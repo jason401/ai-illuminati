@@ -158,3 +158,10 @@
 - 최종 UI 시험: 입력창 안쪽 Send 클릭 → 같은 자리 Stop 표시 → Stop 클릭 → Send 복귀 확인. 모드3 시험방에 중지된 시험 질문 보존.
 - 중요: 격리 적용 후에도 23:00:39 TCC에 Claude(pid88704)의 Documents 요청 재발 확인. 개인 확장만의 문제라고 단정 불가. safe-mode는 부수 확장 로딩 제한이며 Documents 팝업 해결책으로 검증되지 않음.
 - 정확한 파일 접근 추적(fs_usage)은 관리자 권한이 필요했고 sudo -n에서 비밀번호 필요로 진행 불가. 비밀번호를 요청하거나 권한 초기화·확대하지 않음.
+
+## 고정 코드 서명 수정
+- 실제 설치 완료: 사용자 로그인 키체인에 AI Illuminati Local Signing 인증서/비추출 개인 키. 코드 서명 용도에만 사용자 영역 신뢰, 새 키 접근 사전 허용은 /usr/bin/codesign만. 사용자/Claude 비밀번호를 읽거나 기록하지 않음.
+- tools/setup_signing.sh: 한 번 설정, 기존 정상 신원은 재사용. 임시 키·패키지는 권한 제한된 임시 폴더에서만 만들고 정리. 인증서만 있고 정상 신원이 없으면 자동 교체하지 않고 중단.
+- tools/build_app.sh: 빌드 전에 고정 신원 확인(없으면 실행 중 앱을 종료하지 않음), 인증서 SHA1+bundle identifier로 designated requirement 고정. 서명/검증 실패 시 중단, ad-hoc fallback 제거. open 실패도 성공으로 보고하지 않음.
+- 실제 빌드·고정 서명·앱 실행 성공. 다른 빌드 해시의 사본에서도 동일 DR 및 기존 DR 만족 검증 통과(tools/tests/check_signing.py). setup 재실행 시 신원 변경 없음 확인.
+- 기존 ad-hoc ACL에서 전환하므로 계정별 Always Allow 1회 재승인 가능. 실제 사용자 키체인 승인 후 다음 빌드에서 팝업 미발생까지 직접 검증한 것은 아님. Documents 접근 경로 자체는 별도 조사 사항이며 이 서명이 불필요한 파일 접근을 차단하지는 않음.

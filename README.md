@@ -13,7 +13,7 @@
    ```bash
    git clone https://github.com/jason401/ai-illuminati.git
    ```
-2. `Build AI Illuminati.command`를 더블클릭해요 (Xcode Command Line Tools가 필요해요. 없으면 설치 창이 떠요).
+2. 처음 한 번 프로젝트 폴더에서 `zsh tools/setup_signing.sh`를 실행해 앱 전용 로컬 서명을 설정해요. macOS 인증 창은 Mac에서 직접 승인하세요. 이후 `Build AI Illuminati.command`를 더블클릭해요 (Xcode Command Line Tools가 필요해요. 없으면 설치 창이 떠요).
 3. 메뉴바 오른쪽 위에 삼각형 안의 눈 마크가 생겨요. 누르면 계정별 사용량이 보여요.
 
 ## 언어
@@ -56,3 +56,9 @@ AI마다 남은 사용량이 가장 많은 계정을 써요. AI들은 답만 하
 - `app/macos/*.swift` — 앱 (메뉴, 설정 창, 채팅 창, 토론 진행, 계정, 사용량 읽기, 로그인, 아이콘)
 - `tools/build_app.sh` — 빌드 스크립트 (`xcrun swiftc`, Xcode 프로젝트 없음)
 - 앱 데이터: `~/Library/Application Support/AI Illuminati/accounts.json`
+
+## 로컬 빌드 서명
+
+빌드는 로그인 키체인의 **AI Illuminati Local Signing** 인증서를 계속 사용합니다. 임시 서명으로 자동 대체하지 않으며, 서명이 없거나 실패하면 빌드를 중단합니다. 기존 임시 서명에서 전환할 때는 Claude 계정별로 키체인 창에서 **Always Allow**를 한 번 다시 선택해야 할 수 있습니다. 인증서를 삭제하거나 교체하지 않으면 이후 빌드에서도 같은 앱 신원을 유지합니다.
+
+서명 검증: `python3 tools/tests/check_signing.py` (임시 앱 사본의 빌드 해시를 바꿔도 기존 앱 신원으로 검증되는지 확인).

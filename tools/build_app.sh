@@ -4,6 +4,15 @@
 cd "${0:A:h}/.." || exit 1
 APP="AI Illuminati.app"
 LOG="app-build.log"
+SIGNING_NAME="AI Illuminati Local Signing"
+KEYCHAIN="$HOME/Library/Keychains/login.keychain-db"
+SIGNING_ID=$(security find-identity -v -p codesigning "$KEYCHAIN" | awk -v name="$SIGNING_NAME" 'index($0, "\"" name "\"") {print $2; exit}')
+if [[ -z "$SIGNING_ID" ]]; then
+  echo "고정 서명이 필요합니다 / Local signing identity required."
+  echo "먼저 실행하세요 / Run once: zsh tools/setup_signing.sh"
+  echo "기존 앱은 그대로 둡니다. 임시 서명으로 대체하지 않습니다."
+  exit 1
+fi
 
 echo "1/3 실행 중인 앱 종료"
 osascript -e 'tell application id "local.aiilluminati" to quit' >/dev/null 2>&1
@@ -38,13 +47,19 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 </dict></plist>
 PLIST
 
-# Reuse AI Face's local signing certificate when it exists, so a Keychain "Always Allow"
-# survives rebuilds; otherwise sign ad-hoc.
-if ! codesign --force --deep --sign "AI Face Local Signing" "$APP" >>"$LOG" 2>&1; then
-  codesign --force --deep --sign - "$APP" >>"$LOG" 2>&1
+# Pin the designated requirement to a persistent certificate, rather than each build's hash.
+REQUIREMENT="=designated => identifier \"local.aiilluminati\" and anchor H\"$SIGNING_ID\""
+if ! codesign --force --sign "$SIGNING_ID" --keychain "$KEYCHAIN" \
+      --requirements "$REQUIREMENT" "$APP" >>"$LOG" 2>&1; then
+  echo "고정 서명 실패 / Signing failed. See app-build.log."
+  exit 1
+fi
+if ! codesign --verify --strict "$APP" >>"$LOG" 2>&1; then
+  echo "서명 검증 실패 / Signature verification failed."
+  exit 1
 fi
 
 echo "3/3 앱 실행"
 echo "Built $(date)" >>"$LOG"
-open "$APP"
+open "$APP" || exit 1
 echo "완료: 메뉴바 오른쪽 위의 삼각형 안의 눈 마크를 누르면 자세히 보여요."

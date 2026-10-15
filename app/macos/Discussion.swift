@@ -1,4 +1,5 @@
 import Foundation
+import Cocoa
 
 // Asks one AI one prompt through its own command line tool, logged in with the subscription
 // (no API keys). Answers only: every tool is started with file editing and commands turned off,
@@ -117,8 +118,11 @@ enum ChatStore {
         try? encoder.encode(conversation).write(to: URL(fileURLWithPath: dir + "/\(conversation.id.uuidString).json"), options: .atomic)
     }
 
-    static func delete(_ conversation: Conversation) {
-        try? FileManager.default.removeItem(atPath: dir + "/\(conversation.id.uuidString).json")
+    static func delete(_ conversation: Conversation) throws {
+        let path = dir + "/\(conversation.id.uuidString).json"
+        if FileManager.default.fileExists(atPath: path) {
+            try FileManager.default.removeItem(atPath: path)
+        }
     }
 }
 
@@ -165,7 +169,22 @@ final class Discussion: ObservableObject {
 
     func delete(_ id: UUID) {
         guard !running, let conversation = conversations.first(where: { $0.id == id }) else { return }
-        ChatStore.delete(conversation)
+        let alert = NSAlert()
+        alert.messageText = "이 대화를 영구 삭제할까요?"
+        alert.informativeText = "‘\(conversation.title)’의 질문, 답변, 대화 요약을 저장된 파일과 함께 삭제합니다. 되돌릴 수 없어요."
+        alert.addButton(withTitle: "삭제")
+        alert.addButton(withTitle: "취소")
+        alert.buttons.first?.hasDestructiveAction = true
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        do {
+            try ChatStore.delete(conversation)
+        } catch {
+            let failure = NSAlert()
+            failure.messageText = "대화를 삭제하지 못했어요"
+            failure.informativeText = "저장된 파일을 지우지 못해 대화를 그대로 유지했습니다.\n" + error.localizedDescription
+            failure.runModal()
+            return
+        }
         conversations.removeAll { $0.id == id }
         if currentID == id {
             let fresh = Conversation()

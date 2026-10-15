@@ -27,6 +27,7 @@ struct ChatView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     ForEach(discussion.conversations) { conversation in
                         let selected = conversation.id == discussion.currentID
+                        HStack(spacing: 2) {
                         Button(action: { discussion.open(conversation.id) }) {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(conversation.title).lineLimit(2)
@@ -40,9 +41,21 @@ struct ChatView: View {
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        .disabled(discussion.running)
                         .contextMenu {
                             if !conversation.turns.isEmpty {
                                 Button("삭제") { discussion.delete(conversation.id) }
+                            }
+                        }
+                            if !conversation.turns.isEmpty {
+                                Button(action: { discussion.delete(conversation.id) }) {
+                                    Image(systemName: "trash")
+                                }
+                                .buttonStyle(.borderless)
+                                .help("대화 영구 삭제")
+                                .accessibilityLabel("대화 삭제: " + conversation.title)
+                                .disabled(discussion.running)
+                                .padding(.trailing, 6)
                             }
                         }
                     }
@@ -162,16 +175,10 @@ private struct TurnView: View {
                 .cornerRadius(10)
             }
             if !turn.entries.isEmpty {
-                if turn.final == nil && turn.error == nil {
-                    Text("도착한 답변 (\(turn.entries.count))")
-                        .font(.callout.bold())
+                DisclosureGroup("AI들의 대화 보기 (\(turn.entries.count))") {
                     entriesView
-                } else {
-                    DisclosureGroup("AI들의 대화 보기 (\(turn.entries.count))") {
-                        entriesView
-                    }
-                    .font(.callout)
                 }
+                .font(.callout)
             }
         }
     }

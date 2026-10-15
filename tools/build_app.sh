@@ -61,5 +61,7 @@ fi
 
 echo "3/3 앱 실행"
 echo "Built $(date)" >>"$LOG"
-open "$APP" || exit 1
+# Open from a neutral folder so the app does not inherit this folder (in ~/Documents) as PWD.
+APP_PATH="$(pwd)/$APP"
+(cd / && env -u PWD -u OLDPWD open "$APP_PATH") || exit 1
 echo "완료: 메뉴바 오른쪽 위의 삼각형 안의 눈 마크를 누르면 자세히 보여요."

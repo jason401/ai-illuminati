@@ -16,6 +16,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var timer: Timer?
 
     func applicationDidFinishLaunching(_ note: Notification) {
+        // When the build script opens the app, the script's folder (inside ~/Documents) comes along
+        // as PWD/OLDPWD and is passed to every AI tool we start; shells they run then look at that
+        // folder, and macOS asks for Documents access. None of the tools need it.
+        unsetenv("PWD")
+        unsetenv("OLDPWD")
         item.button?.image = illuminatiIcon()
         item.button?.imagePosition = .imageLeading
         menu.delegate = self

@@ -204,3 +204,31 @@ expect(imageChat.pendingImages.count == 1, "clipboard image not imported")
 imageChat.removePendingImage(imageChat.pendingImages[0])
 expect(imageChat.pendingImages.isEmpty, "remove pending image failed")
 print("PASS: normalized attachment copy, image-only send, persistence, transcript image links, actual image deletion, invalid input, clipboard image import")
+
+// Switching modes inside one chat: 1 → 2 → 1. Mode 1 must see what was said in mode 2.
+do {
+    let chat = Discussion(model: model)
+    chat.newConversation()
+    var prompts: [String] = []
+    chat.answer = { account, prompt, _ in
+        prompts.append(prompt)
+        if prompt.contains("당신은 대화 진행자입니다") { return .success("claude,codex,gemini") }
+        return .success("답-\(account.provider.rawValue)-\(prompts.count)")
+    }
+    chat.setMode(1)
+    chat.draft = "모드1 첫 질문"
+    chat.send(); waitFor(chat)
+    chat.setMode(2)
+    expect(chat.configuration.mode == 2, "mode must change after the first message")
+    chat.draft = "모드2 질문"
+    chat.send(); waitFor(chat)
+    let mode2Words = chat.current.turns[1].entries.first?.text ?? "missing"
+    prompts.removeAll()
+    chat.setMode(1)
+    chat.draft = "다시 모드1 질문"
+    chat.send(); waitFor(chat)
+    expect(chat.current.turns.map { $0.mode ?? 1 } == [1, 2, 1], "each message must keep its own mode")
+    expect(prompts.first?.contains("요약 이후 다른 방식으로 나눈 대화 원문") == true, "mode 1 must get the mode 2 exchange")
+    expect(prompts.first?.contains(mode2Words) == true && prompts.first?.contains("모드2 질문") == true, "mode 2 words missing in mode 1")
+    print("PASS: mode switch mid-chat keeps per-message mode and carries mode 2 context into mode 1")
+}

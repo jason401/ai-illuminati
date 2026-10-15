@@ -4,6 +4,47 @@ import Cocoa
 // Asks one AI one prompt through its own command line tool, logged in with the subscription
 // (no API keys). Answers only: every tool is started with file editing and commands turned off,
 // in an empty folder (~/.ai-illuminati/chat).
+// Gemini (agy) can open YouTube links: in one-shot mode it cannot ask for permission, so agy needs
+// an allow rule in ~/.gemini/antigravity-cli/settings.json. agy reads the page (title, channel,
+// description), it does not watch the video. Rules are only added, never removed; the file is
+// backed up once, and left alone if it cannot be read.
+enum GeminiLinks {
+    static let domains = ["youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"]
+    static let toolNote = """
+    [도구 안내] 링크는 read_url로 youtube.com, youtu.be 주소만 열 수 있어요. 다른 사이트와 터미널 명령은 \
+    막혀 있으니 시도하지 말고, 얻은 정보만으로 답하세요. 유튜브는 영상 페이지(제목, 채널, 설명란)만 \
+    읽을 수 있고 영상 자체는 볼 수 없으니, 내용을 어디서 얻었는지 밝히세요.
+
+
+    """
+
+    static func allowYouTube() {
+        let path = Login.home + "/.gemini/antigravity-cli/settings.json"
+        var settings: [String: Any] = [:]
+        if FileManager.default.fileExists(atPath: path) {
+            guard let data = FileManager.default.contents(atPath: path),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+            settings = json
+        }
+        var permissions = settings["permissions"] as? [String: Any] ?? [:]
+        var allow = permissions["allow"] as? [String] ?? []
+        let missing = domains.map { "read_url(\($0))" }.filter { !allow.contains($0) }
+        guard !missing.isEmpty else { return }
+        let backup = path + ".backup-before-ai-illuminati"
+        if FileManager.default.fileExists(atPath: path), !FileManager.default.fileExists(atPath: backup) {
+            try? FileManager.default.copyItem(atPath: path, toPath: backup)
+        }
+        allow += missing
+        permissions["allow"] = allow
+        settings["permissions"] = permissions
+        if let data = try? JSONSerialization.data(withJSONObject: settings, options: [.prettyPrinted, .sortedKeys]) {
+            try? FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+            try? data.write(to: URL(fileURLWithPath: path), options: .atomic)
+            NSLog("AI Illuminati: added to agy settings: \(missing.joined(separator: ", "))")
+        }
+    }
+}
+
 enum Answerer {
     static let chatDir: String = {
         let dir = AccountStore.home + "/.ai-illuminati/chat"
@@ -32,7 +73,8 @@ enum Answerer {
                          "--color", "never", "-C", chatDir, "-o", outFile, prompt]
         case .gemini:
             binary = Login.agyInstalled ? Login.home + "/.local/bin/agy" : nil
-            arguments = ["-p", prompt, "--mode", "plan", "--sandbox", "--disable-slash-commands",
+            GeminiLinks.allowYouTube()
+            arguments = ["-p", GeminiLinks.toolNote + prompt, "--sandbox", "--disable-slash-commands",
                          "--print-timeout", "\(Int(timeout) - 10)s"]
         }
         if !images.isEmpty {
@@ -241,8 +283,8 @@ final class Discussion: ObservableObject {
         change(currentID, save: true) { $0.configuration = config }
     }
 
+    // Any time except while answering; applies from the next message (each turn keeps its own mode).
     func setMode(_ mode: Int) {
-        guard current.turns.isEmpty else { return }
         configure { $0.mode = mode }
     }
 
@@ -354,7 +396,16 @@ final class Discussion: ObservableObject {
         pendingImages = []
         draft = ""
         attachmentError = nil
-        let summary = current.summary
+        // Mode 1 sends the running summary, which only mode 1 updates. After messages in modes 2/3,
+        // add those exchanges in full so mode 1 (and its next summary) knows about them.
+        var summary = current.summary
+        if config.mode == 1 {
+            let lastSummarized = history.lastIndex { ($0.mode ?? 1) == 1 && $0.final != nil }
+            let since = history[(lastSummarized.map { $0 + 1 } ?? 0)...].filter { ($0.mode ?? 1) != 1 }
+            if !since.isEmpty {
+                summary += (summary.isEmpty ? "" : "\n\n") + "[요약 이후 다른 방식으로 나눈 대화 원문]\n" + Self.transcript(Array(since))
+            }
+        }
         change(id, save: true) { c in
             if c.turns.isEmpty { c.title = String(question.prefix(40)) }
             c.turns.append(turn)

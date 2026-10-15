@@ -3,6 +3,13 @@
 이 문서만 읽으면 바로 이어서 작업할 수 있게 정리했어요. 규칙은 `AGENTS.md`(= `CLAUDE.md`와 같은 내용)에, 사용자용 설명은 `README.md`에 있어요.
 
 
+## 최신 변경 — Claude (2026-10-15)
+
+- **키체인 창 반복 해결**: 팀 ID 없는 앱은 "항상 허용"이 빌드마다 바뀌는 해시에 묶여 매 빌드마다 다시 물음. Claude Code는 로그인을 `/usr/bin/security`로 저장하므로, 앱도 `security find-generic-password -s <서비스> -w`로 읽게 바꿈(`Usage.swift` `accessToken`). 두 계정 모두 창 없이 읽힘 확인.
+- **Documents 권한 창 원인과 조치**: 빌드 스크립트가 문서 폴더 안 프로젝트에서 앱을 열어 `PWD/OLDPWD`가 앱 환경에 들어갔고, 자식 AI 도구(Claude 플러그인이 띄우는 `sh` 등)가 그 폴더를 확인하며 Documents 접근이 발생한 것으로 판단. 앱 시작 시 `unsetenv("PWD"/"OLDPWD")`, 빌드 스크립트는 `cd /` + `env -u PWD -u OLDPWD open`. 실행 중 앱 환경에 PWD 없음 확인. **창이 완전히 사라졌는지는 사용자 확인 필요.**
+- **Gemini 유튜브 링크**: 한 번 실행 모드(`agy -p`)는 링크 열기 허락을 물을 수 없어 자동 거절됐음. 앱이 `~/.gemini/antigravity-cli/settings.json`의 `permissions.allow`에 `read_url(youtube.com|www.youtube.com|m.youtube.com|youtu.be)`만 **추가**(백업 `settings.json.backup-before-ai-illuminati`, `GeminiLinks` in `Discussion.swift`). Gemini 메시지 앞에 도구 안내를 붙임. 중요: agy는 **영상을 보지 않고 페이지(제목·채널·설명란)만 읽음**. 자막/영상 내용은 못 가져옴. 다른 사이트와 명령 실행은 여전히 막혀 있음. `--mode plan`은 `--disable-slash-commands`와 함께면 효과가 없다는 경고가 나와서 뺌.
+- **대화 중 모드 변경**: 모드 선택이 진행 중에만 잠김. 각 질문이 자기 모드를 저장하고, 바뀐 지점에 구분선 표시. 모드1로 돌아오면 "요약 + 요약 이후 다른 모드 대화 원문"을 넘겨 다음 요약에 합쳐짐. 모드2/3은 원래 전체 원문을 받음. 시험 `tools/tests/run_mode2.sh`에 1→2→1 전환 시험 추가, 전부 통과.
+
 ## 최신 인수인계 — Codex → Claude (2026-10-14)
 
 **이 절이 현재 상태입니다. 아래 연혁의 이전 설명과 충돌하면 이 절과 실제 코드를 우선하세요.**

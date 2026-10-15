@@ -303,14 +303,22 @@ enum ClaudeUsage {
         return SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess
     }
 
-    // Reading the secret itself asks once per account ("Always Allow").
+    // Claude Code saves its login with Apple's own `security` tool, so that tool is already allowed
+    // to read it. Reading through it (read only) avoids the Keychain password prompt; reading
+    // directly from this app asked again after every build, because macOS remembers "Always Allow"
+    // per build for apps without an Apple team ID.
     private static func accessToken(_ account: Account) -> String? {
-        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
-                                    kSecAttrService as String: account.claudeKeychainService,
-                                    kSecReturnData as String: true]
-        var out: AnyObject?
-        guard SecItemCopyMatching(query as CFDictionary, &out) == errSecSuccess,
-              let data = out as? Data,
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+        process.arguments = ["find-generic-password", "-s", account.claudeKeychainService, "-w"]
+        let out = Pipe()
+        process.standardOutput = out
+        process.standardError = FileHandle.nullDevice
+        process.standardInput = FileHandle.nullDevice
+        guard (try? process.run()) != nil else { return nil }
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0,
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let oauth = json["claudeAiOauth"] as? [String: Any],
               let token = oauth["accessToken"] as? String else { return nil }

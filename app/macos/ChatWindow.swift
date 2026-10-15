@@ -86,7 +86,7 @@ struct ChatView: View {
                     }
                     .labelsHidden()
                     .frame(width: 245)
-                    .disabled(discussion.running || !discussion.current.turns.isEmpty)
+                    .disabled(discussion.running)
                     Spacer(minLength: 8)
                     if discussion.configuration.mode == 3 {
                         Menu {
@@ -116,7 +116,7 @@ struct ChatView: View {
                             Text(L("대표의 진행 판단과 마지막 정리는 발언 수에 포함하지 않습니다.", "Moderator decisions and final synthesis do not count toward the turn limit."))
                         }
                         if !discussion.current.turns.isEmpty {
-                            Text(L("방식 변경은 새 대화에서", "Start a new chat to change modes"))
+                            Text(L("대화 중에도 방식을 바꿀 수 있어요. 다음 질문부터 적용돼요.", "You can switch modes mid-chat. It applies from the next message."))
                         }
                     } label: {
                         Image(systemName: "info.circle")
@@ -168,7 +168,10 @@ struct ChatView: View {
                             .font(.callout)
                             .foregroundColor(.secondary)
                         }
-                        ForEach(conversation.turns) { turn in
+                        ForEach(Array(conversation.turns.enumerated()), id: \.element.id) { index, turn in
+                            if index > 0, (turn.mode ?? 1) != (conversation.turns[index - 1].mode ?? 1) {
+                                ModeChangeMarker(mode: turn.mode ?? 1)
+                            }
                             TurnView(turn: turn).id(turn.id)
                         }
                     }
@@ -366,6 +369,30 @@ private struct ParticipantDropDelegate: DropDelegate {
         discussion.draggingProvider = nil
         discussion.draggingConversationID = nil
         return true
+    }
+}
+
+// A thin line where the chat switched to another mode.
+private struct ModeChangeMarker: View {
+    let mode: Int
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Rectangle().fill(Color.secondary.opacity(0.3)).frame(height: 1)
+            Text(L("\(Self.name(mode))(으)로 바뀜", "Switched to \(Self.name(mode))"))
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .fixedSize()
+            Rectangle().fill(Color.secondary.opacity(0.3)).frame(height: 1)
+        }
+    }
+
+    static func name(_ mode: Int) -> String {
+        switch mode {
+        case 3: return L("모드3 · 토론", "Mode 3 · Debate")
+        case 2: return L("모드2 · 돌아가며 대화", "Mode 2 · Roundtable")
+        default: return L("모드1 · 검토 후 정리", "Mode 1 · Review & summarize")
+        }
     }
 }
 

@@ -98,10 +98,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func rebuildMenu() {
         menu.removeAllItems()
         if usages.isEmpty && !accounts.isEmpty { menu.addItem(info("확인 중…")) }
-        for usage in usages {
-            addRows(for: usage)
-            menu.addItem(.separator())
-        }
+        let nameWidth = usages.map { label(for: $0).size(withAttributes: [.font: rowFont]).width }.max() ?? 0
+        for usage in usages { menu.addItem(row(for: usage, nameWidth: nameWidth)) }
+        if !usages.isEmpty { menu.addItem(.separator()) }
         menu.addItem(action("Claude 계정 추가…", #selector(addClaude)))
         menu.addItem(action("ChatGPT(Codex) 계정 추가…", #selector(addCodex)))
         menu.addItem(.separator())
@@ -115,47 +114,82 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(NSMenuItem(title: "종료", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
     }
 
-    private func addRows(for usage: AIUsage) {
+    private let rowFont = NSFont.systemFont(ofSize: 13, weight: .semibold)
+    private let barFont = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+
+    private func label(for usage: AIUsage) -> String {
         let kind: String
         switch usage.account?.provider {
         case .claude: kind = "Claude"
         case .codex: kind = "ChatGPT"
         case nil: kind = ""
         }
-        let label = kind.isEmpty || usage.name.hasPrefix(kind) ? usage.name : "\(kind) · \(usage.name)"
-        let head = usage.leftNow.map { "\(label) — \(Int($0.rounded()))% 남음" } ?? "\(label) — ?"
-        let headItem = NSMenuItem(title: head, action: nil, keyEquivalent: "")
-        headItem.attributedTitle = NSAttributedString(string: head, attributes: [.font: NSFont.boldSystemFont(ofSize: 13)])
-        if let account = usage.account {
-            headItem.submenu = accountMenu(account)
-        } else {
-            let sub = NSMenu()
-            sub.addItem(action("다시 로그인…", #selector(loginGemini)))
-            headItem.submenu = sub
-        }
-        menu.addItem(headItem)
-        if let detail = usage.detail, !detail.isEmpty { menu.addItem(info("   " + detail)) }
-        if let w = usage.fiveHour { menu.addItem(info("   5시간: " + describe(w))) }
-        if let w = usage.weekly { menu.addItem(info("   주간: " + describe(w))) }
-        for extra in usage.extras { menu.addItem(info("   " + extra)) }
-        if let note = usage.note { menu.addItem(info("   " + note)) }
-        if let account = usage.account, usage.needsLogin {
-            let button = action("   로그인…", #selector(loginAccount(_:)))
-            button.representedObject = account.id
-            menu.addItem(button)
-        } else if usage.account == nil, usage.needsLogin {
-            menu.addItem(action(Login.agyInstalled ? "   Gemini 로그인…" : "   agy 설치하고 로그인…", #selector(loginGemini)))
-        }
+        return kind.isEmpty || usage.name.hasPrefix(kind) ? usage.name : "\(kind) · \(usage.name)"
     }
 
-    private func accountMenu(_ account: Account) -> NSMenu {
+    // "████████░░" for the part left (10 blocks), like Claude Code's usage bars.
+    private func bar(left: Double, cells: Int = 10) -> NSAttributedString {
+        let filled = max(0, min(cells, Int((left / 100 * Double(cells)).rounded())))
+        let text = NSMutableAttributedString(string: String(repeating: "█", count: filled), attributes: [
+            .font: barFont, .foregroundColor: NSColor.labelColor])
+        text.append(NSAttributedString(string: String(repeating: "░", count: cells - filled), attributes: [
+            .font: barFont, .foregroundColor: NSColor.tertiaryLabelColor]))
+        return text
+    }
+
+    // One line per account in the main menu: name, bar, "62%". Hovering opens the details.
+    private func row(for usage: AIUsage, nameWidth: CGFloat) -> NSMenuItem {
+        let style = NSMutableParagraphStyle()
+        style.tabStops = [NSTextTab(textAlignment: .left, location: nameWidth + 16)]
+        let title = NSMutableAttributedString(string: label(for: usage) + "\t", attributes: [.font: rowFont])
+        if let left = usage.leftNow {
+            title.append(bar(left: left))
+            title.append(NSAttributedString(string: String(format: "  %3d%%", Int(left.rounded())), attributes: [.font: barFont]))
+        } else {
+            title.append(NSAttributedString(string: usage.needsLogin ? "로그인 필요" : "?", attributes: [
+                .font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.secondaryLabelColor]))
+        }
+        title.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: title.length))
+        let item = NSMenuItem(title: label(for: usage), action: nil, keyEquivalent: "")
+        item.attributedTitle = title
+        item.submenu = detailMenu(for: usage)
+        return item
+    }
+
+    // The side menu: account, each limit with its own bar and reset time, then account actions.
+    private func detailMenu(for usage: AIUsage) -> NSMenu {
         let sub = NSMenu()
-        for (title, selector) in [("다시 로그인…", #selector(loginAccount(_:))),
-                                  ("이름 바꾸기…", #selector(renameAccount(_:))),
-                                  ("목록에서 빼기…", #selector(removeAccount(_:)))] {
-            let entry = action(title, selector)
-            entry.representedObject = account.id
-            sub.addItem(entry)
+        sub.autoenablesItems = false   // lets the limit lines below show in full color
+        if let detail = usage.detail, !detail.isEmpty { sub.addItem(info(detail)) }
+        var limits: [(String, UsageWindow)] = []
+        if let w = usage.fiveHour { limits.append(("5시간", w)) }
+        if let w = usage.weekly { limits.append(("주간", w)) }
+        for (name, w) in limits {
+            let text = NSMutableAttributedString(string: name + "\t", attributes: [.font: NSFont.systemFont(ofSize: 13)])
+            text.append(bar(left: w.left()))
+            text.append(NSAttributedString(string: "  " + describeLeft(w), attributes: [.font: NSFont.systemFont(ofSize: 12)]))
+            let style = NSMutableParagraphStyle()
+            style.tabStops = [NSTextTab(textAlignment: .left, location: 48)]
+            text.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: text.length))
+            let line = info(name)
+            line.attributedTitle = text
+            line.isEnabled = true
+            sub.addItem(line)
+        }
+        for extra in usage.extras { sub.addItem(info(extra)) }
+        if let note = usage.note { sub.addItem(info(note)) }
+        sub.addItem(.separator())
+        if let account = usage.account {
+            for (title, selector) in [(usage.needsLogin ? "로그인…" : "다시 로그인…", #selector(loginAccount(_:))),
+                                      ("이름 바꾸기…", #selector(renameAccount(_:))),
+                                      ("목록에서 빼기…", #selector(removeAccount(_:)))] {
+                let entry = action(title, selector)
+                entry.representedObject = account.id
+                sub.addItem(entry)
+            }
+        } else {
+            let title = !Login.agyInstalled ? "agy 설치하고 로그인…" : usage.needsLogin ? "로그인…" : "다시 로그인…"
+            sub.addItem(action(title, #selector(loginGemini)))
         }
         return sub
     }
@@ -247,7 +281,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return item
     }
 
-    private func describe(_ w: UsageWindow) -> String { describeLeft(w) }
 
     @objc private func togglePercent() {
         showPercent.toggle()

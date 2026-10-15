@@ -3,6 +3,12 @@
 이 문서만 읽으면 바로 이어서 작업할 수 있게 정리했어요. 규칙은 `AGENTS.md`(= `CLAUDE.md`와 같은 내용)에, 사용자용 설명은 `README.md`에 있어요.
 
 
+## 최신 변경 — Claude (2026-10-15, 프롬프트 순서·이름 색)
+
+- **모드3 프롬프트 순서**: 모든 모드3 호출(발언·진행 판단·최종 정리)이 `Discussion.debateContext`(`[MODE3 DEBATE]` + 규칙 + 전체 원문)로 시작하고, 바뀌는 지시(역할·논점·남은 횟수)는 맨 뒤. 원문은 뒤에만 덧붙으므로 같은 AI의 연속 호출이 긴 공통 앞부분을 가져 AI 서비스의 캐시를 쓸 수 있음. 실제 사용량 절감 폭은 측정 안 함. 모드2는 원래 원문이 맨 뒤라 그대로.
+- **AI별 세션 유지(GPT 제안)는 보류**: 세션을 이어도 도구가 전체 기록을 매번 다시 보내 사용량이 줄지 않고, 계정 자동 선택·이미지·중지·기록 파일 문제로 복잡도만 큼. 방이 길어지면 "오래된 질문은 누가 무엇을 주장·철회했는지 구조화해 압축, 최근은 원문" 방식을 검토.
+- **이름 색**: `Account.Provider.color`(Claude 주황, ChatGPT 초록, Gemini 파랑; 다크/라이트 각각). 발언자 이름과 "정리:" 이름에 적용. 옛 대화도 이름 앞부분으로 색을 찾음(`Provider.of(speaker:)`).
+
 ## 최신 변경 — Claude (2026-10-15, 한 줄 보기)
 
 - **채팅 한 줄 보기(모드1·2·3)**: AI 답 프롬프트 끝에 `Discussion.headlineRule`(첫 줄 `TL;DR: ` 60자 이내)을 붙임. `ChatTurn.Entry.reply(...)`가 그 줄을 `headline`으로 떼고 나머지를 `text`로 저장. AI끼리 주고받는 원문에는 `text`(전체 답)만 들어감. 화면은 `EntryRow`: 이름 + 한 줄(`shortLine`, headline 없으면 첫 문장 90자) + 오른쪽 화살표, 누르면 대표 논점과 전체 답이 펼쳐짐. 펼침 상태는 `Discussion.openEntries`(저장 안 함). 이 Mac의 Command Line Tools에는 SwiftUI `@State` 매크로 플러그인이 없어 `@State`를 쓰면 빌드 실패 → 상태는 ObservableObject에 둘 것.

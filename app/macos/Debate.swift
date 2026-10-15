@@ -83,11 +83,23 @@ extension Discussion {
         cancellation.cancel()
     }
 
-    private func debateSpeech(_ account: Account, rules: String, focus: String, transcript: String, opening: Bool) -> String {
+    // Every mode 3 call starts with the same rules and the transcript, which only grows, and puts what
+    // changes (the task, the focus) last. Repeated calls then share a long identical opening, which the
+    // AI services can reuse from their cache instead of reading again.
+    static func debateContext(rules: String, transcript: String) -> String {
         """
-        [MODE3 SPEECH]
+        [MODE3 DEBATE]
         [Style rules]
         \(rules)
+        [Complete transcript]
+        \(transcript)
+        """
+    }
+
+    private func debateSpeech(_ account: Account, rules: String, focus: String, transcript: String, opening: Bool) -> String {
+        """
+        \(Self.debateContext(rules: rules, transcript: transcript))
+        [MODE3 SPEECH]
         You are \(label(account)). Read the entire conversation and respond to the latest user question\(opening ? "" : " and to the other AIs").
         Speak only as yourself. Never write, imagine, or quote a statement on another AI's behalf.
         Use 2–4 sentences, at most 400 characters (this debate limit overrides shorter length rules), in the language of the
@@ -103,8 +115,6 @@ extension Discussion {
         \(Self.headlineRule)
         [Moderator focus]
         \(focus.isEmpty ? "Give your initial contribution." : focus)
-        [Complete transcript]
-        \(transcript)
         """
     }
 
@@ -170,6 +180,7 @@ extension Discussion {
             let available = team.filter { (used[$0.provider] ?? 0) < perAI }
             let counts = team.map { "\($0.provider.rawValue) \(used[$0.provider] ?? 0)/\(perAI)" }.joined(separator: ", ")
             let prompt = """
+            \(Self.debateContext(rules: rules, transcript: transcript))
             [MODE3 MODERATION]
             You are a neutral moderator. Your goal is a deeper debate, not a quick end. Do not favor your own earlier statements.
             Read the complete transcript and find the most important unresolved disagreement, an unanswered criticism, or a claim without evidence.
@@ -187,8 +198,6 @@ extension Discussion {
             or {"action":"finish","reason":"why discussion is sufficient"}.
             Write focus/reason in the language of the latest user message unless it requests another language.
             Do not use tools, change files, or run commands.
-            [Complete transcript]
-            \(transcript)
             """
             let result = requestDebate(moderator, prompt, 180, cancellation)
             if cancellation.isCancelled { break }
@@ -237,15 +246,12 @@ extension Discussion {
         if !cancellation.isCancelled, let moderator, successful.contains(leader) {
             changeTurn(id, index) { $0.status = L("대표가 결론과 남은 쟁점을 정리하는 중…", "Moderator is summarizing conclusions and open questions…") }
             let result = requestDebate(moderator, """
+                \(Self.debateContext(rules: rules, transcript: transcript))
                 [MODE3 FINAL]
-                [Style rules]
-                \(rules)
                 Summarize the conclusions and any remaining disagreements in at most 3 short sentences.
                 Use the language of the latest user question unless they request another language. Do not imply consensus where none exists.
                 End reason: \(ending)
                 Do not use tools, change files, or execute commands.
-                [Complete transcript]
-                \(transcript)
                 """, 120, cancellation)
             if !cancellation.isCancelled {
                 switch result {

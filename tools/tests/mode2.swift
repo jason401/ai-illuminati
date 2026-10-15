@@ -128,6 +128,12 @@ expect(decisions == 6, "moderator should be asked until finishing is allowed")
 let moderations = debateCalls.filter { $0.contains("[MODE3 MODERATION]") }
 expect(moderations.first?.contains("Finishing is NOT allowed yet") == true, "moderator must be told finishing is not allowed yet")
 expect(moderations.first?.contains("at most 4 times") == true, "moderator must know the per-AI limit")
+// Shared rules + transcript come first and the changing task last, so repeated calls share an identical opening.
+for call in debateCalls {
+    let task = ["[MODE3 SPEECH]", "[MODE3 MODERATION]", "[MODE3 FINAL]"].compactMap { call.range(of: $0)?.lowerBound }.first
+    expect(call.hasPrefix("[MODE3 DEBATE]") && task != nil && call.range(of: "[Complete transcript]")!.lowerBound < task!,
+           "mode3 prompt must put the transcript before the task")
+}
 expect(moderations.last?.contains("Finish only if") == true, "moderator must be told when finishing is allowed")
 expect(debate.current.turns[0].entries[3].focus == "Address the counterexample", "moderator focus not saved")
 expect(debateCalls.first { $0.contains("[MODE3 SPEECH]") && !$0.contains("opening round") }?.contains("Contribution from gemini") == true,

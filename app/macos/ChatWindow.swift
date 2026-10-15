@@ -447,7 +447,9 @@ private struct TurnView: View {
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     if let by = turn.finalBy {
-                        Text(L("정리: \(by)", "Final answer by: \(by)")).font(.caption).foregroundColor(.secondary)
+                        (Text(L("정리: ", "Final answer by: ")).foregroundColor(.secondary)
+                         + Text(by).bold().foregroundColor(Account.Provider.of(speaker: by)?.color ?? .secondary))
+                            .font(.caption)
                     }
                 }
                 .padding(12)
@@ -691,7 +693,7 @@ private struct EntryRow: View {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(label)
                         .font(.caption.bold())
-                        .foregroundColor(entry.failed ? .red : .secondary)
+                        .foregroundColor(entry.failed ? .red : Account.Provider.of(speaker: entry.speaker)?.color ?? .secondary)
                         .fixedSize()
                     Text(entry.failed ? entry.text : entry.shortLine)
                         .lineLimit(isOpen ? nil : 1)
@@ -726,4 +728,23 @@ private struct EntryRow: View {
         let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
         return (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
     }
+}
+
+// Each AI's own color for its name in the chat, close to its company's brand color.
+// A lighter shade in dark mode and a deeper one in light mode keep it readable on both.
+extension Account.Provider {
+    var color: Color {
+        let (dark, light): (NSColor, NSColor)
+        switch self {
+        case .claude: (dark, light) = (NSColor(srgbRed: 0.88, green: 0.55, blue: 0.42, alpha: 1), NSColor(srgbRed: 0.74, green: 0.36, blue: 0.22, alpha: 1))
+        case .codex: (dark, light) = (NSColor(srgbRed: 0.27, green: 0.76, blue: 0.60, alpha: 1), NSColor(srgbRed: 0.05, green: 0.53, blue: 0.41, alpha: 1))
+        case .gemini: (dark, light) = (NSColor(srgbRed: 0.45, green: 0.66, blue: 0.99, alpha: 1), NSColor(srgbRed: 0.10, green: 0.45, blue: 0.91, alpha: 1))
+        }
+        return Color(nsColor: NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light
+        })
+    }
+
+    // Speaker labels start with the AI's name ("Claude (학교)"), so older saved replies get a color too.
+    static func of(speaker: String) -> Self? { allCases.first { speaker.hasPrefix($0.title) } }
 }

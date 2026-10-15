@@ -44,16 +44,21 @@ struct ChatView: View {
                         .disabled(discussion.running)
                         .contextMenu {
                             if !conversation.turns.isEmpty {
-                                Button("삭제") { discussion.delete(conversation.id) }
+                                Button("대화 삭제…", role: .destructive) { discussion.delete(conversation.id) }
                             }
                         }
                             if !conversation.turns.isEmpty {
-                                Button(action: { discussion.delete(conversation.id) }) {
-                                    Image(systemName: "trash")
+                                Menu {
+                                    Button("대화 삭제…", role: .destructive) { discussion.delete(conversation.id) }
+                                } label: {
+                                    Image(systemName: "ellipsis")
+                                        .frame(width: 20, height: 24)
                                 }
-                                .buttonStyle(.borderless)
-                                .help("대화 영구 삭제")
-                                .accessibilityLabel("대화 삭제: " + conversation.title)
+                                .menuStyle(.borderlessButton)
+                                .menuIndicator(.hidden)
+                                .fixedSize()
+                                .help("대화 메뉴")
+                                .accessibilityLabel("대화 메뉴: " + conversation.title)
                                 .disabled(discussion.running)
                                 .padding(.trailing, 6)
                             }

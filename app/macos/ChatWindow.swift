@@ -100,7 +100,7 @@ struct ChatView: View {
             Divider()
             HStack(alignment: .bottom, spacing: 8) {
                 VStack(alignment: .leading, spacing: 5) {
-                    TextEditor(text: $discussion.draft)
+                    MultilineInput(text: $discussion.draft, onSend: { discussion.send() })
                         .font(.body)
                         .frame(height: 76)
                         .padding(4)
@@ -217,5 +217,69 @@ final class ChatWindow {
         }
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
+    }
+}
+
+// Native editor: Return handling stays with the editor, including Korean IME composition.
+final class ChatInputTextView: NSTextView {
+    var onSend: (() -> Void)?
+
+    override func keyDown(with event: NSEvent) {
+        if (event.keyCode == 36 || event.keyCode == 76) && !hasMarkedText() {
+            if event.modifierFlags.contains(.command) {
+                onSend?()
+            } else {
+                insertText("\n", replacementRange: selectedRange())
+            }
+            return
+        }
+        super.keyDown(with: event)
+    }
+}
+
+private struct MultilineInput: NSViewRepresentable {
+    @Binding var text: String
+    var onSend: () -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scroll = NSScrollView()
+        scroll.hasVerticalScroller = true
+        scroll.drawsBackground = false
+        let editor = ChatInputTextView()
+        editor.isRichText = false
+        editor.isAutomaticQuoteSubstitutionEnabled = false
+        editor.isAutomaticDashSubstitutionEnabled = false
+        editor.font = .systemFont(ofSize: NSFont.systemFontSize)
+        editor.drawsBackground = false
+        editor.textContainerInset = NSSize(width: 4, height: 4)
+        editor.isVerticallyResizable = true
+        editor.isHorizontallyResizable = false
+        editor.autoresizingMask = [.width]
+        editor.textContainer?.widthTracksTextView = true
+        editor.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
+        editor.delegate = context.coordinator
+        editor.onSend = onSend
+        editor.string = text
+        editor.setAccessibilityLabel("질문 입력")
+        scroll.documentView = editor
+        return scroll
+    }
+
+    func updateNSView(_ scroll: NSScrollView, context: Context) {
+        context.coordinator.parent = self
+        guard let editor = scroll.documentView as? ChatInputTextView else { return }
+        editor.onSend = onSend
+        if editor.string != text && !editor.hasMarkedText() { editor.string = text }
+    }
+
+    final class Coordinator: NSObject, NSTextViewDelegate {
+        var parent: MultilineInput
+        init(_ parent: MultilineInput) { self.parent = parent }
+        func textDidChange(_ notification: Notification) {
+            guard let editor = notification.object as? NSTextView else { return }
+            parent.text = editor.string
+        }
     }
 }

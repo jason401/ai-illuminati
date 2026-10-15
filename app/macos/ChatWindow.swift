@@ -1,5 +1,6 @@
 import Cocoa
 import SwiftUI
+import UniformTypeIdentifiers
 
 // The chat window: pick which AIs take part, ask, and get one final answer. What the AIs said to
 // each other (own answers, then reviews) is folded under the answer.
@@ -109,7 +110,7 @@ struct ChatView: View {
                         let conversation = discussion.current
                         if conversation.turns.isEmpty {
                             Text(discussion.configuration.mode == 2
-                                 ? "순서와 대표를 정하고 질문하세요. 각 AI가 전체 대화를 읽고 1~2문장씩 이어 말해요.\n한 바퀴가 끝나면 대표가 다음 순서를 정해요. 화살표로 직접 바꿀 수도 있어요."
+                                 ? "순서와 대표를 정하고 질문하세요. 각 AI가 전체 대화를 읽고 1~2문장씩 이어 말해요.\n한 바퀴가 끝나면 대표가 다음 순서를 정해요. 이름 옆 손잡이를 끌어 직접 바꿀 수도 있어요."
                                  : "질문을 입력하면 AI들이 각자 답하고, 서로 검토한 뒤, 한 명이 최종 답을 정리해 줘요.\n이어서 물어보면 지금까지의 대화 요약을 같이 보내요. 답 길이와 말투는 설정의 '채팅 규칙'에서 정해요.")
                                 .foregroundColor(.secondary)
                                 .padding(.top, 40)
@@ -166,18 +167,24 @@ struct ChatView: View {
                         Toggle(provider.title, isOn: Binding(
                             get: { discussion.configuration.participants.contains(provider) },
                             set: { discussion.setParticipation(provider, enabled: $0) }))
-                        Button(action: { discussion.moveProvider(provider, by: -1) }) {
-                            Image(systemName: "chevron.left")
-                        }
-                        .disabled(discussion.configuration.order.first == provider)
-                        .help("앞으로 이동")
-                        Button(action: { discussion.moveProvider(provider, by: 1) }) {
-                            Image(systemName: "chevron.right")
-                        }
-                        .disabled(discussion.configuration.order.last == provider)
-                        .help("뒤로 이동")
+                        Image(systemName: "line.3.horizontal")
+                            .foregroundColor(.secondary)
+                            .frame(width: 22, height: 24)
+                            .contentShape(Rectangle())
+                            .help("끌어서 발언 순서 변경")
+                            .accessibilityLabel(provider.title + " 순서 이동")
+                            .onDrag {
+                                guard !discussion.running else { return NSItemProvider() }
+                                discussion.draggingProvider = provider
+                                discussion.draggingConversationID = discussion.currentID
+                                return NSItemProvider(object: provider.rawValue as NSString)
+                            }
                     }
-                    .buttonStyle(.borderless)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(Color.secondary.opacity(0.08))
+                    .cornerRadius(6)
+                    .onDrop(of: [UTType.text], delegate: ParticipantDropDelegate(discussion: discussion, target: provider))
                 }
                 Spacer(minLength: 0)
             }
@@ -202,6 +209,34 @@ struct ChatView: View {
         f.locale = Locale(identifier: "ko_KR")
         f.dateFormat = Calendar.current.isDateInToday(date) ? "a h:mm" : "M/d (E)"
         return f.string(from: date)
+    }
+}
+
+private struct ParticipantDropDelegate: DropDelegate {
+    let discussion: Discussion
+    let target: Account.Provider
+
+    func validateDrop(info: DropInfo) -> Bool {
+        !discussion.running && discussion.draggingProvider != nil
+            && discussion.draggingConversationID == discussion.currentID
+    }
+
+    func dropEntered(info: DropInfo) {
+        guard validateDrop(info: info), let source = discussion.draggingProvider else { return }
+        withAnimation(.easeInOut(duration: 0.15)) {
+            discussion.moveProvider(source, to: target)
+        }
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: validateDrop(info: info) ? .move : .cancel)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        guard validateDrop(info: info) else { return false }
+        discussion.draggingProvider = nil
+        discussion.draggingConversationID = nil
+        return true
     }
 }
 

@@ -145,6 +145,8 @@ final class Discussion: ObservableObject {
     @Published var currentID: UUID
     @Published var running = false
     @Published var draft = ""
+    @Published var draggingProvider: Account.Provider?
+    var draggingConversationID: UUID?
     @Published var useClaude = true
     @Published var useCodex = true
     @Published var useGemini = true
@@ -168,11 +170,13 @@ final class Discussion: ObservableObject {
         configure { $0.mode = mode }
     }
 
-    func moveProvider(_ provider: Account.Provider, by offset: Int) {
+    func moveProvider(_ provider: Account.Provider, to target: Account.Provider) {
         configure { config in
-            guard let from = config.order.firstIndex(of: provider) else { return }
-            let to = from + offset
-            if config.order.indices.contains(to) { config.order.swapAt(from, to) }
+            guard provider != target,
+                  let from = config.order.firstIndex(of: provider),
+                  let to = config.order.firstIndex(of: target) else { return }
+            config.order.remove(at: from)
+            config.order.insert(provider, at: to)
         }
     }
 

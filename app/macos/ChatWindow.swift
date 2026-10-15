@@ -99,10 +99,17 @@ struct ChatView: View {
             }
             Divider()
             HStack(alignment: .bottom, spacing: 8) {
-                TextField("질문을 입력하세요", text: $discussion.draft, axis: .vertical)
-                    .lineLimit(1...6)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit { discussion.send() }
+                VStack(alignment: .leading, spacing: 5) {
+                    TextEditor(text: $discussion.draft)
+                        .font(.body)
+                        .frame(height: 76)
+                        .padding(4)
+                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.3)))
+                        .accessibilityLabel("질문 입력")
+                    Text("Enter / Shift+Enter: 줄바꿈 · ⌘Enter: 보내기")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
                 Button(discussion.running ? "토론 중…" : "보내기") { discussion.send() }
                     .keyboardShortcut(.return, modifiers: .command)
                     .disabled(discussion.running || discussion.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -155,25 +162,36 @@ private struct TurnView: View {
                 .cornerRadius(10)
             }
             if !turn.entries.isEmpty {
-                DisclosureGroup("AI들의 대화 보기 (\(turn.entries.count))") {
-                    VStack(alignment: .leading, spacing: 12) {
-                        ForEach(turn.entries.sorted { $0.round < $1.round }) { entry in
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("\(entry.round == 1 ? "각자 답" : "검토 후") · \(entry.speaker)")
-                                    .font(.caption.bold())
-                                    .foregroundColor(entry.failed ? .red : .secondary)
-                                Text(markdown(entry.text))
-                                    .textSelection(.enabled)
-                                    .foregroundColor(entry.failed ? .secondary : .primary)
-                            }
-                        }
+                if turn.final == nil && turn.error == nil {
+                    Text("도착한 답변 (\(turn.entries.count))")
+                        .font(.callout.bold())
+                    entriesView
+                } else {
+                    DisclosureGroup("AI들의 대화 보기 (\(turn.entries.count))") {
+                        entriesView
                     }
-                    .padding(.top, 6)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .font(.callout)
                 }
-                .font(.callout)
             }
         }
+    }
+
+    // Entries are appended as each AI finishes; preserve that arrival order on screen.
+    private var entriesView: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ForEach(turn.entries) { entry in
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("\(entry.round == 1 ? "각자 답" : "검토 후") · \(entry.speaker)")
+                        .font(.caption.bold())
+                        .foregroundColor(entry.failed ? .red : .secondary)
+                    Text(markdown(entry.text))
+                        .textSelection(.enabled)
+                        .foregroundColor(entry.failed ? .secondary : .primary)
+                }
+            }
+        }
+        .padding(.top, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // Bold, italics, code and links; line breaks are kept.

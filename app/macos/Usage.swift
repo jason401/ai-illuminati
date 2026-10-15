@@ -151,11 +151,12 @@ enum CodexUsage {
 
 // Claude Code keeps each account's login in the Keychain (see Account.claudeKeychainService).
 // We read it (read only, never change it) and ask Anthropic's usage page. That page is not
-// documented and may change; any failure just shows "?". When the saved login has expired we let
+// documented and may change; on failure the last good reading is shown with its time. When the saved login has expired we let
 // Claude Code renew it itself (`claude auth status`) instead of touching it.
 enum ClaudeUsage {
     private static var cache: [String: (AIUsage, Date)] = [:]
     private static var waitUntil: [String: Date] = [:]
+    private static var backoff: [String: TimeInterval] = [:]
     private static var lastRenew: [String: Date] = [:]
 
     static var binary: String? {
@@ -165,16 +166,22 @@ enum ClaudeUsage {
 
     static func forget(_ account: Account) { cache[account.id] = nil }
 
+    private static func savedReply(_ account: Account) -> URL {
+        URL(fileURLWithPath: AccountStore.supportDir + "/last-usage-\(account.id).json")
+    }
+
+    // Asks at most every 5 minutes. When Anthropic says "too many requests" (429), waits as long as
+    // it asks (or 10 minutes, doubling up to an hour) and meanwhile shows the last good reading.
     static func read(_ account: Account) -> AIUsage {
         var result = AIUsage(name: account.name, account: account)
-        if let (cached, at) = cache[account.id], Date().timeIntervalSince(at) < 120 { return cached }
+        if let (cached, at) = cache[account.id], Date().timeIntervalSince(at) < 300 { return cached }
         if let wait = waitUntil[account.id], wait > Date() {
-            result.note = "잠시 후 다시 확인해요"
-            return cache[account.id]?.0 ?? result
+            return lastGood(account, note: "확인 제한 중이라 \(clock(wait))에 다시 확인해요")
         }
         guard loginExists(account) else {
             result.needsLogin = true
             result.note = "로그인이 필요해요"
+            log(account, "로그인 정보 없음")
             return result
         }
         var token = accessToken(account)
@@ -184,28 +191,64 @@ enum ClaudeUsage {
             token = accessToken(account)
         }
         guard let token else {
-            result.note = "로그인이 만료됐어요 (다시 로그인하면 돌아와요)"
-            return result
+            log(account, "로그인 만료 (갱신 실패)")
+            return lastGood(account, note: "로그인이 만료됐어요 (다시 로그인하면 돌아와요)")
         }
         var request = URLRequest(url: URL(string: "https://api.anthropic.com/api/oauth/usage")!)
         request.timeoutInterval = 15
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
-        guard let (data, status) = syncFetch(request) else {
-            result.note = "사용량을 가져오지 못했어요"
-            return result
+        guard let (data, status, retryAfter) = syncFetch(request) else {
+            log(account, "연결 실패")
+            return lastGood(account, note: "사용량을 가져오지 못했어요")
         }
         if status == 429 {
-            waitUntil[account.id] = Date().addingTimeInterval(600)
-            result.note = "잠시 후 다시 확인해요"
-            return cache[account.id]?.0 ?? result
+            let next = min(max((backoff[account.id] ?? 300) * 2, 600), 3600)
+            backoff[account.id] = next
+            let wait = max(retryAfter ?? 0, next)
+            waitUntil[account.id] = Date().addingTimeInterval(wait)
+            log(account, "429 너무 자주 요청 (Retry-After: \(retryAfter.map { "\(Int($0))s" } ?? "없음")) → \(Int(wait / 60))분 대기")
+            return lastGood(account, note: "확인 제한 중이라 \(clock(waitUntil[account.id]!))에 다시 확인해요")
         }
         guard status == 200, let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            result.note = "사용량을 가져오지 못했어요 (\(status))"
-            return result
+            log(account, "응답 오류 \(status)")
+            return lastGood(account, note: "사용량을 가져오지 못했어요 (\(status))")
         }
-        // Keep the last reply (usage numbers only, no login data) for checking what a plan reports.
-        try? data.write(to: URL(fileURLWithPath: AccountStore.supportDir + "/last-usage-\(account.id).json"))
+        backoff[account.id] = nil
+        // Keep the last good reply (usage numbers only, no login data): shown while waiting.
+        try? data.write(to: savedReply(account))
+        result = parse(json, account: account)
+        result.checkedAt = Date()
+        cache[account.id] = (result, Date())
+        return result
+    }
+
+    // The last good reading (memory, else the saved reply), marked with when it was read.
+    private static func lastGood(_ account: Account, note: String) -> AIUsage {
+        var result: AIUsage
+        if let (cached, _) = cache[account.id] {
+            result = cached
+        } else if let data = try? Data(contentsOf: savedReply(account)),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            result = parse(json, account: account)
+            result.checkedAt = (try? FileManager.default.attributesOfItem(atPath: savedReply(account).path))?[.modificationDate] as? Date
+        } else {
+            result = AIUsage(name: account.name, account: account)
+        }
+        let age = result.checkedAt.map { "\(clock($0)) 기준 · " } ?? ""
+        result.note = age + note
+        return result
+    }
+
+    private static func clock(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "ko_KR")
+        f.dateFormat = "a h:mm"
+        return f.string(from: date)
+    }
+
+    private static func parse(_ json: [String: Any], account: Account) -> AIUsage {
+        var result = AIUsage(name: account.name, account: account)
         result.fiveHour = window(json["five_hour"])
         result.weekly = window(json["seven_day"])
         // "limits" is the list Claude shows on its own usage screen, and differs by plan (a school
@@ -231,10 +274,25 @@ enum ClaudeUsage {
                 }
             }
         }
-        result.checkedAt = Date()
         if result.fiveHour == nil && result.weekly == nil { result.note = "사용량 형식을 읽지 못했어요" }
-        cache[account.id] = (result, Date())
         return result
+    }
+
+    // Why a reading failed, one line each, in ~/Library/Application Support/AI Illuminati/usage.log
+    // (kept under 200 KB). No login data is written.
+    private static func log(_ account: Account, _ message: String) {
+        let path = AccountStore.supportDir + "/usage.log"
+        let line = "\(ISO8601DateFormatter().string(from: Date())) \(account.name): \(message)\n"
+        if let size = (try? FileManager.default.attributesOfItem(atPath: path))?[.size] as? Int, size > 200_000 {
+            try? FileManager.default.removeItem(atPath: path)
+        }
+        if let handle = FileHandle(forWritingAtPath: path) {
+            handle.seekToEndOfFile()
+            handle.write(Data(line.utf8))
+            try? handle.close()
+        } else {
+            try? line.write(toFile: path, atomically: true, encoding: .utf8)
+        }
     }
 
     // Asking only for the item's attributes does not show a Keychain prompt.
@@ -279,11 +337,14 @@ enum ClaudeUsage {
         return UsageWindow(usedPercent: used, resetsAt: (dict["resets_at"] as? String).flatMap(parseISODate))
     }
 
-    private static func syncFetch(_ request: URLRequest) -> (Data, Int)? {
+    private static func syncFetch(_ request: URLRequest) -> (Data, Int, TimeInterval?)? {
         let done = DispatchSemaphore(value: 0)
-        var result: (Data, Int)?
+        var result: (Data, Int, TimeInterval?)?
         URLSession.shared.dataTask(with: request) { data, response, _ in
-            if let data, let http = response as? HTTPURLResponse { result = (data, http.statusCode) }
+            if let data, let http = response as? HTTPURLResponse {
+                let retry = (http.value(forHTTPHeaderField: "Retry-After")).flatMap(TimeInterval.init)
+                result = (data, http.statusCode, retry)
+            }
             done.signal()
         }.resume()
         done.wait()

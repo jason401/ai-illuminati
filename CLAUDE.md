@@ -1,8 +1,8 @@
 # AI Illuminati — notes for Claude
 
 Younghun's macOS menu bar app: remaining subscription usage (5-hour / weekly) per AI account
-(multiple Claude, multiple ChatGPT/Codex, one Gemini via agy). Public repo: github.com/jason401/ai-illuminati (MIT).
-Bigger plan (AI agents talking to each other, dashboards): `~/Downloads/ai-office-spec.md`; this app is step 1.
+(multiple Claude, multiple ChatGPT/Codex, one Gemini via agy). Private repo: github.com/jason401/ai-illuminati (MIT license file).
+Bigger plan (AI agents talking to each other, dashboards): `~/Downloads/ai-office-spec.md`; this app is steps 1 (usage gauge) and 2 (chat).
 
 ## How to work with Younghun
 - Answer in Korean, simply. Avoid jargon.

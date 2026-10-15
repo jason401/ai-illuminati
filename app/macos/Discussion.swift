@@ -22,7 +22,8 @@ enum Answerer {
         switch account.provider {
         case .claude:
             binary = ClaudeUsage.binary
-            arguments = ["-p", prompt, "--tools", "", "--no-session-persistence"]
+            arguments = ["-p", prompt, "--tools", "", "--no-session-persistence",
+                         "--safe-mode", "--strict-mcp-config", "--mcp-config", "{\"mcpServers\":{}}", "--no-chrome"]
         case .codex:
             binary = CodexUsage.binary
             arguments = ["exec", "--skip-git-repo-check", "--sandbox", "read-only", "--ephemeral",
@@ -168,6 +169,7 @@ final class Discussion: ObservableObject {
         Answerer.ask($0, prompt: $1, timeout: $2, cancellation: $3)
     }
     @Published var draft = ""
+    @Published var inputHeight: CGFloat = 36
     @Published var draggingProvider: Account.Provider?
     var draggingConversationID: UUID?
     @Published var useClaude = true

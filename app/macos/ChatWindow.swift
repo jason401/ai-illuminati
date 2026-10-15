@@ -142,27 +142,67 @@ struct ChatView: View {
                 }
             }
             Divider()
-            HStack(alignment: .bottom, spacing: 8) {
-                VStack(alignment: .leading, spacing: 5) {
-                    MultilineInput(text: $discussion.draft, onSend: { discussion.send() })
-                        .font(.body)
-                        .frame(height: 76)
-                        .padding(4)
-                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.3)))
-                        .accessibilityLabel(L("질문 입력", "Message"))
-                    Text(L("Enter / Shift+Enter: 줄바꿈 · ⌘Enter: 보내기", "Enter / Shift+Enter: new line · ⌘Enter: send"))
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+            VStack(spacing: 7) {
+                HStack(alignment: .bottom, spacing: 10) {
+                    ZStack(alignment: .topLeading) {
+                        if discussion.draft.isEmpty {
+                            Text(L("메시지를 입력하세요…", "Write a message…"))
+                                .foregroundColor(.secondary)
+                                .padding(.leading, 8).padding(.top, 8)
+                                .allowsHitTesting(false)
+                        }
+                        MultilineInput(text: $discussion.draft, height: $discussion.inputHeight,
+                                       onSend: { discussion.send() })
+                            .frame(height: discussion.inputHeight)
+                            .accessibilityLabel(L("질문 입력", "Message"))
+                    }
+                    .frame(maxWidth: .infinity)
+                    composerAction
+                        .padding(.bottom, 2)
                 }
-                if discussion.running && discussion.configuration.mode == 3 {
-                    Button(discussion.stopping ? L("중지 중…", "Stopping…") : L("중지", "Stop")) { discussion.stopDebate() }
-                        .disabled(discussion.stopping)
+                .padding(10)
+                .background(Color(nsColor: .textBackgroundColor).opacity(0.65))
+                .clipShape(RoundedRectangle(cornerRadius: 16))
+                .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.secondary.opacity(0.22)))
+                HStack {
+                    Text(L("Enter: 줄바꿈 · ⌘Enter: 전송", "Enter: new line · ⌘Enter: send"))
+                    Spacer()
+                    if discussion.running {
+                        Text(discussion.stopping ? L("중지 중…", "Stopping…") : L("답변 중", "Responding"))
+                    }
                 }
-                Button(discussion.running ? L("토론 중…", "Discussing…") : L("보내기", "Send")) { discussion.send() }
-                    .keyboardShortcut(.return, modifiers: .command)
-                    .disabled(discussion.running || discussion.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .font(.caption2).foregroundColor(.secondary)
+                .padding(.horizontal, 4)
             }
-            .padding(12)
+            .padding(.horizontal, 16).padding(.vertical, 12)
+        }
+    }
+
+    @ViewBuilder private var composerAction: some View {
+        if discussion.running && discussion.configuration.mode == 3 {
+            Button(action: { discussion.stopDebate() }) {
+                Image(systemName: "stop.fill").font(.system(size: 13, weight: .semibold))
+                    .frame(width: 34, height: 34)
+            }
+            .buttonStyle(.plain)
+            .background(Color.secondary.opacity(0.18), in: Circle())
+            .accessibilityLabel(L("중지", "Stop"))
+            .help(L("응답 중지", "Stop responding"))
+            .disabled(discussion.stopping)
+        } else if discussion.running {
+            ProgressView().controlSize(.small).frame(width: 34, height: 34)
+        } else {
+            Button(action: { discussion.send() }) {
+                Image(systemName: "arrow.up").font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(.white).frame(width: 34, height: 34)
+            }
+            .buttonStyle(.plain)
+            .background(discussion.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        ? Color.secondary.opacity(0.3) : Color.accentColor, in: Circle())
+            .accessibilityLabel(L("보내기", "Send"))
+            .help(L("전송 (⌘Enter)", "Send (⌘Enter)"))
+            .keyboardShortcut(.return, modifiers: .command)
+            .disabled(discussion.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
     }
 
@@ -384,6 +424,7 @@ final class ChatInputTextView: NSTextView {
 
 private struct MultilineInput: NSViewRepresentable {
     @Binding var text: String
+    @Binding var height: CGFloat
     var onSend: () -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -391,6 +432,8 @@ private struct MultilineInput: NSViewRepresentable {
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSScrollView()
         scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        scroll.scrollerStyle = .overlay
         scroll.drawsBackground = false
         let editor = ChatInputTextView()
         editor.isRichText = false
@@ -418,6 +461,7 @@ private struct MultilineInput: NSViewRepresentable {
         editor.onSend = onSend
         editor.setAccessibilityLabel(L("질문 입력", "Message"))
         if editor.string != text && !editor.hasMarkedText() { editor.string = text }
+        context.coordinator.measure(editor)
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
@@ -426,6 +470,16 @@ private struct MultilineInput: NSViewRepresentable {
         func textDidChange(_ notification: Notification) {
             guard let editor = notification.object as? NSTextView else { return }
             parent.text = editor.string
+            measure(editor)
+        }
+        func measure(_ editor: NSTextView) {
+            guard let layout = editor.layoutManager, let container = editor.textContainer else { return }
+            layout.ensureLayout(for: container)
+            let measured = min(116, max(36, ceil(layout.usedRect(for: container).height + editor.textContainerInset.height * 2)))
+            DispatchQueue.main.async { [weak self] in
+                guard let self, abs(self.parent.height - measured) > 1 else { return }
+                self.parent.height = measured
+            }
         }
     }
 }

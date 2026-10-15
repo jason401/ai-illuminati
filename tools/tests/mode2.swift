@@ -12,6 +12,11 @@ func waitFor(_ discussion: Discussion) {
     expect(!discussion.running, "discussion did not finish")
 }
 
+// The window offers only mode 3 for now; the tests still check modes 1 and 2, which stay in the code.
+expect(Discussion.availableModes == [3], "only mode 3 should be offered")
+let hiddenDefault = Discussion(model: AppModel())
+expect(hiddenDefault.configuration.mode == 3, "a new room must start in mode 3")
+Discussion.availableModes = [1, 2, 3]
 let model = AppModel()
 model.accounts = Account.Provider.allCases.map {
     Account(id: "test-" + $0.rawValue, provider: $0, name: $0.title, dir: nil)

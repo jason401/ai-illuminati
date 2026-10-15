@@ -80,9 +80,9 @@ struct ChatView: View {
                 HStack {
                     Picker(L("대화 방식", "Chat mode"), selection: Binding(get: { discussion.configuration.mode },
                                                         set: { discussion.setMode($0) })) {
-                        Text(L("모드1 · 검토 후 정리", "Mode 1 · Review & summarize")).tag(1)
-                        Text(L("모드2 · 돌아가며 대화", "Mode 2 · Roundtable")).tag(2)
-                        Text(L("모드3 · 토론", "Mode 3 · Debate")).tag(3)
+                        ForEach(Discussion.availableModes, id: \.self) { mode in
+                            Text(ModeChangeMarker.name(mode)).tag(mode)
+                        }
                     }
                     .labelsHidden()
                     .frame(width: 245)
@@ -115,7 +115,7 @@ struct ChatView: View {
                         if discussion.configuration.mode == 3 {
                             Text(L("첫 의견도 1회로 셉니다. 대표의 진행 판단과 마지막 정리는 발언 수에 포함하지 않습니다.", "The opening view counts as one turn. Moderator decisions and final synthesis do not count."))
                         }
-                        if !discussion.current.turns.isEmpty {
+                        if !discussion.current.turns.isEmpty && Discussion.availableModes.count > 1 {
                             Text(L("대화 중에도 방식을 바꿀 수 있어요. 다음 질문부터 적용돼요.", "You can switch modes mid-chat. It applies from the next message."))
                         }
                     } label: {

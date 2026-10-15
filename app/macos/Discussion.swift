@@ -278,7 +278,15 @@ final class Discussion: ObservableObject {
         Answerer.ask($0, prompt: $1, timeout: $2)
     }
 
-    var configuration: ChatConfiguration { current.configuration ?? ChatConfiguration() }
+    // Modes offered in the chat window. Modes 1 and 2 are hidden for now but kept working (older messages
+    // still show, and they can come back by adding them here). A room left on a hidden mode uses the first one.
+    static var availableModes = [3]
+
+    var configuration: ChatConfiguration {
+        var config = current.configuration ?? ChatConfiguration()
+        if !Self.availableModes.contains(config.mode) { config.mode = Self.availableModes[0] }
+        return config
+    }
 
     func configure(_ edit: (inout ChatConfiguration) -> Void) {
         guard !running else { return }

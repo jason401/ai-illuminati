@@ -122,7 +122,7 @@ enum Answerer {
         guard (try? process.run()) != nil else { return .failure(.missingTool) }
 
         cancellation?.attach(process)
-        defer { cancellation?.detach() }
+        defer { cancellation?.detach(process) }
         // Read both pipes while it runs (a full pipe would stop the tool).
         var stdout = Data(), stderr = Data()
         let readers = DispatchGroup()
@@ -190,7 +190,8 @@ struct ChatTurn: Identifiable, Codable {
     var orderNote: String?
     var endReason: String?
     var debateFocus: String?
-    var maxTurns: Int?
+    var maxTurns: Int?    // mode 3: total AI turns (turnsPerAI × participants)
+    var turnsPerAI: Int?  // missing in older chats, whose limit was a single total
 }
 
 // One group chat, saved as ~/Library/Application Support/AI Illuminati/chats/<id>.json.
@@ -200,7 +201,8 @@ struct ChatConfiguration: Codable {
     var order: [Account.Provider] = [.claude, .codex, .gemini]
     var participants: [Account.Provider] = [.claude, .codex, .gemini]
     var leader: Account.Provider = .claude
-    var maxTurns: Int?
+    var maxTurns: Int?    // old total limit, no longer used
+    var turnsPerAI: Int?  // mode 3: turns each AI may speak (default 4)
 }
 
 struct Conversation: Identifiable, Codable {
@@ -379,8 +381,8 @@ final class Discussion: ObservableObject {
         let config = configuration
         turn.mode = config.mode
         turn.images = pendingImages.isEmpty ? nil : pendingImages
-        let limit = min(30, max(3, config.maxTurns ?? 9))
-        if config.mode == 3 { turn.maxTurns = limit }
+        let perAI = min(10, max(2, config.turnsPerAI ?? 4))
+        if config.mode == 3 { turn.turnsPerAI = perAI; turn.maxTurns = perAI * team.count }
         guard team.count > 0 else {
             turn.error = L("답할 수 있는 AI가 없어요. 참여 AI를 켜고, 설정에서 로그인됐는지 확인해 주세요.", "No AI is available. Enable a participant and check its sign-in in Settings.")
             attachmentError = turn.error
@@ -420,7 +422,7 @@ final class Discussion: ObservableObject {
         work.async {
             if config.mode == 3 {
                 self.runDebate(question: question, history: history, rules: rules, team: team, leader: config.leader,
-                               limit: limit, cancellation: cancellation, id: id, index: index)
+                               perAI: perAI, cancellation: cancellation, id: id, index: index)
             } else if config.mode == 2 {
                 self.runSequential(question: question, history: history, rules: rules, team: team,
                                    leader: config.leader, id: id, index: index)

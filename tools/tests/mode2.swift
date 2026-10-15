@@ -95,12 +95,16 @@ languageModel.language = .english
 expect(languageModel.chatRules == "My custom rules", "custom rules must be preserved")
 print("PASS: default English, Korean switch, persistence, default rule localization, custom rule preservation")
 
-// Mode 3: repeat speakers, complete history, moderator termination and synthesis.
+// Mode 3: parallel opening, then repeat speakers, complete history, moderator termination and synthesis.
+// The opening runs the AIs at the same time, so the fakes below guard shared counters with a lock.
+let testLock = NSLock()
 let debate = Discussion(model: model)
-debate.configure { $0.mode = 3; $0.maxTurns = 9; $0.leader = .claude }
+debate.configure { $0.mode = 3; $0.turnsPerAI = 4; $0.leader = .claude }
 var decisions = 0
 var debateCalls: [String] = []
+var openingSeen: [String] = []
 debate.debateAnswer = { account, prompt, _, _ in
+    testLock.lock(); defer { testLock.unlock() }
     debateCalls.append(prompt)
     if prompt.contains("[MODE3 MODERATION]") {
         decisions += 1
@@ -108,36 +112,45 @@ debate.debateAnswer = { account, prompt, _, _ in
         return .success(#"{"action":"finish","reason":"Important objections addressed"}"#)
     }
     if prompt.contains("[MODE3 FINAL]") { return .success("Final conclusion with an open question.") }
+    if prompt.contains("opening round") { openingSeen.append(prompt) }
     return .success("Contribution from " + account.provider.rawValue)
 }
 debate.draft = "Discuss a counterexample"
 debate.send()
 waitFor(debate)
-// Finish requests before the minimum (6 turns for 3 AIs and a cap of 9) are overridden: the AI who has
-// spoken least (not the last speaker) answers instead.
-expect(debate.current.turns[0].entries.map(\.speaker) == ["Claude", "ChatGPT", "Gemini", "ChatGPT", "Claude", "Gemini"], "early finish must be overridden until the minimum")
-expect(decisions == 4, "moderator should be asked until finishing is allowed")
-expect(debateCalls.filter { $0.contains("[MODE3 MODERATION]") }.first?.contains("Finishing is NOT allowed yet") == true, "moderator must be told finishing is not allowed yet")
-expect(debateCalls.filter { $0.contains("[MODE3 MODERATION]") }.last?.contains("Finish only if") == true, "moderator must be told when finishing is allowed")
+let debateEntries = debate.current.turns[0].entries.map(\.speaker)
+expect(Set(debateEntries.prefix(3)) == ["Claude", "ChatGPT", "Gemini"], "everyone must give an opening view first")
+expect(openingSeen.count == 3 && !openingSeen.contains { $0.contains("Contribution from") }, "opening views must not see each other")
+// 3 AIs × 4 turns = 12, minimum 8. Finish requests before that are overridden: the AI with the fewest turns
+// (not the last speaker) answers instead.
+expect(Array(debateEntries.dropFirst(3)) == ["ChatGPT", "Claude", "Gemini", "Claude", "ChatGPT"], "early finish must be overridden until the minimum")
+expect(decisions == 6, "moderator should be asked until finishing is allowed")
+let moderations = debateCalls.filter { $0.contains("[MODE3 MODERATION]") }
+expect(moderations.first?.contains("Finishing is NOT allowed yet") == true, "moderator must be told finishing is not allowed yet")
+expect(moderations.first?.contains("at most 4 times") == true, "moderator must know the per-AI limit")
+expect(moderations.last?.contains("Finish only if") == true, "moderator must be told when finishing is allowed")
 expect(debate.current.turns[0].entries[3].focus == "Address the counterexample", "moderator focus not saved")
-expect(debateCalls[4].contains("Contribution from gemini"), "full first lap missing from repeated speaker's context")
+expect(debateCalls.first { $0.contains("[MODE3 SPEECH]") && !$0.contains("opening round") }?.contains("Contribution from gemini") == true,
+       "all opening views missing from the next speaker's context")
 expect(debate.current.turns[0].endReason == "Important objections addressed", "moderator end reason missing")
+expect(debate.current.turns[0].maxTurns == 12 && debate.current.turns[0].turnsPerAI == 4, "per-AI limit not saved")
 expect(debate.current.turns[0].final != nil && debate.current.summary.isEmpty, "mode3 final or full-history behavior wrong")
 
-// Hard limit: no additional speech/decision after reaching the cap, exactly one synthesis.
+// Per-AI limit: the moderator keeps asking for Claude, but Claude stops after 2 turns; the others fill the rest.
 let capped = Discussion(model: model)
-capped.configure { $0.mode = 3; $0.maxTurns = 4 }
-var speechCount = 0
+capped.configure { $0.mode = 3; $0.turnsPerAI = 2 }
+var spokenBy: [String: Int] = [:]
 var finalCount = 0
-capped.debateAnswer = { _, prompt, _, _ in
+capped.debateAnswer = { account, prompt, _, _ in
+    testLock.lock(); defer { testLock.unlock() }
     if prompt.contains("[MODE3 MODERATION]") { return .success(#"{"action":"speak","speaker":"claude","focus":"One more detail"}"#) }
     if prompt.contains("[MODE3 FINAL]") { finalCount += 1; return .success("Summary") }
-    speechCount += 1
+    spokenBy[account.provider.rawValue, default: 0] += 1
     return .success("Short contribution")
 }
 capped.draft = "Limit test"; capped.send(); waitFor(capped)
-expect(speechCount == 4 && finalCount == 1, "maximum turns must be enforced")
-expect(capped.current.turns[0].maxTurns == 4, "limit not persisted")
+expect(spokenBy == ["claude": 2, "codex": 2, "gemini": 2] && finalCount == 1, "per-AI turn limit must be enforced")
+expect(capped.current.turns[0].maxTurns == 6, "total limit not saved")
 expect(DebateDecision.parse(#"{"action":"speak","speaker":"unknown","focus":"x"}"#, team: model.accounts) == nil, "unknown speaker accepted")
 expect(DebateDecision.parse(#"{"action":"finish","reason":""}"#, team: model.accounts) == nil, "empty reason accepted")
 
@@ -145,6 +158,7 @@ let broken = Discussion(model: model)
 broken.configure { $0.mode = 3 }
 var brokenCalls = 0
 broken.debateAnswer = { _, prompt, _, _ in
+    testLock.lock(); defer { testLock.unlock() }
     brokenCalls += 1
     if prompt.contains("[MODE3 MODERATION]") { return .success("invalid JSON") }
     return .success("Short response")
@@ -156,31 +170,36 @@ let stopped = Discussion(model: model)
 stopped.configure { $0.mode = 3 }
 var stoppedCalls = 0
 stopped.debateAnswer = { _, _, _, token in
-    stoppedCalls += 1
+    testLock.lock(); stoppedCalls += 1; testLock.unlock()
     while !token.isCancelled { Thread.sleep(forTimeInterval: 0.01) }
     return .failure(.failed("Cancelled"))
 }
 stopped.draft = "Stop test"; stopped.send()
 DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { stopped.stopDebate() }
 waitFor(stopped)
-expect(stoppedCalls == 1 && stopped.current.turns[0].final == nil, "stop must prevent all subsequent requests")
+expect(stoppedCalls == 3 && stopped.current.turns[0].final == nil, "stop must end the opening round and prevent further requests")
+expect(stopped.current.turns[0].entries.isEmpty, "stopped opening must not save cancelled replies")
 expect(stopped.current.turns[0].status.isEmpty && stopped.current.turns[0].endReason != nil, "stop must clear busy state and save reason")
 
 let process = Process()
 process.executableURL = URL(fileURLWithPath: "/bin/sleep")
 process.arguments = ["30"]
 try process.run()
-let token = DebateCancellation(); token.attach(process); token.cancel()
+let second = Process()
+second.executableURL = URL(fileURLWithPath: "/bin/sleep")
+second.arguments = ["30"]
+try second.run()
+let token = DebateCancellation(); token.attach(process); token.attach(second); token.cancel()
 let killDeadline = Date().addingTimeInterval(2)
-while process.isRunning && Date() < killDeadline { Thread.sleep(forTimeInterval: 0.01) }
-expect(!process.isRunning, "cancel must terminate the actual process")
+while (process.isRunning || second.isRunning) && Date() < killDeadline { Thread.sleep(forTimeInterval: 0.01) }
+expect(!process.isRunning && !second.isRunning, "cancel must terminate every running process")
 expect(Discussion.minimumDebateTurns(limit: 9, teamSize: 3) == 6 && Discussion.minimumDebateTurns(limit: 3, teamSize: 3) == 3
        && Discussion.minimumDebateTurns(limit: 30, teamSize: 2) == 18, "minimum turns formula")
 let named = Discussion.namedFirst("야, 재미나이한테 반론의 기회라도 주는게 어때", team: model.accounts).map(\.provider)
 expect(named.first == .gemini && named.count == model.accounts.count, "named AI must open the first lap")
 expect(Discussion.namedFirst("부처님이랑 예수님", team: model.accounts).map(\.provider) == model.accounts.map(\.provider), "order unchanged without names")
 expect(debateCalls.contains { $0.contains("Speak only as yourself") }, "speakers must be told not to speak for others")
-print("PASS: mode3 repeat speakers, minimum turns, moderator completion, hard cap, invalid decision, named first speaker, stop prevents calls, actual process cancellation")
+print("PASS: mode3 parallel opening, repeat speakers, minimum turns, moderator completion, per-AI cap, invalid decision, named first speaker, stop prevents calls, actual process cancellation")
 
 // Attachment storage uses normalized private copies, not references to the user's original.
 let imageChat = Discussion(model: model)

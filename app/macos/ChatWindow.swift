@@ -90,22 +90,22 @@ struct ChatView: View {
                     Spacer(minLength: 8)
                     if discussion.configuration.mode == 3 {
                         Menu {
-                            Picker(L("최대 AI 발언", "Maximum AI turns"), selection: Binding(
-                                get: { discussion.configuration.maxTurns ?? 9 },
-                                set: { limit in discussion.configure { $0.maxTurns = limit } })) {
-                                ForEach(3...30, id: \.self) { limit in
+                            Picker(L("AI마다 최대 발언", "Maximum turns per AI"), selection: Binding(
+                                get: { discussion.configuration.turnsPerAI ?? 4 },
+                                set: { limit in discussion.configure { $0.turnsPerAI = limit } })) {
+                                ForEach(2...10, id: \.self) { limit in
                                     Text(L("\(limit)회", "\(limit) turns")).tag(limit)
                                 }
                             }
                         } label: {
-                            Text(L("최대 \(discussion.configuration.maxTurns ?? 9)회", "Max \(discussion.configuration.maxTurns ?? 9) turns"))
+                            Text(L("AI마다 \(discussion.configuration.turnsPerAI ?? 4)회", "\(discussion.configuration.turnsPerAI ?? 4) turns each"))
                         }
                         .fixedSize()
                         .disabled(discussion.running)
                     }
                     Menu {
                         Text(discussion.configuration.mode == 3
-                             ? L("첫 바퀴 후 대표가 다음 발언자와 논점, 종료를 정합니다.", "After the first lap, the moderator chooses speakers, topics, and when to finish.")
+                             ? L("모두 동시에 첫 의견을 낸 뒤, 대표가 다음 발언자와 논점, 종료를 정합니다.", "Everyone gives an opening view at once. Then the moderator chooses speakers, topics, and when to finish.")
                              : discussion.configuration.mode == 2
                              ? L("각자 한 번씩 전체 대화를 읽고 답하며, 대표가 다음 순서를 정합니다.", "Each AI reads the full history and replies once. The moderator sets the next order.")
                              : L("각자 답변과 상호 검토 후 최종 답변과 요약을 만듭니다.", "Independent answers and peer review are followed by a final answer and summary."))
@@ -113,7 +113,7 @@ struct ChatView: View {
                             Text(L("손잡이를 끌어 순서를 바꾸고, 이름 옆 메뉴에서 대표를 정하세요.", "Drag the handles to reorder. Use the menu beside a name to choose the moderator."))
                         }
                         if discussion.configuration.mode == 3 {
-                            Text(L("대표의 진행 판단과 마지막 정리는 발언 수에 포함하지 않습니다.", "Moderator decisions and final synthesis do not count toward the turn limit."))
+                            Text(L("첫 의견도 1회로 셉니다. 대표의 진행 판단과 마지막 정리는 발언 수에 포함하지 않습니다.", "The opening view counts as one turn. Moderator decisions and final synthesis do not count."))
                         }
                         if !discussion.current.turns.isEmpty {
                             Text(L("대화 중에도 방식을 바꿀 수 있어요. 다음 질문부터 적용돼요.", "You can switch modes mid-chat. It applies from the next message."))
@@ -149,7 +149,7 @@ struct ChatView: View {
                         let conversation = discussion.current
                         if conversation.turns.isEmpty {
                             Text(discussion.configuration.mode == 3
-                                 ? L("첫 바퀴는 지정한 순서로 말해요(메시지에서 부른 AI가 먼저). 이후 대표가 반론권을 주며 다음 발언자와 논점을 정하고, 최대 발언 수의 60%(AI마다 최소 2번)까지는 끝내지 않아요. 중지 버튼으로 언제든 끊을 수 있어요.", "The first lap follows your order (an AI you name goes first). Then the moderator picks speakers, giving a right of reply, and won't end before 60% of the turn limit (at least two turns each). Stop at any time.")
+                                 ? L("먼저 모든 AI가 동시에 각자 의견을 내요. 그다음 대표가 반론권을 주며 한 명씩 다음 발언자와 논점을 정하고, 각자 앞 발언을 모두 읽고 답해요. AI마다 발언 횟수가 정해져 있고(기본 4회), 전체의 60%(AI마다 최소 2번)까지는 끝내지 않아요. 중지 버튼으로 언제든 끊을 수 있어요.", "First, every AI gives its own view at the same time. Then the moderator picks one speaker at a time, giving a right of reply, and each reads everything said so far. Each AI has a turn limit (4 by default), and the debate won't end before 60% of the total (at least two turns each). Stop at any time.")
                                  : discussion.configuration.mode == 2
                                  ? L("순서와 대표를 정하고 질문하세요. 각 AI가 전체 대화를 읽고 1~2문장씩 이어 말해요.\n한 바퀴가 끝나면 대표가 다음 순서를 정해요. 이름 옆 손잡이를 끌어 직접 바꿀 수도 있어요.", "Choose the order and moderator, then send a message. Each AI reads the full conversation and replies in 1–2 sentences.\nThe moderator sets the next order. Drag the handles to change it yourself.")
                                  : L("질문을 입력하면 AI들이 각자 답하고, 서로 검토한 뒤, 한 명이 최종 답을 정리해 줘요.\n이어서 물어보면 지금까지의 대화 요약을 같이 보내요. 답 길이와 말투는 설정의 '채팅 규칙'에서 정해요.", "Ask a question. The AIs answer, review each other, and produce one final answer.\nFollow-ups include a conversation summary. Adjust length and style in Settings → Chat rules."))
@@ -434,7 +434,8 @@ private struct TurnView: View {
                 Text(error).foregroundColor(.red)
             }
             if turn.mode == 3 {
-                Text(L("AI 발언 \(turn.entries.count)/\(turn.maxTurns ?? 9)", "AI turns \(turn.entries.count)/\(turn.maxTurns ?? 9)"))
+                Text(L("AI 발언 \(turn.entries.count)/\(turn.maxTurns ?? 9)", "AI turns \(turn.entries.count)/\(turn.maxTurns ?? 9)")
+                     + (turn.turnsPerAI.map { L(" (AI마다 \($0)회)", " (\($0) each)") } ?? ""))
                     .font(.caption).foregroundColor(.secondary)
                 if let focus = turn.debateFocus { Text(L("다음 논점: ", "Next focus: ") + focus).font(.callout) }
                 if let reason = turn.endReason { Text(L("종료 이유: ", "End reason: ") + reason).font(.callout).foregroundColor(.secondary) }

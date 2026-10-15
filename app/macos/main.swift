@@ -20,6 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         item.button?.imagePosition = .imageLeading
         menu.delegate = self
         item.menu = menu
+        NSApp.mainMenu = keyboardMenu()
         model.onAccountsChange = { [weak self] in self?.refresh() }
         model.onDisplayChange = { [weak self] in self?.updateTitle() }
         rebuildMenu()
@@ -28,6 +29,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func menuWillOpen(_ menu: NSMenu) { refresh() }
+
+    // A menu bar app shows no app menus, but ⌘C/⌘V/⌘X/⌘A/⌘Z and ⌘W only work in text fields and
+    // windows when an Edit/Window menu exists. This one is never visible; it just carries the shortcuts.
+    private func keyboardMenu() -> NSMenu {
+        let main = NSMenu()
+        func submenu(_ title: String, _ items: [(String, Selector, String, NSEvent.ModifierFlags)]) {
+            let holder = NSMenuItem()
+            let sub = NSMenu(title: title)
+            for (name, selector, key, modifiers) in items {
+                let entry = NSMenuItem(title: name, action: selector, keyEquivalent: key)
+                entry.keyEquivalentModifierMask = modifiers
+                sub.addItem(entry)
+            }
+            holder.submenu = sub
+            main.addItem(holder)
+        }
+        submenu("AI Illuminati", [("숨기기", #selector(NSApplication.hide(_:)), "h", .command)])
+        submenu("편집", [("실행 취소", Selector(("undo:")), "z", .command),
+                       ("실행 복귀", Selector(("redo:")), "z", [.command, .shift]),
+                       ("오려두기", #selector(NSText.cut(_:)), "x", .command),
+                       ("복사하기", #selector(NSText.copy(_:)), "c", .command),
+                       ("붙여넣기", #selector(NSText.paste(_:)), "v", .command),
+                       ("모두 선택", #selector(NSText.selectAll(_:)), "a", .command)])
+        submenu("윈도우", [("닫기", #selector(NSWindow.performClose(_:)), "w", .command),
+                        ("최소화", #selector(NSWindow.performMiniaturize(_:)), "m", .command)])
+        return main
+    }
 
     @objc private func refresh() {
         let list = accounts

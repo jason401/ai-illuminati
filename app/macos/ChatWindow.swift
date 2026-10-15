@@ -68,14 +68,33 @@ struct ChatView: View {
 
     private var chat: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 14) {
-                Text("참여").foregroundColor(.secondary)
-                Toggle("Claude", isOn: $discussion.useClaude)
-                Toggle("ChatGPT", isOn: $discussion.useCodex)
-                Toggle("Gemini", isOn: $discussion.useGemini)
-                Spacer()
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Picker("대화 방식", selection: Binding(get: { discussion.configuration.mode },
+                                                        set: { discussion.setMode($0) })) {
+                        Text("모드1 · 검토 후 정리").tag(1)
+                        Text("모드2 · 돌아가며 대화").tag(2)
+                    }
+                    .frame(maxWidth: 340)
+                    .disabled(discussion.running || !discussion.current.turns.isEmpty)
+                    if !discussion.current.turns.isEmpty {
+                        Text("방식 변경은 새 대화에서").font(.caption).foregroundColor(.secondary)
+                    }
+                }
+                if discussion.configuration.mode == 2 {
+                    sequentialControls
+                } else {
+                    HStack(spacing: 14) {
+                        Text("참여").foregroundColor(.secondary)
+                        Toggle("Claude", isOn: $discussion.useClaude)
+                        Toggle("ChatGPT", isOn: $discussion.useCodex)
+                        Toggle("Gemini", isOn: $discussion.useGemini)
+                        Spacer()
+                    }
+                    .toggleStyle(.checkbox)
+                    .disabled(discussion.running)
+                }
             }
-            .toggleStyle(.checkbox)
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
             Divider()
@@ -84,13 +103,15 @@ struct ChatView: View {
                     VStack(alignment: .leading, spacing: 22) {
                         let conversation = discussion.current
                         if conversation.turns.isEmpty {
-                            Text("질문을 입력하면 AI들이 각자 답하고, 서로 검토한 뒤, 한 명이 최종 답을 정리해 줘요.\n이어서 물어보면 지금까지의 대화 요약을 같이 보내요. 답 길이와 말투는 설정의 '채팅 규칙'에서 정해요.")
+                            Text(discussion.configuration.mode == 2
+                                 ? "순서와 대표를 정하고 질문하세요. 각 AI가 전체 대화를 읽고 1~2문장씩 이어 말해요.\n한 바퀴가 끝나면 대표가 다음 순서를 정해요. 화살표로 직접 바꿀 수도 있어요."
+                                 : "질문을 입력하면 AI들이 각자 답하고, 서로 검토한 뒤, 한 명이 최종 답을 정리해 줘요.\n이어서 물어보면 지금까지의 대화 요약을 같이 보내요. 답 길이와 말투는 설정의 '채팅 규칙'에서 정해요.")
                                 .foregroundColor(.secondary)
                                 .padding(.top, 40)
                                 .frame(maxWidth: .infinity)
                                 .multilineTextAlignment(.center)
                         }
-                        if !conversation.summary.isEmpty {
+                        if discussion.configuration.mode == 1 && !conversation.summary.isEmpty {
                             DisclosureGroup("대화 요약 보기 (다음 질문 때 AI들이 읽는 내용)") {
                                 Text(conversation.summary)
                                     .textSelection(.enabled)
@@ -129,6 +150,46 @@ struct ChatView: View {
             }
             .padding(12)
         }
+    }
+
+    private var sequentialControls: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Text("순서").foregroundColor(.secondary)
+                ForEach(discussion.configuration.order, id: \.rawValue) { provider in
+                    HStack(spacing: 3) {
+                        Toggle(provider.title, isOn: Binding(
+                            get: { discussion.configuration.participants.contains(provider) },
+                            set: { discussion.setParticipation(provider, enabled: $0) }))
+                        Button(action: { discussion.moveProvider(provider, by: -1) }) {
+                            Image(systemName: "chevron.left")
+                        }
+                        .disabled(discussion.configuration.order.first == provider)
+                        .help("앞으로 이동")
+                        Button(action: { discussion.moveProvider(provider, by: 1) }) {
+                            Image(systemName: "chevron.right")
+                        }
+                        .disabled(discussion.configuration.order.last == provider)
+                        .help("뒤로 이동")
+                    }
+                    .buttonStyle(.borderless)
+                }
+                Spacer(minLength: 0)
+            }
+            .toggleStyle(.checkbox)
+            HStack {
+                Picker("대표", selection: Binding(get: { discussion.configuration.leader },
+                                                 set: { leader in discussion.configure { $0.leader = leader } })) {
+                    ForEach(discussion.configuration.order.filter { discussion.configuration.participants.contains($0) }, id: \.rawValue) { provider in
+                        Text(provider.title).tag(provider)
+                    }
+                }
+                .frame(width: 170)
+                Text("각자 한 번씩 · 전체 대화 전달 · 대표가 다음 순서 지정")
+                    .font(.caption).foregroundColor(.secondary)
+            }
+        }
+        .disabled(discussion.running)
     }
 
     private func dateText(_ date: Date) -> String {
@@ -174,11 +235,18 @@ private struct TurnView: View {
                 .background(Color(nsColor: .controlBackgroundColor))
                 .cornerRadius(10)
             }
+            if let note = turn.orderNote {
+                Text(note).font(.caption).foregroundColor(.secondary)
+            }
             if !turn.entries.isEmpty {
-                DisclosureGroup("AI들의 대화 보기 (\(turn.entries.count))") {
+                if turn.mode == 2 {
                     entriesView
+                } else {
+                    DisclosureGroup("AI들의 대화 보기 (\(turn.entries.count))") {
+                        entriesView
+                    }
+                    .font(.callout)
                 }
-                .font(.callout)
             }
         }
     }
@@ -188,7 +256,7 @@ private struct TurnView: View {
         VStack(alignment: .leading, spacing: 12) {
             ForEach(turn.entries) { entry in
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("\(entry.round == 1 ? "각자 답" : "검토 후") · \(entry.speaker)")
+                    Text(turn.mode == 2 ? entry.speaker : "\(entry.round == 1 ? "각자 답" : "검토 후") · \(entry.speaker)")
                         .font(.caption.bold())
                         .foregroundColor(entry.failed ? .red : .secondary)
                     Text(markdown(entry.text))

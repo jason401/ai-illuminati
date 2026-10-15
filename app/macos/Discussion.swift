@@ -84,10 +84,19 @@ struct ChatTurn: Identifiable, Codable {
     var final: String?
     var finalBy: String?
     var error: String?
+    var mode: Int?  // missing in older chats means mode 1
+    var orderNote: String?
 }
 
 // One group chat, saved as ~/Library/Application Support/AI Illuminati/chats/<id>.json.
 // `summary` is a few lines about everything so far; it is what the AIs get as context.
+struct ChatConfiguration: Codable {
+    var mode = 1
+    var order: [Account.Provider] = [.claude, .codex, .gemini]
+    var participants: [Account.Provider] = [.claude, .codex, .gemini]
+    var leader: Account.Provider = .claude
+}
+
 struct Conversation: Identifiable, Codable {
     var id = UUID()
     var title = "새 대화"
@@ -95,6 +104,7 @@ struct Conversation: Identifiable, Codable {
     var updatedAt = Date()
     var turns: [ChatTurn] = []
     var summary = ""
+    var configuration: ChatConfiguration?
 }
 
 enum ChatStore {
@@ -138,6 +148,43 @@ final class Discussion: ObservableObject {
     @Published var useClaude = true
     @Published var useCodex = true
     @Published var useGemini = true
+
+    // Injected in tests so full-history sequencing can be checked without spending usage.
+    var answer: (Account, String, TimeInterval) -> Result<String, Answerer.Failure> = {
+        Answerer.ask($0, prompt: $1, timeout: $2)
+    }
+
+    var configuration: ChatConfiguration { current.configuration ?? ChatConfiguration() }
+
+    func configure(_ edit: (inout ChatConfiguration) -> Void) {
+        guard !running else { return }
+        var config = configuration
+        edit(&config)
+        change(currentID, save: true) { $0.configuration = config }
+    }
+
+    func setMode(_ mode: Int) {
+        guard current.turns.isEmpty else { return }
+        configure { $0.mode = mode }
+    }
+
+    func moveProvider(_ provider: Account.Provider, by offset: Int) {
+        configure { config in
+            guard let from = config.order.firstIndex(of: provider) else { return }
+            let to = from + offset
+            if config.order.indices.contains(to) { config.order.swapAt(from, to) }
+        }
+    }
+
+    func setParticipation(_ provider: Account.Provider, enabled: Bool) {
+        configure { config in
+            config.participants.removeAll { $0 == provider }
+            if enabled { config.participants.append(provider) }
+            if !config.participants.contains(config.leader), let first = config.order.first(where: { config.participants.contains($0) }) {
+                config.leader = first
+            }
+        }
+    }
 
     private let model: AppModel
     private let work = DispatchQueue(label: "discussion")
@@ -200,11 +247,14 @@ final class Discussion: ObservableObject {
         draft = ""
         let id = currentID
         var turn = ChatTurn(question: question)
+        let config = configuration
+        turn.mode = config.mode
         guard team.count > 0 else {
             turn.error = "답할 수 있는 AI가 없어요. 참여 AI를 켜고, 설정에서 로그인됐는지 확인해 주세요."
             change(id) { $0.turns.append(turn) }
             return
         }
+        let history = current.turns
         let summary = current.summary
         change(id) { c in
             if c.turns.isEmpty { c.title = String(question.prefix(40)) }
@@ -215,7 +265,12 @@ final class Discussion: ObservableObject {
         let usage = model.latestUsage
         let rules = model.chatRules.trimmingCharacters(in: .whitespacesAndNewlines)
         work.async {
-            self.run(question: question, summary: summary, rules: rules, team: team, usage: usage, id: id, index: index)
+            if config.mode == 2 {
+                self.runSequential(question: question, history: history, rules: rules, team: team,
+                                   leader: config.leader, id: id, index: index)
+            } else {
+                self.run(question: question, summary: summary, rules: rules, team: team, usage: usage, id: id, index: index)
+            }
         }
     }
 
@@ -225,6 +280,9 @@ final class Discussion: ObservableObject {
         if useClaude { providers.append(.claude) }
         if useCodex { providers.append(.codex) }
         if useGemini { providers.append(.gemini) }
+        if configuration.mode == 2 {
+            providers = configuration.order.filter { configuration.participants.contains($0) }
+        }
         return providers.compactMap { provider in
             model.accounts.filter { $0.provider == provider }
                 .compactMap { account -> (Account, Double)? in
@@ -381,6 +439,87 @@ final class Discussion: ObservableObject {
             c.summary = newSummary
             if c.turns.indices.contains(index) { c.turns[index].status = "" }
         }
+        finish(id, index)
+    }
+
+    // Full transcript, without summarizing or dropping earlier turns.
+    static func transcript(_ turns: [ChatTurn]) -> String {
+        turns.map { turn in
+            var parts = ["[사용자]\n" + turn.question]
+            parts += turn.entries.filter { !$0.failed }.map { "[" + $0.speaker + "]\n" + $0.text }
+            if let final = turn.final { parts.append("[최종 답]\n" + final) }
+            return parts.joined(separator: "\n\n")
+        }.joined(separator: "\n\n")
+    }
+
+    static func proposedOrder(_ text: String, team: [Account]) -> [Account.Provider]? {
+        let tokens = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            .split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        let order = tokens.compactMap(Account.Provider.init(rawValue:))
+        let expected = team.map(\.provider)
+        guard order.count == expected.count, Set(order) == Set(expected) else { return nil }
+        return order
+    }
+
+    private func runSequential(question: String, history: [ChatTurn], rules: String,
+                               team: [Account], leader: Account.Provider, id: UUID, index: Int) {
+        var transcript = Self.transcript(history)
+        transcript += "\n\n[사용자]\n" + question
+        var successful: [Account] = []
+        for (position, account) in team.enumerated() {
+            changeTurn(id, index) { $0.status = "\(position + 1)/\(team.count) \(self.label(account)) 발언 중…" }
+            let prompt = """
+            [공통 규칙]
+            \(rules)
+            [모드2 발언 규칙 — 답 길이는 이 규칙 우선]
+            당신은 \(label(account))입니다. 아래는 이 방의 전체 대화 원문입니다.
+            마지막 사용자 질문과 앞선 AI의 발언을 읽고 자연스럽게 이어 말하세요.
+            한국어 1~2문장, 200자 이내로 말하세요. 인사나 단순 동의, 앞말 반복 없이 새 관점, 반론, 보충 중 하나를 말하세요.
+            별도 최종 정리나 요약은 하지 마세요. 파일을 만들거나 명령을 실행하지 마세요.
+
+            [전체 대화 원문]
+            \(transcript)
+            """
+            let entry: ChatTurn.Entry
+            switch answer(account, prompt, 240) {
+            case .success(let text):
+                entry = .init(round: 1, speaker: label(account), text: text, failed: false)
+                successful.append(account)
+                transcript += "\n\n[\(label(account))]\n\(text)"
+            case .failure(let failure):
+                entry = .init(round: 1, speaker: label(account), text: Self.describe(failure), failed: true)
+            }
+            changeTurn(id, index, save: true) { $0.entries.append(entry) }
+        }
+        guard !successful.isEmpty else { return finish(id, index, error: "모든 AI가 답하지 못했어요.") }
+        // Only the selected representative schedules. If unavailable, retain the user's order.
+        if let moderator = successful.first(where: { $0.provider == leader }), team.count > 1 {
+            changeTurn(id, index) { $0.status = "대표 \(self.label(moderator))이(가) 다음 순서를 정하는 중…" }
+            let schedulePrompt = """
+            당신은 대화 진행자입니다. 전체 대화를 읽고 다음 사용자 질문에 답할 AI들의 발언 순서를 정하세요.
+            참여 AI: \(team.map { $0.provider.rawValue }.joined(separator: ","))
+            새 관점을 먼저 제시할 AI, 반론이나 보충할 AI 순서로 판단하세요.
+            참여 AI를 각각 정확히 한 번 포함해 쉼표로 구분한 ID만 출력하세요. 설명 금지.
+            파일을 만들거나 명령을 실행하지 마세요.
+
+            [전체 대화 원문]
+            \(transcript)
+            """
+            if case .success(let text) = answer(moderator, schedulePrompt, 120),
+               let order = Self.proposedOrder(text, team: team) {
+                change(id, save: true) { c in
+                    var config = c.configuration ?? ChatConfiguration()
+                    config.order = order + config.order.filter { !order.contains($0) }
+                    c.configuration = config
+                    c.turns[index].orderNote = "다음 순서: " + order.map(\.title).joined(separator: " → ")
+                }
+            } else {
+                changeTurn(id, index, save: true) { $0.orderNote = "대표의 순서 지정에 실패해 기존 순서를 유지합니다." }
+            }
+        } else if team.count > 1 {
+            changeTurn(id, index, save: true) { $0.orderNote = "대표가 발언하지 못해 기존 순서를 유지합니다." }
+        }
+        changeTurn(id, index, save: true) { $0.status = "" }
         finish(id, index)
     }
 

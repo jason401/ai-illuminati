@@ -113,8 +113,13 @@ debate.debateAnswer = { account, prompt, _, _ in
 debate.draft = "Discuss a counterexample"
 debate.send()
 waitFor(debate)
-expect(debate.current.turns[0].entries.map(\.speaker) == ["Claude", "ChatGPT", "Gemini", "ChatGPT"], "mode3 should repeat the moderator-selected speaker")
-expect(debate.current.turns[0].entries.last?.focus == "Address the counterexample", "moderator focus not saved")
+// Finish requests before the minimum (6 turns for 3 AIs and a cap of 9) are overridden: the AI who has
+// spoken least (not the last speaker) answers instead.
+expect(debate.current.turns[0].entries.map(\.speaker) == ["Claude", "ChatGPT", "Gemini", "ChatGPT", "Claude", "Gemini"], "early finish must be overridden until the minimum")
+expect(decisions == 4, "moderator should be asked until finishing is allowed")
+expect(debateCalls.filter { $0.contains("[MODE3 MODERATION]") }.first?.contains("Finishing is NOT allowed yet") == true, "moderator must be told finishing is not allowed yet")
+expect(debateCalls.filter { $0.contains("[MODE3 MODERATION]") }.last?.contains("Finish only if") == true, "moderator must be told when finishing is allowed")
+expect(debate.current.turns[0].entries[3].focus == "Address the counterexample", "moderator focus not saved")
 expect(debateCalls[4].contains("Contribution from gemini"), "full first lap missing from repeated speaker's context")
 expect(debate.current.turns[0].endReason == "Important objections addressed", "moderator end reason missing")
 expect(debate.current.turns[0].final != nil && debate.current.summary.isEmpty, "mode3 final or full-history behavior wrong")
@@ -169,7 +174,13 @@ let token = DebateCancellation(); token.attach(process); token.cancel()
 let killDeadline = Date().addingTimeInterval(2)
 while process.isRunning && Date() < killDeadline { Thread.sleep(forTimeInterval: 0.01) }
 expect(!process.isRunning, "cancel must terminate the actual process")
-print("PASS: mode3 repeat speakers, moderator completion, hard cap, invalid decision, stop prevents calls, actual process cancellation")
+expect(Discussion.minimumDebateTurns(limit: 9, teamSize: 3) == 6 && Discussion.minimumDebateTurns(limit: 3, teamSize: 3) == 3
+       && Discussion.minimumDebateTurns(limit: 30, teamSize: 2) == 18, "minimum turns formula")
+let named = Discussion.namedFirst("야, 재미나이한테 반론의 기회라도 주는게 어때", team: model.accounts).map(\.provider)
+expect(named.first == .gemini && named.count == model.accounts.count, "named AI must open the first lap")
+expect(Discussion.namedFirst("부처님이랑 예수님", team: model.accounts).map(\.provider) == model.accounts.map(\.provider), "order unchanged without names")
+expect(debateCalls.contains { $0.contains("Speak only as yourself") }, "speakers must be told not to speak for others")
+print("PASS: mode3 repeat speakers, minimum turns, moderator completion, hard cap, invalid decision, named first speaker, stop prevents calls, actual process cancellation")
 
 // Attachment storage uses normalized private copies, not references to the user's original.
 let imageChat = Discussion(model: model)

@@ -149,7 +149,7 @@ struct ChatView: View {
                         let conversation = discussion.current
                         if conversation.turns.isEmpty {
                             Text(discussion.configuration.mode == 3
-                                 ? L("첫 바퀴는 지정한 순서로 말하고, 이후 대표가 다음 발언자와 논점 또는 종료를 정해요. 최대 발언 수에 도달하면 마무리합니다. 중지 버튼으로 언제든 끊을 수 있어요.", "The first lap follows your order. Then the moderator selects speakers and topics until the discussion is sufficient or the turn limit is reached. Stop at any time.")
+                                 ? L("첫 바퀴는 지정한 순서로 말해요(메시지에서 부른 AI가 먼저). 이후 대표가 반론권을 주며 다음 발언자와 논점을 정하고, 최대 발언 수의 60%(AI마다 최소 2번)까지는 끝내지 않아요. 중지 버튼으로 언제든 끊을 수 있어요.", "The first lap follows your order (an AI you name goes first). Then the moderator picks speakers, giving a right of reply, and won't end before 60% of the turn limit (at least two turns each). Stop at any time.")
                                  : discussion.configuration.mode == 2
                                  ? L("순서와 대표를 정하고 질문하세요. 각 AI가 전체 대화를 읽고 1~2문장씩 이어 말해요.\n한 바퀴가 끝나면 대표가 다음 순서를 정해요. 이름 옆 손잡이를 끌어 직접 바꿀 수도 있어요.", "Choose the order and moderator, then send a message. Each AI reads the full conversation and replies in 1–2 sentences.\nThe moderator sets the next order. Drag the handles to change it yourself.")
                                  : L("질문을 입력하면 AI들이 각자 답하고, 서로 검토한 뒤, 한 명이 최종 답을 정리해 줘요.\n이어서 물어보면 지금까지의 대화 요약을 같이 보내요. 답 길이와 말투는 설정의 '채팅 규칙'에서 정해요.", "Ask a question. The AIs answer, review each other, and produce one final answer.\nFollow-ups include a conversation summary. Adjust length and style in Settings → Chat rules."))

@@ -57,6 +57,7 @@ struct ChatView: View {
                                         .frame(width: 20, height: 24)
                                 }
                                 .menuStyle(.borderlessButton)
+                        .menuIndicator(.hidden)
                                 .menuIndicator(.hidden)
                                 .fixedSize()
                                 .help(L("대화 메뉴", "Chat options"))
@@ -81,13 +82,49 @@ struct ChatView: View {
                                                         set: { discussion.setMode($0) })) {
                         Text(L("모드1 · 검토 후 정리", "Mode 1 · Review & summarize")).tag(1)
                         Text(L("모드2 · 돌아가며 대화", "Mode 2 · Roundtable")).tag(2)
-                        Text(L("모드3 · 대표 진행 토론", "Mode 3 · Moderated debate")).tag(3)
+                        Text(L("모드3 · 토론", "Mode 3 · Debate")).tag(3)
                     }
-                    .frame(maxWidth: 340)
+                    .labelsHidden()
+                    .frame(width: 245)
                     .disabled(discussion.running || !discussion.current.turns.isEmpty)
-                    if !discussion.current.turns.isEmpty {
-                        Text(L("방식 변경은 새 대화에서", "Start a new chat to change modes")).font(.caption).foregroundColor(.secondary)
+                    Spacer(minLength: 8)
+                    if discussion.configuration.mode == 3 {
+                        Menu {
+                            Picker(L("최대 AI 발언", "Maximum AI turns"), selection: Binding(
+                                get: { discussion.configuration.maxTurns ?? 9 },
+                                set: { limit in discussion.configure { $0.maxTurns = limit } })) {
+                                ForEach(3...30, id: \.self) { limit in
+                                    Text(L("\(limit)회", "\(limit) turns")).tag(limit)
+                                }
+                            }
+                        } label: {
+                            Text(L("최대 \(discussion.configuration.maxTurns ?? 9)회", "Max \(discussion.configuration.maxTurns ?? 9) turns"))
+                        }
+                        .fixedSize()
+                        .disabled(discussion.running)
                     }
+                    Menu {
+                        Text(discussion.configuration.mode == 3
+                             ? L("첫 바퀴 후 대표가 다음 발언자와 논점, 종료를 정합니다.", "After the first lap, the moderator chooses speakers, topics, and when to finish.")
+                             : discussion.configuration.mode == 2
+                             ? L("각자 한 번씩 전체 대화를 읽고 답하며, 대표가 다음 순서를 정합니다.", "Each AI reads the full history and replies once. The moderator sets the next order.")
+                             : L("각자 답변과 상호 검토 후 최종 답변과 요약을 만듭니다.", "Independent answers and peer review are followed by a final answer and summary."))
+                        if discussion.configuration.mode >= 2 {
+                            Text(L("손잡이를 끌어 순서를 바꾸고, 이름 옆 메뉴에서 대표를 정하세요.", "Drag the handles to reorder. Use the menu beside a name to choose the moderator."))
+                        }
+                        if discussion.configuration.mode == 3 {
+                            Text(L("대표의 진행 판단과 마지막 정리는 발언 수에 포함하지 않습니다.", "Moderator decisions and final synthesis do not count toward the turn limit."))
+                        }
+                        if !discussion.current.turns.isEmpty {
+                            Text(L("방식 변경은 새 대화에서", "Start a new chat to change modes"))
+                        }
+                    } label: {
+                        Image(systemName: "info.circle")
+                    }
+                    .menuStyle(.borderlessButton)
+                        .menuIndicator(.hidden)
+                    .fixedSize()
+                    .accessibilityLabel(L("대화 방식 안내", "About this chat mode"))
                 }
                 if discussion.configuration.mode >= 2 {
                     sequentialControls
@@ -245,13 +282,30 @@ struct ChatView: View {
     private var sequentialControls: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                Text(L("순서", "Order")).foregroundColor(.secondary)
                 ForEach(discussion.configuration.order, id: \.rawValue) { provider in
                     HStack(spacing: 3) {
                         Toggle(provider.title, isOn: Binding(
                             get: { discussion.configuration.participants.contains(provider) },
                             set: { discussion.setParticipation(provider, enabled: $0) }))
                         .disabled(discussion.hasImages && provider == .gemini)
+                        Menu {
+                            Button(L("대표로 지정", "Make moderator")) {
+                                discussion.configure { $0.leader = provider }
+                            }
+                            .disabled(!discussion.configuration.participants.contains(provider)
+                                      || (discussion.hasImages && provider == .gemini))
+                        } label: {
+                            if discussion.configuration.leader == provider {
+                                Image(systemName: "crown.fill")
+                                    .foregroundColor(.accentColor)
+                            } else {
+                                Image(systemName: "chevron.down").font(.caption2)
+                            }
+                        }
+                        .menuStyle(.borderlessButton)
+                        .menuIndicator(.hidden)
+                        .fixedSize()
+                        .help(L("대표 선택", "Choose moderator"))
                         Image(systemName: "line.3.horizontal")
                             .foregroundColor(.secondary)
                             .frame(width: 22, height: 24)
@@ -274,28 +328,7 @@ struct ChatView: View {
                 Spacer(minLength: 0)
             }
             .toggleStyle(.checkbox)
-            HStack {
-                Picker(L("대표", "Moderator"), selection: Binding(get: { discussion.configuration.leader },
-                                                 set: { leader in discussion.configure { $0.leader = leader } })) {
-                    ForEach(discussion.configuration.order.filter { discussion.configuration.participants.contains($0) && (!discussion.hasImages || $0 != .gemini) }, id: \.rawValue) { provider in
-                        Text(provider.title).tag(provider)
-                    }
-                }
-                .frame(width: 170)
-                Text(discussion.configuration.mode == 3
-                     ? L("전체 대화 전달 · 대표가 진행과 종료 판단", "Full history · Moderator directs and ends discussion")
-                     : L("각자 한 번씩 · 전체 대화 전달 · 대표가 다음 순서 지정", "One turn each · Full history · Moderator sets next order"))
-                    .font(.caption).foregroundColor(.secondary)
-            }
-            if discussion.configuration.mode == 3 {
-                Stepper(value: Binding(get: { discussion.configuration.maxTurns ?? 9 },
-                                       set: { limit in discussion.configure { $0.maxTurns = limit } }), in: 3...30) {
-                    Text(L("최대 AI 발언: \(discussion.configuration.maxTurns ?? 9)회", "Maximum AI turns: \(discussion.configuration.maxTurns ?? 9)"))
-                }
-                .frame(maxWidth: 320)
-                Text(L("대표의 진행 판단과 마지막 정리는 발언 수에 포함하지 않습니다.", "Moderator decisions and final synthesis do not count toward this limit."))
-                    .font(.caption).foregroundColor(.secondary)
-            }
+
         }
         .disabled(discussion.running)
     }

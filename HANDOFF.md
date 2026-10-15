@@ -70,7 +70,7 @@
 - 서명: AI Face가 만든 "AI Face Local Signing" 인증서 재사용(키체인 "항상 허용"이 빌드 후에도 유지되게). 없으면 임시 서명.
 - 화면 없이 시험하는 법: 필요한 파일 + 시험용 `main.swift`를 같이 컴파일해 실행.
   ```bash
-  xcrun swiftc -o /tmp/disc app/macos/{Language,Usage,Accounts,Login,Settings,Discussion,Debate}.swift /path/to/test/main.swift
+  xcrun swiftc -o /tmp/disc app/macos/{Language,Usage,Accounts,Login,Settings,Discussion,Debate,Attachments}.swift /path/to/test/main.swift
   ```
   (시험 `main.swift`에서 `AppModel()`, `Discussion(model:)`을 만들고 `draft` 넣고 `send()`, `running`이 끝날 때까지 `RunLoop.main.run`.) 실제 질문을 보내면 각 계정 사용량이 조금 쓰이고, 대화가 `chats/`에 저장됨.
 
@@ -165,3 +165,13 @@
 - tools/build_app.sh: 빌드 전에 고정 신원 확인(없으면 실행 중 앱을 종료하지 않음), 인증서 SHA1+bundle identifier로 designated requirement 고정. 서명/검증 실패 시 중단, ad-hoc fallback 제거. open 실패도 성공으로 보고하지 않음.
 - 실제 빌드·고정 서명·앱 실행 성공. 다른 빌드 해시의 사본에서도 동일 DR 및 기존 DR 만족 검증 통과(tools/tests/check_signing.py). setup 재실행 시 신원 변경 없음 확인.
 - 기존 ad-hoc ACL에서 전환하므로 계정별 Always Allow 1회 재승인 가능. 실제 사용자 키체인 승인 후 다음 빌드에서 팝업 미발생까지 직접 검증한 것은 아님. Documents 접근 경로 자체는 별도 조사 사항이며 이 서명이 불필요한 파일 접근을 차단하지는 않음.
+
+## 이미지 첨부
+- Attachments.swift: ChatImage(id, conversationID, name), 이미지 디코딩·방향 보정·최대1600px PNG 사본(4.5MB 초과 시1024px 재변환). 원본 파일은 수정하지 않음. chats/<roomUUID>.assets/<imageUUID>.png 저장, 방 삭제 시 assets 폴더도 실제 삭제.
+- UI: + 선택, 입력창/첨부영역 드래그, 이미지/파일 URL 클립보드 붙여넣기, 전송 전 썸네일 제거, 저장된 메시지의 썸네일 열기. 이미지 단독 전송 지원. 최대25MB/파일,4장/메시지,12장/방. 방 전환 시 미전송 사본 정리.
+- Claude: 이미지가 있을 때 stream-json 사용자 이미지 블록(base64 PNG), private 0600 임시 stdin 파일, 결과 event만 추출. ChatGPT: codex exec --image 실제 파일 첨부. 모든 모드의 초기답/검토/정리/진행판단/후속질문에 방의 이전 이미지까지 재전달하며 질문별 이미지ID와 순서 매핑 포함.
+- Gemini: 실제 시험에서 Anthropic식 이미지 입력 실패. 공식 agy headless 문서는 event=user/content 텍스트만 지원한다고 명시. 이번 이미지 대화에서는 Gemini를 제외하며 명시 안내. 사진 없이 텍스트만 있는 방은 기존대로 Gemini 참여. 사진 경로만 전달하고 이미지 지원이라고 주장하지 않음.
+- 실제 CLI 시험: 직접 만든 도형 PNG에 Claude와 Codex가 ‘왼쪽 자홍색 원3개, 오른쪽 청록색 정사각형1개’ 정확히 답변.
+- 회귀 시험에 저장/복원/원본과 분리된 사본/이미지 단독 전송/대화 삭제 시 이미지 삭제/잘못된 파일/전용 클립보드 PNG 추가. 기존 모드·언어·중지 시험 포함 전부 통과(클립보드 시험은 sandbox 밖 macOS pasteboard 서비스 필요).
+- 실제 UI 시험: + 파일 선택 → 도형 PNG 미리보기 → 모드2 전송 → Claude/ChatGPT 모두 정확히 인식. 새 첨부 없는 후속 질문에서도 원본 이미지의 색과 상대 높이를 다시 확인하는 답변 확인. 시험방 ‘이미지 기능 시험…’ 보존.
+- 정상 앱 종료 시 미전송 첨부 사본 정리, 진행 중 모드3 취소. 기존 사용자 사진·대화는 삭제하지 않음.

@@ -13,12 +13,14 @@ enum Answerer {
 
     enum Failure: Error { case missingTool, failed(String), timedOut }
 
-    static func ask(_ account: Account, prompt: String, timeout: TimeInterval = 240, cancellation: DebateCancellation? = nil) -> Result<String, Failure> {
+    static func ask(_ account: Account, prompt: String, timeout: TimeInterval = 240, cancellation: DebateCancellation? = nil, images: [URL] = []) -> Result<String, Failure> {
         if cancellation?.isCancelled == true { return .failure(.failed("Cancelled")) }
         let outFile = chatDir + "/answer-\(UUID().uuidString).txt"
         defer { try? FileManager.default.removeItem(atPath: outFile) }
         let binary: String?
-        let arguments: [String]
+        var arguments: [String]
+        var inputData: Data?
+        if !images.isEmpty && account.provider == .gemini { return .failure(.failed("Image input is not enabled for Gemini.")) }
         switch account.provider {
         case .claude:
             binary = ClaudeUsage.binary
@@ -33,6 +35,25 @@ enum Answerer {
             arguments = ["-p", prompt, "--mode", "plan", "--sandbox", "--disable-slash-commands",
                          "--print-timeout", "\(Int(timeout) - 10)s"]
         }
+        if !images.isEmpty {
+            if account.provider == .codex {
+                arguments.removeLast()
+                for url in images { arguments += ["--image", url.path] }
+                arguments += ["--", prompt]
+            } else if account.provider == .claude {
+                arguments.remove(at: 1)
+                arguments += ["--input-format", "stream-json", "--output-format", "stream-json", "--verbose"]
+                do {
+                    var blocks: [[String: Any]] = [["type": "text", "text": prompt]]
+                    for url in images {
+                        let data = try Data(contentsOf: url)
+                        blocks.append(["type": "image", "source": ["type": "base64", "media_type": "image/png", "data": data.base64EncodedString()]])
+                    }
+                    inputData = try JSONSerialization.data(withJSONObject: ["type": "user", "message": ["role": "user", "content": blocks]])
+                    inputData?.append(0x0a)
+                } catch { return .failure(.failed("Could not read an attached image.")) }
+            }
+        }
         guard let binary else { return .failure(.missingTool) }
 
         let process = Process()
@@ -43,7 +64,19 @@ enum Answerer {
         let out = Pipe(), err = Pipe()
         process.standardOutput = out
         process.standardError = err
-        process.standardInput = FileHandle.nullDevice
+        let inputFile = chatDir + "/input-\(UUID().uuidString).jsonl"
+        defer { try? FileManager.default.removeItem(atPath: inputFile) }
+        var inputHandle: FileHandle?
+        if let inputData {
+            do {
+                guard FileManager.default.createFile(atPath: inputFile, contents: inputData, attributes: [.posixPermissions: 0o600]) else {
+                    return .failure(.failed("Could not prepare private image input."))
+                }
+                inputHandle = try FileHandle(forReadingFrom: URL(fileURLWithPath: inputFile))
+            } catch { return .failure(.failed("Could not prepare image input.")) }
+        }
+        defer { try? inputHandle?.close() }
+        process.standardInput = inputHandle ?? FileHandle.nullDevice
         guard (try? process.run()) != nil else { return .failure(.missingTool) }
 
         cancellation?.attach(process)
@@ -73,6 +106,17 @@ enum Answerer {
 
         var text = String(data: stdout, encoding: .utf8) ?? ""
         if account.provider == .codex, let file = try? String(contentsOfFile: outFile, encoding: .utf8) { text = file }
+        if account.provider == .claude && !images.isEmpty {
+            let result = text.split(separator: "\n").compactMap { line -> [String: Any]? in
+                guard let data = String(line).data(using: .utf8), let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      json["type"] as? String == "result" else { return nil }
+                return json
+            }.last
+            guard let result, result["is_error"] as? Bool != true, let answer = result["result"] as? String else {
+                return .failure(.failed("Image response failed."))
+            }
+            text = answer
+        }
         text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard process.terminationStatus == 0, !text.isEmpty else {
             let why = (String(data: stderr, encoding: .utf8) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -94,6 +138,7 @@ struct ChatTurn: Identifiable, Codable {
     }
     var id = UUID()
     var question: String
+    var images: [ChatImage]?
     var status = ""
     var entries: [Entry] = []
     var final: String?
@@ -148,6 +193,8 @@ enum ChatStore {
     }
 
     static func delete(_ conversation: Conversation) throws {
+        let assets = dir + "/\(conversation.id.uuidString).assets"
+        if FileManager.default.fileExists(atPath: assets) { try FileManager.default.removeItem(atPath: assets) }
         let path = dir + "/\(conversation.id.uuidString).json"
         if FileManager.default.fileExists(atPath: path) {
             try FileManager.default.removeItem(atPath: path)
@@ -169,6 +216,10 @@ final class Discussion: ObservableObject {
         Answerer.ask($0, prompt: $1, timeout: $2, cancellation: $3)
     }
     @Published var draft = ""
+    @Published var pendingImages: [ChatImage] = []
+    @Published var attachmentError: String?
+    var activeImages: [URL] = []
+    var imageContext = ""
     @Published var inputHeight: CGFloat = 36
     @Published var draggingProvider: Account.Provider?
     var draggingConversationID: UUID?
@@ -206,10 +257,12 @@ final class Discussion: ObservableObject {
     }
 
     func setParticipation(_ provider: Account.Provider, enabled: Bool) {
+        let imagesPresent = hasImages
         configure { config in
             config.participants.removeAll { $0 == provider }
             if enabled { config.participants.append(provider) }
-            if !config.participants.contains(config.leader), let first = config.order.first(where: { config.participants.contains($0) }) {
+            if (!config.participants.contains(config.leader) || (imagesPresent && config.leader == .gemini)),
+               let first = config.order.first(where: { config.participants.contains($0) && (!imagesPresent || $0 != .gemini) }) {
                 config.leader = first
             }
         }
@@ -231,6 +284,7 @@ final class Discussion: ObservableObject {
     func newConversation() {
         guard !running else { return }
         if current.turns.isEmpty { return }
+        discardPendingImages()
         conversations.removeAll { $0.turns.isEmpty }
         let fresh = Conversation()
         conversations.insert(fresh, at: 0)
@@ -239,6 +293,7 @@ final class Discussion: ObservableObject {
 
     func open(_ id: UUID) {
         guard !running else { return }
+        if currentID != id { discardPendingImages() }
         conversations.removeAll { $0.turns.isEmpty && $0.id != id }
         currentID = id
     }
@@ -263,6 +318,9 @@ final class Discussion: ObservableObject {
         }
         conversations.removeAll { $0.id == id }
         if currentID == id {
+            pendingImages = []
+            attachmentError = nil
+            draft = ""
             let fresh = Conversation()
             conversations.insert(fresh, at: 0)
             currentID = fresh.id
@@ -270,24 +328,34 @@ final class Discussion: ObservableObject {
     }
 
     func send() {
-        let question = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !question.isEmpty, !running else { return }
+        guard canSend else { return }
+        let typed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let question = typed.isEmpty ? L("첨부한 이미지를 설명해줘.", "Describe the attached images.") : typed
         let team = pickTeam()
-        draft = ""
         let id = currentID
         var turn = ChatTurn(question: question)
         let config = configuration
         turn.mode = config.mode
+        turn.images = pendingImages.isEmpty ? nil : pendingImages
         let limit = min(30, max(3, config.maxTurns ?? 9))
         if config.mode == 3 { turn.maxTurns = limit }
         guard team.count > 0 else {
             turn.error = L("답할 수 있는 AI가 없어요. 참여 AI를 켜고, 설정에서 로그인됐는지 확인해 주세요.", "No AI is available. Enable a participant and check its sign-in in Settings.")
-            change(id) { $0.turns.append(turn) }
+            attachmentError = turn.error
             return
         }
         let history = current.turns
+        let allImages = (history + [turn]).flatMap { $0.images ?? [] }
+        activeImages = allImages.map(\.url)
+        let imageMessages = (history + [turn]).flatMap { t in (t.images ?? []).map { ($0, t.question) } }
+        imageContext = imageMessages.enumerated().map {
+            "Image \($0.offset + 1): attachment \($0.element.0.id.uuidString), user message: \($0.element.1.prefix(160))"
+        }.joined(separator: "\n")
+        pendingImages = []
+        draft = ""
+        attachmentError = nil
         let summary = current.summary
-        change(id) { c in
+        change(id, save: true) { c in
             if c.turns.isEmpty { c.title = String(question.prefix(40)) }
             c.turns.append(turn)
         }
@@ -320,6 +388,7 @@ final class Discussion: ObservableObject {
         if configuration.mode >= 2 {
             providers = configuration.order.filter { configuration.participants.contains($0) }
         }
+        if hasImages { providers.removeAll { $0 == .gemini } }
         return providers.compactMap { provider in
             model.accounts.filter { $0.provider == provider }
                 .compactMap { account -> (Account, Double)? in
@@ -364,7 +433,7 @@ final class Discussion: ObservableObject {
             let text = prompt(account)
             group.enter()
             DispatchQueue.global().async {
-                let result = Answerer.ask(account, prompt: text)
+                let result = self.request(account, prompt: text)
                 let entry: ChatTurn.Entry
                 switch result {
                 case .success(let answer):
@@ -439,7 +508,7 @@ final class Discussion: ObservableObject {
             [고친 답들]
             \(current.map { "### \(label($0.0))\n\($0.1)" }.joined(separator: "\n\n"))
             """
-            switch Answerer.ask(writer, prompt: finalPrompt) {
+            switch request(writer, prompt: finalPrompt) {
             case .success(let text):
                 final = text
             case .failure:
@@ -468,7 +537,7 @@ final class Discussion: ObservableObject {
         \(final)
         """
         let newSummary: String
-        switch Answerer.ask(writer, prompt: summaryPrompt, timeout: 120) {
+        switch request(writer, prompt: summaryPrompt, timeout: 120) {
         case .success(let text): newSummary = text
         case .failure: newSummary = (summary.isEmpty ? "" : summary + "\n") + "- 질문: \(question.prefix(80)) → 답: \(final.prefix(160))"
         }
@@ -483,6 +552,7 @@ final class Discussion: ObservableObject {
     static func transcript(_ turns: [ChatTurn]) -> String {
         turns.map { turn in
             var parts = ["[사용자]\n" + turn.question]
+            if let images = turn.images, !images.isEmpty { parts.append("[Images: " + images.map { $0.id.uuidString }.joined(separator: ", ") + "]") }
             parts += turn.entries.filter { !$0.failed }.map {
                 ($0.focus.map { "[Moderator focus]\n" + $0 + "\n" } ?? "") + "[" + $0.speaker + "]\n" + $0.text
             }
@@ -520,7 +590,7 @@ final class Discussion: ObservableObject {
             \(transcript)
             """
             let entry: ChatTurn.Entry
-            switch answer(account, prompt, 240) {
+            switch request(account, prompt: prompt) {
             case .success(let text):
                 entry = .init(round: 1, speaker: label(account), text: text, failed: false)
                 successful.append(account)
@@ -544,7 +614,7 @@ final class Discussion: ObservableObject {
             [전체 대화 원문]
             \(transcript)
             """
-            if case .success(let text) = answer(moderator, schedulePrompt, 120),
+            if case .success(let text) = request(moderator, prompt: schedulePrompt, timeout: 120),
                let order = Self.proposedOrder(text, team: team) {
                 change(id, save: true) { c in
                     var config = c.configuration ?? ChatConfiguration()

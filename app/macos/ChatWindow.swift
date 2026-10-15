@@ -96,7 +96,7 @@ struct ChatView: View {
                         Text(L("참여", "Participants")).foregroundColor(.secondary)
                         Toggle("Claude", isOn: $discussion.useClaude)
                         Toggle("ChatGPT", isOn: $discussion.useCodex)
-                        Toggle("Gemini", isOn: $discussion.useGemini)
+                        Toggle("Gemini", isOn: $discussion.useGemini).disabled(discussion.hasImages)
                         Spacer()
                     }
                     .toggleStyle(.checkbox)
@@ -142,8 +142,43 @@ struct ChatView: View {
                 }
             }
             Divider()
-            VStack(spacing: 7) {
+            VStack(alignment: .leading, spacing: 7) {
+                if let error = discussion.attachmentError {
+                    Text(error).font(.caption).foregroundColor(.red)
+                }
+                if discussion.hasImages {
+                    Text(L("이미지는 Claude와 ChatGPT에 전달됩니다. 이 대화에서 Gemini는 참여하지 않습니다.", "Images go to Claude and ChatGPT. Gemini is excluded from this image chat."))
+                        .font(.caption).foregroundColor(.secondary)
+                }
+                if !discussion.pendingImages.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(discussion.pendingImages) { item in
+                                VStack(spacing: 3) {
+                                    ZStack(alignment: .topTrailing) {
+                                        AttachmentThumbnail(item: item, size: 66)
+                                        Button(action: { discussion.removePendingImage(item) }) {
+                                            Image(systemName: "xmark.circle.fill").symbolRenderingMode(.palette)
+                                                .foregroundStyle(.white, .black.opacity(0.7))
+                                        }
+                                        .buttonStyle(.plain)
+                                        .accessibilityLabel(L("첨부 제거: ", "Remove attachment: ") + item.name)
+                                        .disabled(discussion.running)
+                                    }
+                                    Text(item.name).font(.caption2).lineLimit(1).frame(width: 80)
+                                }
+                            }
+                        }
+                    }
+                }
                 HStack(alignment: .bottom, spacing: 10) {
+                    Button(action: { discussion.chooseImages() }) {
+                        Image(systemName: "plus").font(.system(size: 18, weight: .medium)).frame(width: 30, height: 34)
+                    }
+                    .buttonStyle(.plain).foregroundColor(.secondary)
+                    .accessibilityLabel(L("이미지 첨부", "Attach images"))
+                    .help(L("사진 선택 또는 이미지 붙여넣기", "Choose images or paste a screenshot"))
+                    .disabled(discussion.running)
                     ZStack(alignment: .topLeading) {
                         if discussion.draft.isEmpty {
                             Text(L("메시지를 입력하세요…", "Write a message…"))
@@ -152,7 +187,7 @@ struct ChatView: View {
                                 .allowsHitTesting(false)
                         }
                         MultilineInput(text: $discussion.draft, height: $discussion.inputHeight,
-                                       onSend: { discussion.send() })
+                                       onSend: { discussion.send() }, onPasteImages: { discussion.addPastedImages($0) })
                             .frame(height: discussion.inputHeight)
                             .accessibilityLabel(L("질문 입력", "Message"))
                     }
@@ -175,6 +210,7 @@ struct ChatView: View {
                 .padding(.horizontal, 4)
             }
             .padding(.horizontal, 16).padding(.vertical, 12)
+            .onDrop(of: [UTType.fileURL, UTType.image], delegate: ImageAttachmentDropDelegate(discussion: discussion))
         }
     }
 
@@ -197,12 +233,12 @@ struct ChatView: View {
                     .foregroundColor(.white).frame(width: 34, height: 34)
             }
             .buttonStyle(.plain)
-            .background(discussion.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            .background(!discussion.canSend
                         ? Color.secondary.opacity(0.3) : Color.accentColor, in: Circle())
             .accessibilityLabel(L("보내기", "Send"))
             .help(L("전송 (⌘Enter)", "Send (⌘Enter)"))
             .keyboardShortcut(.return, modifiers: .command)
-            .disabled(discussion.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .disabled(!discussion.canSend)
         }
     }
 
@@ -215,6 +251,7 @@ struct ChatView: View {
                         Toggle(provider.title, isOn: Binding(
                             get: { discussion.configuration.participants.contains(provider) },
                             set: { discussion.setParticipation(provider, enabled: $0) }))
+                        .disabled(discussion.hasImages && provider == .gemini)
                         Image(systemName: "line.3.horizontal")
                             .foregroundColor(.secondary)
                             .frame(width: 22, height: 24)
@@ -240,7 +277,7 @@ struct ChatView: View {
             HStack {
                 Picker(L("대표", "Moderator"), selection: Binding(get: { discussion.configuration.leader },
                                                  set: { leader in discussion.configure { $0.leader = leader } })) {
-                    ForEach(discussion.configuration.order.filter { discussion.configuration.participants.contains($0) }, id: \.rawValue) { provider in
+                    ForEach(discussion.configuration.order.filter { discussion.configuration.participants.contains($0) && (!discussion.hasImages || $0 != .gemini) }, id: \.rawValue) { provider in
                         Text(provider.title).tag(provider)
                     }
                 }
@@ -311,6 +348,20 @@ private struct TurnView: View {
                     .padding(10)
                     .background(Color.accentColor.opacity(0.18))
                     .cornerRadius(10)
+            }
+            if let images = turn.images, !images.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(images) { item in
+                            Button(action: { NSWorkspace.shared.open(item.url) }) {
+                                AttachmentThumbnail(item: item, size: 120)
+                            }
+                            .buttonStyle(.plain)
+                            .help(item.name)
+                            .accessibilityLabel(L("첨부 이미지 열기: ", "Open attached image: ") + item.name)
+                        }
+                    }
+                }
             }
             if !turn.status.isEmpty {
                 HStack(spacing: 8) {
@@ -408,6 +459,27 @@ final class ChatWindow {
 // Native editor: Return handling stays with the editor, including Korean IME composition.
 final class ChatInputTextView: NSTextView {
     var onSend: (() -> Void)?
+    var onPasteImages: ((NSPasteboard) -> Bool)?
+
+    private func hasDraggedImage(_ sender: NSDraggingInfo) -> Bool {
+        let board = sender.draggingPasteboard
+        return board.types?.contains(.png) == true || board.types?.contains(.tiff) == true || board.types?.contains(.fileURL) == true
+    }
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        hasDraggedImage(sender) ? .copy : super.draggingEntered(sender)
+    }
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        hasDraggedImage(sender) ? .copy : super.draggingUpdated(sender)
+    }
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        if onPasteImages?(sender.draggingPasteboard) == true { return true }
+        return super.performDragOperation(sender)
+    }
+
+    override func paste(_ sender: Any?) {
+        if onPasteImages?(NSPasteboard.general) == true { return }
+        super.paste(sender)
+    }
 
     override func keyDown(with event: NSEvent) {
         if (event.keyCode == 36 || event.keyCode == 76) && !hasMarkedText() {
@@ -426,6 +498,7 @@ private struct MultilineInput: NSViewRepresentable {
     @Binding var text: String
     @Binding var height: CGFloat
     var onSend: () -> Void
+    var onPasteImages: (NSPasteboard) -> Bool
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -436,6 +509,7 @@ private struct MultilineInput: NSViewRepresentable {
         scroll.scrollerStyle = .overlay
         scroll.drawsBackground = false
         let editor = ChatInputTextView()
+        editor.registerForDraggedTypes([.fileURL, .png, .tiff, .string])
         editor.isRichText = false
         editor.isAutomaticQuoteSubstitutionEnabled = false
         editor.isAutomaticDashSubstitutionEnabled = false
@@ -449,6 +523,7 @@ private struct MultilineInput: NSViewRepresentable {
         editor.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
         editor.delegate = context.coordinator
         editor.onSend = onSend
+        editor.onPasteImages = onPasteImages
         editor.string = text
         editor.setAccessibilityLabel(L("질문 입력", "Message"))
         scroll.documentView = editor
@@ -459,6 +534,7 @@ private struct MultilineInput: NSViewRepresentable {
         context.coordinator.parent = self
         guard let editor = scroll.documentView as? ChatInputTextView else { return }
         editor.onSend = onSend
+        editor.onPasteImages = onPasteImages
         editor.setAccessibilityLabel(L("질문 입력", "Message"))
         if editor.string != text && !editor.hasMarkedText() { editor.string = text }
         context.coordinator.measure(editor)
@@ -481,5 +557,59 @@ private struct MultilineInput: NSViewRepresentable {
                 self.parent.height = measured
             }
         }
+    }
+}
+
+private struct AttachmentThumbnail: View {
+    let item: ChatImage
+    let size: CGFloat
+    var body: some View {
+        Group {
+            if let image = NSImage(contentsOf: item.url) {
+                Image(nsImage: image).resizable().scaledToFit()
+            } else {
+                Image(systemName: "photo").foregroundColor(.secondary)
+            }
+        }
+        .frame(width: size, height: size)
+        .background(Color.secondary.opacity(0.1))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+private struct ImageAttachmentDropDelegate: DropDelegate {
+    let discussion: Discussion
+    func validateDrop(info: DropInfo) -> Bool { !discussion.running }
+    func performDrop(info: DropInfo) -> Bool {
+        guard !discussion.running else { return false }
+        let conversationID = discussion.currentID
+        let files = info.itemProviders(for: [UTType.fileURL])
+        if !files.isEmpty {
+            for provider in files {
+                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+                    let url: URL?
+                    if let data = item as? Data { url = URL(dataRepresentation: data, relativeTo: nil) }
+                    else { url = item as? URL }
+                    guard let url else { return }
+                    DispatchQueue.main.async {
+                        guard discussion.currentID == conversationID, !discussion.running else { return }
+                        discussion.importImageFile(url)
+                    }
+                }
+            }
+        } else {
+            for provider in info.itemProviders(for: [UTType.image]) {
+                guard let type = provider.registeredTypeIdentifiers.first(where: { UTType($0)?.conforms(to: .image) == true }) else { continue }
+                provider.loadDataRepresentation(forTypeIdentifier: type) { data, _ in
+                    guard let data else { return }
+                    DispatchQueue.main.async {
+                        guard discussion.currentID == conversationID, !discussion.running else { return }
+                        do { try discussion.addImage(data, name: L("드래그한 이미지", "Dropped image")) }
+                        catch { discussion.attachmentError = L("이미지를 첨부할 수 없습니다.", "Could not attach image.") }
+                    }
+                }
+            }
+        }
+        return true
     }
 }

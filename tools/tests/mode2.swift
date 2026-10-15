@@ -170,3 +170,37 @@ let killDeadline = Date().addingTimeInterval(2)
 while process.isRunning && Date() < killDeadline { Thread.sleep(forTimeInterval: 0.01) }
 expect(!process.isRunning, "cancel must terminate the actual process")
 print("PASS: mode3 repeat speakers, moderator completion, hard cap, invalid decision, stop prevents calls, actual process cancellation")
+
+// Attachment storage uses normalized private copies, not references to the user's original.
+let imageChat = Discussion(model: model)
+let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 32, pixelsHigh: 24, bitsPerSample: 8, samplesPerPixel: 4,
+                              hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+let fixture = bitmap.representation(using: .png, properties: [:])!
+try imageChat.addImage(fixture, name: "fixture.png")
+let attached = imageChat.pendingImages[0]
+expect(attached.url.path.hasPrefix(ChatStore.dir), "image must be copied into app storage")
+expect(FileManager.default.fileExists(atPath: attached.url.path), "image copy missing")
+expect(imageChat.canSend, "image-only message must be sendable")
+var imageTurn = ChatTurn(question: "image question")
+imageTurn.images = [attached]
+var imageConversation = Conversation()
+imageConversation.id = imageChat.currentID
+imageConversation.turns = [imageTurn]
+ChatStore.save(imageConversation)
+let restored = ChatStore.loadAll().first { $0.id == imageConversation.id }!
+expect(restored.turns[0].images == [attached], "attachment metadata must survive reload")
+expect(Discussion.transcript(restored.turns).contains(attached.id.uuidString), "transcript must link image to its user message")
+try ChatStore.delete(imageConversation)
+expect(!FileManager.default.fileExists(atPath: attached.url.path), "deleting chat must remove copied images")
+expect(!ChatStore.loadAll().contains { $0.id == imageConversation.id }, "deleted image chat must not reload")
+imageChat.pendingImages = []
+let invalid = Data("not an image".utf8)
+do { _ = try ImageStore.importImage(invalid, name: "bad.png", conversationID: UUID()); fatalError("invalid image accepted") }
+catch ImageStore.Failure.invalid { }
+let paste = NSPasteboard.withUniqueName()
+paste.setData(fixture, forType: .png)
+expect(imageChat.addPastedImages(paste), "clipboard PNG must be recognized")
+expect(imageChat.pendingImages.count == 1, "clipboard image not imported")
+imageChat.removePendingImage(imageChat.pendingImages[0])
+expect(imageChat.pendingImages.isEmpty, "remove pending image failed")
+print("PASS: normalized attachment copy, image-only send, persistence, transcript image links, actual image deletion, invalid input, clipboard image import")

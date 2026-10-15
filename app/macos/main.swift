@@ -46,6 +46,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in self?.refresh() }
     }
 
+    func applicationWillTerminate(_ notification: Notification) {
+        discussion.debateCancellation?.cancel()
+        discussion.discardPendingImages()
+    }
+
     // Reopening the menu-bar app should reveal its chat window.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if !flag { chat.show(discussion: discussion) }

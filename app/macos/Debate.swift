@@ -79,7 +79,7 @@ extension Discussion {
                 [Complete transcript]
                 \(transcript)
                 """
-                let result = debateAnswer(moderator, prompt, 120, cancellation)
+                let result = requestDebate(moderator, prompt, 120, cancellation)
                 if cancellation.isCancelled { break }
                 guard case .success(let text) = result, let decision = DebateDecision.parse(text, team: team) else {
                     reason = L("대표의 진행 판단을 받지 못해 토론을 종료했습니다.", "Moderator decision failed. Debate ended."); break
@@ -110,7 +110,7 @@ extension Discussion {
             [Complete transcript]
             \(transcript)
             """
-            let result = debateAnswer(account, prompt, 240, cancellation)
+            let result = requestDebate(account, prompt, 240, cancellation)
             if cancellation.isCancelled { break }
             count += 1 // Failed attempts count too, so the loop is always bounded.
             var entry: ChatTurn.Entry
@@ -135,7 +135,7 @@ extension Discussion {
         // Stop never starts another request, including the final synthesis.
         if !cancellation.isCancelled, let moderator, successful.contains(leader) {
             changeTurn(id, index) { $0.status = L("대표가 결론과 남은 쟁점을 정리하는 중…", "Moderator is summarizing conclusions and open questions…") }
-            let result = debateAnswer(moderator, """
+            let result = requestDebate(moderator, """
                 [MODE3 FINAL]
                 [Style rules]
                 \(rules)

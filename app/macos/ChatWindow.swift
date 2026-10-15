@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 // each other (own answers, then reviews) is folded under the answer.
 struct ChatView: View {
     @ObservedObject var discussion: Discussion
+    @ObservedObject var model: AppModel
 
     var body: some View {
         HStack(spacing: 0) {
@@ -20,7 +21,7 @@ struct ChatView: View {
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
             Button(action: { discussion.newConversation() }) {
-                Label("새 대화", systemImage: "square.and.pencil").frame(maxWidth: .infinity)
+                Label(L("새 대화", "New chat"), systemImage: "square.and.pencil").frame(maxWidth: .infinity)
             }
             .disabled(discussion.running)
             .padding(10)
@@ -31,7 +32,7 @@ struct ChatView: View {
                         HStack(spacing: 2) {
                         Button(action: { discussion.open(conversation.id) }) {
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(conversation.title).lineLimit(2)
+                                Text(conversation.turns.isEmpty ? L("새 대화", "New chat") : conversation.title).lineLimit(2)
                                 Text(dateText(conversation.updatedAt)).font(.caption).foregroundColor(.secondary)
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -45,12 +46,12 @@ struct ChatView: View {
                         .disabled(discussion.running)
                         .contextMenu {
                             if !conversation.turns.isEmpty {
-                                Button("대화 삭제…", role: .destructive) { discussion.delete(conversation.id) }
+                                Button(L("대화 삭제…", "Delete chat…"), role: .destructive) { discussion.delete(conversation.id) }
                             }
                         }
                             if !conversation.turns.isEmpty {
                                 Menu {
-                                    Button("대화 삭제…", role: .destructive) { discussion.delete(conversation.id) }
+                                    Button(L("대화 삭제…", "Delete chat…"), role: .destructive) { discussion.delete(conversation.id) }
                                 } label: {
                                     Image(systemName: "ellipsis")
                                         .frame(width: 20, height: 24)
@@ -58,8 +59,8 @@ struct ChatView: View {
                                 .menuStyle(.borderlessButton)
                                 .menuIndicator(.hidden)
                                 .fixedSize()
-                                .help("대화 메뉴")
-                                .accessibilityLabel("대화 메뉴: " + conversation.title)
+                                .help(L("대화 메뉴", "Chat options"))
+                                .accessibilityLabel(L("대화 메뉴: ", "Chat options: ") + conversation.title)
                                 .disabled(discussion.running)
                                 .padding(.trailing, 6)
                             }
@@ -76,22 +77,22 @@ struct ChatView: View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    Picker("대화 방식", selection: Binding(get: { discussion.configuration.mode },
+                    Picker(L("대화 방식", "Chat mode"), selection: Binding(get: { discussion.configuration.mode },
                                                         set: { discussion.setMode($0) })) {
-                        Text("모드1 · 검토 후 정리").tag(1)
-                        Text("모드2 · 돌아가며 대화").tag(2)
+                        Text(L("모드1 · 검토 후 정리", "Mode 1 · Review & summarize")).tag(1)
+                        Text(L("모드2 · 돌아가며 대화", "Mode 2 · Roundtable")).tag(2)
                     }
                     .frame(maxWidth: 340)
                     .disabled(discussion.running || !discussion.current.turns.isEmpty)
                     if !discussion.current.turns.isEmpty {
-                        Text("방식 변경은 새 대화에서").font(.caption).foregroundColor(.secondary)
+                        Text(L("방식 변경은 새 대화에서", "Start a new chat to change modes")).font(.caption).foregroundColor(.secondary)
                     }
                 }
                 if discussion.configuration.mode == 2 {
                     sequentialControls
                 } else {
                     HStack(spacing: 14) {
-                        Text("참여").foregroundColor(.secondary)
+                        Text(L("참여", "Participants")).foregroundColor(.secondary)
                         Toggle("Claude", isOn: $discussion.useClaude)
                         Toggle("ChatGPT", isOn: $discussion.useCodex)
                         Toggle("Gemini", isOn: $discussion.useGemini)
@@ -110,15 +111,15 @@ struct ChatView: View {
                         let conversation = discussion.current
                         if conversation.turns.isEmpty {
                             Text(discussion.configuration.mode == 2
-                                 ? "순서와 대표를 정하고 질문하세요. 각 AI가 전체 대화를 읽고 1~2문장씩 이어 말해요.\n한 바퀴가 끝나면 대표가 다음 순서를 정해요. 이름 옆 손잡이를 끌어 직접 바꿀 수도 있어요."
-                                 : "질문을 입력하면 AI들이 각자 답하고, 서로 검토한 뒤, 한 명이 최종 답을 정리해 줘요.\n이어서 물어보면 지금까지의 대화 요약을 같이 보내요. 답 길이와 말투는 설정의 '채팅 규칙'에서 정해요.")
+                                 ? L("순서와 대표를 정하고 질문하세요. 각 AI가 전체 대화를 읽고 1~2문장씩 이어 말해요.\n한 바퀴가 끝나면 대표가 다음 순서를 정해요. 이름 옆 손잡이를 끌어 직접 바꿀 수도 있어요.", "Choose the order and moderator, then send a message. Each AI reads the full conversation and replies in 1–2 sentences.\nThe moderator sets the next order. Drag the handles to change it yourself.")
+                                 : L("질문을 입력하면 AI들이 각자 답하고, 서로 검토한 뒤, 한 명이 최종 답을 정리해 줘요.\n이어서 물어보면 지금까지의 대화 요약을 같이 보내요. 답 길이와 말투는 설정의 '채팅 규칙'에서 정해요.", "Ask a question. The AIs answer, review each other, and produce one final answer.\nFollow-ups include a conversation summary. Adjust length and style in Settings → Chat rules."))
                                 .foregroundColor(.secondary)
                                 .padding(.top, 40)
                                 .frame(maxWidth: .infinity)
                                 .multilineTextAlignment(.center)
                         }
                         if discussion.configuration.mode == 1 && !conversation.summary.isEmpty {
-                            DisclosureGroup("대화 요약 보기 (다음 질문 때 AI들이 읽는 내용)") {
+                            DisclosureGroup(L("대화 요약 보기 (다음 질문 때 AI들이 읽는 내용)", "Conversation summary (context for the next question)")) {
                                 Text(conversation.summary)
                                     .textSelection(.enabled)
                                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -145,12 +146,12 @@ struct ChatView: View {
                         .frame(height: 76)
                         .padding(4)
                         .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.3)))
-                        .accessibilityLabel("질문 입력")
-                    Text("Enter / Shift+Enter: 줄바꿈 · ⌘Enter: 보내기")
+                        .accessibilityLabel(L("질문 입력", "Message"))
+                    Text(L("Enter / Shift+Enter: 줄바꿈 · ⌘Enter: 보내기", "Enter / Shift+Enter: new line · ⌘Enter: send"))
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
-                Button(discussion.running ? "토론 중…" : "보내기") { discussion.send() }
+                Button(discussion.running ? L("토론 중…", "Discussing…") : L("보내기", "Send")) { discussion.send() }
                     .keyboardShortcut(.return, modifiers: .command)
                     .disabled(discussion.running || discussion.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
@@ -161,7 +162,7 @@ struct ChatView: View {
     private var sequentialControls: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                Text("순서").foregroundColor(.secondary)
+                Text(L("순서", "Order")).foregroundColor(.secondary)
                 ForEach(discussion.configuration.order, id: \.rawValue) { provider in
                     HStack(spacing: 3) {
                         Toggle(provider.title, isOn: Binding(
@@ -171,8 +172,8 @@ struct ChatView: View {
                             .foregroundColor(.secondary)
                             .frame(width: 22, height: 24)
                             .contentShape(Rectangle())
-                            .help("끌어서 발언 순서 변경")
-                            .accessibilityLabel(provider.title + " 순서 이동")
+                            .help(L("끌어서 발언 순서 변경", "Drag to reorder speakers"))
+                            .accessibilityLabel(provider.title + L(" 순서 이동", " reorder handle"))
                             .onDrag {
                                 guard !discussion.running else { return NSItemProvider() }
                                 discussion.draggingProvider = provider
@@ -190,14 +191,14 @@ struct ChatView: View {
             }
             .toggleStyle(.checkbox)
             HStack {
-                Picker("대표", selection: Binding(get: { discussion.configuration.leader },
+                Picker(L("대표", "Moderator"), selection: Binding(get: { discussion.configuration.leader },
                                                  set: { leader in discussion.configure { $0.leader = leader } })) {
                     ForEach(discussion.configuration.order.filter { discussion.configuration.participants.contains($0) }, id: \.rawValue) { provider in
                         Text(provider.title).tag(provider)
                     }
                 }
                 .frame(width: 170)
-                Text("각자 한 번씩 · 전체 대화 전달 · 대표가 다음 순서 지정")
+                Text(L("각자 한 번씩 · 전체 대화 전달 · 대표가 다음 순서 지정", "One turn each · Full history · Moderator sets next order"))
                     .font(.caption).foregroundColor(.secondary)
             }
         }
@@ -206,8 +207,8 @@ struct ChatView: View {
 
     private func dateText(_ date: Date) -> String {
         let f = DateFormatter()
-        f.locale = Locale(identifier: "ko_KR")
-        f.dateFormat = Calendar.current.isDateInToday(date) ? "a h:mm" : "M/d (E)"
+        f.locale = AppLanguage.current.locale
+        f.setLocalizedDateFormatFromTemplate(Calendar.current.isDateInToday(date) ? "jm" : "MdEEE")
         return f.string(from: date)
     }
 }
@@ -268,7 +269,7 @@ private struct TurnView: View {
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     if let by = turn.finalBy {
-                        Text("정리: \(by)").font(.caption).foregroundColor(.secondary)
+                        Text(L("정리: \(by)", "Final answer by: \(by)")).font(.caption).foregroundColor(.secondary)
                     }
                 }
                 .padding(12)
@@ -276,13 +277,13 @@ private struct TurnView: View {
                 .cornerRadius(10)
             }
             if let note = turn.orderNote {
-                Text(note).font(.caption).foregroundColor(.secondary)
+                Text(localizedNotice(note)).font(.caption).foregroundColor(.secondary)
             }
             if !turn.entries.isEmpty {
                 if turn.mode == 2 {
                     entriesView
                 } else {
-                    DisclosureGroup("AI들의 대화 보기 (\(turn.entries.count))") {
+                    DisclosureGroup(L("AI들의 대화 보기 (\(turn.entries.count))", "View AI discussion (\(turn.entries.count))")) {
                         entriesView
                     }
                     .font(.callout)
@@ -296,7 +297,7 @@ private struct TurnView: View {
         VStack(alignment: .leading, spacing: 12) {
             ForEach(turn.entries) { entry in
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(turn.mode == 2 ? entry.speaker : "\(entry.round == 1 ? "각자 답" : "검토 후") · \(entry.speaker)")
+                    Text(turn.mode == 2 ? entry.speaker : "\(entry.round == 1 ? L("각자 답", "Initial answer") : L("검토 후", "After review")) · \(entry.speaker)")
                         .font(.caption.bold())
                         .foregroundColor(entry.failed ? .red : .secondary)
                     Text(markdown(entry.text))
@@ -320,10 +321,12 @@ private struct TurnView: View {
 final class ChatWindow {
     private var window: NSWindow?
 
+    func updateLanguage() { window?.title = L("AI Illuminati 채팅", "AI Illuminati Chat") }
+
     func show(discussion: Discussion) {
         if window == nil {
-            let w = NSWindow(contentViewController: NSHostingController(rootView: ChatView(discussion: discussion)))
-            w.title = "AI Illuminati 채팅"
+            let w = NSWindow(contentViewController: NSHostingController(rootView: ChatView(discussion: discussion, model: discussion.model)))
+            w.title = L("AI Illuminati 채팅", "AI Illuminati Chat")
             w.styleMask = [.titled, .closable, .miniaturizable, .resizable]
             w.setContentSize(NSSize(width: 900, height: 700))
             w.isReleasedWhenClosed = false
@@ -377,7 +380,7 @@ private struct MultilineInput: NSViewRepresentable {
         editor.delegate = context.coordinator
         editor.onSend = onSend
         editor.string = text
-        editor.setAccessibilityLabel("질문 입력")
+        editor.setAccessibilityLabel(L("질문 입력", "Message"))
         scroll.documentView = editor
         return scroll
     }
@@ -386,6 +389,7 @@ private struct MultilineInput: NSViewRepresentable {
         context.coordinator.parent = self
         guard let editor = scroll.documentView as? ChatInputTextView else { return }
         editor.onSend = onSend
+        editor.setAccessibilityLabel(L("질문 입력", "Message"))
         if editor.string != text && !editor.hasMarkedText() { editor.string = text }
     }
 

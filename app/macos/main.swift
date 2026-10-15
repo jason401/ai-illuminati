@@ -23,6 +23,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSApp.mainMenu = keyboardMenu()
         model.onAccountsChange = { [weak self] in self?.refresh() }
         model.onDisplayChange = { [weak self] in self?.updateTitle() }
+        model.onLanguageChange = { [weak self] in
+            guard let self else { return }
+            NSApp.mainMenu = self.keyboardMenu()
+            self.settings.updateLanguage()
+            self.chat.updateLanguage()
+            self.discussion.objectWillChange.send()
+            self.updateTitle()
+            self.rebuildMenu()
+            let accounts = self.accounts
+            self.work.async {
+                for account in accounts {
+                    ClaudeUsage.forget(account)
+                    CodexUsage.forget(account)
+                }
+                GeminiUsage.forget()
+                DispatchQueue.main.async { self.refresh() }
+            }
+        }
         rebuildMenu()
         refresh()
         timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in self?.refresh() }
@@ -46,20 +64,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             for (name, selector, key, modifiers) in items {
                 let entry = NSMenuItem(title: name, action: selector, keyEquivalent: key)
                 entry.keyEquivalentModifierMask = modifiers
+                if selector == #selector(openSettings) || selector == #selector(openChat) { entry.target = self }
                 sub.addItem(entry)
             }
             holder.submenu = sub
             main.addItem(holder)
         }
-        submenu("AI Illuminati", [("숨기기", #selector(NSApplication.hide(_:)), "h", .command)])
-        submenu("편집", [("실행 취소", Selector(("undo:")), "z", .command),
-                       ("실행 복귀", Selector(("redo:")), "z", [.command, .shift]),
-                       ("오려두기", #selector(NSText.cut(_:)), "x", .command),
-                       ("복사하기", #selector(NSText.copy(_:)), "c", .command),
-                       ("붙여넣기", #selector(NSText.paste(_:)), "v", .command),
-                       ("모두 선택", #selector(NSText.selectAll(_:)), "a", .command)])
-        submenu("윈도우", [("닫기", #selector(NSWindow.performClose(_:)), "w", .command),
-                        ("최소화", #selector(NSWindow.performMiniaturize(_:)), "m", .command)])
+        submenu("AI Illuminati", [(L("설정…", "Settings…"), #selector(openSettings), ",", .command),
+                                  (L("채팅창 열기…", "Open Chat…"), #selector(openChat), "n", .command),
+                                  (L("숨기기", "Hide"), #selector(NSApplication.hide(_:)), "h", .command)])
+        submenu(L("편집", "Edit"), [(L("실행 취소", "Undo"), Selector(("undo:")), "z", .command),
+                       (L("실행 복귀", "Redo"), Selector(("redo:")), "z", [.command, .shift]),
+                       (L("오려두기", "Cut"), #selector(NSText.cut(_:)), "x", .command),
+                       (L("복사하기", "Copy"), #selector(NSText.copy(_:)), "c", .command),
+                       (L("붙여넣기", "Paste"), #selector(NSText.paste(_:)), "v", .command),
+                       (L("모두 선택", "Select All"), #selector(NSText.selectAll(_:)), "a", .command)])
+        submenu(L("윈도우", "Window"), [(L("닫기", "Close"), #selector(NSWindow.performClose(_:)), "w", .command),
+                        (L("최소화", "Minimize"), #selector(NSWindow.performMiniaturize(_:)), "m", .command)])
         return main
     }
 
@@ -92,7 +113,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard usages[i].account?.provider == .codex,
                   let email = usages[i].detail?.components(separatedBy: " · ").first, !email.isEmpty else { continue }
             if let other = seen[email] {
-                usages[i].note = "'\(other)'과 같은 계정이에요. 하나는 목록에서 빼 주세요"
+                usages[i].note = L("'\(other)'과 같은 계정이에요. 하나는 목록에서 빼 주세요", "Same account as “\(other)”. Remove one of the duplicate entries.")
             } else {
                 seen[email] = usages[i].name
             }
@@ -138,7 +159,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func rebuildMenu() {
         menu.removeAllItems()
-        if usages.isEmpty && !accounts.isEmpty { menu.addItem(info("확인 중…")) }
+        if usages.isEmpty && !accounts.isEmpty { menu.addItem(info(L("확인 중…", "Checking…"))) }
         // Current order and names from the list (readings may be a little older).
         let shown = accounts.compactMap { account in
             usages.first { $0.account?.id == account.id }.map { usage -> AIUsage in
@@ -150,11 +171,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let nameWidth = shown.map { label(for: $0).size(withAttributes: [.font: rowFont]).width }.max() ?? 0
         for usage in shown { menu.addItem(row(for: usage, nameWidth: nameWidth)) }
         if !shown.isEmpty { menu.addItem(.separator()) }
-        menu.addItem(action("채팅창 열기…", #selector(openChat), key: "n"))
-        menu.addItem(action("설정…", #selector(openSettings), key: ","))
-        menu.addItem(action("지금 새로고침", #selector(refresh), key: "r"))
+        menu.addItem(action(L("채팅창 열기…", "Open Chat…"), #selector(openChat), key: "n"))
+        menu.addItem(action(L("설정…", "Settings…"), #selector(openSettings), key: ","))
+        menu.addItem(action(L("지금 새로고침", "Refresh Now"), #selector(refresh), key: "r"))
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "종료", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        menu.addItem(NSMenuItem(title: L("종료", "Quit"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
     }
 
     private let rowFont = NSFont.systemFont(ofSize: 13, weight: .semibold)
@@ -185,7 +206,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             title.append(bar(left: left))
             title.append(NSAttributedString(string: String(format: "  %3d%%", Int(left.rounded())), attributes: [.font: barFont]))
         } else {
-            title.append(NSAttributedString(string: usage.needsLogin ? "로그인 필요" : "?", attributes: [
+            title.append(NSAttributedString(string: usage.needsLogin ? L("로그인 필요", "Sign-in required") : "?", attributes: [
                 .font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.secondaryLabelColor]))
         }
         title.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: title.length))
@@ -201,8 +222,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         sub.autoenablesItems = false   // lets the limit lines below show in full color
         if let detail = usage.detail, !detail.isEmpty { sub.addItem(info(detail)) }
         var limits: [(String, UsageWindow)] = []
-        if let w = usage.fiveHour { limits.append(("5시간", w)) }
-        if let w = usage.weekly { limits.append(("주간", w)) }
+        if let w = usage.fiveHour { limits.append((L("5시간", "5-hour"), w)) }
+        if let w = usage.weekly { limits.append((L("주간", "Weekly"), w)) }
         for (name, w) in limits {
             let text = NSMutableAttributedString(string: name + "\t", attributes: [.font: NSFont.systemFont(ofSize: 13)])
             text.append(bar(left: w.left()))
@@ -219,13 +240,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let note = usage.note { sub.addItem(info(note)) }
         sub.addItem(.separator())
         if let account = usage.account {
-            let title = account.provider == .gemini && !Login.agyInstalled ? "agy 설치하고 로그인…"
-                : usage.needsLogin ? "로그인…" : "다시 로그인…"
+            let title = account.provider == .gemini && !Login.agyInstalled ? L("agy 설치하고 로그인…", "Install agy and Sign In…")
+                : usage.needsLogin ? L("로그인…", "Sign In…") : L("다시 로그인…", "Sign In Again…")
             let entry = action(title, #selector(loginAccount(_:)))
             entry.representedObject = account.id
             sub.addItem(entry)
         }
-        sub.addItem(action("설정…", #selector(openSettings)))
+        sub.addItem(action(L("설정…", "Settings…"), #selector(openSettings)))
         return sub
     }
 

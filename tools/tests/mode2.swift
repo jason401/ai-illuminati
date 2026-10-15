@@ -48,7 +48,7 @@ expect(calls.map { $0.0 } == [.gemini, .codex, .claude, .claude], "next order no
 expect(calls[0].1.contains("첫 질문 원문") && calls[0].1.contains("발언-gemini-3"), "previous full dialogue lost")
 expect(calls[0].1.contains("두 번째 질문 원문"), "latest question missing")
 expect(discussion.configuration.order == [.gemini, .codex, .claude], "invalid schedule must preserve order")
-expect(discussion.current.turns.last?.orderNote?.contains("실패") == true, "invalid order must be visible")
+expect(discussion.current.turns.last?.orderNote?.contains(L("실패", "failed")) == true, "invalid order must be visible")
 let savedID = discussion.currentID
 let reloaded = Discussion(model: model)
 reloaded.open(savedID)
@@ -75,3 +75,22 @@ let legacy = Data(#"{"id":"00000000-0000-0000-0000-000000000001","title":"old","
 let old = try decoder.decode(Conversation.self, from: legacy)
 expect(old.configuration == nil && old.turns[0].mode == nil, "old chats must remain readable as mode1")
 print("PASS: sequential full context, next-turn order, invalid order fallback, failure continuation, persistence, legacy decoding")
+
+let originalLanguage = UserDefaults.standard.object(forKey: "appLanguage")
+defer {
+    if let originalLanguage { UserDefaults.standard.set(originalLanguage, forKey: "appLanguage") }
+    else { UserDefaults.standard.removeObject(forKey: "appLanguage") }
+}
+UserDefaults.standard.removeObject(forKey: "appLanguage")
+expect(AppLanguage.current == .english, "fresh install must default to English")
+expect(L("보내기", "Send") == "Send", "English default text")
+let languageModel = AppModel()
+languageModel.chatRules = AppModel.defaultChatRules
+languageModel.language = .korean
+expect(L("보내기", "Send") == "보내기", "Korean selection")
+expect(languageModel.chatRules == AppModel.rules(for: .korean), "default rules must follow language")
+expect(AppModel().language == .korean, "language must persist across model recreation")
+languageModel.chatRules = "My custom rules"
+languageModel.language = .english
+expect(languageModel.chatRules == "My custom rules", "custom rules must be preserved")
+print("PASS: default English, Korean switch, persistence, default rule localization, custom rule preservation")

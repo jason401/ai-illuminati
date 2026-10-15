@@ -99,7 +99,7 @@ struct ChatConfiguration: Codable {
 
 struct Conversation: Identifiable, Codable {
     var id = UUID()
-    var title = "새 대화"
+    var title = L("새 대화", "New chat")
     var createdAt = Date()
     var updatedAt = Date()
     var turns: [ChatTurn] = []
@@ -190,7 +190,7 @@ final class Discussion: ObservableObject {
         }
     }
 
-    private let model: AppModel
+    let model: AppModel
     private let work = DispatchQueue(label: "discussion")
 
     init(model: AppModel) {
@@ -221,18 +221,18 @@ final class Discussion: ObservableObject {
     func delete(_ id: UUID) {
         guard !running, let conversation = conversations.first(where: { $0.id == id }) else { return }
         let alert = NSAlert()
-        alert.messageText = "이 대화를 영구 삭제할까요?"
-        alert.informativeText = "‘\(conversation.title)’의 질문, 답변, 대화 요약을 저장된 파일과 함께 삭제합니다. 되돌릴 수 없어요."
-        alert.addButton(withTitle: "삭제")
-        alert.addButton(withTitle: "취소")
+        alert.messageText = L("이 대화를 영구 삭제할까요?", "Permanently delete this chat?")
+        alert.informativeText = L("‘\(conversation.title)’의 질문, 답변, 대화 요약을 저장된 파일과 함께 삭제합니다. 되돌릴 수 없어요.", "This deletes all messages, answers, and the summary in “\(conversation.title)”, including its saved file. This cannot be undone.")
+        alert.addButton(withTitle: L("삭제", "Delete"))
+        alert.addButton(withTitle: L("취소", "Cancel"))
         alert.buttons.first?.hasDestructiveAction = true
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         do {
             try ChatStore.delete(conversation)
         } catch {
             let failure = NSAlert()
-            failure.messageText = "대화를 삭제하지 못했어요"
-            failure.informativeText = "저장된 파일을 지우지 못해 대화를 그대로 유지했습니다.\n" + error.localizedDescription
+            failure.messageText = L("대화를 삭제하지 못했어요", "Could not delete chat")
+            failure.informativeText = L("저장된 파일을 지우지 못해 대화를 그대로 유지했습니다.\n", "The saved file could not be deleted. Your chat has been kept.\n") + error.localizedDescription
             failure.runModal()
             return
         }
@@ -254,7 +254,7 @@ final class Discussion: ObservableObject {
         let config = configuration
         turn.mode = config.mode
         guard team.count > 0 else {
-            turn.error = "답할 수 있는 AI가 없어요. 참여 AI를 켜고, 설정에서 로그인됐는지 확인해 주세요."
+            turn.error = L("답할 수 있는 AI가 없어요. 참여 AI를 켜고, 설정에서 로그인됐는지 확인해 주세요.", "No AI is available. Enable a participant and check its sign-in in Settings.")
             change(id) { $0.turns.append(turn) }
             return
         }
@@ -355,26 +355,26 @@ final class Discussion: ObservableObject {
         let head = (rules.isEmpty ? "" : "[규칙 — 반드시 지킬 것]\n\(rules)\n\n")
             + (summary.isEmpty ? "" : "[지금까지의 대화 요약]\n\(summary)\n\n")
 
-        changeTurn(id, index) { $0.status = "1/3 각자 답하는 중… (\(names))" }
+        changeTurn(id, index) { $0.status = L("1/3 각자 답하는 중… (\(names))", "1/3 Getting initial answers… (\(names))") }
         let first = askAll(team, round: 1, prompt: { account in
             """
             \(head)당신은 \(self.label(account))입니다. 여러 AI(\(names))가 함께 사용자의 질문에 답하는 토론의 1단계입니다.
-            다른 AI를 신경 쓰지 말고 당신의 가장 좋은 답을 한국어로 쓰세요. 파일을 만들거나 명령을 실행하지 마세요.
+            다른 AI를 신경 쓰지 말고 당신의 가장 좋은 답을 사용자의 이번 질문 언어로 쓰세요. 사용자가 특정 언어를 요청하면 그 요청을 따르세요. 파일을 만들거나 명령을 실행하지 마세요.
 
             [질문]
             \(question)
             """
         }, id: id, index: index)
-        guard !first.isEmpty else { return finish(id, index, error: "모든 AI가 답하지 못했어요.") }
+        guard !first.isEmpty else { return finish(id, index, error: L("모든 AI가 답하지 못했어요.", "None of the AIs could respond.")) }
 
         var current = first
         if first.count > 1 {
-            changeTurn(id, index) { $0.status = "2/3 서로 답을 검토하는 중…" }
+            changeTurn(id, index) { $0.status = L("2/3 서로 답을 검토하는 중…", "2/3 Reviewing each other's answers…") }
             let answersText = first.map { "### \(label($0.0))\n\($0.1)" }.joined(separator: "\n\n")
             let second = askAll(first.map(\.0), round: 2, prompt: { account in
                 """
                 \(head)당신은 \(self.label(account))입니다. 토론의 2단계입니다. 아래는 같은 질문에 대한 1단계 답들입니다(당신의 답 포함).
-                다른 답과 비교해 틀린 점, 빠진 점만 짧게 짚고, 그걸 반영해 고친 당신의 답을 한국어로 쓰세요.
+                다른 답과 비교해 틀린 점, 빠진 점만 짧게 짚고, 그걸 반영해 고친 당신의 답을 사용자의 이번 질문 언어로 쓰세요. 사용자가 특정 언어를 요청하면 그 요청을 따르세요.
                 형식: "검토:" 다음에 검토, "고친 답:" 다음에 답. 고친 답은 당신의 1단계 답보다 길게 쓰지 마세요.
 
                 [질문]
@@ -394,10 +394,10 @@ final class Discussion: ObservableObject {
         if current.count == 1 {
             final = current[0].1
         } else {
-            changeTurn(id, index) { $0.status = "3/3 \(self.label(writer))이(가) 최종 답을 정리하는 중…" }
+            changeTurn(id, index) { $0.status = L("3/3 \(self.label(writer))이(가) 최종 답을 정리하는 중…", "3/3 \(self.label(writer)) is writing the final answer…") }
             let finalPrompt = """
             \(head)당신은 \(label(writer))이고, 여러 AI의 토론을 정리하는 역할입니다. 아래는 각 AI가 서로 검토한 뒤 고친 답입니다.
-            이를 종합해 사용자에게 줄 하나의 최종 답을 한국어로 쓰세요. 정확한 내용을 우선하고, 의견이 갈린 부분이 있으면 한 줄로 밝히세요.
+            이를 종합해 사용자에게 줄 하나의 최종 답을 사용자의 이번 질문 언어로 쓰세요. 사용자가 특정 언어를 요청하면 그 요청을 따르세요. 정확한 내용을 우선하고, 의견이 갈린 부분이 있으면 한 줄로 밝히세요.
             토론 과정이나 "AI들이 말하길" 같은 설명 없이 답만 쓰세요.
 
             [질문]
@@ -411,19 +411,19 @@ final class Discussion: ObservableObject {
                 final = text
             case .failure:
                 final = current.first { $0.0.id == writer.id }!.1
-                finalBy += " (정리 실패, 고친 답 그대로)"
+                finalBy += L(" (정리 실패, 고친 답 그대로)", " (synthesis failed; showing revised answer)")
             }
         }
         changeTurn(id, index, save: true) { t in
             t.final = final
             t.finalBy = finalBy
-            t.status = "대화 요약 중…"
+            t.status = L("대화 요약 중…", "Updating conversation summary…")
         }
 
         // Short summary of the whole chat so far, for the next question.
         let summaryPrompt = """
         아래 [이전 요약]에 이번 [질문]과 [최종 답]을 합쳐, 이 대화의 요약을 새로 쓰세요.
-        다음 질문 때 다른 AI들이 맥락으로 읽을 거예요. 300자 이내로, 결론과 사용자의 관심·선호만 남기세요. 요약만 쓰세요.
+        다음 질문 때 다른 AI들이 맥락으로 읽을 거예요. 300자 이내로, 결론과 사용자의 관심·선호만 남기세요. 사용자의 이번 질문 언어로 요약만 쓰세요.
 
         [이전 요약]
         \(summary.isEmpty ? "(없음)" : summary)
@@ -471,14 +471,14 @@ final class Discussion: ObservableObject {
         transcript += "\n\n[사용자]\n" + question
         var successful: [Account] = []
         for (position, account) in team.enumerated() {
-            changeTurn(id, index) { $0.status = "\(position + 1)/\(team.count) \(self.label(account)) 발언 중…" }
+            changeTurn(id, index) { $0.status = L("\(position + 1)/\(team.count) \(self.label(account)) 발언 중…", "\(position + 1)/\(team.count) \(self.label(account)) is speaking…") }
             let prompt = """
             [공통 규칙]
             \(rules)
             [모드2 발언 규칙 — 답 길이는 이 규칙 우선]
             당신은 \(label(account))입니다. 아래는 이 방의 전체 대화 원문입니다.
             마지막 사용자 질문과 앞선 AI의 발언을 읽고 자연스럽게 이어 말하세요.
-            한국어 1~2문장, 200자 이내로 말하세요. 인사나 단순 동의, 앞말 반복 없이 새 관점, 반론, 보충 중 하나를 말하세요.
+            사용자의 이번 질문 언어로 1~2문장, 200자 이내로 말하세요. 사용자가 특정 언어를 요청하면 그 요청을 따르세요. 인사나 단순 동의, 앞말 반복 없이 새 관점, 반론, 보충 중 하나를 말하세요.
             별도 최종 정리나 요약은 하지 마세요. 파일을 만들거나 명령을 실행하지 마세요.
 
             [전체 대화 원문]
@@ -495,10 +495,10 @@ final class Discussion: ObservableObject {
             }
             changeTurn(id, index, save: true) { $0.entries.append(entry) }
         }
-        guard !successful.isEmpty else { return finish(id, index, error: "모든 AI가 답하지 못했어요.") }
+        guard !successful.isEmpty else { return finish(id, index, error: L("모든 AI가 답하지 못했어요.", "None of the AIs could respond.")) }
         // Only the selected representative schedules. If unavailable, retain the user's order.
         if let moderator = successful.first(where: { $0.provider == leader }), team.count > 1 {
-            changeTurn(id, index) { $0.status = "대표 \(self.label(moderator))이(가) 다음 순서를 정하는 중…" }
+            changeTurn(id, index) { $0.status = L("대표 \(self.label(moderator))이(가) 다음 순서를 정하는 중…", "Moderator \(self.label(moderator)) is setting the next order…") }
             let schedulePrompt = """
             당신은 대화 진행자입니다. 전체 대화를 읽고 다음 사용자 질문에 답할 AI들의 발언 순서를 정하세요.
             참여 AI: \(team.map { $0.provider.rawValue }.joined(separator: ","))
@@ -515,13 +515,13 @@ final class Discussion: ObservableObject {
                     var config = c.configuration ?? ChatConfiguration()
                     config.order = order + config.order.filter { !order.contains($0) }
                     c.configuration = config
-                    c.turns[index].orderNote = "다음 순서: " + order.map(\.title).joined(separator: " → ")
+                    c.turns[index].orderNote = L("다음 순서: ", "Next order: ") + order.map(\.title).joined(separator: " → ")
                 }
             } else {
-                changeTurn(id, index, save: true) { $0.orderNote = "대표의 순서 지정에 실패해 기존 순서를 유지합니다." }
+                changeTurn(id, index, save: true) { $0.orderNote = L("대표의 순서 지정에 실패해 기존 순서를 유지합니다.", "Scheduling failed. Keeping the current order.") }
             }
         } else if team.count > 1 {
-            changeTurn(id, index, save: true) { $0.orderNote = "대표가 발언하지 못해 기존 순서를 유지합니다." }
+            changeTurn(id, index, save: true) { $0.orderNote = L("대표가 발언하지 못해 기존 순서를 유지합니다.", "The moderator was unavailable. Keeping the current order.") }
         }
         changeTurn(id, index, save: true) { $0.status = "" }
         finish(id, index)
@@ -542,9 +542,9 @@ final class Discussion: ObservableObject {
 
     private static func describe(_ failure: Answerer.Failure) -> String {
         switch failure {
-        case .missingTool: return "프로그램을 찾지 못했어요."
-        case .timedOut: return "시간 안에 답하지 못했어요."
-        case .failed(let why): return "답하지 못했어요." + (why.isEmpty ? "" : " (\(why))")
+        case .missingTool: return L("프로그램을 찾지 못했어요.", "CLI not found.")
+        case .timedOut: return L("시간 안에 답하지 못했어요.", "The response timed out.")
+        case .failed(let why): return L("답하지 못했어요.", "Could not respond.") + (why.isEmpty ? "" : " (\(why))")
         }
     }
 }

@@ -59,15 +59,15 @@ enum CodexUsage {
         var result = AIUsage(name: account.name, account: account)
         guard FileManager.default.fileExists(atPath: account.codexHome + "/auth.json") else {
             result.needsLogin = true
-            result.note = "로그인이 필요해요"
+            result.note = L("로그인이 필요해요", "Sign-in required")
             return result
         }
         guard let binary else {
-            result.note = "Codex 프로그램을 찾지 못했어요 (ChatGPT 앱이 필요해요)"
+            result.note = L("Codex 프로그램을 찾지 못했어요 (ChatGPT 앱이 필요해요)", "Codex CLI not found (ChatGPT app required)")
             return result
         }
         guard let replies = askAppServer(binary: binary, account: account) else {
-            result.note = "Codex에서 답이 없어요"
+            result.note = L("Codex에서 답이 없어요", "No response from Codex")
             return result
         }
         if let accountInfo = replies[3] as? [String: Any] {
@@ -76,7 +76,7 @@ enum CodexUsage {
                     .compactMap { $0 }.joined(separator: " · ")
             } else {
                 result.needsLogin = true
-                result.note = "로그인이 풀렸어요"
+                result.note = L("로그인이 풀렸어요", "Signed out")
                 return result
             }
         }
@@ -85,7 +85,7 @@ enum CodexUsage {
             result.weekly = window(limits["secondary"])
             result.checkedAt = Date()
         }
-        if result.fiveHour == nil && result.weekly == nil { result.note = "사용량을 가져오지 못했어요" }
+        if result.fiveHour == nil && result.weekly == nil { result.note = L("사용량을 가져오지 못했어요", "Could not retrieve usage") }
         cache[account.id] = (result, Date())
         return result
     }
@@ -176,11 +176,11 @@ enum ClaudeUsage {
         var result = AIUsage(name: account.name, account: account)
         if let (cached, at) = cache[account.id], Date().timeIntervalSince(at) < 300 { return cached }
         if let wait = waitUntil[account.id], wait > Date() {
-            return lastGood(account, note: "확인 제한 중이라 \(clock(wait))에 다시 확인해요")
+            return lastGood(account, note: L("확인 제한 중이라 \(clock(wait))에 다시 확인해요", "Rate limited. Checking again at \(clock(wait))"))
         }
         guard loginExists(account) else {
             result.needsLogin = true
-            result.note = "로그인이 필요해요"
+            result.note = L("로그인이 필요해요", "Sign-in required")
             log(account, "로그인 정보 없음")
             return result
         }
@@ -192,7 +192,7 @@ enum ClaudeUsage {
         }
         guard let token else {
             log(account, "로그인 만료 (갱신 실패)")
-            return lastGood(account, note: "로그인이 만료됐어요 (다시 로그인하면 돌아와요)")
+            return lastGood(account, note: L("로그인이 만료됐어요 (다시 로그인하면 돌아와요)", "Sign-in expired. Sign in again."))
         }
         var request = URLRequest(url: URL(string: "https://api.anthropic.com/api/oauth/usage")!)
         request.timeoutInterval = 15
@@ -200,7 +200,7 @@ enum ClaudeUsage {
         request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
         guard let (data, status, retryAfter) = syncFetch(request) else {
             log(account, "연결 실패")
-            return lastGood(account, note: "사용량을 가져오지 못했어요")
+            return lastGood(account, note: L("사용량을 가져오지 못했어요", "Could not retrieve usage"))
         }
         if status == 429 {
             let next = min(max((backoff[account.id] ?? 300) * 2, 600), 3600)
@@ -208,11 +208,11 @@ enum ClaudeUsage {
             let wait = max(retryAfter ?? 0, next)
             waitUntil[account.id] = Date().addingTimeInterval(wait)
             log(account, "429 너무 자주 요청 (Retry-After: \(retryAfter.map { "\(Int($0))s" } ?? "없음")) → \(Int(wait / 60))분 대기")
-            return lastGood(account, note: "확인 제한 중이라 \(clock(waitUntil[account.id]!))에 다시 확인해요")
+            return lastGood(account, note: L("확인 제한 중이라 \(clock(waitUntil[account.id]!))에 다시 확인해요", "Rate limited. Checking again at \(clock(waitUntil[account.id]!))"))
         }
         guard status == 200, let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             log(account, "응답 오류 \(status)")
-            return lastGood(account, note: "사용량을 가져오지 못했어요 (\(status))")
+            return lastGood(account, note: L("사용량을 가져오지 못했어요 (\(status))", "Could not retrieve usage (\(status))"))
         }
         backoff[account.id] = nil
         // Keep the last good reply (usage numbers only, no login data): shown while waiting.
@@ -235,14 +235,14 @@ enum ClaudeUsage {
         } else {
             result = AIUsage(name: account.name, account: account)
         }
-        let age = result.checkedAt.map { "\(clock($0)) 기준 · " } ?? ""
+        let age = result.checkedAt.map { L("\(clock($0)) 기준 · ", "As of \(clock($0)) · ") } ?? ""
         result.note = age + note
         return result
     }
 
     private static func clock(_ date: Date) -> String {
         let f = DateFormatter()
-        f.locale = Locale(identifier: "ko_KR")
+        f.locale = AppLanguage.current.locale
         f.dateFormat = "a h:mm"
         return f.string(from: date)
     }
@@ -270,11 +270,11 @@ enum ClaudeUsage {
                 } else if kind == "weekly_all" {
                     result.weekly = w
                 } else if limit["group"] as? String == "weekly" {
-                    result.extras.append("주간(\(scopeName ?? kind)): " + describeLeft(w))
+                    result.extras.append(L("주간(\(scopeName ?? kind)): ", "Weekly (\(scopeName ?? kind)): ") + describeLeft(w))
                 }
             }
         }
-        if result.fiveHour == nil && result.weekly == nil { result.note = "사용량 형식을 읽지 못했어요" }
+        if result.fiveHour == nil && result.weekly == nil { result.note = L("사용량 형식을 읽지 못했어요", "Unrecognized usage format") }
         return result
     }
 
@@ -359,6 +359,7 @@ enum ClaudeUsage {
 // The "Gemini Models" lines are this row's gauge; other model groups are listed underneath.
 // The login email comes from agy's logs ("applyAuthResult: email=..." each start).
 enum GeminiUsage {
+    static func forget() { cache = nil }
     private static var cache: (AIUsage, Date)?
 
     static func read(_ account: Account) -> AIUsage {
@@ -366,17 +367,17 @@ enum GeminiUsage {
         var result = AIUsage(name: account.name, account: account)
         guard Login.agyInstalled else {
             result.needsLogin = true
-            result.note = "Antigravity CLI(agy)가 설치돼 있지 않아요"
+            result.note = L("Antigravity CLI(agy)가 설치돼 있지 않아요", "Antigravity CLI (agy) is not installed")
             return result
         }
         guard let email = loggedInEmail() else {
             result.needsLogin = true
-            result.note = "로그인이 필요해요"
+            result.note = L("로그인이 필요해요", "Sign-in required")
             return result
         }
         result.detail = email
         guard let output = runUsage() else {
-            result.note = "agy에서 사용량을 가져오지 못했어요"
+            result.note = L("agy에서 사용량을 가져오지 못했어요", "Could not retrieve usage from agy")
             return result
         }
         for line in output.split(separator: "\n") {
@@ -389,11 +390,11 @@ enum GeminiUsage {
                 if weekly { result.weekly = window } else { result.fiveHour = window }
             } else {
                 let group = cols[0].replacingOccurrences(of: " and ", with: "·")
-                result.extras.append("\(group) \(weekly ? "주간" : "5시간"): " + describeLeft(window))
+                result.extras.append("\(group) \(weekly ? L("주간", "Weekly") : L("5시간", "5-hour")): " + describeLeft(window))
             }
         }
         if result.fiveHour == nil && result.weekly == nil {
-            result.note = "사용량 형식을 읽지 못했어요"
+            result.note = L("사용량 형식을 읽지 못했어요", "Unrecognized usage format")
             return result
         }
         result.checkedAt = Date()
@@ -451,14 +452,14 @@ enum GeminiUsage {
 
 // "62% 남음 · 10/20 (화) 오전 8:59 리셋"
 func describeLeft(_ w: UsageWindow) -> String {
-    var text = "\(Int(w.left().rounded()))% 남음"
+    var text = L("\(Int(w.left().rounded()))% 남음", "\(Int(w.left().rounded()))% left")
     if let r = w.resetsAt {
         let f = DateFormatter()
-        f.locale = Locale(identifier: "ko_KR")
-        f.dateFormat = Calendar.current.isDateInToday(r) ? "a h:mm" : "M/d (E) a h:mm"
-        text += r <= Date() ? " · 이미 리셋됨" : " · \(f.string(from: r)) 리셋"
+        f.locale = AppLanguage.current.locale
+        f.setLocalizedDateFormatFromTemplate(Calendar.current.isDateInToday(r) ? "jm" : "MdEEEjm")
+        text += r <= Date() ? L(" · 이미 리셋됨", " · Already reset") : L(" · \(f.string(from: r)) 리셋", " · Resets \(f.string(from: r))")
     } else if w.usedPercent == 0 {
-        text += " · 아직 안 씀"
+        text += L(" · 아직 안 씀", " · Not used yet")
     }
     return text
 }

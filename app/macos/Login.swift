@@ -18,60 +18,60 @@ enum Login {
     }
 
     private static func claude(_ account: Account) {
-        openInTerminal(name: "로그인 - \(account.name)", exports: exports(account), script: """
-        echo "Claude 로그인: \(account.name)"
+        openInTerminal(name: L("로그인 - \(account.name)", "Sign in - \(account.name)"), exports: exports(account), script: """
+        echo "\(L("Claude 로그인: \(account.name)", "Claude sign-in: \(account.name)"))"
         echo
         if [ ! -x "$HOME/.local/bin/claude" ]; then
-          echo "터미널용 Claude Code가 없어요. 공식 설치 명령으로 설치합니다:"
+          echo "\(L("터미널용 Claude Code가 없어요. 공식 설치 명령으로 설치합니다:", "Claude Code is not installed. Install it using the official command:"))"
           echo "  curl -fsSL https://claude.ai/install.sh | bash"
-          read "?설치할까요? (y/n) " a
+          read "?\(L("설치할까요? (y/n) ", "Install? (y/n) "))" a
           [ "$a" = y ] || exit 0
-          curl -fsSL https://claude.ai/install.sh | bash || { echo "설치 실패"; read; exit 1; }
+          curl -fsSL https://claude.ai/install.sh | bash || { echo "\(L("설치 실패", "Installation failed"))"; read; exit 1; }
           echo
         fi
-        echo "브라우저가 열리면 '\(account.name)'으로 쓸 Claude 계정으로 로그인하세요."
-        echo "다른 계정으로 로그인돼 있으면 브라우저에서 계정을 바꾼 뒤 허용을 누르세요."
+        echo "\(L("브라우저가 열리면 '\(account.name)'으로 쓸 Claude 계정으로 로그인하세요.", "When the browser opens, sign in to the Claude account for '\(account.name)'."))"
+        echo "\(L("다른 계정으로 로그인돼 있으면 브라우저에서 계정을 바꾼 뒤 허용을 누르세요.", "If a different account is signed in, switch accounts in the browser before allowing access."))"
         echo
         "$HOME/.local/bin/claude" auth login --claudeai
         echo
-        read "?끝났어요. 엔터를 누르면 창이 닫혀요."
+        read "?\(L("끝났어요. 엔터를 누르면 창이 닫혀요.", "Done. Press Enter to close this window."))"
         """)
     }
 
     private static func codex(_ account: Account) {
         guard let binary = CodexUsage.binary else {
-            openInTerminal(name: "로그인 - \(account.name)", exports: "", script: """
-            echo "Codex 프로그램을 찾지 못했어요. ChatGPT 앱(Codex 포함)을 설치한 뒤 다시 눌러 주세요."
+            openInTerminal(name: L("로그인 - \(account.name)", "Sign in - \(account.name)"), exports: "", script: """
+            echo "\(L("Codex 프로그램을 찾지 못했어요. ChatGPT 앱(Codex 포함)을 설치한 뒤 다시 눌러 주세요.", "Codex was not found. Install the ChatGPT app with Codex and try again."))"
             read
             """)
             return
         }
-        openInTerminal(name: "로그인 - \(account.name)", exports: exports(account), script: """
-        echo "ChatGPT(Codex) 로그인: \(account.name)"
+        openInTerminal(name: L("로그인 - \(account.name)", "Sign in - \(account.name)"), exports: exports(account), script: """
+        echo "\(L("ChatGPT(Codex) 로그인: \(account.name)", "ChatGPT (Codex) sign-in: \(account.name)"))"
         echo
-        echo "브라우저가 열리면 '\(account.name)'으로 쓸 ChatGPT 계정으로 로그인하세요."
-        echo "주의: 이미 추가된 다른 항목과 같은 ChatGPT 계정으로 로그인하면 둘 다 로그인이 풀릴 수 있어요."
+        echo "\(L("브라우저가 열리면 '\(account.name)'으로 쓸 ChatGPT 계정으로 로그인하세요.", "When the browser opens, sign in to the ChatGPT account for '\(account.name)'."))"
+        echo "\(L("주의: 이미 추가된 다른 항목과 같은 ChatGPT 계정으로 로그인하면 둘 다 로그인이 풀릴 수 있어요.", "Warning: adding the same ChatGPT account twice can sign out both entries."))"
         echo
         \(quote(binary)) login
         echo
-        read "?끝났어요. 엔터를 누르면 창이 닫혀요."
+        read "?\(L("끝났어요. 엔터를 누르면 창이 닫혀요.", "Done. Press Enter to close this window."))"
         """)
     }
 
     static func gemini() {
-        openInTerminal(name: "Gemini 로그인", exports: "", script: """
-        echo "Gemini 로그인 (AI Illuminati)"
+        openInTerminal(name: L("Gemini 로그인", "Gemini sign-in"), exports: "", script: """
+        echo "\(L("Gemini 로그인 (AI Illuminati)", "Gemini sign-in (AI Illuminati)"))"
         echo
         if [ ! -x "$HOME/.local/bin/agy" ]; then
-          echo "Antigravity CLI(agy)가 없어요. 공식 설치 명령으로 설치합니다:"
+          echo "\(L("Antigravity CLI(agy)가 없어요. 공식 설치 명령으로 설치합니다:", "Antigravity CLI (agy) is not installed. Install it using the official command:"))"
           echo "  curl -fsSL https://antigravity.google/cli/install.sh | bash"
-          read "?설치할까요? (y/n) " a
+          read "?\(L("설치할까요? (y/n) ", "Install? (y/n) "))" a
           [ "$a" = y ] || exit 0
-          curl -fsSL https://antigravity.google/cli/install.sh | bash || { echo "설치 실패"; read; exit 1; }
+          curl -fsSL https://antigravity.google/cli/install.sh | bash || { echo "\(L("설치 실패", "Installation failed"))"; read; exit 1; }
           echo
         fi
-        echo "곧 agy가 열려요. 로그인 방법을 물으면 'Google OAuth'(개인 계정)를 고르고,"
-        echo "브라우저에서 로그인하세요. 코드를 보여주면 터미널에 붙여 넣으면 돼요."
+        echo "\(L("곧 agy가 열려요. 로그인 방법을 물으면 'Google OAuth'(개인 계정)를 고르고,", "agy will open. Choose 'Google OAuth' (personal account) when asked,"))"
+        echo "\(L("브라우저에서 로그인하세요. 코드를 보여주면 터미널에 붙여 넣으면 돼요.", "then sign in in the browser. If shown a code, paste it into Terminal."))"
         echo
         "$HOME/.local/bin/agy"
         """)

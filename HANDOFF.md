@@ -70,7 +70,7 @@
 - 서명: AI Face가 만든 "AI Face Local Signing" 인증서 재사용(키체인 "항상 허용"이 빌드 후에도 유지되게). 없으면 임시 서명.
 - 화면 없이 시험하는 법: 필요한 파일 + 시험용 `main.swift`를 같이 컴파일해 실행.
   ```bash
-  xcrun swiftc -o /tmp/disc app/macos/{Usage,Accounts,Login,Settings,Discussion}.swift /path/to/test/main.swift
+  xcrun swiftc -o /tmp/disc app/macos/{Language,Usage,Accounts,Login,Settings,Discussion}.swift /path/to/test/main.swift
   ```
   (시험 `main.swift`에서 `AppModel()`, `Discussion(model:)`을 만들고 `draft` 넣고 `send()`, `running`이 끝날 때까지 `RunLoop.main.run`.) 실제 질문을 보내면 각 계정 사용량이 조금 쓰이고, 대화가 `chats/`에 저장됨.
 
@@ -127,3 +127,13 @@
 ### 모드2 순서 드래그
 - 화살표 대신 AI 이름 옆 손잡이를 끌어 재정렬. 체크박스는 참여 선택으로 유지하고, 대표의 다음 순서 지정과 방별 저장은 유지.
 - 빌드 통과. 실제 UI에서 손잡이를 잡아 Gemini를 맨 뒤에서 맨 앞으로 드래그해 Gemini → ChatGPT → Claude 순서로 바뀌는 것 확인.
+
+## English 기본 UI 및 한국어 전환 (2026-10-14)
+- Language.swift: AppLanguage(en/ko), L(한국어, 영어), 저장된 순서 안내의 표시 언어 변환. 언어 미설정 시 English.
+- Settings → Language에서 English/한국어 버튼으로 즉시 전환. UserDefaults appLanguage 저장. ⌘, 설정 열기 추가.
+- 열린 설정·채팅창, 창 제목, 편집·메뉴바 메뉴, 삭제 확인, 사용량 안내·날짜, 로그인 터미널 안내를 양쪽 언어로 제공. 언어 전환 시 사용량 캐시를 비우고 다시 조회.
+- 기존 사용자 대화·계정 이름·사용자 지정 규칙은 보존. 기본 채팅 규칙만 언어 전환에 맞춰 표시. 예전 기본 규칙은 English 기본값으로 인식해 초기 표시.
+- 모드1/모드2 프롬프트에서 한국어 강제 지시 제거. 이번 사용자 질문의 언어를 따르고, 명시적인 답변 언어 요청이 있으면 우선.
+- 빌드와 기존 모드2 회귀 시험 및 기본 영어/한국어 선택/설정 재생성 후 유지/사용자 규칙 보존 시험 통과(tools/tests/mode2.swift, run_mode2.sh).
+- 실제 UI에서 영어 기본 화면, 한국어로 즉시 전환, 채팅창·설정창·제목·메뉴 반영, 재실행 후 한국어 유지, English 재전환 확인.
+- 최종 실제 응답 시험: 같은 모드2 시험방에서 Claude가 영어 질문에는 영어, 바로 다음 한국어 질문에는 한국어로 답하는 것 확인. UI 언어는 English로 복원.

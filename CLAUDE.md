@@ -33,3 +33,5 @@ Bigger plan (AI agents talking to each other, dashboards): `~/Downloads/ai-offic
 - `zsh tools/build_app.sh < /dev/null` (same as double-clicking `Build AI Illuminati.command`).
 - Signs with "AI Face Local Signing" if present (keeps Keychain "Always Allow" across builds), else ad-hoc.
 - Commit and push to `origin main` when a change is done. End commit messages with the Co-Authored-By line.
+
+See also `HANDOFF.md` (state and open items as of 2026-10-14) and `AGENTS.md` (same notes, for Codex).

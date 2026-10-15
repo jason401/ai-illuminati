@@ -33,13 +33,22 @@ struct DebateDecision: Decodable {
     var reason: String?
 
     static func parse(_ text: String, team: [Account]) -> DebateDecision? {
-        let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: "```json", with: "").replacingOccurrences(of: "```", with: "")
-        guard let data = cleaned.data(using: .utf8), let decision = try? JSONDecoder().decode(Self.self, from: data) else { return nil }
-        if decision.action == "finish", let reason = decision.reason, !reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, reason.count <= 500 { return decision }
+        // Take the JSON object even if the moderator wrapped it in a code fence or a sentence.
+        guard let start = text.firstIndex(of: "{"), let end = text.lastIndex(of: "}"), start < end,
+              let data = String(text[start...end]).data(using: .utf8),
+              var decision = try? JSONDecoder().decode(Self.self, from: data) else { return nil }
+        // Long notes are cut, not rejected: a wordy moderator should not end the debate.
+        decision.focus = decision.focus.map(Self.clip)
+        decision.reason = decision.reason.map(Self.clip)
+        if decision.action == "finish", let reason = decision.reason, !reason.isEmpty { return decision }
         if decision.action == "speak", let speaker = decision.speaker, team.contains(where: { $0.provider == speaker }),
-           let focus = decision.focus, !focus.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, focus.count <= 500 { return decision }
+           let focus = decision.focus, !focus.isEmpty { return decision }
         return nil
+    }
+
+    static func clip(_ text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.count > 600 ? String(trimmed.prefix(599)) + "…" : trimmed
     }
 }
 
@@ -91,6 +100,7 @@ extension Discussion {
               Add a new argument, evidence, objection, or counter-rebuttal; do not merely agree or repeat. No separate summary.
               """)
         Do not use tools or execute commands.
+        \(Self.headlineRule)
         [Moderator focus]
         \(focus.isEmpty ? "Give your initial contribution." : focus)
         [Complete transcript]
@@ -129,7 +139,7 @@ extension Discussion {
                 if !cancellation.isCancelled {
                     let entry: ChatTurn.Entry
                     switch result {
-                    case .success(let text): entry = .init(round: 1, speaker: self.label(account), text: text, failed: false)
+                    case .success(let text): entry = .reply(round: 1, speaker: self.label(account), text: text)
                     case .failure(let failure): entry = .init(round: 1, speaker: self.label(account), text: Self.describe(failure), failed: true)
                     }
                     self.changeTurn(id, index, save: true) { $0.entries.append(entry) }
@@ -144,7 +154,7 @@ extension Discussion {
                 used[account.provider, default: 0] += 1
                 if case .success(let text) = openings[account.provider] {
                     successful.insert(account.provider)
-                    transcript += "\n\n[\(label(account))]\n" + text
+                    transcript += "\n\n[\(label(account))]\n" + ChatTurn.Entry.reply(round: 1, speaker: "", text: text).text
                 }
             }
             if successful.isEmpty { reason = L("모든 AI가 응답하지 못해 종료했습니다.", "No AI could respond. Debate ended."); count = limit }
@@ -165,7 +175,7 @@ extension Discussion {
             Read the complete transcript and find the most important unresolved disagreement, an unanswered criticism, or a claim without evidence.
             Right of reply: if an AI's point was just challenged, prefer that AI as the next speaker. Everyone should speak more than once.
             If the latest user message asks for a particular AI to speak, give that AI the turn.
-            The focus must name the specific claim to address and whom to answer.
+            The focus must name the specific claim to address and whom to answer, in one or two sentences (under 250 characters).
             Participants: \(team.map { $0.provider.rawValue }.joined(separator: ","))
             Each AI may speak at most \(perAI) times. Turns used so far: \(counts).
             Only these AIs have turns left: \(available.map { $0.provider.rawValue }.joined(separator: ",")).
@@ -180,7 +190,7 @@ extension Discussion {
             [Complete transcript]
             \(transcript)
             """
-            let result = requestDebate(moderator, prompt, 120, cancellation)
+            let result = requestDebate(moderator, prompt, 180, cancellation)
             if cancellation.isCancelled { break }
             guard case .success(let text) = result, let decision = DebateDecision.parse(text, team: team) else {
                 reason = L("대표의 진행 판단을 받지 못해 토론을 종료했습니다.", "Moderator decision failed. Debate ended."); break
@@ -211,9 +221,9 @@ extension Discussion {
             switch speech {
             case .success(let text):
                 successful.insert(account.provider)
-                entry = .init(round: 1, speaker: label(account), text: text, failed: false)
+                entry = .reply(round: 1, speaker: label(account), text: text)
                 transcript += "\n\n[Moderator focus]\n" + focus
-                transcript += "\n\n[\(label(account))]\n" + text
+                transcript += "\n\n[\(label(account))]\n" + entry.text
             case .failure(let failure):
                 entry = .init(round: 1, speaker: label(account), text: Self.describe(failure), failed: true)
             }

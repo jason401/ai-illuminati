@@ -172,7 +172,7 @@ struct ChatView: View {
                             if index > 0, (turn.mode ?? 1) != (conversation.turns[index - 1].mode ?? 1) {
                                 ModeChangeMarker(mode: turn.mode ?? 1)
                             }
-                            TurnView(turn: turn).id(turn.id)
+                            TurnView(turn: turn, discussion: discussion).id(turn.id)
                         }
                     }
                     .padding(16)
@@ -399,6 +399,7 @@ private struct ModeChangeMarker: View {
 
 private struct TurnView: View {
     let turn: ChatTurn
+    @ObservedObject var discussion: Discussion
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -437,7 +438,7 @@ private struct TurnView: View {
                 Text(L("AI 발언 \(turn.entries.count)/\(turn.maxTurns ?? 9)", "AI turns \(turn.entries.count)/\(turn.maxTurns ?? 9)")
                      + (turn.turnsPerAI.map { L(" (AI마다 \($0)회)", " (\($0) each)") } ?? ""))
                     .font(.caption).foregroundColor(.secondary)
-                if let focus = turn.debateFocus { Text(L("다음 논점: ", "Next focus: ") + focus).font(.callout) }
+                if let focus = turn.debateFocus { Text(L("다음 논점: ", "Next focus: ") + focus).font(.callout).lineLimit(2).foregroundColor(.secondary) }
                 if let reason = turn.endReason { Text(L("종료 이유: ", "End reason: ") + reason).font(.callout).foregroundColor(.secondary) }
             }
             if let final = turn.final {
@@ -470,20 +471,14 @@ private struct TurnView: View {
     }
 
     // Entries are appended as each AI finishes; preserve that arrival order on screen.
+    // Each shows one short line; clicking it opens the full reply (and the moderator's focus).
     private var entriesView: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 6) {
             ForEach(turn.entries) { entry in
-                VStack(alignment: .leading, spacing: 4) {
-                    Text((turn.mode ?? 1) >= 2 ? entry.speaker : "\(entry.round == 1 ? L("각자 답", "Initial answer") : L("검토 후", "After review")) · \(entry.speaker)")
-                        .font(.caption.bold())
-                        .foregroundColor(entry.failed ? .red : .secondary)
-                    if let focus = entry.focus {
-                        Text(L("대표의 논점: ", "Moderator focus: ") + focus).font(.caption).foregroundColor(.secondary)
-                    }
-                    Text(markdown(entry.text))
-                        .textSelection(.enabled)
-                        .foregroundColor(entry.failed ? .secondary : .primary)
-                }
+                EntryRow(entry: entry,
+                         isOpen: Binding(get: { discussion.openEntries.contains(entry.id) },
+                                         set: { if $0 { discussion.openEntries.insert(entry.id) } else { discussion.openEntries.remove(entry.id) } }),
+                         label: (turn.mode ?? 1) >= 2 ? entry.speaker : "\(entry.round == 1 ? L("각자 답", "Initial answer") : L("검토 후", "After review")) · \(entry.speaker)")
             }
         }
         .padding(.top, 6)
@@ -681,5 +676,54 @@ private struct ImageAttachmentDropDelegate: DropDelegate {
             }
         }
         return true
+    }
+}
+
+// One AI reply in the chat: name and a one-line summary, with the full text folded underneath.
+private struct EntryRow: View {
+    let entry: ChatTurn.Entry
+    @Binding var isOpen: Bool
+    let label: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Button(action: { withAnimation(.easeInOut(duration: 0.15)) { isOpen.toggle() } }) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(label)
+                        .font(.caption.bold())
+                        .foregroundColor(entry.failed ? .red : .secondary)
+                        .fixedSize()
+                    Text(entry.failed ? entry.text : entry.shortLine)
+                        .lineLimit(isOpen ? nil : 1)
+                        .foregroundColor(entry.failed ? .secondary : .primary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Image(systemName: "chevron.right")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .rotationEffect(.degrees(isOpen ? 90 : 0))
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(isOpen ? L("접기", "Collapse") : L("자세히 보기", "Show full reply"))
+            .accessibilityLabel(label + ": " + entry.shortLine)
+            if isOpen && !entry.failed {
+                VStack(alignment: .leading, spacing: 6) {
+                    if let focus = entry.focus {
+                        Text(L("대표의 논점: ", "Moderator focus: ") + focus).font(.caption).foregroundColor(.secondary)
+                    }
+                    Text(Self.markdown(entry.text)).textSelection(.enabled)
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(nsColor: .controlBackgroundColor))
+                .cornerRadius(8)
+            }
+        }
+    }
+
+    private static func markdown(_ text: String) -> AttributedString {
+        let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        return (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
     }
 }

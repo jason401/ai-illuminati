@@ -153,6 +153,16 @@ expect(spokenBy == ["claude": 2, "codex": 2, "gemini": 2] && finalCount == 1, "p
 expect(capped.current.turns[0].maxTurns == 6, "total limit not saved")
 expect(DebateDecision.parse(#"{"action":"speak","speaker":"unknown","focus":"x"}"#, team: model.accounts) == nil, "unknown speaker accepted")
 expect(DebateDecision.parse(#"{"action":"finish","reason":""}"#, team: model.accounts) == nil, "empty reason accepted")
+let longFocus = String(repeating: "가", count: 900)
+let wrapped = DebateDecision.parse("Here is my decision:\n```json\n{\"action\":\"speak\",\"speaker\":\"gemini\",\"focus\":\"\(longFocus)\"}\n```", team: model.accounts)
+expect(wrapped?.speaker == .gemini && (wrapped?.focus?.count ?? 0) <= 600, "long or wrapped moderator decision must be accepted and clipped")
+
+// One-line headlines: "TL;DR:" becomes the chat line, the rest stays as the full reply.
+let tldr = ChatTurn.Entry.reply(round: 1, speaker: "Claude", text: "**TL;DR:** 최빈국 부자가 낫다\n\n긴 설명 첫 줄.\n둘째 줄.")
+expect(tldr.headline == "최빈국 부자가 낫다" && tldr.text == "긴 설명 첫 줄.\n둘째 줄." && tldr.shortLine == "최빈국 부자가 낫다", "TL;DR line not split")
+let plainReply = ChatTurn.Entry.reply(round: 1, speaker: "Gemini", text: "첫 문장입니다. 두 번째 문장입니다.")
+expect(plainReply.headline == nil && plainReply.text == "첫 문장입니다. 두 번째 문장입니다." && plainReply.shortLine == "첫 문장입니다.", "fallback line wrong")
+expect(ChatTurn.Entry(round: 1, speaker: "x", text: String(repeating: "a", count: 200), failed: false).shortLine.count == 89, "long fallback line not cut")
 
 let broken = Discussion(model: model)
 broken.configure { $0.mode = 3 }

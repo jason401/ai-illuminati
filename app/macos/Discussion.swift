@@ -177,6 +177,7 @@ struct ChatTurn: Identifiable, Codable {
         var text: String
         var failed: Bool
         var focus: String?
+        var headline: String?  // one short line the chat shows; `text` opens on click
     }
     var id = UUID()
     var question: String
@@ -265,6 +266,7 @@ final class Discussion: ObservableObject {
     var activeImages: [URL] = []
     var imageContext = ""
     @Published var inputHeight: CGFloat = 36
+    @Published var openEntries: Set<UUID> = []  // AI replies unfolded in the chat (not saved)
     @Published var draggingProvider: Account.Provider?
     var draggingConversationID: UUID?
     @Published var useClaude = true
@@ -490,8 +492,8 @@ final class Discussion: ObservableObject {
                 let entry: ChatTurn.Entry
                 switch result {
                 case .success(let answer):
-                    lock.lock(); answers.append((account, answer)); lock.unlock()
-                    entry = .init(round: round, speaker: self.label(account), text: answer, failed: false)
+                    entry = .reply(round: round, speaker: self.label(account), text: answer)
+                    lock.lock(); answers.append((account, entry.text)); lock.unlock()
                 case .failure(let failure):
                     entry = .init(round: round, speaker: self.label(account), text: Self.describe(failure), failed: true)
                 }
@@ -515,6 +517,7 @@ final class Discussion: ObservableObject {
             """
             \(head)당신은 \(self.label(account))입니다. 여러 AI(\(names))가 함께 사용자의 질문에 답하는 토론의 1단계입니다.
             다른 AI를 신경 쓰지 말고 당신의 가장 좋은 답을 사용자의 이번 질문 언어로 쓰세요. 사용자가 특정 언어를 요청하면 그 요청을 따르세요. 파일을 만들거나 명령을 실행하지 마세요.
+            \(Self.headlineRule)
 
             [질문]
             \(question)
@@ -531,6 +534,7 @@ final class Discussion: ObservableObject {
                 \(head)당신은 \(self.label(account))입니다. 토론의 2단계입니다. 아래는 같은 질문에 대한 1단계 답들입니다(당신의 답 포함).
                 다른 답과 비교해 틀린 점, 빠진 점만 짧게 짚고, 그걸 반영해 고친 당신의 답을 사용자의 이번 질문 언어로 쓰세요. 사용자가 특정 언어를 요청하면 그 요청을 따르세요.
                 형식: "검토:" 다음에 검토, "고친 답:" 다음에 답. 고친 답은 당신의 1단계 답보다 길게 쓰지 마세요.
+                \(Self.headlineRule)
 
                 [질문]
                 \(question)
@@ -602,6 +606,9 @@ final class Discussion: ObservableObject {
     }
 
     // Full transcript, without summarizing or dropping earlier turns.
+    // Asked of every AI reply in all modes, so the chat can show one line and fold the rest.
+    static let headlineRule = "Format: the first line must be \"TL;DR: \" followed by your main point in one short sentence (at most 60 characters), in the same language as your reply. Then a blank line, then your full reply."
+
     static func transcript(_ turns: [ChatTurn]) -> String {
         turns.map { turn in
             var parts = ["[사용자]\n" + turn.question]
@@ -638,6 +645,7 @@ final class Discussion: ObservableObject {
             마지막 사용자 질문과 앞선 AI의 발언을 읽고 자연스럽게 이어 말하세요.
             사용자의 이번 질문 언어로 1~2문장, 200자 이내로 말하세요. 사용자가 특정 언어를 요청하면 그 요청을 따르세요. 인사나 단순 동의, 앞말 반복 없이 새 관점, 반론, 보충 중 하나를 말하세요.
             별도 최종 정리나 요약은 하지 마세요. 파일을 만들거나 명령을 실행하지 마세요.
+            \(Self.headlineRule)
 
             [전체 대화 원문]
             \(transcript)
@@ -645,9 +653,9 @@ final class Discussion: ObservableObject {
             let entry: ChatTurn.Entry
             switch request(account, prompt: prompt) {
             case .success(let text):
-                entry = .init(round: 1, speaker: label(account), text: text, failed: false)
+                entry = .reply(round: 1, speaker: label(account), text: text)
                 successful.append(account)
-                transcript += "\n\n[\(label(account))]\n\(text)"
+                transcript += "\n\n[\(label(account))]\n\(entry.text)"
             case .failure(let failure):
                 entry = .init(round: 1, speaker: label(account), text: Self.describe(failure), failed: true)
             }
@@ -706,5 +714,38 @@ final class Discussion: ObservableObject {
         case .timedOut: return L("시간 안에 답하지 못했어요.", "The response timed out.")
         case .failed(let why): return L("답하지 못했어요.", "Could not respond.") + (why.isEmpty ? "" : " (\(why))")
         }
+    }
+}
+
+extension ChatTurn.Entry {
+    // AIs begin each reply with "TL;DR: …". That line becomes the headline; the rest is the full reply.
+    static func reply(round: Int, speaker: String, text: String) -> Self {
+        var entry = Self(round: round, speaker: speaker, text: text, failed: false)
+        var lines = text.trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: "\n")
+        guard let first = lines.first else { return entry }
+        let plain = first.replacingOccurrences(of: "*", with: "").replacingOccurrences(of: "`", with: "")
+            .trimmingCharacters(in: .whitespaces)
+        for prefix in ["TL;DR:", "TLDR:", "TL;DR :", "요약:"] where plain.uppercased().hasPrefix(prefix) {
+            let line = plain.dropFirst(prefix.count).trimmingCharacters(in: .whitespaces)
+            guard !line.isEmpty else { break }
+            lines.removeFirst()
+            let rest = lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            entry.headline = line
+            entry.text = rest.isEmpty ? line : rest
+            break
+        }
+        return entry
+    }
+
+    // The line shown in the chat. Older replies, or an AI that skipped the TL;DR line, use the first sentence.
+    var shortLine: String {
+        if let headline, !headline.isEmpty { return headline }
+        let flat = text.replacingOccurrences(of: "\n", with: " ").replacingOccurrences(of: "*", with: "")
+            .trimmingCharacters(in: .whitespaces)
+        var sentence = flat
+        for end in [". ", "? ", "! ", "。"] {
+            if let range = sentence.range(of: end) { sentence = String(sentence[..<range.lowerBound]) + end.trimmingCharacters(in: .whitespaces) }
+        }
+        return sentence.count > 90 ? String(sentence.prefix(88)) + "…" : sentence
     }
 }

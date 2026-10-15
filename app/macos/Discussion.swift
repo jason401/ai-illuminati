@@ -68,16 +68,16 @@ enum Answerer {
 }
 
 // One question and how the AIs worked it out.
-struct ChatTurn: Identifiable {
-    struct Entry: Identifiable {
-        let id = UUID()
-        let round: Int        // 1 = own answer, 2 = after reading the others
-        let speaker: String
-        let text: String
-        let failed: Bool
+struct ChatTurn: Identifiable, Codable {
+    struct Entry: Identifiable, Codable {
+        var id = UUID()
+        var round: Int        // 1 = own answer, 2 = after reading the others
+        var speaker: String
+        var text: String
+        var failed: Bool
     }
-    let id = UUID()
-    let question: String
+    var id = UUID()
+    var question: String
     var status = ""
     var entries: [Entry] = []
     var final: String?
@@ -85,10 +85,50 @@ struct ChatTurn: Identifiable {
     var error: String?
 }
 
+// One group chat, saved as ~/Library/Application Support/AI Illuminati/chats/<id>.json.
+// `summary` is a few lines about everything so far; it is what the AIs get as context.
+struct Conversation: Identifiable, Codable {
+    var id = UUID()
+    var title = "새 대화"
+    var createdAt = Date()
+    var updatedAt = Date()
+    var turns: [ChatTurn] = []
+    var summary = ""
+}
+
+enum ChatStore {
+    static let dir = AccountStore.supportDir + "/chats"
+
+    static func loadAll() -> [Conversation] {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let files = (try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? []
+        return files.filter { $0.hasSuffix(".json") }
+            .compactMap { try? decoder.decode(Conversation.self, from: Data(contentsOf: URL(fileURLWithPath: dir + "/" + $0))) }
+            .sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    static func save(_ conversation: Conversation) {
+        guard !conversation.turns.isEmpty else { return }
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted]
+        try? encoder.encode(conversation).write(to: URL(fileURLWithPath: dir + "/\(conversation.id.uuidString).json"), options: .atomic)
+    }
+
+    static func delete(_ conversation: Conversation) {
+        try? FileManager.default.removeItem(atPath: dir + "/\(conversation.id.uuidString).json")
+    }
+}
+
 // The discussion: 1) everyone answers on their own, 2) everyone reads the others and improves
-// their answer once, 3) one AI (the one with the most usage left) writes the final answer.
+// their answer once, 3) one AI (the one with the most usage left) writes the final answer,
+// 4) that AI updates the conversation's short summary, which is the context for the next question.
+// The chat rules from Settings go at the top of every message.
 final class Discussion: ObservableObject {
-    @Published var turns: [ChatTurn] = []
+    @Published var conversations: [Conversation]
+    @Published var currentID: UUID
     @Published var running = false
     @Published var draft = ""
     @Published var useClaude = true
@@ -98,11 +138,40 @@ final class Discussion: ObservableObject {
     private let model: AppModel
     private let work = DispatchQueue(label: "discussion")
 
-    init(model: AppModel) { self.model = model }
+    init(model: AppModel) {
+        self.model = model
+        let fresh = Conversation()
+        conversations = [fresh] + ChatStore.loadAll()
+        currentID = fresh.id
+    }
 
-    func reset() {
+    var current: Conversation { conversations.first { $0.id == currentID } ?? Conversation() }
+
+    // Starts an empty chat (reuses the open one if it is still empty).
+    func newConversation() {
         guard !running else { return }
-        turns = []
+        if current.turns.isEmpty { return }
+        conversations.removeAll { $0.turns.isEmpty }
+        let fresh = Conversation()
+        conversations.insert(fresh, at: 0)
+        currentID = fresh.id
+    }
+
+    func open(_ id: UUID) {
+        guard !running else { return }
+        conversations.removeAll { $0.turns.isEmpty && $0.id != id }
+        currentID = id
+    }
+
+    func delete(_ id: UUID) {
+        guard !running, let conversation = conversations.first(where: { $0.id == id }) else { return }
+        ChatStore.delete(conversation)
+        conversations.removeAll { $0.id == id }
+        if currentID == id {
+            let fresh = Conversation()
+            conversations.insert(fresh, at: 0)
+            currentID = fresh.id
+        }
     }
 
     func send() {
@@ -110,18 +179,25 @@ final class Discussion: ObservableObject {
         guard !question.isEmpty, !running else { return }
         let team = pickTeam()
         draft = ""
+        let id = currentID
         var turn = ChatTurn(question: question)
         guard team.count > 0 else {
             turn.error = "답할 수 있는 AI가 없어요. 참여 AI를 켜고, 설정에서 로그인됐는지 확인해 주세요."
-            turns.append(turn)
+            change(id) { $0.turns.append(turn) }
             return
         }
-        let history = turns.suffix(3).compactMap { t in t.final.map { (t.question, $0) } }
-        turns.append(turn)
+        let summary = current.summary
+        change(id) { c in
+            if c.turns.isEmpty { c.title = String(question.prefix(40)) }
+            c.turns.append(turn)
+        }
         running = true
-        let index = turns.count - 1
+        let index = current.turns.count - 1
         let usage = model.latestUsage
-        work.async { self.run(question: question, history: history, team: team, usage: usage, index: index) }
+        let rules = model.chatRules.trimmingCharacters(in: .whitespacesAndNewlines)
+        work.async {
+            self.run(question: question, summary: summary, rules: rules, team: team, usage: usage, id: id, index: index)
+        }
     }
 
     // Per AI, the logged-in account with the most usage left (accounts at 0% are skipped).
@@ -146,12 +222,27 @@ final class Discussion: ObservableObject {
         account.name.hasPrefix(account.provider.title) ? account.name : "\(account.provider.title) (\(account.name))"
     }
 
-    private func update(_ index: Int, _ change: @escaping (inout ChatTurn) -> Void) {
-        DispatchQueue.main.async { change(&self.turns[index]) }
+    // Changes a conversation (on the main thread), saves it and moves it to the top of the list.
+    private func change(_ id: UUID, save: Bool = false, _ edit: @escaping (inout Conversation) -> Void) {
+        let apply = {
+            guard let i = self.conversations.firstIndex(where: { $0.id == id }) else { return }
+            edit(&self.conversations[i])
+            if save {
+                self.conversations[i].updatedAt = Date()
+                ChatStore.save(self.conversations[i])
+                let moved = self.conversations.remove(at: i)
+                self.conversations.insert(moved, at: 0)
+            }
+        }
+        if Thread.isMainThread { apply() } else { DispatchQueue.main.async(execute: apply) }
+    }
+
+    private func changeTurn(_ id: UUID, _ index: Int, save: Bool = false, _ edit: @escaping (inout ChatTurn) -> Void) {
+        change(id, save: save) { c in if c.turns.indices.contains(index) { edit(&c.turns[index]) } }
     }
 
     // Asks everyone at once and waits for all answers.
-    private func askAll(_ team: [Account], round: Int, prompt: (Account) -> String, index: Int) -> [(Account, String)] {
+    private func askAll(_ team: [Account], round: Int, prompt: (Account) -> String, id: UUID, index: Int) -> [(Account, String)] {
         let lock = NSLock()
         var answers: [(Account, String)] = []
         let group = DispatchGroup()
@@ -168,7 +259,7 @@ final class Discussion: ObservableObject {
                 case .failure(let failure):
                     entry = .init(round: round, speaker: self.label(account), text: Self.describe(failure), failed: true)
                 }
-                self.update(index) { $0.entries.append(entry) }
+                self.changeTurn(id, index) { $0.entries.append(entry) }
                 group.leave()
             }
         }
@@ -177,75 +268,111 @@ final class Discussion: ObservableObject {
         return team.compactMap { account in answers.first { $0.0.id == account.id } }
     }
 
-    private func run(question: String, history: [(String, String)], team: [Account], usage: [String: AIUsage], index: Int) {
+    private func run(question: String, summary: String, rules: String, team: [Account],
+                     usage: [String: AIUsage], id: UUID, index: Int) {
         let names = team.map(label).joined(separator: ", ")
-        let context = history.isEmpty ? "" : "[이전 대화]\n" + history.map { "질문: \($0.0)\n최종 답: \($0.1)" }.joined(separator: "\n\n") + "\n\n"
+        let head = (rules.isEmpty ? "" : "[규칙 — 반드시 지킬 것]\n\(rules)\n\n")
+            + (summary.isEmpty ? "" : "[지금까지의 대화 요약]\n\(summary)\n\n")
 
-        update(index) { $0.status = "1/3 각자 답하는 중… (\(names))" }
+        changeTurn(id, index) { $0.status = "1/3 각자 답하는 중… (\(names))" }
         let first = askAll(team, round: 1, prompt: { account in
             """
-            당신은 \(self.label(account))입니다. 여러 AI(\(names))가 함께 사용자의 질문에 답하는 토론의 1단계입니다.
+            \(head)당신은 \(self.label(account))입니다. 여러 AI(\(names))가 함께 사용자의 질문에 답하는 토론의 1단계입니다.
             다른 AI를 신경 쓰지 말고 당신의 가장 좋은 답을 한국어로 쓰세요. 파일을 만들거나 명령을 실행하지 마세요.
 
-            \(context)[질문]
+            [질문]
             \(question)
             """
-        }, index: index)
-        guard !first.isEmpty else { return finish(index, error: "모든 AI가 답하지 못했어요.") }
+        }, id: id, index: index)
+        guard !first.isEmpty else { return finish(id, index, error: "모든 AI가 답하지 못했어요.") }
 
         var current = first
         if first.count > 1 {
-            update(index) { $0.status = "2/3 서로 답을 검토하는 중…" }
-            let answersText = first.map { "### \(label($0.0))의 답\n\($0.1)" }.joined(separator: "\n\n")
+            changeTurn(id, index) { $0.status = "2/3 서로 답을 검토하는 중…" }
+            let answersText = first.map { "### \(label($0.0))\n\($0.1)" }.joined(separator: "\n\n")
             let second = askAll(first.map(\.0), round: 2, prompt: { account in
                 """
-                당신은 \(self.label(account))입니다. 토론의 2단계입니다. 아래는 같은 질문에 대한 1단계 답들입니다(당신의 답 포함).
-                다른 답에서 틀린 점, 빠진 점, 더 나은 점을 짧게 짚고, 그걸 반영해 고친 당신의 답을 한국어로 쓰세요.
-                형식: "검토:" 다음에 짧은 검토, "고친 답:" 다음에 답. 인사나 칭찬 같은 의례적인 말은 쓰지 마세요.
+                \(head)당신은 \(self.label(account))입니다. 토론의 2단계입니다. 아래는 같은 질문에 대한 1단계 답들입니다(당신의 답 포함).
+                다른 답과 비교해 틀린 점, 빠진 점만 짧게 짚고, 그걸 반영해 고친 당신의 답을 한국어로 쓰세요.
+                형식: "검토:" 다음에 검토, "고친 답:" 다음에 답. 고친 답은 당신의 1단계 답보다 길게 쓰지 마세요.
 
-                \(context)[질문]
+                [질문]
                 \(question)
 
                 [1단계 답들]
                 \(answersText)
                 """
-            }, index: index)
+            }, id: id, index: index)
             if !second.isEmpty { current = second }
         }
 
-        // The one with the most usage left writes the final answer.
+        // The one with the most usage left writes the final answer and the summary.
         let writer = current.map(\.0).max { (usage[$0.id]?.leftNow ?? 50) < (usage[$1.id]?.leftNow ?? 50) }!
+        var final: String
+        var finalBy = label(writer)
         if current.count == 1 {
-            return finish(index, final: current[0].1, by: label(writer))
-        }
-        update(index) { $0.status = "3/3 \(self.label(writer))이(가) 최종 답을 정리하는 중…" }
-        let finalPrompt = """
-        당신은 \(label(writer))이고, 여러 AI의 토론을 정리하는 역할입니다. 아래는 각 AI가 서로 검토한 뒤 고친 답입니다.
-        이를 종합해 사용자에게 줄 하나의 최종 답을 한국어로 쓰세요. 정확한 내용을 우선하고, 의견이 갈린 부분이 있으면 짧게 밝히세요.
-        토론 과정이나 "AI들이 말하길" 같은 설명 없이 답만 쓰세요.
+            final = current[0].1
+        } else {
+            changeTurn(id, index) { $0.status = "3/3 \(self.label(writer))이(가) 최종 답을 정리하는 중…" }
+            let finalPrompt = """
+            \(head)당신은 \(label(writer))이고, 여러 AI의 토론을 정리하는 역할입니다. 아래는 각 AI가 서로 검토한 뒤 고친 답입니다.
+            이를 종합해 사용자에게 줄 하나의 최종 답을 한국어로 쓰세요. 정확한 내용을 우선하고, 의견이 갈린 부분이 있으면 한 줄로 밝히세요.
+            토론 과정이나 "AI들이 말하길" 같은 설명 없이 답만 쓰세요.
 
-        \(context)[질문]
+            [질문]
+            \(question)
+
+            [고친 답들]
+            \(current.map { "### \(label($0.0))\n\($0.1)" }.joined(separator: "\n\n"))
+            """
+            switch Answerer.ask(writer, prompt: finalPrompt) {
+            case .success(let text):
+                final = text
+            case .failure:
+                final = current.first { $0.0.id == writer.id }!.1
+                finalBy += " (정리 실패, 고친 답 그대로)"
+            }
+        }
+        changeTurn(id, index, save: true) { t in
+            t.final = final
+            t.finalBy = finalBy
+            t.status = "대화 요약 중…"
+        }
+
+        // Short summary of the whole chat so far, for the next question.
+        let summaryPrompt = """
+        아래 [이전 요약]에 이번 [질문]과 [최종 답]을 합쳐, 이 대화의 요약을 새로 쓰세요.
+        다음 질문 때 다른 AI들이 맥락으로 읽을 거예요. 300자 이내로, 결론과 사용자의 관심·선호만 남기세요. 요약만 쓰세요.
+
+        [이전 요약]
+        \(summary.isEmpty ? "(없음)" : summary)
+
+        [질문]
         \(question)
 
-        [고친 답들]
-        \(current.map { "### \(label($0.0))\n\($0.1)" }.joined(separator: "\n\n"))
+        [최종 답]
+        \(final)
         """
-        switch Answerer.ask(writer, prompt: finalPrompt) {
-        case .success(let text):
-            finish(index, final: text, by: label(writer))
-        case .failure:
-            // Fall back to the writer's own improved answer.
-            let own = current.first { $0.0.id == writer.id }!.1
-            finish(index, final: own, by: label(writer) + " (정리 실패, 고친 답 그대로)")
+        let newSummary: String
+        switch Answerer.ask(writer, prompt: summaryPrompt, timeout: 120) {
+        case .success(let text): newSummary = text
+        case .failure: newSummary = (summary.isEmpty ? "" : summary + "\n") + "- 질문: \(question.prefix(80)) → 답: \(final.prefix(160))"
         }
+        change(id, save: true) { c in
+            c.summary = newSummary
+            if c.turns.indices.contains(index) { c.turns[index].status = "" }
+        }
+        finish(id, index)
     }
 
-    private func finish(_ index: Int, final: String? = nil, by: String? = nil, error: String? = nil) {
+    private func finish(_ id: UUID, _ index: Int, error: String? = nil) {
+        if let error {
+            changeTurn(id, index, save: true) { t in
+                t.error = error
+                t.status = ""
+            }
+        }
         DispatchQueue.main.async {
-            self.turns[index].final = final
-            self.turns[index].finalBy = by
-            self.turns[index].error = error
-            self.turns[index].status = ""
             self.running = false
             self.model.onAccountsChange?()   // refresh the usage numbers after the discussion
         }

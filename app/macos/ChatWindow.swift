@@ -7,6 +7,53 @@ struct ChatView: View {
     @ObservedObject var discussion: Discussion
 
     var body: some View {
+        HStack(spacing: 0) {
+            sidebar
+            Divider()
+            chat
+        }
+        .frame(minWidth: 760, minHeight: 480)
+    }
+
+    // Saved group chats, newest first. Right-click to delete.
+    private var sidebar: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button(action: { discussion.newConversation() }) {
+                Label("새 대화", systemImage: "square.and.pencil").frame(maxWidth: .infinity)
+            }
+            .disabled(discussion.running)
+            .padding(10)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(discussion.conversations) { conversation in
+                        let selected = conversation.id == discussion.currentID
+                        Button(action: { discussion.open(conversation.id) }) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(conversation.title).lineLimit(2)
+                                Text(dateText(conversation.updatedAt)).font(.caption).foregroundColor(.secondary)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 6)
+                            .background(selected ? Color.accentColor.opacity(0.25) : Color.clear)
+                            .cornerRadius(6)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .contextMenu {
+                            if !conversation.turns.isEmpty {
+                                Button("삭제") { discussion.delete(conversation.id) }
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, 6)
+            }
+        }
+        .frame(width: 210)
+    }
+
+    private var chat: some View {
         VStack(spacing: 0) {
             HStack(spacing: 14) {
                 Text("참여").foregroundColor(.secondary)
@@ -14,7 +61,6 @@ struct ChatView: View {
                 Toggle("ChatGPT", isOn: $discussion.useCodex)
                 Toggle("Gemini", isOn: $discussion.useGemini)
                 Spacer()
-                Button("새 대화") { discussion.reset() }.disabled(discussion.running || discussion.turns.isEmpty)
             }
             .toggleStyle(.checkbox)
             .padding(.horizontal, 16)
@@ -23,21 +69,32 @@ struct ChatView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 22) {
-                        if discussion.turns.isEmpty {
-                            Text("질문을 입력하면 AI들이 각자 답하고, 서로 검토한 뒤, 한 명이 최종 답을 정리해 줘요.\n한 질문에 30초~1분쯤 걸리고, 그만큼 각 계정의 사용량이 쓰여요.")
+                        let conversation = discussion.current
+                        if conversation.turns.isEmpty {
+                            Text("질문을 입력하면 AI들이 각자 답하고, 서로 검토한 뒤, 한 명이 최종 답을 정리해 줘요.\n이어서 물어보면 지금까지의 대화 요약을 같이 보내요. 답 길이와 말투는 설정의 '채팅 규칙'에서 정해요.")
                                 .foregroundColor(.secondary)
                                 .padding(.top, 40)
                                 .frame(maxWidth: .infinity)
                                 .multilineTextAlignment(.center)
                         }
-                        ForEach(discussion.turns) { turn in
+                        if !conversation.summary.isEmpty {
+                            DisclosureGroup("대화 요약 보기 (다음 질문 때 AI들이 읽는 내용)") {
+                                Text(conversation.summary)
+                                    .textSelection(.enabled)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.top, 4)
+                            }
+                            .font(.callout)
+                            .foregroundColor(.secondary)
+                        }
+                        ForEach(conversation.turns) { turn in
                             TurnView(turn: turn).id(turn.id)
                         }
                     }
                     .padding(16)
                 }
-                .onChange(of: discussion.turns.count) { _ in
-                    if let last = discussion.turns.last { withAnimation { proxy.scrollTo(last.id, anchor: .top) } }
+                .onChange(of: discussion.current.turns.count) { _ in
+                    if let last = discussion.current.turns.last { withAnimation { proxy.scrollTo(last.id, anchor: .top) } }
                 }
             }
             Divider()
@@ -52,7 +109,13 @@ struct ChatView: View {
             }
             .padding(12)
         }
-        .frame(minWidth: 560, minHeight: 480)
+    }
+
+    private func dateText(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "ko_KR")
+        f.dateFormat = Calendar.current.isDateInToday(date) ? "a h:mm" : "M/d (E)"
+        return f.string(from: date)
     }
 }
 
@@ -120,7 +183,7 @@ private struct TurnView: View {
     }
 }
 
-// One chat window, reused (closing it keeps the conversation until the app quits).
+// One chat window, reused. Conversations are saved, so closing it loses nothing.
 final class ChatWindow {
     private var window: NSWindow?
 
@@ -129,7 +192,7 @@ final class ChatWindow {
             let w = NSWindow(contentViewController: NSHostingController(rootView: ChatView(discussion: discussion)))
             w.title = "AI Illuminati 채팅"
             w.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-            w.setContentSize(NSSize(width: 720, height: 680))
+            w.setContentSize(NSSize(width: 900, height: 700))
             w.isReleasedWhenClosed = false
             w.center()
             window = w

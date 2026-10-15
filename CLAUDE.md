@@ -7,11 +7,15 @@ Bigger plan (AI agents talking to each other, dashboards): `~/Downloads/ai-offic
 ## How to work with Younghun
 - Answer in Korean, simply. Avoid jargon.
 - Every reply: call the `ai-face` MCP tool `set_expression` (skip silently if missing).
-- Never use API keys; never call `claude -p`. Never handle his passwords; logins go through each tool's own login.
+- Never use API keys. Never handle his passwords; logins go through each tool's own login.
+- `claude -p` is allowed: Anthropic paused the June 2026 change, so it still draws from subscription limits
+  (support.claude.com/en/articles/15036540, checked 2026-10-14; Oct 7 update added API credits for Max/Team).
 
 ## Layout
-- `app/macos/main.swift` menu · `Accounts.swift` account list/folders · `Usage.swift` readers ·
-  `Login.swift` Terminal login scripts · `Icon.swift` eye-in-triangle template icon.
+- `app/macos/main.swift` menu · `Settings.swift` AppModel (account list, options) + Settings window ·
+  `ChatWindow.swift` chat UI · `Discussion.swift` Answerer (runs each CLI, tools off) + 3-step discussion ·
+  `Accounts.swift` account list/folders (Gemini is an entry too) · `Usage.swift` readers ·
+  `Login.swift` Terminal login scripts (window closes itself) · `Icon.swift` eye-in-triangle template icon.
 - Data: `~/Library/Application Support/AI Illuminati` (accounts.json, last-usage-*.json, login .command files).
 - Account folders: `~/.ai-illuminati/accounts/<id>`.
 

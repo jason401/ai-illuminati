@@ -5,9 +5,20 @@ import CryptoKit
 // accounts can be logged in at the same time:
 //   Claude: CLAUDE_CONFIG_DIR=<dir>  (login kept in Keychain "Claude Code-credentials-<hash>")
 //   Codex:  CODEX_HOME=<dir>         (login kept in <dir>/auth.json)
+//   Gemini: agy's own folder only (~/.gemini), so there is at most one Gemini entry.
 // dir == nil means the tool's normal folder (~/.claude for Claude, ~/.codex for Codex).
+// The order of the list is the order shown in the menu (changed in Settings).
 struct Account: Codable, Equatable {
-    enum Provider: String, Codable { case claude, codex }
+    enum Provider: String, Codable, CaseIterable {
+        case claude, codex, gemini
+        var title: String {
+            switch self {
+            case .claude: return "Claude"
+            case .codex: return "ChatGPT"
+            case .gemini: return "Gemini"
+            }
+        }
+    }
     var id: String
     var provider: Provider
     var name: String
@@ -31,10 +42,10 @@ struct Account: Codable, Equatable {
     var environment: [String: String] {
         var env = ProcessInfo.processInfo.environment
         for key in ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY", "GEMINI_API_KEY",
-                    "GOOGLE_API_KEY", "CLAUDE_CONFIG_DIR", "CODEX_HOME"] {
+                    "GOOGLE_API_KEY", "ANTHROPIC_BASE_URL", "CLAUDECODE", "CLAUDE_CONFIG_DIR", "CODEX_HOME"] {
             env.removeValue(forKey: key)
         }
-        if let dir {
+        if let dir, provider != .gemini {
             env[provider == .claude ? "CLAUDE_CONFIG_DIR" : "CODEX_HOME"] = dir
         }
         return env
@@ -49,9 +60,19 @@ enum AccountStore {
     static let accountsDir = home + "/.ai-illuminati/accounts"
     private static var file: URL { URL(fileURLWithPath: supportDir + "/accounts.json") }
 
+    static let gemini = Account(id: "gemini-main", provider: .gemini, name: "Gemini", dir: nil)
+
     static func load() -> [Account] {
         if let data = try? Data(contentsOf: file),
-           let list = try? JSONDecoder().decode([Account].self, from: data) {
+           var list = try? JSONDecoder().decode([Account].self, from: data) {
+            // Lists saved before Gemini became an entry get it once, at the end.
+            if !UserDefaults.standard.bool(forKey: "geminiInList") {
+                UserDefaults.standard.set(true, forKey: "geminiInList")
+                if !list.contains(where: { $0.provider == .gemini }) {
+                    list.append(gemini)
+                    save(list)
+                }
+            }
             return list
         }
         // First start: the accounts that are already logged in on this Mac.
@@ -62,6 +83,8 @@ enum AccountStore {
         if ClaudeUsage.loginExists(Account(id: "claude-main", provider: .claude, name: "", dir: nil)) {
             list.append(Account(id: "claude-main", provider: .claude, name: "Claude 기본", dir: nil))
         }
+        list.append(gemini)
+        UserDefaults.standard.set(true, forKey: "geminiInList")
         save(list)
         return list
     }
@@ -76,6 +99,7 @@ enum AccountStore {
     // Makes a new, empty account folder. Codex is told to keep its login in a file there
     // (not the shared Keychain entry) so each account stays separate.
     static func newAccount(provider: Account.Provider, name: String) -> Account {
+        if provider == .gemini { return Account(id: gemini.id, provider: .gemini, name: name, dir: nil) }
         let id = "\(provider.rawValue)-\(Int(Date().timeIntervalSince1970))"
         let dir = accountsDir + "/" + id
         try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true,

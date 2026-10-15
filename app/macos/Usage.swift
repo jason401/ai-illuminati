@@ -300,9 +300,9 @@ enum ClaudeUsage {
 enum GeminiUsage {
     private static var cache: (AIUsage, Date)?
 
-    static func read() -> AIUsage {
+    static func read(_ account: Account) -> AIUsage {
         if let (cached, at) = cache, Date().timeIntervalSince(at) < 300 { return cached }
-        var result = AIUsage(name: "Gemini")
+        var result = AIUsage(name: account.name, account: account)
         guard Login.agyInstalled else {
             result.needsLogin = true
             result.note = "Antigravity CLI(agy)가 설치돼 있지 않아요"

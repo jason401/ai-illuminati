@@ -1,5 +1,4 @@
 import Cocoa
-import ServiceManagement
 
 // AI Illuminati: a menu bar gauge that shows how much of each AI subscription is left
 // (5-hour and weekly limits) and when each one resets, for any number of Claude and ChatGPT
@@ -8,7 +7,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let menu = NSMenu()
     private let work = DispatchQueue(label: "usage")
-    private var accounts: [Account] = []
+    private let model = AppModel()
+    private let settings = SettingsWindow()
+    private let chat = ChatWindow()
+    private lazy var discussion = Discussion(model: model)
+    private var accounts: [Account] { model.accounts }
     private var usages: [AIUsage] = []
     private var timer: Timer?
 
@@ -17,7 +20,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         item.button?.imagePosition = .imageLeading
         menu.delegate = self
         item.menu = menu
-        accounts = AccountStore.load()
+        model.onAccountsChange = { [weak self] in self?.refresh() }
+        model.onDisplayChange = { [weak self] in self?.updateTitle() }
         rebuildMenu()
         refresh()
         timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in self?.refresh() }
@@ -28,12 +32,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func refresh() {
         let list = accounts
         work.async {
-            var fresh = list.filter { $0.provider == .claude }.map(ClaudeUsage.read)
-            fresh += list.filter { $0.provider == .codex }.map(CodexUsage.read)
-            fresh.append(GeminiUsage.read())
+            var fresh = list.map { account -> AIUsage in
+                switch account.provider {
+                case .claude: return ClaudeUsage.read(account)
+                case .codex: return CodexUsage.read(account)
+                case .gemini: return GeminiUsage.read(account)
+                }
+            }
             Self.markSameAccounts(&fresh)
             DispatchQueue.main.async {
                 self.usages = fresh
+                self.model.latestUsage = Dictionary(fresh.compactMap { u in u.account.map { ($0.id, u) } },
+                                                    uniquingKeysWith: { a, _ in a })
                 self.updateTitle()
                 self.rebuildMenu()
             }
@@ -55,10 +65,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    private var showPercent: Bool {
-        get { UserDefaults.standard.bool(forKey: "showPercent") }
-        set { UserDefaults.standard.set(newValue, forKey: "showPercent") }
-    }
+    private var showPercent: Bool { model.showPercent }
 
     // Menu bar: the eye-in-triangle mark. With "% 같이 보기" on, also "Cl 80%  Cx 95%  Gm ?"
     // (per AI, the account with the most left).
@@ -67,7 +74,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let groups: [(String, [AIUsage])] = [
             ("Cl", usages.filter { $0.account?.provider == .claude }),
             ("Cx", usages.filter { $0.account?.provider == .codex }),
-            ("Gm", usages.filter { $0.account == nil }),
+            ("Gm", usages.filter { $0.account?.provider == .gemini }),
         ]
         guard showPercent else {
             item.button?.attributedTitle = NSAttributedString(string: "")
@@ -98,19 +105,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func rebuildMenu() {
         menu.removeAllItems()
         if usages.isEmpty && !accounts.isEmpty { menu.addItem(info("확인 중…")) }
-        let nameWidth = usages.map { label(for: $0).size(withAttributes: [.font: rowFont]).width }.max() ?? 0
-        for usage in usages { menu.addItem(row(for: usage, nameWidth: nameWidth)) }
-        if !usages.isEmpty { menu.addItem(.separator()) }
-        menu.addItem(action("Claude 계정 추가…", #selector(addClaude)))
-        menu.addItem(action("ChatGPT(Codex) 계정 추가…", #selector(addCodex)))
-        menu.addItem(.separator())
+        // Current order and names from the list (readings may be a little older).
+        let shown = accounts.compactMap { account in
+            usages.first { $0.account?.id == account.id }.map { usage -> AIUsage in
+                var copy = usage
+                copy.account = account
+                return copy
+            }
+        }
+        let nameWidth = shown.map { label(for: $0).size(withAttributes: [.font: rowFont]).width }.max() ?? 0
+        for usage in shown { menu.addItem(row(for: usage, nameWidth: nameWidth)) }
+        if !shown.isEmpty { menu.addItem(.separator()) }
+        menu.addItem(action("채팅창 열기…", #selector(openChat), key: "n"))
+        menu.addItem(action("설정…", #selector(openSettings), key: ","))
         menu.addItem(action("지금 새로고침", #selector(refresh), key: "r"))
-        let percent = action("메뉴바에 % 같이 보기", #selector(togglePercent))
-        percent.state = showPercent ? .on : .off
-        menu.addItem(percent)
-        let login = action("로그인할 때 자동 실행", #selector(toggleLogin))
-        login.state = SMAppService.mainApp.status == .enabled ? .on : .off
-        menu.addItem(login)
+        menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "종료", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
     }
 
@@ -118,13 +127,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let barFont = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
 
     private func label(for usage: AIUsage) -> String {
-        let kind: String
-        switch usage.account?.provider {
-        case .claude: kind = "Claude"
-        case .codex: kind = "ChatGPT"
-        case nil: kind = ""
-        }
-        return kind.isEmpty || usage.name.hasPrefix(kind) ? usage.name : "\(kind) · \(usage.name)"
+        let name = usage.account?.name ?? usage.name
+        guard let kind = usage.account?.provider.title else { return name }
+        return name.hasPrefix(kind) ? name : "\(kind) · \(name)"
     }
 
     // "████████░░" for the part left (10 blocks), like Claude Code's usage bars.
@@ -180,91 +185,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let note = usage.note { sub.addItem(info(note)) }
         sub.addItem(.separator())
         if let account = usage.account {
-            for (title, selector) in [(usage.needsLogin ? "로그인…" : "다시 로그인…", #selector(loginAccount(_:))),
-                                      ("이름 바꾸기…", #selector(renameAccount(_:))),
-                                      ("목록에서 빼기…", #selector(removeAccount(_:)))] {
-                let entry = action(title, selector)
-                entry.representedObject = account.id
-                sub.addItem(entry)
-            }
-        } else {
-            let title = !Login.agyInstalled ? "agy 설치하고 로그인…" : usage.needsLogin ? "로그인…" : "다시 로그인…"
-            sub.addItem(action(title, #selector(loginGemini)))
+            let title = account.provider == .gemini && !Login.agyInstalled ? "agy 설치하고 로그인…"
+                : usage.needsLogin ? "로그인…" : "다시 로그인…"
+            let entry = action(title, #selector(loginAccount(_:)))
+            entry.representedObject = account.id
+            sub.addItem(entry)
         }
+        sub.addItem(action("설정…", #selector(openSettings)))
         return sub
     }
 
-    // MARK: Account actions
+    // MARK: Actions
 
-    @objc private func addClaude() { addAccount(.claude) }
-    @objc private func addCodex() { addAccount(.codex) }
-
-    private func addAccount(_ provider: Account.Provider) {
-        let count = accounts.filter { $0.provider == provider }.count
-        let suggestion = (provider == .claude ? "Claude " : "ChatGPT ") + "\(count + 1)"
-        guard let name = askText(title: provider == .claude ? "Claude 계정 추가" : "ChatGPT(Codex) 계정 추가",
-                                 message: "메뉴에 보일 이름을 정해 주세요 (예: 개인, 회사). 다음에 터미널이 열리면 그 계정으로 로그인하면 돼요.",
-                                 value: suggestion) else { return }
-        let account = AccountStore.newAccount(provider: provider, name: name)
-        accounts.append(account)
-        AccountStore.save(accounts)
-        Login.login(account)
-        refresh()
-    }
+    @objc private func openSettings() { settings.show(model: model) }
+    @objc private func openChat() { chat.show(discussion: discussion) }
 
     @objc private func loginAccount(_ sender: NSMenuItem) {
-        guard let account = account(for: sender) else { return }
-        ClaudeUsage.forget(account)
-        CodexUsage.forget(account)
-        Login.login(account)
-    }
-
-    @objc private func renameAccount(_ sender: NSMenuItem) {
-        guard let account = account(for: sender),
-              let name = askText(title: "이름 바꾸기", message: "", value: account.name),
-              let index = accounts.firstIndex(of: account) else { return }
-        accounts[index].name = name
-        AccountStore.save(accounts)
-        ClaudeUsage.forget(account)
-        CodexUsage.forget(account)
-        refresh()
-    }
-
-    @objc private func removeAccount(_ sender: NSMenuItem) {
-        guard let account = account(for: sender) else { return }
-        NSApp.activate(ignoringOtherApps: true)
-        let alert = NSAlert()
-        alert.messageText = "'\(account.name)'을 목록에서 뺄까요?"
-        alert.informativeText = "메뉴에서만 빠져요. 그 계정의 로그인 정보는 지우지 않아요."
-        alert.addButton(withTitle: "빼기")
-        alert.addButton(withTitle: "취소")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        accounts.removeAll { $0.id == account.id }
-        AccountStore.save(accounts)
-        refresh()
-    }
-
-    @objc private func loginGemini() { Login.gemini() }
-
-    private func account(for sender: NSMenuItem) -> Account? {
-        guard let id = sender.representedObject as? String else { return nil }
-        return accounts.first { $0.id == id }
-    }
-
-    private func askText(title: String, message: String, value: String) -> String? {
-        NSApp.activate(ignoringOtherApps: true)
-        let alert = NSAlert()
-        alert.messageText = title
-        alert.informativeText = message
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
-        field.stringValue = value
-        alert.accessoryView = field
-        alert.addButton(withTitle: "확인")
-        alert.addButton(withTitle: "취소")
-        alert.window.initialFirstResponder = field
-        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
-        let text = field.stringValue.trimmingCharacters(in: .whitespaces)
-        return text.isEmpty ? nil : text
+        guard let id = sender.representedObject as? String,
+              let account = accounts.first(where: { $0.id == id }) else { return }
+        model.login(account)
     }
 
     // MARK: Helpers
@@ -281,22 +220,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return item
     }
 
-
-    @objc private func togglePercent() {
-        showPercent.toggle()
-        updateTitle()
-        rebuildMenu()
-    }
-
-    @objc private func toggleLogin() {
-        let service = SMAppService.mainApp
-        do {
-            if service.status == .enabled { try service.unregister() } else { try service.register() }
-        } catch {
-            NSLog("login item: \(error)")
-        }
-        rebuildMenu()
-    }
 }
 
 let app = NSApplication.shared

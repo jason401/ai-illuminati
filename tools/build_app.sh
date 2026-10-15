@@ -14,7 +14,7 @@ echo "2/3 컴파일"
 mkdir -p "$APP/Contents/MacOS"
 ARCH="$(uname -m)"
 if ! xcrun swiftc -swift-version 5 -O -target "$ARCH-apple-macos13.0" \
-      -framework Cocoa -framework ServiceManagement -framework Security \
+      -framework Cocoa -framework SwiftUI -framework ServiceManagement -framework Security \
       -o "$APP/Contents/MacOS/AIIlluminati.new" app/macos/*.swift >"$LOG" 2>&1; then
   echo "빌드 실패 (app-build.log):"
   cat "$LOG"

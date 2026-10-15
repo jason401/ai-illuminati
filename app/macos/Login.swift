@@ -13,6 +13,7 @@ enum Login {
         switch account.provider {
         case .claude: claude(account)
         case .codex: codex(account)
+        case .gemini: gemini()
         }
     }
 

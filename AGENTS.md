@@ -37,5 +37,7 @@ Bigger plan (AI agents talking to each other, dashboards): `~/Downloads/ai-offic
 
 ## Build
 - `zsh tools/build_app.sh < /dev/null` (same as double-clicking `Build AI Illuminati.command`).
-- Signs with "AI Face Local Signing" if present (keeps Keychain "Always Allow" across builds), else ad-hoc.
+- Requires the persistent "AI Illuminati Local Signing" identity in the login keychain. No ad-hoc fallback. Run `zsh tools/setup_signing.sh` only if missing; preserve the existing identity.
+- Read the latest snapshot at the top of `HANDOFF.md` before editing. Older chronological notes below it describe earlier states.
+- Regression checks: `zsh tools/tests/run_mode2.sh`; signing checks: `python3 tools/tests/check_signing.py`. The image clipboard test needs access to the macOS pasteboard service.
 - Commit and push to `origin main` when a change is done. (Claude adds its Co-Authored-By line; other agents use their own attribution or none.)

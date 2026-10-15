@@ -15,5 +15,5 @@ s = Path('app/macos/Accounts.swift').read_text().replace(
 PY
 xcrun swiftc -swift-version 5 -module-cache-path "$TEST_DIR/cache" -o "$TEST_DIR/run" \
     app/macos/Language.swift app/macos/Usage.swift "$TEST_DIR/Accounts.swift" app/macos/Login.swift \
-    app/macos/Settings.swift app/macos/Discussion.swift "$TEST_DIR/main.swift"
+    app/macos/Settings.swift app/macos/Discussion.swift app/macos/Debate.swift "$TEST_DIR/main.swift"
 "$TEST_DIR/run"

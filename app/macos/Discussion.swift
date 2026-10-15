@@ -13,7 +13,8 @@ enum Answerer {
 
     enum Failure: Error { case missingTool, failed(String), timedOut }
 
-    static func ask(_ account: Account, prompt: String, timeout: TimeInterval = 240) -> Result<String, Failure> {
+    static func ask(_ account: Account, prompt: String, timeout: TimeInterval = 240, cancellation: DebateCancellation? = nil) -> Result<String, Failure> {
+        if cancellation?.isCancelled == true { return .failure(.failed("Cancelled")) }
         let outFile = chatDir + "/answer-\(UUID().uuidString).txt"
         defer { try? FileManager.default.removeItem(atPath: outFile) }
         let binary: String?
@@ -44,6 +45,8 @@ enum Answerer {
         process.standardInput = FileHandle.nullDevice
         guard (try? process.run()) != nil else { return .failure(.missingTool) }
 
+        cancellation?.attach(process)
+        defer { cancellation?.detach() }
         // Read both pipes while it runs (a full pipe would stop the tool).
         var stdout = Data(), stderr = Data()
         let readers = DispatchGroup()
@@ -51,9 +54,19 @@ enum Answerer {
         DispatchQueue.global().async { stdout = out.fileHandleForReading.readDataToEndOfFile(); readers.leave() }
         readers.enter()
         DispatchQueue.global().async { stderr = err.fileHandleForReading.readDataToEndOfFile(); readers.leave() }
-        if readers.wait(timeout: .now() + timeout) == .timedOut {
-            process.terminate()
-            return .failure(.timedOut)
+        let deadline = Date().addingTimeInterval(timeout)
+        while readers.wait(timeout: .now() + 0.1) == .timedOut {
+            if cancellation?.isCancelled == true || Date() >= deadline {
+                DebateCancellation.end(process)
+                return .failure(cancellation?.isCancelled == true ? .failed("Cancelled") : .timedOut)
+            }
+        }
+        while process.isRunning {
+            if cancellation?.isCancelled == true || Date() >= deadline {
+                DebateCancellation.end(process)
+                return .failure(cancellation?.isCancelled == true ? .failed("Cancelled") : .timedOut)
+            }
+            Thread.sleep(forTimeInterval: 0.05)
         }
         process.waitUntilExit()
 
@@ -76,6 +89,7 @@ struct ChatTurn: Identifiable, Codable {
         var speaker: String
         var text: String
         var failed: Bool
+        var focus: String?
     }
     var id = UUID()
     var question: String
@@ -86,6 +100,9 @@ struct ChatTurn: Identifiable, Codable {
     var error: String?
     var mode: Int?  // missing in older chats means mode 1
     var orderNote: String?
+    var endReason: String?
+    var debateFocus: String?
+    var maxTurns: Int?
 }
 
 // One group chat, saved as ~/Library/Application Support/AI Illuminati/chats/<id>.json.
@@ -95,6 +112,7 @@ struct ChatConfiguration: Codable {
     var order: [Account.Provider] = [.claude, .codex, .gemini]
     var participants: [Account.Provider] = [.claude, .codex, .gemini]
     var leader: Account.Provider = .claude
+    var maxTurns: Int?
 }
 
 struct Conversation: Identifiable, Codable {
@@ -144,6 +162,11 @@ final class Discussion: ObservableObject {
     @Published var conversations: [Conversation]
     @Published var currentID: UUID
     @Published var running = false
+    @Published var stopping = false
+    var debateCancellation: DebateCancellation?
+    var debateAnswer: (Account, String, TimeInterval, DebateCancellation) -> Result<String, Answerer.Failure> = {
+        Answerer.ask($0, prompt: $1, timeout: $2, cancellation: $3)
+    }
     @Published var draft = ""
     @Published var draggingProvider: Account.Provider?
     var draggingConversationID: UUID?
@@ -253,6 +276,8 @@ final class Discussion: ObservableObject {
         var turn = ChatTurn(question: question)
         let config = configuration
         turn.mode = config.mode
+        let limit = min(30, max(3, config.maxTurns ?? 9))
+        if config.mode == 3 { turn.maxTurns = limit }
         guard team.count > 0 else {
             turn.error = L("답할 수 있는 AI가 없어요. 참여 AI를 켜고, 설정에서 로그인됐는지 확인해 주세요.", "No AI is available. Enable a participant and check its sign-in in Settings.")
             change(id) { $0.turns.append(turn) }
@@ -265,11 +290,17 @@ final class Discussion: ObservableObject {
             c.turns.append(turn)
         }
         running = true
+        stopping = false
+        let cancellation = DebateCancellation()
+        debateCancellation = config.mode == 3 ? cancellation : nil
         let index = current.turns.count - 1
         let usage = model.latestUsage
         let rules = model.chatRules.trimmingCharacters(in: .whitespacesAndNewlines)
         work.async {
-            if config.mode == 2 {
+            if config.mode == 3 {
+                self.runDebate(question: question, history: history, rules: rules, team: team, leader: config.leader,
+                               limit: limit, cancellation: cancellation, id: id, index: index)
+            } else if config.mode == 2 {
                 self.runSequential(question: question, history: history, rules: rules, team: team,
                                    leader: config.leader, id: id, index: index)
             } else {
@@ -284,7 +315,7 @@ final class Discussion: ObservableObject {
         if useClaude { providers.append(.claude) }
         if useCodex { providers.append(.codex) }
         if useGemini { providers.append(.gemini) }
-        if configuration.mode == 2 {
+        if configuration.mode >= 2 {
             providers = configuration.order.filter { configuration.participants.contains($0) }
         }
         return providers.compactMap { provider in
@@ -299,7 +330,7 @@ final class Discussion: ObservableObject {
         }
     }
 
-    private func label(_ account: Account) -> String {
+    func label(_ account: Account) -> String {
         account.name.hasPrefix(account.provider.title) ? account.name : "\(account.provider.title) (\(account.name))"
     }
 
@@ -318,7 +349,7 @@ final class Discussion: ObservableObject {
         if Thread.isMainThread { apply() } else { DispatchQueue.main.async(execute: apply) }
     }
 
-    private func changeTurn(_ id: UUID, _ index: Int, save: Bool = false, _ edit: @escaping (inout ChatTurn) -> Void) {
+    func changeTurn(_ id: UUID, _ index: Int, save: Bool = false, _ edit: @escaping (inout ChatTurn) -> Void) {
         change(id, save: save) { c in if c.turns.indices.contains(index) { edit(&c.turns[index]) } }
     }
 
@@ -450,7 +481,9 @@ final class Discussion: ObservableObject {
     static func transcript(_ turns: [ChatTurn]) -> String {
         turns.map { turn in
             var parts = ["[사용자]\n" + turn.question]
-            parts += turn.entries.filter { !$0.failed }.map { "[" + $0.speaker + "]\n" + $0.text }
+            parts += turn.entries.filter { !$0.failed }.map {
+                ($0.focus.map { "[Moderator focus]\n" + $0 + "\n" } ?? "") + "[" + $0.speaker + "]\n" + $0.text
+            }
             if let final = turn.final { parts.append("[최종 답]\n" + final) }
             return parts.joined(separator: "\n\n")
         }.joined(separator: "\n\n")
@@ -527,7 +560,7 @@ final class Discussion: ObservableObject {
         finish(id, index)
     }
 
-    private func finish(_ id: UUID, _ index: Int, error: String? = nil) {
+    func finish(_ id: UUID, _ index: Int, error: String? = nil) {
         if let error {
             changeTurn(id, index, save: true) { t in
                 t.error = error
@@ -536,11 +569,13 @@ final class Discussion: ObservableObject {
         }
         DispatchQueue.main.async {
             self.running = false
+            self.stopping = false
+            self.debateCancellation = nil
             self.model.onAccountsChange?()   // refresh the usage numbers after the discussion
         }
     }
 
-    private static func describe(_ failure: Answerer.Failure) -> String {
+    static func describe(_ failure: Answerer.Failure) -> String {
         switch failure {
         case .missingTool: return L("프로그램을 찾지 못했어요.", "CLI not found.")
         case .timedOut: return L("시간 안에 답하지 못했어요.", "The response timed out.")

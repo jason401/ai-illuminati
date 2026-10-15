@@ -94,3 +94,79 @@ languageModel.chatRules = "My custom rules"
 languageModel.language = .english
 expect(languageModel.chatRules == "My custom rules", "custom rules must be preserved")
 print("PASS: default English, Korean switch, persistence, default rule localization, custom rule preservation")
+
+// Mode 3: repeat speakers, complete history, moderator termination and synthesis.
+let debate = Discussion(model: model)
+debate.configure { $0.mode = 3; $0.maxTurns = 9; $0.leader = .claude }
+var decisions = 0
+var debateCalls: [String] = []
+debate.debateAnswer = { account, prompt, _, _ in
+    debateCalls.append(prompt)
+    if prompt.contains("[MODE3 MODERATION]") {
+        decisions += 1
+        if decisions == 1 { return .success(#"{"action":"speak","speaker":"codex","focus":"Address the counterexample"}"#) }
+        return .success(#"{"action":"finish","reason":"Important objections addressed"}"#)
+    }
+    if prompt.contains("[MODE3 FINAL]") { return .success("Final conclusion with an open question.") }
+    return .success("Contribution from " + account.provider.rawValue)
+}
+debate.draft = "Discuss a counterexample"
+debate.send()
+waitFor(debate)
+expect(debate.current.turns[0].entries.map(\.speaker) == ["Claude", "ChatGPT", "Gemini", "ChatGPT"], "mode3 should repeat the moderator-selected speaker")
+expect(debate.current.turns[0].entries.last?.focus == "Address the counterexample", "moderator focus not saved")
+expect(debateCalls[4].contains("Contribution from gemini"), "full first lap missing from repeated speaker's context")
+expect(debate.current.turns[0].endReason == "Important objections addressed", "moderator end reason missing")
+expect(debate.current.turns[0].final != nil && debate.current.summary.isEmpty, "mode3 final or full-history behavior wrong")
+
+// Hard limit: no additional speech/decision after reaching the cap, exactly one synthesis.
+let capped = Discussion(model: model)
+capped.configure { $0.mode = 3; $0.maxTurns = 4 }
+var speechCount = 0
+var finalCount = 0
+capped.debateAnswer = { _, prompt, _, _ in
+    if prompt.contains("[MODE3 MODERATION]") { return .success(#"{"action":"speak","speaker":"claude","focus":"One more detail"}"#) }
+    if prompt.contains("[MODE3 FINAL]") { finalCount += 1; return .success("Summary") }
+    speechCount += 1
+    return .success("Short contribution")
+}
+capped.draft = "Limit test"; capped.send(); waitFor(capped)
+expect(speechCount == 4 && finalCount == 1, "maximum turns must be enforced")
+expect(capped.current.turns[0].maxTurns == 4, "limit not persisted")
+expect(DebateDecision.parse(#"{"action":"speak","speaker":"unknown","focus":"x"}"#, team: model.accounts) == nil, "unknown speaker accepted")
+expect(DebateDecision.parse(#"{"action":"finish","reason":""}"#, team: model.accounts) == nil, "empty reason accepted")
+
+let broken = Discussion(model: model)
+broken.configure { $0.mode = 3 }
+var brokenCalls = 0
+broken.debateAnswer = { _, prompt, _, _ in
+    brokenCalls += 1
+    if prompt.contains("[MODE3 MODERATION]") { return .success("invalid JSON") }
+    return .success("Short response")
+}
+broken.draft = "Invalid scheduling"; broken.send(); waitFor(broken)
+expect(broken.current.turns[0].entries.count == 3 && brokenCalls == 5, "invalid moderation must end without retry loops")
+
+let stopped = Discussion(model: model)
+stopped.configure { $0.mode = 3 }
+var stoppedCalls = 0
+stopped.debateAnswer = { _, _, _, token in
+    stoppedCalls += 1
+    while !token.isCancelled { Thread.sleep(forTimeInterval: 0.01) }
+    return .failure(.failed("Cancelled"))
+}
+stopped.draft = "Stop test"; stopped.send()
+DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { stopped.stopDebate() }
+waitFor(stopped)
+expect(stoppedCalls == 1 && stopped.current.turns[0].final == nil, "stop must prevent all subsequent requests")
+expect(stopped.current.turns[0].status.isEmpty && stopped.current.turns[0].endReason != nil, "stop must clear busy state and save reason")
+
+let process = Process()
+process.executableURL = URL(fileURLWithPath: "/bin/sleep")
+process.arguments = ["30"]
+try process.run()
+let token = DebateCancellation(); token.attach(process); token.cancel()
+let killDeadline = Date().addingTimeInterval(2)
+while process.isRunning && Date() < killDeadline { Thread.sleep(forTimeInterval: 0.01) }
+expect(!process.isRunning, "cancel must terminate the actual process")
+print("PASS: mode3 repeat speakers, moderator completion, hard cap, invalid decision, stop prevents calls, actual process cancellation")

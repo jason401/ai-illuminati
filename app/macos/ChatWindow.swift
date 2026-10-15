@@ -81,6 +81,7 @@ struct ChatView: View {
                                                         set: { discussion.setMode($0) })) {
                         Text(L("모드1 · 검토 후 정리", "Mode 1 · Review & summarize")).tag(1)
                         Text(L("모드2 · 돌아가며 대화", "Mode 2 · Roundtable")).tag(2)
+                        Text(L("모드3 · 대표 진행 토론", "Mode 3 · Moderated debate")).tag(3)
                     }
                     .frame(maxWidth: 340)
                     .disabled(discussion.running || !discussion.current.turns.isEmpty)
@@ -88,7 +89,7 @@ struct ChatView: View {
                         Text(L("방식 변경은 새 대화에서", "Start a new chat to change modes")).font(.caption).foregroundColor(.secondary)
                     }
                 }
-                if discussion.configuration.mode == 2 {
+                if discussion.configuration.mode >= 2 {
                     sequentialControls
                 } else {
                     HStack(spacing: 14) {
@@ -110,7 +111,9 @@ struct ChatView: View {
                     VStack(alignment: .leading, spacing: 22) {
                         let conversation = discussion.current
                         if conversation.turns.isEmpty {
-                            Text(discussion.configuration.mode == 2
+                            Text(discussion.configuration.mode == 3
+                                 ? L("첫 바퀴는 지정한 순서로 말하고, 이후 대표가 다음 발언자와 논점 또는 종료를 정해요. 최대 발언 수에 도달하면 마무리합니다. 중지 버튼으로 언제든 끊을 수 있어요.", "The first lap follows your order. Then the moderator selects speakers and topics until the discussion is sufficient or the turn limit is reached. Stop at any time.")
+                                 : discussion.configuration.mode == 2
                                  ? L("순서와 대표를 정하고 질문하세요. 각 AI가 전체 대화를 읽고 1~2문장씩 이어 말해요.\n한 바퀴가 끝나면 대표가 다음 순서를 정해요. 이름 옆 손잡이를 끌어 직접 바꿀 수도 있어요.", "Choose the order and moderator, then send a message. Each AI reads the full conversation and replies in 1–2 sentences.\nThe moderator sets the next order. Drag the handles to change it yourself.")
                                  : L("질문을 입력하면 AI들이 각자 답하고, 서로 검토한 뒤, 한 명이 최종 답을 정리해 줘요.\n이어서 물어보면 지금까지의 대화 요약을 같이 보내요. 답 길이와 말투는 설정의 '채팅 규칙'에서 정해요.", "Ask a question. The AIs answer, review each other, and produce one final answer.\nFollow-ups include a conversation summary. Adjust length and style in Settings → Chat rules."))
                                 .foregroundColor(.secondary)
@@ -150,6 +153,10 @@ struct ChatView: View {
                     Text(L("Enter / Shift+Enter: 줄바꿈 · ⌘Enter: 보내기", "Enter / Shift+Enter: new line · ⌘Enter: send"))
                         .font(.caption)
                         .foregroundColor(.secondary)
+                }
+                if discussion.running && discussion.configuration.mode == 3 {
+                    Button(discussion.stopping ? L("중지 중…", "Stopping…") : L("중지", "Stop")) { discussion.stopDebate() }
+                        .disabled(discussion.stopping)
                 }
                 Button(discussion.running ? L("토론 중…", "Discussing…") : L("보내기", "Send")) { discussion.send() }
                     .keyboardShortcut(.return, modifiers: .command)
@@ -198,7 +205,18 @@ struct ChatView: View {
                     }
                 }
                 .frame(width: 170)
-                Text(L("각자 한 번씩 · 전체 대화 전달 · 대표가 다음 순서 지정", "One turn each · Full history · Moderator sets next order"))
+                Text(discussion.configuration.mode == 3
+                     ? L("전체 대화 전달 · 대표가 진행과 종료 판단", "Full history · Moderator directs and ends discussion")
+                     : L("각자 한 번씩 · 전체 대화 전달 · 대표가 다음 순서 지정", "One turn each · Full history · Moderator sets next order"))
+                    .font(.caption).foregroundColor(.secondary)
+            }
+            if discussion.configuration.mode == 3 {
+                Stepper(value: Binding(get: { discussion.configuration.maxTurns ?? 9 },
+                                       set: { limit in discussion.configure { $0.maxTurns = limit } }), in: 3...30) {
+                    Text(L("최대 AI 발언: \(discussion.configuration.maxTurns ?? 9)회", "Maximum AI turns: \(discussion.configuration.maxTurns ?? 9)"))
+                }
+                .frame(maxWidth: 320)
+                Text(L("대표의 진행 판단과 마지막 정리는 발언 수에 포함하지 않습니다.", "Moderator decisions and final synthesis do not count toward this limit."))
                     .font(.caption).foregroundColor(.secondary)
             }
         }
@@ -263,6 +281,12 @@ private struct TurnView: View {
             if let error = turn.error {
                 Text(error).foregroundColor(.red)
             }
+            if turn.mode == 3 {
+                Text(L("AI 발언 \(turn.entries.count)/\(turn.maxTurns ?? 9)", "AI turns \(turn.entries.count)/\(turn.maxTurns ?? 9)"))
+                    .font(.caption).foregroundColor(.secondary)
+                if let focus = turn.debateFocus { Text(L("다음 논점: ", "Next focus: ") + focus).font(.callout) }
+                if let reason = turn.endReason { Text(L("종료 이유: ", "End reason: ") + reason).font(.callout).foregroundColor(.secondary) }
+            }
             if let final = turn.final {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(markdown(final))
@@ -280,7 +304,7 @@ private struct TurnView: View {
                 Text(localizedNotice(note)).font(.caption).foregroundColor(.secondary)
             }
             if !turn.entries.isEmpty {
-                if turn.mode == 2 {
+                if (turn.mode ?? 1) >= 2 {
                     entriesView
                 } else {
                     DisclosureGroup(L("AI들의 대화 보기 (\(turn.entries.count))", "View AI discussion (\(turn.entries.count))")) {
@@ -297,9 +321,12 @@ private struct TurnView: View {
         VStack(alignment: .leading, spacing: 12) {
             ForEach(turn.entries) { entry in
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(turn.mode == 2 ? entry.speaker : "\(entry.round == 1 ? L("각자 답", "Initial answer") : L("검토 후", "After review")) · \(entry.speaker)")
+                    Text((turn.mode ?? 1) >= 2 ? entry.speaker : "\(entry.round == 1 ? L("각자 답", "Initial answer") : L("검토 후", "After review")) · \(entry.speaker)")
                         .font(.caption.bold())
                         .foregroundColor(entry.failed ? .red : .secondary)
+                    if let focus = entry.focus {
+                        Text(L("대표의 논점: ", "Moderator focus: ") + focus).font(.caption).foregroundColor(.secondary)
+                    }
                     Text(markdown(entry.text))
                         .textSelection(.enabled)
                         .foregroundColor(entry.failed ? .secondary : .primary)

@@ -70,7 +70,7 @@
 - 서명: AI Face가 만든 "AI Face Local Signing" 인증서 재사용(키체인 "항상 허용"이 빌드 후에도 유지되게). 없으면 임시 서명.
 - 화면 없이 시험하는 법: 필요한 파일 + 시험용 `main.swift`를 같이 컴파일해 실행.
   ```bash
-  xcrun swiftc -o /tmp/disc app/macos/{Language,Usage,Accounts,Login,Settings,Discussion}.swift /path/to/test/main.swift
+  xcrun swiftc -o /tmp/disc app/macos/{Language,Usage,Accounts,Login,Settings,Discussion,Debate}.swift /path/to/test/main.swift
   ```
   (시험 `main.swift`에서 `AppModel()`, `Discussion(model:)`을 만들고 `draft` 넣고 `send()`, `running`이 끝날 때까지 `RunLoop.main.run`.) 실제 질문을 보내면 각 계정 사용량이 조금 쓰이고, 대화가 `chats/`에 저장됨.
 
@@ -137,3 +137,12 @@
 - 빌드와 기존 모드2 회귀 시험 및 기본 영어/한국어 선택/설정 재생성 후 유지/사용자 규칙 보존 시험 통과(tools/tests/mode2.swift, run_mode2.sh).
 - 실제 UI에서 영어 기본 화면, 한국어로 즉시 전환, 채팅창·설정창·제목·메뉴 반영, 재실행 후 한국어 유지, English 재전환 확인.
 - 최종 실제 응답 시험: 같은 모드2 시험방에서 Claude가 영어 질문에는 영어, 바로 다음 한국어 질문에는 한국어로 답하는 것 확인. UI 언어는 English로 복원.
+
+## 모드3 — 대표 진행 토론
+- Debate.swift 추가: 첫 바퀴 후 대표가 JSON(action=speak/finish, speaker, focus/reason)으로 다음 발언 또는 종료 판단. 같은 AI 반복 발언 허용. 참여자 검증과 잘못된 응답 시 종료 처리.
+- 전체 대화 원문, 앞선 발언·대표 논점을 매번 전달. 1~2문장/200자 이내 요청. 대표는 충분한 답변, 중요 반론 해소, 반복 여부를 기준으로 판단하며 전원 동의를 강제하지 않음.
+- ChatConfiguration.maxTurns 선택 필드(기존 파일 호환), 기본9, 3~30회. 실패한 발언도 상한에 포함. 진행 판단 및 마지막 정리 호출은 별도. 종료 시 대표가 결론·남은 쟁점을 최대3문장으로 정리. 중지 시 정리도 추가 호출하지 않음.
+- ChatTurn에 maxTurns/endReason/debateFocus, Entry.focus 선택 필드. 화면에 발언 횟수·다음 발언자·논점·종료 이유·Stop 표시. 모드1/2 유지, 영어/한국어 UI 지원.
+- DebateCancellation은 활성 CLI에 종료 신호를 보내고 미종료 시 1초 후 강제종료. Answerer 대기도 취소/기한을 주기적으로 확인(출력 종료 후 프로세스 무한 대기 방지 포함).
+- 회귀 시험(tools/tests/run_mode2.sh) 확장: 반복 발언·전체 맥락·대표 종료·상한·잘못된 진행 판단·추가 호출 없는 중지·실제 sleep 프로세스 취소·기존 모드 및 언어 호환. 전부 통과, 전체 빌드 통과.
+- 실제 UI/CLI 시험: 3종 첫 바퀴 후 대표 Claude가 자신을 다시 지목해 네 번째 발언 → 대표 종료 판단 → 최종3문장 정리 확인(상한5회). 다음 질문은 Gemini 대기 중 Stop으로 중단, 2개 기존 발언 보존 및 추가 발언/정리 없이 idle 복귀 확인. 시험방 ‘모드3 시험…’ 보존.

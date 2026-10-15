@@ -15,6 +15,23 @@ struct ChatView: View {
             chat
         }
         .frame(minWidth: 760, minHeight: 480)
+        // A photo dropped anywhere in the window is attached, not only on the message box.
+        .onDrop(of: [UTType.fileURL, UTType.image], delegate: ImageAttachmentDropDelegate(discussion: discussion))
+        .overlay {
+            if discussion.imageDropActive {
+                ZStack {
+                    Color.accentColor.opacity(0.08)
+                    RoundedRectangle(cornerRadius: 12)
+                        .strokeBorder(Color.accentColor, style: StrokeStyle(lineWidth: 2, dash: [8, 6]))
+                        .padding(8)
+                    Label(L("놓으면 사진이 첨부돼요", "Drop to attach photos"), systemImage: "photo.on.rectangle")
+                        .font(.title3.weight(.medium))
+                        .padding(.horizontal, 18).padding(.vertical, 10)
+                        .background(.regularMaterial, in: Capsule())
+                }
+                .allowsHitTesting(false)
+            }
+        }
     }
 
     // Saved group chats, newest first. Right-click to delete.
@@ -251,7 +268,6 @@ struct ChatView: View {
                 .padding(.horizontal, 4)
             }
             .padding(.horizontal, 16).padding(.vertical, 12)
-            .onDrop(of: [UTType.fileURL, UTType.image], delegate: ImageAttachmentDropDelegate(discussion: discussion))
         }
     }
 
@@ -646,8 +662,12 @@ private struct AttachmentThumbnail: View {
 
 private struct ImageAttachmentDropDelegate: DropDelegate {
     let discussion: Discussion
-    func validateDrop(info: DropInfo) -> Bool { !discussion.running }
+    func validateDrop(info: DropInfo) -> Bool { !discussion.running && info.hasItemsConforming(to: [UTType.fileURL, UTType.image]) }
+    func dropEntered(info: DropInfo) { discussion.imageDropActive = validateDrop(info: info) }
+    func dropExited(info: DropInfo) { discussion.imageDropActive = false }
+    func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: validateDrop(info: info) ? .copy : .forbidden) }
     func performDrop(info: DropInfo) -> Bool {
+        discussion.imageDropActive = false
         guard !discussion.running else { return false }
         let conversationID = discussion.currentID
         let files = info.itemProviders(for: [UTType.fileURL])

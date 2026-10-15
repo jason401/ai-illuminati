@@ -266,6 +266,7 @@ final class Discussion: ObservableObject {
     var activeImages: [URL] = []
     var imageContext = ""
     @Published var inputHeight: CGFloat = 36
+    @Published var imageDropActive = false  // a photo is being dragged over the chat window
     @Published var openEntries: Set<UUID> = []  // AI replies unfolded in the chat (not saved)
     @Published var draggingProvider: Account.Provider?
     var draggingConversationID: UUID?

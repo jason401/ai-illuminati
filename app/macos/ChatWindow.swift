@@ -219,11 +219,12 @@ struct ChatView: View {
                     .accessibilityLabel(L("이미지 첨부", "Attach images"))
                     .help(L("사진 선택 또는 이미지 붙여넣기", "Choose images or paste a screenshot"))
                     .disabled(discussion.running)
-                    ZStack(alignment: .topLeading) {
+                    ZStack(alignment: .leading) {
                         if discussion.draft.isEmpty {
                             Text(L("메시지를 입력하세요…", "Write a message…"))
                                 .foregroundColor(.secondary)
-                                .padding(.leading, 8).padding(.top, 8)
+                                .frame(height: 36)
+                                .padding(.leading, 8)
                                 .allowsHitTesting(false)
                         }
                         MultilineInput(text: $discussion.draft, height: $discussion.inputHeight,
@@ -608,10 +609,18 @@ private struct MultilineInput: NSViewRepresentable {
             parent.text = editor.string
             measure(editor)
         }
+        // The box is at least 36 pt tall. Short text gets equal space above and below so a single
+        // line sits in the middle (next to the + and send buttons); longer text keeps a 4 pt margin.
         func measure(_ editor: NSTextView) {
             guard let layout = editor.layoutManager, let container = editor.textContainer else { return }
             layout.ensureLayout(for: container)
-            let measured = min(116, max(36, ceil(layout.usedRect(for: container).height + editor.textContainerInset.height * 2)))
+            let lineHeight = layout.defaultLineHeight(for: editor.font ?? .systemFont(ofSize: NSFont.systemFontSize))
+            let textHeight = max(lineHeight, ceil(layout.usedRect(for: container).height))
+            let inset = max(4, floor((36 - textHeight) / 2))
+            if abs(editor.textContainerInset.height - inset) > 0.5 {
+                editor.textContainerInset = NSSize(width: 4, height: inset)
+            }
+            let measured = min(116, max(36, textHeight + inset * 2))
             DispatchQueue.main.async { [weak self] in
                 guard let self, abs(self.parent.height - measured) > 1 else { return }
                 self.parent.height = measured

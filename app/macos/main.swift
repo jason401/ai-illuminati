@@ -198,23 +198,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     // "████████░░" for the part left (10 blocks), like Claude Code's usage bars.
-    private func bar(left: Double, cells: Int = 10) -> NSAttributedString {
+    private func bar(left: Double, cells: Int = 10, color: NSColor = .labelColor) -> NSAttributedString {
         let filled = max(0, min(cells, Int((left / 100 * Double(cells)).rounded())))
         let text = NSMutableAttributedString(string: String(repeating: "█", count: filled), attributes: [
-            .font: barFont, .foregroundColor: NSColor.labelColor])
+            .font: barFont, .foregroundColor: color])
         text.append(NSAttributedString(string: String(repeating: "░", count: cells - filled), attributes: [
             .font: barFont, .foregroundColor: NSColor.tertiaryLabelColor]))
         return text
     }
 
-    // One line per account in the main menu: name, bar, "62%". Hovering opens the details.
+    private let windowLabelFont = NSFont.systemFont(ofSize: 11, weight: .medium)
+    private var windowNames: [String] { [L("5시간", "5h"), L("주간", "Week")] }
+
+    // One limit in the main menu row: "5h ██████ 62%". A limit the plan does not have shows "–",
+    // so both columns stay lined up. Low values turn orange or red.
+    private func segment(_ name: String, _ window: UsageWindow?) -> NSAttributedString {
+        let text = NSMutableAttributedString(string: name + " ", attributes: [
+            .font: windowLabelFont, .foregroundColor: NSColor.secondaryLabelColor])
+        guard let window else {
+            text.append(NSAttributedString(string: "–", attributes: [.font: barFont, .foregroundColor: NSColor.tertiaryLabelColor]))
+            return text
+        }
+        let left = window.left()
+        let tint = color(forLeft: left)
+        text.append(bar(left: left, cells: 6, color: tint))
+        text.append(NSAttributedString(string: String(format: " %3d%%", Int(left.rounded())), attributes: [
+            .font: barFont, .foregroundColor: tint]))
+        return text
+    }
+
+    // Width of the widest possible segment, so the weekly column starts at the same place on every row.
+    private var segmentWidth: CGFloat {
+        let full = UsageWindow(usedPercent: 0, resetsAt: nil)
+        return windowNames.map { segment($0, full).size().width }.max() ?? 0
+    }
+
+    // One line per account in the main menu: name, then the 5-hour and weekly limits side by side.
+    // Hovering opens the details (reset times and other limits).
     private func row(for usage: AIUsage, nameWidth: CGFloat) -> NSMenuItem {
         let style = NSMutableParagraphStyle()
-        style.tabStops = [NSTextTab(textAlignment: .left, location: nameWidth + 16)]
+        let first = nameWidth + 16
+        style.tabStops = [NSTextTab(textAlignment: .left, location: first),
+                          NSTextTab(textAlignment: .left, location: first + segmentWidth + 18)]
         let title = NSMutableAttributedString(string: label(for: usage) + "\t", attributes: [.font: rowFont])
-        if let left = usage.leftNow {
-            title.append(bar(left: left))
-            title.append(NSAttributedString(string: String(format: "  %3d%%", Int(left.rounded())), attributes: [.font: barFont]))
+        if usage.fiveHour != nil || usage.weekly != nil {
+            title.append(segment(windowNames[0], usage.fiveHour))
+            title.append(NSAttributedString(string: "\t", attributes: [.font: barFont]))
+            title.append(segment(windowNames[1], usage.weekly))
         } else {
             title.append(NSAttributedString(string: usage.needsLogin ? L("로그인 필요", "Sign-in required") : "?", attributes: [
                 .font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.secondaryLabelColor]))

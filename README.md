@@ -14,7 +14,7 @@
    git clone https://github.com/jason401/ai-illuminati.git
    ```
 2. 처음 한 번 프로젝트 폴더에서 `zsh tools/setup_signing.sh`를 실행해 앱 전용 로컬 서명을 설정해요. macOS 인증 창은 Mac에서 직접 승인하세요. 이후 `Build AI Illuminati.command`를 더블클릭해요 (Xcode Command Line Tools가 필요해요. 없으면 설치 창이 떠요).
-3. 메뉴바 오른쪽 위에 삼각형 안의 눈 마크가 생겨요. 누르면 계정별 사용량이 보여요.
+3. 메뉴바 오른쪽 위에 삼각형 안의 눈 마크가 생겨요. 누르면 계정마다 **5시간·주간 남은 양이 나란히** 보여요(그 요금제에 없는 한도는 `–`, 30% 미만 주황·10% 미만 빨강). 계정 위에 올리면 리셋 시각과 다른 한도가 보여요.
 
 ## 언어
 

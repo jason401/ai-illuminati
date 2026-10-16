@@ -2,6 +2,16 @@
 
 이 문서만 읽으면 바로 이어서 작업할 수 있게 정리했어요. 규칙은 `AGENTS.md`(= `CLAUDE.md`와 같은 내용)에, 사용자용 설명은 `README.md`에 있어요.
 
+## 최신 변경 — Codex (2026-10-16, 세션 검증 첫 단계)
+
+- 사용자 승인으로 세션 도입의 안전한 첫 단계 구현. `tools/tests/session_probe.py`: 기본 실행은 합성 원고(2만 자 이상)·PNG 생성만, `--live`일 때만 기존 앱 전용 Claude/Codex 계정으로 최대 각 4회 호출. 개인 기본 폴더·Gemini 제외, API 키·인증 파일 복사·설정 변경 없음. `--parallel-only`는 같은 계정에 별도 세션 2개 생성(각 제공사 2회 호출).
+- 실제 확인: 두 CLI 모두 첫 호출에만 보낸 원고·이미지를 같은 세션으로 재개해 이전에 묻지 않은 표식·그림 숫자를 정확히 답함. 재개 후 실제 검색 이벤트 확인, 쓰기 시험 파일 생성 안 됨. 같은 계정의 별도 세션 동시 생성도 통과. 해당 세션의 원본 기록에 이미지 데이터 존재 확인.
+- **Codex 권한 중요**: `-c sandbox_mode="read-only"`로 재개한 모든 turn_context에서 read-only·실행 폴더 유지 확인. 학교 관리 정책이 `approval_policy="never"`를 `on-request`로 바꿈. 이를 read-only 해제로 오해하거나 정책을 우회하지 말 것.
+- 오프라인 검사 `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tools/tests -p test_session_probe.py` (6개). 상세 실행법·검증 결과·미검증 항목: `tools/tests/SESSION_PROBE.md`.
+- 기존 회귀 시험에서 모드1↔2 전환 시험의 가짜 응답 함수가 `prompts` 배열을 병렬 수정해 실제 SIGSEGV 발생. 시험 코드에만 NSLock 추가. pasteboard 접근이 가능한 환경에서 `zsh tools/tests/run_mode2.sh` 전체 통과. 앱 소스 변경 없음으로 앱 재빌드/재실행은 하지 않음.
+- **앱의 기존 모드3/호출 방식은 변경하지 않음.** `ready_for_app=false`: 실제 자동 압축·압축 후 이미지·네이티브 삭제·개인 목록 노출·중지/재시작 복구는 아직 미검증. 과도한 사용량을 피하려고 자동 압축까지 밀어붙이는 대형 시험은 하지 않음. 실험 세션은 앱 전용 계정에 남겨둠; 원본 출력/소유권 정보는 private tmp에 있고 git에 넣지 않음. 앱 전용 폴더도 기본 Codex 앱에 안 보인다고 보장하지 말 것.
+- 다음 구현: 앱 소유 기록의 삭제/복구 검증 후 방별 opt-in 세션 연결 + 제한된 기존 호출 대체 경로. 한도/인증/권한 실패·Stop 시 자동 재호출 금지. 자료 목록/압축 복원/공동 작업은 별도 검증·커밋 단위.
+
 
 ## 최신 변경 — Claude (2026-10-16, 웹 검색)
 

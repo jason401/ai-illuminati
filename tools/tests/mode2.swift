@@ -288,7 +288,11 @@ do {
     let chat = Discussion(model: model)
     chat.newConversation()
     var prompts: [String] = []
+    // Mode 1 calls this fake concurrently; protect the captured array just like
+    // the mode 3 fakes above. Unsynchronized append can corrupt Swift's storage.
+    let promptLock = NSLock()
     chat.answer = { account, prompt, _ in
+        promptLock.lock(); defer { promptLock.unlock() }
         prompts.append(prompt)
         if prompt.contains("당신은 대화 진행자입니다") { return .success("claude,codex,gemini") }
         return .success("답-\(account.provider.rawValue)-\(prompts.count)")

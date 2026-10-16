@@ -9,16 +9,18 @@ import Cocoa
 // description), it does not watch the video. Rules are only added, never removed; the file is
 // backed up once, and left alone if it cannot be read.
 enum GeminiLinks {
-    static let domains = ["youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"]
+    // agy cannot ask for permission in print mode, so reading web pages must be allowed in its settings.
+    // "read_url(*)" lets it open any page it finds with its web search (read only; commands stay blocked).
+    static let rules = ["read_url(*)", "read_url(youtube.com)", "read_url(www.youtube.com)", "read_url(m.youtube.com)", "read_url(youtu.be)"]
     static let toolNote = """
-    [도구 안내] 링크는 read_url로 youtube.com, youtu.be 주소만 열 수 있어요. 다른 사이트와 터미널 명령은 \
-    막혀 있으니 시도하지 말고, 얻은 정보만으로 답하세요. 유튜브는 영상 페이지(제목, 채널, 설명란)만 \
-    읽을 수 있고 영상 자체는 볼 수 없으니, 내용을 어디서 얻었는지 밝히세요.
+    [도구 안내] 웹 검색(search_web)과 웹 페이지 읽기(read_url)를 쓸 수 있어요. 터미널 명령과 파일 수정은 \
+    막혀 있으니 시도하지 마세요. 유튜브는 영상 페이지(제목, 채널, 설명란)만 읽을 수 있고 영상 자체는 \
+    볼 수 없어요. 내용을 어디서 얻었는지 밝히세요.
 
 
     """
 
-    static func allowYouTube() {
+    static func allowWeb() {
         let path = Login.home + "/.gemini/antigravity-cli/settings.json"
         var settings: [String: Any] = [:]
         if FileManager.default.fileExists(atPath: path) {
@@ -28,7 +30,7 @@ enum GeminiLinks {
         }
         var permissions = settings["permissions"] as? [String: Any] ?? [:]
         var allow = permissions["allow"] as? [String] ?? []
-        let missing = domains.map { "read_url(\($0))" }.filter { !allow.contains($0) }
+        let missing = rules.filter { !allow.contains($0) }
         guard !missing.isEmpty else { return }
         let backup = path + ".backup-before-ai-illuminati"
         if FileManager.default.fileExists(atPath: path), !FileManager.default.fileExists(atPath: backup) {
@@ -54,7 +56,9 @@ enum Answerer {
 
     enum Failure: Error { case missingTool, failed(String), timedOut }
 
-    static func ask(_ account: Account, prompt: String, timeout: TimeInterval = 240, cancellation: DebateCancellation? = nil, images: [URL] = []) -> Result<String, Failure> {
+    // web: lets the AI search the web and read pages (nothing else: no files, no commands).
+    static func ask(_ account: Account, prompt: String, timeout: TimeInterval = 240, cancellation: DebateCancellation? = nil,
+                    images: [URL] = [], web: Bool = false) -> Result<String, Failure> {
         if cancellation?.isCancelled == true { return .failure(.failed("Cancelled")) }
         let outFile = chatDir + "/answer-\(UUID().uuidString).txt"
         defer { try? FileManager.default.removeItem(atPath: outFile) }
@@ -65,15 +69,17 @@ enum Answerer {
         switch account.provider {
         case .claude:
             binary = ClaudeUsage.binary
-            arguments = ["-p", prompt, "--tools", "", "--no-session-persistence",
+            let tools = web ? ["--tools", "WebSearch,WebFetch", "--allowedTools", "WebSearch,WebFetch"] : ["--tools", ""]
+            arguments = ["-p", prompt] + tools + ["--no-session-persistence",
                          "--safe-mode", "--strict-mcp-config", "--mcp-config", "{\"mcpServers\":{}}", "--no-chrome"]
         case .codex:
             binary = CodexUsage.binary
-            arguments = ["exec", "--skip-git-repo-check", "--sandbox", "read-only", "--ephemeral",
+            // --search belongs before "exec" (it is a top-level option).
+            arguments = (web ? ["--search"] : []) + ["exec", "--skip-git-repo-check", "--sandbox", "read-only", "--ephemeral",
                          "--color", "never", "-C", chatDir, "-o", outFile, prompt]
         case .gemini:
             binary = Login.agyInstalled ? Login.home + "/.local/bin/agy" : nil
-            GeminiLinks.allowYouTube()
+            GeminiLinks.allowWeb()
             arguments = ["-p", GeminiLinks.toolNote + prompt, "--sandbox", "--disable-slash-commands",
                          "--print-timeout", "\(Int(timeout) - 10)s"]
         }
@@ -257,8 +263,8 @@ final class Discussion: ObservableObject {
     @Published var running = false
     @Published var stopping = false
     var debateCancellation: DebateCancellation?
-    var debateAnswer: (Account, String, TimeInterval, DebateCancellation) -> Result<String, Answerer.Failure> = {
-        Answerer.ask($0, prompt: $1, timeout: $2, cancellation: $3)
+    var debateAnswer: (Account, String, TimeInterval, DebateCancellation, Bool) -> Result<String, Answerer.Failure> = {
+        Answerer.ask($0, prompt: $1, timeout: $2, cancellation: $3, web: $4)
     }
     @Published var draft = ""
     @Published var pendingImages: [ChatImage] = []

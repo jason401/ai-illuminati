@@ -108,9 +108,11 @@ debate.configure { $0.mode = 3; $0.turnsPerAI = 4; $0.leader = .claude }
 var decisions = 0
 var debateCalls: [String] = []
 var openingSeen: [String] = []
-debate.debateAnswer = { account, prompt, _, _ in
+var webMismatch = false
+debate.debateAnswer = { account, prompt, _, _, web in
     testLock.lock(); defer { testLock.unlock() }
     debateCalls.append(prompt)
+    if web != prompt.contains("[MODE3 SPEECH]") { webMismatch = true }
     if prompt.contains("[MODE3 MODERATION]") {
         decisions += 1
         if decisions == 1 { return .success(#"{"action":"speak","speaker":"codex","focus":"Address the counterexample","board":"Agreed: A / Check: B"}"#) }
@@ -147,6 +149,9 @@ expect(debate.current.turns[0].entries[3].focus == "Address the counterexample",
 expect(debateCalls.first { $0.contains("[MODE3 SPEECH]") && !$0.contains("opening round") }?.contains("Contribution from gemini") == true,
        "all opening views missing from the next speaker's context")
 expect(debate.current.turns[0].endReason == "Important objections addressed", "moderator end reason missing")
+expect(!webMismatch, "only speeches may search the web; moderation and the final answer must not")
+expect(speeches.last?.contains("check it yourself with a search") == true, "speakers must verify before disputing")
+expect(!speeches.contains { $0.contains("Do not use tools") }, "speeches must not forbid the web search they are given")
 expect(debate.current.turns[0].maxTurns == 12 && debate.current.turns[0].turnsPerAI == 4, "per-AI limit not saved")
 expect(debate.current.turns[0].final != nil && debate.current.summary.isEmpty, "mode3 final or full-history behavior wrong")
 
@@ -155,7 +160,7 @@ let capped = Discussion(model: model)
 capped.configure { $0.mode = 3; $0.turnsPerAI = 2 }
 var spokenBy: [String: Int] = [:]
 var finalCount = 0
-capped.debateAnswer = { account, prompt, _, _ in
+capped.debateAnswer = { account, prompt, _, _, _ in
     testLock.lock(); defer { testLock.unlock() }
     if prompt.contains("[MODE3 MODERATION]") { return .success(#"{"action":"speak","speaker":"claude","focus":"One more detail"}"#) }
     if prompt.contains("[MODE3 FINAL]") { finalCount += 1; return .success("Summary") }
@@ -178,10 +183,31 @@ let plainReply = ChatTurn.Entry.reply(round: 1, speaker: "Gemini", text: "첫 �
 expect(plainReply.headline == nil && plainReply.text == "첫 문장입니다. 두 번째 문장입니다." && plainReply.shortLine == "첫 문장입니다.", "fallback line wrong")
 expect(ChatTurn.Entry(round: 1, speaker: "x", text: String(repeating: "a", count: 200), failed: false).shortLine.count == 89, "long fallback line not cut")
 
+// An AI whose usage is used up is left out after its failed reply; the others carry on.
+let exhausted = Discussion(model: model)
+exhausted.configure { $0.mode = 3; $0.turnsPerAI = 3 }
+var exhaustedCalls: [String: Int] = [:]
+var exhaustedDecisions = 0
+exhausted.debateAnswer = { account, prompt, _, _, _ in
+    testLock.lock(); defer { testLock.unlock() }
+    if prompt.contains("[MODE3 MODERATION]") {
+        exhaustedDecisions += 1
+        if exhaustedDecisions > 3 { return .success(#"{"action":"finish","reason":"done"}"#) }
+        return .success(#"{"action":"speak","speaker":"gemini","focus":"Search for it"}"#)
+    }
+    if prompt.contains("[MODE3 FINAL]") { return .success("Final") }
+    exhaustedCalls[account.provider.rawValue, default: 0] += 1
+    if account.provider == .gemini { return .failure(.failed("RESOURCE_EXHAUSTED (code 429): Individual quota reached.")) }
+    return .success("Reply")
+}
+exhausted.draft = "Quota test"; exhausted.send(); waitFor(exhausted)
+expect(exhaustedCalls["gemini"] == 1 && exhaustedDecisions == 4, "an AI out of usage must not be asked again")
+expect(exhausted.current.turns[0].entries.filter { !$0.failed }.count == 5, "the other AIs must keep speaking")
+
 let broken = Discussion(model: model)
 broken.configure { $0.mode = 3 }
 var brokenCalls = 0
-broken.debateAnswer = { _, prompt, _, _ in
+broken.debateAnswer = { _, prompt, _, _, _ in
     testLock.lock(); defer { testLock.unlock() }
     brokenCalls += 1
     if prompt.contains("[MODE3 MODERATION]") { return .success("invalid JSON") }
@@ -193,7 +219,7 @@ expect(broken.current.turns[0].entries.count == 3 && brokenCalls == 5, "invalid 
 let stopped = Discussion(model: model)
 stopped.configure { $0.mode = 3 }
 var stoppedCalls = 0
-stopped.debateAnswer = { _, _, _, token in
+stopped.debateAnswer = { _, _, _, token, _ in
     testLock.lock(); stoppedCalls += 1; testLock.unlock()
     while !token.isCancelled { Thread.sleep(forTimeInterval: 0.01) }
     return .failure(.failed("Cancelled"))

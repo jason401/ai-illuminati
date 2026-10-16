@@ -111,8 +111,8 @@ extension Discussion {
         return Answerer.ask(account, prompt: imageContext + "\n" + prompt, timeout: timeout, images: activeImages)
     }
 
-    func requestDebate(_ account: Account, _ prompt: String, _ timeout: TimeInterval, _ token: DebateCancellation) -> Result<String, Answerer.Failure> {
-        if activeImages.isEmpty { return debateAnswer(account, prompt, timeout, token) }
-        return Answerer.ask(account, prompt: imageContext + "\n" + prompt, timeout: timeout, cancellation: token, images: activeImages)
+    func requestDebate(_ account: Account, _ prompt: String, _ timeout: TimeInterval, _ token: DebateCancellation, web: Bool = false) -> Result<String, Answerer.Failure> {
+        if activeImages.isEmpty { return debateAnswer(account, prompt, timeout, token, web) }
+        return Answerer.ask(account, prompt: imageContext + "\n" + prompt, timeout: timeout, cancellation: token, images: activeImages, web: web)
     }
 }

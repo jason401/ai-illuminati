@@ -3,6 +3,19 @@
 이 문서만 읽으면 바로 이어서 작업할 수 있게 정리했어요. 규칙은 `AGENTS.md`(= `CLAUDE.md`와 같은 내용)에, 사용자용 설명은 `README.md`에 있어요.
 
 
+## 최신 변경 — Claude (2026-10-16, 웹 검색)
+
+- 사용자 지적: 논문 링크 질문에서 Claude·ChatGPT가 "검색을 못 한다"고 하고, ChatGPT는 검색도 안 하면서 "미확인"만 반복. 원인: 앱이 모든 도구를 꺼서 실행(`--tools ""`, codex 검색 없음, agy는 유튜브 주소만 허용).
+- `Answerer.ask(..., web:)`: 모드3 발언(첫 답·이후 발언)만 `web: true`. 진행 판단·최종 정리는 검색 안 함.
+  - Claude: `--tools WebSearch,WebFetch --allowedTools WebSearch,WebFetch` (print 모드는 허락을 못 물어서 allowedTools 필수).
+  - Codex: `codex --search exec …` (`--search`는 exec 앞에 와야 함. exec 뒤에 두면 오류). 셸 명령(curl 등)은 read-only 샌드박스에서 막힘.
+  - agy: `search_web`은 원래 허용됨. 페이지 읽기(`read_url`)는 print 모드에서 허락을 못 물어 자동 거절 → `~/.gemini/antigravity-cli/settings.json`의 `permissions.allow`에 `read_url(*)` 추가(`GeminiLinks.allowWeb`, 기존 백업 그대로). 사용자의 agy 단독 사용에도 페이지 읽기 허락 창이 안 뜸.
+- 지시문: 중요한 사실·숫자·이름·링크는 먼저 검색, `[source: URL]`. 남의 주장을 미확인/틀림이라 하려면 먼저 직접 검색. 출처 있는 주장을 자기 출처 없이 반박 금지. 대표는 "검색 안 하고 미확인이라고 한 것"을 미확인으로 치지 않음. 최종 답에 찾은 링크 포함. 발언 시간 제한 240→300초.
+- 발언 지시문에 남아 있던 "Do not use tools"가 검색 허용과 충돌 → Claude·ChatGPT가 "도구 금지라 검색 못 함"이라고 답함. "웹 검색·페이지 읽기만 사용, 파일 수정·명령 실행 금지"로 바꿈(시험으로 고정).
+- 사용량 소진(429, RESOURCE_EXHAUSTED, quota, usage/rate limit) 실패가 나면 그 AI는 이번 토론에서 빼고(`isOutOfUsage`), 남은 AI가 이어감. 남은 AI가 없으면 종료.
+- 실제 모드3 확인(같은 질문): 80초·5발언. ChatGPT가 DOI 논문과 인용 출처, Claude가 SearchWorks 서지(view/896785)와 WorldCat 링크를 찾아 최종 답에 링크 포함. 이 시험 중 Gemini 주간 한도 소진(약 127시간 후 리셋).
+- 수동 확인(같은 질문, 단독 실행): Claude가 SearchWorks 기록 https://searchworks.stanford.edu/view/896785 (Stephen Allen Farnow, *Acoustic applications of the zone plate*, 1975/1976) 확인. Gemini가 이전에 말한 "Donald Allen Farnow"는 틀린 이름이었음.
+
 ## 최신 변경 — Claude (2026-10-16, 모드3 목표 = 좋은 답)
 
 - 사용자 지적: AI들이 서로 반박만 하고 대화가 길어져도 답이 나아지지 않음. 원인은 우리 지시문(입장 방어·반론 요구·"동의 금지", 대표에게 "의견 차이 찾기·반론권", 60% 최소 발언 강제, 이른 종료 시 "가장 약한 주장 반박" 대체 지시).

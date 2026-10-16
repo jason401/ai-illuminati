@@ -85,6 +85,12 @@ extension Discussion {
         return others.min { (spoken[$0.provider] ?? 0) < (spoken[$1.provider] ?? 0) }!
     }
 
+    // A reply that failed because the account's usage limit is used up: asking again would only fail again.
+    static func isOutOfUsage(_ failure: Answerer.Failure) -> Bool {
+        let text = describe(failure).lowercased()
+        return ["429", "resource_exhausted", "quota", "usage limit", "rate limit", "limit reached"].contains { text.contains($0) }
+    }
+
     func stopDebate() {
         guard running, let cancellation = debateCancellation else { return }
         stopping = true
@@ -113,8 +119,10 @@ extension Discussion {
         Speak only as yourself. Never write, imagine, or quote a statement on another AI's behalf.
         Use 2–4 sentences, at most 400 characters (this limit overrides shorter length rules), in the language of the
         latest user message unless they request another language.
-        Mark facts and numbers: [source: name] only for a source you actually know, otherwise [from memory] or [estimate].
-        Never invent a source or a precise number.
+        You can search the web and read pages. For any fact, number, name or link that matters, search first and cite
+        what you found as [source: URL]. Use [from memory] or [estimate] only when a search found nothing. Never invent a source.
+        Before calling another AI's claim unverified or wrong, check it yourself with a search. If your search confirms it, say so.
+        If it does not, say what you searched and what you found instead. Never dispute a sourced claim without a source of your own.
         \(opening
             ? "This is the opening round: every AI answers at the same time without seeing the others. Give your best answer to the question with its main reason."
             : """
@@ -124,7 +132,7 @@ extension Discussion {
               When another AI is right, say so briefly and build on it. Change your own view freely if the discussion shows a better one.
               No attacks, no repeating, no separate summary.
               """)
-        Do not use tools or execute commands.
+        Use only web search and reading web pages. Do not change files or run commands.
         \(Self.headlineRule)
         [Moderator focus]
         \(focus.isEmpty ? "Give your initial contribution." : focus)
@@ -157,7 +165,7 @@ extension Discussion {
             let prompt = debateSpeech(account, rules: rules, focus: "", transcript: opening, opening: true)
             group.enter()
             DispatchQueue.global().async {
-                let result = self.requestDebate(account, prompt, 240, cancellation)
+                let result = self.requestDebate(account, prompt, 300, cancellation, web: true)
                 lock.lock(); openings[account.provider] = result; lock.unlock()
                 if !cancellation.isCancelled {
                     let entry: ChatTurn.Entry
@@ -175,9 +183,13 @@ extension Discussion {
             for account in Self.namedFirst(question, team: team) {
                 count += 1
                 used[account.provider, default: 0] += 1
-                if case .success(let text) = openings[account.provider] {
+                switch openings[account.provider] {
+                case .success(let text):
                     successful.insert(account.provider)
                     transcript += "\n\n[\(label(account))]\n" + ChatTurn.Entry.reply(round: 1, speaker: "", text: text).text
+                case .failure(let failure) where Self.isOutOfUsage(failure):
+                    used[account.provider] = perAI  // out of usage: leave it out of the rest of the debate
+                default: break
                 }
             }
             if successful.isEmpty { reason = L("모든 AI가 응답하지 못해 종료했습니다.", "No AI could respond. Debate ended."); count = limit }
@@ -190,16 +202,19 @@ extension Discussion {
             }
             changeTurn(id, index) { $0.status = L("대표가 다음 발언 또는 종료를 판단하는 중…", "Moderator is choosing the next speaker or ending the debate…") }
             let available = team.filter { (used[$0.provider] ?? 0) < perAI }
+            guard !available.isEmpty else { break }
             let counts = team.map { "\($0.provider.rawValue) \(used[$0.provider] ?? 0)/\(perAI)" }.joined(separator: ", ")
             let prompt = """
             \(Self.debateContext(rules: rules, transcript: transcript))
             [MODE3 MODERATION]
             You are the neutral moderator. The goal is the best possible answer to the latest user question.
             Do not favor your own earlier statements.
-            1. Update the board: what is agreed, what needs checking (claims or numbers without a known source), and what is still open.
+            1. Update the board: what is agreed, what needs checking, and what is still open. A claim backed by a URL that no one has
+               contradicted with another source counts as verified. Saying "unverified" without searching does not make it unverified.
             2. Find the most important thing the answer still lacks: missing evidence or data, an unchecked number, an unanswered part of
                the question, a perspective nobody covered, or a real disagreement that changes the answer.
-            3. Give that as a task to the AI best placed to do it. The focus is a task ("find…", "calculate…", "propose…", "check…"),
+            3. Give that as a task to the AI best placed to do it. The AIs can search the web, so a task can be "search for…".
+               The focus is a task ("search…", "find…", "calculate…", "propose…", "check…"),
                never "rebut X". One or two sentences, under 250 characters.
             If the latest user message asks for a particular AI to speak, give that AI the turn.
             Participants: \(team.map { $0.provider.rawValue }.joined(separator: ","))
@@ -237,7 +252,7 @@ extension Discussion {
                 t.status = L("\(number)/\(limit) \(self.label(account)) 발언 중…", "\(number)/\(limit) \(self.label(account)) is speaking…")
                 t.debateFocus = currentFocus
             }
-            let speech = requestDebate(account, debateSpeech(account, rules: rules, focus: focus, transcript: transcript, opening: false), 240, cancellation)
+            let speech = requestDebate(account, debateSpeech(account, rules: rules, focus: focus, transcript: transcript, opening: false), 300, cancellation, web: true)
             if cancellation.isCancelled { break }
             count += 1 // Failed attempts count too, so the loop is always bounded.
             used[account.provider, default: 0] += 1
@@ -251,6 +266,7 @@ extension Discussion {
                 transcript += "\n\n[\(label(account))]\n" + entry.text
             case .failure(let failure):
                 entry = .init(round: 1, speaker: label(account), text: Self.describe(failure), failed: true)
+                if Self.isOutOfUsage(failure) { used[account.provider] = perAI }
             }
             entry.focus = focus
             changeTurn(id, index, save: true) { $0.entries.append(entry) }
@@ -265,7 +281,7 @@ extension Discussion {
                 \(Self.debateContext(rules: rules, transcript: transcript))
                 [MODE3 FINAL]
                 Write the final answer to the latest user question, using the best of what the team found.
-                Answer the question directly first. Then, briefly: what rests on evidence and what is an estimate,
+                Answer the question directly first, with the links the team found. Then, briefly: what rests on a source and what is an estimate,
                 and any open question that would change the answer (skip it if there is none).
                 At most about 8 short sentences or bullet points. Do not describe the discussion or who said what.
                 Use the language of the latest user question unless they request another language. Do not imply certainty or consensus where none exists.

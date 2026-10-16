@@ -94,10 +94,10 @@ final class NativeSessions {
     }
 
     func ask(_ account: Account, room: UUID, prompt: String, images: [URL], timeout: TimeInterval,
-             token: DebateCancellation, web: Bool, speaker: String,
+             token: DebateCancellation, web: Bool, speaker: String, appendContext: Bool = false,
              invoke: (String, [URL], NativeSessionCall?) -> Result<String, Answerer.Failure>,
              note: (String) -> Void) -> Result<String, Answerer.Failure> {
-        guard Self.eligible(account), let (context, instruction, role) = Self.split(prompt) else {
+        guard Self.eligible(account), let (incomingContext, instruction, role) = Self.split(prompt) else {
             note(L("\(account.provider.title): 전체 자료 전달 (전용 계정 세션 미지원)", "\(account.provider.title): full context (dedicated session unavailable)"))
             return invoke(prompt, images, nil)
         }
@@ -105,13 +105,17 @@ final class NativeSessions {
         var records = load(room)
         let index = records.lastIndex { $0.accountID == account.id && $0.role == role && $0.valid }
         var record = index.map { records[$0] } ?? Record(accountID: account.id, provider: account.provider, role: role)
+        var context = incomingContext
+        if appendContext, record.nativeID != nil {
+            context = record.context + "\n\n[Next task context]\n" + incomingContext
+        }
         if !context.hasPrefix(record.context) {
             if let index { records[index].valid = false }
             record = Record(accountID: account.id, provider: account.provider, role: role)
         }
         let resumed = record.nativeID != nil
-        var delta = resumed ? String(context.dropFirst(record.context.count)) : context
-        if resumed, !record.ownBlock.isEmpty, let range = delta.range(of: record.ownBlock) { delta.removeSubrange(range) }
+        var delta = appendContext && resumed ? incomingContext : (resumed ? String(context.dropFirst(record.context.count)) : context)
+        if !appendContext, resumed, !record.ownBlock.isEmpty, let range = delta.range(of: record.ownBlock) { delta.removeSubrange(range) }
         let newImages = resumed ? images.filter { !record.images.contains($0.path) } : images
         let directory = Self.directory(room).appendingPathComponent(record.id.uuidString)
         do {
@@ -132,7 +136,7 @@ final class NativeSessions {
         record.nativeID = call.nativeID ?? record.nativeID
         if case .success(let text) = result, call.completed, let sid = record.nativeID, UUID(uuidString: sid) != nil {
             record.context = context
-            record.images = images.map(\.path)
+            record.images = appendContext && resumed ? Array(Set(record.images + images.map(\.path))).sorted() : images.map(\.path)
             let body = ChatTurn.Entry.reply(round: 1, speaker: speaker, text: text).text
             record.ownBlock = role == "speaker" ? "[\(speaker)]\n" + body : ""
             record.valid = !call.compacted

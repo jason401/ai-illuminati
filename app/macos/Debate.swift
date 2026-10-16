@@ -123,6 +123,7 @@ extension Discussion {
         what you found as [source: URL]. Use [from memory] or [estimate] only when a search found nothing. Never invent a source.
         Before calling another AI's claim unverified or wrong, check it yourself with a search. If your search confirms it, say so.
         If it does not, say what you searched and what you found instead. Never dispute a sourced claim without a source of your own.
+        \(activeAdversarial ? "This is a critical debate: identify the strongest opposing interpretation, concrete failure cases and missing controls in other claims. Defend claims with evidence, rebut ideas rigorously, never attack people or invent disagreement. Do not agree merely to end the discussion." : "")
         \(opening
             ? "This is the opening round: every AI answers at the same time without seeing the others. Give your best answer to the question with its main reason."
             : """
@@ -211,6 +212,7 @@ extension Discussion {
             [MODE3 MODERATION]
             You are the neutral moderator. The goal is the best possible answer to the latest user question.
             Do not favor your own earlier statements.
+            \(activeAdversarial ? "Critical debate: actively assign unresolved opposing hypotheses, rebuttals, stress tests and missing controls; resolve material disagreements with evidence. No personal attacks or fabricated objections." : "")
             1. Update the board: what is agreed, what needs checking, and what is still open. A claim backed by a URL that no one has
                contradicted with another source counts as verified. Saying "unverified" without searching does not make it unverified.
             2. Find the most important thing the answer still lacks: missing evidence or data, an unchecked number, an unanswered part of
@@ -236,8 +238,12 @@ extension Discussion {
                 reason = L("대표의 진행 판단을 받지 못해 토론을 종료했습니다.", "Moderator decision failed. Debate ended."); break
             }
             if let notes = decision.board { board = notes }
-            if decision.action == "finish" { reason = decision.reason!; break }
-            if let chosen = available.first(where: { $0.provider == decision.speaker }) {
+            let criticalPending = activeAdversarial ? available.filter { (used[$0.provider] ?? 0) < 2 } : []
+            if decision.action == "finish" && criticalPending.isEmpty { reason = decision.reason!; break }
+            if decision.action == "finish", let critic = criticalPending.first {
+                next = critic
+                focus = L("다른 AI의 핵심 주장에 대한 가장 강한 반론·대안과 이를 판별할 근거를 제시하세요. 억지 반대나 인신공격은 하지 마세요.", "Give the strongest evidence-based objection or alternative to another claim and a discriminating check. No fabricated disagreement or personal attacks.")
+            } else if let chosen = available.first(where: { $0.provider == decision.speaker }) {
                 next = chosen
                 focus = decision.focus!
             } else {

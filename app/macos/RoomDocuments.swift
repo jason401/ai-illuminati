@@ -5,6 +5,8 @@ struct RoomDocument: Codable, Identifiable {
     var id = UUID()
     var name: String
     var text: String
+    var units: [MaterialUnit]?
+    var notice: String?
 }
 
 enum RoomDocuments {
@@ -45,39 +47,37 @@ extension Discussion {
         panel.canChooseDirectories = folder
         panel.canChooseFiles = !folder
         panel.allowsMultipleSelection = !folder
-        panel.message = L("자료 사본을 이 방에 저장합니다. PDF는 텍스트만 읽으며, 그림은 이미지로 따로 첨부하세요. 최대 20개·총 12만 자.", "Save material snapshots in this chat. PDFs provide text only; attach figures as images. Up to 20 files / 120,000 characters.")
+        panel.message = L("원고·슬라이드·사진·PDF·텍스트를 사본으로 등록합니다. 큰 자료는 나누어 읽습니다. 원본은 수정하지 않습니다.", "Import document, slide, photo, PDF and text snapshots. Large materials are read in parts. Originals stay unchanged.")
         guard panel.runModal() == .OK else { return }
-        do {
-            var urls = panel.urls
-            if folder, let root = urls.first {
-                urls = []
-                if let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.isSymbolicLinkKey], options: [.skipsHiddenFiles, .skipsPackageDescendants]) {
-                    for case let url as URL in enumerator {
-                        if (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true { enumerator.skipDescendants(); continue }
-                        if RoomDocuments.extensions.contains(url.pathExtension.lowercased()) { urls.append(url) }
-                        if urls.count > 20 { break }
-                    }
+        let room = currentID
+        var urls = panel.urls
+        if folder, let root = urls.first {
+            urls = []
+            if let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.isSymbolicLinkKey], options: [.skipsHiddenFiles, .skipsPackageDescendants]) {
+                for case let url as URL in enumerator {
+                    if (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true { enumerator.skipDescendants(); continue }
+                    if MaterialReader.extensions.contains(url.pathExtension.lowercased()) { urls.append(url) }
                 }
             }
-            guard !urls.isEmpty, urls.count + (current.documents?.count ?? 0) <= 20 else {
-                throw NSError(domain: "Materials", code: 3, userInfo: [NSLocalizedDescriptionKey: "PDF·텍스트 파일을 1~20개 선택하세요. 이미지는 입력창의 +를 이용하세요."])
+        }
+        guard !urls.isEmpty else { attachmentError = L("지원되는 자료가 없습니다.", "No supported materials found."); return }
+        importingMaterials = true
+        let files = urls
+        DispatchQueue.global(qos: .userInitiated).async {
+            var added: [RoomDocument] = [], failures: [String] = []
+            for url in files {
+                do { added.append(try MaterialReader.read(url, room: room)) }
+                catch { failures.append(url.lastPathComponent + ": " + error.localizedDescription) }
             }
-            let added = try urls.map(RoomDocuments.read)
-            let all = (current.documents ?? []) + added
-            guard all.reduce(0, { $0 + $1.text.count }) <= 120_000 else {
-                throw NSError(domain: "Materials", code: 4, userInfo: [NSLocalizedDescriptionKey: "자료가 총 12만 자를 넘어요. 필요한 파일만 선택하세요."])
+            DispatchQueue.main.async {
+                self.importingMaterials = false
+                do {
+                    try self.nativeSessions.reset(room)
+                    self.change(room, save: true) { $0.documents = ($0.documents ?? []) + added }
+                    self.sessionNote = L("자료 \(added.count)개 등록. 협업 모드에서 분담해 읽고 결과물을 만듭니다.", "Imported \(added.count) materials. Collaboration reads them in parts and produces deliverables.")
+                    self.attachmentError = failures.isEmpty ? nil : failures.joined(separator: "\n")
+                } catch { self.attachmentError = error.localizedDescription }
             }
-            let dir = RoomDocuments.directory(currentID)
-            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-            for (url, doc) in zip(urls, added) {
-                let dest = dir.appendingPathComponent(doc.id.uuidString + "." + url.pathExtension)
-                try FileManager.default.copyItem(at: url, to: dest)
-                try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: dest.path)
-            }
-            try nativeSessions.reset(currentID)
-            change(currentID, save: true) { $0.documents = all }
-            sessionNote = L("자료 사본 저장됨. 다음 질문부터 참여 AI에게 전달돼요.", "Snapshots saved. Participating AIs receive them with your next question.")
-            attachmentError = nil
-        } catch { attachmentError = error.localizedDescription }
+        }
     }
 }

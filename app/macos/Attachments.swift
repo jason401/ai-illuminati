@@ -42,8 +42,8 @@ enum ImageStore {
 }
 
 extension Discussion {
-    var hasImages: Bool { !pendingImages.isEmpty || current.turns.contains { !($0.images ?? []).isEmpty } }
-    var canSend: Bool { !running && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !pendingImages.isEmpty) }
+    var hasImages: Bool { !pendingImages.isEmpty || current.turns.contains { !($0.images ?? []).isEmpty } || (current.documents ?? []).contains { ($0.units ?? []).contains { !$0.images.isEmpty } } }
+    var canSend: Bool { !running && !importingMaterials && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !pendingImages.isEmpty) }
 
     func chooseImages() {
         guard !running else { return }
@@ -112,14 +112,17 @@ extension Discussion {
     }
 
     func requestDebate(_ account: Account, _ prompt: String, _ timeout: TimeInterval, _ token: DebateCancellation, web: Bool = false) -> Result<String, Answerer.Failure> {
-        let full = (activeDocumentText.isEmpty ? "" : activeDocumentText + "\n") + prompt + (imageContext.isEmpty ? "" : "\n" + imageContext)
+        let selected = MaterialContext.select(MaterialContext.parts(activeMaterials, room: activeSessionRoom ?? currentID), query: String(prompt.suffix(3000)))
+        let materialText = selected.isEmpty ? "" : "\n[Selected source excerpts; not an exhaustive review. Use Collaboration for full coverage.]\n" + MaterialContext.quote(selected)
+        let pictures = activeImages + selected.flatMap(\.images)
+        let full = materialText + (activeDocumentText.isEmpty ? "" : activeDocumentText + "\n") + prompt + (imageContext.isEmpty ? "" : "\n" + imageContext)
         if let room = activeSessionRoom {
-            return nativeSessions.ask(account, room: room, prompt: full, images: activeImages, timeout: timeout,
+            return nativeSessions.ask(account, room: room, prompt: full, images: pictures, timeout: timeout,
                                       token: token, web: web, speaker: label(account), invoke: { text, images, session in
                 Answerer.ask(account, prompt: text, timeout: timeout, cancellation: token, images: images, web: web, session: session)
             }, note: { text in DispatchQueue.main.async { self.sessionNote = text } })
         }
-        if activeImages.isEmpty { return debateAnswer(account, full, timeout, token, web) }
-        return Answerer.ask(account, prompt: full, timeout: timeout, cancellation: token, images: activeImages, web: web)
+        if pictures.isEmpty { return debateAnswer(account, full, timeout, token, web) }
+        return Answerer.ask(account, prompt: full, timeout: timeout, cancellation: token, images: pictures, web: web)
     }
 }

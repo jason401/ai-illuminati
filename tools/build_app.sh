@@ -15,7 +15,15 @@ if [[ -z "$SIGNING_ID" ]]; then
 fi
 
 echo "1/3 실행 중인 앱 종료"
-osascript -e 'tell application id "local.aiilluminati" to quit' >/dev/null 2>&1
+osascript -e 'tell application id "local.aiilluminati" to quit' >/dev/null 2>&1 &
+APP_QUIT_PID=$!
+# An unresponsive Apple Event must not block the build indefinitely.
+for APP_QUIT_ATTEMPT in {1..10}; do
+  kill -0 "$APP_QUIT_PID" 2>/dev/null || break
+  sleep 0.2
+done
+kill "$APP_QUIT_PID" 2>/dev/null
+wait "$APP_QUIT_PID" 2>/dev/null
 sleep 1
 pkill -f "AI Illuminati.app/Contents/MacOS/" 2>/dev/null
 

@@ -40,7 +40,7 @@ struct ChatView: View {
             Button(action: { discussion.newConversation() }) {
                 Label(L("새 대화", "New chat"), systemImage: "square.and.pencil").frame(maxWidth: .infinity)
             }
-            .disabled(discussion.running)
+            .disabled(discussion.running || discussion.importingMaterials)
             .padding(10)
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
@@ -60,7 +60,7 @@ struct ChatView: View {
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
-                        .disabled(discussion.running)
+                        .disabled(discussion.running || discussion.importingMaterials)
                         .contextMenu {
                             if !conversation.turns.isEmpty {
                                 Button(L("대화 삭제…", "Delete chat…"), role: .destructive) { discussion.delete(conversation.id) }
@@ -79,7 +79,7 @@ struct ChatView: View {
                                 .fixedSize()
                                 .help(L("대화 메뉴", "Chat options"))
                                 .accessibilityLabel(L("대화 메뉴: ", "Chat options: ") + conversation.title)
-                                .disabled(discussion.running)
+                                .disabled(discussion.running || discussion.importingMaterials)
                                 .padding(.trailing, 6)
                             }
                         }
@@ -103,9 +103,9 @@ struct ChatView: View {
                     }
                     .labelsHidden()
                     .frame(width: 245)
-                    .disabled(discussion.running)
+                    .disabled(discussion.running || discussion.importingMaterials)
                     Spacer(minLength: 8)
-                    if discussion.configuration.mode == 3 {
+                    if discussion.configuration.mode != 3 {
                         Menu {
                             Picker(L("AI마다 최대 발언", "Maximum turns per AI"), selection: Binding(
                                 get: { discussion.configuration.turnsPerAI ?? 4 },
@@ -118,14 +118,10 @@ struct ChatView: View {
                             Text(L("AI마다 \(discussion.configuration.turnsPerAI ?? 4)회", "\(discussion.configuration.turnsPerAI ?? 4) turns each"))
                         }
                         .fixedSize()
-                        .disabled(discussion.running)
+                        .disabled(discussion.running || discussion.importingMaterials)
                     }
                     Menu {
-                        Text(discussion.configuration.mode == 3
-                             ? L("모두 동시에 답한 뒤, 대표가 빠진 것을 찾아 한 명씩 맡기고 최종 답을 정리합니다.", "Everyone answers at once. Then the moderator assigns what is missing, one AI at a time, and writes the final answer.")
-                             : discussion.configuration.mode == 2
-                             ? L("각자 한 번씩 전체 대화를 읽고 답하며, 대표가 다음 순서를 정합니다.", "Each AI reads the full history and replies once. The moderator sets the next order.")
-                             : L("각자 답변과 상호 검토 후 최종 답변과 요약을 만듭니다.", "Independent answers and peer review are followed by a final answer and summary."))
+                        Text(L("1 토론: 대표가 논점을 맡기고 답을 정리합니다. 2 비판 토론: 반론·대안·실패 조건을 검증합니다. 3 협업: 모든 선택 계정에 결과물 작업을 나누고 검토·통합합니다.", "1 Discussion: moderator-led discussion and synthesis. 2 Critical debate: test objections, alternatives and failure cases. 3 Collaboration: assign work to selected accounts, cross-review and integrate deliverables."))
                         if discussion.configuration.mode >= 2 {
                             Text(L("손잡이를 끌어 순서를 바꾸고, 이름 옆 메뉴에서 대표를 정하세요.", "Drag the handles to reorder. Use the menu beside a name to choose the moderator."))
                         }
@@ -154,13 +150,16 @@ struct ChatView: View {
                         }))
                         .toggleStyle(.switch).controlSize(.small)
                     Menu {
-                        Button(L("파일 선택 (PDF·텍스트)", "Choose files (PDF / text)")) { discussion.chooseMaterials(folder: false) }
+                        Button(L("파일 선택 (문서·슬라이드·사진)", "Choose files (documents / slides / photos)")) { discussion.chooseMaterials(folder: false) }
                         Button(L("폴더 선택 (자료 사본)", "Choose folder (snapshots)")) { discussion.chooseMaterials(folder: true) }
                         Button(L("이미지 첨부", "Attach images")) { discussion.chooseImages() }
                     } label: { Label(L("자료 추가", "Add materials"), systemImage: "folder.badge.plus") }
                     if let documents = discussion.current.documents, !documents.isEmpty {
                         Menu {
-                            ForEach(documents) { document in Text(document.name) }
+                            ForEach(documents) { document in
+                                Text(document.name + " · \(document.units?.count ?? 1) parts")
+                                if let notice = document.notice { Text(notice) }
+                            }
                             Divider()
                             Button(L("자료 연결 해제", "Disconnect materials")) {
                                 discussion.restartRoomSessions(disconnect: true)
@@ -171,30 +170,27 @@ struct ChatView: View {
                     Spacer()
                     Menu {
                         Text(L("원본은 수정하지 않습니다. 선택한 자료 사본은 질문할 때 참여 AI 회사로 전달됩니다. 폴더 변경 사항은 자동 반영되지 않습니다.", "Originals stay unchanged. Snapshots are sent to participating AI providers when you ask. Folder changes are not synced."))
-                        Text(L("PDF의 그림·스캔은 이미지로 따로 첨부하세요. 세션은 완전한 기억이나 사용량 절감을 보장하지 않습니다.", "Attach PDF figures / scans as images. Sessions do not guarantee perfect recall or lower usage."))
+                        Text(L("PDF는 페이지 이미지도 읽습니다. DOCX·PPTX는 텍스트·노트·삽입 이미지를 추출하며 원래 화면 배치를 완전히 재현하지는 않습니다.", "PDF pages include rendered images. DOCX/PPTX extract text, notes and embedded images; original layouts are not fully rendered."))
                         Text(L("세션 기록은 로컬 AI 도구에도 남습니다. 방 삭제만으로 그 기록까지 삭제되지는 않습니다.", "Native AI tools also retain session history. Deleting a chat does not erase native history."))
                         Button(L("원본 자료로 세션 다시 시작", "Restart sessions from originals")) {
                             discussion.restartRoomSessions()
                             discussion.sessionNote = L("다음 질문에서 원본 자료와 대화로 다시 시작합니다.", "Next question rebuilds sessions from source materials and conversation.")
                         }
                     } label: { Image(systemName: "info.circle") }.fixedSize()
-                }.disabled(discussion.running)
+                }.disabled(discussion.running || discussion.importingMaterials)
+                if discussion.importingMaterials { ProgressView(L("자료를 가져오는 중…", "Importing materials…")).controlSize(.small) }
+                if discussion.configuration.mode == 3 {
+                    Text(L("선택한 각 계정에 작업을 나눠 맡기고, 교차 검토 후 결과물을 저장합니다. 읽기·작성·검토 호출에 사용량이 듭니다.", "Each selected account receives a task. Contributions are cross-reviewed and saved. Reading, writing and review consume usage.")).font(.caption).foregroundColor(.secondary)
+                }
                 if !discussion.sessionNote.isEmpty {
                     Text(discussion.sessionNote).font(.caption).foregroundColor(.secondary).lineLimit(2)
                 }
-                if discussion.configuration.mode >= 2 {
-                    sequentialControls
+                if discussion.configuration.mode == 3 {
+                    collaborationControls
                 } else {
-                    HStack(spacing: 14) {
-                        Text(L("참여", "Participants")).foregroundColor(.secondary)
-                        Toggle("Claude", isOn: $discussion.useClaude)
-                        Toggle("ChatGPT", isOn: $discussion.useCodex)
-                        Toggle("Gemini", isOn: $discussion.useGemini).disabled(discussion.hasImages)
-                        Spacer()
-                    }
-                    .toggleStyle(.checkbox)
-                    .disabled(discussion.running)
+                    sequentialControls
                 }
+
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
@@ -204,11 +200,7 @@ struct ChatView: View {
                     VStack(alignment: .leading, spacing: 22) {
                         let conversation = discussion.current
                         if conversation.turns.isEmpty {
-                            Text(discussion.configuration.mode == 3
-                                 ? L("먼저 모든 AI가 동시에 각자 답을 내요. 그다음 대표가 답에 아직 빠진 것(근거, 데이터, 확인 안 된 숫자, 다루지 않은 부분)을 찾아 한 명씩 일을 맡기고, 답이 충분해지면 바로 끝내요. 마지막에 대표가 최종 답을 정리해요. AI마다 발언 횟수가 정해져 있고(기본 4회), 중지 버튼으로 언제든 끊을 수 있어요.", "First, every AI answers at the same time. Then the moderator finds what the answer still lacks (evidence, data, unchecked numbers, uncovered parts), gives one AI that task at a time, and ends as soon as the answer is good enough. The moderator then writes the final answer. Each AI has a turn limit (4 by default). Stop at any time.")
-                                 : discussion.configuration.mode == 2
-                                 ? L("순서와 대표를 정하고 질문하세요. 각 AI가 전체 대화를 읽고 1~2문장씩 이어 말해요.\n한 바퀴가 끝나면 대표가 다음 순서를 정해요. 이름 옆 손잡이를 끌어 직접 바꿀 수도 있어요.", "Choose the order and moderator, then send a message. Each AI reads the full conversation and replies in 1–2 sentences.\nThe moderator sets the next order. Drag the handles to change it yourself.")
-                                 : L("질문을 입력하면 AI들이 각자 답하고, 서로 검토한 뒤, 한 명이 최종 답을 정리해 줘요.\n이어서 물어보면 지금까지의 대화 요약을 같이 보내요. 답 길이와 말투는 설정의 '채팅 규칙'에서 정해요.", "Ask a question. The AIs answer, review each other, and produce one final answer.\nFollow-ups include a conversation summary. Adjust length and style in Settings → Chat rules."))
+                            Text(L("자료를 추가하고 작업을 요청하세요. 1번은 토론, 2번은 비판 토론, 3번은 작업 분담·검토·결과물 작성입니다. 협업은 계정마다 따로 선택하며, 원본을 수정하지 않고 결과를 별도 저장합니다.", "Add materials and describe the task. Use Discussion, Critical debate, or Collaboration. Collaboration assigns work to individually selected accounts and saves outputs separately from originals."))
                                 .foregroundColor(.secondary)
                                 .padding(.top, 40)
                                 .frame(maxWidth: .infinity)
@@ -225,8 +217,8 @@ struct ChatView: View {
                             .foregroundColor(.secondary)
                         }
                         ForEach(Array(conversation.turns.enumerated()), id: \.element.id) { index, turn in
-                            if index > 0, (turn.mode ?? 1) != (conversation.turns[index - 1].mode ?? 1) {
-                                ModeChangeMarker(mode: turn.mode ?? 1)
+                            if index > 0, (turn.mode ?? 1) != (conversation.turns[index - 1].mode ?? 1) || turn.modeVersion != conversation.turns[index - 1].modeVersion {
+                                ModeChangeMarker(mode: turn.mode ?? 1, version: turn.modeVersion)
                             }
                             TurnView(turn: turn, discussion: discussion).id(turn.id)
                         }
@@ -243,7 +235,9 @@ struct ChatView: View {
                     Text(error).font(.caption).foregroundColor(.red)
                 }
                 if discussion.hasImages {
-                    Text(L("이미지는 Claude와 ChatGPT에 전달됩니다. 이 대화에서 Gemini는 참여하지 않습니다.", "Images go to Claude and ChatGPT. Gemini is excluded from this image chat."))
+                    Text(discussion.configuration.mode == 3
+                         ? L("그림은 Claude·ChatGPT가 읽고, Gemini에는 근거 메모를 공유합니다.", "Claude/ChatGPT read images; Gemini receives their evidence notes.")
+                         : L("이미지는 Claude와 ChatGPT에 전달됩니다. 이 대화에서 Gemini는 참여하지 않습니다.", "Images go to Claude and ChatGPT. Gemini is excluded from this image chat."))
                         .font(.caption).foregroundColor(.secondary)
                 }
                 if !discussion.pendingImages.isEmpty {
@@ -259,7 +253,7 @@ struct ChatView: View {
                                         }
                                         .buttonStyle(.plain)
                                         .accessibilityLabel(L("첨부 제거: ", "Remove attachment: ") + item.name)
-                                        .disabled(discussion.running)
+                                        .disabled(discussion.running || discussion.importingMaterials)
                                     }
                                     Text(item.name).font(.caption2).lineLimit(1).frame(width: 80)
                                 }
@@ -274,7 +268,7 @@ struct ChatView: View {
                     .buttonStyle(.plain).foregroundColor(.secondary)
                     .accessibilityLabel(L("이미지 첨부", "Attach images"))
                     .help(L("사진 선택 또는 이미지 붙여넣기", "Choose images or paste a screenshot"))
-                    .disabled(discussion.running)
+                    .disabled(discussion.running || discussion.importingMaterials)
                     ZStack(alignment: .leading) {
                         if discussion.draft.isEmpty {
                             Text(L("메시지를 입력하세요…", "Write a message…"))
@@ -311,7 +305,7 @@ struct ChatView: View {
     }
 
     @ViewBuilder private var composerAction: some View {
-        if discussion.running && discussion.configuration.mode == 3 {
+        if discussion.running && discussion.debateCancellation != nil {
             Button(action: { discussion.stopDebate() }) {
                 Image(systemName: "stop.fill").font(.system(size: 13, weight: .semibold))
                     .frame(width: 34, height: 34)
@@ -336,6 +330,28 @@ struct ChatView: View {
             .keyboardShortcut(.return, modifiers: .command)
             .disabled(!discussion.canSend)
         }
+    }
+
+    private var collaborationControls: some View {
+        ScrollView(.horizontal, showsIndicators: true) {
+            HStack {
+                ForEach(discussion.model.accounts, id: \.id) { account in
+                    HStack(spacing: 3) {
+                        Toggle(discussion.label(account), isOn: Binding(
+                            get: { discussion.configuration.accountIDs?.contains(account.id) ?? true },
+                            set: { enabled in discussion.configure { config in
+                                var selected = config.accountIDs ?? discussion.model.accounts.map(\.id)
+                                selected.removeAll { $0 == account.id }
+                                if enabled { selected.append(account.id) }
+                                config.accountIDs = selected
+                            } }))
+                        Button(action: { discussion.configure { $0.leaderAccountID = account.id; $0.leader = account.provider } }) {
+                            Image(systemName: discussion.configuration.leaderAccountID == account.id ? "crown.fill" : "crown")
+                        }.buttonStyle(.plain).help(L("대표로 지정", "Make moderator"))
+                    }.padding(5).background(Color.secondary.opacity(0.1)).cornerRadius(6)
+                }
+            }.toggleStyle(.checkbox)
+        }.disabled(discussion.running || discussion.importingMaterials)
     }
 
     private var sequentialControls: some View {
@@ -389,7 +405,7 @@ struct ChatView: View {
             .toggleStyle(.checkbox)
 
         }
-        .disabled(discussion.running)
+        .disabled(discussion.running || discussion.importingMaterials)
     }
 
     private func dateText(_ date: Date) -> String {
@@ -431,11 +447,12 @@ private struct ParticipantDropDelegate: DropDelegate {
 // A thin line where the chat switched to another mode.
 private struct ModeChangeMarker: View {
     let mode: Int
+    var version: Int? = 2
 
     var body: some View {
         HStack(spacing: 8) {
             Rectangle().fill(Color.secondary.opacity(0.3)).frame(height: 1)
-            Text(L("\(Self.name(mode))(으)로 바뀜", "Switched to \(Self.name(mode))"))
+            Text(L("\(Self.display(mode, version))(으)로 바뀜", "Switched to \(Self.display(mode, version))"))
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .fixedSize()
@@ -443,11 +460,16 @@ private struct ModeChangeMarker: View {
         }
     }
 
+    static func display(_ mode: Int, _ version: Int?) -> String {
+        guard version != 2 else { return name(mode) }
+        return L("이전 모드 \(mode)", "Legacy mode \(mode)")
+    }
+
     static func name(_ mode: Int) -> String {
         switch mode {
-        case 3: return L("모드3 · 토론", "Mode 3 · Debate")
-        case 2: return L("모드2 · 돌아가며 대화", "Mode 2 · Roundtable")
-        default: return L("모드1 · 검토 후 정리", "Mode 1 · Review & summarize")
+        case 3: return L("모드3 · 협업", "Mode 3 · Collaboration")
+        case 2: return L("모드2 · 비판 토론", "Mode 2 · Critical debate")
+        default: return L("모드1 · 토론", "Mode 1 · Discussion")
         }
     }
 }
@@ -489,13 +511,30 @@ private struct TurnView: View {
             if let error = turn.error {
                 Text(error).foregroundColor(.red)
             }
-            if turn.mode == 3 {
+            if (turn.modeVersion == 2 && turn.mode != 3) || (turn.modeVersion == nil && turn.mode == 3) {
                 Text(L("AI 발언 \(turn.entries.count)/\(turn.maxTurns ?? 9)", "AI turns \(turn.entries.count)/\(turn.maxTurns ?? 9)")
                      + (turn.turnsPerAI.map { L(" (AI마다 \($0)회)", " (\($0) each)") } ?? ""))
                     .font(.caption).foregroundColor(.secondary)
                 if let focus = turn.debateFocus { Text(L("다음 논점: ", "Next focus: ") + focus).font(.callout).lineLimit(2).foregroundColor(.secondary) }
                 if let reason = turn.endReason { Text(L("종료 이유: ", "End reason: ") + reason).font(.callout).foregroundColor(.secondary) }
             }
+            if turn.modeVersion == 2 && turn.mode == 3, let coverage = turn.endReason {
+                Text(coverage).font(.caption).foregroundColor(.secondary)
+            }
+            if let tasks = turn.tasks {
+                ForEach(tasks) { task in
+                    HStack(alignment: .top) {
+                        Image(systemName: task.state == "done" ? "checkmark.circle" : task.state == "running" ? "clock" : "circle")
+                        VStack(alignment: .leading) {
+                            Text(task.title).font(.callout).lineLimit(3)
+                            Text((discussion.model.accounts.first { $0.id == task.accountID }.map { discussion.label($0) } ?? task.accountID) + " · " + task.state).font(.caption).foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        if let path = task.output { Button(L("결과 열기", "Open result")) { discussion.openArtifact(path) } }
+                    }
+                }
+            }
+            if let file = turn.artifact { Button(L("최종 결과물 열기", "Open final deliverable")) { discussion.openArtifact(file) } }
             if let final = turn.final {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(markdown(final))
@@ -515,7 +554,7 @@ private struct TurnView: View {
                 Text(localizedNotice(note)).font(.caption).foregroundColor(.secondary)
             }
             if !turn.entries.isEmpty {
-                if (turn.mode ?? 1) >= 2 {
+                if turn.modeVersion == 2 || (turn.mode ?? 1) >= 2 {
                     entriesView
                 } else {
                     DisclosureGroup(L("AI들의 대화 보기 (\(turn.entries.count))", "View AI discussion (\(turn.entries.count))")) {
@@ -535,7 +574,7 @@ private struct TurnView: View {
                 EntryRow(entry: entry,
                          isOpen: Binding(get: { discussion.openEntries.contains(entry.id) },
                                          set: { if $0 { discussion.openEntries.insert(entry.id) } else { discussion.openEntries.remove(entry.id) } }),
-                         label: (turn.mode ?? 1) >= 2 ? entry.speaker : "\(entry.round == 1 ? L("각자 답", "Initial answer") : L("검토 후", "After review")) · \(entry.speaker)")
+                         label: (turn.modeVersion == 2 || (turn.mode ?? 1) >= 2) ? entry.speaker : "\(entry.round == 1 ? L("각자 답", "Initial answer") : L("검토 후", "After review")) · \(entry.speaker)")
             }
         }
         .padding(.top, 6)

@@ -12,10 +12,11 @@ func waitFor(_ discussion: Discussion) {
     expect(!discussion.running, "discussion did not finish")
 }
 
-// The window offers only mode 3 for now; the tests still check modes 1 and 2, which stay in the code.
-expect(Discussion.availableModes == [3], "only mode 3 should be offered")
+// Offer the three new modes, then check legacy engines separately.
+expect(Discussion.availableModes == [1, 2, 3], "all three new modes should be offered")
 let hiddenDefault = Discussion(model: AppModel())
-expect(hiddenDefault.configuration.mode == 3, "a new room must start in mode 3")
+expect(hiddenDefault.configuration.mode == 1, "a new room must start in discussion mode 1")
+Discussion.modernModes = false
 Discussion.availableModes = [1, 2, 3]
 let model = AppModel()
 model.accounts = Account.Provider.allCases.map {
@@ -355,4 +356,114 @@ do {
     ChatStore.save(conversation)
     expect(ChatStore.loadAll().contains { $0.id == conversation.id && $0.documents?.first?.text == "value 247" && $0.configuration?.keepSessions == true }, "empty room materials / toggle not persisted")
     print("PASS: session delta, image reuse, role separation, compaction bootstrap and material persistence")
+}
+
+// New mode semantics, large Office import, all-account collaboration and artifacts.
+do {
+    Discussion.modernModes = true
+    let root = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("material-fixtures")
+    let room = UUID()
+    let word = try! MaterialReader.read(root.appendingPathComponent("large.docx"), room: room)
+    expect(word.units!.contains { $0.text.contains("247 kPa") && $0.text.contains("386") }, "DOCX text/table missing")
+    expect(word.units!.contains { !$0.images.isEmpty }, "DOCX embedded image missing")
+    let slides = try! MaterialReader.read(root.appendingPathComponent("slides.pptx"), room: room)
+    expect(slides.units![0].text.contains("file 2") && slides.units![0].text.contains("789"), "PPTX order or notes lost")
+    expect(slides.units![1].text.contains("file 1"), "PPTX second slide wrong")
+    let m = AppModel()
+    m.accounts = [Account(id: "personal-test", provider: .codex, name: "Personal", dir: nil),
+                  Account(id: "school-test", provider: .codex, name: "School", dir: AccountStore.accountsDir + "/school-test"),
+                  Account(id: "claude-test", provider: .claude, name: "Claude", dir: nil)]
+    let chat = Discussion(model: m)
+    chat.configure { $0.mode = 3; $0.leaderAccountID = "claude-test" }
+    var assigned: Set<String> = [], active = 0, maximum = 0
+    let lock = NSLock()
+    chat.collaborationAnswer = { account, prompt, _, _ in
+        if prompt.contains("[COLLAB PLAN]") { return .success("{\"assignments\":[{\"accountID\":\"personal-test\",\"task\":\"Design option\"},{\"accountID\":\"school-test\",\"task\":\"Cost analysis\"},{\"accountID\":\"claude-test\",\"task\":\"Risk analysis\"}]}") }
+        if prompt.contains("[Your assignment]") {
+            lock.lock(); assigned.insert(account.id); active += 1; maximum = max(maximum, active); lock.unlock()
+            Thread.sleep(forTimeInterval: 0.05)
+            lock.lock(); active -= 1; lock.unlock()
+        }
+        return .success("Concrete deliverable with uncertainties.")
+    }
+    chat.draft = "Compare designs and produce a project proposal, not a paper."
+    chat.send(); waitFor(chat)
+    expect(assigned == Set(m.accounts.map(\.id)) && maximum >= 2, "all accounts must receive independent concurrent tasks")
+    expect(chat.current.turns[0].tasks?.allSatisfy { $0.state == "done" } == true, "task state not persisted")
+    expect(chat.current.turns[0].artifact.map { FileManager.default.fileExists(atPath: $0) } == true, "final deliverable missing")
+    expect(chat.current.turns[0].modeVersion == 2, "new mode version must persist")
+    print("PASS: large DOCX, images, PPTX order/notes, general-purpose parallel all-account collaboration and saved artifacts")
+}
+
+// A dependent account runs only after its prerequisite. Reuse source notes on follow-up.
+do {
+    let m = AppModel()
+    m.accounts = [Account(id: "school-claude-fake", provider: .claude, name: "School Claude", dir: nil),
+                  Account(id: "school-codex-fake", provider: .codex, name: "School Codex", dir: nil)]
+    let chat = Discussion(model: m)
+    chat.configure { $0.mode = 3; $0.leaderAccountID = "school-claude-fake" }
+    let fixture = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("material-fixtures/slides.pptx")
+    let document = try! MaterialReader.read(fixture, room: chat.currentID)
+    chat.change(chat.currentID, save: true) { $0.documents = [document] }
+    var sourceCalls = 0, order: [String] = []
+    chat.collaborationAnswer = { account, prompt, _, _ in
+        if prompt.contains("[COLLAB PLAN]") {
+            return .success("{\"assignments\":[{\"accountID\":\"school-claude-fake\",\"task\":\"Requirements\",\"dependsOn\":[]},{\"accountID\":\"school-codex-fake\",\"task\":\"Proposal\",\"dependsOn\":[\"school-claude-fake\"]}]}")
+        }
+        if prompt.contains("[COLLAB SOURCE]") { sourceCalls += 1 }
+        if prompt.contains("[Your assignment]") {
+            order.append(account.id)
+            if account.id == "school-codex-fake" {
+                expect(prompt.contains("[Completed prerequisites]") && prompt.contains("[Prerequisite result: school-claude-fake]"), "dependent worker missing prerequisite result")
+            }
+        }
+        return .success("Evidence-backed contribution with source IDs.")
+    }
+    chat.draft = "Create a design proposal."; chat.send(); waitFor(chat)
+    expect(order == ["school-claude-fake", "school-codex-fake"], "dependency order wrong")
+    let initial = sourceCalls
+    expect(initial == document.units!.count, "not all material parts covered")
+    order = []
+    chat.draft = "Refine the same design proposal."; chat.send(); waitFor(chat)
+    expect(sourceCalls == initial, "unchanged material notes must be reused on follow-up")
+    expect(chat.current.turns.last?.endReason?.contains("reused index notes") == true, "coverage/reuse must be visible")
+    print("PASS: prerequisite ordering, prerequisite outputs, complete source coverage and persistent index reuse")
+}
+
+// New discussion/critical mode limits and an unavailable visual moderator fallback.
+do {
+    let m = AppModel()
+    m.accounts = [Account(id: "mode-school-claude-fake", provider: .claude, name: "School Claude", dir: nil),
+                  Account(id: "mode-school-codex-fake", provider: .codex, name: "School Codex", dir: nil)]
+    let chat = Discussion(model: m)
+    chat.configure { $0.mode = 1; $0.leader = .gemini; $0.turnsPerAI = 2 }
+    chat.debateAnswer = { _, prompt, _, _, _ in
+        if prompt.contains("[MODE3 MODERATION]") { return .success("{\"action\":\"finish\",\"reason\":\"Enough evidence\"}") }
+        return .success("TL;DR: A contribution\n\nA concrete contribution.")
+    }
+    chat.draft = "Discuss a design."; chat.send(); waitFor(chat)
+    expect(chat.current.turns[0].maxTurns == 4 && chat.current.turns[0].final != nil, "new mode limits or missing moderator fallback wrong")
+    chat.configure { $0.mode = 2 }
+    chat.draft = "Critique the design."; chat.send(); waitFor(chat)
+    expect(chat.current.turns[1].entries.count == 4 && chat.current.turns[1].maxTurns == 4, "critical mode must give each participant a follow-up objection turn")
+    print("PASS: new discussion limits, unavailable moderator fallback and critical follow-up round")
+}
+
+// Collaboration role sessions continue across different task payloads without resending old images.
+do {
+    let manager = NativeSessions(), room = UUID(), sid = UUID().uuidString
+    let account = Account(id: "school-continuity-fake", provider: .claude, name: "School", dir: AccountStore.accountsDir + "/school-continuity-fake")
+    let image = URL(fileURLWithPath: "/tmp/continuity-figure.png")
+    var calls: [(Bool, Int, String)] = []
+    for (payload, images) in [("source document", [image]), ("write a design", []), ("review a different design", [image])] {
+        _ = manager.ask(account, room: room, prompt: payload + "\n[MODE3 SPEECH]\nDo this task", images: images, timeout: 1,
+                        token: DebateCancellation(), web: false, speaker: "School", appendContext: true, invoke: { prompt, pictures, call in
+            calls.append((call!.resume, pictures.count, prompt))
+            call!.observe("{\"type\":\"result\",\"session_id\":\"\(sid)\",\"is_error\":false}")
+            return .success("Result")
+        }, note: { _ in })
+    }
+    expect(calls.map { $0.0 } == [false, true, true] && calls.map { $0.1 } == [1, 0, 0], "task sessions must continue and retain previously delivered image IDs")
+    expect(!calls[1].2.contains("source document") && !calls[2].2.contains("write a design"), "continuation resent previous tasks")
+    print("PASS: collaboration role continuity across tasks, delta payload and image delivery ledger")
 }

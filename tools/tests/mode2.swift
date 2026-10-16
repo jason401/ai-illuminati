@@ -392,6 +392,13 @@ do {
     expect(chat.current.turns[0].tasks?.allSatisfy { $0.state == "done" } == true, "task state not persisted")
     expect(chat.current.turns[0].artifact.map { FileManager.default.fileExists(atPath: $0) } == true, "final deliverable missing")
     expect(chat.current.turns[0].modeVersion == 2, "new mode version must persist")
+    let writingRoot = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("serial-writing")
+    try FileManager.default.createDirectory(at: writingRoot, withIntermediateDirectories: true)
+    chat.change(chat.currentID, save: true) { $0.workspace = WorkspaceBinding(roots: [WorkspaceRoot(path: writingRoot.path, directory: true)], level: .write) }
+    maximum = 0
+    chat.draft = "Write a proposal."; chat.send(); waitFor(chat)
+    expect(maximum == 1, "writers must execute sequentially")
+    expect(chat.current.turns.last?.backupPath != nil && chat.current.turns.last?.workspaceChanges?.isEmpty == false, "writing must keep backup and actual diff")
     print("PASS: large DOCX, images, PPTX order/notes, general-purpose parallel all-account collaboration and saved artifacts")
 }
 
@@ -466,4 +473,27 @@ do {
     expect(calls.map { $0.0 } == [false, true, true] && calls.map { $0.1 } == [1, 0, 0], "task sessions must continue and retain previously delivered image IDs")
     expect(!calls[1].2.contains("source document") && !calls[2].2.contains("write a design"), "continuation resent previous tasks")
     print("PASS: collaboration role continuity across tasks, delta payload and image delivery ledger")
+}
+
+// Source mutations, exact backup/undo, and external-change conflict protection.
+do {
+    let root = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("backup-fixture")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    try "ORIGINAL".write(to: root.appendingPathComponent("edit.txt"), atomically: true, encoding: .utf8)
+    try "DELETE".write(to: root.appendingPathComponent("delete.txt"), atomically: true, encoding: .utf8)
+    let binding = WorkspaceBinding(roots: [WorkspaceRoot(path: root.path, directory: true)], level: .write)
+    var backup = try WorkspaceBackup.begin(binding, room: UUID(), runID: UUID())
+    try "MODIFIED".write(to: root.appendingPathComponent("edit.txt"), atomically: true, encoding: .utf8)
+    try "CREATED".write(to: root.appendingPathComponent("new.txt"), atomically: true, encoding: .utf8)
+    try FileManager.default.removeItem(at: root.appendingPathComponent("delete.txt"))
+    try backup.finish()
+    expect(Set(backup.changes.map { $0.kind }) == Set(["added","modified","deleted"]), "actual diff kinds wrong")
+    try "LATER".write(to: root.appendingPathComponent("edit.txt"), atomically: true, encoding: .utf8)
+    do { try backup.restore(); fatalError("overwrote external edits") } catch {}
+    try "MODIFIED".write(to: root.appendingPathComponent("edit.txt"), atomically: true, encoding: .utf8)
+    try backup.restore()
+    let restoredStamps = try WorkspaceBackup.stamps(binding.roots)
+    expect(restoredStamps == backup.before, "restored source hashes differ")
+    expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("new.txt").path), "undo left created file")
+    print("PASS: backup, actual add/edit/delete list, conflict refusal and exact hash undo")
 }

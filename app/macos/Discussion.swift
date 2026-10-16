@@ -275,6 +275,9 @@ struct ChatTurn: Identifiable, Codable {
     var modeVersion: Int?
     var tasks: [CollaborationTask]?
     var artifact: String?
+    var backupPath: String?
+    var workspaceChanges: [WorkspaceChange]?
+    var undone: Bool?
     var sessionTranscript: String?
     var debateFocus: String?
     var maxTurns: Int?    // mode 3: total AI turns (turnsPerAI × participants)
@@ -371,6 +374,7 @@ final class Discussion: ObservableObject {
     var activeDocumentText = ""
     var activeMaterials: [RoomDocument] = []
     var activeWorkspace: WorkspaceBinding?
+    var activeWorkspaceBackupPath: String?
     var activeAdversarial = false
     var activeImages: [URL] = []
     var imageContext = ""

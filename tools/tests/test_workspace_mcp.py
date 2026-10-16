@@ -25,5 +25,18 @@ class WorkspaceTests(unittest.TestCase):
         self.assertFalse(third['cache_hit']);self.assertIn('386',third['text'])
     def test_view_exposes_no_mutations(self):
         self.assertEqual([t['name'] for t in self.ws.tools()],['list_files','read_document'])
-        with self.assertRaises(ValueError):self.ws.call('write_file',{'path':'notes.txt','content':'bad'})
-if __name__=='__main__':unittest.main()
+        with self.assertRaises(PermissionError):self.ws.call('write_file',{'path':'notes.txt','content':'bad'})
+    def test_writes_require_backup_and_restore_boundary(self):
+        self.ws.manifest['level']='write'
+        with self.assertRaises(PermissionError): self.ws.write_file('edit.txt',content='bad')
+        backup=self.root/'backup';backup.mkdir()
+        (backup/'complete.json').write_text(json.dumps({'roots':self.ws.manifest['roots'],'restored':False}))
+        self.ws.manifest['backup']=str(backup)
+        self.ws.write_file('edit.txt',content='modified')
+        self.ws.write_file('new.txt',content='created')
+        self.assertEqual((self.folder/'edit.txt').read_text(),'modified')
+        self.ws.delete_file('new.txt');self.assertFalse((self.folder/'new.txt').exists())
+        with self.assertRaises(PermissionError):self.ws.write_file('../outside',content='bad')
+        (backup/'complete.json').write_text(json.dumps({'roots':self.ws.manifest['roots'],'restored':True}))
+        with self.assertRaises(PermissionError):self.ws.delete_file('edit.txt')
+if __name__=='__main__' :unittest.main()

@@ -532,6 +532,22 @@ private struct TurnView: View {
             if turn.modeVersion == 2 && turn.mode == 3, let coverage = turn.endReason {
                 Text(coverage).font(.caption).foregroundColor(.secondary)
             }
+            if let changes = turn.workspaceChanges {
+                DisclosureGroup(L("실제 변경 파일 \(changes.count)개", "\(changes.count) changed files")) {
+                    ForEach(changes) { change in
+                        HStack {
+                            Text(change.kind + " · " + change.path).font(.caption).textSelection(.enabled)
+                            Spacer()
+                            if change.kind != "deleted" { Button(L("파일 열기", "Open file")) { discussion.openArtifact(change.path) } }
+                            Button("Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: change.path)]) }
+                        }
+                    }
+                }
+            }
+            if turn.backupPath != nil {
+                Button(turn.undone == true ? L("되돌림 완료", "Restored") : L("되돌리기", "Undo file changes")) { discussion.undoWorkspace(turn) }
+                    .disabled(turn.undone == true || discussion.running || discussion.importingMaterials)
+            }
             if let tasks = turn.tasks {
                 ForEach(tasks) { task in
                     HStack(alignment: .top) {

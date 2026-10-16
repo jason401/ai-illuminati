@@ -2,6 +2,13 @@
 
 이 문서만 읽으면 바로 이어서 작업할 수 있게 정리했어요. 규칙은 `AGENTS.md`(= `CLAUDE.md`와 같은 내용)에, 사용자용 설명은 `README.md`에 있어요.
 
+## 단계③ — 작성·백업·되돌리기 (2026-10-16)
+
+- 방 권한에 작성 추가. 계획/검토는 보기만, 작업자는 연결 폴더에서 수정·생성·삭제. Claude Edit/Write+앱 MCP, Codex workspace-write/연결 writable_roots와 shell_tool=false, agy accept-edits(개인 명령 자동 허용이 있으면 실행 거부; 개인 설정 변경 없음).
+- 작업 시작 전 APFS COW 전체 백업(다른 파일시스템은 일반 복사), 스트리밍 SHA256 검증 완료 후에만 쓰기. git 루트는 HEAD/stash create+앱 전용 ref도 보관. 백업 실패 시 호출0. 쓰기는 작업별 직렬, 읽기 병렬 유지.
+- 실제 added/modified/deleted 목록과 파일/Finder 버튼, 되돌리기. 복원은 임시 사본 후 rename, 전후 해시 검증, 작업 이후 다른 수정이 있으면 덮어쓰기 거부. 중지/실패에도 백업 보존·변경 목록 수집. 방 삭제로 외부 원본/백업 삭제 안 함.
+- 실제 학교 Claude 시험: disposable 1500쪽 폴더에서 edit.txt 수정/new.txt 생성/delete.txt 삭제, 셸 도구 없음 확인. 실제 변경3개 일치. 학교 Codex도 apply_patch로 동일한3개 변경 성공, 셸 도구 없음 확인. Claude 실제 백업을 앱 restore로 복원해 전파일 해시 일치. 회귀11개/Python5개/고정서명 빌드 통과, 가짜 작업자3명 쓰기 최대동시1 확인. 원본 연구 자료는 사용하지 않음.
+
 ## 단계② — 경로 연결·보기 (2026-10-16)
 
 - 자료 선택은 WorkspaceBinding의 경로/디렉터리 여부만 저장. 내용 복사·PDF 전쪽 렌더·조각별 Read source AI 호출 제거. 파일 목록만으로 즉시 계획 시작. 기존 사본/과거 기록은 보존.

@@ -142,7 +142,9 @@ extension Discussion {
     func runDebate(question: String, history: [ChatTurn], rules: String, team: [Account],
                    leader: Account.Provider, perAI: Int, cancellation: DebateCancellation, id: UUID, index: Int) {
         let limit = perAI * team.count
-        var transcript = Self.transcript(history) + "\n\n[User]\n" + question
+        let previous = Self.transcript(history)
+        let prefix = previous.isEmpty ? "" : previous + "\n\n"
+        var transcript = prefix + "[User]\n" + question
         var successful: Set<Account.Provider> = []
         var used: [Account.Provider: Int] = [:]     // turns attempted, failures included; at most perAI each
         var count = 0
@@ -273,6 +275,10 @@ extension Discussion {
         }
         if cancellation.isCancelled { reason = L("사용자가 중지했습니다.", "Stopped by you.") }
         let ending = reason
+        if activeSessionRoom != nil {
+            let raw = String(transcript.dropFirst(prefix.count))
+            changeTurn(id, index, save: true) { $0.sessionTranscript = raw }
+        }
         changeTurn(id, index, save: true) { t in t.endReason = ending; t.debateFocus = nil }
         // Stop never starts another request, including the final synthesis.
         if !cancellation.isCancelled, let moderator, successful.contains(leader) {

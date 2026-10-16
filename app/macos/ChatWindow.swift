@@ -143,6 +143,45 @@ struct ChatView: View {
                     .fixedSize()
                     .accessibilityLabel(L("대화 방식 안내", "About this chat mode"))
                 }
+                HStack {
+                    Toggle(L("세션 유지 (실험)", "Keep sessions (experimental)"), isOn: Binding(
+                        get: { discussion.configuration.keepSessions == true },
+                        set: { enabled in
+                            discussion.configure { $0.keepSessions = enabled }
+                            discussion.sessionNote = enabled
+                                ? L("앱 전용 Claude·ChatGPT 계정을 사용합니다. 그 외 계정과 Gemini는 전체 대화 전달 방식입니다.", "Uses dedicated Claude / ChatGPT accounts. Other accounts and Gemini receive full context.")
+                                : L("다음 질문부터 전체 대화를 전달합니다.", "Next question uses full context.")
+                        }))
+                        .toggleStyle(.switch).controlSize(.small)
+                    Menu {
+                        Button(L("파일 선택 (PDF·텍스트)", "Choose files (PDF / text)")) { discussion.chooseMaterials(folder: false) }
+                        Button(L("폴더 선택 (자료 사본)", "Choose folder (snapshots)")) { discussion.chooseMaterials(folder: true) }
+                        Button(L("이미지 첨부", "Attach images")) { discussion.chooseImages() }
+                    } label: { Label(L("자료 추가", "Add materials"), systemImage: "folder.badge.plus") }
+                    if let documents = discussion.current.documents, !documents.isEmpty {
+                        Menu {
+                            ForEach(documents) { document in Text(document.name) }
+                            Divider()
+                            Button(L("자료 연결 해제", "Disconnect materials")) {
+                                discussion.restartRoomSessions(disconnect: true)
+                                discussion.sessionNote = L("다음 질문은 자료 없이 새 세션에서 시작합니다.", "Next question starts a fresh session without materials.")
+                            }
+                        } label: { Text(L("자료 \(documents.count)개", "\(documents.count) materials")) }
+                    }
+                    Spacer()
+                    Menu {
+                        Text(L("원본은 수정하지 않습니다. 선택한 자료 사본은 질문할 때 참여 AI 회사로 전달됩니다. 폴더 변경 사항은 자동 반영되지 않습니다.", "Originals stay unchanged. Snapshots are sent to participating AI providers when you ask. Folder changes are not synced."))
+                        Text(L("PDF의 그림·스캔은 이미지로 따로 첨부하세요. 세션은 완전한 기억이나 사용량 절감을 보장하지 않습니다.", "Attach PDF figures / scans as images. Sessions do not guarantee perfect recall or lower usage."))
+                        Text(L("세션 기록은 로컬 AI 도구에도 남습니다. 방 삭제만으로 그 기록까지 삭제되지는 않습니다.", "Native AI tools also retain session history. Deleting a chat does not erase native history."))
+                        Button(L("원본 자료로 세션 다시 시작", "Restart sessions from originals")) {
+                            discussion.restartRoomSessions()
+                            discussion.sessionNote = L("다음 질문에서 원본 자료와 대화로 다시 시작합니다.", "Next question rebuilds sessions from source materials and conversation.")
+                        }
+                    } label: { Image(systemName: "info.circle") }.fixedSize()
+                }.disabled(discussion.running)
+                if !discussion.sessionNote.isEmpty {
+                    Text(discussion.sessionNote).font(.caption).foregroundColor(.secondary).lineLimit(2)
+                }
                 if discussion.configuration.mode >= 2 {
                     sequentialControls
                 } else {

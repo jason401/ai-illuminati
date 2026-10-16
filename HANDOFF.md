@@ -2,6 +2,17 @@
 
 이 문서만 읽으면 바로 이어서 작업할 수 있게 정리했어요. 규칙은 `AGENTS.md`(= `CLAUDE.md`와 같은 내용)에, 사용자용 설명은 `README.md`에 있어요.
 
+## 최신 변경 — Codex (2026-10-16, 세션·자료 UI 완료)
+
+- 사용자가 검증 스크립트만으로는 사용할 수 없음을 지적. 실제 채팅 상단에 opt-in 세션 스위치, 자료 파일/폴더 선택, 자료 이름·개수, 연결 해제, 원본으로 세션 재시작 메뉴 구현 중. `NativeSessions.swift`, `RoomDocuments.swift` 추가.
+- 모드3에서만 앱 전용 Claude/Codex 계정 세션 사용. 발언과 대표 판단/최종 정리 분리. 기본 계정·Gemini는 전체 전달. 사용 가능한 기존 세션 계정 우선, 그 계정 한도가 0이면 다른 계정 선택 후 전체 자료로 bootstrap. 로그인 복사/설정 변경 없음.
+- 방별 ownership ledger + 세션별 cwd. 공통 문맥이 확장되면 delta와 새 이미지만 전달. 대표 JSON은 일반 발언 세션에 넣지 않음. 모드3 원문 순서를 sessionTranscript로 보존해 후속 질문에서도 prefix 유지. 자료가 달라지거나 history가 prefix가 아니면 새 세션. 명시적 missing-session에만 stateless 1회 대체; 한도·인증·권한·Stop·timeout 자동 재시도 없음.
+- PDFKit 쪽 번호 텍스트/UTF-8 지원 파일 사본. 20개·파일10 MB·총12만 자 제한, hidden/package/symlink 제외. 그림·스캔은 별도 이미지. 폴더 실시간 접근·동기화·수정권한 기능 아님. native 압축 이벤트 감지 시 다음 호출 원본 bootstrap; 모든 압축 감지를 보장하지 않음.
+- **삭제 제한 명시**: 방 삭제 시 앱 자료·이미지 사본과 JSON 삭제, native provider transcript는 아직 삭제하지 않음. ownership/cwd는 rooms/archived로 보존. 공유 index나 계정 폴더 삭제 금지. UI 정보와 README에 고지.
+- 검증 완료: 전체 Swift 회귀(기존 모드·언어·이미지·Stop + 세션 delta·최초 이미지만·역할 분리·합성 압축 bootstrap·자료/빈방 설정 저장) 통과. Python probe 오프라인 6개 통과. 최종 전체 앱 빌드/실행 및 고정 서명 검사 통과. sandbox 안 pasteboard/Keychain 검사는 실패하므로 해당 시험은 호스트 권한으로 실행해야 함.
+- 실제 UI: 세션 ON → 폴더 선택으로 합성 원고(약2만 자) 연결 → 이미지 + 첨부 → 두 질문. Claude·ChatGPT 학교 계정 모두 첫 원고 표식/그림 위쪽 숫자, 새 첨부 없는 후속 질문의 다른 표식/아래쪽 숫자 정확히 응답. 두 질문 총8회 CLI 호출. 발언2 + 대표1, 총3개 세션 유지. 정확한 앱 소유 native transcript를 읽어 후속 사용자 입력에 원고 전체/이미지 미재전송 확인(Claude 발언 약1.8천 자·이미지0, Codex 발언 약1.9천 자·이미지0; 첫 호출은 약2.4만 자·이미지1). 테스트 방 5FB165F6-9F7A-4D58-B47B-8CAAC1E68EA4 보존. 고사용량 자동 압축까지 실제 발생시키는 시험은 아직 안 함.
+- 실제 사용법은 README ‘자료와 세션 사용하기’. 현재 UI 언어 English이므로 Keep sessions (experimental) → Add materials → Choose files/Choose folder, 그림은 Attach images. 공동 작업 목록·작업 실행/결과물 작성은 아직 구현하지 않음.
+
 ## 최신 변경 — Codex (2026-10-16, 세션 검증 첫 단계)
 
 - 사용자 승인으로 세션 도입의 안전한 첫 단계 구현. `tools/tests/session_probe.py`: 기본 실행은 합성 원고(2만 자 이상)·PNG 생성만, `--live`일 때만 기존 앱 전용 Claude/Codex 계정으로 최대 각 4회 호출. 개인 기본 폴더·Gemini 제외, API 키·인증 파일 복사·설정 변경 없음. `--parallel-only`는 같은 계정에 별도 세션 2개 생성(각 제공사 2회 호출).

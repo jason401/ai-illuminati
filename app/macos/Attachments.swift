@@ -107,12 +107,19 @@ extension Discussion {
     }
 
     func request(_ account: Account, prompt: String, timeout: TimeInterval = 240) -> Result<String, Answerer.Failure> {
-        if activeImages.isEmpty { return answer(account, prompt, timeout) }
-        return Answerer.ask(account, prompt: imageContext + "\n" + prompt, timeout: timeout, images: activeImages)
+        if activeImages.isEmpty { return answer(account, activeDocumentText + "\n" + prompt, timeout) }
+        return Answerer.ask(account, prompt: activeDocumentText + "\n" + imageContext + "\n" + prompt, timeout: timeout, images: activeImages)
     }
 
     func requestDebate(_ account: Account, _ prompt: String, _ timeout: TimeInterval, _ token: DebateCancellation, web: Bool = false) -> Result<String, Answerer.Failure> {
-        if activeImages.isEmpty { return debateAnswer(account, prompt, timeout, token, web) }
-        return Answerer.ask(account, prompt: imageContext + "\n" + prompt, timeout: timeout, cancellation: token, images: activeImages, web: web)
+        let full = (activeDocumentText.isEmpty ? "" : activeDocumentText + "\n") + prompt + (imageContext.isEmpty ? "" : "\n" + imageContext)
+        if let room = activeSessionRoom {
+            return nativeSessions.ask(account, room: room, prompt: full, images: activeImages, timeout: timeout,
+                                      token: token, web: web, speaker: label(account), invoke: { text, images, session in
+                Answerer.ask(account, prompt: text, timeout: timeout, cancellation: token, images: images, web: web, session: session)
+            }, note: { text in DispatchQueue.main.async { self.sessionNote = text } })
+        }
+        if activeImages.isEmpty { return debateAnswer(account, full, timeout, token, web) }
+        return Answerer.ask(account, prompt: full, timeout: timeout, cancellation: token, images: activeImages, web: web)
     }
 }

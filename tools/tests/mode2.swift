@@ -314,3 +314,45 @@ do {
     expect(prompts.first?.contains(mode2Words) == true && prompts.first?.contains("모드2 질문") == true, "mode 2 words missing in mode 1")
     print("PASS: mode switch mid-chat keeps per-message mode and carries mode 2 context into mode 1")
 }
+
+// Persistent session transport: source images once, delta text, separate moderator,
+// cold bootstrap after compaction, no retries on Stop/quota.
+do {
+    let sessions = NativeSessions(), room = UUID(), sid = UUID().uuidString
+    let account = Account(id: "session-test", provider: .claude, name: "Claude", dir: AccountStore.accountsDir + "/session-test")
+    let image = URL(fileURLWithPath: "/tmp/session-test.png")
+    var requests: [(String, [URL], Bool)] = []
+    func request(_ context: String, role: String = "SPEECH", compact: Bool = false) {
+        let result = sessions.ask(account, room: room, prompt: context + "\n[MODE3 \(role)]\nrespond", images: [image], timeout: 1, token: DebateCancellation(), web: false, speaker: "Claude", invoke: { text, images, call in
+            expect(call != nil, "dedicated account must have a native session")
+            requests.append((text, images, call!.resume))
+            call!.observe("{\"type\":\"result\",\"session_id\":\"\(sid)\",\"is_error\":false}")
+            if compact { call!.observe("{\"type\":\"system\",\"subtype\":\"compact_boundary\"}") }
+            return .success("TL;DR: short\n\nanswer")
+        }, note: { _ in })
+        if case .failure = result { fatalError("fake session failed") }
+    }
+    request("source")
+    request("source\n\n[Claude]\nanswer\n\n[Other]\nnew")
+    expect(requests[0].1 == [image] && !requests[0].2, "first call must bootstrap image")
+    expect(requests[1].1.isEmpty && requests[1].2, "resume must not resend image")
+    expect(!requests[1].0.contains("source") && !requests[1].0.contains("[Claude]"), "resume duplicated previous text or own reply")
+    request("source\n\n[Claude]\nanswer\n\n[Other]\nnew", role: "MODERATION")
+    expect(!requests[2].2 && requests[2].1 == [image], "moderator must have a separate session")
+    request("source\n\n[Claude]\nanswer\n\n[Other]\nnew\nnext", compact: true)
+    request("source\n\n[Claude]\nanswer\n\n[Other]\nnew\nnext\nlast")
+    expect(!requests.last!.2 && requests.last!.1 == [image], "compaction must bootstrap original images")
+    expect(!NativeSessions.eligible(Account(id: "personal", provider: .codex, name: "personal", dir: nil)), "personal default home must stay stateless")
+    try! sessions.reset(room)
+    let source = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("source.txt")
+    try! "value 247".write(to: source, atomically: true, encoding: .utf8)
+    let doc = try! RoomDocuments.read(source)
+    expect(doc.text == "value 247", "material text changed")
+    var conversation = Conversation()
+    conversation.documents = [doc]
+    conversation.configuration = ChatConfiguration()
+    conversation.configuration?.keepSessions = true
+    ChatStore.save(conversation)
+    expect(ChatStore.loadAll().contains { $0.id == conversation.id && $0.documents?.first?.text == "value 247" && $0.configuration?.keepSessions == true }, "empty room materials / toggle not persisted")
+    print("PASS: session delta, image reuse, role separation, compaction bootstrap and material persistence")
+}

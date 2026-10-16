@@ -2,6 +2,17 @@
 
 이 문서만 읽으면 바로 이어서 작업할 수 있게 정리했어요. 규칙은 `AGENTS.md`(= `CLAUDE.md`와 같은 내용)에, 사용자용 설명은 `README.md`에 있어요.
 
+## 단계⑤ — 작업 배분·언어·검색·화면 (2026-10-16)
+
+- 계획은 고유 작업 ID/계정 ID/선행 작업 ID/필수 결과 경로. 필요한 작업만 배분, 한 계정 여러 작업 가능, 선택하지 않은 계정 호출 금지(새 방 기본 모두 미선택). 잘못된 ID/순환 계획은 호출 재시도 없이 표시. 같은 계정은 동시 turn 금지, 쓰기는 직렬.
+- 모든 협업 호출 웹 검색 ON. 사용자 질문 언어로 계획·제목·결과·검토, 검색 먼저+[source: URL], 남의 주장 미확인 판정 전 직접 검색. 전체검토만 파일당 작업, 쪽별 AI 미리 읽기 없음.
+- 필수 결과 경로가 연결 범위에 실제 존재하는지 검증. 결과 답변만으로 성공 처리하지 않음. 계획·교차 검토는 보기만; 최종 통합은 작성 권한을 받아 실제 요청 파일에 검토 수정을 반영. 작업 ID/선행 ID/필수 파일/결과 SHA256을 영구 저장하고 검토는 해당 SHA256 버전에 붙임. 고정된 개별 결과 파일·발언 기록 보존.
+- 작업 목록/발언은 완료·진행 요약+펼치기. 실제 변경 목록/Open/Finder/Undo. 세션 스위치·경로 연결·3단계 권한 UI 실물 확인. 새 협업 방의 5계정 기본 모두미선택 확인.
+- 경로 목록은 절대경로로 통일: /tmp↔/private/tmp 정규화로 상대경로 접두사가 중복되는 실제 시험 버그 수정. DOCX/PPTX 요청 이미지 추출·캐시, 슬라이드 실제 순서/노트 유지, 원래 Office 배치 렌더는 아님.
+- Stop은 CLI의 자식 shell/MCP/분석 프로세스까지 종료(지연 writer 회귀). agy는 --disable-slash-commands와 --mode를 같이 쓰면 mode가 무효라는 실제 경고 확인해 workspace 호출에서 충돌 플래그 제거. 개인 권한은 바꾸지 않음. agy native 파일 읽기247kPa 성공, 보기 쓰기/명령 시도 거절·원본 해시 유지. 실행 승인 필요 시 실패를 그대로 표시.
+- 실제 두 AI 한국어 협업에서 15 PDF×100쪽 연결 → 계획 즉시 → notes+PDF3쪽만 확인 → 검색 → report.md 생성 → 교차검토 → 통합 성공(6개 작업카드, 쪽별 호출0). 첫 실험에서 최종 통합이 readonly라 요청 파일 수정 못 했던 점을 발견해 보완. 최종 실제 재시험에서 report.md의 검토 지적2곳을 직접 수정·검증 완료. 검색 이벤트와 [source: URL], 원본 PDF15개 해시 불변, 요청 변환 캐시2개/미리 읽기0 확인. 시험 방6174ADF8-7E88-4ECC-99DA-BC5B277C1324, disposable 결과는 /private/tmp/illuminati-workspace-live/sources/report.md.
+- 최종 전체 Swift 회귀15개, Python 문서7개+세션6개, 앱 빌드·실행·고정 서명 검사 통과. 작성/실행 실제 백업 복원 해시 일치. 소스 변경 완료, 아래 과거 단계의 미구현/학교만 제한은 현재 상태가 아님.
+
 ## 단계④ — 작성+실행 (2026-10-16)
 
 - 권한 메뉴에 작성+실행 추가. Claude는 restricted를 유지하면서 Bash만 명시적 허용, sandbox enabled/allowUnsandboxedCommands=false 및 연결 allowWrite. Codex는 매 fresh/resume에 workspace-write/연결 writable_roots/shell_tool=true, network=false, tmp 쓰기 제외. 검토·계획은 여전히 read-only/shell off. 우회 플래그 없음.

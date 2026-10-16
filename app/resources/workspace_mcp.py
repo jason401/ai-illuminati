@@ -49,6 +49,28 @@ class Workspace:
             if local in ('p','tr'): out.append('\n')
         return ' '.join(out)
 
+    def office_images(self, z, part):
+        rel=str(pathlib.PurePosixPath(part).parent/'_rels'/(pathlib.PurePosixPath(part).name+'.rels'))
+        names=[]
+        if rel in z.namelist():
+            for r in self.xml(z,rel):
+                if r.attrib.get('Type','').endswith('/image') and r.attrib.get('TargetMode')!='External':
+                    target=r.attrib['Target']
+                    name=target.lstrip('/') if target.startswith('/') else os.path.normpath(str(pathlib.PurePosixPath(part).parent/target))
+                    if name in z.namelist(): names.append(name)
+        elif part=='word/document.xml':
+            names=[n for n in z.namelist() if n.startswith('word/media/') and not n.endswith('/')]
+        result=[]
+        for name in dict.fromkeys(names):
+            if z.getinfo(name).file_size>128*1024*1024:raise ValueError('Embedded image exceeds 128 MiB')
+            self.cache.mkdir(parents=True,exist_ok=True,mode=0o700)
+            with tempfile.NamedTemporaryFile(dir=self.cache,suffix=pathlib.PurePosixPath(name).suffix) as f:
+                f.write(z.read(name));f.flush()
+                converted=json.loads(subprocess.check_output([self.manifest['extractor'],f.name,'1','1','images'],timeout=120))
+                for page in converted.get('pages',[]):
+                    if page.get('image'):result.append({'name':name,'image':page['image'],'mime':page.get('mime','image/png')})
+        return result
+
     def read_document(self, path, root=0, start=1, end=None, images=False, offset=0, max_chars=60000, **_):
         p = self.path(path, root)
         stat = p.stat()
@@ -68,6 +90,7 @@ class Workspace:
                 with zipfile.ZipFile(p) as z:
                     if suffix=='.docx':
                         pages=[{'page':1,'text':self.text(self.xml(z,'word/document.xml'))}]
+                        if images: pages[0]['images']=self.office_images(z,'word/document.xml')
                         for extra in ('word/footnotes.xml','word/endnotes.xml'):
                             if extra in z.namelist(): pages[0]['text']+='\n'+extra+'\n'+self.text(self.xml(z,extra))
                     else:
@@ -84,8 +107,8 @@ class Workspace:
                                     if 'notesSlide' in r.attrib.get('Type','') and r.attrib.get('TargetMode')!='External':
                                         n=os.path.normpath('ppt/slides/'+r.attrib['Target']).lstrip('/')
                                         if n in z.namelist(): text+='\n[Speaker notes]\n'+self.text(self.xml(z,n))
-                            pages.append({'page':i,'text':text})
-                    result={'page_count':len(ids) if suffix=='.pptx' else 1,'pages':pages,'notice':'Office text/notes extraction; original layout not rendered. Embedded images can be listed with list_files only if separately available; use PDF export for exact page layout.'}
+                            pages.append({'page':i,'text':text,'images':self.office_images(z,name) if images else []})
+                    result={'page_count':len(ids) if suffix=='.pptx' else 1,'pages':pages,'notice':'Office text, notes and requested embedded images; original layout not rendered. Use PDF export for exact page layout.'}
             elif suffix in ('.png','.jpg','.jpeg','.webp','.heic','.tif','.tiff','.bmp','.gif'):
                 result={'page_count':1,'pages':[{'page':1,'text':'Image file '+p.name}]}
                 if images:
@@ -100,6 +123,10 @@ class Workspace:
         content=[]; text=[]
         for page in result.pop('pages'):
             text.append('[page/slide '+str(page['page'])+']\n'+page['text'])
+            if images:
+                for picture in page.get('images',[]):
+                    content.append({'type':'text','text':'[Embedded image: '+picture['name']+']'})
+                    content.append({'type':'image','mimeType':picture['mime'],'data':picture['image']})
             if images and 'image' in page: content.append({'type':'image','mimeType':page.get('mime','image/png'),'data':page['image']})
         whole='\n\n'.join(text); offset=max(0,int(offset)); count=max(1,min(int(max_chars),200000))
         result.update(text=whole[offset:offset+count],total_characters=len(whole),next_offset=offset+count if offset+count<len(whole) else None)

@@ -19,6 +19,29 @@ final class DebateCancellation {
         active.forEach(Self.end)
     }
     static func end(_ process: Process) {
+        guard process.isRunning else { return }
+        // Stop command/MCP descendants too, before collecting the final source diff.
+        // Killing only the CLI can leave a Python writer running after Stop.
+        let listing = Process(), pipe = Pipe()
+        listing.executableURL = URL(fileURLWithPath: "/bin/ps")
+        listing.arguments = ["-axo", "pid=,ppid="]; listing.standardOutput = pipe; listing.standardError = FileHandle.nullDevice
+        var children: [Int32] = []
+        if (try? listing.run()) != nil {
+            let text = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            listing.waitUntilExit()
+            let pairs = text.split(separator: "\n").compactMap { line -> (Int32, Int32)? in
+                let parts = line.split(whereSeparator: \.isWhitespace)
+                guard parts.count == 2, let pid = Int32(parts[0]), let parent = Int32(parts[1]) else { return nil }
+                return (pid, parent)
+            }
+            var parents: Set<Int32> = [process.processIdentifier]
+            while true {
+                let next = pairs.filter { parents.contains($0.1) && !parents.contains($0.0) }.map { $0.0 }
+                if next.isEmpty { break }
+                children += next; parents.formUnion(next)
+            }
+        }
+        for child in children.reversed() { kill(child, SIGKILL) }
         if process.isRunning { process.terminate() }
         DispatchQueue.global().asyncAfter(deadline: .now() + 1) {
             if process.isRunning { kill(process.processIdentifier, SIGKILL) }

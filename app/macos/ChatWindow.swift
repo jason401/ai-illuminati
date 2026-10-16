@@ -121,7 +121,7 @@ struct ChatView: View {
                         .disabled(discussion.running || discussion.importingMaterials)
                     }
                     Menu {
-                        Text(L("1 토론: 대표가 논점을 맡기고 답을 정리합니다. 2 비판 토론: 반론·대안·실패 조건을 검증합니다. 3 협업: 모든 선택 계정에 결과물 작업을 나누고 검토·통합합니다.", "1 Discussion: moderator-led discussion and synthesis. 2 Critical debate: test objections, alternatives and failure cases. 3 Collaboration: assign work to selected accounts, cross-review and integrate deliverables."))
+                        Text(L("1 토론: 대표가 논점을 맡기고 답을 정리합니다. 2 비판 토론: 반론·대안·실패 조건을 검증합니다. 3 협업: 선택 계정에 필요한 결과물 작업을 나누고 검토·통합합니다.", "1 Discussion: moderator-led discussion and synthesis. 2 Critical debate: test objections, alternatives and failure cases. 3 Collaboration: assign work to selected accounts, cross-review and integrate deliverables."))
                         if discussion.configuration.mode >= 2 {
                             Text(L("손잡이를 끌어 순서를 바꾸고, 이름 옆 메뉴에서 대표를 정하세요.", "Drag the handles to reorder. Use the menu beside a name to choose the moderator."))
                         }
@@ -197,7 +197,7 @@ struct ChatView: View {
                 }.disabled(discussion.running || discussion.importingMaterials)
                 if discussion.importingMaterials { ProgressView(L("자료를 가져오는 중…", "Importing materials…")).controlSize(.small) }
                 if discussion.configuration.mode == 3 {
-                    Text(L("선택한 각 계정에 작업을 나눠 맡기고, 교차 검토 후 결과물을 저장합니다. 읽기·작성·검토 호출에 사용량이 듭니다.", "Each selected account receives a task. Contributions are cross-reviewed and saved. Reading, writing and review consume usage.")).font(.caption).foregroundColor(.secondary)
+                    Text(L("선택 계정 중 필요한 AI에게 작업을 배분합니다. 한 AI가 여러 작업을 맡을 수 있고 결과는 교차 검토합니다.", "Necessary tasks go to selected accounts. One AI can do multiple tasks; results are cross-reviewed.")).font(.caption).foregroundColor(.secondary)
                 }
                 if !discussion.sessionNote.isEmpty {
                     Text(discussion.sessionNote).font(.caption).foregroundColor(.secondary).lineLimit(2)
@@ -217,7 +217,7 @@ struct ChatView: View {
                     VStack(alignment: .leading, spacing: 22) {
                         let conversation = discussion.current
                         if conversation.turns.isEmpty {
-                            Text(L("자료를 추가하고 작업을 요청하세요. 1번은 토론, 2번은 비판 토론, 3번은 작업 분담·검토·결과물 작성입니다. 협업은 계정마다 따로 선택하며, 원본을 수정하지 않고 결과를 별도 저장합니다.", "Add materials and describe the task. Use Discussion, Critical debate, or Collaboration. Collaboration assigns work to individually selected accounts and saves outputs separately from originals."))
+                            Text(L("자료를 연결하고 협업 참여 계정을 선택하세요. 보기에서는 읽기만, 작성에서는 자동 백업 후 파일을 고치고 결과물을 만듭니다.", "Link materials and select collaboration accounts. View only reads; Write backs up linked files before editing and creating deliverables."))
                                 .foregroundColor(.secondary)
                                 .padding(.top, 40)
                                 .frame(maxWidth: .infinity)
@@ -355,9 +355,9 @@ struct ChatView: View {
                 ForEach(discussion.model.accounts, id: \.id) { account in
                     HStack(spacing: 3) {
                         Toggle(discussion.label(account), isOn: Binding(
-                            get: { discussion.configuration.accountIDs?.contains(account.id) ?? true },
+                            get: { discussion.configuration.accountIDs?.contains(account.id) ?? false },
                             set: { enabled in discussion.configure { config in
-                                var selected = config.accountIDs ?? discussion.model.accounts.map(\.id)
+                                var selected = config.accountIDs ?? []
                                 selected.removeAll { $0 == account.id }
                                 if enabled { selected.append(account.id) }
                                 config.accountIDs = selected
@@ -555,6 +555,7 @@ private struct TurnView: View {
                     .disabled(turn.undone == true || discussion.running || discussion.importingMaterials)
             }
             if let tasks = turn.tasks {
+                DisclosureGroup(L("작업 \(tasks.filter { $0.state == "done" }.count)/\(tasks.count) 완료 · 진행 \(tasks.filter { $0.state == "running" }.count)", "Tasks \(tasks.filter { $0.state == "done" }.count)/\(tasks.count) complete · \(tasks.filter { $0.state == "running" }.count) running")) {
                 ForEach(tasks) { task in
                     HStack(alignment: .top) {
                         Image(systemName: task.state == "done" ? "checkmark.circle" : task.state == "running" ? "clock" : "circle")
@@ -566,6 +567,7 @@ private struct TurnView: View {
                         if let path = task.output { Button(L("결과 열기", "Open result")) { discussion.openArtifact(path) } }
                     }
                 }
+            }
             }
             if let file = turn.artifact { Button(L("최종 결과물 열기", "Open final deliverable")) { discussion.openArtifact(file) } }
             if let final = turn.final {
@@ -587,7 +589,9 @@ private struct TurnView: View {
                 Text(localizedNotice(note)).font(.caption).foregroundColor(.secondary)
             }
             if !turn.entries.isEmpty {
-                if turn.modeVersion == 2 || (turn.mode ?? 1) >= 2 {
+                if turn.modeVersion == 2 && turn.mode == 3 {
+                    DisclosureGroup(L("작업 발언 보기 (\(turn.entries.count))", "View task messages (\(turn.entries.count))")) { entriesView }
+                } else if turn.modeVersion == 2 || (turn.mode ?? 1) >= 2 {
                     entriesView
                 } else {
                     DisclosureGroup(L("AI들의 대화 보기 (\(turn.entries.count))", "View AI discussion (\(turn.entries.count))")) {

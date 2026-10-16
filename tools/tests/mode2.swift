@@ -374,11 +374,12 @@ do {
                   Account(id: "school-test", provider: .codex, name: "School", dir: AccountStore.accountsDir + "/school-test"),
                   Account(id: "claude-test", provider: .claude, name: "Claude", dir: nil)]
     let chat = Discussion(model: m)
-    chat.configure { $0.mode = 3; $0.leaderAccountID = "claude-test" }
+    chat.configure { $0.mode = 3; $0.leaderAccountID = "claude-test"; $0.accountIDs = m.accounts.map(\.id) }
     var assigned: Set<String> = [], active = 0, maximum = 0
     let lock = NSLock()
     chat.collaborationAnswer = { account, prompt, _, _ in
-        if prompt.contains("[COLLAB PLAN]") { return .success("{\"assignments\":[{\"accountID\":\"personal-test\",\"task\":\"Design option\"},{\"accountID\":\"school-test\",\"task\":\"Cost analysis\"},{\"accountID\":\"claude-test\",\"task\":\"Risk analysis\"}]}") }
+        expect(prompt.contains("language of the latest user request") && prompt.contains("[source: URL]"), "collaboration missing language/search contract")
+        if prompt.contains("[COLLAB PLAN]") { return .success("{\"assignments\":[{\"id\":\"design\",\"accountID\":\"personal-test\",\"task\":\"Design option\"},{\"id\":\"cost\",\"accountID\":\"school-test\",\"task\":\"Cost analysis\"},{\"id\":\"risk\",\"accountID\":\"claude-test\",\"task\":\"Risk analysis\"}]}") }
         if prompt.contains("[Your assignment]") {
             lock.lock(); assigned.insert(account.id); active += 1; maximum = max(maximum, active); lock.unlock()
             Thread.sleep(forTimeInterval: 0.05)
@@ -408,20 +409,20 @@ do {
     m.accounts = [Account(id: "school-claude-fake", provider: .claude, name: "School Claude", dir: nil),
                   Account(id: "school-codex-fake", provider: .codex, name: "School Codex", dir: nil)]
     let chat = Discussion(model: m)
-    chat.configure { $0.mode = 3; $0.leaderAccountID = "school-claude-fake" }
+    chat.configure { $0.mode = 3; $0.leaderAccountID = "school-claude-fake"; $0.accountIDs = m.accounts.map(\.id) }
     let fixture = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("material-fixtures/slides.pptx")
     let document = try! MaterialReader.read(fixture, room: chat.currentID)
     chat.change(chat.currentID, save: true) { $0.documents = [document] }
     var sourceCalls = 0, order: [String] = []
     chat.collaborationAnswer = { account, prompt, _, _ in
         if prompt.contains("[COLLAB PLAN]") {
-            return .success("{\"assignments\":[{\"accountID\":\"school-claude-fake\",\"task\":\"Requirements\",\"dependsOn\":[]},{\"accountID\":\"school-codex-fake\",\"task\":\"Proposal\",\"dependsOn\":[\"school-claude-fake\"]}]}")
+            return .success("{\"assignments\":[{\"id\":\"requirements\",\"accountID\":\"school-claude-fake\",\"task\":\"Requirements\",\"dependsOn\":[]},{\"id\":\"proposal\",\"accountID\":\"school-codex-fake\",\"task\":\"Proposal\",\"dependsOn\":[\"requirements\"]}]}")
         }
         if prompt.contains("[COLLAB SOURCE]") { sourceCalls += 1 }
         if prompt.contains("[Your assignment]") {
             order.append(account.id)
             if account.id == "school-codex-fake" {
-                expect(prompt.contains("[Completed prerequisites]") && prompt.contains("[Prerequisite result: school-claude-fake]"), "dependent worker missing prerequisite result")
+                expect(prompt.contains("[Completed prerequisites]") && prompt.contains("[Prerequisite result: requirements]"), "dependent worker missing prerequisite result")
             }
         }
         return .success("Evidence-backed contribution with source IDs.")
@@ -515,5 +516,73 @@ do {
     let viewing = WorkspaceInvocation(binding: binding, room: room, readOnly: true)
     let read = try viewing.arguments(provider: .codex, original: original, directory: dir, web: true)
     expect(read.contains("sandbox_mode=\"read-only\"") && read.contains("features.shell_tool=false"), "review must remain read-only even in execution room")
+    let agy = try viewing.arguments(provider: .gemini, original: ["-p","test","--sandbox","--disable-slash-commands"], directory: dir, web: true)
+    expect(!agy.contains("--disable-slash-commands") && agy.contains("plan"), "agy mode disabled by conflicting slash flag")
     print("PASS: explicit resume sandbox, linked write roots, no temporary roots and read-only review")
+}
+
+// Explicit participants, repeated tasks on one account, task-ID prerequisites, no forced assignments.
+do {
+    let m = AppModel()
+    m.accounts = [Account(id: "chosen", provider: .claude, name: "Chosen", dir: nil), Account(id: "not-chosen", provider: .codex, name: "Unused", dir: nil)]
+    let chat = Discussion(model: m)
+    chat.configure { $0.mode = 3 }
+    var calls = 0, work: [String] = []
+    chat.collaborationAnswer = { _, _, _, _ in calls += 1; return .success("Unexpected") }
+    chat.draft = "한국어로 작업해줘"; chat.send(); waitFor(chat)
+    expect(calls == 0, "nil account selection must not run all accounts")
+    chat.configure { $0.accountIDs = ["chosen"] }
+    chat.collaborationAnswer = { account, prompt, _, _ in
+        expect(account.id == "chosen", "unselected account called")
+        if prompt.contains("[COLLAB PLAN]") { return .success("{\"assignments\":[{\"id\":\"first\",\"accountID\":\"chosen\",\"task\":\"자료 확인\"},{\"id\":\"second\",\"accountID\":\"chosen\",\"task\":\"초안\",\"dependsOn\":[\"first\"]}]}") }
+        if prompt.contains("[Your assignment]") {
+            if prompt.contains("Task ID: second") { expect(prompt.contains("[Prerequisite result: first]"), "task prerequisite missing"); work.append("second") }
+            else { work.append("first") }
+        }
+        return .success("한국어 결과 [source: https://example.org]")
+    }
+    chat.draft = "한국어로 두 작업을 이어서 해줘"; chat.send(); waitFor(chat)
+    expect(work == ["first","second"], "one account must support multiple task IDs")
+    expect(chat.current.turns.last?.tasks?.compactMap(\.planID) == ["first","second"], "task IDs must persist separately from accounts")
+    chat.collaborationAnswer = { _, prompt, _, _ in
+        if prompt.contains("[COLLAB PLAN]") { return .success("{\"assignments\":[{\"id\":\"cycle\",\"accountID\":\"chosen\",\"task\":\"bad\",\"dependsOn\":[\"cycle\"]}]}") }
+        fatalError("invalid cyclic plan executed")
+    }
+    chat.draft = "Invalid plan test"; chat.send(); waitFor(chat)
+    expect(chat.current.turns.last?.error != nil, "invalid plan must fail visibly")
+    print("PASS: explicit account selection, task DAG, multiple tasks per account and cycle rejection")
+}
+
+// Stop also kills a shell's child writer, so no delayed changes occur after diff capture.
+do {
+    let target = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("late-writer")
+    let script = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("late-writer.sh")
+    try "#!/bin/sh\n(sleep 1; echo BAD > \"$1\") &\nwait\n".write(to: script, atomically: true, encoding: .utf8)
+    let process = Process(); process.executableURL = URL(fileURLWithPath: "/bin/sh"); process.arguments = [script.path,target.path]
+    try process.run(); Thread.sleep(forTimeInterval: 0.15)
+    DebateCancellation.end(process); process.waitUntilExit(); Thread.sleep(forTimeInterval: 1.1)
+    expect(!FileManager.default.fileExists(atPath: target.path), "child writer survived Stop")
+    print("PASS: Stop terminates descendant writers")
+}
+
+// Git working state (including untracked files) is recoverable without resetting the user's checkout.
+do {
+    let root = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("git-backup-fixture")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    try WorkspaceBackup.run("/usr/bin/git", ["init", root.path])
+    try "committed".write(to: root.appendingPathComponent("tracked"), atomically: true, encoding: .utf8)
+    try WorkspaceBackup.run("/usr/bin/git", ["-C",root.path,"add","tracked"])
+    try WorkspaceBackup.run("/usr/bin/git", ["-C",root.path,"-c","user.name=Fixture","-c","user.email=fixture@example.invalid","commit","-m","fixture"])
+    try "dirty".write(to: root.appendingPathComponent("tracked"), atomically: true, encoding: .utf8)
+    try "untracked".write(to: root.appendingPathComponent("untracked"), atomically: true, encoding: .utf8)
+    let binding = WorkspaceBinding(roots: [WorkspaceRoot(path: root.path, directory: true)], level: .write)
+    var backup = try WorkspaceBackup.begin(binding, room: UUID(), runID: UUID())
+    expect(!backup.gitStates.isEmpty, "git state not recorded")
+    try FileManager.default.removeItem(at: root.appendingPathComponent("tracked"))
+    try backup.finish(); try backup.restore()
+    let restored = try WorkspaceBackup.stamps(binding.roots)
+    expect(restored == backup.before, "git working state and untracked hashes not restored")
+    let inventory = binding.inventory()
+    expect(inventory.contains { $0.hasSuffix("/tracked") }, "inventory must use unambiguous full file paths")
+    print("PASS: git dirty state, untracked preservation and absolute inventory paths")
 }

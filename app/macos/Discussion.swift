@@ -588,7 +588,7 @@ final class Discussion: ObservableObject {
         }
         if Self.modernModes && configuration.mode == 3 {
             return model.accounts.filter { account in
-                (configuration.accountIDs?.contains(account.id) ?? true)
+                (configuration.accountIDs?.contains(account.id) ?? false)
                 && model.latestUsage[account.id]?.needsLogin != true && (model.latestUsage[account.id]?.leftNow ?? 50) > 0
             }
         }
@@ -871,7 +871,12 @@ final class Discussion: ObservableObject {
         switch failure {
         case .missingTool: return L("프로그램을 찾지 못했어요.", "CLI not found.")
         case .timedOut: return L("시간 안에 답하지 못했어요.", "The response timed out.")
-        case .failed(let why): return L("답하지 못했어요.", "Could not respond.") + (why.isEmpty ? "" : " (\(why))")
+        case .failed(let why):
+            let lower = why.lowercased()
+            if lower.contains("auto-denied") || lower.contains("headless mode cannot prompt") {
+                return L("도구 실행에 별도 승인이 필요하지만 이 호출에서는 승인을 받을 수 없습니다. 계정·개인 권한은 변경하지 않았습니다.", "This tool needs approval that headless execution cannot request. Account and personal permissions were not changed.")
+            }
+            return L("답하지 못했어요.", "Could not respond.") + (why.isEmpty ? "" : " (\(why))")
         }
     }
 }

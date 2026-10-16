@@ -37,6 +37,12 @@ if ! xcrun swiftc -swift-version 5 -O -target "$ARCH-apple-macos13.0" \
   cat "$LOG"
   exit 1
 fi
+mkdir -p "$APP/Contents/Resources"
+cp app/resources/workspace_mcp.py "$APP/Contents/Resources/workspace_mcp.py"
+if ! xcrun swiftc -swift-version 5 -O -o "$APP/Contents/Resources/WorkspaceDocument" tools/workspace_document.swift >>"$LOG" 2>&1; then
+  cat "$LOG"
+  exit 1
+fi
 mv -f "$APP/Contents/MacOS/AIIlluminati.new" "$APP/Contents/MacOS/AIIlluminati"
 
 cat > "$APP/Contents/Info.plist" <<'PLIST'

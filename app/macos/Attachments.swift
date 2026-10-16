@@ -112,17 +112,17 @@ extension Discussion {
     }
 
     func requestDebate(_ account: Account, _ prompt: String, _ timeout: TimeInterval, _ token: DebateCancellation, web: Bool = false) -> Result<String, Answerer.Failure> {
-        let selected = MaterialContext.select(MaterialContext.parts(activeMaterials, room: activeSessionRoom ?? currentID), query: String(prompt.suffix(3000)))
+        let selected: [MaterialContext.Part] = []
         let materialText = selected.isEmpty ? "" : "\n[Selected source excerpts; not an exhaustive review. Use Collaboration for full coverage.]\n" + MaterialContext.quote(selected)
         let pictures = activeImages + selected.flatMap(\.images)
         let full = materialText + (activeDocumentText.isEmpty ? "" : activeDocumentText + "\n") + prompt + (imageContext.isEmpty ? "" : "\n" + imageContext)
         if let room = activeSessionRoom {
             return nativeSessions.ask(account, room: room, prompt: full, images: pictures, timeout: timeout,
                                       token: token, web: web, speaker: label(account), invoke: { text, images, session in
-                Answerer.ask(account, prompt: text, timeout: timeout, cancellation: token, images: images, web: web, session: session)
+                Answerer.ask(account, prompt: text, timeout: timeout, cancellation: token, images: images, web: web, session: session, workspace: self.activeWorkspace.map { WorkspaceInvocation(binding: $0, room: room) })
             }, note: { text in DispatchQueue.main.async { self.sessionNote = text } })
         }
-        if pictures.isEmpty { return debateAnswer(account, full, timeout, token, web) }
-        return Answerer.ask(account, prompt: full, timeout: timeout, cancellation: token, images: pictures, web: web)
+        if pictures.isEmpty && activeWorkspace == nil { return debateAnswer(account, full, timeout, token, web) }
+        return Answerer.ask(account, prompt: full, timeout: timeout, cancellation: token, images: pictures, web: web, workspace: activeWorkspace.map { WorkspaceInvocation(binding: $0, room: activeSessionRoom ?? currentID) })
     }
 }

@@ -36,48 +36,29 @@ extension Discussion {
     func restartRoomSessions(disconnect: Bool = false) {
         do {
             try nativeSessions.reset(currentID)
-            if disconnect { change(currentID, save: true) { $0.documents = nil } }
+            if disconnect { change(currentID, save: true) { $0.documents = nil; $0.workspace = nil } }
             sessionNote = L("다음 질문에서 자료와 대화로 새 세션을 시작합니다.", "Next question starts fresh sessions from current materials and chat.")
         } catch { attachmentError = error.localizedDescription }
     }
 
     func chooseMaterials(folder: Bool) {
-        guard !running else { return }
+        guard !running && !importingMaterials else { return }
         let panel = NSOpenPanel()
-        panel.canChooseDirectories = folder
-        panel.canChooseFiles = !folder
+        panel.canChooseDirectories = folder; panel.canChooseFiles = !folder
         panel.allowsMultipleSelection = !folder
-        panel.message = L("원고·슬라이드·사진·PDF·텍스트를 사본으로 등록합니다. 큰 자료는 나누어 읽습니다. 원본은 수정하지 않습니다.", "Import document, slide, photo, PDF and text snapshots. Large materials are read in parts. Originals stay unchanged.")
+        panel.message = L("경로와 파일 목록만 연결합니다. AI가 필요할 때 파일을 직접 읽습니다.", "Link paths and file names only. AIs open needed files on demand.")
         guard panel.runModal() == .OK else { return }
-        let room = currentID
-        var urls = panel.urls
-        if folder, let root = urls.first {
-            urls = []
-            if let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.isSymbolicLinkKey], options: [.skipsHiddenFiles, .skipsPackageDescendants]) {
-                for case let url as URL in enumerator {
-                    if (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true { enumerator.skipDescendants(); continue }
-                    if MaterialReader.extensions.contains(url.pathExtension.lowercased()) { urls.append(url) }
-                }
+        do {
+            let roots = try panel.urls.map { url -> WorkspaceRoot in
+                let path = url.resolvingSymlinksInPath()
+                let info = try path.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey])
+                guard info.isDirectory == true || info.isRegularFile == true else { throw MaterialReader.error("일반 파일이나 폴더를 선택하세요.") }
+                return WorkspaceRoot(path: path.path, directory: info.isDirectory == true)
             }
-        }
-        guard !urls.isEmpty else { attachmentError = L("지원되는 자료가 없습니다.", "No supported materials found."); return }
-        importingMaterials = true
-        let files = urls
-        DispatchQueue.global(qos: .userInitiated).async {
-            var added: [RoomDocument] = [], failures: [String] = []
-            for url in files {
-                do { added.append(try MaterialReader.read(url, room: room)) }
-                catch { failures.append(url.lastPathComponent + ": " + error.localizedDescription) }
-            }
-            DispatchQueue.main.async {
-                self.importingMaterials = false
-                do {
-                    try self.nativeSessions.reset(room)
-                    self.change(room, save: true) { $0.documents = ($0.documents ?? []) + added }
-                    self.sessionNote = L("자료 \(added.count)개 등록. 협업 모드에서 분담해 읽고 결과물을 만듭니다.", "Imported \(added.count) materials. Collaboration reads them in parts and produces deliverables.")
-                    self.attachmentError = failures.isEmpty ? nil : failures.joined(separator: "\n")
-                } catch { self.attachmentError = error.localizedDescription }
-            }
-        }
+            try nativeSessions.reset(currentID)
+            change(currentID, save: true) { $0.workspace = WorkspaceBinding(roots: roots) }
+            sessionNote = L("경로 연결됨 · 보기. 원문은 요청할 때만 읽습니다.", "Linked · View. Contents are read only on demand.")
+            attachmentError = nil
+        } catch { attachmentError = error.localizedDescription }
     }
 }

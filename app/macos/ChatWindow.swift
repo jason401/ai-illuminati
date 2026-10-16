@@ -151,10 +151,21 @@ struct ChatView: View {
                         .toggleStyle(.switch).controlSize(.small)
                     Menu {
                         Button(L("파일 선택 (문서·슬라이드·사진)", "Choose files (documents / slides / photos)")) { discussion.chooseMaterials(folder: false) }
-                        Button(L("폴더 선택 (자료 사본)", "Choose folder (snapshots)")) { discussion.chooseMaterials(folder: true) }
+                        Button(L("폴더 연결 (경로만)", "Link folder (paths only)")) { discussion.chooseMaterials(folder: true) }
                         Button(L("이미지 첨부", "Attach images")) { discussion.chooseImages() }
                     } label: { Label(L("자료 추가", "Add materials"), systemImage: "folder.badge.plus") }
-                    if let documents = discussion.current.documents, !documents.isEmpty {
+                    if let workspace = discussion.current.workspace {
+                        Menu {
+                            ForEach(workspace.roots, id: \.path) { root in
+                                Button(root.path) { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: root.path)]) }
+                            }
+                            Button(L("연결 끊기", "Disconnect")) { discussion.restartRoomSessions(disconnect: true) }
+                        } label: { Text(L("연결 \(workspace.roots.count)개", "\(workspace.roots.count) links")) }
+                        Picker(L("권한", "Access"), selection: Binding(get: { workspace.level }, set: { discussion.setWorkspaceLevel($0) })) {
+                            ForEach(WorkspaceLevel.offered, id: \.self) { Text($0.title).tag($0) }
+                        }.frame(width: 145)
+                    }
+                    if discussion.current.workspace == nil, let documents = discussion.current.documents, !documents.isEmpty {
                         Menu {
                             ForEach(documents) { document in
                                 Text(document.name + " · \(document.units?.count ?? 1) parts")
@@ -169,7 +180,7 @@ struct ChatView: View {
                     }
                     Spacer()
                     Menu {
-                        Text(L("원본은 수정하지 않습니다. 선택한 자료 사본은 질문할 때 참여 AI 회사로 전달됩니다. 폴더 변경 사항은 자동 반영되지 않습니다.", "Originals stay unchanged. Snapshots are sent to participating AI providers when you ask. Folder changes are not synced."))
+                        Text(L("연결은 경로만 저장합니다. 필요한 내용은 AI가 요청할 때 읽어 참여 AI 회사에 전달합니다.", "Links store paths only. Requested file contents are sent to the participating AI provider on demand."))
                         Text(L("PDF는 페이지 이미지도 읽습니다. DOCX·PPTX는 텍스트·노트·삽입 이미지를 추출하며 원래 화면 배치를 완전히 재현하지는 않습니다.", "PDF pages include rendered images. DOCX/PPTX extract text, notes and embedded images; original layouts are not fully rendered."))
                         Text(L("세션 기록은 로컬 AI 도구에도 남습니다. 방 삭제만으로 그 기록까지 삭제되지는 않습니다.", "Native AI tools also retain session history. Deleting a chat does not erase native history."))
                         Button(L("원본 자료로 세션 다시 시작", "Restart sessions from originals")) {

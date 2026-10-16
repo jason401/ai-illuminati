@@ -2,6 +2,15 @@
 
 이 문서만 읽으면 바로 이어서 작업할 수 있게 정리했어요. 규칙은 `AGENTS.md`(= `CLAUDE.md`와 같은 내용)에, 사용자용 설명은 `README.md`에 있어요.
 
+## 단계② — 경로 연결·보기 (2026-10-16)
+
+- 자료 선택은 WorkspaceBinding의 경로/디렉터리 여부만 저장. 내용 복사·PDF 전쪽 렌더·조각별 Read source AI 호출 제거. 파일 목록만으로 즉시 계획 시작. 기존 사본/과거 기록은 보존.
+- WorkspaceInvocation: Claude restricted+Read/Grep/Glob + 앱 전용 MCP; safe-mode는 명시적 MCP도 꺼서 workspace 호출에서 제거하고 restricted/strict MCP/설정 소스 없음으로 대체. Codex read-only+shell_tool=false, resume에도 -c 적용. agy는 방 cwd의 .agents/mcp_config.json과 plan 모드, 개인 설정 변경 없음.
+- 문서 도구는 요청한 파일/페이지 범위만 변환하고 private 캐시. Python stdlib MCP + 앱 번들 WorkspaceDocument(PDFKit/ImageIO) helper. 파일 범위·symlink 탈출 차단. 권한 없는 쓰기 도구 자체를 노출하지 않음.
+- **학교 Codex 관리 정책은 외부 MCP까지 disabled로 강제함**(mcp list disabled_reason requirements). 정책 변경/우회 없이 문서 요청 JSON → 앱이 허가된 연결 파일을 읽어 전달 → native resume으로 답변. 명령 도구는 여전히 없음. 권한 실패/Stop/timeout 자동 재시도 금지 유지.
+- 실제 검증: 시험용 15 PDF×100쪽 연결에서 미리 변환/AI호출0, 요청한 3–4쪽만 변환·캐시, 원본 해시 동일. Claude와 학교 Codex가 notes 247kPa/PDF 3쪽 표식을 읽고 수정·생성·명령은 거절. Codex 모든 fresh/resume turn_context에서 read-only/on-request/방 cwd 유지 확인.
+- Python 파일경계·lazy 목록·cache 변경감지·보기 도구4개 시험, 기존 전체 회귀, 앱 빌드/서명 통과. 학교 Codex의 MCP 차단은 앱 상태 안내 대상이며 학교 실행 정책도 이후 단계에서 실제 확인할 것.
+
 ## 최신 지시·체크포인트 — Codex (2026-10-16)
 
 - 사용자 최신 지시가 아래 과거 지시보다 우선: 실제 호출 시험은 남은 사용량이 많은 계정부터, 개인도 허용(학교만 제한 해제). 예산/호출 제한/확인창 UI 만들지 않음. 불필요한 쪽별 AI 호출 제거.

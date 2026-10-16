@@ -422,11 +422,11 @@ do {
     chat.draft = "Create a design proposal."; chat.send(); waitFor(chat)
     expect(order == ["school-claude-fake", "school-codex-fake"], "dependency order wrong")
     let initial = sourceCalls
-    expect(initial == document.units!.count, "not all material parts covered")
+    expect(initial == 0, "linking material must not launch pre-reading calls")
     order = []
     chat.draft = "Refine the same design proposal."; chat.send(); waitFor(chat)
     expect(sourceCalls == initial, "unchanged material notes must be reused on follow-up")
-    expect(chat.current.turns.last?.endReason?.contains("reused index notes") == true, "coverage/reuse must be visible")
+    expect(chat.current.turns.last?.endReason?.contains("On-demand source access") == true, "coverage/reuse must be visible")
     print("PASS: prerequisite ordering, prerequisite outputs, complete source coverage and persistent index reuse")
 }
 

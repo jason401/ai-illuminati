@@ -113,7 +113,8 @@ debate.debateAnswer = { account, prompt, _, _ in
     debateCalls.append(prompt)
     if prompt.contains("[MODE3 MODERATION]") {
         decisions += 1
-        if decisions == 1 { return .success(#"{"action":"speak","speaker":"codex","focus":"Address the counterexample"}"#) }
+        if decisions == 1 { return .success(#"{"action":"speak","speaker":"codex","focus":"Address the counterexample","board":"Agreed: A / Check: B"}"#) }
+        if decisions == 2 { return .success(#"{"action":"speak","speaker":"gemini","focus":"Find data for B","board":{"agreed":["A"]}}"#) }
         return .success(#"{"action":"finish","reason":"Important objections addressed"}"#)
     }
     if prompt.contains("[MODE3 FINAL]") { return .success("Final conclusion with an open question.") }
@@ -126,20 +127,22 @@ waitFor(debate)
 let debateEntries = debate.current.turns[0].entries.map(\.speaker)
 expect(Set(debateEntries.prefix(3)) == ["Claude", "ChatGPT", "Gemini"], "everyone must give an opening view first")
 expect(openingSeen.count == 3 && !openingSeen.contains { $0.contains("Contribution from") }, "opening views must not see each other")
-// 3 AIs × 4 turns = 12, minimum 8. Finish requests before that are overridden: the AI with the fewest turns
-// (not the last speaker) answers instead.
-expect(Array(debateEntries.dropFirst(3)) == ["ChatGPT", "Claude", "Gemini", "Claude", "ChatGPT"], "early finish must be overridden until the minimum")
-expect(decisions == 6, "moderator should be asked until finishing is allowed")
+// No minimum: the moderator's finish is accepted as soon as it comes. A board in an unexpected shape is ignored.
+expect(Array(debateEntries.dropFirst(3)) == ["ChatGPT", "Gemini"], "moderator's speakers and early finish must be followed")
+expect(decisions == 3, "moderator should be asked once per turn until it finishes")
 let moderations = debateCalls.filter { $0.contains("[MODE3 MODERATION]") }
-expect(moderations.first?.contains("Finishing is NOT allowed yet") == true, "moderator must be told finishing is not allowed yet")
 expect(moderations.first?.contains("at most 4 times") == true, "moderator must know the per-AI limit")
+expect(moderations.first?.contains("best possible answer") == true && !moderations.contains { $0.contains("Right of reply") },
+       "moderator must aim at the best answer, not at rebuttals")
+let speeches = debateCalls.filter { $0.contains("[MODE3 SPEECH]") && !$0.contains("opening round") }
+expect(speeches.last?.contains("[Moderator board]\nAgreed: A / Check: B") == true, "board must reach later speakers")
+expect(debateCalls.last { $0.contains("[MODE3 FINAL]") }?.contains("Write the final answer") == true, "final must be the answer itself")
 // Shared rules + transcript come first and the changing task last, so repeated calls share an identical opening.
 for call in debateCalls {
     let task = ["[MODE3 SPEECH]", "[MODE3 MODERATION]", "[MODE3 FINAL]"].compactMap { call.range(of: $0)?.lowerBound }.first
     expect(call.hasPrefix("[MODE3 DEBATE]") && task != nil && call.range(of: "[Complete transcript]")!.lowerBound < task!,
            "mode3 prompt must put the transcript before the task")
 }
-expect(moderations.last?.contains("Finish only if") == true, "moderator must be told when finishing is allowed")
 expect(debate.current.turns[0].entries[3].focus == "Address the counterexample", "moderator focus not saved")
 expect(debateCalls.first { $0.contains("[MODE3 SPEECH]") && !$0.contains("opening round") }?.contains("Contribution from gemini") == true,
        "all opening views missing from the next speaker's context")
@@ -214,13 +217,11 @@ let token = DebateCancellation(); token.attach(process); token.attach(second); t
 let killDeadline = Date().addingTimeInterval(2)
 while (process.isRunning || second.isRunning) && Date() < killDeadline { Thread.sleep(forTimeInterval: 0.01) }
 expect(!process.isRunning && !second.isRunning, "cancel must terminate every running process")
-expect(Discussion.minimumDebateTurns(limit: 9, teamSize: 3) == 6 && Discussion.minimumDebateTurns(limit: 3, teamSize: 3) == 3
-       && Discussion.minimumDebateTurns(limit: 30, teamSize: 2) == 18, "minimum turns formula")
 let named = Discussion.namedFirst("야, 재미나이한테 반론의 기회라도 주는게 어때", team: model.accounts).map(\.provider)
 expect(named.first == .gemini && named.count == model.accounts.count, "named AI must open the first lap")
 expect(Discussion.namedFirst("부처님이랑 예수님", team: model.accounts).map(\.provider) == model.accounts.map(\.provider), "order unchanged without names")
 expect(debateCalls.contains { $0.contains("Speak only as yourself") }, "speakers must be told not to speak for others")
-print("PASS: mode3 parallel opening, repeat speakers, minimum turns, moderator completion, per-AI cap, invalid decision, named first speaker, stop prevents calls, actual process cancellation")
+print("PASS: mode3 parallel opening, moderator tasks and board, early finish, moderator completion, per-AI cap, invalid decision, named first speaker, stop prevents calls, actual process cancellation")
 
 // Attachment storage uses normalized private copies, not references to the user's original.
 let imageChat = Discussion(model: model)

@@ -29,8 +29,19 @@ final class DebateCancellation {
 struct DebateDecision: Decodable {
     var action: String
     var speaker: Account.Provider?
-    var focus: String?
+    var focus: String?   // the task for the next speaker
     var reason: String?
+    var board: String?   // the moderator's running notes: agreed / needs checking / still open
+
+    enum CodingKeys: String, CodingKey { case action, speaker, focus, reason, board }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        action = try c.decode(String.self, forKey: .action)
+        speaker = try? c.decode(Account.Provider.self, forKey: .speaker)
+        focus = try? c.decode(String.self, forKey: .focus)
+        reason = try? c.decode(String.self, forKey: .reason)
+        board = try? c.decode(String.self, forKey: .board)  // a board in any other shape is ignored, not fatal
+    }
 
     static func parse(_ text: String, team: [Account]) -> DebateDecision? {
         // Take the JSON object even if the moderator wrapped it in a code fence or a sentence.
@@ -40,6 +51,7 @@ struct DebateDecision: Decodable {
         // Long notes are cut, not rejected: a wordy moderator should not end the debate.
         decision.focus = decision.focus.map(Self.clip)
         decision.reason = decision.reason.map(Self.clip)
+        decision.board = decision.board.map(Self.clip).flatMap { $0.isEmpty ? nil : $0 }
         if decision.action == "finish", let reason = decision.reason, !reason.isEmpty { return decision }
         if decision.action == "speak", let speaker = decision.speaker, team.contains(where: { $0.provider == speaker }),
            let focus = decision.focus, !focus.isEmpty { return decision }
@@ -53,10 +65,6 @@ struct DebateDecision: Decodable {
 }
 
 extension Discussion {
-    static func minimumDebateTurns(limit: Int, teamSize: Int) -> Int {
-        min(limit, max(teamSize * 2, Int((Double(limit) * 0.6).rounded(.up))))
-    }
-
     // Words people use for each AI, in Korean and English (also common misspellings).
     static let aiNames: [Account.Provider: [String]] = [
         .claude: ["claude", "클로드", "클루드"],
@@ -100,16 +108,21 @@ extension Discussion {
         """
         \(Self.debateContext(rules: rules, transcript: transcript))
         [MODE3 SPEECH]
-        You are \(label(account)). Read the entire conversation and respond to the latest user question\(opening ? "" : " and to the other AIs").
+        You are \(label(account)). The AIs here are one team. The shared goal is the best possible answer to the
+        latest user question, not winning an argument.
         Speak only as yourself. Never write, imagine, or quote a statement on another AI's behalf.
-        Use 2–4 sentences, at most 400 characters (this debate limit overrides shorter length rules), in the language of the
+        Use 2–4 sentences, at most 400 characters (this limit overrides shorter length rules), in the language of the
         latest user message unless they request another language.
+        Mark facts and numbers: [source: name] only for a source you actually know, otherwise [from memory] or [estimate].
+        Never invent a source or a precise number.
         \(opening
-            ? "This is the opening round: every AI answers at the same time without seeing the others. Give your own independent position with your main reason."
+            ? "This is the opening round: every AI answers at the same time without seeing the others. Give your best answer to the question with its main reason."
             : """
-              Begin by naming whose point you are answering (e.g. "ChatGPT의 ~에 대해").
-              Defend your position when challenged; concede only to a specific stronger argument and say which one.
-              Add a new argument, evidence, objection, or counter-rebuttal; do not merely agree or repeat. No separate summary.
+              Do the moderator's task below. Your turn must add at least one thing the answer does not have yet:
+              new evidence or data, a calculation, a concrete example or counterexample, or a specific improvement to the answer.
+              If you think something said earlier is wrong, give the better version or the evidence, not only "that is wrong".
+              When another AI is right, say so briefly and build on it. Change your own view freely if the discussion shows a better one.
+              No attacks, no repeating, no separate summary.
               """)
         Do not use tools or execute commands.
         \(Self.headlineRule)
@@ -126,8 +139,8 @@ extension Discussion {
         var used: [Account.Provider: Int] = [:]     // turns attempted, failures included; at most perAI each
         var count = 0
         // The moderator may not end the debate before this many turns (each AI about twice, or 60% of the cap).
-        let minTurns = Self.minimumDebateTurns(limit: limit, teamSize: team.count)
         var focus = ""
+        var board = ""
         var reason = L("모든 AI가 발언 횟수를 다 썼습니다.", "Every AI has used all of its turns.")
         let moderator = team.first { $0.provider == leader }
         var next = team.first!
@@ -176,27 +189,28 @@ extension Discussion {
                 reason = L("대표가 응답하지 못해 토론을 종료했습니다.", "The moderator was unavailable. Debate ended."); break
             }
             changeTurn(id, index) { $0.status = L("대표가 다음 발언 또는 종료를 판단하는 중…", "Moderator is choosing the next speaker or ending the debate…") }
-            let mayFinish = count >= minTurns
             let available = team.filter { (used[$0.provider] ?? 0) < perAI }
             let counts = team.map { "\($0.provider.rawValue) \(used[$0.provider] ?? 0)/\(perAI)" }.joined(separator: ", ")
             let prompt = """
             \(Self.debateContext(rules: rules, transcript: transcript))
             [MODE3 MODERATION]
-            You are a neutral moderator. Your goal is a deeper debate, not a quick end. Do not favor your own earlier statements.
-            Read the complete transcript and find the most important unresolved disagreement, an unanswered criticism, or a claim without evidence.
-            Right of reply: if an AI's point was just challenged, prefer that AI as the next speaker. Everyone should speak more than once.
+            You are the neutral moderator. The goal is the best possible answer to the latest user question.
+            Do not favor your own earlier statements.
+            1. Update the board: what is agreed, what needs checking (claims or numbers without a known source), and what is still open.
+            2. Find the most important thing the answer still lacks: missing evidence or data, an unchecked number, an unanswered part of
+               the question, a perspective nobody covered, or a real disagreement that changes the answer.
+            3. Give that as a task to the AI best placed to do it. The focus is a task ("find…", "calculate…", "propose…", "check…"),
+               never "rebut X". One or two sentences, under 250 characters.
             If the latest user message asks for a particular AI to speak, give that AI the turn.
-            The focus must name the specific claim to address and whom to answer, in one or two sentences (under 250 characters).
             Participants: \(team.map { $0.provider.rawValue }.joined(separator: ","))
             Each AI may speak at most \(perAI) times. Turns used so far: \(counts).
             Only these AIs have turns left: \(available.map { $0.provider.rawValue }.joined(separator: ",")).
             Moderation and final synthesis do not count as turns.
-            \(mayFinish
-                ? "Finish only if the last two turns added no new argument or evidence, or every participant has explicitly agreed."
-                : "Finishing is NOT allowed yet (minimum \(minTurns) turns). You must choose a speaker.")
-            Return ONLY JSON: {"action":"speak","speaker":"claude|codex|gemini","focus":"specific next point"}
-            or {"action":"finish","reason":"why discussion is sufficient"}.
-            Write focus/reason in the language of the latest user message unless it requests another language.
+            Finish as soon as the answer is good enough: nothing important is missing, or the last turns did not change the board.
+            Do not continue just to use up turns.
+            Return ONLY JSON: {"action":"speak","speaker":"claude|codex|gemini","focus":"task for that AI","board":"Agreed: … / Check: … / Open: …"}
+            or {"action":"finish","reason":"why the answer is good enough","board":"…"}.
+            Write focus/reason/board in the language of the latest user message unless it requests another language.
             Do not use tools, change files, or run commands.
             """
             let result = requestDebate(moderator, prompt, 180, cancellation)
@@ -204,16 +218,17 @@ extension Discussion {
             guard case .success(let text) = result, let decision = DebateDecision.parse(text, team: team) else {
                 reason = L("대표의 진행 판단을 받지 못해 토론을 종료했습니다.", "Moderator decision failed. Debate ended."); break
             }
-            if decision.action == "finish" && mayFinish { reason = decision.reason!; break }
-            if decision.action == "speak", let chosen = available.first(where: { $0.provider == decision.speaker }) {
+            if let notes = decision.board { board = notes }
+            if decision.action == "finish" { reason = decision.reason!; break }
+            if let chosen = available.first(where: { $0.provider == decision.speaker }) {
                 next = chosen
                 focus = decision.focus!
             } else {
-                // Too early to end, or the chosen AI has no turns left: the AI with turns left who has
-                // spoken least (not the last speaker) answers the strongest objection.
+                // The chosen AI has no turns left: the AI with turns left who has spoken least (not the last
+                // speaker) adds what the answer is missing.
                 next = Self.leastSpoken(available, spoken: used, last: next.provider)
-                focus = L("지금까지 당신 의견에 나온 가장 강한 반론에 답하거나, 다른 AI의 주장 중 가장 약한 부분을 반박하세요.",
-                          "Answer the strongest objection raised against your view so far, or rebut the weakest claim made by another AI.")
+                focus = L("지금 답에서 가장 중요하게 빠진 것을 하나 더하세요: 새 근거나 데이터, 계산, 구체적인 예, 또는 답을 고칠 구체적인 수정안.",
+                          "Add the most important thing the answer is still missing: new evidence or data, a calculation, a concrete example, or a specific fix.")
             }
             let account = next
             let number = count + 1
@@ -231,6 +246,7 @@ extension Discussion {
             case .success(let text):
                 successful.insert(account.provider)
                 entry = .reply(round: 1, speaker: label(account), text: text)
+                if !board.isEmpty { transcript += "\n\n[Moderator board]\n" + board }
                 transcript += "\n\n[Moderator focus]\n" + focus
                 transcript += "\n\n[\(label(account))]\n" + entry.text
             case .failure(let failure):
@@ -244,15 +260,18 @@ extension Discussion {
         changeTurn(id, index, save: true) { t in t.endReason = ending; t.debateFocus = nil }
         // Stop never starts another request, including the final synthesis.
         if !cancellation.isCancelled, let moderator, successful.contains(leader) {
-            changeTurn(id, index) { $0.status = L("대표가 결론과 남은 쟁점을 정리하는 중…", "Moderator is summarizing conclusions and open questions…") }
+            changeTurn(id, index) { $0.status = L("대표가 최종 답을 정리하는 중…", "Moderator is writing the final answer…") }
             let result = requestDebate(moderator, """
                 \(Self.debateContext(rules: rules, transcript: transcript))
                 [MODE3 FINAL]
-                Summarize the conclusions and any remaining disagreements in at most 3 short sentences.
-                Use the language of the latest user question unless they request another language. Do not imply consensus where none exists.
-                End reason: \(ending)
+                Write the final answer to the latest user question, using the best of what the team found.
+                Answer the question directly first. Then, briefly: what rests on evidence and what is an estimate,
+                and any open question that would change the answer (skip it if there is none).
+                At most about 8 short sentences or bullet points. Do not describe the discussion or who said what.
+                Use the language of the latest user question unless they request another language. Do not imply certainty or consensus where none exists.
+                \(board.isEmpty ? "" : "Moderator board:\n" + board + "\n")End reason: \(ending)
                 Do not use tools, change files, or execute commands.
-                """, 120, cancellation)
+                """, 180, cancellation)
             if !cancellation.isCancelled {
                 switch result {
                 case .success(let text):

@@ -122,7 +122,7 @@ struct ChatView: View {
                     }
                     Menu {
                         Text(discussion.configuration.mode == 3
-                             ? L("모두 동시에 첫 의견을 낸 뒤, 대표가 다음 발언자와 논점, 종료를 정합니다.", "Everyone gives an opening view at once. Then the moderator chooses speakers, topics, and when to finish.")
+                             ? L("모두 동시에 답한 뒤, 대표가 빠진 것을 찾아 한 명씩 맡기고 최종 답을 정리합니다.", "Everyone answers at once. Then the moderator assigns what is missing, one AI at a time, and writes the final answer.")
                              : discussion.configuration.mode == 2
                              ? L("각자 한 번씩 전체 대화를 읽고 답하며, 대표가 다음 순서를 정합니다.", "Each AI reads the full history and replies once. The moderator sets the next order.")
                              : L("각자 답변과 상호 검토 후 최종 답변과 요약을 만듭니다.", "Independent answers and peer review are followed by a final answer and summary."))
@@ -166,7 +166,7 @@ struct ChatView: View {
                         let conversation = discussion.current
                         if conversation.turns.isEmpty {
                             Text(discussion.configuration.mode == 3
-                                 ? L("먼저 모든 AI가 동시에 각자 의견을 내요. 그다음 대표가 반론권을 주며 한 명씩 다음 발언자와 논점을 정하고, 각자 앞 발언을 모두 읽고 답해요. AI마다 발언 횟수가 정해져 있고(기본 4회), 전체의 60%(AI마다 최소 2번)까지는 끝내지 않아요. 중지 버튼으로 언제든 끊을 수 있어요.", "First, every AI gives its own view at the same time. Then the moderator picks one speaker at a time, giving a right of reply, and each reads everything said so far. Each AI has a turn limit (4 by default), and the debate won't end before 60% of the total (at least two turns each). Stop at any time.")
+                                 ? L("먼저 모든 AI가 동시에 각자 답을 내요. 그다음 대표가 답에 아직 빠진 것(근거, 데이터, 확인 안 된 숫자, 다루지 않은 부분)을 찾아 한 명씩 일을 맡기고, 답이 충분해지면 바로 끝내요. 마지막에 대표가 최종 답을 정리해요. AI마다 발언 횟수가 정해져 있고(기본 4회), 중지 버튼으로 언제든 끊을 수 있어요.", "First, every AI answers at the same time. Then the moderator finds what the answer still lacks (evidence, data, unchecked numbers, uncovered parts), gives one AI that task at a time, and ends as soon as the answer is good enough. The moderator then writes the final answer. Each AI has a turn limit (4 by default). Stop at any time.")
                                  : discussion.configuration.mode == 2
                                  ? L("순서와 대표를 정하고 질문하세요. 각 AI가 전체 대화를 읽고 1~2문장씩 이어 말해요.\n한 바퀴가 끝나면 대표가 다음 순서를 정해요. 이름 옆 손잡이를 끌어 직접 바꿀 수도 있어요.", "Choose the order and moderator, then send a message. Each AI reads the full conversation and replies in 1–2 sentences.\nThe moderator sets the next order. Drag the handles to change it yourself.")
                                  : L("질문을 입력하면 AI들이 각자 답하고, 서로 검토한 뒤, 한 명이 최종 답을 정리해 줘요.\n이어서 물어보면 지금까지의 대화 요약을 같이 보내요. 답 길이와 말투는 설정의 '채팅 규칙'에서 정해요.", "Ask a question. The AIs answer, review each other, and produce one final answer.\nFollow-ups include a conversation summary. Adjust length and style in Settings → Chat rules."))

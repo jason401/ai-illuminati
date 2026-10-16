@@ -497,3 +497,23 @@ do {
     expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("new.txt").path), "undo left created file")
     print("PASS: backup, actual add/edit/delete list, conflict refusal and exact hash undo")
 }
+
+// Fresh/resume permissions are explicit at every invocation; no broad bypass flags.
+do {
+    let root = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("permission-fixture")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let binding = WorkspaceBinding(roots: [WorkspaceRoot(path: root.path, directory: true)], level: .execute)
+    let room = UUID(), backup = try WorkspaceBackup.begin(binding, room: room, runID: UUID())
+    let invocation = WorkspaceInvocation(binding: binding, room: room, readOnly: false, backupPath: backup.directory)
+    let dir = NativeSessions.directory(room).appendingPathComponent("test")
+    let original = ["-c", "sandbox_mode=\"read-only\"", "exec", "resume", "fake-session", "question"]
+    let resume = try invocation.arguments(provider: .codex, original: original, directory: dir, web: true)
+    expect(resume.contains("sandbox_mode=\"workspace-write\"") && resume.contains("features.shell_tool=true"), "resume lost execution sandbox")
+    expect(resume.contains("sandbox_workspace_write.exclude_slash_tmp=true") && resume.contains("sandbox_workspace_write.exclude_tmpdir_env_var=true"), "unexpected writable tmp roots")
+    let claude = try invocation.arguments(provider: .claude, original: ["--tools", "", "--mcp-config", "{}"], directory: dir, web: true)
+    expect(claude.contains(where: { $0.contains("Bash") }) && claude.contains("--settings") && !claude.contains("--dangerously-skip-permissions"), "execution must stay sandboxed")
+    let viewing = WorkspaceInvocation(binding: binding, room: room, readOnly: true)
+    let read = try viewing.arguments(provider: .codex, original: original, directory: dir, web: true)
+    expect(read.contains("sandbox_mode=\"read-only\"") && read.contains("features.shell_tool=false"), "review must remain read-only even in execution room")
+    print("PASS: explicit resume sandbox, linked write roots, no temporary roots and read-only review")
+}

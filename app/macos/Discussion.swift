@@ -135,8 +135,8 @@ enum Answerer {
             }
         case .gemini:
             binary = Login.agyInstalled ? Login.home + "/.local/bin/agy" : nil
-            GeminiLinks.allowWeb()
-            arguments = ["-p", GeminiLinks.toolNote + prompt, "--sandbox", "--disable-slash-commands",
+            if workspace == nil { GeminiLinks.allowWeb() }
+            arguments = ["-p", (workspace == nil ? GeminiLinks.toolNote : "") + prompt, "--sandbox", "--disable-slash-commands",
                          "--print-timeout", "\(Int(timeout) - 10)s"]
         }
         let executionDirectory = session?.directory ?? workspace.map { NativeSessions.directory($0.room).appendingPathComponent("stateless-\(UUID().uuidString)") } ?? URL(fileURLWithPath: chatDir)

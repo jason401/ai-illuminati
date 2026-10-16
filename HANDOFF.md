@@ -2,6 +2,13 @@
 
 이 문서만 읽으면 바로 이어서 작업할 수 있게 정리했어요. 규칙은 `AGENTS.md`(= `CLAUDE.md`와 같은 내용)에, 사용자용 설명은 `README.md`에 있어요.
 
+## 단계④ — 작성+실행 (2026-10-16)
+
+- 권한 메뉴에 작성+실행 추가. Claude는 restricted를 유지하면서 Bash만 명시적 허용, sandbox enabled/allowUnsandboxedCommands=false 및 연결 allowWrite. Codex는 매 fresh/resume에 workspace-write/연결 writable_roots/shell_tool=true, network=false, tmp 쓰기 제외. 검토·계획은 여전히 read-only/shell off. 우회 플래그 없음.
+- 실제 학교 Claude와 학교 Codex에서 Python으로 연결 폴더 analysis.txt 생성 성공, 부모 outside-marker 쓰기는 EPERM 차단, 실제 파일 없음. **학교 Codex의 on-request는 유지되지만 모든 실행이 막히지는 않음**: sandbox 안 명령 성공. fresh+readback resume turn_context 모두 연결 root/workspace-write/on-request 확인. 승인 필요한 명령은 headless에서 실패하며 자동 승인·재시도 없음.
+- agy 실제 보기 시험에서 MCP 승인이 개인 설정에 없어 headless 거절 확인. 전역 허용을 추가하지 않음. 따라서 agy workspace MCP는 등록하지 않고 native workspace 도구+앱 읽기요청 JSON만 사용. 실행은 기존 agy sandbox/계정 권한에 따르며 거절될 수 있음을 화면 안내. 이 backend 한계는 숨기지 않음.
+- 전체 회귀12개(실행 resume 설정/쓰기 root/tmp 제외/검토 readonly 포함), 고정 서명 빌드 통과. 실제 시험은 disposable 사본만 사용.
+
 ## 단계③ — 작성·백업·되돌리기 (2026-10-16)
 
 - 방 권한에 작성 추가. 계획/검토는 보기만, 작업자는 연결 폴더에서 수정·생성·삭제. Claude Edit/Write+앱 MCP, Codex workspace-write/연결 writable_roots와 shell_tool=false, agy accept-edits(개인 명령 자동 허용이 있으면 실행 거부; 개인 설정 변경 없음).

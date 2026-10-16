@@ -2,7 +2,7 @@ import Cocoa
 
 enum WorkspaceLevel: String, Codable, CaseIterable {
     case view, write, execute
-    static var offered: [WorkspaceLevel] = [.view, .write]
+    static var offered: [WorkspaceLevel] = [.view, .write, .execute]
     var title: String { switch self { case .view: return L("보기", "View"); case .write: return L("작성", "Write"); case .execute: return L("작성+실행", "Write + execute") } }
 }
 struct WorkspaceRoot: Codable, Equatable { var path: String; var directory: Bool }
@@ -103,9 +103,14 @@ struct WorkspaceInvocation {
             let mcp = ["mcpServers": ["illuminati": ["command": command, "args": args] as [String: Any]]]
             let config = String(data: try JSONSerialization.data(withJSONObject: mcp), encoding: .utf8)!
             if let i = result.firstIndex(of: "--mcp-config") { result[i + 1] = config }
-            if let i = result.firstIndex(of: "--tools") { result[i + 1] = "Read,Grep,Glob" + (level != .view ? ",Edit,Write" : "") + (web ? ",WebSearch,WebFetch" : "") }
+            if let i = result.firstIndex(of: "--tools") { result[i + 1] = "Read,Grep,Glob" + (level != .view ? ",Edit,Write" : "") + (level == .execute ? ",Bash" : "") + (web ? ",WebSearch,WebFetch" : "") }
             if let i = result.firstIndex(of: "--allowedTools") { result.removeSubrange(i...i + 1) }
-            result += ["--restricted", "--setting-sources", "", "--disable-slash-commands", "--permission-mode", "dontAsk", "--allowedTools", "Read,Grep,Glob,mcp__illuminati__*" + (level != .view ? ",Edit,Write" : "") + (web ? ",WebSearch,WebFetch" : "")]
+            result += ["--restricted", "--setting-sources", "", "--disable-slash-commands", "--permission-mode", "dontAsk", "--allowedTools", "Read,Grep,Glob,mcp__illuminati__*" + (level != .view ? ",Edit,Write" : "") + (level == .execute ? ",Bash" : "") + (web ? ",WebSearch,WebFetch" : "")]
+            if level == .execute {
+                let settings: [String: Any] = ["sandbox": ["enabled": true, "autoAllowBashIfSandboxed": true, "allowUnsandboxedCommands": false,
+                    "filesystem": ["allowWrite": binding.roots.filter(\.directory).map(\.path)]]]
+                result += ["--settings", String(data: try JSONSerialization.data(withJSONObject: settings), encoding: .utf8)!]
+            }
             for root in binding.roots where root.directory { result += ["--add-dir", root.path] }
         case .codex:
             // Remove old per-call settings before adding the effective workspace settings.
@@ -117,19 +122,19 @@ struct WorkspaceInvocation {
                 if base[i] == "-C", i + 1 < base.count { base[i + 1] = directory.path }
                 i += 1
             }
-            result = ["-c", "sandbox_mode=" + json(level == .view ? "read-only" : "workspace-write"), "-c", "approval_policy=\"never\"", "-c", "features.shell_tool=false",
+            result = ["-c", "sandbox_mode=" + json(level == .view ? "read-only" : "workspace-write"), "-c", "approval_policy=\"never\"", "-c", "features.shell_tool=" + (level == .execute ? "true" : "false"),
                       "-c", "features.multi_agent=false", "-c", "sandbox_workspace_write.writable_roots=" + json(binding.roots.filter(\.directory).map(\.path)),
                       "-c", "sandbox_workspace_write.exclude_slash_tmp=true", "-c", "sandbox_workspace_write.exclude_tmpdir_env_var=true",
                       "-c", "sandbox_workspace_write.network_access=false", "-c", "web_search=" + json(web ? "live" : "disabled"),
                       "-c", "mcp_servers.illuminati.command=" + json(command), "-c", "mcp_servers.illuminati.args=" + json(args),
                       "-c", "mcp_servers.illuminati.required=true", "-c", "mcp_servers.illuminati.default_tools_approval_mode=\"auto\""] + base
         case .gemini:
+            // agy headless MCP needs a global allow rule. Never broaden personal
+            // permissions: native workspace tools + the host read-request bridge suffice.
             let folder = directory.appendingPathComponent(".agents")
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-            let config: [String: Any] = ["mcpServers": ["illuminati": ["command": command, "args": args]]]
-            try JSONSerialization.data(withJSONObject: config).write(to: folder.appendingPathComponent("mcp_config.json"), options: .atomic)
-                        // Do not widen global settings. Existing command auto-grants cannot be
-            // reconciled with a write-without-execution promise for this provider.
+            try Data("{\"mcpServers\":{}}".utf8).write(to: folder.appendingPathComponent("mcp_config.json"), options: .atomic)
+            // Existing command auto-grants cannot guarantee write-without-execution.
             let settingsURL = URL(fileURLWithPath: AccountStore.home + "/.gemini/antigravity-cli/settings.json")
             let settings = (try? Data(contentsOf: settingsURL)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
             let allow = (settings["permissions"] as? [String: Any])?["allow"] as? [String] ?? []

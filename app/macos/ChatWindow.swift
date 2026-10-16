@@ -165,6 +165,12 @@ struct ChatView: View {
                             ForEach(WorkspaceLevel.offered, id: \.self) { Text($0.title).tag($0) }
                         }.frame(width: 145)
                     }
+                    if discussion.current.workspace?.level == .execute {
+                        Text(L("Gemini는 개인 권한 설정에 따라 문서 도구·명령이 거절될 수 있습니다. 앱은 개인 설정을 넓히지 않습니다.", "Gemini document tools or commands may be denied by personal permission settings; the app does not widen them."))
+                            .font(.caption).foregroundColor(.secondary)
+                        Text(L("실행은 각 도구의 샌드박스·계정 정책을 따릅니다. 학교 ChatGPT의 승인 요청은 자동 승인하지 않습니다.", "Execution follows each tool’s sandbox and account policy. School ChatGPT approval requests are not auto-approved."))
+                            .font(.caption).foregroundColor(.secondary)
+                    }
                     if discussion.current.workspace == nil, let documents = discussion.current.documents, !documents.isEmpty {
                         Menu {
                             ForEach(documents) { document in

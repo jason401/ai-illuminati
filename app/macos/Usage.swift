@@ -152,7 +152,7 @@ enum CodexUsage {
 // Claude Code keeps each account's login in the Keychain (see Account.claudeKeychainService).
 // We read it (read only, never change it) and ask Anthropic's usage page. That page is not
 // documented and may change; on failure the last good reading is shown with its time. When the saved login has expired we let
-// Claude Code renew it itself (`claude auth status`) instead of touching it.
+// Claude Code renew it itself (one tiny request; `claude auth status` only reports and does not renew) instead of touching it.
 enum ClaudeUsage {
     private static var cache: [String: (AIUsage, Date)] = [:]
     private static var waitUntil: [String: Date] = [:]
@@ -185,7 +185,7 @@ enum ClaudeUsage {
             return result
         }
         var token = accessToken(account)
-        if token == nil, let binary, Date().timeIntervalSince(lastRenew[account.id] ?? .distantPast) > 600 {
+        if token == nil, let binary, Date().timeIntervalSince(lastRenew[account.id] ?? .distantPast) > 1800 {
             lastRenew[account.id] = Date()
             renew(binary: binary, account: account)
             token = accessToken(account)
@@ -326,18 +326,24 @@ enum ClaudeUsage {
         return token
     }
 
-    // Claude Code checks (and, if needed, renews) its own login. Waits up to 30 s.
+    // The saved sign-in key lasts only hours and Claude Code renews it only when it actually sends a
+    // request (`claude auth status` just reports "logged in"). So when the key has expired, send one tiny
+    // request with the smallest model and no tools; Claude Code renews the key itself. Waits up to 60 s.
     private static func renew(binary: String, account: Account) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: binary)
-        process.arguments = ["auth", "status", "--json"]
+        process.arguments = ["-p", "Reply only: ok", "--model", "haiku", "--tools", "", "--no-session-persistence",
+                             "--safe-mode", "--strict-mcp-config", "--mcp-config", "{\"mcpServers\":{}}", "--no-chrome"]
+        process.currentDirectoryURL = URL(fileURLWithPath: Answerer.chatDir)
+        process.standardInput = FileHandle.nullDevice
         process.environment = account.environment
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         guard (try? process.run()) != nil else { return }
-        let deadline = Date().addingTimeInterval(30)
+        let deadline = Date().addingTimeInterval(60)
         while process.isRunning && Date() < deadline { Thread.sleep(forTimeInterval: 0.2) }
         if process.isRunning { process.terminate() }
+        log(account, accessToken(account) == nil ? "로그인 갱신 실패" : "로그인 갱신됨 (짧은 요청)")
     }
 
     private static func window(_ value: Any?) -> UsageWindow? {

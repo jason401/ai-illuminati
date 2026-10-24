@@ -178,7 +178,7 @@ struct ChatView: View {
                 }
                 HStack {
                     Toggle(L("세션 유지 (실험)", "Keep sessions (experimental)"), isOn: Binding(
-                        get: { discussion.configuration.keepSessions == true },
+                        get: { discussion.configuration.sessionsOn },
                         set: { enabled in
                             discussion.configure { $0.keepSessions = enabled }
                             discussion.sessionNote = enabled

@@ -117,7 +117,8 @@ extension Discussion {
         pictureLock.lock(); let shared = activeImages, sharedContext = imageContext; pictureLock.unlock()
         let pictures = shared + selected.flatMap(\.images)
         let full = materialText + (activeDocumentText.isEmpty ? "" : activeDocumentText + "\n") + prompt + (sharedContext.isEmpty ? "" : "\n" + sharedContext)
-        if let room = activeSessionRoom {
+        // Only dedicated Claude / ChatGPT accounts keep sessions; others (Gemini) take the normal path.
+        if let room = activeSessionRoom, NativeSessions.eligible(account) {
             return nativeSessions.ask(account, room: room, prompt: full, images: pictures, timeout: timeout,
                                       token: token, web: web, speaker: label(account), invoke: { text, images, session in
                 Answerer.ask(account, prompt: text, timeout: timeout, cancellation: token, images: images, web: web, session: session, workspace: self.activeWorkspace.map { WorkspaceInvocation(binding: $0, room: room) })

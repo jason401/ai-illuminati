@@ -342,7 +342,8 @@ struct ChatConfiguration: Codable {
     var maxTurns: Int?    // old total limit, no longer used
     var turnsPerAI: Int?  // mode 3: turns each AI may speak (default 4)
     var speechLength: Int? // discussion modes: characters per AI turn (400 / 800 / 1500, default 800)
-    var keepSessions: Bool?
+    var keepSessions: Bool?   // nil = on (default); false = turned off for this chat
+    var sessionsOn: Bool { keepSessions != false }
     var modeVersion: Int?
     var accountIDs: [String]?
     var leaderAccountID: String?
@@ -674,7 +675,7 @@ final class Discussion: ObservableObject {
             attachmentError = turn.error
             return
         }
-        activeSessionRoom = config.keepSessions == true && (Self.modernModes || config.mode == 3) ? id : nil
+        activeSessionRoom = config.sessionsOn && (Self.modernModes || config.mode == 3) ? id : nil
         activeMaterials = current.documents ?? []
         activeWorkspace = current.workspace
         activeAdversarial = Self.modernModes && config.mode == 2
@@ -761,7 +762,7 @@ final class Discussion: ObservableObject {
                 }
                 .max {
                     func score(_ item: (Account, Double)) -> Double {
-                        guard configuration.keepSessions == true else { return item.1 }
+                        guard configuration.sessionsOn else { return item.1 }
                         if nativeSessions.pinnedAccount(provider, room: currentID) == item.0.id { return 300 + item.1 }
                         return (NativeSessions.eligible(item.0) ? 200 : 0) + item.1
                     }

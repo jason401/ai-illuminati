@@ -709,7 +709,7 @@ do {
                   Account(id: "pic-codex", provider: .codex, name: "Codex", dir: codexDir)]
     let chat = Discussion(model: m)
     chat.newConversation()
-    chat.configure { $0.participants = [.claude, .codex]; $0.mode = 1; $0.leader = .claude; $0.turnsPerAI = 2 }
+    chat.configure { $0.participants = [.claude, .codex]; $0.mode = 1; $0.leader = .claude; $0.turnsPerAI = 2; $0.keepSessions = false }
     let png = Pictures.render(svg: "<svg viewBox='0 0 10 10'><rect width='10' height='10' fill='green'/></svg>")!
     let promptLock = NSLock()
     var prompts: [String] = []
@@ -785,6 +785,7 @@ do {
     let again = Discussion(model: m)
     expect(again.currentID == blankID && again.configuration.turnsPerAI == 3 && again.conversations.filter { !$0.hasContent }.count == 1,
            "newest settings-only chat becomes the new chat, no pile-up")
+    expect(ChatConfiguration().sessionsOn && !ChatConfiguration(keepSessions: false).sessionsOn, "sessions are on unless turned off")
     print("PASS: pin to top (order, saved, unpin) and delete all (all or keep pinned)")
 }
 

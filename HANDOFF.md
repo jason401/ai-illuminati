@@ -2,6 +2,10 @@
 
 이 문서만 읽으면 바로 이어서 작업할 수 있게 정리했어요. 규칙은 `AGENTS.md`(= `CLAUDE.md`와 같은 내용)에, 사용자용 설명은 `README.md`에 있어요.
 
+## 세션 기본 켜짐 (2026-10-23, Claude)
+
+- 사용자 결정: 세션 유지 기본 ON, 스위치는 남김(방별 끄기). `ChatConfiguration.sessionsOn` = `keepSessions != false`(nil=켜짐). 끈 방만 false 저장. `requestDebate`는 세션 대상 계정(`NativeSessions.eligible`: 앱 전용 Claude/Codex)만 세션 경로, 나머지(Gemini)는 기존 경로(시험 주입 포함). 시험 20개 통과.
+
 ## 고정·전부 지우기·빈 대화 정리 (2026-10-23, Claude)
 
 - `Conversation.pinned`(선택 필드), `listedConversations`(고정 먼저), `togglePin`. `deleteAll()`(모두/고정 남기기, 확인 창) → `removeChats`(하나씩 `ChatStore.delete`, 실패 수 보고, 빈 새 대화 1개 유지). 목록 ⋯/오른쪽 클릭에 고정, "새 대화" 옆 ⊙ 메뉴에 전부 지우기.

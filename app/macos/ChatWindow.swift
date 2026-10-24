@@ -119,6 +119,22 @@ struct ChatView: View {
                         }
                         .fixedSize()
                         .disabled(discussion.running || discussion.importingMaterials)
+                        Menu {
+                            Picker(L("AI 발언 길이", "Length of each AI turn"), selection: Binding(
+                                get: { SpeechLength.clamp(discussion.configuration.speechLength) },
+                                set: { length in discussion.configure { $0.speechLength = length } })) {
+                                ForEach(SpeechLength.all, id: \.self) { length in
+                                    Text(SpeechLength.name(length)).tag(length)
+                                }
+                            }
+                            Divider()
+                            Text(L("길수록 근거를 더 담지만, 뒤 발언이 앞 대화를 모두 다시 읽어 사용량이 빠르게 늘어요.",
+                                   "Longer turns carry more evidence but use more, since every later turn re-reads the whole chat."))
+                        } label: {
+                            Text(SpeechLength.name(SpeechLength.clamp(discussion.configuration.speechLength)))
+                        }
+                        .fixedSize()
+                        .disabled(discussion.running || discussion.importingMaterials)
                     }
                     Menu {
                         Text(L("1 토론: 대표가 논점을 맡기고 답을 정리합니다. 2 비판 토론: 반론·대안·실패 조건을 검증합니다. 3 협업: 선택 계정에 필요한 결과물 작업을 나누고 검토·통합합니다.", "1 Discussion: moderator-led discussion and synthesis. 2 Critical debate: test objections, alternatives and failure cases. 3 Collaboration: assign work to selected accounts, cross-review and integrate deliverables."))

@@ -457,6 +457,29 @@ do {
     print("PASS: new discussion limits, unavailable moderator fallback and critical follow-up round")
 }
 
+// Speech length: default medium (800), and the chosen length reaches every AI turn.
+do {
+    let m = AppModel()
+    m.accounts = [Account(id: "len-claude-fake", provider: .claude, name: "Claude", dir: nil),
+                  Account(id: "len-codex-fake", provider: .codex, name: "Codex", dir: nil)]
+    let chat = Discussion(model: m)
+    chat.configure { $0.mode = 1; $0.leader = .claude; $0.turnsPerAI = 2 }
+    var speeches: [String] = []
+    chat.debateAnswer = { _, prompt, _, _, _ in
+        if prompt.contains("[MODE3 MODERATION]") { return .success("{\"action\":\"finish\",\"reason\":\"Enough\"}") }
+        if prompt.contains("[MODE3 SPEECH]") { speeches.append(prompt) }
+        return .success("TL;DR: Point\n\nDetail.")
+    }
+    chat.draft = "Default length."; chat.send(); waitFor(chat)
+    expect(!speeches.isEmpty && speeches.allSatisfy { $0.contains("at most 800 characters") }, "default turn length must be 800")
+    speeches.removeAll()
+    chat.configure { $0.speechLength = SpeechLength.long }
+    chat.draft = "Long turns."; chat.send(); waitFor(chat)
+    expect(!speeches.isEmpty && speeches.allSatisfy { $0.contains("at most 1500 characters") }, "chosen long length must reach every speech")
+    expect(SpeechLength.clamp(123) == 800 && SpeechLength.clamp(nil) == 800 && SpeechLength.clamp(400) == 400, "length clamp")
+    print("PASS: speech length default 800 and chosen length in every AI turn")
+}
+
 // Collaboration role sessions continue across different task payloads without resending old images.
 do {
     let manager = NativeSessions(), room = UUID(), sid = UUID().uuidString

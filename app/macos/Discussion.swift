@@ -284,6 +284,32 @@ struct ChatTurn: Identifiable, Codable {
     var turnsPerAI: Int?  // missing in older chats, whose limit was a single total
 }
 
+// How much each AI may say per turn in the discussion modes. The user mostly reads the one-line
+// headlines and the final answer, so turns can be longer; longer turns cost more usage because every
+// later turn re-reads the whole transcript.
+enum SpeechLength {
+    static let short = 400, standard = 800, long = 1500
+    static let all = [short, standard, long]
+
+    static func clamp(_ value: Int?) -> Int { all.contains(value ?? 0) ? value! : standard }
+
+    static func name(_ value: Int) -> String {
+        switch value {
+        case short: return L("짧게 · 400자", "Short · 400 chars")
+        case long: return L("길게 · 1500자", "Long · 1500 chars")
+        default: return L("보통 · 800자", "Medium · 800 chars")
+        }
+    }
+
+    static func rule(_ value: Int) -> String {
+        switch value {
+        case short: return "Use 2–4 sentences, at most 400 characters"
+        case long: return "Be thorough: up to about 15 sentences or a structured list with evidence, examples and sources, at most 1500 characters"
+        default: return "Use up to about 8 sentences or a short list with your evidence, at most 800 characters"
+        }
+    }
+}
+
 // One group chat, saved as ~/Library/Application Support/AI Illuminati/chats/<id>.json.
 // `summary` is a few lines about everything so far; it is what the AIs get as context.
 struct ChatConfiguration: Codable {
@@ -293,6 +319,7 @@ struct ChatConfiguration: Codable {
     var leader: Account.Provider = .claude
     var maxTurns: Int?    // old total limit, no longer used
     var turnsPerAI: Int?  // mode 3: turns each AI may speak (default 4)
+    var speechLength: Int? // discussion modes: characters per AI turn (400 / 800 / 1500, default 800)
     var keepSessions: Bool?
     var modeVersion: Int?
     var accountIDs: [String]?
@@ -376,6 +403,7 @@ final class Discussion: ObservableObject {
     var activeWorkspace: WorkspaceBinding?
     var activeWorkspaceBackupPath: String?
     var activeAdversarial = false
+    var activeSpeechLength = SpeechLength.standard
     var activeImages: [URL] = []
     var imageContext = ""
     @Published var inputHeight: CGFloat = 36
@@ -527,6 +555,7 @@ final class Discussion: ObservableObject {
         activeMaterials = current.documents ?? []
         activeWorkspace = current.workspace
         activeAdversarial = Self.modernModes && config.mode == 2
+        activeSpeechLength = SpeechLength.clamp(config.speechLength)
         activeDocumentText = activeWorkspace?.description ?? MaterialContext.overview(activeMaterials)
         let history = current.turns
         let allImages = (history + [turn]).flatMap { $0.images ?? [] }

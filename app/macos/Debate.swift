@@ -140,7 +140,7 @@ extension Discussion {
         You are \(label(account)). The AIs here are one team. The shared goal is the best possible answer to the
         latest user question, not winning an argument.
         Speak only as yourself. Never write, imagine, or quote a statement on another AI's behalf.
-        Use 2–4 sentences, at most 400 characters (this limit overrides shorter length rules), in the language of the
+        \(SpeechLength.rule(activeSpeechLength)) (this limit overrides shorter length rules), in the language of the
         latest user message unless they request another language.
         You can search the web and read pages. For any fact, number, name or link that matters, search first and cite
         what you found as [source: URL]. Use [from memory] or [estimate] only when a search found nothing. Never invent a source.

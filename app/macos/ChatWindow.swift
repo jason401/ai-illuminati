@@ -270,7 +270,7 @@ struct ChatView: View {
                 if discussion.hasImages {
                     Text(discussion.configuration.mode == 3
                          ? L("그림은 Claude·ChatGPT가 읽고, Gemini에는 근거 메모를 공유합니다.", "Claude/ChatGPT read images; Gemini receives their evidence notes.")
-                         : L("이미지는 Claude와 ChatGPT에 전달됩니다. 이 대화에서 Gemini는 참여하지 않습니다.", "Images go to Claude and ChatGPT. Gemini is excluded from this image chat."))
+                         : L("사진과 AI가 그린 그림은 참여한 모든 AI에게 전달돼요(Gemini는 파일로 봐요).", "Photos and pictures the AIs drew go to every participating AI (Gemini reads them as files)."))
                         .font(.caption).foregroundColor(.secondary)
                 }
                 if !discussion.pendingImages.isEmpty {
@@ -395,13 +395,11 @@ struct ChatView: View {
                         Toggle(provider.title, isOn: Binding(
                             get: { discussion.configuration.participants.contains(provider) },
                             set: { discussion.setParticipation(provider, enabled: $0) }))
-                        .disabled(discussion.hasImages && provider == .gemini)
                         Menu {
                             Button(L("대표로 지정", "Make moderator")) {
                                 discussion.configure { $0.leader = provider }
                             }
-                            .disabled(!discussion.configuration.participants.contains(provider)
-                                      || (discussion.hasImages && provider == .gemini))
+                            .disabled(!discussion.configuration.participants.contains(provider))
                         } label: {
                             if discussion.configuration.leader == provider {
                                 Image(systemName: "crown.fill")
@@ -591,6 +589,8 @@ private struct TurnView: View {
                     Text(markdown(final))
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                    let pictures = Self.finalPictures(turn, final: final)
+                    if !pictures.isEmpty { PictureStrip(images: pictures, size: 180) }
                     if let by = turn.finalBy {
                         (Text(L("정리: ", "Final answer by: ")).foregroundColor(.secondary)
                          + Text(by).bold().foregroundColor(Account.Provider.of(speaker: by)?.color ?? .secondary))
@@ -632,6 +632,19 @@ private struct TurnView: View {
         }
         .padding(.top, 6)
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // The final answer's own pictures, plus the team's pictures it names ([그림 2] / [Picture 2]).
+    static func finalPictures(_ turn: ChatTurn, final: String) -> [ChatImage] {
+        var pictures = turn.finalImages ?? []
+        let regex = try! NSRegularExpression(pattern: "\\[(?:그림|Picture) (\\d+)\\]")
+        let ns = final as NSString
+        let named = regex.matches(in: final, range: NSRange(location: 0, length: ns.length)).map { "picture-" + ns.substring(with: $0.range(at: 1)) + ".png" }
+        for name in named {
+            if let image = turn.entries.flatMap({ $0.images ?? [] }).first(where: { $0.name == name }),
+               !pictures.contains(where: { $0.id == image.id }) { pictures.append(image) }
+        }
+        return pictures
     }
 
     // Bold, italics, code and links; line breaks are kept.
@@ -774,6 +787,26 @@ private struct MultilineInput: NSViewRepresentable {
     }
 }
 
+// Pictures an AI made: a row of thumbnails, each opening full size in Preview.
+private struct PictureStrip: View {
+    let images: [ChatImage]
+    let size: CGFloat
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(images) { item in
+                    Button(action: { NSWorkspace.shared.open(item.url) }) {
+                        AttachmentThumbnail(item: item, size: size)
+                    }
+                    .buttonStyle(.plain)
+                    .help(item.name)
+                    .accessibilityLabel(L("그림 열기: ", "Open picture: ") + item.name)
+                }
+            }
+        }
+    }
+}
+
 private struct AttachmentThumbnail: View {
     let item: ChatImage
     let size: CGFloat
@@ -860,6 +893,9 @@ private struct EntryRow: View {
             .buttonStyle(.plain)
             .help(isOpen ? L("접기", "Collapse") : L("자세히 보기", "Show full reply"))
             .accessibilityLabel(label + ": " + entry.shortLine)
+            if let images = entry.images, !images.isEmpty {
+                PictureStrip(images: images, size: 110)
+            }
             if isOpen && !entry.failed {
                 VStack(alignment: .leading, spacing: 6) {
                     if let focus = entry.focus {

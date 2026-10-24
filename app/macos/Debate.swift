@@ -157,6 +157,7 @@ extension Discussion {
               No attacks, no repeating, no separate summary.
               """)
         Use only web search and reading web pages. Do not change files or run commands.
+        \(Pictures.rule(for: account.provider))
         \(Self.headlineRule)
         [Moderator focus]
         \(focus.isEmpty ? "Give your initial contribution." : focus)
@@ -186,17 +187,24 @@ extension Discussion {
         let opening = transcript
         let lock = NSLock()
         var openings: [Account.Provider: Result<String, Answerer.Failure>] = [:]
+        var openingPictures: [Account.Provider: [ChatImage]] = [:]
         let group = DispatchGroup()
         for account in team {
             let prompt = debateSpeech(account, rules: rules, focus: "", transcript: opening, opening: true)
             group.enter()
             DispatchQueue.global().async {
-                let result = self.requestDebate(account, prompt, 300, cancellation, web: true)
-                lock.lock(); openings[account.provider] = result; lock.unlock()
+                let started = Date()
+                var result = self.requestDebate(account, prompt, 300, cancellation, web: true)
+                var pictures: [ChatImage] = []
+                if case .success(let text) = result {
+                    let harvest = self.collectPictures(text, account: account, since: started, id: id)
+                    result = .success(harvest.text); pictures = harvest.images
+                }
+                lock.lock(); openings[account.provider] = result; openingPictures[account.provider] = pictures; lock.unlock()
                 if !cancellation.isCancelled {
-                    let entry: ChatTurn.Entry
+                    var entry: ChatTurn.Entry
                     switch result {
-                    case .success(let text): entry = .reply(round: 1, speaker: self.label(account), text: text)
+                    case .success(let text): entry = .reply(round: 1, speaker: self.label(account), text: text); entry.images = pictures.isEmpty ? nil : pictures
                     case .failure(let failure): entry = .init(round: 1, speaker: self.label(account), text: Self.describe(failure), failed: true)
                     }
                     self.changeTurn(id, index, save: true) { $0.entries.append(entry) }
@@ -213,6 +221,7 @@ extension Discussion {
                 case .success(let text):
                     successful.insert(account.provider)
                     transcript += "\n\n[\(label(account))]\n" + ChatTurn.Entry.reply(round: 1, speaker: "", text: text).text
+                    sharePictures(openingPictures[account.provider] ?? [], by: label(account))
                 case .failure(let failure) where Self.isOutOfUsage(failure):
                     used[account.provider] = perAI  // out of usage: leave it out of the rest of the debate
                 default: break
@@ -283,6 +292,7 @@ extension Discussion {
                 t.status = L("\(number)/\(limit) \(self.label(account)) 발언 중…", "\(number)/\(limit) \(self.label(account)) is speaking…")
                 t.debateFocus = currentFocus
             }
+            let started = Date()
             let speech = requestDebate(account, debateSpeech(account, rules: rules, focus: focus, transcript: transcript, opening: false), 300, cancellation, web: true)
             if cancellation.isCancelled { break }
             count += 1 // Failed attempts count too, so the loop is always bounded.
@@ -291,7 +301,10 @@ extension Discussion {
             switch speech {
             case .success(let text):
                 successful.insert(account.provider)
-                entry = .reply(round: 1, speaker: label(account), text: text)
+                let harvest = collectPictures(text, account: account, since: started, id: id)
+                entry = .reply(round: 1, speaker: label(account), text: harvest.text)
+                entry.images = harvest.images.isEmpty ? nil : harvest.images
+                sharePictures(harvest.images, by: label(account))
                 if !board.isEmpty { transcript += "\n\n[Moderator board]\n" + board }
                 transcript += "\n\n[Moderator focus]\n" + focus
                 transcript += "\n\n[\(label(account))]\n" + entry.text
@@ -312,6 +325,7 @@ extension Discussion {
         // Stop never starts another request, including the final synthesis.
         if !cancellation.isCancelled, let moderator, successful.contains(leader) {
             changeTurn(id, index) { $0.status = L("대표가 최종 답을 정리하는 중…", "Moderator is writing the final answer…") }
+            let finalStarted = Date()
             let result = requestDebate(moderator, """
                 \(Self.debateContext(rules: rules, transcript: transcript))
                 [MODE3 FINAL]
@@ -321,12 +335,19 @@ extension Discussion {
                 At most about 8 short sentences or bullet points. Do not describe the discussion or who said what.
                 Use the language of the latest user question unless they request another language. Do not imply certainty or consensus where none exists.
                 \(board.isEmpty ? "" : "Moderator board:\n" + board + "\n")End reason: \(ending)
-                Do not use tools, change files, or execute commands.
+                If the user asked for a picture and the team made some, they are already shown: name the best one by its marker
+                (e.g. [그림 2] / [Picture 2]) and say why in one line; make a new one only if the team made none.
+                \(Pictures.rule(for: moderator.provider))
+                Do not change files or execute commands.
                 """, 180, cancellation)
             if !cancellation.isCancelled {
                 switch result {
                 case .success(let text):
-                    changeTurn(id, index, save: true) { $0.final = text; $0.finalBy = self.label(moderator) }
+                    let harvest = collectPictures(text, account: moderator, since: finalStarted, id: id)
+                    changeTurn(id, index, save: true) {
+                        $0.final = harvest.text; $0.finalBy = self.label(moderator)
+                        $0.finalImages = harvest.images.isEmpty ? nil : harvest.images
+                    }
                 case .failure:
                     changeTurn(id, index, save: true) { $0.error = L("최종 정리에 실패했습니다. 위 발언은 저장됐습니다.", "Final synthesis failed. The contributions have been saved.") }
                 }

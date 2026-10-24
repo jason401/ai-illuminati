@@ -700,3 +700,56 @@ do {
     print("PASS: update status texts")
 }
 
+// Pictures: Claude's SVG and Codex's generated image become stored pictures, shown with markers,
+// and are passed to everyone who speaks afterwards (moderator now, all AIs in the next question).
+do {
+    let m = AppModel()
+    let codexDir = AccountStore.accountsDir + "/pic-codex"
+    m.accounts = [Account(id: "pic-claude", provider: .claude, name: "Claude", dir: nil),
+                  Account(id: "pic-codex", provider: .codex, name: "Codex", dir: codexDir)]
+    let chat = Discussion(model: m)
+    chat.newConversation()
+    chat.configure { $0.participants = [.claude, .codex]; $0.mode = 1; $0.leader = .claude; $0.turnsPerAI = 2 }
+    let png = Pictures.render(svg: "<svg viewBox='0 0 10 10'><rect width='10' height='10' fill='green'/></svg>")!
+    let promptLock = NSLock()
+    var prompts: [String] = []
+    chat.debateAnswer = { account, prompt, _, _, _ in
+        promptLock.lock(); prompts.append(prompt); promptLock.unlock()
+        if prompt.contains("[MODE3 MODERATION]") { return .success("{\"action\":\"finish\",\"reason\":\"Done\"}") }
+        if prompt.contains("[MODE3 FINAL]") { return .success("가장 좋은 그림은 [그림 2]입니다.") }
+        if account.provider == .claude {
+            return .success("TL;DR: 사과\n\n사과를 그렸어요.\n```svg\n<svg viewBox='0 0 10 10'><circle cx='5' cy='5' r='4' fill='red'/></svg>\n```\n끝.")
+        }
+        let folder = codexDir + "/generated_images/thread-1"
+        try? FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+        try? png.write(to: URL(fileURLWithPath: folder + "/exec-1.png"))
+        return .success("TL;DR: 그렸어요\n\n초록 네모를 그렸어요.")
+    }
+    var pictureCounts: [Int] = []
+    chat.pictureAnswer = { account, prompt, pictures, timeout, token, web in
+        promptLock.lock(); pictureCounts.append(pictures.count); promptLock.unlock()
+        return chat.debateAnswer(account, prompt, timeout, token, web)
+    }
+    chat.draft = "사과 그림 그려줘"; chat.send(); waitFor(chat)
+    let turn = chat.current.turns[0]
+    let claudeEntry = turn.entries.first { $0.speaker.hasPrefix("Claude") }!
+    let codexEntry = turn.entries.first { $0.speaker.hasPrefix("ChatGPT") }!
+    expect(claudeEntry.images?.count == 1 && !claudeEntry.text.contains("<svg") && claudeEntry.text.contains("[그림") || claudeEntry.text.contains("[Picture"),
+           "Claude's SVG must become a stored picture with a marker")
+    expect(codexEntry.images?.count == 1, "Codex's generated image must be collected")
+    let all = turn.entries.flatMap { $0.images ?? [] }
+    expect(Set(all.map(\.name)) == ["picture-1.png", "picture-2.png"] && all.allSatisfy { FileManager.default.fileExists(atPath: $0.url.path) },
+           "pictures are numbered and stored with the chat")
+    let moderation = prompts.first { $0.contains("[MODE3 MODERATION]") } ?? ""
+    expect(moderation.contains("drawn by") && pictureCounts.contains(2), "the moderator must receive the pictures")
+    expect(prompts.contains { $0.contains("Pictures: only when the user asks") }, "speakers are told how to make pictures")
+    prompts.removeAll()
+    chat.draft = "두 그림 중 뭐가 나아?"; chat.send(); waitFor(chat)
+    let opening = prompts.filter { $0.contains("[MODE3 SPEECH]") }
+    expect(!opening.isEmpty && opening.allSatisfy { $0.contains("Image 1: picture-") && $0.contains("Image 2: picture-") },
+           "pictures from earlier messages go to every AI in the next question")
+    expect(chat.current.turns.last?.entries.allSatisfy { ($0.images ?? []).isEmpty || $0.images!.allSatisfy { $0.name.hasPrefix("picture-") } } == true,
+           "numbering continues")
+    print("PASS: AI pictures (SVG and generated files) are stored, marked, shown and shared with later speakers")
+}
+

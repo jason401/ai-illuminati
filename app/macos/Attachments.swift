@@ -114,8 +114,9 @@ extension Discussion {
     func requestDebate(_ account: Account, _ prompt: String, _ timeout: TimeInterval, _ token: DebateCancellation, web: Bool = false) -> Result<String, Answerer.Failure> {
         let selected: [MaterialContext.Part] = []
         let materialText = selected.isEmpty ? "" : "\n[Selected source excerpts; not an exhaustive review. Use Collaboration for full coverage.]\n" + MaterialContext.quote(selected)
-        let pictures = activeImages + selected.flatMap(\.images)
-        let full = materialText + (activeDocumentText.isEmpty ? "" : activeDocumentText + "\n") + prompt + (imageContext.isEmpty ? "" : "\n" + imageContext)
+        pictureLock.lock(); let shared = activeImages, sharedContext = imageContext; pictureLock.unlock()
+        let pictures = shared + selected.flatMap(\.images)
+        let full = materialText + (activeDocumentText.isEmpty ? "" : activeDocumentText + "\n") + prompt + (sharedContext.isEmpty ? "" : "\n" + sharedContext)
         if let room = activeSessionRoom {
             return nativeSessions.ask(account, room: room, prompt: full, images: pictures, timeout: timeout,
                                       token: token, web: web, speaker: label(account), invoke: { text, images, session in
@@ -123,6 +124,7 @@ extension Discussion {
             }, note: { text in DispatchQueue.main.async { self.sessionNote = text } })
         }
         if pictures.isEmpty && activeWorkspace == nil { return debateAnswer(account, full, timeout, token, web) }
+        if let pictureAnswer, activeWorkspace == nil { return pictureAnswer(account, full, pictures, timeout, token, web) }
         return Answerer.ask(account, prompt: full, timeout: timeout, cancellation: token, images: pictures, web: web, workspace: activeWorkspace.map { WorkspaceInvocation(binding: $0, room: activeSessionRoom ?? currentID) })
     }
 }

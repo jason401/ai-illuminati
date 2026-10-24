@@ -108,7 +108,24 @@ enum Answerer {
         var arguments: [String]
         var inputData: Data?
         if account.provider == .gemini && prompt.utf8.count > 180000 { return .failure(.failed("Gemini input is too large for this CLI. Use a smaller task or Claude/ChatGPT.")) }
-        if !images.isEmpty && account.provider == .gemini { return .failure(.failed("Image input is not enabled for Gemini.")) }
+        // Gemini reads pictures as files: copy them into a folder for this call and name them in the prompt.
+        var geminiPictures: URL?
+        defer { if let geminiPictures { try? FileManager.default.removeItem(at: geminiPictures) } }
+        var pictureNote = ""
+        if !images.isEmpty && account.provider == .gemini {
+            let folder = URL(fileURLWithPath: chatDir).appendingPathComponent("gemini-pictures-\(UUID().uuidString)")
+            do {
+                try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+                var paths: [String] = []
+                for (n, url) in images.enumerated() {
+                    let copy = folder.appendingPathComponent("image-\(n + 1).png")
+                    try FileManager.default.copyItem(at: url, to: copy)
+                    paths.append(copy.path)
+                }
+                geminiPictures = folder
+                pictureNote = "[Attached images] Open and look at these image files, in order (Image 1, Image 2, …): " + paths.joined(separator: ", ") + "\n\n"
+            } catch { return .failure(.failed("Could not prepare images for Gemini.")) }
+        }
         switch account.provider {
         case .claude:
             binary = ClaudeUsage.binary
@@ -136,10 +153,12 @@ enum Answerer {
         case .gemini:
             binary = Login.agyInstalled ? Login.home + "/.local/bin/agy" : nil
             if workspace == nil { GeminiLinks.allowWeb() }
-            arguments = ["-p", (workspace == nil ? GeminiLinks.toolNote : "") + prompt, "--sandbox", "--disable-slash-commands",
+            arguments = ["-p", pictureNote + (workspace == nil ? GeminiLinks.toolNote : "") + prompt, "--sandbox", "--disable-slash-commands",
                          "--print-timeout", "\(Int(timeout) - 10)s"]
+            if let geminiPictures { arguments += ["--add-dir", geminiPictures.path] }
         }
-        let executionDirectory = session?.directory ?? workspace.map { NativeSessions.directory($0.room).appendingPathComponent("stateless-\(UUID().uuidString)") } ?? URL(fileURLWithPath: chatDir)
+        var executionDirectory = session?.directory ?? workspace.map { NativeSessions.directory($0.room).appendingPathComponent("stateless-\(UUID().uuidString)") } ?? URL(fileURLWithPath: chatDir)
+        if let geminiPictures, session == nil, workspace == nil { executionDirectory = geminiPictures }
         if let workspace {
             do { arguments = try workspace.arguments(provider: account.provider, original: arguments, directory: executionDirectory, web: web) }
             catch { return .failure(.failed("Workspace setup failed: " + error.localizedDescription)) }
@@ -260,6 +279,7 @@ struct ChatTurn: Identifiable, Codable {
         var failed: Bool
         var focus: String?
         var headline: String?  // one short line the chat shows; `text` opens on click
+        var images: [ChatImage]?  // pictures this AI made in this reply (Pictures.swift)
     }
     var id = UUID()
     var question: String
@@ -267,6 +287,7 @@ struct ChatTurn: Identifiable, Codable {
     var status = ""
     var entries: [Entry] = []
     var final: String?
+    var finalImages: [ChatImage]?
     var finalBy: String?
     var error: String?
     var mode: Int?  // missing in older chats means mode 1
@@ -407,7 +428,31 @@ final class Discussion: ObservableObject {
     var activeAdversarial = false
     var activeSpeechLength = SpeechLength.standard
     var activeImages: [URL] = []
+    // Tests only: answers requests that carry pictures without calling the real tools.
+    var pictureAnswer: ((Account, String, [URL], TimeInterval, DebateCancellation, Bool) -> Result<String, Answerer.Failure>)?
     var imageContext = ""
+    // Pictures made during a turn are added to activeImages/imageContext while other calls may be
+    // reading them, so both go through this lock; nextPicture numbers pictures across the chat.
+    let pictureLock = NSLock()
+    var nextPicture = 1
+
+    // Collects the pictures in one AI reply (numbered in order, stored with the chat).
+    func collectPictures(_ text: String, account: Account, since: Date, id: UUID) -> Pictures.Harvest {
+        pictureLock.lock(); defer { pictureLock.unlock() }
+        let harvest = Pictures.harvest(text, account: account, since: since, conversationID: id, number: nextPicture)
+        nextPicture += harvest.images.count
+        return harvest
+    }
+
+    // Every AI that speaks after this sees these pictures.
+    func sharePictures(_ images: [ChatImage], by speaker: String) {
+        guard !images.isEmpty else { return }
+        pictureLock.lock(); defer { pictureLock.unlock() }
+        for image in images {
+            activeImages.append(image.url)
+            imageContext += (imageContext.isEmpty ? "" : "\n") + "Image \(activeImages.count): \(image.name.replacingOccurrences(of: ".png", with: "")) drawn by \(speaker)"
+        }
+    }
     @Published var inputHeight: CGFloat = 36
     @Published var imageDropActive = false  // a photo is being dragged over the chat window
     @Published var openEntries: Set<UUID> = []  // AI replies unfolded in the chat (not saved)
@@ -459,12 +504,11 @@ final class Discussion: ObservableObject {
     }
 
     func setParticipation(_ provider: Account.Provider, enabled: Bool) {
-        let imagesPresent = hasImages
         configure { config in
             config.participants.removeAll { $0 == provider }
             if enabled { config.participants.append(provider) }
-            if (!config.participants.contains(config.leader) || (imagesPresent && config.leader == .gemini)),
-               let first = config.order.first(where: { config.participants.contains($0) && (!imagesPresent || $0 != .gemini) }) {
+            if !config.participants.contains(config.leader),
+               let first = config.order.first(where: { config.participants.contains($0) }) {
                 config.leader = first
             }
         }
@@ -559,12 +603,19 @@ final class Discussion: ObservableObject {
         activeSpeechLength = SpeechLength.clamp(config.speechLength)
         activeDocumentText = activeWorkspace?.description ?? MaterialContext.overview(activeMaterials)
         let history = current.turns
-        let allImages = (history + [turn]).flatMap { $0.images ?? [] }
-        activeImages = allImages.map(\.url)
-        let imageMessages = (history + [turn]).flatMap { t in (t.images ?? []).map { ($0, t.question) } }
-        imageContext = imageMessages.enumerated().map {
-            "Image \($0.offset + 1): attachment \($0.element.0.id.uuidString), user message: \($0.element.1.prefix(160))"
-        }.joined(separator: "\n")
+        // Everything earlier in this chat that the AIs should see: the user's photos and the pictures
+        // the AIs drew, in order. New pictures made in this turn are added as they arrive.
+        var shared: [(ChatImage, String)] = []
+        for t in history + [turn] {
+            shared += (t.images ?? []).map { ($0, "attachment \($0.id.uuidString), user message: \(t.question.prefix(160))") }
+            for entry in t.entries { shared += (entry.images ?? []).map { ($0, "\($0.name.replacingOccurrences(of: ".png", with: "")) drawn by \(entry.speaker)") } }
+            shared += (t.finalImages ?? []).map { ($0, "\($0.name.replacingOccurrences(of: ".png", with: "")) in the final answer by \(t.finalBy ?? "")") }
+        }
+        pictureLock.lock()
+        activeImages = shared.map(\.0.url)
+        imageContext = shared.enumerated().map { "Image \($0.offset + 1): \($0.element.1)" }.joined(separator: "\n")
+        nextPicture = history.reduce(1) { n, t in n + t.entries.reduce(0) { $0 + ($1.images?.count ?? 0) } + (t.finalImages?.count ?? 0) }
+        pictureLock.unlock()
         pendingImages = []
         draft = ""
         attachmentError = nil
@@ -622,7 +673,6 @@ final class Discussion: ObservableObject {
                 && model.latestUsage[account.id]?.needsLogin != true && (model.latestUsage[account.id]?.leftNow ?? 50) > 0
             }
         }
-        if hasImages { providers.removeAll { $0 == .gemini } }
         return providers.compactMap { provider in
             model.accounts.filter { $0.provider == provider }
                 .compactMap { account -> (Account, Double)? in

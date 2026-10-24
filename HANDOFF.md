@@ -2,6 +2,14 @@
 
 이 문서만 읽으면 바로 이어서 작업할 수 있게 정리했어요. 규칙은 `AGENTS.md`(= `CLAUDE.md`와 같은 내용)에, 사용자용 설명은 `README.md`에 있어요.
 
+## AI 그림 (2026-10-23, Claude)
+
+- 시험 결과: Codex `exec`(read-only)에서 그림 생성 됨(29초) → `<CODEX_HOME>/generated_images/<thread>/exec-*.png`. Claude는 그림 파일 불가 → SVG. agy `generate_image`는 비동기 helper로 print 모드가 먼저 끝나고, 재시도 시 Google 500 오류 → 쓰지 않고 SVG. agy는 작업 폴더의 이미지 파일을 읽어 정확히 설명함.
+- `Pictures.swift`: 규칙(`Pictures.rule(for:)`: Codex=그림 도구, Claude/Gemini=```svg), 수집(`harvest`: SVG→PNG 렌더 후 [그림 N] 표시로 교체, Codex는 호출 시작 이후 generated_images 새 파일), 저장(`ImageStore`로 chats/<방>.assets, 이름 picture-N.png).
+- `Discussion`: `collectPictures`/`sharePictures`(pictureLock), `nextPicture`, send()에서 이전 사용자 사진+AI 그림 전부 activeImages/imageContext로. Entry.images, ChatTurn.finalImages(선택 필드, 옛 JSON 호환). 첫 의견 그림은 모두 끝난 뒤 공유(서로 안 보고 답하므로). 최종 답: 팀 그림을 [그림 N]으로 고르게, 화면은 이름 매칭으로 같이 표시(`TurnView.finalPictures`).
+- Gemini 이미지 제외 제거: 호출마다 임시 폴더에 image-N.png 복사, cwd/`--add-dir`, 경로를 프롬프트에 명시.
+- 시험용 `pictureAnswer` 훅(그림 있는 요청을 가짜 응답으로). 시험 추가, 19개 통과. 실제 3AI 시험 41초: 셋 다 그림, 대표가 그림을 보고 비교·추천. 협업(모드3) 결과물 그림은 아직 안 함.
+
 ## 공개 저장소·자동 업데이트·채팅 삭제 정리 (2026-10-23, Claude)
 
 - 저장소 **공개**(사용자 승인). 공개 전 전체 기록 검사: 이메일·토큰·키 없음, 메모에 학교명(Stanford)·요금제 정도만.

@@ -41,8 +41,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         markTimer = ticker
     }
 
+    // Keeps animating while the menu is open (like AI Face): the timer runs in .common mode and only
+    // the menu bar image changes; the menu itself is not rebuilt while open.
     private func animateMark() {
-        guard !usageMenuIsOpen else { return }
         let now = ProcessInfo.processInfo.systemUptime
         let frame = MenuMarkFrame.at(now - markStartedAt, working: markWorking,
                                      completionAge: markCompletedAt.map { now - $0 })

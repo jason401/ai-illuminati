@@ -345,7 +345,7 @@ struct ChatView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 16))
                 .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.secondary.opacity(0.22)))
                 HStack {
-                    Text(L("Enter: 줄바꿈 · ⌘Enter: 전송", "Enter: new line · ⌘Enter: send"))
+                    Text(L("Enter: 전송 · Shift+Enter: 줄바꿈", "Enter: send · Shift+Enter: new line"))
                     Spacer()
                     if discussion.running {
                         Text(discussion.stopping ? L("중지 중…", "Stopping…") : L("답변 중", "Responding"))
@@ -380,7 +380,7 @@ struct ChatView: View {
             .background(!discussion.canSend
                         ? Color.secondary.opacity(0.3) : Color.accentColor, in: Circle())
             .accessibilityLabel(L("보내기", "Send"))
-            .help(L("전송 (⌘Enter)", "Send (⌘Enter)"))
+            .help(L("전송 (Enter)", "Send (Enter)"))
             .keyboardShortcut(.return, modifiers: .command)
             .disabled(!discussion.canSend)
         }
@@ -721,12 +721,15 @@ final class ChatInputTextView: NSTextView {
         super.paste(sender)
     }
 
+    // Like chat apps: Return sends, Shift+Return (or Option+Return) starts a new line; ⌘Return also
+    // sends. While Korean (or other) text is still being composed, Return only finishes the character.
     override func keyDown(with event: NSEvent) {
         if (event.keyCode == 36 || event.keyCode == 76) && !hasMarkedText() {
-            if event.modifierFlags.contains(.command) {
-                onSend?()
-            } else {
+            let flags = event.modifierFlags
+            if flags.contains(.shift) || flags.contains(.option) {
                 insertText("\n", replacementRange: selectedRange())
+            } else {
+                onSend?()
             }
             return
         }

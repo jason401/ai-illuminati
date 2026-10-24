@@ -2,6 +2,9 @@
 
 이 문서만 읽으면 바로 이어서 작업할 수 있게 정리했어요. 규칙은 `AGENTS.md`(= `CLAUDE.md`와 같은 내용)에, 사용자용 설명은 `README.md`에 있어요.
 
+## 채팅 입력 키 (2026-10-24, Claude)
+- 사용자 요청: Enter=전송, Shift+Enter(또는 Option+Enter)=줄바꿈, ⌘Enter도 전송. 한글 조합 중(hasMarkedText) Enter는 기본 입력기에 맡겨 글자만 완성. `ChatInputTextView.keyDown`, 안내 문구·버튼 도움말·README 수정. 가짜 키 입력으로 세 경우 확인.
+
 ## 사용량 메뉴 압축·계정별 상세 (2026-10-24, Claude)
 - 비교/원형 보기를 계정별 메뉴 항목으로 분리(머리글·AI 제목·계정 줄). 계정 줄은 `MenuRowView`(직접 그린 hover 배경, `menu(_:willHighlight:)`)에 `submenu = detailMenu(usage)` → 마우스를 올리면 옆에 상세. 카드 보기도 같은 상세. '계정 상세' 별도 항목과 메뉴의 '표시 방식' 제거(설정에만). 이름열58·칸132·막대22pt, %/시간 11pt, 한국어 시간 "4시간34분"(공백 없음). 폭 약444→378pt. custom view 항목의 hover 하위 메뉴 동작은 사용자가 실제 화면에서 확인함(2026-10-24).
 

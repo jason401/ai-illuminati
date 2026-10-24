@@ -1,4 +1,5 @@
 import Cocoa
+import Combine
 
 // AI Illuminati: a menu bar gauge that shows how much of each AI subscription is left
 // (5-hour and weekly limits) and when each one resets, for any number of Claude and ChatGPT
@@ -14,6 +15,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var accounts: [Account] { model.accounts }
     private var usages: [AIUsage] = []
     private var timer: Timer?
+
+    private var markTimer: Timer?
+    private var runningObservation: AnyCancellable?
+    private var motionObservation: NSObjectProtocol?
+    private var iconRenderer: ((MenuMarkFrame?) -> NSImage)?
+    private var lastMarkFrame: MenuMarkFrame?
+    private let markStartedAt = ProcessInfo.processInfo.systemUptime
+    private var markWorking = false
+    private var markCompletedAt: TimeInterval?
+
+    private func configureMarkAnimation() {
+        markTimer?.invalidate()
+        markTimer = nil
+        lastMarkFrame = nil
+        guard model.menuBarAnimation, model.menuBarStyle != .bars,
+              !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+            item.button?.image = iconRenderer?(nil)
+            return
+        }
+        animateMark()
+        let ticker = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in self?.animateMark() }
+        ticker.tolerance = 0.035
+        RunLoop.main.add(ticker, forMode: .common)
+        markTimer = ticker
+    }
+
+    private func animateMark() {
+        guard !usageMenuIsOpen else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        let frame = MenuMarkFrame.at(now - markStartedAt, working: markWorking,
+                                     completionAge: markCompletedAt.map { now - $0 })
+        guard frame != lastMarkFrame else { return }
+        lastMarkFrame = frame
+        item.button?.image = iconRenderer?(frame)
+    }
 
     func applicationDidFinishLaunching(_ note: Notification) {
         model.updater.isBusy = { [weak self] in
@@ -66,9 +102,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         rebuildMenu()
         refresh()
         timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in self?.refresh() }
+        runningObservation = discussion.$running.removeDuplicates().sink { [weak self] running in
+            guard let self else { return }
+            if self.markWorking && !running && !self.discussion.stopping,
+               self.discussion.current.turns.last?.error == nil {
+                self.markCompletedAt = ProcessInfo.processInfo.systemUptime
+            }
+            if running { self.markCompletedAt = nil }
+            self.markWorking = running
+        }
+        motionObservation = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil, queue: .main
+        ) { [weak self] _ in self?.configureMarkAnimation() }
+        updateTitle()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        markTimer?.invalidate()
+        if let motionObservation { NSWorkspace.shared.notificationCenter.removeObserver(motionObservation) }
         discussion.debateCancellation?.cancel()
         discussion.discardPendingImages()
     }
@@ -183,10 +234,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let accountColors = listed.map { tint($0.provider) }
         switch style {
         case .mark, .markPercent:
-            item.button?.image = illuminatiIcon(colored: colored)
+            iconRenderer = { frame in illuminatiIcon(colored: colored, frame: frame) }
         case .markBars, .bars:
-            item.button?.image = meterIcon(levels: levels, mark: style == .markBars, colors: colored ? accountColors : nil)
+            iconRenderer = { frame in meterIcon(levels: levels, mark: style == .markBars, colors: colored ? accountColors : nil, frame: frame) }
         }
+        configureMarkAnimation()
         guard style == .markPercent else {
             item.button?.attributedTitle = NSAttributedString(string: "")
             return

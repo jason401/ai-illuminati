@@ -51,6 +51,12 @@ final class AppModel: ObservableObject {
             onDisplayChange?()
         }
     }
+    @Published var menuBarAnimation: Bool {
+        didSet {
+            UserDefaults.standard.set(menuBarAnimation, forKey: "menuBarAnimation")
+            onDisplayChange?()
+        }
+    }
     enum UsageMenuStyle: String, CaseIterable {
         case cards, comparison, comparisonRings, compact
         var title: String {
@@ -118,6 +124,7 @@ final class AppModel: ObservableObject {
         // Older setting: "% 같이 보기" on becomes "mark + %"; otherwise the new default "mark + bars".
         menuBarStyle = UserDefaults.standard.string(forKey: "menuBarStyle").flatMap(MenuBarStyle.init(rawValue:))
             ?? (UserDefaults.standard.bool(forKey: "showPercent") ? .markPercent : .markBars)
+        menuBarAnimation = UserDefaults.standard.object(forKey: "menuBarAnimation") as? Bool ?? true
         menuBarColored = UserDefaults.standard.bool(forKey: "menuBarColored")
         usageMenuStyle = UserDefaults.standard.string(forKey: "usageMenuStyle").flatMap(UsageMenuStyle.init(rawValue:)) ?? .cards
         openAtLogin = SMAppService.mainApp.status == .enabled
@@ -205,6 +212,7 @@ struct GeneralSettingsTab: View {
                     Text(L("흑백", "Monochrome")).tag(false)
                     Text(L("컬러", "Color")).tag(true)
                 }
+                Toggle(L("눈과 후광 애니메이션", "Animate eye & halo"), isOn: $model.menuBarAnimation)
                 Picker(L("사용량 메뉴", "Usage menu"), selection: $model.usageMenuStyle) {
                     ForEach(AppModel.UsageMenuStyle.allCases, id: \.self) { Text($0.title).tag($0) }
                 }

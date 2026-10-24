@@ -43,8 +43,8 @@ func illuminatiIcon(colored: Bool = false) -> NSImage {
     return image
 }
 
-// The compact menu bar meter: one thin vertical bar per AI (Claude, ChatGPT, Gemini), filled from the
-// bottom by what is left. An AI with no reading shows an empty outline. Optionally the mark first.
+// The compact menu bar meter: one thin vertical bar per connected account, filled from the
+// bottom by what is left. An account with no reading shows an empty outline. Optionally the mark first.
 // Provider colors are optional; without them macOS adapts the template to the menu bar.
 func meterIcon(levels: [Double?], mark: Bool, colors: [NSColor]? = nil) -> NSImage {
     let barWidth: CGFloat = 4, gap: CGFloat = 1, height: CGFloat = 18

@@ -212,8 +212,8 @@ struct GeneralSettingsTab: View {
                 Toggle(L("로그인할 때 자동 실행", "Open at login"), isOn: Binding(get: { model.openAtLogin },
                                                                           set: { model.setOpenAtLogin($0) }))
             } footer: {
-                Text(L("막대는 왼쪽부터 Claude · ChatGPT · Gemini예요. 각 AI에서 가장 많이 남은 계정이 지금 쓸 수 있는 양(5시간과 주간 중 적은 쪽)을 채워서 보여줘요. 마우스를 올리면 숫자가 보여요.",
-                       "Bars, left to right: Claude · ChatGPT · Gemini. Each is filled by what its best account can use now (the lower of 5-hour and weekly). Hover for the numbers."))
+                Text(L("막대 하나가 계정 하나예요. 계정 설정의 순서대로, 지금 쓸 수 있는 양(5시간과 주간 중 적은 쪽)을 보여줘요. 마우스를 올리면 계정별 이름과 숫자가 보여요.",
+                       "One bar per account, in Settings order. Each shows what that account can use now (the lower of 5-hour and weekly). Hover for account names and numbers."))
                     .font(.caption).foregroundStyle(.secondary)
             }
             UpdateSection(updater: model.updater)

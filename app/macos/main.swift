@@ -159,29 +159,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    // Menu bar: the eye-in-triangle mark and/or one thin bar per AI (Claude, ChatGPT, Gemini), or the
-    // mark with "Cl 80%  Cx 95%  Gm 94%". Per AI, the account with the most left counts.
+    // Bars show every connected account in Settings order, including unknown readings.
+    // Percentage text keeps its existing per-provider summary.
     private func updateTitle() {
         let groups: [(String, Account.Provider)] = [("Cl", .claude), ("Cx", .codex), ("Gm", .gemini)]
         let present = groups.filter { g in usages.contains { $0.account?.provider == g.1 } }
         let best = present.map { g in usages.filter { $0.account?.provider == g.1 }.compactMap(\.leftNow).max() }
-        item.button?.toolTip = zip(present, best).map { g, left in
-            g.1.title + " " + (left.map { "\(Int($0.rounded()))%" } ?? "?")
-        }.joined(separator: " · ")
+        let listed = accounts
+        let levels = listed.map { account in usages.first { $0.account?.id == account.id }?.leftNow }
+        item.button?.toolTip = zip(listed, levels).map { account, left in
+            account.name + " " + (left.map { "\(Int($0.rounded()))%" } ?? "?")
+        }.joined(separator: "\n")
         let style = model.menuBarStyle
         let colored = model.menuBarColored
-        let colors: [NSColor] = present.map { group in
-            switch group.1 {
+        func tint(_ provider: Account.Provider) -> NSColor {
+            switch provider {
             case .claude: return .systemOrange
             case .codex: return .systemGreen
             case .gemini: return .systemBlue
             }
         }
+        let colors = present.map { tint($0.1) }
+        let accountColors = listed.map { tint($0.provider) }
         switch style {
         case .mark, .markPercent:
             item.button?.image = illuminatiIcon(colored: colored)
         case .markBars, .bars:
-            item.button?.image = meterIcon(levels: best, mark: style == .markBars, colors: colored ? colors : nil)
+            item.button?.image = meterIcon(levels: levels, mark: style == .markBars, colors: colored ? accountColors : nil)
         }
         guard style == .markPercent else {
             item.button?.attributedTitle = NSAttributedString(string: "")

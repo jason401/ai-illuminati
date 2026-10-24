@@ -221,7 +221,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let listed = accounts
         let levels = listed.map { account in usages.first { $0.account?.id == account.id }.flatMap { window.left($0) } }
         item.button?.toolTip = window.title + "\n" + zip(listed, levels).map { account, left in
-            account.name + " " + (left.map { "\(Int($0.rounded()))%" } ?? "–")
+            let usage = usages.first { $0.account?.id == account.id }
+            let text = usage.map { window.hasNoLimit($0) } == true ? L("한도 없음", "no limit")
+                : left.map { "\(Int($0.rounded()))%" } ?? "–"
+            return account.name + " " + text
         }.joined(separator: "\n")
         let style = model.menuBarStyle
         let colored = model.menuBarColored

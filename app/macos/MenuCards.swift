@@ -165,3 +165,158 @@ enum MenuCardItem {
         return item
     }
 }
+
+// Alternative presentations of the same readings; fetching and quota calculations stay unchanged.
+private struct UsageComparison: View {
+    let usages: [AIUsage]
+    let style: AppModel.UsageMenuStyle
+    private let nameWidth: CGFloat = 112
+    private let cellWidth: CGFloat = 154
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 10) {
+                Text(L("계정", "Account")).frame(width: nameWidth, alignment: .leading)
+                Text(L("5시간 잔여", "5h left")).frame(width: cellWidth, alignment: .leading)
+                Text(L("주간 잔여", "Week left")).frame(width: cellWidth, alignment: .leading)
+            }
+            .font(.system(size: 11, weight: .medium)).foregroundColor(.secondary)
+            .padding(.bottom, 6)
+            ForEach(Account.Provider.allCases, id: \.rawValue) { provider in
+                let group = usages.filter { $0.account?.provider == provider }
+                if !group.isEmpty {
+                    Text(provider.title).font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(provider.color).padding(.top, 6).padding(.bottom, 3)
+                    ForEach(Array(group.enumerated()), id: \.offset) { _, usage in
+                        HStack(spacing: 10) {
+                            HStack(spacing: 3) {
+                                Text(accountName(usage, provider: provider)).lineLimit(1).truncationMode(.middle)
+                                if usage.needsLogin || usage.note != nil {
+                                    Image(systemName: "exclamationmark.circle").foregroundColor(.orange)
+                                }
+                            }
+                            .frame(width: nameWidth, alignment: .leading)
+                            .help(([usage.account?.name ?? usage.name] + usage.extras + [usage.note].compactMap { $0 }).joined(separator: "\n"))
+                            metric(usage.fiveHour, minutes: 300)
+                            metric(usage.weekly, minutes: 7 * 24 * 60)
+                        }
+                        .font(.system(size: 12))
+                        .padding(.vertical, style == .compact ? 5 : 7)
+                    }
+                    Divider().padding(.top, 5)
+                }
+            }
+            Text(style == .comparison
+                 ? L("막대: 잔여량 · 시간: 충전까지 · 계정 상세 메뉴에서 더 보기", "Bars: remaining · Time: until reset · More in Account details")
+                 : L("원형: 충전까지 지난 시간 · 계정 상세 메뉴에서 더 보기", "Rings: time toward reset · More in Account details"))
+                .font(.system(size: 10)).foregroundColor(.secondary).padding(.top, 7)
+        }
+        .padding(.horizontal, 14).padding(.vertical, 8)
+        .frame(width: nameWidth + cellWidth * 2 + 48)
+    }
+
+    @ViewBuilder private func metric(_ window: UsageWindow?, minutes: Double) -> some View {
+        Group {
+            if let w = window {
+                let left = w.left()
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 5) {
+                        Text("\(Int(left.rounded()))%")
+                            .font(.system(size: 12, weight: .semibold).monospacedDigit())
+                            .foregroundColor(UsageText.tint(left))
+                            .lineLimit(1).fixedSize(horizontal: true, vertical: false)
+                            .frame(width: 42, alignment: .trailing)
+                        if style == .compact || style == .comparisonRings {
+                            RefillRing(progress: w.elapsed(minutes: minutes) ?? (w.resetsAt == nil ? 0 : 1))
+                        }
+                        Text(shortTime(w.resetsAt))
+                            .font(.system(size: 11).monospacedDigit())
+                            .foregroundColor(.secondary).lineLimit(1)
+                    }
+                    if style != .compact {
+                        LeftBar(left: left, evenLeft: nil).frame(width: cellWidth - 8)
+                    }
+                }
+                .help(details(w))
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(details(w))
+            } else {
+                Text("—").foregroundColor(.secondary)
+            }
+        }
+        .frame(width: cellWidth, alignment: .leading)
+    }
+
+    private func accountName(_ usage: AIUsage, provider: Account.Provider) -> String {
+        let full = usage.account?.name ?? usage.name
+        guard full.hasPrefix(provider.title) else { return full }
+        let rest = String(full.dropFirst(provider.title.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+        if rest.hasPrefix("("), rest.hasSuffix(")") { return String(rest.dropFirst().dropLast()) }
+        return rest.isEmpty ? L("기본", "Default") : rest
+    }
+
+    private func shortTime(_ date: Date?) -> String {
+        guard let date else { return "—" }
+        let minutes = max(0, Int(ceil(date.timeIntervalSinceNow / 60)))
+        if minutes == 0 { return L("충전 시각", "Reset due") }
+        if minutes < 60 { return L("\(minutes)분", "\(minutes)m") }
+        if minutes < 1440 {
+            let h = minutes / 60, m = minutes % 60
+            return m == 0 ? L("\(h)시간", "\(h)h") : L("\(h)시간 \(m)분", "\(h)h \(m)m")
+        }
+        let d = minutes / 1440, h = minutes % 1440 / 60
+        return h == 0 ? L("\(d)일", "\(d)d") : L("\(d)일 \(h)시간", "\(d)d \(h)h")
+    }
+
+    private func details(_ w: UsageWindow) -> String {
+        var text = L("남은 양 \(Int(w.left().rounded()))%", "\(Int(w.left().rounded()))% left")
+        if let date = w.resetsAt {
+            let f = DateFormatter()
+            f.locale = AppLanguage.current.locale
+            f.dateStyle = .medium; f.timeStyle = .short
+            text += L(" · 충전: ", " · Resets: ") + f.string(from: date)
+        }
+        return text
+    }
+}
+
+extension MenuCardItem {
+    static func comparison(_ usages: [AIUsage], style: AppModel.UsageMenuStyle) -> NSMenuItem {
+        let host = NSHostingView(rootView: UsageComparison(usages: usages, style: style))
+        host.frame = NSRect(origin: .zero, size: host.fittingSize)
+        let item = NSMenuItem()
+        item.view = host
+        return item
+    }
+}
+
+extension MenuCardItem {
+    static func details(_ usages: [AIUsage]) -> NSMenuItem {
+        let root = NSMenuItem(title: L("계정 상세", "Account details"), action: nil, keyEquivalent: "")
+        let accounts = NSMenu()
+        let formatter = DateFormatter()
+        formatter.locale = AppLanguage.current.locale
+        formatter.dateStyle = .medium; formatter.timeStyle = .short
+        for usage in usages {
+            let entry = NSMenuItem(title: usage.account?.name ?? usage.name, action: nil, keyEquivalent: "")
+            let details = NSMenu()
+            var lines: [String] = []
+            if let detail = usage.detail { lines.append(detail) }
+            for (title, window) in [(L("5시간", "5h"), usage.fiveHour), (L("주간", "Week"), usage.weekly)] {
+                if let w = window {
+                    var line = title + L(" 잔여 ", " left ") + "\(Int(w.left().rounded()))%"
+                    if let date = w.resetsAt { line += L(" · 충전: ", " · Resets: ") + formatter.string(from: date) }
+                    lines.append(line)
+                }
+            }
+            lines += usage.extras
+            if let note = usage.note { lines.append(note) }
+            if lines.isEmpty { lines.append(L("확인 중…", "Checking…")) }
+            for line in lines { details.addItem(NSMenuItem(title: line, action: nil, keyEquivalent: "")) }
+            entry.submenu = details
+            accounts.addItem(entry)
+        }
+        root.submenu = accounts
+        return root
+    }
+}

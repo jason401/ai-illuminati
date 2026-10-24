@@ -45,6 +45,23 @@ final class AppModel: ObservableObject {
             onDisplayChange?()
         }
     }
+    enum UsageMenuStyle: String, CaseIterable {
+        case cards, comparison, comparisonRings, compact
+        var title: String {
+            switch self {
+            case .cards: return L("기존 카드", "Original cards")
+            case .comparison: return L("비교 · 막대", "Compare · bars")
+            case .comparisonRings: return L("비교 · 막대와 충전 시계", "Compare · bars & reset rings")
+            case .compact: return L("압축 · 충전 시계", "Compact · reset rings")
+            }
+        }
+    }
+    @Published var usageMenuStyle: UsageMenuStyle {
+        didSet {
+            UserDefaults.standard.set(usageMenuStyle.rawValue, forKey: "usageMenuStyle")
+            onDisplayChange?()
+        }
+    }
     @Published private(set) var openAtLogin: Bool
     let updater = Updater()
     // Rules put at the top of every message the chat sends to an AI (edited in Settings).
@@ -86,6 +103,7 @@ final class AppModel: ObservableObject {
     @Published var latestUsage: [String: AIUsage] = [:]   // last readings by account id (set by the menu)
     var onAccountsChange: (() -> Void)?
     var onDisplayChange: (() -> Void)?
+    var onPreviewUsageMenu: (() -> Void)?
 
     init() {
         language = AppLanguage.current
@@ -94,6 +112,7 @@ final class AppModel: ObservableObject {
         // Older setting: "% 같이 보기" on becomes "mark + %"; otherwise the new default "mark + bars".
         menuBarStyle = UserDefaults.standard.string(forKey: "menuBarStyle").flatMap(MenuBarStyle.init(rawValue:))
             ?? (UserDefaults.standard.bool(forKey: "showPercent") ? .markPercent : .markBars)
+        usageMenuStyle = UserDefaults.standard.string(forKey: "usageMenuStyle").flatMap(UsageMenuStyle.init(rawValue:)) ?? .cards
         openAtLogin = SMAppService.mainApp.status == .enabled
         let saved = UserDefaults.standard.string(forKey: "chatRules")
         chatRules = (saved == nil || saved == Self.koreanChatRules || saved == Self.rules(for: .english)
@@ -175,6 +194,10 @@ struct GeneralSettingsTab: View {
                 Picker(L("메뉴바 표시", "Menu bar"), selection: $model.menuBarStyle) {
                     ForEach(AppModel.MenuBarStyle.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
+                Picker(L("사용량 메뉴", "Usage menu"), selection: $model.usageMenuStyle) {
+                    ForEach(AppModel.UsageMenuStyle.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                Button(L("메뉴 미리 보기", "Preview usage menu")) { model.onPreviewUsageMenu?() }
                 Toggle(L("로그인할 때 자동 실행", "Open at login"), isOn: Binding(get: { model.openAtLogin },
                                                                           set: { model.setOpenAtLogin($0) }))
             } footer: {

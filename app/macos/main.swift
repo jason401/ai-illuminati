@@ -32,7 +32,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         item.menu = menu
         NSApp.mainMenu = keyboardMenu()
         model.onAccountsChange = { [weak self] in self?.refresh() }
-        model.onDisplayChange = { [weak self] in self?.updateTitle() }
+        model.onDisplayChange = { [weak self] in
+            self?.updateTitle()
+            self?.rebuildMenu()
+        }
+        model.onPreviewUsageMenu = { [weak self] in
+            guard let self,
+                  let window = NSApp.keyWindow ?? NSApp.mainWindow ?? NSApp.windows.first(where: { $0.isVisible }),
+                  let content = window.contentView else { return }
+            NSApp.activate(ignoringOtherApps: true)
+            window.makeKeyAndOrderFront(nil)
+            let location = content.convert(window.mouseLocationOutsideOfEventStream, from: nil)
+            self.menu.popUp(positioning: nil, at: location, in: content)
+        }
         model.onLanguageChange = { [weak self] in
             guard let self else { return }
             NSApp.mainMenu = self.keyboardMenu()
@@ -67,7 +79,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return true
     }
 
-    func menuWillOpen(_ menu: NSMenu) { refresh() }
+    private var usageMenuIsOpen = false
+    func menuWillOpen(_ menu: NSMenu) {
+        rebuildMenu()
+        usageMenuIsOpen = true
+        refresh()
+    }
+    func menuDidClose(_ menu: NSMenu) {
+        // AppKit can still be unwinding menu tracking here. Rebuild on the next event turn.
+        DispatchQueue.main.async {
+            self.usageMenuIsOpen = false
+            self.rebuildMenu()
+        }
+    }
 
     // A menu bar app shows no app menus, but ⌘C/⌘V/⌘X/⌘A/⌘Z and ⌘W only work in text fields and
     // windows when an Edit/Window menu exists. This one is never visible; it just carries the shortcuts.
@@ -168,6 +192,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func rebuildMenu() {
+        guard !usageMenuIsOpen else { return }
         menu.removeAllItems()
         if usages.isEmpty && !accounts.isEmpty { menu.addItem(info(L("확인 중…", "Checking…"))) }
         // Current order and names from the list (readings may be a little older).
@@ -178,14 +203,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 return copy
             }
         }
-        for (i, usage) in shown.enumerated() {
-            if i > 0 { menu.addItem(.separator()) }
-            menu.addItem(MenuCardItem.make(usage, title: label(for: usage)))
+        if model.usageMenuStyle == .cards {
+            for (i, usage) in shown.enumerated() {
+                if i > 0 { menu.addItem(.separator()) }
+                menu.addItem(MenuCardItem.make(usage, title: label(for: usage)))
+            }
+            if !shown.isEmpty { menu.addItem(MenuCardItem.legend()) }
+        } else if !shown.isEmpty {
+            menu.addItem(MenuCardItem.comparison(shown, style: model.usageMenuStyle))
+            menu.addItem(MenuCardItem.details(shown))
         }
-        if !shown.isEmpty {
-            menu.addItem(MenuCardItem.legend())
-            menu.addItem(.separator())
+        if !shown.isEmpty { menu.addItem(.separator()) }
+        let appearance = NSMenuItem(title: L("표시 방식", "View style"), action: nil, keyEquivalent: "")
+        let choices = NSMenu()
+        for style in AppModel.UsageMenuStyle.allCases {
+            let choice = action(style.title, #selector(changeUsageMenuStyle(_:)))
+            choice.representedObject = style.rawValue
+            choice.state = model.usageMenuStyle == style ? .on : .off
+            choices.addItem(choice)
         }
+        appearance.submenu = choices
+        menu.addItem(appearance)
         menu.addItem(action(L("채팅창 열기…", "Open Chat…"), #selector(openChat), key: "n"))
         menu.addItem(action(L("설정…", "Settings…"), #selector(openSettings), key: ","))
         menu.addItem(action(L("지금 새로고침", "Refresh Now"), #selector(refresh), key: "r"))
@@ -200,6 +238,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     // MARK: Actions
+
+    @objc private func changeUsageMenuStyle(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let style = AppModel.UsageMenuStyle(rawValue: raw) else { return }
+        model.usageMenuStyle = style
+    }
 
     @objc private func openSettings() { settings.show(model: model) }
     @objc private func openChat() { chat.show(discussion: discussion) }

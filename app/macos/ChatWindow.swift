@@ -204,7 +204,7 @@ struct ChatView: View {
                     Menu {
                         Text(L("연결은 경로만 저장합니다. 필요한 내용은 AI가 요청할 때 읽어 참여 AI 회사에 전달합니다.", "Links store paths only. Requested file contents are sent to the participating AI provider on demand."))
                         Text(L("PDF는 페이지 이미지도 읽습니다. DOCX·PPTX는 텍스트·노트·삽입 이미지를 추출하며 원래 화면 배치를 완전히 재현하지는 않습니다.", "PDF pages include rendered images. DOCX/PPTX extract text, notes and embedded images; original layouts are not fully rendered."))
-                        Text(L("세션 기록은 로컬 AI 도구에도 남습니다. 방 삭제만으로 그 기록까지 삭제되지는 않습니다.", "Native AI tools also retain session history. Deleting a chat does not erase native history."))
+                        Text(L("세션 기록은 앱 전용 계정 폴더에 저장되고, 방을 삭제하면 이 방이 만든 세션 기록과 백업도 함께 지워져요. Gemini 자체 기록은 남아요.", "Session history is kept in the app's account folders. Deleting a chat also removes the sessions and backups it created. Gemini keeps its own history."))
                         Button(L("원본 자료로 세션 다시 시작", "Restart sessions from originals")) {
                             discussion.restartRoomSessions()
                             discussion.sessionNote = L("다음 질문에서 원본 자료와 대화로 다시 시작합니다.", "Next question rebuilds sessions from source materials and conversation.")

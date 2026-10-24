@@ -633,3 +633,70 @@ do {
     expect(inventory.contains { $0.hasSuffix("/tracked") }, "inventory must use unambiguous full file paths")
     print("PASS: git dirty state, untracked preservation and absolute inventory paths")
 }
+
+// Deleting a chat removes exactly this room's session transcripts and backups, nothing else.
+do {
+    let fm = FileManager.default
+    let room = UUID()
+    let claudeDir = AccountStore.accountsDir + "/purge-claude", codexDir = AccountStore.accountsDir + "/purge-codex"
+    let claude = Account(id: "purge-claude", provider: .claude, name: "C", dir: claudeDir)
+    let codex = Account(id: "purge-codex", provider: .codex, name: "X", dir: codexDir)
+    let saved = AccountStore.load()
+    AccountStore.save(saved + [claude, codex])
+    let cid = UUID().uuidString.lowercased(), xid = UUID().uuidString.lowercased(), other = UUID().uuidString.lowercased()
+    let project = claudeDir + "/projects/-tmp-rooms-" + room.uuidString + "-s1"
+    try fm.createDirectory(atPath: project + "/" + cid, withIntermediateDirectories: true)
+    try "x".write(toFile: project + "/" + cid + ".jsonl", atomically: true, encoding: .utf8)
+    try fm.createDirectory(atPath: claudeDir + "/projects/-other", withIntermediateDirectories: true)
+    try "keep".write(toFile: claudeDir + "/projects/-other/" + other + ".jsonl", atomically: true, encoding: .utf8)
+    try "login".write(toFile: claudeDir + "/.claude.json", atomically: true, encoding: .utf8)
+    try fm.createDirectory(atPath: codexDir + "/sessions/2026/10/23", withIntermediateDirectories: true)
+    try "x".write(toFile: codexDir + "/sessions/2026/10/23/rollout-2026-10-23-" + xid + ".jsonl", atomically: true, encoding: .utf8)
+    try "keep".write(toFile: codexDir + "/sessions/2026/10/23/rollout-2026-10-23-" + other + ".jsonl", atomically: true, encoding: .utf8)
+    try "auth".write(toFile: codexDir + "/auth.json", atomically: true, encoding: .utf8)
+    let ledger = NativeSessions.directory(room)
+    try fm.createDirectory(at: ledger, withIntermediateDirectories: true)
+    let records = [NativeSessions.Record(accountID: claude.id, provider: .claude, role: "speaker", nativeID: cid),
+                   NativeSessions.Record(accountID: codex.id, provider: .codex, role: "speaker", nativeID: xid)]
+    try JSONEncoder().encode(records).write(to: ledger.appendingPathComponent("ownership.json"))
+    // A backup of a linked git folder, with the app's ref marker.
+    let repo = AccountStore.home + "/purge-repo", runID = UUID()
+    try fm.createDirectory(atPath: repo, withIntermediateDirectories: true)
+    try "v1".write(toFile: repo + "/a.txt", atomically: true, encoding: .utf8)
+    for args in [["init", "-q"], ["-c", "user.email=t@t", "-c", "user.name=t", "add", "."], ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "init"]] {
+        try WorkspaceBackup.run("/usr/bin/git", ["-C", repo] + args)
+    }
+    let head = try WorkspaceBackup.run("/usr/bin/git", ["-C", repo, "rev-parse", "HEAD"])
+    try WorkspaceBackup.run("/usr/bin/git", ["-C", repo, "update-ref", "refs/ai-illuminati/" + runID.uuidString, head])
+    let runFolder = WorkspaceBackup.base.appendingPathComponent(room.uuidString).appendingPathComponent(runID.uuidString)
+    try fm.createDirectory(at: runFolder, withIntermediateDirectories: true)
+    let backup = WorkspaceBackup(directory: runFolder.path, roots: [WorkspaceRoot(path: repo, directory: true)], before: [:])
+    try backup.save()
+    var conversation = Conversation(); conversation.id = room
+    try ChatStore.delete(conversation)
+    expect(!fm.fileExists(atPath: project + "/" + cid + ".jsonl") && !fm.fileExists(atPath: project + "/" + cid) && !fm.fileExists(atPath: project),
+           "room's Claude session must be deleted")
+    expect(!fm.fileExists(atPath: codexDir + "/sessions/2026/10/23/rollout-2026-10-23-" + xid + ".jsonl"), "room's Codex session must be deleted")
+    expect(fm.fileExists(atPath: claudeDir + "/projects/-other/" + other + ".jsonl") && fm.fileExists(atPath: codexDir + "/sessions/2026/10/23/rollout-2026-10-23-" + other + ".jsonl"),
+           "other sessions must be kept")
+    expect(fm.fileExists(atPath: claudeDir + "/.claude.json") && fm.fileExists(atPath: codexDir + "/auth.json"), "logins must be kept")
+    expect(!fm.fileExists(atPath: ledger.path), "room session folder must be deleted")
+    expect(!fm.fileExists(atPath: WorkspaceBackup.base.appendingPathComponent(room.uuidString).path), "room backups must be deleted")
+    expect((try? WorkspaceBackup.run("/usr/bin/git", ["-C", repo, "rev-parse", "--verify", "-q", "refs/ai-illuminati/" + runID.uuidString])) == nil,
+           "backup git marker must be removed")
+    expect(fm.fileExists(atPath: repo + "/a.txt"), "linked folder must be kept")
+    AccountStore.save(saved)
+    print("PASS: chat delete removes only its sessions, session folder, backups and git marker; keeps logins, other sessions and linked folders")
+}
+
+// Update status text for each state (the update steps themselves need git and are checked live).
+do {
+    expect(Updater.describe(["status": "current", "current": "abcdef1234"]).contains("abcdef1"), "current version text")
+    expect(Updater.describe(["status": "updated", "previous": "1111111aaa", "current": "2222222bbb"]).contains("1111111")
+           && Updater.describe(["status": "updated", "previous": "1111111aaa", "current": "2222222bbb"]).contains("2222222"), "updated text")
+    for state in ["checking", "testing", "building", "waiting", "postponed", "local-changes", "local-commits", "unavailable", "failed"] {
+        expect(!Updater.describe(["status": state]).isEmpty, "status text for " + state)
+    }
+    print("PASS: update status texts")
+}
+

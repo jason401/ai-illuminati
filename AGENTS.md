@@ -7,7 +7,7 @@ The notes below are the same as `CLAUDE.md` (keep the two in sync).
 
 
 Younghun's macOS menu bar app: remaining subscription usage (5-hour / weekly) per AI account
-(multiple Claude, multiple ChatGPT/Codex, one Gemini via agy). Private repo: github.com/jason401/ai-illuminati (MIT license file).
+(multiple Claude, multiple ChatGPT/Codex, one Gemini via agy). Public repo: github.com/jason401/ai-illuminati (MIT). Public since 2026-10-23: never commit emails, tokens or personal data.
 Bigger plan (AI agents talking to each other, dashboards): `~/Downloads/ai-office-spec.md`; this app is steps 1 (usage gauge) and 2 (chat).
 
 ## How to work with Younghun
@@ -40,4 +40,4 @@ Bigger plan (AI agents talking to each other, dashboards): `~/Downloads/ai-offic
 - Requires the persistent "AI Illuminati Local Signing" identity in the login keychain. No ad-hoc fallback. Run `zsh tools/setup_signing.sh` only if missing; preserve the existing identity.
 - Read the latest snapshot at the top of `HANDOFF.md` before editing. Older chronological notes below it describe earlier states.
 - Regression checks: `zsh tools/tests/run_mode2.sh`; signing checks: `python3 tools/tests/check_signing.py`. The image clipboard test needs access to the macOS pasteboard service.
-- Commit and push to `origin main` when a change is done. (Claude adds its Co-Authored-By line; other agents use their own attribution or none.)
+- Commit and push to `origin main` when a change is done. The app auto-updates from `origin/main` (Updater.swift: fetch → ff → `tools/tests/run_mode2.sh` → `build_app.sh --stage` → `--install-staged`), so a pushed commit reaches the running app within 3 hours: only push code whose tests pass. (Claude adds its Co-Authored-By line; other agents use their own attribution or none.)

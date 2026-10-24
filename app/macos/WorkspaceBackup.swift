@@ -16,6 +16,24 @@ struct WorkspaceBackup: Codable {
     var gitStates: [String] = []
     var restored = false
     static var base: URL { URL(fileURLWithPath: AccountStore.supportDir).appendingPathComponent("workspace-backups") }
+
+    // Deleting a chat removes its backups: the copies under workspace-backups/<room> and the
+    // refs/ai-illuminati/<run> markers this app added to linked git folders. Linked folders themselves
+    // and any other git refs are left alone.
+    static func purgeRoom(_ room: UUID) throws {
+        let fm = FileManager.default
+        let folder = base.appendingPathComponent(room.uuidString)
+        guard fm.fileExists(atPath: folder.path) else { return }
+        for run in (try? fm.contentsOfDirectory(atPath: folder.path)) ?? [] {
+            guard let runID = UUID(uuidString: run),
+                  let data = try? Data(contentsOf: folder.appendingPathComponent(run).appendingPathComponent("complete.json")),
+                  let backup = try? JSONDecoder().decode(WorkspaceBackup.self, from: data) else { continue }
+            for root in backup.roots where root.directory {
+                _ = try? WorkspaceBackup.run("/usr/bin/git", ["-C", root.path, "update-ref", "-d", "refs/ai-illuminati/" + runID.uuidString])
+            }
+        }
+        try fm.removeItem(at: folder)
+    }
     static func digest(_ url: URL) throws -> String {
         let handle = try FileHandle(forReadingFrom: url); defer { try? handle.close() }
         var hash = SHA256()

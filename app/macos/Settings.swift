@@ -28,6 +28,7 @@ final class AppModel: ObservableObject {
         }
     }
     @Published private(set) var openAtLogin: Bool
+    let updater = Updater()
     // Rules put at the top of every message the chat sends to an AI (edited in Settings).
     @Published var chatRules: String {
         didSet { UserDefaults.standard.set(chatRules, forKey: "chatRules") }
@@ -158,6 +159,7 @@ struct GeneralSettingsTab: View {
                        "The menu bar shows the eye-in-triangle mark. With percentages on, each AI's best remaining account is shown next to it."))
                     .font(.caption).foregroundStyle(.secondary)
             }
+            UpdateSection(updater: model.updater)
             Section {
                 HStack {
                     Text(L("앱 데이터", "App data"))
@@ -178,6 +180,31 @@ struct GeneralSettingsTab: View {
             }
         }
         .formStyle(.grouped)
+    }
+}
+
+// Automatic updates (see Updater.swift).
+private struct UpdateSection: View {
+    @ObservedObject var updater: Updater
+
+    var body: some View {
+        Section {
+            Toggle(L("자동 업데이트", "Automatic updates"), isOn: $updater.enabled)
+            HStack {
+                Text(updater.status.isEmpty ? L("아직 확인 안 함", "Not checked yet") : updater.status)
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer()
+                Button(L("지금 확인", "Check now")) { updater.check(manual: true) }
+                    .disabled(updater.checking)
+            }
+        } header: {
+            Text(L("업데이트", "Updates"))
+        } footer: {
+            Text(L("켜져 있으면 앱이 켜질 때와 3시간마다 GitHub의 새 버전을 확인해요. 시험과 빌드를 모두 통과해야 바꿔서 다시 켜고, 실패하면 지금 버전을 그대로 써요. 채팅 중에는 기다렸다가 바꿔요.",
+                   "When on, the app checks GitHub at launch and every 3 hours. It restarts into a new version only after tests and the build pass; otherwise it keeps this version. It waits while a chat is answering."))
+                .font(.caption).foregroundStyle(.secondary)
+        }
     }
 }
 

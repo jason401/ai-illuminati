@@ -72,6 +72,52 @@ final class NativeSessions {
         for i in records.indices { records[i].valid = false }
         try save(records, room)
     }
+    // Deleting a chat removes what its sessions left behind: the room's session folders and, in each
+    // app-owned account folder, only the transcript files whose names carry a session ID this room
+    // recorded (Claude: projects/*/<id>.jsonl and its <id>/ folder; Codex: sessions/**/*<id>*).
+    // Account folders, logins, shared indexes and other sessions are never touched.
+    static func purgeRoom(_ room: UUID, accounts: [Account]) throws {
+        let fm = FileManager.default
+        let base = directory(room).deletingLastPathComponent()
+        var folders = [directory(room)]
+        let archive = base.appendingPathComponent("archived")
+        if let old = try? fm.contentsOfDirectory(atPath: archive.path) {
+            folders += old.filter { $0.hasPrefix(room.uuidString) }.map { archive.appendingPathComponent($0) }
+        }
+        for folder in folders where fm.fileExists(atPath: folder.path) {
+            let data = try? Data(contentsOf: folder.appendingPathComponent("ownership.json"))
+            let records = data.flatMap { try? JSONDecoder().decode([Record].self, from: $0) } ?? []
+            for record in records {
+                guard let id = record.nativeID, id.count >= 16, !id.contains("/"),
+                      let account = accounts.first(where: { $0.id == record.accountID }), eligible(account),
+                      let dir = account.dir else { continue }
+                let roots = record.provider == .claude ? ["projects"] : ["sessions", "archived_sessions"]
+                for name in roots {
+                    let root = URL(fileURLWithPath: dir).appendingPathComponent(name)
+                    guard let walker = fm.enumerator(at: root, includingPropertiesForKeys: nil) else { continue }
+                    var matches: [URL] = []
+                    for case let url as URL in walker {
+                        let file = url.lastPathComponent
+                        if file == id || file == id + ".jsonl" || (record.provider == .codex && file.contains(id)) {
+                            matches.append(url)
+                            walker.skipDescendants()
+                        }
+                    }
+                    for url in matches { try fm.removeItem(at: url) }
+                }
+                // Claude names a project folder after the session's working folder, which is inside this room.
+                if record.provider == .claude {
+                    let projects = URL(fileURLWithPath: dir).appendingPathComponent("projects")
+                    for name in (try? fm.contentsOfDirectory(atPath: projects.path)) ?? [] where name.contains(room.uuidString) {
+                        let url = projects.appendingPathComponent(name)
+                        if (try? fm.contentsOfDirectory(atPath: url.path))?.isEmpty == true { try fm.removeItem(at: url) }
+                    }
+                }
+            }
+            try fm.removeItem(at: folder)
+        }
+    }
+
     static func archiveRoom(_ room: UUID) throws {
         let dir = directory(room)
         guard FileManager.default.fileExists(atPath: dir.path) else { return }

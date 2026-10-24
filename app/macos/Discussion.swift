@@ -363,8 +363,9 @@ enum ChatStore {
     }
 
     static func delete(_ conversation: Conversation) throws {
-        // Native transcripts have a separate ownership ledger. Never delete an account folder.
-        try NativeSessions.archiveRoom(conversation.id)
+        // Remove this chat's session transcripts (exact IDs only, never an account folder) and its backups.
+        try NativeSessions.purgeRoom(conversation.id, accounts: AccountStore.load())
+        try WorkspaceBackup.purgeRoom(conversation.id)
         let work = URL(fileURLWithPath: dir).appendingPathComponent(conversation.id.uuidString + ".work")
         if FileManager.default.fileExists(atPath: work.path) { try FileManager.default.removeItem(at: work) }
         let documents = RoomDocuments.directory(conversation.id)
@@ -505,9 +506,8 @@ final class Discussion: ObservableObject {
         let alert = NSAlert()
         alert.messageText = L("이 대화를 영구 삭제할까요?", "Permanently delete this chat?")
         alert.informativeText = L("‘\(conversation.title)’의 질문, 답변, 대화 요약을 저장된 파일과 함께 삭제합니다. 되돌릴 수 없어요.", "This deletes all messages, answers, and the summary in “\(conversation.title)”, including its saved file. This cannot be undone.")
-        if conversation.configuration?.keepSessions == true {
-            alert.informativeText += L("\n앱 자료 사본은 삭제됩니다. Claude/Codex의 로컬 세션 기록은 남습니다.", "\nApp material snapshots are deleted. Native Claude/Codex session histories remain.")
-        }
+        alert.informativeText += L("\n이 방이 만든 세션 기록, 자료·첨부 사본, 작업 결과, 파일 백업도 함께 지워져요. 연결한 원본 폴더와 Gemini 자체 기록은 그대로예요.",
+                                   "\nThe sessions, material and attachment copies, results and file backups this chat created are deleted too. Linked original folders and Gemini's own history stay.")
         alert.addButton(withTitle: L("삭제", "Delete"))
         alert.addButton(withTitle: L("취소", "Cancel"))
         alert.buttons.first?.hasDestructiveAction = true

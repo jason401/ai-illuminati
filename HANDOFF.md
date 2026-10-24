@@ -2,6 +2,12 @@
 
 이 문서만 읽으면 바로 이어서 작업할 수 있게 정리했어요. 규칙은 `AGENTS.md`(= `CLAUDE.md`와 같은 내용)에, 사용자용 설명은 `README.md`에 있어요.
 
+## 공개 저장소·자동 업데이트·채팅 삭제 정리 (2026-10-23, Claude)
+
+- 저장소 **공개**(사용자 승인). 공개 전 전체 기록 검사: 이메일·토큰·키 없음, 메모에 학교명(Stanford)·요금제 정도만.
+- `Updater.swift`: 시작 60초 뒤·3시간마다. 로컬 수정/로컬 전용 커밋이면 건너뜀, 채팅 중이면 10분 뒤. fetch → `merge --ff-only` → `run_mode2.sh`(30분 제한) → `build_app.sh --stage`(실행 중 앱 옆 `AI Illuminati.update.app`) → 실패 시 `reset --hard` 이전 HEAD. 성공 시 채팅이 끝날 때까지(최대 6시간) 기다렸다 `--install-staged`를 분리 실행(앱 종료→교체→실행, 실패 시 이전 앱 복구). 상태는 `update.json`, 설정 → 일반 → 업데이트(켜기/지금 확인/상태). `--stage`·`--install-staged` 실제 동작 확인(실행 중 앱 유지, 새 pid, 같은 서명 신원).
+- 채팅 삭제: `NativeSessions.purgeRoom`(방 ledger의 정확한 세션 ID 파일만: Claude `projects/*/<id>.jsonl`·`<id>/`, Codex `sessions|archived_sessions/**/*<id>*`, 앱 전용 계정만; 빈 방 project 폴더; 방 rooms 폴더와 예전 archived 사본) + `WorkspaceBackup.purgeRoom`(`workspace-backups/<방>` + 연결 git의 `refs/ai-illuminati/<run>`). 로그인·다른 세션·원본은 유지. 시험 추가.
+
 ## 채팅 규칙·저장 위치 (2026-10-23, Claude)
 
 - 기본 채팅 규칙에서 길이 줄("3~5문장", "검토 3줄", "자세히는 요청 시만") 제거, 말투·언어만 남김. 길이는 `SpeechLength` 메뉴가 담당. 저장된 값이 예전 기본(`AppModel.oldDefaultRules`, 한/영)이면 새 기본으로 읽음; 사용자가 쓴 규칙은 유지. 시험 추가.

@@ -26,7 +26,7 @@ struct MenuMarkFrame: Equatable {
         return Self(gazeX: CGFloat(previous.0 + (target.0 - previous.0) * ease),
                     gazeY: CGFloat(previous.1 + (target.1 - previous.1) * ease),
                     openness: CGFloat(blink),
-                    halo: working ? CGFloat(0.55 + 0.35 * sin(t * 2)) : CGFloat(0.12 * idleSparkle),
+                    halo: working ? CGFloat(0.55 + 0.35 * sin(t * 2)) : CGFloat(0.24 + 0.16 * idleSparkle),
                     rotation: working ? t * 1.6 : 0,
                     sparkle: CGFloat(max(finish, working ? 0 : idleSparkle * 0.5)))
     }
@@ -109,25 +109,44 @@ func meterIcon(levels: [Double?], mark: Bool, colors: [NSColor]? = nil, frame: M
 }
 
 
-// Clear rays, rather than blur alone, remain visible at native menu bar size in both color modes.
+// A soft radial fan shines from behind the triangle; the eye itself remains unobscured.
 private func animatedIlluminatiIcon(colored: Bool, frame: MenuMarkFrame) -> NSImage {
     let image = NSImage(size: NSSize(width: 22, height: 18), flipped: false) { _ in
         let ink: NSColor = colored ? .systemTeal : .black
         let center = NSPoint(x: 11, y: 8.2)
-        for index in 0..<8 {
-            let angle = Double(index) * .pi / 4
-            let wave = (cos(angle - frame.rotation) + 1) / 2
-            let strength = min(1, Double(frame.halo) * (0.35 + 0.65 * wave) + Double(frame.sparkle) * 0.8)
-            guard strength > 0.02 else { continue }
-            let ray = NSBezierPath()
-            ray.move(to: NSPoint(x: center.x + CGFloat(cos(angle)) * 8.3,
-                                 y: center.y + CGFloat(sin(angle)) * 6.4))
-            ray.line(to: NSPoint(x: center.x + CGFloat(cos(angle)) * (9.0 + 1.3 * strength),
-                                 y: center.y + CGFloat(sin(angle)) * (7.0 + 0.8 * strength)))
-            ray.lineWidth = 1.1
-            ray.lineCapStyle = .round
-            ink.withAlphaComponent(strength).setStroke()
-            ray.stroke()
+        let triangleMask = NSBezierPath()
+        triangleMask.move(to: NSPoint(x: 11, y: 15.2))
+        triangleMask.line(to: NSPoint(x: 18, y: 2.7))
+        triangleMask.line(to: NSPoint(x: 4, y: 2.7))
+        triangleMask.close()
+        let strength = min(1, frame.halo + frame.sparkle * 0.8)
+        if strength > 0.02 {
+            NSGraphicsContext.saveGraphicsState()
+            let outside = NSBezierPath(rect: NSRect(x: 0, y: 0, width: 22, height: 18))
+            outside.append(triangleMask)
+            outside.windingRule = .evenOdd
+            outside.addClip()
+            let light: NSColor = colored ? .systemMint : .black
+            let haze = NSBezierPath(ovalIn: NSRect(x: 0.4, y: 0.2, width: 21.2, height: 17.4))
+            NSGradient(starting: light.withAlphaComponent(strength * 0.3),
+                       ending: light.withAlphaComponent(0))?.draw(in: haze, relativeCenterPosition: .zero)
+            // Many tapered rays, fading outward. Positions stay fixed; only their light shimmers.
+            for index in 0..<28 {
+                let angle = Double(index) * 2 * .pi / 28
+                let shimmer = 0.75 + 0.25 * cos(angle * 3 - frame.rotation)
+                for segment in 0..<7 {
+                    let near = Double(segment) / 7, far = Double(segment + 1) / 7
+                    let ray = NSBezierPath()
+                    ray.move(to: NSPoint(x: center.x + CGFloat(cos(angle) * (2.5 + near * 8)),
+                                         y: center.y + CGFloat(sin(angle) * (2 + near * 6.6))))
+                    ray.line(to: NSPoint(x: center.x + CGFloat(cos(angle) * (2.5 + far * 8)),
+                                         y: center.y + CGFloat(sin(angle) * (2 + far * 6.6))))
+                    ray.lineWidth = CGFloat(0.65 - near * 0.3)
+                    light.withAlphaComponent(Double(strength) * shimmer * pow(1 - near, 0.8)).setStroke()
+                    ray.stroke()
+                }
+            }
+            NSGraphicsContext.restoreGraphicsState()
         }
         ink.setStroke(); ink.setFill()
         let triangle = NSBezierPath()
@@ -154,17 +173,6 @@ private func animatedIlluminatiIcon(colored: Bool, frame: MenuMarkFrame) -> NSIm
                                        y: eyeCenter.y + frame.gazeY * 0.9 - 1.3,
                                        width: 2.6, height: 2.6)).fill()
             NSGraphicsContext.restoreGraphicsState()
-        }
-        // A four-point glint at the upper right accompanies the idle and completion shimmer.
-        if frame.sparkle > 0.02 {
-            ink.withAlphaComponent(min(1, frame.sparkle)).setStroke()
-            let glint = NSBezierPath()
-            let radius = 0.7 + 1.2 * frame.sparkle
-            glint.move(to: NSPoint(x: 19.6 - radius, y: 14.7))
-            glint.line(to: NSPoint(x: 19.6 + radius, y: 14.7))
-            glint.move(to: NSPoint(x: 19.6, y: 14.7 - radius))
-            glint.line(to: NSPoint(x: 19.6, y: 14.7 + radius))
-            glint.lineWidth = 1; glint.stroke()
         }
         return true
     }

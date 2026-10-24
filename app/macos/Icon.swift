@@ -28,15 +28,19 @@ struct MenuMarkFrame: Equatable {
         let target = gazes[index]
         let fraction = min(t.truncatingRemainder(dividingBy: step) / 0.5, 1)
         let ease = fraction * fraction * (3 - 2 * fraction)
-        let idlePhase = t.truncatingRemainder(dividingBy: 12)
-        let idleSparkle = idlePhase < 1.4 ? sin(idlePhase / 1.4 * .pi) : 0
+        // A complete dark hold, then a smooth rise to full light and back to zero.
+        let period = working ? 3.0 : 5.0
+        let darkHold = working ? 0.4 : 1.0
+        let phase = t.truncatingRemainder(dividingBy: period)
+        let pulse = phase > darkHold && phase < period - darkHold
+            ? pow(sin((phase - darkHold) / (period - darkHold * 2) * .pi), 2) : 0
         let finish = completionAge.map { $0 >= 0 && $0 < 1.4 ? sin($0 / 1.4 * .pi) : 0 } ?? 0
         return Self(gazeX: CGFloat(previous.0 + (target.0 - previous.0) * ease),
                     gazeY: CGFloat(previous.1 + (target.1 - previous.1) * ease),
                     openness: CGFloat(blink),
-                    halo: working ? CGFloat(0.82 + 0.16 * sin(t * 2)) : CGFloat(0.62 + 0.18 * idleSparkle),
+                    halo: CGFloat(pulse),
                     rotation: working ? t * 1.6 : 0,
-                    sparkle: CGFloat(max(finish, working ? 0 : idleSparkle * 0.5)))
+                    sparkle: CGFloat(finish))
     }
 }
 

@@ -14,7 +14,15 @@ struct IconAnimationCheck {
         precondition(MenuMarkFrame.at(20, working: false, completionAge: 0.7).sparkle > 0.99)
         precondition(MenuMarkFrame.at(20, working: false, completionAge: 2).sparkle == 0)
         // Idle frames in a quiet hold are identical, so the ticker can skip redraws.
-        precondition(MenuMarkFrame.at(6, working: false) == MenuMarkFrame.at(6.1, working: false))
+        precondition(MenuMarkFrame.at(5.2, working: false) == MenuMarkFrame.at(5.3, working: false))
+        for working in [false, true] {
+            let period = working ? 3.0 : 5.0
+            for t in [0.0, 0.2, period - 0.2, period, period + 0.2] {
+                let dark = MenuMarkFrame.at(t, working: working)
+                precondition(dark.halo == 0 && dark.sparkle == 0, "Halo must fully disappear")
+            }
+            precondition(MenuMarkFrame.at(period / 2, working: working).halo > 0.99)
+        }
         let levels: [Double?] = [0, 99, 60, 100, nil]
         let colors: [NSColor] = [.systemOrange, .systemOrange, .systemGreen, .systemGreen, .systemBlue]
         let frames = [MenuMarkFrame(), MenuMarkFrame(gazeX: -1), MenuMarkFrame(gazeY: 0.8),

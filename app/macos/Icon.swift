@@ -1,5 +1,13 @@
 import Cocoa
 
+// Warm gold stays readable on both light and dark menu bars.
+private let illuminatiGold = NSColor(name: nil) { appearance in
+    appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        ? NSColor(srgbRed: 1, green: 0.9, blue: 0.6, alpha: 1)
+        : NSColor(srgbRed: 0.64, green: 0.35, blue: 0.04, alpha: 1)
+}
+private let illuminatiLight = NSColor(srgbRed: 1, green: 0.67, blue: 0.12, alpha: 1)
+
 // Deterministic animation frames, shared by the menu renderer and offline previews.
 struct MenuMarkFrame: Equatable {
     var gazeX: CGFloat = 0
@@ -26,19 +34,19 @@ struct MenuMarkFrame: Equatable {
         return Self(gazeX: CGFloat(previous.0 + (target.0 - previous.0) * ease),
                     gazeY: CGFloat(previous.1 + (target.1 - previous.1) * ease),
                     openness: CGFloat(blink),
-                    halo: working ? CGFloat(0.55 + 0.35 * sin(t * 2)) : CGFloat(0.24 + 0.16 * idleSparkle),
+                    halo: working ? CGFloat(0.82 + 0.16 * sin(t * 2)) : CGFloat(0.62 + 0.18 * idleSparkle),
                     rotation: working ? t * 1.6 : 0,
                     sparkle: CGFloat(max(finish, working ? 0 : idleSparkle * 0.5)))
     }
 }
 
 // The menu bar mark: an eye inside a triangle, drawn in code (18 x 18 points).
-// Monochrome uses a template image; color mode keeps the teal mark.
+// Monochrome uses a template image; color mode keeps the warm gold mark.
 func illuminatiIcon(colored: Bool = false, frame: MenuMarkFrame? = nil) -> NSImage {
     if let frame { return animatedIlluminatiIcon(colored: colored, frame: frame) }
     let size = NSSize(width: 18, height: 18)
     let image = NSImage(size: size, flipped: false) { _ in
-        let ink: NSColor = colored ? .systemTeal : .black
+        let ink: NSColor = colored ? illuminatiGold : .black
         ink.setStroke()
         ink.setFill()
 
@@ -112,7 +120,7 @@ func meterIcon(levels: [Double?], mark: Bool, colors: [NSColor]? = nil, frame: M
 // A soft radial fan shines from behind the triangle; the eye itself remains unobscured.
 private func animatedIlluminatiIcon(colored: Bool, frame: MenuMarkFrame) -> NSImage {
     let image = NSImage(size: NSSize(width: 22, height: 18), flipped: false) { _ in
-        let ink: NSColor = colored ? .systemTeal : .black
+        let ink: NSColor = colored ? illuminatiGold : .black
         let center = NSPoint(x: 11, y: 8.2)
         let triangleMask = NSBezierPath()
         triangleMask.move(to: NSPoint(x: 11, y: 15.2))
@@ -126,9 +134,9 @@ private func animatedIlluminatiIcon(colored: Bool, frame: MenuMarkFrame) -> NSIm
             outside.append(triangleMask)
             outside.windingRule = .evenOdd
             outside.addClip()
-            let light: NSColor = colored ? .systemMint : .black
+            let light: NSColor = colored ? illuminatiLight : .black
             let haze = NSBezierPath(ovalIn: NSRect(x: 0.4, y: 0.2, width: 21.2, height: 17.4))
-            NSGradient(starting: light.withAlphaComponent(strength * 0.3),
+            NSGradient(starting: light.withAlphaComponent(strength * 0.65),
                        ending: light.withAlphaComponent(0))?.draw(in: haze, relativeCenterPosition: .zero)
             // Many tapered rays, fading outward. Positions stay fixed; only their light shimmers.
             for index in 0..<28 {
@@ -141,8 +149,8 @@ private func animatedIlluminatiIcon(colored: Bool, frame: MenuMarkFrame) -> NSIm
                                          y: center.y + CGFloat(sin(angle) * (2 + near * 6.6))))
                     ray.line(to: NSPoint(x: center.x + CGFloat(cos(angle) * (2.5 + far * 8)),
                                          y: center.y + CGFloat(sin(angle) * (2 + far * 6.6))))
-                    ray.lineWidth = CGFloat(0.65 - near * 0.3)
-                    light.withAlphaComponent(Double(strength) * shimmer * pow(1 - near, 0.8)).setStroke()
+                    ray.lineWidth = CGFloat(1.05 - near * 0.35)
+                    light.withAlphaComponent(min(1, Double(strength) * 1.25 * shimmer * pow(1 - near, 0.45))).setStroke()
                     ray.stroke()
                 }
             }

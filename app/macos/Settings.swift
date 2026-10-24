@@ -208,10 +208,11 @@ struct GeneralSettingsTab: View {
                 Picker(L("메뉴바 표시", "Menu bar"), selection: $model.menuBarStyle) {
                     ForEach(AppModel.MenuBarStyle.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
-                Picker(L("메뉴바 색상", "Menu bar color"), selection: $model.menuBarColored) {
-                    Text(L("흑백", "Monochrome")).tag(false)
-                    Text(L("컬러", "Color")).tag(true)
-                }
+                Toggle(L("흑백", "Monochrome"), isOn: Binding(
+                    get: { !model.menuBarColored },
+                    set: { model.menuBarColored = !$0 }))
+                    .toggleStyle(.switch)
+                    .help(L("켜면 흑백, 끄면 컬러로 표시해요.", "On: monochrome. Off: color."))
                 Toggle(L("눈과 후광 애니메이션", "Animate eye & halo"), isOn: $model.menuBarAnimation)
                 Picker(L("사용량 메뉴", "Usage menu"), selection: $model.usageMenuStyle) {
                     ForEach(AppModel.UsageMenuStyle.allCases, id: \.self) { Text($0.title).tag($0) }

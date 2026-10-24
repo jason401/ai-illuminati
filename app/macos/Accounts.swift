@@ -75,14 +75,10 @@ enum AccountStore {
             }
             return list
         }
-        // First start: the accounts that are already logged in on this Mac.
+        // First start: only Gemini. Claude and ChatGPT accounts are added in Settings, each with its own
+        // app folder, so every account works the same way (sessions included) and the ChatGPT / Claude
+        // apps' own logins and histories are never shared or touched.
         var list: [Account] = []
-        if FileManager.default.fileExists(atPath: home + "/.codex/auth.json") {
-            list.append(Account(id: "codex-main", provider: .codex, name: "ChatGPT 기본", dir: nil))
-        }
-        if ClaudeUsage.loginExists(Account(id: "claude-main", provider: .claude, name: "", dir: nil)) {
-            list.append(Account(id: "claude-main", provider: .claude, name: "Claude 기본", dir: nil))
-        }
         list.append(gemini)
         UserDefaults.standard.set(true, forKey: "geminiInList")
         save(list)

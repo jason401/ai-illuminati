@@ -2,10 +2,13 @@
 
 이 문서만 읽으면 바로 이어서 작업할 수 있게 정리했어요. 규칙은 `AGENTS.md`(= `CLAUDE.md`와 같은 내용)에, 사용자용 설명은 `README.md`에 있어요.
 
+## 모든 계정 같은 방식 (2026-10-23, Claude)
+
+- 사용자 결정: ChatGPT 개인·학교 모두 같은 방식. 처음 실행 시 `~/.codex`·기본 Claude 로그인을 빌려 등록하던 코드 제거(Gemini만 자동 등록). 기존 `codex-main`(ChatGPT (개인))은 id·이름 유지, `dir`=`~/.ai-illuminati/accounts/codex-main`(+ file 인증 저장)으로 옮기고 사용자가 브라우저로 따로 로그인. 결과: 새 폴더 개인 plus 사용량 읽힘, ChatGPT 앱 `~/.codex` 로그인도 계속 유효(따로 로그인은 충돌 없음, 복사만 위험). 이제 세션 대상 계정 4개(Claude 2, ChatGPT 2). 계정 목록 백업 `accounts.json.backup-before-codex-move`.
+
 ## Gemini 기본 꺼짐 (2026-10-23, Claude)
 
 - 사용자 결정: 모든 모드에서 Gemini는 새 대화 기본 참여 안 함. `ChatConfiguration.participants` 기본 [.claude, .codex], 옛 모드용 `useGemini` false. 모드3(협업)은 원래 모든 계정 미선택. 설정을 저장한 기존 방은 그대로. 시험은 Gemini 참여를 명시하도록 고치고 기본값 시험 추가, 16개 통과.
-- 세션: ChatGPT 개인(dir nil = ~/.codex, ChatGPT 앱과 공유)은 `NativeSessions.eligible`에서 제외. 같은 계정을 앱 전용 폴더로 또 로그인하면 토큰 충돌 위험이라 권하지 않음. 사용자에게 설명함, 변경 없음.
 
 ## 발언 길이 설정 (2026-10-23, Claude)
 

@@ -45,6 +45,18 @@ final class AppModel: ObservableObject {
             onDisplayChange?()
         }
     }
+    // Which limit the menu bar bars and numbers show. Saved as "menuBarWindow" (default 5-hour).
+    enum MenuBarWindow: String, CaseIterable {
+        case fiveHour, weekly
+        var title: String { self == .fiveHour ? L("5시간", "5-hour") : L("주간", "Weekly") }
+        func left(_ usage: AIUsage) -> Double? { (self == .fiveHour ? usage.fiveHour : usage.weekly)?.left() }
+    }
+    @Published var menuBarWindow: MenuBarWindow {
+        didSet {
+            UserDefaults.standard.set(menuBarWindow.rawValue, forKey: "menuBarWindow")
+            onDisplayChange?()
+        }
+    }
     @Published var menuBarColored: Bool {
         didSet {
             UserDefaults.standard.set(menuBarColored, forKey: "menuBarColored")
@@ -125,6 +137,7 @@ final class AppModel: ObservableObject {
         menuBarStyle = UserDefaults.standard.string(forKey: "menuBarStyle").flatMap(MenuBarStyle.init(rawValue:))
             ?? (UserDefaults.standard.bool(forKey: "showPercent") ? .markPercent : .markBars)
         menuBarAnimation = UserDefaults.standard.object(forKey: "menuBarAnimation") as? Bool ?? true
+        menuBarWindow = UserDefaults.standard.string(forKey: "menuBarWindow").flatMap(MenuBarWindow.init(rawValue:)) ?? .fiveHour
         menuBarColored = UserDefaults.standard.bool(forKey: "menuBarColored")
         usageMenuStyle = UserDefaults.standard.string(forKey: "usageMenuStyle").flatMap(UsageMenuStyle.init(rawValue:)) ?? .cards
         openAtLogin = SMAppService.mainApp.status == .enabled
@@ -208,6 +221,10 @@ struct GeneralSettingsTab: View {
                 Picker(L("메뉴바 표시", "Menu bar"), selection: $model.menuBarStyle) {
                     ForEach(AppModel.MenuBarStyle.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
+                Picker(L("메뉴바 잔여량 기준", "Menu bar shows"), selection: $model.menuBarWindow) {
+                    ForEach(AppModel.MenuBarWindow.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.segmented)
                 Toggle(L("흑백", "Monochrome"), isOn: Binding(
                     get: { !model.menuBarColored },
                     set: { model.menuBarColored = !$0 }))
@@ -221,8 +238,8 @@ struct GeneralSettingsTab: View {
                 Toggle(L("로그인할 때 자동 실행", "Open at login"), isOn: Binding(get: { model.openAtLogin },
                                                                           set: { model.setOpenAtLogin($0) }))
             } footer: {
-                Text(L("막대 하나가 계정 하나예요. 계정 설정의 순서대로, 지금 쓸 수 있는 양(5시간과 주간 중 적은 쪽)을 보여줘요. 마우스를 올리면 계정별 이름과 숫자가 보여요.",
-                       "One bar per account, in Settings order. Each shows what that account can use now (the lower of 5-hour and weekly). Hover for account names and numbers."))
+                Text(L("막대 하나가 계정 하나예요. 계정 설정의 순서대로, '메뉴바 잔여량 기준'에서 고른 한도(5시간 또는 주간)의 남은 양을 보여줘요. 그 한도가 없는 계정(예: Gemini의 5시간)은 빈 막대예요. 마우스를 올리면 계정별 이름과 숫자가 보여요.",
+                       "One bar per account, in Settings order, showing what is left of the limit chosen in 'Menu bar shows' (5-hour or weekly). An account without that limit (e.g. Gemini's 5-hour) shows an empty bar. Hover for names and numbers."))
                     .font(.caption).foregroundStyle(.secondary)
             }
             UpdateSection(updater: model.updater)

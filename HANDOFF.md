@@ -2,6 +2,9 @@
 
 이 문서만 읽으면 바로 이어서 작업할 수 있게 정리했어요. 규칙은 `AGENTS.md`(= `CLAUDE.md`와 같은 내용)에, 사용자용 설명은 `README.md`에 있어요.
 
+## 메뉴바 잔여량 기준 (2026-10-24, Claude)
+- 사용자 결정: 메뉴바 막대·%·툴팁은 한 가지 한도만(섞지 않음). 설정 → 일반 → '메뉴바 잔여량 기준' 5시간(기본)/주간, `AppModel.MenuBarWindow`(UserDefaults `menuBarWindow`). 그 한도가 없는 계정은 빈 막대(다른 한도로 대체 안 함). 예전 `leftNow`(둘 중 적은 쪽)는 메뉴바에서 안 씀. 시험 추가.
+
 ## Monochrome 스위치 (2026-10-24, Codex)
 - 설정의 색상 Picker를 Monochrome/흑백 on/off 스위치로 교체. ON=흑백, OFF=컬러. 기존 menuBarColored 저장값을 반전 Binding으로 연결해 현재 선택 및 저장 방식 유지. 다른 동작 변경 없음.
 

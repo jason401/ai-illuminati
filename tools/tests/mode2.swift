@@ -789,3 +789,16 @@ do {
     print("PASS: pin to top (order, saved, unpin) and delete all (all or keep pinned)")
 }
 
+
+// Menu bar limit choice: 5-hour by default; each choice reads only its own limit.
+do {
+    var u = AIUsage(name: "x")
+    u.fiveHour = UsageWindow(usedPercent: 80, resetsAt: Date().addingTimeInterval(3600))
+    u.weekly = UsageWindow(usedPercent: 33, resetsAt: Date().addingTimeInterval(86400))
+    expect(AppModel.MenuBarWindow.fiveHour.left(u) == 20 && AppModel.MenuBarWindow.weekly.left(u) == 67, "menu bar limit choice")
+    var g = AIUsage(name: "g"); g.weekly = UsageWindow(usedPercent: 6, resetsAt: nil)
+    expect(AppModel.MenuBarWindow.fiveHour.left(g) == nil, "a missing limit shows empty, not the other one")
+    UserDefaults.standard.removeObject(forKey: "menuBarWindow")
+    expect(AppModel().menuBarWindow == .fiveHour, "default is 5-hour")
+    print("PASS: menu bar 5-hour / weekly choice")
+}

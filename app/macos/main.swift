@@ -215,11 +215,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func updateTitle() {
         let groups: [(String, Account.Provider)] = [("Cl", .claude), ("Cx", .codex), ("Gm", .gemini)]
         let present = groups.filter { g in usages.contains { $0.account?.provider == g.1 } }
-        let best = present.map { g in usages.filter { $0.account?.provider == g.1 }.compactMap(\.leftNow).max() }
+        // One limit everywhere in the menu bar: the 5-hour or the weekly one, as chosen in Settings.
+        let window = model.menuBarWindow
+        let best = present.map { g in usages.filter { $0.account?.provider == g.1 }.compactMap { window.left($0) }.max() }
         let listed = accounts
-        let levels = listed.map { account in usages.first { $0.account?.id == account.id }?.leftNow }
-        item.button?.toolTip = zip(listed, levels).map { account, left in
-            account.name + " " + (left.map { "\(Int($0.rounded()))%" } ?? "?")
+        let levels = listed.map { account in usages.first { $0.account?.id == account.id }.flatMap { window.left($0) } }
+        item.button?.toolTip = window.title + "\n" + zip(listed, levels).map { account, left in
+            account.name + " " + (left.map { "\(Int($0.rounded()))%" } ?? "–")
         }.joined(separator: "\n")
         let style = model.menuBarStyle
         let colored = model.menuBarColored

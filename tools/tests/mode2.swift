@@ -16,6 +16,7 @@ func waitFor(_ discussion: Discussion) {
 expect(Discussion.availableModes == [1, 2, 3], "all three new modes should be offered")
 let hiddenDefault = Discussion(model: AppModel())
 expect(hiddenDefault.configuration.mode == 1, "a new room must start in discussion mode 1")
+expect(!hiddenDefault.configuration.participants.contains(.gemini) && !hiddenDefault.useGemini, "Gemini must be off by default in new chats")
 Discussion.modernModes = false
 Discussion.availableModes = [1, 2, 3]
 let model = AppModel()
@@ -23,7 +24,9 @@ model.accounts = Account.Provider.allCases.map {
     Account(id: "test-" + $0.rawValue, provider: $0, name: $0.title, dir: nil)
 }
 let discussion = Discussion(model: model)
+discussion.useGemini = true
 discussion.configure {
+    $0.participants = [.claude, .codex, .gemini]
     $0.mode = 2
     $0.order = [.codex, .claude, .gemini]
     $0.leader = .claude
@@ -57,6 +60,7 @@ expect(discussion.configuration.order == [.gemini, .codex, .claude], "invalid sc
 expect(discussion.current.turns.last?.orderNote?.contains(L("실패", "failed")) == true, "invalid order must be visible")
 let savedID = discussion.currentID
 let reloaded = Discussion(model: model)
+reloaded.useGemini = true
 reloaded.open(savedID)
 expect(reloaded.configuration.mode == 2 && reloaded.configuration.leader == .claude, "configuration not persisted")
 expect(reloaded.current.turns.count == 2, "full history not persisted")
@@ -105,7 +109,8 @@ print("PASS: default English, Korean switch, persistence, default rule localizat
 // The opening runs the AIs at the same time, so the fakes below guard shared counters with a lock.
 let testLock = NSLock()
 let debate = Discussion(model: model)
-debate.configure { $0.mode = 3; $0.turnsPerAI = 4; $0.leader = .claude }
+debate.useGemini = true
+debate.configure { $0.participants = [.claude, .codex, .gemini]; $0.mode = 3; $0.turnsPerAI = 4; $0.leader = .claude }
 var decisions = 0
 var debateCalls: [String] = []
 var openingSeen: [String] = []
@@ -158,7 +163,8 @@ expect(debate.current.turns[0].final != nil && debate.current.summary.isEmpty, "
 
 // Per-AI limit: the moderator keeps asking for Claude, but Claude stops after 2 turns; the others fill the rest.
 let capped = Discussion(model: model)
-capped.configure { $0.mode = 3; $0.turnsPerAI = 2 }
+capped.useGemini = true
+capped.configure { $0.participants = [.claude, .codex, .gemini]; $0.mode = 3; $0.turnsPerAI = 2 }
 var spokenBy: [String: Int] = [:]
 var finalCount = 0
 capped.debateAnswer = { account, prompt, _, _, _ in
@@ -186,7 +192,8 @@ expect(ChatTurn.Entry(round: 1, speaker: "x", text: String(repeating: "a", count
 
 // An AI whose usage is used up is left out after its failed reply; the others carry on.
 let exhausted = Discussion(model: model)
-exhausted.configure { $0.mode = 3; $0.turnsPerAI = 3 }
+exhausted.useGemini = true
+exhausted.configure { $0.participants = [.claude, .codex, .gemini]; $0.mode = 3; $0.turnsPerAI = 3 }
 var exhaustedCalls: [String: Int] = [:]
 var exhaustedDecisions = 0
 exhausted.debateAnswer = { account, prompt, _, _, _ in
@@ -206,7 +213,9 @@ expect(exhaustedCalls["gemini"] == 1 && exhaustedDecisions == 4, "an AI out of u
 expect(exhausted.current.turns[0].entries.filter { !$0.failed }.count == 5, "the other AIs must keep speaking")
 
 let broken = Discussion(model: model)
-broken.configure { $0.mode = 3 }
+
+broken.useGemini = true
+broken.configure { $0.participants = [.claude, .codex, .gemini]; $0.mode = 3 }
 var brokenCalls = 0
 broken.debateAnswer = { _, prompt, _, _, _ in
     testLock.lock(); defer { testLock.unlock() }
@@ -218,7 +227,9 @@ broken.draft = "Invalid scheduling"; broken.send(); waitFor(broken)
 expect(broken.current.turns[0].entries.count == 3 && brokenCalls == 5, "invalid moderation must end without retry loops")
 
 let stopped = Discussion(model: model)
-stopped.configure { $0.mode = 3 }
+
+stopped.useGemini = true
+stopped.configure { $0.participants = [.claude, .codex, .gemini]; $0.mode = 3 }
 var stoppedCalls = 0
 stopped.debateAnswer = { _, _, _, token, _ in
     testLock.lock(); stoppedCalls += 1; testLock.unlock()
@@ -252,6 +263,7 @@ print("PASS: mode3 parallel opening, moderator tasks and board, early finish, mo
 
 // Attachment storage uses normalized private copies, not references to the user's original.
 let imageChat = Discussion(model: model)
+imageChat.useGemini = true
 let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 32, pixelsHigh: 24, bitsPerSample: 8, samplesPerPixel: 4,
                               hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
 let fixture = bitmap.representation(using: .png, properties: [:])!
@@ -287,6 +299,7 @@ print("PASS: normalized attachment copy, image-only send, persistence, transcrip
 // Switching modes inside one chat: 1 → 2 → 1. Mode 1 must see what was said in mode 2.
 do {
     let chat = Discussion(model: model)
+    chat.useGemini = true
     chat.newConversation()
     var prompts: [String] = []
     // Mode 1 calls this fake concurrently; protect the captured array just like
@@ -374,7 +387,8 @@ do {
                   Account(id: "school-test", provider: .codex, name: "School", dir: AccountStore.accountsDir + "/school-test"),
                   Account(id: "claude-test", provider: .claude, name: "Claude", dir: nil)]
     let chat = Discussion(model: m)
-    chat.configure { $0.mode = 3; $0.leaderAccountID = "claude-test"; $0.accountIDs = m.accounts.map(\.id) }
+    chat.useGemini = true
+    chat.configure { $0.participants = [.claude, .codex, .gemini]; $0.mode = 3; $0.leaderAccountID = "claude-test"; $0.accountIDs = m.accounts.map(\.id) }
     var assigned: Set<String> = [], active = 0, maximum = 0
     let lock = NSLock()
     chat.collaborationAnswer = { account, prompt, _, _ in
@@ -409,7 +423,8 @@ do {
     m.accounts = [Account(id: "school-claude-fake", provider: .claude, name: "School Claude", dir: nil),
                   Account(id: "school-codex-fake", provider: .codex, name: "School Codex", dir: nil)]
     let chat = Discussion(model: m)
-    chat.configure { $0.mode = 3; $0.leaderAccountID = "school-claude-fake"; $0.accountIDs = m.accounts.map(\.id) }
+    chat.useGemini = true
+    chat.configure { $0.participants = [.claude, .codex, .gemini]; $0.mode = 3; $0.leaderAccountID = "school-claude-fake"; $0.accountIDs = m.accounts.map(\.id) }
     let fixture = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("material-fixtures/slides.pptx")
     let document = try! MaterialReader.read(fixture, room: chat.currentID)
     chat.change(chat.currentID, save: true) { $0.documents = [document] }
@@ -444,14 +459,15 @@ do {
     m.accounts = [Account(id: "mode-school-claude-fake", provider: .claude, name: "School Claude", dir: nil),
                   Account(id: "mode-school-codex-fake", provider: .codex, name: "School Codex", dir: nil)]
     let chat = Discussion(model: m)
-    chat.configure { $0.mode = 1; $0.leader = .gemini; $0.turnsPerAI = 2 }
+    chat.useGemini = true
+    chat.configure { $0.participants = [.claude, .codex, .gemini]; $0.mode = 1; $0.leader = .gemini; $0.turnsPerAI = 2 }
     chat.debateAnswer = { _, prompt, _, _, _ in
         if prompt.contains("[MODE3 MODERATION]") { return .success("{\"action\":\"finish\",\"reason\":\"Enough evidence\"}") }
         return .success("TL;DR: A contribution\n\nA concrete contribution.")
     }
     chat.draft = "Discuss a design."; chat.send(); waitFor(chat)
     expect(chat.current.turns[0].maxTurns == 4 && chat.current.turns[0].final != nil, "new mode limits or missing moderator fallback wrong")
-    chat.configure { $0.mode = 2 }
+    chat.configure { $0.participants = [.claude, .codex, .gemini]; $0.mode = 2 }
     chat.draft = "Critique the design."; chat.send(); waitFor(chat)
     expect(chat.current.turns[1].entries.count == 4 && chat.current.turns[1].maxTurns == 4, "critical mode must give each participant a follow-up objection turn")
     print("PASS: new discussion limits, unavailable moderator fallback and critical follow-up round")
@@ -463,7 +479,8 @@ do {
     m.accounts = [Account(id: "len-claude-fake", provider: .claude, name: "Claude", dir: nil),
                   Account(id: "len-codex-fake", provider: .codex, name: "Codex", dir: nil)]
     let chat = Discussion(model: m)
-    chat.configure { $0.mode = 1; $0.leader = .claude; $0.turnsPerAI = 2 }
+    chat.useGemini = true
+    chat.configure { $0.participants = [.claude, .codex, .gemini]; $0.mode = 1; $0.leader = .claude; $0.turnsPerAI = 2 }
     var speeches: [String] = []
     chat.debateAnswer = { _, prompt, _, _, _ in
         if prompt.contains("[MODE3 MODERATION]") { return .success("{\"action\":\"finish\",\"reason\":\"Enough\"}") }
@@ -549,7 +566,8 @@ do {
     let m = AppModel()
     m.accounts = [Account(id: "chosen", provider: .claude, name: "Chosen", dir: nil), Account(id: "not-chosen", provider: .codex, name: "Unused", dir: nil)]
     let chat = Discussion(model: m)
-    chat.configure { $0.mode = 3 }
+    chat.useGemini = true
+    chat.configure { $0.participants = [.claude, .codex, .gemini]; $0.mode = 3 }
     var calls = 0, work: [String] = []
     chat.collaborationAnswer = { _, _, _, _ in calls += 1; return .success("Unexpected") }
     chat.draft = "한국어로 작업해줘"; chat.send(); waitFor(chat)

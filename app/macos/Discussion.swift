@@ -315,7 +315,8 @@ enum SpeechLength {
 struct ChatConfiguration: Codable {
     var mode = 1
     var order: [Account.Provider] = [.claude, .codex, .gemini]
-    var participants: [Account.Provider] = [.claude, .codex, .gemini]
+    // Gemini is off by default in every mode (turn it on per chat); chats that saved a list keep it.
+    var participants: [Account.Provider] = [.claude, .codex]
     var leader: Account.Provider = .claude
     var maxTurns: Int?    // old total limit, no longer used
     var turnsPerAI: Int?  // mode 3: turns each AI may speak (default 4)
@@ -413,7 +414,7 @@ final class Discussion: ObservableObject {
     var draggingConversationID: UUID?
     @Published var useClaude = true
     @Published var useCodex = true
-    @Published var useGemini = true
+    @Published var useGemini = false
 
     // Injected in tests so full-history sequencing can be checked without spending usage.
     var answer: (Account, String, TimeInterval) -> Result<String, Answerer.Failure> = {

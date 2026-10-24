@@ -2,6 +2,11 @@
 
 이 문서만 읽으면 바로 이어서 작업할 수 있게 정리했어요. 규칙은 `AGENTS.md`(= `CLAUDE.md`와 같은 내용)에, 사용자용 설명은 `README.md`에 있어요.
 
+## Gemini 기본 꺼짐 (2026-10-23, Claude)
+
+- 사용자 결정: 모든 모드에서 Gemini는 새 대화 기본 참여 안 함. `ChatConfiguration.participants` 기본 [.claude, .codex], 옛 모드용 `useGemini` false. 모드3(협업)은 원래 모든 계정 미선택. 설정을 저장한 기존 방은 그대로. 시험은 Gemini 참여를 명시하도록 고치고 기본값 시험 추가, 16개 통과.
+- 세션: ChatGPT 개인(dir nil = ~/.codex, ChatGPT 앱과 공유)은 `NativeSessions.eligible`에서 제외. 같은 계정을 앱 전용 폴더로 또 로그인하면 토큰 충돌 위험이라 권하지 않음. 사용자에게 설명함, 변경 없음.
+
 ## 발언 길이 설정 (2026-10-23, Claude)
 
 - 모드1·2(토론/비판 토론)에 방별 `speechLength`(400/800/1500, 기본 800). `SpeechLength` in `Discussion.swift`, 발언 프롬프트 `Debate.swift`의 길이 규칙만 바꿈(사회자 지시 250자·최종 답 8문장은 그대로). 상단 "AI마다 N회" 옆 메뉴. 시험 `speech length default 800…` 추가, 전체 16개 통과.

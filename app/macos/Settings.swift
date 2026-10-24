@@ -45,6 +45,12 @@ final class AppModel: ObservableObject {
             onDisplayChange?()
         }
     }
+    @Published var menuBarColored: Bool {
+        didSet {
+            UserDefaults.standard.set(menuBarColored, forKey: "menuBarColored")
+            onDisplayChange?()
+        }
+    }
     enum UsageMenuStyle: String, CaseIterable {
         case cards, comparison, comparisonRings, compact
         var title: String {
@@ -112,6 +118,7 @@ final class AppModel: ObservableObject {
         // Older setting: "% 같이 보기" on becomes "mark + %"; otherwise the new default "mark + bars".
         menuBarStyle = UserDefaults.standard.string(forKey: "menuBarStyle").flatMap(MenuBarStyle.init(rawValue:))
             ?? (UserDefaults.standard.bool(forKey: "showPercent") ? .markPercent : .markBars)
+        menuBarColored = UserDefaults.standard.bool(forKey: "menuBarColored")
         usageMenuStyle = UserDefaults.standard.string(forKey: "usageMenuStyle").flatMap(UsageMenuStyle.init(rawValue:)) ?? .cards
         openAtLogin = SMAppService.mainApp.status == .enabled
         let saved = UserDefaults.standard.string(forKey: "chatRules")
@@ -193,6 +200,10 @@ struct GeneralSettingsTab: View {
             Section {
                 Picker(L("메뉴바 표시", "Menu bar"), selection: $model.menuBarStyle) {
                     ForEach(AppModel.MenuBarStyle.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                Picker(L("메뉴바 색상", "Menu bar color"), selection: $model.menuBarColored) {
+                    Text(L("흑백", "Monochrome")).tag(false)
+                    Text(L("컬러", "Color")).tag(true)
                 }
                 Picker(L("사용량 메뉴", "Usage menu"), selection: $model.usageMenuStyle) {
                     ForEach(AppModel.UsageMenuStyle.allCases, id: \.self) { Text($0.title).tag($0) }

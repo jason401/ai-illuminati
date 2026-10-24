@@ -169,13 +169,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             g.1.title + " " + (left.map { "\(Int($0.rounded()))%" } ?? "?")
         }.joined(separator: " · ")
         let style = model.menuBarStyle
+        let colored = model.menuBarColored
+        let colors: [NSColor] = present.map { group in
+            switch group.1 {
+            case .claude: return .systemOrange
+            case .codex: return .systemGreen
+            case .gemini: return .systemBlue
+            }
+        }
         switch style {
-        case .mark:
-            item.button?.image = illuminatiIcon()
+        case .mark, .markPercent:
+            item.button?.image = illuminatiIcon(colored: colored)
         case .markBars, .bars:
-            item.button?.image = meterIcon(levels: best, mark: style == .markBars)
-        case .markPercent:
-            item.button?.image = illuminatiIcon()
+            item.button?.image = meterIcon(levels: best, mark: style == .markBars, colors: colored ? colors : nil)
         }
         guard style == .markPercent else {
             item.button?.attributedTitle = NSAttributedString(string: "")
@@ -183,10 +189,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         let font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
         let title = NSMutableAttributedString(string: " ", attributes: [.font: font])
-        for (g, left) in zip(present, best) {
+        for (index, pair) in zip(present, best).enumerated() {
+            let (g, left) = pair
             if title.length > 1 { title.append(NSAttributedString(string: "  ", attributes: [.font: font])) }
             title.append(NSAttributedString(string: g.0 + " ", attributes: [.font: font, .foregroundColor: NSColor.secondaryLabelColor]))
-            title.append(NSAttributedString(string: left.map { "\(Int($0.rounded()))%" } ?? "?", attributes: [.font: font]))
+            title.append(NSAttributedString(string: left.map { "\(Int($0.rounded()))%" } ?? "?", attributes: [.font: font, .foregroundColor: colored ? colors[index] : NSColor.labelColor]))
         }
         item.button?.attributedTitle = title
     }

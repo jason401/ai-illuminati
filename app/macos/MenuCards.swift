@@ -170,7 +170,7 @@ enum MenuCardItem {
 private struct UsageComparison: View {
     let usages: [AIUsage]
     let style: AppModel.UsageMenuStyle
-    private let nameWidth: CGFloat = 112
+    private let nameWidth: CGFloat = 88
     private let cellWidth: CGFloat = 154
 
     var body: some View {
@@ -201,7 +201,7 @@ private struct UsageComparison: View {
                             metric(usage.weekly, minutes: 7 * 24 * 60)
                         }
                         .font(.system(size: 12))
-                        .padding(.vertical, style == .compact ? 5 : 7)
+                        .padding(.vertical, 5)
                     }
                     Divider().padding(.top, 5)
                 }
@@ -219,23 +219,21 @@ private struct UsageComparison: View {
         Group {
             if let w = window {
                 let left = w.left()
-                VStack(alignment: .leading, spacing: 5) {
-                    HStack(spacing: 5) {
-                        Text("\(Int(left.rounded()))%")
-                            .font(.system(size: 12, weight: .semibold).monospacedDigit())
-                            .foregroundColor(UsageText.tint(left))
-                            .lineLimit(1).fixedSize(horizontal: true, vertical: false)
-                            .frame(width: 42, alignment: .trailing)
-                        if style == .compact || style == .comparisonRings {
-                            RefillRing(progress: w.elapsed(minutes: minutes) ?? (w.resetsAt == nil ? 0 : 1))
-                        }
-                        Text(shortTime(w.resetsAt))
-                            .font(.system(size: 11).monospacedDigit())
-                            .foregroundColor(.secondary).lineLimit(1)
-                    }
+                HStack(spacing: 4) {
                     if style != .compact {
-                        LeftBar(left: left, evenLeft: nil).frame(width: cellWidth - 8)
+                        LeftBar(left: left, evenLeft: nil).frame(width: 36)
                     }
+                    Text("\(Int(left.rounded()))%")
+                        .font(.system(size: 12, weight: .semibold).monospacedDigit())
+                        .foregroundColor(UsageText.tint(left))
+                        .lineLimit(1).fixedSize(horizontal: true, vertical: false)
+                        .frame(width: style == .compact ? 42 : 36, alignment: .trailing)
+                    if style == .compact || style == .comparisonRings {
+                        RefillRing(progress: w.elapsed(minutes: minutes) ?? (w.resetsAt == nil ? 0 : 1))
+                    }
+                    Text(shortTime(w.resetsAt))
+                        .font(.system(size: 11).monospacedDigit())
+                        .foregroundColor(.secondary).lineLimit(1).minimumScaleFactor(0.85)
                 }
                 .help(details(w))
                 .accessibilityElement(children: .ignore)

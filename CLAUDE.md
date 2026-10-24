@@ -7,6 +7,7 @@ Bigger plan (AI agents talking to each other, dashboards): `~/Downloads/ai-offic
 ## How to work with Younghun
 - Answer in Korean, simply. Avoid jargon.
 - Every reply: call the `ai-face` MCP tool `set_expression` (skip silently if missing).
+- Write the reply text only ONCE, after all tool calls (`set_expression`, and `wrap_up` in the desktop app). Never write the answer, call those tools, then write it again — he sees that as two answers.
 - Never use API keys. Never handle his passwords; logins go through each tool's own login.
 - `claude -p` is allowed: Anthropic paused the June 2026 change, so it still draws from subscription limits
   (support.claude.com/en/articles/15036540, checked 2026-10-14; Oct 7 update added API credits for Max/Team).

@@ -358,6 +358,11 @@ struct Conversation: Identifiable, Codable {
     var configuration: ChatConfiguration?
     var documents: [RoomDocument]?
     var workspace: WorkspaceBinding?
+    var pinned: Bool?   // kept at the top of the list
+
+    // Something worth keeping: messages, materials or a linked folder. A chat with only settings is
+    // "blank": it is not kept in the list once you leave it.
+    var hasContent: Bool { !turns.isEmpty || !(documents ?? []).isEmpty || workspace != nil }
 }
 
 enum ChatStore {
@@ -519,9 +524,20 @@ final class Discussion: ObservableObject {
 
     init(model: AppModel) {
         self.model = model
-        let fresh = Conversation()
-        conversations = [fresh] + ChatStore.loadAll()
+        // The newest blank chat (settings only) becomes the new chat, so its settings are kept;
+        // older blank ones hold nothing and are removed.
+        let loaded = ChatStore.loadAll()
+        let blanks = loaded.filter { !$0.hasContent }
+        for old in blanks.dropFirst() { try? ChatStore.delete(old) }
+        let fresh = blanks.first ?? Conversation()
+        conversations = [fresh] + loaded.filter(\.hasContent)
         currentID = fresh.id
+    }
+
+    // Leaving a blank chat: drop it from the list and remove its settings-only file.
+    private func dropBlanks(except keep: UUID?) {
+        for blank in conversations where !blank.hasContent && blank.id != keep { try? ChatStore.delete(blank) }
+        conversations.removeAll { !$0.hasContent && $0.id != keep }
     }
 
     var current: Conversation { conversations.first { $0.id == currentID } ?? Conversation() }
@@ -531,7 +547,7 @@ final class Discussion: ObservableObject {
         guard !running && !importingMaterials else { return }
         if current.turns.isEmpty && (current.documents ?? []).isEmpty && current.workspace == nil { return }
         discardPendingImages()
-        conversations.removeAll { $0.turns.isEmpty && ($0.documents ?? []).isEmpty && $0.workspace == nil && $0.configuration == nil }
+        dropBlanks(except: nil)
         let fresh = Conversation()
         conversations.insert(fresh, at: 0)
         currentID = fresh.id
@@ -540,9 +556,71 @@ final class Discussion: ObservableObject {
     func open(_ id: UUID) {
         guard !running && !importingMaterials else { return }
         if currentID != id { discardPendingImages() }
-        conversations.removeAll { $0.turns.isEmpty && ($0.documents ?? []).isEmpty && $0.workspace == nil && $0.configuration == nil && $0.id != id }
+        dropBlanks(except: id)
         currentID = id
         sessionNote = ""
+    }
+
+    // Pinned chats first (in their usual order), then the rest.
+    var listedConversations: [Conversation] {
+        conversations.filter { $0.pinned == true } + conversations.filter { $0.pinned != true }
+    }
+
+    func togglePin(_ id: UUID) {
+        guard let i = conversations.firstIndex(where: { $0.id == id }), conversations[i].hasContent else { return }
+        conversations[i].pinned = conversations[i].pinned == true ? nil : true
+        ChatStore.save(conversations[i])
+    }
+
+    // Deletes every saved chat (or all but the pinned ones), each the same way as deleting one.
+    func deleteAll() {
+        guard !running, !importingMaterials else { return }
+        let saved = conversations.filter(\.hasContent)
+        guard !saved.isEmpty else { return }
+        let pinnedCount = saved.filter { $0.pinned == true }.count
+        let alert = NSAlert()
+        alert.messageText = L("대화 \(saved.count)개를 모두 지울까요?", "Delete all \(saved.count) chats?")
+        alert.informativeText = L("각 대화의 질문·답변·그림·첨부 사본·작업 결과, 그 대화들이 만든 세션 기록과 파일 백업까지 지워져요. 되돌릴 수 없어요. 연결한 원본 폴더와 Gemini 자체 기록은 그대로예요.",
+                                  "Each chat's messages, pictures, attachment copies, results, and the sessions and file backups they created are deleted. This cannot be undone. Linked original folders and Gemini's own history stay.")
+        alert.addButton(withTitle: L("모두 삭제", "Delete all"))
+        if pinnedCount > 0 { alert.addButton(withTitle: L("고정한 \(pinnedCount)개는 남기기", "Keep \(pinnedCount) pinned")) }
+        alert.addButton(withTitle: L("취소", "Cancel"))
+        alert.buttons.first?.hasDestructiveAction = true
+        let answer = alert.runModal()
+        let keepPinned: Bool
+        switch answer {
+        case .alertFirstButtonReturn: keepPinned = false
+        case .alertSecondButtonReturn where pinnedCount > 0: keepPinned = true
+        default: return
+        }
+        let failed = removeChats(saved.filter { !(keepPinned && $0.pinned == true) })
+        if failed > 0 {
+            let failure = NSAlert()
+            failure.messageText = L("\(failed)개 대화를 지우지 못했어요", "Could not delete \(failed) chats")
+            failure.informativeText = L("저장된 파일을 지우지 못한 대화는 그대로 남겨뒀어요.", "Chats whose files could not be deleted were kept.")
+            failure.runModal()
+        }
+    }
+
+    // Removes these chats (files, sessions, backups) and their list rows; returns how many failed.
+    @discardableResult
+    func removeChats(_ chats: [Conversation]) -> Int {
+        var failed = 0
+        for conversation in chats {
+            do {
+                try ChatStore.delete(conversation)
+                conversations.removeAll { $0.id == conversation.id }
+            } catch { failed += 1 }
+        }
+        // Leave exactly one empty "new chat": the open one if it is empty, else a fresh one.
+        dropBlanks(except: currentID)
+        if !conversations.contains(where: { $0.id == currentID }) {
+            pendingImages = []; attachmentError = nil; draft = ""
+            let fresh = Conversation()
+            conversations.insert(fresh, at: 0)
+            currentID = fresh.id
+        }
+        return failed
     }
 
     func delete(_ id: UUID) {

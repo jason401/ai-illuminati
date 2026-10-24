@@ -2,6 +2,11 @@
 
 이 문서만 읽으면 바로 이어서 작업할 수 있게 정리했어요. 규칙은 `AGENTS.md`(= `CLAUDE.md`와 같은 내용)에, 사용자용 설명은 `README.md`에 있어요.
 
+## 고정·전부 지우기·빈 대화 정리 (2026-10-23, Claude)
+
+- `Conversation.pinned`(선택 필드), `listedConversations`(고정 먼저), `togglePin`. `deleteAll()`(모두/고정 남기기, 확인 창) → `removeChats`(하나씩 `ChatStore.delete`, 실패 수 보고, 빈 새 대화 1개 유지). 목록 ⋯/오른쪽 클릭에 고정, "새 대화" 옆 ⊙ 메뉴에 전부 지우기.
+- 빈 대화 누적 수정: Codex가 설정만 바꾼 빈 방도 저장하게 해서 "새 대화"가 쌓이고 메뉴가 없어 못 지웠음. `Conversation.hasContent`(질문·자료·폴더). 설정만 있는 방은 떠날 때 파일 삭제(`dropBlanks`), 시작 시 가장 최근 것을 새 대화로 재사용(설정 유지)하고 나머지 삭제. 자료/폴더만 있는 빈 방은 유지·메뉴 표시. Discussion이 lazy라 정리는 채팅 창을 처음 열 때. 시험 20개 통과.
+
 ## AI 그림 (2026-10-23, Claude)
 
 - 시험 결과: Codex `exec`(read-only)에서 그림 생성 됨(29초) → `<CODEX_HOME>/generated_images/<thread>/exec-*.png`. Claude는 그림 파일 불가 → SVG. agy `generate_image`는 비동기 helper로 print 모드가 먼저 끝나고, 재시도 시 Google 500 오류 → 쓰지 않고 SVG. agy는 작업 폴더의 이미지 파일을 읽어 정확히 설명함.

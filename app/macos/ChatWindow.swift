@@ -37,19 +37,36 @@ struct ChatView: View {
     // Saved group chats, newest first. Right-click to delete.
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Button(action: { discussion.newConversation() }) {
-                Label(L("새 대화", "New chat"), systemImage: "square.and.pencil").frame(maxWidth: .infinity)
+            HStack(spacing: 6) {
+                Button(action: { discussion.newConversation() }) {
+                    Label(L("새 대화", "New chat"), systemImage: "square.and.pencil").frame(maxWidth: .infinity)
+                }
+                Menu {
+                    Button(L("대화 전부 지우기…", "Delete all chats…"), role: .destructive) { discussion.deleteAll() }
+                        .disabled(!discussion.conversations.contains(where: \.hasContent))
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help(L("대화 목록 메뉴", "Chat list options"))
             }
             .disabled(discussion.running || discussion.importingMaterials)
             .padding(10)
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
-                    ForEach(discussion.conversations) { conversation in
+                    ForEach(discussion.listedConversations) { conversation in
                         let selected = conversation.id == discussion.currentID
                         HStack(spacing: 2) {
                         Button(action: { discussion.open(conversation.id) }) {
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(conversation.turns.isEmpty ? L("새 대화", "New chat") : conversation.title).lineLimit(2)
+                                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                                    if conversation.pinned == true {
+                                        Image(systemName: "pin.fill").font(.caption2).foregroundColor(.secondary)
+                                    }
+                                    Text(conversation.turns.isEmpty ? L("새 대화", "New chat") : conversation.title).lineLimit(2)
+                                }
                                 Text(dateText(conversation.updatedAt)).font(.caption).foregroundColor(.secondary)
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -62,13 +79,17 @@ struct ChatView: View {
                         .buttonStyle(.plain)
                         .disabled(discussion.running || discussion.importingMaterials)
                         .contextMenu {
-                            if !conversation.turns.isEmpty {
+                            if conversation.hasContent {
+                                Button(conversation.pinned == true ? L("고정 해제", "Unpin") : L("맨 위에 고정", "Pin to top")) { discussion.togglePin(conversation.id) }
+                                Divider()
                                 Button(L("대화 삭제…", "Delete chat…"), role: .destructive) { discussion.delete(conversation.id) }
                             }
                         }
-                            if !conversation.turns.isEmpty {
+                            if conversation.hasContent {
                                 Menu {
-                                    Button(L("대화 삭제…", "Delete chat…"), role: .destructive) { discussion.delete(conversation.id) }
+                                    Button(conversation.pinned == true ? L("고정 해제", "Unpin") : L("맨 위에 고정", "Pin to top")) { discussion.togglePin(conversation.id) }
+                                Divider()
+                                Button(L("대화 삭제…", "Delete chat…"), role: .destructive) { discussion.delete(conversation.id) }
                                 } label: {
                                     Image(systemName: "ellipsis")
                                         .frame(width: 20, height: 24)

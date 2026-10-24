@@ -753,3 +753,38 @@ do {
     print("PASS: AI pictures (SVG and generated files) are stored, marked, shown and shared with later speakers")
 }
 
+// Pin to top and delete all.
+do {
+    let m = AppModel()
+    let chat = Discussion(model: m)
+    chat.removeChats(chat.conversations.filter(\.hasContent))
+    var made: [UUID] = []
+    for title in ["A", "B", "C"] {
+        var c = Conversation(); c.title = title; c.turns = [ChatTurn(question: title)]
+        ChatStore.save(c); chat.conversations.insert(c, at: 0); made.append(c.id)
+    }
+    chat.togglePin(made[0])   // "A" is the oldest
+    expect(chat.listedConversations.first?.id == made[0], "pinned chat must be listed first")
+    let reloaded = Discussion(model: m)
+    expect(reloaded.conversations.first { $0.id == made[0] }?.pinned == true, "pin must be saved")
+    expect(reloaded.listedConversations.first?.id == made[0], "pinned chat first after reopening")
+    chat.togglePin(made[0])
+    expect(chat.conversations.first { $0.id == made[0] }?.pinned == nil, "unpin")
+    chat.togglePin(made[1])
+    // "Keep pinned" path of delete all.
+    let failed = chat.removeChats(chat.conversations.filter { $0.hasContent && $0.pinned != true })
+    expect(failed == 0 && chat.conversations.filter(\.hasContent).map(\.id) == [made[1]], "delete all keeping pinned")
+    expect(!FileManager.default.fileExists(atPath: ChatStore.dir + "/\(made[0].uuidString).json") && FileManager.default.fileExists(atPath: ChatStore.dir + "/\(made[1].uuidString).json"),
+           "files of deleted chats removed, pinned kept")
+    chat.removeChats(chat.conversations.filter(\.hasContent))
+    expect(chat.conversations.count == 1 && chat.conversations[0].turns.isEmpty && chat.currentID == chat.conversations[0].id, "after deleting all, one empty new chat")
+    expect(!ChatStore.loadAll().contains { made.contains($0.id) }, "none of the deleted chats remain saved")
+    // A chat with only settings is not kept once you leave it; a new window reuses the newest one.
+    chat.configure { $0.turnsPerAI = 3 }
+    let blankID = chat.currentID
+    let again = Discussion(model: m)
+    expect(again.currentID == blankID && again.configuration.turnsPerAI == 3 && again.conversations.filter { !$0.hasContent }.count == 1,
+           "newest settings-only chat becomes the new chat, no pile-up")
+    print("PASS: pin to top (order, saved, unpin) and delete all (all or keep pinned)")
+}
+

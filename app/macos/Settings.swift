@@ -27,6 +27,24 @@ final class AppModel: ObservableObject {
             onDisplayChange?()
         }
     }
+    // What the menu bar shows next to (or instead of) the mark. Saved as "menuBarStyle".
+    enum MenuBarStyle: String, CaseIterable {
+        case mark, markBars, bars, markPercent
+        var title: String {
+            switch self {
+            case .mark: return L("마크만", "Mark")
+            case .markBars: return L("마크 + 막대", "Mark + bars")
+            case .bars: return L("막대만", "Bars")
+            case .markPercent: return L("마크 + %", "Mark + %")
+            }
+        }
+    }
+    @Published var menuBarStyle: MenuBarStyle {
+        didSet {
+            UserDefaults.standard.set(menuBarStyle.rawValue, forKey: "menuBarStyle")
+            onDisplayChange?()
+        }
+    }
     @Published private(set) var openAtLogin: Bool
     let updater = Updater()
     // Rules put at the top of every message the chat sends to an AI (edited in Settings).
@@ -73,6 +91,9 @@ final class AppModel: ObservableObject {
         language = AppLanguage.current
         accounts = AccountStore.load()
         showPercent = UserDefaults.standard.bool(forKey: "showPercent")
+        // Older setting: "% 같이 보기" on becomes "mark + %"; otherwise the new default "mark + bars".
+        menuBarStyle = UserDefaults.standard.string(forKey: "menuBarStyle").flatMap(MenuBarStyle.init(rawValue:))
+            ?? (UserDefaults.standard.bool(forKey: "showPercent") ? .markPercent : .markBars)
         openAtLogin = SMAppService.mainApp.status == .enabled
         let saved = UserDefaults.standard.string(forKey: "chatRules")
         chatRules = (saved == nil || saved == Self.koreanChatRules || saved == Self.rules(for: .english)
@@ -151,12 +172,14 @@ struct GeneralSettingsTab: View {
                 .pickerStyle(.segmented)
             }
             Section {
-                Toggle(L("메뉴바에 % 같이 보기", "Show percentages in the menu bar"), isOn: $model.showPercent)
+                Picker(L("메뉴바 표시", "Menu bar"), selection: $model.menuBarStyle) {
+                    ForEach(AppModel.MenuBarStyle.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
                 Toggle(L("로그인할 때 자동 실행", "Open at login"), isOn: Binding(get: { model.openAtLogin },
                                                                           set: { model.setOpenAtLogin($0) }))
             } footer: {
-                Text(L("메뉴바에는 삼각형 안의 눈 마크가 보여요. % 같이 보기를 켜면 AI별로 가장 많이 남은 계정의 %가 옆에 나와요.",
-                       "The menu bar shows the eye-in-triangle mark. With percentages on, each AI's best remaining account is shown next to it."))
+                Text(L("막대는 왼쪽부터 Claude · ChatGPT · Gemini예요. 각 AI에서 가장 많이 남은 계정이 지금 쓸 수 있는 양(5시간과 주간 중 적은 쪽)을 채워서 보여줘요. 마우스를 올리면 숫자가 보여요.",
+                       "Bars, left to right: Claude · ChatGPT · Gemini. Each is filled by what its best account can use now (the lower of 5-hour and weekly). Hover for the numbers."))
                     .font(.caption).foregroundStyle(.secondary)
             }
             UpdateSection(updater: model.updater)

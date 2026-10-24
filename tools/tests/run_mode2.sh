@@ -16,5 +16,5 @@ PY
 PYTHONDONTWRITEBYTECODE=1 python3 tools/tests/material_fixtures.py "$TEST_DIR/data/material-fixtures"
 xcrun swiftc -swift-version 5 -module-cache-path "$TEST_DIR/cache" -o "$TEST_DIR/run" \
     app/macos/Language.swift app/macos/Usage.swift "$TEST_DIR/Accounts.swift" app/macos/Login.swift \
-    app/macos/Settings.swift app/macos/Discussion.swift app/macos/Debate.swift app/macos/Attachments.swift app/macos/NativeSessions.swift app/macos/RoomDocuments.swift app/macos/MaterialReader.swift app/macos/Collaboration.swift app/macos/Workspace.swift app/macos/WorkspaceBackup.swift app/macos/Updater.swift app/macos/Pictures.swift "$TEST_DIR/main.swift"
+    app/macos/Settings.swift app/macos/Discussion.swift app/macos/Debate.swift app/macos/Attachments.swift app/macos/NativeSessions.swift app/macos/RoomDocuments.swift app/macos/MaterialReader.swift app/macos/Collaboration.swift app/macos/Workspace.swift app/macos/WorkspaceBackup.swift app/macos/Updater.swift app/macos/Pictures.swift app/macos/MenuCards.swift app/macos/Icon.swift "$TEST_DIR/main.swift"
 "$TEST_DIR/run"

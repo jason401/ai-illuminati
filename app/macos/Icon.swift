@@ -41,3 +41,34 @@ func illuminatiIcon() -> NSImage {
     image.accessibilityDescription = "AI Illuminati"
     return image
 }
+
+// The compact menu bar meter: one thin vertical bar per AI (Claude, ChatGPT, Gemini), filled from the
+// bottom by what is left. An AI with no reading shows an empty outline. Optionally the mark first.
+// A template image, so macOS draws it white or black to match the menu bar.
+func meterIcon(levels: [Double?], mark: Bool) -> NSImage {
+    let barWidth: CGFloat = 4, gap: CGFloat = 3, height: CGFloat = 18
+    let barsWidth = CGFloat(levels.count) * barWidth + CGFloat(max(levels.count - 1, 0)) * gap
+    let markWidth: CGFloat = mark ? 18 + 5 : 0
+    let size = NSSize(width: markWidth + barsWidth, height: height)
+    let image = NSImage(size: size, flipped: false) { _ in
+        if mark { illuminatiIcon().draw(in: NSRect(x: 0, y: 0, width: 18, height: 18)) }
+        for (i, level) in levels.enumerated() {
+            let x = markWidth + CGFloat(i) * (barWidth + gap)
+            let frame = NSRect(x: x + 0.5, y: 2.5, width: barWidth - 1, height: 13)
+            let outline = NSBezierPath(roundedRect: frame, xRadius: 1.5, yRadius: 1.5)
+            NSColor.black.withAlphaComponent(0.45).setStroke()
+            outline.lineWidth = 1
+            outline.stroke()
+            if let level, level > 0 {
+                let fillHeight = max(1.5, 13 * CGFloat(min(level, 100)) / 100)
+                NSColor.black.setFill()
+                NSBezierPath(roundedRect: NSRect(x: x + 0.5, y: 2.5, width: barWidth - 1, height: fillHeight), xRadius: 1.5, yRadius: 1.5).fill()
+            }
+        }
+        return true
+    }
+    image.isTemplate = true
+    image.accessibilityDescription = "AI Illuminati"
+    return image
+}
+

@@ -247,8 +247,8 @@ struct GeneralSettingsTab: View {
                 Toggle(L("로그인할 때 자동 실행", "Open at login"), isOn: Binding(get: { model.openAtLogin },
                                                                           set: { model.setOpenAtLogin($0) }))
             } footer: {
-                Text(L("막대 하나가 계정 하나예요. 계정 설정의 순서대로, '메뉴바 잔여량 기준'에서 고른 한도(5시간 또는 주간)의 남은 양을 보여줘요. 그 한도가 없는 계정(예: Gemini의 5시간)은 막히지 않으니 가득 찬 막대예요. 아직 못 읽은 계정만 빈 막대예요. 마우스를 올리면 계정별 이름과 숫자가 보여요.",
-                       "One bar per account, in Settings order, showing what is left of the limit chosen in 'Menu bar shows' (5-hour or weekly). An account without that limit (e.g. Gemini's 5-hour) is not held back by it, so its bar is full; only unread accounts are empty. Hover for names and numbers."))
+                Text(L("막대 하나가 계정 하나예요. 계정 설정의 순서대로, '메뉴바 잔여량 기준'에서 고른 한도(5시간 또는 주간)의 남은 양을 보여줘요. 그 한도가 없는 계정(예: Gemini의 5시간)은 막히지 않으니 가득 찬 막대예요. 아직 못 읽은 계정만 빈 막대예요. 마우스를 올리면 계정별 이름과 숫자가 보여요. 사용량 메뉴에서는 원형이 충전까지 지난 시간이고, 계정 줄에 마우스를 올리면 옆에 자세한 내용이 나와요.",
+                       "One bar per account, in Settings order, showing what is left of the limit chosen in 'Menu bar shows' (5-hour or weekly). An account without that limit (e.g. Gemini's 5-hour) is not held back by it, so its bar is full; only unread accounts are empty. Hover for names and numbers. In the usage menu, rings show time toward reset; hover an account row for its details."))
                     .font(.caption).foregroundStyle(.secondary)
             }
             UpdateSection(updater: model.updater)

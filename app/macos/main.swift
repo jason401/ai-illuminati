@@ -131,6 +131,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private var usageMenuIsOpen = false
+    // Account rows are custom views: draw their hover highlight (their details open to the side).
+    func menu(_ menu: NSMenu, willHighlight item: NSMenuItem?) {
+        for entry in menu.items { (entry.view as? MenuRowView)?.highlighted = entry === item }
+    }
+
     func menuWillOpen(_ menu: NSMenu) {
         rebuildMenu()
         usageMenuIsOpen = true
@@ -278,20 +283,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
             if !shown.isEmpty { menu.addItem(MenuCardItem.legend()) }
         } else if !shown.isEmpty {
-            menu.addItem(MenuCardItem.comparison(shown, style: model.usageMenuStyle))
-            menu.addItem(MenuCardItem.details(shown))
+            for row in MenuCardItem.comparison(shown, style: model.usageMenuStyle) { menu.addItem(row) }
         }
         if !shown.isEmpty { menu.addItem(.separator()) }
-        let appearance = NSMenuItem(title: L("표시 방식", "View style"), action: nil, keyEquivalent: "")
-        let choices = NSMenu()
-        for style in AppModel.UsageMenuStyle.allCases {
-            let choice = action(style.title, #selector(changeUsageMenuStyle(_:)))
-            choice.representedObject = style.rawValue
-            choice.state = model.usageMenuStyle == style ? .on : .off
-            choices.addItem(choice)
-        }
-        appearance.submenu = choices
-        menu.addItem(appearance)
         menu.addItem(action(L("채팅창 열기…", "Open Chat…"), #selector(openChat), key: "n"))
         menu.addItem(action(L("설정…", "Settings…"), #selector(openSettings), key: ","))
         menu.addItem(action(L("지금 새로고침", "Refresh Now"), #selector(refresh), key: "r"))
@@ -307,11 +301,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: Actions
 
-    @objc private func changeUsageMenuStyle(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String,
-              let style = AppModel.UsageMenuStyle(rawValue: raw) else { return }
-        model.usageMenuStyle = style
-    }
 
     @objc private func openSettings() { settings.show(model: model) }
     @objc private func openChat() { chat.show(discussion: discussion) }

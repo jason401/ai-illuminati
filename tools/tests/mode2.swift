@@ -103,6 +103,12 @@ expect(AppModel().language == .korean, "language must persist across model recre
 languageModel.chatRules = "My custom rules"
 languageModel.language = .english
 expect(languageModel.chatRules == "My custom rules", "custom rules must be preserved")
+expect(AppModel.oldDefaultRules.count == 2 && !AppModel.defaultChatRules.contains("3–5") && !AppModel.rules(for: .korean).contains("3~5"),
+       "default rules must not set a length any more")
+UserDefaults.standard.set(AppModel.oldDefaultRules[1], forKey: "chatRules")
+expect(AppModel().chatRules == AppModel.defaultChatRules, "a saved old default must become the new default")
+UserDefaults.standard.set("My custom rules", forKey: "chatRules")
+expect(AppModel().chatRules == "My custom rules", "custom saved rules must be kept")
 print("PASS: default English, Korean switch, persistence, default rule localization, custom rule preservation")
 
 // Mode 3: parallel opening, then repeat speakers, complete history, moderator termination and synthesis.

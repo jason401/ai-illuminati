@@ -32,21 +32,37 @@ final class AppModel: ObservableObject {
     @Published var chatRules: String {
         didSet { UserDefaults.standard.set(chatRules, forKey: "chatRules") }
     }
+    // Style only. How long each AI turn is comes from the length menu in the chat window.
     private static let koreanChatRules = """
-    - 짧게 핵심만 쓴다. 보통 3~5문장, 목록이면 5개 이내.
     - 인사, 칭찬, 맞장구, 질문 되풀이, 같은 말 반복은 쓰지 않는다.
-    - 다른 AI의 답을 검토할 때는 틀린 점과 빠진 점만 3줄 이내로 쓴다.
-    - 사용자가 자세히 해달라고 할 때만 길게 쓴다.
+    - 다른 AI의 답을 검토할 때는 틀린 점과 빠진 점에 집중한다.
+    - 사용자의 최근 메시지 언어로 답한다. 다른 언어를 요청하면 그 언어로.
     """
     static func rules(for language: AppLanguage) -> String {
         if language == .korean { return koreanChatRules }
         return """
+        - Avoid greetings, praise, filler, restating the question, and repetition.
+        - When reviewing other answers, focus on errors and omissions.
+        - Reply in the language of the user's latest message unless they request another language.
+        """
+    }
+
+    // Earlier defaults, which also set a length ("3–5 sentences"). Saved copies of them are replaced
+    // by the current default; rules the user wrote stay as they are.
+    static let oldDefaultRules = [
+        """
+        - 짧게 핵심만 쓴다. 보통 3~5문장, 목록이면 5개 이내.
+        - 인사, 칭찬, 맞장구, 질문 되풀이, 같은 말 반복은 쓰지 않는다.
+        - 다른 AI의 답을 검토할 때는 틀린 점과 빠진 점만 3줄 이내로 쓴다.
+        - 사용자가 자세히 해달라고 할 때만 길게 쓴다.
+        """,
+        """
         - Keep answers concise: usually 3–5 sentences, or at most 5 list items.
         - Avoid greetings, praise, filler, restating the question, and repetition.
         - When reviewing other answers, mention only errors or omissions in at most 3 lines.
         - Give more detail only when requested. Reply in the language of the user's latest message unless they request another language.
-        """
-    }
+        """,
+    ]
     static var defaultChatRules: String { rules(for: AppLanguage.current) }
     @Published var latestUsage: [String: AIUsage] = [:]   // last readings by account id (set by the menu)
     var onAccountsChange: (() -> Void)?
@@ -58,7 +74,8 @@ final class AppModel: ObservableObject {
         showPercent = UserDefaults.standard.bool(forKey: "showPercent")
         openAtLogin = SMAppService.mainApp.status == .enabled
         let saved = UserDefaults.standard.string(forKey: "chatRules")
-        chatRules = (saved == nil || saved == Self.koreanChatRules || saved == Self.rules(for: .english))
+        chatRules = (saved == nil || saved == Self.koreanChatRules || saved == Self.rules(for: .english)
+                     || Self.oldDefaultRules.contains(saved!))
             ? Self.defaultChatRules : saved!
     }
 
@@ -141,8 +158,37 @@ struct GeneralSettingsTab: View {
                        "The menu bar shows the eye-in-triangle mark. With percentages on, each AI's best remaining account is shown next to it."))
                     .font(.caption).foregroundStyle(.secondary)
             }
+            Section {
+                HStack {
+                    Text(L("앱 데이터", "App data"))
+                    Spacer()
+                    Button(L("Finder에서 열기", "Show in Finder")) { DataFolders.open(DataFolders.appData) }
+                }
+                HStack {
+                    Text(L("계정 폴더", "Account folders"))
+                    Spacer()
+                    Button(L("Finder에서 열기", "Show in Finder")) { DataFolders.open(DataFolders.accounts) }
+                }
+            } header: {
+                Text(L("저장 위치", "Where things are saved"))
+            } footer: {
+                Text(L("앱 데이터: 계정 목록, 대화 기록(chats)과 첨부 사본, 사용량 기록. 계정 폴더: 계정마다 Claude·ChatGPT 도구의 로그인·설정·세션 기록이 있어요. 로그인 정보가 들어 있으니 고치거나 다른 사람과 공유하지 마세요.",
+                       "App data: account list, chats and attachment copies, usage logs. Account folders: each account's Claude / ChatGPT login, settings and sessions. They contain sign-in data, so do not edit or share them."))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
+    }
+}
+
+// The two places the app keeps things, opened in Finder from Settings.
+enum DataFolders {
+    static var appData: String { AccountStore.supportDir }
+    static var accounts: String { AccountStore.home + "/.ai-illuminati" }
+
+    static func open(_ path: String) {
+        try? FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
+        NSWorkspace.shared.open(URL(fileURLWithPath: path, isDirectory: true))
     }
 }
 
@@ -232,6 +278,9 @@ private struct AccountRow: View {
                 .disabled(model.accounts.last?.id == account.id)
             Menu {
                 Button(L("로그인…", "Sign in…")) { model.login(account) }
+                if let dir = account.dir {
+                    Button(L("Finder에서 폴더 열기", "Show folder in Finder")) { DataFolders.open(dir) }
+                }
                 Divider()
                 Button(L("목록에서 빼기…", "Remove from list…")) { model.remove(account) }
             } label: {

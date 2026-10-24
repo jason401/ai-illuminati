@@ -2,6 +2,11 @@
 
 이 문서만 읽으면 바로 이어서 작업할 수 있게 정리했어요. 규칙은 `AGENTS.md`(= `CLAUDE.md`와 같은 내용)에, 사용자용 설명은 `README.md`에 있어요.
 
+## 채팅 규칙·저장 위치 (2026-10-23, Claude)
+
+- 기본 채팅 규칙에서 길이 줄("3~5문장", "검토 3줄", "자세히는 요청 시만") 제거, 말투·언어만 남김. 길이는 `SpeechLength` 메뉴가 담당. 저장된 값이 예전 기본(`AppModel.oldDefaultRules`, 한/영)이면 새 기본으로 읽음; 사용자가 쓴 규칙은 유지. 시험 추가.
+- 설정 → 일반 → "저장 위치": 앱 데이터(`~/Library/Application Support/AI Illuminati`)·계정 폴더(`~/.ai-illuminati`) Finder 열기(`DataFolders`), 계정 ⋯ 메뉴에 "Finder에서 폴더 열기". 로그인 정보 주의 문구.
+
 ## 모든 계정 같은 방식 (2026-10-23, Claude)
 
 - 사용자 결정: ChatGPT 개인·학교 모두 같은 방식. 처음 실행 시 `~/.codex`·기본 Claude 로그인을 빌려 등록하던 코드 제거(Gemini만 자동 등록). 기존 `codex-main`(ChatGPT (개인))은 id·이름 유지, `dir`=`~/.ai-illuminati/accounts/codex-main`(+ file 인증 저장)으로 옮기고 사용자가 브라우저로 따로 로그인. 결과: 새 폴더 개인 plus 사용량 읽힘, ChatGPT 앱 `~/.codex` 로그인도 계속 유효(따로 로그인은 충돌 없음, 복사만 위험). 이제 세션 대상 계정 4개(Claude 2, ChatGPT 2). 계정 목록 백업 `accounts.json.backup-before-codex-move`.

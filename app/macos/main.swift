@@ -11,6 +11,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let model = AppModel()
     private let settings = SettingsWindow()
     private let chat = ChatWindow()
+    private let poker = PokerWindow()
+    private lazy var pokerGame = PokerGame(model: model)
     private lazy var discussion = Discussion(model: model)
     private var accounts: [Account] { model.accounts }
     private var usages: [AIUsage] = []
@@ -87,6 +89,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             NSApp.mainMenu = self.keyboardMenu()
             self.settings.updateLanguage()
             self.chat.updateLanguage()
+            self.poker.updateLanguage()
             self.discussion.objectWillChange.send()
             self.updateTitle()
             self.rebuildMenu()
@@ -160,7 +163,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             for (name, selector, key, modifiers) in items {
                 let entry = NSMenuItem(title: name, action: selector, keyEquivalent: key)
                 entry.keyEquivalentModifierMask = modifiers
-                if selector == #selector(openSettings) || selector == #selector(openChat) { entry.target = self }
+                if selector == #selector(openSettings) || selector == #selector(openChat) || selector == #selector(openGame) { entry.target = self }
                 sub.addItem(entry)
             }
             holder.submenu = sub
@@ -168,6 +171,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         submenu("AI Illuminati", [(L("설정…", "Settings…"), #selector(openSettings), ",", .command),
                                   (L("채팅창 열기…", "Open Chat…"), #selector(openChat), "n", .command),
+                                  (L("게임 열기…", "Open Games…"), #selector(openGame), "g", .command),
                                   (L("숨기기", "Hide"), #selector(NSApplication.hide(_:)), "h", .command)])
         submenu(L("편집", "Edit"), [(L("실행 취소", "Undo"), Selector(("undo:")), "z", .command),
                        (L("실행 복귀", "Redo"), Selector(("redo:")), "z", [.command, .shift]),
@@ -288,6 +292,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         if !shown.isEmpty { menu.addItem(.separator()) }
         menu.addItem(action(L("채팅창 열기…", "Open Chat…"), #selector(openChat), key: "n"))
+        menu.addItem(action(L("게임 열기…", "Open Games…"), #selector(openGame), key: "g"))
         menu.addItem(action(L("설정…", "Settings…"), #selector(openSettings), key: ","))
         menu.addItem(action(L("지금 새로고침", "Refresh Now"), #selector(refresh), key: "r"))
         menu.addItem(.separator())
@@ -305,6 +310,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func openSettings() { settings.show(model: model) }
     @objc private func openChat() { chat.show(discussion: discussion) }
+    @objc private func openGame() { poker.show(game: pokerGame) }
 
     // MARK: Helpers
 

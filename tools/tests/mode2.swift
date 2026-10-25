@@ -803,3 +803,100 @@ do {
     expect(AppModel().menuBarWindow == .fiveHour, "default is 5-hour")
     print("PASS: menu bar 5-hour / weekly choice")
 }
+
+// Poker: hand ranking, betting rules, side pots, AI answers and a full fake game.
+do {
+    func c(_ s: String) -> [Card] { s.split(separator: " ").map { Card(String($0))! } }
+    func v(_ s: String) -> HandValue { HandEvaluator.best(c(s)) }
+    expect(v("As Ks Qs Js Ts 2d 3c").category == 8 && v("As Ks Qs Js Ts").name == L("로열 플러시", "Royal flush"), "royal flush")
+    expect(v("Ah 2d 3c 4s 5h 9d Kc") == HandValue(category: 4, ranks: [5]), "wheel straight is 5-high")
+    expect(v("Kh Kd Kc 2s 2h 9d 9c") > v("Ah Qh 9h 4h 2h 3d 3c"), "full house beats flush")
+    expect(v("Kh Kd 7c 7s 2h 9d 3c") < v("Kh Kd 7c 7s 2h Ad 3c"), "two pair kicker")
+    expect(v("Ah Ad 7c 6s 2h") == v("As Ac 7d 6h 2c"), "same hand ties")
+    expect(v("2h 2d 2c 3s 3h 3d Ac") == HandValue(category: 6, ranks: [3, 2]), "two trips make the best full house")
+
+    // A deck where each seat gets the given cards and the board comes out as given.
+    func rig(_ holes: [String], dealer: Int, board: String) -> [Card] {
+        let hs = holes.map(c), b = c(board)
+        var order: [Card] = []
+        for round in 0..<2 { for k in 1...hs.count { order.append(hs[(dealer + k) % hs.count][round]) } }
+        let rest = Card.fullDeck.filter { !hs.joined().contains($0) && !b.contains($0) }
+        order += [rest[0]] + b.prefix(3) + [rest[1], b[3], rest[2], b[4]] + rest.dropFirst(3)
+        return order
+    }
+    func seat(_ id: String, _ chips: Int) -> PokerSeat { PokerSeat(id: id, name: id, isHuman: false, chips: chips) }
+
+    // Heads-up: the dealer posts the small blind and acts first before the flop, last after it.
+    var h = PokerHand(seats: [seat("A", 1000), seat("B", 1000)], dealer: 0, smallBlind: 10, bigBlind: 20,
+                      deck: rig(["Ah Ad", "Kc Kd"], dealer: 0, board: "2s 7h 9c Jd 3s"))
+    expect(h.seats[0].hole == c("Ah Ad") && h.seats[1].hole == c("Kc Kd"), "rigged deal")
+    expect(h.seats[0].bet == 10 && h.seats[1].bet == 20 && h.toAct == 0 && h.pot == 30, "heads-up blinds")
+    expect(h.legal(.check, for: 0) == .fold && h.legal(.raise(25), for: 0) == .raise(40) && h.legal(.raise(5000), for: 0) == .raise(1000), "legal actions")
+    h.apply(.call, by: 0)
+    expect(h.toAct == 1 && h.street == .preflop, "big blind keeps the option")
+    h.apply(.raise(60), by: 1)
+    expect(h.toAct == 0 && h.minRaiseTo(0) == 100, "re-raise minimum")
+    h.apply(.call, by: 0)
+    expect(h.street == .flop && h.board == c("2s 7h 9c") && h.toAct == 1 && h.pot == 120, "flop dealt, non-dealer first")
+    h.apply(.check, by: 1); h.apply(.raise(50), by: 0); h.apply(.call, by: 1)
+    expect(h.street == .turn && h.pot == 220, "turn")
+    h.apply(.check, by: 1); h.apply(.check, by: 0)
+    h.apply(.check, by: 1); h.apply(.check, by: 0)
+    expect(h.finished && h.street == .showdown && h.wins == [PokerWin(seat: 0, amount: 220, hand: L("원페어", "One pair"))], "showdown winner")
+    expect(h.seats[0].chips == 1110 && h.seats[1].chips == 890, "chips after showdown")
+
+    // Fold ends the hand at once.
+    var f = PokerHand(seats: [seat("A", 1000), seat("B", 1000), seat("C", 1000)], dealer: 0, smallBlind: 10, bigBlind: 20, deck: Card.fullDeck)
+    expect(f.toAct == 0, "three-handed: dealer acts first preflop")
+    f.apply(.fold, by: 0); f.apply(.fold, by: 1)
+    expect(f.finished && f.seats[2].chips == 1010 && f.seats[1].chips == 990, "everyone folded to the big blind")
+
+    // Side pot: the short all-in stack can win only what it matched.
+    var s = PokerHand(seats: [seat("A", 100), seat("B", 500), seat("C", 500)], dealer: 2, smallBlind: 10, bigBlind: 20,
+                      deck: rig(["As Ah", "Ks Kh", "2c 7d"], dealer: 2, board: "3s 8h 9c Jd 4s"))
+    expect(s.toAct == 2, "first to act after the big blind")
+    s.apply(.call, by: 2); s.apply(.raise(100), by: 0)
+    expect(s.seats[0].allIn, "short stack is all in")
+    s.apply(.raise(300), by: 1); s.apply(.call, by: 2)
+    expect(s.street == .flop && s.pots().map(\.amount) == [300, 400], "main pot and side pot")
+    s.apply(.check, by: 1); s.apply(.check, by: 2); s.apply(.check, by: 1); s.apply(.check, by: 2); s.apply(.check, by: 1); s.apply(.check, by: 2)
+    expect(s.finished && s.seats.map(\.chips) == [300, 600, 200], "short stack wins main, next best wins side")
+
+    // Everyone all in: the board runs out with no more questions.
+    let r = PokerHand(seats: [seat("A", 15), seat("B", 20)], dealer: 0, smallBlind: 10, bigBlind: 20, deck: rig(["2c 3d", "Ac Ad"], dealer: 0, board: "Ks Qh 9c 7d 5s"))
+    var r2 = r; r2.apply(.call, by: 0)
+    expect(r2.finished && r2.board.count == 5 && r2.seats.map(\.chips) == [0, 35], "all in runs out the board; unmatched chips go back")
+
+    // AI answers.
+    let p = PokerHand(seats: [seat("A", 1000), seat("B", 1000)], dealer: 0, smallBlind: 10, bigBlind: 20, deck: rig(["Ah Ad", "Kc Kd"], dealer: 0, board: "2s 7h 9c Jd 3s"))
+    expect(PokerAI.parse("{\"action\":\"raise\",\"amount\":80,\"reason\":\"좋은 패\"}", hand: p, seat: 0) == .init(action: .raise(80), reason: "좋은 패", usable: true), "JSON answer")
+    expect(PokerAI.parse("Sure! ```json\n{\"action\":\"CALL\",\"amount\":0,\"reason\":\"x\"}\n```", hand: p, seat: 0).action == .call, "JSON inside text")
+    expect(PokerAI.parse("I will fold here.", hand: p, seat: 0).action == .fold, "plain words")
+    expect(PokerAI.parse("{\"action\":\"raise\",\"amount\":3}", hand: p, seat: 0).action == .raise(40), "small raise becomes the minimum")
+    let bad = PokerAI.parse("hmm", hand: p, seat: 0)
+    expect(bad.action == .fold && !bad.usable, "unreadable answer folds when a bet is owed")
+    let promptA = PokerAI.prompt(p, seat: 0)
+    expect(promptA.contains("A♥ A♦") && !promptA.contains("K♣") && !promptA.contains("K♦"), "an AI sees only its own cards")
+
+    // A whole game between two fake AIs, saved to poker.json.
+    try? FileManager.default.removeItem(at: PokerStore.file)
+    let pm = AppModel()
+    pm.accounts = [Account(id: "p1", provider: .claude, name: "Claude P", dir: nil), Account(id: "p2", provider: .codex, name: "GPT P", dir: nil)]
+    let game = PokerGame(model: pm)
+    game.withMe = false
+    game.autoNext = false
+    var prompts: [String] = []
+    game.answer = { account, prompt in
+        prompts.append(prompt)
+        return .success(account.id == "p1" ? "{\"action\":\"call\",\"reason\":\"콜\"}" : "{\"action\":\"check\",\"reason\":\"체크\"}")
+    }
+    expect(game.chosenAI == ["p1", "p2"] && game.canStart, "setup")
+    game.start()
+    let deadline = Date().addingTimeInterval(5)
+    while game.hand?.finished != true && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+    expect(game.hand?.finished == true && prompts.count >= 2, "fake hand finished")
+    expect(game.seats.map(\.chips).reduce(0, +) == 2000 && PokerStore.load()["p1"]?.hands == 1, "chips kept and saved")
+    expect(game.hand!.events.contains { $0.reason == "콜" }, "reasons kept for after the hand")
+    game.stop()
+    print("PASS: poker (ranking, betting, side pots, AI answers, saved chips)")
+}

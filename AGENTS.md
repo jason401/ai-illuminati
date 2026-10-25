@@ -21,7 +21,8 @@ Bigger plan (AI agents talking to each other, dashboards): `~/Downloads/ai-offic
 - `app/macos/main.swift` menu · `Settings.swift` AppModel (account list, options) + Settings window ·
   `ChatWindow.swift` chat UI · `Discussion.swift` Answerer (runs each CLI, tools off) + 3-step discussion + summary, ChatStore (chats/*.json) ·
   `Accounts.swift` account list/folders (Gemini is an entry too) · `Usage.swift` readers ·
-  `Login.swift` Terminal login scripts (window closes itself) · `Icon.swift` eye-in-triangle template icon.
+  `Login.swift` Terminal login scripts (window closes itself) · `Icon.swift` eye-in-triangle template icon ·
+  `Poker.swift` Texas Hold'em engine + AI decisions + poker.json · `PokerWindow.swift` game window.
 - Data: `~/Library/Application Support/AI Illuminati` (accounts.json, chats/*.json, last-usage-*.json, login .command files).
   Chat rules live in UserDefaults `chatRules` (default in `AppModel.defaultChatRules`).
 - agy keeps a local history file per `agy -p` call (`~/.gemini/antigravity-cli/conversations`); Claude/Codex calls keep none.

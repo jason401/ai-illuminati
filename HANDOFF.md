@@ -2,6 +2,11 @@
 
 이 문서만 읽으면 바로 이어서 작업할 수 있게 정리했어요. 규칙은 `AGENTS.md`(= `CLAUDE.md`와 같은 내용)에, 사용자용 설명은 `README.md`에 있어요.
 
+## 포커 게임 (2026-10-24, Claude)
+- 사용자 요청: 채팅 모드가 아닌 별도 게임. 메뉴 '게임 열기…'(⌘G) → `PokerWindow.swift`(설정 화면 + 초록 테이블 + 오른쪽 판 기록). 엔진은 `Poker.swift`: 카드·족보(`HandEvaluator`, 7장 중 최고 5장), 노리밋 홀덤 배팅(`PokerHand`: 블라인드 10/20, 헤즈업 규칙, 최소 레이즈, 올인 시 보드 자동 진행, 사이드팟, 남는 칩은 딜러 왼쪽부터), AI 프롬프트/답 해석(`PokerAI`, 자기 카드+공개 정보만, JSON 한 줄, 못 읽으면 체크/폴드), 진행(`PokerGame`, 사람 차례면 버튼 대기, AI는 `Answerer.ask` 120초, 그만하기 시 진행 중 판 취소=칩 원상태).
+- 사람이 참여하면 AI 카드·속마음은 판이 끝난 뒤 공개, AI끼리 구경이면 바로 보임. 칩·판수·승수·리바이는 `poker.json`(순위표, 리바이, 기록 지우기).
+- 실제 Claude(개인) vs ChatGPT(개인) 한 판 확인: 75초, 9번 결정 모두 정상 JSON, 이유 한국어. 시험 `poker (...)` 추가.
+
 ## 채팅 입력 키 (2026-10-24, Claude)
 - 사용자 요청: Enter=전송, Shift+Enter(또는 Option+Enter)=줄바꿈, ⌘Enter도 전송. 한글 조합 중(hasMarkedText) Enter는 기본 입력기에 맡겨 글자만 완성. `ChatInputTextView.keyDown`, 안내 문구·버튼 도움말·README 수정. 가짜 키 입력으로 세 경우 확인.
 

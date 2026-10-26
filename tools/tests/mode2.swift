@@ -888,7 +888,9 @@ do {
     var prompts: [String] = []
     game.answer = { account, prompt in
         prompts.append(prompt)
-        return .success(account.id == "p1" ? "{\"action\":\"call\",\"reason\":\"콜\"}" : "{\"action\":\"check\",\"reason\":\"체크\"}")
+        // Both only call (a call with nothing owed is a check). A fake that always checks would fold
+        // whenever it is randomly first to act with a bet owed, ending the hand after one answer.
+        return .success(account.id == "p1" ? "{\"action\":\"call\",\"reason\":\"콜\"}" : "{\"action\":\"call\",\"reason\":\"따라감\"}")
     }
     expect(game.chosenAI == ["p1", "p2"] && game.canStart, "setup")
     game.start()

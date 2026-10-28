@@ -1,6 +1,6 @@
 from pathlib import Path
-import subprocess,tempfile,shutil,plistlib,re
-app=Path(__file__).resolve().parents[2]/'AI Illuminati.app'
+import subprocess,tempfile,shutil,plistlib,re,sys
+app=Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else Path(__file__).resolve().parents[2]/'AI Illuminati.update.app'
 keychain=Path.home()/'Library/Keychains/login.keychain-db'
 identities=subprocess.check_output(['security','find-identity','-v','-p','codesigning',str(keychain)],text=True)
 identity=re.search(r'([0-9A-F]{40}) "AI Illuminati Local Signing"',identities).group(1)

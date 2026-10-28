@@ -1,6 +1,6 @@
 # 앱 설치·업데이트 구조 분리 계획
 
-작성: Codex, 2026-10-28 · 상태: Claude 검토 전 초안
+작성: Codex, 2026-10-28 · 상태: Claude 검토 반영 · 1차 구현 (최종 결정은 §12)
 
 이 문서는 구현 계획만 담는다. 사용자 요청에 따라 실행 코드, 설치 위치, 서명, 사용자 데이터는 아직 변경하지 않는다. Claude 검토 이후 Codex가 의견을 반영해 계획을 수정하고, 최종 합의된 범위로 구현한다. 이 문서의 제안은 구현 승인이나 완료 기록이 아니다.
 
@@ -229,3 +229,15 @@ README는 일반 사용자 설치와 개발자 빌드를 나눈다. HANDOFF에�
 | D' | updater를 숨은 clone 기반으로 전환 (릴리스 다운로드 대신), `/Applications` 교체·시작 확인·복구 |
 | E | 새 버전의 1회 자동 이전 (로그인 항목 포함), 프로젝트 폴더 접근 불가 상태 시험 |
 | F | 연속 두 버전 업데이트 시험, 문서 갱신. Releases·Sparkle·Developer ID는 별도 후속 계획 |
+
+
+## 12. Codex 최종 결정 및 구현 범위 (2026-10-28)
+
+사용자가 Claude 검토 후 구현을 승인했다. §1~10은 원안, §11은 Claude의 원문 검토로 보존한다. 실제 1차 구현은 이 절을 따른다.
+
+- **수용:** 각 Mac의 로컬 서명 유지, `/Applications` 설치, `Application Support/AI Illuminati/source` 전용 public clone, `stable`만 배포, 계정·rooms 경로 유지, bundle 자원 사용, 정확한 프로세스 종료·새 앱 시작 확인·실패 복구.
+- **후속으로 이동:** Releases archive, Sparkle, Developer ID, notarization, 외부 CLI 재배포. 이번 버전의 사용자 Mac에는 Command Line Tools·Python·기존 로컬 서명이 필요하다. 앞서 설명한 “사용자 Mac에서 컴파일 불필요”는 이번 1차 방식에는 적용되지 않는다.
+- **수정 수용:** bootstrap 커밋을 먼저 main에 배포하는 대신 구현 전체를 별도 branch에서 완료하고 시험 후 main·stable에 게시한다. 구 updater의 `--install-staged` 명령에는 호환 bridge를 둔다. 구 경로의 앱을 먼저 새 버전으로 교체한 뒤 그 앱이 자체 idle 검사·로그인 항목 전환을 거쳐 정식 위치로 이전한다. 구 updater 자체의 idle 검사는 포커를 알지 못하므로 다른 Mac의 최초 전환은 포커를 종료한 상태에서 수행한다. 전환 후에는 포커까지 교체 보류 대상이다.
+- **범위 명시:** 전원 중단 뒤 기록이 불완전하면 자동 삭제·덮어쓰기를 막고 명시적인 `--recover` 명령으로 복구한다. 영구 privileged helper는 설치하지 않는다. `/Applications` 권한이 없을 때 조용한 대체는 하지 않으며 `installInUserApplications`를 명시적으로 켜면 사용자 Applications를 쓴다.
+- 빌드 번호는 Git 커밋 개수, 소스 revision은 전체 SHA를 기록한다. 실제 업데이트 순서는 stable의 fast-forward ancestry로 검증한다. main push와 stable 배포를 구분한다.
+- 데이터 schema·로그인·사용자 연구 파일은 변경하지 않는다. 데이터 백업·실제 설치 검증 결과는 HANDOFF에 기록한다. 최초 이전이 끝나도 프로젝트의 구 앱은 복구 사본으로 남겨 두며, 그 앱을 다시 실행하면 다른 실행 사본이 있는 동안 설치를 거부한다.

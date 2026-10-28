@@ -14,12 +14,19 @@
    ```bash
    git clone https://github.com/jason401/ai-illuminati.git
    ```
-2. 처음 한 번 프로젝트 폴더에서 `zsh tools/setup_signing.sh`를 실행해 앱 전용 로컬 서명을 설정해요. macOS 인증 창은 Mac에서 직접 승인하세요. 이후 `Build AI Illuminati.command`를 더블클릭해요 (Xcode Command Line Tools가 필요해요. 없으면 설치 창이 떠요).
-3. 메뉴바 오른쪽 위에 삼각형 안의 눈 마크가 생겨요. 누르면 계정마다 **5시간·주간 남은 양이 나란히** 보여요(그 요금제에 없는 한도는 `–`, 30% 미만 주황·10% 미만 빨강). 계정 위에 올리면 리셋 시각과 다른 한도가 보여요.
+2. 처음 한 번 프로젝트 폴더에서 `zsh tools/setup_signing.sh`를 실행해 앱 전용 로컬 서명을 설정해요. macOS 인증 창은 Mac에서 직접 승인하세요. 기존 앱이 실행 중이면 작업을 마치고 종료한 뒤 `Build AI Illuminati.command`를 더블클릭해요 (Xcode Command Line Tools가 필요해요. 없으면 설치 창이 떠요).
+3. 준비된 앱이 처음 실행되면 `/Applications/AI Illuminati.app`로 설치되어 다시 켜져요. 권한이 없으면 실패 이유를 표시하고 기존 앱을 유지해요. 사용자별 설치는 명시적으로 `defaults write local.aiilluminati installInUserApplications -bool true`를 설정한 뒤 다시 실행하면 `~/Applications`를 사용해요.
+4. 메뉴바 오른쪽 위에 삼각형 안의 눈 마크가 생겨요. 누르면 계정마다 **5시간·주간 남은 양이 나란히** 보여요(그 요금제에 없는 한도는 `–`, 30% 미만 주황·10% 미만 빨강). 계정 위에 올리면 리셋 시각과 다른 한도가 보여요.
 
 ## 자동 업데이트
 
-설정 → 일반 → **업데이트**. 켜져 있으면(기본) 앱이 켜질 때와 3시간마다 GitHub의 새 버전을 확인해요. 새 버전이 있으면 받기 → 시험 → 새 앱을 옆에 빌드·서명까지 하고, **모두 통과해야** 앱을 바꿔서 다시 켜요. 하나라도 실패하면 받은 코드를 되돌리고 지금 버전을 그대로 써요. 이 맥에서 직접 고친 코드나 GitHub에 없는 커밋이 있으면 건너뛰고, 채팅이 진행 중이면 끝날 때까지 기다려요. **지금 확인** 버튼으로 바로 확인할 수도 있어요. 수동으로는 `zsh tools/build_app.sh --stage` 후 `--install-staged`로 같은 과정을 할 수 있어요.
+설정 → 일반 → **업데이트**. 기본으로 시작 후 60초와 3시간마다 공개 저장소의 `stable` 브랜치를 확인해요. 앱 전용 소스는 `~/Library/Application Support/AI Illuminati/source`에 있고, Documents의 개발 프로젝트는 읽거나 수정하지 않아요. 각 Mac에서 시험 → 빌드 → 기존 로컬 인증서로 서명 → 설치 위치의 앱 교체 → 새 앱 실행 확인 순서로 진행해요. 따라서 업데이트에는 각 Mac의 Command Line Tools와 기존 로컬 서명이 계속 필요해요. API 키는 필요 없어요.
+
+채팅·자료 가져오기·포커가 진행 중이면 교체를 미뤄요. 설치 실패 시 이전 앱을 복구하고, 새 앱이 시작됐다고 확인한 뒤에만 성공으로 기록해요. 계정·대화·설정과 `~/.ai-illuminati` 경로는 유지해요. 외부 Claude/Codex/agy와 `/usr/bin/python3`는 기존 설치를 사용해요.
+
+개발자는 `main`에서 수정·시험·push한 뒤 검증된 커밋만 `git push origin main:stable`로 배포해요. `stable`은 되감거나 강제 push하지 않아요. `zsh tools/build_app.sh --stage`는 후보 앱만 만들며 실행 앱을 종료하지 않아요. `--install-staged`는 구 버전 updater를 위한 최초 전환 호환 명령이에요. 새 앱의 업데이트는 자체 installer가 담당해요.
+
+전원 중단 등으로 설치 기록이 남으면 자동으로 덮어쓰지 않아요. 복구는 이 프로젝트에서 `/usr/bin/python3 tools/install_app.py --recover --support "$HOME/Library/Application Support/AI Illuminati"`로 수행할 수 있어요. 정상 앱의 번들 안 `Contents/Resources/install_app.py`도 같은 복구 명령을 지원해요. 로그는 데이터 폴더의 `updates/install.log`에 있어요. 공개용 Developer ID·notarization·완성 앱 다운로드 배포는 후속 범위예요.
 
 ## 언어
 

@@ -35,11 +35,10 @@ struct WorkspaceInvocation {
     var backupPath: String?
     var level: WorkspaceLevel { readOnly ? .view : binding.level }
     static var resources: URL {
-        if let url = Bundle.main.resourceURL, FileManager.default.fileExists(atPath: url.appendingPathComponent("workspace_mcp.py").path) { return url }
-        let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        let built = repo.appendingPathComponent("AI Illuminati.app/Contents/Resources")
-        if FileManager.default.fileExists(atPath: built.appendingPathComponent("WorkspaceDocument").path) { return built }
-        return repo.appendingPathComponent("app/resources")
+        // Test executables may supply resources explicitly; production never follows #filePath.
+        if let path = ProcessInfo.processInfo.environment["AI_ILLUMINATI_TEST_RESOURCES"],
+           Bundle.main.bundleIdentifier != "local.aiilluminati" { return URL(fileURLWithPath: path) }
+        return Bundle.main.resourceURL ?? Bundle.main.bundleURL.appendingPathComponent("Contents/Resources")
     }
     func prepare(in directory: URL) throws -> (String, [String]) {
         if level != .view {

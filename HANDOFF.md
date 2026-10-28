@@ -2,6 +2,16 @@
 
 이 문서만 읽으면 바로 이어서 작업할 수 있게 정리했어요. 규칙은 `AGENTS.md`(= `CLAUDE.md`와 같은 내용)에, 사용자용 설명은 `README.md`에 있어요.
 
+## 독립 설치·전용 업데이트 소스 (2026-10-28, Codex)
+
+- Claude의 `DISTRIBUTION_PLAN.md` §11 검토를 반영해 §12에서 결정: 각 Mac 로컬 서명 유지, `/Applications/AI Illuminati.app`, 전용 clone `~/Library/Application Support/AI Illuminati/source`, 배포 채널 `stable`. Developer ID/Releases/Sparkle은 후속. Command Line Tools·Python은 계속 필요.
+- `Updater.swift`: 개발 폴더와 독립, public stable clone/fetch/ff → 시험 → 로컬 서명 build → 분리 installer. clone·설치 lock, 소스 수정/분기 감지, 실행 binary SHA와 비교해 실패 build 재시도 가능. 채팅/자료 import/포커 중 교체 보류(강제 종료 없음).
+- `tools/install_app.py`: 현재 앱 designated requirement로 후보 검증, 대상 볼륨에서 준비, 정확한 앱 종료 후 백업·교체, 새 앱이 token/revision ack를 쓴 뒤 성공. 실패 시 기존 앱 복구. 중단 기록은 덮어쓰지 않고 `--recover --support <데이터폴더>`로 명시적 복구. 관리자 서비스 없음. 로그인 자동 실행은 구 앱 해제→새 앱 등록, 계정·rooms·UserDefaults 경로와 bundle ID 유지.
+- `build_app.sh --stage`는 후보만 생성(실행 앱 수정/종료 안 함). 기본 실행은 후보를 열어 최초 이전. `--install-staged`는 구 updater 호환: 정확한 경로의 구 앱에 정상 종료 요청→구 위치 새 앱→새 앱이 정식 위치 이전. 다른 Mac의 최초 전환 때는 구 updater가 포커를 인식하지 못하므로 게임을 먼저 종료할 것.
+- `Workspace.swift`: 배포 앱에서 #filePath fallback 제거, bundle 자원만 사용. CLI 시험은 명시적인 시험 자원 경로를 주입. 외부 AI CLI·Python은 기존 설치를 사용.
+- 개발 완료 시 main push, 배포는 별도로 `git push origin main:stable`(ff만). 부분 구현을 stable에 배포 금지. AGENTS/CLAUDE/README와 계획서 갱신.
+- 검증: 전체 Swift/아이콘/클립보드 회귀 통과, 임시 데이터 installer 단위 시험(취소·서명 거부·실패 복구 포함) 9개 통과. 임시 서명 fixture 앱의 두 차례 실제 설치·시작 ack(1→2→3) 통과. 실제 사용자 앱 이전 결과는 아래 후속 기록에 추가.
+
 ## 포커 게임 (2026-10-24, Claude)
 - 사용자 요청: 채팅 모드가 아닌 별도 게임. 메뉴 '게임 열기…'(⌘G) → `PokerWindow.swift`(설정 화면 + 초록 테이블 + 오른쪽 판 기록). 엔진은 `Poker.swift`: 카드·족보(`HandEvaluator`, 7장 중 최고 5장), 노리밋 홀덤 배팅(`PokerHand`: 블라인드 10/20, 헤즈업 규칙, 최소 레이즈, 올인 시 보드 자동 진행, 사이드팟, 남는 칩은 딜러 왼쪽부터), AI 프롬프트/답 해석(`PokerAI`, 자기 카드+공개 정보만, JSON 한 줄, 못 읽으면 체크/폴드), 진행(`PokerGame`, 사람 차례면 버튼 대기, AI는 `Answerer.ask` 120초, 그만하기 시 진행 중 판 취소=칩 원상태).
 - 사람이 참여하면 AI 카드·속마음은 판이 끝난 뒤 공개, AI끼리 구경이면 바로 보임. 칩·판수·승수·리바이는 `poker.json`(순위표, 리바이, 기록 지우기).

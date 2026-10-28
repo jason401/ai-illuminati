@@ -1,12 +1,9 @@
-import Foundation
+import Cocoa
+import Darwin
+import ServiceManagement
 
-// Automatic updates, the same way as AI Face: the app checks the public GitHub repository (the
-// project's `origin`, no login needed) one minute after it starts and every 3 hours.
-// Safe order: fetch -> fast-forward -> tests -> build and sign the new app next to the running one
-// (`tools/build_app.sh --stage`). Only when all of that passes is the app swapped and restarted
-// (`--install-staged`, started detached because it quits this app). Anything failing puts the folder
-// back where it was and the running app stays. Skipped when this Mac has its own changes or commits,
-// and postponed while a chat is answering.
+// stable is a deployment channel. Only the app-owned checkout is ever changed.
+// Each Mac builds with its existing local identity; developer repositories are never touched.
 final class Updater: ObservableObject {
     @Published var enabled: Bool {
         didSet { UserDefaults.standard.set(enabled, forKey: "autoUpdate") }
@@ -16,7 +13,18 @@ final class Updater: ObservableObject {
     var isBusy: () -> Bool = { false }
 
     static let every: TimeInterval = 3 * 3600, retry: TimeInterval = 600, first: TimeInterval = 60
-    let root = Bundle.main.bundleURL.deletingLastPathComponent()
+    static let repository = "https://github.com/jason401/ai-illuminati.git"
+    static let channel = "stable"
+    let root = URL(fileURLWithPath: AccountStore.supportDir).appendingPathComponent("source")
+    private var installing = false
+    private var revision: String { Bundle.main.object(forInfoDictionaryKey: "AISourceRevision") as? String ?? "" }
+    private var updates: URL { URL(fileURLWithPath: AccountStore.supportDir).appendingPathComponent("updates") }
+    private var target: URL {
+        // The user may explicitly choose the per-user Applications folder.
+        let personal = UserDefaults.standard.bool(forKey: "installInUserApplications")
+        let base = personal ? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications") : URL(fileURLWithPath: "/Applications")
+        return base.appendingPathComponent("AI Illuminati.app")
+    }
     private let work = DispatchQueue(label: "updater")
     private var timer: Timer?
     private var stateFile: URL { URL(fileURLWithPath: AccountStore.supportDir).appendingPathComponent("update.json") }
@@ -27,7 +35,8 @@ final class Updater: ObservableObject {
     }
 
     func start() {
-        schedule(after: Self.first)
+        acknowledgeInstallation()
+        schedule(after: Bundle.main.bundleURL.standardizedFileURL == target.standardizedFileURL ? Self.first : 2)
         timer = Timer.scheduledTimer(withTimeInterval: Self.every, repeats: true) { [weak self] _ in
             guard let self, self.enabled else { return }
             self.check(manual: false)
@@ -42,7 +51,7 @@ final class Updater: ObservableObject {
     }
 
     func check(manual: Bool) {
-        guard !checking else { return }
+        guard !checking, !installing else { return }
         if !manual && isBusy() {
             report(["status": "postponed"])
             schedule(after: Self.retry)
@@ -57,49 +66,151 @@ final class Updater: ObservableObject {
 
     private func run(manual: Bool) {
         defer { DispatchQueue.main.async { self.checking = false } }
-        guard FileManager.default.fileExists(atPath: root.appendingPathComponent(".git").path),
-              (try? git("remote", "get-url", "origin"))?.contains("ai-illuminati") == true else {
-            return report(["status": "unavailable"])
+        // A developer build is installed once before it checks for source updates.
+        if Bundle.main.bundleURL.standardizedFileURL != target.standardizedFileURL {
+            return handoff(staged: Bundle.main.bundleURL, next: revision)
         }
-        // This Mac's own edits are never overwritten.
-        if let changes = try? git("status", "--porcelain", "--untracked-files=no"), !changes.isEmpty {
-            return report(["status": "local-changes"])
-        }
-        do { try git("fetch", "-q", "origin", "main", timeout: 90) } catch {
-            return report(["status": "failed", "detail": L("GitHub에 연결하지 못했어요", "Could not reach GitHub")])
-        }
-        guard let old = try? git("rev-parse", "HEAD"), let new = try? git("rev-parse", "origin/main") else {
-            return report(["status": "failed", "detail": "git"])
-        }
-        if old == new { return report(["status": "current", "current": old]) }
-        guard (try? git("merge-base", "--is-ancestor", "HEAD", "origin/main")) != nil else {
-            return report(["status": "local-commits"])
-        }
-        report(["status": "testing", "current": old, "next": new], save: false)
         do {
-            try git("merge", "--ff-only", "-q", "origin/main")
-            try shell(["zsh", "tools/tests/run_mode2.sh"], timeout: 30 * 60, step: L("시험", "tests"))
-            report(["status": "building", "current": old, "next": new], save: false)
-            try shell(["zsh", "tools/build_app.sh", "--stage"], timeout: 20 * 60, step: L("빌드", "build"))
+            try FileManager.default.createDirectory(at: root.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let lockPath = root.deletingLastPathComponent().appendingPathComponent("source.lock").path
+            let lockFD = open(lockPath, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
+            guard lockFD >= 0 else { throw Failure(description: "Cannot open update lock") }
+            defer { close(lockFD) }
+            guard flock(lockFD, LOCK_EX | LOCK_NB) == 0 else { return report(["status": "postponed"]) }
+            defer { flock(lockFD, LOCK_UN) }
+            guard root.resolvingSymlinksInPath().path == root.path else {
+                throw Failure(description: "Update source must not be a symbolic link")
+            }
+            if !FileManager.default.fileExists(atPath: root.path) {
+                let temporary = root.deletingLastPathComponent().appendingPathComponent("source-clone-" + UUID().uuidString)
+                defer { try? FileManager.default.removeItem(at: temporary) }
+                _ = try execute(["/usr/bin/git", "clone", "--branch", Self.channel, "--single-branch", Self.repository, temporary.path],
+                            timeout: 180, step: "clone", directory: root.deletingLastPathComponent())
+                try FileManager.default.moveItem(at: temporary, to: root)
+            }
+            guard try git("remote", "get-url", "origin") == Self.repository else {
+                throw Failure(description: "Unexpected update repository")
+            }
+            guard try git("status", "--porcelain", "--untracked-files=normal").isEmpty else {
+                return report(["status": "local-changes"])
+            }
+            try git("fetch", "-q", "origin", Self.channel, timeout: 90)
+            let old = try git("rev-parse", "HEAD"), new = try git("rev-parse", "origin/" + Self.channel)
+            // Compare against the running binary, not only the checkout (a failed build may
+            // leave the checkout newer than the installed app).
+            if revision == new { return report(["status": "current", "current": revision]) }
+            guard (try? git("merge-base", "--is-ancestor", "HEAD", new)) != nil else {
+                return report(["status": "local-commits"])
+            }
+            // Refuse a stable rewind relative to the running app when its commit is available.
+            if !revision.isEmpty, (try? git("cat-file", "-e", revision + "^{commit}")) != nil,
+               (try? git("merge-base", "--is-ancestor", revision, new)) == nil {
+                throw Failure(description: "Stable channel is older than the running app")
+            }
+            do {
+                try git("merge", "--ff-only", "-q", new)
+                report(["status": "testing", "current": revision, "next": new], save: false)
+                try shell(["zsh", "tools/tests/run_mode2.sh"], timeout: 30 * 60, step: "tests")
+                report(["status": "building", "current": revision, "next": new], save: false)
+                try shell(["zsh", "tools/build_app.sh", "--stage"], timeout: 20 * 60, step: "build")
+            } catch {
+                // Only this private, clean checkout can be reset; never a developer folder.
+                _ = try? git("reset", "-q", "--hard", old)
+                throw error
+            }
+            handoff(staged: root.appendingPathComponent("AI Illuminati.update.app"), next: new)
         } catch {
-            _ = try? git("reset", "-q", "--hard", old)
-            try? FileManager.default.removeItem(at: root.appendingPathComponent("AI Illuminati.update.app"))
-            return report(["status": "failed", "current": old, "detail": "\(error)"])
+            report(["status": "failed", "current": revision, "detail": String(describing: error)])
         }
-        // Do not restart in the middle of an answer: wait (up to 6 hours) for the chat to finish.
-        let deadline = Date().addingTimeInterval(6 * 3600)
-        while DispatchQueue.main.sync(execute: { isBusy() }) && Date() < deadline {
-            report(["status": "waiting", "current": old, "next": new], save: false)
-            Thread.sleep(forTimeInterval: 60)
+    }
+
+    private func handoff(staged: URL, next: String) {
+        DispatchQueue.main.sync {
+            guard !isBusy() else {
+                report(["status": "waiting", "current": revision, "next": next])
+                schedule(after: Self.retry)
+                return
+            }
+            do {
+                // Avoid migrating a second app while a legacy copy is still running.
+                let others = NSRunningApplication.runningApplications(withBundleIdentifier: "local.aiilluminati")
+                    .filter { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }
+                guard others.isEmpty else { throw Failure(description: L("다른 AI Illuminati 앱을 먼저 종료해 주세요", "Quit the other AI Illuminati copy first")) }
+                try FileManager.default.createDirectory(at: updates, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+                let token = UUID().uuidString
+                let helper = staged.appendingPathComponent("Contents/Resources/install_app.py")
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+                var args = [helper.path, "--staged", staged.path, "--current", Bundle.main.bundleURL.path,
+                            "--target", target.path, "--support", AccountStore.supportDir,
+                            "--pid", String(ProcessInfo.processInfo.processIdentifier), "--token", token]
+                if SMAppService.mainApp.status == .enabled { args.append("--restore-login") }
+                process.arguments = args
+                process.currentDirectoryURL = URL(fileURLWithPath: "/")
+                process.environment = cleanEnvironment()
+                process.standardInput = FileHandle.nullDevice
+                let log = updates.appendingPathComponent("install.log")
+                if !FileManager.default.fileExists(atPath: log.path) { FileManager.default.createFile(atPath: log.path, contents: nil, attributes: [.posixPermissions: 0o600]) }
+                let output = try FileHandle(forWritingTo: log)
+                try output.seekToEnd()
+                process.standardOutput = output
+                process.standardError = output
+                try process.run()
+                installing = true
+                waitForInstaller(process, token: token, deadline: Date().addingTimeInterval(120))
+            } catch { report(["status": "failed", "detail": String(describing: error)]) }
         }
-        report(["status": "updated", "previous": old, "current": new])
-        let install = Process()
-        install.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        install.arguments = ["-c", "nohup zsh tools/build_app.sh --install-staged >/dev/null 2>&1 &"]
-        install.currentDirectoryURL = root
-        install.environment = cleanEnvironment()
-        try? install.run()
-        install.waitUntilExit()
+    }
+
+    private func waitForInstaller(_ process: Process, token: String, deadline: Date) {
+        // Poll without blocking the UI. Recheck busy immediately before graceful termination.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            let ready = self.updates.appendingPathComponent(token + ".ready")
+            if FileManager.default.fileExists(atPath: ready.path) {
+                guard !self.isBusy() else {
+                    process.terminate()
+                    self.installing = false
+                    self.report(["status": "postponed"])
+                    self.schedule(after: Self.retry)
+                    return
+                }
+                if SMAppService.mainApp.status == .enabled {
+                    do { try SMAppService.mainApp.unregister() }
+                    catch {
+                        process.terminate()
+                        self.installing = false
+                        self.report(["status": "failed", "detail": "Could not unregister old login item: \(error)"])
+                        return
+                    }
+                }
+                NSApp.terminate(nil)
+            } else if !process.isRunning || Date() > deadline {
+                if process.isRunning { process.terminate() }
+                self.installing = false
+                self.report(["status": "failed", "detail": L("설치 준비 실패: updates/install.log를 확인해 주세요", "Installer preparation failed; see updates/install.log")])
+            } else { self.waitForInstaller(process, token: token, deadline: deadline) }
+        }
+    }
+
+    private func acknowledgeInstallation() {
+        let journal = updates.appendingPathComponent("transaction.json")
+        guard let data = try? Data(contentsOf: journal),
+              let record = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+        if record["phase"] as? String == "starting",
+           record["target"] as? String == Bundle.main.bundleURL.path,
+           record["revision"] as? String == revision, let token = record["token"] as? String,
+           UUID(uuidString: token) != nil {
+            if record["restoreLogin"] as? Bool == true {
+                do { try SMAppService.mainApp.register() }
+                catch { report(["status": "failed", "detail": "Login item registration failed: \(error)"]) }
+            }
+            let confirmation: [String: Any] = ["revision": revision, "pid": ProcessInfo.processInfo.processIdentifier]
+            if let ack = try? JSONSerialization.data(withJSONObject: confirmation) {
+                try? ack.write(to: updates.appendingPathComponent(token + ".ack"), options: .atomic)
+            }
+        } else if record["phase"] as? String == "failed", record["restoreLogin"] as? Bool == true {
+            try? SMAppService.mainApp.register()
+        }
     }
 
     struct Failure: Error, CustomStringConvertible { let description: String }
@@ -118,14 +229,15 @@ final class Updater: ObservableObject {
         for key in ["PWD", "OLDPWD", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"] { env.removeValue(forKey: key) }
         env["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin"
         env["GIT_TERMINAL_PROMPT"] = "0"
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
         return env
     }
 
-    private func execute(_ command: [String], timeout: TimeInterval, step: String) throws -> String {
+    private func execute(_ command: [String], timeout: TimeInterval, step: String, directory: URL? = nil) throws -> String {
         let process = Process(), out = Pipe()
         process.executableURL = URL(fileURLWithPath: command[0])
         process.arguments = Array(command.dropFirst())
-        process.currentDirectoryURL = root
+        process.currentDirectoryURL = directory ?? root
         process.environment = cleanEnvironment()
         process.standardOutput = out
         process.standardError = out
@@ -135,7 +247,8 @@ final class Updater: ObservableObject {
         let reader = DispatchQueue(label: "updater-read"), done = DispatchSemaphore(value: 0)
         reader.async { data = out.fileHandleForReading.readDataToEndOfFile(); done.signal() }
         if done.wait(timeout: .now() + timeout) == .timedOut {
-            process.terminate()
+            DebateCancellation.end(process)
+            process.waitUntilExit()
             throw Failure(description: L("\(step) 시간 초과", "\(step) timed out"))
         }
         process.waitUntilExit()
@@ -180,13 +293,13 @@ final class Updater: ObservableObject {
         case "checking": return L("새 버전 확인 중…", "Checking for a new version…")
         case "testing": return L("새 버전(\(short(s["next"]))) 시험 중…", "Testing new version \(short(s["next"]))…")
         case "building": return L("새 버전(\(short(s["next"]))) 준비 중…", "Preparing new version \(short(s["next"]))…")
-        case "waiting": return L("새 버전 준비 완료. 채팅이 끝나면 다시 시작해요", "New version ready. Restarting after the chat finishes")
+        case "waiting": return L("새 버전 준비 완료. 작업이 끝나면 다시 시작해요", "New version ready. Restarting after active work finishes")
         case "current": return L("최신 버전이에요 (\(short(s["current"])))", "Up to date (\(short(s["current"])))") + when
         case "updated": return L("업데이트됨: \(short(s["previous"])) → \(short(s["current"]))", "Updated: \(short(s["previous"])) → \(short(s["current"]))") + when
-        case "postponed": return L("채팅 중이라 10분 뒤 다시 확인해요", "Busy with a chat; checking again in 10 minutes") + when
+        case "postponed": return L("작업 중이라 10분 뒤 다시 확인해요", "Busy; checking again in 10 minutes") + when
         case "local-changes": return L("이 맥에서 고친 코드가 있어 건너뛰었어요", "Skipped: this Mac has its own code changes") + when
         case "local-commits": return L("이 맥에만 있는 커밋이 있어 건너뛰었어요", "Skipped: this Mac has commits not on GitHub") + when
-        case "unavailable": return L("프로젝트 폴더(git)가 아니라 자동 업데이트를 쓸 수 없어요", "Not in the project folder (git), so updates are unavailable")
+        case "unavailable": return L("업데이트 소스를 준비하지 못했어요", "Update source is unavailable")
         case "failed": return L("업데이트 실패, 지금 버전을 그대로 써요: ", "Update failed; keeping this version: ") + (s["detail"] ?? "") + when
         default: return ""
         }

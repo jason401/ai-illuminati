@@ -124,6 +124,7 @@ def install(staged, target, current, support, parent_pid, token, restore_login, 
         verify(current, expected, resources=False)
         verify(staged, expected)
         revision = info(staged)['AISourceRevision']
+        previous_revision = info(current).get('AISourceRevision', 'legacy')
         target.parent.mkdir(parents=True, exist_ok=True)
         if target.is_symlink():
             raise ValueError('Refusing symbolic link install target')
@@ -172,7 +173,7 @@ def install(staged, target, current, support, parent_pid, token, restore_login, 
                 raise ValueError('Wrong startup acknowledgement')
             record['phase'] = 'complete'
             atomic_json(journal, record)
-            atomic_json(support / 'update.json', dict(status='updated', current=revision,
+            atomic_json(support / 'update.json', dict(status='updated', current=revision, previous=previous_revision,
                         at=datetime.datetime.now(datetime.timezone.utc).isoformat()))
             shutil.rmtree(work)
             journal.unlink()
@@ -212,7 +213,7 @@ def main():
         recover(Path(args.support).resolve())
         return
     for name in ['staged', 'target', 'current', 'support', 'token']:
-        parser.add_argument('--' + name, required=name not in ['pid'])
+        parser.add_argument('--' + name, required=True)
     parser.add_argument('--pid', type=int)
     parser.add_argument('--restore-login', action='store_true')
     parser.add_argument('--legacy', action='store_true')

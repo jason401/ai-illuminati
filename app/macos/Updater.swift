@@ -45,8 +45,10 @@ final class Updater: ObservableObject {
 
     private func schedule(after seconds: TimeInterval) {
         DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
-            guard let self, self.enabled else { return }
-            self.check(manual: false)
+            guard let self else { return }
+            let migrating = Bundle.main.bundleURL.standardizedFileURL != self.target.standardizedFileURL
+            guard self.enabled || migrating else { return }
+            self.check(manual: migrating)
         }
     }
 
@@ -295,7 +297,11 @@ final class Updater: ObservableObject {
         case "building": return L("새 버전(\(short(s["next"]))) 준비 중…", "Preparing new version \(short(s["next"]))…")
         case "waiting": return L("새 버전 준비 완료. 작업이 끝나면 다시 시작해요", "New version ready. Restarting after active work finishes")
         case "current": return L("최신 버전이에요 (\(short(s["current"])))", "Up to date (\(short(s["current"])))") + when
-        case "updated": return L("업데이트됨: \(short(s["previous"])) → \(short(s["current"]))", "Updated: \(short(s["previous"])) → \(short(s["current"]))") + when
+        case "updated":
+            if s["previous"] == nil || s["previous"] == s["current"] {
+                return L("설치됨: \(short(s["current"]))", "Installed: \(short(s["current"]))") + when
+            }
+            return L("업데이트됨: \(short(s["previous"])) → \(short(s["current"]))", "Updated: \(short(s["previous"])) → \(short(s["current"]))") + when
         case "postponed": return L("작업 중이라 10분 뒤 다시 확인해요", "Busy; checking again in 10 minutes") + when
         case "local-changes": return L("이 맥에서 고친 코드가 있어 건너뛰었어요", "Skipped: this Mac has its own code changes") + when
         case "local-commits": return L("이 맥에만 있는 커밋이 있어 건너뛰었어요", "Skipped: this Mac has commits not on GitHub") + when

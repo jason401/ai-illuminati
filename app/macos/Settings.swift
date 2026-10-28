@@ -293,8 +293,8 @@ private struct UpdateSection: View {
         } header: {
             Text(L("업데이트", "Updates"))
         } footer: {
-            Text(L("켜져 있으면 앱이 켜질 때와 3시간마다 GitHub의 새 버전을 확인해요. 시험과 빌드를 모두 통과해야 바꿔서 다시 켜고, 실패하면 지금 버전을 그대로 써요. 채팅 중에는 기다렸다가 바꿔요.",
-                   "When on, the app checks GitHub at launch and every 3 hours. It restarts into a new version only after tests and the build pass; otherwise it keeps this version. It waits while a chat is answering."))
+            Text(L("켜져 있으면 앱이 켜질 때와 3시간마다 GitHub의 새 버전을 확인해요. 시험과 빌드를 모두 통과해야 바꿔서 다시 켜고, 실패하면 지금 버전을 그대로 써요. 채팅·자료 가져오기·포커가 진행 중이면 기다려요.",
+                   "When on, the app checks GitHub at launch and every 3 hours. It restarts into a new version only after tests and the build pass; otherwise it keeps this version. It waits while chats, imports or poker are active."))
                 .font(.caption).foregroundStyle(.secondary)
         }
     }

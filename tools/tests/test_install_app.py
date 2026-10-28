@@ -42,6 +42,7 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual((self.target / 'content').read_text(), 'new')
         self.assertEqual(json.loads((self.support / 'update.json').read_text())['status'], 'updated')
         self.assertFalse((self.support / 'updates/transaction.json').exists())
+        self.assertEqual(json.loads((self.support / 'update.json').read_text())['previous'], 'revision')
 
     def test_launch_failure_restores_previous(self):
         with patch.object(m.subprocess, 'run', side_effect=RuntimeError('launch failed')):

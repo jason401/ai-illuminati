@@ -21,7 +21,7 @@ if [[ "$MODE" == "--install-staged" ]]; then
   nohup /usr/bin/python3 "$CANDIDATE/Contents/Resources/install_app.py" \
     --legacy --staged "$CANDIDATE" --current "$CURRENT" --target "$CURRENT" \
     --support "$SUPPORT" --token "$(uuidgen)" \
-    </dev/null >>"$SUPPORT/updates/install.log" 2>&1 &
+    </dev/null >>"$SUPPORT/updates/install.log" 2>&1 &!
   exit 0
 fi
 if [[ "$MODE" != "" && "$MODE" != "--stage" ]]; then

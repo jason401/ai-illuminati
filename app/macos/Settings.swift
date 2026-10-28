@@ -209,7 +209,11 @@ final class AppModel: ObservableObject {
         } catch {
             NSLog("login item: \(error)")
         }
-        openAtLogin = service.status == .enabled
+        refreshLoginItemStatus()
+    }
+
+    func refreshLoginItemStatus() {
+        openAtLogin = SMAppService.mainApp.status == .enabled
     }
 }
 

@@ -119,6 +119,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         ) { [weak self] _ in self?.configureMarkAnimation() }
         updateTitle()
         model.updater.start()
+        model.refreshLoginItemStatus()
     }
 
     func applicationWillTerminate(_ notification: Notification) {

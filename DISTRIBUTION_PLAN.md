@@ -172,3 +172,60 @@ README는 일반 사용자 설치와 개발자 빌드를 나눈다. HANDOFF에�
 8. API 키 없이 수동 릴리스부터 시작하는 운영이 가능한가? 어떤 도구 로그인·사용자 작업이 필요한가?
 
 검토 후 Codex가 수용·보류·기각 사유와 함께 계획을 수정한다. 구현 시작 전에는 미결 사항을 명시적으로 닫고, 이후 변경 파일·시험 결과·실제 이전 결과를 HANDOFF에 남긴다.
+
+## 11. Claude 검토 의견 (2026-10-28)
+
+검토 기준 커밋: `c748354`. 코드 확인과 Sparkle 공식 문서(sparkle-project.org/documentation) 확인을 거쳤다. 구현은 하지 않았다.
+
+### 핵심 결론: 1차는 "소스 기반 업데이트 유지 + 위치만 분리"를 권장
+
+계획서의 목표("Documents 프로젝트는 개발 전용, 설치 앱은 프로젝트 없이 실행·업데이트")에는 동의한다. 다만 1차 수단으로 GitHub Releases·배포 artifact를 쓰는 것은 현재 서명 구조와 맞지 않는다.
+
+- **로컬 서명은 Mac마다 다르다.** 각 Mac이 `setup_signing.sh`로 자기 인증서를 만든다(이 Mac은 2026-10-15에 새로 생성). Mac A에서 서명한 릴리스 앱을 Mac B에 설치하면 designated requirement가 A의 인증서에 묶인다. 그래서 B의 기존 Keychain "항상 허용"·TCC 기록과 앱 신원이 이어지지 않는다. B가 A의 자체 서명 인증서를 신뢰하지도 않으므로 "기대 서명 신원 검증"도 Mac마다 기준이 달라진다.
+- 결국 사용자의 두 Mac 모두에서 신원 연속성을 지키려면 (a) 개인 키를 Mac 사이에 복사하거나(계획서가 거부한 방식, 동의), (b) Developer ID로 가거나, (c) **각 Mac이 직접 빌드**해야 한다. 현재 범위에서는 (c)가 가장 단순하다.
+- 권장 1차 구조:
+  - 앱 위치: `/Applications/AI Illuminati.app` (관리자 계정이면 보통 추가 권한 없이 쓰기 가능). 안 되면 `~/Applications`를 **명시적으로** 사용한다. 조용한 대체는 금지(계획서와 동일).
+  - 업데이트용 소스: 사용자 개발 폴더가 아니라 앱 전용 숨은 clone(예: `~/Library/Application Support/AI Illuminati/source`)을 둔다. 저장소가 public이므로 로그인 없이 fetch 가능하다.
+  - 흐름: 그 clone에서 fetch → ff → 시험 → 빌드·서명(그 Mac의 로컬 인증서) → 검증 → `/Applications` 교체. 지금의 Updater 단계를 그대로 재사용하고 **경로만 바꾼다.**
+  - 요구 사항: 각 Mac에 Command Line Tools와 로컬 서명 인증서. 두 Mac 모두 이미 갖추고 있음.
+  - 장점: 릴리스 업로드·feed·서명 키 관리·Sparkle 통합이 필요 없다. 신원 연속성이 자연스럽게 유지된다. 개발 폴더를 옮기거나 지워도 앱은 계속 업데이트된다.
+- GitHub Releases·Sparkle·notarization은 **다른 사람의 Mac에 배포할 때**(Developer ID 필요) 후속 범위로 둔다.
+
+### 질문별 의견
+
+1. **1차 독립 설치 / 공개 배포 분리:** 분리 자체는 적절하다. 단, 1차의 업데이트 수단은 릴리스 artifact가 아니라 위의 Mac별 소스 빌드로 바꿀 것을 권장한다(서명 이유).
+2. **서명·Keychain·TCC 연속성:** 경로를 옮겨도 bundle ID(`local.aiilluminati`)와 인증서 기반 designated requirement가 같으면 Keychain ACL·TCC는 이어진다. 빠진 조건은 다음과 같다.
+   - (a) 각 Mac은 **자기 인증서**로 서명해야 한다(위 이유).
+   - (b) `check_signing.py`를 `/Applications` 사본 기준으로도 돌린다.
+   - (c) 문서 폴더 접근 권한 창: 앱이 더 이상 Documents 안에서 실행되지 않으므로 예전 Documents 접근 창 원인 하나가 사라진다. 다만 사용자가 연결한 작업 폴더가 Documents 안이면 첫 접근 때 한 번 다시 물을 수 있다고 안내한다.
+3. **Sparkle vs 직접 helper:** Sparkle 공식 문서는 Developer ID 서명 + EdDSA(`SUPublicEDKey`)를 권장 구성으로 설명하고, 자체 서명 앱 지원은 명시하지 않는다. ad-hoc 서명은 Library Validation 때문에 프레임워크 로딩이 막힐 수 있다고 경고한다. 통합 절차도 Xcode(SwiftPM/Embed & Sign) 중심이라, `swiftc`만 쓰는 현재 빌드에서는 framework 복사·rpath(`@loader_path/../Frameworks`)·helper 서명을 직접 맞춰야 한다. 따라서 1차(Mac별 소스 빌드)에는 Sparkle이 불필요하다. Developer ID로 공개 배포할 때는 직접 helper보다 **Sparkle을 쓰는 것이 맞다**(서명 검증·설치·복구를 직접 책임지지 않기 위해).
+4. **/Applications 쓰기·helper·rollback·시작 확인:** 계획서의 설계(정확한 대상 종료 대기, 같은 볼륨에서 준비, 백업 후 교체, 새 build 시작 확인 후 성공 기록, 실패 시 복구)는 충분하다. 지금 `build_app.sh`의 `pkill -f "AI Illuminati.app/Contents/MacOS/"`는 개발용 앱과 설치 앱을 구분하지 못하므로 **PID 또는 정확한 절대경로 기준 종료**로 바꿔야 한다는 지적에 동의한다. 시작 확인은 새 앱이 `update.json`에 자기 build 번호를 기록하는 방식이 간단하다.
+5. **소스 폴더 의존성 (코드 확인 결과):**
+   - `Workspace.swift:39`: 번들에 `workspace_mcp.py`가 없으면 `#filePath`로 소스 폴더를 찾는 fallback이 있다. 제거하고 번들 자원만 쓴다.
+   - `Updater.swift:19`: `root = Bundle.main.bundleURL.deletingLastPathComponent()`. 앱이 `/Applications`에 가면 root가 `/Applications`가 되어 git 저장소가 아니다. 위 권장안에서는 숨은 clone 경로로 바꾼다.
+   - `/usr/bin/python3` 사용(`Workspace.swift:55`, `Login.swift:105`): Command Line Tools가 없는 Mac에서는 설치 안내 창이 뜨는 stub이다. 두 Mac은 문제없지만 "외부 의존성 목록"에 명시한다.
+   - `build_app.sh`: `cd /` + `env -u PWD -u OLDPWD open` 실행은 유지한다. 위치가 바뀌어도 유효하다.
+   - `SMAppService.mainApp`: 등록은 실행 중인 번들 기준이다. 이전 때 구 위치 앱에서 해제(unregister) → 새 위치 앱에서 등록 순서로 하고, 로그인 항목에 구 경로가 남지 않는지 확인한다.
+6. **계정·rooms 경로 유지:** `~/.ai-illuminati`를 옮기지 않는 결정에 동의한다(Claude Keychain 서비스 이름이 `CLAUDE_CONFIG_DIR` 해시라 이동하면 로그인 연결이 깨짐). 추가로 확인할 것:
+   - 이 Mac의 "ChatGPT (개인)"은 아직 `dir` 없음(`~/.codex` 사용). 이번 범위에서 건드리지 않는다.
+   - 숨은 clone 위치는 계정 폴더와 섞이지 않게 둔다.
+7. **기존 main 기반 updater의 중간 코드 수신 방지:** 가장 단순한 방법:
+   - 지금 설치된 앱의 updater를 **안정 채널(예: `stable` 브랜치)만 따르도록 먼저 바꾸는 작은 커밋**을 main에 올린다. 이 커밋만 시험을 통과시켜 자동 설치되게 한다.
+   - 이후 개발은 main, 배포는 `stable`을 main의 검증된 커밋으로 fast-forward할 때만 한다.
+   - 위치 이전 코드는 그다음 `stable`에 한 번에 넣고, 새 버전이 **첫 실행 때 스스로 1회 이전**(`/Applications` 사본 준비 → 로그인 항목 전환 → 새 앱 실행 → 구 앱 종료)하도록 한다. 사용자 수동 단계가 없다.
+   - 이전이 실패하면 구 위치 앱이 계속 동작하고 다음 확인 때 다시 시도한다.
+8. **API 키 없이 운영 가능 여부:** 가능하다.
+   - 권장안에서는 public 저장소 익명 fetch만 필요해 로그인·키가 전혀 필요 없다.
+   - `stable` 갱신은 개발 Mac의 기존 `gh` 로그인(git push)으로 충분하다.
+   - 후속 공개 배포(Developer ID·notarization)에는 Apple Developer 계정과 `notarytool` 로그인(사용자 본인 절차)이 필요하다. 이때도 저장소에 키를 넣지 않는다.
+
+### 계획 단계 수정 제안
+
+| 단계 | 내용 |
+|---|---|
+| A' | updater를 `stable` 채널로 전환하는 작은 커밋 (먼저 배포) |
+| B | build/install 분리 + PID·절대경로 기준 종료 + 버전·build 번호·커밋 주입 (계획서와 같음) |
+| C | `#filePath` fallback 제거, 번들 자원만 사용, 외부 의존성 목록 (계획서와 같음) |
+| D' | updater를 숨은 clone 기반으로 전환 (릴리스 다운로드 대신), `/Applications` 교체·시작 확인·복구 |
+| E | 새 버전의 1회 자동 이전 (로그인 항목 포함), 프로젝트 폴더 접근 불가 상태 시험 |
+| F | 연속 두 버전 업데이트 시험, 문서 갱신. Releases·Sparkle·Developer ID는 별도 후속 계획 |

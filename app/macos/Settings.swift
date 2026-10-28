@@ -217,89 +217,138 @@ final class AppModel: ObservableObject {
     }
 }
 
-// Settings look like AI Face's: toolbar tabs (일반 · 계정 · 채팅), each a grouped form of cards.
+// Compact pages share the same insets and row rhythm instead of Form's large footers.
+private struct SettingsCard<Content: View>: View {
+    let title: String
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                .padding(.horizontal, 2)
+            VStack(spacing: 0) { content }
+                .background(Color(nsColor: .controlBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(0.07)))
+        }
+    }
+}
+
+private struct SettingsRow<Content: View>: View {
+    let title: String
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(title).frame(width: 112, alignment: .leading)
+            Spacer(minLength: 0)
+            content
+        }
+        .padding(.horizontal, 10).padding(.vertical, 6)
+        .frame(minHeight: 32)
+    }
+}
+
+private struct SettingsPage<Content: View>: View {
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) { content }
+                .padding(14).frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+        .font(.system(size: 12))
+        .controlSize(.small)
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+}
+
 struct GeneralSettingsTab: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
-        Form {
-            Section {
-                Picker(L("언어", "Language"), selection: $model.language) {
-                    Text("English").tag(AppLanguage.english)
-                    Text("한국어").tag(AppLanguage.korean)
+        SettingsPage {
+            SettingsCard(title: L("메뉴 표시", "Menu appearance")) {
+                SettingsRow(title: L("메뉴바 표시", "Menu bar")) {
+                    Picker("", selection: $model.menuBarStyle) {
+                        ForEach(AppModel.MenuBarStyle.allCases, id: \.self) { Text($0.title).tag($0) }
+                    }.labelsHidden().frame(width: 218)
                 }
-                .pickerStyle(.segmented)
+                Divider()
+                SettingsRow(title: L("잔여량 기준", "Usage limit")) {
+                    Picker("", selection: $model.menuBarWindow) {
+                        ForEach(AppModel.MenuBarWindow.allCases, id: \.self) { Text($0.title).tag($0) }
+                    }
+                    .labelsHidden().pickerStyle(.segmented).frame(width: 218)
+                    .help(L("계정마다 선택한 한도의 남은 양을 표시해요. 한도가 없으면 가득 찬 막대, 읽지 못했으면 빈 막대예요.",
+                            "One bar per account for this limit. No limit: full bar. Unread account: empty bar."))
+                }
+                Divider()
+                HStack(spacing: 16) {
+                    Toggle(L("흑백", "Monochrome"), isOn: Binding(
+                        get: { !model.menuBarColored }, set: { model.menuBarColored = !$0 }))
+                        .help(L("끄면 계정 종류별 컬러로 표시해요.", "Turn off to use provider colors."))
+                    Divider().frame(height: 16)
+                    Toggle(L("눈과 후광", "Eye & halo"), isOn: $model.menuBarAnimation)
+                        .help(L("메뉴바의 눈과 후광 애니메이션", "Animate the menu bar eye and halo"))
+                }
+                .toggleStyle(.switch).padding(.horizontal, 10).padding(.vertical, 6)
+                Divider()
+                SettingsRow(title: L("사용량 메뉴", "Usage menu")) {
+                    Picker("", selection: $model.usageMenuStyle) {
+                        ForEach(AppModel.UsageMenuStyle.allCases, id: \.self) { Text($0.title).tag($0) }
+                    }.labelsHidden().frame(maxWidth: .infinity)
+                    Button { model.onPreviewUsageMenu?() } label: { Image(systemName: "eye") }
+                        .help(L("메뉴 미리 보기", "Preview usage menu"))
+                        .accessibilityLabel(L("메뉴 미리 보기", "Preview usage menu"))
+                }
             }
-            Section {
-                Picker(L("메뉴바 표시", "Menu bar"), selection: $model.menuBarStyle) {
-                    ForEach(AppModel.MenuBarStyle.allCases, id: \.self) { Text($0.title).tag($0) }
+            SettingsCard(title: L("앱 기본 설정", "App")) {
+                SettingsRow(title: L("언어", "Language")) {
+                    Picker("", selection: $model.language) {
+                        Text("English").tag(AppLanguage.english)
+                        Text("한국어").tag(AppLanguage.korean)
+                    }.labelsHidden().pickerStyle(.segmented).frame(width: 218)
                 }
-                Picker(L("메뉴바 잔여량 기준", "Menu bar shows"), selection: $model.menuBarWindow) {
-                    ForEach(AppModel.MenuBarWindow.allCases, id: \.self) { Text($0.title).tag($0) }
+                Divider()
+                SettingsRow(title: L("로그인 시 실행", "Open at login")) {
+                    Toggle(L("로그인 시 실행", "Open at login"), isOn: Binding(
+                        get: { model.openAtLogin }, set: { model.setOpenAtLogin($0) }))
+                        .labelsHidden().toggleStyle(.switch)
                 }
-                .pickerStyle(.segmented)
-                Toggle(L("흑백", "Monochrome"), isOn: Binding(
-                    get: { !model.menuBarColored },
-                    set: { model.menuBarColored = !$0 }))
-                    .toggleStyle(.switch)
-                    .help(L("켜면 흑백, 끄면 컬러로 표시해요.", "On: monochrome. Off: color."))
-                Toggle(L("눈과 후광 애니메이션", "Animate eye & halo"), isOn: $model.menuBarAnimation)
-                Picker(L("사용량 메뉴", "Usage menu"), selection: $model.usageMenuStyle) {
-                    ForEach(AppModel.UsageMenuStyle.allCases, id: \.self) { Text($0.title).tag($0) }
-                }
-                Button(L("메뉴 미리 보기", "Preview usage menu")) { model.onPreviewUsageMenu?() }
-                Toggle(L("로그인할 때 자동 실행", "Open at login"), isOn: Binding(get: { model.openAtLogin },
-                                                                          set: { model.setOpenAtLogin($0) }))
-            } footer: {
-                Text(L("막대 하나가 계정 하나예요. 계정 설정의 순서대로, '메뉴바 잔여량 기준'에서 고른 한도(5시간 또는 주간)의 남은 양을 보여줘요. 그 한도가 없는 계정(예: Gemini의 5시간)은 막히지 않으니 가득 찬 막대예요. 아직 못 읽은 계정만 빈 막대예요. 마우스를 올리면 계정별 이름과 숫자가 보여요. 사용량 메뉴에서는 원형이 충전까지 지난 시간이고, 계정 줄에 마우스를 올리면 옆에 자세한 내용이 나와요.",
-                       "One bar per account, in Settings order, showing what is left of the limit chosen in 'Menu bar shows' (5-hour or weekly). An account without that limit (e.g. Gemini's 5-hour) is not held back by it, so its bar is full; only unread accounts are empty. Hover for names and numbers. In the usage menu, rings show time toward reset; hover an account row for its details."))
-                    .font(.caption).foregroundStyle(.secondary)
             }
-            UpdateSection(updater: model.updater)
-            Section {
-                HStack {
-                    Text(L("앱 데이터", "App data"))
-                    Spacer()
-                    Button(L("Finder에서 열기", "Show in Finder")) { DataFolders.open(DataFolders.appData) }
-                }
-                HStack {
-                    Text(L("계정 폴더", "Account folders"))
-                    Spacer()
-                    Button(L("Finder에서 열기", "Show in Finder")) { DataFolders.open(DataFolders.accounts) }
-                }
-            } header: {
-                Text(L("저장 위치", "Where things are saved"))
-            } footer: {
-                Text(L("앱 데이터: 계정 목록, 대화 기록(chats)과 첨부 사본, 사용량 기록. 계정 폴더: 계정마다 Claude·ChatGPT 도구의 로그인·설정·세션 기록이 있어요. 로그인 정보가 들어 있으니 고치거나 다른 사람과 공유하지 마세요.",
-                       "App data: account list, chats and attachment copies, usage logs. Account folders: each account's Claude / ChatGPT login, settings and sessions. They contain sign-in data, so do not edit or share them."))
-                    .font(.caption).foregroundStyle(.secondary)
-            }
+            MaintenanceSettings(model: model, updater: model.updater)
         }
-        .formStyle(.grouped)
     }
 }
 
-// Automatic updates (see Updater.swift).
-private struct UpdateSection: View {
+private struct MaintenanceSettings: View {
+    @ObservedObject var model: AppModel
     @ObservedObject var updater: Updater
 
     var body: some View {
-        Section {
-            Toggle(L("자동 업데이트", "Automatic updates"), isOn: $updater.enabled)
-            HStack {
-                Text(updater.status.isEmpty ? L("아직 확인 안 함", "Not checked yet") : updater.status)
-                    .font(.caption).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer()
+        SettingsCard(title: L("업데이트와 저장 위치", "Updates & storage")) {
+            SettingsRow(title: L("자동 업데이트", "Automatic updates")) {
+                Toggle(L("자동 업데이트", "Automatic updates"), isOn: $updater.enabled)
+                    .labelsHidden().toggleStyle(.switch)
                 Button(L("지금 확인", "Check now")) { updater.check(manual: true) }
                     .disabled(updater.checking)
             }
-        } header: {
-            Text(L("업데이트", "Updates"))
-        } footer: {
-            Text(L("켜져 있으면 앱이 켜질 때와 3시간마다 GitHub의 새 버전을 확인해요. 시험과 빌드를 모두 통과해야 바꿔서 다시 켜고, 실패하면 지금 버전을 그대로 써요. 채팅·자료 가져오기·포커가 진행 중이면 기다려요.",
-                   "When on, the app checks GitHub at launch and every 3 hours. It restarts into a new version only after tests and the build pass; otherwise it keeps this version. It waits while chats, imports or poker are active."))
-                .font(.caption).foregroundStyle(.secondary)
+            Text(updater.status.isEmpty ? L("시작 후, 그리고 3시간마다 확인해요.", "Checks at launch and every 3 hours.") : updater.status)
+                .font(.system(size: 11)).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 10).padding(.bottom, 7)
+                .help(L("시험과 빌드가 통과해야 교체해요. 채팅·자료 가져오기·포커 중에는 기다려요.",
+                        "Installs after tests and build pass. Waits for chats, imports and poker to finish."))
+            Divider()
+            SettingsRow(title: L("저장 폴더", "Folders")) {
+                Button(L("앱 데이터", "App data")) { DataFolders.open(DataFolders.appData) }
+                    .help(L("계정 목록, 대화, 첨부 사본과 사용량 기록", "Account list, chats, attachment copies and usage logs"))
+                Button(L("계정", "Accounts")) { DataFolders.open(DataFolders.accounts) }
+                    .help(L("로그인 정보와 세션이 들어 있어요. 다른 사람과 공유하지 마세요.",
+                            "Contains sign-in data and sessions. Do not share this folder."))
+            }
         }
     }
 }
@@ -319,33 +368,39 @@ struct AccountsSettingsTab: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
-        Form {
-            Section {
-                ForEach(model.accounts, id: \.id) { account in
-                    AccountRow(model: model, account: account)
-                }
-            } header: {
-                Text(L("계정", "Accounts"))
-            } footer: {
-                Text(L("화살표로 순서를 바꾸면 메뉴에 그 순서대로 보여요. 이름은 바로 고칠 수 있어요.",
-                       "Use the arrows to set the menu order. Edit names directly."))
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            Section {
-                HStack {
+        SettingsPage {
+            HStack {
+                Text(L("계정", "Accounts")).font(.system(size: 12, weight: .semibold))
+                Text("\(model.accounts.count)").foregroundStyle(.secondary)
+                Spacer()
+                Menu {
                     Button(L("Claude 계정 추가", "Add Claude")) { model.add(.claude) }
                     Button(L("ChatGPT 계정 추가", "Add ChatGPT")) { model.add(.codex) }
                     Button(L("Gemini 추가", "Add Gemini")) { model.add(.gemini) }.disabled(model.hasGemini)
-                }
-            } header: {
-                Text(L("계정 추가", "Add an account"))
-            } footer: {
-                Text(L("추가하면 터미널이 열려요. 그 계정으로 브라우저 로그인을 하면 돼요. 같은 ChatGPT 계정을 두 번 추가하지 마세요.",
-                       "Adding an account opens Terminal for browser sign-in. Do not add the same ChatGPT account twice."))
-                    .font(.caption).foregroundStyle(.secondary)
+                } label: {
+                    Label(L("계정 추가", "Add account"), systemImage: "plus")
+                }.fixedSize()
             }
+            VStack(spacing: 0) {
+                if model.accounts.isEmpty {
+                    Text(L("계정을 추가하면 사용량이 여기에 표시돼요.", "Add an account to see its usage here."))
+                        .foregroundStyle(.secondary).padding(16)
+                }
+                ForEach(model.accounts, id: \.id) { account in
+                    if account.id != model.accounts.first?.id { Divider() }
+                    AccountRow(model: model, account: account)
+                        .padding(.horizontal, 10).padding(.vertical, 6)
+                }
+            }
+            .background(Color(nsColor: .controlBackgroundColor))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(0.07)))
+            Text(L("이름을 눌러 수정 · 화살표로 순서 변경 · ⋯에서 로그인과 폴더 열기", "Edit names directly · Arrows reorder · ⋯ for sign-in and folders"))
+                .font(.system(size: 11)).foregroundStyle(.secondary)
+            Text(L("계정을 추가하면 브라우저 로그인을 위해 터미널이 열려요. 같은 ChatGPT 계정을 중복 추가하지 마세요.",
+                   "Adding opens Terminal for browser sign-in. Add each ChatGPT account only once."))
+                .font(.system(size: 11)).foregroundStyle(.secondary)
         }
-        .formStyle(.grouped)
     }
 }
 
@@ -353,27 +408,26 @@ struct ChatSettingsTab: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
-        Form {
-            Section {
-                TextEditor(text: $model.chatRules)
-                    .font(.body)
-                    .frame(minHeight: 150)
-                    .scrollContentBackground(.hidden)
-            } header: {
-                HStack {
-                    Text(L("채팅 규칙", "Chat rules"))
-                    Spacer()
-                    Button(L("기본값으로", "Reset to default")) { model.chatRules = AppModel.defaultChatRules }
-                        .disabled(model.chatRules == AppModel.defaultChatRules)
-                        .controlSize(.small)
-                }
-            } footer: {
-                Text(L("채팅에서 AI들에게 보내는 모든 메시지 맨 앞에 붙어요. 답 길이와 말투를 여기서 정해요.",
-                       "Included with each AI request. Set the answer length and style here."))
-                    .font(.caption).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text(L("채팅 규칙", "Chat rules")).font(.system(size: 12, weight: .semibold))
+                Spacer()
+                Button(L("기본값으로", "Reset to default")) { model.chatRules = AppModel.defaultChatRules }
+                    .disabled(model.chatRules == AppModel.defaultChatRules)
             }
+            TextEditor(text: $model.chatRules)
+                .font(.system(size: 12))
+                .scrollContentBackground(.hidden)
+                .padding(8)
+                .background(Color(nsColor: .textBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(0.1)))
+            Text(L("모든 AI 요청에 적용할 말투와 응답 규칙이에요. 답변 길이는 채팅창에서 선택해요.",
+                   "Style and instructions for every AI request. Choose response length in the chat window."))
+                .font(.system(size: 11)).foregroundStyle(.secondary)
         }
-        .formStyle(.grouped)
+        .padding(14).controlSize(.small)
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 }
 
@@ -382,7 +436,7 @@ private struct AccountRow: View {
     let account: Account
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 1) {
                 TextField(L("이름", "Name"), text: Binding(
                     get: { model.accounts.first { $0.id == account.id }?.name ?? "" },
@@ -392,7 +446,7 @@ private struct AccountRow: View {
                 Text(account.provider.title).font(.caption).foregroundStyle(.secondary)
             }
             Spacer(minLength: 8)
-            status
+            status.font(.system(size: 11)).lineLimit(1)
             Button(action: { model.move(account, by: -1) }) { Image(systemName: "chevron.up") }
                 .buttonStyle(.borderless)
                 .disabled(model.accounts.first?.id == account.id)
@@ -413,7 +467,7 @@ private struct AccountRow: View {
             .menuIndicator(.hidden)
             .fixedSize()
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 1)
     }
 
     // Like AI Face's "Connected": green when signed in, orange when a sign-in is needed.
@@ -436,7 +490,7 @@ private struct AccountRow: View {
 final class SettingsWindow {
     private var window: NSWindow?
     private var tabs: NSTabViewController?
-    static let size = NSSize(width: 560, height: 480)
+    static let size = NSSize(width: 500, height: 420)
 
     private func tab<V: View>(_ content: V, symbol: String) -> NSTabViewItem {
         let size = Self.size

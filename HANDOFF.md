@@ -2,6 +2,12 @@
 
 이 문서만 읽으면 바로 이어서 작업할 수 있게 정리했어요. 규칙은 `AGENTS.md`(= `CLAUDE.md`와 같은 내용)에, 사용자용 설명은 `README.md`에 있어요.
 
+## 설정 창 압축 (2026-10-28, Codex)
+
+- Settings.swift: 콘텐츠 크기 560×480 → 500×420. grouped Form의 큰 여백과 긴 footer를 compact card/row로 교체. 일반 탭은 메뉴 표시 / 앱 기본 설정 / 업데이트와 저장 위치로 묶고 메뉴 미리 보기·폴더 열기는 관련 항목 옆에 배치. 상세 설명은 항목별 도움말로 이동.
+- 계정 탭: 목록 머리글 옆에 추가 메뉴 통합, 계정 행과 상태 표시 압축. 채팅 탭: 규칙 편집기를 창 안에 정돈하고 길이 선택은 채팅창에서 한다고 안내 수정. 설정 값과 저장 방식은 유지.
+- 전체 회귀 시험 통과. 화면 공유·컴퓨터 제어 도구는 사용하지 않음. 빌드·서명 검증 후 main과 stable에 배포.
+
 ## 독립 설치·전용 업데이트 소스 (2026-10-28, Codex)
 
 - Claude의 `DISTRIBUTION_PLAN.md` §11 검토를 반영해 §12에서 결정: 각 Mac 로컬 서명 유지, `/Applications/AI Illuminati.app`, 전용 clone `~/Library/Application Support/AI Illuminati/source`, 배포 채널 `stable`. Developer ID/Releases/Sparkle은 후속. Command Line Tools·Python은 계속 필요.

@@ -239,10 +239,9 @@ private struct SettingsRow<Content: View>: View {
     @ViewBuilder var content: Content
 
     var body: some View {
-        HStack(spacing: 12) {
-            Text(title).frame(width: 112, alignment: .leading)
-            Spacer(minLength: 0)
-            content
+        HStack(spacing: 10) {
+            Text(title).frame(width: 96, alignment: .leading)
+            HStack(spacing: 6) { content }.frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.horizontal, 10).padding(.vertical, 6)
         .frame(minHeight: 32)
@@ -255,7 +254,7 @@ private struct SettingsPage<Content: View>: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) { content }
-                .padding(14).frame(maxWidth: .infinity, alignment: .topLeading)
+                .padding(12).frame(maxWidth: .infinity, alignment: .topLeading)
         }
         .font(.system(size: 12))
         .controlSize(.small)
@@ -263,52 +262,126 @@ private struct SettingsPage<Content: View>: View {
     }
 }
 
+// Explicit labels fill the control column; native picker intrinsic widths otherwise
+// leave the visible buttons centered at different positions inside their frames.
+private struct SettingsMenu<Value: Hashable>: View {
+    let options: [(String, Value)]
+    @Binding var selection: Value
+
+    var body: some View {
+        SettingsPopup(titles: options.map { $0.0 }, selection: Binding(
+            get: { options.firstIndex { $0.1 == selection } ?? 0 },
+            set: { if options.indices.contains($0) { selection = options[$0].1 } }))
+            .frame(maxWidth: .infinity).frame(height: 24)
+    }
+}
+
+private struct SettingsPopup: NSViewRepresentable {
+    let titles: [String]
+    @Binding var selection: Int
+
+    final class Coordinator: NSObject {
+        var parent: SettingsPopup
+        init(_ parent: SettingsPopup) { self.parent = parent }
+        @objc func select(_ sender: NSPopUpButton) { parent.selection = sender.indexOfSelectedItem }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+    func makeNSView(context: Context) -> NSPopUpButton {
+        let button = NSPopUpButton(frame: .zero, pullsDown: false)
+        button.controlSize = .small
+        button.font = .systemFont(ofSize: 11)
+        button.target = context.coordinator
+        button.action = #selector(Coordinator.select(_:))
+        button.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        return button
+    }
+    func updateNSView(_ button: NSPopUpButton, context: Context) {
+        context.coordinator.parent = self
+        if button.itemTitles != titles {
+            button.removeAllItems()
+            button.addItems(withTitles: titles)
+        }
+        button.selectItem(at: selection)
+    }
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSPopUpButton, context: Context) -> CGSize? {
+        CGSize(width: proposal.width ?? 184, height: 24)
+    }
+}
+
+private struct SettingsSegments<Value: Hashable>: View {
+    let options: [(String, Value)]
+    @Binding var selection: Value
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(options.indices, id: \.self) { index in
+                Button { selection = options[index].1 } label: {
+                    Text(options[index].0).lineLimit(1)
+                        .frame(maxWidth: .infinity, minHeight: 22)
+                        .foregroundStyle(selection == options[index].1 ? Color.white : Color.primary)
+                        .background(RoundedRectangle(cornerRadius: 4).fill(selection == options[index].1 ? Color.accentColor : Color.clear))
+                }.buttonStyle(.plain)
+                    .accessibilityAddTraits(selection == options[index].1 ? [.isSelected] : [])
+            }
+        }
+        .padding(2).background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.06)))
+    }
+}
+
+private struct SettingsAction: View {
+    let title: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(title).lineLimit(1).frame(maxWidth: .infinity, minHeight: 24)
+                .background(RoundedRectangle(cornerRadius: 5).fill(Color.primary.opacity(0.07)))
+        }.buttonStyle(.plain)
+    }
+}
+
 struct GeneralSettingsTab: View {
     @ObservedObject var model: AppModel
+
+    private var menuOptions: [(String, AppModel.UsageMenuStyle)] {
+        [(L("카드", "Cards"), .cards), (L("막대", "Bars"), .comparison),
+         (L("막대 + 충전 시계", "Bars + reset rings"), .comparisonRings),
+         (L("충전 시계", "Reset rings"), .compact)]
+    }
 
     var body: some View {
         SettingsPage {
             SettingsCard(title: L("메뉴 표시", "Menu appearance")) {
-                SettingsRow(title: L("메뉴바 표시", "Menu bar")) {
-                    Picker("", selection: $model.menuBarStyle) {
-                        ForEach(AppModel.MenuBarStyle.allCases, id: \.self) { Text($0.title).tag($0) }
-                    }.labelsHidden().frame(width: 218)
+                SettingsRow(title: L("메뉴바", "Menu bar")) {
+                    SettingsMenu(options: AppModel.MenuBarStyle.allCases.map { ($0.title, $0) }, selection: $model.menuBarStyle)
                 }
                 Divider()
                 SettingsRow(title: L("잔여량 기준", "Usage limit")) {
-                    Picker("", selection: $model.menuBarWindow) {
-                        ForEach(AppModel.MenuBarWindow.allCases, id: \.self) { Text($0.title).tag($0) }
-                    }
-                    .labelsHidden().pickerStyle(.segmented).frame(width: 218)
-                    .help(L("계정마다 선택한 한도의 남은 양을 표시해요. 한도가 없으면 가득 찬 막대, 읽지 못했으면 빈 막대예요.",
-                            "One bar per account for this limit. No limit: full bar. Unread account: empty bar."))
+                    SettingsSegments(options: AppModel.MenuBarWindow.allCases.map { ($0.title, $0) }, selection: $model.menuBarWindow)
+                        .help(L("선택한 한도의 남은 양이에요. 한도가 없으면 가득 찬 막대, 읽지 못했으면 빈 막대예요.", "Remaining usage for this limit. No limit: full bar. Unread: empty bar."))
                 }
                 Divider()
-                HStack(spacing: 16) {
-                    Toggle(L("흑백", "Monochrome"), isOn: Binding(
-                        get: { !model.menuBarColored }, set: { model.menuBarColored = !$0 }))
+                SettingsRow(title: L("표시 효과", "Appearance")) {
+                    Toggle(L("흑백", "Monochrome"), isOn: Binding(get: { !model.menuBarColored }, set: { model.menuBarColored = !$0 }))
                         .help(L("끄면 계정 종류별 컬러로 표시해요.", "Turn off to use provider colors."))
-                    Divider().frame(height: 16)
-                    Toggle(L("눈과 후광", "Eye & halo"), isOn: $model.menuBarAnimation)
-                        .help(L("메뉴바의 눈과 후광 애니메이션", "Animate the menu bar eye and halo"))
-                }
-                .toggleStyle(.switch).padding(.horizontal, 10).padding(.vertical, 6)
+                    Toggle(L("애니메이션", "Animate"), isOn: $model.menuBarAnimation)
+                        .help(L("눈과 후광 애니메이션", "Animate the eye and halo"))
+                }.toggleStyle(.checkbox)
                 Divider()
                 SettingsRow(title: L("사용량 메뉴", "Usage menu")) {
-                    Picker("", selection: $model.usageMenuStyle) {
-                        ForEach(AppModel.UsageMenuStyle.allCases, id: \.self) { Text($0.title).tag($0) }
-                    }.labelsHidden().frame(maxWidth: .infinity)
-                    Button { model.onPreviewUsageMenu?() } label: { Image(systemName: "eye") }
+                    SettingsMenu(options: menuOptions, selection: $model.usageMenuStyle)
+                    Button { model.onPreviewUsageMenu?() } label: {
+                        Image(systemName: "eye").frame(width: 24, height: 24)
+                            .background(RoundedRectangle(cornerRadius: 5).fill(Color.primary.opacity(0.07)))
+                    }.buttonStyle(.plain)
                         .help(L("메뉴 미리 보기", "Preview usage menu"))
                         .accessibilityLabel(L("메뉴 미리 보기", "Preview usage menu"))
                 }
             }
             SettingsCard(title: L("앱 기본 설정", "App")) {
                 SettingsRow(title: L("언어", "Language")) {
-                    Picker("", selection: $model.language) {
-                        Text("English").tag(AppLanguage.english)
-                        Text("한국어").tag(AppLanguage.korean)
-                    }.labelsHidden().pickerStyle(.segmented).frame(width: 218)
+                    SettingsSegments(options: [("English", AppLanguage.english), ("한국어", .korean)], selection: $model.language)
                 }
                 Divider()
                 SettingsRow(title: L("로그인 시 실행", "Open at login")) {
@@ -317,37 +390,34 @@ struct GeneralSettingsTab: View {
                         .labelsHidden().toggleStyle(.switch)
                 }
             }
-            MaintenanceSettings(model: model, updater: model.updater)
+            MaintenanceSettings(updater: model.updater)
         }
     }
 }
 
 private struct MaintenanceSettings: View {
-    @ObservedObject var model: AppModel
     @ObservedObject var updater: Updater
 
     var body: some View {
         SettingsCard(title: L("업데이트와 저장 위치", "Updates & storage")) {
-            SettingsRow(title: L("자동 업데이트", "Automatic updates")) {
+            SettingsRow(title: L("자동 업데이트", "Auto update")) {
                 Toggle(L("자동 업데이트", "Automatic updates"), isOn: $updater.enabled)
                     .labelsHidden().toggleStyle(.switch)
-                Button(L("지금 확인", "Check now")) { updater.check(manual: true) }
+                SettingsAction(title: L("지금 확인", "Check now")) { updater.check(manual: true) }
                     .disabled(updater.checking)
             }
             Text(updater.status.isEmpty ? L("시작 후, 그리고 3시간마다 확인해요.", "Checks at launch and every 3 hours.") : updater.status)
-                .font(.system(size: 11)).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+                .font(.system(size: 10)).foregroundStyle(.secondary)
+                .lineLimit(2).fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 10).padding(.bottom, 7)
-                .help(L("시험과 빌드가 통과해야 교체해요. 채팅·자료 가져오기·포커 중에는 기다려요.",
-                        "Installs after tests and build pass. Waits for chats, imports and poker to finish."))
+                .help(updater.status + "\n" + L("시험과 빌드가 통과해야 교체해요. 작업 중에는 기다려요.", "Installs after tests and build pass. Waits for active work."))
             Divider()
             SettingsRow(title: L("저장 폴더", "Folders")) {
-                Button(L("앱 데이터", "App data")) { DataFolders.open(DataFolders.appData) }
-                    .help(L("계정 목록, 대화, 첨부 사본과 사용량 기록", "Account list, chats, attachment copies and usage logs"))
-                Button(L("계정", "Accounts")) { DataFolders.open(DataFolders.accounts) }
-                    .help(L("로그인 정보와 세션이 들어 있어요. 다른 사람과 공유하지 마세요.",
-                            "Contains sign-in data and sessions. Do not share this folder."))
+                SettingsAction(title: L("앱 데이터", "App data")) { DataFolders.open(DataFolders.appData) }
+                    .help(L("계정 목록, 대화와 첨부 사본", "Account list, chats and attachment copies"))
+                SettingsAction(title: L("계정", "Accounts")) { DataFolders.open(DataFolders.accounts) }
+                    .help(L("로그인 정보가 있어요. 공유하지 마세요.", "Contains sign-in data. Do not share."))
             }
         }
     }
@@ -426,7 +496,7 @@ struct ChatSettingsTab: View {
                    "Style and instructions for every AI request. Choose response length in the chat window."))
                 .font(.system(size: 11)).foregroundStyle(.secondary)
         }
-        .padding(14).controlSize(.small)
+        .padding(12).controlSize(.small)
         .background(Color(nsColor: .windowBackgroundColor))
     }
 }
@@ -443,10 +513,12 @@ private struct AccountRow: View {
                     set: { model.rename(account.id, to: $0) }))
                     .textFieldStyle(.plain)
                     .labelsHidden()
-                Text(account.provider.title).font(.caption).foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    Text(account.provider.title).foregroundStyle(.secondary)
+                    status
+                }.font(.system(size: 10)).lineLimit(1)
             }
-            Spacer(minLength: 8)
-            status.font(.system(size: 11)).lineLimit(1)
+            Spacer(minLength: 4)
             Button(action: { model.move(account, by: -1) }) { Image(systemName: "chevron.up") }
                 .buttonStyle(.borderless)
                 .disabled(model.accounts.first?.id == account.id)
@@ -476,7 +548,7 @@ private struct AccountRow: View {
             if usage.needsLogin {
                 Text(L("로그인 필요", "Sign-in needed")).foregroundStyle(.orange)
             } else if let left = usage.leftNow {
-                Text(L("연결됨 · \(Int(left.rounded()))% 남음", "Connected · \(Int(left.rounded()))% left")).foregroundStyle(.green)
+                Text(L("\(Int(left.rounded()))% 남음", "\(Int(left.rounded()))% left")).foregroundStyle(.green)
             } else {
                 Text(L("연결됨", "Connected")).foregroundStyle(.green)
             }
@@ -490,7 +562,7 @@ private struct AccountRow: View {
 final class SettingsWindow {
     private var window: NSWindow?
     private var tabs: NSTabViewController?
-    static let size = NSSize(width: 500, height: 420)
+    static let size = NSSize(width: 334, height: 420)
 
     private func tab<V: View>(_ content: V, symbol: String) -> NSTabViewItem {
         let size = Self.size

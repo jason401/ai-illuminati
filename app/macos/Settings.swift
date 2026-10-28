@@ -385,6 +385,7 @@ struct GeneralSettingsTab: View {
                 }
                 Divider()
                 SettingsRow(title: L("로그인 시 실행", "Open at login")) {
+                    Spacer()
                     Toggle(L("로그인 시 실행", "Open at login"), isOn: Binding(
                         get: { model.openAtLogin }, set: { model.setOpenAtLogin($0) }))
                         .labelsHidden().toggleStyle(.switch)
@@ -400,13 +401,14 @@ private struct MaintenanceSettings: View {
 
     var body: some View {
         SettingsCard(title: L("업데이트와 저장 위치", "Updates & storage")) {
+            // Switches sit at the right end of their row.
             SettingsRow(title: L("새 버전 확인", "Check updates")) {
+                SettingsAction(title: L("지금 확인", "Check now")) { updater.check() }
+                    .disabled(updater.checking)
                 Toggle(L("새 버전 자동 확인", "Check for updates automatically"), isOn: $updater.enabled)
                     .labelsHidden().toggleStyle(.switch)
                     .help(L("켜면 시작 후, 그리고 3시간마다 확인만 해요. 설치는 버튼을 눌러야 해요.",
                             "Checks at launch and every 3 hours. Installing always needs the button."))
-                SettingsAction(title: L("지금 확인", "Check now")) { updater.check() }
-                    .disabled(updater.checking)
             }
             if updater.available != nil {
                 SettingsRow(title: L("새 버전", "New version")) {

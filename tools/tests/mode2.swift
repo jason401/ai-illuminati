@@ -694,9 +694,10 @@ do {
     expect(Updater.describe(["status": "current", "current": "abcdef1234"]).contains("abcdef1"), "current version text")
     expect(Updater.describe(["status": "updated", "previous": "1111111aaa", "current": "2222222bbb"]).contains("1111111")
            && Updater.describe(["status": "updated", "previous": "1111111aaa", "current": "2222222bbb"]).contains("2222222"), "updated text")
-    for state in ["checking", "testing", "building", "waiting", "postponed", "local-changes", "local-commits", "unavailable", "failed"] {
+    for state in ["checking", "available", "testing", "building", "waiting", "postponed", "local-changes", "local-commits", "unavailable", "failed"] {
         expect(!Updater.describe(["status": state]).isEmpty, "status text for " + state)
     }
+    expect(Updater.describe(["status": "available", "next": "3333333ccc"]).contains("3333333"), "available text")
     print("PASS: update status texts")
 }
 

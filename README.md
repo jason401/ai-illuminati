@@ -18,11 +18,11 @@
 3. 준비된 앱이 처음 실행되면 `/Applications/AI Illuminati.app`로 설치되어 다시 켜져요. 권한이 없으면 실패 이유를 표시하고 기존 앱을 유지해요. 사용자별 설치는 명시적으로 `defaults write local.aiilluminati installInUserApplications -bool true`를 설정한 뒤 다시 실행하면 `~/Applications`를 사용해요.
 4. 메뉴바 오른쪽 위에 삼각형 안의 눈 마크가 생겨요. 누르면 계정마다 **5시간·주간 남은 양이 나란히** 보여요(그 요금제에 없는 한도는 `–`, 30% 미만 주황·10% 미만 빨강). 계정 위에 올리면 리셋 시각과 다른 한도가 보여요.
 
-## 자동 업데이트
+## 업데이트
 
-설정 → 일반 → **업데이트**. 기본으로 시작 후 60초와 3시간마다 공개 저장소의 `stable` 브랜치를 확인해요. 앱 전용 소스는 `~/Library/Application Support/AI Illuminati/source`에 있고, Documents의 개발 프로젝트는 읽거나 수정하지 않아요. 각 Mac에서 시험 → 빌드 → 기존 로컬 인증서로 서명 → 설치 위치의 앱 교체 → 새 앱 실행 확인 순서로 진행해요. 따라서 업데이트에는 각 Mac의 Command Line Tools와 기존 로컬 서명이 계속 필요해요. API 키는 필요 없어요.
+설정 → 일반 → **새 버전 확인**. 기본으로 시작 후 60초와 3시간마다 공개 저장소의 `stable` 브랜치를 **확인만** 해요. 새 버전이 있으면 메뉴에 **새 버전 설치**, 설정에 **지금 업데이트** 버튼이 생기고, 그 버튼을 눌러야만 설치해요. 앱 전용 소스는 `~/Library/Application Support/AI Illuminati/source`에 있고, Documents의 개발 프로젝트는 읽거나 수정하지 않아요. 각 Mac에서 시험 → 빌드 → 기존 로컬 인증서로 서명 → 설치 위치의 앱 교체 → 새 앱 실행 확인 순서로 진행해요. 따라서 업데이트에는 각 Mac의 Command Line Tools와 기존 로컬 서명이 계속 필요해요. API 키는 필요 없어요.
 
-채팅·자료 가져오기·포커가 진행 중이면 교체를 미뤄요. 설치 실패 시 이전 앱을 복구하고, 새 앱이 시작됐다고 확인한 뒤에만 성공으로 기록해요. 계정·대화·설정과 `~/.ai-illuminati` 경로는 유지해요. 외부 Claude/Codex/agy와 `/usr/bin/python3`는 기존 설치를 사용해요.
+버튼을 누른 뒤 채팅·자료 가져오기·포커가 진행 중이면, 끝날 때까지 10분마다 다시 시도해요. 설치 실패 시 이전 앱을 복구하고, 새 앱이 시작됐다고 확인한 뒤에만 성공으로 기록해요. 계정·대화·설정과 `~/.ai-illuminati` 경로는 유지해요. 외부 Claude/Codex/agy와 `/usr/bin/python3`는 기존 설치를 사용해요.
 
 개발자는 `main`에서 수정·시험·push한 뒤 검증된 커밋만 `git push origin main:stable`로 배포해요. `stable`은 되감거나 강제 push하지 않아요. `zsh tools/build_app.sh --stage`는 후보 앱만 만들며 실행 앱을 종료하지 않아요. `--install-staged`는 구 버전 updater를 위한 최초 전환 호환 명령이에요. 새 앱의 업데이트는 자체 installer가 담당해요.
 

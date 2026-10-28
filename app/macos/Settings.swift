@@ -400,18 +400,26 @@ private struct MaintenanceSettings: View {
 
     var body: some View {
         SettingsCard(title: L("업데이트와 저장 위치", "Updates & storage")) {
-            SettingsRow(title: L("자동 업데이트", "Auto update")) {
-                Toggle(L("자동 업데이트", "Automatic updates"), isOn: $updater.enabled)
+            SettingsRow(title: L("새 버전 확인", "Check updates")) {
+                Toggle(L("새 버전 자동 확인", "Check for updates automatically"), isOn: $updater.enabled)
                     .labelsHidden().toggleStyle(.switch)
-                SettingsAction(title: L("지금 확인", "Check now")) { updater.check(manual: true) }
+                    .help(L("켜면 시작 후, 그리고 3시간마다 확인만 해요. 설치는 버튼을 눌러야 해요.",
+                            "Checks at launch and every 3 hours. Installing always needs the button."))
+                SettingsAction(title: L("지금 확인", "Check now")) { updater.check() }
                     .disabled(updater.checking)
             }
-            Text(updater.status.isEmpty ? L("시작 후, 그리고 3시간마다 확인해요.", "Checks at launch and every 3 hours.") : updater.status)
+            if updater.available != nil {
+                SettingsRow(title: L("새 버전", "New version")) {
+                    SettingsAction(title: L("지금 업데이트", "Update Now")) { updater.install() }
+                        .disabled(updater.checking)
+                }
+            }
+            Text(updater.status.isEmpty ? L("새 버전은 확인만 하고, 설치는 버튼을 눌러야 해요.", "Checks only; installing needs the button.") : updater.status)
                 .font(.system(size: 10)).foregroundStyle(.secondary)
                 .lineLimit(2).fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 10).padding(.bottom, 7)
-                .help(updater.status + "\n" + L("시험과 빌드가 통과해야 교체해요. 작업 중에는 기다려요.", "Installs after tests and build pass. Waits for active work."))
+                .help(updater.status + "\n" + L("시험과 빌드가 통과해야 교체해요. 채팅·게임 중에는 기다려요.", "Installs after tests and build pass. Waits for chats and games."))
             Divider()
             SettingsRow(title: L("저장 폴더", "Folders")) {
                 SettingsAction(title: L("앱 데이터", "App data")) { DataFolders.open(DataFolders.appData) }

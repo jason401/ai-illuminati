@@ -5,12 +5,16 @@ import ServiceManagement
 // stable is a deployment channel. Only the app-owned checkout is ever changed.
 // Each Mac builds with its existing local identity; developer repositories are never touched.
 final class Updater: ObservableObject {
+    // Only checks run on their own; installing a new version always waits for the button.
+    // The key keeps its old name so an existing on/off choice carries over.
     @Published var enabled: Bool {
         didSet { UserDefaults.standard.set(enabled, forKey: "autoUpdate") }
     }
     @Published private(set) var checking = false
     @Published private(set) var status = ""
+    @Published private(set) var available: String?
     var isBusy: () -> Bool = { false }
+    var onAvailableChange: () -> Void = {}
 
     static let every: TimeInterval = 3 * 3600, retry: TimeInterval = 600, first: TimeInterval = 60
     static let repository = "https://github.com/jason401/ai-illuminati.git"
@@ -25,112 +29,152 @@ final class Updater: ObservableObject {
         let base = personal ? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications") : URL(fileURLWithPath: "/Applications")
         return base.appendingPathComponent("AI Illuminati.app")
     }
+    private var migrating: Bool { Bundle.main.bundleURL.standardizedFileURL != target.standardizedFileURL }
+    private var staged: URL { root.appendingPathComponent("AI Illuminati.update.app") }
     private let work = DispatchQueue(label: "updater")
     private var timer: Timer?
     private var stateFile: URL { URL(fileURLWithPath: AccountStore.supportDir).appendingPathComponent("update.json") }
 
     init() {
         enabled = UserDefaults.standard.object(forKey: "autoUpdate") as? Bool ?? true
-        status = Self.describe(loadState())
+        let state = loadState()
+        status = Self.describe(state)
+        if state["status"] == "available", let next = state["next"], next != revision { available = next }
     }
 
     func start() {
         acknowledgeInstallation()
-        schedule(after: Bundle.main.bundleURL.standardizedFileURL == target.standardizedFileURL ? Self.first : 2)
+        // A developer build is moved to its install location once, without waiting for the button.
+        if migrating { return schedule(after: 2) { $0.install() } }
+        schedule(after: Self.first) { if $0.enabled { $0.check() } }
         timer = Timer.scheduledTimer(withTimeInterval: Self.every, repeats: true) { [weak self] _ in
             guard let self, self.enabled else { return }
-            self.check(manual: false)
+            self.check()
         }
     }
 
-    private func schedule(after seconds: TimeInterval) {
+    private func schedule(after seconds: TimeInterval, _ step: @escaping (Updater) -> Void) {
         DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
-            guard let self else { return }
-            let migrating = Bundle.main.bundleURL.standardizedFileURL != self.target.standardizedFileURL
-            guard self.enabled || migrating else { return }
-            self.check(manual: migrating)
+            if let self { step(self) }
         }
     }
 
-    func check(manual: Bool) {
+    /// Looks for a new version on the stable channel. Changes nothing on this Mac's app.
+    func check() {
         guard !checking, !installing else { return }
-        if !manual && isBusy() {
-            report(["status": "postponed"])
-            schedule(after: Self.retry)
-            return
+        checking = true
+        report(["status": "checking"], save: false)
+        work.async {
+            defer { DispatchQueue.main.async { self.checking = false } }
+            do {
+                try self.withSource { _, new in
+                    self.report(["status": "available", "current": self.revision, "next": new])
+                    self.setAvailable(new)
+                }
+            } catch {
+                self.report(["status": "failed", "current": self.revision, "detail": String(describing: error)])
+            }
+        }
+    }
+
+    /// Runs only after the user asks: tests, builds and installs the stable version.
+    func install() {
+        guard !checking, !installing else { return }
+        if isBusy() {
+            report(["status": "waiting", "current": revision])
+            return schedule(after: Self.retry) { $0.install() }
         }
         checking = true
         report(["status": "checking"], save: false)
-        work.async { self.run(manual: manual) }
+        work.async {
+            defer { DispatchQueue.main.async { self.checking = false } }
+            if self.migrating { return self.handoff(staged: Bundle.main.bundleURL, next: self.revision) }
+            do {
+                try self.withSource { old, new in
+                    // A build made earlier for this version (e.g. while waiting for a chat) is reused.
+                    let ready = (try? self.git("rev-parse", "HEAD")) == new
+                        && (NSDictionary(contentsOf: self.staged.appendingPathComponent("Contents/Info.plist"))?["AISourceRevision"] as? String) == new
+                    if !ready {
+                        do {
+                            try self.git("merge", "--ff-only", "-q", new)
+                            self.report(["status": "testing", "current": self.revision, "next": new], save: false)
+                            try self.shell(["zsh", "tools/tests/run_mode2.sh"], timeout: 30 * 60, step: "tests")
+                            self.report(["status": "building", "current": self.revision, "next": new], save: false)
+                            try self.shell(["zsh", "tools/build_app.sh", "--stage"], timeout: 20 * 60, step: "build")
+                        } catch {
+                            // Only this private, clean checkout can be reset; never a developer folder.
+                            _ = try? self.git("reset", "-q", "--hard", old)
+                            throw error
+                        }
+                    }
+                    self.handoff(staged: self.staged, next: new)
+                }
+            } catch {
+                self.report(["status": "failed", "current": self.revision, "detail": String(describing: error)])
+            }
+        }
+    }
+
+    private func setAvailable(_ next: String?) {
+        DispatchQueue.main.async {
+            guard self.available != next else { return }
+            self.available = next
+            self.onAvailableChange()
+        }
     }
 
     // MARK: Steps
 
-    private func run(manual: Bool) {
-        defer { DispatchQueue.main.async { self.checking = false } }
-        // A developer build is installed once before it checks for source updates.
-        if Bundle.main.bundleURL.standardizedFileURL != target.standardizedFileURL {
-            return handoff(staged: Bundle.main.bundleURL, next: revision)
+    /// Holds the source lock, fetches stable and calls `body(old, new)` only when stable is newer
+    /// than the running app. Other outcomes are reported here.
+    private func withSource(_ body: (String, String) throws -> Void) throws {
+        try FileManager.default.createDirectory(at: root.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let lockPath = root.deletingLastPathComponent().appendingPathComponent("source.lock").path
+        let lockFD = open(lockPath, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
+        guard lockFD >= 0 else { throw Failure(description: "Cannot open update lock") }
+        defer { close(lockFD) }
+        guard flock(lockFD, LOCK_EX | LOCK_NB) == 0 else { return report(["status": "postponed"]) }
+        defer { flock(lockFD, LOCK_UN) }
+        guard root.resolvingSymlinksInPath().path == root.path else {
+            throw Failure(description: "Update source must not be a symbolic link")
         }
-        do {
-            try FileManager.default.createDirectory(at: root.deletingLastPathComponent(), withIntermediateDirectories: true)
-            let lockPath = root.deletingLastPathComponent().appendingPathComponent("source.lock").path
-            let lockFD = open(lockPath, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
-            guard lockFD >= 0 else { throw Failure(description: "Cannot open update lock") }
-            defer { close(lockFD) }
-            guard flock(lockFD, LOCK_EX | LOCK_NB) == 0 else { return report(["status": "postponed"]) }
-            defer { flock(lockFD, LOCK_UN) }
-            guard root.resolvingSymlinksInPath().path == root.path else {
-                throw Failure(description: "Update source must not be a symbolic link")
-            }
-            if !FileManager.default.fileExists(atPath: root.path) {
-                let temporary = root.deletingLastPathComponent().appendingPathComponent("source-clone-" + UUID().uuidString)
-                defer { try? FileManager.default.removeItem(at: temporary) }
-                _ = try execute(["/usr/bin/git", "clone", "--branch", Self.channel, "--single-branch", Self.repository, temporary.path],
-                            timeout: 180, step: "clone", directory: root.deletingLastPathComponent())
-                try FileManager.default.moveItem(at: temporary, to: root)
-            }
-            guard try git("remote", "get-url", "origin") == Self.repository else {
-                throw Failure(description: "Unexpected update repository")
-            }
-            guard try git("status", "--porcelain", "--untracked-files=normal").isEmpty else {
-                return report(["status": "local-changes"])
-            }
-            try git("fetch", "-q", "origin", Self.channel, timeout: 90)
-            let old = try git("rev-parse", "HEAD"), new = try git("rev-parse", "origin/" + Self.channel)
-            // Compare against the running binary, not only the checkout (a failed build may
-            // leave the checkout newer than the installed app).
-            if revision == new { return report(["status": "current", "current": revision]) }
-            guard (try? git("merge-base", "--is-ancestor", "HEAD", new)) != nil else {
-                return report(["status": "local-commits"])
-            }
-            // Refuse a stable rewind relative to the running app when its commit is available.
-            if !revision.isEmpty, (try? git("cat-file", "-e", revision + "^{commit}")) != nil,
-               (try? git("merge-base", "--is-ancestor", revision, new)) == nil {
-                throw Failure(description: "Stable channel is older than the running app")
-            }
-            do {
-                try git("merge", "--ff-only", "-q", new)
-                report(["status": "testing", "current": revision, "next": new], save: false)
-                try shell(["zsh", "tools/tests/run_mode2.sh"], timeout: 30 * 60, step: "tests")
-                report(["status": "building", "current": revision, "next": new], save: false)
-                try shell(["zsh", "tools/build_app.sh", "--stage"], timeout: 20 * 60, step: "build")
-            } catch {
-                // Only this private, clean checkout can be reset; never a developer folder.
-                _ = try? git("reset", "-q", "--hard", old)
-                throw error
-            }
-            handoff(staged: root.appendingPathComponent("AI Illuminati.update.app"), next: new)
-        } catch {
-            report(["status": "failed", "current": revision, "detail": String(describing: error)])
+        if !FileManager.default.fileExists(atPath: root.path) {
+            let temporary = root.deletingLastPathComponent().appendingPathComponent("source-clone-" + UUID().uuidString)
+            defer { try? FileManager.default.removeItem(at: temporary) }
+            _ = try execute(["/usr/bin/git", "clone", "--branch", Self.channel, "--single-branch", Self.repository, temporary.path],
+                        timeout: 180, step: "clone", directory: root.deletingLastPathComponent())
+            try FileManager.default.moveItem(at: temporary, to: root)
         }
+        guard try git("remote", "get-url", "origin") == Self.repository else {
+            throw Failure(description: "Unexpected update repository")
+        }
+        guard try git("status", "--porcelain", "--untracked-files=normal").isEmpty else {
+            return report(["status": "local-changes"])
+        }
+        try git("fetch", "-q", "origin", Self.channel, timeout: 90)
+        let old = try git("rev-parse", "HEAD"), new = try git("rev-parse", "origin/" + Self.channel)
+        // Compare against the running binary, not only the checkout (a failed build may
+        // leave the checkout newer than the installed app).
+        if revision == new {
+            setAvailable(nil)
+            return report(["status": "current", "current": revision])
+        }
+        guard (try? git("merge-base", "--is-ancestor", "HEAD", new)) != nil else {
+            return report(["status": "local-commits"])
+        }
+        // Refuse a stable rewind relative to the running app when its commit is available.
+        if !revision.isEmpty, (try? git("cat-file", "-e", revision + "^{commit}")) != nil,
+           (try? git("merge-base", "--is-ancestor", revision, new)) == nil {
+            throw Failure(description: "Stable channel is older than the running app")
+        }
+        try body(old, new)
     }
 
     private func handoff(staged: URL, next: String) {
         DispatchQueue.main.sync {
             guard !isBusy() else {
                 report(["status": "waiting", "current": revision, "next": next])
-                schedule(after: Self.retry)
+                schedule(after: Self.retry) { $0.install() }
                 return
             }
             do {
@@ -159,12 +203,12 @@ final class Updater: ObservableObject {
                 process.standardError = output
                 try process.run()
                 installing = true
-                waitForInstaller(process, token: token, deadline: Date().addingTimeInterval(120))
+                waitForInstaller(process, token: token, next: next, deadline: Date().addingTimeInterval(120))
             } catch { report(["status": "failed", "detail": String(describing: error)]) }
         }
     }
 
-    private func waitForInstaller(_ process: Process, token: String, deadline: Date) {
+    private func waitForInstaller(_ process: Process, token: String, next: String, deadline: Date) {
         // Poll without blocking the UI. Recheck busy immediately before graceful termination.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
             let ready = self.updates.appendingPathComponent(token + ".ready")
@@ -172,8 +216,8 @@ final class Updater: ObservableObject {
                 guard !self.isBusy() else {
                     process.terminate()
                     self.installing = false
-                    self.report(["status": "postponed"])
-                    self.schedule(after: Self.retry)
+                    self.report(["status": "waiting", "current": self.revision, "next": next])
+                    self.schedule(after: Self.retry) { $0.install() }
                     return
                 }
                 if SMAppService.mainApp.status == .enabled {
@@ -190,7 +234,7 @@ final class Updater: ObservableObject {
                 if process.isRunning { process.terminate() }
                 self.installing = false
                 self.report(["status": "failed", "detail": L("설치 준비 실패: updates/install.log를 확인해 주세요", "Installer preparation failed; see updates/install.log")])
-            } else { self.waitForInstaller(process, token: token, deadline: deadline) }
+            } else { self.waitForInstaller(process, token: token, next: next, deadline: deadline) }
         }
     }
 
@@ -295,14 +339,15 @@ final class Updater: ObservableObject {
         case "checking": return L("새 버전 확인 중…", "Checking for a new version…")
         case "testing": return L("새 버전(\(short(s["next"]))) 시험 중…", "Testing new version \(short(s["next"]))…")
         case "building": return L("새 버전(\(short(s["next"]))) 준비 중…", "Preparing new version \(short(s["next"]))…")
-        case "waiting": return L("새 버전 준비 완료. 작업이 끝나면 다시 시작해요", "New version ready. Restarting after active work finishes")
+        case "available": return L("새 버전(\(short(s["next"])))이 있어요. '지금 업데이트'를 눌러 설치해요", "New version \(short(s["next"])) is available. Click Update Now to install") + when
+        case "waiting": return L("채팅·게임이 끝나면 업데이트해요", "Updating after the chat or game finishes")
         case "current": return L("최신 버전이에요 (\(short(s["current"])))", "Up to date (\(short(s["current"])))") + when
         case "updated":
             if s["previous"] == nil || s["previous"] == s["current"] {
                 return L("설치됨: \(short(s["current"]))", "Installed: \(short(s["current"]))") + when
             }
             return L("업데이트됨: \(short(s["previous"])) → \(short(s["current"]))", "Updated: \(short(s["previous"])) → \(short(s["current"]))") + when
-        case "postponed": return L("작업 중이라 10분 뒤 다시 확인해요", "Busy; checking again in 10 minutes") + when
+        case "postponed": return L("다른 업데이트 작업 중이에요", "Another update step is running") + when
         case "local-changes": return L("이 맥에서 고친 코드가 있어 건너뛰었어요", "Skipped: this Mac has its own code changes") + when
         case "local-commits": return L("이 맥에만 있는 커밋이 있어 건너뛰었어요", "Skipped: this Mac has commits not on GitHub") + when
         case "unavailable": return L("업데이트 소스를 준비하지 못했어요", "Update source is unavailable")

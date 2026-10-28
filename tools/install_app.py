@@ -191,8 +191,10 @@ def install(staged, target, current, support, parent_pid, token, restore_login, 
             record['phase'] = 'failed'
             record['detail'] = str(error)
             atomic_json(journal, record)
-            atomic_json(support / 'update.json', dict(status='failed', detail=str(error),
-                        at=datetime.datetime.now(datetime.timezone.utc).isoformat()))
+            # The app cancels before swapping when a chat or game starts; it records "waiting" itself.
+            if not (isinstance(error, InterruptedError) and not replaced):
+                atomic_json(support / 'update.json', dict(status='failed', detail=str(error),
+                            at=datetime.datetime.now(datetime.timezone.utc).isoformat()))
             if not alive(parent_pid):
                 subprocess.run(['/usr/bin/open', '-n', str(current)], cwd='/', check=False)
             if work.exists() and not backup.exists():

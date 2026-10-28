@@ -55,6 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func applicationDidFinishLaunching(_ note: Notification) {
+        model.updater.onAvailableChange = { [weak self] in self?.rebuildMenu() }
         model.updater.isBusy = { [weak self] in
             guard let self else { return false }
             return self.discussion.running || self.discussion.importingMaterials || self.pokerGame.running
@@ -294,6 +295,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if !shown.isEmpty { menu.addItem(.separator()) }
         menu.addItem(action(L("채팅창 열기…", "Open Chat…"), #selector(openChat), key: "n"))
         menu.addItem(action(L("게임 열기…", "Open Games…"), #selector(openGame), key: "g"))
+        if let next = model.updater.available {
+            menu.addItem(action(L("새 버전 설치 (\(next.prefix(7)))", "Install New Version (\(next.prefix(7)))"), #selector(installUpdate)))
+        }
         menu.addItem(action(L("설정…", "Settings…"), #selector(openSettings), key: ","))
         menu.addItem(action(L("지금 새로고침", "Refresh Now"), #selector(refresh), key: "r"))
         menu.addItem(.separator())
@@ -310,6 +314,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
 
     @objc private func openSettings() { settings.show(model: model) }
+    @objc private func installUpdate() { model.updater.install() }
     @objc private func openChat() { chat.show(discussion: discussion) }
     @objc private func openGame() { poker.show(game: pokerGame) }
 

@@ -61,6 +61,16 @@ if ! xcrun swiftc -swift-version 5 -O -o "$OUT/Contents/Resources/InstallBridge"
   cat "$LOG"
   exit 1
 fi
+# App icon: the menu bar mark drawn large by app/macos/Icon.swift.
+ICON_TMP="$(mktemp -d)"
+if ! xcrun swiftc -swift-version 5 -O -o "$ICON_TMP/MakeIcon" app/macos/Icon.swift tools/make_icon.swift >>"$LOG" 2>&1 \
+   || ! "$ICON_TMP/MakeIcon" "$ICON_TMP/AppIcon.iconset" >>"$LOG" 2>&1 \
+   || ! iconutil -c icns "$ICON_TMP/AppIcon.iconset" -o "$OUT/Contents/Resources/AppIcon.icns" >>"$LOG" 2>&1; then
+  rm -rf "$ICON_TMP"
+  cat "$LOG"
+  exit 1
+fi
+rm -rf "$ICON_TMP"
 mv -f "$OUT/Contents/MacOS/AIIlluminati.new" "$OUT/Contents/MacOS/AIIlluminati"
 
 cat > "$OUT/Contents/Info.plist" <<PLIST
@@ -69,6 +79,7 @@ cat > "$OUT/Contents/Info.plist" <<PLIST
 <plist version="1.0"><dict>
 <key>CFBundleExecutable</key><string>AIIlluminati</string>
 <key>CFBundleIdentifier</key><string>local.aiilluminati</string>
+<key>CFBundleIconFile</key><string>AppIcon</string>
 <key>CFBundleName</key><string>AI Illuminati</string>
 <key>CFBundleDisplayName</key><string>AI Illuminati</string>
 <key>CFBundlePackageType</key><string>APPL</string>

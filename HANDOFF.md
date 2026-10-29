@@ -2,6 +2,11 @@
 
 이 문서만 읽으면 바로 이어서 작업할 수 있게 정리했어요. 규칙은 `AGENTS.md`(= `CLAUDE.md`와 같은 내용)에, 사용자용 설명은 `README.md`에 있어요.
 
+## 앱 아이콘 (2026-10-29, Claude)
+
+- 예전엔 `.icns`도 `CFBundleIconFile`도 없어 Finder·활동 모니터에 빈 아이콘이 보였음. `Icon.swift`의 `drawAppIcon(in:)`이 메뉴바 마크를 1024 격자에 크게 그림(남색 타일, 금색 삼각형·눈, 뒤의 앰버 후광).
+- `tools/make_icon.swift`(Icon.swift와 함께 컴파일)가 iconset을 그리고 `build_app.sh`가 `iconutil`로 `Contents/Resources/AppIcon.icns`를 만듦. 그림 파일은 저장소에 두지 않음.
+
 ## 업데이트는 버튼으로만 (2026-10-28, Claude)
 
 - 사용자 결정: 자동 설치 끔. 시작 60초 뒤·3시간마다 `stable`을 **확인만**(fetch·비교, 소스/앱 변경 없음) → `Updater.available`. 메뉴 '새 버전 설치 (rev)'와 설정 '지금 업데이트'를 눌러야 `install()`(ff→시험→빌드→교체). 스위치는 '새 버전 자동 확인'(UserDefaults 키 `autoUpdate` 그대로). 개발 폴더 빌드의 최초 이전만 자동.

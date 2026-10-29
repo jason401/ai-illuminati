@@ -121,6 +121,70 @@ func meterIcon(levels: [Double?], mark: Bool, colors: [NSColor]? = nil, frame: M
 }
 
 
+// The app icon (Finder, Dock, Activity Monitor): the same mark in gold on a night-blue tile, with the
+// halo shining behind the triangle. Drawn on a 1024 grid, scaled to rect. tools/make_icon.swift renders it.
+func drawAppIcon(in rect: NSRect) {
+    let s = rect.width / 1024
+    func p(_ x: CGFloat, _ y: CGFloat) -> NSPoint { NSPoint(x: rect.minX + x * s, y: rect.minY + y * s) }
+    let gold = NSColor(srgbRed: 1, green: 0.84, blue: 0.45, alpha: 1)
+    let tile = NSBezierPath(roundedRect: NSRect(origin: p(100, 100), size: NSSize(width: 824 * s, height: 824 * s)),
+                            xRadius: 185 * s, yRadius: 185 * s)
+    NSGradient(starting: NSColor(srgbRed: 0.14, green: 0.15, blue: 0.29, alpha: 1),
+               ending: NSColor(srgbRed: 0.04, green: 0.05, blue: 0.11, alpha: 1))?.draw(in: tile, angle: -90)
+
+    let center = p(512, 470)
+    let triangle = NSBezierPath()
+    triangle.move(to: p(512, 800))
+    triangle.line(to: p(792, 300))
+    triangle.line(to: p(232, 300))
+    triangle.close()
+
+    // Halo: a warm glow and tapered rays, outside the triangle only.
+    NSGraphicsContext.saveGraphicsState()
+    tile.addClip()
+    let outside = NSBezierPath(rect: rect)
+    outside.append(triangle)
+    outside.windingRule = .evenOdd
+    outside.addClip()
+    let glow = NSBezierPath(ovalIn: NSRect(x: center.x - 420 * s, y: center.y - 420 * s, width: 840 * s, height: 840 * s))
+    NSGradient(starting: illuminatiLight.withAlphaComponent(0.55), ending: illuminatiLight.withAlphaComponent(0))?
+        .draw(in: glow, relativeCenterPosition: .zero)
+    for index in 0..<28 {
+        let angle = Double(index) * 2 * .pi / 28
+        for segment in 0..<7 {
+            let near = Double(segment) / 7, far = Double(segment + 1) / 7
+            let ray = NSBezierPath()
+            ray.move(to: NSPoint(x: center.x + CGFloat(cos(angle) * (120 + near * 330)) * s,
+                                 y: center.y + CGFloat(sin(angle) * (120 + near * 330)) * s))
+            ray.line(to: NSPoint(x: center.x + CGFloat(cos(angle) * (120 + far * 330)) * s,
+                                 y: center.y + CGFloat(sin(angle) * (120 + far * 330)) * s))
+            ray.lineWidth = CGFloat(16 - near * 9) * s
+            illuminatiLight.withAlphaComponent(0.9 * pow(1 - near, 0.6)).setStroke()
+            ray.stroke()
+        }
+    }
+    NSGraphicsContext.restoreGraphicsState()
+
+    NSColor(srgbRed: 0.09, green: 0.1, blue: 0.2, alpha: 1).setFill()
+    triangle.fill()
+    gold.setStroke()
+    triangle.lineWidth = 34 * s
+    triangle.lineJoinStyle = .round
+    triangle.stroke()
+
+    let eye = NSBezierPath()
+    eye.move(to: p(362, 460))
+    eye.curve(to: p(662, 460), controlPoint1: p(437, 560), controlPoint2: p(587, 560))
+    eye.curve(to: p(362, 460), controlPoint1: p(587, 360), controlPoint2: p(437, 360))
+    eye.close()
+    eye.lineWidth = 24 * s
+    eye.stroke()
+    gold.setFill()
+    NSBezierPath(ovalIn: NSRect(x: center.x - 52 * s, y: center.y - 62 * s, width: 104 * s, height: 104 * s)).fill()
+    NSColor(srgbRed: 0.09, green: 0.1, blue: 0.2, alpha: 1).setFill()
+    NSBezierPath(ovalIn: NSRect(x: center.x - 22 * s, y: center.y - 32 * s, width: 44 * s, height: 44 * s)).fill()
+}
+
 // A soft radial fan shines from behind the triangle; the eye itself remains unobscured.
 private func animatedIlluminatiIcon(colored: Bool, frame: MenuMarkFrame) -> NSImage {
     let image = NSImage(size: NSSize(width: 22, height: 18), flipped: false) { _ in

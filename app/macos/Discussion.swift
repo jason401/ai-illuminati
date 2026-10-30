@@ -303,6 +303,8 @@ struct ChatTurn: Identifiable, Codable {
     var debateFocus: String?
     var maxTurns: Int?    // mode 3: total AI turns (turnsPerAI × participants)
     var turnsPerAI: Int?  // missing in older chats, whose limit was a single total
+    var voteOptions: [String]?  // mode 4: the choices voted on
+    var votes: [VoteBallot]?    // mode 4: one ballot per AI, in the team's order
 }
 
 // How much each AI may say per turn in the discussion modes. The user mostly reads the one-line
@@ -474,7 +476,7 @@ final class Discussion: ObservableObject {
     }
 
     // New mode numbers are versioned; legacy engines remain available for regression checks.
-    static var availableModes = [1, 2, 3]
+    static var availableModes = [1, 2, 3, 4]
     static var modernModes = true
 
     var configuration: ChatConfiguration {
@@ -667,7 +669,7 @@ final class Discussion: ObservableObject {
         turn.modeVersion = Self.modernModes ? 2 : nil
         turn.images = pendingImages.isEmpty ? nil : pendingImages
         let perAI = min(10, max(2, config.turnsPerAI ?? 4))
-        if (Self.modernModes && config.mode != 3) || (!Self.modernModes && config.mode == 3) {
+        if (Self.modernModes && config.mode <= 2) || (!Self.modernModes && config.mode == 3) {
             turn.turnsPerAI = perAI; turn.maxTurns = perAI * team.count
         }
         guard team.count > 0 else {
@@ -721,7 +723,10 @@ final class Discussion: ObservableObject {
         let rules = model.chatRules.trimmingCharacters(in: .whitespacesAndNewlines)
         let debateLeader = Self.modernModes && !team.contains(where: { $0.provider == config.leader }) ? team[0].provider : config.leader
         work.async {
-            if Self.modernModes && config.mode == 3 {
+            if Self.modernModes && config.mode == 4 {
+                self.runVote(question: question, history: history, rules: rules, team: team, leader: debateLeader,
+                             cancellation: cancellation, id: id, index: index)
+            } else if Self.modernModes && config.mode == 3 {
                 self.runCollaboration(question: question, history: history, rules: rules, team: team,
                                       leader: config.leaderAccountID, fallbackLeader: config.leader,
                                       cancellation: cancellation, id: id, index: index)

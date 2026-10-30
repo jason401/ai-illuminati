@@ -126,7 +126,7 @@ struct ChatView: View {
                     .frame(width: 245)
                     .disabled(discussion.running || discussion.importingMaterials)
                     Spacer(minLength: 8)
-                    if discussion.configuration.mode != 3 {
+                    if discussion.configuration.mode <= 2 {
                         Menu {
                             Picker(L("AI마다 최대 발언", "Maximum turns per AI"), selection: Binding(
                                 get: { discussion.configuration.turnsPerAI ?? 4 },
@@ -140,6 +140,8 @@ struct ChatView: View {
                         }
                         .fixedSize()
                         .disabled(discussion.running || discussion.importingMaterials)
+                    }
+                    if discussion.configuration.mode != 3 {
                         Menu {
                             Picker(L("AI 발언 길이", "Length of each AI turn"), selection: Binding(
                                 get: { SpeechLength.clamp(discussion.configuration.speechLength) },
@@ -158,8 +160,10 @@ struct ChatView: View {
                         .disabled(discussion.running || discussion.importingMaterials)
                     }
                     Menu {
-                        Text(L("1 토론: 대표가 논점을 맡기고 답을 정리합니다. 2 비판 토론: 반론·대안·실패 조건을 검증합니다. 3 협업: 선택 계정에 필요한 결과물 작업을 나누고 검토·통합합니다.", "1 Discussion: moderator-led discussion and synthesis. 2 Critical debate: test objections, alternatives and failure cases. 3 Collaboration: assign work to selected accounts, cross-review and integrate deliverables."))
-                        if discussion.configuration.mode >= 2 {
+                        Text(L("1 토론: 대표가 논점을 맡기고 답을 정리합니다. 2 비판 토론: 반론·대안·실패 조건을 검증합니다. 3 협업: 선택 계정에 필요한 결과물 작업을 나누고 검토·통합합니다. 4 투표: 선택지를 한 줄에 하나씩 적으면 AI마다 서로 보지 않고 한 표씩 이유와 함께 던지고, 앱이 개표합니다.", "1 Discussion: moderator-led discussion and synthesis. 2 Critical debate: test objections, alternatives and failure cases. 3 Collaboration: assign work to selected accounts, cross-review and integrate deliverables. 4 Vote: list the choices one per line; each AI casts one vote with its reason without seeing the others, and the app counts."))
+                        if discussion.configuration.mode == 4 {
+                            Text(L("선택지를 적지 않으면 대표(왕관)가 질문을 보고 선택지를 만들어요. 대표도 다른 AI와 똑같이 한 표만 던져요.", "Without a list, the moderator (crown) drafts the choices from your question. The moderator still gets one vote like everyone else."))
+                        } else if discussion.configuration.mode >= 2 {
                             Text(L("손잡이를 끌어 순서를 바꾸고, 이름 옆 메뉴에서 대표를 정하세요.", "Drag the handles to reorder. Use the menu beside a name to choose the moderator."))
                         }
                         if discussion.configuration.mode == 3 {
@@ -496,6 +500,46 @@ private struct ParticipantDropDelegate: DropDelegate {
     }
 }
 
+// Mode 4: the choices, and once everyone has voted, a bar per choice (the leading choice in the accent color).
+private struct VoteResultView: View {
+    let options: [String]
+    let votes: [VoteBallot]?
+
+    var body: some View {
+        let counts = VoteCount.tally(votes ?? [], options: options.count)
+        let total = max(counts.reduce(0, +), 1)
+        let top = counts.max() ?? 0
+        VStack(alignment: .leading, spacing: 7) {
+            ForEach(options.indices, id: \.self) { i in
+                let leading = votes != nil && top > 0 && counts[i] == top
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("\(i + 1). " + options[i]).fontWeight(leading ? .semibold : .regular)
+                        Spacer(minLength: 8)
+                        if votes != nil {
+                            Text(L("\(counts[i])표", "\(counts[i])")).monospacedDigit().foregroundColor(.secondary)
+                        }
+                    }
+                    if votes != nil {
+                        GeometryReader { geometry in
+                            ZStack(alignment: .leading) {
+                                Capsule().fill(Color.secondary.opacity(0.15))
+                                Capsule().fill(leading ? Color.accentColor : Color.secondary.opacity(0.5))
+                                    .frame(width: geometry.size.width * CGFloat(counts[i]) / CGFloat(total))
+                            }
+                        }
+                        .frame(height: 6)
+                    }
+                }
+                .accessibilityElement(children: .combine)
+            }
+        }
+        .padding(12)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .cornerRadius(10)
+    }
+}
+
 // A thin line where the chat switched to another mode.
 private struct ModeChangeMarker: View {
     let mode: Int
@@ -519,6 +563,7 @@ private struct ModeChangeMarker: View {
 
     static func name(_ mode: Int) -> String {
         switch mode {
+        case 4: return L("모드4 · 투표", "Mode 4 · Vote")
         case 3: return L("모드3 · 협업", "Mode 3 · Collaboration")
         case 2: return L("모드2 · 비판 토론", "Mode 2 · Critical debate")
         default: return L("모드1 · 토론", "Mode 1 · Discussion")
@@ -563,7 +608,7 @@ private struct TurnView: View {
             if let error = turn.error {
                 Text(error).foregroundColor(.red)
             }
-            if (turn.modeVersion == 2 && turn.mode != 3) || (turn.modeVersion == nil && turn.mode == 3) {
+            if (turn.modeVersion == 2 && (turn.mode ?? 1) <= 2) || (turn.modeVersion == nil && turn.mode == 3) {
                 Text(L("AI 발언 \(turn.entries.count)/\(turn.maxTurns ?? 9)", "AI turns \(turn.entries.count)/\(turn.maxTurns ?? 9)")
                      + (turn.turnsPerAI.map { L(" (AI마다 \($0)회)", " (\($0) each)") } ?? ""))
                     .font(.caption).foregroundColor(.secondary)
@@ -605,6 +650,9 @@ private struct TurnView: View {
             }
             }
             if let file = turn.artifact { Button(L("최종 결과물 열기", "Open final deliverable")) { discussion.openArtifact(file) } }
+            if let options = turn.voteOptions {
+                VoteResultView(options: options, votes: turn.votes)
+            }
             if let final = turn.final {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(markdown(final))

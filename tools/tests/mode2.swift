@@ -13,7 +13,7 @@ func waitFor(_ discussion: Discussion) {
 }
 
 // Offer the three new modes, then check legacy engines separately.
-expect(Discussion.availableModes == [1, 2, 3], "all three new modes should be offered")
+expect(Discussion.availableModes == [1, 2, 3, 4], "all four new modes should be offered")
 let hiddenDefault = Discussion(model: AppModel())
 expect(hiddenDefault.configuration.mode == 1, "a new room must start in discussion mode 1")
 expect(!hiddenDefault.configuration.participants.contains(.gemini) && !hiddenDefault.useGemini, "Gemini must be off by default in new chats")
@@ -902,4 +902,69 @@ do {
     expect(game.hand!.events.contains { $0.reason == "콜" }, "reasons kept for after the hand")
     game.stop()
     print("PASS: poker (ranking, betting, side pots, AI answers, saved chips)")
+}
+
+// Mode 4 vote: listed choices kept as written, one independent ballot per AI, app-side count,
+// invalid ballots, moderator-drafted choices, ties and the choice parser.
+do {
+    Discussion.modernModes = true
+    Discussion.availableModes = [1, 2, 3, 4]
+    let m = AppModel()
+    m.accounts = Account.Provider.allCases.map { Account(id: "vote-\($0.rawValue)-fake", provider: $0, name: $0.title, dir: nil) }
+    let chat = Discussion(model: m)
+    chat.configure { $0.participants = [.claude, .codex, .gemini]; $0.order = [.claude, .codex, .gemini]; $0.mode = 4; $0.leader = .claude; $0.keepSessions = false }
+    let lock = NSLock()
+    var prompts: [String] = []
+    chat.debateAnswer = { account, prompt, _, _, web in
+        lock.lock(); prompts.append(prompt); lock.unlock()
+        if prompt.contains("[MODE4 OPTIONS]") { return .success("{\"options\":[\"Swift\",\"Rust\"]}") }
+        expect(prompt.contains("[MODE4 VOTE]") && web, "ballots must use the vote prompt with web search")
+        expect(prompt.contains("1. Python\n2. Go\n3. Java"), "ballot must list the numbered choices")
+        switch account.provider {
+        case .claude: return .success("{\"choice\":2,\"headline\":\"Simple to ship\",\"reason\":\"reason-claude\"}")
+        case .codex: return .success("```json\n{\"choice\":\"2\",\"reason\":\"reason-codex\"}\n```")
+        case .gemini: return .success("I like option 1")
+        }
+    }
+    chat.draft = "Which should we use?\n1. Python\n2. Go\n3. Java"
+    chat.send(); waitFor(chat)
+    let first = chat.current.turns[0]
+    expect(first.mode == 4 && first.maxTurns == nil, "vote turn must be mode 4 without a turn count")
+    expect(first.voteOptions == ["Python", "Go", "Java"], "listed choices must be used as written")
+    expect(!prompts.contains { $0.contains("[MODE4 OPTIONS]") }, "no moderator call when the user listed choices")
+    expect(prompts.count == 3 && !prompts.contains { $0.contains("reason-") }, "each AI votes once without seeing the others")
+    expect(first.votes?.map(\.choice) == [2, 2, nil], "ballots in team order; unreadable vote counts as none")
+    expect(VoteCount.tally(first.votes!, options: 3) == [0, 2, 0], "app tally")
+    expect(first.final == VoteCount.summary(options: first.voteOptions!, ballots: first.votes!), "final is the app's count")
+    expect(first.entries.count == 3 && first.entries.filter(\.failed).count == 1, "unreadable vote shown as failed entry")
+    expect(first.entries.contains { $0.headline?.contains("Simple to ship") == true }, "ballot headline shown")
+
+    prompts.removeAll()
+    chat.debateAnswer = { account, prompt, _, _, _ in
+        lock.lock(); prompts.append(prompt); lock.unlock()
+        if prompt.contains("[MODE4 OPTIONS]") {
+            expect(account.provider == .claude, "the moderator drafts the choices")
+            return .success("{\"options\":[\"Swift\",\"Rust\"]}")
+        }
+        expect(prompt.contains("1. Swift\n2. Rust") && prompt.contains("Which should we use?"), "drafted choices and earlier chat reach every ballot")
+        return .success(account.provider == .claude ? "{\"choice\":1,\"reason\":\"a\"}"
+                        : account.provider == .codex ? "{\"choice\":2,\"reason\":\"b\"}" : "{\"choice\":9,\"reason\":\"c\"}")
+    }
+    chat.draft = "Swift or Rust for the new tool?"
+    chat.send(); waitFor(chat)
+    let second = chat.current.turns[1]
+    expect(second.voteOptions == ["Swift", "Rust"] && prompts.filter { $0.contains("[MODE4 OPTIONS]") }.count == 1, "moderator-drafted choices")
+    expect(VoteCount.tally(second.votes!, options: 2) == [1, 1] && second.votes?[2].choice == nil, "out-of-range vote is invalid")
+    let headline = second.final?.components(separatedBy: "\n").first ?? ""
+    expect(headline.contains("Swift") && headline.contains("Rust"), "a tie names every leading choice")
+
+    chat.debateAnswer = { _, _, _, _, _ in .success("no json") }
+    chat.draft = "Pick something"
+    chat.send(); waitFor(chat)
+    expect(chat.current.turns[2].error != nil && chat.current.turns[2].votes == nil, "no choices: explain instead of voting")
+
+    expect(VoteCount.options(in: "A) yes\nB) no") == ["yes", "no"], "lettered choices")
+    expect(VoteCount.options(in: "Which?\n- tea\n• coffee\n① water") == ["tea", "coffee", "water"], "bulleted choices")
+    expect(VoteCount.options(in: "Only one line") == [] && VoteCount.options(in: "1. alone") == [], "fewer than two is not a list")
+    print("PASS: vote mode (listed and drafted choices, independent ballots, app count, invalid ballots, tie, no-choice error)")
 }

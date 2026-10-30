@@ -33,8 +33,8 @@ struct IconAnimationCheck {
             let mono = illuminatiIcon(frame: frame), color = illuminatiIcon(colored: true, frame: frame)
             precondition(mono.isTemplate && !color.isTemplate)
             precondition(mono.size == NSSize(width: 22, height: 18))
-            precondition(meterIcon(levels: levels, mark: true, frame: frame).size.width == 48)
-            precondition(meterIcon(levels: levels, mark: false, colors: colors, frame: frame).size.width == 24)
+            precondition(meterIcon(levels: levels, mark: true, frame: frame).size.width == 38)
+            precondition(meterIcon(levels: levels, mark: false, colors: colors, frame: frame).size.width == 17)
             precondition(mono.tiffRepresentation != nil && color.tiffRepresentation != nil)
         }
         precondition(illuminatiIcon().size.width == 18)

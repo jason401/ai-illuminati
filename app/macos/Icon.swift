@@ -92,17 +92,19 @@ func illuminatiIcon(colored: Bool = false, frame: MenuMarkFrame? = nil) -> NSIma
 // bottom by what is left. An account with no reading shows an empty outline. Optionally the mark first.
 // Provider colors are optional; without them macOS adapts the template to the menu bar.
 func meterIcon(levels: [Double?], mark: Bool, colors: [NSColor]? = nil, frame: MenuMarkFrame? = nil) -> NSImage {
-    let barWidth: CGFloat = 4, gap: CGFloat = 1, height: CGFloat = 18
+    // Each bar is 2 pt wide (3 pt slot, 0.5 pt inset) with 1.5 pt between bars.
+    let barWidth: CGFloat = 3, gap: CGFloat = 0.5, height: CGFloat = 18
     let barsWidth = CGFloat(levels.count) * barWidth + CGFloat(max(levels.count - 1, 0)) * gap
     let markSize: CGFloat = frame == nil ? 18 : 22
-    let markWidth: CGFloat = mark ? markSize + 2 : 0
-    let size = NSSize(width: markWidth + barsWidth, height: height)
+    // About 3 pt from the triangle to the first bar; the animated mark keeps room for its halo on the right.
+    let markWidth: CGFloat = mark ? markSize + (frame == nil ? 1.5 : -1.5) : 0
+    let size = NSSize(width: (markWidth + barsWidth).rounded(.up), height: height)
     let image = NSImage(size: size, flipped: false) { _ in
         if mark { illuminatiIcon(colored: colors != nil, frame: frame).draw(in: NSRect(x: 0, y: 0, width: markSize, height: 18)) }
         for (i, level) in levels.enumerated() {
             let x = markWidth + CGFloat(i) * (barWidth + gap)
             let frame = NSRect(x: x + 0.5, y: 2.5, width: barWidth - 1, height: 13)
-            let outline = NSBezierPath(roundedRect: frame, xRadius: 1.5, yRadius: 1.5)
+            let outline = NSBezierPath(roundedRect: frame, xRadius: 1, yRadius: 1)
             let ink: NSColor = colors.flatMap { i < $0.count ? $0[i] : nil } ?? .black
             ink.withAlphaComponent(0.45).setStroke()
             outline.lineWidth = 1
@@ -110,7 +112,7 @@ func meterIcon(levels: [Double?], mark: Bool, colors: [NSColor]? = nil, frame: M
             if let level, level > 0 {
                 let fillHeight = max(1.5, 13 * CGFloat(min(level, 100)) / 100)
                 ink.setFill()
-                NSBezierPath(roundedRect: NSRect(x: x + 0.5, y: 2.5, width: barWidth - 1, height: fillHeight), xRadius: 1.5, yRadius: 1.5).fill()
+                NSBezierPath(roundedRect: NSRect(x: x + 0.5, y: 2.5, width: barWidth - 1, height: fillHeight), xRadius: 1, yRadius: 1).fill()
             }
         }
         return true

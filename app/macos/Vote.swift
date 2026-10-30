@@ -87,7 +87,7 @@ enum VoteCount {
 
 extension Discussion {
     func runVote(question: String, history: [ChatTurn], rules: String, team: [Account],
-                 leader: Account.Provider, cancellation: DebateCancellation, id: UUID, index: Int) {
+                 leader moderator: Account, cancellation: DebateCancellation, id: UUID, index: Int) {
         let previous = Self.transcript(history)
         let prefix = previous.isEmpty ? "" : previous + "\n\n"
         var transcript = prefix + "[User]\n" + question
@@ -96,7 +96,6 @@ extension Discussion {
         // 1. The choices: as the user listed them, else the moderator proposes them.
         var options = VoteCount.options(in: question)
         if options.isEmpty {
-            let moderator = team.first { $0.provider == leader } ?? team[0]
             changeTurn(id, index) { $0.status = L("\(self.label(moderator))가 선택지를 정리하는 중…", "\(self.label(moderator)) is drafting the choices…") }
             let result = requestDebate(moderator, """
                 \(Self.debateContext(rules: rules, transcript: transcript))

@@ -963,8 +963,35 @@ do {
     chat.send(); waitFor(chat)
     expect(chat.current.turns[2].error != nil && chat.current.turns[2].votes == nil, "no choices: explain instead of voting")
 
+    // Every account votes, personal and school ones too; unchecked or signed-out accounts do not.
+    let many = AppModel()
+    many.accounts = [Account(id: "vote-p-claude", provider: .claude, name: "Claude", dir: nil),
+                     Account(id: "vote-s-claude", provider: .claude, name: "School Claude", dir: nil),
+                     Account(id: "vote-p-codex", provider: .codex, name: "ChatGPT", dir: nil),
+                     Account(id: "vote-s-codex", provider: .codex, name: "School ChatGPT", dir: nil),
+                     Account(id: "vote-gemini", provider: .gemini, name: "Gemini", dir: nil)]
+    var signedOut = AIUsage(name: "School ChatGPT"); signedOut.needsLogin = true
+    many.latestUsage["vote-s-codex"] = signedOut
+    let all = Discussion(model: many)
+    all.configure { $0.mode = 4; $0.leaderAccountID = "vote-s-claude" }
+    var voters: [String] = [], drafters: [String] = []
+    all.debateAnswer = { account, prompt, _, _, _ in
+        lock.lock(); defer { lock.unlock() }
+        if prompt.contains("[MODE4 OPTIONS]") { drafters.append(account.id); return .success("{\"options\":[\"Yes\",\"No\"]}") }
+        voters.append(account.id)
+        return .success("{\"choice\":1,\"reason\":\"r\"}")
+    }
+    all.draft = "Ship it today?"; all.send(); waitFor(all)
+    expect(Set(voters) == ["vote-p-claude", "vote-s-claude", "vote-p-codex", "vote-gemini"] && voters.count == 4, "every signed-in account votes once, Gemini included")
+    expect(drafters == ["vote-s-claude"], "the crowned account drafts the choices")
+    expect(all.current.turns[0].votes?.map(\.speaker).count == 4, "one ballot per account")
+    voters.removeAll()
+    all.configure { $0.voteSkippedIDs = ["vote-gemini"] }
+    all.draft = "Ship it tomorrow?\n1. Yes\n2. No"; all.send(); waitFor(all)
+    expect(Set(voters) == ["vote-p-claude", "vote-s-claude", "vote-p-codex"], "an unchecked account does not vote")
+
     expect(VoteCount.options(in: "A) yes\nB) no") == ["yes", "no"], "lettered choices")
     expect(VoteCount.options(in: "Which?\n- tea\n• coffee\n① water") == ["tea", "coffee", "water"], "bulleted choices")
     expect(VoteCount.options(in: "Only one line") == [] && VoteCount.options(in: "1. alone") == [], "fewer than two is not a list")
-    print("PASS: vote mode (listed and drafted choices, independent ballots, app count, invalid ballots, tie, no-choice error)")
+    print("PASS: vote mode (every account votes, listed and drafted choices, independent ballots, app count, invalid ballots, tie, no-choice error)")
 }

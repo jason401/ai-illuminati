@@ -349,6 +349,7 @@ struct ChatConfiguration: Codable {
     var modeVersion: Int?
     var accountIDs: [String]?
     var leaderAccountID: String?
+    var voteSkippedIDs: [String]?  // mode 4: accounts turned off; every other account votes
 }
 
 struct Conversation: Identifiable, Codable {
@@ -724,7 +725,8 @@ final class Discussion: ObservableObject {
         let debateLeader = Self.modernModes && !team.contains(where: { $0.provider == config.leader }) ? team[0].provider : config.leader
         work.async {
             if Self.modernModes && config.mode == 4 {
-                self.runVote(question: question, history: history, rules: rules, team: team, leader: debateLeader,
+                self.runVote(question: question, history: history, rules: rules, team: team,
+                             leader: team.first { $0.id == config.leaderAccountID } ?? team.first { $0.provider == config.leader } ?? team[0],
                              cancellation: cancellation, id: id, index: index)
             } else if Self.modernModes && config.mode == 3 {
                 self.runCollaboration(question: question, history: history, rules: rules, team: team,
@@ -750,6 +752,14 @@ final class Discussion: ObservableObject {
         if useGemini { providers.append(.gemini) }
         if Self.modernModes || configuration.mode >= 2 {
             providers = configuration.order.filter { configuration.participants.contains($0) }
+        }
+        // Vote: every account votes (personal and school ones too), except the ones turned off.
+        if Self.modernModes && configuration.mode == 4 {
+            let skipped = configuration.voteSkippedIDs ?? []
+            return model.accounts.filter { account in
+                !skipped.contains(account.id)
+                && model.latestUsage[account.id]?.needsLogin != true && (model.latestUsage[account.id]?.leftNow ?? 50) > 0
+            }
         }
         if Self.modernModes && configuration.mode == 3 {
             return model.accounts.filter { account in

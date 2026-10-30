@@ -2,6 +2,10 @@
 
 이 문서만 읽으면 바로 이어서 작업할 수 있게 정리했어요. 규칙은 `AGENTS.md`(= `CLAUDE.md`와 같은 내용)에, 사용자용 설명은 `README.md`에 있어요.
 
+## 모드4 · 투표: 모든 계정 참여 (2026-10-30, Claude)
+
+- 사용자 요청: 투표는 회사별 1개가 아니라 연결된 모든 계정(개인·학교·Gemini)이 한 표씩. `ChatConfiguration.voteSkippedIDs`(끈 계정만 저장, 기본 전부 참여). 로그인 필요·잔여 0% 계정은 자동 제외. 대표는 `leaderAccountID`(왕관) → 없으면 `leader` 회사 → 첫 계정. 채팅창 `voteControls`에 계정별 체크·왕관.
+
 ## 모드4 · 투표 (2026-10-30, Claude)
 
 - `Vote.swift`: 질문에 선택지가 목록(1. / A) / - / • / ①, 2~10개)으로 있으면 그대로, 없으면 대표가 `[MODE4 OPTIONS]`로 JSON 선택지를 만듦. 모든 AI가 `[MODE4 VOTE]`로 동시에(서로 못 봄, 웹 검색 허용) `{"choice","headline","reason"}` 투표. 형식 오류·범위 밖은 무효. 개표는 AI가 아니라 앱(`VoteCount.summary`)이 함 → `final`, `finalBy`="앱이 집계".

@@ -160,9 +160,9 @@ struct ChatView: View {
                         .disabled(discussion.running || discussion.importingMaterials)
                     }
                     Menu {
-                        Text(L("1 토론: 대표가 논점을 맡기고 답을 정리합니다. 2 비판 토론: 반론·대안·실패 조건을 검증합니다. 3 협업: 선택 계정에 필요한 결과물 작업을 나누고 검토·통합합니다. 4 투표: 선택지를 한 줄에 하나씩 적으면 AI마다 서로 보지 않고 한 표씩 이유와 함께 던지고, 앱이 개표합니다.", "1 Discussion: moderator-led discussion and synthesis. 2 Critical debate: test objections, alternatives and failure cases. 3 Collaboration: assign work to selected accounts, cross-review and integrate deliverables. 4 Vote: list the choices one per line; each AI casts one vote with its reason without seeing the others, and the app counts."))
+                        Text(L("1 토론: 대표가 논점을 맡기고 답을 정리합니다. 2 비판 토론: 반론·대안·실패 조건을 검증합니다. 3 협업: 선택 계정에 필요한 결과물 작업을 나누고 검토·통합합니다. 4 투표: 선택지를 한 줄에 하나씩 적으면 모든 계정이 서로 보지 않고 한 표씩 이유와 함께 던지고, 앱이 개표합니다.", "1 Discussion: moderator-led discussion and synthesis. 2 Critical debate: test objections, alternatives and failure cases. 3 Collaboration: assign work to selected accounts, cross-review and integrate deliverables. 4 Vote: list the choices one per line; every account casts one vote with its reason without seeing the others, and the app counts."))
                         if discussion.configuration.mode == 4 {
-                            Text(L("선택지를 적지 않으면 대표(왕관)가 질문을 보고 선택지를 만들어요. 대표도 다른 AI와 똑같이 한 표만 던져요.", "Without a list, the moderator (crown) drafts the choices from your question. The moderator still gets one vote like everyone else."))
+                            Text(L("연결된 모든 계정(개인·학교 포함)이 한 표씩 던져요. 체크를 끄면 빠져요. 선택지를 적지 않으면 대표(왕관)가 선택지를 만들고, 대표도 한 표만 던져요.", "Every connected account (personal and school) casts one vote; uncheck to leave one out. Without a list, the moderator (crown) drafts the choices and still gets one vote."))
                         } else if discussion.configuration.mode >= 2 {
                             Text(L("손잡이를 끌어 순서를 바꾸고, 이름 옆 메뉴에서 대표를 정하세요.", "Drag the handles to reorder. Use the menu beside a name to choose the moderator."))
                         }
@@ -245,6 +245,8 @@ struct ChatView: View {
                 }
                 if discussion.configuration.mode == 3 {
                     collaborationControls
+                } else if discussion.configuration.mode == 4 {
+                    voteControls
                 } else {
                     sequentialControls
                 }
@@ -406,6 +408,31 @@ struct ChatView: View {
                         Button(action: { discussion.configure { $0.leaderAccountID = account.id; $0.leader = account.provider } }) {
                             Image(systemName: discussion.configuration.leaderAccountID == account.id ? "crown.fill" : "crown")
                         }.buttonStyle(.plain).help(L("대표로 지정", "Make moderator"))
+                    }.padding(5).background(Color.secondary.opacity(0.1)).cornerRadius(6)
+                }
+            }.toggleStyle(.checkbox)
+        }.disabled(discussion.running || discussion.importingMaterials)
+    }
+
+    // Mode 4: every account votes unless unchecked; the crown drafts the choices when none are listed.
+    private var voteControls: some View {
+        ScrollView(.horizontal, showsIndicators: true) {
+            HStack {
+                ForEach(discussion.model.accounts, id: \.id) { account in
+                    let config = discussion.configuration
+                    let moderator = config.leaderAccountID ?? discussion.model.accounts.first { $0.provider == config.leader }?.id
+                    HStack(spacing: 3) {
+                        Toggle(discussion.label(account), isOn: Binding(
+                            get: { !(discussion.configuration.voteSkippedIDs ?? []).contains(account.id) },
+                            set: { enabled in discussion.configure { config in
+                                var skipped = config.voteSkippedIDs ?? []
+                                skipped.removeAll { $0 == account.id }
+                                if !enabled { skipped.append(account.id) }
+                                config.voteSkippedIDs = skipped
+                            } }))
+                        Button(action: { discussion.configure { $0.leaderAccountID = account.id; $0.leader = account.provider } }) {
+                            Image(systemName: moderator == account.id ? "crown.fill" : "crown")
+                        }.buttonStyle(.plain).help(L("대표로 지정 (선택지를 적지 않았을 때 선택지를 만듦)", "Make moderator (drafts the choices when none are listed)"))
                     }.padding(5).background(Color.secondary.opacity(0.1)).cornerRadius(6)
                 }
             }.toggleStyle(.checkbox)

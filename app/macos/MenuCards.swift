@@ -3,7 +3,7 @@ import SwiftUI
 
 // The menu's account cards (ideas from CodexBar: usage bars, reset countdowns and an even-use guide).
 // Each card: the account name and plan, then one line per limit:
-//   5시간  [██████████░░░░░|░░]  62%   ◔ 2시간 13분 후 충전
+//   5h  [██████████░░░░░|░░]  62%   ◔ Refills in 2h 13m
 // - The bar is what is left; it turns orange under 30% and red under 10%.
 // - The small tick on the bar is where you would be if you used the window evenly: a bar ending left
 //   of the tick means you are using it faster than that pace.
@@ -19,7 +19,7 @@ extension UsageWindow {
 }
 
 enum UsageText {
-    // "2시간 13분 후 충전" for today-ish resets, "10/26 (일) 오전 8:59 충전" further out.
+    // A localized relative countdown, such as "Refills in 2h 13m" or "Refills in 2d 4h".
     static func refill(_ date: Date?, now: Date = Date()) -> String {
         guard let date else { return L("아직 안 씀", "Not used yet") }
         if date <= now { return L("충전됨", "Refilled") }

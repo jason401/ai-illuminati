@@ -1,20 +1,20 @@
-# 보안 및 개인정보
+# Security and privacy
 
-이 앱은 로컬 인증 정보·AI 계정·사용자가 연결한 파일을 다룹니다. GitHub에 공개된 소스만으로 다른 사용자의 키체인·로컬 계정 폴더·대화에 접근할 수 있는 것은 아닙니다. 하지만 공개 소스의 검토가 모든 보안 취약점 부재를 보증하지도 않습니다.
+This app handles local authentication information, AI accounts, and files linked by the user. Publishing its source does not by itself grant access to another user's Keychain, account folders, or conversations. Source review is not a guarantee that the app has no security vulnerabilities.
 
-## 보고할 때
+## Reporting an issue
 
-공개 Issue·첨부 파일·PR에 비밀번호, OAuth 토큰, auth.json, 쿠키, 키체인 덤프, 서명 개인 키, 실제 사용자 대화/자료를 올리지 마세요. GitHub의 비공개 취약점 신고 기능이 활성화되어 있다면 그 경로를 사용하고, 없다면 민감한 상세 내용을 공개하지 않은 채 유지관리자에게 비공개 연락 경로를 문의하세요.
+Do not post passwords, OAuth tokens, auth.json, cookies, Keychain dumps, signing private keys, or real user conversations or documents in public issues, attachments, or pull requests. Use GitHub's private vulnerability reporting if it is enabled. Otherwise, ask the maintainer for a private contact method without disclosing sensitive details publicly.
 
-재현 자료는 가상 계정·가상 파일을 사용하고 개인 이메일·홈 폴더 경로를 가리세요. 실제 자격 증명이 유출되었다면 Git 파일 삭제만으로 충분하지 않으며, 제공사에서 해당 자격 증명을 폐기해야 합니다.
+Use fictional accounts and files in reproductions. Redact personal emails and home directory paths. If a real credential is exposed, removing a Git file is not sufficient: revoke the credential with its provider.
 
-## 저장 위치
+## Local storage
 
-- `~/Library/Application Support/AI Illuminati`: 계정 목록, 대화·이미지 사본, 결과·백업, 업데이트 상태/소스.
-- `~/.ai-illuminati`: 앱 전용 CLI 계정·세션.
-- macOS 키체인: 일부 CLI 인증과 로컬 코드 서명 신원.
-- 외부 CLI가 관리하는 별도 경로에도 기록이 있을 수 있습니다.
+- `~/Library/Application Support/AI Illuminati`: account lists, conversations, image copies, deliverables, backups, update state, and update source.
+- `~/.ai-illuminati`: app-specific CLI accounts and sessions.
+- macOS Keychain: some CLI credentials and the local code-signing identity.
+- External CLIs may also store records in their own locations.
 
-이 폴더·키체인 내용은 배포 패키지에 넣지 마세요. 프로젝트의 .gitignore는 예방책이며, 강제로 추적한 파일이나 이미 올라간 Git 이력까지 지워주지는 않습니다.
+Never include these folders or Keychain contents in a distribution package. The project's .gitignore is a precaution; it cannot remove already published Git history or protect files explicitly force-added to Git.
 
-개발 메모와 예전 공개 이력은 정리했습니다. 이미 내려받은 사본·포크·GitHub 캐시는 별개이며, 이력 변경만으로 외부 사본의 삭제를 보장하지 않습니다.
+Internal development notes and the previous public history have been removed from public branch history. Previously downloaded copies, forks, and GitHub caches are separate: rewriting history does not guarantee the removal of external copies.

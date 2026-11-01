@@ -31,23 +31,23 @@ fi
 
 SIGNING_ID=$(security find-identity -v -p codesigning "$KEYCHAIN" | awk -v name="$SIGNING_NAME" 'index($0, "\"" name "\"") {print $2; exit}')
 if [[ -z "$SIGNING_ID" ]]; then
-  echo "고정 서명이 필요합니다 / Local signing identity required."
-  echo "먼저 실행하세요 / Run once: zsh tools/setup_signing.sh"
-  echo "기존 앱은 그대로 둡니다. 임시 서명으로 대체하지 않습니다."
+  echo "Local signing identity required."
+  echo "Run once: zsh tools/setup_signing.sh"
+  echo "The installed app is unchanged. Ad-hoc signing will not be used."
   exit 1
 fi
 
 OUT="$STAGED"
 rm -rf "$OUT"
-echo "1/3 새 버전을 준비 (실행 중인 앱은 그대로)"
+echo "1/3 Prepare a candidate (the running app is unchanged)"
 
-echo "2/3 컴파일"
+echo "2/3 Compile"
 mkdir -p "$OUT/Contents/MacOS"
 ARCH="$(uname -m)"
 if ! xcrun swiftc -swift-version 5 -O -target "$ARCH-apple-macos13.0" \
       -framework Cocoa -framework SwiftUI -framework ServiceManagement -framework Security \
       -o "$OUT/Contents/MacOS/AIIlluminati.new" app/macos/*.swift >"$LOG" 2>&1; then
-  echo "빌드 실패 (app-build.log):"
+  echo "Build failed (app-build.log):"
   cat "$LOG"
   exit 1
 fi
@@ -96,18 +96,18 @@ PLIST
 REQUIREMENT="=designated => identifier \"local.aiilluminati\" and anchor H\"$SIGNING_ID\""
 if ! codesign --force --sign "$SIGNING_ID" --keychain "$KEYCHAIN" \
       --requirements "$REQUIREMENT" "$OUT" >>"$LOG" 2>&1; then
-  echo "고정 서명 실패 / Signing failed. See app-build.log."
+  echo "Signing failed. See app-build.log."
   exit 1
 fi
 if ! codesign --verify --strict "$OUT" >>"$LOG" 2>&1; then
-  echo "서명 검증 실패 / Signature verification failed."
+  echo "Signature verification failed."
   exit 1
 fi
 
 echo "Built $(date)" >>"$LOG"
-echo "준비 완료: $OUT"
+echo "Candidate ready: $OUT"
 if [[ -z "$MODE" ]]; then
-  echo "기존 앱이 실행 중이면 먼저 종료해 주세요. 새 앱은 별도 설치 위치로 이전합니다."
+  echo "Finish active work and quit the existing app first. The candidate migrates to its installation location."
   # Explicit developer action; the prepared app migrates itself on first launch.
   APP_PATH="$(pwd)/$OUT"
   (cd / && env -u PWD -u OLDPWD open -n "$APP_PATH") || exit 1

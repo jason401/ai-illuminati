@@ -464,7 +464,7 @@ enum GeminiUsage {
     }
 }
 
-// "62% 남음 · 10/20 (화) 오전 8:59 리셋"
+// Example localized output: "62% left · Resets Tue, 10/20, 8:59 AM"
 func describeLeft(_ w: UsageWindow) -> String {
     var text = L("\(Int(w.left().rounded()))% 남음", "\(Int(w.left().rounded()))% left")
     if let r = w.resetsAt {

@@ -142,7 +142,7 @@ final class AppModel: ObservableObject {
         language = AppLanguage.current
         accounts = AccountStore.load()
         showPercent = UserDefaults.standard.bool(forKey: "showPercent")
-        // Older setting: "% 같이 보기" on becomes "mark + %"; otherwise the new default "mark + bars".
+        // The legacy show-percent option maps to "mark + %"; otherwise default to "mark + bars".
         menuBarStyle = UserDefaults.standard.string(forKey: "menuBarStyle").flatMap(MenuBarStyle.init(rawValue:))
             ?? (UserDefaults.standard.bool(forKey: "showPercent") ? .markPercent : .markBars)
         menuBarAnimation = UserDefaults.standard.object(forKey: "menuBarAnimation") as? Bool ?? true

@@ -5,7 +5,7 @@ import Cocoa
 //   generated_images/<thread>/…png. New files there after a call started are that call's pictures.
 // - Claude and Gemini draw by writing SVG in a ```svg code block (Gemini's own image tool fails or
 //   finishes after the one-shot call ends). The app renders the SVG to PNG and puts a short
-//   "[그림 N]" marker in the text instead of the code.
+//   a localized "[Picture N]" marker in the text instead of the code.
 // Pictures are stored with the chat like attached photos (chats/<id>.assets, deleted with the chat)
 // and are passed to every AI that speaks afterwards, so they can look at and critique them.
 enum Pictures {

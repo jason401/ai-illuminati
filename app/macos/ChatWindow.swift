@@ -730,7 +730,7 @@ private struct TurnView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    // The final answer's own pictures, plus the team's pictures it names ([그림 2] / [Picture 2]).
+    // The final answer's own pictures, plus named team pictures using localized [Picture N] markers.
     static func finalPictures(_ turn: ChatTurn, final: String) -> [ChatImage] {
         var pictures = turn.finalImages ?? []
         let regex = try! NSRegularExpression(pattern: "\\[(?:그림|Picture) (\\d+)\\]")
@@ -1031,6 +1031,6 @@ extension Account.Provider {
         })
     }
 
-    // Speaker labels start with the AI's name ("Claude (학교)"), so older saved replies get a color too.
+    // Speaker labels start with the AI's name (for example, "Claude (Work)"), so older replies get a color too.
     static func of(speaker: String) -> Self? { allCases.first { speaker.hasPrefix($0.title) } }
 }

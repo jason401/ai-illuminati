@@ -1,58 +1,58 @@
-# 사용법
+# Usage
 
-## 계정과 사용량
+## Accounts and usage limits
 
-메뉴 → Settings(⌘,) → Accounts에서 Claude·ChatGPT 계정을 추가하고 제공사의 브라우저 로그인으로 인증합니다. Gemini는 별도의 agy 로그인을 사용합니다. 앱 전용 계정은 각각의 폴더를 사용하며, 같은 인증 파일을 복사해서 계정을 늘리지 마세요.
+Open Settings (⌘,) → Accounts, add Claude or ChatGPT accounts, and authenticate through the provider's browser sign-in. Gemini uses a separate agy login. App-specific accounts have separate folders. Do not duplicate accounts by copying authentication files.
 
-메뉴는 각 계정의 5시간·주간 잔여량과 리셋 시간을 보여줍니다. 제공사/요금제마다 없는 한도도 있습니다. 막대·원형·카드 형태를 설정에서 고르고, 계정 위에 마우스를 올리면 자세한 한도를 확인합니다.
+The menu shows per-account five-hour and weekly remaining limits and reset times. Available limits vary by provider and plan. Choose bar, ring, or card layouts in Settings, and hover over an account for additional limits.
 
-메뉴바 막대는 계정 하나당 하나이며, 설정의 계정 순서대로 표시합니다. 메뉴바의 잔여량 기준은 5시간 또는 주간 중 하나를 고릅니다. 한도가 없는 계정과 읽기 실패는 다르게 표시합니다. Monochrome은 ON=흑백, OFF=컬러입니다.
+Menu bar meters show one bar per account, in Settings order. Choose either the five-hour or weekly window as the menu bar's usage basis. An absent limit is distinguished from a failed reading. Monochrome ON means black and white; OFF means color.
 
-눈·후광 애니메이션은 설정에서 끌 수 있습니다. 후광은 완전히 사라졌다 밝아지는 주기를 반복하며, 채팅 응답 중에는 더 빠르게 움직입니다. macOS ‘동작 줄이기’에서는 정지합니다.
+Eye and halo animation can be disabled in Settings. The halo cycles from fully absent to bright and back, with a faster cycle while an AI response is running. macOS Reduce Motion stops the animation.
 
-## 필요한 외부 도구
+## External tools
 
-- Claude: Claude Code의 공식 설치·로그인. 앱은 `~/.local/bin/claude`를 사용합니다.
-- ChatGPT: OpenAI Codex CLI. 앱은 `~/.local/bin`, Homebrew의 표준 경로 또는 지원하는 ChatGPT 앱 번들 경로를 확인합니다.
-- Gemini: Antigravity CLI(agy)의 설치·로그인. 앱은 `~/.local/bin/agy`를 사용합니다.
+- Claude: install and sign in through Claude Code's official tools. The app uses `~/.local/bin/claude`.
+- ChatGPT: install OpenAI Codex CLI. The app checks `~/.local/bin`, standard Homebrew locations, and a supported ChatGPT app bundle path.
+- Gemini: install and sign in through Antigravity CLI (agy). The app uses `~/.local/bin/agy`.
 
-도구의 가용성·사용 한도·구독 지원 여부는 제공사와 조직 정책에 따라 달라집니다. 프로그램의 라이선스가 무료라고 AI 서비스가 무제한 또는 무료가 되는 것은 아닙니다.
+Availability, limits, and subscription support depend on each provider and organizational policy. A free software license does not make AI services unlimited or free.
 
-## 대화 모드
+## Conversation modes
 
-| 모드 | 동작 |
+| Mode | Behavior |
 |---|---|
-| Discussion | 각자 의견을 낸 뒤 대표가 필요한 논점을 맡기고 최종 답 정리 |
-| Critical debate | 반론·대안·실패 조건을 검토하고 정리 |
-| Collaboration | 선택한 계정들에 작업을 배분하고 선행 조건에 맞춰 실행·교차 검토·통합 |
-| Vote | 선택지를 대상으로 계정마다 독립 투표하고 앱이 집계 |
+| Discussion | Independent opening opinions, moderator-assigned follow-ups, and a final answer |
+| Critical debate | Review objections, alternatives, and failure conditions before a final answer |
+| Collaboration | Assign tasks to selected accounts, respect prerequisites, execute independent work, cross-review, and integrate results |
+| Vote | Accounts vote independently on the options; the app counts the ballots |
 
-토론은 AI 종류별 계정 하나씩 자동 선택하고, 협업은 참여 계정을 직접 고릅니다. 투표는 연결된 계정마다 참여를 켜거나 끌 수 있으며, 로그인·사용량 상태에 따라 제외될 수 있습니다. 왕관은 대표 지정입니다.
+Discussions automatically select one account per provider. Collaboration lets you select accounts individually. Voting participation can be switched for each connected account; sign-in status and usage limits may exclude an account. The crown selects the moderator.
 
-Enter는 전송, Shift+Enter 또는 Option+Enter는 줄바꿈, ⌘Enter도 전송입니다. 한글 조합 중 Enter는 글자 완성에 사용합니다. Stop은 활성 요청을 중단합니다.
+Enter sends a message. Shift+Enter or Option+Enter inserts a newline. ⌘Enter also sends. During Korean input composition, Enter finishes the composed text. Stop cancels active requests.
 
-토론의 발언 길이는 400/800/1500자 메뉴로 정합니다. AI 출력이 요청 길이를 항상 정확히 지킨다는 보장은 없습니다. 세션은 앱 전용 Claude/Codex 계정에서 기본으로 유지하고 방별로 끌 수 있습니다. Gemini 등은 전체 문맥을 다시 전달하는 경로를 사용할 수 있습니다.
+Discussion turns have a 400/800/1500-character length setting. Models may not obey the requested length exactly. Sessions are kept by default for app-specific Claude/Codex accounts and can be disabled per chat. Gemini and some other paths may resend the full context.
 
-사진은 + 선택, 붙여넣기 또는 드래그로 첨부합니다. AI 그림 생성과 전달 방식은 제공사별로 다릅니다. 실제 지원하지 않은 기능을 동일하게 제공한다고 가정하지 마세요.
+Attach pictures using +, paste, or drag and drop. Image generation and sharing differ by provider; do not assume all tools provide the same capabilities.
 
-## 자료와 파일 권한
+## Materials and file permissions
 
-폴더/파일 연결은 먼저 경로와 목록을 등록하고, 필요한 파일·페이지를 요청할 때 읽습니다. PDF·Office의 필요한 범위를 텍스트/이미지로 변환할 수 있지만 Office의 원래 전체 화면 배치를 그대로 렌더링하는 기능은 아닙니다.
+Linking folders or files initially records paths and inventory. Files and pages are read when needed. Selected PDF/Office ranges can be converted to text or images; this is not a full rendering of the original Office layout.
 
-- **보기:** 연결 자료 읽기.
-- **작성:** 협업 작업자에게 연결 범위의 파일 수정·생성·삭제 허용. 사전 백업 및 변경 내역 제공.
-- **작성+실행:** 각 CLI의 샌드박스/권한 내에서 명령 실행도 허용. 조직 관리 정책·승인이 필요한 작업은 실패할 수 있습니다.
+- **View:** read linked materials.
+- **Write:** collaboration workers may modify, create, or delete files within linked scope, with a prior backup and change reporting.
+- **Write + Execute:** also permits commands within each CLI's sandbox and permissions. Organizational policies or approval requirements may prevent execution.
 
-계획·검토 단계는 읽기 전용으로 동작합니다. 되돌리기는 이후 별도로 수정된 파일과 충돌하면 거부될 수 있으므로 별도 백업도 유지하세요. AI에게 전달할 권한이 있는 자료만 연결하세요.
+Planning and review remain read-only. Undo may refuse to overwrite files changed separately after the task, so keep independent backups. Only link materials you have permission to send to AI providers.
 
-## 대화 관리와 게임
+## Chat management and games
 
-대화의 ⋯/우클릭 메뉴에서 고정·삭제를 합니다. 삭제는 앱 소유 JSON·사본과 연결된 앱 소유 세션/백업 기록을 정리하며 원래 연결한 외부 파일을 지우는 기능은 아닙니다. 제공사 서버 측 기록이나 앱이 소유하지 않은 모든 CLI 기록까지 지운다고 보장하지 않습니다.
+Use a chat's ⋯ or context menu to pin or delete it. Deletion cleans up the app-owned JSON, copies, and associated app-owned session and backup records. It does not delete original external linked files or guarantee deletion of provider-side records and every unrelated CLI session.
 
-메뉴의 Open Game(⌘G)에서는 가상 칩으로 AI 포커를 합니다. AI의 각 결정도 해당 계정 사용량을 소비합니다. 실제 금전 거래 기능은 없습니다.
+Open Game (⌘G) starts AI poker with virtual chips. Each AI decision consumes usage for the corresponding account. There are no real-money transactions.
 
-## 언어·업데이트·문제 보고
+## Language, updates, and reports
 
-English/한국어는 Settings에서 바꿉니다. AI 답변 언어는 사용자 질문을 따르도록 요청합니다. 실제 사용자의 기존 대화·자료·계정 이름을 자동 번역하지 않습니다.
+Choose English or Korean in Settings. The AI is instructed to follow the language of your latest message. Existing conversations, materials, and account names are not automatically translated.
 
-업데이트는 `stable` 확인 후 사용자 버튼으로 설치합니다. 설치 중 문제가 생기면 로컬 데이터 폴더의 업데이트 상태와 로그를 확인하되, 공개 보고 전에 이메일·토큰·경로·개인 대화 등을 제거하세요. [보안 안내](../SECURITY.md)를 참고하세요.
+Updates check stable and install only after a user action. If installation fails, inspect the update state and logs in the local app-data folder, but remove emails, tokens, personal paths, and private conversations before sharing a report. See the [security guidance](../SECURITY.md).

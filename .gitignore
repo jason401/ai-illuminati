@@ -1,0 +1,36 @@
+# Built app and build output (made by "Build AI Illuminati.command")
+/AI Illuminati.app/
+app-build.log
+.DS_Store
+/AI Illuminati.update.app/
+/AI Illuminati.app.old/
+
+# Release artifacts and local tooling
+/dist/
+/.release/
+__pycache__/
+*.pyc
+.venv/
+
+# Never package or commit local credentials, personal app data, or signing keys
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+auth.json
+accounts.json
+credentials*.json
+last-usage-*.json
+usage.log
+poker.json
+/.ai-illuminati/
+/.claude/
+/.codex/
+/.gemini/
+/chats/
+/rooms/
+/workspace-backups/
+/source/

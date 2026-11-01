@@ -27,17 +27,19 @@ These are **actual app views rendered with fictional accounts**. They contain no
 
 ## Download and installation
 
-Download **`AI-Illuminati-0.2.0-source.zip`** and **`SHA256SUMS`** from [GitHub Releases](https://github.com/jason401/ai-illuminati/releases).
+Download **[AI-Illuminati-0.2.0-source.zip](https://github.com/jason401/ai-illuminati/releases/download/v0.2.0/AI-Illuminati-0.2.0-source.zip)**. **The ZIP is the only download needed for installation.**
+
+`SHA256SUMS` is an optional text file for checking download integrity. The installer does not require it. See [GitHub Releases](https://github.com/jason401/ai-illuminati/releases) for all assets.
 
 **This is a source installation package**, not a ready-to-run `.app` or DMG. The current installation and update system preserves a local signing identity on each Mac. No maintainer signing keys or account credentials are distributed.
 
 1. Prepare Xcode Command Line Tools and Python 3 on macOS 13 or later. Run `xcode-select --install` to open Apple's installation prompt.
-2. Verify the downloaded ZIP's SHA-256 checksum and extract it. See the [installation guide](docs/INSTALL.md).
+2. Extract the ZIP. If you want to verify its integrity first, see the optional checksum section in the [installation guide](docs/INSTALL.md).
 3. Run **`Install AI Illuminati.command`**. It downloads the official repository's **`v0.2.0` tag** into a new folder, prepares local signing, and builds on your Mac. Initial compilation takes time.
 4. If AI Illuminati is already running, finish active work and quit it first. The candidate migrates to `/Applications/AI Illuminati.app`.
 5. Add accounts in Settings → Accounts using each AI tool's official browser sign-in. Do not enter passwords or API keys into this app.
 
-A paid Apple Developer account is not required. However, the app has **no Apple Developer ID signature or notarization**, so macOS may block it. Only after checking its source and checksum, and deciding you trust it, use System Settings → Privacy & Security → **Open Anyway**. This does not guarantee safety. Do not disable Gatekeeper or SIP or remove quarantine attributes in bulk. See [Apple's guidance](https://support.apple.com/en-us/102445).
+A paid Apple Developer account is not required. However, the app has **no Apple Developer ID signature or notarization**, so macOS may block it. After confirming that the download is from the official source and deciding you trust it, use System Settings → Privacy & Security → **Open Anyway**. This does not guarantee safety. Do not disable Gatekeeper or SIP or remove quarantine attributes in bulk. See [Apple's guidance](https://support.apple.com/en-us/102445).
 
 ### Install directly from Git
 

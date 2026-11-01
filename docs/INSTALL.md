@@ -4,10 +4,9 @@
 
 The current release is a **source installation package**. It contains public app source, build and test tools, documentation, MIT notices, and an installer launcher. It contains no maintainer app data, CLI credentials, or signing private keys. It is not a prebuilt app or DMG.
 
-Download these assets from the official [Releases page](https://github.com/jason401/ai-illuminati/releases):
+Download **[AI-Illuminati-0.2.0-source.zip](https://github.com/jason401/ai-illuminati/releases/download/v0.2.0/AI-Illuminati-0.2.0-source.zip)** from the official release. **Only the ZIP is required.** Extract it and follow the installation steps below.
 
-- `AI-Illuminati-0.2.0-source.zip`
-- `SHA256SUMS`
+`SHA256SUMS` is an **optional** plain-text checksum file for verifying the ZIP. It is not an installer, dependency, or file that the app needs. You can leave it out.
 
 GitHub's automatically generated `Source code (zip)` does not include Git metadata. **Do not run the existing build_app.sh directly from an extracted source ZIP.** The build requires a Git revision, so the installer clones the official release tag into a fresh checkout.
 
@@ -24,9 +23,9 @@ defaults write local.aiilluminati installInUserApplications -bool true
 
 This selects `~/Applications`. The installer does not require unnecessary Full Disk Access or an administrator service.
 
-## Verify the checksum
+## Optional: verify the checksum
 
-Place the ZIP and SHA256SUMS in the same folder, then run this command from that folder:
+Skip this section if you do not want a manual integrity check. To check it, download `SHA256SUMS` as well. Place the ZIP and SHA256SUMS in the same folder, then run this command from that folder:
 
 ```bash
 shasum -a 256 -c SHA256SUMS
@@ -48,7 +47,7 @@ The exact source cache path is printed in Terminal. Do not remove the cache or c
 
 A paid Apple Developer account and Developer ID notarization are not used. Local signing does not mean Apple verified the developer or guarantees the app's safety.
 
-1. Verify the official repository, tag, and download checksum.
+1. Confirm the official repository and release tag. You can also perform the optional checksum check above.
 2. Try opening the file once and read the macOS message.
 3. Only if you trust its source, approve the specific item in **System Settings → Privacy & Security → Open Anyway**. Complete any requested authentication yourself.
 4. Stop if macOS reports malware, an unexpected damaged file, or a checksum mismatch. Do not force an exception. Managed Macs may prohibit exceptions under organizational policy.

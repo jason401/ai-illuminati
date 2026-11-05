@@ -1201,8 +1201,10 @@ do {
     claude.feed(line(["type": "stream_event", "event": ["type": "message_start"]]))
     claude.feed(line(["type": "stream_event", "event": ["type": "content_block_delta", "delta": ["type": "text_delta", "text": "Let me "]]]))
     claude.feed(line(["type": "stream_event", "event": ["type": "content_block_start", "content_block": ["type": "tool_use", "name": "Read"]]]))
-    claude.feed(line(["type": "stream_event", "event": ["type": "message_start"]]) + line(["type": "stream_event", "event": ["type": "content_block_delta", "delta": ["type": "text_delta", "text": "Final "]]]).prefix(30))
-    claude.feed(line(["type": "stream_event", "event": ["type": "content_block_delta", "delta": ["type": "text_delta", "text": "Final "]]]).dropFirst(30))
+    // One line split in two. Built once: two equal dictionaries may serialize their keys in different orders.
+    let split = line(["type": "stream_event", "event": ["type": "content_block_delta", "delta": ["type": "text_delta", "text": "Final "]]])
+    claude.feed(line(["type": "stream_event", "event": ["type": "message_start"]]) + split.prefix(30))
+    claude.feed(split.dropFirst(30))
     claude.feed(line(["type": "stream_event", "event": ["type": "content_block_delta", "delta": ["type": "text_delta", "text": "answer"]]]))
     claude.feed(line(["type": "stream_event", "event": ["type": "message_stop"]]))
     let texts = seen.compactMap { if case .text(let t) = $0 { return t } else { return nil } }

@@ -44,10 +44,14 @@ AI Illuminati behaves like the other desktop apps: **the app itself** is AI Face
    `clientInfo.name = "AI Illuminati"`, then `tools/list`), always with `AIFACE_AGENT=illuminati` whatever the file
    says. It checks the file every 30 seconds and before each call: Connect, Disconnect, or a server that quit
    is picked up without restarting AI Illuminati.
-4. Which model answers stays inside AI Illuminati. In plain chat, each answer's model (Claude Code CLI or Codex
-   CLI, started per answer) gets the allowed AI Face tools from AI Illuminati's own workspace bridge, which hands
-   every call to the app over a local socket; the app sends it on its one AI Face session. AI Face therefore
-   always sees one client, AI Illuminati, and never which model chose the face.
+4. Which model answers stays inside AI Illuminati. In plain chat the model ends each reply with a hidden tag,
+   `<face>mood</face>` (the moods come from AI Face's `set_expression` list). The app removes the tag from the
+   reply and calls `set_expression` itself on its one AI Face session. No tool call by the model: it costs
+   almost nothing, and models had skipped the tool call in long chats. AI Face therefore always sees one
+   client, AI Illuminati, and never which model chose the face.
+5. AI Face's other tools (calendar, mail, folders, timer …) are still offered to the model through AI
+   Illuminati's workspace bridge, which hands every call to the app over a local socket; the app sends it on
+   the same session. A model uses them only when the user asks for something they do.
 
 ### What AI Illuminati accepts (its checks)
 
@@ -56,8 +60,7 @@ AI Illuminati behaves like the other desktop apps: **the app itself** is AI Face
 - **Every tool AI Face lists is passed on to the models**, like the ChatGPT app does. AI Illuminati only has an
   on/off switch for the whole server (Settings → Chat → MCP servers). **AI Face's permissions for `illuminati`
   are therefore the only lock** on calendar, mail and shared folders: they must exist and default to off (see 3).
-  The instruction AI Illuminati adds to each answer asks only for `set_expression`; other tools are used only
-  when the user asks for them in the chat.
+  The face itself never needs a tool call by the model (see 4); other tools are used only when the user asks.
 - The data a tool returns (calendar events, mail text) goes to whichever model answers, which may be a
   school/Enterprise account. AI Face should say so next to the Illuminati switches.
 - Only plain chat (mode 0). Debate, collaboration and vote modes do not get AI Face.

@@ -1254,11 +1254,21 @@ do {
     expect(FaceLink.active() == nil && FaceLink.shared.tools().isEmpty && manifest(plain)["face"] == nil, "the switch in Settings turns AI Face off")
     FaceLink.shared.on = true
     expect(FaceLink.shared.tools().count == 2, "and on again")
+    // The face comes from a hidden tag at the end of the reply; the app sets it.
+    expect(FaceLink.extract("Done.\n<face>Happy</face>") == ("Done.", "happy"), "the tag is removed and read")
+    expect(FaceLink.extract("Done.\n<face>happy</face>\n<chat-state>x</chat-state>").text == "Done.\n\n<chat-state>x</chat-state>", "the chat state stays for its own reader")
+    expect(FaceLink.extract("Writing…\n<fa").text == "Writing…" && FaceLink.extract("Writing…\n<face>ha").text == "Writing…", "a tag still arriving is not shown")
+    expect(FaceLink.extract("a < b").text == "a < b" && FaceLink.extract("No tag").mood == nil, "other text is kept")
+    expect(FaceLink.shared.moods() == ["happy", "sad"] && FaceLink.rule(FaceLink.shared.moods()).contains("one of: happy, sad"), "the rule lists AI Face's moods")
+    FaceLink.shared.show("sad"); FaceLink.shared.show("furious")
+    _ = FaceLink.shared.tools()   // same queue: the calls above are done
+    let shown = ((try? String(contentsOf: calls, encoding: .utf8)) ?? "").components(separatedBy: "\n").filter { $0.contains("\"sad\"") || $0.contains("furious") }
+    expect(shown.count == 1 && shown[0].contains("\"sad\"") && shown[0].contains("\"agent\": \"illuminati\""), "the app sets the tagged mood; one AI Face does not offer is dropped")
     try? FileManager.default.removeItem(at: FaceLink.file)
     FaceLink.shared.refresh()
     expect(FaceLink.shared.tools().isEmpty, "Disconnect in AI Face ends the connection")
     unlink(FaceLink.socketPath)
-    print("PASS: AI Face link (the app is the one client named illuminati, its own server only, plain chat only, all its tools through the bridge, on/off switch)")
+    print("PASS: AI Face link (the app is the one client named illuminati, its own server only, plain chat only, all its tools through the bridge, on/off switch, face from a hidden tag)")
 }
 
 

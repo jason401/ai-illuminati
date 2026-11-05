@@ -4,7 +4,9 @@ import Darwin
 // AI Face (a separate menu bar app) shows a face for each AI reply. AI Illuminati connects to it the way
 // Claude desktop and ChatGPT desktop do: the app itself is AI Face's MCP client and keeps one connection
 // open while it runs, as "illuminati". AI Face writes its server into mcp.json here when the user clicks
-// Connect (and removes it on Disconnect). Which model answers stays inside AI Illuminati: the per-answer
+// Connect (and removes it on Disconnect). The face for each plain-chat reply is chosen by the model that
+// wrote it, as a hidden <face>mood</face> tag at the end; the app removes the tag and sets the face itself
+// (no tool call: cheaper, and models skipped the call in long chats). Which model answers stays inside AI Illuminati: the per-answer
 // workspace bridge (workspace_mcp.py) offers AI Face's tools to whichever model it serves and hands each
 // call to the app over a local socket. Like the ChatGPT app, AI Illuminati passes every tool on and only
 // turns the whole server on or off (Settings → Chat); AI Face decides per AI which tools work (calendar,
@@ -47,14 +49,53 @@ final class FaceLink: ObservableObject {
         return Server(command: command, args: args)
     }
 
-    // Asked before the reply: the chat shows the AI's last message, and text written before a tool call
-    // would end up in an earlier one. Codex needs the argument name and example moods.
-    static let rule = """
-        [Face] AI Face shows a small animated face for this chat. Before writing your reply, call the tool
-        set_expression once, its `emotion` set to the mood your reply will have (vary it), then write the whole reply.
-        Use only a mood the tool lists, e.g. happy, talking, thinking, curious, agree, sympathy, proud, apologetic, shrug.
-        Do not mention the call. If the tool is missing or fails, carry on without it.
+    // MARK: The face tag
+
+    static let fallbackMoods = ["happy", "talking", "thinking", "curious", "agree", "sympathy", "proud", "apologetic", "shrug"]
+
+    /// The moods AI Face offers (from its set_expression tool), for the rule and to check a tag.
+    func moods() -> [String] {
+        queue.sync {
+            _ = ensure()
+            let tool = faceTools.first { $0["name"] as? String == "set_expression" }
+            let properties = ((tool?["inputSchema"] as? [String: Any])?["properties"] as? [String: Any]) ?? [:]
+            return (properties["emotion"] as? [String: Any])?["enum"] as? [String] ?? []
+        }
+    }
+
+    static func rule(_ moods: [String]) -> String {
         """
+        [Face] AI Face shows a small face for this chat. End your reply with one more line, hidden from the user:
+        <face>MOOD</face> — the mood of your reply (vary it), one of: \((moods.isEmpty ? fallbackMoods : moods).joined(separator: ", ")).
+        Nothing after it. Do not mention it.
+        """
+    }
+
+    /// The text without its last <face>…</face> tag (also a tag still arriving at the end), and the mood.
+    static func extract(_ text: String) -> (text: String, mood: String?) {
+        if let open = text.range(of: "<face>", options: .backwards) {
+            let rest = text[open.upperBound...]
+            guard let close = rest.range(of: "</face>") else { return (String(text[..<open.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines), nil) }
+            let mood = rest[..<close.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let cleaned = String(text[..<open.lowerBound]) + String(rest[close.upperBound...])
+            return (cleaned.trimmingCharacters(in: .whitespacesAndNewlines), mood.isEmpty ? nil : mood)
+        }
+        if let partial = text.range(of: "<", options: .backwards), "<face>".hasPrefix(String(text[partial.lowerBound...])) {
+            return (String(text[..<partial.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines), nil)
+        }
+        return (text, nil)
+    }
+
+    /// Sets the face for a finished reply. A mood AI Face does not offer is dropped.
+    func show(_ mood: String) {
+        queue.async {
+            guard self.ensure(), let tool = self.faceTools.first(where: { $0["name"] as? String == "set_expression" }) else { return }
+            let properties = ((tool["inputSchema"] as? [String: Any])?["properties"] as? [String: Any]) ?? [:]
+            let offered = (properties["emotion"] as? [String: Any])?["enum"] as? [String] ?? []
+            guard offered.isEmpty || offered.contains(mood) else { return }
+            _ = self.request("tools/call", ["name": "set_expression", "arguments": ["emotion": mood]])
+        }
+    }
 
     // MARK: Connection to AI Face (one MCP session while the app runs)
 

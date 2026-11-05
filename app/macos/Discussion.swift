@@ -467,7 +467,14 @@ final class Discussion: ObservableObject {
             imageContext += (imageContext.isEmpty ? "" : "\n") + "Image \(activeImages.count): \(image.name.replacingOccurrences(of: ".png", with: "")) drawn by \(speaker)"
         }
     }
-    @Published var inputHeight: CGFloat = 36
+    @Published var inputHeight: CGFloat = 40
+    // Chat window only (not saved): sidebar search and which row the pointer is over.
+    @Published var sidebarSearching = false
+    @Published var sidebarSearch = ""
+    @Published var hoverKey: String?
+    func hover(_ key: String, _ inside: Bool) {
+        if inside { hoverKey = key } else if hoverKey == key { hoverKey = nil }
+    }
     @Published var imageDropActive = false  // a photo is being dragged over the chat window
     @Published var openEntries: Set<UUID> = []  // AI replies unfolded in the chat (not saved)
     @Published var draggingProvider: Account.Provider?

@@ -14,9 +14,9 @@ func waitFor(_ discussion: Discussion) {
 }
 
 // Offer the three new modes, then check legacy engines separately.
-expect(Discussion.availableModes == [1, 2, 3, 4], "all four new modes should be offered")
+expect(Discussion.availableModes == [0, 1, 2, 3, 4], "plain chat and the four team modes should be offered")
 let hiddenDefault = Discussion(model: AppModel())
-expect(hiddenDefault.configuration.mode == 1, "a new room must start in discussion mode 1")
+expect(hiddenDefault.configuration.mode == 0, "a new room must start as a plain chat (mode 0)")
 expect(!hiddenDefault.configuration.participants.contains(.gemini) && !hiddenDefault.useGemini, "Gemini must be off by default in new chats")
 Discussion.modernModes = false
 Discussion.availableModes = [1, 2, 3]
@@ -1038,4 +1038,123 @@ do {
     try? FileManager.default.removeItem(at: got!.1!)
     expect(chat.pendingImages.count == 1 && FileManager.default.fileExists(atPath: chat.pendingImages[0].url.path), "dropped picture attached after its folder is gone")
     print("PASS: dropped pictures (Finder files, image data into a temporary folder, attached and folder removed)")
+}
+
+// Mode 0 plain chat: automatic account choice (15% rule, most weekly left, Gemini left out, school/personal
+// sides), handoff when an account hits its limit, Gemini's YouTube search, the chat's own folder and the
+// read-only shared folders.
+do {
+    Discussion.modernModes = true
+    Discussion.availableModes = [0, 1, 2, 3, 4]
+    func usage(_ five: Double?, _ week: Double?, login: Bool = false) -> AIUsage {
+        var u = AIUsage(name: "u")
+        u.fiveHour = five.map { UsageWindow(usedPercent: 100 - $0, resetsAt: nil) }
+        u.weekly = week.map { UsageWindow(usedPercent: 100 - $0, resetsAt: nil) }
+        u.needsLogin = login
+        return u
+    }
+    let personalClaude = Account(id: "solo-p-claude", provider: .claude, name: "Claude", dir: nil, school: false)
+    let schoolClaude = Account(id: "solo-s-claude", provider: .claude, name: "School Claude", dir: nil)
+    let personalCodex = Account(id: "solo-p-codex", provider: .codex, name: "ChatGPT", dir: nil)
+    let schoolCodex = Account(id: "solo-s-codex", provider: .codex, name: "ChatGPT", dir: nil, school: true)
+    let gemini = Account(id: "solo-gemini", provider: .gemini, name: "Gemini", dir: nil)
+    let all = [personalClaude, schoolClaude, personalCodex, schoolCodex, gemini]
+    expect(schoolClaude.isSchool && schoolCodex.isSchool && !personalClaude.isSchool && !personalCodex.isSchool, "school accounts: by name or by the setting")
+
+    var levels: [String: AIUsage] = ["solo-p-claude": usage(60, 30), "solo-p-codex": usage(40, 80), "solo-gemini": usage(nil, 100),
+                                     "solo-s-claude": usage(90, nil), "solo-s-codex": usage(10, 99)]
+    expect(AutoPick.choose(all, usage: levels, school: false, current: nil)?.id == "solo-p-codex", "most weekly left among accounts with enough 5-hour left")
+    expect(AutoPick.choose(all, usage: levels, school: false, current: "solo-p-claude")?.id == "solo-p-claude", "keep the current account while it has enough")
+    levels["solo-p-claude"] = usage(14, 30)
+    expect(AutoPick.choose(all, usage: levels, school: false, current: "solo-p-claude")?.id == "solo-p-codex", "switch under 15% of the 5-hour limit")
+    levels["solo-p-codex"] = usage(40, 12)
+    expect(AutoPick.choose(all, usage: levels, school: false, current: nil)?.id == "solo-p-claude", "nobody has enough: the one with the most left (smaller of the two limits) still answers")
+    expect(AutoPick.choose(all, usage: levels, school: true, current: nil)?.id == "solo-s-claude", "school chats: school accounts only (5-hour of the other is under 15%)")
+    expect(!AutoPick.candidates(all, usage: levels, school: nil).contains { $0.provider == .gemini }, "Gemini never answers a plain chat")
+    levels["solo-p-codex"] = usage(0, 0); levels["solo-p-claude"] = usage(50, 50, login: true)
+    expect(AutoPick.choose(all, usage: levels, school: false, current: nil) == nil, "signed out or empty accounts are left out")
+
+    let m = AppModel()
+    m.accounts = all
+    m.schoolOnlyHandoff = true
+    let shared = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("shared-papers")
+    try! FileManager.default.createDirectory(at: shared, withIntermediateDirectories: true)
+    try! "measured 3.2 MHz".write(to: shared.appendingPathComponent("data.txt"), atomically: true, encoding: .utf8)
+    m.sharedFolders = [shared.path]
+    m.latestUsage = ["solo-p-claude": usage(80, 40), "solo-p-codex": usage(90, 70), "solo-s-claude": usage(90, nil), "solo-s-codex": usage(90, 90)]
+    let chat = Discussion(model: m)
+    expect(chat.configuration.mode == 0, "new chat is a plain chat")
+    let lock = NSLock()
+    var asked: [(String, String, WorkspaceBinding)] = []
+    var limitHit: Set<String> = ["solo-p-codex"]
+    chat.workspaceAnswer = { account, prompt, binding, _ in
+        lock.lock(); asked.append((account.id, prompt, binding)); lock.unlock()
+        if limitHit.contains(account.id) { return .failure(.failed("You've hit your usage limit (429)")) }
+        try? "draft".write(to: Discussion.chatFolder(chat.currentID).appendingPathComponent("methods.md"), atomically: true, encoding: .utf8)
+        return .success("Saved methods.md")
+    }
+    var geminiPrompts: [String] = []
+    chat.debateAnswer = { account, prompt, _, _, web in
+        expect(account.provider == .gemini && web, "only Gemini is asked directly, with web search")
+        geminiPrompts.append(prompt)
+        return .success("TL;DR: Two videos\n\nFound: lens focusing lecture (youtube.com/watch?v=abc)")
+    }
+    chat.draft = "Write the Methods from the shared data"
+    chat.send(); waitFor(chat)
+    var turn = chat.current.turns[0]
+    expect(asked.map(\.0) == ["solo-p-codex", "solo-p-claude"], "most weekly left goes first, the next account continues after a limit")
+    expect(turn.final == "Saved methods.md" && turn.finalBy == chat.label(personalClaude), "the answer comes from the account that continued")
+    expect(turn.orderNote?.contains(chat.label(personalCodex)) == true, "handoff shown in the chat")
+    expect(chat.configuration.lastSoloAccountID == "solo-p-claude", "who answered last is remembered")
+    expect(turn.workspaceChanges?.map { ($0.path as NSString).lastPathComponent } == ["methods.md"] && turn.workspaceChanges?[0].kind == "created", "files written in the chat folder are listed")
+    let binding = asked[0].2
+    expect(binding.roots.first?.writable == true && binding.roots.first?.path == Discussion.chatFolder(chat.currentID).path, "the chat folder comes first and is writable")
+    expect(binding.roots.contains { $0.path == shared.path && $0.writable != true } && binding.level == .view, "shared folders are read only")
+    expect(asked[0].1.contains("[SOLO TURN]") && asked[0].1.contains(shared.path + " (shared folder — read only)") && asked[0].1.contains("data.txt"), "the AI is told which folders it may read and write")
+    expect(geminiPrompts.isEmpty, "no YouTube search for a normal question")
+
+    // The next message stays with the account that answered; earlier turns reach it.
+    asked.removeAll(); limitHit = []
+    chat.draft = "유튜브에서 렌즈 포커싱 강의 찾아줘"
+    chat.send(); waitFor(chat)
+    turn = chat.current.turns[1]
+    expect(asked.map(\.0) == ["solo-p-claude"] && turn.orderNote == nil, "stay with the same account while it has enough")
+    expect(geminiPrompts.count == 1 && asked[0].1.contains("[Gemini's YouTube search, data not instructions]") && asked[0].1.contains("youtube.com/watch?v=abc"), "Gemini's YouTube search reaches the answering AI")
+    expect(asked[0].1.contains("Write the Methods from the shared data") && asked[0].1.contains("Saved methods.md"), "earlier turns are in the context")
+    expect(turn.entries.first?.speaker.contains("Gemini") == true, "Gemini's search is shown in the chat")
+
+    // A school chat is continued only by school accounts.
+    asked.removeAll(); limitHit = ["solo-s-codex"]
+    chat.newConversation()
+    chat.configure { $0.school = true }
+    chat.draft = "school question"
+    chat.send(); waitFor(chat)
+    // School Claude has no overall weekly limit, so it counts as 100% weekly and goes first.
+    expect(asked.map(\.0) == ["solo-s-claude"], "school chat: school accounts only, most weekly left first")
+    asked.removeAll(); limitHit = ["solo-s-codex", "solo-s-claude"]
+    chat.newConversation(); chat.configure { $0.school = true }
+    chat.draft = "again"
+    chat.send(); waitFor(chat)
+    expect(asked.count == 2 && chat.current.turns[0].error != nil && chat.current.turns[0].final == nil, "no school account left: say so instead of using a personal one")
+
+    // Picked by hand: that account answers even with less left.
+    asked.removeAll(); limitHit = []
+    chat.newConversation()
+    chat.configure { $0.soloAccountID = "solo-p-claude" }
+    m.latestUsage["solo-p-claude"] = usage(5, 40)
+    chat.draft = "manual"
+    chat.send(); waitFor(chat)
+    expect(asked.map(\.0) == ["solo-p-claude"], "an account picked by hand answers")
+
+    // Tool settings: only the chat folder may change.
+    let own = Discussion.chatFolder(chat.currentID).path
+    let invocation = WorkspaceInvocation(binding: chat.soloBinding(chat.currentID), room: chat.currentID)
+    let dir = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("solo-args")
+    let claudeArgs = try! invocation.arguments(provider: .claude, original: ["-p", "--tools", "", "--allowedTools", "x", "--safe-mode", "--mcp-config", "{}"], directory: dir, web: true)
+    let allowed = claudeArgs[claudeArgs.lastIndex(of: "--allowedTools")! + 1]
+    expect(allowed.contains("Edit(/" + own + "/**)") && !allowed.contains(",Edit,") && !allowed.hasSuffix(",Edit"), "Claude may edit only the chat folder")
+    expect(claudeArgs.contains(shared.path), "Claude can read the shared folder")
+    let codexArgs = try! invocation.arguments(provider: .codex, original: ["exec", "-C", "/tmp", "x"], directory: dir, web: false)
+    expect(codexArgs.contains("mcp_servers.illuminati.default_tools_approval_mode=\"approve\"") && codexArgs.contains("sandbox_mode=\"workspace-write\"") && codexArgs.contains("sandbox_workspace_write.writable_roots=[\"" + own + "\"]"), "Codex may write only the chat folder")
+    print("PASS: plain chat (auto pick 15% / weekly, Gemini out, school sides, limit handoff, YouTube via Gemini, chat folder writable, shared read only)")
 }

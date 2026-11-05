@@ -10,7 +10,7 @@ Free and open source · **MIT License** · macOS 13 or later · English / Korean
 
 - **Per-account usage:** five-hour and weekly remaining limits, reset times, multiple accounts, and compact bar, ring, or card layouts.
 - **Animated menu bar:** per-account meters, color or monochrome, eye movements, blinking, and a pulsing golden halo. Respects Reduce Motion.
-- **AI conversations:** discussion, critical debate, collaboration, and independent voting, with messages, materials, images, and per-account sessions.
+- **AI conversations:** a plain chat with one AI that the app picks by remaining usage and hands to another account when it runs low, plus discussion, critical debate, collaboration, and independent voting.
 - **File collaboration:** linked folders, read/write/execute permissions, task assignment and review, backups, and undo.
 - **Images:** attach pictures and display or share AI-generated images. Capabilities vary by provider.
 - **Poker:** play Texas Hold'em with AIs, or watch AIs play, using virtual chips. No real-money transactions.

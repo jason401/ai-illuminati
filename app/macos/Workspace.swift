@@ -5,7 +5,8 @@ enum WorkspaceLevel: String, Codable, CaseIterable {
     static var offered: [WorkspaceLevel] = [.view, .write, .execute]
     var title: String { switch self { case .view: return L("보기", "View"); case .write: return L("작성", "Write"); case .execute: return L("작성+실행", "Write + execute") } }
 }
-struct WorkspaceRoot: Codable, Equatable { var path: String; var directory: Bool }
+// writable: the chat's own folder, which its AI may change without a backup (every other root follows the level).
+struct WorkspaceRoot: Codable, Equatable { var path: String; var directory: Bool; var writable: Bool? = nil }
 struct WorkspaceBinding: Codable {
     var roots: [WorkspaceRoot]
     var level: WorkspaceLevel = .view
@@ -45,7 +46,12 @@ struct WorkspaceInvocation {
             guard let backupPath, let backup = try? WorkspaceBackup.load(backupPath), backup.roots == binding.roots, !backup.restored else { throw MaterialReader.error("자동 백업 완료 전에는 쓰기를 시작할 수 없습니다.") }
         }
         let manifest = directory.appendingPathComponent("workspace-\(UUID().uuidString).json")
-        let object: [String: Any] = ["roots": binding.roots.map { ["path": $0.path, "directory": $0.directory] as [String: Any] }, "level": level.rawValue, "backup": backupPath ?? "",
+        let roots: [[String: Any]] = binding.roots.map { root in
+            var entry: [String: Any] = ["path": root.path, "directory": root.directory]
+            if root.writable == true { entry["writable"] = true }
+            return entry
+        }
+        let object: [String: Any] = ["roots": roots, "level": level.rawValue, "backup": backupPath ?? "",
                                       "cache": NativeSessions.directory(room).appendingPathComponent("document-cache").path,
                                       "extractor": Self.resources.appendingPathComponent("WorkspaceDocument").path]
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
@@ -87,6 +93,8 @@ struct WorkspaceInvocation {
         return (text.joined(separator: "\n\n"), images)
     }
 
+    var ownFolders: [String] { binding.roots.filter { $0.directory && $0.writable == true }.map(\.path) }
+
     func arguments(provider: Account.Provider, original: [String], directory: URL, web: Bool) throws -> [String] {
         let (command, args) = try prepare(in: directory)
         func json(_ object: Any) -> String {
@@ -102,9 +110,13 @@ struct WorkspaceInvocation {
             let mcp = ["mcpServers": ["illuminati": ["command": command, "args": args] as [String: Any]]]
             let config = String(data: try JSONSerialization.data(withJSONObject: mcp), encoding: .utf8)!
             if let i = result.firstIndex(of: "--mcp-config") { result[i + 1] = config }
-            if let i = result.firstIndex(of: "--tools") { result[i + 1] = "Read,Grep,Glob" + (level != .view ? ",Edit,Write" : "") + (level == .execute ? ",Bash" : "") + (web ? ",WebSearch,WebFetch" : "") }
+            // In view, only the writable roots may change: an Edit(//absolute/**) rule covers Edit and Write.
+            let own = level == .view ? ownFolders : []
+            let edit = level != .view || !own.isEmpty
+            if let i = result.firstIndex(of: "--tools") { result[i + 1] = "Read,Grep,Glob" + (edit ? ",Edit,Write" : "") + (level == .execute ? ",Bash" : "") + (web ? ",WebSearch,WebFetch" : "") }
             if let i = result.firstIndex(of: "--allowedTools") { result.removeSubrange(i...i + 1) }
-            result += ["--restricted", "--setting-sources", "", "--disable-slash-commands", "--permission-mode", "dontAsk", "--allowedTools", "Read,Grep,Glob,mcp__illuminati__*" + (level != .view ? ",Edit,Write" : "") + (level == .execute ? ",Bash" : "") + (web ? ",WebSearch,WebFetch" : "")]
+            let allowedEdit = level != .view ? ",Edit,Write" : own.map { ",Edit(/" + $0 + "/**)" }.joined()
+            result += ["--restricted", "--setting-sources", "", "--disable-slash-commands", "--permission-mode", "dontAsk", "--allowedTools", "Read,Grep,Glob,mcp__illuminati__*" + allowedEdit + (level == .execute ? ",Bash" : "") + (web ? ",WebSearch,WebFetch" : "")]
             if level == .execute {
                 let settings: [String: Any] = ["sandbox": ["enabled": true, "autoAllowBashIfSandboxed": true, "allowUnsandboxedCommands": false,
                     "filesystem": ["allowWrite": binding.roots.filter(\.directory).map(\.path)]]]
@@ -121,12 +133,16 @@ struct WorkspaceInvocation {
                 if base[i] == "-C", i + 1 < base.count { base[i + 1] = directory.path }
                 i += 1
             }
-            result = ["-c", "sandbox_mode=" + json(level == .view ? "read-only" : "workspace-write"), "-c", "approval_policy=\"never\"", "-c", "features.shell_tool=" + (level == .execute ? "true" : "false"),
-                      "-c", "features.multi_agent=false", "-c", "sandbox_workspace_write.writable_roots=" + json(binding.roots.filter(\.directory).map(\.path)),
+            let own = level == .view ? ownFolders : []
+            result = ["-c", "sandbox_mode=" + json(level == .view && own.isEmpty ? "read-only" : "workspace-write"), "-c", "approval_policy=\"never\"", "-c", "features.shell_tool=" + (level == .execute ? "true" : "false"),
+                      "-c", "features.multi_agent=false", "-c", "sandbox_workspace_write.writable_roots=" + json(level == .view ? own : binding.roots.filter(\.directory).map(\.path)),
                       "-c", "sandbox_workspace_write.exclude_slash_tmp=true", "-c", "sandbox_workspace_write.exclude_tmpdir_env_var=true",
                       "-c", "sandbox_workspace_write.network_access=false", "-c", "web_search=" + json(web ? "live" : "disabled"),
                       "-c", "mcp_servers.illuminati.command=" + json(command), "-c", "mcp_servers.illuminati.args=" + json(args),
-                      "-c", "mcp_servers.illuminati.required=true", "-c", "mcp_servers.illuminati.default_tools_approval_mode=\"auto\""] + base
+                      "-c", "mcp_servers.illuminati.required=true",
+                      // The bridge itself allows writes only in the chat folder (or after a backup), so its calls
+                      // need no approval; "auto" still asked for write_file, which fails with approval "never".
+                      "-c", "mcp_servers.illuminati.default_tools_approval_mode=" + json(own.isEmpty ? "auto" : "approve")] + base
         case .gemini:
             // agy implements --mode through slash expansion; disabling it silently disables plan/accept-edits.
             result.removeAll { $0 == "--disable-slash-commands" }

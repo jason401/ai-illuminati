@@ -124,6 +124,7 @@ extension Discussion {
                 Answerer.ask(account, prompt: text, timeout: timeout, cancellation: token, images: images, web: web, session: session, workspace: self.activeWorkspace.map { WorkspaceInvocation(binding: $0, room: room) })
             }, note: { text in DispatchQueue.main.async { self.sessionNote = text } })
         }
+        if let workspaceAnswer, let binding = activeWorkspace { return workspaceAnswer(account, full, binding, token) }
         if pictures.isEmpty && activeWorkspace == nil { return debateAnswer(account, full, timeout, token, web) }
         if let pictureAnswer, activeWorkspace == nil { return pictureAnswer(account, full, pictures, timeout, token, web) }
         return Answerer.ask(account, prompt: full, timeout: timeout, cancellation: token, images: pictures, web: web, workspace: activeWorkspace.map { WorkspaceInvocation(binding: $0, room: activeSessionRoom ?? currentID) })

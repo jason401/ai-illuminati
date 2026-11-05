@@ -54,6 +54,8 @@ struct ChatView: View {
             }
             .disabled(discussion.running || discussion.importingMaterials)
             .padding(10)
+            sharedFolders
+            Text(L("대화", "Chats")).font(.caption).foregroundColor(.secondary).padding(.horizontal, 14).padding(.top, 8)
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
                     ForEach(discussion.listedConversations) { conversation in
@@ -114,152 +116,168 @@ struct ChatView: View {
 
     private var chat: some View {
         VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Picker(L("대화 방식", "Chat mode"), selection: Binding(get: { discussion.configuration.mode },
-                                                        set: { discussion.setMode($0) })) {
-                        ForEach(Discussion.availableModes, id: \.self) { mode in
-                            Text(ModeChangeMarker.name(mode)).tag(mode)
+            if discussion.configuration.mode == 0 {
+                soloHeader
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Picker(L("대화 방식", "Chat mode"), selection: Binding(get: { discussion.configuration.mode },
+                                                            set: { discussion.setMode($0) })) {
+                            ForEach(Discussion.availableModes, id: \.self) { mode in
+                                Text(ModeChangeMarker.name(mode)).tag(mode)
+                            }
                         }
-                    }
-                    .labelsHidden()
-                    .frame(width: 245)
-                    .disabled(discussion.running || discussion.importingMaterials)
-                    Spacer(minLength: 8)
-                    if discussion.configuration.mode <= 2 {
-                        Menu {
-                            Picker(L("AI마다 최대 발언", "Maximum turns per AI"), selection: Binding(
-                                get: { discussion.configuration.turnsPerAI ?? 4 },
-                                set: { limit in discussion.configure { $0.turnsPerAI = limit } })) {
-                                ForEach(2...10, id: \.self) { limit in
-                                    Text(L("\(limit)회", "\(limit) turns")).tag(limit)
+                        .labelsHidden()
+                        .frame(width: 245)
+                        .disabled(discussion.running || discussion.importingMaterials)
+                        Spacer(minLength: 8)
+                        if discussion.configuration.mode <= 2 {
+                            Menu {
+                                Picker(L("AI마다 최대 발언", "Maximum turns per AI"), selection: Binding(
+                                    get: { discussion.configuration.turnsPerAI ?? 4 },
+                                    set: { limit in discussion.configure { $0.turnsPerAI = limit } })) {
+                                    ForEach(2...10, id: \.self) { limit in
+                                        Text(L("\(limit)회", "\(limit) turns")).tag(limit)
+                                    }
                                 }
+                            } label: {
+                                Text(L("AI마다 \(discussion.configuration.turnsPerAI ?? 4)회", "\(discussion.configuration.turnsPerAI ?? 4) turns each"))
+                            }
+                            .fixedSize()
+                            .disabled(discussion.running || discussion.importingMaterials)
+                        }
+                        if discussion.configuration.mode != 3 {
+                            Menu {
+                                Picker(L("AI 발언 길이", "Length of each AI turn"), selection: Binding(
+                                    get: { SpeechLength.clamp(discussion.configuration.speechLength) },
+                                    set: { length in discussion.configure { $0.speechLength = length } })) {
+                                    ForEach(SpeechLength.all, id: \.self) { length in
+                                        Text(SpeechLength.name(length)).tag(length)
+                                    }
+                                }
+                                Divider()
+                                Text(L("길수록 근거를 더 담지만, 뒤 발언이 앞 대화를 모두 다시 읽어 사용량이 빠르게 늘어요.",
+                                       "Longer turns carry more evidence but use more, since every later turn re-reads the whole chat."))
+                            } label: {
+                                Text(SpeechLength.name(SpeechLength.clamp(discussion.configuration.speechLength)))
+                            }
+                            .fixedSize()
+                            .disabled(discussion.running || discussion.importingMaterials)
+                        }
+                        Menu {
+                            Text(L("1 토론: 대표가 논점을 맡기고 답을 정리합니다. 2 비판 토론: 반론·대안·실패 조건을 검증합니다. 3 협업: 선택 계정에 필요한 결과물 작업을 나누고 검토·통합합니다. 4 투표: 선택지를 한 줄에 하나씩 적으면 모든 계정이 서로 보지 않고 한 표씩 이유와 함께 던지고, 앱이 개표합니다.", "1 Discussion: moderator-led discussion and synthesis. 2 Critical debate: test objections, alternatives and failure cases. 3 Collaboration: assign work to selected accounts, cross-review and integrate deliverables. 4 Vote: list the choices one per line; every account casts one vote with its reason without seeing the others, and the app counts."))
+                            if discussion.configuration.mode == 4 {
+                                Text(L("연결된 모든 계정(개인·학교 포함)이 한 표씩 던져요. 체크를 끄면 빠져요. 선택지를 적지 않으면 대표(왕관)가 선택지를 만들고, 대표도 한 표만 던져요.", "Every connected account (personal and school) casts one vote; uncheck to leave one out. Without a list, the moderator (crown) drafts the choices and still gets one vote."))
+                            } else if discussion.configuration.mode >= 2 {
+                                Text(L("손잡이를 끌어 순서를 바꾸고, 이름 옆 메뉴에서 대표를 정하세요.", "Drag the handles to reorder. Use the menu beside a name to choose the moderator."))
+                            }
+                            if discussion.configuration.mode == 3 {
+                                Text(L("첫 의견도 1회로 셉니다. 대표의 진행 판단과 마지막 정리는 발언 수에 포함하지 않습니다.", "The opening view counts as one turn. Moderator decisions and final synthesis do not count."))
+                            }
+                            if !discussion.current.turns.isEmpty && Discussion.availableModes.count > 1 {
+                                Text(L("대화 중에도 방식을 바꿀 수 있어요. 다음 질문부터 적용돼요.", "You can switch modes mid-chat. It applies from the next message."))
                             }
                         } label: {
-                            Text(L("AI마다 \(discussion.configuration.turnsPerAI ?? 4)회", "\(discussion.configuration.turnsPerAI ?? 4) turns each"))
+                            Image(systemName: "info.circle")
                         }
+                        .menuStyle(.borderlessButton)
+                            .menuIndicator(.hidden)
                         .fixedSize()
-                        .disabled(discussion.running || discussion.importingMaterials)
+                        .accessibilityLabel(L("대화 방식 안내", "About this chat mode"))
                     }
-                    if discussion.configuration.mode != 3 {
+                    HStack {
+                        Toggle(L("세션 유지 (실험)", "Keep sessions (experimental)"), isOn: Binding(
+                            get: { discussion.configuration.sessionsOn },
+                            set: { enabled in
+                                discussion.configure { $0.keepSessions = enabled }
+                                discussion.sessionNote = enabled
+                                    ? L("앱 전용 Claude·ChatGPT 계정을 사용합니다. 그 외 계정과 Gemini는 전체 대화 전달 방식입니다.", "Uses dedicated Claude / ChatGPT accounts. Other accounts and Gemini receive full context.")
+                                    : L("다음 질문부터 전체 대화를 전달합니다.", "Next question uses full context.")
+                            }))
+                            .toggleStyle(.switch).controlSize(.small)
                         Menu {
-                            Picker(L("AI 발언 길이", "Length of each AI turn"), selection: Binding(
-                                get: { SpeechLength.clamp(discussion.configuration.speechLength) },
-                                set: { length in discussion.configure { $0.speechLength = length } })) {
-                                ForEach(SpeechLength.all, id: \.self) { length in
-                                    Text(SpeechLength.name(length)).tag(length)
+                            Button(L("파일 선택 (문서·슬라이드·사진)", "Choose files (documents / slides / photos)")) { discussion.chooseMaterials(folder: false) }
+                            Button(L("폴더 연결 (경로만)", "Link folder (paths only)")) { discussion.chooseMaterials(folder: true) }
+                            Button(L("이미지 첨부", "Attach images")) { discussion.chooseImages() }
+                        } label: { Label(L("자료 추가", "Add materials"), systemImage: "folder.badge.plus") }
+                        if let workspace = discussion.current.workspace {
+                            Menu {
+                                ForEach(workspace.roots, id: \.path) { root in
+                                    Button(root.path) { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: root.path)]) }
                                 }
-                            }
-                            Divider()
-                            Text(L("길수록 근거를 더 담지만, 뒤 발언이 앞 대화를 모두 다시 읽어 사용량이 빠르게 늘어요.",
-                                   "Longer turns carry more evidence but use more, since every later turn re-reads the whole chat."))
-                        } label: {
-                            Text(SpeechLength.name(SpeechLength.clamp(discussion.configuration.speechLength)))
+                                Button(L("연결 끊기", "Disconnect")) { discussion.restartRoomSessions(disconnect: true) }
+                            } label: { Text(L("연결 \(workspace.roots.count)개", "\(workspace.roots.count) links")) }
+                            Picker(L("권한", "Access"), selection: Binding(get: { workspace.level }, set: { discussion.setWorkspaceLevel($0) })) {
+                                ForEach(WorkspaceLevel.offered, id: \.self) { Text($0.title).tag($0) }
+                            }.frame(width: 145)
                         }
-                        .fixedSize()
-                        .disabled(discussion.running || discussion.importingMaterials)
-                    }
-                    Menu {
-                        Text(L("1 토론: 대표가 논점을 맡기고 답을 정리합니다. 2 비판 토론: 반론·대안·실패 조건을 검증합니다. 3 협업: 선택 계정에 필요한 결과물 작업을 나누고 검토·통합합니다. 4 투표: 선택지를 한 줄에 하나씩 적으면 모든 계정이 서로 보지 않고 한 표씩 이유와 함께 던지고, 앱이 개표합니다.", "1 Discussion: moderator-led discussion and synthesis. 2 Critical debate: test objections, alternatives and failure cases. 3 Collaboration: assign work to selected accounts, cross-review and integrate deliverables. 4 Vote: list the choices one per line; every account casts one vote with its reason without seeing the others, and the app counts."))
-                        if discussion.configuration.mode == 4 {
-                            Text(L("연결된 모든 계정(개인·학교 포함)이 한 표씩 던져요. 체크를 끄면 빠져요. 선택지를 적지 않으면 대표(왕관)가 선택지를 만들고, 대표도 한 표만 던져요.", "Every connected account (personal and school) casts one vote; uncheck to leave one out. Without a list, the moderator (crown) drafts the choices and still gets one vote."))
-                        } else if discussion.configuration.mode >= 2 {
-                            Text(L("손잡이를 끌어 순서를 바꾸고, 이름 옆 메뉴에서 대표를 정하세요.", "Drag the handles to reorder. Use the menu beside a name to choose the moderator."))
+                        if discussion.current.workspace?.level == .execute {
+                            Text(L("Gemini는 개인 권한 설정에 따라 문서 도구·명령이 거절될 수 있습니다. 앱은 개인 설정을 넓히지 않습니다.", "Gemini document tools or commands may be denied by personal permission settings; the app does not widen them."))
+                                .font(.caption).foregroundColor(.secondary)
+                            Text(L("실행은 각 도구의 샌드박스·계정 정책을 따릅니다. 학교 ChatGPT의 승인 요청은 자동 승인하지 않습니다.", "Execution follows each tool’s sandbox and account policy. School ChatGPT approval requests are not auto-approved."))
+                                .font(.caption).foregroundColor(.secondary)
                         }
-                        if discussion.configuration.mode == 3 {
-                            Text(L("첫 의견도 1회로 셉니다. 대표의 진행 판단과 마지막 정리는 발언 수에 포함하지 않습니다.", "The opening view counts as one turn. Moderator decisions and final synthesis do not count."))
+                        if discussion.current.workspace == nil, let documents = discussion.current.documents, !documents.isEmpty {
+                            Menu {
+                                ForEach(documents) { document in
+                                    Text(document.name + " · \(document.units?.count ?? 1) parts")
+                                    if let notice = document.notice { Text(notice) }
+                                }
+                                Divider()
+                                Button(L("자료 연결 해제", "Disconnect materials")) {
+                                    discussion.restartRoomSessions(disconnect: true)
+                                    discussion.sessionNote = L("다음 질문은 자료 없이 새 세션에서 시작합니다.", "Next question starts a fresh session without materials.")
+                                }
+                            } label: { Text(L("자료 \(documents.count)개", "\(documents.count) materials")) }
                         }
-                        if !discussion.current.turns.isEmpty && Discussion.availableModes.count > 1 {
-                            Text(L("대화 중에도 방식을 바꿀 수 있어요. 다음 질문부터 적용돼요.", "You can switch modes mid-chat. It applies from the next message."))
-                        }
-                    } label: {
-                        Image(systemName: "info.circle")
-                    }
-                    .menuStyle(.borderlessButton)
-                        .menuIndicator(.hidden)
-                    .fixedSize()
-                    .accessibilityLabel(L("대화 방식 안내", "About this chat mode"))
-                }
-                HStack {
-                    Toggle(L("세션 유지 (실험)", "Keep sessions (experimental)"), isOn: Binding(
-                        get: { discussion.configuration.sessionsOn },
-                        set: { enabled in
-                            discussion.configure { $0.keepSessions = enabled }
-                            discussion.sessionNote = enabled
-                                ? L("앱 전용 Claude·ChatGPT 계정을 사용합니다. 그 외 계정과 Gemini는 전체 대화 전달 방식입니다.", "Uses dedicated Claude / ChatGPT accounts. Other accounts and Gemini receive full context.")
-                                : L("다음 질문부터 전체 대화를 전달합니다.", "Next question uses full context.")
-                        }))
-                        .toggleStyle(.switch).controlSize(.small)
-                    Menu {
-                        Button(L("파일 선택 (문서·슬라이드·사진)", "Choose files (documents / slides / photos)")) { discussion.chooseMaterials(folder: false) }
-                        Button(L("폴더 연결 (경로만)", "Link folder (paths only)")) { discussion.chooseMaterials(folder: true) }
-                        Button(L("이미지 첨부", "Attach images")) { discussion.chooseImages() }
-                    } label: { Label(L("자료 추가", "Add materials"), systemImage: "folder.badge.plus") }
-                    if let workspace = discussion.current.workspace {
+                        Spacer()
                         Menu {
-                            ForEach(workspace.roots, id: \.path) { root in
-                                Button(root.path) { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: root.path)]) }
+                            Text(L("연결은 경로만 저장합니다. 필요한 내용은 AI가 요청할 때 읽어 참여 AI 회사에 전달합니다.", "Links store paths only. Requested file contents are sent to the participating AI provider on demand."))
+                            Text(L("PDF는 페이지 이미지도 읽습니다. DOCX·PPTX는 텍스트·노트·삽입 이미지를 추출하며 원래 화면 배치를 완전히 재현하지는 않습니다.", "PDF pages include rendered images. DOCX/PPTX extract text, notes and embedded images; original layouts are not fully rendered."))
+                            Text(L("세션 기록은 앱 전용 계정 폴더에 저장되고, 방을 삭제하면 이 방이 만든 세션 기록과 백업도 함께 지워져요. Gemini 자체 기록은 남아요.", "Session history is kept in the app's account folders. Deleting a chat also removes the sessions and backups it created. Gemini keeps its own history."))
+                            Button(L("원본 자료로 세션 다시 시작", "Restart sessions from originals")) {
+                                discussion.restartRoomSessions()
+                                discussion.sessionNote = L("다음 질문에서 원본 자료와 대화로 다시 시작합니다.", "Next question rebuilds sessions from source materials and conversation.")
                             }
-                            Button(L("연결 끊기", "Disconnect")) { discussion.restartRoomSessions(disconnect: true) }
-                        } label: { Text(L("연결 \(workspace.roots.count)개", "\(workspace.roots.count) links")) }
-                        Picker(L("권한", "Access"), selection: Binding(get: { workspace.level }, set: { discussion.setWorkspaceLevel($0) })) {
-                            ForEach(WorkspaceLevel.offered, id: \.self) { Text($0.title).tag($0) }
-                        }.frame(width: 145)
+                        } label: { Image(systemName: "info.circle") }.fixedSize()
+                    }.disabled(discussion.running || discussion.importingMaterials)
+                    if discussion.importingMaterials { ProgressView(L("자료를 가져오는 중…", "Importing materials…")).controlSize(.small) }
+                    if discussion.configuration.mode == 3 {
+                        Text(L("선택 계정 중 필요한 AI에게 작업을 배분합니다. 한 AI가 여러 작업을 맡을 수 있고 결과는 교차 검토합니다.", "Necessary tasks go to selected accounts. One AI can do multiple tasks; results are cross-reviewed.")).font(.caption).foregroundColor(.secondary)
                     }
-                    if discussion.current.workspace?.level == .execute {
-                        Text(L("Gemini는 개인 권한 설정에 따라 문서 도구·명령이 거절될 수 있습니다. 앱은 개인 설정을 넓히지 않습니다.", "Gemini document tools or commands may be denied by personal permission settings; the app does not widen them."))
-                            .font(.caption).foregroundColor(.secondary)
-                        Text(L("실행은 각 도구의 샌드박스·계정 정책을 따릅니다. 학교 ChatGPT의 승인 요청은 자동 승인하지 않습니다.", "Execution follows each tool’s sandbox and account policy. School ChatGPT approval requests are not auto-approved."))
-                            .font(.caption).foregroundColor(.secondary)
+                    if !discussion.sessionNote.isEmpty {
+                        Text(discussion.sessionNote).font(.caption).foregroundColor(.secondary).lineLimit(2)
                     }
-                    if discussion.current.workspace == nil, let documents = discussion.current.documents, !documents.isEmpty {
-                        Menu {
-                            ForEach(documents) { document in
-                                Text(document.name + " · \(document.units?.count ?? 1) parts")
-                                if let notice = document.notice { Text(notice) }
-                            }
-                            Divider()
-                            Button(L("자료 연결 해제", "Disconnect materials")) {
-                                discussion.restartRoomSessions(disconnect: true)
-                                discussion.sessionNote = L("다음 질문은 자료 없이 새 세션에서 시작합니다.", "Next question starts a fresh session without materials.")
-                            }
-                        } label: { Text(L("자료 \(documents.count)개", "\(documents.count) materials")) }
+                    if discussion.configuration.mode == 3 {
+                        collaborationControls
+                    } else if discussion.configuration.mode == 4 {
+                        voteControls
+                    } else {
+                        sequentialControls
                     }
-                    Spacer()
-                    Menu {
-                        Text(L("연결은 경로만 저장합니다. 필요한 내용은 AI가 요청할 때 읽어 참여 AI 회사에 전달합니다.", "Links store paths only. Requested file contents are sent to the participating AI provider on demand."))
-                        Text(L("PDF는 페이지 이미지도 읽습니다. DOCX·PPTX는 텍스트·노트·삽입 이미지를 추출하며 원래 화면 배치를 완전히 재현하지는 않습니다.", "PDF pages include rendered images. DOCX/PPTX extract text, notes and embedded images; original layouts are not fully rendered."))
-                        Text(L("세션 기록은 앱 전용 계정 폴더에 저장되고, 방을 삭제하면 이 방이 만든 세션 기록과 백업도 함께 지워져요. Gemini 자체 기록은 남아요.", "Session history is kept in the app's account folders. Deleting a chat also removes the sessions and backups it created. Gemini keeps its own history."))
-                        Button(L("원본 자료로 세션 다시 시작", "Restart sessions from originals")) {
-                            discussion.restartRoomSessions()
-                            discussion.sessionNote = L("다음 질문에서 원본 자료와 대화로 다시 시작합니다.", "Next question rebuilds sessions from source materials and conversation.")
-                        }
-                    } label: { Image(systemName: "info.circle") }.fixedSize()
-                }.disabled(discussion.running || discussion.importingMaterials)
-                if discussion.importingMaterials { ProgressView(L("자료를 가져오는 중…", "Importing materials…")).controlSize(.small) }
-                if discussion.configuration.mode == 3 {
-                    Text(L("선택 계정 중 필요한 AI에게 작업을 배분합니다. 한 AI가 여러 작업을 맡을 수 있고 결과는 교차 검토합니다.", "Necessary tasks go to selected accounts. One AI can do multiple tasks; results are cross-reviewed.")).font(.caption).foregroundColor(.secondary)
-                }
-                if !discussion.sessionNote.isEmpty {
-                    Text(discussion.sessionNote).font(.caption).foregroundColor(.secondary).lineLimit(2)
-                }
-                if discussion.configuration.mode == 3 {
-                    collaborationControls
-                } else if discussion.configuration.mode == 4 {
-                    voteControls
-                } else {
-                    sequentialControls
-                }
 
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
             Divider()
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 22) {
                         let conversation = discussion.current
-                        if conversation.turns.isEmpty {
+                        if conversation.turns.isEmpty && discussion.configuration.mode == 0 {
+                            VStack(spacing: 8) {
+                                Text(L("무엇을 도와드릴까요?", "What should we work on?")).font(.title2)
+                                Text(L("남은 사용량이 넉넉한 AI가 답하고, 한도에 가까워지면 다른 AI가 이어받아요. 공동 폴더와 이 대화 폴더의 자료를 읽고, 쓴 글은 이 대화 폴더에 저장해요.",
+                                       "The AI with the most usage left answers, and another one continues when it runs low. It reads the shared folders and this chat's folder, and saves what it writes in this chat's folder."))
+                                    .foregroundColor(.secondary)
+                            }
+                            .padding(.top, 60)
+                            .frame(maxWidth: .infinity)
+                            .multilineTextAlignment(.center)
+                        } else if conversation.turns.isEmpty {
                             Text(L("자료를 연결하고 협업 참여 계정을 선택하세요. 보기에서는 읽기만, 작성에서는 자동 백업 후 파일을 고치고 결과물을 만듭니다.", "Link materials and select collaboration accounts. View only reads; Write backs up linked files before editing and creating deliverables."))
                                 .foregroundColor(.secondary)
                                 .padding(.top, 40)
@@ -322,12 +340,26 @@ struct ChatView: View {
                     }
                 }
                 HStack(alignment: .bottom, spacing: 10) {
-                    Button(action: { discussion.chooseImages() }) {
+                    Menu {
+                        Button(L("이미지 첨부", "Attach images")) { discussion.chooseImages() }
+                        Button(L("파일 연결 (읽기)", "Link files (read)")) { discussion.chooseMaterials(folder: false) }
+                        Button(L("폴더 연결 (읽기)", "Link folder (read)")) { discussion.chooseMaterials(folder: true) }
+                        Divider()
+                        Menu(L("여럿에게 묻기", "Ask several AIs")) {
+                            ForEach([1, 2, 3, 4], id: \.self) { mode in
+                                Button(ModeChangeMarker.name(mode)) { discussion.setMode(mode) }
+                            }
+                        }
+                        if discussion.configuration.mode != 0 {
+                            Button(L("기본 대화로 돌아가기", "Back to plain chat")) { discussion.setMode(0) }
+                        }
+                    } label: {
                         Image(systemName: "plus").font(.system(size: 18, weight: .medium)).frame(width: 30, height: 34)
                     }
-                    .buttonStyle(.plain).foregroundColor(.secondary)
-                    .accessibilityLabel(L("이미지 첨부", "Attach images"))
-                    .help(L("사진 선택 또는 이미지 붙여넣기", "Choose images or paste a screenshot"))
+                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                    .foregroundColor(.secondary)
+                    .accessibilityLabel(L("첨부와 여럿에게 묻기", "Attach or ask several AIs"))
+                    .help(L("사진·파일·폴더 첨부, 여럿에게 묻기", "Attach photos, files or folders, or ask several AIs"))
                     .disabled(discussion.running || discussion.importingMaterials)
                     ZStack(alignment: .leading) {
                         if discussion.draft.isEmpty {
@@ -353,6 +385,7 @@ struct ChatView: View {
                 HStack {
                     Text(L("Enter: 전송 · Shift+Enter: 줄바꿈", "Enter: send · Shift+Enter: new line"))
                     Spacer()
+                    if discussion.configuration.mode == 0 && !discussion.running { accountChip }
                     if discussion.running {
                         Text(discussion.stopping ? L("중지 중…", "Stopping…") : L("답변 중", "Responding"))
                     }
@@ -412,6 +445,102 @@ struct ChatView: View {
                 }
             }.toggleStyle(.checkbox)
         }.disabled(discussion.running || discussion.importingMaterials)
+    }
+
+    // Folders every chat's AI may read (read only for now). Right-click to open or remove.
+    private var sharedFolders: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Text(L("공동 폴더", "Shared folders")).font(.caption).foregroundColor(.secondary)
+                Spacer()
+                Button(action: { model.addSharedFolder() }) { Image(systemName: "plus") }
+                    .buttonStyle(.plain).foregroundColor(.secondary)
+                    .help(L("모든 대화의 AI가 읽을 폴더 추가", "Add a folder every chat's AI can read"))
+                    .accessibilityLabel(L("공동 폴더 추가", "Add shared folder"))
+            }
+            .padding(.horizontal, 4)
+            if model.sharedFolders.isEmpty {
+                Text(L("모든 대화의 AI가 읽을 수 있는 폴더예요.", "Folders every chat's AI can read."))
+                    .font(.caption2).foregroundColor(.secondary).padding(.horizontal, 4)
+            }
+            ForEach(model.sharedFolders, id: \.self) { path in
+                HStack(spacing: 6) {
+                    Image(systemName: "folder").foregroundColor(.secondary)
+                    Text((path as NSString).lastPathComponent).lineLimit(1)
+                    Spacer(minLength: 2)
+                    Image(systemName: "eye").font(.caption2).foregroundColor(.secondary)
+                        .help(L("모든 대화에서 읽기만 가능", "Read only in every chat"))
+                }
+                .padding(.horizontal, 4).padding(.vertical, 3)
+                .contentShape(Rectangle())
+                .help(path)
+                .contextMenu {
+                    Button(L("Finder에서 열기", "Show in Finder")) { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }
+                    Button(L("공동 폴더에서 빼기", "Remove from shared folders")) { model.sharedFolders.removeAll { $0 == path } }
+                }
+            }
+        }
+        .padding(.horizontal, 10)
+        .disabled(discussion.running || discussion.importingMaterials)
+    }
+
+    // Mode 0: this chat's folder and links on the right; everything else lives in the message box.
+    private var soloHeader: some View {
+        HStack(spacing: 8) {
+            if !discussion.sessionNote.isEmpty {
+                Text(discussion.sessionNote).font(.caption).foregroundColor(.secondary).lineLimit(1)
+            }
+            Spacer()
+            if let workspace = discussion.current.workspace {
+                Menu {
+                    ForEach(workspace.roots, id: \.path) { root in
+                        Button(root.path) { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: root.path)]) }
+                    }
+                    Button(L("연결 끊기", "Disconnect")) { discussion.restartRoomSessions(disconnect: true) }
+                } label: { Label(L("연결 \(workspace.roots.count)개 · 읽기", "\(workspace.roots.count) linked · read"), systemImage: "link") }
+                .fixedSize()
+            }
+            Button(action: { discussion.openChatFolder() }) {
+                Label(L("이 대화 폴더", "This chat's folder"), systemImage: "folder")
+            }
+            .help(L("이 대화의 AI가 쓴 파일이 저장되는 폴더", "Where this chat's AI saves what it writes"))
+        }
+        .controlSize(.small)
+        .disabled(discussion.running || discussion.importingMaterials)
+    }
+
+    // Who answers next: automatic (most usage left) or an account picked by hand; and the chat's side.
+    private var accountChip: some View {
+        let config = discussion.configuration
+        let next = discussion.soloNext
+        let usage = next.flatMap { discussion.model.latestUsage[$0.id] }
+        let title = (config.soloAccountID == nil ? L("자동 · ", "Auto · ") : "")
+            + (next.map { discussion.label($0) + " · " + AutoPick.describe(usage) } ?? L("쓸 수 있는 계정 없음", "No account available"))
+        return Menu {
+            Button((config.soloAccountID == nil ? "✓ " : "") + L("자동 (남은 사용량 기준)", "Automatic (most usage left)")) {
+                discussion.configure { $0.soloAccountID = nil }
+            }
+            Divider()
+            ForEach(discussion.model.accounts.filter { $0.provider != .gemini }, id: \.id) { account in
+                Button((config.soloAccountID == account.id ? "✓ " : "") + discussion.label(account) + " · "
+                       + AutoPick.describe(discussion.model.latestUsage[account.id])) {
+                    discussion.configure { $0.soloAccountID = account.id }
+                }
+            }
+            if discussion.model.schoolOnlyHandoff {
+                Divider()
+                Picker(L("이 대화", "This chat"), selection: Binding(get: { config.school ?? false },
+                                                                set: { school in discussion.configure { $0.school = school; $0.lastSoloAccountID = nil } })) {
+                    Text(L("개인 대화 (개인 계정끼리 이어받기)", "Personal (personal accounts continue)")).tag(false)
+                    Text(L("학교 대화 (학교 계정끼리 이어받기)", "School (school accounts continue)")).tag(true)
+                }
+            }
+        } label: {
+            Text((config.school == true && discussion.model.schoolOnlyHandoff ? L("학교 · ", "School · ") : "") + title)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help(L("답할 AI: 자동이면 5시간이 15% 이상 남은 계정 중 주간이 가장 많이 남은 계정", "Who answers: automatic picks, among accounts with at least 15% of the 5-hour limit left, the one with the most weekly usage left"))
     }
 
     // Mode 4: every account votes unless unchecked; the crown drafts the choices when none are listed.
@@ -590,6 +719,7 @@ private struct ModeChangeMarker: View {
 
     static func name(_ mode: Int) -> String {
         switch mode {
+        case 0: return L("기본 대화 (AI 한 명)", "Plain chat (one AI)")
         case 4: return L("모드4 · 투표", "Mode 4 · Vote")
         case 3: return L("모드3 · 협업", "Mode 3 · Collaboration")
         case 2: return L("모드2 · 비판 토론", "Mode 2 · Critical debate")
@@ -635,7 +765,7 @@ private struct TurnView: View {
             if let error = turn.error {
                 Text(error).foregroundColor(.red)
             }
-            if (turn.modeVersion == 2 && (turn.mode ?? 1) <= 2) || (turn.modeVersion == nil && turn.mode == 3) {
+            if (turn.modeVersion == 2 && (1...2).contains(turn.mode ?? 1)) || (turn.modeVersion == nil && turn.mode == 3) {
                 Text(L("AI 발언 \(turn.entries.count)/\(turn.maxTurns ?? 9)", "AI turns \(turn.entries.count)/\(turn.maxTurns ?? 9)")
                      + (turn.turnsPerAI.map { L(" (AI마다 \($0)회)", " (\($0) each)") } ?? ""))
                     .font(.caption).foregroundColor(.secondary)
@@ -645,17 +775,8 @@ private struct TurnView: View {
             if turn.modeVersion == 2 && turn.mode == 3, let coverage = turn.endReason {
                 Text(coverage).font(.caption).foregroundColor(.secondary)
             }
-            if let changes = turn.workspaceChanges {
-                DisclosureGroup(L("실제 변경 파일 \(changes.count)개", "\(changes.count) changed files")) {
-                    ForEach(changes) { change in
-                        HStack {
-                            Text(change.kind + " · " + change.path).font(.caption).textSelection(.enabled)
-                            Spacer()
-                            if change.kind != "deleted" { Button(L("파일 열기", "Open file")) { discussion.openArtifact(change.path) } }
-                            Button("Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: change.path)]) }
-                        }
-                    }
-                }
+            if turn.mode != 0, let changes = turn.workspaceChanges {
+                changesView(changes, title: L("실제 변경 파일 \(changes.count)개", "\(changes.count) changed files"))
             }
             if turn.backupPath != nil {
                 Button(turn.undone == true ? L("되돌림 완료", "Restored") : L("되돌리기", "Undo file changes")) { discussion.undoWorkspace(turn) }
@@ -680,6 +801,9 @@ private struct TurnView: View {
             if let options = turn.voteOptions {
                 VoteResultView(options: options, votes: turn.votes)
             }
+            if turn.mode == 0, let note = turn.orderNote {
+                Label(note, systemImage: "arrow.left.arrow.right").font(.caption).foregroundColor(.orange)
+            }
             if let final = turn.final {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(markdown(final))
@@ -688,7 +812,7 @@ private struct TurnView: View {
                     let pictures = Self.finalPictures(turn, final: final)
                     if !pictures.isEmpty { PictureStrip(images: pictures, size: 180) }
                     if let by = turn.finalBy {
-                        (Text(L("정리: ", "Final answer by: ")).foregroundColor(.secondary)
+                        (Text(turn.mode == 0 ? L("답: ", "Answered by: ") : L("정리: ", "Final answer by: ")).foregroundColor(.secondary)
                          + Text(by).bold().foregroundColor(Account.Provider.of(speaker: by)?.color ?? .secondary))
                             .font(.caption)
                     }
@@ -697,7 +821,11 @@ private struct TurnView: View {
                 .background(Color(nsColor: .controlBackgroundColor))
                 .cornerRadius(10)
             }
-            if let note = turn.orderNote {
+            if turn.mode == 0, let changes = turn.workspaceChanges {
+                changesView(changes, title: L("이 대화 폴더의 파일 \(changes.count)개", "\(changes.count) files in this chat's folder"))
+                    .font(.callout)
+            }
+            if turn.mode != 0, let note = turn.orderNote {
                 Text(localizedNotice(note)).font(.caption).foregroundColor(.secondary)
             }
             if !turn.entries.isEmpty {
@@ -710,6 +838,20 @@ private struct TurnView: View {
                         entriesView
                     }
                     .font(.callout)
+                }
+            }
+        }
+    }
+
+    // Files an answer created or changed, each with Open and Finder.
+    private func changesView(_ changes: [WorkspaceChange], title: String) -> some View {
+        DisclosureGroup(title) {
+            ForEach(changes) { change in
+                HStack {
+                    Text(change.kind + " · " + change.path).font(.caption).textSelection(.enabled)
+                    Spacer()
+                    if change.kind != "deleted" { Button(L("파일 열기", "Open file")) { discussion.openArtifact(change.path) } }
+                    Button("Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: change.path)]) }
                 }
             }
         }

@@ -23,6 +23,12 @@ struct Account: Codable, Equatable {
     var provider: Provider
     var name: String
     var dir: String?
+    var school: Bool?   // set in Settings; nil = guessed from the name
+
+    // School accounts hand work only to other school accounts (Settings can turn that off).
+    var isSchool: Bool {
+        school ?? ["학교", "school", "univ", "edu"].contains { name.lowercased().contains($0) }
+    }
 
     var codexHome: String {
         dir ?? FileManager.default.homeDirectoryForCurrentUser.path + "/.codex"

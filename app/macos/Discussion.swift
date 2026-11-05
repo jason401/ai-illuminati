@@ -350,6 +350,9 @@ struct ChatConfiguration: Codable {
     var accountIDs: [String]?
     var leaderAccountID: String?
     var voteSkippedIDs: [String]?  // mode 4: accounts turned off; every other account votes
+    var soloAccountID: String?      // mode 0: the account picked by hand (nil = automatic)
+    var lastSoloAccountID: String?  // mode 0: who answered last; it keeps going while it has usage left
+    var school: Bool?               // mode 0: a school chat (continued only by school accounts)
 }
 
 struct Conversation: Identifiable, Codable {
@@ -437,6 +440,8 @@ final class Discussion: ObservableObject {
     var activeAdversarial = false
     var activeSpeechLength = SpeechLength.standard
     var activeImages: [URL] = []
+    // Tests only: answers requests that have folders attached (mode 0 always does) without calling the real tools.
+    var workspaceAnswer: ((Account, String, WorkspaceBinding, DebateCancellation) -> Result<String, Answerer.Failure>)?
     // Tests only: answers requests that carry pictures without calling the real tools.
     var pictureAnswer: ((Account, String, [URL], TimeInterval, DebateCancellation, Bool) -> Result<String, Answerer.Failure>)?
     var imageContext = ""
@@ -477,11 +482,12 @@ final class Discussion: ObservableObject {
     }
 
     // New mode numbers are versioned; legacy engines remain available for regression checks.
-    static var availableModes = [1, 2, 3, 4]
+    static var availableModes = [0, 1, 2, 3, 4]
     static var modernModes = true
 
     var configuration: ChatConfiguration {
-        var config = current.configuration ?? ChatConfiguration()
+        // A new chat starts as a plain chat with one AI (mode 0).
+        var config = current.configuration ?? ChatConfiguration(mode: Self.availableModes.contains(0) ? 0 : 1, modeVersion: Self.modernModes ? 2 : nil)
         if Self.modernModes && config.modeVersion != 2 {
             config.mode = 1
             config.modeVersion = 2
@@ -670,7 +676,7 @@ final class Discussion: ObservableObject {
         turn.modeVersion = Self.modernModes ? 2 : nil
         turn.images = pendingImages.isEmpty ? nil : pendingImages
         let perAI = min(10, max(2, config.turnsPerAI ?? 4))
-        if (Self.modernModes && config.mode <= 2) || (!Self.modernModes && config.mode == 3) {
+        if (Self.modernModes && (1...2).contains(config.mode)) || (!Self.modernModes && config.mode == 3) {
             turn.turnsPerAI = perAI; turn.maxTurns = perAI * team.count
         }
         guard team.count > 0 else {
@@ -680,10 +686,12 @@ final class Discussion: ObservableObject {
         }
         activeSessionRoom = config.sessionsOn && (Self.modernModes || config.mode == 3) ? id : nil
         activeMaterials = current.documents ?? []
-        activeWorkspace = current.workspace
+        let solo = Self.modernModes && config.mode == 0
+        activeWorkspace = solo ? soloBinding(id) : current.workspace
         activeAdversarial = Self.modernModes && config.mode == 2
         activeSpeechLength = SpeechLength.clamp(config.speechLength)
-        activeDocumentText = activeWorkspace?.description ?? MaterialContext.overview(activeMaterials)
+        // Mode 0 names its folders after the session marker, so a new file does not restart the session.
+        activeDocumentText = solo ? MaterialContext.overview(activeMaterials) : activeWorkspace?.description ?? MaterialContext.overview(activeMaterials)
         let history = current.turns
         // Everything earlier in this chat that the AIs should see: the user's photos and the pictures
         // the AIs drew, in order. New pictures made in this turn are added as they arrive.
@@ -724,7 +732,10 @@ final class Discussion: ObservableObject {
         let rules = model.chatRules.trimmingCharacters(in: .whitespacesAndNewlines)
         let debateLeader = Self.modernModes && !team.contains(where: { $0.provider == config.leader }) ? team[0].provider : config.leader
         work.async {
-            if Self.modernModes && config.mode == 4 {
+            if solo {
+                self.runSolo(question: question, history: history, rules: rules, config: config,
+                             cancellation: cancellation, id: id, index: index)
+            } else if Self.modernModes && config.mode == 4 {
                 self.runVote(question: question, history: history, rules: rules, team: team,
                              leader: team.first { $0.id == config.leaderAccountID } ?? team.first { $0.provider == config.leader } ?? team[0],
                              cancellation: cancellation, id: id, index: index)
@@ -753,6 +764,7 @@ final class Discussion: ObservableObject {
         if Self.modernModes || configuration.mode >= 2 {
             providers = configuration.order.filter { configuration.participants.contains($0) }
         }
+        if Self.modernModes && configuration.mode == 0 { return soloNext.map { [$0] } ?? [] }
         // Vote: every account votes (personal and school ones too), except the ones turned off.
         if Self.modernModes && configuration.mode == 4 {
             let skipped = configuration.voteSkippedIDs ?? []

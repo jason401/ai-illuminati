@@ -40,6 +40,15 @@ class WorkspaceTests(unittest.TestCase):
         with self.assertRaises(PermissionError):self.ws.write_file('../outside',content='bad')
         (backup/'complete.json').write_text(json.dumps({'roots':self.ws.manifest['roots'],'restored':True}))
         with self.assertRaises(PermissionError):self.ws.delete_file('edit.txt')
+    def test_chat_folder_writable_without_backup_other_roots_read_only(self):
+        own=self.root/'chat';own.mkdir()
+        ws=module.Workspace({'roots':[{'path':str(own),'directory':True,'writable':True},{'path':str(self.folder),'directory':True}],'level':'view','cache':str(self.cache),'extractor':'unused'})
+        self.assertIn('write_file',[t['name'] for t in ws.tools()])
+        ws.write_file('draft.md',content='methods')
+        self.assertEqual((own/'draft.md').read_text(),'methods')
+        ws.delete_file('draft.md');self.assertFalse((own/'draft.md').exists())
+        with self.assertRaises(PermissionError):ws.write_file(str(self.folder/'bad.txt'),content='bad',root=1)
+        with self.assertRaises(PermissionError):ws.delete_file(str(own))
     def test_office_images_are_on_demand_and_cached(self):
         p=self.folder/'draft.docx'
         with zipfile.ZipFile(p,'w') as z:

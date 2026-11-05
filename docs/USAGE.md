@@ -18,6 +18,14 @@ Eye and halo animation can be disabled in Settings. The halo cycles from fully a
 
 Availability, limits, and subscription support depend on each provider and organizational policy. A free software license does not make AI services unlimited or free.
 
+## Plain chat
+
+New chats start as a plain chat with one AI, like a desktop chat app. **Automatic** picks, among signed-in Claude and ChatGPT accounts with at least 15% of the five-hour limit left, the one with the most weekly usage left (a plan without a weekly limit counts as full). The same account keeps answering while both of its limits stay at 15% or more. When it drops below that, or a reply fails because a limit was reached, another account continues from the saved chat history and the same folders; the chat shows the handoff. Gemini does not answer plain chats. When a message mentions YouTube, Gemini searches YouTube first and the answering AI receives its notes (agy reads video pages and search results, not the video itself). You can also pick an account by hand from the menu under the message box.
+
+Mark school accounts in Settings → Accounts. With **Keep school and personal chats apart** (Settings → Chat, on by default), a school chat is continued only by school accounts and a personal chat only by personal ones; choose the chat's side in the account menu.
+
+Each chat has its own folder (**This chat's folder**). Its AI may create and edit files there and saves drafts and documents as Markdown. **Shared folders** in the sidebar can be read by every chat's AI and are read only. Folders or files linked to a chat with **+** are read only in a plain chat. The other modes are under **+ → Ask several AIs**.
+
 ## Conversation modes
 
 | Mode | Behavior |

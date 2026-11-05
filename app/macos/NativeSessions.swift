@@ -132,7 +132,8 @@ final class NativeSessions {
     // Reordered/edited history cannot be delta-delivered safely and starts a new session.
     static func split(_ prompt: String) -> (String, String, String)? {
         let markers = [("[MODE3 SPEECH]", "speaker"), ("[MODE3 MODERATION]", "moderator"), ("[MODE3 FINAL]", "moderator"),
-                       ("[MODE4 OPTIONS]", "moderator"), ("[MODE4 VOTE]", "voter")]
+                       ("[MODE4 OPTIONS]", "moderator"), ("[MODE4 VOTE]", "voter"),
+                       ("[SOLO TURN]", "assistant")]
         let found = markers.compactMap { marker, role -> (Range<String.Index>, String)? in
             prompt.range(of: marker, options: .backwards).map { ($0, role) }
         }.max { $0.0.lowerBound < $1.0.lowerBound }

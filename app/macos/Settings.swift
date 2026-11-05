@@ -134,6 +134,14 @@ final class AppModel: ObservableObject {
     ]
     static var defaultChatRules: String { rules(for: AppLanguage.current) }
     @Published var latestUsage: [String: AIUsage] = [:]   // last readings by account id (set by the menu)
+    // Folders every chat and every AI may read (left side of the chat window). Read only for now.
+    @Published var sharedFolders: [String] {
+        didSet { UserDefaults.standard.set(sharedFolders, forKey: "sharedFolders") }
+    }
+    // A school chat is continued only by school accounts, a personal chat only by personal ones.
+    @Published var schoolOnlyHandoff: Bool {
+        didSet { UserDefaults.standard.set(schoolOnlyHandoff, forKey: "schoolOnlyHandoff") }
+    }
     var onAccountsChange: (() -> Void)?
     var onDisplayChange: (() -> Void)?
     var onPreviewUsageMenu: (() -> Void)?
@@ -150,6 +158,8 @@ final class AppModel: ObservableObject {
         menuBarColored = UserDefaults.standard.bool(forKey: "menuBarColored")
         usageMenuStyle = UserDefaults.standard.string(forKey: "usageMenuStyle").flatMap(UsageMenuStyle.init(rawValue:)) ?? .cards
         openAtLogin = SMAppService.mainApp.status == .enabled
+        sharedFolders = UserDefaults.standard.stringArray(forKey: "sharedFolders") ?? []
+        schoolOnlyHandoff = UserDefaults.standard.object(forKey: "schoolOnlyHandoff") as? Bool ?? true
         let saved = UserDefaults.standard.string(forKey: "chatRules")
         chatRules = (saved == nil || saved == Self.koreanChatRules || saved == Self.rules(for: .english)
                      || Self.oldDefaultRules.contains(saved!))
@@ -188,6 +198,21 @@ final class AppModel: ObservableObject {
     func rename(_ id: String, to name: String) {
         guard let index = accounts.firstIndex(where: { $0.id == id }), accounts[index].name != name else { return }
         accounts[index].name = name
+    }
+
+    func setSchool(_ id: String, _ on: Bool) {
+        guard let index = accounts.firstIndex(where: { $0.id == id }) else { return }
+        accounts[index].school = on
+    }
+
+    func addSharedFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = true
+        panel.prompt = L("공동 폴더로 추가", "Add as shared folder")
+        guard panel.runModal() == .OK else { return }
+        for url in panel.urls where !sharedFolders.contains(url.path) { sharedFolders.append(url.path) }
     }
 
     // Removing only takes it off the list; the login stays where the tool keeps it.
@@ -505,6 +530,11 @@ struct ChatSettingsTab: View {
             Text(L("모든 AI 요청에 적용할 말투와 응답 규칙이에요. 답변 길이는 채팅창에서 선택해요.",
                    "Style and instructions for every AI request. Choose response length in the chat window."))
                 .font(.system(size: 11)).foregroundStyle(.secondary)
+            Toggle(L("학교·개인 대화를 따로 이어받기", "Keep school and personal chats apart"), isOn: $model.schoolOnlyHandoff)
+                .toggleStyle(.switch)
+            Text(L("켜면 학교 대화는 학교 계정끼리, 개인 대화는 개인 계정끼리만 이어받아요. 학교 계정은 계정 탭에서 표시해요.",
+                   "On: school chats are continued only by school accounts, personal chats only by personal ones. Mark school accounts in the Accounts tab."))
+                .font(.system(size: 11)).foregroundStyle(.secondary)
         }
         .padding(12).controlSize(.small)
         .background(Color(nsColor: .windowBackgroundColor))
@@ -526,6 +556,13 @@ private struct AccountRow: View {
                 HStack(spacing: 6) {
                     Text(account.provider.title).foregroundStyle(.secondary)
                     status
+                    if account.provider != .gemini {
+                        Toggle(L("학교", "School"), isOn: Binding(
+                            get: { model.accounts.first { $0.id == account.id }?.isSchool ?? false },
+                            set: { model.setSchool(account.id, $0) }))
+                            .toggleStyle(.checkbox).controlSize(.mini)
+                            .help(L("학교 계정: 학교 대화는 학교 계정끼리만 이어받아요", "School account: school chats are continued only by school accounts"))
+                    }
                 }.font(.system(size: 10)).lineLimit(1)
             }
             Spacer(minLength: 4)

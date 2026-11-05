@@ -136,8 +136,16 @@ final class AppModel: ObservableObject {
     @Published var latestUsage: [String: AIUsage] = [:]   // last readings by account id (set by the menu)
     // Folders every chat and every AI may read (left side of the chat window). Read only for now.
     @Published var sharedFolders: [String] {
-        didSet { UserDefaults.standard.set(sharedFolders, forKey: "sharedFolders") }
+        didSet {
+            UserDefaults.standard.set(sharedFolders, forKey: "sharedFolders")
+            if !pausedSharedFolders.isSubset(of: Set(sharedFolders)) { pausedSharedFolders.formIntersection(sharedFolders) }
+        }
     }
+    // Shared folders kept in the list but not given to the AIs for now (the eye in the chat sidebar).
+    @Published var pausedSharedFolders: Set<String> = [] {
+        didSet { UserDefaults.standard.set(pausedSharedFolders.sorted(), forKey: "pausedSharedFolders") }
+    }
+    var activeSharedFolders: [String] { sharedFolders.filter { !pausedSharedFolders.contains($0) } }
     // A school chat is continued only by school accounts, a personal chat only by personal ones.
     @Published var schoolOnlyHandoff: Bool {
         didSet { UserDefaults.standard.set(schoolOnlyHandoff, forKey: "schoolOnlyHandoff") }
@@ -159,6 +167,7 @@ final class AppModel: ObservableObject {
         usageMenuStyle = UserDefaults.standard.string(forKey: "usageMenuStyle").flatMap(UsageMenuStyle.init(rawValue:)) ?? .cards
         openAtLogin = SMAppService.mainApp.status == .enabled
         sharedFolders = UserDefaults.standard.stringArray(forKey: "sharedFolders") ?? []
+        pausedSharedFolders = Set(UserDefaults.standard.stringArray(forKey: "pausedSharedFolders") ?? [])
         schoolOnlyHandoff = UserDefaults.standard.object(forKey: "schoolOnlyHandoff") as? Bool ?? true
         let saved = UserDefaults.standard.string(forKey: "chatRules")
         chatRules = (saved == nil || saved == Self.koreanChatRules || saved == Self.rules(for: .english)

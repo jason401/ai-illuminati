@@ -516,25 +516,42 @@ struct ChatView: View {
                 }
                 .buttonStyle(.plain)
             }
+            // Double-click opens the folder in Finder; the eye turns sharing on or off (the folder stays
+            // listed); right-click to remove it.
             ForEach(model.sharedFolders, id: \.self) { path in
+                let paused = model.pausedSharedFolders.contains(path)
                 HStack(spacing: 8) {
                     Image(systemName: "folder").foregroundColor(.secondary).frame(width: 18)
                     Text((path as NSString).lastPathComponent).lineLimit(1)
+                        .foregroundColor(paused ? .secondary : .primary)
                     Spacer(minLength: 2)
-                    Image(systemName: "eye").font(.system(size: 10)).foregroundColor(.secondary.opacity(0.7))
-                        .help(L("모든 대화에서 읽기만 가능", "Read only in every chat"))
+                    Button(action: {
+                        if paused { model.pausedSharedFolders.remove(path) } else { model.pausedSharedFolders.insert(path) }
+                    }) {
+                        Image(systemName: paused ? "eye.slash" : "eye").font(.system(size: 10))
+                            .foregroundColor(.secondary.opacity(paused ? 0.5 : 0.8)).frame(width: 18, height: 18)
+                    }
+                    .buttonStyle(.plain)
+                    .help(paused ? L("공유 꺼짐: AI가 이 폴더를 못 봐요. 눌러서 켜기", "Not shared: the AIs cannot see it. Click to share")
+                                 : L("공유 중: 모든 대화의 AI가 읽을 수 있어요(읽기만). 눌러서 끄기", "Shared: every chat's AI can read it (read only). Click to stop"))
+                    .accessibilityLabel(paused ? L("공유 켜기", "Share") : L("공유 끄기", "Stop sharing"))
                 }
                 .font(.system(size: 13))
                 .padding(.horizontal, 10).frame(height: 30)
                 .contentShape(Rectangle())
-                .help(path)
+                .onTapGesture(count: 2) { NSWorkspace.shared.open(URL(fileURLWithPath: path)) }
+                .help(path + "\n" + L("두 번 눌러 Finder에서 열기", "Double-click to open in Finder"))
                 .contextMenu {
-                    Button(L("Finder에서 열기", "Show in Finder")) { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }
-                    Button(L("공동 폴더에서 빼기", "Remove from shared folders")) { model.sharedFolders.removeAll { $0 == path } }
+                    Button(L("Finder에서 열기", "Open in Finder")) { NSWorkspace.shared.open(URL(fileURLWithPath: path)) }
+                    Button(paused ? L("공유 켜기", "Share") : L("공유 끄기", "Stop sharing")) {
+                        if paused { model.pausedSharedFolders.remove(path) } else { model.pausedSharedFolders.insert(path) }
+                    }
+                    Divider()
+                    Button(L("공동 폴더에서 빼기", "Remove from shared folders"), role: .destructive) { model.sharedFolders.removeAll { $0 == path } }
                 }
             }
         }
-        .disabled(discussion.running || discussion.importingMaterials)
+        .disabled(discussion.importingMaterials)
     }
 
     // Mode 0: this chat's folder and links on the right; everything else lives in the message box.

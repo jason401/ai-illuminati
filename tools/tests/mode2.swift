@@ -1118,6 +1118,10 @@ do {
     let binding = asked[0].2
     expect(binding.roots.first?.writable == true && binding.roots.first?.path == Discussion.chatFolder(chat.currentID).path, "the chat folder comes first and is writable")
     expect(binding.roots.contains { $0.path == shared.path && $0.writable != true } && binding.level == .view, "shared folders are read only")
+    m.pausedSharedFolders = [shared.path]
+    expect(!chat.soloBinding(chat.currentID).roots.contains { $0.path == shared.path } && m.sharedFolders == [shared.path], "a shared folder turned off stays listed but is not given to the AI")
+    m.pausedSharedFolders = []
+    expect(chat.soloBinding(chat.currentID).roots.contains { $0.path == shared.path }, "and on again")
     expect(asked[0].1.contains("[SOLO TURN]") && asked[0].1.contains(shared.path + " (shared folder — read only)") && asked[0].1.contains("data.txt"), "the AI is told which folders it may read and write")
     expect(geminiPrompts.isEmpty, "no YouTube search for a normal question")
 

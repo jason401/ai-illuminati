@@ -1,5 +1,6 @@
 import Foundation
 import Cocoa
+import UniformTypeIdentifiers
 
 func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
     if !condition() { fatalError(message) }
@@ -994,4 +995,47 @@ do {
     expect(VoteCount.options(in: "Which?\n- tea\n• coffee\n① water") == ["tea", "coffee", "water"], "bulleted choices")
     expect(VoteCount.options(in: "Only one line") == [] && VoteCount.options(in: "1. alone") == [], "fewer than two is not a list")
     print("PASS: vote mode (every account votes, listed and drafted choices, independent ballots, app count, invalid ballots, tie, no-choice error)")
+}
+
+// Dropped pictures: Finder file URLs pass straight through; image data (as from a screenshot thumbnail)
+// is saved into a temporary folder that the chat reads and then removes.
+do {
+    func waitUntil(_ done: () -> Bool) {
+        let deadline = Date().addingTimeInterval(5)
+        while !done() && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+    }
+    let png: Data = {
+        let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 4, pixelsHigh: 4, bitsPerSample: 8, samplesPerPixel: 4,
+                                   hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+        return rep.representation(using: .png, properties: [:])!
+    }()
+    let file = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("drop-test.png")
+    try! png.write(to: file)
+
+    let finder = NSPasteboard(name: NSPasteboard.Name("ai-illuminati-drop-test-\(UUID().uuidString)"))
+    finder.clearContents(); finder.writeObjects([file as NSURL])
+    var got: ([URL], URL?)?
+    PictureDrop.receive([], pasteboard: finder) { got = ($0, $1) }
+    waitUntil { got != nil }
+    expect(got?.0.map(\.path) == [file.path] && got?.1 == nil, "Finder file URLs pass through without a temporary folder")
+
+    let photos = NSPasteboard(name: NSPasteboard.Name("ai-illuminati-drop-test-\(UUID().uuidString)"))
+    photos.clearContents()
+    expect(!PictureDrop.hasPromises(photos), "no promised files on an empty drag")
+    let provider = NSItemProvider()
+    provider.suggestedName = "Screenshot"
+    provider.registerDataRepresentation(forTypeIdentifier: UTType.png.identifier, visibility: .all) { $0(png, nil); return nil }
+    got = nil
+    PictureDrop.receive([provider], pasteboard: photos) { got = ($0, $1) }
+    waitUntil { got != nil }
+    let copied = got?.0 ?? []
+    expect(copied.count == 1 && copied[0].lastPathComponent.hasSuffix("Screenshot.png") && (try? Data(contentsOf: copied[0])) == png,
+           "image data is saved as a picture file")
+    expect(got?.1.map { copied[0].path.hasPrefix($0.path) } == true, "the copy lives in the temporary drop folder")
+
+    let chat = Discussion(model: AppModel())
+    copied.forEach(chat.importImageFile)
+    try? FileManager.default.removeItem(at: got!.1!)
+    expect(chat.pendingImages.count == 1 && FileManager.default.fileExists(atPath: chat.pendingImages[0].url.path), "dropped picture attached after its folder is gone")
+    print("PASS: dropped pictures (Finder files, image data into a temporary folder, attached and folder removed)")
 }

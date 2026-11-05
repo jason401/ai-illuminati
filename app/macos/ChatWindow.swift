@@ -16,7 +16,7 @@ struct ChatView: View {
         }
         .frame(minWidth: 760, minHeight: 480)
         // A photo dropped anywhere in the window is attached, not only on the message box.
-        .onDrop(of: [UTType.fileURL, UTType.image], delegate: ImageAttachmentDropDelegate(discussion: discussion))
+        .onDrop(of: [UTType.fileURL, UTType.image, UTType.item], delegate: ImageAttachmentDropDelegate(discussion: discussion))
         .overlay {
             if discussion.imageDropActive {
                 ZStack {
@@ -923,42 +923,24 @@ private struct AttachmentThumbnail: View {
     }
 }
 
+// Photos from Finder, the Photos app or a screenshot thumbnail (see PictureDrop).
 private struct ImageAttachmentDropDelegate: DropDelegate {
     let discussion: Discussion
-    func validateDrop(info: DropInfo) -> Bool { !discussion.running && info.hasItemsConforming(to: [UTType.fileURL, UTType.image]) }
+    func validateDrop(info: DropInfo) -> Bool {
+        !discussion.running && (info.hasItemsConforming(to: [UTType.fileURL, UTType.image]) || PictureDrop.hasPromises())
+    }
     func dropEntered(info: DropInfo) { discussion.imageDropActive = validateDrop(info: info) }
     func dropExited(info: DropInfo) { discussion.imageDropActive = false }
     func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: validateDrop(info: info) ? .copy : .forbidden) }
     func performDrop(info: DropInfo) -> Bool {
         discussion.imageDropActive = false
-        guard !discussion.running else { return false }
+        guard validateDrop(info: info) else { return false }
         let conversationID = discussion.currentID
-        let files = info.itemProviders(for: [UTType.fileURL])
-        if !files.isEmpty {
-            for provider in files {
-                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
-                    let url: URL?
-                    if let data = item as? Data { url = URL(dataRepresentation: data, relativeTo: nil) }
-                    else { url = item as? URL }
-                    guard let url else { return }
-                    DispatchQueue.main.async {
-                        guard discussion.currentID == conversationID, !discussion.running else { return }
-                        discussion.importImageFile(url)
-                    }
-                }
-            }
-        } else {
-            for provider in info.itemProviders(for: [UTType.image]) {
-                guard let type = provider.registeredTypeIdentifiers.first(where: { UTType($0)?.conforms(to: .image) == true }) else { continue }
-                provider.loadDataRepresentation(forTypeIdentifier: type) { data, _ in
-                    guard let data else { return }
-                    DispatchQueue.main.async {
-                        guard discussion.currentID == conversationID, !discussion.running else { return }
-                        do { try discussion.addImage(data, name: L("드래그한 이미지", "Dropped image")) }
-                        catch { discussion.attachmentError = L("이미지를 첨부할 수 없습니다.", "Could not attach image.") }
-                    }
-                }
-            }
+        PictureDrop.receive(info.itemProviders(for: [UTType.image])) { urls, folder in
+            defer { if let folder { try? FileManager.default.removeItem(at: folder) } }
+            guard discussion.currentID == conversationID, !discussion.running else { return }
+            if urls.isEmpty { discussion.attachmentError = L("이미지를 첨부할 수 없습니다.", "Could not attach image."); return }
+            urls.forEach(discussion.importImageFile)   // reads each file right away
         }
         return true
     }

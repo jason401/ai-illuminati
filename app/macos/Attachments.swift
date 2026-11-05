@@ -129,3 +129,64 @@ extension Discussion {
         return Answerer.ask(account, prompt: full, timeout: timeout, cancellation: token, images: pictures, web: web, workspace: activeWorkspace.map { WorkspaceInvocation(binding: $0, room: activeSessionRoom ?? currentID) })
     }
 }
+
+/// Pictures from a drop (same as AI Face's PictureDrop). Finder hands over file URLs; the Photos app and
+/// screenshot thumbnails hand over promised files (written when dropped, after an iCloud download if
+/// needed) or only image data. Those are copied into a temporary folder first: `done(urls, folder)` runs on
+/// the main thread, and the caller removes `folder` once it has read the files.
+enum PictureDrop {
+    // Promised files (the Photos app, screenshot thumbnails) are on the drag pasteboard, not in the item types.
+    static func hasPromises(_ pasteboard: NSPasteboard = NSPasteboard(name: .drag)) -> Bool {
+        pasteboard.canReadObject(forClasses: [NSFilePromiseReceiver.self], options: nil)
+    }
+
+    static func receive(_ providers: [NSItemProvider], pasteboard: NSPasteboard = NSPasteboard(name: .drag),
+                        done: @escaping ([URL], URL?) -> Void) {
+        let files = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
+        if !files.isEmpty { done(files, nil); return }
+
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("AI Illuminati drop " + UUID().uuidString)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        var found: [URL] = []
+        let lock = NSLock()
+        let group = DispatchGroup()
+        func keep(_ url: URL) { lock.lock(); found.append(url); lock.unlock() }
+
+        let promises = pasteboard.readObjects(forClasses: [NSFilePromiseReceiver.self], options: nil) as? [NSFilePromiseReceiver] ?? []
+        if !promises.isEmpty {
+            let queue = OperationQueue()
+            for promise in promises {
+                var waiting = max(1, promise.fileTypes.count)   // the reader runs once per promised file
+                for _ in 0..<waiting { group.enter() }
+                promise.receivePromisedFiles(atDestination: folder, options: [:], operationQueue: queue) { url, error in
+                    if error == nil { keep(url) }
+                    lock.lock(); let leave = waiting > 0; waiting -= 1; lock.unlock()
+                    if leave { group.leave() }
+                }
+            }
+        } else {
+            for provider in providers {
+                guard let type = provider.registeredTypeIdentifiers.first(where: { UTType($0)?.conforms(to: .image) == true }) else { continue }
+                group.enter()
+                provider.loadFileRepresentation(forTypeIdentifier: type) { url, _ in
+                    defer { group.leave() }
+                    guard let url else { return }   // removed when this returns: copy it now
+                    let ext = UTType(type)?.preferredFilenameExtension ?? url.pathExtension
+                    let name = (provider.suggestedName ?? url.deletingPathExtension().lastPathComponent) + "." + ext
+                    let copy = folder.appendingPathComponent(String(UUID().uuidString.prefix(8)) + " " + name)
+                    if (try? FileManager.default.copyItem(at: url, to: copy)) != nil { keep(copy) }
+                }
+            }
+        }
+        // Give up on anything that has not arrived after a minute (a stuck iCloud download).
+        var finished = false
+        let finish = {
+            if finished { return }
+            finished = true
+            lock.lock(); let urls = found; lock.unlock()
+            done(urls, folder)
+        }
+        group.notify(queue: .main, execute: finish)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 60, execute: finish)
+    }
+}

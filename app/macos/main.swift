@@ -131,9 +131,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         discussion.discardPendingImages()
     }
 
-    // Reopening the menu-bar app should reveal its chat window.
+    // Reopening the app (its Dock icon, Spotlight, Finder) always brings up the chat window,
+    // also while Settings or the game is open.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if !flag { chat.show(discussion: discussion) }
+        chat.show(discussion: discussion)
         return true
     }
 

@@ -1052,8 +1052,11 @@ private struct TurnView: View {
 }
 
 // One chat window, reused. Conversations are saved, so closing it loses nothing.
+// While it is open the app shows in the Dock and ⌘Tab like a normal app (so it can be kept in the Dock);
+// closed, it is a menu bar app again. A Dock icon kept there reopens the chat (applicationShouldHandleReopen).
 final class ChatWindow {
     private var window: NSWindow?
+    private var closing: NSObjectProtocol?
 
     func updateLanguage() { window?.title = L("AI Illuminati 채팅", "AI Illuminati Chat") }
 
@@ -1069,7 +1072,11 @@ final class ChatWindow {
             w.isReleasedWhenClosed = false
             w.center()
             window = w
+            closing = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: w, queue: .main) { _ in
+                NSApp.setActivationPolicy(.accessory)
+            }
         }
+        NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
     }

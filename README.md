@@ -11,6 +11,7 @@ Free and open source · **MIT License** · macOS 13 or later · English / Korean
 - **Per-account usage:** five-hour and weekly remaining limits, reset times, multiple accounts, and compact bar, ring, or card layouts.
 - **Animated menu bar:** per-account meters, color or monochrome, eye movements, blinking, and a pulsing golden halo. Respects Reduce Motion.
 - **AI conversations:** a plain chat with one AI that the app picks by remaining usage and hands to another account when it runs low, plus discussion, critical debate, collaboration, and independent voting.
+- **Opening the chat:** from the menu, from Spotlight (⌘Space, "AI Illuminati"), or from the Dock: while the chat window is open the app shows in the Dock, where it can be kept (Options → Keep in Dock); clicking it opens the chat.
 - **File collaboration:** linked folders, read/write/execute permissions, task assignment and review, backups, and undo.
 - **Images:** attach pictures and display or share AI-generated images. Capabilities vary by provider.
 - **Poker:** play Texas Hold'em with AIs, or watch AIs play, using virtual chips. No real-money transactions.

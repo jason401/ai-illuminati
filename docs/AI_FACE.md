@@ -53,9 +53,13 @@ AI Illuminati behaves like the other desktop apps: **the app itself** is AI Face
 
 - Only the `ai-face` entry. `command` must be an absolute path to an executable; `args[0]` must be a file
   inside `~/Library/Application Support/AI Face/` (symlinks and `..` are resolved first). Anything else is ignored.
-- Only the tool **`set_expression`** is passed on to models (one list in `FaceLink.swift`). Calendar, mail,
-  folders, timer and the other tools are refused inside AI Illuminati for now, whatever AI Face allows.
-  Widening this later is a change on AI Illuminati's side plus AI Face's permissions for `illuminati`.
+- **Every tool AI Face lists is passed on to the models**, like the ChatGPT app does. AI Illuminati only has an
+  on/off switch for the whole server (Settings → Chat → MCP servers). **AI Face's permissions for `illuminati`
+  are therefore the only lock** on calendar, mail and shared folders: they must exist and default to off (see 3).
+  The instruction AI Illuminati adds to each answer asks only for `set_expression`; other tools are used only
+  when the user asks for them in the chat.
+- The data a tool returns (calendar events, mail text) goes to whichever model answers, which may be a
+  school/Enterprise account. AI Face should say so next to the Illuminati switches.
 - Only plain chat (mode 0). Debate, collaboration and vote modes do not get AI Face.
 - If the file is missing, invalid or AI Face is closed, chats work as before, without a face.
 
@@ -72,8 +76,10 @@ Places that assume two AIs (from a search for `'gpt'`):
    (history and the 7-day counts); `core/aiface/server.py` `_who`; `calendar_access.py`, `folder_access.py`,
    `mail_access.py` names and `DEFAULTS`. Old history files keep working (they only have claude/gpt/user).
 3. **Permissions** (shared folders, calendar read/write, mail): a third switch "Illuminati" next to Claude / GPT
-   (`SettingsTabs.swift` `perAI`, `Settings.swift` `calIlluminati` …). Suggested default **off**, like GPT.
-   AI Illuminati only calls `set_expression` today, so these switches matter only when that is widened.
+   (`SettingsTabs.swift` `perAI`, `Settings.swift` `calIlluminati` …). Default **off**, like GPT. This is required,
+   not optional: AI Illuminati passes every AI Face tool on, so these switches are what keeps calendar and mail
+   closed. Until this exists, the shim treats `illuminati` as GPT (unknown agent, client name without "claude"),
+   so GPT's switches apply.
 4. **Connect row** `core/aiface/integrations.py` + `SettingsTabs.swift` `appRow`: "AI Illuminati" with
    Connected / Not connected / Connect / Disconnect, reading and writing the file above. Show it only when
    AI Illuminati is installed (`/Applications/AI Illuminati.app` or its data folder exists). Unlike the other apps,
@@ -100,8 +106,7 @@ Places that assume two AIs (from a search for `'gpt'`):
 
 ## Verified on AI Illuminati's side (2026-11-05)
 
-- With the real AI Face server: the app-side link started it once, listed tools (only `set_expression` kept),
-  and stayed connected.
+- With the real AI Face server: the app-side link started it once, listed its tools and stayed connected.
 - Claude Code CLI and Codex CLI (Codex in its sandbox, shell off) each called `set_expression` through AI
   Illuminati's bridge before replying (`cheering`, `sympathy`); both changes reached AI Face through the app's one
   session. Before AI Face's change AI Face records them as GPT (unknown agent, client name without "claude").

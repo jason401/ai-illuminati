@@ -1230,8 +1230,8 @@ do {
     expect(!(try! invocation.arguments(provider: .claude, original: ["-p", "--mcp-config", "{}"], directory: dir, web: false)).joined().contains("ai-face"),
            "models are not given AI Face directly")
     FaceLink.shared.start()
-    expect(FaceLink.shared.tools().map { $0["name"] as? String } == ["set_expression"], "only set_expression is offered")
-    expect(FaceLink.shared.call("calendar_events", [:])["isError"] as? Bool == true, "other AI Face tools are refused")
+    expect(FaceLink.shared.tools().map { $0["name"] as? String } == ["set_expression", "calendar_events"], "every AI Face tool is offered (AI Face decides)")
+    expect(FaceLink.shared.call("no_such_tool", [:])["isError"] as? Bool == true, "a tool AI Face does not list is refused")
     // A model's call: bridge → app socket → the app's AI Face connection.
     let bridge = Process(), toBridge = Pipe(), fromBridge = Pipe()
     bridge.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
@@ -1247,14 +1247,18 @@ do {
     let replies = String(decoding: fromBridge.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
     bridge.waitUntilExit()
     let recorded = (try? String(contentsOf: calls, encoding: .utf8)) ?? ""
-    expect(replies.contains("\"set_expression\"") && !replies.contains("calendar_events") && replies.contains("\"ok\""), "the bridge offers and forwards set_expression")
-    expect(recorded.contains("\"agent\": \"illuminati\"") && recorded.contains("\"emotion\": \"happy\"") && !recorded.contains("calendar"),
+    expect(replies.contains("\"set_expression\"") && replies.contains("calendar_events") && replies.contains("\"ok\""), "the bridge offers AI Face's tools and forwards calls")
+    expect(recorded.contains("\"agent\": \"illuminati\"") && recorded.contains("\"emotion\": \"happy\""),
            "AI Face gets the call from AI Illuminati, named illuminati")
+    FaceLink.shared.on = false
+    expect(FaceLink.active() == nil && FaceLink.shared.tools().isEmpty && manifest(plain)["face"] == nil, "the switch in Settings turns AI Face off")
+    FaceLink.shared.on = true
+    expect(FaceLink.shared.tools().count == 2, "and on again")
     try? FileManager.default.removeItem(at: FaceLink.file)
     FaceLink.shared.refresh()
     expect(FaceLink.shared.tools().isEmpty, "Disconnect in AI Face ends the connection")
     unlink(FaceLink.socketPath)
-    print("PASS: AI Face link (the app is the one client named illuminati, its own server only, plain chat only, set_expression only, through the bridge)")
+    print("PASS: AI Face link (the app is the one client named illuminati, its own server only, plain chat only, all its tools through the bridge, on/off switch)")
 }
 
 

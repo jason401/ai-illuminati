@@ -55,7 +55,7 @@ struct WorkspaceInvocation {
         var object: [String: Any] = ["roots": roots, "level": level.rawValue, "backup": backupPath ?? "",
                                       "cache": NativeSessions.directory(room).appendingPathComponent("document-cache").path,
                                       "extractor": Self.resources.appendingPathComponent("WorkspaceDocument").path]
-        if binding.face == true && FaceLink.server() != nil { object["face"] = FaceLink.socketPath }
+        if binding.face == true && FaceLink.active() != nil { object["face"] = FaceLink.socketPath }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         try JSONSerialization.data(withJSONObject: object).write(to: manifest, options: .atomic)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: manifest.path)

@@ -571,9 +571,38 @@ struct ChatSettingsTab: View {
             Text(L("켜면 엔터프라이즈 대화는 엔터프라이즈 계정끼리, 개인 대화는 개인 계정끼리만 이어받아요. 엔터프라이즈 계정은 계정 탭에서 표시해요.",
                    "On: Enterprise chats are continued only by Enterprise accounts, personal chats only by personal ones. Mark Enterprise accounts in the Accounts tab."))
                 .font(.system(size: 11)).foregroundStyle(.secondary)
+            MCPSettings()
         }
         .padding(12).controlSize(.small)
         .background(Color(nsColor: .windowBackgroundColor))
+    }
+}
+
+// MCP servers the chat's AI may use, one switch each (like the ChatGPT app). AI Face adds itself when
+// AI Illuminati is connected in AI Face; which of its tools work is set there.
+private struct MCPSettings: View {
+    @ObservedObject var link = FaceLink.shared
+
+    var body: some View {
+        SettingsCard(title: L("MCP 서버", "MCP servers")) {
+            if link.configured {
+                SettingsRow(title: "ai-face") {
+                    Text(!link.on ? L("꺼짐", "Off") : link.connected ? L("연결됨", "Connected") : L("연결 중…", "Connecting…"))
+                        .foregroundStyle(link.on && link.connected ? .green : .secondary)
+                    Spacer()
+                    Toggle("ai-face", isOn: $link.on).labelsHidden().toggleStyle(.switch)
+                }
+                .help(L("AI Face: 일반 채팅의 AI가 표정을 바꿔요. 캘린더·메일·폴더 권한은 AI Face 설정에서 정해요.",
+                        "AI Face: the AI in plain chat sets the face. Calendar, mail and folder access is set in AI Face."))
+            } else {
+                Text(L("없어요. AI Face 설정 → AI에서 AI Illuminati를 연결하면 여기에 보여요.",
+                       "None. Connect AI Illuminati in AI Face (Settings → AI) and it shows here."))
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 10).padding(.vertical, 8)
+            }
+        }
+        .onAppear { link.refresh() }
     }
 }
 

@@ -5,19 +5,34 @@ import Darwin
 // Claude desktop and ChatGPT desktop do: the app itself is AI Face's MCP client and keeps one connection
 // open while it runs, as "illuminati". AI Face writes its server into mcp.json here when the user clicks
 // Connect (and removes it on Disconnect). Which model answers stays inside AI Illuminati: the per-answer
-// workspace bridge (workspace_mcp.py) offers the allowed AI Face tools to whichever model it serves and
-// hands each call to the app over a local socket. The agreement between the two apps is docs/AI_FACE.md.
-final class FaceLink {
+// workspace bridge (workspace_mcp.py) offers AI Face's tools to whichever model it serves and hands each
+// call to the app over a local socket. Like the ChatGPT app, AI Illuminati passes every tool on and only
+// turns the whole server on or off (Settings → Chat); AI Face decides per AI which tools work (calendar,
+// mail, folders). The agreement between the two apps is docs/AI_FACE.md.
+final class FaceLink: ObservableObject {
     struct Server: Equatable { var command: String; var args: [String] }
 
     static let shared = FaceLink()
     static let name = "ai-face", agent = "illuminati"
-    // Tools the models in AI Illuminati may use. Widen here, and in AI Face's permissions for Illuminati.
-    static let allowed: Set<String> = ["set_expression"]
     static var file = URL(fileURLWithPath: AccountStore.supportDir).appendingPathComponent("mcp.json")
     // The server must be AI Face's own file; anything else in mcp.json is ignored.
     static var faceFolder = AccountStore.home + "/Library/Application Support/AI Face"
     static var socketPath = AccountStore.supportDir + "/face.sock"
+
+    // The on/off switch per server (only AI Face for now). Off servers are listed in UserDefaults "mcpOff".
+    static var isOn: Bool { !(UserDefaults.standard.stringArray(forKey: "mcpOff") ?? []).contains(name) }
+    static func active() -> Server? { isOn ? server() : nil }
+
+    @Published private(set) var configured = false
+    @Published private(set) var connected = false
+    @Published var on = FaceLink.isOn {
+        didSet {
+            var off = Set(UserDefaults.standard.stringArray(forKey: "mcpOff") ?? [])
+            if on { off.remove(Self.name) } else { off.insert(Self.name) }
+            UserDefaults.standard.set(off.sorted(), forKey: "mcpOff")
+            refresh()
+        }
+    }
 
     static func server() -> Server? {
         guard let data = try? Data(contentsOf: file),
@@ -44,7 +59,7 @@ final class FaceLink {
     // MARK: Connection to AI Face (one MCP session while the app runs)
 
     private let queue = DispatchQueue(label: "face-link")
-    private var process: Process?, input: FileHandle?, connected: Server?
+    private var process: Process?, input: FileHandle?, server: Server?
     private var faceTools: [[String: Any]] = []
     private var nextID = 1
     private let lock = NSLock(), arrived = DispatchSemaphore(value: 0)
@@ -63,15 +78,15 @@ final class FaceLink {
 
     func refresh() { queue.async { _ = self.ensure() } }
 
-    /// The AI Face tools models may use now (empty when AI Face is not connected).
+    /// AI Face's tools, for the models (empty when AI Face is not connected or switched off).
     func tools() -> [[String: Any]] { queue.sync { ensure() ? faceTools : [] } }
 
     /// One tool call, answered as an MCP tool result ({content, isError}).
     func call(_ name: String, _ arguments: [String: Any]) -> [String: Any] {
         func failure(_ text: String) -> [String: Any] { ["content": [["type": "text", "text": text]], "isError": true] }
-        guard Self.allowed.contains(name) else { return failure("Tool not allowed in AI Illuminati: \(name)") }
         return queue.sync {
             guard ensure() else { return failure("AI Face is not connected") }
+            guard faceTools.contains(where: { $0["name"] as? String == name }) else { return failure("Unknown AI Face tool: \(name)") }
             let reply = request("tools/call", ["name": name, "arguments": arguments])
             if let result = reply?["result"] as? [String: Any] { return result }
             let message = (reply?["error"] as? [String: Any])?["message"] as? String
@@ -81,12 +96,15 @@ final class FaceLink {
     }
 
     private func ensure() -> Bool {
-        let wanted = Self.server()
-        if wanted != connected || process?.isRunning != true {
+        let found = Self.server()
+        let wanted = Self.isOn ? found : nil
+        if wanted != server || process?.isRunning != true {
             disconnect()
             if let wanted { connect(wanted) }
         }
-        return process?.isRunning == true
+        let running = process?.isRunning == true
+        DispatchQueue.main.async { self.configured = found != nil; self.connected = running }
+        return running
     }
 
     private func connect(_ server: Server) {
@@ -111,19 +129,19 @@ final class FaceLink {
         do { try child.run() } catch { return }
         process = child
         input = toChild.fileHandleForWriting
-        connected = server
+        self.server = server
         let hello: [String: Any] = ["protocolVersion": "2025-06-18", "capabilities": [:] as [String: Any],
                                     "clientInfo": ["name": "AI Illuminati", "version": "1"]]
         guard request("initialize", hello)?["result"] != nil else { return disconnect() }
         send(["jsonrpc": "2.0", "method": "notifications/initialized"])
         let listed = (request("tools/list", [:])?["result"] as? [String: Any])?["tools"] as? [[String: Any]] ?? []
-        faceTools = listed.filter { Self.allowed.contains($0["name"] as? String ?? "") }
+        faceTools = listed
     }
 
     private func disconnect() {
         if let process, process.isRunning { process.terminate() }
         try? input?.close()
-        process = nil; input = nil; connected = nil; faceTools = []
+        process = nil; input = nil; server = nil; faceTools = []
     }
 
     private func send(_ message: [String: Any]) {

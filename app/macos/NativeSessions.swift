@@ -142,12 +142,12 @@ final class NativeSessions {
     }
 
     func ask(_ account: Account, room: UUID, prompt: String, images: [URL], timeout: TimeInterval,
-             token: DebateCancellation, web: Bool, speaker: String, appendContext: Bool = false,
+             token: DebateCancellation, web: Bool, speaker: String, appendContext: Bool = false, fresh: String? = nil,
              invoke: (String, [URL], NativeSessionCall?) -> Result<String, Answerer.Failure>,
              note: (String) -> Void) -> Result<String, Answerer.Failure> {
         guard Self.eligible(account), let (incomingContext, instruction, role) = Self.split(prompt) else {
             note(L("\(account.provider.title): 전체 자료 전달 (전용 계정 세션 미지원)", "\(account.provider.title): full context (dedicated session unavailable)"))
-            return invoke(prompt, images, nil)
+            return invoke(fresh ?? prompt, images, nil)
         }
         lock.lock()
         var records = load(room)
@@ -174,11 +174,13 @@ final class NativeSessions {
         } catch {
             lock.unlock()
             note(L("세션 저장 실패: 전체 자료 전달", "Session storage failed: sending full context"))
-            return invoke(prompt, images, nil)
+            return invoke(fresh ?? prompt, images, nil)
         }
         lock.unlock()
         let call = NativeSessionCall(id: record.nativeID ?? record.id.uuidString, resume: resumed, directory: directory)
-        let result = invoke(delta + "\n" + instruction, newImages, call)
+        // A new session that was given a short version (summary + recent turns) still records the full context,
+        // so later turns resume with only what is new.
+        let result = invoke(!resumed && fresh != nil ? fresh! : delta + "\n" + instruction, newImages, call)
         lock.lock()
         records = load(room)
         record.nativeID = call.nativeID ?? record.nativeID
@@ -202,7 +204,7 @@ final class NativeSessions {
         if case .failure(.failed(let message)) = result, !token.isCancelled, resumed,
            ["no conversation found", "session not found", "no session found"].contains(where: { message.lowercased().contains($0) }) {
             note(L("세션을 찾지 못해 전체 자료로 복구", "Session missing: restoring full context"))
-            return invoke(prompt, images, nil)
+            return invoke(fresh ?? prompt, images, nil)
         }
         return result
     }

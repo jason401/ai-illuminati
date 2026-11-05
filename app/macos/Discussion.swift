@@ -57,9 +57,12 @@ enum Answerer {
     enum Failure: Error { case missingTool, failed(String), timedOut }
 
     // web: lets the AI search the web and read pages (nothing else: no files, no commands).
+    // progress: the reply so far and what the AI is doing, while it works (Claude sends text as it is
+    // written; Codex sends each finished step). Called on a background thread.
     static func ask(_ account: Account, prompt: String, timeout: TimeInterval = 240, cancellation: DebateCancellation? = nil,
-                    images: [URL] = [], web: Bool = false, session: NativeSessionCall? = nil, workspace: WorkspaceInvocation? = nil) -> Result<String, Failure> {
-        guard let workspace else { return askOnce(account, prompt: prompt, timeout: timeout, cancellation: cancellation, images: images, web: web, session: session) }
+                    images: [URL] = [], web: Bool = false, session: NativeSessionCall? = nil, workspace: WorkspaceInvocation? = nil,
+                    progress: ((AnswerProgress) -> Void)? = nil) -> Result<String, Failure> {
+        guard let workspace else { return askOnce(account, prompt: prompt, timeout: timeout, cancellation: cancellation, images: images, web: web, session: session, progress: progress) }
         let instruction = """
         If native workspace read tools are unavailable because of managed policy, request data from the host instead of guessing.
         Return ONLY JSON {"workspace_reads":[{"path":"absolute linked file path","start":1,"end":5,"images":false}]} and wait.
@@ -74,7 +77,12 @@ enum Answerer {
         let directory = session?.directory ?? NativeSessions.directory(workspace.room).appendingPathComponent("host-read-\(UUID().uuidString)")
         while true {
             if cancellation?.isCancelled == true { return .failure(.failed("Cancelled")) }
-            let result = askOnce(account, prompt: current, timeout: timeout, cancellation: cancellation, images: currentImages, web: web, session: call, workspace: workspace)
+            // A request for file data (workspace_reads JSON) is for the app, not a reply to show.
+            let shown: ((AnswerProgress) -> Void)? = progress.map { report in { update in
+                if case .text(let text) = update, text.contains("\"workspace_reads\"") { return }
+                report(update)
+            } }
+            let result = askOnce(account, prompt: current, timeout: timeout, cancellation: cancellation, images: currentImages, web: web, session: call, workspace: workspace, progress: shown)
             if let session, let call { session.nativeID = call.nativeID; session.completed = call.completed; session.compacted = session.compacted || call.compacted }
             guard case .success(let text) = result,
                   let start = text.firstIndex(of: "{"), let end = text.lastIndex(of: "}"), start < end,
@@ -100,7 +108,8 @@ enum Answerer {
     }
 
     private static func askOnce(_ account: Account, prompt: String, timeout: TimeInterval = 240, cancellation: DebateCancellation? = nil,
-                    images: [URL] = [], web: Bool = false, session: NativeSessionCall? = nil, workspace: WorkspaceInvocation? = nil) -> Result<String, Failure> {
+                    images: [URL] = [], web: Bool = false, session: NativeSessionCall? = nil, workspace: WorkspaceInvocation? = nil,
+                    progress: ((AnswerProgress) -> Void)? = nil) -> Result<String, Failure> {
         if cancellation?.isCancelled == true { return .failure(.failed("Cancelled")) }
         let outFile = chatDir + "/answer-\(UUID().uuidString).txt"
         defer { try? FileManager.default.removeItem(atPath: outFile) }
@@ -157,6 +166,15 @@ enum Answerer {
                          "--print-timeout", "\(Int(timeout) - 10)s"]
             if let geminiPictures { arguments += ["--add-dir", geminiPictures.path] }
         }
+        // Stream: Claude's JSON events carry the text as it is written, Codex's each finished step.
+        let streamed = progress != nil && account.provider != .gemini
+        if streamed && account.provider == .claude {
+            if !arguments.contains("--output-format") { arguments += ["--output-format", "stream-json", "--verbose"] }
+            arguments.append("--include-partial-messages")
+        }
+        if streamed && account.provider == .codex && !arguments.contains("--json"), let exec = arguments.firstIndex(of: "exec") {
+            arguments.insert("--json", at: exec + 1)
+        }
         var executionDirectory = session?.directory ?? workspace.map { NativeSessions.directory($0.room).appendingPathComponent("stateless-\(UUID().uuidString)") } ?? URL(fileURLWithPath: chatDir)
         if let geminiPictures, session == nil, workspace == nil { executionDirectory = geminiPictures }
         if let workspace {
@@ -171,7 +189,7 @@ enum Answerer {
             } else if account.provider == .claude {
                 arguments.remove(at: 1)
                 arguments += ["--input-format", "stream-json"]
-                if session == nil { arguments += ["--output-format", "stream-json", "--verbose"] }
+                if session == nil && !arguments.contains("--output-format") { arguments += ["--output-format", "stream-json", "--verbose"] }
                 do {
                     var blocks: [[String: Any]] = [["type": "text", "text": prompt]]
                     for url in images {
@@ -219,7 +237,19 @@ enum Answerer {
         var stdout = Data(), stderr = Data()
         let readers = DispatchGroup()
         readers.enter()
-        DispatchQueue.global().async { stdout = out.fileHandleForReading.readDataToEndOfFile(); readers.leave() }
+        let parser = streamed ? StreamParser(provider: account.provider, report: progress!) : nil
+        let stdoutLock = NSLock()
+        DispatchQueue.global().async {
+            // Read as it arrives (not only at the end) so a streaming reply can be shown while it is written.
+            let handle = out.fileHandleForReading
+            while true {
+                let chunk = handle.availableData
+                if chunk.isEmpty { break }
+                stdoutLock.lock(); stdout.append(chunk); stdoutLock.unlock()
+                parser?.feed(chunk)
+            }
+            readers.leave()
+        }
         readers.enter()
         DispatchQueue.global().async { stderr = err.fileHandleForReading.readDataToEndOfFile(); readers.leave() }
         let deadline = Date().addingTimeInterval(timeout)
@@ -248,7 +278,7 @@ enum Answerer {
         var text = String(data: stdout, encoding: .utf8) ?? ""
         if let session { session.observe(text) }
         if account.provider == .codex, let file = try? String(contentsOfFile: outFile, encoding: .utf8) { text = file }
-        if account.provider == .claude && (!images.isEmpty || session != nil) {
+        if account.provider == .claude && (!images.isEmpty || session != nil || streamed) {
             let result = text.split(separator: "\n").compactMap { line -> [String: Any]? in
                 guard let data = String(line).data(using: .utf8), let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                       json["type"] as? String == "result" else { return nil }
@@ -266,6 +296,83 @@ enum Answerer {
             return .failure(.failed(String(why.suffix(300))))
         }
         return .success(text)
+    }
+}
+
+enum AnswerProgress {
+    case text(String)      // the reply so far (the whole text, not only the new part)
+    case activity(String)  // what the AI is doing now, e.g. reading files or searching the web
+}
+
+// Turns a CLI's JSON lines into progress. Claude: text deltas within the current message (a new message,
+// after a tool call, starts over, like its final result) and tool starts. Codex: finished agent messages
+// and the start of commands, tool calls and searches (its configuration warnings are skipped).
+final class StreamParser {
+    private let provider: Account.Provider
+    private let report: (AnswerProgress) -> Void
+    private var pending = Data()
+    private var text = ""
+    private var lastSent = Date.distantPast
+
+    init(provider: Account.Provider, report: @escaping (AnswerProgress) -> Void) {
+        self.provider = provider
+        self.report = report
+    }
+
+    func feed(_ chunk: Data) {
+        pending.append(chunk)
+        while let newline = pending.firstIndex(of: 0x0A) {
+            let line = pending[pending.startIndex..<newline]
+            pending.removeSubrange(pending.startIndex...newline)
+            if let json = try? JSONSerialization.jsonObject(with: line) as? [String: Any] { handle(json) }
+        }
+    }
+
+    static func activity(tool: String) -> String {
+        let name = tool.lowercased()
+        if ["websearch", "webfetch", "web_search", "search"].contains(where: { name.contains($0) }) { return L("웹 검색 중…", "Searching the web…") }
+        if ["edit", "write", "file_change", "delete"].contains(where: { name.contains($0) }) { return L("파일 쓰는 중…", "Writing files…") }
+        if ["read", "grep", "glob", "list_files"].contains(where: { name.contains($0) }) { return L("자료 읽는 중…", "Reading files…") }
+        return L("작업 중…", "Working…") + " (" + tool + ")"
+    }
+
+    private func handle(_ json: [String: Any]) {
+        switch provider {
+        case .claude:
+            guard json["type"] as? String == "stream_event", let event = json["event"] as? [String: Any] else { return }
+            switch event["type"] as? String {
+            case "message_start":
+                text = ""
+            case "content_block_start":
+                if let block = event["content_block"] as? [String: Any], block["type"] as? String == "tool_use", let name = block["name"] as? String {
+                    report(.activity(Self.activity(tool: name)))
+                }
+            case "content_block_delta":
+                guard let delta = event["delta"] as? [String: Any], delta["type"] as? String == "text_delta", let piece = delta["text"] as? String else { return }
+                text += piece
+                // At most about 12 updates a second: each one redraws the chat.
+                if Date().timeIntervalSince(lastSent) > 0.08 { lastSent = Date(); report(.text(text)) }
+            case "message_stop":
+                if !text.isEmpty { report(.text(text)) }
+            default: break
+            }
+        case .codex:
+            guard let item = json["item"] as? [String: Any], let kind = item["type"] as? String else { return }
+            if json["type"] as? String == "item.completed", kind == "agent_message", let message = item["text"] as? String {
+                text = message
+                report(.text(text))
+            } else if json["type"] as? String == "item.started" {
+                switch kind {
+                case "command_execution": report(.activity(L("명령 실행 중…", "Running a command…")))
+                case "mcp_tool_call": report(.activity(Self.activity(tool: item["tool"] as? String ?? "tool")))
+                case "web_search": report(.activity(Self.activity(tool: "web_search")))
+                case "file_change": report(.activity(Self.activity(tool: "file_change")))
+                default: break
+                }
+            }
+        case .gemini:
+            break
+        }
     }
 }
 
@@ -303,6 +410,9 @@ struct ChatTurn: Identifiable, Codable {
     var debateFocus: String?
     var maxTurns: Int?    // mode 3: total AI turns (turnsPerAI × participants)
     var turnsPerAI: Int?  // missing in older chats, whose limit was a single total
+    var partial: String?        // mode 0: the reply so far while it is being written (cleared when done)
+    var partialBy: String?      // mode 0: who is writing it
+    var activity: String?       // mode 0: what that AI is doing now (reading files, searching…)
     var voteOptions: [String]?  // mode 4: the choices voted on
     var votes: [VoteBallot]?    // mode 4: one ballot per AI, in the team's order
 }
@@ -441,7 +551,7 @@ final class Discussion: ObservableObject {
     var activeSpeechLength = SpeechLength.standard
     var activeImages: [URL] = []
     // Tests only: answers requests that have folders attached (mode 0 always does) without calling the real tools.
-    var workspaceAnswer: ((Account, String, WorkspaceBinding, DebateCancellation) -> Result<String, Answerer.Failure>)?
+    var workspaceAnswer: ((Account, String, WorkspaceBinding, DebateCancellation, ((AnswerProgress) -> Void)?) -> Result<String, Answerer.Failure>)?
     // Tests only: answers requests that carry pictures without calling the real tools.
     var pictureAnswer: ((Account, String, [URL], TimeInterval, DebateCancellation, Bool) -> Result<String, Answerer.Failure>)?
     var imageContext = ""

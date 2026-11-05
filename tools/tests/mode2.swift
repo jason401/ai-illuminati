@@ -1087,7 +1087,7 @@ do {
     let lock = NSLock()
     var asked: [(String, String, WorkspaceBinding)] = []
     var limitHit: Set<String> = ["solo-p-codex"]
-    chat.workspaceAnswer = { account, prompt, binding, _ in
+    chat.workspaceAnswer = { account, prompt, binding, _, _ in
         lock.lock(); asked.append((account.id, prompt, binding)); lock.unlock()
         if limitHit.contains(account.id) { return .failure(.failed("You've hit your usage limit (429)")) }
         try? "draft".write(to: Discussion.chatFolder(chat.currentID).appendingPathComponent("methods.md"), atomically: true, encoding: .utf8)
@@ -1153,7 +1153,7 @@ do {
     asked.removeAll(); limitHit = []
     chat.newConversation()
     chat.change(chat.currentID, save: true) { $0.workspace = WorkspaceBinding(roots: [WorkspaceRoot(path: linkedDir.path, directory: true)]) }
-    chat.workspaceAnswer = { account, prompt, binding, _ in
+    chat.workspaceAnswer = { account, prompt, binding, _, _ in
         lock.lock(); asked.append((account.id, prompt, binding)); lock.unlock()
         try? "v2".write(to: linkedDir.appendingPathComponent("paper.md"), atomically: true, encoding: .utf8)
         try? "new".write(to: linkedDir.appendingPathComponent("notes.md"), atomically: true, encoding: .utf8)
@@ -1187,4 +1187,84 @@ do {
     expect(codexArgs.contains("mcp_servers.illuminati.default_tools_approval_mode=\"approve\"") && codexArgs.contains("sandbox_mode=\"workspace-write\"")
            && codexArgs.contains("sandbox_workspace_write.writable_roots=[\"" + own + "\",\"" + linkedDir.path + "\"]"), "Codex may write the chat folder and the linked folder only")
     print("PASS: plain chat (auto pick 15% / weekly, Gemini out, Enterprise sides, limit handoff, YouTube via Gemini, chat and linked folders writable with backup and undo, shared read only)")
+}
+
+
+// Plain chat, part 2: replies stream in as they are written, a long chat is handed over as the chat state
+// plus the recent turns, and a reply cut off by a usage limit is continued by the next account.
+do {
+    Discussion.modernModes = true
+    Discussion.availableModes = [0, 1, 2, 3, 4]
+    func line(_ object: [String: Any]) -> Data { try! JSONSerialization.data(withJSONObject: object) + Data([0x0A]) }
+    var seen: [AnswerProgress] = []
+    let claude = StreamParser(provider: .claude) { seen.append($0) }
+    claude.feed(line(["type": "stream_event", "event": ["type": "message_start"]]))
+    claude.feed(line(["type": "stream_event", "event": ["type": "content_block_delta", "delta": ["type": "text_delta", "text": "Let me "]]]))
+    claude.feed(line(["type": "stream_event", "event": ["type": "content_block_start", "content_block": ["type": "tool_use", "name": "Read"]]]))
+    claude.feed(line(["type": "stream_event", "event": ["type": "message_start"]]) + line(["type": "stream_event", "event": ["type": "content_block_delta", "delta": ["type": "text_delta", "text": "Final "]]]).prefix(30))
+    claude.feed(line(["type": "stream_event", "event": ["type": "content_block_delta", "delta": ["type": "text_delta", "text": "Final "]]]).dropFirst(30))
+    claude.feed(line(["type": "stream_event", "event": ["type": "content_block_delta", "delta": ["type": "text_delta", "text": "answer"]]]))
+    claude.feed(line(["type": "stream_event", "event": ["type": "message_stop"]]))
+    let texts = seen.compactMap { if case .text(let t) = $0 { return t } else { return nil } }
+    let doing = seen.compactMap { if case .activity(let a) = $0 { return a } else { return nil } }
+    expect(texts.first == "Let me " && texts.last == "Final answer", "Claude text streams per message, split lines are joined")
+    expect(doing == [StreamParser.activity(tool: "Read")], "Claude tool use shows as an activity")
+    seen.removeAll()
+    let codex = StreamParser(provider: .codex) { seen.append($0) }
+    codex.feed(line(["type": "item.completed", "item": ["type": "error", "message": "config warning"]]))
+    codex.feed(line(["type": "item.started", "item": ["type": "mcp_tool_call", "tool": "read_document"]]))
+    codex.feed(line(["type": "item.completed", "item": ["type": "agent_message", "text": "Done."]]))
+    expect(seen.count == 2, "Codex: configuration warnings are not shown")
+    if case .activity(let a) = seen[0] { expect(a == StreamParser.activity(tool: "read_document"), "Codex tool call activity") } else { expect(false, "Codex activity first") }
+    if case .text(let t) = seen[1] { expect(t == "Done.", "Codex finished message") } else { expect(false, "Codex text second") }
+
+    expect(Discussion.extractState("Hi\n<chat-state>Goal: x</chat-state>") == ("Hi", "Goal: x"), "state block taken out of the reply")
+    expect(Discussion.extractState("Hi there\n<chat-st").reply == "Hi there" && Discussion.extractState("Hi\n<chat-state>Goal").reply == "Hi", "a state block still arriving is hidden")
+
+    let m = AppModel()
+    m.accounts = [Account(id: "st-claude", provider: .claude, name: "Claude", dir: nil, school: false),
+                  Account(id: "st-codex", provider: .codex, name: "ChatGPT", dir: nil, school: false)]
+    var low = AIUsage(name: "c"); low.fiveHour = UsageWindow(usedPercent: 10, resetsAt: nil); low.weekly = UsageWindow(usedPercent: 20, resetsAt: nil)
+    var lower = AIUsage(name: "x"); lower.fiveHour = UsageWindow(usedPercent: 20, resetsAt: nil); lower.weekly = UsageWindow(usedPercent: 50, resetsAt: nil)
+    m.latestUsage = ["st-claude": low, "st-codex": lower]
+    m.sharedFolders = []
+    let chat = Discussion(model: m)
+    let lock = NSLock()
+    var prompts: [(String, String)] = []
+    var step = 0
+    chat.workspaceAnswer = { account, prompt, _, _, progress in
+        lock.lock(); prompts.append((account.id, prompt)); step += 1; let n = step; lock.unlock()
+        if account.id == "st-claude" && prompt.contains("CUT-ME") {
+            progress?(.text("Half of the summary about lenses"))
+            return .failure(.failed("usage limit reached (429)"))
+        }
+        return .success("Answer \(n)\n<chat-state>Goal: summarise lenses \(n)\nNext steps: none</chat-state>")
+    }
+    let long = String(repeating: "lens data ", count: 1400)   // 14,000 characters
+    chat.draft = "FIRST-QUESTION " + long
+    chat.send(); waitFor(chat)
+    expect(prompts.last?.1.contains("[Chat state]") == true, "a long chat asks the AI to keep the chat state")
+    expect(chat.current.turns[0].final == "Answer 1" && chat.current.turns[0].partial == nil, "the state block is not shown")
+    expect(Discussion.loadState(chat.currentID).hasPrefix("Goal: summarise lenses 1"), "the chat state is saved")
+    expect(!Discussion.stamps(Discussion.chatFolder(chat.currentID)).keys.contains { $0.contains(".illuminati") }, "the state file is not listed as a written file")
+    chat.draft = "SECOND " + long
+    chat.send(); waitFor(chat)
+    chat.draft = "THIRD question"
+    chat.send(); waitFor(chat)
+    let third = prompts.last!.1
+    expect(third.contains("[Chat state — a summary") && third.contains("Goal: summarise lenses 2"), "a new session gets the chat state")
+    expect(third.contains("[Recent turns]") && third.contains("THIRD question"), "recent turns and the new message are included")
+    let history = (try? String(contentsOf: Discussion.historyFile(chat.currentID), encoding: .utf8)) ?? ""
+    expect(history.contains("FIRST-QUESTION"), "every earlier turn is saved for the AI to open")
+
+    // Cut off by the limit while writing: the next account continues from what was written.
+    prompts.removeAll()
+    chat.newConversation()
+    chat.draft = "CUT-ME please summarise"
+    chat.send(); waitFor(chat)
+    let cut = chat.current.turns[0]
+    expect(prompts.map(\.0) == ["st-claude", "st-codex"], "the next account continues after the limit")
+    expect(prompts[1].1.contains("[Unfinished reply by") && prompts[1].1.contains("Half of the summary about lenses"), "the unfinished reply is handed over")
+    expect(cut.final?.hasPrefix("Answer") == true && cut.finalBy == chat.label(m.accounts[1]) && cut.partial == nil && cut.activity == nil, "the continued answer is shown, the partial one cleared")
+    print("PASS: plain chat streaming (Claude text deltas, Codex steps), chat state summary, short handoff with recent turns and history file, unfinished reply continued")
 }

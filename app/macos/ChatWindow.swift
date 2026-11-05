@@ -877,11 +877,28 @@ private struct TurnView: View {
                     }
                 }
             }
+            if turn.mode == 0, turn.final == nil, let partial = turn.partial, !partial.isEmpty {
+                // The reply as it is being written.
+                VStack(alignment: .leading, spacing: 8) {
+                    if let by = turn.partialBy {
+                        HStack(spacing: 6) {
+                            Circle().fill(Account.Provider.of(speaker: by)?.color ?? .secondary).frame(width: 7, height: 7)
+                            Text(by).font(.system(size: 12, weight: .medium)).foregroundColor(.secondary)
+                        }
+                    }
+                    Text(markdown(partial))
+                        .font(.system(size: 15))
+                        .lineSpacing(5)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
             if !turn.status.isEmpty {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
-                    Text(turn.status).foregroundColor(.secondary)
+                    Text(turn.activity ?? turn.status).foregroundColor(.secondary)
                 }
+                .font(turn.mode == 0 ? .system(size: 12) : .body)
             }
             if let error = turn.error {
                 Text(error).foregroundColor(.red)

@@ -1146,6 +1146,34 @@ do {
     chat.send(); waitFor(chat)
     expect(asked.map(\.0) == ["solo-p-claude"], "an account picked by hand answers")
 
+    // A folder linked to the chat: the AI may edit and delete there; it is backed up first and can be undone.
+    let linkedDir = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("linked-draft")
+    try! FileManager.default.createDirectory(at: linkedDir, withIntermediateDirectories: true)
+    try! "v1".write(to: linkedDir.appendingPathComponent("paper.md"), atomically: true, encoding: .utf8)
+    asked.removeAll(); limitHit = []
+    chat.newConversation()
+    chat.change(chat.currentID, save: true) { $0.workspace = WorkspaceBinding(roots: [WorkspaceRoot(path: linkedDir.path, directory: true)]) }
+    chat.workspaceAnswer = { account, prompt, binding, _ in
+        lock.lock(); asked.append((account.id, prompt, binding)); lock.unlock()
+        try? "v2".write(to: linkedDir.appendingPathComponent("paper.md"), atomically: true, encoding: .utf8)
+        try? "new".write(to: linkedDir.appendingPathComponent("notes.md"), atomically: true, encoding: .utf8)
+        return .success("Edited paper.md")
+    }
+    chat.draft = "Revise the paper"
+    chat.send(); waitFor(chat)
+    var edited = chat.current.turns[0]
+    expect(asked[0].2.roots.contains { $0.path == linkedDir.path && $0.writable == true }, "linked folders are writable in a plain chat")
+    expect(asked[0].1.contains(linkedDir.path + " (folder linked to this chat — you may read, edit, create and delete"), "the AI is told it may change the linked folder")
+    expect(edited.backupPath != nil, "linked folders are backed up before the answer")
+    let kinds = Dictionary(uniqueKeysWithValues: (edited.workspaceChanges ?? []).map { (($0.path as NSString).lastPathComponent, $0.kind) })
+    expect(kinds["paper.md"] == "modified" && kinds["notes.md"] == "added", "changes in the linked folder are listed")
+    chat.undoWorkspace(edited)
+    let undoDeadline = Date().addingTimeInterval(5)
+    while chat.running && Date() < undoDeadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+    edited = chat.current.turns[0]
+    expect(edited.undone == true && (try? String(contentsOf: linkedDir.appendingPathComponent("paper.md"), encoding: .utf8)) == "v1"
+           && !FileManager.default.fileExists(atPath: linkedDir.appendingPathComponent("notes.md").path), "undo restores the linked folder")
+
     // Tool settings: only the chat folder may change.
     let own = Discussion.chatFolder(chat.currentID).path
     let invocation = WorkspaceInvocation(binding: chat.soloBinding(chat.currentID), room: chat.currentID)
@@ -1154,7 +1182,9 @@ do {
     let allowed = claudeArgs[claudeArgs.lastIndex(of: "--allowedTools")! + 1]
     expect(allowed.contains("Edit(/" + own + "/**)") && !allowed.contains(",Edit,") && !allowed.hasSuffix(",Edit"), "Claude may edit only the chat folder")
     expect(claudeArgs.contains(shared.path), "Claude can read the shared folder")
+    expect(allowed.contains("Edit(/" + linkedDir.path + "/**)") && !allowed.contains("Edit(/" + shared.path), "Claude may edit the linked folder, not the shared one")
     let codexArgs = try! invocation.arguments(provider: .codex, original: ["exec", "-C", "/tmp", "x"], directory: dir, web: false)
-    expect(codexArgs.contains("mcp_servers.illuminati.default_tools_approval_mode=\"approve\"") && codexArgs.contains("sandbox_mode=\"workspace-write\"") && codexArgs.contains("sandbox_workspace_write.writable_roots=[\"" + own + "\"]"), "Codex may write only the chat folder")
-    print("PASS: plain chat (auto pick 15% / weekly, Gemini out, school sides, limit handoff, YouTube via Gemini, chat folder writable, shared read only)")
+    expect(codexArgs.contains("mcp_servers.illuminati.default_tools_approval_mode=\"approve\"") && codexArgs.contains("sandbox_mode=\"workspace-write\"")
+           && codexArgs.contains("sandbox_workspace_write.writable_roots=[\"" + own + "\",\"" + linkedDir.path + "\"]"), "Codex may write the chat folder and the linked folder only")
+    print("PASS: plain chat (auto pick 15% / weekly, Gemini out, Enterprise sides, limit handoff, YouTube via Gemini, chat and linked folders writable with backup and undo, shared read only)")
 }

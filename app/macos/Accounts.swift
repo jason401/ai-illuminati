@@ -23,11 +23,11 @@ struct Account: Codable, Equatable {
     var provider: Provider
     var name: String
     var dir: String?
-    var school: Bool?   // set in Settings; nil = guessed from the name
+    var school: Bool?   // an Enterprise (school or work) account, set in Settings; nil = guessed from the name
 
-    // School accounts hand work only to other school accounts (Settings can turn that off).
+    // Enterprise accounts hand work only to other Enterprise accounts (Settings can turn that off).
     var isSchool: Bool {
-        school ?? ["학교", "school", "univ", "edu"].contains { name.lowercased().contains($0) }
+        school ?? ["학교", "school", "univ", "edu", "enterprise", "엔터프라이즈", "회사"].contains { name.lowercased().contains($0) }
     }
 
     var codexHome: String {

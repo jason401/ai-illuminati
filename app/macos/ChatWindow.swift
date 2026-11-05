@@ -121,6 +121,7 @@ struct ChatView: View {
         .contextMenu {
             if conversation.hasContent {
                 Button(conversation.pinned == true ? L("고정 해제", "Unpin") : L("맨 위에 고정", "Pin to top")) { discussion.togglePin(conversation.id) }
+                Button(L("이 대화 폴더 열기", "Show this chat's folder")) { discussion.openChatFolder(conversation.id) }
                 Divider()
                 Button(L("대화 삭제…", "Delete chat…"), role: .destructive) { discussion.delete(conversation.id) }
             }
@@ -215,7 +216,7 @@ struct ChatView: View {
                     Menu {
                         Text(L("1 토론: 대표가 논점을 맡기고 답을 정리합니다. 2 비판 토론: 반론·대안·실패 조건을 검증합니다. 3 협업: 선택 계정에 필요한 결과물 작업을 나누고 검토·통합합니다. 4 투표: 선택지를 한 줄에 하나씩 적으면 모든 계정이 서로 보지 않고 한 표씩 이유와 함께 던지고, 앱이 개표합니다.", "1 Discussion: moderator-led discussion and synthesis. 2 Critical debate: test objections, alternatives and failure cases. 3 Collaboration: assign work to selected accounts, cross-review and integrate deliverables. 4 Vote: list the choices one per line; every account casts one vote with its reason without seeing the others, and the app counts."))
                         if discussion.configuration.mode == 4 {
-                            Text(L("연결된 모든 계정(개인·학교 포함)이 한 표씩 던져요. 체크를 끄면 빠져요. 선택지를 적지 않으면 대표(왕관)가 선택지를 만들고, 대표도 한 표만 던져요.", "Every connected account (personal and school) casts one vote; uncheck to leave one out. Without a list, the moderator (crown) drafts the choices and still gets one vote."))
+                            Text(L("연결된 모든 계정(개인·엔터프라이즈 포함)이 한 표씩 던져요. 체크를 끄면 빠져요. 선택지를 적지 않으면 대표(왕관)가 선택지를 만들고, 대표도 한 표만 던져요.", "Every connected account (personal and Enterprise) casts one vote; uncheck to leave one out. Without a list, the moderator (crown) drafts the choices and still gets one vote."))
                         } else if discussion.configuration.mode >= 2 {
                             Text(L("손잡이를 끌어 순서를 바꾸고, 이름 옆 메뉴에서 대표를 정하세요.", "Drag the handles to reorder. Use the menu beside a name to choose the moderator."))
                         }
@@ -262,7 +263,7 @@ struct ChatView: View {
                     if discussion.current.workspace?.level == .execute {
                         Text(L("Gemini는 개인 권한 설정에 따라 문서 도구·명령이 거절될 수 있습니다. 앱은 개인 설정을 넓히지 않습니다.", "Gemini document tools or commands may be denied by personal permission settings; the app does not widen them."))
                             .font(.caption).foregroundColor(.secondary)
-                        Text(L("실행은 각 도구의 샌드박스·계정 정책을 따릅니다. 학교 ChatGPT의 승인 요청은 자동 승인하지 않습니다.", "Execution follows each tool’s sandbox and account policy. School ChatGPT approval requests are not auto-approved."))
+                        Text(L("실행은 각 도구의 샌드박스·계정 정책을 따릅니다. 엔터프라이즈 ChatGPT의 승인 요청은 자동 승인하지 않습니다.", "Execution follows each tool’s sandbox and account policy. Enterprise ChatGPT approval requests are not auto-approved."))
                             .font(.caption).foregroundColor(.secondary)
                     }
                     if discussion.current.workspace == nil, let documents = discussion.current.documents, !documents.isEmpty {
@@ -416,8 +417,8 @@ struct ChatView: View {
     private var plusMenu: some View {
         Menu {
             Button(L("이미지 첨부", "Attach images")) { discussion.chooseImages() }
+            Button(L("폴더 연결 (읽기·쓰기)", "Link folder (read and write)")) { discussion.chooseMaterials(folder: true) }
             Button(L("파일 연결 (읽기)", "Link files (read)")) { discussion.chooseMaterials(folder: false) }
-            Button(L("폴더 연결 (읽기)", "Link folder (read)")) { discussion.chooseMaterials(folder: true) }
             Divider()
             Menu(L("여럿에게 묻기", "Ask several AIs")) {
                 ForEach([1, 2, 3, 4], id: \.self) { mode in
@@ -549,10 +550,7 @@ struct ChatView: View {
                 }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                 .foregroundColor(.secondary)
-                .help(L("이 대화에 연결한 파일·폴더 (읽기만)", "Files and folders linked to this chat (read only)"))
-            }
-            HeaderIconButton(discussion: discussion, symbol: "folder", help: L("이 대화 폴더 열기: AI가 쓴 파일이 여기 저장돼요", "Open this chat's folder, where its AI saves files")) {
-                discussion.openChatFolder()
+                .help(L("이 대화에 연결한 폴더: AI가 읽고 쓰고 지울 수 있어요 (답하기 전에 자동 백업)", "Folders linked to this chat: its AI may read, edit and delete (backed up before each answer)"))
             }
         }
         .disabled(discussion.running || discussion.importingMaterials)
@@ -579,12 +577,12 @@ struct ChatView: View {
                 Picker(L("이 대화", "This chat"), selection: Binding(get: { config.school ?? false },
                                                                 set: { school in discussion.configure { $0.school = school; $0.lastSoloAccountID = nil } })) {
                     Text(L("개인 대화 (개인 계정끼리 이어받기)", "Personal (personal accounts continue)")).tag(false)
-                    Text(L("학교 대화 (학교 계정끼리 이어받기)", "School (school accounts continue)")).tag(true)
+                    Text(L("엔터프라이즈 대화 (엔터프라이즈 계정끼리 이어받기)", "Enterprise (Enterprise accounts continue)")).tag(true)
                 }
             }
         } label: {
             // A menu label keeps a single text view, so the name and usage are one concatenated Text.
-            let name = (config.school == true && discussion.model.schoolOnlyHandoff ? L("학교 · ", "School · ") : "")
+            let name = (config.school == true && discussion.model.schoolOnlyHandoff ? L("엔터프라이즈 · ", "Enterprise · ") : "")
                 + (next.map { discussion.label($0) } ?? L("쓸 수 있는 계정 없음", "No account available"))
             (Text(config.soloAccountID == nil ? Image(systemName: "sparkles") : Image(systemName: "person.crop.circle"))
              + Text(" " + name).foregroundColor(.primary)
@@ -899,7 +897,8 @@ private struct TurnView: View {
             if turn.mode != 0, let changes = turn.workspaceChanges {
                 changesView(changes, title: L("실제 변경 파일 \(changes.count)개", "\(changes.count) changed files"))
             }
-            if turn.backupPath != nil {
+            // Plain chat: Undo only when the answer changed a linked folder (the chat's own folder is not backed up).
+            if turn.backupPath != nil && (turn.mode != 0 || (turn.workspaceChanges ?? []).contains { !$0.path.hasPrefix(Discussion.chatFolder(discussion.currentID).path + "/") }) {
                 Button(turn.undone == true ? L("되돌림 완료", "Restored") : L("되돌리기", "Undo file changes")) { discussion.undoWorkspace(turn) }
                     .disabled(turn.undone == true || discussion.running || discussion.importingMaterials)
             }

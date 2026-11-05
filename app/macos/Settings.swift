@@ -530,10 +530,10 @@ struct ChatSettingsTab: View {
             Text(L("모든 AI 요청에 적용할 말투와 응답 규칙이에요. 답변 길이는 채팅창에서 선택해요.",
                    "Style and instructions for every AI request. Choose response length in the chat window."))
                 .font(.system(size: 11)).foregroundStyle(.secondary)
-            Toggle(L("학교·개인 대화를 따로 이어받기", "Keep school and personal chats apart"), isOn: $model.schoolOnlyHandoff)
+            Toggle(L("엔터프라이즈·개인 대화를 따로 이어받기", "Keep Enterprise and personal chats apart"), isOn: $model.schoolOnlyHandoff)
                 .toggleStyle(.switch)
-            Text(L("켜면 학교 대화는 학교 계정끼리, 개인 대화는 개인 계정끼리만 이어받아요. 학교 계정은 계정 탭에서 표시해요.",
-                   "On: school chats are continued only by school accounts, personal chats only by personal ones. Mark school accounts in the Accounts tab."))
+            Text(L("켜면 엔터프라이즈 대화는 엔터프라이즈 계정끼리, 개인 대화는 개인 계정끼리만 이어받아요. 엔터프라이즈 계정은 계정 탭에서 표시해요.",
+                   "On: Enterprise chats are continued only by Enterprise accounts, personal chats only by personal ones. Mark Enterprise accounts in the Accounts tab."))
                 .font(.system(size: 11)).foregroundStyle(.secondary)
         }
         .padding(12).controlSize(.small)
@@ -557,11 +557,11 @@ private struct AccountRow: View {
                     Text(account.provider.title).foregroundStyle(.secondary)
                     status
                     if account.provider != .gemini {
-                        Toggle(L("학교", "School"), isOn: Binding(
+                        Toggle(L("엔터프라이즈", "Enterprise"), isOn: Binding(
                             get: { model.accounts.first { $0.id == account.id }?.isSchool ?? false },
                             set: { model.setSchool(account.id, $0) }))
                             .toggleStyle(.checkbox).controlSize(.mini)
-                            .help(L("학교 계정: 학교 대화는 학교 계정끼리만 이어받아요", "School account: school chats are continued only by school accounts"))
+                            .help(L("엔터프라이즈(학교·회사) 계정: 엔터프라이즈 대화는 이런 계정끼리만 이어받아요", "Enterprise (school or work) account: Enterprise chats are continued only by these accounts"))
                     }
                 }.font(.system(size: 10)).lineLimit(1)
             }

@@ -366,45 +366,13 @@ private struct SettingsAction: View {
     }
 }
 
+// What most apps have: language, launch at login, updates, where data lives, and the version.
 struct GeneralSettingsTab: View {
     @ObservedObject var model: AppModel
 
-    private var menuOptions: [(String, AppModel.UsageMenuStyle)] {
-        [(L("카드", "Cards"), .cards), (L("막대", "Bars"), .comparison),
-         (L("막대 + 충전 시계", "Bars + reset rings"), .comparisonRings),
-         (L("충전 시계", "Reset rings"), .compact)]
-    }
-
     var body: some View {
         SettingsPage {
-            SettingsCard(title: L("메뉴 표시", "Menu appearance")) {
-                SettingsRow(title: L("메뉴바", "Menu bar")) {
-                    SettingsMenu(options: AppModel.MenuBarStyle.allCases.map { ($0.title, $0) }, selection: $model.menuBarStyle)
-                }
-                Divider()
-                SettingsRow(title: L("잔여량 기준", "Usage limit")) {
-                    SettingsSegments(options: AppModel.MenuBarWindow.allCases.map { ($0.title, $0) }, selection: $model.menuBarWindow)
-                        .help(L("선택한 한도의 남은 양이에요. 한도가 없으면 가득 찬 막대, 읽지 못했으면 빈 막대예요.", "Remaining usage for this limit. No limit: full bar. Unread: empty bar."))
-                }
-                Divider()
-                SettingsRow(title: L("표시 효과", "Appearance")) {
-                    Toggle(L("흑백", "Monochrome"), isOn: Binding(get: { !model.menuBarColored }, set: { model.menuBarColored = !$0 }))
-                        .help(L("끄면 계정 종류별 컬러로 표시해요.", "Turn off to use provider colors."))
-                    Toggle(L("애니메이션", "Animate"), isOn: $model.menuBarAnimation)
-                        .help(L("눈과 후광 애니메이션", "Animate the eye and halo"))
-                }.toggleStyle(.checkbox)
-                Divider()
-                SettingsRow(title: L("사용량 메뉴", "Usage menu")) {
-                    SettingsMenu(options: menuOptions, selection: $model.usageMenuStyle)
-                    Button { model.onPreviewUsageMenu?() } label: {
-                        Image(systemName: "eye").frame(width: 24, height: 24)
-                            .background(RoundedRectangle(cornerRadius: 5).fill(Color.primary.opacity(0.07)))
-                    }.buttonStyle(.plain)
-                        .help(L("메뉴 미리 보기", "Preview usage menu"))
-                        .accessibilityLabel(L("메뉴 미리 보기", "Preview usage menu"))
-                }
-            }
-            SettingsCard(title: L("앱 기본 설정", "App")) {
+            SettingsCard(title: L("앱", "App")) {
                 SettingsRow(title: L("언어", "Language")) {
                     SettingsSegments(options: [("English", AppLanguage.english), ("한국어", .korean)], selection: $model.language)
                 }
@@ -421,11 +389,72 @@ struct GeneralSettingsTab: View {
     }
 }
 
+// The menu bar mark and the usage menu.
+struct AppearanceSettingsTab: View {
+    @ObservedObject var model: AppModel
+
+    private var menuOptions: [(String, AppModel.UsageMenuStyle)] {
+        [(L("카드", "Cards"), .cards), (L("막대", "Bars"), .comparison),
+         (L("막대 + 충전 시계", "Bars + reset rings"), .comparisonRings),
+         (L("충전 시계", "Reset rings"), .compact)]
+    }
+
+    var body: some View {
+        SettingsPage {
+            SettingsCard(title: L("메뉴바", "Menu bar")) {
+                SettingsRow(title: L("표시", "Show")) {
+                    SettingsMenu(options: AppModel.MenuBarStyle.allCases.map { ($0.title, $0) }, selection: $model.menuBarStyle)
+                }
+                Divider()
+                SettingsRow(title: L("잔여량 기준", "Usage limit")) {
+                    SettingsSegments(options: AppModel.MenuBarWindow.allCases.map { ($0.title, $0) }, selection: $model.menuBarWindow)
+                        .help(L("선택한 한도의 남은 양이에요. 한도가 없으면 가득 찬 막대, 읽지 못했으면 빈 막대예요.", "Remaining usage for this limit. No limit: full bar. Unread: empty bar."))
+                }
+                Divider()
+                SettingsRow(title: L("흑백", "Monochrome")) {
+                    Spacer()
+                    Toggle(L("흑백", "Monochrome"), isOn: Binding(get: { !model.menuBarColored }, set: { model.menuBarColored = !$0 }))
+                        .labelsHidden().toggleStyle(.switch)
+                        .help(L("끄면 계정 종류별 컬러로 표시해요.", "Turn off to use provider colors."))
+                }
+                Divider()
+                SettingsRow(title: L("애니메이션", "Animate")) {
+                    Spacer()
+                    Toggle(L("애니메이션", "Animate"), isOn: $model.menuBarAnimation)
+                        .labelsHidden().toggleStyle(.switch)
+                        .help(L("눈 깜빡임과 후광. macOS '동작 줄이기'를 켜면 멈춰요.", "Eye blinks and halo. Stops with macOS Reduce Motion."))
+                }
+            }
+            SettingsCard(title: L("사용량 메뉴", "Usage menu")) {
+                SettingsRow(title: L("모양", "Style")) {
+                    SettingsMenu(options: menuOptions, selection: $model.usageMenuStyle)
+                    Button { model.onPreviewUsageMenu?() } label: {
+                        Image(systemName: "eye").frame(width: 24, height: 24)
+                            .background(RoundedRectangle(cornerRadius: 5).fill(Color.primary.opacity(0.07)))
+                    }.buttonStyle(.plain)
+                        .help(L("메뉴 미리 보기", "Preview usage menu"))
+                        .accessibilityLabel(L("메뉴 미리 보기", "Preview usage menu"))
+                }
+            }
+        }
+    }
+}
+
 private struct MaintenanceSettings: View {
     @ObservedObject var updater: Updater
 
+    // "0.2.0 (82 · a1fb746)": the app version, the build number and the source revision it was built from.
+    static var version: String {
+        let info = Bundle.main.infoDictionary ?? [:]
+        let short = info["CFBundleShortVersionString"] as? String ?? "–"
+        let build = info["CFBundleVersion"] as? String ?? "–"
+        let revision = (info["AISourceRevision"] as? String).map { " · " + $0.prefix(7) } ?? ""
+        return "\(short) (\(build)\(revision))"
+    }
+
     var body: some View {
-        SettingsCard(title: L("업데이트와 저장 위치", "Updates & storage")) {
+        VStack(alignment: .leading, spacing: 12) {
+        SettingsCard(title: L("업데이트", "Updates")) {
             // Switches sit at the right end of their row.
             SettingsRow(title: L("새 버전 확인", "Check updates")) {
                 SettingsAction(title: L("지금 확인", "Check now")) { updater.check() }
@@ -448,12 +477,19 @@ private struct MaintenanceSettings: View {
                 .padding(.horizontal, 10).padding(.bottom, 7)
                 .help(updater.status + "\n" + L("시험과 빌드가 통과해야 교체해요. 채팅·게임 중에는 기다려요.", "Installs after tests and build pass. Waits for chats and games."))
             Divider()
+            SettingsRow(title: L("버전", "Version")) {
+                Text(Self.version).font(.system(size: 12)).foregroundStyle(.secondary).textSelection(.enabled)
+                Spacer()
+            }
+        }
+        SettingsCard(title: L("저장 위치", "Storage")) {
             SettingsRow(title: L("저장 폴더", "Folders")) {
                 SettingsAction(title: L("앱 데이터", "App data")) { DataFolders.open(DataFolders.appData) }
                     .help(L("계정 목록, 대화와 첨부 사본", "Account list, chats and attachment copies"))
                 SettingsAction(title: L("계정", "Accounts")) { DataFolders.open(DataFolders.accounts) }
                     .help(L("로그인 정보가 있어요. 공유하지 마세요.", "Contains sign-in data. Do not share."))
             }
+        }
         }
     }
 }
@@ -623,8 +659,8 @@ final class SettingsWindow {
     }
 
     func updateLanguage() {
-        guard let items = tabs?.tabViewItems, items.count == 3 else { return }
-        for (item, title) in zip(items, [L("일반", "General"), L("계정", "Accounts"), L("채팅", "Chat")]) {
+        guard let items = tabs?.tabViewItems, items.count == 4 else { return }
+        for (item, title) in zip(items, [L("일반", "General"), L("모양", "Appearance"), L("계정", "Accounts"), L("채팅", "Chat")]) {
             item.label = title
             item.viewController?.title = title
         }
@@ -636,6 +672,7 @@ final class SettingsWindow {
             let t = NSTabViewController()
             t.tabStyle = .toolbar
             t.addTabViewItem(tab(GeneralSettingsTab(model: model), symbol: "gearshape"))
+            t.addTabViewItem(tab(AppearanceSettingsTab(model: model), symbol: "paintbrush"))
             t.addTabViewItem(tab(AccountsSettingsTab(model: model), symbol: "person.2"))
             t.addTabViewItem(tab(ChatSettingsTab(model: model), symbol: "bubble.left.and.bubble.right"))
             tabs = t

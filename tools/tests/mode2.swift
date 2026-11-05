@@ -1187,6 +1187,38 @@ do {
     expect(codexArgs.contains("mcp_servers.illuminati.default_tools_approval_mode=\"approve\"") && codexArgs.contains("sandbox_mode=\"workspace-write\"")
            && codexArgs.contains("sandbox_workspace_write.writable_roots=[\"" + own + "\",\"" + linkedDir.path + "\"]"), "Codex may write the chat folder and the linked folder only")
     print("PASS: plain chat (auto pick 15% / weekly, Gemini out, Enterprise sides, limit handoff, YouTube via Gemini, chat and linked folders writable with backup and undo, shared read only)")
+
+    // AI Face: only after AI Face wrote its server into mcp.json, only its own file, only set_expression.
+    let face = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("Library/Application Support/AI Face")
+    try! FileManager.default.createDirectory(at: face, withIntermediateDirectories: true)
+    let script = face.appendingPathComponent("ai_face_mcp.py")
+    try! Data("print()".utf8).write(to: script)
+    FaceLink.faceFolder = face.path
+    FaceLink.file = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("face-mcp.json")
+    func register(_ args: [String]) {
+        let entry: [String: Any] = ["mcpServers": ["ai-face": ["command": "/usr/bin/python3", "args": args, "env": ["AIFACE_AGENT": "illuminati"]]]]
+        try! JSONSerialization.data(withJSONObject: entry).write(to: FaceLink.file)
+    }
+    func faceArgs(_ provider: Account.Provider) -> [String] {
+        try! invocation.arguments(provider: provider, original: provider == .claude ? ["-p", "--tools", "", "--mcp-config", "{}"] : ["exec", "x"], directory: dir, web: false)
+    }
+    expect(FaceLink.server() == nil && !faceArgs(.claude).joined().contains("ai-face"), "no AI Face server before it is connected")
+    register(["/tmp/elsewhere.py"])
+    expect(FaceLink.server() == nil, "a server outside the AI Face folder is ignored")
+    register([face.appendingPathComponent("../AI Face/../AI Face/ai_face_mcp.py").path])
+    expect(FaceLink.server()?.command == "/usr/bin/python3", "AI Face's own server is used")
+    let claudeFace = faceArgs(.claude)
+    let config = claudeFace[claudeFace.firstIndex(of: "--mcp-config")! + 1]
+    expect(config.contains("\"ai-face\"") && config.contains("\"AIFACE_AGENT\":\"illuminati\"") && config.contains("\"illuminati\":")
+           && claudeFace[claudeFace.lastIndex(of: "--allowedTools")! + 1].hasSuffix(",mcp__ai-face__set_expression"), "Claude gets AI Face as illuminati, set_expression only")
+    let codexFace = faceArgs(.codex)
+    expect(codexFace.contains("mcp_servers.ai-face.env.AIFACE_AGENT=\"illuminati\"") && codexFace.contains("mcp_servers.ai-face.enabled_tools=[\"set_expression\"]")
+           && codexFace.firstIndex(of: "exec")! > codexFace.lastIndex(of: "-c")!, "Codex gets AI Face as illuminati, set_expression only, before exec")
+    var debate = chat.soloBinding(chat.currentID); debate.face = nil
+    expect(!(try! WorkspaceInvocation(binding: debate, room: chat.currentID).arguments(provider: .claude, original: ["-p", "--mcp-config", "{}"], directory: dir, web: false)).joined().contains("ai-face"),
+           "other chat modes do not get AI Face")
+    try? FileManager.default.removeItem(at: FaceLink.file)
+    print("PASS: AI Face link (connected in AI Face only, its own server only, plain chat only, named illuminati, set_expression only)")
 }
 
 

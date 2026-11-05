@@ -10,6 +10,7 @@ struct WorkspaceRoot: Codable, Equatable { var path: String; var directory: Bool
 struct WorkspaceBinding: Codable {
     var roots: [WorkspaceRoot]
     var level: WorkspaceLevel = .view
+    var face: Bool? = nil   // plain chat: also give the AI the AI Face server when the user connected it (FaceLink)
     func inventory() -> [String] {
         var result: [String] = []
         for (index, root) in roots.enumerated() {
@@ -97,6 +98,7 @@ struct WorkspaceInvocation {
 
     func arguments(provider: Account.Provider, original: [String], directory: URL, web: Bool) throws -> [String] {
         let (command, args) = try prepare(in: directory)
+        let face = binding.face == true && provider != .gemini ? FaceLink.server() : nil
         func json(_ object: Any) -> String {
             let data = try! JSONSerialization.data(withJSONObject: [object], options: [.fragmentsAllowed, .sortedKeys, .withoutEscapingSlashes])
             return String(data: data, encoding: .utf8)!.dropFirst().dropLast().description
@@ -107,7 +109,9 @@ struct WorkspaceInvocation {
             // safe-mode disables even explicitly configured MCP servers. restricted mode
             // confines file tools and ignores project/user settings while allowing this bridge.
             result.removeAll { $0 == "--safe-mode" }
-            let mcp = ["mcpServers": ["illuminati": ["command": command, "args": args] as [String: Any]]]
+            var servers: [String: Any] = ["illuminati": ["command": command, "args": args] as [String: Any]]
+            if let face { servers[FaceLink.name] = ["command": face.command, "args": face.args, "env": ["AIFACE_AGENT": FaceLink.agent]] as [String: Any] }
+            let mcp = ["mcpServers": servers]
             let config = String(data: try JSONSerialization.data(withJSONObject: mcp), encoding: .utf8)!
             if let i = result.firstIndex(of: "--mcp-config") { result[i + 1] = config }
             // In view, only the writable roots may change: an Edit(//absolute/**) rule covers Edit and Write.
@@ -116,7 +120,8 @@ struct WorkspaceInvocation {
             if let i = result.firstIndex(of: "--tools") { result[i + 1] = "Read,Grep,Glob" + (edit ? ",Edit,Write" : "") + (level == .execute ? ",Bash" : "") + (web ? ",WebSearch,WebFetch" : "") }
             if let i = result.firstIndex(of: "--allowedTools") { result.removeSubrange(i...i + 1) }
             let allowedEdit = level != .view ? ",Edit,Write" : own.map { ",Edit(/" + $0 + "/**)" }.joined()
-            result += ["--restricted", "--setting-sources", "", "--disable-slash-commands", "--permission-mode", "dontAsk", "--allowedTools", "Read,Grep,Glob,mcp__illuminati__*" + allowedEdit + (level == .execute ? ",Bash" : "") + (web ? ",WebSearch,WebFetch" : "")]
+            result += ["--restricted", "--setting-sources", "", "--disable-slash-commands", "--permission-mode", "dontAsk", "--allowedTools", "Read,Grep,Glob,mcp__illuminati__*" + allowedEdit + (level == .execute ? ",Bash" : "") + (web ? ",WebSearch,WebFetch" : "")
+                       + (face != nil ? ",mcp__\(FaceLink.name)__\(FaceLink.tool)" : "")]
             if level == .execute {
                 let settings: [String: Any] = ["sandbox": ["enabled": true, "autoAllowBashIfSandboxed": true, "allowUnsandboxedCommands": false,
                     "filesystem": ["allowWrite": binding.roots.filter(\.directory).map(\.path)]]]
@@ -142,7 +147,14 @@ struct WorkspaceInvocation {
                       "-c", "mcp_servers.illuminati.required=true",
                       // The bridge itself allows writes only in the chat folder (or after a backup), so its calls
                       // need no approval; "auto" still asked for write_file, which fails with approval "never".
-                      "-c", "mcp_servers.illuminati.default_tools_approval_mode=" + json(own.isEmpty ? "auto" : "approve")] + base
+                      "-c", "mcp_servers.illuminati.default_tools_approval_mode=" + json(own.isEmpty ? "auto" : "approve")]
+            if let face {
+                let key = "mcp_servers." + FaceLink.name
+                result += ["-c", key + ".command=" + json(face.command), "-c", key + ".args=" + json(face.args),
+                           "-c", key + ".env.AIFACE_AGENT=" + json(FaceLink.agent), "-c", key + ".enabled_tools=" + json([FaceLink.tool]),
+                           "-c", key + ".default_tools_approval_mode=\"approve\""]
+            }
+            result += base
         case .gemini:
             // agy implements --mode through slash expansion; disabling it silently disables plan/accept-edits.
             result.removeAll { $0 == "--disable-slash-commands" }

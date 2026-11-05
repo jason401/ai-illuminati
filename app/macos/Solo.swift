@@ -82,7 +82,7 @@ extension Discussion {
         for path in model.sharedFolders where FileManager.default.fileExists(atPath: path) {
             roots.append(WorkspaceRoot(path: path, directory: true))
         }
-        for root in current.workspace?.roots ?? [] where !roots.contains(where: { $0.path == root.path }) {
+        for root in conversations.first(where: { $0.id == room })?.workspace?.roots ?? [] where !roots.contains(where: { $0.path == root.path }) {
             roots.append(WorkspaceRoot(path: root.path, directory: root.directory, writable: root.directory ? true : nil))
         }
         return WorkspaceBinding(roots: roots, level: .view, face: true)

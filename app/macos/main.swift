@@ -58,7 +58,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         model.updater.onAvailableChange = { [weak self] in self?.rebuildMenu() }
         model.updater.isBusy = { [weak self] in
             guard let self else { return false }
-            return self.discussion.running || self.discussion.importingMaterials || self.pokerGame.running
+            return self.discussion.anyRunning || self.discussion.importingMaterials || self.pokerGame.running
         }
         // When the build script opens the app, the script's folder (inside ~/Documents) comes along
         // as PWD/OLDPWD and is passed to every AI tool we start; shells they run then look at that
@@ -106,9 +106,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         rebuildMenu()
         refresh()
         timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in self?.refresh() }
-        runningObservation = discussion.$running.removeDuplicates().sink { [weak self] running in
+        // The halo works while any chat is answering and shimmers when the last one finishes.
+        runningObservation = discussion.$runningRooms.map { !$0.isEmpty }.removeDuplicates().sink { [weak self] running in
             guard let self else { return }
-            if self.markWorking && !running && !self.discussion.stopping,
+            if self.markWorking && !running && self.discussion.stoppingRooms.isEmpty,
                self.discussion.current.turns.last?.error == nil {
                 self.markCompletedAt = ProcessInfo.processInfo.systemUptime
             }
@@ -127,7 +128,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         markTimer?.invalidate()
         if let motionObservation { NSWorkspace.shared.notificationCenter.removeObserver(motionObservation) }
-        discussion.debateCancellation?.cancel()
+        discussion.cancelAll()
         discussion.discardPendingImages()
     }
 

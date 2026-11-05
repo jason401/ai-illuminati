@@ -530,9 +530,26 @@ final class Discussion: ObservableObject {
     @Published var conversations: [Conversation]
     @Published var currentID: UUID
     @Published var importingMaterials = false
-    @Published var running = false
-    @Published var stopping = false
-    var debateCancellation: DebateCancellation?
+    // Several chats can work at once. Each sent message runs on its own worker (a Discussion with `host`
+    // set and only that chat), so the run state below (active…, pictures, cancellation) is per chat; the
+    // worker hands every change back to the host, which the window shows.
+    static let maxRunning = 3
+    @Published var runningRooms: Set<UUID> = []
+    @Published var stoppingRooms: Set<UUID> = []
+    weak var host: Discussion?
+    private var workers: [UUID: Discussion] = [:]
+    // For the open chat (a worker: always its own chat).
+    var running: Bool {
+        get { host != nil || runningRooms.contains(currentID) }
+        set { if newValue { runningRooms.insert(currentID) } else { runningRooms.remove(currentID) } }
+    }
+    var stopping: Bool {
+        get { stoppingRooms.contains(currentID) }
+        set { if newValue { stoppingRooms.insert(currentID) } else { stoppingRooms.remove(currentID) } }
+    }
+    var anyRunning: Bool { !runningRooms.isEmpty }
+    var runCancellation: DebateCancellation?
+    var debateCancellation: DebateCancellation? { host == nil ? workers[currentID]?.runCancellation : runCancellation }
     var collaborationAnswer: ((Account, String, [URL], DebateCancellation) -> Result<String, Answerer.Failure>)?
     var debateAnswer: (Account, String, TimeInterval, DebateCancellation, Bool) -> Result<String, Answerer.Failure> = {
         Answerer.ask($0, prompt: $1, timeout: $2, cancellation: $3, web: $4)
@@ -540,8 +557,11 @@ final class Discussion: ObservableObject {
     @Published var draft = ""
     @Published var pendingImages: [ChatImage] = []
     @Published var attachmentError: String?
-    @Published var sessionNote = ""
-    let nativeSessions = NativeSessions()
+    @Published var sessionNote = "" {
+        // A worker's notes show only while its chat is the open one.
+        didSet { if let host, host.currentID == currentID { host.sessionNote = sessionNote } }
+    }
+    let nativeSessions: NativeSessions
     var activeSessionRoom: UUID?
     var activeDocumentText = ""
     var activeMaterials: [RoomDocument] = []
@@ -647,10 +667,11 @@ final class Discussion: ObservableObject {
     }
 
     let model: AppModel
-    private let work = DispatchQueue(label: "discussion")
+    fileprivate let work = DispatchQueue(label: "discussion")
 
     init(model: AppModel) {
         self.model = model
+        nativeSessions = NativeSessions()
         // The newest blank chat (settings only) becomes the new chat, so its settings are kept;
         // older blank ones hold nothing and are removed.
         let loaded = ChatStore.loadAll()
@@ -660,6 +681,32 @@ final class Discussion: ObservableObject {
         conversations = [fresh] + loaded.filter(\.hasContent)
         currentID = fresh.id
     }
+
+    // A worker for one message in one chat: same accounts, sessions and test hooks, only that chat.
+    private init(workerFor host: Discussion, room: UUID) {
+        model = host.model
+        nativeSessions = host.nativeSessions
+        conversations = host.conversations.filter { $0.id == room }
+        currentID = room
+        self.host = host
+        answer = host.answer
+        debateAnswer = host.debateAnswer
+        collaborationAnswer = host.collaborationAnswer
+        workspaceAnswer = host.workspaceAnswer
+        pictureAnswer = host.pictureAnswer
+        useClaude = host.useClaude; useCodex = host.useCodex; useGemini = host.useGemini
+    }
+
+    // A worker finished (called on the main thread).
+    private func runFinished(_ room: UUID) {
+        runningRooms.remove(room)
+        stoppingRooms.remove(room)
+        workers[room] = nil
+        model.onAccountsChange?()   // refresh the usage numbers after the answer
+    }
+
+    /// Stops every chat that is working (quitting the app).
+    func cancelAll() { for worker in workers.values { worker.runCancellation?.cancel() } }
 
     // Leaving a blank chat: drop it from the list and remove its settings-only file.
     private func dropBlanks(except keep: UUID?) {
@@ -671,7 +718,7 @@ final class Discussion: ObservableObject {
 
     // Starts an empty chat (reuses the open one if it is still empty).
     func newConversation() {
-        guard !running && !importingMaterials else { return }
+        guard !importingMaterials else { return }
         if current.turns.isEmpty && (current.documents ?? []).isEmpty && current.workspace == nil { return }
         discardPendingImages()
         dropBlanks(except: nil)
@@ -681,7 +728,7 @@ final class Discussion: ObservableObject {
     }
 
     func open(_ id: UUID) {
-        guard !running && !importingMaterials else { return }
+        guard !importingMaterials else { return }
         if currentID != id { discardPendingImages() }
         dropBlanks(except: id)
         currentID = id
@@ -695,7 +742,7 @@ final class Discussion: ObservableObject {
 
     // Asks for a new name; the list keeps its order (renaming is not new activity).
     func rename(_ id: UUID) {
-        guard !running, let i = conversations.firstIndex(where: { $0.id == id }) else { return }
+        guard let i = conversations.firstIndex(where: { $0.id == id }) else { return }
         let alert = NSAlert()
         alert.messageText = L("대화 이름 바꾸기", "Rename chat")
         let field = NSTextField(string: conversations[i].title)
@@ -719,7 +766,7 @@ final class Discussion: ObservableObject {
 
     // Deletes every saved chat (or all but the pinned ones), each the same way as deleting one.
     func deleteAll() {
-        guard !running, !importingMaterials else { return }
+        guard !anyRunning, !importingMaterials else { return }
         let saved = conversations.filter(\.hasContent)
         guard !saved.isEmpty else { return }
         let pinnedCount = saved.filter { $0.pinned == true }.count
@@ -769,7 +816,7 @@ final class Discussion: ObservableObject {
     }
 
     func delete(_ id: UUID) {
-        guard !running, let conversation = conversations.first(where: { $0.id == id }) else { return }
+        guard !runningRooms.contains(id), let conversation = conversations.first(where: { $0.id == id }) else { return }
         let alert = NSAlert()
         alert.messageText = L("이 대화를 영구 삭제할까요?", "Permanently delete this chat?")
         alert.informativeText = L("‘\(conversation.title)’의 질문, 답변, 대화 요약을 저장된 파일과 함께 삭제합니다. 되돌릴 수 없어요.", "This deletes all messages, answers, and the summary in “\(conversation.title)”, including its saved file. This cannot be undone.")
@@ -858,34 +905,45 @@ final class Discussion: ObservableObject {
             if c.turns.isEmpty { c.title = String(question.prefix(40)) }
             c.turns.append(turn)
         }
-        running = true
-        stopping = false
-        let cancellation = DebateCancellation()
-        debateCancellation = (Self.modernModes || config.mode == 3) ? cancellation : nil
         let index = current.turns.count - 1
+        let cancellation = DebateCancellation()
+        let worker = Discussion(workerFor: self, room: id)
+        worker.runCancellation = (Self.modernModes || config.mode == 3) ? cancellation : nil
+        worker.activeSessionRoom = activeSessionRoom
+        worker.activeMaterials = activeMaterials
+        worker.activeWorkspace = activeWorkspace
+        worker.activeAdversarial = activeAdversarial
+        worker.activeSpeechLength = activeSpeechLength
+        worker.activeDocumentText = activeDocumentText
+        pictureLock.lock()
+        worker.activeImages = activeImages; worker.imageContext = imageContext; worker.nextPicture = nextPicture
+        pictureLock.unlock()
+        workers[id] = worker
+        runningRooms.insert(id)
+        stoppingRooms.remove(id)
         let usage = model.latestUsage
         let rules = model.chatRules.trimmingCharacters(in: .whitespacesAndNewlines)
         let debateLeader = Self.modernModes && !team.contains(where: { $0.provider == config.leader }) ? team[0].provider : config.leader
-        work.async {
+        worker.work.async {
             if solo {
-                self.runSolo(question: question, history: history, rules: rules, config: config,
+                worker.runSolo(question: question, history: history, rules: rules, config: config,
                              cancellation: cancellation, id: id, index: index)
             } else if Self.modernModes && config.mode == 4 {
-                self.runVote(question: question, history: history, rules: rules, team: team,
+                worker.runVote(question: question, history: history, rules: rules, team: team,
                              leader: team.first { $0.id == config.leaderAccountID } ?? team.first { $0.provider == config.leader } ?? team[0],
                              cancellation: cancellation, id: id, index: index)
             } else if Self.modernModes && config.mode == 3 {
-                self.runCollaboration(question: question, history: history, rules: rules, team: team,
+                worker.runCollaboration(question: question, history: history, rules: rules, team: team,
                                       leader: config.leaderAccountID, fallbackLeader: config.leader,
                                       cancellation: cancellation, id: id, index: index)
             } else if Self.modernModes || config.mode == 3 {
-                self.runDebate(question: question, history: history, rules: rules, team: team, leader: debateLeader,
+                worker.runDebate(question: question, history: history, rules: rules, team: team, leader: debateLeader,
                                perAI: perAI, cancellation: cancellation, id: id, index: index)
             } else if config.mode == 2 {
-                self.runSequential(question: question, history: history, rules: rules, team: team,
+                worker.runSequential(question: question, history: history, rules: rules, team: team,
                                    leader: config.leader, id: id, index: index)
             } else {
-                self.run(question: question, summary: summary, rules: rules, team: team, usage: usage, id: id, index: index)
+                worker.run(question: question, summary: summary, rules: rules, team: team, usage: usage, id: id, index: index)
             }
         }
     }
@@ -939,6 +997,7 @@ final class Discussion: ObservableObject {
 
     // Changes a conversation (on the main thread), saves it and moves it to the top of the list.
     func change(_ id: UUID, save: Bool = false, _ edit: @escaping (inout Conversation) -> Void) {
+        if let host { return host.change(id, save: save, edit) }
         let apply = {
             guard let i = self.conversations.firstIndex(where: { $0.id == id }) else { return }
             edit(&self.conversations[i])
@@ -1180,10 +1239,11 @@ final class Discussion: ObservableObject {
                 t.status = ""
             }
         }
+        let room = currentID
         DispatchQueue.main.async {
-            self.running = false
-            self.stopping = false
-            self.debateCancellation = nil
+            if let host = self.host { return host.runFinished(room) }
+            self.runningRooms.remove(room)
+            self.stoppingRooms.remove(room)
             self.model.onAccountsChange?()   // refresh the usage numbers after the discussion
         }
     }

@@ -114,6 +114,7 @@ extension Discussion {
         return ["429", "resource_exhausted", "quota", "usage limit", "rate limit", "limit reached"].contains { text.contains($0) }
     }
 
+    // Stops the open chat's answer (the other chats keep working).
     func stopDebate() {
         guard running, let cancellation = debateCancellation else { return }
         stopping = true

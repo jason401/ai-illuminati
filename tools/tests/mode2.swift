@@ -1352,3 +1352,52 @@ do {
     expect(cut.final?.hasPrefix("Answer") == true && cut.finalBy == chat.label(m.accounts[1]) && cut.partial == nil && cut.activity == nil, "the continued answer is shown, the partial one cleared")
     print("PASS: plain chat streaming (Claude text deltas, Codex steps), chat state summary, short handoff with recent turns and history file, unfinished reply continued")
 }
+
+// Several chats at once: each message runs on its own worker, so other chats stay usable meanwhile.
+do {
+    Discussion.modernModes = true
+    Discussion.availableModes = [0, 1, 2, 3, 4]
+    let m = AppModel()
+    m.accounts = [Account(id: "multi-claude", provider: .claude, name: "Claude (multi)", dir: nil)]
+    let chat = Discussion(model: m)
+    let gate = DispatchSemaphore(value: 0)
+    let lock = NSLock()
+    var seen: [String] = []
+    chat.workspaceAnswer = { _, prompt, _, _, _ in
+        let question = ["first", "second", "third"].first { prompt.contains("\($0) question") } ?? "?"
+        lock.lock(); seen.append(question); lock.unlock()
+        gate.wait()
+        return .success("answer to \(question)")
+    }
+    func spin(_ done: () -> Bool) {
+        let deadline = Date().addingTimeInterval(10)
+        while !done() && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+    }
+    func asked() -> Int { lock.lock(); defer { lock.unlock() }; return seen.count }
+    chat.draft = "first question"; chat.send()
+    let first = chat.currentID
+    expect(chat.running && chat.runningRooms == [first], "the first chat is answering")
+    chat.newConversation()
+    expect(chat.currentID != first && !chat.running, "a new chat opens while the first answers")
+    chat.draft = "second question"
+    expect(chat.canSend, "and can send")
+    chat.send()
+    let second = chat.currentID
+    spin { asked() == 2 }
+    expect(chat.runningRooms == [first, second] && asked() == 2, "two chats answer at the same time")
+    chat.open(first)
+    expect(chat.currentID == first && chat.running && chat.current.turns.last?.question == "first question", "switching chats while both answer")
+    chat.newConversation(); chat.draft = "third question"; chat.send()
+    let third = chat.currentID
+    spin { asked() == 3 }
+    chat.newConversation(); chat.draft = "fourth question"
+    expect(!chat.canSend && chat.runningRooms.count == Discussion.maxRunning, "at most \(Discussion.maxRunning) chats answer at once")
+    chat.draft = ""
+    for _ in 0..<3 { gate.signal() }
+    spin { chat.runningRooms.isEmpty }
+    for (room, question) in [(first, "first"), (second, "second"), (third, "third")] {
+        expect(chat.conversations.first { $0.id == room }?.turns.last?.final == "answer to \(question)", "\(question) answer lands in its own chat")
+    }
+    expect(!chat.anyRunning && chat.stoppingRooms.isEmpty, "all done")
+    print("PASS: several chats at once (own worker per message, switch and start chats meanwhile, limit of \(Discussion.maxRunning), answers land in their own chats)")
+}

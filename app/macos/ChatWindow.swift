@@ -55,7 +55,8 @@ struct ChatView: View {
                 }
             }
             .padding(.horizontal, 10).padding(.top, 40)   // below the window buttons (the title bar is see-through)
-            .disabled(discussion.running || discussion.importingMaterials)
+            // Other chats stay usable while one answers (Discussion.maxRunning at once).
+            .disabled(discussion.importingMaterials)
             ScrollView {
                 VStack(alignment: .leading, spacing: 1) {
                     sharedFolders
@@ -78,7 +79,7 @@ struct ChatView: View {
             HStack {
                 Menu {
                     Button(L("대화 전부 지우기…", "Delete all chats…"), role: .destructive) { discussion.deleteAll() }
-                        .disabled(!discussion.conversations.contains(where: \.hasContent))
+                        .disabled(!discussion.conversations.contains(where: \.hasContent) || discussion.anyRunning)
                 } label: {
                     Label(L("대화 관리", "Manage chats"), systemImage: "ellipsis.circle").font(.system(size: 12))
                 }
@@ -87,7 +88,7 @@ struct ChatView: View {
                 Spacer()
             }
             .padding(.horizontal, 16).padding(.vertical, 10)
-            .disabled(discussion.running || discussion.importingMaterials)
+            .disabled(discussion.importingMaterials)
         }
         .frame(width: 250)
         .background(Color.primary.opacity(0.035))
@@ -100,6 +101,7 @@ struct ChatView: View {
         Button(L("이 대화 폴더 열기", "Show this chat's folder")) { discussion.openChatFolder(conversation.id) }
         Divider()
         Button(L("대화 삭제…", "Delete chat…"), role: .destructive) { discussion.delete(conversation.id) }
+            .disabled(discussion.runningRooms.contains(conversation.id))
     }
 
     private func chatRow(_ conversation: Conversation) -> some View {
@@ -109,6 +111,10 @@ struct ChatView: View {
             Text(conversation.turns.isEmpty ? L("새 대화", "New chat") : conversation.title)
                 .lineLimit(1).truncationMode(.tail)
                 .frame(maxWidth: .infinity, alignment: .leading)
+            if discussion.runningRooms.contains(conversation.id) {
+                ProgressView().controlSize(.mini)
+                    .help(L("답하는 중", "Answering"))
+            }
             if conversation.hasContent && (hovered || selected) {
                 Menu { chatMenu(conversation) } label: { Image(systemName: "ellipsis").frame(width: 18, height: 18) }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
@@ -126,7 +132,7 @@ struct ChatView: View {
         .contextMenu {
             if conversation.hasContent { chatMenu(conversation) }
         }
-        .disabled(discussion.running || discussion.importingMaterials)
+        .disabled(discussion.importingMaterials)
     }
 
     private var chat: some View {
@@ -462,7 +468,10 @@ struct ChatView: View {
             .background(!discussion.canSend
                         ? Color.secondary.opacity(0.3) : Color.accentColor, in: Circle())
             .accessibilityLabel(L("보내기", "Send"))
-            .help(L("전송 (Enter)", "Send (Enter)"))
+            .help(discussion.runningRooms.count >= Discussion.maxRunning
+                  ? L("동시에 \(Discussion.maxRunning)개 대화까지 답할 수 있어요. 하나가 끝나면 보낼 수 있어요.",
+                      "Up to \(Discussion.maxRunning) chats can answer at once. Send when one finishes.")
+                  : L("전송 (Enter)", "Send (Enter)"))
             .keyboardShortcut(.return, modifiers: .command)
             .disabled(!discussion.canSend)
         }

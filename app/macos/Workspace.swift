@@ -183,7 +183,7 @@ extension Discussion {
     func undoWorkspace(_ turn: ChatTurn) {
         guard !running, !importingMaterials, let path = turn.backupPath else { return }
         let room = currentID
-        running = true
+        runningRooms.insert(room)
         DispatchQueue.global(qos: .userInitiated).async {
             do {
                 var backup = try WorkspaceBackup.load(path)
@@ -192,10 +192,10 @@ extension Discussion {
                     self.change(room, save: true) { conversation in
                         if let i = conversation.turns.firstIndex(where: { $0.id == turn.id }) { conversation.turns[i].undone = true }
                     }
-                    self.running = false
+                    self.runningRooms.remove(room)
                     self.sessionNote = L("백업 시점으로 복구하고 해시 일치를 확인했습니다.", "Restored the backup; original hashes match.")
                 }
-            } catch { DispatchQueue.main.async { self.running = false; self.attachmentError = error.localizedDescription } }
+            } catch { DispatchQueue.main.async { self.runningRooms.remove(room); self.attachmentError = error.localizedDescription } }
         }
     }
 }

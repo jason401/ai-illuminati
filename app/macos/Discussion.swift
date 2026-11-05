@@ -583,6 +583,24 @@ final class Discussion: ObservableObject {
         conversations.filter { $0.pinned == true } + conversations.filter { $0.pinned != true }
     }
 
+    // Asks for a new name; the list keeps its order (renaming is not new activity).
+    func rename(_ id: UUID) {
+        guard !running, let i = conversations.firstIndex(where: { $0.id == id }) else { return }
+        let alert = NSAlert()
+        alert.messageText = L("대화 이름 바꾸기", "Rename chat")
+        let field = NSTextField(string: conversations[i].title)
+        field.frame = NSRect(x: 0, y: 0, width: 280, height: 24)
+        alert.accessoryView = field
+        alert.addButton(withTitle: L("바꾸기", "Rename"))
+        alert.addButton(withTitle: L("취소", "Cancel"))
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, let index = conversations.firstIndex(where: { $0.id == id }) else { return }
+        conversations[index].title = String(name.prefix(80))
+        ChatStore.save(conversations[index])
+    }
+
     func togglePin(_ id: UUID) {
         guard let i = conversations.firstIndex(where: { $0.id == id }), conversations[i].hasContent else { return }
         conversations[i].pinned = conversations[i].pinned == true ? nil : true

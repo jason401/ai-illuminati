@@ -93,6 +93,15 @@ struct ChatView: View {
         .background(Color.primary.opacity(0.035))
     }
 
+    // The same items in the ⋯ menu and on right-click.
+    @ViewBuilder private func chatMenu(_ conversation: Conversation) -> some View {
+        Button(L("이름 바꾸기…", "Rename…")) { discussion.rename(conversation.id) }
+        Button(conversation.pinned == true ? L("고정 해제", "Unpin") : L("맨 위에 고정", "Pin to top")) { discussion.togglePin(conversation.id) }
+        Button(L("이 대화 폴더 열기", "Show this chat's folder")) { discussion.openChatFolder(conversation.id) }
+        Divider()
+        Button(L("대화 삭제…", "Delete chat…"), role: .destructive) { discussion.delete(conversation.id) }
+    }
+
     private func chatRow(_ conversation: Conversation) -> some View {
         let selected = conversation.id == discussion.currentID
         let hovered = discussion.hoverKey == conversation.id.uuidString
@@ -101,11 +110,7 @@ struct ChatView: View {
                 .lineLimit(1).truncationMode(.tail)
                 .frame(maxWidth: .infinity, alignment: .leading)
             if conversation.hasContent && (hovered || selected) {
-                Menu {
-                    Button(conversation.pinned == true ? L("고정 해제", "Unpin") : L("맨 위에 고정", "Pin to top")) { discussion.togglePin(conversation.id) }
-                    Divider()
-                    Button(L("대화 삭제…", "Delete chat…"), role: .destructive) { discussion.delete(conversation.id) }
-                } label: { Image(systemName: "ellipsis").frame(width: 18, height: 18) }
+                Menu { chatMenu(conversation) } label: { Image(systemName: "ellipsis").frame(width: 18, height: 18) }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                 .accessibilityLabel(L("대화 메뉴: ", "Chat options: ") + conversation.title)
             }
@@ -119,12 +124,7 @@ struct ChatView: View {
         .onHover { inside in discussion.hover(conversation.id.uuidString, inside) }
         .help(dateText(conversation.updatedAt))
         .contextMenu {
-            if conversation.hasContent {
-                Button(conversation.pinned == true ? L("고정 해제", "Unpin") : L("맨 위에 고정", "Pin to top")) { discussion.togglePin(conversation.id) }
-                Button(L("이 대화 폴더 열기", "Show this chat's folder")) { discussion.openChatFolder(conversation.id) }
-                Divider()
-                Button(L("대화 삭제…", "Delete chat…"), role: .destructive) { discussion.delete(conversation.id) }
-            }
+            if conversation.hasContent { chatMenu(conversation) }
         }
         .disabled(discussion.running || discussion.importingMaterials)
     }
@@ -533,6 +533,8 @@ struct ChatView: View {
         HStack(spacing: 6) {
             Text(discussion.current.turns.isEmpty ? "" : discussion.current.title)
                 .font(.system(size: 13, weight: .medium)).lineLimit(1)
+                .onTapGesture(count: 2) { discussion.rename(discussion.currentID) }
+                .help(L("두 번 눌러 이름 바꾸기", "Double-click to rename"))
             if !discussion.sessionNote.isEmpty {
                 Text(discussion.sessionNote).font(.system(size: 11)).foregroundColor(.secondary).lineLimit(1)
             }

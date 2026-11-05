@@ -120,6 +120,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         ) { [weak self] _ in self?.configureMarkAnimation() }
         updateTitle()
         model.updater.start()
+        FaceLink.shared.start()
         model.refreshLoginItemStatus()
     }
 

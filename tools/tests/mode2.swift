@@ -1188,37 +1188,73 @@ do {
            && codexArgs.contains("sandbox_workspace_write.writable_roots=[\"" + own + "\",\"" + linkedDir.path + "\"]"), "Codex may write the chat folder and the linked folder only")
     print("PASS: plain chat (auto pick 15% / weekly, Gemini out, Enterprise sides, limit handoff, YouTube via Gemini, chat and linked folders writable with backup and undo, shared read only)")
 
-    // AI Face: only after AI Face wrote its server into mcp.json, only its own file, only set_expression.
+    // AI Face: the app is its one MCP client ("illuminati"); a model reaches it only through the bridge.
     let face = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("Library/Application Support/AI Face")
     try! FileManager.default.createDirectory(at: face, withIntermediateDirectories: true)
+    let calls = face.appendingPathComponent("calls.jsonl")
     let script = face.appendingPathComponent("ai_face_mcp.py")
-    try! Data("print()".utf8).write(to: script)
+    // A stand-in for AI Face's server: two tools, records each call and the agent it was started as.
+    try! Data("""
+        import json, os, sys
+        for line in sys.stdin:
+            m = json.loads(line)
+            if 'id' not in m: continue
+            if m['method'] == 'initialize': r = {'protocolVersion': '2025-06-18', 'capabilities': {'tools': {}}, 'serverInfo': {'name': 'ai-face'}}
+            elif m['method'] == 'tools/list':
+                s = {'type': 'object', 'properties': {'emotion': {'type': 'string', 'enum': ['happy', 'sad']}}, 'required': ['emotion']}
+                r = {'tools': [{'name': 'set_expression', 'description': 'face', 'inputSchema': s}, {'name': 'calendar_events', 'description': 'cal', 'inputSchema': {'type': 'object'}}]}
+            else:
+                with open(\(String(reflecting: calls.path)), 'a') as f: f.write(json.dumps({'agent': os.environ.get('AIFACE_AGENT'), 'call': m['params']}) + '\\n')
+                r = {'content': [{'type': 'text', 'text': 'ok'}], 'isError': False}
+            print(json.dumps({'jsonrpc': '2.0', 'id': m['id'], 'result': r}), flush=True)
+        """.utf8).write(to: script)
     FaceLink.faceFolder = face.path
     FaceLink.file = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("face-mcp.json")
+    FaceLink.socketPath = "/tmp/ai-illuminati-face-test-\(getpid()).sock"
     func register(_ args: [String]) {
-        let entry: [String: Any] = ["mcpServers": ["ai-face": ["command": "/usr/bin/python3", "args": args, "env": ["AIFACE_AGENT": "illuminati"]]]]
+        let entry: [String: Any] = ["mcpServers": ["ai-face": ["command": "/usr/bin/python3", "args": args, "env": ["AIFACE_AGENT": "claude"]]]]
         try! JSONSerialization.data(withJSONObject: entry).write(to: FaceLink.file)
     }
-    func faceArgs(_ provider: Account.Provider) -> [String] {
-        try! invocation.arguments(provider: provider, original: provider == .claude ? ["-p", "--tools", "", "--mcp-config", "{}"] : ["exec", "x"], directory: dir, web: false)
+    func manifest(_ binding: WorkspaceBinding) -> [String: Any] {
+        let (_, args) = try! WorkspaceInvocation(binding: binding, room: chat.currentID).prepare(in: dir)
+        return try! JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: args[1]))) as! [String: Any]
     }
-    expect(FaceLink.server() == nil && !faceArgs(.claude).joined().contains("ai-face"), "no AI Face server before it is connected")
+    let plain = chat.soloBinding(chat.currentID)
+    expect(FaceLink.server() == nil && manifest(plain)["face"] == nil, "no AI Face before it is connected")
     register(["/tmp/elsewhere.py"])
     expect(FaceLink.server() == nil, "a server outside the AI Face folder is ignored")
-    register([face.appendingPathComponent("../AI Face/../AI Face/ai_face_mcp.py").path])
+    register([face.appendingPathComponent("../AI Face/ai_face_mcp.py").path])
     expect(FaceLink.server()?.command == "/usr/bin/python3", "AI Face's own server is used")
-    let claudeFace = faceArgs(.claude)
-    let config = claudeFace[claudeFace.firstIndex(of: "--mcp-config")! + 1]
-    expect(config.contains("\"ai-face\"") && config.contains("\"AIFACE_AGENT\":\"illuminati\"") && config.contains("\"illuminati\":")
-           && claudeFace[claudeFace.lastIndex(of: "--allowedTools")! + 1].hasSuffix(",mcp__ai-face__set_expression"), "Claude gets AI Face as illuminati, set_expression only")
-    let codexFace = faceArgs(.codex)
-    expect(codexFace.contains("mcp_servers.ai-face.env.AIFACE_AGENT=\"illuminati\"") && codexFace.contains("mcp_servers.ai-face.enabled_tools=[\"set_expression\"]")
-           && codexFace.firstIndex(of: "exec")! > codexFace.lastIndex(of: "-c")!, "Codex gets AI Face as illuminati, set_expression only, before exec")
-    var debate = chat.soloBinding(chat.currentID); debate.face = nil
-    expect(!(try! WorkspaceInvocation(binding: debate, room: chat.currentID).arguments(provider: .claude, original: ["-p", "--mcp-config", "{}"], directory: dir, web: false)).joined().contains("ai-face"),
-           "other chat modes do not get AI Face")
+    var debate = plain; debate.face = nil
+    expect(manifest(plain)["face"] as? String == FaceLink.socketPath && manifest(debate)["face"] == nil, "plain chat only")
+    expect(!(try! invocation.arguments(provider: .claude, original: ["-p", "--mcp-config", "{}"], directory: dir, web: false)).joined().contains("ai-face"),
+           "models are not given AI Face directly")
+    FaceLink.shared.start()
+    expect(FaceLink.shared.tools().map { $0["name"] as? String } == ["set_expression"], "only set_expression is offered")
+    expect(FaceLink.shared.call("calendar_events", [:])["isError"] as? Bool == true, "other AI Face tools are refused")
+    // A model's call: bridge → app socket → the app's AI Face connection.
+    let bridge = Process(), toBridge = Pipe(), fromBridge = Pipe()
+    bridge.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+    bridge.arguments = try! WorkspaceInvocation(binding: plain, room: chat.currentID).prepare(in: dir).1
+    bridge.standardInput = toBridge; bridge.standardOutput = fromBridge; bridge.standardError = FileHandle.nullDevice
+    try! bridge.run()
+    for (n, line) in [#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#,
+                      #"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"set_expression","arguments":{"emotion":"happy"}}}"#].enumerated() {
+        toBridge.fileHandleForWriting.write(Data((line + "\n").utf8))
+        _ = n
+    }
+    try! toBridge.fileHandleForWriting.close()
+    let replies = String(decoding: fromBridge.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+    bridge.waitUntilExit()
+    let recorded = (try? String(contentsOf: calls, encoding: .utf8)) ?? ""
+    expect(replies.contains("\"set_expression\"") && !replies.contains("calendar_events") && replies.contains("\"ok\""), "the bridge offers and forwards set_expression")
+    expect(recorded.contains("\"agent\": \"illuminati\"") && recorded.contains("\"emotion\": \"happy\"") && !recorded.contains("calendar"),
+           "AI Face gets the call from AI Illuminati, named illuminati")
     try? FileManager.default.removeItem(at: FaceLink.file)
-    print("PASS: AI Face link (connected in AI Face only, its own server only, plain chat only, named illuminati, set_expression only)")
+    FaceLink.shared.refresh()
+    expect(FaceLink.shared.tools().isEmpty, "Disconnect in AI Face ends the connection")
+    unlink(FaceLink.socketPath)
+    print("PASS: AI Face link (the app is the one client named illuminati, its own server only, plain chat only, set_expression only, through the bridge)")
 }
 
 

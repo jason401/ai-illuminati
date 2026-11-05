@@ -1,6 +1,7 @@
 #!/usr/bin/python3
-"""Room-scoped MCP filesystem bridge. No credentials, no network, no eager reads."""
-import base64, fnmatch, hashlib, json, os, pathlib, subprocess, sys, zipfile
+"""Room-scoped MCP filesystem bridge. No credentials, no network, no eager reads.
+The only connection is the app's local socket for AI Face tools (plain chat)."""
+import base64, fnmatch, hashlib, json, os, pathlib, socket, subprocess, sys, zipfile
 import xml.etree.ElementTree as ET
 import shutil, stat, tempfile
 
@@ -11,6 +12,24 @@ class Workspace:
         # The chat's own folder: changes there need no backup. Other roots follow the level.
         self.own = [pathlib.Path(r['path']).resolve() for r in manifest['roots'] if r.get('writable') and r['directory']]
         self.cache = pathlib.Path(manifest['cache'])
+        # Plain chat: AI Face's tools, offered and called through the app (FaceLink.swift), which keeps
+        # the one connection to AI Face. Missing or slow app: no face tools, the chat goes on.
+        self.face = manifest.get('face')
+        self.face_tools = []
+        if self.face:
+            try: self.face_tools = self.ask_face({'op': 'tools'}).get('tools', [])
+            except Exception: self.face_tools = []
+
+    def ask_face(self, message):
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+            s.settimeout(15); s.connect(self.face)
+            s.sendall(json.dumps(message).encode() + b'\n')
+            data = b''
+            while not data.endswith(b'\n'):
+                chunk = s.recv(65536)
+                if not chunk: break
+                data += chunk
+        return json.loads(data)
 
     def path(self, value, root=0):
         if root < 0 or root >= len(self.roots): raise ValueError('Invalid root index')
@@ -173,7 +192,7 @@ class Workspace:
         if self.manifest.get('level') in ('write','execute') or self.own:
             tools += [tool('write_file','Create or replace a linked file. Automatic backup is mandatory. No shell execution.',{'path':string,'root':integer,'content':string,'encoding':string},['path','content']),
                       tool('delete_file','Delete a linked file or subfolder after automatic backup. Cannot delete a linked root folder.',{'path':string,'root':integer},['path'])]
-        return tools
+        return tools + self.face_tools
 
     def call(self,name,args):
         if name=='list_files': return [{'type':'text','text':json.dumps(self.list_files(**args),ensure_ascii=False)}]
@@ -190,8 +209,13 @@ def serve(workspace):
             if method=='initialize': result={'protocolVersion':'2024-11-05','capabilities':{'tools':{}},'serverInfo':{'name':'illuminati-workspace','version':'1'}}
             elif method=='tools/list': result={'tools':workspace.tools()}
             elif method=='tools/call':
-                try: result={'content':workspace.call(msg['params']['name'],msg['params'].get('arguments',{})),'isError':False}
-                except Exception as e: result={'content':[{'type':'text','text':str(e)}],'isError':True}
+                name=msg['params']['name']
+                if any(t.get('name')==name for t in workspace.face_tools):
+                    try: result=workspace.ask_face({'op':'call','name':name,'arguments':msg['params'].get('arguments',{})})
+                    except Exception as e: result={'content':[{'type':'text','text':'AI Face: '+str(e)}],'isError':True}
+                else:
+                    try: result={'content':workspace.call(name,msg['params'].get('arguments',{})),'isError':False}
+                    except Exception as e: result={'content':[{'type':'text','text':str(e)}],'isError':True}
             elif method=='ping': result={}
             else:
                 print(json.dumps({'jsonrpc':'2.0','id':ident,'error':{'code':-32601,'message':'Unknown method'}}),flush=True);continue

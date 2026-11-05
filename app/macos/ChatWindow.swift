@@ -59,14 +59,18 @@ struct ChatView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 1) {
                     sharedFolders
-                    let chats = discussion.listedConversations.filter { discussion.sidebarSearch.isEmpty || $0.title.localizedCaseInsensitiveContains(discussion.sidebarSearch) }
+                    // A new chat with nothing in it yet is not listed (like the desktop apps); it appears once it has a message.
+                    let chats = discussion.listedConversations.filter { $0.hasContent && (discussion.sidebarSearch.isEmpty || $0.title.localizedCaseInsensitiveContains(discussion.sidebarSearch)) }
                     let pinned = chats.filter { $0.pinned == true }
                     if !pinned.isEmpty {
                         SidebarHeader(title: L("고정됨", "Pinned"))
                         ForEach(pinned) { chatRow($0) }
                     }
-                    SidebarHeader(title: L("최근", "Recents"))
-                    ForEach(chats.filter { $0.pinned != true }) { chatRow($0) }
+                    let recents = chats.filter { $0.pinned != true }
+                    if !recents.isEmpty {
+                        SidebarHeader(title: L("최근", "Recents"))
+                        ForEach(recents) { chatRow($0) }
+                    }
                 }
                 .padding(.horizontal, 10).padding(.bottom, 12)
             }

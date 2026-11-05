@@ -27,19 +27,24 @@ enum AutoPick {
         }
     }
 
+    // When accounts have about the same left, an Enterprise (school or work) account goes first:
+    // it counts this many points more.
+    static let enterpriseBonus = 10.0
+
     // Stay with the current account while it has enough left. Otherwise, among accounts with enough
-    // 5-hour usage left, the one with the most weekly usage left. If none has enough, the one with
-    // the most left at all (still above 0).
+    // 5-hour usage left, the one with the most weekly usage left (Enterprise first when close). If none
+    // has enough, the one with the most left at all (still above 0).
     static func choose(_ accounts: [Account], usage: [String: AIUsage], school: Bool?, current: String?,
                        excluded: Set<String> = []) -> Account? {
         let list = candidates(accounts, usage: usage, school: school, excluded: excluded)
         if let current, let keep = list.first(where: { $0.id == current }), enough(usage[keep.id]) { return keep }
+        func bonus(_ account: Account) -> Double { account.isSchool ? enterpriseBonus : 0 }
         let ready = list.filter { enough(usage[$0.id]) }
-        if let best = ready.max(by: { (weekly(usage[$0.id]), fiveHour(usage[$0.id])) < (weekly(usage[$1.id]), fiveHour(usage[$1.id])) }) {
+        if let best = ready.max(by: { (weekly(usage[$0.id]) + bonus($0), fiveHour(usage[$0.id])) < (weekly(usage[$1.id]) + bonus($1), fiveHour(usage[$1.id])) }) {
             return best
         }
-        return list.filter { min(fiveHour(usage[$0.id]), weekly(usage[$0.id])) > 0 }
-            .max { min(fiveHour(usage[$0.id]), weekly(usage[$0.id])) < min(fiveHour(usage[$1.id]), weekly(usage[$1.id])) }
+        func least(_ account: Account) -> Double { min(fiveHour(usage[account.id]), weekly(usage[account.id])) }
+        return list.filter { least($0) > 0 }.max { least($0) + bonus($0) < least($1) + bonus($1) }
     }
 
     static func describe(_ usage: AIUsage?) -> String {
@@ -61,9 +66,11 @@ extension Discussion {
     }
 
     // The chat's school/personal side decides which accounts may continue it (nil: any account).
+    // A new chat has no side yet: its first answer may come from either (Enterprise first when the usage
+    // left is close), and that account's side becomes the chat's.
     var soloSchool: Bool? {
         guard model.schoolOnlyHandoff else { return nil }
-        return configuration.school ?? false
+        return configuration.school
     }
 
     // Who answers the next message if it were sent now (shown under the message box).
@@ -238,7 +245,7 @@ extension Discussion {
             changeTurn(id, index, save: true) { $0.entries.append(entry) }
         }
 
-        let school: Bool? = model.schoolOnlyHandoff ? (config.school ?? false) : nil
+        let school: Bool? = model.schoolOnlyHandoff ? config.school : nil
         var excluded: Set<String> = []
         var handedOver = false
         var unfinished: (by: String, text: String)?
@@ -314,6 +321,7 @@ extension Discussion {
                 change(id, save: true) { c in
                     var saved = c.configuration ?? config
                     saved.lastSoloAccountID = account.id
+                    if self.model.schoolOnlyHandoff && saved.school == nil { saved.school = account.isSchool }
                     c.configuration = saved
                     guard c.turns.indices.contains(index) else { return }
                     c.turns[index].final = harvest.text

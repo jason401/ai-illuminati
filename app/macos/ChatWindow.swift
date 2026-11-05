@@ -585,7 +585,7 @@ struct ChatView: View {
             }
             if discussion.model.schoolOnlyHandoff {
                 Divider()
-                Picker(L("이 대화", "This chat"), selection: Binding(get: { config.school ?? false },
+                Picker(L("이 대화", "This chat"), selection: Binding(get: { config.school ?? next?.isSchool ?? false },
                                                                 set: { school in discussion.configure { $0.school = school; $0.lastSoloAccountID = nil } })) {
                     Text(L("개인 대화 (개인 계정끼리 이어받기)", "Personal (personal accounts continue)")).tag(false)
                     Text(L("엔터프라이즈 대화 (엔터프라이즈 계정끼리 이어받기)", "Enterprise (Enterprise accounts continue)")).tag(true)
@@ -593,7 +593,7 @@ struct ChatView: View {
             }
         } label: {
             // A menu label keeps a single text view, so the name and usage are one concatenated Text.
-            let name = (config.school == true && discussion.model.schoolOnlyHandoff ? L("엔터프라이즈 · ", "Enterprise · ") : "")
+            let name = ((config.school ?? next?.isSchool) == true && discussion.model.schoolOnlyHandoff ? L("엔터프라이즈 · ", "Enterprise · ") : "")
                 + (next.map { discussion.label($0) } ?? L("쓸 수 있는 계정 없음", "No account available"))
             (Text(config.soloAccountID == nil ? Image(systemName: "sparkles") : Image(systemName: "person.crop.circle"))
              + Text(" " + name).foregroundColor(.primary)

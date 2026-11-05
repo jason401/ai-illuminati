@@ -1071,6 +1071,11 @@ do {
     expect(AutoPick.choose(all, usage: levels, school: false, current: nil)?.id == "solo-p-claude", "nobody has enough: the one with the most left (smaller of the two limits) still answers")
     expect(AutoPick.choose(all, usage: levels, school: true, current: nil)?.id == "solo-s-claude", "school chats: school accounts only (5-hour of the other is under 15%)")
     expect(!AutoPick.candidates(all, usage: levels, school: nil).contains { $0.provider == .gemini }, "Gemini never answers a plain chat")
+    // Close levels: Enterprise first; a clear lead still wins.
+    let close: [String: AIUsage] = ["solo-p-codex": usage(90, 70), "solo-s-codex": usage(90, 63)]
+    expect(AutoPick.choose(all, usage: close, school: nil, current: nil, excluded: ["solo-p-claude", "solo-s-claude"])?.id == "solo-s-codex", "about the same left: the Enterprise account goes first")
+    let apart: [String: AIUsage] = ["solo-p-codex": usage(90, 80), "solo-s-codex": usage(90, 60)]
+    expect(AutoPick.choose(all, usage: apart, school: nil, current: nil, excluded: ["solo-p-claude", "solo-s-claude"])?.id == "solo-p-codex", "clearly more left: the personal account still goes first")
     levels["solo-p-codex"] = usage(0, 0); levels["solo-p-claude"] = usage(50, 50, login: true)
     expect(AutoPick.choose(all, usage: levels, school: false, current: nil) == nil, "signed out or empty accounts are left out")
 
@@ -1099,6 +1104,9 @@ do {
         geminiPrompts.append(prompt)
         return .success("TL;DR: Two videos\n\nFound: lens focusing lecture (youtube.com/watch?v=abc)")
     }
+    // A new chat has no side: its first answer goes to an Enterprise account when the usage left is close.
+    expect(chat.soloNext?.id == "solo-s-claude", "a new chat starts with the Enterprise account that has the most left")
+    chat.configure { $0.school = false }
     chat.draft = "Write the Methods from the shared data"
     chat.send(); waitFor(chat)
     var turn = chat.current.turns[0]
@@ -1399,5 +1407,6 @@ do {
         expect(chat.conversations.first { $0.id == room }?.turns.last?.final == "answer to \(question)", "\(question) answer lands in its own chat")
     }
     expect(!chat.anyRunning && chat.stoppingRooms.isEmpty, "all done")
+    expect(!m.schoolOnlyHandoff || chat.conversations.first { $0.id == first }?.configuration?.school == false, "the first answer sets a new chat's side (personal account here)")
     print("PASS: several chats at once (own worker per message, switch and start chats meanwhile, limit of \(Discussion.maxRunning), answers land in their own chats)")
 }

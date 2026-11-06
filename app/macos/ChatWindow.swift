@@ -1333,12 +1333,16 @@ final class ChatWindow {
 
     func show(discussion: Discussion) {
         if window == nil {
-            let w = NSWindow(contentViewController: NSHostingController(rootView: ChatView(discussion: discussion, model: discussion.model)))
+            let host = NSHostingController(rootView: ChatView(discussion: discussion, model: discussion.model))
+            // Keep content changes from renegotiating window size during a native drag.
+            host.sizingOptions = []
+            let w = NSWindow(contentViewController: host)
             w.title = L("AI Illuminati 채팅", "AI Illuminati Chat")
             // One surface from the title bar down, like the desktop chat apps.
             w.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
             w.titlebarAppearsTransparent = true
             w.titleVisibility = .hidden
+            w.contentMinSize = NSSize(width: 820, height: 520)
             w.setContentSize(NSSize(width: 1040, height: 720))
             w.isReleasedWhenClosed = false
             w.center()

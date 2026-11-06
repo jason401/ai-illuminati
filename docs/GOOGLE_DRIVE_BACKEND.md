@@ -77,3 +77,13 @@ server shuts down if its test parent exits.
 Also run `zsh tools/build_app.sh --stage` and signing checks before committing. Real Google authorization,
 Keychain persistence/ACL behavior, seven-day use, school-admin restrictions, and actual Claude/Codex requests
 against the user's Drive still require an explicitly initiated real-account test after the connection UI is added.
+
+## Known issues (to fix later)
+
+- `ToolHub.listen()`: the accept loop does `if client < 0 { break }`, so one failed `accept` (for example
+  `ECONNABORTED` or `EINTR`) stops the tool socket until the app restarts. The old FaceLink loop used `continue`.
+  Fix: `continue` (optionally with a short sleep on repeated errors). Found in review 2026-11-06; not fixed yet
+  because Younghun asked to record it only.
+- `drive_read` returns up to 60,000 characters per call (as `read_document` does). Claude Code may cut or refuse
+  long MCP results (its MCP output token limit); long Korean text is the likely case. Check with a real long
+  Korean Google Doc and lower the default or page it if needed.

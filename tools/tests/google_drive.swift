@@ -61,7 +61,12 @@ func testGoogleDrive() {
     let drive = DriveLink(auth: loggedIn)
     DriveLink.shared = drive
     drive.enabled = true
-    defer { drive.enabled = true }
+    defer { drive.enabled = true; DriveLink.folders = []; DriveLink.pausedFolders = [] }
+    // The app is the gate: no shared Drive folder means no Drive tools at all.
+    DriveLink.folders = []; DriveLink.pausedFolders = []
+    expect(!drive.active && drive.tools().isEmpty, "connected but no folders: no Drive tools")
+    DriveLink.folders = [DriveFolder(id: "allowed", name: "Allowed")]
+    expect(drive.active && drive.rule().contains("\"Allowed\""), "a shared folder turns the tools on and is named to the model")
     let context = ToolContext(room: UUID(), roots: [WorkspaceRoot(path: root.path, directory: true)])
     func call(_ tool: String, _ args: [String: Any]) -> [String: Any] {
         let result = drive.call(tool, args, context: context)
@@ -81,6 +86,24 @@ func testGoogleDrive() {
     expect((call("drive_read", ["file": "office"])["text"] as? String)?.contains("247 kPa") == true, "downloaded DOCX through MaterialReader")
     expect((call("drive_read", ["file": "download"])["text"] as? String) == "Fixture download", "ordinary text download")
     expect(call("drive_read", ["file": "shortcut"])["id"] as? String == "doc", "Drive shortcut resolution")
+    // Outside the shared folders: refused; the search drops it; the plain list shows the shared folders.
+    expect(drive.call("drive_read", ["file": "outside"], context: context)["isError"] as? Bool == true, "file outside the shared folders refused")
+    expect(drive.call("drive_list", ["folder": "other"], context: context)["isError"] as? Bool == true, "folder outside the shared folders refused")
+    let found = (call("drive_search", ["query": "fixture"])["files"] as? [[String: Any]])?.compactMap { $0["id"] as? String }
+    expect(found == ["doc"], "search keeps only files inside the shared folders")
+    expect((call("drive_list", [:])["files"] as? [[String: Any]])?.compactMap { $0["id"] as? String } == ["allowed"], "list without a folder shows the shared folders")
+    expect(call("drive_list", ["folder": "Allowed"])["files"] != nil, "a shared folder by its name")
+    let farPointer = root.appendingPathComponent("far.gdoc")
+    try! Data(#"{"doc_id":"outside"}"#.utf8).write(to: farPointer)
+    expect(call("drive_read", ["file": farPointer.path])["id"] as? String == "outside", "a pointer in a linked local folder was shared there already")
+    DriveLink.pausedFolders = ["allowed"]
+    expect(!drive.active, "the eye off on the only folder: no Drive tools")
+    DriveLink.pausedFolders = []
+    // The folder picker (the user's own choices): subfolders, a pasted link, the account shown in the app.
+    expect((try? drive.childFolders(of: "root"))?.isEmpty == false, "picker lists folders")
+    expect((try? drive.folder(from: "https://drive.google.com/drive/folders/allowed"))?.id == "allowed", "a pasted folder link")
+    expect((try? drive.folder(from: "doc")) == nil, "a document link is not a folder")
+    expect(drive.accountEmail() == "fixture@example.invalid", "the signed-in account for the sidebar")
     let pointer = root.appendingPathComponent("fixture.gdoc")
     try! Data(#"{"doc_id":"doc","email":"FIXTURE_PRIVATE_EMAIL"}"#.utf8).write(to: pointer)
     expect(call("drive_read", ["file": pointer.path])["id"] as? String == "doc", "linked pointer reads actual document without returning pointer metadata")
@@ -111,7 +134,11 @@ func testGoogleDrive() {
     let revokedStore = MemoryGoogleStore()
     revokedStore.data = try! JSONEncoder().encode(GoogleAuth.Credentials(clientID: "fixture-client", clientSecret: "fixture-secret", refreshToken: "revoked-fixture"))
     let revoked = GoogleAuth(store: revokedStore)
-    do { _ = try revoked.accessToken(); expect(false, "revoked login must fail") } catch { expect(!revoked.connected, "invalid_grant requires reconnect") }
+    do { _ = try revoked.accessToken(); expect(false, "revoked login must fail") } catch { expect(!revoked.connected && revoked.needsReconnect, "invalid_grant requires reconnect") }
+    let again = try! revoked.beginReauthorization { _ in }
+    expect(URLComponents(url: again, resolvingAgainstBaseURL: false)!.queryItems!.contains { $0.name == "client_id" && $0.value == "fixture-client" }, "reconnect reuses the saved client")
+    revoked.cancelAuthorization()
+    expect(!loggedIn.needsReconnect, "a working login needs no reconnect")
 
     // Real MCP stdio bridge -> capability-bound app socket -> fake Google API, without CLI networking.
     let manifestDir = root.appendingPathComponent("drive-manifests")
@@ -173,5 +200,5 @@ func testGoogleDrive() {
     _ = try! auth.beginAuthorization(clientJSON: client) { _ in cancelled.signal() }
     auth.cancelAuthorization()
     expect(cancelled.wait(timeout: .now() + 5) == .success, "sign-in cancellation closes callback")
-    print("PASS: Google Drive backend (PKCE, state, refresh/revoke, read-only search/list/read, named sheet tabs, PDF/DOCX, bounds, pointer scope, real MCP bridge, modes/off, no credentials in results/logs)")
+    print("PASS: Google Drive backend (PKCE, state, refresh/revoke/reconnect, shared Drive folders only, read-only search/list/read, named sheet tabs, PDF/DOCX, bounds, pointer scope, picker folders, real MCP bridge, modes/off, no credentials in results/logs)")
 }

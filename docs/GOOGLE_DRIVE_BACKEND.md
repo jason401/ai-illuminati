@@ -1,9 +1,22 @@
 # Read-only Google Drive backend
 
-Backend implementation only. There is deliberately **no connection button, settings row, file picker or
-browser launch** yet. No Google login is started automatically. Nothing is installed or published to `stable`
-by adding this backend. The installed app cannot connect a Google account through its UI until that work is
-explicitly requested.
+No Google login is ever started automatically.
+
+## UI (added 2026-11-06)
+
+- Chat window sidebar, under Shared folders: a **Google Drive** section (`DriveUI.swift`). `+` connects (an
+  explanation of the one-time Google Cloud steps, then the client JSON file, then the browser) or, once
+  connected, opens the folder picker. States: connecting (cancel), reconnect needed (orange), off, no folders.
+- **Shared Drive folders** (UserDefaults `driveFolders`, `pausedDriveFolders`): rows like Shared folders, with an
+  eye to pause one, double-click opens it in the browser, right-click to remove, reconnect or disconnect. No
+  pencil: read only. The picker browses My Drive and Shared with me, or takes a pasted folder link.
+- **The app is the gate** (`DriveLink.isAllowed`): Google's `drive.readonly` login covers the whole Drive, so every
+  tool call is checked by walking the file's parents up to a shared folder (parents cached 5 minutes). Search
+  results outside are dropped; `drive_list` without a folder lists the shared folders; reads outside are refused.
+  No shared folder (or all paused) means no Drive tools at all. Exception: a `.gdoc`/`.gsheet`/`.gslides` pointer
+  file in the chat's linked local folders, which the user already shared there.
+- Settings → Chat → MCP servers: a `google-drive` row with its state and the on/off switch (connecting and
+  folders stay in the sidebar).
 
 ## Entry points for the future UI
 
@@ -80,10 +93,7 @@ against the user's Drive still require an explicitly initiated real-account test
 
 ## Known issues (to fix later)
 
-- `ToolHub.listen()`: the accept loop does `if client < 0 { break }`, so one failed `accept` (for example
-  `ECONNABORTED` or `EINTR`) stops the tool socket until the app restarts. The old FaceLink loop used `continue`.
-  Fix: `continue` (optionally with a short sleep on repeated errors). Found in review 2026-11-06; not fixed yet
-  because Younghun asked to record it only.
+- Fixed 2026-11-06: one failed `accept` no longer stops the tool socket (`ToolHub.listen()` continues).
 - `drive_read` returns up to 60,000 characters per call (as `read_document` does). Claude Code may cut or refuse
   long MCP results (its MCP output token limit); long Korean text is the likely case. Check with a real long
   Korean Google Doc and lower the default or page it if needed.

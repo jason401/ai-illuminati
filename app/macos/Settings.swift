@@ -667,6 +667,7 @@ struct ChatSettingsTab: View {
 // AI Illuminati is connected in AI Face; which of its tools work is set there.
 private struct MCPSettings: View {
     @ObservedObject var link = FaceLink.shared
+    @ObservedObject var drive = DriveCenter.shared
 
     var body: some View {
         SettingsCard(title: L("MCP 서버", "MCP servers")) {
@@ -680,14 +681,35 @@ private struct MCPSettings: View {
                 .help(L("AI Face: 일반 채팅의 AI가 표정을 바꿔요. 캘린더·메일·폴더 권한은 AI Face 설정에서 정해요.",
                         "AI Face: the AI in plain chat sets the face. Calendar, mail and folder access is set in AI Face."))
             } else {
-                Text(L("없어요. AI Face 설정 → AI에서 AI Illuminati를 연결하면 여기에 보여요.",
-                       "None. Connect AI Illuminati in AI Face (Settings → AI) and it shows here."))
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 10).padding(.vertical, 8)
+                note(L("ai-face: 없어요. AI Face 설정 → AI에서 AI Illuminati를 연결하면 여기에 보여요.",
+                       "ai-face: none. Connect AI Illuminati in AI Face (Settings → AI) and it shows here."))
+            }
+            // Google Drive (read only): connected and its folders chosen in the chat window's sidebar.
+            if drive.connected || drive.needsReconnect {
+                SettingsRow(title: "google-drive") {
+                    Text(drive.needsReconnect ? L("다시 연결 필요", "Reconnect needed")
+                         : !drive.on ? L("꺼짐", "Off")
+                         : drive.folders.isEmpty ? L("연결됨 · 폴더 없음", "Connected · no folders")
+                         : L("읽기 전용 · 폴더 \(drive.folders.count - drive.paused.count)개", "Read only · \(drive.folders.count - drive.paused.count) folders"))
+                        .foregroundStyle(drive.needsReconnect ? .orange : drive.on && !drive.folders.isEmpty ? .green : .secondary)
+                    Spacer()
+                    Toggle("google-drive", isOn: $drive.on).labelsHidden().toggleStyle(.switch)
+                }
+                .help(L("Google 드라이브: 일반 채팅의 AI가 고른 드라이브 폴더만 읽어요. 연결과 폴더는 채팅창 사이드바에서 정해요.",
+                        "Google Drive: the AI in plain chat reads only the chosen Drive folders. Connect and choose folders in the chat window's sidebar."))
+            } else {
+                note(L("google-drive: 연결 안 됨. 채팅창 사이드바의 Google Drive에서 연결해요.",
+                       "google-drive: not connected. Connect it under Google Drive in the chat window's sidebar."))
             }
         }
-        .onAppear { link.refresh() }
+        .onAppear { link.refresh(); drive.refresh() }
+    }
+
+    private func note(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 11)).foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 10).padding(.vertical, 8)
     }
 }
 
@@ -814,4 +836,24 @@ final class SettingsWindow {
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
     }
+}
+
+// A section title in the chat sidebar, with an optional accessory (a + button) on the right.
+struct SidebarHeader<Accessory: View>: View {
+    let title: String
+    let accessory: Accessory
+    init(title: String, @ViewBuilder accessory: () -> Accessory) { self.title = title; self.accessory = accessory() }
+
+    var body: some View {
+        HStack {
+            Text(title).font(.system(size: 11, weight: .medium)).foregroundColor(.secondary)
+            Spacer()
+            accessory
+        }
+        .padding(.horizontal, 10).padding(.top, 16).padding(.bottom, 4)
+    }
+}
+
+extension SidebarHeader where Accessory == EmptyView {
+    init(title: String) { self.init(title: title) { EmptyView() } }
 }

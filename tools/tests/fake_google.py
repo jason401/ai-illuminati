@@ -64,8 +64,10 @@ class H(BaseHTTPRequestHandler):
         if path.endswith('/large-response'): return self.reply(b'', headers={'Content-Length': '999999999'})
         if path == '/drive/files':
             return self.reply({'files': [{'id': 'doc', 'name': 'Fixture Doc', 'mimeType': 'application/vnd.google-apps.document',
-                                         'modifiedTime': '2026-01-01T00:00:00Z', 'webViewLink': 'https://docs.google.com/document/d/doc/edit'}],
+                                         'modifiedTime': '2026-01-01T00:00:00Z', 'webViewLink': 'https://docs.google.com/document/d/doc/edit'},
+                                        {'id': 'outside', 'name': 'Outside Doc', 'mimeType': 'application/vnd.google-apps.document'}],
                                'nextPageToken': 'fixture-next'})
+        if path == '/drive/about': return self.reply({'user': {'emailAddress': 'fixture@example.invalid'}})
         if path.startswith('/sheets/spreadsheets/'):
             if '/values/' in path:
                 return self.reply({'values': [['Second tab', '247']] if "O''Brien/2026" in path else [['Main tab', '386']]})
@@ -84,11 +86,14 @@ class H(BaseHTTPRequestHandler):
                 return self.reply(b'Fixture download')
             mime = {'sheet': 'application/vnd.google-apps.spreadsheet', 'slides': 'application/vnd.google-apps.presentation',
                     'pdf': 'application/pdf', 'office': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                    'folder': 'application/vnd.google-apps.folder', 'download': 'text/plain', 'huge': 'application/pdf',
+                    'folder': 'application/vnd.google-apps.folder', 'allowed': 'application/vnd.google-apps.folder',
+                    'other': 'application/vnd.google-apps.folder', 'download': 'text/plain', 'huge': 'application/pdf',
                     'shortcut': 'application/vnd.google-apps.shortcut'}.get(ident, 'application/vnd.google-apps.document')
             result = {'id': ident, 'name': 'fixture.docx' if ident == 'office' else 'Fixture ' + ident, 'mimeType': mime,
                       'size': '999999999' if ident == 'huge' else '100', 'modifiedTime': '2026-01-01T00:00:00Z'}
             if ident == 'shortcut': result['shortcutDetails'] = {'targetId': 'doc'}
+            # Folder tree: allowed and other sit in My Drive; outside is in other; everything else in allowed.
+            result['parents'] = {'allowed': ['root-real'], 'other': ['root-real'], 'outside': ['other'], 'root-real': []}.get(ident, ['allowed'])
             return self.reply(result)
         self.reply({}, 404)
 

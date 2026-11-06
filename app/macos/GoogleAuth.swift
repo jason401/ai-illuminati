@@ -117,6 +117,18 @@ final class GoogleAuth {
         lock.lock(); defer { lock.unlock() }
         return ((try? credentials())?.refreshToken?.isEmpty == false)
     }
+    // Google refused the saved login (expired or revoked): sign in again with the saved client.
+    var needsReconnect: Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard let saved = try? credentials() else { return false }
+        return saved.refreshToken?.isEmpty != false
+    }
+    func beginReauthorization(completion: @escaping (Result<Void, Error>) -> Void) throws -> URL {
+        let saved: Credentials? = { lock.lock(); defer { lock.unlock() }; return try? credentials() }()
+        guard let saved else { throw GoogleFailure(message: "Choose the Google OAuth client file again.") }
+        let client = try JSONSerialization.data(withJSONObject: ["installed": ["client_id": saved.clientID, "client_secret": saved.clientSecret]])
+        return try beginAuthorization(clientJSON: client, completion: completion)
+    }
     private func credentials() throws -> Credentials? {
         guard let data = try store.load() else { return nil }
         return try JSONDecoder().decode(Credentials.self, from: data)

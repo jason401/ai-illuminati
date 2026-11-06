@@ -60,6 +60,7 @@ struct ChatView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 1) {
                     sharedFolders
+                    DriveSidebarSection().disabled(discussion.importingMaterials)
                     // A new chat with nothing in it yet is not listed (like the desktop apps); it appears once it has a message.
                     let chats = discussion.listedConversations.filter { $0.hasContent && (discussion.sidebarSearch.isEmpty || $0.title.localizedCaseInsensitiveContains(discussion.sidebarSearch)) }
                     let pinned = chats.filter { $0.pinned == true }
@@ -1054,25 +1055,6 @@ private struct SidebarRow: View {
     }
 }
 
-// A small section title in the sidebar, with an optional button on the right.
-private struct SidebarHeader<Accessory: View>: View {
-    let title: String
-    let accessory: Accessory
-    init(title: String, @ViewBuilder accessory: () -> Accessory) { self.title = title; self.accessory = accessory() }
-
-    var body: some View {
-        HStack {
-            Text(title).font(.system(size: 11, weight: .medium)).foregroundColor(.secondary)
-            Spacer()
-            accessory
-        }
-        .padding(.horizontal, 10).padding(.top, 16).padding(.bottom, 4)
-    }
-}
-
-extension SidebarHeader where Accessory == EmptyView {
-    init(title: String) { self.init(title: title) { EmptyView() } }
-}
 
 // A thin line where the chat switched to another mode.
 private struct ModeChangeMarker: View {

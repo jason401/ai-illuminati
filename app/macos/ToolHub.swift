@@ -92,7 +92,7 @@ final class ToolHub {
         Thread.detachNewThread { [weak self] in
             while true {
                 let client = accept(fd, nil, nil)
-                if client < 0 { break }
+                if client < 0 { Thread.sleep(forTimeInterval: 0.05); continue }   // one failed accept must not stop the socket
                 DispatchQueue.global().async { self?.serve(client, legacy: legacy) }
             }
         }

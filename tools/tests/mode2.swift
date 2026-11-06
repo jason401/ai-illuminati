@@ -1535,35 +1535,38 @@ do {
     let port = 18_000 + Int.random(in: 0..<2000)
     let script = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("fake_ollama.py")
     try! """
-    import json, sys
-    from http.server import BaseHTTPRequestHandler, HTTPServer
+    import json, sys, time
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
     class H(BaseHTTPRequestHandler):
         def log_message(self, *a): pass
-        loaded = False
+        loaded = set()
         keep = None
+        most = 0      # the most models in memory at once
         def do_GET(self):
             if self.path == "/api/ps":
-                models = [{"name": "gemma4:e4b", "size": 10_000_000_000, "expires_at": "2099-01-01T00:00:00.000000+00:00"}] if H.loaded else []
+                models = [{"name": n, "size": 10_000_000_000, "expires_at": "2099-01-01T00:00:00.000000+00:00"} for n in sorted(H.loaded)]
                 body = json.dumps({"models": models}).encode()
             elif self.path == "/last":
-                body = json.dumps({"keep": H.keep}).encode()
+                body = json.dumps({"keep": H.keep, "most": H.most}).encode()
             else:
-                body = json.dumps({"models": [{"name": "gemma4:e4b"}]}).encode()
+                body = json.dumps({"models": [{"name": "gemma4:e4b"}, {"name": "gemma4:12b"}]}).encode()
             self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(body)
         def do_POST(self):
             req = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             if self.path == "/api/generate":
-                if req.get("keep_alive") == 0: H.loaded = False
+                if req.get("keep_alive") == 0: H.loaded.discard(req["model"])
                 self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(b"{}"); return
-            H.keep = req.get("keep_alive"); H.loaded = req.get("keep_alive") != 0
+            H.keep = req.get("keep_alive"); H.loaded.add(req["model"]); H.most = max(H.most, len(H.loaded))
             self.send_response(200); self.send_header("Content-Type", "application/x-ndjson"); self.end_headers()
+            if "SLOW" in req["messages"][0]["content"]: time.sleep(0.6)
             if "FAIL" in req["messages"][0]["content"]:
                 self.wfile.write(b'{"error":"model failed"}\\n'); return
-            assert req["model"] == "gemma4:e4b" and req["stream"] and req["options"]["num_ctx"] >= 32768
+            assert req["model"] in ("gemma4:e4b", "gemma4:12b") and req["stream"] and req["options"]["num_ctx"] >= 32768
             for piece in ["Hello ", "from ", "Gemma"]:
                 self.wfile.write(json.dumps({"message": {"role": "assistant", "content": piece}, "done": False}).encode() + b"\\n"); self.wfile.flush()
             self.wfile.write(b'{"message":{"role":"assistant","content":""},"done":true}\\n')
-    HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
+            if req.get("keep_alive") == 0: H.loaded.discard(req["model"])
+    ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
     """.write(to: script, atomically: true, encoding: .utf8)
     let server = Process()
     server.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
@@ -1573,7 +1576,7 @@ do {
     LocalModel.server = URL(string: "http://127.0.0.1:\(port)")!
     var names: [String]?
     for _ in 0..<40 where names == nil { names = LocalModel.installedModels(timeout: 1); if names == nil { Thread.sleep(forTimeInterval: 0.1) } }
-    expect(names.map(LocalModel.hasModel) == true && LocalModel.ensureServer(), "the model is listed and the server is up")
+    expect(names.map { LocalModel.hasModel($0) } == true && LocalModel.ensureServer(), "the model is listed and the server is up")
 
     var streamed: [String] = []
     let lock = NSLock()
@@ -1617,6 +1620,37 @@ do {
     let usage = LocalUsage.read(Account(id: "ollama-local", provider: .ollama, name: "Gemma 4", dir: nil))
     expect(usage.needsLogin == (LocalModel.binary == nil), "no Ollama installed: the entry asks for installing")
 
+    // Two models: only one in memory. Asking the other unloads the first; two chats asking both at once take turns.
+    let e4b = LocalModel.variants[0], big = LocalModel.variants[1]
+    expect(names.map { LocalModel.hasModel($0, big) } == true, "12B listed too")
+    _ = LocalModel.ask(e4b, prompt: "hi", images: [], timeout: 20, cancellation: nil, progress: nil)
+    expect(LocalModel.loadedModels().map(\.title) == [e4b.title], "E4B in memory")
+    _ = LocalModel.ask(big, prompt: "hi", images: [], timeout: 20, cancellation: nil, progress: nil)
+    expect(LocalModel.loadedModels().map(\.title) == [big.title], "asking 12B unloads E4B first")
+    let both = DispatchGroup()
+    var waited = false
+    for v in [e4b, big] {
+        DispatchQueue.global().async(group: both) {
+            _ = LocalModel.ask(v, prompt: "SLOW", images: [], timeout: 20, cancellation: nil) { update in
+                if case .activity = update { lock.lock(); waited = true; lock.unlock() }
+            }
+        }
+    }
+    both.wait()
+    let most = (try? Data(contentsOf: URL(string: "http://127.0.0.1:\(port)/last")!)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }?["most"] as? Int
+    expect(most == 1 && waited, "two chats at once: one waits, never two models in memory")
+    let gemmas = [Account(id: e4b.id, provider: .ollama, name: e4b.title, dir: nil), Account(id: big.id, provider: .ollama, name: big.title, dir: nil)]
+    let pick = AppModel(); pick.accounts = gemmas
+    let picker = Discussion(model: pick)
+    expect(picker.lastResort(usage: [:], excluded: [])?.id == LocalModel.loaded().flatMap { LocalModel.variant(named: $0.name) }?.id, "last resort: the Gemma already in memory")
+    LocalModel.unload()
+    expect(LocalModel.loaded() == nil && picker.lastResort(usage: [:], excluded: [])?.id == e4b.id, "none in memory: the first Gemma (E4B)")
+    picker.configure { $0.mode = 4 }
+    expect(picker.pickTeam().filter { $0.provider == .ollama }.map(\.id) == [e4b.id], "a vote takes one Gemma only")
+    picker.configure { $0.voteSkippedIDs = [e4b.id] }
+    expect(picker.pickTeam().filter { $0.provider == .ollama }.map(\.id) == [big.id], "E4B left out of the vote: 12B votes")
+    picker.configure { $0.mode = 0; $0.voteSkippedIDs = nil }   // the next chat opened here is a plain chat again
+
     let local = Account(id: "ollama-local", provider: .ollama, name: "Gemma 4 (this Mac)", dir: nil)
     let cloud = Account(id: "lm-codex", provider: .codex, name: "ChatGPT", dir: nil, school: false)
     expect(!AutoPick.candidates([cloud, local], usage: [:], school: nil).contains { $0.provider == .ollama }, "Gemma is never picked automatically")
@@ -1639,5 +1673,5 @@ do {
     [{"id":"a","provider":"claude","name":"Claude"},{"id":"b","provider":"future-ai","name":"New"},{"id":"c","provider":"ollama","name":"Gemma"}]
     """
     expect(AccountStore.decode(Data(list.utf8))?.map(\.id) == ["a", "c"], "an unknown kind of AI is skipped, the rest of the list kept")
-    print("PASS: Gemma on this Mac (models, streamed reply, errors, keep-alive, unload now and after the window closes, on/off, not automatic, last resort, account list with unknown entry)")
+    print("PASS: Gemma on this Mac (models, streamed reply, errors, keep-alive, unload now and after the window closes, on/off, not automatic, last resort, account list with unknown entry, E4B and 12B one at a time)")
 }

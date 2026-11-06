@@ -1,12 +1,28 @@
 import Foundation
 
-// Gemma 4 E4B on this Mac, through Ollama (https://ollama.com). No account, key or usage limit: the app talks
+// Gemma 4 on this Mac, through Ollama (https://ollama.com): E4B (fast, light) and 12B (smarter, heavier), each its
+// own entry in Accounts, installed one by one. Only one is ever in memory: answers take turns (one at a time across
+// all chats) and the other model is unloaded before one loads. No account, key or usage limit: the app talks
 // to Ollama on 127.0.0.1:11434 and nothing leaves the Mac. Installed from Settings → Accounts only when the user
 // asks (Terminal shows each step and asks before installing). In plain chat it answers when called with @, and
 // when every cloud account is out of usage; it also votes. It reads linked files through the app (the
 // workspace_reads requests) and cannot change files or search the web.
 enum LocalModel {
-    static let model = "gemma4:e4b"
+    struct Variant: Equatable {
+        let id: String       // the account's id
+        let model: String    // Ollama's name
+        let title: String
+        let downloadGB: Int
+        let memory: String   // while answering
+    }
+    static let variants = [
+        Variant(id: "ollama-local", model: "gemma4:e4b", title: "Gemma 4 E4B", downloadGB: 10, memory: "7–8"),
+        Variant(id: "ollama-12b", model: "gemma4:12b", title: "Gemma 4 12B", downloadGB: 8, memory: "10–11"),
+    ]
+    static func variant(_ account: Account) -> Variant { variants.first { $0.id == account.id } ?? variants[0] }
+    static func variant(named name: String) -> Variant? {
+        variants.first { name == $0.model || name.hasPrefix($0.model + "-") }
+    }
     static var server = URL(string: "http://127.0.0.1:11434")!   // tests point this at a fake server
     static let minMemoryGB = 16
     static let minDiskGB = 15
@@ -23,39 +39,52 @@ enum LocalModel {
         minutes == 0 ? L("답 끝나면 바로", "Right after each reply") : L("\(minutes)분", "\(minutes) min")
     }
 
-    struct Loaded { var bytes: Int64; var until: Date? }
+    struct Loaded { var name: String; var title: String; var bytes: Int64; var until: Date? }
 
-    // Whether Gemma is in memory now (GET /api/ps), how big, and until when. nil when not loaded or Ollama is off.
-    static func loaded(timeout: TimeInterval = 0.7) -> Loaded? {
+    // The Gemma in memory now (one at most), how big, and until when. nil when none or Ollama is off.
+    static func loaded(timeout: TimeInterval = 0.7) -> Loaded? { loadedModels(timeout: timeout).first }
+
+    // Every Gemma Ollama has in memory (GET /api/ps).
+    static func loadedModels(timeout: TimeInterval = 0.7) -> [Loaded] {
         var request = URLRequest(url: server.appendingPathComponent("api/ps"))
         request.timeoutInterval = timeout
         let done = DispatchSemaphore(value: 0)
-        var found: Loaded?
+        var found: [Loaded] = []
         URLSession.shared.dataTask(with: request) { data, _, _ in
             defer { done.signal() }
             guard let data, let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let models = json["models"] as? [[String: Any]],
-                  let entry = models.first(where: { ($0["name"] as? String).map { $0 == model || $0.hasPrefix(model + "-") } ?? false }) else { return }
+                  let models = json["models"] as? [[String: Any]] else { return }
             let formatter = ISO8601DateFormatter()
             formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-            let until = (entry["expires_at"] as? String).flatMap { formatter.date(from: $0) ?? ISO8601DateFormatter().date(from: $0) }
-            found = Loaded(bytes: (entry["size"] as? NSNumber)?.int64Value ?? 0, until: until)
+            for entry in models {
+                guard let name = entry["name"] as? String, let variant = variant(named: name) else { continue }
+                let until = (entry["expires_at"] as? String).flatMap { formatter.date(from: $0) ?? ISO8601DateFormatter().date(from: $0) }
+                found.append(Loaded(name: name, title: variant.title, bytes: (entry["size"] as? NSNumber)?.int64Value ?? 0, until: until))
+            }
         }.resume()
         _ = done.wait(timeout: .now() + timeout + 0.5)
         return found
     }
 
-    // Takes Gemma out of memory now (Ollama keeps running, about 50 MB). Nothing happens when it is not loaded.
-    static func unload() {
-        guard loaded() != nil else { return }
-        var request = URLRequest(url: server.appendingPathComponent("api/generate"))
-        request.httpMethod = "POST"
-        request.timeoutInterval = 10
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try? JSONSerialization.data(withJSONObject: ["model": model, "keep_alive": 0])
-        let done = DispatchSemaphore(value: 0)
-        URLSession.shared.dataTask(with: request) { _, _, _ in done.signal() }.resume()
-        _ = done.wait(timeout: .now() + 11)
+    // Takes Gemma out of memory now (Ollama keeps running, about 50 MB), every model but `keep`, and waits up to
+    // 10 s until Ollama has let them go. Nothing happens when none is loaded.
+    static func unload(except keep: String? = nil) {
+        let others = loadedModels().filter { variant(named: $0.name)?.model != keep }
+        guard !others.isEmpty else { return }
+        for entry in others {
+            var request = URLRequest(url: server.appendingPathComponent("api/generate"))
+            request.httpMethod = "POST"
+            request.timeoutInterval = 10
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try? JSONSerialization.data(withJSONObject: ["model": entry.name, "keep_alive": 0])
+            let done = DispatchSemaphore(value: 0)
+            URLSession.shared.dataTask(with: request) { _, _, _ in done.signal() }.resume()
+            _ = done.wait(timeout: .now() + 11)
+        }
+        let deadline = Date().addingTimeInterval(10)
+        while Date() < deadline && loadedModels().contains(where: { variant(named: $0.name)?.model != keep }) {
+            Thread.sleep(forTimeInterval: 0.2)
+        }
     }
 
     // The chat window closed: unload once no chat is answering any more (an answer under way finishes first),
@@ -109,7 +138,9 @@ enum LocalModel {
         return names
     }
 
-    static func hasModel(_ names: [String]) -> Bool { names.contains { $0 == model || $0.hasPrefix(model + "-") } }
+    static func hasModel(_ names: [String], _ variant: Variant = variants[0]) -> Bool {
+        names.contains { $0 == variant.model || $0.hasPrefix(variant.model + "-") }
+    }
 
     // Starts Ollama when it is installed but not running, and waits up to 15 s for it.
     static func ensureServer() -> Bool {
@@ -118,6 +149,8 @@ enum LocalModel {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: binary)
         process.arguments = ["serve"]
+        // Ollama itself also keeps only one model in memory.
+        process.environment = ProcessInfo.processInfo.environment.merging(["OLLAMA_MAX_LOADED_MODELS": "1"]) { $1 }
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
@@ -130,10 +163,10 @@ enum LocalModel {
     }
 
     // Terminal shows each step: install Ollama with Homebrew (asks y/n first) or open its download page,
-    // start it, then download the model (about 10 GB) with Ollama's own progress bar.
-    static func install() {
-        Login.openInTerminal(name: L("Gemma 4 설치", "Install Gemma 4"), exports: "", script: """
-        echo "\(L("Gemma 4 E4B를 이 Mac에 설치해요 (Ollama 사용, 약 10GB).", "Installs Gemma 4 E4B on this Mac (with Ollama, about 10 GB)."))"
+    // start it, then download the model with Ollama's own progress bar.
+    static func install(_ variant: Variant = variants[0]) {
+        Login.openInTerminal(name: L("\(variant.title) 설치", "Install \(variant.title)"), exports: "", script: """
+        echo "\(L("\(variant.title)를 이 Mac에 설치해요 (Ollama 사용, 약 \(variant.downloadGB)GB).", "Installs \(variant.title) on this Mac (with Ollama, about \(variant.downloadGB) GB)."))"
         echo
         OLLAMA=""
         for p in /opt/homebrew/bin/ollama /usr/local/bin/ollama /Applications/Ollama.app/Contents/Resources/ollama; do
@@ -155,18 +188,21 @@ enum LocalModel {
         fi
         if ! curl -s http://127.0.0.1:11434/api/version >/dev/null; then
           echo "\(L("Ollama를 켜는 중…", "Starting Ollama…"))"
-          ("$OLLAMA" serve >/dev/null 2>&1 &)
+          (OLLAMA_MAX_LOADED_MODELS=1 "$OLLAMA" serve >/dev/null 2>&1 &)
           for i in {1..30}; do curl -s http://127.0.0.1:11434/api/version >/dev/null && break; sleep 0.5; done
         fi
         echo "\(L("모델 받는 중 (Gemma 이용 약관: https://ai.google.dev/gemma/terms)", "Downloading the model (Gemma terms: https://ai.google.dev/gemma/terms)"))"
-        "$OLLAMA" pull \(model) || { echo "\(L("받기 실패", "Download failed"))"; read; exit 1; }
+        "$OLLAMA" pull \(variant.model) || { echo "\(L("받기 실패", "Download failed"))"; read; exit 1; }
         echo
-        read "?\(L("끝났어요. AI Illuminati에서 @Gemma로 불러 보세요. 엔터를 누르면 창이 닫혀요.", "Done. Call it with @Gemma in AI Illuminati. Press Enter to close this window."))"
+        read "?\(L("끝났어요. AI Illuminati에서 @\(variant.title)로 불러 보세요. 엔터를 누르면 창이 닫혀요.", "Done. Call it with @\(variant.title) in AI Illuminati. Press Enter to close this window."))"
         """)
     }
 
+    // One answer at a time across every chat, so two models never sit in memory together.
+    private static let gate = DispatchSemaphore(value: 1)
+
     // One reply from POST /api/chat, streamed: each line carries the next piece of text.
-    static func ask(prompt: String, images: [URL], timeout: TimeInterval, cancellation: DebateCancellation?,
+    static func ask(_ variant: Variant = variants[0], prompt: String, images: [URL], timeout: TimeInterval, cancellation: DebateCancellation?,
                     progress: ((AnswerProgress) -> Void)?) -> Result<String, Answerer.Failure> {
         guard enabled else {
             return .failure(.failed(L("Gemma가 꺼져 있어요. 메뉴바에서 켤 수 있어요.", "Gemma is turned off. Turn it on from the menu bar.")))
@@ -175,10 +211,20 @@ enum LocalModel {
             return .failure(.failed(binary == nil ? L("Ollama가 설치돼 있지 않아요. 설정 → 계정에서 Gemma를 설치하세요.", "Ollama is not installed. Install Gemma in Settings → Accounts.")
                                     : L("Ollama를 켜지 못했어요.", "Could not start Ollama.")))
         }
+        var waiting = false
+        while gate.wait(timeout: .now() + 0.2) == .timedOut {
+            if cancellation?.isCancelled == true { return .failure(.failed("Cancelled")) }
+            if !waiting {
+                waiting = true
+                progress?(.activity(L("다른 대화의 Gemma 답이 끝나길 기다리는 중", "Waiting for Gemma to finish another chat's reply")))
+            }
+        }
+        defer { gate.signal() }
+        unload(except: variant.model)   // the other model leaves memory before this one loads
         var message: [String: Any] = ["role": "user", "content": prompt]
         let pictures = images.compactMap { try? Data(contentsOf: $0).base64EncodedString() }
         if !pictures.isEmpty { message["images"] = pictures }
-        let body: [String: Any] = ["model": model, "messages": [message], "stream": true,
+        let body: [String: Any] = ["model": variant.model, "messages": [message], "stream": true,
                                    "options": ["num_ctx": context], "keep_alive": keepAlive == 0 ? 0 as Any : "\(keepAlive)m" as Any]
         var request = URLRequest(url: server.appendingPathComponent("api/chat"))
         request.httpMethod = "POST"
@@ -246,7 +292,8 @@ final class LocalStream: NSObject, URLSessionDataDelegate {
 enum LocalUsage {
     static func read(_ account: Account) -> AIUsage {
         var result = AIUsage(name: account.name, account: account)
-        result.detail = L("내 Mac · ", "This Mac · ") + LocalModel.model
+        let variant = LocalModel.variant(account)
+        result.detail = L("내 Mac · ", "This Mac · ") + variant.model
         guard LocalModel.enabled else {
             result.needsLogin = true
             result.note = L("꺼 둠 (메뉴바에서 켜기)", "Turned off (turn on from the menu bar)")
@@ -258,7 +305,7 @@ enum LocalUsage {
             return result
         }
         if let names = LocalModel.installedModels() {
-            guard LocalModel.hasModel(names) else {
+            guard LocalModel.hasModel(names, variant) else {
                 result.needsLogin = true
                 result.note = L("모델을 받는 중이거나 없어요", "Model not downloaded yet")
                 return result

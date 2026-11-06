@@ -14,7 +14,7 @@ enum Login {
         case .claude: claude(account)
         case .codex: codex(account)
         case .gemini: gemini()
-        case .ollama: LocalModel.install()
+        case .ollama: LocalModel.install(LocalModel.variant(account))
         }
     }
 

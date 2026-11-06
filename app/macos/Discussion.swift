@@ -116,7 +116,7 @@ enum Answerer {
         let binary: String?
         var arguments: [String]
         var inputData: Data?
-        if account.provider == .ollama { return LocalModel.ask(prompt: prompt, images: images, timeout: timeout, cancellation: cancellation, progress: progress) }
+        if account.provider == .ollama { return LocalModel.ask(LocalModel.variant(account), prompt: prompt, images: images, timeout: timeout, cancellation: cancellation, progress: progress) }
         if account.provider == .gemini && prompt.utf8.count > 180000 { return .failure(.failed("Gemini input is too large for this CLI. Use a smaller task or Claude/ChatGPT.")) }
         // Gemini reads pictures as files: copy them into a folder for this call and name them in the prompt.
         var geminiPictures: URL?
@@ -974,7 +974,7 @@ final class Discussion: ObservableObject {
     }
 
     // Per AI, the logged-in account with the most usage left (accounts at 0% are skipped).
-    private func pickTeam() -> [Account] {
+    func pickTeam() -> [Account] {
         var providers: [Account.Provider] = []
         if useClaude { providers.append(.claude) }
         if useCodex { providers.append(.codex) }
@@ -986,10 +986,13 @@ final class Discussion: ObservableObject {
         // Vote: every account votes (personal and school ones too), except the ones turned off.
         if Self.modernModes && configuration.mode == 4 {
             let skipped = configuration.voteSkippedIDs ?? []
-            return model.accounts.filter { account in
+            let voters = model.accounts.filter { account in
                 !skipped.contains(account.id) && (account.provider != .ollama || model.localEnabled)
                 && model.latestUsage[account.id]?.needsLogin != true && (model.latestUsage[account.id]?.leftNow ?? 50) > 0
             }
+            // One Gemma at most (only one fits in memory): the first one not turned off for this vote.
+            let gemma = voters.first { $0.provider == .ollama }
+            return voters.filter { $0.provider != .ollama || $0.id == gemma?.id }
         }
         if Self.modernModes && configuration.mode == 3 {
             return model.accounts.filter { account in

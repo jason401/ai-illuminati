@@ -169,6 +169,13 @@ extension Discussion {
         }
     }
 
+    // Gemma on this Mac when every cloud account is out: the one already in memory, else the first in the list.
+    func lastResort(usage: [String: AIUsage], excluded: Set<String>) -> Account? {
+        let ready = model.accounts.filter { $0.provider == .ollama && model.localEnabled && !excluded.contains($0.id) && usage[$0.id]?.needsLogin != true }
+        guard ready.count > 1, let inMemory = LocalModel.loaded().flatMap({ LocalModel.variant(named: $0.name) }) else { return ready.first }
+        return ready.first { LocalModel.variant($0) == inMemory } ?? ready.first
+    }
+
     // The @ list: every account (Gemini too: it only never answers automatically), matching what was typed
     // after @ by name or by the AI's name in English or Korean. At most 9, numbered 1–9.
     func mentionCandidates() -> [Account] {
@@ -348,7 +355,7 @@ extension Discussion {
                 account = chosen
             } else if let chosen = AutoPick.choose(model.accounts, usage: usage, school: school, current: last, excluded: excluded) {
                 account = chosen
-            } else if let local = model.accounts.first(where: { $0.provider == .ollama && self.model.localEnabled && !excluded.contains($0.id) && usage[$0.id]?.needsLogin != true }) {
+            } else if let local = lastResort(usage: usage, excluded: excluded) {
                 // Every cloud account is out: Gemma on this Mac answers (its data never leaves the Mac,
                 // so it may continue personal and Enterprise chats alike).
                 account = local

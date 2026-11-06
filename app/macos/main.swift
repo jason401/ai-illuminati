@@ -311,7 +311,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if let loaded = localLoaded {
                 let size = String(format: "%.1f", Double(loaded.bytes) / 1_073_741_824)
                 let minutes = loaded.until.map { max(0, Int(($0.timeIntervalSinceNow / 60).rounded(.up))) }
-                menu.addItem(info(L("메모리 \(size)GB 사용 중", "Using \(size) GB of memory") + (minutes.map { L(" · \($0)분 뒤 내려감", " · unloads in \($0) min") } ?? "")))
+                menu.addItem(info(loaded.title + L(" · 메모리 \(size)GB 사용 중", " · using \(size) GB of memory") + (minutes.map { L(" · \($0)분 뒤 내려감", " · unloads in \($0) min") } ?? "")))
                 menu.addItem(action(L("Gemma 지금 내리기", "Unload Gemma Now"), #selector(unloadLocal)))
             }
         }

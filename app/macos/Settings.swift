@@ -173,7 +173,13 @@ final class AppModel: ObservableObject {
 
     init() {
         language = AppLanguage.current
-        accounts = AccountStore.load()
+        var loaded = AccountStore.load()
+        // The first Gemma entry was named before there were two models: name its model.
+        if let i = loaded.firstIndex(where: { $0.id == LocalModel.variants[0].id && ["Gemma 4 (내 Mac)", "Gemma 4 (this Mac)"].contains($0.name) }) {
+            loaded[i].name = L("\(LocalModel.variants[0].title) (내 Mac)", "\(LocalModel.variants[0].title) (this Mac)")
+            AccountStore.save(loaded)
+        }
+        accounts = loaded
         showPercent = UserDefaults.standard.bool(forKey: "showPercent")
         // The legacy show-percent option maps to "mark + %"; otherwise default to "mark + bars".
         menuBarStyle = UserDefaults.standard.string(forKey: "menuBarStyle").flatMap(MenuBarStyle.init(rawValue:))
@@ -199,7 +205,7 @@ final class AppModel: ObservableObject {
 
     // New entry with a default name (renamed in Settings), then that tool's login opens in Terminal.
     func add(_ provider: Account.Provider) {
-        if provider == .ollama { return addLocal() }
+        if provider == .ollama { return addLocal(LocalModel.variants[0]) }
         let name: String
         if provider == .gemini {
             name = "Gemini"
@@ -213,9 +219,10 @@ final class AppModel: ObservableObject {
     }
 
     var hasLocal: Bool { accounts.contains { $0.provider == .ollama } }
+    func hasLocal(_ variant: LocalModel.Variant) -> Bool { accounts.contains { $0.id == variant.id } }
 
     // Gemma 4 on this Mac: check the Mac, then add the entry and open the installer in Terminal.
-    func addLocal() {
+    func addLocal(_ variant: LocalModel.Variant) {
         NSApp.activate(ignoringOtherApps: true)
         if let why = LocalModel.unsuitable() {
             let alert = NSAlert()
@@ -225,14 +232,16 @@ final class AppModel: ObservableObject {
             return
         }
         let alert = NSAlert()
-        alert.messageText = L("Gemma 4 E4B를 이 Mac에 설치할까요?", "Install Gemma 4 E4B on this Mac?")
-        alert.informativeText = L("Ollama(무료)로 모델 약 10GB를 받아요. 터미널에서 단계마다 확인해요. 답할 때 메모리를 7~8GB 써요. 인터넷 없이 이 Mac 안에서만 돌아가고, 사용량 한도가 없어요. @Gemma로 부르거나, 모든 클라우드 계정이 한도에 걸렸을 때 답해요.",
-                                  "Uses Ollama (free) to download about 10 GB; Terminal asks at each step. Uses 7–8 GB of memory while answering. Runs only on this Mac, without the internet or usage limits. It answers when called with @Gemma, or when every cloud account is out of usage.")
+        alert.messageText = L("\(variant.title)를 이 Mac에 설치할까요?", "Install \(variant.title) on this Mac?")
+        alert.informativeText = L("Ollama(무료)로 모델 약 \(variant.downloadGB)GB를 받아요. 터미널에서 단계마다 확인해요. 답할 때 메모리를 \(variant.memory)GB 써요. 인터넷 없이 이 Mac 안에서만 돌아가고, 사용량 한도가 없어요. @로 부르거나, 모든 클라우드 계정이 한도에 걸렸을 때 답해요. Gemma를 둘 다 받아도 메모리에는 한 번에 하나만 올라가요.",
+                                  "Uses Ollama (free) to download about \(variant.downloadGB) GB; Terminal asks at each step. Uses \(variant.memory) GB of memory while answering. Runs only on this Mac, without the internet or usage limits. It answers when called with @, or when every cloud account is out of usage. With both Gemma models installed, only one is in memory at a time.")
         alert.addButton(withTitle: L("설치", "Install"))
         alert.addButton(withTitle: L("취소", "Cancel"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-        if !hasLocal { accounts.append(Account(id: "ollama-local", provider: .ollama, name: L("Gemma 4 (내 Mac)", "Gemma 4 (this Mac)"), dir: nil)) }
-        LocalModel.install()
+        if !hasLocal(variant) {
+            accounts.append(Account(id: variant.id, provider: .ollama, name: L("\(variant.title) (내 Mac)", "\(variant.title) (this Mac)"), dir: nil))
+        }
+        LocalModel.install(variant)
     }
 
     func login(_ account: Account) {
@@ -590,7 +599,10 @@ struct AccountsSettingsTab: View {
                     Button(L("ChatGPT 계정 추가", "Add ChatGPT")) { model.add(.codex) }
                     Button(L("Gemini 추가", "Add Gemini")) { model.add(.gemini) }.disabled(model.hasGemini)
                     Divider()
-                    Button(L("Gemma 4 (내 Mac) 설치…", "Install Gemma 4 (this Mac)…")) { model.add(.ollama) }.disabled(model.hasLocal)
+                    ForEach(LocalModel.variants, id: \.id) { variant in
+                        Button(L("\(variant.title) (내 Mac) 설치…", "Install \(variant.title) (this Mac)…")) { model.addLocal(variant) }
+                            .disabled(model.hasLocal(variant))
+                    }
                 } label: {
                     Label(L("계정 추가", "Add account"), systemImage: "plus")
                 }.fixedSize()

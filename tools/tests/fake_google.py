@@ -39,7 +39,14 @@ class H(BaseHTTPRequestHandler):
     def do_POST(self):
         raw = self.rfile.read(int(self.headers['Content-Length'])).decode()
         path = urlsplit(self.path).path
+        if path.startswith('/slides/presentations/'):
+            if not path.endswith(':batchUpdate') or urlsplit(self.path).query: return self.reply({}, 404)
+            body = json.loads(raw)
+            H.records.append({'path': path, 'body': body})
+            if body['writeControl']['requiredRevisionId'] != 'slides-revision-1': return self.reply({}, 400)
+            return self.reply({'replies': [{} for _ in body['requests']], 'writeControl': {'requiredRevisionId': 'slides-revision-2'}})
         if path.startswith('/docs/documents/'):
+            if not path.endswith(':batchUpdate') or urlsplit(self.path).query: return self.reply({}, 404)
             body = json.loads(raw)
             H.records.append({'path': path, 'body': body})
             if body['writeControl']['requiredRevisionId'] != 'revision-1': return self.reply({}, 400)
@@ -59,10 +66,21 @@ class H(BaseHTTPRequestHandler):
                   'scope': 'https://www.googleapis.com/auth/drive' if fields.get('code') == ['write-code'] or fields.get('refresh_token') == ['write-refresh'] else 'https://www.googleapis.com/auth/drive.readonly'}
         if fields.get('grant_type') == ['authorization_code']: result['refresh_token'] = 'write-refresh' if fields.get('code') == ['write-code'] else 'fixture-refresh'
         self.reply(result)
+    def do_PATCH(self):
+        body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+        path = urlsplit(self.path).path
+        H.records.append({'path': path, 'method': 'PATCH', 'body': body})
+        if path.startswith('/drive/files/') and body == {'trashed': True}:
+            return self.reply({'id': path.split('/')[-1], 'trashed': True})
+        self.reply({}, 400)
     def do_GET(self):
         parsed = urlsplit(self.path)
         path, query = unquote(parsed.path), parse_qs(parsed.query)
         if path == '/records': return self.reply(H.records)
+        if path.startswith('/slides/presentations/'):
+            return self.reply({'presentationId': 'slides', 'title': 'Fixture Slides', 'revisionId': 'slides-revision-1',
+                               'pageSize': {'width': {'magnitude': 9144000, 'unit': 'EMU'}, 'height': {'magnitude': 5143500, 'unit': 'EMU'}},
+                               'slides': [{'objectId': 'page-one', 'pageElements': [{'objectId': 'shape-one', 'shape': {'text': {'textElements': [{'textRun': {'content': 'Fixture title'}}]}}}]}, {'objectId': 'page-two', 'pageElements': []}]})
         if path.startswith('/docs/documents/'):
             return self.reply({'revisionId': 'revision-1'})
         if path == '/counts': return self.reply(H.counts)

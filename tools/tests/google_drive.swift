@@ -270,9 +270,9 @@ func testGoogleDrive() {
     auth.cancelAuthorization()
     expect(cancelled.wait(timeout: .now() + 5) == .success, "sign-in cancellation closes callback")
     // Write access is opt-in twice: a Google grant and an explicit folder rule.
-    let oldDocs = DriveLink.docsAPI, oldUpload = DriveLink.uploadAPI
-    DriveLink.docsAPI = base.appendingPathComponent("docs"); DriveLink.uploadAPI = base.appendingPathComponent("upload")
-    defer { DriveLink.docsAPI = oldDocs; DriveLink.uploadAPI = oldUpload; DriveLink.writeRules = [:] }
+    let oldDocs = DriveLink.docsAPI, oldUpload = DriveLink.uploadAPI, oldSlides = DriveLink.slidesAPI
+    DriveLink.docsAPI = base.appendingPathComponent("docs"); DriveLink.uploadAPI = base.appendingPathComponent("upload"); DriveLink.slidesAPI = base.appendingPathComponent("slides")
+    defer { DriveLink.docsAPI = oldDocs; DriveLink.uploadAPI = oldUpload; DriveLink.slidesAPI = oldSlides; DriveLink.writeRules = [:] }
     let writeStore = MemoryGoogleStore(), writeAuth = GoogleAuth(store: writeStore), presenter = FakeGooglePresenter()
     let writeDone = DispatchSemaphore(value: 0)
     var writeLogin = false
@@ -299,6 +299,41 @@ func testGoogleDrive() {
     expect(writer.call("drive_edit_doc", edit, context: context)["isError"] as? Bool == false, "revision-bound Doc edit succeeds")
     var stale = edit; stale["revision"] = "old-revision"
     expect(writer.call("drive_edit_doc", stale, context: context)["isError"] as? Bool == true, "stale revision rejected without blind retry")
+    func slideCall(_ name: String, _ arguments: [String: Any]) -> [String: Any] {
+        let result = writer.call(name, arguments, context: context)
+        expect(result["isError"] as? Bool == false, "Slides tool succeeds: " + name)
+        let content = (result["content"] as! [[String: Any]])[0]["text"] as! String
+        return try! JSONSerialization.jsonObject(with: Data(content.utf8)) as! [String: Any]
+    }
+    let structured = slideCall("drive_slides_get", ["file": "slides", "start": 1, "limit": 1])
+    expect(structured["revision"] as? String == "slides-revision-1" && structured["slideCount"] as? Int == 2 && (structured["slides"] as? [[String: Any]])?.first?["objectId"] as? String == "page-two", "Slides structure paginates with revision and stable IDs")
+    expect(writer.call("drive_slides_get", ["file": "outside"], context: context)["isError"] as? Bool == true, "Slides structure cannot bypass folder gate")
+    _ = slideCall("drive_create", ["folder": "allowed", "name": "New slides", "kind": "slides"])
+    expect(writer.call("drive_create", ["folder": "allowed", "name": "New slides", "kind": "slides", "text": "not imported"], context: context)["isError"] as? Bool == true, "Slides creation does not silently drop supplied text")
+    let slideEdit: [String: Any] = ["file": "slides", "action": "replace_text", "old": "Fixture", "new": "Edited", "slide": "page-one", "revision": "slides-revision-1"]
+    _ = slideCall("drive_edit_slides", slideEdit)
+    _ = slideCall("drive_edit_slides", ["file": "slides", "action": "add_slide", "title": "New title", "text": "New body", "index": 1, "revision": "slides-revision-1"])
+    _ = slideCall("drive_edit_slides", ["file": "slides", "action": "delete_slide", "slide": "page-two", "revision": "slides-revision-1"])
+    var wrongRevision = slideEdit; wrongRevision["revision"] = "old-revision"
+    expect(writer.call("drive_edit_slides", wrongRevision, context: context)["isError"] as? Bool == true, "Slides edit rejects changed revision")
+    var wrongSlide = slideEdit; wrongSlide["slide"] = "unrelated-page"
+    expect(writer.call("drive_edit_slides", wrongSlide, context: context)["isError"] as? Bool == true, "Slides edits reject page IDs outside the presentation")
+    expect(writer.call("drive_edit_slides", ["file": "nested-doc", "action": "delete_slide", "slide": "page-one", "revision": "slides-revision-1"], context: context)["isError"] as? Bool == true, "read-only child blocks Slides mutation")
+    expect(writer.call("drive_trash", ["file": "allowed", "confirm_name": "Fixture allowed"], context: context)["isError"] as? Bool == true, "folder trash is not offered")
+    expect(writer.call("drive_trash", ["file": "doc", "confirm_name": "Wrong name"], context: context)["isError"] as? Bool == true, "trash requires current exact filename")
+    expect(writer.call("drive_trash", ["file": "outside", "confirm_name": "Fixture outside"], context: context)["isError"] as? Bool == true, "trash outside writable folder refused")
+    _ = slideCall("drive_trash", ["file": "doc", "confirm_name": "Fixture doc"])
+    _ = slideCall("drive_trash", ["file": "slides", "confirm_name": "Fixture slides"])
+    let mutationRecords = try! JSONSerialization.jsonObject(with: GoogleHTTP.send(base.appendingPathComponent("records")).data) as! [[String: Any]]
+    let batches = mutationRecords.filter { $0["path"] as? String == "/slides/presentations/slides:batchUpdate" }
+    expect(batches.count == 3, "failed Slides preconditions never send mutation requests")
+    let replace = ((batches[0]["body"] as! [String: Any])["requests"] as! [[String: Any]])[0]["replaceAllText"] as! [String: Any]
+    expect(replace["pageObjectIds"] as? [String] == ["page-one"], "text replacement targets only requested page")
+    let creation = (batches[1]["body"] as! [String: Any])["requests"] as! [[String: Any]]
+    expect(creation.count == 7 && creation[0]["createSlide"] != nil, "new page includes two text boxes, content and text styling")
+    let trashed = mutationRecords.filter { $0["method"] as? String == "PATCH" }
+    expect(trashed.count == 2 && trashed.allSatisfy { ($0["body"] as? [String: Bool]) == ["trashed": true] }, "deletion only sets trash, never permanently deletes")
+    print("PASS: Slides structure/create/text/page edits, revision conflicts, scoped trash and invalid-target protection")
     DriveLink.writeRules["child"] = true
     expect(try! writer.isWritable("nested-doc"), "explicit writable child override works")
     DriveLink.pausedFolders = ["child"]

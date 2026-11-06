@@ -194,7 +194,7 @@ final class DriveCenter: ObservableObject {
         if !allowed { writeRules[folder.id] = false; return }
         let alert = NSAlert()
         alert.messageText = L("이 폴더에 쓰기를 허용할까요?", "Allow writing in this folder?")
-        alert.informativeText = L("이 폴더와 하위 폴더에서 AI가 파일을 생성하고 Google Doc 텍스트를 수정할 수 있어요. 하위 폴더에서 읽기 전용으로 다시 제한할 수 있어요. Google 추가 동의는 계정 전체 Drive의 수정·삭제 권한을 포함하지만 앱은 허용한 폴더의 생성·Doc 수정만 제공합니다. Google Cloud에 Drive 쓰기 범위를 추가하고 Google Docs API도 켜야 해요.", "The AI may create files and edit Google Doc text in this folder and descendants. A subfolder can override this to read only. Google consent includes account-wide Drive editing/deletion, but the app offers only creation and Doc edits in permitted folders. The app owner must add the Drive write scope and enable Google Docs API in Google Cloud.")
+        alert.informativeText = L("이 폴더와 하위 폴더에서 AI가 파일을 생성하고 Docs/Slides를 수정하거나 휴지통으로 보낼 수 있어요. Slides 페이지도 추가·삭제할 수 있어요. 하위 폴더에서 읽기 전용으로 다시 제한할 수 있어요. Google 추가 동의는 계정 전체 Drive의 수정·삭제 권한을 포함하지만 앱은 허용한 폴더의 생성·Docs/Slides 편집·파일 휴지통 이동만 제공합니다. Google Cloud에 Drive 쓰기 범위를 추가하고 Google Docs API와 Google Slides API도 켜야 해요.", "The AI may create files, edit Docs/Slides and move them to trash in this folder and descendants. A subfolder can override this to read only. Google consent includes account-wide Drive editing/deletion, but the app offers creation, Docs/Slides edits and file trash in permitted folders. The app owner must add the Drive write scope and enable Google Docs API and Google Slides API in Google Cloud.")
         alert.addButton(withTitle: L("허용", "Allow")); alert.addButton(withTitle: L("취소", "Cancel"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         writeRules[folder.id] = true

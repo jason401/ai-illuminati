@@ -9,7 +9,7 @@ No Google login is ever started automatically.
   connected, opens the folder picker. States: connecting (cancel), reconnect needed (orange), off, no folders.
 - **Shared Drive folders** (UserDefaults `driveFolders`, `pausedDriveFolders`): rows like Shared folders, with an
   eye to pause one, double-click opens it in the browser, right-click to remove, reconnect or disconnect. No
-  pencil: read only. The picker browses My Drive and Shared with me, or takes a pasted folder link.
+  Pencil menu: inherited/read-only/write permission. The picker browses My Drive and Shared with me, or takes a pasted folder link.
 - **The app is the gate** (`DriveLink.isAllowed`): Google's `drive.readonly` login covers the whole Drive, so every
   tool call is checked by walking the file's parents up to a shared folder (fresh permission metadata). Search
   results outside are dropped; `drive_list` without a folder lists the shared folders; reads outside are refused.
@@ -68,7 +68,7 @@ Gemma/Gemini have no new Drive invocation path. Other conversation modes receive
 - Read offsets count Swift `Character` values, starting at zero, with exclusive `end`. At most 60,000 characters
   are returned per call, together with total length, returned range, name, ID, type and modification time.
 - Network requests are bounded, redirects are refused, 401 refreshes once, and 429 retries once only when its
-  requested delay fits the short retry budget. A tool call has a 50-second HTTP budget. No API writes/deletes.
+  requested delay fits the short retry budget. A tool call has a 50-second HTTP budget. Mutations are separately opt-in and are never automatically retried.
 
 `ToolHub` issues per-answer, two-hour local capabilities bound to room and linked roots. The socket is mode 0600.
 These capability strings are not Google tokens. New manifests use `tools`/`toolSession`; the old `face` key and
@@ -119,8 +119,8 @@ Google Cloud must include the Drive write scope in consent data access and have 
 
 Tools: `drive_create` creates a folder, UTF-8 plain text file or native Google Doc (240 KB text maximum).
 `drive_edit_doc` replaces all exact, case-sensitive matches in a native Google Doc using a mandatory
-`requiredRevisionId` from `drive_read`. Stale revisions fail. Sheets/Slides edits, binary-file overwrites,
-renaming, moving, deletion and automatic Undo are not implemented in this first phase.
+`requiredRevisionId` from `drive_read`. Stale revisions fail. Sheets edits, binary-file overwrites, renaming, moving, folder/permanent deletion and automatic Undo
+are not implemented. Slides edits and file trash are described below.
 The local app's folder backup does not cover cloud writes; recover Doc edits through Google version history.
 Mutation calls are not automatically retried: a timeout can follow a successful server-side change.
 Always check Drive before repeating. Mutations already sent cannot be cancelled by switching sharing off.
@@ -129,3 +129,26 @@ https://developers.google.com/workspace/docs/api/reference/rest/v1/documents/bat
 
 Folder names refresh on app activation and every minute while the sidebar is visible. Metadata failures
 keep the old name; IDs, pause/write permissions and in-flight reads are preserved on name-only changes.
+
+## Docs/Slides editing and file removal
+
+Enable Google Slides API in addition to Google Docs API and the existing Drive API. The same full Drive
+write scope is accepted; no new OAuth client or separate Slides scope is required.
+
+- `drive_create(kind: slides)` creates an empty native presentation directly in a permitted Drive folder.
+  It rejects non-empty text; add pages through the edit tool rather than silently dropping content.
+- `drive_slides_get` reads revision, slide IDs and native page elements, including text/geometry/image references.
+  `start` is a zero-based slide index; `limit` defaults to 5 (maximum 10), result cap 500 KB. Follow pages to
+  cover the whole deck. This is structured inspection, not visual rendering or image/OCR interpretation.
+- `drive_edit_slides`: `replace_text` (all exact case-sensitive matches, optional single slide), `add_slide`
+  (blank page plus title/body text boxes), `delete_slide` (specified page; last page protected). Requests
+  require the previously read revision; Google applies the batch atomically or refuses stale revisions.
+  Native text/style/image/table/layout editing beyond these actions is not exposed.
+- `drive_edit_doc` still supports exact text replacement; empty replacement removes matching text.
+- `drive_trash` accepts only native Docs/Slides, requires a writable folder and exact current filename.
+  It PATCHes `trashed: true`; it never invokes permanent DELETE. Folders and shortcuts are rejected.
+  Restore manually from Google Drive trash before Google purges it (normally 30 days). No local Undo.
+
+Official API references: https://developers.google.com/workspace/slides/api/reference/rest/v1/presentations/batchUpdate
+and https://developers.google.com/workspace/drive/api/guides/delete . Actual Google writes remain to be
+validated together with the user; automated tests use fake endpoints and memory credentials only.

@@ -74,9 +74,10 @@ developer may qualify for Google’s personal-use exception; a count below 100 a
 public-distribution exemption.
 
 To enable Drive writing, use a folder's pencil menu → **Allow Writing…** and grant additional Google access.
-Google consent includes full Drive modification authority; the app limits tools to creation and Google Doc
-text edits in explicitly writable folders. Add a subfolder and set **Read Only** to override a writable parent;
+Google consent includes full Drive modification authority; the app limits tools to creation, Docs/Slides text/page edits and moving Docs/Slides files to trash in explicitly writable folders. Add a subfolder and set **Read Only** to override a writable parent;
 **Inherit Parent Permission** removes the override. Existing connections remain read only until upgraded.
-The app owner must enable Google Docs API and add the Drive write scope in Google Cloud data access.
-Cloud writes are not covered by the local-folder Undo system. Moving, deletion and Sheets/Slides edits are
-not offered. Folder names refresh automatically when the app becomes active and about once a minute.
+The app owner must enable Google Docs API and Google Slides API, and add the Drive write scope in Google Cloud data access.
+Cloud writes are not covered by the local-folder Undo system. Restore trashed files from Google Drive trash before Google purges them. File moving, folder/permanent deletion and Sheets edits are not offered. Folder names refresh automatically when the app becomes active and about once a minute.
+
+Slides supports native text replacement, page addition and page deletion. Reading slide structure provides
+page IDs, text and geometry, but does not visually inspect images or rendered layout.

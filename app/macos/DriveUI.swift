@@ -17,6 +17,8 @@ final class DriveCenter: ObservableObject {
     @Published var folders: [DriveFolder] = DriveLink.folders {
         didSet {
             DriveLink.folders = folders
+            let rules = DriveLink.writeRules.filter { key, _ in folders.contains { $0.id == key } }
+            if rules != writeRules { writeRules = rules }
             let kept = paused.intersection(folders.map(\.id))
             if kept != paused { paused = kept }
         }
@@ -28,6 +30,9 @@ final class DriveCenter: ObservableObject {
         didSet { if DriveLink.shared.enabled != on { DriveLink.shared.enabled = on } }
     }
     private var attempt = UUID()
+    private var namesChecked = Date.distantPast
+    private var namesLoading = false
+    @Published var writeRules = DriveLink.writeRules { didSet { if writeRules != DriveLink.writeRules { DriveLink.writeRules = writeRules } } }
 
     private init() { refresh() }
 
@@ -36,6 +41,22 @@ final class DriveCenter: ObservableObject {
         needsReconnect = !connected && GoogleAuth.shared.needsReconnect
         if on != DriveLink.shared.enabled { on = DriveLink.shared.enabled }
         guard connected else { email = nil; return }
+        if !namesLoading && namesChecked.timeIntervalSinceNow < -60 {
+            namesLoading = true; namesChecked = Date()
+            let version = GoogleAuth.shared.connectionVersion, selected = folders
+            DispatchQueue.global(qos: .utility).async {
+                Thread.current.threadDictionary["illuminatiGoogleDeadline"] = Date().addingTimeInterval(50)
+                defer { Thread.current.threadDictionary.removeObject(forKey: "illuminatiGoogleDeadline") }
+                var names: [String: String] = [:]
+                for folder in selected { if let current = try? DriveLink.shared.folder(from: folder.id) { names[folder.id] = current.name } }
+                DispatchQueue.main.async {
+                    self.namesLoading = false
+                    guard self.connected, GoogleAuth.shared.connectionVersion == version else { return }
+                    let renamed = self.folders.map { DriveFolder(id: $0.id, name: names[$0.id] ?? $0.name) }
+                    if renamed != self.folders { self.folders = renamed }
+                }
+            }
+        }
         if email == nil {
             DispatchQueue.global(qos: .utility).async {
                 let found = DriveLink.shared.accountEmail()
@@ -100,10 +121,10 @@ final class DriveCenter: ObservableObject {
         signIn { try GoogleAuth.shared.beginAuthorization(clientJSON: data, completion: $0) }
     }
 
-    private func publicSignIn(_ clientID: String) {
+    private func publicSignIn(_ clientID: String, writable: Bool = false) {
         let current = UUID(); attempt = current; signingIn = true
         do {
-            try GoogleAuth.shared.beginBuiltInAuthorization(present: GoogleBrowserSession(), clientID: clientID) { result in
+            try GoogleAuth.shared.beginBuiltInAuthorization(present: GoogleBrowserSession(), clientID: clientID, writable: writable) { result in
                 DispatchQueue.main.async {
                     guard self.attempt == current else { return }
                     self.signingIn = false; self.refresh()
@@ -169,6 +190,19 @@ final class DriveCenter: ObservableObject {
         if !folders.contains(where: { $0.id == folder.id }) { folders.append(folder) }
     }
 
+    func setWritable(_ folder: DriveFolder, _ allowed: Bool) {
+        if !allowed { writeRules[folder.id] = false; return }
+        let alert = NSAlert()
+        alert.messageText = L("이 폴더에 쓰기를 허용할까요?", "Allow writing in this folder?")
+        alert.informativeText = L("이 폴더와 하위 폴더에서 AI가 파일을 생성하고 Google Doc 텍스트를 수정할 수 있어요. 하위 폴더에서 읽기 전용으로 다시 제한할 수 있어요. Google 추가 동의는 계정 전체 Drive의 수정·삭제 권한을 포함하지만 앱은 허용한 폴더의 생성·Doc 수정만 제공합니다. Google Cloud에 Drive 쓰기 범위를 추가하고 Google Docs API도 켜야 해요.", "The AI may create files and edit Google Doc text in this folder and descendants. A subfolder can override this to read only. Google consent includes account-wide Drive editing/deletion, but the app offers only creation and Doc edits in permitted folders. The app owner must add the Drive write scope and enable Google Docs API in Google Cloud.")
+        alert.addButton(withTitle: L("허용", "Allow")); alert.addButton(withTitle: L("취소", "Cancel"))
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        writeRules[folder.id] = true
+        guard !GoogleAuth.shared.canWrite else { return }
+        if let client = GoogleAuth.shared.publicClientID { publicSignIn(client, writable: true) }
+        else { signIn { try GoogleAuth.shared.beginReauthorization(writable: true, completion: $0) } }
+    }
+
     func togglePaused(_ id: String) {
         if paused.contains(id) { paused.remove(id) } else { paused.insert(id) }
     }
@@ -222,6 +256,8 @@ struct DriveSidebarSection: View {
         }
         .sheet(isPresented: $center.picking) { DriveFolderPicker(center: center) }
         .onAppear { center.refresh() }
+        .onReceive(Timer.publish(every: 60, on: .main, in: .common).autoconnect()) { _ in center.refresh() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in center.refresh() }
     }
 
     private func hint(_ text: String, symbol: String, color: Color = .secondary, action: @escaping () -> Void) -> some View {
@@ -243,21 +279,33 @@ struct DriveSidebarSection: View {
             Image(systemName: "cloud").foregroundColor(.secondary).frame(width: 18)
             Text(folder.name).lineLimit(1).foregroundColor(paused || !center.on ? .secondary : .primary)
             Spacer(minLength: 2)
+            Menu {
+                Button(L("쓰기 허용…", "Allow Writing…")) { center.setWritable(folder, true) }
+                Button(L("읽기 전용", "Read Only")) { center.setWritable(folder, false) }
+                Button(L("상위 폴더 설정 따르기", "Inherit Parent Permission")) { center.writeRules.removeValue(forKey: folder.id) }
+            } label: {
+                Image(systemName: center.writeRules[folder.id] == nil ? "arrow.turn.down.right" : (center.writeRules[folder.id] == true ? "pencil" : "lock"))
+                    .font(.system(size: 11)).frame(width: 24, height: 24)
+            }
+            .menuStyle(.borderlessButton).fixedSize()
+            .help(L("이 폴더와 하위 폴더의 쓰기 권한", "Writing permission for this folder and descendants"))
             Button(action: { center.togglePaused(folder.id) }) {
                 Image(systemName: paused ? "eye.slash" : "eye").font(.system(size: 12))
                     .foregroundColor(.secondary.opacity(paused ? 0.6 : 0.9)).frame(width: 24, height: 24)
             }
             .buttonStyle(.plainHit)
             .help(paused ? L("공유 꺼짐: AI가 이 폴더를 못 봐요. 눌러서 켜기", "Not shared: the AIs cannot see it. Click to share")
-                         : L("공유 중 (읽기 전용): 일반 채팅의 AI가 볼 수 있어요. 눌러서 끄기", "Shared (read only): the AI in plain chat can see it. Click to stop"))
+                         : L("공유 중: 일반 채팅의 AI가 볼 수 있어요. 쓰기는 별도 폴더 설정을 따릅니다. 눌러서 끄기", "Shared: the AI in plain chat can read it. Writing follows folder permissions. Click to stop"))
             .accessibilityLabel(paused ? L("공유 켜기", "Share") : L("공유 끄기", "Stop sharing"))
         }
         .font(.system(size: 13))
         .padding(.horizontal, 10).frame(height: 30)
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { NSWorkspace.shared.open(link) }
-        .help(folder.name + (center.email.map { "\n" + $0 } ?? "") + "\n" + L("두 번 눌러 브라우저에서 열기 · 읽기 전용", "Double-click to open in the browser · read only"))
+        .help(folder.name + (center.email.map { "\n" + $0 } ?? "") + "\n" + L("두 번 눌러 브라우저에서 열기", "Double-click to open in the browser"))
         .contextMenu {
+            Button(L("쓰기 허용…", "Allow Writing…")) { center.setWritable(folder, true) }
+            Button(L("읽기 전용", "Read Only")) { center.setWritable(folder, false) }
             Button(L("브라우저에서 열기", "Open in Browser")) { NSWorkspace.shared.open(link) }
             Button(paused ? L("공유 켜기", "Share") : L("공유 끄기", "Stop sharing")) { center.togglePaused(folder.id) }
             Button(L("드라이브 폴더에서 빼기", "Remove from Drive folders"), role: .destructive) { center.folders.removeAll { $0.id == folder.id } }
@@ -341,7 +389,7 @@ struct DriveFolderPicker: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(L("AI가 읽을 Google 드라이브 폴더", "Google Drive folders the AIs may read")).font(.system(size: 14, weight: .semibold))
-            Text(L("고른 폴더와 그 안의 하위 폴더만 읽을 수 있어요 (읽기 전용).", "Only these folders and their subfolders can be read (read only)."))
+            Text(L("고른 폴더와 하위 폴더를 읽을 수 있어요. 쓰기는 추가 후 별도로 허용하세요.", "Only these folders and descendants can be read. Enable writing separately after adding."))
                 .font(.system(size: 11)).foregroundStyle(.secondary)
             HStack(spacing: 6) {
                 Button(action: model.back) { Image(systemName: "chevron.left").frame(width: 22, height: 22) }

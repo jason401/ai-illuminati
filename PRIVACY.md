@@ -8,7 +8,11 @@ It runs only on your Mac. The developer runs no server and collects no data from
 ## Google Drive (optional)
 
 - If you choose to connect Google Drive, the app asks Google for **read-only** access
-  (`https://www.googleapis.com/auth/drive.readonly`). It cannot change, delete, upload or share your files.
+  (`https://www.googleapis.com/auth/drive.readonly`) by default.
+- If you explicitly enable writing, the app requests `https://www.googleapis.com/auth/drive`, which grants
+  account-wide editing/deletion authority at Google. The app restricts its AI tools to file/folder creation and
+  Google Doc text edits in folders you allow; subfolders can override inherited writing to read only.
+  No AI tool for moving, deleting or sharing files is provided.
 - The app only reads files inside the Drive folders you add in the app. You can remove a folder or disconnect at any time.
 - Your Google sign-in token is stored only in the macOS Keychain on your Mac. It is never sent to the developer or to any AI.
 - When you ask an AI a question in the app, the text of the Drive files it reads for that answer is sent to the AI
@@ -41,7 +45,7 @@ Questions: open an issue at https://github.com/jason401/ai-illuminati/issues .
 ## 개인정보 처리 안내 (요약)
 
 - AI Illuminati는 내 Mac에서만 돌아가는 무료 앱이에요. 개발자는 서버가 없고, 어떤 정보도 모으지 않아요.
-- 구글 드라이브는 **읽기 전용**으로만 연결되고, 앱에서 고른 폴더 안의 파일만 읽어요.
+- 구글 드라이브는 기본 **읽기 전용**이고, 선택한 폴더만 AI에게 제공해요. 쓰기를 별도로 허용하면 Google 계정 전체 수정·삭제 권한에 동의하지만, 앱의 AI 도구는 허용한 폴더의 생성·Google Doc 텍스트 수정만 제공해요.
 - 구글 로그인 정보는 내 Mac의 키체인에만 저장돼요.
 - AI에게 질문할 때, 그 답에 필요한 파일 내용은 내가 고른 AI 서비스(Claude, ChatGPT 등)로 보내져요.
 - 연결 끊기: 사이드바의 Google Drive를 오른쪽 클릭 → 연결 끊기, 또는 https://myaccount.google.com/permissions

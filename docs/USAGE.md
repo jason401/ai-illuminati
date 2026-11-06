@@ -72,3 +72,11 @@ Updates check stable and install only after a user action. If installation fails
 The app uses a public iOS OAuth client ID without a client secret. A small group personally known to the
 developer may qualify for Google’s personal-use exception; a count below 100 alone is not a
 public-distribution exemption.
+
+To enable Drive writing, use a folder's pencil menu → **Allow Writing…** and grant additional Google access.
+Google consent includes full Drive modification authority; the app limits tools to creation and Google Doc
+text edits in explicitly writable folders. Add a subfolder and set **Read Only** to override a writable parent;
+**Inherit Parent Permission** removes the override. Existing connections remain read only until upgraded.
+The app owner must enable Google Docs API and add the Drive write scope in Google Cloud data access.
+Cloud writes are not covered by the local-folder Undo system. Moving, deletion and Sheets/Slides edits are
+not offered. Folder names refresh automatically when the app becomes active and about once a minute.

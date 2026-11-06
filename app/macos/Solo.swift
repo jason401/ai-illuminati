@@ -300,7 +300,7 @@ extension Discussion {
                 if keepState { instruction += "\n" + Self.stateRule(current: Self.loadState(id)) }
                 let progress: (AnswerProgress) -> Void = { update in
                     switch update {
-                    case .text(let text): self.changeTurn(id, index) { $0.partial = Self.extractState(text).reply; $0.partialBy = speaker }
+                    case .text(let text): self.changeTurn(id, index) { $0.partial = Self.extractState(FaceLink.extract(text).text).reply; $0.partialBy = speaker }
                     case .activity(let what): self.changeTurn(id, index) { $0.activity = what }
                     }
                 }
@@ -313,7 +313,9 @@ extension Discussion {
                 var entry: ChatTurn.Entry
                 switch result {
                 case .success(let raw):
-                    let (text, newState) = Self.extractState(raw)
+                    let (tagless, mood) = FaceLink.extract(raw)
+                    if let mood, binding.face == true { FaceLink.shared.show(mood) }
+                    let (text, newState) = Self.extractState(tagless)
                     if let newState { Self.saveText(newState, to: Self.stateFile(id)) }
                     let harvest = collectPictures(text, account: account, since: started, id: id)
                     said += "\n\n[\(speaker)]\n" + harvest.text

@@ -108,3 +108,24 @@ Saved Desktop credentials remain compatible. Public-client reconnect uses the sa
 Local pointer files and shortcut targets must also be inside selected Drive folders. Folder changes
 invalidate in-flight results; permission ancestry is fetched fresh. Search follows Drive pages.
 Real Google consent, callback, refresh and relaunch still require manual testing with Younghun.
+
+## Optional writing (2026-11-06)
+
+Existing connections remain read only. A folder's pencil menu enables writing after explicit Google consent
+for `https://www.googleapis.com/auth/drive`. This is a broad Google grant; the app separately enforces
+`driveWriteRules` (nearest ancestor override, default false, paused folders excluded). Add a subfolder
+as a selected folder to override it to read only or writable. Permission changes invalidate pending calls.
+Google Cloud must include the Drive write scope in consent data access and have Google Docs API enabled.
+
+Tools: `drive_create` creates a folder, UTF-8 plain text file or native Google Doc (240 KB text maximum).
+`drive_edit_doc` replaces all exact, case-sensitive matches in a native Google Doc using a mandatory
+`requiredRevisionId` from `drive_read`. Stale revisions fail. Sheets/Slides edits, binary-file overwrites,
+renaming, moving, deletion and automatic Undo are not implemented in this first phase.
+The local app's folder backup does not cover cloud writes; recover Doc edits through Google version history.
+Mutation calls are not automatically retried: a timeout can follow a successful server-side change.
+Always check Drive before repeating. Mutations already sent cannot be cancelled by switching sharing off.
+Official references: https://developers.google.com/workspace/drive/api/guides/create-file and
+https://developers.google.com/workspace/docs/api/reference/rest/v1/documents/batchUpdate .
+
+Folder names refresh on app activation and every minute while the sidebar is visible. Metadata failures
+keep the old name; IDs, pause/write permissions and in-flight reads are preserved on name-only changes.

@@ -1503,7 +1503,7 @@ do {
     var asked: [(String, String)] = []
     chat.workspaceAnswer = { account, prompt, _, _, _ in
         lock.lock(); asked.append((account.id, prompt)); let n = asked.count; lock.unlock()
-        return .success("Reply \(n) from \(account.id)")
+        return .success("Reply \(n) from \(account.id)\n<face>focused</face>")
     }
     chat.draft = "@\(labels["at-codex-s"]!) @\(labels["at-gemini"]!) what do you think?"
     chat.draftMentions = ["at-codex-s", "at-gemini"]

@@ -269,5 +269,44 @@ func testGoogleDrive() {
     _ = try! auth.beginAuthorization(clientJSON: client) { _ in cancelled.signal() }
     auth.cancelAuthorization()
     expect(cancelled.wait(timeout: .now() + 5) == .success, "sign-in cancellation closes callback")
+    // Write access is opt-in twice: a Google grant and an explicit folder rule.
+    let oldDocs = DriveLink.docsAPI, oldUpload = DriveLink.uploadAPI
+    DriveLink.docsAPI = base.appendingPathComponent("docs"); DriveLink.uploadAPI = base.appendingPathComponent("upload")
+    defer { DriveLink.docsAPI = oldDocs; DriveLink.uploadAPI = oldUpload; DriveLink.writeRules = [:] }
+    let writeStore = MemoryGoogleStore(), writeAuth = GoogleAuth(store: writeStore), presenter = FakeGooglePresenter()
+    let writeDone = DispatchSemaphore(value: 0)
+    var writeLogin = false
+    try! writeAuth.beginBuiltInAuthorization(present: presenter, clientID: "writer.apps.googleusercontent.com", writable: true) { result in
+        if case .success = result { writeLogin = true }; writeDone.signal()
+    }
+    expect(URLComponents(url: presenter.url!, resolvingAgainstBaseURL: false)!.queryItems!.contains { $0.name == "scope" && $0.value == GoogleAuth.writeScope }, "write consent explicitly requests write scope")
+    presenter.respond(code: "write-code")
+    expect(writeDone.wait(timeout: .now() + 5) == .success && writeLogin && writeAuth.canWrite, "write grant stored separately from legacy read login")
+    _ = try! writeAuth.accessToken(forceRefresh: true)
+    let writer = DriveLink(auth: writeAuth)
+    DriveLink.folders = [DriveFolder(id: "allowed", name: "Old name"), DriveFolder(id: "child", name: "Child")]
+    DriveLink.pausedFolders = []; DriveLink.writeRules = [:]
+    expect(!writer.tools().contains { $0["name"] as? String == "drive_create" }, "write OAuth without writable folder offers no write tools")
+    DriveLink.writeRules = ["allowed": true, "child": false]
+    expect((try! writer.isWritable("doc")) && !(try! writer.isWritable("nested-doc")), "child read-only override wins over writable parent")
+    expect(writer.call("drive_create", ["folder": "child", "name": "Blocked", "kind": "text"], context: context)["isError"] as? Bool == true, "read-only child rejects creation")
+    expect(writer.call("drive_create", ["folder": "other", "name": "Blocked", "kind": "text"], context: context)["isError"] as? Bool == true, "outside shared folders rejects creation")
+    for kind in ["folder", "text", "doc"] {
+        expect(writer.call("drive_create", ["folder": "allowed", "name": "Fixture " + kind, "kind": kind, "text": "한글 content"], context: context)["isError"] as? Bool == false, "create permitted " + kind)
+    }
+    expect(writer.call("drive_read", ["file": "doc"], context: context)["isError"] as? Bool == false, "writable Doc read supplies revision")
+    let edit: [String: Any] = ["file": "doc", "old": "Fixture", "new": "Edited", "revision": "revision-1"]
+    expect(writer.call("drive_edit_doc", edit, context: context)["isError"] as? Bool == false, "revision-bound Doc edit succeeds")
+    var stale = edit; stale["revision"] = "old-revision"
+    expect(writer.call("drive_edit_doc", stale, context: context)["isError"] as? Bool == true, "stale revision rejected without blind retry")
+    DriveLink.writeRules["child"] = true
+    expect(try! writer.isWritable("nested-doc"), "explicit writable child override works")
+    DriveLink.pausedFolders = ["child"]
+    expect(!(try! writer.isWritable("nested-doc")), "paused child cannot inherit access from shared parent")
+    DriveLink.pausedFolders = []
+    let renamed = try! writer.folder(from: "allowed")
+    expect(renamed.id == "allowed" && renamed.name != "Old name", "folder metadata refresh preserves ID and gets current name")
+    expect(!drive.canWrite, "legacy read-only login stays read only")
+    print("PASS: Drive writes (explicit OAuth, folder inheritance/override/pause, create folder/text/Doc, revision conflict, refresh compatibility)")
     print("PASS: Google Drive backend (PKCE, state, refresh/revoke/reconnect, shared Drive folders only, read-only search/list/read, named sheet tabs, PDF/DOCX, bounds, pointer scope, picker folders, real MCP bridge, modes/off, no credentials in results/logs)")
 }

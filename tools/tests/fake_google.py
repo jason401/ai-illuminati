@@ -37,7 +37,17 @@ class H(BaseHTTPRequestHandler):
         try: self.wfile.write(body)
         except (BrokenPipeError, ConnectionResetError): pass
     def do_POST(self):
-        fields = parse_qs(self.rfile.read(int(self.headers['Content-Length'])).decode())
+        raw = self.rfile.read(int(self.headers['Content-Length'])).decode()
+        path = urlsplit(self.path).path
+        if path.startswith('/docs/documents/'):
+            body = json.loads(raw)
+            H.records.append({'path': path, 'body': body})
+            if body['writeControl']['requiredRevisionId'] != 'revision-1': return self.reply({}, 400)
+            return self.reply({'replies': [{'replaceAllText': {'occurrencesChanged': 1}}]})
+        if path in ['/drive/files', '/upload/files']:
+            H.records.append({'path': path, 'body': raw})
+            return self.reply({'id': 'created-fixture', 'name': 'Created fixture'})
+        fields = parse_qs(raw)
         H.records.append({'path': self.path, 'fields': fields})
         if self.path == '/revoke': return self.reply({})
         if fields.get('refresh_token') == ['revoked-fixture']:
@@ -46,13 +56,15 @@ class H(BaseHTTPRequestHandler):
         if fields.get('code') == ['bad-code']:
             return self.reply({'error': 'invalid_grant'}, 400)
         result = {'access_token': 'fixture-access', 'expires_in': 3600,
-                  'scope': 'https://www.googleapis.com/auth/drive.readonly'}
-        if fields.get('grant_type') == ['authorization_code']: result['refresh_token'] = 'fixture-refresh'
+                  'scope': 'https://www.googleapis.com/auth/drive' if fields.get('code') == ['write-code'] or fields.get('refresh_token') == ['write-refresh'] else 'https://www.googleapis.com/auth/drive.readonly'}
+        if fields.get('grant_type') == ['authorization_code']: result['refresh_token'] = 'write-refresh' if fields.get('code') == ['write-code'] else 'fixture-refresh'
         self.reply(result)
     def do_GET(self):
         parsed = urlsplit(self.path)
         path, query = unquote(parsed.path), parse_qs(parsed.query)
         if path == '/records': return self.reply(H.records)
+        if path.startswith('/docs/documents/'):
+            return self.reply({'revisionId': 'revision-1'})
         if path == '/counts': return self.reply(H.counts)
         H.records.append({'path': path, 'query': query, 'authorization': self.headers.get('Authorization')})
         H.counts[path] = H.counts.get(path, 0) + 1
@@ -90,7 +102,7 @@ class H(BaseHTTPRequestHandler):
                     'pdf': 'application/pdf', 'office': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
                     'folder': 'application/vnd.google-apps.folder', 'allowed': 'application/vnd.google-apps.folder',
                     'other': 'application/vnd.google-apps.folder', 'download': 'text/plain', 'huge': 'application/pdf',
-                    'shortcut': 'application/vnd.google-apps.shortcut'}.get(ident, 'application/vnd.google-apps.document')
+                    'child': 'application/vnd.google-apps.folder', 'shortcut': 'application/vnd.google-apps.shortcut'}.get(ident, 'application/vnd.google-apps.document')
             result = {'id': ident, 'name': 'fixture.docx' if ident == 'office' else 'Fixture ' + ident, 'mimeType': mime,
                       'size': '999999999' if ident == 'huge' else '100', 'modifiedTime': '2026-01-01T00:00:00Z'}
             if ident == 'escape-shortcut':
@@ -98,7 +110,7 @@ class H(BaseHTTPRequestHandler):
                 result['shortcutDetails'] = {'targetId': 'outside'}
             if ident == 'shortcut': result['shortcutDetails'] = {'targetId': 'doc'}
             # Folder tree: allowed and other sit in My Drive; outside is in other; everything else in allowed.
-            result['parents'] = {'allowed': ['root-real'], 'other': ['root-real'], 'outside': ['other'], 'root-real': []}.get(ident, ['allowed'])
+            result['parents'] = {'allowed': ['root-real'], 'other': ['root-real'], 'outside': ['other'], 'child': ['allowed'], 'nested-doc': ['child'], 'root-real': []}.get(ident, ['allowed'])
             return self.reply(result)
         self.reply({}, 404)
 

@@ -987,7 +987,7 @@ final class Discussion: ObservableObject {
         if Self.modernModes && configuration.mode == 4 {
             let skipped = configuration.voteSkippedIDs ?? []
             return model.accounts.filter { account in
-                !skipped.contains(account.id)
+                !skipped.contains(account.id) && (account.provider != .ollama || model.localEnabled)
                 && model.latestUsage[account.id]?.needsLogin != true && (model.latestUsage[account.id]?.leftNow ?? 50) > 0
             }
         }

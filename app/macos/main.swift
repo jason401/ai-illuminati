@@ -140,12 +140,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private var usageMenuIsOpen = false
+    private var localLoaded: LocalModel.Loaded?   // Gemma in memory, read when the menu opens
     // Account rows are custom views: draw their hover highlight (their details open to the side).
     func menu(_ menu: NSMenu, willHighlight item: NSMenuItem?) {
         for entry in menu.items { (entry.view as? MenuRowView)?.highlighted = entry === item }
     }
 
     func menuWillOpen(_ menu: NSMenu) {
+        localLoaded = model.hasLocal && model.localEnabled ? LocalModel.loaded() : nil
         rebuildMenu()
         usageMenuIsOpen = true
         refresh()
@@ -300,6 +302,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if !shown.isEmpty { menu.addItem(.separator()) }
         menu.addItem(action(L("채팅창 열기…", "Open Chat…"), #selector(openChat), key: "n"))
         menu.addItem(action(L("게임 열기…", "Open Games…"), #selector(openGame), key: "g"))
+        if model.hasLocal {
+            // Gemma on this Mac: on/off, and while it is in memory, how much and until when, with Unload now.
+            menu.addItem(.separator())
+            let toggle = action(L("Gemma 4 (내 Mac) 쓰기", "Use Gemma 4 (this Mac)"), #selector(toggleLocal))
+            toggle.state = model.localEnabled ? .on : .off
+            menu.addItem(toggle)
+            if let loaded = localLoaded {
+                let size = String(format: "%.1f", Double(loaded.bytes) / 1_073_741_824)
+                let minutes = loaded.until.map { max(0, Int(($0.timeIntervalSinceNow / 60).rounded(.up))) }
+                menu.addItem(info(L("메모리 \(size)GB 사용 중", "Using \(size) GB of memory") + (minutes.map { L(" · \($0)분 뒤 내려감", " · unloads in \($0) min") } ?? "")))
+                menu.addItem(action(L("Gemma 지금 내리기", "Unload Gemma Now"), #selector(unloadLocal)))
+            }
+        }
         if let next = model.updater.available {
             menu.addItem(action(L("새 버전 설치 (\(next.prefix(7)))", "Install New Version (\(next.prefix(7)))"), #selector(installUpdate)))
         }
@@ -319,6 +334,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
 
     @objc private func openSettings() { settings.show(model: model) }
+    @objc private func toggleLocal() { model.localEnabled.toggle() }
+    @objc private func unloadLocal() {
+        localLoaded = nil
+        DispatchQueue.global(qos: .utility).async { LocalModel.unload() }
+    }
     @objc private func installUpdate() { model.updater.install() }
     @objc private func openChat() { chat.show(discussion: discussion) }
     @objc private func openGame() { poker.show(game: pokerGame) }

@@ -174,8 +174,9 @@ extension Discussion {
     func mentionCandidates() -> [Account] {
         guard let query = mentionQuery?.lowercased() else { return [] }
         let list = model.accounts.filter { account in
+            (account.provider != .ollama || model.localEnabled) && (
             query.isEmpty || label(account).lowercased().contains(query) || account.name.lowercased().contains(query)
-                || (Self.aiNames[account.provider] ?? []).contains { $0.hasPrefix(query) || query.hasPrefix($0) }
+                || (Self.aiNames[account.provider] ?? []).contains { $0.hasPrefix(query) || query.hasPrefix($0) })
         }
         return Array(list.prefix(9))
     }
@@ -347,7 +348,7 @@ extension Discussion {
                 account = chosen
             } else if let chosen = AutoPick.choose(model.accounts, usage: usage, school: school, current: last, excluded: excluded) {
                 account = chosen
-            } else if let local = model.accounts.first(where: { $0.provider == .ollama && !excluded.contains($0.id) && usage[$0.id]?.needsLogin != true }) {
+            } else if let local = model.accounts.first(where: { $0.provider == .ollama && self.model.localEnabled && !excluded.contains($0.id) && usage[$0.id]?.needsLogin != true }) {
                 // Every cloud account is out: Gemma on this Mac answers (its data never leaves the Mac,
                 // so it may continue personal and Enterprise chats alike).
                 account = local

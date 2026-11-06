@@ -1539,11 +1539,23 @@ do {
     from http.server import BaseHTTPRequestHandler, HTTPServer
     class H(BaseHTTPRequestHandler):
         def log_message(self, *a): pass
+        loaded = False
+        keep = None
         def do_GET(self):
-            body = json.dumps({"models": [{"name": "gemma4:e4b"}]}).encode()
+            if self.path == "/api/ps":
+                models = [{"name": "gemma4:e4b", "size": 10_000_000_000, "expires_at": "2099-01-01T00:00:00.000000+00:00"}] if H.loaded else []
+                body = json.dumps({"models": models}).encode()
+            elif self.path == "/last":
+                body = json.dumps({"keep": H.keep}).encode()
+            else:
+                body = json.dumps({"models": [{"name": "gemma4:e4b"}]}).encode()
             self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(body)
         def do_POST(self):
             req = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            if self.path == "/api/generate":
+                if req.get("keep_alive") == 0: H.loaded = False
+                self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(b"{}"); return
+            H.keep = req.get("keep_alive"); H.loaded = req.get("keep_alive") != 0
             self.send_response(200); self.send_header("Content-Type", "application/x-ndjson"); self.end_headers()
             if "FAIL" in req["messages"][0]["content"]:
                 self.wfile.write(b'{"error":"model failed"}\\n'); return
@@ -1573,6 +1585,35 @@ do {
     if case .failure(.failed(let why)) = LocalModel.ask(prompt: "FAIL", images: [], timeout: 20, cancellation: nil, progress: nil) {
         expect(why.contains("model failed"), "an Ollama error is reported")
     } else { expect(false, "an error line must fail") }
+    // In memory after a reply for the chosen time (default 5 min); Unload takes it out; "right after" sends 0.
+    func lastKeep() -> Any? {
+        let data = try? Data(contentsOf: URL(string: "http://127.0.0.1:\(port)/last")!)
+        return (data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] })?["keep"] ?? nil
+    }
+    UserDefaults.standard.removeObject(forKey: "localKeepAlive")
+    UserDefaults.standard.removeObject(forKey: "localEnabled")
+    expect(LocalModel.keepAlive == 5 && LocalModel.enabled, "defaults: 5 minutes, on")
+    expect(lastKeep() as? String == "5m" && LocalModel.loaded()?.until != nil && (LocalModel.loaded()?.bytes ?? 0) > 0, "after a reply it stays loaded, with size and time")
+    LocalModel.unload()
+    expect(LocalModel.loaded() == nil, "unload takes it out of memory")
+    UserDefaults.standard.set(0, forKey: "localKeepAlive")
+    _ = LocalModel.ask(prompt: "hi", images: [], timeout: 20, cancellation: nil, progress: nil)
+    expect(lastKeep() as? Int == 0 && LocalModel.loaded() == nil, "right after: keep_alive 0")
+    UserDefaults.standard.set(5, forKey: "localKeepAlive")
+    _ = LocalModel.ask(prompt: "hi", images: [], timeout: 20, cancellation: nil, progress: nil)
+    var busy = true
+    LocalModel.unloadWhenIdle(busy: { busy }, reopened: { false })
+    Thread.sleep(forTimeInterval: 0.5)
+    expect(LocalModel.loaded() != nil, "an answer under way: not unloaded yet")
+    busy = false
+    let unloadDeadline = Date().addingTimeInterval(6)
+    while LocalModel.loaded() != nil && Date() < unloadDeadline { RunLoop.main.run(until: Date().addingTimeInterval(0.1)) }
+    expect(LocalModel.loaded() == nil, "window closed: unloaded once nothing is answering")
+    UserDefaults.standard.set(false, forKey: "localEnabled")
+    if case .failure = LocalModel.ask(prompt: "hi", images: [], timeout: 20, cancellation: nil, progress: nil) {} else { expect(false, "turned off: Gemma does not answer") }
+    expect(LocalUsage.read(Account(id: "ollama-local", provider: .ollama, name: "Gemma 4", dir: nil)).needsLogin, "turned off: left out like a signed-out account")
+    UserDefaults.standard.removeObject(forKey: "localEnabled")
+    UserDefaults.standard.removeObject(forKey: "localKeepAlive")
     let usage = LocalUsage.read(Account(id: "ollama-local", provider: .ollama, name: "Gemma 4", dir: nil))
     expect(usage.needsLogin == (LocalModel.binary == nil), "no Ollama installed: the entry asks for installing")
 
@@ -1598,5 +1639,5 @@ do {
     [{"id":"a","provider":"claude","name":"Claude"},{"id":"b","provider":"future-ai","name":"New"},{"id":"c","provider":"ollama","name":"Gemma"}]
     """
     expect(AccountStore.decode(Data(list.utf8))?.map(\.id) == ["a", "c"], "an unknown kind of AI is skipped, the rest of the list kept")
-    print("PASS: Gemma on this Mac (models, streamed reply, errors, not automatic, last resort, account list with unknown entry)")
+    print("PASS: Gemma on this Mac (models, streamed reply, errors, keep-alive, unload now and after the window closes, on/off, not automatic, last resort, account list with unknown entry)")
 }

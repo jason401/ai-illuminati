@@ -153,6 +153,17 @@ final class AppModel: ObservableObject {
         didSet { UserDefaults.standard.set(writableSharedFolders.sorted(), forKey: "writableSharedFolders") }
     }
     // A school chat is continued only by school accounts, a personal chat only by personal ones.
+    // Gemma on this Mac: on/off (menu bar) and how long it stays in memory after a reply (Settings → Accounts).
+    @Published var localEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(localEnabled, forKey: "localEnabled")
+            if !localEnabled { DispatchQueue.global(qos: .utility).async { LocalModel.unload() } }
+            onAccountsChange?()
+        }
+    }
+    @Published var localKeepAlive: Int {
+        didSet { UserDefaults.standard.set(localKeepAlive, forKey: "localKeepAlive") }
+    }
     @Published var schoolOnlyHandoff: Bool {
         didSet { UserDefaults.standard.set(schoolOnlyHandoff, forKey: "schoolOnlyHandoff") }
     }
@@ -176,6 +187,8 @@ final class AppModel: ObservableObject {
         pausedSharedFolders = Set(UserDefaults.standard.stringArray(forKey: "pausedSharedFolders") ?? [])
         writableSharedFolders = Set(UserDefaults.standard.stringArray(forKey: "writableSharedFolders") ?? [])
         schoolOnlyHandoff = UserDefaults.standard.object(forKey: "schoolOnlyHandoff") as? Bool ?? true
+        localEnabled = LocalModel.enabled
+        localKeepAlive = LocalModel.keepAlive
         let saved = UserDefaults.standard.string(forKey: "chatRules")
         chatRules = (saved == nil || saved == Self.koreanChatRules || saved == Self.rules(for: .english)
                      || Self.oldDefaultRules.contains(saved!))
@@ -681,6 +694,19 @@ private struct AccountRow: View {
                 HStack(spacing: 6) {
                     Text(account.provider.title).foregroundStyle(.secondary)
                     status
+                    if account.provider == .ollama {
+                        // How long Gemma stays in memory after a reply (closing the chat window unloads it anyway).
+                        Menu {
+                            Picker(L("답한 뒤 메모리에 남겨 두기", "Keep in memory after a reply"), selection: $model.localKeepAlive) {
+                                ForEach(LocalModel.keepAliveChoices, id: \.self) { Text(LocalModel.keepAliveName($0)).tag($0) }
+                            }
+                        } label: {
+                            Text(L("유지 ", "Keep ") + LocalModel.keepAliveName(model.localKeepAlive))
+                        }
+                        .menuStyle(.borderlessButton).fixedSize().controlSize(.mini)
+                        .help(L("답한 뒤 Gemma를 메모리에 남겨 두는 시간. 다시 부를 때 기다리지 않아요. 채팅창을 닫으면 바로 내려요.",
+                                "How long Gemma stays in memory after a reply, so the next one starts at once. Closing the chat window unloads it."))
+                    }
                     if account.provider != .gemini && account.provider != .ollama {
                         Toggle(L("엔터프라이즈", "Enterprise"), isOn: Binding(
                             get: { model.accounts.first { $0.id == account.id }?.isSchool ?? false },

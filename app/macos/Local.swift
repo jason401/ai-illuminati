@@ -12,6 +12,63 @@ enum LocalModel {
     static let minDiskGB = 15
     static let context = 32768   // Ollama's default (4K) is too short for a chat with files
 
+    // Set from the menu bar (on/off) and Settings → Accounts (how long it stays in memory after a reply).
+    static var enabled: Bool { UserDefaults.standard.object(forKey: "localEnabled") as? Bool ?? true }
+    static let keepAliveChoices = [0, 2, 5, 10]   // minutes; 0 = unload right after the reply
+    static var keepAlive: Int {
+        guard let value = UserDefaults.standard.object(forKey: "localKeepAlive") as? Int, keepAliveChoices.contains(value) else { return 5 }
+        return value
+    }
+    static func keepAliveName(_ minutes: Int) -> String {
+        minutes == 0 ? L("답 끝나면 바로", "Right after each reply") : L("\(minutes)분", "\(minutes) min")
+    }
+
+    struct Loaded { var bytes: Int64; var until: Date? }
+
+    // Whether Gemma is in memory now (GET /api/ps), how big, and until when. nil when not loaded or Ollama is off.
+    static func loaded(timeout: TimeInterval = 0.7) -> Loaded? {
+        var request = URLRequest(url: server.appendingPathComponent("api/ps"))
+        request.timeoutInterval = timeout
+        let done = DispatchSemaphore(value: 0)
+        var found: Loaded?
+        URLSession.shared.dataTask(with: request) { data, _, _ in
+            defer { done.signal() }
+            guard let data, let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let models = json["models"] as? [[String: Any]],
+                  let entry = models.first(where: { ($0["name"] as? String).map { $0 == model || $0.hasPrefix(model + "-") } ?? false }) else { return }
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            let until = (entry["expires_at"] as? String).flatMap { formatter.date(from: $0) ?? ISO8601DateFormatter().date(from: $0) }
+            found = Loaded(bytes: (entry["size"] as? NSNumber)?.int64Value ?? 0, until: until)
+        }.resume()
+        _ = done.wait(timeout: .now() + timeout + 0.5)
+        return found
+    }
+
+    // Takes Gemma out of memory now (Ollama keeps running, about 50 MB). Nothing happens when it is not loaded.
+    static func unload() {
+        guard loaded() != nil else { return }
+        var request = URLRequest(url: server.appendingPathComponent("api/generate"))
+        request.httpMethod = "POST"
+        request.timeoutInterval = 10
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try? JSONSerialization.data(withJSONObject: ["model": model, "keep_alive": 0])
+        let done = DispatchSemaphore(value: 0)
+        URLSession.shared.dataTask(with: request) { _, _, _ in done.signal() }.resume()
+        _ = done.wait(timeout: .now() + 11)
+    }
+
+    // The chat window closed: unload once no chat is answering any more (an answer under way finishes first),
+    // unless the window was opened again in the meantime.
+    static func unloadWhenIdle(busy: @escaping () -> Bool, reopened: @escaping () -> Bool) {
+        if reopened() { return }
+        if busy() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { unloadWhenIdle(busy: busy, reopened: reopened) }
+            return
+        }
+        DispatchQueue.global(qos: .utility).async { unload() }
+    }
+
     static var binary: String? {
         ["/opt/homebrew/bin/ollama", "/usr/local/bin/ollama", "/Applications/Ollama.app/Contents/Resources/ollama"]
             .first { FileManager.default.isExecutableFile(atPath: $0) }
@@ -111,6 +168,9 @@ enum LocalModel {
     // One reply from POST /api/chat, streamed: each line carries the next piece of text.
     static func ask(prompt: String, images: [URL], timeout: TimeInterval, cancellation: DebateCancellation?,
                     progress: ((AnswerProgress) -> Void)?) -> Result<String, Answerer.Failure> {
+        guard enabled else {
+            return .failure(.failed(L("Gemma가 꺼져 있어요. 메뉴바에서 켤 수 있어요.", "Gemma is turned off. Turn it on from the menu bar.")))
+        }
         guard ensureServer() else {
             return .failure(.failed(binary == nil ? L("Ollama가 설치돼 있지 않아요. 설정 → 계정에서 Gemma를 설치하세요.", "Ollama is not installed. Install Gemma in Settings → Accounts.")
                                     : L("Ollama를 켜지 못했어요.", "Could not start Ollama.")))
@@ -119,7 +179,7 @@ enum LocalModel {
         let pictures = images.compactMap { try? Data(contentsOf: $0).base64EncodedString() }
         if !pictures.isEmpty { message["images"] = pictures }
         let body: [String: Any] = ["model": model, "messages": [message], "stream": true,
-                                   "options": ["num_ctx": context], "keep_alive": "10m"]
+                                   "options": ["num_ctx": context], "keep_alive": keepAlive == 0 ? 0 as Any : "\(keepAlive)m" as Any]
         var request = URLRequest(url: server.appendingPathComponent("api/chat"))
         request.httpMethod = "POST"
         request.timeoutInterval = timeout
@@ -187,6 +247,11 @@ enum LocalUsage {
     static func read(_ account: Account) -> AIUsage {
         var result = AIUsage(name: account.name, account: account)
         result.detail = L("내 Mac · ", "This Mac · ") + LocalModel.model
+        guard LocalModel.enabled else {
+            result.needsLogin = true
+            result.note = L("꺼 둠 (메뉴바에서 켜기)", "Turned off (turn on from the menu bar)")
+            return result
+        }
         guard LocalModel.binary != nil else {
             result.needsLogin = true
             result.note = L("설치가 필요해요 (설정 → 계정)", "Needs installing (Settings → Accounts)")

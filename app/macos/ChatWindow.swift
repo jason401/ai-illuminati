@@ -1361,8 +1361,12 @@ final class ChatWindow {
             w.isReleasedWhenClosed = false
             w.center()
             window = w
-            closing = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: w, queue: .main) { _ in
+            closing = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: w, queue: .main) { [weak self] _ in
                 NSApp.setActivationPolicy(.accessory)
+                // No chat open: Gemma need not hold its memory (an answer under way finishes first).
+                if discussion.model.hasLocal {
+                    LocalModel.unloadWhenIdle(busy: { discussion.anyRunning }, reopened: { self?.window?.isVisible == true })
+                }
             }
         }
         NSApp.setActivationPolicy(.regular)

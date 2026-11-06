@@ -429,13 +429,22 @@ final class DriveLink: ToolProvider {
     // Folders inside a folder; "root" = My Drive, "shared" = Shared with me.
     func childFolders(of parent: String) throws -> [DriveFolder] {
         let scope = parent == "shared" ? "sharedWithMe" : "'\(escape(parent))' in parents"
-        let found = try json(Self.api, ["files"], ["q": scope + " and mimeType = '\(types["folder"]!)' and trashed = false",
-                                                   "pageSize": "200", "fields": "files(id,name)", "orderBy": "name",
-                                                   "supportsAllDrives": "true", "includeItemsFromAllDrives": "true"])
-        return (found["files"] as? [[String: Any]] ?? []).compactMap { entry in
-            guard let id = entry["id"] as? String, let name = entry["name"] as? String else { return nil }
-            return DriveFolder(id: id, name: name)
-        }
+        var result: [DriveFolder] = [], page: String?, seen = Set<String>()
+        Thread.current.threadDictionary["illuminatiGoogleDeadline"] = Date().addingTimeInterval(50)
+        defer { Thread.current.threadDictionary.removeObject(forKey: "illuminatiGoogleDeadline") }
+        repeat {
+            var query = ["q": scope + " and mimeType = '\(types["folder"]!)' and trashed = false", "pageSize": "200",
+                         "fields": "nextPageToken,files(id,name)", "orderBy": "name", "supportsAllDrives": "true", "includeItemsFromAllDrives": "true"]
+            if let page { query["pageToken"] = page }
+            let found = try json(Self.api, ["files"], query)
+            result += (found["files"] as? [[String: Any]] ?? []).compactMap { entry in
+                guard let id = entry["id"] as? String, let name = entry["name"] as? String else { return nil }
+                return DriveFolder(id: id, name: name)
+            }
+            page = found["nextPageToken"] as? String
+            if let page, !seen.insert(page).inserted { throw GoogleFailure(message: "Google repeated a folder page. Try again.") }
+        } while page != nil
+        return result
     }
 
     // A folder from a pasted Drive link or ID ("root" gives My Drive with its real ID).

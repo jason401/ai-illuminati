@@ -81,3 +81,10 @@ Cloud writes are not covered by the local-folder Undo system. Restore trashed fi
 
 Slides supports native text replacement, page addition and page deletion. Reading slide structure provides
 page IDs, text and geometry, but does not visually inspect images or rendered layout.
+
+The Google Drive sidebar is a folder tree. Click a chevron to load/expand direct subfolders; collapse to hide
+them. Only opened branches are fetched, with loading/error/retry states. Each row's permission menu can
+allow writing, force read only, or inherit the parent. Dim icons indicate inherited settings. Child folders
+need not be added as separate shared roots. Root eye switches pause the whole shared tree; removing a root
+only removes sharing and its associated permission overrides, never the real Drive folder. Double-click
+opens the folder in the browser. Expanded branches refresh about once a minute while visible.

@@ -6,6 +6,34 @@ import UniformTypeIdentifiers
 // Google Drive in the chat sidebar, under Shared folders: connect (read only), the Drive folders the AIs may read
 // (each with an eye to pause it), and the folder picker. The login lives in GoogleAuth (Keychain); the gate that
 // keeps the AIs inside these folders is DriveLink.isAllowed.
+struct DriveTreeItem: Identifiable {
+    let folder: DriveFolder
+    let ancestors: [String]
+    var id: String { (ancestors + [folder.id]).joined(separator: "/") }
+    var depth: Int { ancestors.count }
+    var rootID: String { ancestors.first ?? folder.id }
+}
+
+// Flatten only expanded branches; never prefetch the user's entire Drive.
+enum DriveTree {
+    static func rows(roots: [DriveFolder], children: [String: [DriveFolder]], expanded: Set<String>) -> [DriveTreeItem] {
+        var result: [DriveTreeItem] = []
+        func visit(_ folder: DriveFolder, _ ancestors: [String]) {
+            guard ancestors.count < 50, !ancestors.contains(folder.id) else { return }
+            result.append(DriveTreeItem(folder: folder, ancestors: ancestors))
+            if expanded.contains(folder.id) {
+                for child in children[folder.id] ?? [] { visit(child, ancestors + [folder.id]) }
+            }
+        }
+        for root in roots { visit(root, []) }
+        return result
+    }
+    static func writable(_ row: DriveTreeItem, rules: [String: Bool]) -> Bool {
+        for id in ([row.folder.id] + row.ancestors.reversed()) { if let value = rules[id] { return value } }
+        return false
+    }
+}
+
 final class DriveCenter: ObservableObject {
     static let shared = DriveCenter()
     @Published private(set) var connected = false
@@ -17,8 +45,13 @@ final class DriveCenter: ObservableObject {
     @Published var folders: [DriveFolder] = DriveLink.folders {
         didSet {
             DriveLink.folders = folders
-            let rules = DriveLink.writeRules.filter { key, _ in folders.contains { $0.id == key } }
-            if rules != writeRules { writeRules = rules }
+            let removed = Set(oldValue.map(\.id)).subtracting(folders.map(\.id))
+            if !removed.isEmpty {
+                let discard = Set(ruleRoots.filter { removed.contains($0.value) }.keys).union(removed)
+                writeRules = writeRules.filter { !discard.contains($0.key) }
+                ruleRoots = ruleRoots.filter { !discard.contains($0.key) }
+                for id in removed { expanded.remove(id); children.removeValue(forKey: id); treeRequests.removeValue(forKey: id); treeLoading.remove(id) }
+            }
             let kept = paused.intersection(folders.map(\.id))
             if kept != paused { paused = kept }
         }
@@ -34,13 +67,49 @@ final class DriveCenter: ObservableObject {
     private var namesLoading = false
     @Published var writeRules = DriveLink.writeRules { didSet { if writeRules != DriveLink.writeRules { DriveLink.writeRules = writeRules } } }
 
-    private init() { refresh() }
+    @Published var expanded = Set<String>()
+    @Published var children: [String: [DriveFolder]] = [:]
+    @Published var treeLoading = Set<String>()
+    @Published var treeErrors: [String: String] = [:]
+    private var treeRequests: [String: UUID] = [:]
+    private var treeChecked: [String: Date] = [:]
+    private var ruleRoots = UserDefaults.standard.dictionary(forKey: "driveRuleRoots") as? [String: String] ?? [:] {
+        didSet { UserDefaults.standard.set(ruleRoots, forKey: "driveRuleRoots") }
+    }
+    var treeRows: [DriveTreeItem] { DriveTree.rows(roots: folders, children: children, expanded: expanded) }
+    init(startRefreshing: Bool = true) { if startRefreshing { refresh() } }
+
+    func toggleExpanded(_ folder: DriveFolder) {
+        if expanded.contains(folder.id) { expanded.remove(folder.id) }
+        else { expanded.insert(folder.id); loadChildren(folder.id) }
+    }
+    func loadChildren(_ id: String, force: Bool = false) {
+        guard connected, !treeLoading.contains(id), force || children[id] == nil || (treeChecked[id]?.timeIntervalSinceNow ?? -61) < -60 else { return }
+        let request = UUID(), version = GoogleAuth.shared.connectionVersion
+        treeRequests[id] = request; treeLoading.insert(id); treeErrors[id] = nil
+        DispatchQueue.global(qos: .utility).async {
+            let result = Result { try DriveLink.shared.childFolders(of: id) }
+            DispatchQueue.main.async {
+                guard self.treeRequests[id] == request else { return }
+                self.treeLoading.remove(id)
+                guard self.connected, GoogleAuth.shared.connectionVersion == version else { return }
+                switch result {
+                case .success(let found): self.children[id] = found; self.treeChecked[id] = Date()
+                case .failure: self.treeErrors[id] = L("폴더를 불러오지 못했어요 · 다시 시도", "Could not load folders · Retry")
+                }
+            }
+        }
+    }
 
     func refresh() {
         connected = GoogleAuth.shared.connected
         needsReconnect = !connected && GoogleAuth.shared.needsReconnect
         if on != DriveLink.shared.enabled { on = DriveLink.shared.enabled }
-        guard connected else { email = nil; return }
+        guard connected else {
+            email = nil; children = [:]; treeRequests = [:]; treeLoading = []; treeErrors = [:]; treeChecked = [:]
+            return
+        }
+        for id in expanded { loadChildren(id) }
         if !namesLoading && namesChecked.timeIntervalSinceNow < -60 {
             namesLoading = true; namesChecked = Date()
             let version = GoogleAuth.shared.connectionVersion, selected = folders
@@ -190,13 +259,14 @@ final class DriveCenter: ObservableObject {
         if !folders.contains(where: { $0.id == folder.id }) { folders.append(folder) }
     }
 
-    func setWritable(_ folder: DriveFolder, _ allowed: Bool) {
-        if !allowed { writeRules[folder.id] = false; return }
+    func setWritable(_ folder: DriveFolder, _ allowed: Bool, rootID: String? = nil) {
+        if !allowed { ruleRoots[folder.id] = rootID ?? folder.id; writeRules[folder.id] = false; return }
         let alert = NSAlert()
         alert.messageText = L("이 폴더에 쓰기를 허용할까요?", "Allow writing in this folder?")
         alert.informativeText = L("이 폴더와 하위 폴더에서 AI가 파일을 생성하고 Docs/Slides를 수정하거나 휴지통으로 보낼 수 있어요. Slides 페이지도 추가·삭제할 수 있어요. 하위 폴더에서 읽기 전용으로 다시 제한할 수 있어요. Google 추가 동의는 계정 전체 Drive의 수정·삭제 권한을 포함하지만 앱은 허용한 폴더의 생성·Docs/Slides 편집·파일 휴지통 이동만 제공합니다. Google Cloud에 Drive 쓰기 범위를 추가하고 Google Docs API와 Google Slides API도 켜야 해요.", "The AI may create files, edit Docs/Slides and move them to trash in this folder and descendants. A subfolder can override this to read only. Google consent includes account-wide Drive editing/deletion, but the app offers creation, Docs/Slides edits and file trash in permitted folders. The app owner must add the Drive write scope and enable Google Docs API and Google Slides API in Google Cloud.")
         alert.addButton(withTitle: L("허용", "Allow")); alert.addButton(withTitle: L("취소", "Cancel"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
+        ruleRoots[folder.id] = rootID ?? folder.id
         writeRules[folder.id] = true
         guard !GoogleAuth.shared.canWrite else { return }
         if let client = GoogleAuth.shared.publicClientID { publicSignIn(client, writable: true) }
@@ -251,7 +321,23 @@ struct DriveSidebarSection: View {
                 if center.folders.isEmpty {
                     hint(L("폴더 추가 · AI가 읽을 드라이브 폴더", "Add a folder · the AIs read only these"), symbol: "folder.badge.plus") { center.picking = true }
                 }
-                ForEach(center.folders, id: \.id) { folder in row(folder) }
+                ForEach(center.treeRows) { item in
+                    row(item)
+                    if center.expanded.contains(item.folder.id) {
+                        if center.treeLoading.contains(item.folder.id) {
+                            HStack { ProgressView().controlSize(.mini); Text(L("불러오는 중…", "Loading…")).font(.system(size: 11)) }
+                                .padding(.leading, CGFloat(min(item.depth + 1, 8)) * 12 + 32).frame(height: 24)
+                        }
+                        if let error = center.treeErrors[item.folder.id] {
+                            Button(error) { center.loadChildren(item.folder.id, force: true) }
+                                .font(.system(size: 11)).buttonStyle(.plainHit).foregroundColor(.secondary)
+                                .padding(.leading, CGFloat(min(item.depth + 1, 8)) * 12 + 32).frame(height: 24)
+                        } else if center.children[item.folder.id]?.isEmpty == true && !center.treeLoading.contains(item.folder.id) {
+                            Text(L("하위 폴더 없음", "No subfolders")).font(.system(size: 11)).foregroundColor(.secondary)
+                                .padding(.leading, CGFloat(min(item.depth + 1, 8)) * 12 + 32).frame(height: 24)
+                        }
+                    }
+                }
             }
         }
         .sheet(isPresented: $center.picking) { DriveFolderPicker(center: center) }
@@ -272,23 +358,31 @@ struct DriveSidebarSection: View {
     }
 
     // Double-click opens it in the browser; the eye pauses it (it stays listed); right-click to remove.
-    private func row(_ folder: DriveFolder) -> some View {
-        let paused = center.paused.contains(folder.id)
+    private func row(_ item: DriveTreeItem) -> some View {
+        let folder = item.folder, root = item.depth == 0
+        let paused = (item.ancestors + [folder.id]).contains { center.paused.contains($0) }
+        let writable = DriveTree.writable(item, rules: center.writeRules)
+        let explicit = center.writeRules[folder.id] != nil
         let link = URL(string: "https://drive.google.com/drive/folders/" + folder.id)!
-        return HStack(spacing: 8) {
-            Image(systemName: "cloud").foregroundColor(.secondary).frame(width: 18)
+        return HStack(spacing: 3) {
+            Button { center.toggleExpanded(folder) } label: {
+                Image(systemName: center.expanded.contains(folder.id) ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 9, weight: .semibold)).foregroundColor(.secondary).frame(width: 22, height: 24)
+            }.buttonStyle(.plainHit).accessibilityLabel(L("하위 폴더 펼치기/접기", "Expand/collapse subfolders"))
+            Image(systemName: root ? "cloud" : "folder").foregroundColor(.secondary).frame(width: 16)
             Text(folder.name).lineLimit(1).foregroundColor(paused || !center.on ? .secondary : .primary)
             Spacer(minLength: 2)
             Menu {
-                Button(L("쓰기 허용…", "Allow Writing…")) { center.setWritable(folder, true) }
-                Button(L("읽기 전용", "Read Only")) { center.setWritable(folder, false) }
+                Button(L("쓰기 허용…", "Allow Writing…")) { center.setWritable(folder, true, rootID: item.rootID) }
+                Button(L("읽기 전용", "Read Only")) { center.setWritable(folder, false, rootID: item.rootID) }
                 Button(L("상위 폴더 설정 따르기", "Inherit Parent Permission")) { center.writeRules.removeValue(forKey: folder.id) }
             } label: {
-                Image(systemName: center.writeRules[folder.id] == nil ? "arrow.turn.down.right" : (center.writeRules[folder.id] == true ? "pencil" : "lock"))
-                    .font(.system(size: 11)).frame(width: 24, height: 24)
+                Image(systemName: writable ? "pencil" : "lock")
+                    .font(.system(size: 11)).foregroundColor(explicit ? .primary : .secondary).frame(width: 24, height: 24)
             }
             .menuStyle(.borderlessButton).fixedSize()
             .help(L("이 폴더와 하위 폴더의 쓰기 권한", "Writing permission for this folder and descendants"))
+            if root {
             Button(action: { center.togglePaused(folder.id) }) {
                 Image(systemName: paused ? "eye.slash" : "eye").font(.system(size: 12))
                     .foregroundColor(.secondary.opacity(paused ? 0.6 : 0.9)).frame(width: 24, height: 24)
@@ -297,18 +391,22 @@ struct DriveSidebarSection: View {
             .help(paused ? L("공유 꺼짐: AI가 이 폴더를 못 봐요. 눌러서 켜기", "Not shared: the AIs cannot see it. Click to share")
                          : L("공유 중: 일반 채팅의 AI가 볼 수 있어요. 쓰기는 별도 폴더 설정을 따릅니다. 눌러서 끄기", "Shared: the AI in plain chat can read it. Writing follows folder permissions. Click to stop"))
             .accessibilityLabel(paused ? L("공유 켜기", "Share") : L("공유 끄기", "Stop sharing"))
+            }
         }
         .font(.system(size: 13))
-        .padding(.horizontal, 10).frame(height: 30)
+        .padding(.leading, 6 + CGFloat(min(item.depth, 8)) * 12).padding(.trailing, 8).frame(height: 28)
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { NSWorkspace.shared.open(link) }
         .help(folder.name + (center.email.map { "\n" + $0 } ?? "") + "\n" + L("두 번 눌러 브라우저에서 열기", "Double-click to open in the browser"))
         .contextMenu {
-            Button(L("쓰기 허용…", "Allow Writing…")) { center.setWritable(folder, true) }
-            Button(L("읽기 전용", "Read Only")) { center.setWritable(folder, false) }
+            Button(L("쓰기 허용…", "Allow Writing…")) { center.setWritable(folder, true, rootID: item.rootID) }
+            Button(L("읽기 전용", "Read Only")) { center.setWritable(folder, false, rootID: item.rootID) }
             Button(L("브라우저에서 열기", "Open in Browser")) { NSWorkspace.shared.open(link) }
+            Button(L("하위 폴더 새로고침", "Refresh Subfolders")) { center.expanded.insert(folder.id); center.loadChildren(folder.id, force: true) }
+            if root {
             Button(paused ? L("공유 켜기", "Share") : L("공유 끄기", "Stop sharing")) { center.togglePaused(folder.id) }
             Button(L("드라이브 폴더에서 빼기", "Remove from Drive folders"), role: .destructive) { center.folders.removeAll { $0.id == folder.id } }
+            }
             Divider()
             accountMenu
         }

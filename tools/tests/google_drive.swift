@@ -342,6 +342,22 @@ func testGoogleDrive() {
     let renamed = try! writer.folder(from: "allowed")
     expect(renamed.id == "allowed" && renamed.name != "Old name", "folder metadata refresh preserves ID and gets current name")
     expect(!drive.canWrite, "legacy read-only login stays read only")
+    let treeRoot = DriveFolder(id: "allowed", name: "Research"), child = DriveFolder(id: "child", name: "Drafts"), grandchild = DriveFolder(id: "grand", name: "Figures")
+    let branches = ["allowed": [child], "child": [grandchild], "grand": [treeRoot]]
+    expect(DriveTree.rows(roots: [treeRoot], children: branches, expanded: []).count == 1, "collapsed tree never reveals descendants")
+    let rows = DriveTree.rows(roots: [treeRoot], children: branches, expanded: ["allowed", "child", "grand"])
+    expect(rows.map { $0.folder.id } == ["allowed", "child", "grand"] && rows[2].depth == 2 && rows[2].rootID == "allowed", "tree expands with stable IDs, indentation and cycle protection")
+    expect(DriveTree.writable(rows[2], rules: ["allowed": true]) && !DriveTree.writable(rows[2], rules: ["allowed": true, "child": false]), "tree icons follow nearest ancestor permission")
+    expect((try! writer.childFolders(of: "allowed")).contains { $0.id == "later" }, "folder browsing follows next pages")
+    let center = DriveCenter(startRefreshing: false)
+    center.folders = [treeRoot]; center.children = branches; center.expanded = ["allowed", "child"]
+    center.writeRules = ["allowed": true]
+    center.setWritable(child, false, rootID: "allowed")
+    center.folders = [DriveFolder(id: "allowed", name: "Renamed Research")]
+    expect(center.writeRules["child"] == false, "automatic root rename preserves subtree write override")
+    center.folders = []
+    expect(center.writeRules["child"] == nil && center.writeRules["allowed"] == nil, "removing shared root clears associated subtree overrides")
+    print("PASS: Drive folder tree (lazy rows, cycles, inherited permissions, pagination, rename preservation and root cleanup)")
     print("PASS: Drive writes (explicit OAuth, folder inheritance/override/pause, create folder/text/Doc, revision conflict, refresh compatibility)")
     print("PASS: Google Drive backend (PKCE, state, refresh/revoke/reconnect, shared Drive folders only, read-only search/list/read, named sheet tabs, PDF/DOCX, bounds, pointer scope, picker folders, real MCP bridge, modes/off, no credentials in results/logs)")
 }

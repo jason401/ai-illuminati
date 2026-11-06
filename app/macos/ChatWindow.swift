@@ -45,8 +45,8 @@ struct ChatView: View {
                     HStack(spacing: 8) {
                         Image(systemName: "magnifyingglass").foregroundColor(.secondary).frame(width: 18)
                         TextField(L("대화 검색", "Search chats"), text: $discussion.sidebarSearch).textFieldStyle(.plain)
-                        Button(action: { discussion.sidebarSearching = false; discussion.sidebarSearch = "" }) { Image(systemName: "xmark.circle.fill") }
-                            .buttonStyle(.plain).foregroundColor(.secondary)
+                        Button(action: { discussion.sidebarSearching = false; discussion.sidebarSearch = "" }) { Image(systemName: "xmark.circle.fill").frame(width: 22, height: 22) }
+                            .buttonStyle(.plainHit).foregroundColor(.secondary)
                     }
                     .padding(.horizontal, 10).padding(.vertical, 7)
                     .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
@@ -378,7 +378,7 @@ struct ChatView: View {
                                         Image(systemName: "xmark.circle.fill").symbolRenderingMode(.palette)
                                             .foregroundStyle(.white, .black.opacity(0.7))
                                     }
-                                    .buttonStyle(.plain)
+                                    .buttonStyle(.plainHit)
                                     .accessibilityLabel(L("첨부 제거: ", "Remove attachment: ") + item.name)
                                     .disabled(discussion.running || discussion.importingMaterials)
                                 }
@@ -452,7 +452,7 @@ struct ChatView: View {
                 Image(systemName: "stop.fill").font(.system(size: 11, weight: .semibold))
                     .frame(width: 30, height: 30)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.plainHit)
             .background(Color.secondary.opacity(0.18), in: Circle())
             .accessibilityLabel(L("중지", "Stop"))
             .help(L("응답 중지", "Stop responding"))
@@ -464,7 +464,7 @@ struct ChatView: View {
                 Image(systemName: "arrow.up").font(.system(size: 14, weight: .semibold))
                     .foregroundColor(.white).frame(width: 30, height: 30)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.plainHit)
             .background(!discussion.canSend
                         ? Color.secondary.opacity(0.3) : Color.accentColor, in: Circle())
             .accessibilityLabel(L("보내기", "Send"))
@@ -492,7 +492,7 @@ struct ChatView: View {
                             } }))
                         Button(action: { discussion.configure { $0.leaderAccountID = account.id; $0.leader = account.provider } }) {
                             Image(systemName: discussion.configuration.leaderAccountID == account.id ? "crown.fill" : "crown")
-                        }.buttonStyle(.plain).help(L("대표로 지정", "Make moderator"))
+                        }.buttonStyle(.plainHit).help(L("대표로 지정", "Make moderator"))
                     }.padding(5).background(Color.secondary.opacity(0.1)).cornerRadius(6)
                 }
             }.toggleStyle(.checkbox)
@@ -503,8 +503,8 @@ struct ChatView: View {
     private var sharedFolders: some View {
         VStack(alignment: .leading, spacing: 1) {
             SidebarHeader(title: L("공동 폴더", "Shared folders")) {
-                Button(action: { model.addSharedFolder() }) { Image(systemName: "plus").font(.system(size: 11, weight: .semibold)) }
-                    .buttonStyle(.plain).foregroundColor(.secondary)
+                Button(action: { model.addSharedFolder() }) { Image(systemName: "plus").font(.system(size: 11, weight: .semibold)).frame(width: 22, height: 22) }
+                    .buttonStyle(.plainHit).foregroundColor(.secondary)
                     .help(L("모든 대화의 AI가 읽을 폴더 추가", "Add a folder every chat's AI can read"))
                     .accessibilityLabel(L("공동 폴더 추가", "Add shared folder"))
             }
@@ -514,7 +514,7 @@ struct ChatView: View {
                         .font(.system(size: 12)).foregroundColor(.secondary)
                         .padding(.horizontal, 10).frame(height: 28, alignment: .leading)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.plainHit)
             }
             // Double-click opens the folder in Finder; the pencil lets the AIs change it (backed up before each
             // answer); the eye turns sharing on or off (the folder stays listed); right-click to remove it.
@@ -529,10 +529,10 @@ struct ChatView: View {
                     Spacer(minLength: 2)
                     if !paused {
                         Button(action: toggleWrite) {
-                            Image(systemName: writable ? "pencil" : "pencil.slash").font(.system(size: 10))
-                                .foregroundColor(writable ? .accentColor : .secondary.opacity(0.5)).frame(width: 18, height: 18)
+                            Image(systemName: writable ? "pencil" : "pencil.slash").font(.system(size: 12, weight: .medium))
+                                .foregroundColor(writable ? .accentColor : .secondary.opacity(0.6)).frame(width: 24, height: 24)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.plainHit)
                         .help(writable ? L("쓰기 허용: AI가 고치고 만들고 지울 수 있어요(답하기 전에 자동 백업). 눌러서 읽기만", "Writable: the AIs may edit, create and delete (backed up before each answer). Click for read only")
                                        : L("읽기만: AI가 고칠 수 없어요. 눌러서 쓰기 허용", "Read only: the AIs cannot change it. Click to allow changes"))
                         .accessibilityLabel(writable ? L("읽기만으로", "Make read only") : L("쓰기 허용", "Allow changes"))
@@ -540,10 +540,10 @@ struct ChatView: View {
                     Button(action: {
                         if paused { model.pausedSharedFolders.remove(path) } else { model.pausedSharedFolders.insert(path) }
                     }) {
-                        Image(systemName: paused ? "eye.slash" : "eye").font(.system(size: 10))
-                            .foregroundColor(.secondary.opacity(paused ? 0.5 : 0.8)).frame(width: 18, height: 18)
+                        Image(systemName: paused ? "eye.slash" : "eye").font(.system(size: 12))
+                            .foregroundColor(.secondary.opacity(paused ? 0.6 : 0.9)).frame(width: 24, height: 24)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.plainHit)
                     .help(paused ? L("공유 꺼짐: AI가 이 폴더를 못 봐요. 눌러서 켜기", "Not shared: the AIs cannot see it. Click to share")
                                  : L("공유 중: 모든 대화의 AI가 볼 수 있어요. 눌러서 끄기", "Shared: every chat's AI can see it. Click to stop"))
                     .accessibilityLabel(paused ? L("공유 켜기", "Share") : L("공유 끄기", "Stop sharing"))
@@ -653,7 +653,7 @@ struct ChatView: View {
                             } }))
                         Button(action: { discussion.configure { $0.leaderAccountID = account.id; $0.leader = account.provider } }) {
                             Image(systemName: moderator == account.id ? "crown.fill" : "crown")
-                        }.buttonStyle(.plain).help(L("대표로 지정 (선택지를 적지 않았을 때 선택지를 만듦)", "Make moderator (drafts the choices when none are listed)"))
+                        }.buttonStyle(.plainHit).help(L("대표로 지정 (선택지를 적지 않았을 때 선택지를 만듦)", "Make moderator (drafts the choices when none are listed)"))
                     }.padding(5).background(Color.secondary.opacity(0.1)).cornerRadius(6)
                 }
             }.toggleStyle(.checkbox)
@@ -803,7 +803,7 @@ private struct HeaderIconButton: View {
                 .background(hovered ? Color.primary.opacity(0.07) : .clear, in: RoundedRectangle(cornerRadius: 7))
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain).foregroundColor(.secondary)
+        .buttonStyle(.plainHit).foregroundColor(.secondary)
         .onHover { discussion.hover("header." + symbol, $0) }
         .help(help)
         .accessibilityLabel(help)
@@ -830,7 +830,7 @@ private struct SidebarRow: View {
             .background(hovered ? Color.primary.opacity(0.06) : .clear, in: RoundedRectangle(cornerRadius: 8))
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.plainHit)
         .onHover { discussion.hover("row." + symbol, $0) }
     }
 }
@@ -909,7 +909,7 @@ private struct TurnView: View {
                             Button(action: { NSWorkspace.shared.open(item.url) }) {
                                 AttachmentThumbnail(item: item, size: 120)
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(.plainHit)
                             .help(item.name)
                             .accessibilityLabel(L("첨부 이미지 열기: ", "Open attached image: ") + item.name)
                         }
@@ -1242,7 +1242,7 @@ private struct PictureStrip: View {
                     Button(action: { NSWorkspace.shared.open(item.url) }) {
                         AttachmentThumbnail(item: item, size: size)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.plainHit)
                     .help(item.name)
                     .accessibilityLabel(L("그림 열기: ", "Open picture: ") + item.name)
                 }
@@ -1316,7 +1316,7 @@ private struct EntryRow: View {
                 }
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.plainHit)
             .help(isOpen ? L("접기", "Collapse") : L("자세히 보기", "Show full reply"))
             .accessibilityLabel(label + ": " + entry.shortLine)
             if let images = entry.images, !images.isEmpty {

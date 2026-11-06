@@ -362,12 +362,30 @@ private struct SettingsSegments<Value: Hashable>: View {
                         .frame(maxWidth: .infinity, minHeight: 22)
                         .foregroundStyle(selection == options[index].1 ? Color.white : Color.primary)
                         .background(RoundedRectangle(cornerRadius: 4).fill(selection == options[index].1 ? Color.accentColor : Color.clear))
-                }.buttonStyle(.plain)
+                }.buttonStyle(.plainHit)
                     .accessibilityAddTraits(selection == options[index].1 ? [.isSelected] : [])
             }
         }
         .padding(2).background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.06)))
     }
+}
+
+// Like .plain, but the whole frame of the label is clickable, not only the drawn pixels of an icon
+// (a thin pencil was almost impossible to hit). Dims while pressed or disabled.
+struct PlainHitButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View { HitArea(configuration: configuration) }
+    private struct HitArea: View {
+        let configuration: Configuration
+        @Environment(\.isEnabled) private var enabled
+        var body: some View {
+            configuration.label
+                .contentShape(Rectangle())
+                .opacity(!enabled ? 0.4 : configuration.isPressed ? 0.6 : 1)
+        }
+    }
+}
+extension ButtonStyle where Self == PlainHitButtonStyle {
+    static var plainHit: PlainHitButtonStyle { PlainHitButtonStyle() }
 }
 
 private struct SettingsAction: View {
@@ -378,7 +396,7 @@ private struct SettingsAction: View {
         Button(action: action) {
             Text(title).lineLimit(1).frame(maxWidth: .infinity, minHeight: 24)
                 .background(RoundedRectangle(cornerRadius: 5).fill(Color.primary.opacity(0.07)))
-        }.buttonStyle(.plain)
+        }.buttonStyle(.plainHit)
     }
 }
 
@@ -447,7 +465,7 @@ struct AppearanceSettingsTab: View {
                     Button { model.onPreviewUsageMenu?() } label: {
                         Image(systemName: "eye").frame(width: 24, height: 24)
                             .background(RoundedRectangle(cornerRadius: 5).fill(Color.primary.opacity(0.07)))
-                    }.buttonStyle(.plain)
+                    }.buttonStyle(.plainHit)
                         .help(L("메뉴 미리 보기", "Preview usage menu"))
                         .accessibilityLabel(L("메뉴 미리 보기", "Preview usage menu"))
                 }

@@ -23,6 +23,8 @@ __pycache__/
 auth.json
 accounts.json
 credentials*.json
+client_secret*.json
+drive.log
 last-usage-*.json
 usage.log
 poker.json

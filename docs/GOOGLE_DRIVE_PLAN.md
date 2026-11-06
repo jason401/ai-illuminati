@@ -206,3 +206,14 @@ Also run `zsh tools/build_app.sh --stage < /dev/null` (the menu and settings cod
 
 What works, what he must click once (the Google Cloud steps), what was verified with the fake server versus his
 real Drive, and the limits (read only; Sheets first tab only until phase 1.5; content goes to whichever AI answers).
+
+
+## Implementation status — backend only (2026-11-06, Codex)
+
+Younghun requested the functionality without changing UI. The OAuth/Keychain backend, read-only Drive tools,
+Sheets named-tab support, common capability-bound ToolHub, and fake-server tests are implemented. Settings and
+chat UI are unchanged, so no user connection flow is exposed yet. See [GOOGLE_DRIVE_BACKEND.md](GOOGLE_DRIVE_BACKEND.md)
+for entry points, verified behavior and remaining real-account checks. No real Google login or stable deployment
+was performed. Sheets tabs were included in the first implementation; uploaded binary XLSX is not supported by
+the existing MaterialReader and is explicitly rejected instead of pretending to read it. The original UI steps
+and the real-account success criteria above remain outstanding. Publish stable only after Younghun says to deploy.

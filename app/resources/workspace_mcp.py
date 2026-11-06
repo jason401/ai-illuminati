@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 """Room-scoped MCP filesystem bridge. No credentials, no network, no eager reads.
-The only connection is the app's local socket for AI Face tools (plain chat)."""
+The only connection is the app's local tool socket (plain chat). Google credentials stay in the app."""
 import base64, fnmatch, hashlib, json, os, pathlib, socket, subprocess, sys, zipfile
 import xml.etree.ElementTree as ET
 import shutil, stat, tempfile
@@ -12,17 +12,20 @@ class Workspace:
         # The chat's own folder: changes there need no backup. Other roots follow the level.
         self.own = [pathlib.Path(r['path']).resolve() for r in manifest['roots'] if r.get('writable') and r['directory']]
         self.cache = pathlib.Path(manifest['cache'])
-        # Plain chat: AI Face's tools, offered and called through the app (FaceLink.swift), which keeps
-        # the one connection to AI Face. Missing or slow app: no face tools, the chat goes on.
-        self.face = manifest.get('face')
-        self.face_tools = []
-        if self.face:
-            try: self.face_tools = self.ask_face({'op': 'tools'}).get('tools', [])
-            except Exception: self.face_tools = []
+        # Plain chat: app-side tools (AI Face, read-only Drive), scoped by this answer's
+        # capability. Missing or slow app: chats still work without these extra tools.
+        self.hub = manifest.get('tools') or manifest.get('face')
+        self.tool_session = manifest.get('toolSession')
+        self.hub_tools = []
+        if self.hub:
+            try: self.hub_tools = self.ask_hub({'op': 'tools'}).get('tools', [])
+            except Exception: self.hub_tools = []
 
-    def ask_face(self, message):
+    def ask_hub(self, message):
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
-            s.settimeout(15); s.connect(self.face)
+            timeout = 65 if message.get('name', '').startswith('drive_') else 15
+            s.settimeout(timeout); s.connect(self.hub)
+            if self.tool_session: message = dict(message, session=self.tool_session)
             s.sendall(json.dumps(message).encode() + b'\n')
             data = b''
             while not data.endswith(b'\n'):
@@ -192,7 +195,7 @@ class Workspace:
         if self.manifest.get('level') in ('write','execute') or self.own:
             tools += [tool('write_file','Create or replace a linked file. Automatic backup is mandatory. No shell execution.',{'path':string,'root':integer,'content':string,'encoding':string},['path','content']),
                       tool('delete_file','Delete a linked file or subfolder after automatic backup. Cannot delete a linked root folder.',{'path':string,'root':integer},['path'])]
-        return tools + self.face_tools
+        return tools + self.hub_tools
 
     def call(self,name,args):
         if name=='list_files': return [{'type':'text','text':json.dumps(self.list_files(**args),ensure_ascii=False)}]
@@ -210,9 +213,9 @@ def serve(workspace):
             elif method=='tools/list': result={'tools':workspace.tools()}
             elif method=='tools/call':
                 name=msg['params']['name']
-                if any(t.get('name')==name for t in workspace.face_tools):
-                    try: result=workspace.ask_face({'op':'call','name':name,'arguments':msg['params'].get('arguments',{})})
-                    except Exception as e: result={'content':[{'type':'text','text':'AI Face: '+str(e)}],'isError':True}
+                if any(t.get('name')==name for t in workspace.hub_tools):
+                    try: result=workspace.ask_hub({'op':'call','name':name,'arguments':msg['params'].get('arguments',{})})
+                    except Exception as e: result={'content':[{'type':'text','text':'App tool: '+str(e)}],'isError':True}
                 else:
                     try: result={'content':workspace.call(name,msg['params'].get('arguments',{})),'isError':False}
                     except Exception as e: result={'content':[{'type':'text','text':str(e)}],'isError':True}

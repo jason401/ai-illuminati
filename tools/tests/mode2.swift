@@ -2,6 +2,8 @@ import Foundation
 import Cocoa
 import UniformTypeIdentifiers
 
+GoogleAuth.shared = GoogleAuth(store: MemoryGoogleStore())
+
 func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
     if !condition() { fatalError(message) }
 }
@@ -1675,3 +1677,6 @@ do {
     expect(AccountStore.decode(Data(list.utf8))?.map(\.id) == ["a", "c"], "an unknown kind of AI is skipped, the rest of the list kept")
     print("PASS: Gemma on this Mac (models, streamed reply, errors, keep-alive, unload now and after the window closes, on/off, not automatic, last resort, account list with unknown entry, E4B and 12B one at a time)")
 }
+
+
+testGoogleDrive()

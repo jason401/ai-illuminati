@@ -112,7 +112,8 @@ final class FaceLink: ObservableObject {
     func start() {
         // Writing to AI Face's server after it quit must fail quietly, not end the app.
         signal(SIGPIPE, SIG_IGN)
-        listen()
+        ToolHub.shared.start()
+        ToolHub.shared.startLegacyFaceSocket(at: Self.socketPath)
         refresh()
         timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in self?.refresh() }
     }
@@ -213,51 +214,4 @@ final class FaceLink: ObservableObject {
         }
     }
 
-    // MARK: Local socket for the workspace bridge: one JSON line in ({op: tools} or {op: call, name, arguments}), one out.
-
-    private func listen() {
-        let path = Self.socketPath
-        unlink(path)
-        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
-        guard fd >= 0 else { return }
-        var address = sockaddr_un()
-        address.sun_family = sa_family_t(AF_UNIX)
-        let bytes = Array(path.utf8)
-        guard bytes.count < MemoryLayout.size(ofValue: address.sun_path) else { close(fd); return }
-        withUnsafeMutableBytes(of: &address.sun_path) { raw in
-            raw.copyBytes(from: bytes)
-            raw[bytes.count] = 0
-        }
-        let bound = withUnsafePointer(to: &address) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
-        }
-        guard bound == 0, chmod(path, 0o600) == 0, Darwin.listen(fd, 8) == 0 else { close(fd); return }
-        Thread.detachNewThread { [weak self] in
-            while true {
-                let client = accept(fd, nil, nil)
-                if client < 0 { continue }
-                DispatchQueue.global().async { self?.serve(client) }
-            }
-        }
-    }
-
-    private func serve(_ client: Int32) {
-        defer { close(client) }
-        var data = Data(), chunk = [UInt8](repeating: 0, count: 4096)
-        while !data.contains(0x0A) && data.count < 1_000_000 {
-            let n = read(client, &chunk, chunk.count)
-            if n <= 0 { break }
-            data.append(contentsOf: chunk[0..<n])
-        }
-        guard let line = data.split(separator: 0x0A).first,
-              let message = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any] else { return }
-        let reply: [String: Any]
-        switch message["op"] as? String {
-        case "tools": reply = ["tools": tools()]
-        case "call": reply = call(message["name"] as? String ?? "", message["arguments"] as? [String: Any] ?? [:])
-        default: reply = ["error": "unknown op"]
-        }
-        guard let out = try? JSONSerialization.data(withJSONObject: reply) else { return }
-        (out + Data([0x0A])).withUnsafeBytes { _ = write(client, $0.baseAddress, $0.count) }
-    }
 }

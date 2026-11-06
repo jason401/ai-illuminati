@@ -626,6 +626,19 @@ struct AccountsSettingsTab: View {
             Text(L("계정을 추가하면 브라우저 로그인을 위해 터미널이 열려요. 같은 ChatGPT 계정을 중복 추가하지 마세요.",
                    "Adding opens Terminal for browser sign-in. Add each ChatGPT account only once."))
                 .font(.system(size: 11)).foregroundStyle(.secondary)
+            if model.hasLocal {
+                // Gemma on this Mac: off leaves it out of @, votes and the last resort, and unloads it.
+                SettingsCard(title: L("Gemma 4 (내 Mac)", "Gemma 4 (this Mac)")) {
+                    SettingsRow(title: L("쓰기", "Use")) {
+                        Text(L("끄면 @·투표·대타에서 빠져요", "Off: no @, votes or stand-in"))
+                            .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                            .help(L("끄면 @ 목록, 투표, 클라우드 계정이 다 바닥났을 때의 대타에서 빠지고 메모리에서 내려요.",
+                                    "Off: left out of @, votes and the last resort when every cloud account is out, and unloaded."))
+                        Spacer()
+                        Toggle(L("Gemma 쓰기", "Use Gemma"), isOn: $model.localEnabled).labelsHidden().toggleStyle(.switch)
+                    }
+                }
+            }
         }
     }
 }

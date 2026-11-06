@@ -225,7 +225,11 @@ struct ComparisonRow: View {
     private var accountName: String {
         let full = usage.account?.name ?? usage.name
         guard let provider = usage.account?.provider, full.hasPrefix(provider.title) else { return full }
-        let rest = String(full.dropFirst(provider.title.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+        var rest = String(full.dropFirst(provider.title.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+        if provider == .ollama {   // "Gemma 4 E4B (내 Mac)" → "E4B": the section already says Gemma, and all run on this Mac
+            for tail in ["(내 Mac)", "(this Mac)"] where rest.hasSuffix(tail) { rest = String(rest.dropLast(tail.count)).trimmingCharacters(in: .whitespaces) }
+            if rest.hasPrefix("4 ") { rest.removeFirst(2) }
+        }
         if rest.hasPrefix("("), rest.hasSuffix(")") { return String(rest.dropFirst().dropLast()) }
         return rest.isEmpty ? L("기본", "Default") : rest
     }

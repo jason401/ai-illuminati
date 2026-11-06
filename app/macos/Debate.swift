@@ -93,6 +93,7 @@ extension Discussion {
         .claude: ["claude", "클로드", "클루드"],
         .codex: ["chatgpt", "gpt", "지피티", "챗지피티", "codex", "코덱스"],
         .gemini: ["gemini", "제미나이", "재미나이", "제미니"],
+        .ollama: ["gemma", "젬마", "로컬", "local"],
     ]
 
     // First-lap order: AIs named in the user's message go first, then the rest in the chosen order.

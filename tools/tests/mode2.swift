@@ -956,7 +956,7 @@ do {
     Discussion.modernModes = true
     Discussion.availableModes = [1, 2, 3, 4]
     let m = AppModel()
-    m.accounts = Account.Provider.allCases.map { Account(id: "vote-\($0.rawValue)-fake", provider: $0, name: $0.title, dir: nil) }
+    m.accounts = [Account.Provider.claude, .codex, .gemini].map { Account(id: "vote-\($0.rawValue)-fake", provider: $0, name: $0.title, dir: nil) }
     let chat = Discussion(model: m)
     chat.configure { $0.participants = [.claude, .codex, .gemini]; $0.order = [.claude, .codex, .gemini]; $0.mode = 4; $0.leader = .claude; $0.keepSessions = false }
     let lock = NSLock()
@@ -969,7 +969,7 @@ do {
         switch account.provider {
         case .claude: return .success("{\"choice\":2,\"headline\":\"Simple to ship\",\"reason\":\"reason-claude\"}")
         case .codex: return .success("```json\n{\"choice\":\"2\",\"reason\":\"reason-codex\"}\n```")
-        case .gemini: return .success("I like option 1")
+        case .gemini, .ollama: return .success("I like option 1")
         }
     }
     chat.draft = "Which should we use?\n1. Python\n2. Go\n3. Java"
@@ -1525,4 +1525,78 @@ do {
     chat.send(); waitFor(chat)
     expect(asked.map(\.0) == ["at-claude"] && chat.current.turns[2].question == L("지금까지의 대화에 대해 네 의견을 말해 줘.", "What do you think about this conversation so far?"), "only a name: asks for its view on the chat")
     print("PASS: @ mentions (list with Gemini, narrowing, Korean names, order, second reads first, automatic again, name only)")
+}
+
+// Gemma on this Mac (Ollama): models listed, replies streamed, errors reported, never picked automatically,
+// the last resort when every cloud account is out, and an account list with an unknown entry still loads.
+do {
+    Discussion.modernModes = true
+    Discussion.availableModes = [0, 1, 2, 3, 4]
+    let port = 18_000 + Int.random(in: 0..<2000)
+    let script = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("fake_ollama.py")
+    try! """
+    import json, sys
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    class H(BaseHTTPRequestHandler):
+        def log_message(self, *a): pass
+        def do_GET(self):
+            body = json.dumps({"models": [{"name": "gemma4:e4b"}]}).encode()
+            self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(body)
+        def do_POST(self):
+            req = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            self.send_response(200); self.send_header("Content-Type", "application/x-ndjson"); self.end_headers()
+            if "FAIL" in req["messages"][0]["content"]:
+                self.wfile.write(b'{"error":"model failed"}\\n'); return
+            assert req["model"] == "gemma4:e4b" and req["stream"] and req["options"]["num_ctx"] >= 32768
+            for piece in ["Hello ", "from ", "Gemma"]:
+                self.wfile.write(json.dumps({"message": {"role": "assistant", "content": piece}, "done": False}).encode() + b"\\n"); self.wfile.flush()
+            self.wfile.write(b'{"message":{"role":"assistant","content":""},"done":true}\\n')
+    HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
+    """.write(to: script, atomically: true, encoding: .utf8)
+    let server = Process()
+    server.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+    server.arguments = [script.path, String(port)]
+    try! server.run()
+    defer { server.terminate() }
+    LocalModel.server = URL(string: "http://127.0.0.1:\(port)")!
+    var names: [String]?
+    for _ in 0..<40 where names == nil { names = LocalModel.installedModels(timeout: 1); if names == nil { Thread.sleep(forTimeInterval: 0.1) } }
+    expect(names.map(LocalModel.hasModel) == true && LocalModel.ensureServer(), "the model is listed and the server is up")
+
+    var streamed: [String] = []
+    let lock = NSLock()
+    let reply = LocalModel.ask(prompt: "hi", images: [], timeout: 20, cancellation: nil) { update in
+        if case .text(let t) = update { lock.lock(); streamed.append(t); lock.unlock() }
+    }
+    if case .success(let text) = reply { expect(text == "Hello from Gemma", "the reply is the streamed pieces joined") } else { expect(false, "Gemma reply failed: \(reply)") }
+    expect(streamed.last == "Hello from Gemma", "the reply streams in")
+    if case .failure(.failed(let why)) = LocalModel.ask(prompt: "FAIL", images: [], timeout: 20, cancellation: nil, progress: nil) {
+        expect(why.contains("model failed"), "an Ollama error is reported")
+    } else { expect(false, "an error line must fail") }
+    let usage = LocalUsage.read(Account(id: "ollama-local", provider: .ollama, name: "Gemma 4", dir: nil))
+    expect(usage.needsLogin == (LocalModel.binary == nil), "no Ollama installed: the entry asks for installing")
+
+    let local = Account(id: "ollama-local", provider: .ollama, name: "Gemma 4 (this Mac)", dir: nil)
+    let cloud = Account(id: "lm-codex", provider: .codex, name: "ChatGPT", dir: nil, school: false)
+    expect(!AutoPick.candidates([cloud, local], usage: [:], school: nil).contains { $0.provider == .ollama }, "Gemma is never picked automatically")
+    let m = AppModel()
+    m.accounts = [cloud, local]
+    m.sharedFolders = []
+    let chat = Discussion(model: m)
+    var asked: [String] = []
+    chat.workspaceAnswer = { account, _, _, _, _ in
+        lock.lock(); asked.append(account.id); lock.unlock()
+        return account.provider == .ollama ? .success("Local answer") : .failure(.failed("usage limit reached (429)"))
+    }
+    chat.draft = "help"
+    chat.send(); waitFor(chat)
+    let turn = chat.current.turns[0]
+    expect(asked == ["lm-codex", "ollama-local"] && turn.final == "Local answer", "every cloud account out: Gemma answers")
+    expect(turn.orderNote?.contains(chat.label(local)) == true, "the chat says Gemma took over")
+
+    let list = """
+    [{"id":"a","provider":"claude","name":"Claude"},{"id":"b","provider":"future-ai","name":"New"},{"id":"c","provider":"ollama","name":"Gemma"}]
+    """
+    expect(AccountStore.decode(Data(list.utf8))?.map(\.id) == ["a", "c"], "an unknown kind of AI is skipped, the rest of the list kept")
+    print("PASS: Gemma on this Mac (models, streamed reply, errors, not automatic, last resort, account list with unknown entry)")
 }

@@ -12,6 +12,8 @@ Eye and halo animation can be disabled in Settings. The halo cycles from fully a
 
 ## External tools
 
+- Gemma 4 E4B on this Mac (optional): Settings → Accounts → Add account → **Install Gemma 4 (this Mac)**. Needs Apple silicon, 16 GB of memory and 15 GB of free disk. Terminal installs [Ollama](https://ollama.com) (with Homebrew, after asking) or opens its download page, then downloads `gemma4:e4b` (about 10 GB; [Gemma terms](https://ai.google.dev/gemma/terms)). It runs only on this Mac, without an account, key or usage limit, and uses 7–8 GB of memory while answering. In plain chat it answers when called with **@Gemma** and when every cloud account is out of usage; it also votes. It reads linked files through the app, cannot change files or search the web, and does not join discussions or collaboration.
+
 - Claude: install and sign in through Claude Code's official tools. The app uses `~/.local/bin/claude`.
 - ChatGPT: install OpenAI Codex CLI. The app checks `~/.local/bin`, standard Homebrew locations, and a supported ChatGPT app bundle path.
 - Gemini: install and sign in through Antigravity CLI (agy). The app uses `~/.local/bin/agy`.

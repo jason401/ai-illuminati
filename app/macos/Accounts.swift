@@ -11,11 +11,13 @@ import CryptoKit
 struct Account: Codable, Equatable {
     enum Provider: String, Codable, CaseIterable {
         case claude, codex, gemini
+        case ollama   // Gemma 4 on this Mac (Local.swift)
         var title: String {
             switch self {
             case .claude: return "Claude"
             case .codex: return "ChatGPT"
             case .gemini: return "Gemini"
+            case .ollama: return "Gemma"
             }
         }
     }
@@ -68,9 +70,23 @@ enum AccountStore {
 
     static let gemini = Account(id: "gemini-main", provider: .gemini, name: "Gemini", dir: nil)
 
+    // One entry that cannot be read (for example a kind of AI from a newer version) is skipped, not the list.
+    private struct Entry: Decodable {
+        let account: Account?
+        init(from decoder: Decoder) throws { account = try? Account(from: decoder) }
+    }
+
+    static func decode(_ data: Data) -> [Account]? {
+        (try? JSONDecoder().decode([Entry].self, from: data)).map { $0.compactMap(\.account) }
+    }
+
     static func load() -> [Account] {
-        if let data = try? Data(contentsOf: file),
-           var list = try? JSONDecoder().decode([Account].self, from: data) {
+        let saved = try? Data(contentsOf: file)
+        if let saved, decode(saved) == nil {
+            // Never write over a list that could not be read: keep a copy next to it first.
+            try? saved.write(to: file.deletingLastPathComponent().appendingPathComponent("accounts.unreadable-\(Int(Date().timeIntervalSince1970)).json"))
+        }
+        if let data = saved, var list = decode(data) {
             // Lists saved before Gemini became an entry get it once, at the end.
             if !UserDefaults.standard.bool(forKey: "geminiInList") {
                 UserDefaults.standard.set(true, forKey: "geminiInList")

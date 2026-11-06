@@ -197,6 +197,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 case .claude: return ClaudeUsage.read(account)
                 case .codex: return CodexUsage.read(account)
                 case .gemini: return GeminiUsage.read(account)
+                case .ollama: return LocalUsage.read(account)
                 }
             }
             Self.markSameAccounts(&fresh)
@@ -248,6 +249,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             case .claude: return .systemOrange
             case .codex: return .systemGreen
             case .gemini: return .systemBlue
+            case .ollama: return .systemPurple
             }
         }
         let colors = present.map { tint($0.1) }

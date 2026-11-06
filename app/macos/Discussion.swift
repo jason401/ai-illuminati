@@ -116,6 +116,7 @@ enum Answerer {
         let binary: String?
         var arguments: [String]
         var inputData: Data?
+        if account.provider == .ollama { return LocalModel.ask(prompt: prompt, images: images, timeout: timeout, cancellation: cancellation, progress: progress) }
         if account.provider == .gemini && prompt.utf8.count > 180000 { return .failure(.failed("Gemini input is too large for this CLI. Use a smaller task or Claude/ChatGPT.")) }
         // Gemini reads pictures as files: copy them into a folder for this call and name them in the prompt.
         var geminiPictures: URL?
@@ -165,6 +166,8 @@ enum Answerer {
             arguments = ["-p", pictureNote + (workspace == nil ? GeminiLinks.toolNote : "") + prompt, "--sandbox", "--disable-slash-commands",
                          "--print-timeout", "\(Int(timeout) - 10)s"]
             if let geminiPictures { arguments += ["--add-dir", geminiPictures.path] }
+        case .ollama:
+            return .failure(.missingTool)   // answered above, without a CLI
         }
         // Stream: Claude's JSON events carry the text as it is written, Codex's each finished step.
         let streamed = progress != nil && account.provider != .gemini
@@ -370,7 +373,7 @@ final class StreamParser {
                 default: break
                 }
             }
-        case .gemini:
+        case .gemini, .ollama:
             break
         }
     }

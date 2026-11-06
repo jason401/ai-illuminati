@@ -15,7 +15,7 @@ enum Pictures {
         switch provider {
         case .codex:
             how = "Make it with your image generation tool (do not run other commands for it)."
-        case .claude, .gemini:
+        case .claude, .gemini, .ollama:
             how = "Draw it as one SVG inside a ```svg code block (it is shown to the user as an image). Keep each SVG under 20 KB, give it a viewBox, and use simple shapes and text."
         }
         return """

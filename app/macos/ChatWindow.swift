@@ -696,7 +696,8 @@ struct ChatView: View {
     private var collaborationControls: some View {
         ScrollView(.horizontal, showsIndicators: true) {
             HStack {
-                ForEach(discussion.model.accounts, id: \.id) { account in
+                // Gemma on this Mac has no tools for the task work, so it does not join collaboration.
+                ForEach(discussion.model.accounts.filter { $0.provider != .ollama }, id: \.id) { account in
                     HStack(spacing: 3) {
                         Toggle(discussion.label(account), isOn: Binding(
                             get: { discussion.configuration.accountIDs?.contains(account.id) ?? false },
@@ -1608,6 +1609,7 @@ extension Account.Provider {
         case .claude: (dark, light) = (NSColor(srgbRed: 0.88, green: 0.55, blue: 0.42, alpha: 1), NSColor(srgbRed: 0.74, green: 0.36, blue: 0.22, alpha: 1))
         case .codex: (dark, light) = (NSColor(srgbRed: 0.27, green: 0.76, blue: 0.60, alpha: 1), NSColor(srgbRed: 0.05, green: 0.53, blue: 0.41, alpha: 1))
         case .gemini: (dark, light) = (NSColor(srgbRed: 0.45, green: 0.66, blue: 0.99, alpha: 1), NSColor(srgbRed: 0.10, green: 0.45, blue: 0.91, alpha: 1))
+        case .ollama: (dark, light) = (NSColor(srgbRed: 0.72, green: 0.58, blue: 0.98, alpha: 1), NSColor(srgbRed: 0.45, green: 0.30, blue: 0.80, alpha: 1))
         }
         return Color(nsColor: NSColor(name: nil) { appearance in
             appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light

@@ -14,6 +14,7 @@ enum Login {
         case .claude: claude(account)
         case .codex: codex(account)
         case .gemini: gemini()
+        case .ollama: LocalModel.install()
         }
     }
 
@@ -89,7 +90,7 @@ enum Login {
 
     // Writes the script to ~/Library/Application Support/AI Illuminati and opens it in Terminal.
     // API key variables are removed so the tools log in with the subscription, not an API key.
-    private static func openInTerminal(name: String, exports: String, script: String) {
+    static func openInTerminal(name: String, exports: String, script: String) {
         let dir = URL(fileURLWithPath: AccountStore.supportDir)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let safeName = name.replacingOccurrences(of: "/", with: "-")

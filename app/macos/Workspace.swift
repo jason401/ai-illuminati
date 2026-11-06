@@ -146,6 +146,8 @@ struct WorkspaceInvocation {
                       // need no approval; "auto" still asked for write_file, which fails with approval "never".
                       "-c", "mcp_servers.illuminati.default_tools_approval_mode=" + json(own.isEmpty ? "auto" : "approve")]
             result += base
+        case .ollama:
+            break   // no CLI: it reads files through the app's workspace_reads requests
         case .gemini:
             // agy implements --mode through slash expansion; disabling it silently disables plan/accept-edits.
             result.removeAll { $0 == "--disable-slash-commands" }

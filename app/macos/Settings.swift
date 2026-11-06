@@ -186,6 +186,7 @@ final class AppModel: ObservableObject {
 
     // New entry with a default name (renamed in Settings), then that tool's login opens in Terminal.
     func add(_ provider: Account.Provider) {
+        if provider == .ollama { return addLocal() }
         let name: String
         if provider == .gemini {
             name = "Gemini"
@@ -196,6 +197,29 @@ final class AppModel: ObservableObject {
         let account = AccountStore.newAccount(provider: provider, name: name)
         accounts.append(account)
         Login.login(account)
+    }
+
+    var hasLocal: Bool { accounts.contains { $0.provider == .ollama } }
+
+    // Gemma 4 on this Mac: check the Mac, then add the entry and open the installer in Terminal.
+    func addLocal() {
+        NSApp.activate(ignoringOtherApps: true)
+        if let why = LocalModel.unsuitable() {
+            let alert = NSAlert()
+            alert.messageText = L("이 Mac에서는 Gemma를 설치할 수 없어요", "Gemma cannot be installed on this Mac")
+            alert.informativeText = why
+            alert.runModal()
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = L("Gemma 4 E4B를 이 Mac에 설치할까요?", "Install Gemma 4 E4B on this Mac?")
+        alert.informativeText = L("Ollama(무료)로 모델 약 10GB를 받아요. 터미널에서 단계마다 확인해요. 답할 때 메모리를 7~8GB 써요. 인터넷 없이 이 Mac 안에서만 돌아가고, 사용량 한도가 없어요. @Gemma로 부르거나, 모든 클라우드 계정이 한도에 걸렸을 때 답해요.",
+                                  "Uses Ollama (free) to download about 10 GB; Terminal asks at each step. Uses 7–8 GB of memory while answering. Runs only on this Mac, without the internet or usage limits. It answers when called with @Gemma, or when every cloud account is out of usage.")
+        alert.addButton(withTitle: L("설치", "Install"))
+        alert.addButton(withTitle: L("취소", "Cancel"))
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        if !hasLocal { accounts.append(Account(id: "ollama-local", provider: .ollama, name: L("Gemma 4 (내 Mac)", "Gemma 4 (this Mac)"), dir: nil)) }
+        LocalModel.install()
     }
 
     func login(_ account: Account) {
@@ -552,6 +576,8 @@ struct AccountsSettingsTab: View {
                     Button(L("Claude 계정 추가", "Add Claude")) { model.add(.claude) }
                     Button(L("ChatGPT 계정 추가", "Add ChatGPT")) { model.add(.codex) }
                     Button(L("Gemini 추가", "Add Gemini")) { model.add(.gemini) }.disabled(model.hasGemini)
+                    Divider()
+                    Button(L("Gemma 4 (내 Mac) 설치…", "Install Gemma 4 (this Mac)…")) { model.add(.ollama) }.disabled(model.hasLocal)
                 } label: {
                     Label(L("계정 추가", "Add account"), systemImage: "plus")
                 }.fixedSize()
@@ -655,7 +681,7 @@ private struct AccountRow: View {
                 HStack(spacing: 6) {
                     Text(account.provider.title).foregroundStyle(.secondary)
                     status
-                    if account.provider != .gemini {
+                    if account.provider != .gemini && account.provider != .ollama {
                         Toggle(L("엔터프라이즈", "Enterprise"), isOn: Binding(
                             get: { model.accounts.first { $0.id == account.id }?.isSchool ?? false },
                             set: { model.setSchool(account.id, $0) }))
@@ -672,7 +698,7 @@ private struct AccountRow: View {
                 .buttonStyle(.borderless)
                 .disabled(model.accounts.last?.id == account.id)
             Menu {
-                Button(L("로그인…", "Sign in…")) { model.login(account) }
+                Button(account.provider == .ollama ? L("설치·업데이트…", "Install or update…") : L("로그인…", "Sign in…")) { model.login(account) }
                 if let dir = account.dir {
                     Button(L("Finder에서 폴더 열기", "Show folder in Finder")) { DataFolders.open(dir) }
                 }

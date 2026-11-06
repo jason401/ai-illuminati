@@ -54,7 +54,7 @@ struct ChatView: View {
                     SidebarRow(discussion: discussion, title: L("검색", "Search"), symbol: "magnifyingglass") { discussion.sidebarSearching = true }
                 }
             }
-            .padding(.horizontal, 10).padding(.top, 40)   // below the window buttons (the title bar is see-through)
+            .padding(.horizontal, 10).padding(.top, 16)   // breathing room below the native title-bar safe area
             // Other chats stay usable while one answers (Discussion.maxRunning at once).
             .disabled(discussion.importingMaterials)
             ScrollView {
@@ -140,7 +140,7 @@ struct ChatView: View {
         VStack(spacing: 0) {
             // Every mode shares the plain chat's layout; a team mode only adds a pill and a settings chip
             // in the message box.
-            soloHeader.padding(.horizontal, 18).frame(height: 52)
+            soloHeader.padding(.horizontal, 18).frame(height: 40)
             if discussion.current.turns.isEmpty {
                 // A new chat: the greeting and the message box in the middle, like the desktop apps.
                 VStack(spacing: 28) {

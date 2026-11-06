@@ -365,6 +365,7 @@ struct ChatView: View {
                     .font(.caption).foregroundColor(.secondary)
             }
             VStack(alignment: .leading, spacing: 8) {
+                if discussion.mentionQuery != nil { mentionList }
                 if !discussion.pendingImages.isEmpty {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 8) {
@@ -393,7 +394,9 @@ struct ChatView: View {
                             .allowsHitTesting(false)
                     }
                     MultilineInput(text: $discussion.draft, height: $discussion.inputHeight,
-                                   onSend: { discussion.send() }, onPasteImages: { discussion.addPastedImages($0) })
+                                   onSend: { discussion.send() }, onPasteImages: { discussion.addPastedImages($0) },
+                                   onKey: { event, editor in mentionKey(event, editor) },
+                                   onTextChange: { editor in mentionChanged(editor) })
                         .frame(height: discussion.inputHeight)
                         .accessibilityLabel(L("질문 입력", "Message"))
                 }
@@ -491,6 +494,146 @@ struct ChatView: View {
         .help(L("참여 AI와 이 모드의 설정", "Participants and settings for this mode"))
         .popover(isPresented: $discussion.teamSettingsOpen, arrowEdge: .bottom) { teamSettings }
         .disabled(discussion.importingMaterials)
+    }
+
+    // @ in plain chat: a numbered list of accounts above the text. 1–9 or Return picks, ↑↓ moves, Esc closes;
+    // a picked name is one colored piece that ⌫ removes at once.
+    private var mentionList: some View {
+        let list = discussion.mentionCandidates()
+        return VStack(alignment: .leading, spacing: 1) {
+            ForEach(Array(list.enumerated()), id: \.element.id) { n, account in
+                let usage = discussion.model.latestUsage[account.id]
+                Button(action: { if let editor = discussion.mentionEditor { pickMention(account, editor) } }) {
+                    HStack(spacing: 8) {
+                        Text("\(n + 1)").font(.system(size: 11, weight: .semibold).monospacedDigit())
+                            .frame(width: 18, height: 18)
+                            .background(Color.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 4))
+                        Circle().fill(account.provider.color).frame(width: 7, height: 7)
+                        Text(discussion.label(account)).font(.system(size: 13))
+                        Spacer()
+                        Text(account.provider == .gemini ? L("@로만 답해요", "answers only when called") : AutoPick.describe(usage))
+                            .font(.system(size: 11)).foregroundColor(.secondary)
+                    }
+                    .padding(.horizontal, 8).frame(height: 28)
+                    .background(n == discussion.mentionIndex ? Color.accentColor.opacity(0.16) : .clear, in: RoundedRectangle(cornerRadius: 6))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            Text(L("숫자나 Enter로 고르기 · Esc 닫기", "Number or Return to pick · Esc to close"))
+                .font(.system(size: 10)).foregroundColor(.secondary).padding(.horizontal, 8).padding(.top, 2)
+        }
+        .padding(4)
+        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    // Opens, narrows or closes the list as the text after @ changes; colors the picked names.
+    private func mentionChanged(_ editor: NSTextView) {
+        discussion.mentionEditor = editor
+        defer { colorMentions(editor) }
+        guard discussion.configuration.mode == 0 else { discussion.mentionQuery = nil; return }
+        let text = editor.string as NSString
+        let cursor = editor.selectedRange().location
+        var at: Int?
+        var i = cursor - 1
+        while i >= 0 && cursor - i <= 24 {
+            let c = text.character(at: i)
+            if c == 64 { at = i; break }       // @
+            if c == 10 { break }               // a new line ends the search
+            i -= 1
+        }
+        guard let at, at == 0 || CharacterSet.whitespacesAndNewlines.contains(UnicodeScalar(text.character(at: at - 1)) ?? " ") else {
+            discussion.mentionQuery = nil; return
+        }
+        // Right after a name already picked: no list.
+        let tail = text.substring(from: at)
+        for id in discussion.draftMentions {
+            if let account = discussion.model.accounts.first(where: { $0.id == id }), tail.hasPrefix("@" + discussion.label(account)) {
+                discussion.mentionQuery = nil; return
+            }
+        }
+        let query = text.substring(with: NSRange(location: at + 1, length: cursor - at - 1))
+        if query != discussion.mentionQuery { discussion.mentionIndex = 0 }
+        discussion.mentionLocation = at
+        discussion.mentionQuery = query
+        if discussion.mentionCandidates().isEmpty { discussion.mentionQuery = nil }
+    }
+
+    private func mentionKey(_ event: NSEvent, _ editor: NSTextView) -> Bool {
+        let flags = event.modifierFlags.intersection([.command, .control, .option])
+        if event.keyCode == 51, flags.isEmpty, editor.selectedRange().length == 0 {
+            // ⌫ right after a picked name removes the whole name and the pick.
+            let text = editor.string as NSString
+            let cursor = editor.selectedRange().location
+            for id in discussion.draftMentions {
+                guard let account = discussion.model.accounts.first(where: { $0.id == id }) else { continue }
+                for token in ["@" + discussion.label(account) + " ", "@" + discussion.label(account)] {
+                    let length = (token as NSString).length
+                    if cursor >= length, text.substring(with: NSRange(location: cursor - length, length: length)) == token {
+                        let range = NSRange(location: cursor - length, length: length)
+                        if editor.shouldChangeText(in: range, replacementString: "") {
+                            editor.replaceCharacters(in: range, with: "")
+                            editor.didChangeText()
+                        }
+                        if !(editor.string.contains("@" + discussion.label(account))) { discussion.draftMentions.removeAll { $0 == id } }
+                        return true
+                    }
+                }
+            }
+            return false
+        }
+        guard discussion.mentionQuery != nil, flags.isEmpty else { return false }
+        let list = discussion.mentionCandidates()
+        guard !list.isEmpty else { return false }
+        switch event.keyCode {
+        case 36, 76, 48:                                  // Return, Enter, Tab
+            pickMention(list[min(discussion.mentionIndex, list.count - 1)], editor); return true
+        case 125: discussion.mentionIndex = min(discussion.mentionIndex + 1, list.count - 1); return true   // ↓
+        case 126: discussion.mentionIndex = max(discussion.mentionIndex - 1, 0); return true                // ↑
+        case 53: discussion.mentionQuery = nil; return true                                                // Esc
+        default:
+            if let key = event.charactersIgnoringModifiers, let n = Int(key), (1...list.count).contains(n) {
+                pickMention(list[n - 1], editor); return true
+            }
+            return false
+        }
+    }
+
+    private func pickMention(_ account: Account, _ editor: NSTextView) {
+        let cursor = editor.selectedRange().location
+        let start = discussion.mentionLocation
+        guard start <= cursor, cursor <= (editor.string as NSString).length else { return }
+        if !discussion.draftMentions.contains(account.id) { discussion.draftMentions.append(account.id) }
+        discussion.mentionQuery = nil
+        let range = NSRange(location: start, length: cursor - start)
+        let token = "@" + discussion.label(account) + " "
+        if editor.shouldChangeText(in: range, replacementString: token) {
+            editor.replaceCharacters(in: range, with: token)
+            editor.didChangeText()
+        }
+        editor.window?.makeFirstResponder(editor)
+    }
+
+    private func colorMentions(_ editor: NSTextView) {
+        guard !editor.hasMarkedText(), let storage = editor.textStorage else { return }
+        let plain: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 14), .foregroundColor: NSColor.textColor]
+        let whole = NSRange(location: 0, length: storage.length)
+        storage.beginEditing()
+        storage.setAttributes(plain, range: whole)
+        for id in discussion.draftMentions {
+            guard let account = discussion.model.accounts.first(where: { $0.id == id }) else { continue }
+            let token = "@" + discussion.label(account)
+            var search = NSRange(location: 0, length: storage.length)
+            while true {
+                let found = (storage.string as NSString).range(of: token, options: [], range: search)
+                if found.location == NSNotFound { break }
+                storage.addAttributes([.foregroundColor: NSColor.controlAccentColor, .font: NSFont.systemFont(ofSize: 14, weight: .semibold)], range: found)
+                let next = found.location + found.length
+                search = NSRange(location: next, length: storage.length - next)
+            }
+        }
+        storage.endEditing()
+        editor.typingAttributes = plain
     }
 
     private var plusMenu: some View {
@@ -977,6 +1120,14 @@ private struct TurnView: View {
                     .padding(.horizontal, 14).padding(.vertical, 10)
                     .background(Color.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 18))
             }
+            if let mentions = turn.mentions, !mentions.isEmpty {
+                // Called with @: who was asked, under the message.
+                HStack {
+                    Spacer()
+                    Text("@ " + mentions.map { id in discussion.model.accounts.first { $0.id == id }.map(discussion.label) ?? id }.joined(separator: ", "))
+                        .font(.system(size: 11)).foregroundColor(.secondary)
+                }
+            }
             if let images = turn.images, !images.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
@@ -989,22 +1140,6 @@ private struct TurnView: View {
                             .accessibilityLabel(L("첨부 이미지 열기: ", "Open attached image: ") + item.name)
                         }
                     }
-                }
-            }
-            if turn.mode == 0, turn.final == nil, let partial = turn.partial, !partial.isEmpty {
-                // The reply as it is being written.
-                VStack(alignment: .leading, spacing: 8) {
-                    if let by = turn.partialBy {
-                        HStack(spacing: 6) {
-                            Circle().fill(Account.Provider.of(speaker: by)?.color ?? .secondary).frame(width: 7, height: 7)
-                            Text(by).font(.system(size: 12, weight: .medium)).foregroundColor(.secondary)
-                        }
-                    }
-                    Text(markdown(partial))
-                        .font(.system(size: 15))
-                        .lineSpacing(5)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
             if !turn.status.isEmpty {
@@ -1093,6 +1228,38 @@ private struct TurnView: View {
                 .padding(12)
                 .background(Color(nsColor: .controlBackgroundColor))
                 .cornerRadius(10)
+            }
+            ForEach(turn.mode == 0 ? (turn.moreAnswers ?? []) : []) { answer in
+                // A second (third…) AI called with @, which read the replies before it.
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 6) {
+                        Circle().fill(Account.Provider.of(speaker: answer.speaker)?.color ?? .secondary).frame(width: 7, height: 7)
+                        Text(answer.speaker).font(.system(size: 12, weight: .medium)).foregroundColor(.secondary)
+                    }
+                    Text(answer.failed ? AttributedString(answer.text) : markdown(answer.text))
+                        .font(.system(size: 15)).lineSpacing(5)
+                        .foregroundColor(answer.failed ? .red : .primary)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    if let images = answer.images, !images.isEmpty { PictureStrip(images: images, size: 180) }
+                }
+                .padding(.top, 6)
+            }
+            if turn.mode == 0, let partial = turn.partial, !partial.isEmpty {
+                // The reply as it is being written.
+                VStack(alignment: .leading, spacing: 8) {
+                    if let by = turn.partialBy {
+                        HStack(spacing: 6) {
+                            Circle().fill(Account.Provider.of(speaker: by)?.color ?? .secondary).frame(width: 7, height: 7)
+                            Text(by).font(.system(size: 12, weight: .medium)).foregroundColor(.secondary)
+                        }
+                    }
+                    Text(markdown(partial))
+                        .font(.system(size: 15))
+                        .lineSpacing(5)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
             if turn.mode == 0, let changes = turn.workspaceChanges {
                 changesView(changes, title: L("이 대화 폴더의 파일 \(changes.count)개", "\(changes.count) files in this chat's folder"))
@@ -1206,6 +1373,7 @@ final class ChatWindow {
 // Native editor: Return handling stays with the editor, including Korean IME composition.
 final class ChatInputTextView: NSTextView {
     var onSend: (() -> Void)?
+    var onKey: ((NSEvent, NSTextView) -> Bool)?   // the @ list: numbers, arrows, Return, Esc, ⌫ on a picked name
     var onPasteImages: ((NSPasteboard) -> Bool)?
 
     private func hasDraggedImage(_ sender: NSDraggingInfo) -> Bool {
@@ -1231,6 +1399,7 @@ final class ChatInputTextView: NSTextView {
     // Like chat apps: Return sends, Shift+Return (or Option+Return) starts a new line; ⌘Return also
     // sends. While Korean (or other) text is still being composed, Return only finishes the character.
     override func keyDown(with event: NSEvent) {
+        if !hasMarkedText(), onKey?(event, self) == true { return }
         if (event.keyCode == 36 || event.keyCode == 76) && !hasMarkedText() {
             let flags = event.modifierFlags
             if flags.contains(.shift) || flags.contains(.option) {
@@ -1249,6 +1418,8 @@ private struct MultilineInput: NSViewRepresentable {
     @Binding var height: CGFloat
     var onSend: () -> Void
     var onPasteImages: (NSPasteboard) -> Bool
+    var onKey: ((NSEvent, NSTextView) -> Bool)? = nil
+    var onTextChange: ((NSTextView) -> Void)? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -1274,6 +1445,7 @@ private struct MultilineInput: NSViewRepresentable {
         editor.delegate = context.coordinator
         editor.onSend = onSend
         editor.onPasteImages = onPasteImages
+        editor.onKey = onKey
         editor.string = text
         editor.setAccessibilityLabel(L("질문 입력", "Message"))
         scroll.documentView = editor
@@ -1285,8 +1457,9 @@ private struct MultilineInput: NSViewRepresentable {
         guard let editor = scroll.documentView as? ChatInputTextView else { return }
         editor.onSend = onSend
         editor.onPasteImages = onPasteImages
+        editor.onKey = onKey
         editor.setAccessibilityLabel(L("질문 입력", "Message"))
-        if editor.string != text && !editor.hasMarkedText() { editor.string = text }
+        if editor.string != text && !editor.hasMarkedText() { editor.string = text; onTextChange?(editor) }
         context.coordinator.measure(editor)
     }
 
@@ -1296,6 +1469,7 @@ private struct MultilineInput: NSViewRepresentable {
         func textDidChange(_ notification: Notification) {
             guard let editor = notification.object as? NSTextView else { return }
             parent.text = editor.string
+            parent.onTextChange?(editor)
             measure(editor)
         }
         // Grows with the text from one line (at least 40 pt, like the desktop apps) up to about 8 lines.

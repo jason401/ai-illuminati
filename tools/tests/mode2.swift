@@ -1469,3 +1469,60 @@ do {
     expect(!m.schoolOnlyHandoff || chat.conversations.first { $0.id == first }?.configuration?.school == false, "the first answer sets a new chat's side (personal account here)")
     print("PASS: several chats at once (own worker per message, switch and start chats meanwhile, limit of \(Discussion.maxRunning), answers land in their own chats)")
 }
+
+// Plain chat, part 3: @ calls one or more accounts for one message, Gemini included; the second reads the
+// first reply; the next message is automatic again and sees both replies.
+do {
+    Discussion.modernModes = true
+    Discussion.availableModes = [0, 1, 2, 3, 4]
+    let m = AppModel()
+    m.accounts = [Account(id: "at-claude", provider: .claude, name: "Claude", dir: nil, school: false),
+                  Account(id: "at-codex", provider: .codex, name: "ChatGPT", dir: nil, school: false),
+                  Account(id: "at-codex-s", provider: .codex, name: "ChatGPT (School)", dir: nil),
+                  Account(id: "at-gemini", provider: .gemini, name: "Gemini", dir: nil)]
+    var full = AIUsage(name: "u"); full.fiveHour = UsageWindow(usedPercent: 10, resetsAt: nil); full.weekly = UsageWindow(usedPercent: 10, resetsAt: nil)
+    m.latestUsage = ["at-claude": full, "at-codex": full, "at-codex-s": full, "at-gemini": full]
+    m.sharedFolders = []
+    let chat = Discussion(model: m)
+    chat.mentionQuery = ""
+    expect(chat.mentionCandidates().map(\.id) == ["at-claude", "at-codex", "at-codex-s", "at-gemini"], "the @ list has every account, Gemini too, in Settings order")
+    chat.mentionQuery = "gpt"
+    expect(chat.mentionCandidates().map(\.id) == ["at-codex", "at-codex-s"], "typing narrows the list")
+    chat.mentionQuery = "제미"
+    expect(chat.mentionCandidates().map(\.id) == ["at-gemini"], "Korean names match too")
+    chat.mentionQuery = "zzz"
+    expect(chat.mentionCandidates().isEmpty, "nothing matches: no list")
+    chat.mentionQuery = nil
+    let labels = Dictionary(uniqueKeysWithValues: m.accounts.map { ($0.id, chat.label($0)) })
+    expect(Discussion.mentions(in: "@\(labels["at-gemini"]!) hi", picked: ["at-codex", "at-gemini"], accounts: m.accounts, label: chat.label) == ["at-gemini"],
+           "a picked name deleted from the text is not called")
+
+    let lock = NSLock()
+    var asked: [(String, String)] = []
+    chat.workspaceAnswer = { account, prompt, _, _, _ in
+        lock.lock(); asked.append((account.id, prompt)); let n = asked.count; lock.unlock()
+        return .success("Reply \(n) from \(account.id)")
+    }
+    chat.draft = "@\(labels["at-codex-s"]!) @\(labels["at-gemini"]!) what do you think?"
+    chat.draftMentions = ["at-codex-s", "at-gemini"]
+    chat.send(); waitFor(chat)
+    let turn = chat.current.turns[0]
+    expect(asked.map(\.0) == ["at-codex-s", "at-gemini"], "the called accounts answer, in order (Gemini too)")
+    expect(turn.question == "what do you think?" && turn.mentions == ["at-codex-s", "at-gemini"], "the names leave the message and are kept as mentions")
+    expect(asked[1].1.contains("[\(labels["at-codex-s"]!)]\nReply 1 from at-codex-s") && asked[1].1.contains("The user called several AIs"), "the second reads the first reply")
+    expect(turn.final == "Reply 1 from at-codex-s" && turn.finalBy == labels["at-codex-s"] && turn.moreAnswers?.map(\.text) == ["Reply 2 from at-gemini"], "both replies are shown")
+    expect(chat.draftMentions.isEmpty && chat.configuration.lastSoloAccountID == nil, "picks are cleared and do not become the automatic choice")
+
+    asked.removeAll()
+    chat.draft = "and now?"
+    chat.send(); waitFor(chat)
+    expect(asked.count == 1 && asked[0].0 != "at-gemini", "the next message is automatic again (never Gemini)")
+    expect(asked[0].1.contains("[\(labels["at-gemini"]!)]\nReply 2 from at-gemini") && asked[0].1.contains("[User]\nwhat do you think?"), "the next AI sees both replies")
+
+    asked.removeAll()
+    chat.draft = "@\(labels["at-claude"]!)"
+    chat.draftMentions = ["at-claude"]
+    chat.send(); waitFor(chat)
+    expect(asked.map(\.0) == ["at-claude"] && chat.current.turns[2].question == L("지금까지의 대화에 대해 네 의견을 말해 줘.", "What do you think about this conversation so far?"), "only a name: asks for its view on the chat")
+    print("PASS: @ mentions (list with Gemini, narrowing, Korean names, order, second reads first, automatic again, name only)")
+}

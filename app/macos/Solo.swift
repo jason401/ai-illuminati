@@ -159,6 +159,26 @@ extension Discussion {
         """
     }
 
+    // The accounts named with @ in the draft, in the order they were picked (deleted ones are left out).
+    static func mentions(in draft: String, picked: [String], accounts: [Account], label: (Account) -> String) -> [String] {
+        var seen: Set<String> = []
+        return picked.filter { id in
+            guard !seen.contains(id), let account = accounts.first(where: { $0.id == id }), draft.contains("@" + label(account)) else { return false }
+            seen.insert(id); return true
+        }
+    }
+
+    // The @ list: every account (Gemini too: it only never answers automatically), matching what was typed
+    // after @ by name or by the AI's name in English or Korean. At most 9, numbered 1–9.
+    func mentionCandidates() -> [Account] {
+        guard let query = mentionQuery?.lowercased() else { return [] }
+        let list = model.accounts.filter { account in
+            query.isEmpty || label(account).lowercased().contains(query) || account.name.lowercased().contains(query)
+                || (Self.aiNames[account.provider] ?? []).contains { $0.hasPrefix(query) || query.hasPrefix($0) }
+        }
+        return Array(list.prefix(9))
+    }
+
     // YouTube questions: Gemini searches YouTube first (it reads video pages and search results, not the video).
     static func asksAboutYouTube(_ text: String) -> Bool {
         let lower = text.lowercased()
@@ -176,16 +196,19 @@ extension Discussion {
         """
     }
 
-    func runSolo(question: String, history: [ChatTurn], rules: String, config: ChatConfiguration,
+    // mentions: accounts called with @ (in order). Each answers in turn and sees the replies before it;
+    // nobody is picked automatically and the next message is automatic again.
+    func runSolo(question: String, history: [ChatTurn], rules: String, config: ChatConfiguration, mentions: [String] = [],
                  cancellation: DebateCancellation, id: UUID, index: Int) {
         let previous = Self.transcript(history)
-        let context = Self.soloContext(rules: rules, transcript: (previous.isEmpty ? "" : previous + "\n\n") + "[User]\n" + question)
+        let asked = (previous.isEmpty ? "" : previous + "\n\n") + "[User]\n" + question
+        let context = Self.soloContext(rules: rules, transcript: asked)
         let state = Self.loadState(id)
-        var fresh: String?
+        var freshTranscript: String?
         if previous.count > Self.compactFrom, !state.isEmpty {
             Self.saveText(previous, to: Self.historyFile(id))
             let recent = Self.transcript(Array(history.suffix(Self.recentTurns)))
-            fresh = Self.soloContext(rules: rules, transcript: """
+            freshTranscript = """
                 [Chat state — a summary of the earlier turns, kept by the AIs of this chat]
                 \(state)
 
@@ -196,8 +219,9 @@ extension Discussion {
 
                 [User]
                 \(question)
-                """)
+                """
         }
+        let fresh = freshTranscript.map { Self.soloContext(rules: rules, transcript: $0) }
         let keepState = previous.count + question.count > Self.stateFrom
         var binding = activeWorkspace ?? soloBinding(id)
         let own = Self.chatFolder(id)
@@ -231,7 +255,7 @@ extension Discussion {
         }
 
         var helper = ""
-        if Self.asksAboutYouTube(question), let gemini = model.accounts.first(where: { $0.provider == .gemini }),
+        if Self.asksAboutYouTube(question), let gemini = model.accounts.first(where: { $0.provider == .gemini }), !mentions.contains(gemini.id),
            model.latestUsage[gemini.id]?.needsLogin != true {
             changeTurn(id, index) { $0.status = L("Gemini가 유튜브를 찾는 중…", "Gemini is searching YouTube…") }
             let result = debateAnswer(gemini, """
@@ -251,6 +275,62 @@ extension Discussion {
                 entry = .init(round: 1, speaker: L("Gemini · 유튜브 찾기", "Gemini · YouTube search"), text: Self.describe(failure), failed: true)
             }
             changeTurn(id, index, save: true) { $0.entries.append(entry) }
+        }
+
+        if !mentions.isEmpty {
+            var said = ""   // the replies already given in this turn, which the next AI reads
+            for (k, accountID) in mentions.enumerated() where !cancellation.isCancelled {
+                guard let account = model.accounts.first(where: { $0.id == accountID }) else { continue }
+                let speaker = label(account)
+                let note = notes.joined(separator: "\n")
+                changeTurn(id, index) { t in t.status = L("\(speaker)가 답하는 중…", "\(speaker) is answering…"); t.orderNote = note.isEmpty ? nil : note }
+                var instruction = soloInstruction(account, binding: binding, helper: helper)
+                if k > 0 {
+                    instruction += "\nThe user called several AIs for this message. The replies before yours are above: give your own view, briefly agree where they are right, add what they missed and say where you disagree and why."
+                }
+                if keepState { instruction += "\n" + Self.stateRule(current: Self.loadState(id)) }
+                let progress: (AnswerProgress) -> Void = { update in
+                    switch update {
+                    case .text(let text): self.changeTurn(id, index) { $0.partial = Self.extractState(text).reply; $0.partialBy = speaker }
+                    case .activity(let what): self.changeTurn(id, index) { $0.activity = what }
+                    }
+                }
+                let started = Date()
+                let result = requestDebate(account, Self.soloContext(rules: rules, transcript: asked + said) + "\n[SOLO TURN]\n" + instruction,
+                                           900, cancellation, web: true,
+                                           fresh: freshTranscript.map { Self.soloContext(rules: rules, transcript: $0 + said) + "\n[SOLO TURN]\n" + instruction },
+                                           progress: progress)
+                if cancellation.isCancelled { break }
+                var entry: ChatTurn.Entry
+                switch result {
+                case .success(let raw):
+                    let (text, newState) = Self.extractState(raw)
+                    if let newState { Self.saveText(newState, to: Self.stateFile(id)) }
+                    let harvest = collectPictures(text, account: account, since: started, id: id)
+                    said += "\n\n[\(speaker)]\n" + harvest.text
+                    if k == 0 {
+                        changeTurn(id, index, save: true) { t in
+                            t.final = harvest.text; t.finalBy = speaker
+                            t.finalImages = harvest.images.isEmpty ? nil : harvest.images
+                            t.partial = nil; t.activity = nil
+                        }
+                        continue
+                    }
+                    entry = .init(round: 1, speaker: speaker, text: harvest.text, failed: false)
+                    entry.images = harvest.images.isEmpty ? nil : harvest.images
+                case .failure(let failure):
+                    entry = .init(round: 1, speaker: speaker, text: Self.describe(failure), failed: true)
+                }
+                changeTurn(id, index, save: true) { t in
+                    t.moreAnswers = (t.moreAnswers ?? []) + [entry]
+                    t.partial = nil; t.activity = nil
+                }
+            }
+            var changes = Self.changes(own, since: before)
+            if var made = backup, (try? made.finish()) != nil { changes += made.changes.filter { $0.kind != "directory" } }
+            let found = changes
+            changeTurn(id, index, save: true) { $0.workspaceChanges = found.isEmpty ? nil : found }
+            return endSolo(id, index, stopped: cancellation.isCancelled)
         }
 
         let school: Bool? = model.schoolOnlyHandoff ? config.school : nil

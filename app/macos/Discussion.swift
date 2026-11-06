@@ -410,6 +410,8 @@ struct ChatTurn: Identifiable, Codable {
     var debateFocus: String?
     var maxTurns: Int?    // mode 3: total AI turns (turnsPerAI × participants)
     var turnsPerAI: Int?  // missing in older chats, whose limit was a single total
+    var mentions: [String]?     // mode 0: accounts called with @ for this message, in order (nil = automatic)
+    var moreAnswers: [Entry]?   // mode 0: replies after the first when several AIs were called with @
     var partial: String?        // mode 0: the reply so far while it is being written (cleared when done)
     var partialBy: String?      // mode 0: who is writing it
     var activity: String?       // mode 0: what that AI is doing now (reading files, searching…)
@@ -608,6 +610,12 @@ final class Discussion: ObservableObject {
     @Published var sidebarSearch = ""
     @Published var hoverKey: String?
     @Published var teamSettingsOpen = false   // the team mode settings popover in the message box
+    // @ in the message box: the accounts picked so far, and the list while it is open.
+    @Published var draftMentions: [String] = []
+    @Published var mentionQuery: String?      // what was typed after @ (the list is open while this is set)
+    @Published var mentionIndex = 0
+    var mentionLocation = 0
+    weak var mentionEditor: NSTextView?      // the message box, for picking from the list with the mouse
     func hover(_ key: String, _ inside: Bool) {
         if inside { hoverKey = key } else if hoverKey == key { hoverKey = nil }
     }
@@ -854,11 +862,19 @@ final class Discussion: ObservableObject {
 
     func send() {
         guard canSend else { return }
-        let typed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        let question = typed.isEmpty ? L("첨부한 이미지를 설명해줘.", "Describe the attached images.") : typed
-        let team = pickTeam()
+        // Plain chat: "@Name" picked from the list sends this one message to those accounts, in order.
+        let mentioned = Self.modernModes && configuration.mode == 0 ? Self.mentions(in: draft, picked: draftMentions, accounts: model.accounts, label: label) : []
+        var typed = draft
+        for id in mentioned { if let account = model.accounts.first(where: { $0.id == id }) { typed = typed.replacingOccurrences(of: "@" + label(account), with: "") } }
+        typed = typed.replacingOccurrences(of: "  ", with: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+        draftMentions = []
+        mentionQuery = nil
+        let question = !typed.isEmpty ? typed : !mentioned.isEmpty ? L("지금까지의 대화에 대해 네 의견을 말해 줘.", "What do you think about this conversation so far?")
+            : L("첨부한 이미지를 설명해줘.", "Describe the attached images.")
+        let team = mentioned.isEmpty ? pickTeam() : mentioned.compactMap { id in model.accounts.first { $0.id == id } }
         let id = currentID
         var turn = ChatTurn(question: question)
+        turn.mentions = mentioned.isEmpty ? nil : mentioned
         let config = configuration
         turn.mode = config.mode
         turn.modeVersion = Self.modernModes ? 2 : nil
@@ -932,7 +948,7 @@ final class Discussion: ObservableObject {
         let debateLeader = Self.modernModes && !team.contains(where: { $0.provider == config.leader }) ? team[0].provider : config.leader
         worker.work.async {
             if solo {
-                worker.runSolo(question: question, history: history, rules: rules, config: config,
+                worker.runSolo(question: question, history: history, rules: rules, config: config, mentions: mentioned,
                              cancellation: cancellation, id: id, index: index)
             } else if Self.modernModes && config.mode == 4 {
                 worker.runVote(question: question, history: history, rules: rules, team: team,
@@ -1153,6 +1169,14 @@ final class Discussion: ObservableObject {
 
     static func transcript(_ turns: [ChatTurn]) -> String {
         turns.map { turn in
+            // Plain chat: the message, then each reply under the name of the AI that wrote it.
+            if turn.mode == 0 && turn.modeVersion == 2 {
+                var parts = ["[User]\n" + turn.question]
+                if let images = turn.images, !images.isEmpty { parts.append("[Images: " + images.map { $0.id.uuidString }.joined(separator: ", ") + "]") }
+                if let final = turn.final { parts.append("[\(turn.finalBy ?? "AI")]\n" + final) }
+                parts += (turn.moreAnswers ?? []).filter { !$0.failed }.map { "[\($0.speaker)]\n" + $0.text }
+                return parts.joined(separator: "\n\n")
+            }
             if let raw = turn.sessionTranscript {
                 return raw + (turn.final.map { "\n\n[최종 답]\n" + $0 } ?? "")
             }

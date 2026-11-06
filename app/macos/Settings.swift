@@ -139,6 +139,7 @@ final class AppModel: ObservableObject {
         didSet {
             UserDefaults.standard.set(sharedFolders, forKey: "sharedFolders")
             if !pausedSharedFolders.isSubset(of: Set(sharedFolders)) { pausedSharedFolders.formIntersection(sharedFolders) }
+            if !writableSharedFolders.isSubset(of: Set(sharedFolders)) { writableSharedFolders.formIntersection(sharedFolders) }
         }
     }
     // Shared folders kept in the list but not given to the AIs for now (the eye in the chat sidebar).
@@ -146,6 +147,11 @@ final class AppModel: ObservableObject {
         didSet { UserDefaults.standard.set(pausedSharedFolders.sorted(), forKey: "pausedSharedFolders") }
     }
     var activeSharedFolders: [String] { sharedFolders.filter { !pausedSharedFolders.contains($0) } }
+    // Shared folders the AIs may also change (the pencil): backed up before each answer, like linked folders.
+    // The others stay read only.
+    @Published var writableSharedFolders: Set<String> = [] {
+        didSet { UserDefaults.standard.set(writableSharedFolders.sorted(), forKey: "writableSharedFolders") }
+    }
     // A school chat is continued only by school accounts, a personal chat only by personal ones.
     @Published var schoolOnlyHandoff: Bool {
         didSet { UserDefaults.standard.set(schoolOnlyHandoff, forKey: "schoolOnlyHandoff") }
@@ -168,6 +174,7 @@ final class AppModel: ObservableObject {
         openAtLogin = SMAppService.mainApp.status == .enabled
         sharedFolders = UserDefaults.standard.stringArray(forKey: "sharedFolders") ?? []
         pausedSharedFolders = Set(UserDefaults.standard.stringArray(forKey: "pausedSharedFolders") ?? [])
+        writableSharedFolders = Set(UserDefaults.standard.stringArray(forKey: "writableSharedFolders") ?? [])
         schoolOnlyHandoff = UserDefaults.standard.object(forKey: "schoolOnlyHandoff") as? Bool ?? true
         let saved = UserDefaults.standard.string(forKey: "chatRules")
         chatRules = (saved == nil || saved == Self.koreanChatRules || saved == Self.rules(for: .english)

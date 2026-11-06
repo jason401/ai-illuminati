@@ -1122,6 +1122,16 @@ do {
     expect(!chat.soloBinding(chat.currentID).roots.contains { $0.path == shared.path } && m.sharedFolders == [shared.path], "a shared folder turned off stays listed but is not given to the AI")
     m.pausedSharedFolders = []
     expect(chat.soloBinding(chat.currentID).roots.contains { $0.path == shared.path }, "and on again")
+    // The pencil: a shared folder the AIs may change, backed up before the answer like a linked folder.
+    m.writableSharedFolders = [shared.path]
+    let writableBinding = chat.soloBinding(chat.currentID)
+    expect(writableBinding.roots.contains { $0.path == shared.path && $0.writable == true }, "a writable shared folder is given as writable")
+    expect(Discussion.soloFolders(writableBinding, shared: m.activeSharedFolders).contains(shared.path + " (shared folder — you may read, edit"), "the AI is told it may change it")
+    let writableArgs = try! WorkspaceInvocation(binding: writableBinding, room: chat.currentID).arguments(provider: .claude, original: ["-p", "--tools", "", "--allowedTools", "x"], directory: URL(fileURLWithPath: AccountStore.home).appendingPathComponent("shared-args"), web: false)
+    expect(writableArgs[writableArgs.lastIndex(of: "--allowedTools")! + 1].contains("Edit(/" + shared.path + "/**)"), "Claude may edit it")
+    m.sharedFolders = []
+    expect(m.writableSharedFolders.isEmpty, "removing the folder also drops its write access")
+    m.sharedFolders = [shared.path]
     expect(asked[0].1.contains("[SOLO TURN]") && asked[0].1.contains(shared.path + " (shared folder — read only)") && asked[0].1.contains("data.txt"), "the AI is told which folders it may read and write")
     expect(geminiPrompts.isEmpty, "no YouTube search for a normal question")
 

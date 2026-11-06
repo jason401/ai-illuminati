@@ -516,15 +516,27 @@ struct ChatView: View {
                 }
                 .buttonStyle(.plain)
             }
-            // Double-click opens the folder in Finder; the eye turns sharing on or off (the folder stays
-            // listed); right-click to remove it.
+            // Double-click opens the folder in Finder; the pencil lets the AIs change it (backed up before each
+            // answer); the eye turns sharing on or off (the folder stays listed); right-click to remove it.
             ForEach(model.sharedFolders, id: \.self) { path in
                 let paused = model.pausedSharedFolders.contains(path)
+                let writable = model.writableSharedFolders.contains(path)
+                let toggleWrite = { if writable { model.writableSharedFolders.remove(path) } else { model.writableSharedFolders.insert(path) } }
                 HStack(spacing: 8) {
                     Image(systemName: "folder").foregroundColor(.secondary).frame(width: 18)
                     Text((path as NSString).lastPathComponent).lineLimit(1)
                         .foregroundColor(paused ? .secondary : .primary)
                     Spacer(minLength: 2)
+                    if !paused {
+                        Button(action: toggleWrite) {
+                            Image(systemName: writable ? "pencil" : "pencil.slash").font(.system(size: 10))
+                                .foregroundColor(writable ? .accentColor : .secondary.opacity(0.5)).frame(width: 18, height: 18)
+                        }
+                        .buttonStyle(.plain)
+                        .help(writable ? L("쓰기 허용: AI가 고치고 만들고 지울 수 있어요(답하기 전에 자동 백업). 눌러서 읽기만", "Writable: the AIs may edit, create and delete (backed up before each answer). Click for read only")
+                                       : L("읽기만: AI가 고칠 수 없어요. 눌러서 쓰기 허용", "Read only: the AIs cannot change it. Click to allow changes"))
+                        .accessibilityLabel(writable ? L("읽기만으로", "Make read only") : L("쓰기 허용", "Allow changes"))
+                    }
                     Button(action: {
                         if paused { model.pausedSharedFolders.remove(path) } else { model.pausedSharedFolders.insert(path) }
                     }) {
@@ -533,7 +545,7 @@ struct ChatView: View {
                     }
                     .buttonStyle(.plain)
                     .help(paused ? L("공유 꺼짐: AI가 이 폴더를 못 봐요. 눌러서 켜기", "Not shared: the AIs cannot see it. Click to share")
-                                 : L("공유 중: 모든 대화의 AI가 읽을 수 있어요(읽기만). 눌러서 끄기", "Shared: every chat's AI can read it (read only). Click to stop"))
+                                 : L("공유 중: 모든 대화의 AI가 볼 수 있어요. 눌러서 끄기", "Shared: every chat's AI can see it. Click to stop"))
                     .accessibilityLabel(paused ? L("공유 켜기", "Share") : L("공유 끄기", "Stop sharing"))
                 }
                 .font(.system(size: 13))
@@ -546,6 +558,7 @@ struct ChatView: View {
                     Button(paused ? L("공유 켜기", "Share") : L("공유 끄기", "Stop sharing")) {
                         if paused { model.pausedSharedFolders.remove(path) } else { model.pausedSharedFolders.insert(path) }
                     }
+                    Button(writable ? L("읽기만으로", "Make read only") : L("쓰기 허용 (자동 백업)", "Allow changes (backed up)"), action: toggleWrite)
                     Divider()
                     Button(L("공동 폴더에서 빼기", "Remove from shared folders"), role: .destructive) { model.sharedFolders.removeAll { $0 == path } }
                 }

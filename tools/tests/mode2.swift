@@ -1680,3 +1680,5 @@ do {
 
 
 testGoogleDrive()
+
+testWindowDrag()

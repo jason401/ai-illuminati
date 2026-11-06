@@ -30,7 +30,8 @@ private struct EmptyPreviewLogin: GoogleTokenStore {
         for appearance in [NSAppearance.Name.darkAqua, .aqua] {
             let host = NSHostingController(rootView: ChatView(discussion: chat, model: model).environment(\.colorScheme, appearance == .darkAqua ? .dark : .light))
             host.sizingOptions = []
-            let window = NSWindow(contentViewController: host)
+            let window = ChatDragWindow(contentViewController: host)
+            window.isMovable = false
             window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
             window.titlebarAppearsTransparent = true; window.titleVisibility = .hidden
             window.appearance = NSAppearance(named: appearance)

@@ -16,6 +16,7 @@ struct ChatView: View {
         }
         .frame(minWidth: 820, minHeight: 520)
         .background(Color(nsColor: .textBackgroundColor))
+        .background(WindowTitlebarDragBridge())
         // A photo dropped anywhere in the window is attached, not only on the message box.
         .onDrop(of: [UTType.fileURL, UTType.image, UTType.item], delegate: ImageAttachmentDropDelegate(discussion: discussion))
         .overlay {
@@ -39,6 +40,7 @@ struct ChatView: View {
     // chats as single lines. Right-click (or ⋯ on hover) to pin or delete.
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
+            WindowDragRegion().frame(height: 16)
             VStack(alignment: .leading, spacing: 1) {
                 SidebarRow(discussion: discussion, title: L("새 대화", "New chat"), symbol: "square.and.pencil") { discussion.newConversation() }
                 if discussion.sidebarSearching {
@@ -54,7 +56,7 @@ struct ChatView: View {
                     SidebarRow(discussion: discussion, title: L("검색", "Search"), symbol: "magnifyingglass") { discussion.sidebarSearching = true }
                 }
             }
-            .padding(.horizontal, 10).padding(.top, 16)   // breathing room below the native title-bar safe area
+            .padding(.horizontal, 10)
             // Other chats stay usable while one answers (Discussion.maxRunning at once).
             .disabled(discussion.importingMaterials)
             ScrollView {
@@ -792,10 +794,11 @@ struct ChatView: View {
                 .font(.system(size: 13, weight: .medium)).lineLimit(1)
                 .onTapGesture(count: 2) { discussion.rename(discussion.currentID) }
                 .help(L("두 번 눌러 이름 바꾸기", "Double-click to rename"))
+                .disabled(discussion.running || discussion.importingMaterials)
             if !discussion.sessionNote.isEmpty {
                 Text(discussion.sessionNote).font(.system(size: 11)).foregroundColor(.secondary).lineLimit(1)
             }
-            Spacer()
+            WindowDragRegion().frame(maxWidth: .infinity, maxHeight: .infinity)
             if let workspace = discussion.current.workspace {
                 Menu {
                     ForEach(workspace.roots, id: \.path) { root in
@@ -808,13 +811,13 @@ struct ChatView: View {
                         .font(.system(size: 12))
                 }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                .disabled(discussion.running || discussion.importingMaterials)
                 .foregroundColor(.secondary)
                 .help(discussion.configuration.mode == 0
                       ? L("이 대화에 연결한 폴더: AI가 읽고 쓰고 지울 수 있어요 (답하기 전에 자동 백업)", "Folders linked to this chat: its AI may read, edit and delete (backed up before each answer)")
                       : L("이 대화에 연결한 폴더: 권한은 모드 설정(입력창 오른쪽)에서 정해요", "Folders linked to this chat: set access in the mode settings (right of the message box)"))
             }
         }
-        .disabled(discussion.running || discussion.importingMaterials)
     }
 
     // Who answers next: automatic (most usage left) or an account picked by hand; and the chat's side.
@@ -1336,10 +1339,11 @@ final class ChatWindow {
             let host = NSHostingController(rootView: ChatView(discussion: discussion, model: discussion.model))
             // Keep content changes from renegotiating window size during a native drag.
             host.sizingOptions = []
-            let w = NSWindow(contentViewController: host)
+            let w = ChatDragWindow(contentViewController: host)
             w.title = L("AI Illuminati 채팅", "AI Illuminati Chat")
             // One surface from the title bar down, like the desktop chat apps.
             w.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
+            w.isMovable = false
             w.titlebarAppearsTransparent = true
             w.titleVisibility = .hidden
             w.contentMinSize = NSSize(width: 820, height: 520)

@@ -8,6 +8,21 @@ final class MemoryGoogleStore: GoogleTokenStore {
     func clear() throws { data = nil }
 }
 
+final class FakeGooglePresenter: GoogleAuthPresenter {
+    var url: URL?, scheme = ""
+    var callback: ((Result<URL, Error>) -> Void)?
+    func start(_ url: URL, scheme: String, completion: @escaping (Result<URL, Error>) -> Void) {
+        self.url = url; self.scheme = scheme; callback = completion
+    }
+    func cancel() { callback?(.failure(GoogleFailure(message: "Google sign-in was cancelled."))); callback = nil }
+    func respond(state: String? = nil, code: String = "fixture-code") {
+        let items = URLComponents(url: url!, resolvingAgainstBaseURL: false)!.queryItems!
+        var result = URLComponents(string: scheme + ":/oauth2redirect")!
+        result.queryItems = [URLQueryItem(name: "state", value: state ?? items.first { $0.name == "state" }!.value!), URLQueryItem(name: "code", value: code)]
+        callback?(.success(result.url!))
+    }
+}
+
 func testGoogleDrive() {
     let root = URL(fileURLWithPath: AccountStore.home)
     let server = Process()
@@ -58,6 +73,27 @@ func testGoogleDrive() {
     expect(!authorize(auth, wrongState: true) && !auth.connected, "wrong state never creates credentials")
     expect(authorize(loggedIn) && loggedIn.connected, "successful loopback sign-in stores offline credentials")
     expect(!authorize(loggedIn, code: "bad-code") && loggedIn.connected, "a failed new sign-in preserves existing login")
+    let publicStore = MemoryGoogleStore(), publicAuth = GoogleAuth(store: publicStore)
+    let publicID = "fixture.apps.googleusercontent.com"
+    func publicAttempt(state: String? = nil, cancel: Bool = false) -> Bool {
+        let present = FakeGooglePresenter(), done = DispatchSemaphore(value: 0)
+        var success = false
+        try! publicAuth.beginBuiltInAuthorization(present: present, clientID: publicID) { result in
+            if case .success = result { success = true }; done.signal()
+        }
+        let items = URLComponents(url: present.url!, resolvingAgainstBaseURL: false)!.queryItems!
+        expect(present.scheme == "com.googleusercontent.apps.fixture" && !items.contains { $0.name == "client_secret" }, "public client uses reversed scheme without secret")
+        if cancel { publicAuth.cancelAuthorization() } else { present.respond(state: state) }
+        expect(done.wait(timeout: .now() + 5) == .success, "public client callback finishes")
+        return success
+    }
+    expect(!publicAttempt(state: "wrong") && !publicAuth.connected, "public client rejects wrong state")
+    expect(publicAttempt() && publicAuth.connected, "public client stores offline login")
+    expect(!publicAttempt(cancel: true) && publicAuth.connected, "public client cancellation preserves working login")
+    _ = try! publicAuth.accessToken(forceRefresh: true)
+    let publicRecords = try! JSONSerialization.jsonObject(with: GoogleHTTP.send(base.appendingPathComponent("records")).data) as! [[String: Any]]
+    let publicRequests = publicRecords.filter { ($0["fields"] as? [String: Any])?["client_id"] as? [String] == [publicID] }
+    expect(!publicRequests.isEmpty && publicRequests.allSatisfy { ($0["fields"] as? [String: Any])?["client_secret"] == nil }, "public exchange and refresh omit client secret")
     let drive = DriveLink(auth: loggedIn)
     DriveLink.shared = drive
     drive.enabled = true
@@ -74,7 +110,8 @@ func testGoogleDrive() {
         let text = ((result["content"] as! [[String: Any]])[0]["text"] as! String)
         return try! JSONSerialization.jsonObject(with: Data(text.utf8)) as! [String: Any]
     }
-    _ = call("drive_search", ["query": "O'Brien\\lab", "type": "doc"])
+    let paged = call("drive_search", ["query": "O'Brien\\lab", "type": "doc"])
+    expect((paged["files"] as? [[String: Any]])?.contains { $0["id"] as? String == "later" } == true, "search includes allowed matches beyond first page")
     _ = call("drive_list", ["folder": "https://drive.google.com/drive/folders/folder", "page": "fixture-next"])
     let doc = call("drive_read", ["file": "https://docs.google.com/document/d/doc/edit", "start": 2, "end": 9])
     expect(doc["text"] as? String == "Fixture" && doc["start"] as? Int == 2 && doc["end"] as? Int == 9, "character range and metadata")
@@ -86,16 +123,17 @@ func testGoogleDrive() {
     expect((call("drive_read", ["file": "office"])["text"] as? String)?.contains("247 kPa") == true, "downloaded DOCX through MaterialReader")
     expect((call("drive_read", ["file": "download"])["text"] as? String) == "Fixture download", "ordinary text download")
     expect(call("drive_read", ["file": "shortcut"])["id"] as? String == "doc", "Drive shortcut resolution")
+    expect(drive.call("drive_read", ["file": "escape-shortcut"], context: context)["isError"] as? Bool == true, "shortcut target outside shared folders refused")
     // Outside the shared folders: refused; the search drops it; the plain list shows the shared folders.
     expect(drive.call("drive_read", ["file": "outside"], context: context)["isError"] as? Bool == true, "file outside the shared folders refused")
     expect(drive.call("drive_list", ["folder": "other"], context: context)["isError"] as? Bool == true, "folder outside the shared folders refused")
     let found = (call("drive_search", ["query": "fixture"])["files"] as? [[String: Any]])?.compactMap { $0["id"] as? String }
-    expect(found == ["doc"], "search keeps only files inside the shared folders")
+    expect(Set(found ?? []) == Set(["doc", "later"]), "search keeps only files inside the shared folders")
     expect((call("drive_list", [:])["files"] as? [[String: Any]])?.compactMap { $0["id"] as? String } == ["allowed"], "list without a folder shows the shared folders")
     expect(call("drive_list", ["folder": "Allowed"])["files"] != nil, "a shared folder by its name")
     let farPointer = root.appendingPathComponent("far.gdoc")
     try! Data(#"{"doc_id":"outside"}"#.utf8).write(to: farPointer)
-    expect(call("drive_read", ["file": farPointer.path])["id"] as? String == "outside", "a pointer in a linked local folder was shared there already")
+    expect(drive.call("drive_read", ["file": farPointer.path], context: context)["isError"] as? Bool == true, "local pointer cannot bypass shared Drive folders")
     DriveLink.pausedFolders = ["allowed"]
     expect(!drive.active, "the eye off on the only folder: no Drive tools")
     DriveLink.pausedFolders = []
@@ -119,7 +157,7 @@ func testGoogleDrive() {
     _ = call("drive_read", ["file": "rate"])
     let recordsData = try! GoogleHTTP.send(base.appendingPathComponent("records")).data
     let records = try! JSONSerialization.jsonObject(with: recordsData) as! [[String: Any]]
-    let grants = records.filter { $0["path"] as? String == "/token" }
+    let grants = records.filter { $0["path"] as? String == "/token" && ($0["fields"] as? [String: [String]])?["client_id"] == ["fixture-client"] }
     expect(grants.count == 3, "authorization attempts plus exactly one 401 refresh")
     let verifier = ((grants[0]["fields"] as! [String: [String]])["code_verifier"]!.first!)
     let digest = Data(SHA256.hash(data: Data(verifier.utf8))).base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
@@ -176,8 +214,10 @@ func testGoogleDrive() {
         if counts["/drive/files/slow/export"] != nil { break }
         Thread.sleep(forTimeInterval: 0.02)
     }
-    drive.enabled = false; drive.enabled = true
-    expect(pending.wait(timeout: .now() + 5) == .success && withheld["isError"] as? Bool == true, "in-flight result withheld after switch changes")
+    DriveLink.folders.append(DriveFolder(id: "other", name: "Other"))
+    DriveLink.pausedFolders = ["allowed"]
+    DriveLink.pausedFolders = []
+    expect(pending.wait(timeout: .now() + 5) == .success && withheld["isError"] as? Bool == true, "in-flight result withheld after folder pause with another folder active")
 
     let slowStore = MemoryGoogleStore(), slowAuth = GoogleAuth(store: slowStore)
     let cancelledExchange = DispatchSemaphore(value: 0)

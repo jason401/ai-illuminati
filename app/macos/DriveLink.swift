@@ -6,7 +6,7 @@ struct DriveFolder: Codable, Hashable { var id: String; var name: String }
 
 // Read-only Google APIs. No tokens or downloaded credential files leave this process.
 // Google's login covers the whole Drive; the app is the gatekeeper: the AIs reach only files inside the folders
-// the user added (and their subfolders), plus Google pointer files in the chat's linked local folders.
+// the user added (and their subfolders), including Google pointer files in the chat's linked local folders.
 final class DriveLink: ToolProvider {
     static var shared = DriveLink(auth: .shared)
     static var api = URL(string: "https://www.googleapis.com/drive/v3")!
@@ -14,8 +14,10 @@ final class DriveLink: ToolProvider {
     static let maxDownload = 50 * 1024 * 1024
     private let auth: GoogleAuth
     private let logLock = NSLock(), settingsLock = NSLock()
+    private static let folderLock = NSLock()
+    private static var folderVersion = 0
     private var settingsVersion = 0
-    private var settingsEpoch: Int { settingsLock.lock(); defer { settingsLock.unlock() }; return settingsVersion }
+    private var settingsEpoch: Int { settingsLock.lock(); defer { settingsLock.unlock() }; Self.folderLock.lock(); defer { Self.folderLock.unlock() }; return settingsVersion + Self.folderVersion }
     init(auth: GoogleAuth) { self.auth = auth }
     var enabled: Bool {
         get { !(UserDefaults.standard.stringArray(forKey: "mcpOff") ?? []).contains("google-drive") }
@@ -31,11 +33,11 @@ final class DriveLink: ToolProvider {
     // The folders the AIs may read (UserDefaults), and the ones turned off with the eye.
     static var folders: [DriveFolder] {
         get { (UserDefaults.standard.data(forKey: "driveFolders")).flatMap { try? JSONDecoder().decode([DriveFolder].self, from: $0) } ?? [] }
-        set { UserDefaults.standard.set(try? JSONEncoder().encode(newValue), forKey: "driveFolders") }
+        set { folderLock.lock(); defer { folderLock.unlock() }; folderVersion += 1; UserDefaults.standard.set(try? JSONEncoder().encode(newValue), forKey: "driveFolders") }
     }
     static var pausedFolders: Set<String> {
         get { Set(UserDefaults.standard.stringArray(forKey: "pausedDriveFolders") ?? []) }
-        set { UserDefaults.standard.set(newValue.sorted(), forKey: "pausedDriveFolders") }
+        set { folderLock.lock(); defer { folderLock.unlock() }; folderVersion += 1; UserDefaults.standard.set(newValue.sorted(), forKey: "pausedDriveFolders") }
     }
     static var allowedFolders: [DriveFolder] { let off = pausedFolders; return folders.filter { !off.contains($0.id) } }
 
@@ -76,9 +78,7 @@ final class DriveLink: ToolProvider {
             case "drive_read":
                 let file = try required(arguments, "file")
                 identifier = try fileID(file, roots: context.roots)
-                // A pointer file in this chat's linked folders was shared there already; anything else must be
-                // inside a shared Drive folder.
-                if !file.hasPrefix("/") { try requireAllowed(identifier) }
+                try requireAllowed(identifier)
                 result = try read(identifier, arguments: arguments)
             default: return ToolHub.failure("Unknown Google Drive tool.")
             }
@@ -160,11 +160,19 @@ final class DriveLink: ToolProvider {
         }
         // Google searches the whole Drive; keep only what lies inside the shared folders.
         let limit = min(50, max(1, args["limit"] as? Int ?? 20))
-        var found = try files(q, limit: min(100, limit * 3))
-        let inside = try (found["files"] as? [[String: Any]] ?? []).filter { try isAllowed($0["id"] as? String ?? "") }
-        found["files"] = Array(inside.prefix(limit))
-        found["nextPageToken"] = nil
-        return found
+        var inside: [[String: Any]] = [], page: String?, seen = Set<String>()
+        var incomplete = false
+        repeat {
+            let found = try files(q, limit: 100, page: page)
+            incomplete = incomplete || (found["incompleteSearch"] as? Bool == true)
+            for file in found["files"] as? [[String: Any]] ?? [] {
+                if try isAllowed(file["id"] as? String ?? "") { inside.append(file) }
+                if inside.count == limit { break }
+            }
+            page = found["nextPageToken"] as? String
+            if let next = page, !seen.insert(next).inserted { incomplete = true; break }
+        } while inside.count < limit && page != nil
+        return ["files": inside, "incompleteSearch": incomplete]
     }
     private func list(_ args: [String: Any]) throws -> [String: Any] {
         // No folder: the shared folders themselves.
@@ -228,17 +236,10 @@ final class DriveLink: ToolProvider {
 
     // MARK: Shared folders (the app's gate)
 
-    private let cacheLock = NSLock()
-    private var parentCache: [String: (parents: [String], at: Date)] = [:]
-
+    // Permission decisions use current metadata, never a previous account's cached parents.
     private func parents(of id: String) throws -> [String] {
-        cacheLock.lock()
-        if let cached = parentCache[id], cached.at.timeIntervalSinceNow > -300 { cacheLock.unlock(); return cached.parents }
-        cacheLock.unlock()
         let metadata = try json(Self.api, ["files", id], ["fields": "id,parents", "supportsAllDrives": "true"])
-        let found = metadata["parents"] as? [String] ?? []
-        cacheLock.lock(); parentCache[id] = (found, Date()); cacheLock.unlock()
-        return found
+        return metadata["parents"] as? [String] ?? []
     }
 
     // Whether the file or folder is one of the shared folders or lies anywhere below one (walking up its parents).
@@ -295,6 +296,7 @@ final class DriveLink: ToolProvider {
             if metadata["mimeType"] as? String != "application/vnd.google-apps.shortcut" { break }
             guard depth < 4, let target = (metadata["shortcutDetails"] as? [String: Any])?["targetId"] as? String else { throw GoogleFailure(message: "Drive shortcut chain could not be resolved.") }
             id = try fileID(target, roots: [])
+            try requireAllowed(id)
         }
         let mime = metadata["mimeType"] as? String ?? "", name = metadata["name"] as? String ?? id
         var text: String, note = "", extra: [String: Any] = [:]

@@ -62,6 +62,8 @@ class H(BaseHTTPRequestHandler):
         if path.endswith('/missing'): return self.reply({}, 404)
         if path.endswith('/redirect'): return self.reply(b'', 302, {'Location': 'http://127.0.0.1:1/steal'})
         if path.endswith('/large-response'): return self.reply(b'', headers={'Content-Length': '999999999'})
+        if path == '/drive/files' and query.get('pageToken'):
+            return self.reply({'files': [{'id': 'later', 'name': 'Later Doc', 'mimeType': 'application/vnd.google-apps.document'}]})
         if path == '/drive/files':
             return self.reply({'files': [{'id': 'doc', 'name': 'Fixture Doc', 'mimeType': 'application/vnd.google-apps.document',
                                          'modifiedTime': '2026-01-01T00:00:00Z', 'webViewLink': 'https://docs.google.com/document/d/doc/edit'},
@@ -91,6 +93,9 @@ class H(BaseHTTPRequestHandler):
                     'shortcut': 'application/vnd.google-apps.shortcut'}.get(ident, 'application/vnd.google-apps.document')
             result = {'id': ident, 'name': 'fixture.docx' if ident == 'office' else 'Fixture ' + ident, 'mimeType': mime,
                       'size': '999999999' if ident == 'huge' else '100', 'modifiedTime': '2026-01-01T00:00:00Z'}
+            if ident == 'escape-shortcut':
+                result['mimeType'] = 'application/vnd.google-apps.shortcut'
+                result['shortcutDetails'] = {'targetId': 'outside'}
             if ident == 'shortcut': result['shortcutDetails'] = {'targetId': 'doc'}
             # Folder tree: allowed and other sit in My Drive; outside is in other; everything else in allowed.
             result['parents'] = {'allowed': ['root-real'], 'other': ['root-real'], 'outside': ['other'], 'root-real': []}.get(ident, ['allowed'])

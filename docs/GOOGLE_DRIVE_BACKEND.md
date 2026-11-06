@@ -97,3 +97,12 @@ against the user's Drive still require an explicitly initiated real-account test
 - `drive_read` returns up to 60,000 characters per call (as `read_document` does). Claude Code may cut or refuse
   long MCP results (its MCP output token limit); long Korean text is the likely case. Check with a real long
   Korean Google Doc and lower the default or page it if needed.
+
+## Public-client login and folder gate (2026-11-06)
+
+ASWebAuthenticationSession + PKCE supports a public iOS-type client without a client secret.
+The built-in client ID is currently empty: the existing Desktop JSON flow remains the default.
+Saved Desktop credentials remain compatible. Public-client reconnect uses the saved client ID.
+Local pointer files and shortcut targets must also be inside selected Drive folders. Folder changes
+invalidate in-flight results; permission ancestry is fetched fresh. Search follows Drive pages.
+Real Google consent, callback, refresh and relaunch still require a configured client ID and manual testing.

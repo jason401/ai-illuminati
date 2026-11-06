@@ -96,18 +96,25 @@ struct GoogleKeychainStore: GoogleTokenStore {
     }
 }
 
+protocol GoogleAuthPresenter: AnyObject {
+    func start(_ url: URL, scheme: String, completion: @escaping (Result<URL, Error>) -> Void)
+    func cancel()
+}
+
 // Backend only: a future UI supplies the Desktop-client JSON and opens the returned URL.
 // No browser is opened and no Google login starts without an explicit caller.
 final class GoogleAuth {
     static var shared = GoogleAuth(store: GoogleKeychainStore())
+    static let builtInClientID = "" // Public iOS OAuth client ID; supplied by the app owner.
     static let scope = "https://www.googleapis.com/auth/drive.readonly"
     static var authorizeURL = URL(string: "https://accounts.google.com/o/oauth2/v2/auth")!
     static var tokenURL = URL(string: "https://oauth2.googleapis.com/token")!
     static var revokeURL = URL(string: "https://oauth2.googleapis.com/revoke")!
-    struct Credentials: Codable { var clientID: String; var clientSecret: String; var refreshToken: String? }
+    struct Credentials: Codable { var clientID: String; var clientSecret: String?; var refreshToken: String? }
     private let store: GoogleTokenStore
     private let lock = NSRecursiveLock()
     private var access: String?, expires = Date.distantPast
+    private var presenter: GoogleAuthPresenter?
     private var listener: GoogleLoopback?
     private var authorizationID: UUID?
     private var version = 0
@@ -126,7 +133,7 @@ final class GoogleAuth {
     func beginReauthorization(completion: @escaping (Result<Void, Error>) -> Void) throws -> URL {
         let saved: Credentials? = { lock.lock(); defer { lock.unlock() }; return try? credentials() }()
         guard let saved else { throw GoogleFailure(message: "Choose the Google OAuth client file again.") }
-        let client = try JSONSerialization.data(withJSONObject: ["installed": ["client_id": saved.clientID, "client_secret": saved.clientSecret]])
+        let client = try JSONSerialization.data(withJSONObject: ["installed": ["client_id": saved.clientID, "client_secret": saved.clientSecret ?? ""]])
         return try beginAuthorization(clientJSON: client, completion: completion)
     }
     private func credentials() throws -> Credentials? {
@@ -150,6 +157,7 @@ final class GoogleAuth {
             throw GoogleFailure(message: "Choose a Google OAuth Desktop-app client JSON, not an API key.")
         }
         lock.lock(); defer { lock.unlock() }
+        presenter?.cancel(); presenter = nil
         listener?.cancel()
         let state = try Self.random(), verifier = try Self.random(), identifier = UUID()
         let callback = try GoogleLoopback()
@@ -186,17 +194,81 @@ final class GoogleAuth {
         }
         return components.url!
     }
+    var publicClientID: String? {
+        lock.lock(); defer { lock.unlock() }
+        guard let saved = try? credentials(), saved.clientSecret == nil else { return nil }
+        return saved.clientID
+    }
+
+    func beginBuiltInAuthorization(present: GoogleAuthPresenter, clientID: String = GoogleAuth.builtInClientID,
+                                   completion: @escaping (Result<Void, Error>) -> Void) throws {
+        let suffix = ".apps.googleusercontent.com"
+        guard clientID.hasSuffix(suffix), !clientID.dropLast(suffix.count).isEmpty,
+              clientID.unicodeScalars.allSatisfy({ GoogleHTTP.unreserved.contains($0) }) else {
+            throw GoogleFailure(message: "The app's Google client ID has not been configured.")
+        }
+        cancelAuthorization()
+        let state = try Self.random(), verifier = try Self.random(), identifier = UUID()
+        let scheme = "com.googleusercontent.apps." + clientID.dropLast(suffix.count)
+        let redirect = scheme + ":/oauth2redirect"
+        lock.lock(); authorizationID = identifier; presenter = present; lock.unlock()
+        var address = URLComponents(url: Self.authorizeURL, resolvingAgainstBaseURL: false)!
+        address.queryItems = ["client_id": clientID, "redirect_uri": redirect, "response_type": "code",
+            "scope": Self.scope, "access_type": "offline", "prompt": "consent", "state": state,
+            "code_challenge_method": "S256", "code_challenge": Self.base64(Data(SHA256.hash(data: Data(verifier.utf8))))]
+            .map { URLQueryItem(name: $0.key, value: $0.value) }
+        present.start(address.url!, scheme: String(scheme)) { result in
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    let callback = try result.get()
+                    guard let parts = URLComponents(url: callback, resolvingAgainstBaseURL: false),
+                          parts.scheme == scheme, parts.host == nil, parts.path == "/oauth2redirect" else {
+                        throw GoogleFailure(message: "Invalid Google sign-in callback.")
+                    }
+                    var fields: [String: String] = [:]
+                    for item in parts.queryItems ?? [] {
+                        guard fields[item.name] == nil else { throw GoogleFailure(message: "Invalid Google sign-in callback.") }
+                        fields[item.name] = item.value ?? ""
+                    }
+                    guard fields["state"] == state else { throw GoogleFailure(message: "Google sign-in state did not match.") }
+                    if let error = fields["error"] {
+                        throw GoogleFailure(message: error == "admin_policy_enforced" ? "Your Google administrator blocked this app." : "Google sign-in was denied or cancelled.")
+                    }
+                    guard let code = fields["code"], !code.isEmpty else { throw GoogleFailure(message: "Google sign-in returned no authorization code.") }
+                    self.lock.lock(); let current = self.authorizationID == identifier; self.lock.unlock()
+                    guard current else { throw GoogleFailure(message: "Google sign-in was cancelled.") }
+                    let reply = try self.token(["client_id": clientID, "code": code, "code_verifier": verifier,
+                        "redirect_uri": redirect, "grant_type": "authorization_code"])
+                    guard let refresh = reply["refresh_token"] as? String, !refresh.isEmpty else { throw GoogleFailure(message: "Google did not return offline access. Please reconnect.") }
+                    try self.finishAuthorization(Credentials(clientID: clientID, clientSecret: nil, refreshToken: refresh), reply: reply, identifier: identifier)
+                    completion(.success(()))
+                } catch {
+                    self.lock.lock()
+                    if self.authorizationID == identifier { self.authorizationID = nil; self.presenter = nil }
+                    self.lock.unlock()
+                    completion(.failure(error))
+                }
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 300) {
+            self.lock.lock(); let current = self.authorizationID == identifier; self.lock.unlock()
+            if current { self.cancelAuthorization() }
+        }
+    }
+
     private func finishAuthorization(_ credentials: Credentials, reply: [String: Any], identifier: UUID) throws {
         lock.lock(); defer { lock.unlock() }
         guard authorizationID == identifier else { throw GoogleFailure(message: "Google sign-in was cancelled.") }
         try store.save(JSONEncoder().encode(credentials))
         remember(reply)
         version += 1
-        listener = nil; authorizationID = nil
+        listener = nil; presenter = nil; authorizationID = nil
     }
     func cancelAuthorization() {
         lock.lock(); defer { lock.unlock() }
+        let previous = presenter; presenter = nil
         listener?.cancel(); listener = nil; authorizationID = nil
+        previous?.cancel()
     }
     private func token(_ fields: [String: String]) throws -> [String: Any] {
         let reply = try GoogleHTTP.send(Self.tokenURL, method: "POST", headers: ["Content-Type": "application/x-www-form-urlencoded"], body: GoogleHTTP.form(fields))
@@ -222,7 +294,9 @@ final class GoogleAuth {
         lock.lock(); defer { lock.unlock() }
         guard let saved = try credentials(), let refresh = saved.refreshToken else { throw GoogleFailure(message: "Google Drive is not connected. Sign in first.") }
         if !forceRefresh, let access, expires.timeIntervalSinceNow > 60 { return access }
-        let reply = try token(["client_id": saved.clientID, "client_secret": saved.clientSecret, "refresh_token": refresh, "grant_type": "refresh_token"])
+        var fields = ["client_id": saved.clientID, "refresh_token": refresh, "grant_type": "refresh_token"]
+        if let secret = saved.clientSecret { fields["client_secret"] = secret }
+        let reply = try token(fields)
         if let rotated = reply["refresh_token"] as? String {
             try store.save(JSONEncoder().encode(Credentials(clientID: saved.clientID, clientSecret: saved.clientSecret, refreshToken: rotated)))
         }

@@ -1,4 +1,5 @@
 import Cocoa
+import AuthenticationServices
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -46,7 +47,21 @@ final class DriveCenter: ObservableObject {
     // First time: explain the one-time Google Cloud setup, pick the downloaded client file, then the browser login.
     // Reconnect: the saved client, straight to the browser.
     func connect() {
+        if let saved = GoogleAuth.shared.publicClientID { return publicSignIn(saved) }
         if needsReconnect { return signIn { try GoogleAuth.shared.beginReauthorization(completion: $0) } }
+        if !GoogleAuth.builtInClientID.isEmpty {
+            let alert = NSAlert()
+            alert.messageText = L("Google 드라이브 연결 (읽기 전용)", "Connect Google Drive (read only)")
+            alert.informativeText = L("구글 로그인 후 AI가 읽을 폴더를 골라요. 읽은 내용은 답하는 AI로 보내져요. 로그인 정보는 이 Mac의 키체인에만 저장돼요. 확인되지 않은 앱 경고가 나오면 고급 → AI Illuminati(으)로 이동을 누르세요.", "Sign in, then choose the folders your AI may read. Read content goes to the responding AI; login credentials stay in this Mac's Keychain. If Google shows an unverified app warning, choose Advanced → Go to AI Illuminati.")
+            alert.addButton(withTitle: L("구글로 로그인", "Sign in with Google"))
+            alert.addButton(withTitle: L("취소", "Cancel"))
+            if alert.runModal() == .alertFirstButtonReturn { publicSignIn(GoogleAuth.builtInClientID) }
+            return
+        }
+        connectOwnClient()
+    }
+
+    func connectOwnClient() {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
         alert.messageText = L("Google 드라이브 연결 (읽기 전용)", "Connect Google Drive (read only)")
@@ -83,6 +98,22 @@ final class DriveCenter: ObservableObject {
         panel.prompt = L("연결", "Connect")
         guard panel.runModal() == .OK, let url = panel.url, let data = try? Data(contentsOf: url) else { return }
         signIn { try GoogleAuth.shared.beginAuthorization(clientJSON: data, completion: $0) }
+    }
+
+    private func publicSignIn(_ clientID: String) {
+        let current = UUID(); attempt = current; signingIn = true
+        do {
+            try GoogleAuth.shared.beginBuiltInAuthorization(present: GoogleBrowserSession(), clientID: clientID) { result in
+                DispatchQueue.main.async {
+                    guard self.attempt == current else { return }
+                    self.signingIn = false; self.refresh()
+                    switch result {
+                    case .success: if self.folders.isEmpty { self.picking = true }
+                    case .failure(let error): self.show(error)
+                    }
+                }
+            }
+        } catch { signingIn = false; show(error) }
     }
 
     private func signIn(_ begin: (@escaping (Result<Void, Error>) -> Void) throws -> URL) {
@@ -201,7 +232,7 @@ struct DriveSidebarSection: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .buttonStyle(.plainHit)
-        .contextMenu { if center.connected { accountMenu } }
+        .contextMenu { accountMenu }
     }
 
     // Double-click opens it in the browser; the eye pauses it (it stays listed); right-click to remove.
@@ -236,10 +267,13 @@ struct DriveSidebarSection: View {
     }
 
     @ViewBuilder private var accountMenu: some View {
+        Button(L("내 등록 파일로 연결…", "Connect with Own Client File…")) { center.connectOwnClient() }
+        if center.connected {
         Button(L("폴더 추가…", "Add Folder…")) { center.picking = true }
         Button(center.on ? L("드라이브 끄기", "Turn Drive Off") : L("드라이브 켜기", "Turn Drive On")) { center.on.toggle() }
         Button(L("다시 연결…", "Reconnect…")) { center.connect() }
         Button(L("연결 끊기…", "Disconnect…")) { center.disconnect() }
+        }
     }
 }
 
@@ -367,5 +401,33 @@ struct DriveFolderPicker: View {
         let added = center.folders.contains { $0.id == folder.id }
         return Button(added ? L("추가됨", "Added") : title) { model.add(folder, to: center) }
             .controlSize(.small).disabled(added)
+    }
+}
+
+// ASWebAuthenticationSession owns the browser callback; no screen capture or embedded web view.
+private final class GoogleBrowserSession: NSObject, GoogleAuthPresenter, ASWebAuthenticationPresentationContextProviding {
+    private var session: ASWebAuthenticationSession?
+    private var completion: ((Result<URL, Error>) -> Void)?
+    func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+        NSApp.keyWindow ?? NSApp.windows.first(where: { $0.isVisible }) ?? ASPresentationAnchor()
+    }
+    func start(_ url: URL, scheme: String, completion: @escaping (Result<URL, Error>) -> Void) {
+        self.completion = completion
+        let session = ASWebAuthenticationSession(url: url, callbackURLScheme: scheme) { [weak self] url, error in
+            guard let self else { return }
+            if let url { self.finish(.success(url)) }
+            else { self.finish(.failure(GoogleFailure(message: (error as? ASWebAuthenticationSessionError)?.code == .canceledLogin ? "Google sign-in was cancelled." : "Could not open Google sign-in."))) }
+        }
+        session.presentationContextProvider = self
+        session.prefersEphemeralWebBrowserSession = false
+        self.session = session
+        if !session.start() { finish(.failure(GoogleFailure(message: "Could not open Google sign-in."))) }
+    }
+    private func finish(_ result: Result<URL, Error>) {
+        let callback = completion; completion = nil; session = nil; callback?(result)
+    }
+    func cancel() {
+        let stop = { self.session?.cancel(); self.finish(.failure(GoogleFailure(message: "Google sign-in was cancelled."))) }
+        if Thread.isMainThread { stop() } else { DispatchQueue.main.async(execute: stop) }
     }
 }

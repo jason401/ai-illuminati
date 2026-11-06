@@ -4,13 +4,20 @@ Written 2026-11-06. Read `CLAUDE.md` / `AGENTS.md`, the top of `HANDOFF.md`, `do
 follow their rules (Korean, simple replies to Younghun; tests before commit; push `main`; **`stable` only after
 his explicit "배포해"**; public repo: no emails, tokens, client secrets or personal data).
 
+## Implementation status (2026-11-06)
+
+Implemented with the client ID intentionally empty (not yet registered). The existing Desktop JSON
+connection stays available. Fake-server checks cover public-client authorization/refresh/cancellation,
+legacy credentials and Drive folder restrictions. Real Google login remains pending client registration.
+
 ## Why
 
 Today every person who installs AI Illuminati must create their own Google Cloud project and OAuth client before
 connecting Google Drive (sidebar → Google Drive → +). Younghun will share the app with a few people (under 100).
 Goal: **Younghun registers once; the app ships his client ID; everyone else only presses "Sign in with Google →
-Allow"**, like the Claude and ChatGPT apps. No Google verification or security assessment (fewer than 100 users;
-users see Google's "unverified app" warning and pass it with Advanced → Go to).
+Allow"**, like the Claude and ChatGPT apps. Personal use with a small group personally known to the developer may qualify for the verification exception.
+Fewer than 100 users alone does not exempt a publicly distributed app from verification. See
+https://developers.google.com/identity/protocols/oauth2/policies . Users may see an unverified-app warning.
 
 ## Decisions (already made)
 
@@ -101,7 +108,7 @@ users see Google's "unverified app" warning and pass it with Advanced → Go to)
    saved, an existing login kept.
 4. An old saved login with a secret (Desktop client) still refreshes and sends its secret; reconnect picks the
    right flow for each kind.
-5. `grep` guard: the repo contains no `GOCSPX-` string.
+5. Secret scanning: no real Google client secrets or tokens in tracked source; documentation may name secret formats.
 6. All existing tests still pass (`zsh tools/tests/run_mode2.sh`), then `zsh tools/build_app.sh --stage < /dev/null`
    and `python3 tools/tests/check_signing.py`.
 

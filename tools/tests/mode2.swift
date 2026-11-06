@@ -536,14 +536,57 @@ do {
     try FileManager.default.removeItem(at: root.appendingPathComponent("delete.txt"))
     try backup.finish()
     expect(Set(backup.changes.map { $0.kind }) == Set(["added","modified","deleted"]), "actual diff kinds wrong")
+    // An edit after the answer (here: put away, then put back unchanged) blocks Undo until it is gone.
+    let aside = root.deletingLastPathComponent().appendingPathComponent("edit-aside.txt")
+    try? FileManager.default.removeItem(at: aside)
+    try FileManager.default.moveItem(at: root.appendingPathComponent("edit.txt"), to: aside)
     try "LATER".write(to: root.appendingPathComponent("edit.txt"), atomically: true, encoding: .utf8)
     do { try backup.restore(); fatalError("overwrote external edits") } catch {}
-    try "MODIFIED".write(to: root.appendingPathComponent("edit.txt"), atomically: true, encoding: .utf8)
+    try FileManager.default.removeItem(at: root.appendingPathComponent("edit.txt"))
+    try FileManager.default.moveItem(at: aside, to: root.appendingPathComponent("edit.txt"))
     try backup.restore()
     let restoredStamps = try WorkspaceBackup.stamps(binding.roots)
     expect(restoredStamps == backup.before, "restored source hashes differ")
     expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("new.txt").path), "undo left created file")
     print("PASS: backup, actual add/edit/delete list, conflict refusal and exact hash undo")
+}
+
+// Cloud-only files are not downloaded for the backup; Undo puts back only what changed; old backups go.
+do {
+    let fm = FileManager.default
+    let root = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("cloud-fixture")
+    try? fm.removeItem(at: root)
+    try fm.createDirectory(at: root.appendingPathComponent("sub"), withIntermediateDirectories: true)
+    for (name, text) in [("local.txt", "LOCAL"), ("cloud.txt", "CLOUD"), ("keep.txt", "KEEP"), ("sub/note.txt", "NOTE")] {
+        try text.write(to: root.appendingPathComponent(name), atomically: true, encoding: .utf8)
+    }
+    WorkspaceBackup.treatAsCloud = [root.appendingPathComponent("cloud.txt").standardizedFileURL.path]
+    defer { WorkspaceBackup.treatAsCloud = [] }
+    let binding = WorkspaceBinding(roots: [WorkspaceRoot(path: root.path, directory: true)], level: .write)
+    let room = UUID()
+    var backup = try WorkspaceBackup.begin(binding, room: room, runID: UUID())
+    let copy = URL(fileURLWithPath: backup.directory).appendingPathComponent("0")
+    expect(!fm.fileExists(atPath: copy.appendingPathComponent("cloud.txt").path) && fm.fileExists(atPath: copy.appendingPathComponent("local.txt").path)
+           && backup.cloud == ["0/cloud.txt"], "cloud-only files are left out of the backup")
+    try "CHANGED".write(to: root.appendingPathComponent("local.txt"), atomically: true, encoding: .utf8)
+    try fm.removeItem(at: root.appendingPathComponent("cloud.txt"))
+    try fm.removeItem(at: root.appendingPathComponent("sub"))
+    try "NEW".write(to: root.appendingPathComponent("new.txt"), atomically: true, encoding: .utf8)
+    try backup.finish()
+    let kinds = Dictionary(uniqueKeysWithValues: backup.changes.map { (($0.path as NSString).lastPathComponent, $0.kind) })
+    expect(kinds["cloud.txt"] == "cloud-deleted" && kinds["local.txt"] == "modified" && kinds["new.txt"] == "added" && kinds["note.txt"] == "deleted", "a changed cloud-only file is marked")
+    let keepBefore = try WorkspaceBackup.entry(root.appendingPathComponent("keep.txt")).0
+    try backup.restore()
+    expect((try? String(contentsOf: root.appendingPathComponent("local.txt"), encoding: .utf8)) == "LOCAL"
+           && (try? String(contentsOf: root.appendingPathComponent("sub/note.txt"), encoding: .utf8)) == "NOTE"
+           && !fm.fileExists(atPath: root.appendingPathComponent("new.txt").path), "Undo puts back what changed")
+    let keepAfter = try WorkspaceBackup.entry(root.appendingPathComponent("keep.txt")).0
+    expect(keepAfter == keepBefore, "untouched files are left alone (not replaced)")
+    expect(!fm.fileExists(atPath: root.appendingPathComponent("cloud.txt").path) && backup.restored, "the cloud-only file is not invented; Undo still succeeds")
+    for _ in 0..<(WorkspaceBackup.keepPerChat + 2) { _ = try WorkspaceBackup.begin(binding, room: room, runID: UUID()) }
+    let kept = try fm.contentsOfDirectory(atPath: WorkspaceBackup.base.appendingPathComponent(room.uuidString).path)
+    expect(kept.count == WorkspaceBackup.keepPerChat, "each chat keeps its newest \(WorkspaceBackup.keepPerChat) backups")
+    print("PASS: backup by size and time, cloud-only files skipped and marked, Undo per entry, old backups pruned")
 }
 
 // Fresh/resume permissions are explicit at every invocation; no broad bypass flags.

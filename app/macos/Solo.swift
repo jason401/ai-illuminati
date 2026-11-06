@@ -210,9 +210,16 @@ extension Discussion {
         if !linked.isEmpty {
             changeTurn(id, index) { $0.status = L("연결 폴더를 백업하는 중…", "Backing up linked folders…") }
             do {
+                let started = Date()
                 let made = try WorkspaceBackup.begin(WorkspaceBinding(roots: linked, level: .write), room: id, runID: UUID())
                 backup = made
                 changeTurn(id, index, save: true) { $0.backupPath = made.directory }
+                // A big folder makes every answer wait: say so, with the way out.
+                let took = Date().timeIntervalSince(started)
+                if took > 10 {
+                    notes.append(L("연결 폴더 백업에 \(Int(took))초 걸렸어요 (항목 \(made.before.count)개). 필요한 하위 폴더만 연결하면 빨라져요.",
+                                   "Backing up the linked folders took \(Int(took)) s (\(made.before.count) items). Link only the subfolder you need to make it faster."))
+                }
             } catch {
                 binding.roots = binding.roots.map { root in
                     linked.contains(root) ? WorkspaceRoot(path: root.path, directory: root.directory) : root

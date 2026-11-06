@@ -956,7 +956,7 @@ private struct TurnView: View {
                 changesView(changes, title: L("실제 변경 파일 \(changes.count)개", "\(changes.count) changed files"))
             }
             // Plain chat: Undo only when the answer changed a linked folder (the chat's own folder is not backed up).
-            if turn.backupPath != nil && (turn.mode != 0 || (turn.workspaceChanges ?? []).contains { !$0.path.hasPrefix(Discussion.chatFolder(discussion.currentID).path + "/") }) {
+            if let backupPath = turn.backupPath, FileManager.default.fileExists(atPath: backupPath) && (turn.mode != 0 || (turn.workspaceChanges ?? []).contains { !$0.path.hasPrefix(Discussion.chatFolder(discussion.currentID).path + "/") }) {
                 Button(turn.undone == true ? L("되돌림 완료", "Restored") : L("되돌리기", "Undo file changes")) { discussion.undoWorkspace(turn) }
                     .disabled(turn.undone == true || discussion.running || discussion.importingMaterials)
             }
@@ -1047,8 +1047,15 @@ private struct TurnView: View {
             ForEach(changes) { change in
                 HStack {
                     Text(change.kind + " · " + change.path).font(.caption).textSelection(.enabled)
+                    if change.kind.hasPrefix("cloud-") {
+                        // Only in the cloud before the answer, so not in the backup.
+                        Text(L("되돌리기 안 됨 · 클라우드 버전 기록으로 복구", "Not undoable · restore from the cloud's version history"))
+                            .font(.caption).foregroundColor(.orange)
+                            .help(L("이 파일은 답하기 전에 클라우드에만 있어서 백업하지 않았어요. Google Drive는 버전 기록과 휴지통(30일), iCloud는 최근 삭제된 항목(30일)에서 되찾을 수 있어요.",
+                                    "This file was only in the cloud before the answer, so it was not backed up. Google Drive keeps versions and a trash (30 days); iCloud keeps Recently Deleted (30 days)."))
+                    }
                     Spacer()
-                    if change.kind != "deleted" { Button(L("파일 열기", "Open file")) { discussion.openArtifact(change.path) } }
+                    if !change.kind.hasSuffix("deleted") { Button(L("파일 열기", "Open file")) { discussion.openArtifact(change.path) } }
                     Button("Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: change.path)]) }
                 }
             }

@@ -602,6 +602,7 @@ final class Discussion: ObservableObject {
     @Published var sidebarSearching = false
     @Published var sidebarSearch = ""
     @Published var hoverKey: String?
+    @Published var teamSettingsOpen = false   // the team mode settings popover in the message box
     func hover(_ key: String, _ inside: Bool) {
         if inside { hoverKey = key } else if hoverKey == key { hoverKey = nil }
     }

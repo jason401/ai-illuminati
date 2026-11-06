@@ -137,26 +137,24 @@ struct ChatView: View {
 
     private var chat: some View {
         VStack(spacing: 0) {
-            if discussion.configuration.mode == 0 {
-                soloHeader.padding(.horizontal, 18).frame(height: 52)
-            } else {
-                teamHeader.padding(.top, 22)
-                Divider().opacity(0.5)
-            }
-            if discussion.configuration.mode == 0 && discussion.current.turns.isEmpty {
+            // Every mode shares the plain chat's layout; a team mode only adds a pill and a settings chip
+            // in the message box.
+            soloHeader.padding(.horizontal, 18).frame(height: 52)
+            if discussion.current.turns.isEmpty {
                 // A new chat: the greeting and the message box in the middle, like the desktop apps.
                 VStack(spacing: 28) {
                     Spacer(minLength: 0)
                     HStack(spacing: 12) {
                         Image(nsImage: illuminatiIcon(colored: true)).resizable().frame(width: 30, height: 30)
-                        Text(L("무엇을 도와드릴까요?", "What should we work on?"))
+                        Text(Self.greeting(discussion.configuration.mode))
                             // Serif reads well in English; Korean serif fonts look like handwriting, so Korean stays sans.
                             .font(.system(size: 30, weight: AppLanguage.current == .korean ? .light : .regular,
                                           design: AppLanguage.current == .korean ? .default : .serif))
                     }
                     composer
-                    Text(L("남은 사용량이 넉넉한 AI가 답하고, 한도에 가까워지면 다른 AI가 이어받아요.", "The AI with the most usage left answers; another one continues when it runs low."))
+                    Text(Self.greetingNote(discussion.configuration.mode))
                         .font(.system(size: 12)).foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
                     Spacer(minLength: 0)
                     Spacer(minLength: 0)
                 }
@@ -173,18 +171,31 @@ struct ChatView: View {
         }
     }
 
-    private var teamHeader: some View {
+    static func greeting(_ mode: Int) -> String {
+        switch mode {
+        case 1: return L("여러 AI와 토론해요", "Discuss it with several AIs")
+        case 2: return L("서로 반론하며 따져 봐요", "Put it to a critical debate")
+        case 3: return L("여러 AI와 함께 만들어요", "Work on it together")
+        case 4: return L("AI들에게 투표를 맡겨요", "Let the AIs vote")
+        default: return L("무엇을 도와드릴까요?", "What should we work on?")
+        }
+    }
+
+    static func greetingNote(_ mode: Int) -> String {
+        switch mode {
+        case 1: return L("각자 의견을 낸 뒤, 대표가 논점을 맡기고 답을 하나로 정리해요.", "Each gives a view, the moderator assigns the open points and writes one answer.")
+        case 2: return L("반론, 대안, 실패할 조건을 서로 검증한 뒤 정리해요.", "They test objections, alternatives and failure cases, then sum up.")
+        case 3: return L("대표가 작업을 나누고, 결과를 서로 검토해서 하나로 합쳐요.", "The moderator splits the work; results are cross-reviewed and combined.")
+        case 4: return L("선택지를 한 줄에 하나씩 적으면 모든 계정이 서로 보지 않고 한 표씩 던져요.", "List the choices one per line; every account votes without seeing the others.")
+        default: return L("남은 사용량이 넉넉한 AI가 답하고, 한도에 가까워지면 다른 AI가 이어받아요.", "The AI with the most usage left answers; another one continues when it runs low.")
+        }
+    }
+
+    // A team mode's settings, opened from the chip in the message box.
+    private var teamSettings: some View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    Picker(L("대화 방식", "Chat mode"), selection: Binding(get: { discussion.configuration.mode },
-                                                        set: { discussion.setMode($0) })) {
-                        ForEach(Discussion.availableModes, id: \.self) { mode in
-                            Text(ModeChangeMarker.name(mode)).tag(mode)
-                        }
-                    }
-                    .labelsHidden()
-                    .frame(width: 245)
-                    .disabled(discussion.running || discussion.importingMaterials)
+                    Text(ModeChangeMarker.name(discussion.configuration.mode)).font(.system(size: 13, weight: .semibold))
                     Spacer(minLength: 8)
                     if discussion.configuration.mode <= 2 {
                         Menu {
@@ -250,11 +261,6 @@ struct ChatView: View {
                                 : L("다음 질문부터 전체 대화를 전달합니다.", "Next question uses full context.")
                         }))
                         .toggleStyle(.switch).controlSize(.small)
-                    Menu {
-                        Button(L("파일 선택 (문서·슬라이드·사진)", "Choose files (documents / slides / photos)")) { discussion.chooseMaterials(folder: false) }
-                        Button(L("폴더 연결 (경로만)", "Link folder (paths only)")) { discussion.chooseMaterials(folder: true) }
-                        Button(L("이미지 첨부", "Attach images")) { discussion.chooseImages() }
-                    } label: { Label(L("자료 추가", "Add materials"), systemImage: "folder.badge.plus") }
                     if let workspace = discussion.current.workspace {
                         Menu {
                             ForEach(workspace.roots, id: \.path) { root in
@@ -303,6 +309,7 @@ struct ChatView: View {
                 if !discussion.sessionNote.isEmpty {
                     Text(discussion.sessionNote).font(.caption).foregroundColor(.secondary).lineLimit(2)
                 }
+                Text(L("참여 AI", "Participants")).font(.system(size: 11, weight: .medium)).foregroundColor(.secondary).padding(.top, 4)
                 if discussion.configuration.mode == 3 {
                     collaborationControls
                 } else if discussion.configuration.mode == 4 {
@@ -310,10 +317,9 @@ struct ChatView: View {
                 } else {
                     sequentialControls
                 }
-
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
+            .padding(16)
+            .frame(width: 520)
     }
 
     private var transcript: some View {
@@ -402,12 +408,18 @@ struct ChatView: View {
                 }
                 HStack(spacing: 10) {
                     plusMenu
+                    if discussion.configuration.mode != 0 { modePill }
+                    if discussion.importingMaterials {
+                        ProgressView().controlSize(.small)
+                        Text(L("자료를 가져오는 중…", "Importing materials…")).font(.system(size: 12)).foregroundColor(.secondary)
+                    }
                     if discussion.running {
                         Text(discussion.stopping ? L("중지 중…", "Stopping…") : L("답변 중…", "Responding…"))
                             .font(.system(size: 12)).foregroundColor(.secondary)
                     }
                     Spacer()
                     if discussion.configuration.mode == 0 && !discussion.running { accountChip }
+                    if discussion.configuration.mode != 0 && !discussion.running { teamChip }
                     composerAction
                 }
             }
@@ -418,6 +430,76 @@ struct ChatView: View {
             .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(Color.primary.opacity(0.10)))
             .shadow(color: .black.opacity(0.07), radius: 10, y: 3)
         }
+    }
+
+    // The team mode, as a pill next to +: click to switch mode, ✕ for plain chat again.
+    private var modePill: some View {
+        let mode = discussion.configuration.mode
+        let symbol = [1: "person.2", 2: "exclamationmark.bubble", 3: "square.stack.3d.up", 4: "checklist"][mode] ?? "person.2"
+        return HStack(spacing: 4) {
+            Menu {
+                ForEach([1, 2, 3, 4], id: \.self) { other in
+                    Button((other == mode ? "✓ " : "") + ModeChangeMarker.name(other)) { discussion.setMode(other) }
+                }
+                Divider()
+                Button(L("기본 대화로 돌아가기", "Back to plain chat")) { discussion.setMode(0) }
+            } label: {
+                Label(Self.shortName(mode), systemImage: symbol).font(.system(size: 12, weight: .medium))
+            }
+            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+            Button(action: { discussion.setMode(0) }) { Image(systemName: "xmark").font(.system(size: 9, weight: .bold)) }
+                .buttonStyle(.plain)
+                .help(L("기본 대화로 돌아가기", "Back to plain chat"))
+                .accessibilityLabel(L("기본 대화로 돌아가기", "Back to plain chat"))
+        }
+        .foregroundColor(.accentColor)
+        .padding(.leading, 10).padding(.trailing, 8).padding(.vertical, 4)
+        .background(Color.accentColor.opacity(0.13), in: Capsule())
+        .disabled(discussion.running || discussion.importingMaterials)
+    }
+
+    static func shortName(_ mode: Int) -> String {
+        switch mode {
+        case 1: return L("토론", "Discussion")
+        case 2: return L("비판 토론", "Critical debate")
+        case 3: return L("협업", "Collaboration")
+        case 4: return L("투표", "Vote")
+        default: return L("기본 대화", "Chat")
+        }
+    }
+
+    // Who takes part (the crown is the moderator) and, for discussions, turns and length; click for all settings.
+    private var teamChip: some View {
+        let config = discussion.configuration
+        let accounts = discussion.model.accounts
+        var names: [String]
+        switch config.mode {
+        case 3:
+            names = accounts.filter { config.accountIDs?.contains($0.id) ?? false }
+                .map { ($0.id == config.leaderAccountID ? "👑 " : "") + discussion.label($0) }
+        case 4:
+            names = accounts.filter { !(config.voteSkippedIDs ?? []).contains($0.id) }.map { discussion.label($0) }
+        default:
+            names = config.order.filter { config.participants.contains($0) }
+                .map { ($0 == config.leader ? "👑 " : "") + $0.title }
+        }
+        if names.isEmpty { names = [L("참여 AI 고르기", "Choose participants")] }
+        var summary = names.count > 3 ? names.prefix(2).joined(separator: " · ") + L(" 외 \(names.count - 2)", " +\(names.count - 2)") : names.joined(separator: " · ")
+        if (1...2).contains(config.mode) {
+            summary += "  " + L("\(config.turnsPerAI ?? 4)회", "\(config.turnsPerAI ?? 4) turns") + " · " + SpeechLength.name(SpeechLength.clamp(config.speechLength)).components(separatedBy: " · ").first!
+        }
+        return Button(action: { discussion.teamSettingsOpen.toggle() }) {
+            HStack(spacing: 4) {
+                Text(summary).foregroundColor(.primary)
+                Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold)).foregroundColor(.secondary)
+            }
+            .font(.system(size: 12))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(L("참여 AI와 이 모드의 설정", "Participants and settings for this mode"))
+        .popover(isPresented: $discussion.teamSettingsOpen, arrowEdge: .bottom) { teamSettings }
+        .disabled(discussion.importingMaterials)
     }
 
     private var plusMenu: some View {
@@ -591,7 +673,9 @@ struct ChatView: View {
                 }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                 .foregroundColor(.secondary)
-                .help(L("이 대화에 연결한 폴더: AI가 읽고 쓰고 지울 수 있어요 (답하기 전에 자동 백업)", "Folders linked to this chat: its AI may read, edit and delete (backed up before each answer)"))
+                .help(discussion.configuration.mode == 0
+                      ? L("이 대화에 연결한 폴더: AI가 읽고 쓰고 지울 수 있어요 (답하기 전에 자동 백업)", "Folders linked to this chat: its AI may read, edit and delete (backed up before each answer)")
+                      : L("이 대화에 연결한 폴더: 권한은 모드 설정(입력창 오른쪽)에서 정해요", "Folders linked to this chat: set access in the mode settings (right of the message box)"))
             }
         }
         .disabled(discussion.running || discussion.importingMaterials)

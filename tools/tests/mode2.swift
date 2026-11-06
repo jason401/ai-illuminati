@@ -480,7 +480,7 @@ do {
     print("PASS: new discussion limits, unavailable moderator fallback and critical follow-up round")
 }
 
-// Speech length: default medium (800), and the chosen length reaches every AI turn.
+// Speech length: no limit by default, and the chosen length reaches every AI turn.
 do {
     let m = AppModel()
     m.accounts = [Account(id: "len-claude-fake", provider: .claude, name: "Claude", dir: nil),
@@ -495,13 +495,14 @@ do {
         return .success("TL;DR: Point\n\nDetail.")
     }
     chat.draft = "Default length."; chat.send(); waitFor(chat)
-    expect(!speeches.isEmpty && speeches.allSatisfy { $0.contains("at most 800 characters") }, "default turn length must be 800")
+    expect(!speeches.isEmpty && speeches.allSatisfy { $0.contains("Take the length your point needs") && !$0.contains("at most 800 characters") }, "default turn length must be unlimited")
     speeches.removeAll()
     chat.configure { $0.speechLength = SpeechLength.long }
     chat.draft = "Long turns."; chat.send(); waitFor(chat)
     expect(!speeches.isEmpty && speeches.allSatisfy { $0.contains("at most 1500 characters") }, "chosen long length must reach every speech")
-    expect(SpeechLength.clamp(123) == 800 && SpeechLength.clamp(nil) == 800 && SpeechLength.clamp(400) == 400, "length clamp")
-    print("PASS: speech length default 800 and chosen length in every AI turn")
+    expect(SpeechLength.clamp(123) == SpeechLength.unlimited && SpeechLength.clamp(nil) == SpeechLength.unlimited && SpeechLength.clamp(400) == 400 && SpeechLength.clamp(800) == 800, "length clamp")
+    expect(Discussion(model: AppModel()).configuration.sessionsOn, "sessions are always kept")
+    print("PASS: speech length unlimited by default, chosen length in every AI turn, sessions always on")
 }
 
 // Collaboration role sessions continue across different task payloads without resending old images.
@@ -749,7 +750,8 @@ do {
 // and are passed to everyone who speaks afterwards (moderator now, all AIs in the next question).
 do {
     let m = AppModel()
-    let codexDir = AccountStore.accountsDir + "/pic-codex"
+    // Outside the app's account folders, so the fake answers are used (sessions are always on for app accounts).
+    let codexDir = AccountStore.home + "/pic-codex-home"
     m.accounts = [Account(id: "pic-claude", provider: .claude, name: "Claude", dir: nil),
                   Account(id: "pic-codex", provider: .codex, name: "Codex", dir: codexDir)]
     let chat = Discussion(model: m)
@@ -830,7 +832,7 @@ do {
     let again = Discussion(model: m)
     expect(again.currentID == blankID && again.configuration.turnsPerAI == 3 && again.conversations.filter { !$0.hasContent }.count == 1,
            "newest settings-only chat becomes the new chat, no pile-up")
-    expect(ChatConfiguration().sessionsOn && !ChatConfiguration(keepSessions: false).sessionsOn, "sessions are on unless turned off")
+    expect(ChatConfiguration().sessionsOn && ChatConfiguration(keepSessions: false).sessionsOn, "sessions are always on, also in chats that once turned them off")
     print("PASS: pin to top (order, saved, unpin) and delete all (all or keep pinned)")
 }
 

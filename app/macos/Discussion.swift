@@ -421,24 +421,29 @@ struct ChatTurn: Identifiable, Codable {
 // headlines and the final answer, so turns can be longer; longer turns cost more usage because every
 // later turn re-reads the whole transcript.
 enum SpeechLength {
-    static let short = 400, standard = 800, long = 1500
-    static let all = [short, standard, long]
+    // 0 = no limit (the default): the AI says what its point needs. The user mostly reads the one-line
+    // headlines and the final answer, and sessions send each AI only what is new, so longer turns cost less
+    // than they seem.
+    static let unlimited = 0, short = 400, standard = 800, long = 1500
+    static let all = [unlimited, short, standard, long]
 
-    static func clamp(_ value: Int?) -> Int { all.contains(value ?? 0) ? value! : standard }
+    static func clamp(_ value: Int?) -> Int { all.contains(value ?? -1) ? value! : unlimited }
 
     static func name(_ value: Int) -> String {
         switch value {
         case short: return L("짧게 · 400자", "Short · 400 chars")
+        case standard: return L("보통 · 800자", "Medium · 800 chars")
         case long: return L("길게 · 1500자", "Long · 1500 chars")
-        default: return L("보통 · 800자", "Medium · 800 chars")
+        default: return L("제한 없음", "No limit")
         }
     }
 
     static func rule(_ value: Int) -> String {
         switch value {
         case short: return "Use 2–4 sentences, at most 400 characters"
+        case standard: return "Use up to about 8 sentences or a short list with your evidence, at most 800 characters"
         case long: return "Be thorough: up to about 15 sentences or a structured list with evidence, examples and sources, at most 1500 characters"
-        default: return "Use up to about 8 sentences or a short list with your evidence, at most 800 characters"
+        default: return "Take the length your point needs: full reasoning, evidence, numbers and examples, with no padding, repetition or restating of others"
         }
     }
 }
@@ -453,9 +458,9 @@ struct ChatConfiguration: Codable {
     var leader: Account.Provider = .claude
     var maxTurns: Int?    // old total limit, no longer used
     var turnsPerAI: Int?  // mode 3: turns each AI may speak (default 4)
-    var speechLength: Int? // discussion modes: characters per AI turn (400 / 800 / 1500, default 800)
-    var keepSessions: Bool?   // nil = on (default); false = turned off for this chat
-    var sessionsOn: Bool { keepSessions != false }
+    var speechLength: Int? // discussion modes: characters per AI turn (no limit by default, or 400 / 800 / 1500)
+    var keepSessions: Bool?   // no longer used: sessions are always kept (older chats may have saved false)
+    var sessionsOn: Bool { true }
     var modeVersion: Int?
     var accountIDs: [String]?
     var leaderAccountID: String?
@@ -568,7 +573,7 @@ final class Discussion: ObservableObject {
     var activeWorkspace: WorkspaceBinding?
     var activeWorkspaceBackupPath: String?
     var activeAdversarial = false
-    var activeSpeechLength = SpeechLength.standard
+    var activeSpeechLength = SpeechLength.unlimited
     var activeImages: [URL] = []
     // Tests only: answers requests that have folders attached (mode 0 always does) without calling the real tools.
     var workspaceAnswer: ((Account, String, WorkspaceBinding, DebateCancellation, ((AnswerProgress) -> Void)?) -> Result<String, Answerer.Failure>)?

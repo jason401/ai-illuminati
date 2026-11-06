@@ -222,8 +222,8 @@ struct ChatView: View {
                                 }
                             }
                             Divider()
-                            Text(L("길수록 근거를 더 담지만, 뒤 발언이 앞 대화를 모두 다시 읽어 사용량이 빠르게 늘어요.",
-                                   "Longer turns carry more evidence but use more, since every later turn re-reads the whole chat."))
+                            Text(L("기본은 제한 없음: AI가 근거와 예시를 필요한 만큼 써요. 화면에는 한 줄 요약과 최종 답이 보여요.",
+                                   "No limit by default: each AI uses the evidence and examples its point needs. The chat shows one-line summaries and the final answer."))
                         } label: {
                             Text(SpeechLength.name(SpeechLength.clamp(discussion.configuration.speechLength)))
                         }
@@ -252,15 +252,6 @@ struct ChatView: View {
                     .accessibilityLabel(L("대화 방식 안내", "About this chat mode"))
                 }
                 HStack {
-                    Toggle(L("세션 유지 (실험)", "Keep sessions (experimental)"), isOn: Binding(
-                        get: { discussion.configuration.sessionsOn },
-                        set: { enabled in
-                            discussion.configure { $0.keepSessions = enabled }
-                            discussion.sessionNote = enabled
-                                ? L("앱 전용 Claude·ChatGPT 계정을 사용합니다. 그 외 계정과 Gemini는 전체 대화 전달 방식입니다.", "Uses dedicated Claude / ChatGPT accounts. Other accounts and Gemini receive full context.")
-                                : L("다음 질문부터 전체 대화를 전달합니다.", "Next question uses full context.")
-                        }))
-                        .toggleStyle(.switch).controlSize(.small)
                     if let workspace = discussion.current.workspace {
                         Menu {
                             ForEach(workspace.roots, id: \.path) { root in

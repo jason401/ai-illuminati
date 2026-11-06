@@ -39,7 +39,7 @@ Discussions automatically select one account per provider. Collaboration lets yo
 
 Enter sends a message. Shift+Enter or Option+Enter inserts a newline. ⌘Enter also sends. During Korean input composition, Enter finishes the composed text. Stop cancels active requests.
 
-Discussion turns have a 400/800/1500-character length setting. Models may not obey the requested length exactly. Sessions are kept by default for app-specific Claude/Codex accounts and can be disabled per chat. Gemini and some other paths may resend the full context.
+Discussion and vote turns have no length limit by default; the mode settings also offer 400/800/1500 characters. Models may not obey a requested length exactly. Sessions are always kept for app-specific Claude/Codex accounts, so each AI receives only what is new. Gemini and some other paths may resend the full context.
 
 Attach pictures using +, paste, or drag and drop. Image generation and sharing differ by provider; do not assume all tools provide the same capabilities.
 

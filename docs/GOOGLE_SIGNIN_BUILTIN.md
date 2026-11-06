@@ -6,9 +6,11 @@ his explicit "배포해"**; public repo: no emails, tokens, client secrets or pe
 
 ## Implementation status (2026-11-06)
 
-Implemented with the client ID intentionally empty (not yet registered). The existing Desktop JSON
-connection stays available. Fake-server checks cover public-client authorization/refresh/cancellation,
-legacy credentials and Drive folder restrictions. Real Google login remains pending client registration.
+The owner-supplied public iOS client ID is configured in `GoogleAuth.builtInClientID`; no client secret is used.
+Drive/Sheets API setup, read-only consent and production publishing are complete per the owner.
+The existing Desktop JSON connection remains an advanced fallback. Fake-server tests cover authorization,
+refresh, cancellation, legacy credentials and Drive folder restrictions. Actual Google login, relaunch and
+real document reads will be checked together with Younghun; they have not yet been verified.
 
 ## Why
 

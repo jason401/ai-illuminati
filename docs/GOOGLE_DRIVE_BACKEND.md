@@ -5,23 +5,25 @@ No Google login is ever started automatically.
 ## UI (added 2026-11-06)
 
 - Chat window sidebar, under Shared folders: a **Google Drive** section (`DriveUI.swift`). `+` connects (an
-  explanation of the one-time Google Cloud steps, then the client JSON file, then the browser) or, once
+  short disclosure, then the Google sign-in window) or, once
   connected, opens the folder picker. States: connecting (cancel), reconnect needed (orange), off, no folders.
 - **Shared Drive folders** (UserDefaults `driveFolders`, `pausedDriveFolders`): rows like Shared folders, with an
   eye to pause one, double-click opens it in the browser, right-click to remove, reconnect or disconnect. No
   pencil: read only. The picker browses My Drive and Shared with me, or takes a pasted folder link.
 - **The app is the gate** (`DriveLink.isAllowed`): Google's `drive.readonly` login covers the whole Drive, so every
-  tool call is checked by walking the file's parents up to a shared folder (parents cached 5 minutes). Search
+  tool call is checked by walking the file's parents up to a shared folder (fresh permission metadata). Search
   results outside are dropped; `drive_list` without a folder lists the shared folders; reads outside are refused.
-  No shared folder (or all paused) means no Drive tools at all. Exception: a `.gdoc`/`.gsheet`/`.gslides` pointer
-  file in the chat's linked local folders, which the user already shared there.
+  No shared folder (or all paused) means no Drive tools at all. Local pointer files and shortcut targets
+  must pass the same shared-folder check.
 - Settings → Chat → MCP servers: a `google-drive` row with its state and the on/off switch (connecting and
   folders stay in the sidebar).
 
-## Entry points for the future UI
+## Authentication entry points
 
+- `GoogleAuth.shared.beginBuiltInAuthorization(present:completion:)` starts the configured public iOS-client
+  PKCE flow through `ASWebAuthenticationSession`. No client secret is sent, including during refresh.
 - `GoogleAuth.shared.beginAuthorization(clientJSON:completion:)` accepts a downloaded **Desktop OAuth client**
-  JSON as `Data` and returns the consent URL. The future caller opens that URL in the default browser. This is
+  JSON as `Data` and returns the consent URL. The fallback UI opens that URL in the default browser. This is
   OAuth, not an API key. The completion runs on a background thread; dispatch UI work to the main queue.
 - `cancelAuthorization()` cancels a pending sign-in, including an exchange whose response arrives later.
 - `connected` reads whether offline credentials exist. `accessToken(forceRefresh:)` is for the backend only.
@@ -31,8 +33,8 @@ No Google login is ever started automatically.
   means tools are not offered and calls are refused. An in-flight result is withheld if the switch or Google
   login changes before it returns.
 
-The setup still requires a Google Cloud project, Drive API and Sheets API enabled, and a Desktop OAuth client.
-Use the system browser, PKCE S256 and a random-port localhost callback. The caller must disclose that
+The app owner configured the public iOS client, Drive/Sheets APIs and production read-only consent.
+The optional own-client fallback uses a Desktop client, PKCE S256 and a random-port localhost callback. The caller must disclose that
 `drive.readonly` covers the account's accessible Drive, not just linked folders, and that retrieved contents go
 to whichever AI account is answering. Personal use and public OAuth distribution have different verification
 requirements. Testing-mode refresh tokens for these scopes expire after seven days; production tokens can
@@ -101,8 +103,8 @@ against the user's Drive still require an explicitly initiated real-account test
 ## Public-client login and folder gate (2026-11-06)
 
 ASWebAuthenticationSession + PKCE supports a public iOS-type client without a client secret.
-The built-in client ID is currently empty: the existing Desktop JSON flow remains the default.
+The built-in public client ID is configured: Google sign-in is the default; Desktop JSON remains a fallback.
 Saved Desktop credentials remain compatible. Public-client reconnect uses the saved client ID.
 Local pointer files and shortcut targets must also be inside selected Drive folders. Folder changes
 invalidate in-flight results; permission ancestry is fetched fresh. Search follows Drive pages.
-Real Google consent, callback, refresh and relaunch still require a configured client ID and manual testing.
+Real Google consent, callback, refresh and relaunch still require manual testing with Younghun.

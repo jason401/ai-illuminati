@@ -105,7 +105,7 @@ protocol GoogleAuthPresenter: AnyObject {
 // No browser is opened and no Google login starts without an explicit caller.
 final class GoogleAuth {
     static var shared = GoogleAuth(store: GoogleKeychainStore())
-    static let builtInClientID = "" // Public iOS OAuth client ID; supplied by the app owner.
+    static let builtInClientID = "961717606753-4c5cmpcmegejgqdb39plii50ch7rq88m.apps.googleusercontent.com" // Public iOS OAuth client; no secret.
     static let scope = "https://www.googleapis.com/auth/drive.readonly"
     static var authorizeURL = URL(string: "https://accounts.google.com/o/oauth2/v2/auth")!
     static var tokenURL = URL(string: "https://oauth2.googleapis.com/token")!

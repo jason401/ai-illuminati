@@ -15,11 +15,14 @@ final class FakeGooglePresenter: GoogleAuthPresenter {
         self.url = url; self.scheme = scheme; callback = completion
     }
     func cancel() { callback?(.failure(GoogleFailure(message: "Google sign-in was cancelled."))); callback = nil }
-    func respond(state: String? = nil, code: String = "fixture-code") {
+    func respond(state: String? = nil, code: String = "fixture-code", error: String? = nil, wrongScheme: Bool = false) {
         let items = URLComponents(url: url!, resolvingAgainstBaseURL: false)!.queryItems!
         var result = URLComponents(string: scheme + ":/oauth2redirect")!
         result.queryItems = [URLQueryItem(name: "state", value: state ?? items.first { $0.name == "state" }!.value!), URLQueryItem(name: "code", value: code)]
-        callback?(.success(result.url!))
+        if let error { result.queryItems!.append(URLQueryItem(name: "error", value: error)) }
+        if wrongScheme { result.scheme = "unrelated" }
+        let finished = callback; callback = nil
+        finished?(.success(result.url!))
     }
 }
 
@@ -75,7 +78,7 @@ func testGoogleDrive() {
     expect(!authorize(loggedIn, code: "bad-code") && loggedIn.connected, "a failed new sign-in preserves existing login")
     let publicStore = MemoryGoogleStore(), publicAuth = GoogleAuth(store: publicStore)
     let publicID = "fixture.apps.googleusercontent.com"
-    func publicAttempt(state: String? = nil, cancel: Bool = false) -> Bool {
+    func publicAttempt(state: String? = nil, cancel: Bool = false, error: String? = nil, wrongScheme: Bool = false) -> Bool {
         let present = FakeGooglePresenter(), done = DispatchSemaphore(value: 0)
         var success = false
         try! publicAuth.beginBuiltInAuthorization(present: present, clientID: publicID) { result in
@@ -83,13 +86,39 @@ func testGoogleDrive() {
         }
         let items = URLComponents(url: present.url!, resolvingAgainstBaseURL: false)!.queryItems!
         expect(present.scheme == "com.googleusercontent.apps.fixture" && !items.contains { $0.name == "client_secret" }, "public client uses reversed scheme without secret")
-        if cancel { publicAuth.cancelAuthorization() } else { present.respond(state: state) }
+        let values = Dictionary(uniqueKeysWithValues: items.map { ($0.name, $0.value ?? "") })
+        expect(values["scope"] == GoogleAuth.scope && values["code_challenge_method"] == "S256" && values["access_type"] == "offline", "public client consent uses read-only scope, PKCE and offline access")
+        expect(values["redirect_uri"] == "com.googleusercontent.apps.fixture:/oauth2redirect", "public client redirect matches callback scheme")
+        if cancel { publicAuth.cancelAuthorization() } else { present.respond(state: state, error: error, wrongScheme: wrongScheme) }
         expect(done.wait(timeout: .now() + 5) == .success, "public client callback finishes")
         return success
     }
     expect(!publicAttempt(state: "wrong") && !publicAuth.connected, "public client rejects wrong state")
     expect(publicAttempt() && publicAuth.connected, "public client stores offline login")
     expect(!publicAttempt(cancel: true) && publicAuth.connected, "public client cancellation preserves working login")
+    expect(!publicAttempt(error: "access_denied") && publicAuth.connected, "denied consent preserves working public login")
+    expect(!publicAttempt(error: "admin_policy_enforced") && publicAuth.connected, "administrator denial preserves working public login")
+    expect(!publicAttempt(wrongScheme: true) && publicAuth.connected, "wrong callback scheme rejected")
+    expect(publicAuth.publicClientID == publicID && loggedIn.publicClientID == nil, "saved public and Desktop clients select different reconnect flows")
+    let stagedStore = MemoryGoogleStore(), stagedAuth = GoogleAuth(store: stagedStore), stagedPresenter = FakeGooglePresenter()
+    let stagedDone = DispatchSemaphore(value: 0)
+    var stagedSuccess = false
+    try! stagedAuth.beginBuiltInAuthorization(present: stagedPresenter) { result in
+        if case .success = result { stagedSuccess = true }; stagedDone.signal()
+    }
+    let configuredItems = URLComponents(url: stagedPresenter.url!, resolvingAgainstBaseURL: false)!.queryItems!
+    expect(configuredItems.contains { $0.name == "client_id" && $0.value == GoogleAuth.builtInClientID } && !GoogleAuth.builtInClientID.isEmpty, "default authorization uses configured public client")
+    let beforeSlow = try! JSONSerialization.jsonObject(with: GoogleHTTP.send(base.appendingPathComponent("records")).data) as! [[String: Any]]
+    stagedPresenter.respond(code: "slow-code")
+    var exchangeStarted = false
+    for _ in 0..<100 {
+        let current = try! JSONSerialization.jsonObject(with: GoogleHTTP.send(base.appendingPathComponent("records")).data) as! [[String: Any]]
+        if current.count > beforeSlow.count { exchangeStarted = true; break }
+        Thread.sleep(forTimeInterval: 0.01)
+    }
+    expect(exchangeStarted, "public token exchange began before cancellation")
+    stagedAuth.cancelAuthorization()
+    expect(stagedDone.wait(timeout: .now() + 5) == .success && !stagedSuccess && !stagedAuth.connected, "cancel during public token exchange cannot save credentials")
     _ = try! publicAuth.accessToken(forceRefresh: true)
     let publicRecords = try! JSONSerialization.jsonObject(with: GoogleHTTP.send(base.appendingPathComponent("records")).data) as! [[String: Any]]
     let publicRequests = publicRecords.filter { ($0["fields"] as? [String: Any])?["client_id"] as? [String] == [publicID] }

@@ -44,7 +44,7 @@ final class DriveCenter: ObservableObject {
         }
     }
 
-    // First time: explain the one-time Google Cloud setup, pick the downloaded client file, then the browser login.
+    // First connection uses the public Google client; own Desktop client remains an advanced fallback.
     // Reconnect: the saved client, straight to the browser.
     func connect() {
         if let saved = GoogleAuth.shared.publicClientID { return publicSignIn(saved) }
@@ -205,7 +205,7 @@ struct DriveSidebarSection: View {
                 }
             }
             if center.signingIn {
-                hint(L("브라우저에서 허용을 눌러 주세요 · 취소", "Press Allow in the browser · Cancel"), symbol: "safari") { center.cancelSignIn() }
+                hint(L("구글 로그인 창에서 허용을 눌러 주세요 · 취소", "Press Allow in the Google sign-in window · Cancel"), symbol: "safari") { center.cancelSignIn() }
             } else if center.needsReconnect {
                 hint(L("다시 연결 필요", "Reconnect needed"), symbol: "exclamationmark.triangle", color: .orange) { center.connect() }
             } else if !center.connected {

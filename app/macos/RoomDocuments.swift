@@ -71,4 +71,33 @@ extension Discussion {
             attachmentError = nil
         } catch { attachmentError = error.localizedDescription }
     }
+
+    // One "Attach file": pictures go into the question (the AI sees them); other files are linked by path
+    // (read only, opened on demand) next to any folder already linked to this chat.
+    func chooseFiles() {
+        guard !running && !importingMaterials else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = false; panel.canChooseFiles = true; panel.allowsMultipleSelection = true
+        panel.message = L("사진은 질문에 바로 붙이고, 다른 파일은 AI가 필요할 때 열어 봐요.", "Pictures go into the question; other files are opened by the AI when needed.")
+        guard panel.runModal() == .OK else { return }
+        let isImage = { (url: URL) in (try? url.resourceValues(forKeys: [.contentTypeKey]).contentType?.conforms(to: .image)) == true }
+        for url in panel.urls where isImage(url) { importImageFile(url) }
+        let others = panel.urls.filter { !isImage($0) }
+        guard !others.isEmpty else { return }
+        do {
+            let roots = try others.map { url -> WorkspaceRoot in
+                let path = url.resolvingSymlinksInPath()
+                guard (try path.resourceValues(forKeys: [.isRegularFileKey])).isRegularFile == true else { throw MaterialReader.error("일반 파일을 선택하세요.") }
+                return WorkspaceRoot(path: path.path, directory: false)
+            }
+            try nativeSessions.reset(currentID)
+            change(currentID, save: true) { conversation in
+                var binding = conversation.workspace ?? WorkspaceBinding(roots: [])
+                for root in roots where !binding.roots.contains(where: { $0.path == root.path }) { binding.roots.append(root) }
+                conversation.workspace = binding
+            }
+            sessionNote = L("파일 연결됨 · 필요할 때 AI가 열어 봐요.", "Files linked · the AI opens them when needed.")
+            attachmentError = nil
+        } catch { attachmentError = error.localizedDescription }
+    }
 }

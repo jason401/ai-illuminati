@@ -671,14 +671,13 @@ struct ChatView: View {
 
     private var plusMenu: some View {
         Menu {
-            Button(L("이미지 첨부", "Attach images")) { discussion.chooseImages() }
+            Button(L("파일 첨부", "Attach files")) { discussion.chooseFiles() }
             Button(L("폴더 연결 (모든 권한)", "Link folder (full access)")) { discussion.chooseMaterials(folder: true) }
             if discussion.configuration.mode == 0 {
                 if discussion.current.workspace?.project != nil || discussion.current.workspace?.roots.contains(where: \.directory) == true {
                     Button(discussion.current.workspace?.isFullAuto == true ? L("완전 자동 끄기 (카드로 확인)", "Turn off full auto (confirm with cards)") : L("완전 자동 켜기", "Turn on full auto")) { discussion.toggleFullAuto() }
                 }
             }
-            Button(L("파일 연결 (읽기)", "Link files (read)")) { discussion.chooseMaterials(folder: false) }
             Divider()
             Menu(L("여럿에게 묻기", "Ask several AIs")) {
                 ForEach([1, 2, 3, 4], id: \.self) { mode in

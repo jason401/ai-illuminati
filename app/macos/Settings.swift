@@ -830,14 +830,99 @@ private struct AccountDropDelegate: DropDelegate {
 struct ChatSettingsTab: View {
     @ObservedObject var model: AppModel
 
+    private var isDefault: Bool { model.chatRules == AppModel.defaultChatRules }
+    // The first two non-empty lines, so the tab shows what is set without a cramped editor.
+    private var preview: String {
+        let lines = model.chatRules.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        return lines.isEmpty ? L("규칙 없음", "No rules") : lines.prefix(2).joined(separator: "\n")
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text(L("채팅 규칙", "Chat rules")).font(.system(size: 12, weight: .semibold))
-                Spacer()
-                Button(L("기본값으로", "Reset to default")) { model.chatRules = AppModel.defaultChatRules }
-                    .disabled(model.chatRules == AppModel.defaultChatRules)
+        SettingsPage {
+            VStack(alignment: .leading, spacing: 6) {
+                SettingsCard(title: L("채팅 규칙", "Chat rules")) {
+                    SettingsRow(title: isDefault ? L("기본값", "Default") : L("직접 고침", "Custom")) {
+                        SettingsAction(title: L("편집…", "Edit…")) { ChatRulesWindow.shared.show(model: model) }
+                    }
+                    Divider()
+                    Text(preview)
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                        .lineLimit(2).truncationMode(.tail)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 10).padding(.vertical, 6)
+                }
+                hint(L("모든 AI 요청에 적용할 말투와 응답 규칙이에요. 답변 길이는 채팅창에서 선택해요.",
+                       "Style and instructions for every AI request. Choose response length in the chat window."))
             }
+            VStack(alignment: .leading, spacing: 6) {
+                Toggle(L("엔터프라이즈·개인 대화를 따로 이어받기", "Keep Enterprise and personal chats apart"), isOn: $model.schoolOnlyHandoff)
+                    .toggleStyle(.switch)
+                hint(L("켜면 엔터프라이즈 대화는 엔터프라이즈 계정끼리, 개인 대화는 개인 계정끼리만 이어받아요. 엔터프라이즈 계정은 계정 탭에서 표시해요.",
+                       "On: Enterprise chats are continued only by Enterprise accounts, personal chats only by personal ones. Mark Enterprise accounts in the Accounts tab."))
+            }
+            let makers = model.accounts.filter { $0.provider == .codex }
+            if !makers.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    SettingsCard(title: L("그림 담당", "Picture makers")) {
+                        ForEach(makers, id: \.id) { account in
+                            SettingsRow(title: account.name) {
+                                Text(account.isSchool ? L("엔터프라이즈", "Enterprise") : L("개인", "Personal"))
+                                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                                Spacer()
+                                Toggle(account.name, isOn: Binding(
+                                    get: { !model.pictureMakersOff.contains(account.id) },
+                                    set: { on in if on { model.pictureMakersOff.remove(account.id) } else { model.pictureMakersOff.insert(account.id) } }))
+                                    .labelsHidden().toggleStyle(.switch)
+                            }
+                        }
+                    }
+                    hint(L("켜 둔 ChatGPT 계정이 다른 AI 대신 모든 그림을 그려요. 위 설정이 켜져 있으면 엔터프라이즈 AI는 엔터프라이즈 ChatGPT에게, 개인 AI는 개인 ChatGPT에게만 맡겨요. 숫자가 정확해야 하는 그래프와 도표는 각 AI가 직접 그려요.",
+                           "Checked ChatGPT accounts draw every picture for the other AIs. With the setting above on, Enterprise AIs ask only Enterprise ChatGPT and personal AIs only personal ChatGPT. Charts and diagrams that must be exact are still drawn by each AI."))
+                }
+            }
+            MCPSettings()
+        }
+    }
+
+    // Wraps instead of truncating; the page scrolls when the notes are long.
+    private func hint(_ text: String) -> some View {
+        Text(text).font(.system(size: 11)).foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true).padding(.horizontal, 2)
+    }
+}
+
+// Chat rules get their own resizable window: the settings window is too small for a useful editor.
+final class ChatRulesWindow {
+    static let shared = ChatRulesWindow()
+    private var window: NSWindow?
+
+    func show(model: AppModel) {
+        if window == nil {
+            let host = NSHostingController(rootView: ChatRulesView(model: model, close: { [weak self] in self?.window?.close() })
+                .frame(minWidth: 420, idealWidth: 520, minHeight: 300, idealHeight: 420))
+            let w = NSWindow(contentViewController: host)
+            w.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+            w.title = L("채팅 규칙", "Chat rules")
+            w.setContentSize(NSSize(width: 520, height: 420))
+            w.isReleasedWhenClosed = false
+            w.center()
+            window = w
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        window?.makeKeyAndOrderFront(nil)
+    }
+}
+
+struct ChatRulesView: View {
+    @ObservedObject var model: AppModel
+    let close: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(L("모든 AI 요청 맨 앞에 붙는 말투와 응답 규칙이에요. 고치면 바로 저장돼요.",
+                   "Style and instructions added to the top of every AI request. Changes save as you type."))
+                .font(.system(size: 11)).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             TextEditor(text: $model.chatRules)
                 .font(.system(size: 12))
                 .scrollContentBackground(.hidden)
@@ -845,36 +930,15 @@ struct ChatSettingsTab: View {
                 .background(Color(nsColor: .textBackgroundColor))
                 .clipShape(RoundedRectangle(cornerRadius: 8))
                 .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(0.1)))
-            Text(L("모든 AI 요청에 적용할 말투와 응답 규칙이에요. 답변 길이는 채팅창에서 선택해요.",
-                   "Style and instructions for every AI request. Choose response length in the chat window."))
-                .font(.system(size: 11)).foregroundStyle(.secondary)
-            Toggle(L("엔터프라이즈·개인 대화를 따로 이어받기", "Keep Enterprise and personal chats apart"), isOn: $model.schoolOnlyHandoff)
-                .toggleStyle(.switch)
-            Text(L("켜면 엔터프라이즈 대화는 엔터프라이즈 계정끼리, 개인 대화는 개인 계정끼리만 이어받아요. 엔터프라이즈 계정은 계정 탭에서 표시해요.",
-                   "On: Enterprise chats are continued only by Enterprise accounts, personal chats only by personal ones. Mark Enterprise accounts in the Accounts tab."))
-                .font(.system(size: 11)).foregroundStyle(.secondary)
-            let makers = model.accounts.filter { $0.provider == .codex }
-            if !makers.isEmpty {
-                SettingsCard(title: L("그림 담당", "Picture makers")) {
-                    ForEach(makers, id: \.id) { account in
-                        SettingsRow(title: account.name) {
-                            Text(account.isSchool ? L("엔터프라이즈", "Enterprise") : L("개인", "Personal"))
-                                .font(.system(size: 11)).foregroundStyle(.secondary)
-                            Spacer()
-                            Toggle(account.name, isOn: Binding(
-                                get: { !model.pictureMakersOff.contains(account.id) },
-                                set: { on in if on { model.pictureMakersOff.remove(account.id) } else { model.pictureMakersOff.insert(account.id) } }))
-                                .labelsHidden().toggleStyle(.switch)
-                        }
-                    }
-                }
-                Text(L("켜 둔 ChatGPT 계정이 다른 AI 대신 모든 그림을 그려요. 위 설정이 켜져 있으면 엔터프라이즈 AI는 엔터프라이즈 ChatGPT에게, 개인 AI는 개인 ChatGPT에게만 맡겨요. 숫자가 정확해야 하는 그래프와 도표는 각 AI가 직접 그려요.",
-                       "Checked ChatGPT accounts draw every picture for the other AIs. With the setting above on, Enterprise AIs ask only Enterprise ChatGPT and personal AIs only personal ChatGPT. Charts and diagrams that must be exact are still drawn by each AI."))
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            HStack {
+                Button(L("기본값으로", "Reset to default")) { model.chatRules = AppModel.defaultChatRules }
+                    .disabled(model.chatRules == AppModel.defaultChatRules)
+                Spacer()
+                Button(L("완료", "Done"), action: close).keyboardShortcut(.defaultAction)
             }
-            MCPSettings()
         }
-        .padding(12).controlSize(.small)
+        .padding(14)
         .background(Color(nsColor: .windowBackgroundColor))
     }
 }

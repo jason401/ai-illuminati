@@ -5,6 +5,8 @@ import SwiftUI
 // Mission Control work like other apps. The chat title bar must NOT be transparent: with
 // titlebarAppearsTransparent, macOS (27) makes a dragged window jump hundreds of points as the
 // pointer crosses to another display (measured 2026-11-06 with test windows; opaque title bars do not jump).
+// Never put a drag view of ours inside the title bar (the window's frame view): performDrag started there
+// jumps the same way. The title bar drags natively; WindowDragRegion is only for empty spots below it.
 enum WindowDoubleClickAction {
     case zoom, minimize, none, fill
     static func resolve(_ preference: String?, legacyMinimize: Bool = false) -> Self {
@@ -66,43 +68,4 @@ final class WindowDragView: NSView {
 struct WindowDragRegion: NSViewRepresentable {
     func makeNSView(context: Context) -> WindowDragView { WindowDragView() }
     func updateNSView(_ nsView: WindowDragView, context: Context) {}
-}
-
-// A non-interactive SwiftUI background installs a transparent drag strip in the native title bar.
-// It excludes the traffic lights and outer resize edges, without changing the content or title-bar style.
-struct WindowTitlebarDragBridge: NSViewRepresentable {
-    func makeNSView(context: Context) -> TitlebarDragBridgeView { TitlebarDragBridgeView() }
-    func updateNSView(_ nsView: TitlebarDragBridgeView, context: Context) { nsView.positionStrip() }
-    static func dismantleNSView(_ nsView: TitlebarDragBridgeView, coordinator: ()) { nsView.detach() }
-}
-
-final class TitlebarDragBridgeView: NSView {
-    private var strip: WindowDragView?
-    override func hitTest(_ point: NSPoint) -> NSView? { nil }
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        detach()
-        if let frameView = window?.contentView?.superview {
-            let drag = WindowDragView()
-            drag.autoresizingMask = [.width, .minYMargin]
-            frameView.addSubview(drag, positioned: .above, relativeTo: nil)
-            strip = drag
-            positionStrip()
-            DispatchQueue.main.async { [weak self] in self?.positionStrip() }
-        }
-    }
-    override func layout() { super.layout(); positionStrip() }
-    override func setFrameSize(_ newSize: NSSize) { super.setFrameSize(newSize); positionStrip() }
-    func detach() { strip?.removeFromSuperview(); strip = nil }
-    func positionStrip() {
-        guard let strip, let window, let frameView = strip.superview else { return }
-        strip.isHidden = window.styleMask.contains(.fullScreen)
-        var left: CGFloat = 80
-        for kind in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
-            if let button = window.standardWindowButton(kind) { left = max(left, button.convert(button.bounds, to: frameView).maxX + 8) }
-        }
-        let topOfContent = window.contentLayoutRect.maxY
-        strip.frame = NSRect(x: left, y: topOfContent, width: max(0, frameView.bounds.width - left - 6),
-                             height: max(0, frameView.bounds.maxY - topOfContent - 4))
-    }
 }

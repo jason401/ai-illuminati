@@ -37,7 +37,6 @@ struct ChatView: View {
         .onChange(of: discussion.currentID) { _ in discussion.sidebarOverlay = false }
         .frame(minWidth: Self.minSize.width, minHeight: Self.minSize.height)
         .background(Color(nsColor: .textBackgroundColor))
-        .background(WindowTitlebarDragBridge())
         // A photo dropped anywhere in the window is attached, not only on the message box.
         .onDrop(of: [UTType.fileURL, UTType.image, UTType.item], delegate: ImageAttachmentDropDelegate(discussion: discussion))
         .overlay {
@@ -61,7 +60,8 @@ struct ChatView: View {
     // chats as single lines. Right-click (or ⋯ on hover) to pin or delete.
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
-            WindowDragRegion().frame(height: 16)
+            // The title bar above is macOS's own; it moves the window (no drag view of ours there).
+            Color.clear.frame(height: 16)
             VStack(alignment: .leading, spacing: 1) {
                 SidebarRow(discussion: discussion, title: L("새 대화", "New chat"), symbol: "square.and.pencil") { discussion.newConversation() }
                 if discussion.sidebarSearching {

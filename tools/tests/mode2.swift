@@ -1999,3 +1999,24 @@ func testChatMarkdown() {
     print("PASS: chat Markdown (single ~ ranges, ~~ strikethrough, code kept, headings, tables, rules, fences)")
 }
 testChatMarkdown()
+
+// Long chats: the chat window draws the latest turns; switching or closing starts again from them.
+func testShownTurns() {
+    let chat = Discussion(model: AppModel())
+    var long = Conversation(); long.turns = (0..<88).map { ChatTurn(question: "q\($0)") }
+    chat.conversations.insert(long, at: 0)
+    chat.currentID = long.id
+    let first = chat.currentID
+    expect(chat.shownTurns == Discussion.turnPage, "a chat opens with its latest \(Discussion.turnPage) turns")
+    chat.shownTurns += Discussion.turnPage * 4
+    chat.reachedBottom = true
+    chat.newConversation()
+    chat.currentID = first
+    expect(chat.shownTurns == Discussion.turnPage && !chat.reachedBottom, "coming back to a chat shows its latest turns again")
+    expect(chat.current.turns.count == 88, "the saved turns are untouched")
+    chat.shownTurns = 88
+    chat.showLatestTurns()
+    expect(chat.shownTurns == Discussion.turnPage, "closing the window shows the latest turns next time")
+    print("PASS: long chats show the latest turns after switching or reopening")
+}
+testShownTurns()

@@ -552,7 +552,11 @@ enum ChatStore {
 // The chat rules from Settings go at the top of every message.
 final class Discussion: ObservableObject {
     @Published var conversations: [Conversation]
-    @Published var currentID: UUID
+    @Published var currentID: UUID {
+        // Coming back to a chat starts again from its latest turns.
+        didSet { if currentID != oldValue { showLatestTurns() } }
+    }
+    func showLatestTurns() { shownTurns = Self.turnPage; reachedBottom = false; loadingEarlier = false }
     @Published var importingMaterials = false
     // Several chats can work at once. Each sent message runs on its own worker (a Discussion with `host`
     // set and only that chat), so the run state below (active…, pictures, cancellation) is per chat; the
@@ -677,6 +681,14 @@ final class Discussion: ObservableObject {
     @Published var sidebarOverlay = false
     // The transcript's end is out of view: the chat shows a jump-to-bottom button above the message box.
     @Published var awayFromBottom = false
+    // Long chats draw only the latest turns; scrolling to the top adds earlier ones. Display only:
+    // the saved history and what the AIs receive are untouched.
+    @Published var shownTurns = Discussion.turnPage
+    // Turns drawn when a chat opens, and how many each scroll to the top adds.
+    static let turnPage = 20
+    // Earlier turns are added only after the chat has been seen at its end, so opening it does not load them all.
+    var reachedBottom = false
+    var loadingEarlier = false
     @Published var hoverKey: String?
     @Published var teamSettingsOpen = false   // the team mode settings popover in the message box
     // @ in the message box: the accounts picked so far, and the list while it is open.

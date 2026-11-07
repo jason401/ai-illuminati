@@ -377,7 +377,19 @@ struct ChatView: View {
                     .font(.callout)
                     .foregroundColor(.secondary)
                 }
-                ForEach(Array(conversation.turns.enumerated()), id: \.element.id) { index, turn in
+                let hidden = max(0, conversation.turns.count - discussion.shownTurns)
+                if hidden > 0 {
+                    Button(action: { showEarlierTurns(proxy) }) {
+                        Text(L("이전 대화 \(min(hidden, Discussion.turnPage))턴 더 보기 · \(hidden)턴 숨김", "Show \(min(hidden, Discussion.turnPage)) earlier turns · \(hidden) hidden"))
+                            .font(.callout)
+                    }
+                    .buttonStyle(.link)
+                    .frame(maxWidth: .infinity)
+                    .background(GeometryReader { marker in
+                        Color.clear.preference(key: TranscriptTopKey.self, value: marker.frame(in: .named(Self.bottomID)).minY)
+                    })
+                }
+                ForEach(Array(conversation.turns.enumerated()).dropFirst(hidden), id: \.element.id) { index, turn in
                     if index > 0, (turn.mode ?? 1) != (conversation.turns[index - 1].mode ?? 1) || turn.modeVersion != conversation.turns[index - 1].modeVersion {
                         ModeChangeMarker(mode: turn.mode ?? 1, version: turn.modeVersion)
                     }
@@ -401,6 +413,16 @@ struct ChatView: View {
         .onPreferenceChange(TranscriptBottomKey.self) { end in
             let away = end > viewport.size.height + Self.bottomSlack
             if away != discussion.awayFromBottom { withAnimation(.easeOut(duration: 0.15)) { discussion.awayFromBottom = away } }
+            if !away && !discussion.reachedBottom { discussion.reachedBottom = true }
+        }
+        .onPreferenceChange(TranscriptTopKey.self) { top in
+            // The "show earlier" row came into view near the top: add the next page.
+            if discussion.reachedBottom && top > -40 && top < viewport.size.height { showEarlierTurns(proxy) }
+        }
+        .onChange(of: discussion.currentID) { _ in
+            DispatchQueue.main.async {
+                if let last = discussion.current.turns.last { proxy.scrollTo(last.id, anchor: .top) }
+            }
         }
         .overlay(alignment: .bottom) {
             if discussion.awayFromBottom {
@@ -427,6 +449,19 @@ struct ChatView: View {
     }
 
     static let bottomID = "transcript-bottom"
+
+    // Adds the next page of earlier turns and keeps the turn being read where it was.
+    private func showEarlierTurns(_ proxy: ScrollViewProxy) {
+        let turns = discussion.current.turns
+        guard !discussion.loadingEarlier, turns.count > discussion.shownTurns else { return }
+        discussion.loadingEarlier = true
+        let anchor = turns[turns.count - discussion.shownTurns].id
+        discussion.shownTurns += Discussion.turnPage
+        DispatchQueue.main.async {
+            proxy.scrollTo(anchor, anchor: .top)
+            DispatchQueue.main.async { discussion.loadingEarlier = false }
+        }
+    }
     // How far (pt) the end may sit below the visible area and still count as the bottom, so the button does not flicker.
     static let bottomSlack: CGFloat = 80
 
@@ -1023,6 +1058,11 @@ struct ChatView: View {
     }
 }
 
+private struct TranscriptTopKey: PreferenceKey {
+    static var defaultValue: CGFloat = -.infinity
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+}
+
 private struct TranscriptBottomKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
@@ -1461,6 +1501,8 @@ final class ChatWindow {
             closing = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: w, queue: .main) { [weak self] _ in
                 ProjectCenter.shared.cancel()
                 NSApp.setActivationPolicy(.accessory)
+                // Reopened later, the chat starts again from its latest turns.
+                discussion.showLatestTurns()
                 // No chat open: Gemma need not hold its memory (an answer under way finishes first).
                 if discussion.model.hasLocal {
                     LocalModel.unloadWhenIdle(busy: { discussion.anyRunning }, reopened: { self?.window?.isVisible == true })

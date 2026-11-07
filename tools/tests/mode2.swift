@@ -15,6 +15,64 @@ func waitFor(_ discussion: Discussion) {
     expect(!discussion.running, "discussion did not finish")
 }
 
+// Tests and previews never reach the real data: a throwaway home and settings file, a preview model
+// that writes nothing, and a backup before every change to the account list.
+do {
+    let fm = FileManager.default
+    let real = fm.homeDirectoryForCurrentUser.standardizedFileURL.path
+    expect(URL(fileURLWithPath: AccountStore.home).standardizedFileURL.path != real, "tests must not use the real home folder")
+    expect(AccountStore.home == ProcessInfo.processInfo.environment["AI_ILLUMINATI_TEST_HOME"], "tests must use the folder the script names")
+    expect(UserDefaults.app !== UserDefaults.standard, "tests must not use the app's real settings")
+
+    let before = (try? fm.subpathsOfDirectory(atPath: AccountStore.home))?.sorted() ?? []
+    let preview = AppModel(persist: false)
+    expect(preview.accounts.isEmpty, "a preview model starts without accounts")
+    preview.accounts = [Account(id: "preview", provider: .claude, name: "Preview", dir: nil)]
+    preview.accounts = []
+    expect(((try? fm.subpathsOfDirectory(atPath: AccountStore.home))?.sorted() ?? []) == before, "a preview model must not write any file")
+
+    let file = URL(fileURLWithPath: AccountStore.supportDir + "/accounts.json")
+    let saved = AccountStore.load()
+    try? fm.removeItem(at: AccountStore.backupDir)
+    let a = Account(id: "backup-a", provider: .claude, name: "A", dir: nil)
+    let b = Account(id: "backup-b", provider: .codex, name: "B", dir: nil)
+    expect(AccountStore.save(saved + [a, b]), "save")
+    var backups: [String] { ((try? fm.contentsOfDirectory(atPath: AccountStore.backupDir.path)) ?? []).sorted() }
+    expect(backups.count == 1 && !backups[0].hasSuffix("-shrink.json"), "adding accounts backs up the old list")
+    expect(AccountStore.save(saved + [a, b]) && backups.count == 1, "an unchanged list makes no new backup")
+    expect(AccountStore.save(saved + [b, a]) && backups.filter { !$0.hasSuffix("-shrink.json") }.count == 2, "reordering backs up as an everyday copy")
+    let full = try! Data(contentsOf: file)
+    expect(AccountStore.save(saved + [b]), "save")
+    let shrink = backups.filter { $0.hasSuffix("-shrink.json") }
+    expect(shrink.count == 1 && (try? Data(contentsOf: AccountStore.backupDir.appendingPathComponent(shrink[0]))) == full,
+           "a save that drops an account keeps the full list as a shrink copy")
+
+    for i in 0..<(AccountStore.keptBackups + 5) {
+        AccountStore.save(saved + [Account(id: b.id, provider: .codex, name: "N\(i)", dir: nil)])   // renamed, nothing dropped
+    }
+    expect(backups.filter { !$0.hasSuffix("-shrink.json") }.count == AccountStore.keptBackups, "only the newest everyday copies are kept")
+    expect(backups.filter { $0.hasSuffix("-shrink.json") }.count == 1, "shrink copies are kept apart from everyday copies")
+    for i in 0..<(AccountStore.keptShrinkBackups + 3) {
+        try! Data().write(to: AccountStore.backupDir.appendingPathComponent("accounts-20000101-000000-\(String(format: "%06d", i))-shrink.json"))
+    }
+    AccountStore.pruneBackups()
+    expect(backups.filter { $0.hasSuffix("-shrink.json") }.count == AccountStore.keptShrinkBackups, "shrink copies have a limit too")
+    let old = (0..<10).map { "accounts-202501\(String(format: "%02d", $0 + 1))-120000-000000.json" }
+    for name in old { try! Data().write(to: AccountStore.backupDir.appendingPathComponent(name)) }
+    AccountStore.pruneBackups()
+    expect(backups.filter { old.contains($0) }.count == AccountStore.keptDays - 1, "one copy per recent day is kept beside the newest ones")
+
+    // No backup, no save: the list on disk stays as it was.
+    let current = try! Data(contentsOf: file)
+    try! fm.removeItem(at: AccountStore.backupDir)
+    try! Data().write(to: AccountStore.backupDir)
+    expect(!AccountStore.save(saved), "a save whose backup fails must report failure")
+    expect((try? Data(contentsOf: file)) == current, "a save whose backup fails must leave the list unchanged")
+    try! fm.removeItem(at: AccountStore.backupDir)
+    expect(AccountStore.save(saved) && AccountStore.load().map(\.id) == saved.map(\.id), "restore")
+    print("PASS: test home and settings kept apart, preview model writes nothing, account backups (shrink, limits, failure stops the save)")
+}
+
 // Offer the three new modes, then check legacy engines separately.
 expect(Discussion.availableModes == [0, 1, 2, 3, 4], "plain chat and the four team modes should be offered")
 let hiddenDefault = Discussion(model: AppModel())
@@ -90,11 +148,11 @@ expect(old.configuration == nil && old.turns[0].mode == nil, "old chats must rem
 print("PASS: sequential full context, next-turn order, invalid order fallback, failure continuation, persistence, legacy decoding")
 
 let originalLanguage = AppLanguage.current
-let originalRules = UserDefaults.standard.object(forKey: "chatRules")
+let originalRules = UserDefaults.app.object(forKey: "chatRules")
 defer {
     AppLanguage.current = originalLanguage
-    if let originalRules { UserDefaults.standard.set(originalRules, forKey: "chatRules") }
-    else { UserDefaults.standard.removeObject(forKey: "chatRules") }
+    if let originalRules { UserDefaults.app.set(originalRules, forKey: "chatRules") }
+    else { UserDefaults.app.removeObject(forKey: "chatRules") }
 }
 expect(AppLanguage.resolve(["ko-KR", "en-US"]) == .korean && AppLanguage.resolve(["ko"]) == .korean, "a Korean Mac must get Korean")
 expect(AppLanguage.resolve(["en-GB", "ko-KR"]) == .english && AppLanguage.resolve(["ja-JP", "ko-KR"]) == .korean,
@@ -102,21 +160,21 @@ expect(AppLanguage.resolve(["en-GB", "ko-KR"]) == .english && AppLanguage.resolv
 expect(AppLanguage.resolve(["ja-JP", "fr-FR"]) == .english && AppLanguage.resolve([]) == .english, "unsupported languages fall back to English")
 AppLanguage.current = .english
 expect(L("보내기", "Send") == "Send", "English text")
-UserDefaults.standard.set("ko", forKey: "appLanguage")
-UserDefaults.standard.set(AppModel.rules(for: .korean), forKey: "chatRules")
+UserDefaults.app.set("ko", forKey: "appLanguage")
+UserDefaults.app.set(AppModel.rules(for: .korean), forKey: "chatRules")
 expect(AppModel().chatRules == AppModel.rules(for: .english), "a saved Korean default must follow an English Mac at launch")
-expect(UserDefaults.standard.object(forKey: "appLanguage") == nil, "the old in-app language choice must be removed")
+expect(UserDefaults.app.object(forKey: "appLanguage") == nil, "the old in-app language choice must be removed")
 AppLanguage.current = .korean
 expect(L("보내기", "Send") == "보내기", "Korean text")
 expect(AppModel().chatRules == AppModel.rules(for: .korean), "a saved English default must follow a Korean Mac at launch")
-UserDefaults.standard.set("My custom rules", forKey: "chatRules")
+UserDefaults.app.set("My custom rules", forKey: "chatRules")
 expect(AppModel().chatRules == "My custom rules", "custom rules must be preserved when the language changes")
 AppLanguage.current = .english
 expect(AppModel.oldDefaultRules.count == 2 && !AppModel.defaultChatRules.contains("3–5") && !AppModel.rules(for: .korean).contains("3~5"),
        "default rules must not set a length any more")
-UserDefaults.standard.set(AppModel.oldDefaultRules[1], forKey: "chatRules")
+UserDefaults.app.set(AppModel.oldDefaultRules[1], forKey: "chatRules")
 expect(AppModel().chatRules == AppModel.defaultChatRules, "a saved old default must become the new default")
-UserDefaults.standard.set("My custom rules", forKey: "chatRules")
+UserDefaults.app.set("My custom rules", forKey: "chatRules")
 expect(AppModel().chatRules == "My custom rules", "custom saved rules must be kept")
 print("PASS: macOS language, default rule localization at launch, old setting removed, custom rule preservation")
 
@@ -792,8 +850,8 @@ do {
     expect(UpdateProgress.lastLine(Data("one\r\n\u{1B}[32mPASS: two\u{1B}[0m  \n\n".utf8)) == "PASS: two", "last output line without colors")
     expect(UpdateProgress.lastLine(Data(" \n".utf8)) == nil, "blank output has no line")
 
-    let savedTimes = UserDefaults.standard.object(forKey: UpdateProgress.key)
-    defer { UserDefaults.standard.set(savedTimes, forKey: UpdateProgress.key) }
+    let savedTimes = UserDefaults.app.object(forKey: UpdateProgress.key)
+    defer { UserDefaults.app.set(savedTimes, forKey: UpdateProgress.key) }
     var done = UpdateProgress(estimates: [1: 300, 2: 120], at: t0)
     done.move(to: 3, at: t0.addingTimeInterval(9))
     done.move(to: 4, at: t0.addingTimeInterval(25))
@@ -972,7 +1030,7 @@ do {
     var g = AIUsage(name: "g"); g.weekly = UsageWindow(usedPercent: 6, resetsAt: nil)
     expect(AppModel.MenuBarWindow.fiveHour.left(g) == 100 && AppModel.MenuBarWindow.fiveHour.hasNoLimit(g), "a plan without this limit counts as full")
     expect(AppModel.MenuBarWindow.weekly.left(AIUsage(name: "unread")) == nil, "no reading stays empty")
-    UserDefaults.standard.removeObject(forKey: "menuBarWindow")
+    UserDefaults.app.removeObject(forKey: "menuBarWindow")
     expect(AppModel().menuBarWindow == .fiveHour, "default is 5-hour")
     print("PASS: menu bar 5-hour / weekly choice")
 }
@@ -1761,16 +1819,16 @@ do {
         let data = try? Data(contentsOf: URL(string: "http://127.0.0.1:\(port)/last")!)
         return (data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] })?["keep"] ?? nil
     }
-    UserDefaults.standard.removeObject(forKey: "localKeepAlive")
-    UserDefaults.standard.removeObject(forKey: "localEnabled")
+    UserDefaults.app.removeObject(forKey: "localKeepAlive")
+    UserDefaults.app.removeObject(forKey: "localEnabled")
     expect(LocalModel.keepAlive == 5 && LocalModel.enabled, "defaults: 5 minutes, on")
     expect(lastKeep() as? String == "5m" && LocalModel.loaded()?.until != nil && (LocalModel.loaded()?.bytes ?? 0) > 0, "after a reply it stays loaded, with size and time")
     LocalModel.unload()
     expect(LocalModel.loaded() == nil, "unload takes it out of memory")
-    UserDefaults.standard.set(0, forKey: "localKeepAlive")
+    UserDefaults.app.set(0, forKey: "localKeepAlive")
     _ = LocalModel.ask(prompt: "hi", images: [], timeout: 20, cancellation: nil, progress: nil)
     expect(lastKeep() as? Int == 0 && LocalModel.loaded() == nil, "right after: keep_alive 0")
-    UserDefaults.standard.set(5, forKey: "localKeepAlive")
+    UserDefaults.app.set(5, forKey: "localKeepAlive")
     _ = LocalModel.ask(prompt: "hi", images: [], timeout: 20, cancellation: nil, progress: nil)
     var busy = true
     LocalModel.unloadWhenIdle(busy: { busy }, reopened: { false })
@@ -1780,11 +1838,11 @@ do {
     let unloadDeadline = Date().addingTimeInterval(6)
     while LocalModel.loaded() != nil && Date() < unloadDeadline { RunLoop.main.run(until: Date().addingTimeInterval(0.1)) }
     expect(LocalModel.loaded() == nil, "window closed: unloaded once nothing is answering")
-    UserDefaults.standard.set(false, forKey: "localEnabled")
+    UserDefaults.app.set(false, forKey: "localEnabled")
     if case .failure = LocalModel.ask(prompt: "hi", images: [], timeout: 20, cancellation: nil, progress: nil) {} else { expect(false, "turned off: Gemma does not answer") }
     expect(LocalUsage.read(Account(id: "ollama-local", provider: .ollama, name: "Gemma 4", dir: nil)).needsLogin, "turned off: left out like a signed-out account")
-    UserDefaults.standard.removeObject(forKey: "localEnabled")
-    UserDefaults.standard.removeObject(forKey: "localKeepAlive")
+    UserDefaults.app.removeObject(forKey: "localEnabled")
+    UserDefaults.app.removeObject(forKey: "localKeepAlive")
     let usage = LocalUsage.read(Account(id: "ollama-local", provider: .ollama, name: "Gemma 4", dir: nil))
     expect(usage.needsLogin == (LocalModel.binary == nil), "no Ollama installed: the entry asks for installing")
 

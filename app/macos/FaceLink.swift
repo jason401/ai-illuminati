@@ -22,16 +22,16 @@ final class FaceLink: ObservableObject {
     static var socketPath = AccountStore.supportDir + "/face.sock"
 
     // The on/off switch per server (only AI Face for now). Off servers are listed in UserDefaults "mcpOff".
-    static var isOn: Bool { !(UserDefaults.standard.stringArray(forKey: "mcpOff") ?? []).contains(name) }
+    static var isOn: Bool { !(UserDefaults.app.stringArray(forKey: "mcpOff") ?? []).contains(name) }
     static func active() -> Server? { isOn ? server() : nil }
 
     @Published private(set) var configured = false
     @Published private(set) var connected = false
     @Published var on = FaceLink.isOn {
         didSet {
-            var off = Set(UserDefaults.standard.stringArray(forKey: "mcpOff") ?? [])
+            var off = Set(UserDefaults.app.stringArray(forKey: "mcpOff") ?? [])
             if on { off.remove(Self.name) } else { off.insert(Self.name) }
-            UserDefaults.standard.set(off.sorted(), forKey: "mcpOff")
+            UserDefaults.app.set(off.sorted(), forKey: "mcpOff")
             refresh()
         }
     }

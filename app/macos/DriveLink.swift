@@ -23,31 +23,31 @@ final class DriveLink: ToolProvider {
     private var settingsEpoch: Int { settingsLock.lock(); defer { settingsLock.unlock() }; Self.folderLock.lock(); defer { Self.folderLock.unlock() }; return settingsVersion + Self.folderVersion }
     init(auth: GoogleAuth) { self.auth = auth }
     var enabled: Bool {
-        get { !(UserDefaults.standard.stringArray(forKey: "mcpOff") ?? []).contains("google-drive") }
+        get { !(UserDefaults.app.stringArray(forKey: "mcpOff") ?? []).contains("google-drive") }
         set {
             settingsLock.lock(); settingsVersion += 1; settingsLock.unlock()
-            var off = Set(UserDefaults.standard.stringArray(forKey: "mcpOff") ?? [])
+            var off = Set(UserDefaults.app.stringArray(forKey: "mcpOff") ?? [])
             if newValue { off.remove("google-drive") } else { off.insert("google-drive") }
-            UserDefaults.standard.set(off.sorted(), forKey: "mcpOff")
+            UserDefaults.app.set(off.sorted(), forKey: "mcpOff")
         }
     }
     var active: Bool { enabled && auth.connected && !Self.allowedFolders.isEmpty }
 
     // The folders the AIs may read (UserDefaults), and the ones turned off with the eye.
     static var folders: [DriveFolder] {
-        get { (UserDefaults.standard.data(forKey: "driveFolders")).flatMap { try? JSONDecoder().decode([DriveFolder].self, from: $0) } ?? [] }
-        set { folderLock.lock(); defer { folderLock.unlock() }; if Set(newValue.map(\.id)) != Set(folders.map(\.id)) { folderVersion += 1 }; UserDefaults.standard.set(try? JSONEncoder().encode(newValue), forKey: "driveFolders") }
+        get { (UserDefaults.app.data(forKey: "driveFolders")).flatMap { try? JSONDecoder().decode([DriveFolder].self, from: $0) } ?? [] }
+        set { folderLock.lock(); defer { folderLock.unlock() }; if Set(newValue.map(\.id)) != Set(folders.map(\.id)) { folderVersion += 1 }; UserDefaults.app.set(try? JSONEncoder().encode(newValue), forKey: "driveFolders") }
     }
     static var pausedFolders: Set<String> {
-        get { Set(UserDefaults.standard.stringArray(forKey: "pausedDriveFolders") ?? []) }
-        set { folderLock.lock(); defer { folderLock.unlock() }; folderVersion += 1; UserDefaults.standard.set(newValue.sorted(), forKey: "pausedDriveFolders") }
+        get { Set(UserDefaults.app.stringArray(forKey: "pausedDriveFolders") ?? []) }
+        set { folderLock.lock(); defer { folderLock.unlock() }; folderVersion += 1; UserDefaults.app.set(newValue.sorted(), forKey: "pausedDriveFolders") }
     }
     static var allowedFolders: [DriveFolder] { let off = pausedFolders; return folders.filter { !off.contains($0.id) } }
 
     // Explicit overrides: nearest configured ancestor wins. An explicit false blocks inherited writes.
     static var writeRules: [String: Bool] {
-        get { UserDefaults.standard.dictionary(forKey: "driveWriteRules") as? [String: Bool] ?? [:] }
-        set { folderLock.lock(); defer { folderLock.unlock() }; folderVersion += 1; UserDefaults.standard.set(newValue, forKey: "driveWriteRules") }
+        get { UserDefaults.app.dictionary(forKey: "driveWriteRules") as? [String: Bool] ?? [:] }
+        set { folderLock.lock(); defer { folderLock.unlock() }; folderVersion += 1; UserDefaults.app.set(newValue, forKey: "driveWriteRules") }
     }
     var canWrite: Bool { auth.canWrite }
     func isWritable(_ id: String) throws -> Bool {

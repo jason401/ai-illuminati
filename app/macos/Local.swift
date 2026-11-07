@@ -58,10 +58,10 @@ enum LocalModel {
     static let context = 32768   // Ollama's default (4K) is too short for a chat with files
 
     // Set from the menu bar (on/off) and Settings → Accounts (how long it stays in memory after a reply).
-    static var enabled: Bool { UserDefaults.standard.object(forKey: "localEnabled") as? Bool ?? true }
+    static var enabled: Bool { UserDefaults.app.object(forKey: "localEnabled") as? Bool ?? true }
     static let keepAliveChoices = [0, 2, 5, 10]   // minutes; 0 = unload right after the reply
     static var keepAlive: Int {
-        guard let value = UserDefaults.standard.object(forKey: "localKeepAlive") as? Int, keepAliveChoices.contains(value) else { return 5 }
+        guard let value = UserDefaults.app.object(forKey: "localKeepAlive") as? Int, keepAliveChoices.contains(value) else { return 5 }
         return value
     }
     static func keepAliveName(_ minutes: Int) -> String {

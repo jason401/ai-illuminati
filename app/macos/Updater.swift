@@ -9,7 +9,7 @@ final class Updater: ObservableObject {
     // Only checks run on their own; installing a new version always waits for the button.
     // The key keeps its old name so an existing on/off choice carries over.
     @Published var enabled: Bool {
-        didSet { UserDefaults.standard.set(enabled, forKey: "autoUpdate") }
+        didSet { UserDefaults.app.set(enabled, forKey: "autoUpdate") }
     }
     @Published private(set) var checking = false
     @Published private(set) var status = ""
@@ -30,7 +30,7 @@ final class Updater: ObservableObject {
     private var updates: URL { URL(fileURLWithPath: AccountStore.supportDir).appendingPathComponent("updates") }
     private var target: URL {
         // The user may explicitly choose the per-user Applications folder.
-        let personal = UserDefaults.standard.bool(forKey: "installInUserApplications")
+        let personal = UserDefaults.app.bool(forKey: "installInUserApplications")
         let base = personal ? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications") : URL(fileURLWithPath: "/Applications")
         return base.appendingPathComponent("AI Illuminati.app")
     }
@@ -43,7 +43,7 @@ final class Updater: ObservableObject {
     private var stateFile: URL { URL(fileURLWithPath: AccountStore.supportDir).appendingPathComponent("update.json") }
 
     init() {
-        enabled = UserDefaults.standard.object(forKey: "autoUpdate") as? Bool ?? true
+        enabled = UserDefaults.app.object(forKey: "autoUpdate") as? Bool ?? true
         let state = loadState()
         status = Self.describe(state)
         if state["status"] == "available", let next = state["next"], next != revision { available = next }
@@ -72,7 +72,7 @@ final class Updater: ObservableObject {
         cancelWaiting()
         progress = nil
         channel = name
-        UserDefaults.standard.set(name, forKey: UpdateChannel.key)
+        UserDefaults.app.set(name, forKey: UpdateChannel.key)
         setAvailable(nil)
         report(["status": ""])
         if !checking && !installing { check() }   // a running check looks again when it ends
@@ -481,7 +481,7 @@ final class Updater: ObservableObject {
 enum UpdateChannel {
     static let all = ["stable", "main"]
     static let key = "updateChannel"
-    static var current: String { valid(UserDefaults.standard.string(forKey: key)) }
+    static var current: String { valid(UserDefaults.app.string(forKey: key)) }
     static func valid(_ name: String?) -> String { name.flatMap { all.contains($0) ? $0 : nil } ?? "stable" }
     /// An install started on `started` goes on only while that is still the chosen channel (nil: no channel, e.g. moving a development build).
     static func proceeds(started: String?, now: String) -> Bool { started == nil || started == now }
@@ -643,7 +643,7 @@ struct UpdateProgress: Equatable {
 
     /// The step times saved after the last successful update.
     static var saved: [Int: TimeInterval] {
-        let stored = UserDefaults.standard.dictionary(forKey: key) as? [String: Double] ?? [:]
+        let stored = UserDefaults.app.dictionary(forKey: key) as? [String: Double] ?? [:]
         return Dictionary(uniqueKeysWithValues: stored.compactMap { name, seconds in Int(name).map { ($0, seconds) } })
     }
 
@@ -651,6 +651,6 @@ struct UpdateProgress: Equatable {
     static func remember(_ progress: UpdateProgress) {
         var times = progress.estimates
         for (step, seconds) in progress.seconds where !progress.skipped.contains(step) { times[step] = seconds }
-        UserDefaults.standard.set(Dictionary(uniqueKeysWithValues: times.map { (String($0.key), $0.value) }), forKey: key)
+        UserDefaults.app.set(Dictionary(uniqueKeysWithValues: times.map { (String($0.key), $0.value) }), forKey: key)
     }
 }

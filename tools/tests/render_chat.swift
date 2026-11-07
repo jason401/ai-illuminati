@@ -17,8 +17,7 @@ private struct EmptyPreviewLogin: GoogleTokenStore {
         UserDefaults.standard.setVolatileDomain(["mcpOff": ["ai-face", "google-drive"], "driveFolders": Data()], forName: UserDefaults.argumentDomain)
         let output = URL(fileURLWithPath: CommandLine.arguments[1])
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
-        let model = AppModel()
-        model.accounts = []
+        let model = AppModel(persist: false)
         let chat = Discussion(model: model)
         var conversation = Conversation()
         conversation.title = "Window spacing preview"

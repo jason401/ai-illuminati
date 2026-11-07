@@ -61,13 +61,41 @@ struct Account: Codable, Equatable {
     }
 }
 
+// The app's settings. Same place rule as AccountStore.home: the real ones only in the app itself.
+extension UserDefaults {
+    static var app: UserDefaults { AccountStore.place.defaults }
+}
+
 // The account list, saved in ~/Library/Application Support/AI Illuminati/accounts.json.
 // Account folders live in ~/.ai-illuminati/accounts/<id>.
 enum AccountStore {
-    static let home = FileManager.default.homeDirectoryForCurrentUser.path
-    static let supportDir = home + "/Library/Application Support/AI Illuminati"
-    static let accountsDir = home + "/.ai-illuminati/accounts"
+    // Only the app itself (main.swift) chooses the real home folder and settings, before anything reads
+    // them. Every other program built from these files (tests, previews) gets a throwaway folder and
+    // settings file, or AI_ILLUMINATI_TEST_HOME when a test names one, so a forgotten step can never
+    // write over the real accounts.
+    private static var realHomeChosen = false
+    private static var placeChosen = false
+    static let place: (home: String, defaults: UserDefaults) = {
+        placeChosen = true
+        let real = FileManager.default.homeDirectoryForCurrentUser.path
+        if realHomeChosen { return (real, .standard) }
+        var home = ProcessInfo.processInfo.environment["AI_ILLUMINATI_TEST_HOME"] ?? ""
+        if home.isEmpty || URL(fileURLWithPath: home).standardizedFileURL.path == URL(fileURLWithPath: real).standardizedFileURL.path {
+            home = NSTemporaryDirectory() + "ai-illuminati-scratch-" + UUID().uuidString
+        }
+        try? FileManager.default.createDirectory(atPath: home, withIntermediateDirectories: true)
+        return (home, UserDefaults(suiteName: home + "/settings")!)
+    }()
+    static func useRealHome() {
+        precondition(!placeChosen, "AccountStore.useRealHome() must run before anything reads the data folder")
+        realHomeChosen = true
+    }
+    static var home: String { place.home }
+    static var supportDir: String { home + "/Library/Application Support/AI Illuminati" }
+    static var accountsDir: String { home + "/.ai-illuminati/accounts" }
     private static var file: URL { URL(fileURLWithPath: supportDir + "/accounts.json") }
+    static var backupDir: URL { URL(fileURLWithPath: supportDir + "/backups") }
+    static let keptBackups = 20, keptDays = 7, keptShrinkBackups = 30
 
     static let gemini = Account(id: "gemini-main", provider: .gemini, name: "Gemini", dir: nil)
 
@@ -89,8 +117,8 @@ enum AccountStore {
         }
         if let data = saved, var list = decode(data) {
             // Lists saved before Gemini became an entry get it once, at the end.
-            if !UserDefaults.standard.bool(forKey: "geminiInList") {
-                UserDefaults.standard.set(true, forKey: "geminiInList")
+            if !UserDefaults.app.bool(forKey: "geminiInList") {
+                UserDefaults.app.set(true, forKey: "geminiInList")
                 if !list.contains(where: { $0.provider == .gemini }) {
                     list.append(gemini)
                     save(list)
@@ -103,16 +131,67 @@ enum AccountStore {
         // apps' own logins and histories are never shared or touched.
         var list: [Account] = []
         list.append(gemini)
-        UserDefaults.standard.set(true, forKey: "geminiInList")
+        UserDefaults.app.set(true, forKey: "geminiInList")
         save(list)
         return list
     }
 
-    static func save(_ list: [Account]) {
-        try? FileManager.default.createDirectory(atPath: supportDir, withIntermediateDirectories: true)
+    // The list on disk is copied to backups/ before it changes; if that copy fails, the list is not
+    // replaced. A save that drops accounts gets a "-shrink" copy, kept apart from everyday saves.
+    @discardableResult
+    static func save(_ list: [Account]) -> Bool {
+        let fm = FileManager.default
+        try? fm.createDirectory(atPath: supportDir, withIntermediateDirectories: true)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try? encoder.encode(list).write(to: file, options: .atomic)
+        guard let data = try? encoder.encode(list) else { return false }
+        if let old = try? Data(contentsOf: file), old != data {
+            let dropped = (decode(old) ?? []).filter { account in !list.contains { $0.id == account.id } }
+            guard backUp(old, shrink: !dropped.isEmpty) else {
+                NSLog("AI Illuminati: accounts.json not saved, its backup could not be written")
+                return false
+            }
+        }
+        do { try data.write(to: file, options: .atomic) } catch { return false }
+        return true
+    }
+
+    private static func backUp(_ data: Data, shrink: Bool) -> Bool {
+        let fm = FileManager.default
+        let format = DateFormatter()
+        format.locale = Locale(identifier: "en_US_POSIX")
+        format.dateFormat = "yyyyMMdd-HHmmss"
+        let now = Date()
+        // Microseconds keep quick saves apart and in order.
+        var micro = Int(now.timeIntervalSince1970 * 1_000_000) % 1_000_000, stamp = ""
+        repeat {
+            stamp = format.string(from: now) + String(format: "-%06d", micro)
+            micro += 1
+        } while ["", "-shrink"].contains { fm.fileExists(atPath: backupDir.appendingPathComponent("accounts-\(stamp)\($0).json").path) }
+        let name = "accounts-" + stamp + (shrink ? "-shrink" : "") + ".json"
+        do {
+            try fm.createDirectory(at: backupDir, withIntermediateDirectories: true)
+            try data.write(to: backupDir.appendingPathComponent(name), options: .atomic)
+        } catch { return false }
+        pruneBackups()
+        return true
+    }
+
+    // Keeps the newest everyday copies, plus the newest copy of each of the last days, and the newest
+    // shrink copies. Names sort by time, so the newest come last.
+    static func pruneBackups() {
+        let fm = FileManager.default
+        let names = ((try? fm.contentsOfDirectory(atPath: backupDir.path)) ?? [])
+            .filter { $0.hasPrefix("accounts-") && $0.hasSuffix(".json") }.sorted()
+        let shrink = names.filter { $0.hasSuffix("-shrink.json") }
+        let everyday = names.filter { !$0.hasSuffix("-shrink.json") }
+        var keep = Set(shrink.suffix(keptShrinkBackups)).union(everyday.suffix(keptBackups))
+        var days: [String: String] = [:]
+        for name in everyday { days[String(name.dropFirst("accounts-".count).prefix(8))] = name }
+        keep.formUnion(days.keys.sorted().suffix(keptDays).compactMap { days[$0] })
+        for name in names where !keep.contains(name) {
+            try? fm.removeItem(at: backupDir.appendingPathComponent(name))
+        }
     }
 
     // Makes a new, empty account folder. Codex is told to keep its login in a file there

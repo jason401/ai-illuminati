@@ -73,8 +73,8 @@ final class DriveCenter: ObservableObject {
     @Published var treeErrors: [String: String] = [:]
     private var treeRequests: [String: UUID] = [:]
     private var treeChecked: [String: Date] = [:]
-    private var ruleRoots = UserDefaults.standard.dictionary(forKey: "driveRuleRoots") as? [String: String] ?? [:] {
-        didSet { UserDefaults.standard.set(ruleRoots, forKey: "driveRuleRoots") }
+    private var ruleRoots = UserDefaults.app.dictionary(forKey: "driveRuleRoots") as? [String: String] ?? [:] {
+        didSet { UserDefaults.app.set(ruleRoots, forKey: "driveRuleRoots") }
     }
     var treeRows: [DriveTreeItem] { DriveTree.rows(roots: folders, children: children, expanded: expanded) }
     init(startRefreshing: Bool = true) { if startRefreshing { refresh() } }

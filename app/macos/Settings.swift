@@ -8,14 +8,18 @@ import UniformTypeIdentifiers
 final class AppModel: ObservableObject {
     @Published var accounts: [Account] {
         didSet {
-            AccountStore.save(accounts)
+            if persist { AccountStore.save(accounts) }
             onAccountsChange?()
         }
     }
+    // A preview model (persist: false) starts with no accounts and default settings, and never
+    // reads or writes the account list; its settings go to a throwaway file.
+    let persist: Bool
+    private let defaults: UserDefaults
     @Published var draggingAccount: String?   // Settings > Accounts row being dragged
     @Published var showPercent: Bool {
         didSet {
-            UserDefaults.standard.set(showPercent, forKey: "showPercent")
+            defaults.set(showPercent, forKey: "showPercent")
             onDisplayChange?()
         }
     }
@@ -33,7 +37,7 @@ final class AppModel: ObservableObject {
     }
     @Published var menuBarStyle: MenuBarStyle {
         didSet {
-            UserDefaults.standard.set(menuBarStyle.rawValue, forKey: "menuBarStyle")
+            defaults.set(menuBarStyle.rawValue, forKey: "menuBarStyle")
             onDisplayChange?()
         }
     }
@@ -54,19 +58,19 @@ final class AppModel: ObservableObject {
     }
     @Published var menuBarWindow: MenuBarWindow {
         didSet {
-            UserDefaults.standard.set(menuBarWindow.rawValue, forKey: "menuBarWindow")
+            defaults.set(menuBarWindow.rawValue, forKey: "menuBarWindow")
             onDisplayChange?()
         }
     }
     @Published var menuBarColored: Bool {
         didSet {
-            UserDefaults.standard.set(menuBarColored, forKey: "menuBarColored")
+            defaults.set(menuBarColored, forKey: "menuBarColored")
             onDisplayChange?()
         }
     }
     @Published var menuBarAnimation: Bool {
         didSet {
-            UserDefaults.standard.set(menuBarAnimation, forKey: "menuBarAnimation")
+            defaults.set(menuBarAnimation, forKey: "menuBarAnimation")
             onDisplayChange?()
         }
     }
@@ -83,7 +87,7 @@ final class AppModel: ObservableObject {
     }
     @Published var usageMenuStyle: UsageMenuStyle {
         didSet {
-            UserDefaults.standard.set(usageMenuStyle.rawValue, forKey: "usageMenuStyle")
+            defaults.set(usageMenuStyle.rawValue, forKey: "usageMenuStyle")
             onDisplayChange?()
         }
     }
@@ -91,7 +95,7 @@ final class AppModel: ObservableObject {
     let updater = Updater()
     // Rules put at the top of every message the chat sends to an AI (edited in Settings).
     @Published var chatRules: String {
-        didSet { UserDefaults.standard.set(chatRules, forKey: "chatRules") }
+        didSet { defaults.set(chatRules, forKey: "chatRules") }
     }
     // Style only. How long each AI turn is comes from the length menu in the chat window.
     private static let koreanChatRules = """
@@ -129,73 +133,78 @@ final class AppModel: ObservableObject {
     // Folders every chat and every AI may read (left side of the chat window). Read only for now.
     @Published var sharedFolders: [String] {
         didSet {
-            UserDefaults.standard.set(sharedFolders, forKey: "sharedFolders")
+            defaults.set(sharedFolders, forKey: "sharedFolders")
             if !pausedSharedFolders.isSubset(of: Set(sharedFolders)) { pausedSharedFolders.formIntersection(sharedFolders) }
             if !writableSharedFolders.isSubset(of: Set(sharedFolders)) { writableSharedFolders.formIntersection(sharedFolders) }
         }
     }
     // Shared folders kept in the list but not given to the AIs for now (the eye in the chat sidebar).
     @Published var pausedSharedFolders: Set<String> = [] {
-        didSet { UserDefaults.standard.set(pausedSharedFolders.sorted(), forKey: "pausedSharedFolders") }
+        didSet { defaults.set(pausedSharedFolders.sorted(), forKey: "pausedSharedFolders") }
     }
     var activeSharedFolders: [String] { sharedFolders.filter { !pausedSharedFolders.contains($0) } }
     // Shared folders the AIs may also change (the pencil): backed up before each answer, like linked folders.
     // The others stay read only.
     @Published var writableSharedFolders: Set<String> = [] {
-        didSet { UserDefaults.standard.set(writableSharedFolders.sorted(), forKey: "writableSharedFolders") }
+        didSet { defaults.set(writableSharedFolders.sorted(), forKey: "writableSharedFolders") }
     }
     // A school chat is continued only by school accounts, a personal chat only by personal ones.
     // Ollama models on this Mac: on/off (Settings → Accounts) and how long it stays in memory after a reply (Settings → Accounts).
     @Published var localEnabled: Bool {
         didSet {
-            UserDefaults.standard.set(localEnabled, forKey: "localEnabled")
+            defaults.set(localEnabled, forKey: "localEnabled")
             if !localEnabled { DispatchQueue.global(qos: .utility).async { LocalModel.unload() } }
             onAccountsChange?()
         }
     }
     @Published var localKeepAlive: Int {
-        didSet { UserDefaults.standard.set(localKeepAlive, forKey: "localKeepAlive") }
+        didSet { defaults.set(localKeepAlive, forKey: "localKeepAlive") }
     }
     @Published var schoolOnlyHandoff: Bool {
-        didSet { UserDefaults.standard.set(schoolOnlyHandoff, forKey: "schoolOnlyHandoff") }
+        didSet { defaults.set(schoolOnlyHandoff, forKey: "schoolOnlyHandoff") }
     }
     // ChatGPT accounts unchecked as picture makers (Settings → Chat). The others draw every picture the
     // other AIs need; a new ChatGPT account starts checked.
     @Published var pictureMakersOff: Set<String> {
-        didSet { UserDefaults.standard.set(pictureMakersOff.sorted(), forKey: "pictureMakersOff") }
+        didSet { defaults.set(pictureMakersOff.sorted(), forKey: "pictureMakersOff") }
     }
     var pictureMakers: [Account] { accounts.filter { $0.provider == .codex && !pictureMakersOff.contains($0.id) } }
     var onAccountsChange: (() -> Void)?
     var onDisplayChange: (() -> Void)?
     var onPreviewUsageMenu: (() -> Void)?
 
-    init() {
-        UserDefaults.standard.removeObject(forKey: "appLanguage")   // the old in-app choice; macOS decides now
-        var loaded = AccountStore.load()
-        // The first Gemma entry was named before there were two models: name its model.
-        if let i = loaded.firstIndex(where: { $0.id == LocalModel.legacy[0].id && ["Gemma 4 (내 Mac)", "Gemma 4 (this Mac)"].contains($0.name) }) {
-            loaded[i].name = L("\(LocalModel.legacy[0].title) (내 Mac)", "\(LocalModel.legacy[0].title) (this Mac)")
-            AccountStore.save(loaded)
+    init(persist: Bool = true) {
+        self.persist = persist
+        defaults = persist ? .app : UserDefaults(suiteName: NSTemporaryDirectory() + "ai-illuminati-preview-" + UUID().uuidString)!
+        var loaded: [Account] = []
+        if persist {
+            defaults.removeObject(forKey: "appLanguage")   // the old in-app choice; macOS decides now
+            loaded = AccountStore.load()
+            // The first Gemma entry was named before there were two models: name its model.
+            if let i = loaded.firstIndex(where: { $0.id == LocalModel.legacy[0].id && ["Gemma 4 (내 Mac)", "Gemma 4 (this Mac)"].contains($0.name) }) {
+                loaded[i].name = L("\(LocalModel.legacy[0].title) (내 Mac)", "\(LocalModel.legacy[0].title) (this Mac)")
+                AccountStore.save(loaded)
+            }
         }
         accounts = loaded
-        showPercent = UserDefaults.standard.bool(forKey: "showPercent")
+        showPercent = defaults.bool(forKey: "showPercent")
         // The legacy show-percent option maps to "mark + %"; otherwise default to "mark + bars".
-        menuBarStyle = UserDefaults.standard.string(forKey: "menuBarStyle").flatMap(MenuBarStyle.init(rawValue:))
-            ?? (UserDefaults.standard.bool(forKey: "showPercent") ? .markPercent : .markBars)
-        menuBarAnimation = UserDefaults.standard.object(forKey: "menuBarAnimation") as? Bool ?? true
-        menuBarWindow = UserDefaults.standard.string(forKey: "menuBarWindow").flatMap(MenuBarWindow.init(rawValue:)) ?? .fiveHour
-        menuBarColored = UserDefaults.standard.bool(forKey: "menuBarColored")
-        usageMenuStyle = UserDefaults.standard.string(forKey: "usageMenuStyle").flatMap(UsageMenuStyle.init(rawValue:)) ?? .cards
+        menuBarStyle = defaults.string(forKey: "menuBarStyle").flatMap(MenuBarStyle.init(rawValue:))
+            ?? (defaults.bool(forKey: "showPercent") ? .markPercent : .markBars)
+        menuBarAnimation = defaults.object(forKey: "menuBarAnimation") as? Bool ?? true
+        menuBarWindow = defaults.string(forKey: "menuBarWindow").flatMap(MenuBarWindow.init(rawValue:)) ?? .fiveHour
+        menuBarColored = defaults.bool(forKey: "menuBarColored")
+        usageMenuStyle = defaults.string(forKey: "usageMenuStyle").flatMap(UsageMenuStyle.init(rawValue:)) ?? .cards
         openAtLogin = SMAppService.mainApp.status == .enabled
-        sharedFolders = UserDefaults.standard.stringArray(forKey: "sharedFolders") ?? []
-        pausedSharedFolders = Set(UserDefaults.standard.stringArray(forKey: "pausedSharedFolders") ?? [])
-        writableSharedFolders = Set(UserDefaults.standard.stringArray(forKey: "writableSharedFolders") ?? [])
-        schoolOnlyHandoff = UserDefaults.standard.object(forKey: "schoolOnlyHandoff") as? Bool ?? true
-        pictureMakersOff = Set(UserDefaults.standard.stringArray(forKey: "pictureMakersOff") ?? [])
-        localEnabled = LocalModel.enabled
-        localKeepAlive = LocalModel.keepAlive
+        sharedFolders = defaults.stringArray(forKey: "sharedFolders") ?? []
+        pausedSharedFolders = Set(defaults.stringArray(forKey: "pausedSharedFolders") ?? [])
+        writableSharedFolders = Set(defaults.stringArray(forKey: "writableSharedFolders") ?? [])
+        schoolOnlyHandoff = defaults.object(forKey: "schoolOnlyHandoff") as? Bool ?? true
+        pictureMakersOff = Set(defaults.stringArray(forKey: "pictureMakersOff") ?? [])
+        localEnabled = persist ? LocalModel.enabled : true
+        localKeepAlive = persist ? LocalModel.keepAlive : 5
         // A saved default in either language becomes the default in today's language.
-        let saved = UserDefaults.standard.string(forKey: "chatRules")
+        let saved = defaults.string(forKey: "chatRules")
         chatRules = (saved == nil || saved == Self.koreanChatRules || saved == Self.rules(for: .english)
                      || Self.oldDefaultRules.contains(saved!))
             ? Self.defaultChatRules : saved!
@@ -341,6 +350,7 @@ final class AppModel: ObservableObject {
     }
 
     func setOpenAtLogin(_ on: Bool) {
+        guard persist else { return }
         let service = SMAppService.mainApp
         do {
             if on { try service.register() } else { try service.unregister() }

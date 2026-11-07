@@ -690,6 +690,10 @@ final class Discussion: ObservableObject {
     var reachedBottom = false
     var loadingEarlier = false
     @Published var hoverKey: String?
+    // The notes panel on the right of the chat window, open or folded (the same for every chat).
+    @Published var notesShown = UserDefaults.standard.bool(forKey: "notesShown") {
+        didSet { UserDefaults.standard.set(notesShown, forKey: "notesShown") }
+    }
     @Published var teamSettingsOpen = false   // the team mode settings popover in the message box
     // @ in the message box: the accounts picked so far, and the list while it is open.
     @Published var draftMentions: [String] = []

@@ -2020,3 +2020,33 @@ func testShownTurns() {
     print("PASS: long chats show the latest turns after switching or reopening")
 }
 testShownTurns()
+
+func testChatNotes() {
+    let room = UUID()
+    let file = ChatNotes.file(room)
+    let chatFolder = Discussion.chatFolder(room).path + "/"
+    expect(!file.path.hasPrefix(chatFolder), "the notes are kept outside the chat folder the AI may write in")
+    expect(ChatNotes.rule("  \n ").isEmpty, "empty notes add nothing to the instructions")
+    let notes = ChatNotes()
+    notes.open(room)
+    notes.text = "논문 마감 11월 20일"
+    notes.flush()
+    expect(ChatNotes.load(room) == "논문 마감 11월 20일", "typed notes are saved for the chat")
+    let other = UUID()
+    notes.open(other)
+    expect(notes.text.isEmpty && ChatNotes.load(room) == "논문 마감 11월 20일", "each chat has its own notes")
+    let rule = ChatNotes.rule(ChatNotes.load(room))
+    expect(rule.contains("논문 마감 11월 20일") && rule.contains("never change"), "the AI gets the notes to read, not to edit")
+    let instruction = Discussion.composeInstruction(name: "Claude", provider: .claude, folders: "[Folders]", drive: "", fullAccess: false,
+                                                    picture: "", helper: "", face: "", project: nil, notes: rule)
+    expect(instruction.contains("[User's notes for this chat]"), "the notes reach the instructions")
+    let long = ChatNotes.rule(String(repeating: "a", count: ChatNotes.promptLimit + 50))
+    expect(long.contains("(cut: the notes are longer)") && long.count < ChatNotes.promptLimit + 600, "very long notes are cut")
+    notes.text = ""
+    notes.open(room)
+    notes.text = ""
+    notes.flush()
+    expect(!FileManager.default.fileExists(atPath: file.path), "clearing the notes removes the file")
+    print("PASS: chat notes are the user's, saved per chat, read by the AI")
+}
+testChatNotes()

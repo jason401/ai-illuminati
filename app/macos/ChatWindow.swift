@@ -12,11 +12,14 @@ struct ChatView: View {
     // Smallest window, about the Claude and ChatGPT apps; below `wide` the sidebar slides over the chat.
     static let minSize = NSSize(width: 440, height: 420)
     static let wide: CGFloat = 700
+    static let notesWidth: CGFloat = 280
 
     var body: some View {
         GeometryReader { geometry in
             let wide = geometry.size.width >= Self.wide
             let inline = wide && !discussion.sidebarHidden
+            // The notes sit beside the chat when it keeps at least `wide` points, else they slide over it.
+            let notesInline = geometry.size.width - (inline ? 251 : 0) - Self.notesWidth >= Self.wide
             ZStack(alignment: .leading) {
                 HStack(spacing: 0) {
                     if inline {
@@ -24,6 +27,18 @@ struct ChatView: View {
                         Divider().opacity(0.5)
                     }
                     chat(sidebarShown: inline, wide: wide)
+                    if discussion.notesShown && notesInline {
+                        Divider().opacity(0.5)
+                        NotesPanel(room: discussion.currentID) { discussion.notesShown = false }
+                    }
+                }
+                if discussion.notesShown && !notesInline {
+                    HStack(spacing: 0) {
+                        Spacer(minLength: 0)
+                        NotesPanel(room: discussion.currentID) { discussion.notesShown = false }
+                            .background(Color(nsColor: .windowBackgroundColor))
+                            .shadow(color: .black.opacity(0.25), radius: 12)
+                    }
                 }
                 if !wide && discussion.sidebarOverlay {
                     // Click outside to close, like the desktop apps.
@@ -932,6 +947,13 @@ struct ChatView: View {
                       ? L("이 대화에 연결한 폴더: AI가 읽고 쓰고 지울 수 있어요 (답하기 전에 자동 백업)", "Folders linked to this chat: its AI may read, edit and delete (backed up before each answer)")
                       : L("이 대화에 연결한 폴더: 권한은 모드 설정(입력창 오른쪽)에서 정해요", "Folders linked to this chat: set access in the mode settings (right of the message box)"))
             }
+            Button(action: { discussion.notesShown.toggle() }) {
+                Image(systemName: "note.text").frame(width: 24, height: 24)
+            }
+            .buttonStyle(.plainHit)
+            .foregroundColor(discussion.notesShown ? .accentColor : .secondary)
+            .help(discussion.notesShown ? L("메모 접기", "Hide notes") : L("메모 펼치기 (AI는 읽기만 해요)", "Show notes (the AI only reads them)"))
+            .accessibilityLabel(L("메모", "Notes"))
         }
     }
 
@@ -1234,37 +1256,37 @@ private struct TurnView: View, Equatable {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Spacer(minLength: 120)
-                Text(turn.question)
-                    .font(.system(size: 14))
-                    .lineSpacing(3)
-                    .textSelection(.enabled)
-                    .padding(.horizontal, 14).padding(.vertical, 10)
-                    .background(Color.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 18))
-            }
-            if let mentions = turn.mentions, !mentions.isEmpty {
-                // Called with @: who was asked, under the message.
-                HStack {
-                    Spacer()
-                    Text("@ " + mentions.map { accountLabels[$0] ?? $0 }.joined(separator: ", "))
-                        .font(.system(size: 11)).foregroundColor(.secondary)
-                }
-            }
-            if let images = turn.images, !images.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(images) { item in
-                            Button(action: { NSWorkspace.shared.open(item.url) }) {
-                                AttachmentThumbnail(item: item, size: 120)
-                            }
-                            .buttonStyle(.plainHit)
-                            .help(item.name)
-                            .accessibilityLabel(L("첨부 이미지 열기: ", "Open attached image: ") + item.name)
-                        }
+            // The user's side, all on the right like the desktop apps: attached pictures, the message,
+            // who was called with @, and Copy.
+            VStack(alignment: .trailing, spacing: 6) {
+                if let images = turn.images, !images.isEmpty {
+                    // On the right while they fit on one line; more scroll sideways across the whole width.
+                    ViewThatFits(in: .horizontal) {
+                        attachedImages(images)
+                        ScrollView(.horizontal, showsIndicators: false) { attachedImages(images) }
                     }
+                    .padding(.bottom, 2)
+                }
+                HStack {
+                    Spacer(minLength: 120)
+                    Text(turn.question)
+                        .font(.system(size: 14))
+                        .lineSpacing(3)
+                        .textSelection(.enabled)
+                        .padding(.horizontal, 14).padding(.vertical, 10)
+                        .background(Color.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 18))
+                }
+                HStack(spacing: 6) {
+                    Spacer()
+                    if let mentions = turn.mentions, !mentions.isEmpty {
+                        // Called with @: who was asked, under the message.
+                        Text("@ " + mentions.map { accountLabels[$0] ?? $0 }.joined(separator: ", "))
+                            .font(.system(size: 11)).foregroundColor(.secondary)
+                    }
+                    CopyButton(text: turn.question, key: "question-\(turn.id)")
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .trailing)
             if !turn.status.isEmpty {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
@@ -1338,6 +1360,7 @@ private struct TurnView: View, Equatable {
                         .frame(maxWidth: .infinity, alignment: .leading)
                     let pictures = Self.finalPictures(turn, final: final)
                     if !pictures.isEmpty { PictureStrip(images: pictures, size: 180) }
+                    CopyButton(text: final, key: "final-\(turn.id)")
                 }
             } else if let final = turn.final {
                 VStack(alignment: .leading, spacing: 6) {
@@ -1346,10 +1369,13 @@ private struct TurnView: View, Equatable {
                         .frame(maxWidth: .infinity, alignment: .leading)
                     let pictures = Self.finalPictures(turn, final: final)
                     if !pictures.isEmpty { PictureStrip(images: pictures, size: 180) }
-                    if let by = turn.finalBy {
-                        (Text(turn.mode == 0 ? L("답: ", "Answered by: ") : L("정리: ", "Final answer by: ")).foregroundColor(.secondary)
-                         + Text(by).bold().foregroundColor(Account.Provider.of(speaker: by)?.color ?? .secondary))
-                            .font(.caption)
+                    HStack(spacing: 6) {
+                        if let by = turn.finalBy {
+                            (Text(turn.mode == 0 ? L("답: ", "Answered by: ") : L("정리: ", "Final answer by: ")).foregroundColor(.secondary)
+                             + Text(by).bold().foregroundColor(Account.Provider.of(speaker: by)?.color ?? .secondary))
+                                .font(.caption)
+                        }
+                        CopyButton(text: final, key: "final-\(turn.id)")
                     }
                 }
                 .padding(12)
@@ -1371,6 +1397,7 @@ private struct TurnView: View, Equatable {
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     if let images = answer.images, !images.isEmpty { PictureStrip(images: images, size: 180) }
+                    if !answer.failed { CopyButton(text: answer.text, key: "answer-\(answer.id)") }
                 }
                 .padding(.top, 6)
             }
@@ -1419,6 +1446,19 @@ private struct TurnView: View, Equatable {
                     }
                     .font(.callout)
                 }
+            }
+        }
+    }
+
+    private func attachedImages(_ images: [ChatImage]) -> some View {
+        HStack(spacing: 8) {
+            ForEach(images) { item in
+                Button(action: { NSWorkspace.shared.open(item.url) }) {
+                    AttachmentThumbnail(item: item, size: 120)
+                }
+                .buttonStyle(.plainHit)
+                .help(item.name)
+                .accessibilityLabel(L("첨부 이미지 열기: ", "Open attached image: ") + item.name)
             }
         }
     }
@@ -1503,6 +1543,7 @@ final class ChatWindow {
                 NSApp.setActivationPolicy(.accessory)
                 // Reopened later, the chat starts again from its latest turns.
                 discussion.showLatestTurns()
+                ChatNotes.shared.flush()
                 // No chat open: Gemma need not hold its memory (an answer under way finishes first).
                 if discussion.model.hasLocal {
                     LocalModel.unloadWhenIdle(busy: { discussion.anyRunning }, reopened: { self?.window?.isVisible == true })
@@ -1630,6 +1671,81 @@ private struct MultilineInput: NSViewRepresentable {
                 self.parent.height = measured
             }
         }
+    }
+}
+
+// Which Copy button was pressed last, so it shows a check mark for a moment (no @State: see DriveUI.swift).
+private final class CopyFeedback: ObservableObject {
+    static let shared = CopyFeedback()
+    @Published var copied: String?
+}
+
+// A small Copy button under a message or an answer, like the desktop apps. Copies the text as written (Markdown).
+private struct CopyButton: View {
+    let text: String
+    let key: String
+    @ObservedObject var feedback = CopyFeedback.shared
+
+    var body: some View {
+        let done = feedback.copied == key
+        Button(action: {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+            feedback.copied = key
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { if feedback.copied == key { feedback.copied = nil } }
+        }) {
+            Image(systemName: done ? "checkmark" : "doc.on.doc")
+                .font(.system(size: 12))
+                .frame(width: 24, height: 22)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plainHit)
+        .foregroundColor(.secondary)
+        .help(done ? L("복사했어요", "Copied") : L("복사", "Copy"))
+        .accessibilityLabel(L("복사", "Copy"))
+    }
+}
+
+// The chat's notes on the right: only the user edits them; each answer reads them (see ChatNotes).
+private struct NotesPanel: View {
+    let room: UUID
+    let close: () -> Void
+    @ObservedObject var notes = ChatNotes.shared
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 6) {
+                Text(L("메모", "Notes")).font(.system(size: 13, weight: .medium))
+                WindowDragRegion().frame(maxWidth: .infinity, maxHeight: .infinity)
+                Button(action: close) { Image(systemName: "xmark").font(.system(size: 11)).frame(width: 22, height: 22) }
+                    .buttonStyle(.plainHit).foregroundColor(.secondary)
+                    .help(L("메모 접기", "Hide notes"))
+            }
+            .padding(.horizontal, 14).frame(height: 40)
+            ZStack(alignment: .topLeading) {
+                TextEditor(text: $notes.text)
+                    .font(.system(size: 13))
+                    .scrollContentBackground(.hidden)
+                    .accessibilityLabel(L("이 대화의 메모", "Notes for this chat"))
+                if notes.text.isEmpty {
+                    Text(L("이 대화의 메모예요. 나만 고칠 수 있고, AI는 답할 때 읽기만 해요.",
+                           "Notes for this chat. Only you edit them; the AI reads them when it answers."))
+                        .font(.system(size: 13)).foregroundColor(.secondary)
+                        .padding(.leading, 5)
+                        .allowsHitTesting(false)
+                }
+            }
+            .padding(.horizontal, 10).padding(.bottom, 10)
+            Text(L("AI는 읽기만 해요", "The AI only reads these"))
+                .font(.system(size: 11)).foregroundColor(.secondary)
+                .padding(.horizontal, 14).padding(.bottom, 12)
+        }
+        .frame(width: ChatView.notesWidth)
+        .frame(maxHeight: .infinity)
+        .background(Color.primary.opacity(0.035))
+        .onAppear { notes.open(room) }
+        .onChange(of: room) { notes.open($0) }
+        .onDisappear { notes.flush() }
     }
 }
 

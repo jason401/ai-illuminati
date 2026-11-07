@@ -71,19 +71,43 @@ final class FaceLink: ObservableObject {
         """
     }
 
-    /// The text without its last <face>…</face> tag (also a tag still arriving at the end), and the mood.
+    /// The text without the <face>…</face> tag at its end (also a tag still arriving there), and the mood. Only a
+    /// tag with one English word that ends the reply counts (a hidden <chat-state> block may follow it, kept for its
+    /// own reader); a tag written inside the reply, e.g. explaining it, stays text and sets no face.
     static func extract(_ text: String) -> (text: String, mood: String?) {
-        if let open = text.range(of: "<face>", options: .backwards) {
-            let rest = text[open.upperBound...]
-            guard let close = rest.range(of: "</face>") else { return (String(text[..<open.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines), nil) }
-            let mood = rest[..<close.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            let cleaned = String(text[..<open.lowerBound]) + String(rest[close.upperBound...])
-            return (cleaned.trimmingCharacters(in: .whitespacesAndNewlines), mood.isEmpty ? nil : mood)
+        var ends = [text.endIndex]
+        if let state = text.range(of: "<chat-state>", options: .backwards) { ends.append(state.lowerBound) }
+        else if let partial = text.range(of: "<chat", options: .backwards), "<chat-state>".hasPrefix(String(text[partial.lowerBound...])) { ends.append(partial.lowerBound) }
+        for end in ends {
+            var last = end
+            while last > text.startIndex, text[text.index(before: last)].isWhitespace { last = text.index(before: last) }
+            let body = text[..<last]
+            guard body.hasSuffix("</face>"), let open = body.range(of: "<face>", options: .backwards) else { continue }
+            let mood = body[open.upperBound..<body.index(last, offsetBy: -7)].trimmingCharacters(in: .whitespaces)
+            guard isMood(mood) else { continue }
+            let cleaned = String(text[..<open.lowerBound]) + String(text[last...])
+            return (cleaned.trimmingCharacters(in: .whitespacesAndNewlines), mood.lowercased())
+        }
+        if let open = text.range(of: "<face>", options: .backwards), arriving(text[open.lowerBound...]) {
+            return (String(text[..<open.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines), nil)
         }
         if let partial = text.range(of: "<", options: .backwards), "<face>".hasPrefix(String(text[partial.lowerBound...])) {
             return (String(text[..<partial.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines), nil)
         }
         return (text, nil)
+    }
+
+    private static func isMood<S: StringProtocol>(_ word: S) -> Bool {
+        (1...32).contains(word.count) && word.allSatisfy { $0.isASCII && ($0.isLetter || $0 == "_" || $0 == "-") }
+    }
+
+    /// The end of a streamed reply that can still become <face>mood</face>.
+    private static func arriving(_ tail: Substring) -> Bool {
+        var rest = tail.dropFirst("<face>".count).drop { $0 == " " }
+        let word = rest.prefix { $0.isASCII && ($0.isLetter || $0 == "_" || $0 == "-") }
+        guard word.count <= 32 else { return false }
+        rest = rest.dropFirst(word.count).drop { $0 == " " }
+        return "</face>".hasPrefix(rest)
     }
 
     /// Sets the face for a finished reply. A mood AI Face does not offer is dropped.

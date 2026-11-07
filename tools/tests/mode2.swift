@@ -1334,6 +1334,13 @@ do {
     expect(FaceLink.extract("Done.\n<face>happy</face>\n<chat-state>x</chat-state>").text == "Done.\n\n<chat-state>x</chat-state>", "the chat state stays for its own reader")
     expect(FaceLink.extract("Writing…\n<fa").text == "Writing…" && FaceLink.extract("Writing…\n<face>ha").text == "Writing…", "a tag still arriving is not shown")
     expect(FaceLink.extract("a < b").text == "a < b" && FaceLink.extract("No tag").mood == nil, "other text is kept")
+    let explained = "Test: the rule has `<face>`.\n\nPlan 2: the scroll button."
+    expect(FaceLink.extract(explained) == (explained, nil), "an open tag inside the reply does not cut the rest")
+    let example = "Write <face>happy</face> at the end.\n\nMore."
+    expect(FaceLink.extract(example) == (example, nil), "a whole tag inside the reply stays and sets no face")
+    expect(FaceLink.extract("Write <face>happy</face> at the end.\n<face>proud</face>\n") == ("Write <face>happy</face> at the end.", "proud"), "only the tag at the end is read")
+    expect(FaceLink.extract("Done.\n<face>not a mood</face>").mood == nil, "a mood is one English word")
+    expect(FaceLink.extract("Done.\n<face>happy</fa").text == "Done." && Discussion.extractState(FaceLink.extract("Done.\n<face>happy</face>\n<chat-st").text).reply == "Done.", "a tag still arriving before the chat state is not shown")
     expect(FaceLink.shared.moods() == ["happy", "sad"] && FaceLink.rule(FaceLink.shared.moods()).contains("one of: happy, sad"), "the rule lists AI Face's moods")
     FaceLink.shared.show("sad"); FaceLink.shared.show("furious")
     _ = FaceLink.shared.tools()   // same queue: the calls above are done

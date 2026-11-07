@@ -1686,3 +1686,4 @@ testWindowDrag()
 testProjectWork()
 
 testProjectHandoff()
+testFullAuto()

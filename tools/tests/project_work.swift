@@ -170,3 +170,70 @@ func testProjectHandoff() {
     expect((try! ProjectProcess.git(["log", "--oneline"], root: root.path)).split(separator: "\n").count == 1, "handoff never fabricates a checkpoint commit")
     print("PASS: project AI handoff (same plain chat, same dirty files, next AI continuation, old-token revocation and no forced commit)")
 }
+
+func testFullAuto() {
+    let base = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("auto-fixture-" + UUID().uuidString)
+    try! FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+    let root = base.appendingPathComponent("repo"), origin = base.appendingPathComponent("origin.git")
+    func git(_ args: [String], at folder: URL? = nil) -> String { try! ProjectProcess.git(args, root: (folder ?? base).path) }
+    _ = git(["init", "--bare", origin.path]); _ = git(["init", "-b", "main", root.path])
+    _ = git(["config", "user.name", "Fixture"], at: root); _ = git(["config", "user.email", "fixture@example.invalid"], at: root)
+    _ = git(["remote", "add", "origin", origin.path], at: root)
+    try! "{\"version\":1,\"commands\":{\"hello\":{\"executable\":\"/bin/echo\",\"args\":[\"hi\"]}}}".write(to: root.appendingPathComponent(".ai-illuminati.json"), atomically: true, encoding: .utf8)
+    _ = git(["add", "."], at: root); _ = git(["commit", "-m", "Initial"], at: root); _ = git(["push", "-u", "origin", "main"], at: root)
+    let selected = try! ProjectProcess.inspect(root.path)
+    var binding = WorkspaceBinding(roots: [WorkspaceRoot(path: root.path, directory: true, writable: true)], project: selected)
+
+    // Environment: shims first on PATH, no Git/GitHub credentials.
+    let env = AutoGuard.environment(["PATH": "/usr/bin:/bin", "GH_TOKEN": "x", "SSH_AUTH_SOCK": "/tmp/agent"])
+    expect(env["PATH"]!.hasPrefix(AutoGuard.folder.path) && env["GH_TOKEN"] == nil && env["SSH_AUTH_SOCK"] == nil
+           && env["GIT_CONFIG_VALUE_0"] == "" && env["GIT_CONFIG_KEY_1"] == "credential.https://github.com.helper" && env["GH_CONFIG_DIR"] != nil,
+           "full auto environment drops Git and GitHub credentials")
+    func shell(_ command: String) -> ProjectProcess.Reply {
+        let p = Process(), out = Pipe(); p.executableURL = URL(fileURLWithPath: "/bin/bash"); p.arguments = ["-c", command]
+        p.environment = env; p.currentDirectoryURL = root; p.standardOutput = out; p.standardError = out
+        try! p.run(); let data = out.fileHandleForReading.readDataToEndOfFile(); p.waitUntilExit()
+        return ProjectProcess.Reply(status: p.terminationStatus, output: String(decoding: data, as: UTF8.self))
+    }
+    let push = shell("git -C . push --force origin main")
+    expect(push.status != 0 && push.output.contains("git_push"), "git shim refuses push (use the app's git_push)")
+    expect(shell("git status --short").status == 0, "other git commands still work")
+    let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("auto-rm-" + UUID().uuidString)
+    try! "x".write(to: scratch, atomically: true, encoding: .utf8)
+    expect(shell("rm -f '\(scratch.path)'").status == 0 && !FileManager.default.fileExists(atPath: scratch.path), "rm deletes temporary files normally")
+    expect(shell("rm '\(scratch.path)'").status != 0 && shell("rm -f '\(scratch.path)'").status == 0, "rm keeps missing-file and -f semantics")
+
+    // CLI options: no prompts, no sandbox, Git push denied.
+    binding.fullAuto = true; binding.level = .execute; binding.projectRunID = UUID()
+    let room = UUID()
+    let backup = try! WorkspaceBackup.begin(WorkspaceBinding(roots: binding.roots, level: .write), room: room, runID: binding.projectRunID!)
+    let invocation = WorkspaceInvocation(binding: binding, room: room, readOnly: false, backupPath: backup.directory)
+    let dir = base.appendingPathComponent("session"); try! FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    let claude = try! invocation.arguments(provider: .claude, original: ["-p", "x", "--tools", "", "--mcp-config", "{}"], directory: dir, web: false)
+    expect(claude.contains("bypassPermissions") && claude.contains("default") && !claude.contains("--restricted") && !claude.contains("--settings")
+           && claude.contains { $0.contains("Bash(git push:*)") }, "Claude full auto: all tools, no prompts, no sandbox, push denied")
+    let codex = try! invocation.arguments(provider: .codex, original: ["exec", "-C", dir.path, "x"], directory: dir, web: false)
+    expect(codex.contains("sandbox_mode=\"danger-full-access\"") && codex.contains("web_search=\"live\"") && !codex.contains { $0.contains("network_access=false") },
+           "Codex full auto: full access with network")
+
+    // No approval card for registered commands; stable publishing keeps its card.
+    let run = ProjectRun(room: UUID(), binding: selected, token: DebateCancellation(), fullAuto: true)
+    expect(run.deadline.timeIntervalSinceNow > 8 * 3600 && run.activeLimit == 8 * 3600, "full auto runs up to 8 hours")
+    ProjectWork.register(run); run.nextAttempt()
+    defer { ProjectWork.finish(run) }
+    let context = ToolContext(room: run.room, roots: binding.roots, projectRun: run.id, projectGeneration: run.generation)
+    let reply = GitLink.shared.call("project_run", ["name": "hello"], context: context)
+    let text = ((reply["content"] as? [[String: Any]])?.first?["text"] as? String) ?? ""
+    expect(reply["isError"] as? Bool == false && text.contains("hi") && ProjectCenter.shared.requests.isEmpty, "full auto runs registered commands without a card")
+    let done = DispatchSemaphore(value: 0); var published: [String: Any] = [:]
+    DispatchQueue.global().async { published = GitLink.shared.call("git_publish_stable", [:], context: context); done.signal() }
+    var carded = false
+    let limit = Date().addingTimeInterval(15)
+    while done.wait(timeout: .now()) != .success && Date() < limit {
+        RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+        if !carded, let request = ProjectCenter.shared.requests.first(where: { $0.run == run.id }) { carded = true; ProjectCenter.shared.decide(request.id, allow: false) }
+    }
+    expect(carded && published["isError"] as? Bool == true && (try? ProjectProcess.git(["rev-parse", "--verify", "refs/heads/stable"], root: origin.path)) == nil,
+           "full auto still asks before publishing stable; refusal publishes nothing")
+    print("PASS: full auto (no cards for commands, 8 hours, stable still asks, no Git credentials, git push blocked, rm to Trash outside temp)")
+}

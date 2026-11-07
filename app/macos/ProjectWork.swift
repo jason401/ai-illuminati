@@ -13,7 +13,7 @@ struct ProjectBinding: Codable, Equatable {
 enum ProjectProcess {
     struct Reply { var status: Int32; var output: String }
     static func run(_ executable: String, _ args: [String], cwd: String, token: DebateCancellation? = nil,
-                    deadline: Date = Date().addingTimeInterval(60)) throws -> Reply {
+                    deadline: Date = Date().addingTimeInterval(60), guarded: Bool = false) throws -> Reply {
         if token?.isCancelled == true { throw MaterialReader.error("Project operation cancelled.") }
         let p = Process(), out = Pipe(), err = Pipe(), lock = NSLock(), done = DispatchGroup()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
@@ -22,6 +22,7 @@ enum ProjectProcess {
         var environment = ProcessInfo.processInfo.environment
         environment["GIT_TERMINAL_PROMPT"] = "0"; environment["GIT_SSH_COMMAND"] = "/usr/bin/ssh -o BatchMode=yes"
         environment["AI_ILLUMINATI_PROJECT_PROCESS"] = "1"
+        if guarded { environment = AutoGuard.environment(environment) }
         p.environment = environment; p.standardInput = FileHandle.nullDevice; p.standardOutput = out; p.standardError = err
         var captured = Data()
         for pipe in [out, err] {
@@ -123,13 +124,16 @@ final class ProjectCenter: ObservableObject {
 final class ProjectRun {
     let id = UUID(), room: UUID, binding: ProjectBinding, outer: DebateCancellation
     let started = Date()
-    let deadline = Date().addingTimeInterval(3600)
+    // Full auto runs while the user is away: up to 8 hours instead of 1 (45 minutes active).
+    let fullAuto: Bool
+    let deadline: Date
+    var activeLimit: TimeInterval { fullAuto ? 8 * 3600 : 2700 }
     private let clock = NSLock()
     private var waitingSince: Date?
     private var waited: TimeInterval = 0
     func beginApproval() { clock.lock(); waitingSince = Date(); clock.unlock() }
     func endApproval() { clock.lock(); if let date = waitingSince { waited += Date().timeIntervalSince(date) }; waitingSince = nil; clock.unlock() }
-    var activeExpired: Bool { clock.lock(); defer { clock.unlock() }; return Date().timeIntervalSince(started) - waited - (waitingSince.map { Date().timeIntervalSince($0) } ?? 0) > 2700 }
+    var activeExpired: Bool { clock.lock(); defer { clock.unlock() }; return Date().timeIntervalSince(started) - waited - (waitingSince.map { Date().timeIntervalSince($0) } ?? 0) > activeLimit }
     private(set) var generation = 0
     var attempt = DebateCancellation()
     private let lifecycle = NSLock()
@@ -138,8 +142,9 @@ final class ProjectRun {
     var committed = false, pushed = false
     var initialDirty: Set<String> = []
     let operations = NSRecursiveLock()
-    init(room: UUID, binding: ProjectBinding, token: DebateCancellation) {
-        self.room = room; self.binding = binding; self.outer = token
+    init(room: UUID, binding: ProjectBinding, token: DebateCancellation, fullAuto: Bool = false) {
+        self.room = room; self.binding = binding; self.outer = token; self.fullAuto = fullAuto
+        deadline = Date().addingTimeInterval(fullAuto ? 8 * 3600 + 600 : 3600)
         let status = (try? ProjectProcess.git(["status", "--porcelain", "-z"], root: binding.root)) ?? ""
         initialDirty = Set(status.split(separator: "\0").map { String($0.dropFirst(3)) })
         Thread.detachNewThread { [self] in
@@ -256,7 +261,7 @@ final class GitLink: ToolProvider {
                 guard resolved.hasPrefix(run.binding.root + "/") else { throw MaterialReader.error("Commit path leaves the project.") }
             }
             let diff = try git(["diff", "--no-ext-diff", "--no-textconv", "HEAD", "--"] + paths)
-            if paths.contains(where: { path in run.initialDirty.contains(where: { dirty in path == "." || dirty == path || dirty.hasPrefix(path + "/") }) }) { try approve("기존 변경 포함 / Include existing edits", diff) }
+            if !run.fullAuto, paths.contains(where: { path in run.initialDirty.contains(where: { dirty in path == "." || dirty == path || dirty.hasPrefix(path + "/") }) }) { try approve("기존 변경 포함 / Include existing edits", diff) }
             let result = try git(["add", "--"] + paths) + "\n" + git(["commit", "--only", "-m", message, "--"] + paths)
             run.committed = true; return result
         case "git_push":
@@ -289,11 +294,93 @@ final class GitLink: ToolProvider {
                   let exe = command["executable"] as? String, exe.hasPrefix("/"), let argv = command["args"] as? [String] else { throw MaterialReader.error("Unknown or invalid named project command. Add it to .ai-illuminati.json (absolute executable, args array) and call project_run again.") }
             let status = try git(["status", "--short"])
             let tree = try WorkspaceBackup.stamps([WorkspaceRoot(path: run.binding.root, directory: true)])
-            try approve("프로젝트 실행 / Run project command", "Runs outside the AI sandbox as your user.\n" + run.binding.root + "\n" + exe + " " + argv.joined(separator: " ") + "\n" + status)
+            if run.fullAuto { ProjectCenter.shared.note(run.room, "project_run (full auto): " + exe + " " + argv.joined(separator: " ")) }
+            else { try approve("프로젝트 실행 / Run project command", "Runs outside the AI sandbox as your user.\n" + run.binding.root + "\n" + exe + " " + argv.joined(separator: " ") + "\n" + status) }
             guard try Data(contentsOf: url) == data, try WorkspaceBackup.stamps([WorkspaceRoot(path: run.binding.root, directory: true)]) == tree else { throw MaterialReader.error("Command changed after approval. Request it again.") }
-            let reply = try ProjectProcess.run(exe, argv, cwd: run.binding.root, token: run.attempt, deadline: min(run.deadline, Date().addingTimeInterval(2700)))
+            let reply = try ProjectProcess.run(exe, argv, cwd: run.binding.root, token: run.attempt, deadline: min(run.deadline, Date().addingTimeInterval(2700)), guarded: run.fullAuto)
             return "exit=\(reply.status)\n" + reply.output
         default: throw MaterialReader.error("Unknown project tool.")
         }
+    }
+}
+
+// Full auto (the user is away): the AI gets every tool without approval cards, but cannot destroy the backups.
+// - No Git or GitHub credentials in its environment: pushes go through git_push (main/feature, never force)
+//   and git_publish_stable (always an approval card). A `git` shim refuses push and history rewrites.
+// - An `rm` shim moves files to the Trash instead of deleting them (temporary folders are deleted normally).
+// Limits: a deliberate script could still call /bin/rm or read Keychain items; this guards mistakes, not malice.
+enum AutoGuard {
+    static let claudeDenied = ["Bash(git push:*)", "Bash(git filter-branch:*)", "Bash(git filter-repo:*)", "Bash(/usr/bin/git push:*)",
+                               "Bash(gh repo delete:*)", "Bash(/bin/rm:*)", "Bash(git clean:*)"]
+    static var folder: URL { URL(fileURLWithPath: AccountStore.supportDir).appendingPathComponent("auto-guard", isDirectory: true) }
+
+    static let gitShim = """
+    #!/bin/bash
+    # AI Illuminati full auto: Git without push or history rewrites. Use the app's git_push tool.
+    i=1; sub=""
+    while [ $i -le $# ]; do
+      a="${!i}"
+      case "$a" in
+        -C|-c|--git-dir|--work-tree|--namespace|--exec-path) i=$((i+2)); continue;;
+        -*) i=$((i+1)); continue;;
+        *) sub="$a"; break;;
+      esac
+    done
+    case "$sub" in
+      push|filter-branch|filter-repo|send-pack)
+        echo "AI Illuminati full auto: 'git $sub' is blocked here. Use the git_push tool (main or feature branches; stable needs the user's approval)." >&2
+        exit 1;;
+    esac
+    exec /usr/bin/git "$@"
+    """
+
+    static let rmShim = """
+    #!/bin/bash
+    # AI Illuminati full auto: rm moves files to the Trash (recoverable). Temporary folders are deleted normally.
+    force=0; ended=0; files=()
+    for a in "$@"; do
+      if [ $ended -eq 0 ] && [ "$a" = "--" ]; then ended=1; continue; fi
+      if [ $ended -eq 0 ] && [ "${a#-}" != "$a" ] && [ "$a" != "-" ]; then case "$a" in *f*) force=1;; esac; continue; fi
+      files+=("$a")
+    done
+    tmp="${TMPDIR:-/tmp}"; status=0
+    for f in "${files[@]}"; do
+      if [ ! -e "$f" ] && [ ! -L "$f" ]; then
+        [ $force -eq 1 ] || { echo "rm: $f: No such file or directory" >&2; status=1; }
+        continue
+      fi
+      full="$(cd "$(dirname "$f")" 2>/dev/null && pwd -P)/$(basename "$f")"
+      case "$full" in
+        /tmp/*|/private/tmp/*|/var/folders/*|/private/var/folders/*|"${tmp%/}"/*) /bin/rm -rf -- "$f" || status=1; continue;;
+      esac
+      if [ -x /usr/bin/trash ]; then /usr/bin/trash "$f" >/dev/null 2>&1 || status=1
+      else mkdir -p "$HOME/.Trash" && mv -- "$f" "$HOME/.Trash/$(basename "$f").$(date +%s).$$" || status=1; fi
+    done
+    exit $status
+    """
+
+    static func environment(_ base: [String: String]) -> [String: String] {
+        var env = base
+        let bin = folder.appendingPathComponent("bin", isDirectory: true)
+        let gh = folder.appendingPathComponent("gh-empty", isDirectory: true)
+        let fm = FileManager.default
+        try? fm.createDirectory(at: bin, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try? fm.createDirectory(at: gh, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        for (name, text) in [("git", gitShim), ("rm", rmShim)] {
+            let url = bin.appendingPathComponent(name)
+            if (try? String(contentsOf: url, encoding: .utf8)) != text {
+                try? text.write(to: url, atomically: true, encoding: .utf8)
+            }
+            try? fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: url.path)
+        }
+        env["PATH"] = bin.path + ":" + (base["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin")
+        // No credentials: an empty helper list, no prompts, no SSH keys, and an empty GitHub CLI login.
+        env["GIT_CONFIG_COUNT"] = "2"; env["GIT_CONFIG_KEY_0"] = "credential.helper"; env["GIT_CONFIG_VALUE_0"] = ""
+        env["GIT_CONFIG_KEY_1"] = "credential.https://github.com.helper"; env["GIT_CONFIG_VALUE_1"] = ""
+        env["GIT_TERMINAL_PROMPT"] = "0"; env["GIT_ASKPASS"] = "/usr/bin/false"; env["SSH_ASKPASS"] = "/usr/bin/false"
+        env["GIT_SSH_COMMAND"] = "/usr/bin/ssh -o BatchMode=yes -o IdentitiesOnly=yes -i /dev/null"
+        env["GH_CONFIG_DIR"] = gh.path
+        for key in ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "SSH_AUTH_SOCK"] { env.removeValue(forKey: key) }
+        return env
     }
 }

@@ -114,6 +114,12 @@ group. Approval expires after 15 minutes; a project turn allows 45 minutes of ac
 and at most 60 minutes including approvals. App restart preserves unfinished files and a
 local journal, but does not automatically resume the task.
 
+**Full auto** (`+` → Full auto…, per chat, for when you are away): the AI runs any command without
+approval cards, uses the network, runs registered commands directly and pushes main through the app's
+`git_push`. Up to 8 hours, and the Mac stays awake. Still blocked: force push and history rewrites (its shell has
+no Git/GitHub credentials and `git push` is refused), and permanent deletes (`rm` moves files to the Trash,
+except temporary folders). These guard mistakes, not a deliberately malicious script.
+
 Stable publishing always asks approval for the exact main SHA and remote shown on the card.
 Ordinary push does not update stable. Undo is unavailable after commit or push; use Git to
 review and revert those changes. Google Drive permissions are separate from project work.

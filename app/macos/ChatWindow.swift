@@ -675,6 +675,9 @@ struct ChatView: View {
             Button(L("폴더 연결 (읽기·쓰기)", "Link folder (read and write)")) { discussion.chooseMaterials(folder: true) }
             if discussion.configuration.mode == 0 {
                 Button(discussion.current.workspace?.project == nil ? L("프로젝트 작업 허용…", "Enable Project Work…") : L("프로젝트 작업 해제", "Disable Project Work")) { discussion.configureProject() }
+                if discussion.current.workspace?.project != nil {
+                    Button(discussion.current.workspace?.fullAuto == true ? L("완전 자동 끄기", "Turn off full auto") : L("완전 자동으로 맡기기…", "Full auto…")) { discussion.toggleFullAuto() }
+                }
             }
             Button(L("파일 연결 (읽기)", "Link files (read)")) { discussion.chooseMaterials(folder: false) }
             Divider()
@@ -840,7 +843,8 @@ struct ChatView: View {
                     Divider()
                     Button(L("연결 끊기", "Disconnect")) { discussion.restartRoomSessions(disconnect: true) }
                 } label: {
-                    Label(L("연결 \(workspace.roots.count)개", "\(workspace.roots.count) linked"), systemImage: "link")
+                    Label((workspace.fullAuto == true ? L("완전 자동 · ", "Full auto · ") : "") + L("연결 \(workspace.roots.count)개", "\(workspace.roots.count) linked"),
+                          systemImage: workspace.fullAuto == true ? "bolt.fill" : "link")
                         .font(.system(size: 12))
                 }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()

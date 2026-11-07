@@ -13,6 +13,7 @@ struct WorkspaceBinding: Codable {
     var project: ProjectBinding? = nil
     var projectRunID: UUID? = nil
     var projectGeneration: Int? = nil
+    var fullAuto: Bool? = nil   // project work without approval cards (stable publishing still asks)
     var face: Bool? = nil   // plain chat: the bridge also offers AI Face's tools through the app (FaceLink)
     func inventory() -> [String] {
         var result: [String] = []
@@ -123,6 +124,16 @@ struct WorkspaceInvocation {
             let mcp = ["mcpServers": ["illuminati": server]]
             let config = String(data: try JSONSerialization.data(withJSONObject: mcp), encoding: .utf8)!
             if let i = result.firstIndex(of: "--mcp-config") { result[i + 1] = config }
+            if binding.fullAuto == true && binding.projectRunID != nil {
+                // Full auto: every tool, no prompts, no sandbox (network on), like Claude Code run by the user.
+                // AutoGuard's environment removes Git credentials and turns rm into the Trash.
+                if let i = result.firstIndex(of: "--tools") { result[i + 1] = "default" }
+                if let i = result.firstIndex(of: "--allowedTools") { result.removeSubrange(i...i + 1) }
+                result += ["--setting-sources", "", "--disable-slash-commands", "--permission-mode", "bypassPermissions",
+                           "--disallowedTools", AutoGuard.claudeDenied.joined(separator: ",")]
+                for root in binding.roots where root.directory { result += ["--add-dir", root.path] }
+                break
+            }
             // In view, only the writable roots may change: an Edit(//absolute/**) rule covers Edit and Write.
             let own = level == .view || binding.projectRunID != nil ? ownFolders : []
             let edit = level != .view || !own.isEmpty
@@ -154,6 +165,14 @@ struct WorkspaceInvocation {
                 i += 1
             }
             let own = level == .view || binding.projectRunID != nil ? ownFolders : []
+            if binding.fullAuto == true && binding.projectRunID != nil {
+                result = ["-c", "sandbox_mode=\"danger-full-access\"", "-c", "approval_policy=\"never\"", "-c", "features.shell_tool=true",
+                          "-c", "features.multi_agent=false", "-c", "web_search=\"live\"",
+                          "-c", "mcp_servers.illuminati.command=" + json(command), "-c", "mcp_servers.illuminati.args=" + json(args),
+                          "-c", "mcp_servers.illuminati.required=true", "-c", "mcp_servers.illuminati.default_tools_approval_mode=\"approve\"",
+                          "-c", "mcp_servers.illuminati.tool_timeout_sec=3610"] + base
+                break
+            }
             result = ["-c", "sandbox_mode=" + json(level == .view && own.isEmpty ? "read-only" : "workspace-write"), "-c", "approval_policy=\"never\"", "-c", "features.shell_tool=" + (level == .execute ? "true" : "false"),
                       "-c", "features.multi_agent=false", "-c", "sandbox_workspace_write.writable_roots=" + json(level == .view ? own : executionFolders),
                       "-c", "sandbox_workspace_write.exclude_slash_tmp=true", "-c", "sandbox_workspace_write.exclude_tmpdir_env_var=true",

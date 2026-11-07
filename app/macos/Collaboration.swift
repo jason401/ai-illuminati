@@ -1,7 +1,7 @@
 import Cocoa
 import CryptoKit
 
-struct CollaborationTask: Codable, Identifiable {
+struct CollaborationTask: Codable, Identifiable, Equatable {
     var id = UUID()
     var title: String
     var accountID: String

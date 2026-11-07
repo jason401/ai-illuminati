@@ -170,9 +170,36 @@ enum ChatMarkdown {
 
     // Bold, italics, code and links; line breaks are kept.
     static func inline(_ text: String) -> AttributedString {
+        if let cached = inlineCache.object(forKey: text as NSString) { return cached.value }
         let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        return (try? AttributedString(markdown: escapingSingleTildes(text), options: options)) ?? AttributedString(text)
+        let parsed = (try? AttributedString(markdown: escapingSingleTildes(text), options: options)) ?? AttributedString(text)
+        inlineCache.setObject(Parsed(parsed), forKey: text as NSString)
+        return parsed
     }
+
+    // Parsed replies are kept, so redrawing or resizing a long chat does not parse every reply again.
+    // Keyed by the text itself: a reply that changes (while it streams) is simply a new entry.
+    static func cachedBlocks(_ text: String) -> [Block] {
+        if let cached = blockCache.object(forKey: text as NSString) { return cached.value }
+        let parsed = blocks(text)
+        blockCache.setObject(Parsed(parsed), forKey: text as NSString)
+        return parsed
+    }
+
+    private final class Parsed<Value> {
+        let value: Value
+        init(_ value: Value) { self.value = value }
+    }
+    private static let blockCache: NSCache<NSString, Parsed<[Block]>> = {
+        let cache = NSCache<NSString, Parsed<[Block]>>()
+        cache.countLimit = 500
+        return cache
+    }()
+    private static let inlineCache: NSCache<NSString, Parsed<AttributedString>> = {
+        let cache = NSCache<NSString, Parsed<AttributedString>>()
+        cache.countLimit = 5000
+        return cache
+    }()
 }
 
 // A reply drawn from its Markdown blocks. Font, line spacing and selection come from the caller.
@@ -181,7 +208,7 @@ struct MarkdownText: View {
     var size: CGFloat = 13
 
     var body: some View {
-        let blocks = ChatMarkdown.blocks(text)
+        let blocks = ChatMarkdown.cachedBlocks(text)
         VStack(alignment: .leading, spacing: 8) {
             ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
                 switch block {

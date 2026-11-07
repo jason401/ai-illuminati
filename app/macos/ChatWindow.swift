@@ -1,6 +1,7 @@
 import Cocoa
 import SwiftUI
 import UniformTypeIdentifiers
+import ImageIO
 
 // The chat window: pick which AIs take part, ask, and get one final answer. What the AIs said to
 // each other (own answers, then reviews) is folded under the answer.
@@ -356,6 +357,9 @@ struct ChatView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 28) {
                 let conversation = discussion.current
+                let busy = discussion.running || discussion.importingMaterials
+                let accountLabels = Dictionary(discussion.model.accounts.map { ($0.id, discussion.label($0)) }, uniquingKeysWith: { first, _ in first })
+                let chatFolder = Discussion.chatFolder(discussion.currentID).path
                 if conversation.turns.isEmpty {
                     Text(L("자료를 연결하고 협업 참여 계정을 선택하세요. 보기에서는 읽기만, 작성에서는 자동 백업 후 파일을 고치고 결과물을 만듭니다.", "Link materials and select collaboration accounts. View only reads; Write backs up linked files before editing and creating deliverables."))
                         .foregroundColor(.secondary)
@@ -377,7 +381,11 @@ struct ChatView: View {
                     if index > 0, (turn.mode ?? 1) != (conversation.turns[index - 1].mode ?? 1) || turn.modeVersion != conversation.turns[index - 1].modeVersion {
                         ModeChangeMarker(mode: turn.mode ?? 1, version: turn.modeVersion)
                     }
-                    TurnView(turn: turn, discussion: discussion).id(turn.id)
+                    TurnView(turn: turn, discussion: discussion, busy: busy,
+                             openEntries: discussion.openEntries.intersection(turn.entries.map(\.id)),
+                             accountLabels: accountLabels, chatFolder: chatFolder, language: AppLanguage.current)
+                        .equatable()
+                        .id(turn.id)
                 }
                 // Where the transcript ends, for the jump-to-bottom button (macOS 13 has no scroll position API).
                 Color.clear.frame(height: 1).id(Self.bottomID)
@@ -1168,9 +1176,21 @@ private struct ModeChangeMarker: View {
     }
 }
 
-private struct TurnView: View {
+// Each turn gets only the values it shows, and redraws only when they change: with the whole Discussion
+// observed, any change (typing, the scroll-to-bottom button) redrew every turn of a long chat.
+private struct TurnView: View, Equatable {
     let turn: ChatTurn
-    @ObservedObject var discussion: Discussion
+    let discussion: Discussion   // for actions only; not observed
+    let busy: Bool               // running or importing materials
+    let openEntries: Set<UUID>   // this turn's unfolded AI replies
+    let accountLabels: [String: String]
+    let chatFolder: String
+    let language: AppLanguage
+
+    static func == (a: TurnView, b: TurnView) -> Bool {
+        a.turn == b.turn && a.busy == b.busy && a.openEntries == b.openEntries
+            && a.accountLabels == b.accountLabels && a.chatFolder == b.chatFolder && a.language == b.language
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -1187,7 +1207,7 @@ private struct TurnView: View {
                 // Called with @: who was asked, under the message.
                 HStack {
                     Spacer()
-                    Text("@ " + mentions.map { id in discussion.model.accounts.first { $0.id == id }.map(discussion.label) ?? id }.joined(separator: ", "))
+                    Text("@ " + mentions.map { accountLabels[$0] ?? $0 }.joined(separator: ", "))
                         .font(.system(size: 11)).foregroundColor(.secondary)
                 }
             }
@@ -1233,9 +1253,9 @@ private struct TurnView: View {
                 changesView(changes, title: L("실제 변경 파일 \(changes.count)개", "\(changes.count) changed files"))
             }
             // Plain chat: Undo only when the answer changed a linked folder (the chat's own folder is not backed up).
-            if turn.projectCommitted != true, turn.projectPushed != true, let backupPath = turn.backupPath, FileManager.default.fileExists(atPath: backupPath) && (turn.mode != 0 || (turn.workspaceChanges ?? []).contains { !$0.path.hasPrefix(Discussion.chatFolder(discussion.currentID).path + "/") }) {
+            if turn.projectCommitted != true, turn.projectPushed != true, let backupPath = turn.backupPath, FileManager.default.fileExists(atPath: backupPath) && (turn.mode != 0 || (turn.workspaceChanges ?? []).contains { !$0.path.hasPrefix(chatFolder + "/") }) {
                 Button(turn.undone == true ? L("되돌림 완료", "Restored") : L("되돌리기", "Undo file changes")) { discussion.undoWorkspace(turn) }
-                    .disabled(turn.undone == true || discussion.running || discussion.importingMaterials)
+                    .disabled(turn.undone == true || busy)
             }
             if let tasks = turn.tasks {
                 DisclosureGroup(L("작업 \(tasks.filter { $0.state == "done" }.count)/\(tasks.count) 완료 · 진행 \(tasks.filter { $0.state == "running" }.count)", "Tasks \(tasks.filter { $0.state == "done" }.count)/\(tasks.count) complete · \(tasks.filter { $0.state == "running" }.count) running")) {
@@ -1244,7 +1264,7 @@ private struct TurnView: View {
                         Image(systemName: task.state == "done" ? "checkmark.circle" : task.state == "running" ? "clock" : "circle")
                         VStack(alignment: .leading) {
                             Text(task.title).font(.callout).lineLimit(3)
-                            Text((discussion.model.accounts.first { $0.id == task.accountID }.map { discussion.label($0) } ?? task.accountID) + " · " + task.state).font(.caption).foregroundColor(.secondary)
+                            Text((accountLabels[task.accountID] ?? task.accountID) + " · " + task.state).font(.caption).foregroundColor(.secondary)
                         }
                         Spacer()
                         if let path = task.output { Button(L("결과 열기", "Open result")) { discussion.openArtifact(path) } }
@@ -1390,7 +1410,7 @@ private struct TurnView: View {
         VStack(alignment: .leading, spacing: 6) {
             ForEach(turn.entries) { entry in
                 EntryRow(entry: entry,
-                         isOpen: Binding(get: { discussion.openEntries.contains(entry.id) },
+                         isOpen: Binding(get: { openEntries.contains(entry.id) },
                                          set: { if $0 { discussion.openEntries.insert(entry.id) } else { discussion.openEntries.remove(entry.id) } }),
                          label: (turn.modeVersion == 2 || (turn.mode ?? 1) >= 2) ? entry.speaker : "\(entry.round == 1 ? L("각자 답", "Initial answer") : L("검토 후", "After review")) · \(entry.speaker)")
             }
@@ -1596,7 +1616,7 @@ private struct AttachmentThumbnail: View {
     let size: CGFloat
     var body: some View {
         Group {
-            if let image = NSImage(contentsOf: item.url) {
+            if let image = Self.thumbnail(item.url, size: size) {
                 Image(nsImage: image).resizable().scaledToFit()
             } else {
                 Image(systemName: "photo").foregroundColor(.secondary)
@@ -1605,6 +1625,28 @@ private struct AttachmentThumbnail: View {
         .frame(width: size, height: size)
         .background(Color.secondary.opacity(0.1))
         .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    // A small copy (twice the shown size, for Retina), read once: redrawing the chat must not decode full pictures again.
+    // Missing files are not remembered, so a picture still being written shows once it exists.
+    private static let cache: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.countLimit = 300
+        return cache
+    }()
+
+    static func thumbnail(_ url: URL, size: CGFloat) -> NSImage? {
+        let key = "\(Int(size))|\(url.path)" as NSString
+        if let cached = cache.object(forKey: key) { return cached }
+        let options = [kCGImageSourceCreateThumbnailFromImageAlways: true,
+                       kCGImageSourceCreateThumbnailWithTransform: true,
+                       kCGImageSourceShouldCacheImmediately: true,
+                       kCGImageSourceThumbnailMaxPixelSize: Int(size * 2)] as CFDictionary
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let small = CGImageSourceCreateThumbnailAtIndex(source, 0, options) else { return nil }
+        let image = NSImage(cgImage: small, size: NSSize(width: small.width, height: small.height))
+        cache.setObject(image, forKey: key)
+        return image
     }
 }
 

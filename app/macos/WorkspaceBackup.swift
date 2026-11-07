@@ -1,7 +1,7 @@
 import Foundation
 import CryptoKit
 
-struct WorkspaceChange: Codable, Identifiable {
+struct WorkspaceChange: Codable, Identifiable, Equatable {
     var id: String { path }
     var path: String
     var kind: String

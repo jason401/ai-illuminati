@@ -391,8 +391,8 @@ final class StreamParser {
 }
 
 // One question and how the AIs worked it out.
-struct ChatTurn: Identifiable, Codable {
-    struct Entry: Identifiable, Codable {
+struct ChatTurn: Identifiable, Codable, Equatable {
+    struct Entry: Identifiable, Codable, Equatable {
         var id = UUID()
         var round: Int        // 1 = own answer, 2 = after reading the others
         var speaker: String

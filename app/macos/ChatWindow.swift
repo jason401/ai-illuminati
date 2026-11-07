@@ -1271,7 +1271,7 @@ private struct TurnView: View {
                             Text(by).font(.system(size: 12, weight: .medium)).foregroundColor(.secondary)
                         }
                     }
-                    Text(markdown(final))
+                    MarkdownText(text: final, size: 15)
                         .font(.system(size: 15))
                         .lineSpacing(5)
                         .textSelection(.enabled)
@@ -1281,7 +1281,7 @@ private struct TurnView: View {
                 }
             } else if let final = turn.final {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(markdown(final))
+                    MarkdownText(text: final)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     let pictures = Self.finalPictures(turn, final: final)
@@ -1303,7 +1303,9 @@ private struct TurnView: View {
                         Circle().fill(Account.Provider.of(speaker: answer.speaker)?.color ?? .secondary).frame(width: 7, height: 7)
                         Text(answer.speaker).font(.system(size: 12, weight: .medium)).foregroundColor(.secondary)
                     }
-                    Text(answer.failed ? AttributedString(answer.text) : markdown(answer.text))
+                    Group {
+                        if answer.failed { Text(answer.text) } else { MarkdownText(text: answer.text, size: 15) }
+                    }
                         .font(.system(size: 15)).lineSpacing(5)
                         .foregroundColor(answer.failed ? .red : .primary)
                         .textSelection(.enabled)
@@ -1321,7 +1323,7 @@ private struct TurnView: View {
                             Text(by).font(.system(size: 12, weight: .medium)).foregroundColor(.secondary)
                         }
                     }
-                    Text(markdown(partial))
+                    MarkdownText(text: partial, size: 15)
                         .font(.system(size: 15))
                         .lineSpacing(5)
                         .textSelection(.enabled)
@@ -1410,11 +1412,6 @@ private struct TurnView: View {
         return pictures
     }
 
-    // Bold, italics, code and links; line breaks are kept.
-    private func markdown(_ text: String) -> AttributedString {
-        let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        return (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
-    }
 }
 
 // One chat window, reused. Conversations are saved, so closing it loses nothing.
@@ -1672,7 +1669,7 @@ private struct EntryRow: View {
                     if let focus = entry.focus {
                         Text(L("대표의 논점: ", "Moderator focus: ") + focus).font(.caption).foregroundColor(.secondary)
                     }
-                    Text(Self.markdown(entry.text)).textSelection(.enabled)
+                    MarkdownText(text: entry.text).textSelection(.enabled)
                 }
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1682,10 +1679,6 @@ private struct EntryRow: View {
         }
     }
 
-    private static func markdown(_ text: String) -> AttributedString {
-        let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        return (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
-    }
 }
 
 // Each AI's own color for its name in the chat, close to its company's brand color.

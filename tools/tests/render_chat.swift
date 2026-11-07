@@ -25,6 +25,9 @@ private struct EmptyPreviewLogin: GoogleTokenStore {
         turn.mode = 0
         turn.final = "The sidebar starts closer to the title bar. The conversation header remains readable, with room to drag the window."
         turn.finalBy = "Preview AI"
+        if CommandLine.arguments.contains("--markdown") {
+            turn.final = "Memory first.\n\n## Models\n\n| Model | Memory | Time |\n|---|---|---|\n| SD 1.5 | 2~4GB | 10~20s |\n| **SDXL** | 7~9GB | 30s~1min |\n\n---\n### Notes\nKeep ~~old~~ text and `a~b` code."
+        }
         conversation.turns = [turn]
         chat.conversations = [conversation]; chat.currentID = conversation.id
         if CommandLine.arguments.contains("--project-approval") {

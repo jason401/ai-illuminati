@@ -28,6 +28,8 @@ New chats start as a plain chat with one AI, like a desktop chat app. **Automati
 
 Mark Enterprise (school or work) accounts in Settings → Accounts. With **Keep Enterprise and personal chats apart** (Settings → Chat, on by default), an Enterprise chat is continued only by Enterprise accounts and a personal chat only by personal ones; choose the chat's side in the account menu.
 
+Replies are shown with Markdown: bold, italics, code, links, headings, tables and `---` rules. A single `~` stays as written (`2~4GB`); only `~~text~~` strikes through.
+
 **Shared folders** in the sidebar can be read by every chat's AI and are read only. A folder linked to a chat with **+ → Link folder** can be read, edited and deleted by that chat's AI; it is backed up before each answer (APFS clones), changed files are listed under the answer, and **Undo** restores the folder. Linked single files are read only. Each chat also has its own folder (right-click the chat → **Show this chat's folder**) where its AI saves new drafts and documents as Markdown. The other modes are under **+ → Ask several AIs**.
 
 ## Conversation modes

@@ -1864,3 +1864,25 @@ testProjectWork()
 
 testProjectHandoff()
 testFullAuto()
+
+// Chat Markdown: one ~ is a range, not strikethrough; headings and tables are drawn.
+func testChatMarkdown() {
+    func struck(_ text: String) -> Bool { ChatMarkdown.inline(text).runs.contains { $0.inlinePresentationIntent?.contains(.strikethrough) == true } }
+    let ranges = "| SD 1.5 | 2~4GB | 여유 | 10~20초 |"
+    expect(!struck(ranges) && String(ChatMarkdown.inline(ranges).characters) == ranges, "single ~ ranges stay as written")
+    expect(struck("a ~~gone~~ b") && String(ChatMarkdown.inline("a ~~gone~~ b").characters) == "a gone b", "~~ still strikes through")
+    expect(ChatMarkdown.escapingSingleTildes("`a~b` and `` x~y `` then 1~2") == "`a~b` and `` x~y `` then 1\\~2", "code keeps its ~")
+    expect(ChatMarkdown.escapingSingleTildes("already \\~ escaped") == "already \\~ escaped", "an escaped ~ is not escaped twice")
+    let reply = "Intro\n\n## Models\n\n| Model | Size |\n|---|:---:|\n| **SDXL** | 7~9GB |\n| `a|b` | x \\| y |\n| short |\n\nAfter\n---\nEnd"
+    expect(ChatMarkdown.blocks(reply) == [
+        .text("Intro"),
+        .heading(level: 2, text: "Models"),
+        .table(header: ["Model", "Size"], rows: [["**SDXL**", "7~9GB"], ["`a|b`", "x | y"], ["short", ""]]),
+        .text("After"), .rule, .text("End"),
+    ], "headings, tables and rules become their own blocks")
+    let fenced = "```\n## not a heading\n| a | b |\n|---|---|\n```\n# Title #"
+    expect(ChatMarkdown.blocks(fenced) == [.text("```\n## not a heading\n| a | b |\n|---|---|\n```"), .heading(level: 1, text: "Title")], "code fences are left as written")
+    expect(ChatMarkdown.blocks("#hashtag\na | b\nno separator") == [.text("#hashtag\na | b\nno separator")], "lookalikes stay text")
+    print("PASS: chat Markdown (single ~ ranges, ~~ strikethrough, code kept, headings, tables, rules, fences)")
+}
+testChatMarkdown()

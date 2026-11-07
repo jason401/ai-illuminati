@@ -89,30 +89,36 @@ let old = try decoder.decode(Conversation.self, from: legacy)
 expect(old.configuration == nil && old.turns[0].mode == nil, "old chats must remain readable as mode1")
 print("PASS: sequential full context, next-turn order, invalid order fallback, failure continuation, persistence, legacy decoding")
 
-let originalLanguage = UserDefaults.standard.object(forKey: "appLanguage")
+let originalLanguage = AppLanguage.current
+let originalRules = UserDefaults.standard.object(forKey: "chatRules")
 defer {
-    if let originalLanguage { UserDefaults.standard.set(originalLanguage, forKey: "appLanguage") }
-    else { UserDefaults.standard.removeObject(forKey: "appLanguage") }
+    AppLanguage.current = originalLanguage
+    if let originalRules { UserDefaults.standard.set(originalRules, forKey: "chatRules") }
+    else { UserDefaults.standard.removeObject(forKey: "chatRules") }
 }
-UserDefaults.standard.removeObject(forKey: "appLanguage")
-expect(AppLanguage.current == .english, "fresh install must default to English")
-expect(L("보내기", "Send") == "Send", "English default text")
-let languageModel = AppModel()
-languageModel.chatRules = AppModel.defaultChatRules
-languageModel.language = .korean
-expect(L("보내기", "Send") == "보내기", "Korean selection")
-expect(languageModel.chatRules == AppModel.rules(for: .korean), "default rules must follow language")
-expect(AppModel().language == .korean, "language must persist across model recreation")
-languageModel.chatRules = "My custom rules"
-languageModel.language = .english
-expect(languageModel.chatRules == "My custom rules", "custom rules must be preserved")
+expect(AppLanguage.resolve(["ko-KR", "en-US"]) == .korean && AppLanguage.resolve(["ko"]) == .korean, "a Korean Mac must get Korean")
+expect(AppLanguage.resolve(["en-GB", "ko-KR"]) == .english && AppLanguage.resolve(["ja-JP", "ko-KR"]) == .korean,
+       "the first supported macOS language wins")
+expect(AppLanguage.resolve(["ja-JP", "fr-FR"]) == .english && AppLanguage.resolve([]) == .english, "unsupported languages fall back to English")
+AppLanguage.current = .english
+expect(L("보내기", "Send") == "Send", "English text")
+UserDefaults.standard.set("ko", forKey: "appLanguage")
+UserDefaults.standard.set(AppModel.rules(for: .korean), forKey: "chatRules")
+expect(AppModel().chatRules == AppModel.rules(for: .english), "a saved Korean default must follow an English Mac at launch")
+expect(UserDefaults.standard.object(forKey: "appLanguage") == nil, "the old in-app language choice must be removed")
+AppLanguage.current = .korean
+expect(L("보내기", "Send") == "보내기", "Korean text")
+expect(AppModel().chatRules == AppModel.rules(for: .korean), "a saved English default must follow a Korean Mac at launch")
+UserDefaults.standard.set("My custom rules", forKey: "chatRules")
+expect(AppModel().chatRules == "My custom rules", "custom rules must be preserved when the language changes")
+AppLanguage.current = .english
 expect(AppModel.oldDefaultRules.count == 2 && !AppModel.defaultChatRules.contains("3–5") && !AppModel.rules(for: .korean).contains("3~5"),
        "default rules must not set a length any more")
 UserDefaults.standard.set(AppModel.oldDefaultRules[1], forKey: "chatRules")
 expect(AppModel().chatRules == AppModel.defaultChatRules, "a saved old default must become the new default")
 UserDefaults.standard.set("My custom rules", forKey: "chatRules")
 expect(AppModel().chatRules == "My custom rules", "custom saved rules must be kept")
-print("PASS: default English, Korean switch, persistence, default rule localization, custom rule preservation")
+print("PASS: macOS language, default rule localization at launch, old setting removed, custom rule preservation")
 
 // Mode 3: parallel opening, then repeat speakers, complete history, moderator termination and synthesis.
 // The opening runs the AIs at the same time, so the fakes below guard shared counters with a lock.

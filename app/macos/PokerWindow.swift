@@ -5,8 +5,6 @@ import SwiftUI
 final class PokerWindow {
     private var window: NSWindow?
 
-    func updateLanguage() { window?.title = L("AI Illuminati 게임", "AI Illuminati Games") }
-
     func show(game: PokerGame) {
         if window == nil {
             let w = NSWindow(contentViewController: NSHostingController(rootView: PokerView(game: game)))

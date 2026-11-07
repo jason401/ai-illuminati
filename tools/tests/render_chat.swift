@@ -13,7 +13,8 @@ private struct EmptyPreviewLogin: GoogleTokenStore {
         _ = NSApplication.shared
         NSApp.setActivationPolicy(.prohibited)
         GoogleAuth.shared = GoogleAuth(store: EmptyPreviewLogin())
-        UserDefaults.standard.setVolatileDomain(["appLanguage": "en", "mcpOff": ["ai-face", "google-drive"], "driveFolders": Data()], forName: UserDefaults.argumentDomain)
+        AppLanguage.current = .english
+        UserDefaults.standard.setVolatileDomain(["mcpOff": ["ai-face", "google-drive"], "driveFolders": Data()], forName: UserDefaults.argumentDomain)
         let output = URL(fileURLWithPath: CommandLine.arguments[1])
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
         let model = AppModel()

@@ -84,25 +84,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let location = content.convert(window.mouseLocationOutsideOfEventStream, from: nil)
             self.menu.popUp(positioning: nil, at: location, in: content)
         }
-        model.onLanguageChange = { [weak self] in
-            guard let self else { return }
-            NSApp.mainMenu = self.keyboardMenu()
-            self.settings.updateLanguage()
-            self.chat.updateLanguage()
-            self.poker.updateLanguage()
-            self.discussion.objectWillChange.send()
-            self.updateTitle()
-            self.rebuildMenu()
-            let accounts = self.accounts
-            self.work.async {
-                for account in accounts {
-                    ClaudeUsage.forget(account)
-                    CodexUsage.forget(account)
-                }
-                GeminiUsage.forget()
-                DispatchQueue.main.async { self.refresh() }
-            }
-        }
         rebuildMenu()
         refresh()
         timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in self?.refresh() }

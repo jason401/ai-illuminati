@@ -4,8 +4,17 @@ enum AppLanguage: String, CaseIterable {
     case english = "en"
     case korean = "ko"
 
-    static var current: AppLanguage {
-        AppLanguage(rawValue: UserDefaults.standard.string(forKey: "appLanguage") ?? "en") ?? .english
+    // The language macOS picked for this app (System Settings → General → Language & Region →
+    // Applications can set it per app): the first Korean or English entry, English otherwise.
+    // macOS restarts the app when it changes, so it is read once.
+    static var current = resolve(Locale.preferredLanguages)
+
+    static func resolve(_ preferred: [String]) -> AppLanguage {
+        for id in preferred {
+            if id.hasPrefix("ko") { return .korean }
+            if id.hasPrefix("en") { return .english }
+        }
+        return .english
     }
     var locale: Locale { Locale(identifier: self == .korean ? "ko_KR" : "en_US") }
 }

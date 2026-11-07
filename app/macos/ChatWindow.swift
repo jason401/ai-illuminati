@@ -1421,8 +1421,6 @@ final class ChatWindow {
     private var window: NSWindow?
     private var closing: NSObjectProtocol?
 
-    func updateLanguage() { window?.title = L("AI Illuminati 채팅", "AI Illuminati Chat") }
-
     func show(discussion: Discussion) {
         if window == nil {
             let host = NSHostingController(rootView: ChatView(discussion: discussion, model: discussion.model))

@@ -6,16 +6,6 @@ import UniformTypeIdentifiers
 // What the menu and the Settings window share: the account list (saved on every change) and
 // the display options. The menu listens through the two callbacks.
 final class AppModel: ObservableObject {
-    @Published var language: AppLanguage {
-        didSet {
-            let wasDefault = chatRules == Self.rules(for: oldValue)
-            UserDefaults.standard.set(language.rawValue, forKey: "appLanguage")
-            if wasDefault { chatRules = Self.rules(for: language) }
-            onLanguageChange?()
-        }
-    }
-    var onLanguageChange: (() -> Void)?
-
     @Published var accounts: [Account] {
         didSet {
             AccountStore.save(accounts)
@@ -180,7 +170,7 @@ final class AppModel: ObservableObject {
     var onPreviewUsageMenu: (() -> Void)?
 
     init() {
-        language = AppLanguage.current
+        UserDefaults.standard.removeObject(forKey: "appLanguage")   // the old in-app choice; macOS decides now
         var loaded = AccountStore.load()
         // The first Gemma entry was named before there were two models: name its model.
         if let i = loaded.firstIndex(where: { $0.id == LocalModel.legacy[0].id && ["Gemma 4 (내 Mac)", "Gemma 4 (this Mac)"].contains($0.name) }) {
@@ -204,6 +194,7 @@ final class AppModel: ObservableObject {
         pictureMakersOff = Set(UserDefaults.standard.stringArray(forKey: "pictureMakersOff") ?? [])
         localEnabled = LocalModel.enabled
         localKeepAlive = LocalModel.keepAlive
+        // A saved default in either language becomes the default in today's language.
         let saved = UserDefaults.standard.string(forKey: "chatRules")
         chatRules = (saved == nil || saved == Self.koreanChatRules || saved == Self.rules(for: .english)
                      || Self.oldDefaultRules.contains(saved!))
@@ -387,7 +378,7 @@ private struct SettingsRow<Content: View>: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Text(title).frame(width: 96, alignment: .leading)
+            Text(title).frame(width: 118, alignment: .leading)   // fits "Check automatically" on one line
             HStack(spacing: 6) { content }.frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.horizontal, 10).padding(.vertical, 6)
@@ -496,27 +487,26 @@ extension ButtonStyle where Self == PlainHitButtonStyle {
 
 private struct SettingsAction: View {
     let title: String
+    var prominent = false   // blue, for the one thing to do next (Update Now)
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             Text(title).lineLimit(1).frame(maxWidth: .infinity, minHeight: 24)
-                .background(RoundedRectangle(cornerRadius: 5).fill(Color.primary.opacity(0.07)))
+                .foregroundStyle(prominent ? Color.white : Color.primary)
+                .background(RoundedRectangle(cornerRadius: 5).fill(prominent ? Color.accentColor : Color.primary.opacity(0.07)))
         }.buttonStyle(.plainHit)
     }
 }
 
-// What most apps have: language, launch at login, updates, where data lives, and the version.
+// The same General tab as AI Face and Cats in Menubar (docs/SETTINGS_GENERAL.md):
+// App, Updates, Folders, About, in that order. The language follows macOS.
 struct GeneralSettingsTab: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
         SettingsPage {
             SettingsCard(title: L("앱", "App")) {
-                SettingsRow(title: L("언어", "Language")) {
-                    SettingsSegments(options: [("English", AppLanguage.english), ("한국어", .korean)], selection: $model.language)
-                }
-                Divider()
                 SettingsRow(title: L("로그인 시 실행", "Open at login")) {
                     Spacer()
                     Toggle(L("로그인 시 실행", "Open at login"), isOn: Binding(
@@ -583,28 +573,32 @@ struct AppearanceSettingsTab: View {
 private struct MaintenanceSettings: View {
     @ObservedObject var updater: Updater
 
-    // "0.2.0 (82 · a1fb746)": the app version, the build number and the source revision it was built from.
+    // "0.3.0 Beta (3a3588d)": the app version and the source revision it was built from.
+    // The build number and the full revision show on hover.
     static var version: String {
         let info = Bundle.main.infoDictionary ?? [:]
         let short = info["CFBundleShortVersionString"] as? String ?? "–"
-        let build = info["CFBundleVersion"] as? String ?? "–"
-        let revision = (info["AISourceRevision"] as? String).map { " · " + $0.prefix(7) } ?? ""
+        let revision = (info["AISourceRevision"] as? String).map { " (" + $0.prefix(7) + ")" } ?? ""
         let beta = UpdateChannel.built == "main" ? " Beta" : ""   // built from main, not stable
-        return "\(short)\(beta) (\(build)\(revision))"
+        return "\(short)\(beta)\(revision)"
+    }
+    static var versionDetail: String {
+        let info = Bundle.main.infoDictionary ?? [:]
+        let build = info["CFBundleVersion"] as? String ?? "–"
+        return L("빌드 ", "Build ") + build + ((info["AISourceRevision"] as? String).map { " · " + $0 } ?? "")
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
         SettingsCard(title: L("업데이트", "Updates")) {
-            // Switches sit at the right end of their row.
-            SettingsRow(title: L("새 버전 확인", "Check updates")) {
-                SettingsAction(title: L("지금 확인", "Check now")) { updater.check() }
-                    .disabled(updater.checking || updater.installing)
+            SettingsRow(title: L("자동 확인", "Check automatically")) {
+                Spacer()
                 Toggle(L("새 버전 자동 확인", "Check for updates automatically"), isOn: $updater.enabled)
                     .labelsHidden().toggleStyle(.switch)
                     .help(L("켜면 시작 후, 그리고 3시간마다 확인만 해요. 설치는 버튼을 눌러야 해요.",
                             "Checks at launch and every 3 hours. Installing always needs the button."))
             }
+            Divider()
             SettingsRow(title: L("채널", "Channel")) {
                 SettingsMenu(options: [(L("안정", "Stable"), "stable"), (L("베타(main, 테스트용)", "Beta (main, for testing)"), "main")],
                              selection: Binding(get: { updater.channel }, set: { updater.setChannel($0) }))
@@ -612,9 +606,14 @@ private struct MaintenanceSettings: View {
                     .help(L("안정 채널은 테스트를 거쳐 배포된 버전만 받아요. 베타는 새 변경이 먼저 올라오는 main을 따라가서 깨져 있을 수도 있어요. 안정으로 돌아가면 stable이 지금 쓰는 버전을 따라잡을 때 업데이트돼요.",
                             "Stable gets versions that were published after testing. Beta follows main, where new changes arrive first; it may be broken. Going back to Stable updates once stable catches up with the version you run."))
             }
-            if updater.available != nil {
-                SettingsRow(title: L("새 버전", "New version")) {
-                    SettingsAction(title: L("지금 업데이트", "Update Now")) { updater.install() }
+            Divider()
+            // Check Now until a new version is found, then the blue Update Now in the same place.
+            SettingsRow(title: L("새 버전", "New version")) {
+                if updater.available != nil {
+                    SettingsAction(title: L("지금 업데이트", "Update Now"), prominent: true) { updater.install() }
+                        .disabled(updater.checking || updater.installing)
+                } else {
+                    SettingsAction(title: L("지금 확인", "Check Now")) { updater.check() }
                         .disabled(updater.checking || updater.installing)
                 }
             }
@@ -625,25 +624,36 @@ private struct MaintenanceSettings: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 10).padding(.bottom, 7)
                 .help(updater.status + "\n" + L("시험과 빌드가 통과해야 교체해요. 채팅·게임 중에는 기다려요.", "Installs after tests and build pass. Waits for chats and games."))
-            Divider()
-            SettingsRow(title: L("버전", "Version")) {
-                Text(Self.version).font(.system(size: 12)).foregroundStyle(.secondary).textSelection(.enabled)
-                Spacer()
-            }
         }
-        SettingsCard(title: L("저장 위치", "Storage")) {
-            SettingsRow(title: L("저장 폴더", "Folders")) {
+        SettingsCard(title: L("폴더", "Folders")) {
+            SettingsRow(title: L("열기", "Open")) {
                 SettingsAction(title: L("앱 데이터", "App data")) { DataFolders.open(DataFolders.appData) }
                     .help(L("계정 목록, 대화와 첨부 사본", "Account list, chats and attachment copies"))
                 SettingsAction(title: L("계정", "Accounts")) { DataFolders.open(DataFolders.accounts) }
                     .help(L("로그인 정보가 있어요. 공유하지 마세요.", "Contains sign-in data. Do not share."))
+                SettingsAction(title: L("앱", "App")) { DataFolders.reveal(Bundle.main.bundleURL) }
+                    .help(Bundle.main.bundlePath)
+            }
+        }
+        SettingsCard(title: L("정보", "About")) {
+            SettingsRow(title: L("버전", "Version")) {
+                Text(Self.version).font(.system(size: 12)).foregroundStyle(.secondary).textSelection(.enabled)
+                    .help(Self.versionDetail)
+                Spacer()
+            }
+            Divider()
+            SettingsRow(title: L("라이선스", "Licenses")) {
+                SettingsAction(title: L("보기", "Show")) {
+                    if let url = Bundle.main.url(forResource: "THIRD_PARTY_NOTICES", withExtension: "md") { NSWorkspace.shared.open(url) }
+                }
+                .disabled(Bundle.main.url(forResource: "THIRD_PARTY_NOTICES", withExtension: "md") == nil)
             }
         }
         }
     }
 }
 
-// The two places the app keeps things, opened in Finder from Settings.
+// Where the app keeps things, opened in Finder from Settings.
 enum DataFolders {
     static var appData: String { AccountStore.supportDir }
     static var accounts: String { AccountStore.home + "/.ai-illuminati" }
@@ -652,6 +662,9 @@ enum DataFolders {
         try? FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
         NSWorkspace.shared.open(URL(fileURLWithPath: path, isDirectory: true))
     }
+
+    // Selects the item in Finder (the app itself, so it is not launched again).
+    static func reveal(_ url: URL) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
 }
 
 struct AccountsSettingsTab: View {

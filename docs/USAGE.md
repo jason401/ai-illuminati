@@ -69,7 +69,7 @@ Open Game (⌘G) starts AI poker with virtual chips. Each AI decision consumes u
 
 ## Language, updates, and reports
 
-Choose English or Korean in Settings. The AI is instructed to follow the language of your latest message. Existing conversations, materials, and account names are not automatically translated.
+The app follows the macOS language: Korean on a Korean Mac, English otherwise. To pick one for this app only, use System Settings → General → Language & Region → Applications. The AI is instructed to follow the language of your latest message. Existing conversations, materials, and account names are not automatically translated.
 
 Updates check stable (or main, with the Beta channel in Settings) and install only after a user action. If installation fails, inspect the update state and logs in the local app-data folder, but remove emails, tokens, personal paths, and private conversations before sharing a report. See the [security guidance](../SECURITY.md).
 

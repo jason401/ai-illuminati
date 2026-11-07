@@ -52,7 +52,12 @@ if ! xcrun swiftc -swift-version 5 -O -target "$ARCH-apple-macos13.0" \
   exit 1
 fi
 mkdir -p "$OUT/Contents/Resources"
-cp app/resources/workspace_mcp.py app/resources/project_process.py app/resources/local_models.json tools/install_app.py "$OUT/Contents/Resources/"
+# One folder per supported language, so macOS lists the app under Language & Region → Applications.
+for lang in en ko; do
+  mkdir -p "$OUT/Contents/Resources/$lang.lproj"
+  printf '"CFBundleDisplayName" = "AI Illuminati";\n' > "$OUT/Contents/Resources/$lang.lproj/InfoPlist.strings"
+done
+cp app/resources/workspace_mcp.py app/resources/project_process.py app/resources/local_models.json tools/install_app.py THIRD_PARTY_NOTICES.md LICENSE "$OUT/Contents/Resources/"
 if ! xcrun swiftc -swift-version 5 -O -o "$OUT/Contents/Resources/WorkspaceDocument" tools/workspace_document.swift >>"$LOG" 2>&1; then
   cat "$LOG"
   exit 1
@@ -87,6 +92,8 @@ cat > "$OUT/Contents/Info.plist" <<PLIST
 <key>AISourceRevision</key><string>$(git rev-parse HEAD)</string>
 <key>AIUpdateChannel</key><string>$(git rev-parse --abbrev-ref HEAD)</string>
 <key>CFBundleShortVersionString</key><string>0.3.0</string>
+<key>CFBundleDevelopmentRegion</key><string>en</string>
+<key>CFBundleLocalizations</key><array><string>en</string><string>ko</string></array>
 <key>LSMinimumSystemVersion</key><string>13.0</string>
 <key>LSUIElement</key><true/>
 </dict></plist>

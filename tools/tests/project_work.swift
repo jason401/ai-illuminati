@@ -248,5 +248,23 @@ func testFullAuto() {
            && Discussion.projectFaceRule(face: true, active: false, moods: ["happy"]).isEmpty
            && Discussion.projectFaceRule(face: false, active: true, moods: ["happy"]).isEmpty,
            "project turns ask for a face tag when AI Face is connected")
+    let folders = Discussion.soloFolders(WorkspaceBinding(roots: [WorkspaceRoot(path: "/chat", directory: true, writable: true),
+                                                                  WorkspaceRoot(path: "/shared", directory: true),
+                                                                  WorkspaceRoot(path: "/repo", directory: true, writable: true)]),
+                                         shared: ["/shared"], project: "/repo")
+    func compose(_ project: Discussion.ProjectPart?) -> String {
+        Discussion.composeInstruction(name: "Claude", provider: .claude, folders: folders, drive: "[Drive rule]", fullAccess: false,
+                                      picture: "[Picture rule]", helper: "", face: "[Face rule]", project: project)
+    }
+    let plain = compose(nil)
+    let projectText = compose(.init(root: "/repo", fullAuto: true, rules: "[Project rules: AGENTS.md]\nTabs."))
+    expect(["[Folders]", "/shared (shared folder — read only)", "[Drive rule]", "[Picture rule]", "[Face rule]", "search the web", "language of the user"]
+            .allSatisfy { plain.contains($0) && projectText.contains($0) },
+           "project work gets everything a plain chat gets (shared folders, web, Drive, pictures, face)")
+    expect(projectText.contains("/repo (linked Git project") && projectText.contains("git_status") && projectText.contains(Discussion.fullAutoNote)
+            && projectText.contains("Tabs.") && !projectText.contains("not code") && !projectText.contains("Do not run commands")
+            && !projectText.contains("Markdown file in the chat folder") && !plain.contains("git_status") && plain.contains("Do not run commands"),
+           "only project work adds the Git steps; plain-only lines stay out of it")
+    expect(projectText.hasSuffix("[Face rule]") && !projectText.contains("\n\n"), "the face rule ends the instruction, without blank lines")
     print("PASS: full auto (no cards for commands, 8 hours, stable still asks, no Git credentials, git push blocked, rm to Trash outside temp)")
 }

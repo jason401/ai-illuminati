@@ -101,6 +101,9 @@ In plain chat, open `+` → **Link folder (full access)**. A top-level Git folde
 Claude or Codex can edit it and use app-hosted Git tools for status/diff/log, fast-forward pull,
 explicit-path commit, and normal push to main or feature/fix/codex branches.
 The project permission remains attached to that chat until disabled from the same menu.
+Project work uses the same instruction as any plain chat, plus the Git steps: the AI knows the shared folders
+(read only here), can search the web with sources, uses Drive, pictures and AI Face, and keeps the chat state
+summary in long chats. Whatever is added to plain chat reaches project work too.
 Only one writer in this app may work on a repository at a time. External editors and agents
 are not locked. On a usage limit, the previous attempt is cancelled and another supported
 account continues the same files; no automatic stash, reset, checkpoint commit, or dirty pull.

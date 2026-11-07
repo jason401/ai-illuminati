@@ -14,12 +14,16 @@ struct ChatView: View {
     static let wide: CGFloat = 700
     static let notesWidth: CGFloat = 280
 
+    // Which side panels fit. Kept apart from the window size so resizing rebuilds the views only when one
+    // of these changes, not on every frame of the drag.
+    @ObservedObject private var layout = ChatLayout.shared
+
     var body: some View {
-        GeometryReader { geometry in
-            let wide = geometry.size.width >= Self.wide
-            let inline = wide && !discussion.sidebarHidden
-            // The notes sit beside the chat when it keeps at least `wide` points, else they slide over it.
-            let notesInline = geometry.size.width - (inline ? 251 : 0) - Self.notesWidth >= Self.wide
+        let wide = layout.wide
+        let inline = wide && !discussion.sidebarHidden
+        // The notes sit beside the chat when it keeps at least `wide` points, else they slide over it.
+        let notesInline = inline ? layout.notesFit : layout.notesFitAlone
+        Group {
             ZStack(alignment: .leading) {
                 HStack(spacing: 0) {
                     if inline {
@@ -50,6 +54,12 @@ struct ChatView: View {
                 }
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(GeometryReader { geometry in
+            Color.clear
+                .onAppear { layout.measure(geometry.size.width) }
+                .onChange(of: geometry.size.width) { layout.measure($0) }
+        })
         .onChange(of: discussion.currentID) { _ in discussion.sidebarOverlay = false }
         .frame(minWidth: Self.minSize.width, minHeight: Self.minSize.height)
         .background(Color(nsColor: .textBackgroundColor))
@@ -404,15 +414,20 @@ struct ChatView: View {
                         Color.clear.preference(key: TranscriptTopKey.self, value: marker.frame(in: .named(Self.bottomID)).minY)
                     })
                 }
-                ForEach(Array(conversation.turns.enumerated()).dropFirst(hidden), id: \.element.id) { index, turn in
-                    if index > 0, (turn.mode ?? 1) != (conversation.turns[index - 1].mode ?? 1) || turn.modeVersion != conversation.turns[index - 1].modeVersion {
-                        ModeChangeMarker(mode: turn.mode ?? 1, version: turn.modeVersion)
-                    }
-                    TurnView(turn: turn, discussion: discussion, busy: busy,
-                             openEntries: discussion.openEntries.intersection(turn.entries.map(\.id)),
-                             accountLabels: accountLabels, chatFolder: chatFolder, language: AppLanguage.current)
-                        .equatable()
+                // Lazy, so a window resize re-lays out only the turns near the screen, not every shown turn.
+                LazyVStack(alignment: .leading, spacing: 28) {
+                    ForEach(Array(conversation.turns.enumerated()).dropFirst(hidden), id: \.element.id) { index, turn in
+                        VStack(alignment: .leading, spacing: 28) {
+                            if index > 0, (turn.mode ?? 1) != (conversation.turns[index - 1].mode ?? 1) || turn.modeVersion != conversation.turns[index - 1].modeVersion {
+                                ModeChangeMarker(mode: turn.mode ?? 1, version: turn.modeVersion)
+                            }
+                            TurnView(turn: turn, discussion: discussion, busy: busy,
+                                     openEntries: discussion.openEntries.intersection(turn.entries.map(\.id)),
+                                     accountLabels: accountLabels, chatFolder: chatFolder, language: AppLanguage.current)
+                                .equatable()
+                        }
                         .id(turn.id)
+                    }
                 }
                 // Where the transcript ends, for the jump-to-bottom button (macOS 13 has no scroll position API).
                 Color.clear.frame(height: 1).id(Self.bottomID)
@@ -1671,6 +1686,23 @@ private struct MultilineInput: NSViewRepresentable {
                 self.parent.height = measured
             }
         }
+    }
+}
+
+// Which side panels fit in the chat window (no @State: see DriveUI.swift). Published only when one changes.
+private final class ChatLayout: ObservableObject {
+    static let shared = ChatLayout()
+    @Published private(set) var wide = true
+    @Published private(set) var notesFit = true
+    @Published private(set) var notesFitAlone = true
+
+    func measure(_ width: CGFloat) {
+        let isWide = width >= ChatView.wide
+        let fit = width - 251 - ChatView.notesWidth >= ChatView.wide
+        let fitAlone = width - ChatView.notesWidth >= ChatView.wide
+        if isWide != wide { wide = isWide }
+        if fit != notesFit { notesFit = fit }
+        if fitAlone != notesFitAlone { notesFitAlone = fitAlone }
     }
 }
 

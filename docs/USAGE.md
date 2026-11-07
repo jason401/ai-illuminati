@@ -73,6 +73,8 @@ The app follows the macOS language: Korean on a Korean Mac, English otherwise. T
 
 Updates check stable (or main, with the Beta channel in Settings) and install only after a user action. If installation fails, inspect the update state and logs in the local app-data folder, but remove emails, tokens, personal paths, and private conversations before sharing a report. See the [security guidance](../SECURITY.md).
 
+Updates fetch, test and build in a separate checkout while the app remains usable. Only replacing the installed app and restarting waits for active chats, material imports and games to finish. Replacement resumes when the work state changes, with a ten-second fallback check. The progress area shows when it last checked and a countdown; a prepared build is reused rather than rebuilt while waiting.
+
 The app uses a public iOS OAuth client ID without a client secret. A small group personally known to the
 developer may qualify for Google’s personal-use exception; a count below 100 alone is not a
 public-distribution exemption.

@@ -20,6 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private var markTimer: Timer?
     private var runningObservation: AnyCancellable?
+    private var updateIdleObservation: AnyCancellable?
     private var motionObservation: NSObjectProtocol?
     private var iconRenderer: ((MenuMarkFrame?) -> NSImage)?
     private var lastMarkFrame: MenuMarkFrame?
@@ -60,6 +61,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let self else { return false }
             return self.discussion.anyRunning || self.discussion.importingMaterials || self.pokerGame.running
         }
+        // Published values arrive before assignment; deliver on the main queue to read the new state.
+        updateIdleObservation = Publishers.CombineLatest3(discussion.$runningRooms, discussion.$importingMaterials, pokerGame.$running)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.model.updater.resumeWhenIdle() }
         // When the build script opens the app, the script's folder (inside ~/Documents) comes along
         // as PWD/OLDPWD and is passed to every AI tool we start; shells they run then look at that
         // folder, and macOS asks for Documents access. None of the tools need it.

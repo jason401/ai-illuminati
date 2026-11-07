@@ -19,7 +19,7 @@ final class Updater: ObservableObject {
     var isBusy: () -> Bool = { false }
     var onAvailableChange: () -> Void = {}
 
-    static let every: TimeInterval = 3 * 3600, retry: TimeInterval = 600, first: TimeInterval = 60
+    static let every: TimeInterval = 3 * 3600, retry: TimeInterval = 10, first: TimeInterval = 60
     static let repository = "https://github.com/jason401/ai-illuminati.git"
     let root = URL(fileURLWithPath: AccountStore.supportDir).appendingPathComponent("source")
     /// True while the installer helper prepares the swap; channel and Update Now wait for it.
@@ -38,6 +38,8 @@ final class Updater: ObservableObject {
     private var staged: URL { root.appendingPathComponent("AI Illuminati.update.app") }
     private let work = DispatchQueue(label: "updater")
     private var timer: Timer?
+    private var waitingChannel: String?
+    private var waitTask: DispatchWorkItem?
     private var stateFile: URL { URL(fileURLWithPath: AccountStore.supportDir).appendingPathComponent("update.json") }
 
     init() {
@@ -67,6 +69,8 @@ final class Updater: ObservableObject {
     /// Switches between Stable and Beta, then looks right away. What the other channel found no longer applies.
     func setChannel(_ name: String) {
         guard UpdateChannel.all.contains(name), name != channel else { return }
+        cancelWaiting()
+        progress = nil
         channel = name
         UserDefaults.standard.set(name, forKey: UpdateChannel.key)
         setAvailable(nil)
@@ -79,7 +83,7 @@ final class Updater: ObservableObject {
 
     /// Looks for a new version on the chosen channel. Changes nothing on this Mac's app.
     func check() {
-        guard !checking, !installing else { return }
+        guard !checking, !installing, waitingChannel == nil else { return }
         checking = true
         progress = nil
         let branch = channel
@@ -109,12 +113,9 @@ final class Updater: ObservableObject {
     func install() {
         guard !checking, !installing else { return }
         let branch = channel
+        cancelWaiting()
         progress = UpdateProgress(estimates: UpdateProgress.saved)
-        if isBusy() {
-            progress?.waiting = true
-            report(["status": "waiting", "current": revision])
-            return schedule(after: Self.retry) { if $0.channel == branch { $0.install() } }
-        }
+        // Fetch, test and build alongside ongoing chats; only the final app swap waits for idle.
         checking = true
         report(["status": "checking"], save: false)
         work.async {
@@ -218,13 +219,11 @@ final class Updater: ObservableObject {
     /// `channel` is the update channel this install came from; nil for moving a development build.
     private func handoff(staged: URL, next: String, channel: String? = nil) {
         DispatchQueue.main.sync {
+            update { $0.move(to: 3) }
             guard !isBusy() else {
-                update { $0.waiting = true }
-                report(["status": "waiting", "current": revision, "next": next])
-                schedule(after: Self.retry) { $0.retryInstall(channel) }
+                waitForIdle(channel ?? self.channel)
                 return
             }
-            update { $0.move(to: 3) }
             do {
                 // Avoid migrating a second app while a legacy copy is still running.
                 let others = NSRunningApplication.runningApplications(withBundleIdentifier: "local.aiilluminati")
@@ -275,9 +274,7 @@ final class Updater: ObservableObject {
                 guard !self.isBusy() else {
                     process.terminate()
                     self.installing = false
-                    self.update { $0.waiting = true }
-                    self.report(["status": "waiting", "current": self.revision, "next": next])
-                    self.schedule(after: Self.retry) { $0.retryInstall(channel) }
+                    self.waitForIdle(channel ?? self.channel)
                     return
                 }
                 if SMAppService.mainApp.status == .enabled {
@@ -302,9 +299,35 @@ final class Updater: ObservableObject {
         }
     }
 
-    /// Tries a postponed install again, unless the user picked another channel meanwhile.
-    private func retryInstall(_ channel: String?) {
-        if UpdateChannel.proceeds(started: channel, now: self.channel) { install() }
+    /// Called on the main queue after chat, import or game state changes, and every ten seconds.
+    func resumeWhenIdle() {
+        guard let branch = waitingChannel else { return }
+        guard branch == channel else { cancelWaiting(); return }
+        guard !checking, !installing else { return }
+        if isBusy() { waitForIdle(branch); return }
+        cancelWaiting()
+        report(["status": "resuming"], save: false)
+        install()
+        update { $0.show(L("작업 완료 확인 · 준비된 업데이트를 적용해요", "Work finished · applying prepared update")) }
+    }
+
+    private func cancelWaiting() {
+        waitTask?.cancel()
+        waitTask = nil
+        waitingChannel = nil
+    }
+
+    private func waitForIdle(_ branch: String) {
+        cancelWaiting()
+        waitingChannel = branch
+        let now = Date()
+        update {
+            $0.waitForWork(at: now, retry: Self.retry)
+        }
+        report(["status": "waiting", "current": revision])
+        let task = DispatchWorkItem { [weak self] in self?.resumeWhenIdle() }
+        waitTask = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.retry, execute: task)
     }
 
     private func acknowledgeInstallation() {
@@ -427,7 +450,8 @@ final class Updater: ObservableObject {
         case "testing": return L("새 버전(\(short(s["next"]))) 시험 중…", "Testing new version \(short(s["next"]))…")
         case "building": return L("새 버전(\(short(s["next"]))) 준비 중…", "Preparing new version \(short(s["next"]))…")
         case "available": return L("새 버전(\(short(s["next"])))이 있어요. '지금 업데이트'를 눌러 설치해요", "New version \(short(s["next"])) is available. Click Update Now to install") + when
-        case "waiting": return L("채팅·게임이 끝나면 업데이트해요", "Updating after the chat or game finishes")
+        case "waiting": return L("업데이트 준비 완료 · 작업 중이라 교체 대기 · 끝나면 자동 적용해요", "Update prepared · waiting for active work to finish before replacing the app")
+        case "resuming": return L("작업 완료 확인 · 준비된 업데이트를 적용해요", "Work finished · applying prepared update")
         case "current": return L("최신 버전이에요 (\(short(s["current"])))", "Up to date (\(short(s["current"])))") + when
         case "updated":
             if s["previous"] == nil || s["previous"] == s["current"] {
@@ -531,6 +555,7 @@ struct UpdateProgress: Equatable {
     var started = Date(), stageStarted = Date()
     var line = "", lineAt = Date()
     var waiting = false, failed = false
+    var waitCheckedAt: Date?, waitNextAt: Date?
     /// Steps not run this time (a build made earlier was reused).
     var skipped: Set<Int> = []
     /// How long each finished step took this time.
@@ -550,6 +575,12 @@ struct UpdateProgress: Equatable {
         stage = next; stageStarted = now
         line = ""; lineAt = now
         waiting = false
+    }
+
+    mutating func waitForWork(at now: Date = Date(), retry: TimeInterval) {
+        waiting = true
+        waitCheckedAt = now
+        waitNextAt = now.addingTimeInterval(retry)
     }
 
     mutating func show(_ text: String, at now: Date = Date()) { line = text; lineAt = now }
@@ -581,7 +612,11 @@ struct UpdateProgress: Equatable {
     func summary(at now: Date) -> String {
         let step = "\(stage + 1)/\(Self.count) "
         if failed { return step + L("\(Self.names[stage])에서 멈췄어요", "Stopped at \(Self.names[stage])") }
-        if waiting { return step + Self.names[stage] + L(" · 채팅·게임이 끝나면 계속해요", " · continues after the chat or game") }
+        if waiting {
+            let seconds = max(0, Int(ceil((waitNextAt ?? now).timeIntervalSince(now))))
+            let ago = max(0, Int(now.timeIntervalSince(waitCheckedAt ?? now)))
+            return L("준비 완료 · 교체 대기 · \(ago)초 전 확인 · \(seconds)초 후 재확인", "Ready · waiting to replace app · checked \(ago)s ago · checking again in \(seconds)s")
+        }
         var text = step + Self.doing[stage] + " · " + L("\(Self.duration(now.timeIntervalSince(started))) 지남", "\(Self.duration(now.timeIntervalSince(started))) elapsed")
         if let left = remaining(at: now), stage < Self.count - 1 {
             let minutes = max(1, Int((left / 60).rounded(.up)))

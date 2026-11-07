@@ -71,28 +71,97 @@ protocol GoogleTokenStore {
 }
 
 struct GoogleKeychainStore: GoogleTokenStore {
-    private var query: [String: Any] {
-        [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "AI Illuminati Google", kSecAttrAccount as String: "oauth"]
+    // Apple's signed security executable owns the ACL, so rebuilding this app does not change its reader.
+    // All secret writes go over stdin, never argv, shell interpolation, a file or a log.
+    typealias Runner = ([String], Data?) throws -> (Int32, Data)
+    private static let lock = NSRecursiveLock()
+    private static let prefix = "ai-illuminati-google-v1:"
+    private static let service = "AI Illuminati Google"
+    private static let backup = "oauth-migration"
+    private let run: Runner
+    init(run: Runner? = nil) { self.run = run ?? Self.execute }
+
+    private static func execute(_ arguments: [String], _ input: Data?) throws -> (Int32, Data) {
+        let process = Process(), out = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+        process.arguments = arguments
+        process.standardOutput = out
+        process.standardError = FileHandle.nullDevice
+        let pipe = input == nil ? nil : Pipe()
+        process.standardInput = pipe.map { $0.fileHandleForReading } ?? FileHandle.nullDevice
+        do { try process.run() } catch { throw GoogleFailure(message: "Could not start macOS Keychain access.") }
+        if let input, let pipe {
+            pipe.fileHandleForWriting.write(input)
+            pipe.fileHandleForWriting.closeFile()
+        }
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return (process.terminationStatus, data)
+    }
+    private func read(_ account: String) throws -> Data? {
+        let (status, output) = try run(["find-generic-password", "-s", Self.service, "-a", account, "-w"], nil)
+        if status == 44 { return nil } // errSecItemNotFound, as returned by security(1).
+        guard status == 0 else { throw GoogleFailure(message: "Could not read Google login from Keychain.") }
+        var data = output
+        if data.last == 10 { data.removeLast() } // security adds one newline; do not trim the stored value.
+        return data
+    }
+    private func unpack(_ value: Data) throws -> Data? {
+        let prefix = Data(Self.prefix.utf8)
+        guard value.starts(with: prefix) else { return nil }
+        guard let data = Data(base64Encoded: value.dropFirst(prefix.count)) else {
+            throw GoogleFailure(message: "Google Keychain login is damaged. Reconnect Google Drive.")
+        }
+        return data
+    }
+    private func write(_ data: Data, account: String) throws {
+        let value = Self.prefix + data.base64EncodedString()
+        let line = "add-generic-password -U -s \"AI Illuminati Google\" -a " + account + " -w " + value + "\n"
+        // security's interactive parser has a bounded input line. Reject before touching existing items.
+        guard line.utf8.count < 4000 else { throw GoogleFailure(message: "Google login is too large for macOS Keychain storage.") }
+        let (status, _) = try run(["-i"], Data(line.utf8))
+        guard status == 0, try read(account) == Data(value.utf8) else {
+            throw GoogleFailure(message: "Could not save Google login to Keychain.")
+        }
+    }
+    private func remove(_ account: String) throws {
+        let (status, _) = try run(["delete-generic-password", "-s", Self.service, "-a", account], nil)
+        guard status == 0 || status == 44 else { throw GoogleFailure(message: "Could not remove Google login from Keychain.") }
     }
     func load() throws -> Data? {
-        var q = query; q[kSecReturnData as String] = true
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(q as CFDictionary, &result)
-        if status == errSecItemNotFound { return nil }
-        guard status == errSecSuccess else { throw GoogleFailure(message: "Could not read Google login from Keychain.") }
-        return result as? Data
+        Self.lock.lock(); defer { Self.lock.unlock() }
+        if let raw = try read("oauth") {
+            if let data = try unpack(raw) {
+                try? remove(Self.backup)
+                return data
+            }
+            // Legacy raw JSON item. Read once (macOS may ask once), stage a recoverable CLI-owned copy,
+            // then replace the item so its original per-build ACL/partition is not retained by -U.
+            guard (try? JSONDecoder().decode(GoogleAuth.Credentials.self, from: raw)) != nil else {
+                throw GoogleFailure(message: "Google Keychain login is damaged. Reconnect Google Drive.")
+            }
+            try write(raw, account: Self.backup)
+            try remove("oauth")
+            try write(raw, account: "oauth")
+            try? remove(Self.backup)
+            return raw
+        }
+        // Recover a migration interrupted between deleting the legacy item and recreating the CLI item.
+        if let saved = try read(Self.backup), let data = try unpack(saved) {
+            try write(data, account: "oauth")
+            try? remove(Self.backup)
+            return data
+        }
+        return nil
     }
     func save(_ data: Data) throws {
-        let status = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
-        if status == errSecItemNotFound {
-            var q = query; q[kSecValueData as String] = data
-            q[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
-            guard SecItemAdd(q as CFDictionary, nil) == errSecSuccess else { throw GoogleFailure(message: "Could not save Google login to Keychain.") }
-        } else if status != errSecSuccess { throw GoogleFailure(message: "Could not update Google login in Keychain.") }
+        Self.lock.lock(); defer { Self.lock.unlock() }
+        _ = try load() // Migrate an existing legacy ACL before updating it.
+        try write(data, account: "oauth")
     }
     func clear() throws {
-        let status = SecItemDelete(query as CFDictionary)
-        guard status == errSecSuccess || status == errSecItemNotFound else { throw GoogleFailure(message: "Could not remove Google login from Keychain.") }
+        Self.lock.lock(); defer { Self.lock.unlock() }
+        try remove("oauth"); try remove(Self.backup)
     }
 }
 

@@ -26,7 +26,54 @@ final class FakeGooglePresenter: GoogleAuthPresenter {
     }
 }
 
+func testGoogleKeychainCLI() {
+    let legacy = Data(#"{"clientID":"fixture","clientSecret":null,"refreshToken":"fixture-token","writable":true}"#.utf8)
+    var items = ["oauth": legacy], calls: [([String], Data?)] = []
+    var failPrimaryWrite = false, denyRead = false
+    let store = GoogleKeychainStore { args, input in
+        calls.append((args, input))
+        if args == ["-i"] {
+            let line = String(decoding: input!, as: UTF8.self)
+            let account = line.contains("-a oauth-migration ") ? "oauth-migration" : "oauth"
+            if failPrimaryWrite && account == "oauth" { return (1, Data()) }
+            let value = line.components(separatedBy: " -w ")[1].dropLast()
+            items[account] = Data(value.utf8)
+            return (0, Data())
+        }
+        let account = args[args.firstIndex(of: "-a")! + 1]
+        if args.first == "find-generic-password" {
+            if denyRead { return (128, Data()) }
+            guard let value = items[account] else { return (44, Data()) }
+            return (0, value + Data([10]))
+        }
+        return (items.removeValue(forKey: account) == nil ? 44 : 0, Data())
+    }
+    expect(try! store.load() == legacy, "legacy Google item migrates without changing credentials or write grant")
+    expect(items["oauth-migration"] == nil && items["oauth"] != legacy, "migration recreates primary item and removes recovery copy")
+    let deletes = calls.filter { $0.0.first == "delete-generic-password" && $0.0.contains("oauth") }.count
+    expect(try! store.load() == legacy, "new-format item reads after rebuild without repeating migration")
+    expect(calls.filter { $0.0.first == "delete-generic-password" && $0.0.contains("oauth") }.count == deletes, "modern item is not deleted on every read")
+    let replacement = Data([0, 10, 34, 92, 255])
+    try! store.save(replacement)
+    expect(try! store.load() == replacement, "stdin storage round-trips binary data, quotes and newlines")
+    expect(calls.allSatisfy { !$0.0.joined(separator: " ").contains("fixture-token") && ($0.1 == nil || $0.0 == ["-i"]) }, "secret commands are stdin-only, never argv")
+    try! store.clear(); expect(try! store.load() == nil, "clear removes primary and recovery entries")
+    items = ["oauth": legacy]; failPrimaryWrite = true
+    do { _ = try store.load(); expect(false, "migration recreation failure must fail") } catch {}
+    expect(items["oauth"] == nil && items["oauth-migration"] != nil, "failed recreation keeps a recoverable CLI-owned login")
+    failPrimaryWrite = false
+    expect(try! store.load() == legacy && items["oauth-migration"] == nil, "interrupted migration recovers on next read")
+    denyRead = true; let before = items
+    do { _ = try store.load(); expect(false, "cancelled Keychain read must fail") } catch {}
+    expect(items == before, "cancelled read never deletes stored login")
+    denyRead = false
+    do { try store.save(Data(repeating: 65, count: 5000)); expect(false, "overlong security command refused") } catch {}
+    expect(items == before, "overlong write leaves working login unchanged")
+    print("PASS: Google Keychain CLI (stdin-only secrets, one-time migration, interrupted migration recovery, read cancellation and size bounds)")
+}
+
 func testGoogleDrive() {
+    testGoogleKeychainCLI()
     let root = URL(fileURLWithPath: AccountStore.home)
     let server = Process()
     server.executableURL = URL(fileURLWithPath: "/usr/bin/python3")

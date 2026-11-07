@@ -672,10 +672,9 @@ struct ChatView: View {
     private var plusMenu: some View {
         Menu {
             Button(L("이미지 첨부", "Attach images")) { discussion.chooseImages() }
-            Button(L("폴더 연결 (읽기·쓰기)", "Link folder (read and write)")) { discussion.chooseMaterials(folder: true) }
+            Button(L("폴더 연결 (모든 권한)", "Link folder (full access)")) { discussion.chooseMaterials(folder: true) }
             if discussion.configuration.mode == 0 {
-                Button(discussion.current.workspace?.project == nil ? L("프로젝트 작업 허용…", "Enable Project Work…") : L("프로젝트 작업 해제", "Disable Project Work")) { discussion.configureProject() }
-                if discussion.current.workspace?.project != nil {
+                if discussion.current.workspace?.project != nil || discussion.current.workspace?.roots.contains(where: \.directory) == true {
                     Button(discussion.current.workspace?.isFullAuto == true ? L("완전 자동 끄기 (카드로 확인)", "Turn off full auto (confirm with cards)") : L("완전 자동 켜기", "Turn on full auto")) { discussion.toggleFullAuto() }
                 }
             }

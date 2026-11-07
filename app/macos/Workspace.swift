@@ -15,7 +15,10 @@ struct WorkspaceBinding: Codable {
     var projectGeneration: Int? = nil
     // Project work is full auto by default (no approval cards; stable publishing still asks). false = cards.
     var fullAuto: Bool? = nil
-    var isFullAuto: Bool { project != nil && fullAuto != false }
+    var isFullAuto: Bool { (project != nil || roots.contains(where: \.directory)) && fullAuto != false }
+    // Runtime only (plain chat with a linked non-Git folder): full access like project work, with the Undo backup.
+    var fullAccess: Bool? = nil
+    var fullAccessActive: Bool { (isFullAuto && projectRunID != nil) || fullAccess == true }
     var face: Bool? = nil   // plain chat: the bridge also offers AI Face's tools through the app (FaceLink)
     func inventory() -> [String] {
         var result: [String] = []
@@ -126,7 +129,7 @@ struct WorkspaceInvocation {
             let mcp = ["mcpServers": ["illuminati": server]]
             let config = String(data: try JSONSerialization.data(withJSONObject: mcp), encoding: .utf8)!
             if let i = result.firstIndex(of: "--mcp-config") { result[i + 1] = config }
-            if binding.isFullAuto && binding.projectRunID != nil {
+            if binding.fullAccessActive {
                 // Full auto: every tool, no prompts, no sandbox (network on), like Claude Code run by the user.
                 // AutoGuard's environment removes Git credentials and turns rm into the Trash.
                 if let i = result.firstIndex(of: "--tools") { result[i + 1] = "default" }
@@ -167,7 +170,7 @@ struct WorkspaceInvocation {
                 i += 1
             }
             let own = level == .view || binding.projectRunID != nil ? ownFolders : []
-            if binding.isFullAuto && binding.projectRunID != nil {
+            if binding.fullAccessActive {
                 result = ["-c", "sandbox_mode=\"danger-full-access\"", "-c", "approval_policy=\"never\"", "-c", "features.shell_tool=true",
                           "-c", "features.multi_agent=false", "-c", "web_search=\"live\"",
                           "-c", "mcp_servers.illuminati.command=" + json(command), "-c", "mcp_servers.illuminati.args=" + json(args),

@@ -92,7 +92,8 @@ opens the folder in the browser. Expanded branches refresh about once a minute w
 
 ## Project work in plain chat
 
-In plain chat, open `+` → **Allow project work**, then choose the top-level Git folder.
+In plain chat, open `+` → **Link folder (full access)**. A top-level Git folder with a remote becomes project work
+(Git tools below); any other folder gets the same full access, backed up before each answer with Undo.
 Claude or Codex can edit it and use app-hosted Git tools for status/diff/log, fast-forward pull,
 explicit-path commit, and normal push to main or feature/fix/codex branches.
 The project permission remains attached to that chat until disabled from the same menu.

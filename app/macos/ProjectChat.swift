@@ -191,7 +191,7 @@ extension Discussion {
     """
 
     func toggleFullAuto() {
-        guard !running, current.workspace?.project != nil else { return }
+        guard !running, current.workspace?.project != nil || current.workspace?.roots.contains(where: \.directory) == true else { return }
         let on = current.workspace?.isFullAuto == true
         change(currentID, save: true) { $0.workspace?.fullAuto = on ? false : nil }
     }

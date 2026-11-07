@@ -1243,10 +1243,16 @@ do {
     expect(edited.undone == true && (try? String(contentsOf: linkedDir.appendingPathComponent("paper.md"), encoding: .utf8)) == "v1"
            && !FileManager.default.fileExists(atPath: linkedDir.appendingPathComponent("notes.md").path), "undo restores the linked folder")
 
-    // Tool settings: only the chat folder may change.
+    // A linked folder gets full access by default (any command, network, no sandbox, Git push blocked).
+    let dir = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("solo-args")
+    let fullBinding = chat.soloBinding(chat.currentID)
+    let fullArgs = try! WorkspaceInvocation(binding: fullBinding, room: chat.currentID).arguments(provider: .claude, original: ["-p", "--tools", "", "--allowedTools", "x", "--safe-mode", "--mcp-config", "{}"], directory: dir, web: true)
+    expect(fullBinding.fullAccess == true && fullArgs.contains("bypassPermissions") && fullArgs.contains { $0.contains("Bash(git push:*)") }, "linked folder: full access by default")
+    chat.change(chat.currentID) { $0.workspace?.fullAuto = false }
+    // Turned off: tool settings as before, only the chat folder and the linked folder may change.
     let own = Discussion.chatFolder(chat.currentID).path
     let invocation = WorkspaceInvocation(binding: chat.soloBinding(chat.currentID), room: chat.currentID)
-    let dir = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("solo-args")
+    expect(invocation.binding.fullAccess == nil, "full access off restores the limited mode")
     let claudeArgs = try! invocation.arguments(provider: .claude, original: ["-p", "--tools", "", "--allowedTools", "x", "--safe-mode", "--mcp-config", "{}"], directory: dir, web: true)
     let allowed = claudeArgs[claudeArgs.lastIndex(of: "--allowedTools")! + 1]
     expect(allowed.contains("Edit(/" + own + "/**)") && !allowed.contains(",Edit,") && !allowed.hasSuffix(",Edit"), "Claude may edit only the chat folder")

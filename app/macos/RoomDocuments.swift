@@ -56,8 +56,18 @@ extension Discussion {
                 return WorkspaceRoot(path: path.path, directory: info.isDirectory == true)
             }
             try nativeSessions.reset(currentID)
-            change(currentID, save: true) { $0.workspace = WorkspaceBinding(roots: roots) }
-            sessionNote = L("경로 연결됨 · 보기. 원문은 요청할 때만 읽습니다.", "Linked · View. Contents are read only on demand.")
+            // One "Link folder": a top-level Git folder with a remote becomes project work (Git tools, push);
+            // any other folder gets the same full access with the Undo backup. Both are full auto unless turned off.
+            let project = folder && configuration.mode == 0 ? roots.first.flatMap { try? ProjectProcess.inspect($0.path) } : nil
+            change(currentID, save: true) { conversation in
+                var binding = WorkspaceBinding(roots: project.map { [WorkspaceRoot(path: $0.root, directory: true, writable: true)] } ?? roots)
+                binding.project = project
+                conversation.workspace = binding
+            }
+            sessionNote = folder
+                ? (project != nil ? L("Git 프로젝트 연결됨 · 완전 자동 (stable 배포만 허용 카드)", "Git project linked · full auto (only stable publishing asks)")
+                                  : L("폴더 연결됨 · 완전 자동 (답할 때마다 백업, Undo 가능)", "Folder linked · full auto (backed up before each answer, Undo available)"))
+                : L("경로 연결됨 · 보기. 원문은 요청할 때만 읽습니다.", "Linked · View. Contents are read only on demand.")
             attachmentError = nil
         } catch { attachmentError = error.localizedDescription }
     }

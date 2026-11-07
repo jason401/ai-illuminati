@@ -204,7 +204,7 @@ func testFullAuto() {
     expect(shell("rm '\(scratch.path)'").status != 0 && shell("rm -f '\(scratch.path)'").status == 0, "rm keeps missing-file and -f semantics")
 
     // CLI options: no prompts, no sandbox, Git push denied.
-    expect(binding.isFullAuto && !WorkspaceBinding(roots: binding.roots).isFullAuto, "project work is full auto by default; plain folders are not")
+    expect(binding.isFullAuto && !binding.fullAccessActive && !WorkspaceBinding(roots: []).isFullAuto, "linked folders are full auto by default; access opens only during a run")
     binding.fullAuto = false; expect(!binding.isFullAuto, "full auto can be turned off per chat")
     binding.fullAuto = nil; binding.level = .execute; binding.projectRunID = UUID()
     let room = UUID()

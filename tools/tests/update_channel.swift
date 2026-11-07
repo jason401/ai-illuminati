@@ -40,6 +40,10 @@ func testUpdateChannels() {
     _ = try! run(base, ["clone", "-q", "--branch", "stable", "--single-branch", origin.path, checkout.path])
 
     expect(look("stable", a).outcome == .current, "stable app on stable: up to date")
+    // A local build GitHub does not have is never compared, so never "updated" to an older version.
+    expect(look("stable", String(repeating: "0", count: 40)).outcome == .localBuild, "an unpushed local build waits instead of installing stable")
+    expect(UpdateChannel.proceeds(started: "main", now: "main") && UpdateChannel.proceeds(started: nil, now: "stable")
+           && !UpdateChannel.proceeds(started: "main", now: "stable"), "an install stops when the channel changed before the swap")
     let beta = look("main", a)
     expect(beta.outcome == .newer && beta.new == b && beta.switching, "Beta finds main from a single-branch stable checkout")
     try! beta.advance(git)
@@ -59,5 +63,5 @@ func testUpdateChannels() {
     expect(look("main", c).outcome == .ahead, "Beta behind the running app waits too")
     _ = try! git(["checkout", "-q", "-b", "local"], 60)
     expect(look("stable", c).outcome == .otherBranch, "a checkout on another branch is left alone")
-    print("PASS: update channels (Stable and Beta from a single-branch checkout, switching, restore after failure, never downgrading, other branches left alone)")
+    print("PASS: update channels (Stable and Beta from a single-branch checkout, switching, restore after failure, never downgrading, unpushed local builds wait, a changed channel stops the install)")
 }

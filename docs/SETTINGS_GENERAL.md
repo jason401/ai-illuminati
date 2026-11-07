@@ -15,6 +15,11 @@ Change it here first, then in each app.
    - Channel — Stable / Beta (main, for testing).
    - New version — "Check Now" while nothing is found; the blue "Update Now" in the same place
      once a new version is found.
+   - While Update Now runs, the New version row shows a step bar instead of the button: one
+     segment per update step (each app names its own), the step with time elapsed and, from the
+     last update's step times, time left, and the last line of output ("no output for 45s" once
+     it goes quiet). Yellow while waiting, red at the step that failed. The menu bar menu shows
+     the same step line.
    - A small note below: the Beta warning, what the last check found, and when.
 3. **Folders**
    - One row, "Open": App data → buttons only this app has (AI Illuminati: Accounts,

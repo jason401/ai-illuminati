@@ -754,6 +754,54 @@ do {
     print("PASS: update status texts")
 }
 
+// The Update Now bar: steps, time left from last time, skipped steps, quiet output and saved times.
+do {
+    let t0 = Date(timeIntervalSince1970: 1_000_000)
+    var fresh = UpdateProgress(at: t0)
+    expect(fresh.remaining(at: t0) == nil && fresh.fraction(at: t0) == nil, "no time left before a first update")
+    expect(fresh.summary(at: t0.addingTimeInterval(72)).hasPrefix("1/5") && fresh.summary(at: t0.addingTimeInterval(72)).contains(UpdateProgress.duration(72)),
+           "summary shows the step and time elapsed")
+    fresh.move(to: 1, at: t0.addingTimeInterval(10))
+    expect(fresh.seconds[0] == 10 && fresh.line.isEmpty, "a finished step keeps its time")
+    expect(fresh.quiet(at: t0.addingTimeInterval(20)) == nil && fresh.quiet(at: t0.addingTimeInterval(45)) == 35, "quiet only after 30 s without output")
+    fresh.show("PASS: something", at: t0.addingTimeInterval(44))
+    expect(fresh.quiet(at: t0.addingTimeInterval(45)) == nil && fresh.line == "PASS: something", "new output resets quiet")
+    fresh.move(to: 0, at: t0.addingTimeInterval(50))
+    expect(fresh.stage == 1, "steps never go back")
+
+    var timed = UpdateProgress(estimates: [0: 10, 1: 300, 2: 120, 3: 20], at: t0)
+    timed.move(to: 1, at: t0.addingTimeInterval(10))
+    expect(timed.remaining(at: t0.addingTimeInterval(110)) == 200 + 120 + 20, "time left: rest of this step and the steps after")
+    expect(abs((timed.fraction(at: t0.addingTimeInterval(160)) ?? 0) - 0.5) < 0.001, "segment fills by last time's duration")
+    expect(timed.remaining(at: t0.addingTimeInterval(900)) == 140 && timed.fraction(at: t0.addingTimeInterval(900)) == 0.95,
+           "a slow step stops at 95% and leaves the later steps")
+    var reused = UpdateProgress(estimates: [0: 10, 1: 300, 2: 120, 3: 20], at: t0)
+    reused.move(to: 3, at: t0.addingTimeInterval(8))
+    expect(reused.skipped == [1, 2] && reused.remaining(at: t0.addingTimeInterval(8)) == 20, "a reused build skips test and build")
+    reused.move(to: 4, at: t0.addingTimeInterval(30))
+    expect(reused.remaining(at: t0.addingTimeInterval(30)) == 0, "restarting has nothing left")
+
+    var stopped = UpdateProgress(at: t0)
+    stopped.move(to: 2, at: t0)
+    stopped.failed = true
+    expect(stopped.summary(at: t0).hasPrefix("3/5") && stopped.quiet(at: t0.addingTimeInterval(99)) == nil, "a failed step is named and not 'quiet'")
+    var waiting = UpdateProgress(at: t0)
+    waiting.waiting = true
+    expect(waiting.summary(at: t0) != UpdateProgress(at: t0).summary(at: t0), "waiting reads differently")
+
+    expect(UpdateProgress.lastLine(Data("one\r\n\u{1B}[32mPASS: two\u{1B}[0m  \n\n".utf8)) == "PASS: two", "last output line without colors")
+    expect(UpdateProgress.lastLine(Data(" \n".utf8)) == nil, "blank output has no line")
+
+    let savedTimes = UserDefaults.standard.object(forKey: UpdateProgress.key)
+    defer { UserDefaults.standard.set(savedTimes, forKey: UpdateProgress.key) }
+    var done = UpdateProgress(estimates: [1: 300, 2: 120], at: t0)
+    done.move(to: 3, at: t0.addingTimeInterval(9))
+    done.move(to: 4, at: t0.addingTimeInterval(25))
+    UpdateProgress.remember(done)
+    expect(UpdateProgress.saved == [0: 9, 1: 300, 2: 120, 3: 16], "saved times keep last time's for skipped steps")
+    print("PASS: update progress bar steps, time left and output line")
+}
+
 // Pictures: Claude's SVG and Codex's generated image become stored pictures, shown with markers,
 // and are passed to everyone who speaks afterwards (moderator now, all AIs in the next question).
 do {

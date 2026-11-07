@@ -294,7 +294,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 menu.addItem(action(L("로컬 모델 지금 내리기", "Unload Local Model Now"), #selector(unloadLocal)))
             }
         }
-        if let next = model.updater.available {
+        if let progress = model.updater.progress {
+            // Also seen with Settings closed; the menu is rebuilt each time it opens.
+            menu.addItem(info(L("업데이트 ", "Update ") + progress.summary(at: Date())))
+        }
+        if let next = model.updater.available, model.updater.progress?.failed ?? true {
             menu.addItem(action(L("새 버전 설치 (\(next.prefix(7)))", "Install New Version (\(next.prefix(7)))"), #selector(installUpdate)))
         }
         menu.addItem(action(L("설정…", "Settings…"), #selector(openSettings), key: ","))

@@ -608,13 +608,26 @@ private struct MaintenanceSettings: View {
             }
             Divider()
             // Check Now until a new version is found, then the blue Update Now in the same place.
-            SettingsRow(title: L("새 버전", "New version")) {
-                if updater.available != nil {
-                    SettingsAction(title: L("지금 업데이트", "Update Now"), prominent: true) { updater.install() }
-                        .disabled(updater.checking || updater.installing)
-                } else {
-                    SettingsAction(title: L("지금 확인", "Check Now")) { updater.check() }
-                        .disabled(updater.checking || updater.installing)
+            // While it installs, the step bar takes the card's full width (five named steps do not fit
+            // the value column), with Update Now again under a bar that stopped.
+            if let progress = updater.progress {
+                VStack(alignment: .leading, spacing: 6) {
+                    UpdateProgressBar(progress: progress)
+                    if progress.failed, updater.available != nil {
+                        SettingsAction(title: L("지금 업데이트", "Update Now"), prominent: true) { updater.install() }
+                            .disabled(updater.checking || updater.installing)
+                    }
+                }
+                .padding(.horizontal, 10).padding(.vertical, 8)
+            } else {
+                SettingsRow(title: L("새 버전", "New version")) {
+                    if updater.available != nil {
+                        SettingsAction(title: L("지금 업데이트", "Update Now"), prominent: true) { updater.install() }
+                            .disabled(updater.checking || updater.installing)
+                    } else {
+                        SettingsAction(title: L("지금 확인", "Check Now")) { updater.check() }
+                            .disabled(updater.checking || updater.installing)
+                    }
                 }
             }
             Text((updater.channel == "main" ? L("베타: 아직 테스트되지 않은 변경이 올 수 있어요.", "Beta: changes may not be tested yet.") + "\n" : "")
@@ -650,6 +663,69 @@ private struct MaintenanceSettings: View {
             }
         }
         }
+    }
+}
+
+// Five segments for fetch, test, build, prepare and restart: done ones full, the current one filling
+// by last time's duration (pulsing when there is none), yellow while waiting, red where it stopped.
+// Below: the step, time elapsed and left, and the last line of output, so a stalled step shows.
+private struct UpdateProgressBar: View {
+    let progress: UpdateProgress
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            let now = context.date
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .top, spacing: 3) {
+                    ForEach(0 ..< UpdateProgress.count, id: \.self) { step in
+                        VStack(alignment: .leading, spacing: 3) {
+                            segment(step, now)
+                            Text(UpdateProgress.names[step] + (step < progress.stage ? " ✓" : ""))
+                                .font(.system(size: 10, weight: step == progress.stage ? .semibold : .regular))
+                                .foregroundStyle(step == progress.stage ? Color.primary : Color.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+                }
+                Text(progress.summary(at: now))
+                    .font(.system(size: 11)).foregroundStyle(tint == .accentColor ? Color.primary : tint)
+                    .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                if let output = output(now) {
+                    Text(output).font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
+                        .lineLimit(1).truncationMode(.tail)
+                        .frame(maxWidth: .infinity, alignment: .leading)   // a long line must not squeeze the steps
+                        .help(progress.line)
+                }
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private var tint: Color { progress.failed ? .red : progress.waiting ? .yellow : .accentColor }
+
+    private func segment(_ step: Int, _ now: Date) -> some View {
+        let current = step == progress.stage
+        let fill: Double = step < progress.stage ? 1
+            : current ? (progress.failed || progress.waiting ? 1 : progress.fraction(at: now) ?? 0.5) : 0
+        // Without last time's duration the current segment pulses instead of pretending to know.
+        let pulse = current && !progress.failed && !progress.waiting && progress.fraction(at: now) == nil
+            && Int(now.timeIntervalSince1970) % 2 == 1
+        return GeometryReader { box in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.primary.opacity(0.1))
+                Capsule().fill(current ? tint : Color.accentColor)
+                    .frame(width: box.size.width * fill)
+                    .opacity(pulse ? 0.45 : 1)
+                    .animation(.easeInOut(duration: 0.9), value: pulse)
+            }
+        }
+        .frame(height: 4)
+    }
+
+    private func output(_ now: Date) -> String? {
+        let quiet = progress.quiet(at: now).map { L("\(UpdateProgress.duration($0))째 새 출력 없음", "no output for \(UpdateProgress.duration($0))") }
+        guard !progress.line.isEmpty || quiet != nil else { return nil }
+        return "› " + [progress.line, quiet].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
     }
 }
 

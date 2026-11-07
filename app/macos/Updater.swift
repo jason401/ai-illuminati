@@ -24,6 +24,8 @@ final class Updater: ObservableObject {
     let root = URL(fileURLWithPath: AccountStore.supportDir).appendingPathComponent("source")
     /// True while the installer helper prepares the swap; channel and Update Now wait for it.
     @Published private(set) var installing = false
+    /// What Update Now is doing, for the bar in Settings and the line in the menu; nil when idle.
+    @Published private(set) var progress: UpdateProgress?
     private var revision: String { Bundle.main.object(forInfoDictionaryKey: "AISourceRevision") as? String ?? "" }
     private var updates: URL { URL(fileURLWithPath: AccountStore.supportDir).appendingPathComponent("updates") }
     private var target: URL {
@@ -79,6 +81,7 @@ final class Updater: ObservableObject {
     func check() {
         guard !checking, !installing else { return }
         checking = true
+        progress = nil
         let branch = channel
         report(["status": "checking"], save: false)
         work.async {
@@ -106,14 +109,16 @@ final class Updater: ObservableObject {
     func install() {
         guard !checking, !installing else { return }
         let branch = channel
+        progress = UpdateProgress(estimates: UpdateProgress.saved)
         if isBusy() {
+            progress?.waiting = true
             report(["status": "waiting", "current": revision])
             return schedule(after: Self.retry) { if $0.channel == branch { $0.install() } }
         }
         checking = true
         report(["status": "checking"], save: false)
         work.async {
-            defer { DispatchQueue.main.async { self.finished(branch) } }
+            defer { DispatchQueue.main.async { self.settle(); self.finished(branch) } }
             if self.migrating { return self.handoff(staged: Bundle.main.bundleURL, next: self.revision) }
             do {
                 try self.withSource(branch) { step in
@@ -124,8 +129,10 @@ final class Updater: ObservableObject {
                         do {
                             try step.advance(self.gitStep)
                             self.report(["status": "testing", "current": self.revision, "next": step.new], save: false)
+                            self.update { $0.move(to: 1) }
                             try self.shell(["zsh", "tools/tests/run_mode2.sh"], timeout: 30 * 60, step: "tests")
                             self.report(["status": "building", "current": self.revision, "next": step.new], save: false)
+                            self.update { $0.move(to: 2) }
                             try self.shell(["zsh", "tools/build_app.sh", "--stage"], timeout: 20 * 60, step: "build")
                         } catch {
                             // Only this private, clean checkout can be reset; never a developer folder.
@@ -138,9 +145,21 @@ final class Updater: ObservableObject {
                     self.handoff(staged: self.staged, next: step.new, channel: branch)
                 }
             } catch {
+                self.update { $0.failed = true }
                 if self.still(branch) { self.report(["status": "failed", "current": self.revision, "detail": String(describing: error)]) }
             }
         }
+    }
+
+    /// Changes the progress on the main thread (the bar is drawn from it).
+    private func update(_ change: @escaping (inout UpdateProgress) -> Void) {
+        if Thread.isMainThread { if progress != nil { change(&progress!) } }
+        else { DispatchQueue.main.async { self.update(change) } }
+    }
+
+    /// An install that ended without handing off, failing or waiting (up to date, channel changed…) hides the bar.
+    private func settle() {
+        if let current = progress, !current.failed, !current.waiting, !installing { progress = nil }
     }
 
     private func setAvailable(_ next: String?) {
@@ -200,10 +219,12 @@ final class Updater: ObservableObject {
     private func handoff(staged: URL, next: String, channel: String? = nil) {
         DispatchQueue.main.sync {
             guard !isBusy() else {
+                update { $0.waiting = true }
                 report(["status": "waiting", "current": revision, "next": next])
                 schedule(after: Self.retry) { $0.retryInstall(channel) }
                 return
             }
+            update { $0.move(to: 3) }
             do {
                 // Avoid migrating a second app while a legacy copy is still running.
                 let others = NSRunningApplication.runningApplications(withBundleIdentifier: "local.aiilluminati")
@@ -231,7 +252,10 @@ final class Updater: ObservableObject {
                 try process.run()
                 installing = true
                 waitForInstaller(process, token: token, next: next, channel: channel, deadline: Date().addingTimeInterval(120))
-            } catch { report(["status": "failed", "detail": String(describing: error)]) }
+            } catch {
+                update { $0.failed = true }
+                report(["status": "failed", "detail": String(describing: error)])
+            }
         }
     }
 
@@ -251,6 +275,7 @@ final class Updater: ObservableObject {
                 guard !self.isBusy() else {
                     process.terminate()
                     self.installing = false
+                    self.update { $0.waiting = true }
                     self.report(["status": "waiting", "current": self.revision, "next": next])
                     self.schedule(after: Self.retry) { $0.retryInstall(channel) }
                     return
@@ -260,14 +285,18 @@ final class Updater: ObservableObject {
                     catch {
                         process.terminate()
                         self.installing = false
+                        self.update { $0.failed = true }
                         self.report(["status": "failed", "detail": "Could not unregister old login item: \(error)"])
                         return
                     }
                 }
+                self.update { $0.move(to: 4) }
+                if let done = self.progress { UpdateProgress.remember(done) }   // the next update estimates the time left from these
                 NSApp.terminate(nil)
             } else if !process.isRunning || Date() > deadline {
                 if process.isRunning { process.terminate() }
                 self.installing = false
+                self.update { $0.failed = true }
                 self.report(["status": "failed", "detail": L("설치 준비 실패: updates/install.log를 확인해 주세요", "Installer preparation failed; see updates/install.log")])
             } else { self.waitForInstaller(process, token: token, next: next, channel: channel, deadline: deadline) }
         }
@@ -314,7 +343,7 @@ final class Updater: ObservableObject {
     }
 
     private func shell(_ arguments: [String], timeout: TimeInterval, step: String) throws {
-        _ = try execute(["/usr/bin/env"] + arguments, timeout: timeout, step: step)
+        _ = try execute(["/usr/bin/env"] + arguments, timeout: timeout, step: step, live: true)
     }
 
     private func cleanEnvironment() -> [String: String] {
@@ -326,7 +355,8 @@ final class Updater: ObservableObject {
         return env
     }
 
-    private func execute(_ command: [String], timeout: TimeInterval, step: String, directory: URL? = nil) throws -> String {
+    /// `live`: each piece of output shows its last line under the bar, so a stalled step is visible.
+    private func execute(_ command: [String], timeout: TimeInterval, step: String, directory: URL? = nil, live: Bool = false) throws -> String {
         let process = Process(), out = Pipe()
         process.executableURL = URL(fileURLWithPath: command[0])
         process.arguments = Array(command.dropFirst())
@@ -338,7 +368,17 @@ final class Updater: ObservableObject {
         try process.run()
         var data = Data()
         let reader = DispatchQueue(label: "updater-read"), done = DispatchSemaphore(value: 0)
-        reader.async { data = out.fileHandleForReading.readDataToEndOfFile(); done.signal() }
+        reader.async {
+            while true {
+                let chunk = out.fileHandleForReading.availableData
+                if chunk.isEmpty { break }
+                data.append(chunk)
+                if live, let line = UpdateProgress.lastLine(chunk) {
+                    self.update { $0.show(line) }
+                }
+            }
+            done.signal()
+        }
         if done.wait(timeout: .now() + timeout) == .timedOut {
             DebateCancellation.end(process)
             process.waitUntilExit()
@@ -474,5 +514,108 @@ struct ChannelStep {
     func restore(_ git: Git) {
         if switching { _ = try? git(["checkout", "-q", "--force", "-B", head, old], 60) }
         else { _ = try? git(["reset", "-q", "--hard", old], 60) }
+    }
+}
+
+/// The five steps of Update Now, as one bar: fetch, test, build, prepare the installer, restart.
+/// The time left comes from how long each step took in the last successful update on this Mac.
+struct UpdateProgress: Equatable {
+    static let count = 5
+    static var names: [String] { [L("받기", "Fetch"), L("시험", "Test"), L("빌드", "Build"), L("설치 준비", "Prepare"), L("재시작", "Restart")] }
+    private static var doing: [String] { [L("받는 중", "Fetching"), L("시험 중", "Testing"), L("빌드 중", "Building"), L("설치 준비 중", "Preparing"), L("재시작 중", "Restarting")] }
+    static let key = "updateStepSeconds"
+    /// Output older than this reads as "no output for N s" under the bar.
+    static let quietAfter: TimeInterval = 30
+
+    var stage = 0
+    var started = Date(), stageStarted = Date()
+    var line = "", lineAt = Date()
+    var waiting = false, failed = false
+    /// Steps not run this time (a build made earlier was reused).
+    var skipped: Set<Int> = []
+    /// How long each finished step took this time.
+    var seconds: [Int: TimeInterval] = [:]
+    /// How long each step took last time; empty before the first update.
+    var estimates: [Int: TimeInterval] = [:]
+
+    init(estimates: [Int: TimeInterval] = [:], at now: Date = Date()) {
+        self.estimates = estimates
+        started = now; stageStarted = now; lineAt = now
+    }
+
+    mutating func move(to next: Int, at now: Date = Date()) {
+        guard next > stage, next < Self.count else { return }
+        seconds[stage] = now.timeIntervalSince(stageStarted)
+        for skippedStage in stage + 1 ..< next { skipped.insert(skippedStage) }
+        stage = next; stageStarted = now
+        line = ""; lineAt = now
+        waiting = false
+    }
+
+    mutating func show(_ text: String, at now: Date = Date()) { line = text; lineAt = now }
+
+    /// Seconds left; nil while some remaining step has no time from last time. Restarting takes seconds and is not counted.
+    func remaining(at now: Date) -> TimeInterval? {
+        var left: TimeInterval = 0
+        for step in stage ..< Self.count - 1 where !skipped.contains(step) {
+            guard let last = estimates[step] else { return nil }
+            left += step == stage ? max(0, last - now.timeIntervalSince(stageStarted)) : last
+        }
+        return left
+    }
+
+    /// How full the current step's segment is; nil when there is no time from last time.
+    func fraction(at now: Date) -> Double? {
+        guard let last = estimates[stage], last > 0 else { return nil }
+        return min(0.95, max(0.05, now.timeIntervalSince(stageStarted) / last))
+    }
+
+    /// Seconds without new output while testing or building, once past `quietAfter`.
+    func quiet(at now: Date) -> TimeInterval? {
+        guard (1...2).contains(stage), !waiting, !failed else { return nil }
+        let silent = now.timeIntervalSince(lineAt)
+        return silent >= Self.quietAfter ? silent : nil
+    }
+
+    /// "2/5 시험 중 · 3분 12초 지남 · 약 6분 남음"
+    func summary(at now: Date) -> String {
+        let step = "\(stage + 1)/\(Self.count) "
+        if failed { return step + L("\(Self.names[stage])에서 멈췄어요", "Stopped at \(Self.names[stage])") }
+        if waiting { return step + Self.names[stage] + L(" · 채팅·게임이 끝나면 계속해요", " · continues after the chat or game") }
+        var text = step + Self.doing[stage] + " · " + L("\(Self.duration(now.timeIntervalSince(started))) 지남", "\(Self.duration(now.timeIntervalSince(started))) elapsed")
+        if let left = remaining(at: now), stage < Self.count - 1 {
+            let minutes = max(1, Int((left / 60).rounded(.up)))
+            text += left < 60 ? L(" · 1분 안에 끝나요", " · under a minute left") : L(" · 약 \(minutes)분 남음", " · about \(minutes) min left")
+        }
+        return text
+    }
+
+    /// "3분 12초" / "3m 12s"
+    static func duration(_ seconds: TimeInterval) -> String {
+        let total = max(0, Int(seconds)), minutes = total / 60, rest = total % 60
+        if minutes == 0 { return L("\(rest)초", "\(rest)s") }
+        return L("\(minutes)분 \(rest)초", "\(minutes)m \(rest)s")
+    }
+
+    /// The last non-empty line of a piece of output, without terminal colors.
+    static func lastLine(_ data: Data) -> String? {
+        let text = String(decoding: data, as: UTF8.self)
+            .replacingOccurrences(of: "\u{1B}\\[[0-9;]*[A-Za-z]", with: "", options: .regularExpression)
+        let line = text.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }.last(where: { !$0.isEmpty })
+        return line.map { String($0.prefix(160)) }
+    }
+
+    /// The step times saved after the last successful update.
+    static var saved: [Int: TimeInterval] {
+        let stored = UserDefaults.standard.dictionary(forKey: key) as? [String: Double] ?? [:]
+        return Dictionary(uniqueKeysWithValues: stored.compactMap { name, seconds in Int(name).map { ($0, seconds) } })
+    }
+
+    /// Keeps this update's step times; steps it skipped keep last time's.
+    static func remember(_ progress: UpdateProgress) {
+        var times = progress.estimates
+        for (step, seconds) in progress.seconds where !progress.skipped.contains(step) { times[step] = seconds }
+        UserDefaults.standard.set(Dictionary(uniqueKeysWithValues: times.map { (String($0.key), $0.value) }), forKey: key)
     }
 }

@@ -47,6 +47,8 @@ Discussion and vote turns have no length limit by default; the mode settings als
 
 Attach pictures using +, paste, or drag and drop. Image generation and sharing differ by provider; do not assume all tools provide the same capabilities.
 
+Picture makers (Settings → Chat): checked ChatGPT accounts draw every picture the other AIs (Claude, Gemini, Gemma) need, in plain chats, team modes and project chats. The AI writes a picture request and the drawn image takes its place. With "Keep Enterprise and personal chats apart" on, an Enterprise AI asks only an Enterprise ChatGPT and a personal AI only a personal one; if every maker on that side fails, the request is shown instead. Charts of real data and diagrams that must be exact are still drawn by each AI. Uncheck all makers to have each AI draw for itself again.
+
 ## Materials and file permissions
 
 Linking folders or files initially records paths and inventory. Files and pages are read when needed. Selected PDF/Office ranges can be converted to text or images; this is not a full rendering of the original Office layout.

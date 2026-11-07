@@ -169,6 +169,12 @@ final class AppModel: ObservableObject {
     @Published var schoolOnlyHandoff: Bool {
         didSet { UserDefaults.standard.set(schoolOnlyHandoff, forKey: "schoolOnlyHandoff") }
     }
+    // ChatGPT accounts unchecked as picture makers (Settings → Chat). The others draw every picture the
+    // other AIs need; a new ChatGPT account starts checked.
+    @Published var pictureMakersOff: Set<String> {
+        didSet { UserDefaults.standard.set(pictureMakersOff.sorted(), forKey: "pictureMakersOff") }
+    }
+    var pictureMakers: [Account] { accounts.filter { $0.provider == .codex && !pictureMakersOff.contains($0.id) } }
     var onAccountsChange: (() -> Void)?
     var onDisplayChange: (() -> Void)?
     var onPreviewUsageMenu: (() -> Void)?
@@ -195,6 +201,7 @@ final class AppModel: ObservableObject {
         pausedSharedFolders = Set(UserDefaults.standard.stringArray(forKey: "pausedSharedFolders") ?? [])
         writableSharedFolders = Set(UserDefaults.standard.stringArray(forKey: "writableSharedFolders") ?? [])
         schoolOnlyHandoff = UserDefaults.standard.object(forKey: "schoolOnlyHandoff") as? Bool ?? true
+        pictureMakersOff = Set(UserDefaults.standard.stringArray(forKey: "pictureMakersOff") ?? [])
         localEnabled = LocalModel.enabled
         localKeepAlive = LocalModel.keepAlive
         let saved = UserDefaults.standard.string(forKey: "chatRules")
@@ -705,6 +712,25 @@ struct ChatSettingsTab: View {
             Text(L("켜면 엔터프라이즈 대화는 엔터프라이즈 계정끼리, 개인 대화는 개인 계정끼리만 이어받아요. 엔터프라이즈 계정은 계정 탭에서 표시해요.",
                    "On: Enterprise chats are continued only by Enterprise accounts, personal chats only by personal ones. Mark Enterprise accounts in the Accounts tab."))
                 .font(.system(size: 11)).foregroundStyle(.secondary)
+            let makers = model.accounts.filter { $0.provider == .codex }
+            if !makers.isEmpty {
+                SettingsCard(title: L("그림 담당", "Picture makers")) {
+                    ForEach(makers, id: \.id) { account in
+                        SettingsRow(title: account.name) {
+                            Text(account.isSchool ? L("엔터프라이즈", "Enterprise") : L("개인", "Personal"))
+                                .font(.system(size: 11)).foregroundStyle(.secondary)
+                            Spacer()
+                            Toggle(account.name, isOn: Binding(
+                                get: { !model.pictureMakersOff.contains(account.id) },
+                                set: { on in if on { model.pictureMakersOff.remove(account.id) } else { model.pictureMakersOff.insert(account.id) } }))
+                                .labelsHidden().toggleStyle(.switch)
+                        }
+                    }
+                }
+                Text(L("켜 둔 ChatGPT 계정이 다른 AI 대신 모든 그림을 그려요. 위 설정이 켜져 있으면 엔터프라이즈 AI는 엔터프라이즈 ChatGPT에게, 개인 AI는 개인 ChatGPT에게만 맡겨요. 숫자가 정확해야 하는 그래프와 도표는 각 AI가 직접 그려요.",
+                       "Checked ChatGPT accounts draw every picture for the other AIs. With the setting above on, Enterprise AIs ask only Enterprise ChatGPT and personal AIs only personal ChatGPT. Charts and diagrams that must be exact are still drawn by each AI."))
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+            }
             MCPSettings()
         }
         .padding(12).controlSize(.small)

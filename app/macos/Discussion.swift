@@ -604,10 +604,57 @@ final class Discussion: ObservableObject {
     let pictureLock = NSLock()
     var nextPicture = 1
 
-    // Collects the pictures in one AI reply (numbered in order, stored with the chat).
-    func collectPictures(_ text: String, account: Account, since: Date, id: UUID) -> Pictures.Harvest {
+    // The ChatGPT accounts that draw for `account` (Settings → Chat → Picture makers), best first. Empty when
+    // none is checked or `account` is one of them (it draws itself). With Enterprise and personal chats kept
+    // apart, only makers on the same side: an Enterprise Claude asks only an Enterprise ChatGPT.
+    func pictureMakers(for account: Account, chat id: UUID, excluded: Set<String> = []) -> [Account] {
+        let makers = model.pictureMakers
+        guard !makers.contains(where: { $0.id == account.id }) else { return [] }
+        var side: Bool?
+        if model.schoolOnlyHandoff {
+            // Gemma on this Mac belongs to no side: the chat's side decides.
+            let chat = conversations.first { $0.id == id }?.configuration?.school
+            side = account.provider == .ollama ? (chat ?? false) : account.isSchool
+        }
+        var left = makers.filter { !excluded.contains($0.id) }, ordered: [Account] = []
+        while let best = AutoPick.choose(left, usage: model.latestUsage, school: side, current: nil) {
+            ordered.append(best); left.removeAll { $0.id == best.id }
+        }
+        return ordered
+    }
+
+    // How `account` makes pictures in this chat (draws itself, or asks a picture maker).
+    func pictureRule(_ account: Account, chat id: UUID? = nil) -> String {
+        Pictures.rule(for: account.provider, delegate: !pictureMakers(for: account, chat: id ?? currentID).isEmpty)
+    }
+
+    // Collects the pictures in one AI reply (numbered in order, stored with the chat). Each ```picture request
+    // goes to a picture maker first; one out of usage hands it to the next.
+    func collectPictures(_ text: String, account: Account, since: Date, id: UUID, index: Int? = nil,
+                         cancellation: DebateCancellation? = nil) -> Pictures.Harvest {
+        let requests = Pictures.requestBlocks(in: text)
+        var drawn: [[Data]?] = []
+        if !requests.isEmpty, !pictureMakers(for: account, chat: id).isEmpty {
+            let token = cancellation ?? DebateCancellation()
+            var excluded: Set<String> = []
+            for block in requests {
+                var files: [Data]?
+                while files == nil, !token.isCancelled, let maker = pictureMakers(for: account, chat: id, excluded: excluded).first {
+                    if let index { changeTurn(id, index) { $0.status = L("\(self.label(maker))가 그림 그리는 중…", "\(self.label(maker)) is drawing…") } }
+                    let started = Date()
+                    switch debateAnswer(maker, Pictures.makerPrompt(block.request), 600, token, false) {
+                    case .success:
+                        let made = Pictures.newCodexImages(maker, since: started).compactMap { try? Data(contentsOf: $0) }
+                        if made.isEmpty { excluded.insert(maker.id) } else { files = made }
+                    case .failure:
+                        excluded.insert(maker.id)
+                    }
+                }
+                drawn.append(files)
+            }
+        }
         pictureLock.lock(); defer { pictureLock.unlock() }
-        let harvest = Pictures.harvest(text, account: account, since: since, conversationID: id, number: nextPicture)
+        let harvest = Pictures.harvest(text, account: account, since: since, conversationID: id, number: nextPicture, drawn: drawn)
         nextPicture += harvest.images.count
         return harvest
     }

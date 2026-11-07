@@ -160,7 +160,7 @@ extension Discussion {
               No attacks, no repeating, no separate summary.
               """)
         Use only web search and reading web pages. Do not change files or run commands.
-        \(Pictures.rule(for: account.provider))
+        \(pictureRule(account))
         \(Self.headlineRule)
         [Moderator focus]
         \(focus.isEmpty ? "Give your initial contribution." : focus)
@@ -200,7 +200,7 @@ extension Discussion {
                 var result = self.requestDebate(account, prompt, 300, cancellation, web: true)
                 var pictures: [ChatImage] = []
                 if case .success(let text) = result {
-                    let harvest = self.collectPictures(text, account: account, since: started, id: id)
+                    let harvest = self.collectPictures(text, account: account, since: started, id: id, cancellation: cancellation)
                     result = .success(harvest.text); pictures = harvest.images
                 }
                 lock.lock(); openings[account.provider] = result; openingPictures[account.provider] = pictures; lock.unlock()
@@ -304,7 +304,7 @@ extension Discussion {
             switch speech {
             case .success(let text):
                 successful.insert(account.provider)
-                let harvest = collectPictures(text, account: account, since: started, id: id)
+                let harvest = collectPictures(text, account: account, since: started, id: id, cancellation: cancellation)
                 entry = .reply(round: 1, speaker: label(account), text: harvest.text)
                 entry.images = harvest.images.isEmpty ? nil : harvest.images
                 sharePictures(harvest.images, by: label(account))
@@ -340,13 +340,13 @@ extension Discussion {
                 \(board.isEmpty ? "" : "Moderator board:\n" + board + "\n")End reason: \(ending)
                 If the user asked for a picture and the team made some, they are already shown: name the best one by its marker
                 (e.g. [그림 2] / [Picture 2]) and say why in one line; make a new one only if the team made none.
-                \(Pictures.rule(for: moderator.provider))
+                \(pictureRule(moderator))
                 Do not change files or execute commands.
                 """, 180, cancellation)
             if !cancellation.isCancelled {
                 switch result {
                 case .success(let text):
-                    let harvest = collectPictures(text, account: moderator, since: finalStarted, id: id)
+                    let harvest = collectPictures(text, account: moderator, since: finalStarted, id: id, index: index, cancellation: cancellation)
                     changeTurn(id, index, save: true) {
                         $0.final = harvest.text; $0.finalBy = self.label(moderator)
                         $0.finalImages = harvest.images.isEmpty ? nil : harvest.images

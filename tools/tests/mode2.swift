@@ -802,6 +802,76 @@ do {
     print("PASS: AI pictures (SVG and generated files) are stored, marked, shown and shared with later speakers")
 }
 
+// Picture makers: a ```picture request is drawn by a checked ChatGPT account on the writer's side
+// (Enterprise Claude → Enterprise ChatGPT), the next one takes over after a failure, and with no maker the
+// AI is told to draw itself and request blocks stay as written.
+do {
+    let savedModes = Discussion.availableModes
+    Discussion.availableModes = [0, 1, 2, 3, 4]
+    defer { Discussion.availableModes = savedModes }
+    let m = AppModel()
+    let personalDir = AccountStore.home + "/maker-personal", schoolDir = AccountStore.home + "/maker-school"
+    m.accounts = [Account(id: "maker-claude", provider: .claude, name: "Claude (학교)", dir: nil, school: true),
+                  Account(id: "maker-p-codex", provider: .codex, name: "ChatGPT (개인)", dir: personalDir, school: false),
+                  Account(id: "maker-s-codex", provider: .codex, name: "ChatGPT (학교)", dir: schoolDir, school: true),
+                  Account(id: "maker-s-codex2", provider: .codex, name: "ChatGPT (회사)", dir: schoolDir + "2", school: true)]
+    m.schoolOnlyHandoff = true
+    m.pictureMakersOff = []
+    func left(_ week: Double) -> AIUsage {
+        var u = AIUsage(name: "u")
+        u.fiveHour = UsageWindow(usedPercent: 10, resetsAt: nil); u.weekly = UsageWindow(usedPercent: 100 - week, resetsAt: nil)
+        return u
+    }
+    m.latestUsage = Dictionary(uniqueKeysWithValues: m.accounts.map { ($0.id, left($0.id == "maker-s-codex" ? 95 : 80)) })
+    let chat = Discussion(model: m)
+    chat.newConversation()
+    chat.configure { $0.mode = 0; $0.soloAccountID = "maker-claude"; $0.school = true }
+    let png = Pictures.render(svg: "<svg viewBox='0 0 10 10'><rect width='10' height='10' fill='blue'/></svg>")!
+    let lock = NSLock()
+    var writerPrompts: [String] = [], makers: [String] = [], makerPrompts: [String] = []
+    var failing: Set<String> = ["maker-s-codex"]
+    let writer: (String) -> Result<String, Answerer.Failure> = { prompt in
+        lock.lock(); writerPrompts.append(prompt); lock.unlock()
+        return .success("개념도예요.\n```picture\nA lens focusing light, labels 'lens' and 'focus'\n```\n끝.")
+    }
+    chat.workspaceAnswer = { _, prompt, _, _, _ in writer(prompt) }
+    chat.debateAnswer = { account, prompt, _, _, _ in
+        guard prompt.contains("[PICTURE REQUEST]") else { return writer(prompt) }
+        lock.lock(); makers.append(account.id); makerPrompts.append(prompt); lock.unlock()
+        if failing.contains(account.id) { return .failure(.failed("You've hit your usage limit (429)")) }
+        let folder = account.codexHome + "/generated_images/thread-1"
+        try? FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+        try? png.write(to: URL(fileURLWithPath: folder + "/img-\(makers.count).png"))
+        return .success("Made it.")
+    }
+    chat.draft = "렌즈 개념도 그려줘"; chat.send(); waitFor(chat)
+    var turn = chat.current.turns[0]
+    expect(writerPrompts.first?.contains("```picture") == true && writerPrompts.first?.contains("do not draw it yourself") == true,
+           "with a picture maker, the AI is told to write a picture request")
+    expect(makers == ["maker-s-codex", "maker-s-codex2"], "only Enterprise makers draw for an Enterprise Claude; the next one takes over after a limit")
+    expect(makerPrompts.last?.contains("[PICTURE REQUEST]") == true && makerPrompts.last?.contains("labels 'lens' and 'focus'") == true,
+           "the maker gets the request")
+    expect(turn.finalImages?.count == 1 && (turn.final?.contains("[그림 1]") == true || turn.final?.contains("[Picture 1]") == true) && turn.final?.contains("```picture") == false,
+           "the drawn picture replaces the request block: \(turn.final ?? "nil")")
+
+    failing = ["maker-s-codex", "maker-s-codex2"]; makers.removeAll()
+    chat.draft = "하나 더"; chat.send(); waitFor(chat)
+    turn = chat.current.turns[1]
+    expect(!makers.contains("maker-p-codex"), "a personal maker never draws for an Enterprise AI")
+    expect(turn.finalImages == nil && (turn.final?.contains("[그림을 만들지 못했어요]") == true || turn.final?.contains("[The picture could not be made]") == true) && turn.final?.contains("> A lens") == true,
+           "a picture no maker could make keeps its request")
+
+    m.pictureMakersOff = ["maker-s-codex", "maker-s-codex2"]; makers.removeAll(); writerPrompts.removeAll()
+    chat.draft = "또"; chat.send(); waitFor(chat)
+    turn = chat.current.turns[2]
+    expect(makers.isEmpty && writerPrompts.first?.contains("Pictures: only when the user asks") == true,
+           "with no maker on its side the AI draws itself")
+    expect(turn.final?.contains("```picture") == true, "request blocks stay when there is no maker")
+    expect(chat.pictureMakers(for: m.accounts[1], chat: chat.currentID).isEmpty, "a maker draws its own pictures")
+    m.pictureMakersOff = []
+    print("PASS: picture makers draw requested pictures on the same Enterprise/personal side")
+}
+
 // Pin to top and delete all.
 do {
     let m = AppModel()

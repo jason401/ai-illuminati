@@ -85,8 +85,8 @@ cat > "$OUT/Contents/Info.plist" <<PLIST
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleVersion</key><string>$(git rev-list --count HEAD)</string>
 <key>AISourceRevision</key><string>$(git rev-parse HEAD)</string>
-<key>AIUpdateChannel</key><string>stable</string>
-<key>CFBundleShortVersionString</key><string>0.2.0</string>
+<key>AIUpdateChannel</key><string>$(git rev-parse --abbrev-ref HEAD)</string>
+<key>CFBundleShortVersionString</key><string>0.3.0</string>
 <key>LSMinimumSystemVersion</key><string>13.0</string>
 <key>LSUIElement</key><true/>
 </dict></plist>

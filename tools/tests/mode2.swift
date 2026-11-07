@@ -1861,6 +1861,7 @@ testGoogleDrive()
 testWindowDrag()
 
 testProjectWork()
+testUpdateChannels()
 
 testProjectHandoff()
 testFullAuto()

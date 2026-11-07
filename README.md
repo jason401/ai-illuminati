@@ -68,7 +68,7 @@ See [SECURITY.md](SECURITY.md) for reporting guidance and sensitive-file handlin
 
 ## Updates and development
 
-Installed apps check the public `stable` branch. When automatic checks are enabled, checks run about 60 seconds after launch and every three hours. **Update Now** starts tests, a local build, and installation. Command Line Tools, Python, and the existing local signing identity remain required. The app does not automatically modify developer checkouts.
+Installed apps check the public `stable` branch, or `main` with **Settings → General → Updates → Channel → Beta** (new changes arrive there first and may be broken; going back to Stable updates once `stable` catches up with the version you run). When automatic checks are enabled, checks run about 60 seconds after launch and every three hours. **Update Now** starts tests, a local build, and installation. Command Line Tools, Python, and the existing local signing identity remain required. The app does not automatically modify developer checkouts.
 
 Detailed instructions: [docs/USAGE.md](docs/USAGE.md).
 

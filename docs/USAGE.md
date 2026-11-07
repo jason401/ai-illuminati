@@ -71,7 +71,7 @@ Open Game (⌘G) starts AI poker with virtual chips. Each AI decision consumes u
 
 Choose English or Korean in Settings. The AI is instructed to follow the language of your latest message. Existing conversations, materials, and account names are not automatically translated.
 
-Updates check stable and install only after a user action. If installation fails, inspect the update state and logs in the local app-data folder, but remove emails, tokens, personal paths, and private conversations before sharing a report. See the [security guidance](../SECURITY.md).
+Updates check stable (or main, with the Beta channel in Settings) and install only after a user action. If installation fails, inspect the update state and logs in the local app-data folder, but remove emails, tokens, personal paths, and private conversations before sharing a report. See the [security guidance](../SECURITY.md).
 
 The app uses a public iOS OAuth client ID without a client secret. A small group personally known to the
 developer may qualify for Google’s personal-use exception; a count below 100 alone is not a

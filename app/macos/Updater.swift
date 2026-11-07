@@ -2,7 +2,8 @@ import Cocoa
 import Darwin
 import ServiceManagement
 
-// stable is a deployment channel. Only the app-owned checkout is ever changed.
+// stable is a deployment channel; main is the beta channel, where changes arrive first.
+// Only the app-owned checkout is ever changed.
 // Each Mac builds with its existing local identity; developer repositories are never touched.
 final class Updater: ObservableObject {
     // Only checks run on their own; installing a new version always waits for the button.
@@ -13,12 +14,13 @@ final class Updater: ObservableObject {
     @Published private(set) var checking = false
     @Published private(set) var status = ""
     @Published private(set) var available: String?
+    /// The branch updates come from: "stable" (default) or "main" (beta).
+    @Published private(set) var channel = UpdateChannel.current
     var isBusy: () -> Bool = { false }
     var onAvailableChange: () -> Void = {}
 
     static let every: TimeInterval = 3 * 3600, retry: TimeInterval = 600, first: TimeInterval = 60
     static let repository = "https://github.com/jason401/ai-illuminati.git"
-    static let channel = "stable"
     let root = URL(fileURLWithPath: AccountStore.supportDir).appendingPathComponent("source")
     private var installing = false
     private var revision: String { Bundle.main.object(forInfoDictionaryKey: "AISourceRevision") as? String ?? "" }
@@ -59,58 +61,83 @@ final class Updater: ObservableObject {
         }
     }
 
-    /// Looks for a new version on the stable channel. Changes nothing on this Mac's app.
+    /// Switches between Stable and Beta, then looks right away. What the other channel found no longer applies.
+    func setChannel(_ name: String) {
+        guard UpdateChannel.all.contains(name), name != channel else { return }
+        channel = name
+        UserDefaults.standard.set(name, forKey: UpdateChannel.key)
+        setAvailable(nil)
+        report(["status": ""])
+        if !checking && !installing { check() }   // a running check looks again when it ends
+    }
+
+    /// True while `branch` is still the chosen channel (asked from the update queue).
+    private func still(_ branch: String) -> Bool { DispatchQueue.main.sync { channel == branch } }
+
+    /// Looks for a new version on the chosen channel. Changes nothing on this Mac's app.
     func check() {
         guard !checking, !installing else { return }
         checking = true
+        let branch = channel
         report(["status": "checking"], save: false)
         work.async {
-            defer { DispatchQueue.main.async { self.checking = false } }
+            defer { DispatchQueue.main.async { self.finished(branch) } }
             do {
-                try self.withSource { _, new in
-                    self.report(["status": "available", "current": self.revision, "next": new])
-                    self.setAvailable(new)
+                try self.withSource(branch) { step in
+                    // The channel changed while this ran: its result belongs to the other channel.
+                    guard self.still(branch) else { return }
+                    self.report(["status": "available", "current": self.revision, "next": step.new])
+                    self.setAvailable(step.new)
                 }
             } catch {
-                self.report(["status": "failed", "current": self.revision, "detail": String(describing: error)])
+                if self.still(branch) { self.report(["status": "failed", "current": self.revision, "detail": String(describing: error)]) }
             }
         }
     }
 
-    /// Runs only after the user asks: tests, builds and installs the stable version.
+    /// Ends a check or install; if the channel changed meanwhile, looks again (without installing).
+    private func finished(_ branch: String) {
+        checking = false
+        if channel != branch { check() }
+    }
+
+    /// Runs only after the user asks: tests, builds and installs the chosen channel's version.
     func install() {
         guard !checking, !installing else { return }
+        let branch = channel
         if isBusy() {
             report(["status": "waiting", "current": revision])
-            return schedule(after: Self.retry) { $0.install() }
+            return schedule(after: Self.retry) { if $0.channel == branch { $0.install() } }
         }
         checking = true
         report(["status": "checking"], save: false)
         work.async {
-            defer { DispatchQueue.main.async { self.checking = false } }
+            defer { DispatchQueue.main.async { self.finished(branch) } }
             if self.migrating { return self.handoff(staged: Bundle.main.bundleURL, next: self.revision) }
             do {
-                try self.withSource { old, new in
+                try self.withSource(branch) { step in
                     // A build made earlier for this version (e.g. while waiting for a chat) is reused.
-                    let ready = (try? self.git("rev-parse", "HEAD")) == new
-                        && (NSDictionary(contentsOf: self.staged.appendingPathComponent("Contents/Info.plist"))?["AISourceRevision"] as? String) == new
+                    let ready = (try? self.git("rev-parse", "HEAD")) == step.new && !step.switching
+                        && (NSDictionary(contentsOf: self.staged.appendingPathComponent("Contents/Info.plist"))?["AISourceRevision"] as? String) == step.new
                     if !ready {
                         do {
-                            try self.git("merge", "--ff-only", "-q", new)
-                            self.report(["status": "testing", "current": self.revision, "next": new], save: false)
+                            try step.advance(self.gitStep)
+                            self.report(["status": "testing", "current": self.revision, "next": step.new], save: false)
                             try self.shell(["zsh", "tools/tests/run_mode2.sh"], timeout: 30 * 60, step: "tests")
-                            self.report(["status": "building", "current": self.revision, "next": new], save: false)
+                            self.report(["status": "building", "current": self.revision, "next": step.new], save: false)
                             try self.shell(["zsh", "tools/build_app.sh", "--stage"], timeout: 20 * 60, step: "build")
                         } catch {
                             // Only this private, clean checkout can be reset; never a developer folder.
-                            _ = try? self.git("reset", "-q", "--hard", old)
+                            step.restore(self.gitStep)
                             throw error
                         }
                     }
-                    self.handoff(staged: self.staged, next: new)
+                    // Testing and building take minutes: a channel picked meanwhile waits for a new Update Now.
+                    guard self.still(branch) else { return }
+                    self.handoff(staged: self.staged, next: step.new, channel: branch)
                 }
             } catch {
-                self.report(["status": "failed", "current": self.revision, "detail": String(describing: error)])
+                if self.still(branch) { self.report(["status": "failed", "current": self.revision, "detail": String(describing: error)]) }
             }
         }
     }
@@ -125,9 +152,9 @@ final class Updater: ObservableObject {
 
     // MARK: Steps
 
-    /// Holds the source lock, fetches stable and calls `body(old, new)` only when stable is newer
-    /// than the running app. Other outcomes are reported here.
-    private func withSource(_ body: (String, String) throws -> Void) throws {
+    /// Holds the source lock, fetches `branch` and calls `body` only when it is newer than the
+    /// running app. Other outcomes are reported here.
+    private func withSource(_ branch: String, _ body: (ChannelStep) throws -> Void) throws {
         try FileManager.default.createDirectory(at: root.deletingLastPathComponent(), withIntermediateDirectories: true)
         let lockPath = root.deletingLastPathComponent().appendingPathComponent("source.lock").path
         let lockFD = open(lockPath, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
@@ -141,7 +168,7 @@ final class Updater: ObservableObject {
         if !FileManager.default.fileExists(atPath: root.path) {
             let temporary = root.deletingLastPathComponent().appendingPathComponent("source-clone-" + UUID().uuidString)
             defer { try? FileManager.default.removeItem(at: temporary) }
-            _ = try execute(["/usr/bin/git", "clone", "--branch", Self.channel, "--single-branch", Self.repository, temporary.path],
+            _ = try execute(["/usr/bin/git", "clone", "--branch", branch, "--single-branch", Self.repository, temporary.path],
                         timeout: 180, step: "clone", directory: root.deletingLastPathComponent())
             try FileManager.default.moveItem(at: temporary, to: root)
         }
@@ -151,30 +178,26 @@ final class Updater: ObservableObject {
         guard try git("status", "--porcelain", "--untracked-files=normal").isEmpty else {
             return report(["status": "local-changes"])
         }
-        try git("fetch", "-q", "origin", Self.channel, timeout: 90)
-        let old = try git("rev-parse", "HEAD"), new = try git("rev-parse", "origin/" + Self.channel)
-        // Compare against the running binary, not only the checkout (a failed build may
-        // leave the checkout newer than the installed app).
-        if revision == new {
+        let step = try ChannelStep.look(branch: branch, revision: revision, git: gitStep)
+        switch step.outcome {
+        case .newer: try body(step)
+        case .current:
             setAvailable(nil)
-            return report(["status": "current", "current": revision])
+            report(["status": "current", "current": revision])
+        case .localCommits: report(["status": "local-commits"])
+        case .otherBranch: report(["status": "other-branch", "detail": step.head])
+        case .ahead:
+            setAvailable(nil)
+            report(["status": "ahead", "current": revision, "channel": branch])
         }
-        guard (try? git("merge-base", "--is-ancestor", "HEAD", new)) != nil else {
-            return report(["status": "local-commits"])
-        }
-        // Refuse a stable rewind relative to the running app when its commit is available.
-        if !revision.isEmpty, (try? git("cat-file", "-e", revision + "^{commit}")) != nil,
-           (try? git("merge-base", "--is-ancestor", revision, new)) == nil {
-            throw Failure(description: "Stable channel is older than the running app")
-        }
-        try body(old, new)
     }
 
-    private func handoff(staged: URL, next: String) {
+    /// `channel` is the update channel this install came from; nil for moving a development build.
+    private func handoff(staged: URL, next: String, channel: String? = nil) {
         DispatchQueue.main.sync {
             guard !isBusy() else {
                 report(["status": "waiting", "current": revision, "next": next])
-                schedule(after: Self.retry) { $0.install() }
+                schedule(after: Self.retry) { $0.retryInstall(channel) }
                 return
             }
             do {
@@ -203,12 +226,12 @@ final class Updater: ObservableObject {
                 process.standardError = output
                 try process.run()
                 installing = true
-                waitForInstaller(process, token: token, next: next, deadline: Date().addingTimeInterval(120))
+                waitForInstaller(process, token: token, next: next, channel: channel, deadline: Date().addingTimeInterval(120))
             } catch { report(["status": "failed", "detail": String(describing: error)]) }
         }
     }
 
-    private func waitForInstaller(_ process: Process, token: String, next: String, deadline: Date) {
+    private func waitForInstaller(_ process: Process, token: String, next: String, channel: String?, deadline: Date) {
         // Poll without blocking the UI. Recheck busy immediately before graceful termination.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
             let ready = self.updates.appendingPathComponent(token + ".ready")
@@ -217,7 +240,7 @@ final class Updater: ObservableObject {
                     process.terminate()
                     self.installing = false
                     self.report(["status": "waiting", "current": self.revision, "next": next])
-                    self.schedule(after: Self.retry) { $0.install() }
+                    self.schedule(after: Self.retry) { $0.retryInstall(channel) }
                     return
                 }
                 if SMAppService.mainApp.status == .enabled {
@@ -234,8 +257,13 @@ final class Updater: ObservableObject {
                 if process.isRunning { process.terminate() }
                 self.installing = false
                 self.report(["status": "failed", "detail": L("설치 준비 실패: updates/install.log를 확인해 주세요", "Installer preparation failed; see updates/install.log")])
-            } else { self.waitForInstaller(process, token: token, next: next, deadline: deadline) }
+            } else { self.waitForInstaller(process, token: token, next: next, channel: channel, deadline: deadline) }
         }
+    }
+
+    /// Tries a postponed install again, unless the user picked another channel meanwhile.
+    private func retryInstall(_ channel: String?) {
+        if channel == nil || channel == self.channel { install() }
     }
 
     private func acknowledgeInstallation() {
@@ -263,7 +291,14 @@ final class Updater: ObservableObject {
 
     @discardableResult
     private func git(_ arguments: String..., timeout: TimeInterval = 60) throws -> String {
-        try execute(["/usr/bin/git", "-C", root.path] + arguments, timeout: timeout, step: "git " + (arguments.first ?? ""))
+        try gitStep(arguments, timeout)
+    }
+
+    /// Git in the update checkout, for ChannelStep.
+    private var gitStep: ChannelStep.Git {
+        { [unowned self] arguments, timeout in
+            try self.execute(["/usr/bin/git", "-C", self.root.path] + arguments, timeout: timeout, step: "git " + (arguments.first ?? ""))
+        }
     }
 
     private func shell(_ arguments: [String], timeout: TimeInterval, step: String) throws {
@@ -350,9 +385,76 @@ final class Updater: ObservableObject {
         case "postponed": return L("다른 업데이트 작업 중이에요", "Another update step is running") + when
         case "local-changes": return L("이 맥에서 고친 코드가 있어 건너뛰었어요", "Skipped: this Mac has its own code changes") + when
         case "local-commits": return L("이 맥에만 있는 커밋이 있어 건너뛰었어요", "Skipped: this Mac has commits not on GitHub") + when
+        case "other-branch":
+            let head = s["detail"] ?? "?"
+            return L("업데이트 소스가 stable·main이 아닌 \(head) 브랜치에 있어 건너뛰었어요", "Skipped: the update source is on \(head), not stable or main") + when
+        case "ahead":
+            let label = UpdateChannel.label(s["channel"] ?? "stable")
+            return L("이 맥의 앱이 \(label)보다 새 버전이에요. \(label)이 따라잡으면 업데이트돼요",
+                     "This Mac already runs a newer version than \(label); it updates once \(label) catches up") + when
         case "unavailable": return L("업데이트 소스를 준비하지 못했어요", "Update source is unavailable")
         case "failed": return L("업데이트 실패, 지금 버전을 그대로 써요: ", "Update failed; keeping this version: ") + (s["detail"] ?? "") + when
         default: return ""
         }
+    }
+}
+
+/// The update channels: stable (default) and main, the beta channel where new changes arrive first.
+enum UpdateChannel {
+    static let all = ["stable", "main"]
+    static let key = "updateChannel"
+    static var current: String { valid(UserDefaults.standard.string(forKey: key)) }
+    static func valid(_ name: String?) -> String { name.flatMap { all.contains($0) ? $0 : nil } ?? "stable" }
+    static func label(_ name: String) -> String { name == "main" ? L("베타(main)", "beta (main)") : name }
+    /// The branch this app was built from (written by build_app.sh); "main" shows as Beta.
+    static var built: String { Bundle.main.object(forInfoDictionaryKey: "AIUpdateChannel") as? String ?? "" }
+}
+
+/// One look at an update channel from the app's private checkout: what it found, and how to move there.
+struct ChannelStep {
+    enum Outcome: Equatable { case current, newer, ahead, localCommits, otherBranch }
+    typealias Git = (_ arguments: [String], _ timeout: TimeInterval) throws -> String
+    let branch: String, head: String, old: String, new: String, outcome: Outcome
+    /// The user picked the other channel: the checkout follows it.
+    var switching: Bool { head != branch }
+
+    /// Fetches `branch` and compares it with the checkout and with `revision`, the running app's commit.
+    /// The checkout is cloned with one branch only, so the fetched commit is read from FETCH_HEAD.
+    static func look(branch: String, revision: String, git: Git) throws -> ChannelStep {
+        let head = try git(["rev-parse", "--abbrev-ref", "HEAD"], 60), old = try git(["rev-parse", "HEAD"], 60)
+        func step(_ new: String, _ outcome: Outcome) -> ChannelStep {
+            ChannelStep(branch: branch, head: head, old: old, new: new, outcome: outcome)
+        }
+        guard UpdateChannel.all.contains(head) else { return step(old, .otherBranch) }
+        _ = try git(["fetch", "-q", "origin", branch], 90)
+        let new = try git(["rev-parse", "FETCH_HEAD"], 60)
+        func ancestor(_ a: String, _ b: String) -> Bool { (try? git(["merge-base", "--is-ancestor", a, b], 60)) != nil }
+        func known(_ commit: String) -> Bool { (try? git(["cat-file", "-e", commit + "^{commit}"], 60)) != nil }
+        // Compare against the running app, not only the checkout (a failed build may leave the checkout newer).
+        if revision == new {
+            if head != branch { _ = try git(["checkout", "-q", "-B", branch, new], 60) }
+            return step(new, .current)
+        }
+        if head == branch && !ancestor(old, new) { return step(new, .localCommits) }
+        if !revision.isEmpty {
+            // A build from the other channel may be ahead of this one: never go back.
+            for other in UpdateChannel.all where other != branch && !known(revision) {
+                _ = try? git(["fetch", "-q", "origin", other], 90)
+            }
+            if known(revision) && !ancestor(revision, new) { return step(new, .ahead) }
+        }
+        return step(new, .newer)
+    }
+
+    /// Moves the checkout to the new commit: a fast-forward, or onto the other channel's branch.
+    func advance(_ git: Git) throws {
+        if switching { _ = try git(["checkout", "-q", "-B", branch, new], 60) }
+        else { _ = try git(["merge", "--ff-only", "-q", new], 60) }
+    }
+
+    /// After failed tests or build: back to the branch and commit the running app came from.
+    func restore(_ git: Git) {
+        if switching { _ = try? git(["checkout", "-q", "--force", "-B", head, old], 60) }
+        else { _ = try? git(["reset", "-q", "--hard", old], 60) }
     }
 }

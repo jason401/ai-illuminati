@@ -589,7 +589,8 @@ private struct MaintenanceSettings: View {
         let short = info["CFBundleShortVersionString"] as? String ?? "–"
         let build = info["CFBundleVersion"] as? String ?? "–"
         let revision = (info["AISourceRevision"] as? String).map { " · " + $0.prefix(7) } ?? ""
-        return "\(short) (\(build)\(revision))"
+        let beta = UpdateChannel.built == "main" ? " Beta" : ""   // built from main, not stable
+        return "\(short)\(beta) (\(build)\(revision))"
     }
 
     var body: some View {
@@ -604,15 +605,23 @@ private struct MaintenanceSettings: View {
                     .help(L("켜면 시작 후, 그리고 3시간마다 확인만 해요. 설치는 버튼을 눌러야 해요.",
                             "Checks at launch and every 3 hours. Installing always needs the button."))
             }
+            SettingsRow(title: L("채널", "Channel")) {
+                SettingsMenu(options: [(L("안정", "Stable"), "stable"), (L("베타(main, 테스트용)", "Beta (main, for testing)"), "main")],
+                             selection: Binding(get: { updater.channel }, set: { updater.setChannel($0) }))
+                    .disabled(updater.checking)
+                    .help(L("안정 채널은 테스트를 거쳐 배포된 버전만 받아요. 베타는 새 변경이 먼저 올라오는 main을 따라가서 깨져 있을 수도 있어요. 안정으로 돌아가면 stable이 지금 쓰는 버전을 따라잡을 때 업데이트돼요.",
+                            "Stable gets versions that were published after testing. Beta follows main, where new changes arrive first; it may be broken. Going back to Stable updates once stable catches up with the version you run."))
+            }
             if updater.available != nil {
                 SettingsRow(title: L("새 버전", "New version")) {
                     SettingsAction(title: L("지금 업데이트", "Update Now")) { updater.install() }
                         .disabled(updater.checking)
                 }
             }
-            Text(updater.status.isEmpty ? L("새 버전은 확인만 하고, 설치는 버튼을 눌러야 해요.", "Checks only; installing needs the button.") : updater.status)
+            Text((updater.channel == "main" ? L("베타: 아직 테스트되지 않은 변경이 올 수 있어요.", "Beta: changes may not be tested yet.") + "\n" : "")
+                 + (updater.status.isEmpty ? L("새 버전은 확인만 하고, 설치는 버튼을 눌러야 해요.", "Checks only; installing needs the button.") : updater.status))
                 .font(.system(size: 10)).foregroundStyle(.secondary)
-                .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                .lineLimit(3).fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 10).padding(.bottom, 7)
                 .help(updater.status + "\n" + L("시험과 빌드가 통과해야 교체해요. 채팅·게임 중에는 기다려요.", "Installs after tests and build pass. Waits for chats and games."))

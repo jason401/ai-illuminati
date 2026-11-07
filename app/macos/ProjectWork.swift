@@ -281,10 +281,12 @@ final class GitLink: ToolProvider {
             guard let selected = args["name"] as? String else { throw MaterialReader.error("Choose a registered command name.") }
             let url = URL(fileURLWithPath: run.binding.root).appendingPathComponent(".ai-illuminati.json")
             guard url.resolvingSymlinksInPath().path.hasPrefix(run.binding.root + "/") else { throw MaterialReader.error("Project config leaves the repository.") }
-            let data = try Data(contentsOf: url)
+            guard let data = try? Data(contentsOf: url) else {
+                throw MaterialReader.error("No .ai-illuminati.json in the project yet. Create it with {\"version\":1,\"commands\":{\"\(selected)\":{\"executable\":\"/absolute/path\",\"args\":[...]}}} and call project_run again; the user approves the exact command.")
+            }
             guard data.count < 64_000, let config = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let commands = config["commands"] as? [String: [String: Any]], let command = commands[selected],
-                  let exe = command["executable"] as? String, exe.hasPrefix("/"), let argv = command["args"] as? [String] else { throw MaterialReader.error("Unknown or invalid named project command.") }
+                  let exe = command["executable"] as? String, exe.hasPrefix("/"), let argv = command["args"] as? [String] else { throw MaterialReader.error("Unknown or invalid named project command. Add it to .ai-illuminati.json (absolute executable, args array) and call project_run again.") }
             let status = try git(["status", "--short"])
             let tree = try WorkspaceBackup.stamps([WorkspaceRoot(path: run.binding.root, directory: true)])
             try approve("프로젝트 실행 / Run project command", "Runs outside the AI sandbox as your user.\n" + run.binding.root + "\n" + exe + " " + argv.joined(separator: " ") + "\n" + status)

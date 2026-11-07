@@ -155,7 +155,7 @@ final class AppModel: ObservableObject {
         didSet { UserDefaults.standard.set(writableSharedFolders.sorted(), forKey: "writableSharedFolders") }
     }
     // A school chat is continued only by school accounts, a personal chat only by personal ones.
-    // Gemma on this Mac: on/off (menu bar) and how long it stays in memory after a reply (Settings → Accounts).
+    // Ollama models on this Mac: on/off (Settings → Accounts) and how long it stays in memory after a reply (Settings → Accounts).
     @Published var localEnabled: Bool {
         didSet {
             UserDefaults.standard.set(localEnabled, forKey: "localEnabled")
@@ -183,8 +183,8 @@ final class AppModel: ObservableObject {
         language = AppLanguage.current
         var loaded = AccountStore.load()
         // The first Gemma entry was named before there were two models: name its model.
-        if let i = loaded.firstIndex(where: { $0.id == LocalModel.variants[0].id && ["Gemma 4 (내 Mac)", "Gemma 4 (this Mac)"].contains($0.name) }) {
-            loaded[i].name = L("\(LocalModel.variants[0].title) (내 Mac)", "\(LocalModel.variants[0].title) (this Mac)")
+        if let i = loaded.firstIndex(where: { $0.id == LocalModel.legacy[0].id && ["Gemma 4 (내 Mac)", "Gemma 4 (this Mac)"].contains($0.name) }) {
+            loaded[i].name = L("\(LocalModel.legacy[0].title) (내 Mac)", "\(LocalModel.legacy[0].title) (this Mac)")
             AccountStore.save(loaded)
         }
         accounts = loaded
@@ -214,7 +214,7 @@ final class AppModel: ObservableObject {
 
     // New entry with a default name (renamed in Settings), then that tool's login opens in Terminal.
     func add(_ provider: Account.Provider) {
-        if provider == .ollama { return addLocal(LocalModel.variants[0]) }
+        if provider == .ollama { return LocalModelsWindow.shared.show(model: self) }
         let name: String
         if provider == .gemini {
             name = "Gemini"
@@ -228,32 +228,51 @@ final class AppModel: ObservableObject {
     }
 
     var hasLocal: Bool { accounts.contains { $0.provider == .ollama } }
-    func hasLocal(_ variant: LocalModel.Variant) -> Bool { accounts.contains { $0.id == variant.id } }
+    func hasLocal(_ model: String) -> Bool {
+        accounts.contains { $0.provider == .ollama && LocalModel.same(LocalModel.variant($0).model, model) }
+    }
 
-    // Gemma 4 on this Mac: check the Mac, then add the entry and open the installer in Terminal.
-    func addLocal(_ variant: LocalModel.Variant) {
+    // An Ollama model on this Mac: check the Mac, ask, add the entry, then download it in the app (or, without
+    // Ollama, open the installer in Terminal). `downloadGB` is nil when the size is not known yet.
+    func addLocal(_ name: String, downloadGB: Double?) {
         NSApp.activate(ignoringOtherApps: true)
-        if let why = LocalModel.unsuitable() {
+        let model = LocalModel.normalized(name)
+        let title = LocalModel.title(for: model)
+        if let why = LocalModel.unsuitable(downloadGB: downloadGB ?? 0) {
             let alert = NSAlert()
-            alert.messageText = L("이 Mac에서는 Gemma를 설치할 수 없어요", "Gemma cannot be installed on this Mac")
+            alert.messageText = L("이 Mac에서는 \(title)를 설치할 수 없어요", "\(title) cannot be installed on this Mac")
             alert.informativeText = why
             alert.runModal()
             return
         }
         let alert = NSAlert()
-        alert.messageText = L("\(variant.title)를 이 Mac에 설치할까요?", "Install \(variant.title) on this Mac?")
-        alert.informativeText = L("Ollama(무료)로 모델 약 \(variant.downloadGB)GB를 받아요. 터미널에서 단계마다 확인해요. 답할 때 메모리를 \(variant.memory)GB 써요. 인터넷 없이 이 Mac 안에서만 돌아가고, 사용량 한도가 없어요. @로 부르거나, 모든 클라우드 계정이 한도에 걸렸을 때 답해요. Gemma를 둘 다 받아도 메모리에는 한 번에 하나만 올라가요.",
-                                  "Uses Ollama (free) to download about \(variant.downloadGB) GB; Terminal asks at each step. Uses \(variant.memory) GB of memory while answering. Runs only on this Mac, without the internet or usage limits. It answers when called with @, or when every cloud account is out of usage. With both Gemma models installed, only one is in memory at a time.")
+        alert.messageText = L("\(title)를 이 Mac에 설치할까요?", "Install \(title) on this Mac?")
+        let size = downloadGB.map { String(format: "%.1f", $0) }
+        let need = downloadGB.map { String(format: "%.0f", LocalModel.memoryNeed(downloadGB: $0).rounded(.up)) }
+        var fit = ""
+        if let downloadGB, LocalModel.fit(downloadGB: downloadGB) != .good { fit = "\n\n" + LocalModel.fit(downloadGB: downloadGB).title + "." }
+        let ollama = LocalModel.binary == nil ? L(" Ollama(무료)가 없어서 터미널에서 먼저 설치해요.", " Ollama (free) is not installed yet, so Terminal installs it first.") : ""
+        alert.informativeText = L("모델 \(model)\(size.map { " 약 \($0)GB" } ?? "")를 받아요.\(need.map { " 답할 때 메모리를 약 \($0)GB 써요." } ?? "")\(ollama) 인터넷 없이 이 Mac 안에서만 돌아가고, 사용량 한도가 없어요. @로 부르거나, 모든 클라우드 계정이 한도에 걸렸을 때 답해요. 여러 모델을 받아도 메모리에는 한 번에 하나만 올라가요.\(fit)",
+                                  "Downloads \(model)\(size.map { ", about \($0) GB" } ?? "").\(need.map { " Uses about \($0) GB of memory while answering." } ?? "")\(ollama) Runs only on this Mac, without the internet or usage limits. It answers when called with @, or when every cloud account is out of usage. With several models installed, only one is in memory at a time.\(fit)")
         alert.addButton(withTitle: L("설치", "Install"))
         alert.addButton(withTitle: L("취소", "Cancel"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-        if !hasLocal(variant) {
-            accounts.append(Account(id: variant.id, provider: .ollama, name: L("\(variant.title) (내 Mac)", "\(variant.title) (this Mac)"), dir: nil))
-        }
-        LocalModel.install(variant)
+        if !hasLocal(model) { accounts.append(LocalModel.account(for: model)) }
+        let account = accounts.first { $0.provider == .ollama && LocalModel.same(LocalModel.variant($0).model, model) }!
+        if LocalModel.binary == nil { LocalModel.install(LocalModel.variant(account)) } else { LocalModelStore.shared.pull(model) }
+    }
+
+    // A model already on this Mac (downloaded in Terminal, say) joins the list without downloading.
+    func addInstalled(_ name: String) {
+        if !hasLocal(name) { accounts.append(LocalModel.account(for: name)) }
     }
 
     func login(_ account: Account) {
+        // An Ollama model: download it again (gets updates); without Ollama, Terminal installs it first.
+        if account.provider == .ollama {
+            if LocalModel.binary == nil { LocalModel.install(LocalModel.variant(account)) } else { LocalModelStore.shared.pull(LocalModel.variant(account).model) }
+            return
+        }
         ClaudeUsage.forget(account)
         CodexUsage.forget(account)
         Login.login(account)
@@ -297,6 +316,7 @@ final class AppModel: ObservableObject {
     // Removing only takes it off the list; the login stays where the tool keeps it.
     func remove(_ account: Account) {
         NSApp.activate(ignoringOtherApps: true)
+        if account.provider == .ollama { return removeLocal(account) }
         let alert = NSAlert()
         alert.messageText = L("'\(account.name)'을 목록에서 뺄까요?", "Remove “\(account.name)” from the list?")
         alert.informativeText = L("목록에서만 빠져요. 그 계정의 로그인 정보는 지우지 않아요.", "This removes the account from the list. Its sign-in credentials are kept.")
@@ -304,6 +324,29 @@ final class AppModel: ObservableObject {
         alert.addButton(withTitle: L("취소", "Cancel"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         accounts.removeAll { $0.id == account.id }
+    }
+
+    // An Ollama model: off the list only, or its files deleted too (unless another entry uses the same model).
+    func removeLocal(_ account: Account) {
+        let model = LocalModel.variant(account).model
+        let shared = accounts.contains { $0.id != account.id && $0.provider == .ollama && LocalModel.same(LocalModel.variant($0).model, model) }
+        let onDisk = shared ? nil : LocalModel.installed(timeout: 1)?.first { LocalModel.matches($0.name, model) }
+        let alert = NSAlert()
+        alert.messageText = L("'\(account.name)'을 목록에서 뺄까요?", "Remove “\(account.name)” from the list?")
+        if let onDisk {
+            let size = String(format: "%.1f", Double(onDisk.bytes) / 1e9)
+            alert.informativeText = L("모델 파일(\(size)GB)도 지우면 디스크가 비워져요. 나중에 다시 받을 수 있어요.", "Deleting the model files too frees \(size) GB of disk. You can download it again later.")
+            alert.addButton(withTitle: L("모델 파일도 지우기", "Delete Model Files Too"))
+            alert.addButton(withTitle: L("목록에서만 빼기", "Remove from List Only"))
+        } else {
+            alert.informativeText = L("목록에서만 빠져요.", "This removes the entry from the list.")
+            alert.addButton(withTitle: L("빼기", "Remove"))
+        }
+        alert.addButton(withTitle: L("취소", "Cancel"))
+        let answer = alert.runModal()
+        if answer == .alertThirdButtonReturn || (onDisk == nil && answer == .alertSecondButtonReturn) { return }
+        accounts.removeAll { $0.id == account.id }
+        if let onDisk, answer == .alertFirstButtonReturn { LocalModelStore.shared.delete(onDisk.name) }
     }
 
     func setOpenAtLogin(_ on: Bool) {
@@ -616,10 +659,7 @@ struct AccountsSettingsTab: View {
                     Button(L("ChatGPT 계정 추가", "Add ChatGPT")) { model.add(.codex) }
                     Button(L("Gemini 추가", "Add Gemini")) { model.add(.gemini) }.disabled(model.hasGemini)
                     Divider()
-                    ForEach(LocalModel.variants, id: \.id) { variant in
-                        Button(L("\(variant.title) (내 Mac) 설치…", "Install \(variant.title) (this Mac)…")) { model.addLocal(variant) }
-                            .disabled(model.hasLocal(variant))
-                    }
+                    Button(L("Ollama 모델 (내 Mac)…", "Ollama Models (this Mac)…")) { LocalModelsWindow.shared.show(model: model) }
                 } label: {
                     Label(L("계정 추가", "Add account"), systemImage: "plus")
                 }.fixedSize()
@@ -651,15 +691,18 @@ struct AccountsSettingsTab: View {
                    "Adding opens Terminal for browser sign-in. Add each ChatGPT account only once."))
                 .font(.system(size: 11)).foregroundStyle(.secondary)
             if model.hasLocal {
-                // Gemma on this Mac: off leaves it out of @, votes and the last resort, and unloads it.
-                SettingsCard(title: L("Gemma 4 (내 Mac)", "Gemma 4 (this Mac)")) {
+                // Ollama models on this Mac: off leaves them out of @, votes and the last resort, and unloads them.
+                SettingsCard(title: L("Ollama (내 Mac)", "Ollama (this Mac)")) {
+                    SettingsRow(title: L("모델", "Models")) {
+                        SettingsAction(title: L("고르기·받기·지우기…", "Pick, download, delete…")) { LocalModelsWindow.shared.show(model: model) }
+                    }
                     SettingsRow(title: L("쓰기", "Use")) {
                         Text(L("끄면 @·투표·대타에서 빠져요", "Off: no @, votes or stand-in"))
                             .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
                             .help(L("끄면 @ 목록, 투표, 클라우드 계정이 다 바닥났을 때의 대타에서 빠지고 메모리에서 내려요.",
                                     "Off: left out of @, votes and the last resort when every cloud account is out, and unloaded."))
                         Spacer()
-                        Toggle(L("Gemma 쓰기", "Use Gemma"), isOn: $model.localEnabled).labelsHidden().toggleStyle(.switch)
+                        Toggle(L("Ollama 모델 쓰기", "Use Ollama models"), isOn: $model.localEnabled).labelsHidden().toggleStyle(.switch)
                     }
                 }
             }
@@ -804,7 +847,7 @@ private struct AccountRow: View {
                     Text(account.provider.title).foregroundStyle(.secondary)
                     status
                     if account.provider == .ollama {
-                        // How long Gemma stays in memory after a reply (closing the chat window unloads it anyway).
+                        // How long the model stays in memory after a reply (closing the chat window unloads it anyway).
                         Menu {
                             Picker(L("답한 뒤 메모리에 남겨 두기", "Keep in memory after a reply"), selection: $model.localKeepAlive) {
                                 ForEach(LocalModel.keepAliveChoices, id: \.self) { Text(LocalModel.keepAliveName($0)).tag($0) }
@@ -813,8 +856,8 @@ private struct AccountRow: View {
                             Text(L("유지 ", "Keep ") + LocalModel.keepAliveName(model.localKeepAlive))
                         }
                         .menuStyle(.borderlessButton).fixedSize().controlSize(.mini)
-                        .help(L("답한 뒤 Gemma를 메모리에 남겨 두는 시간. 다시 부를 때 기다리지 않아요. 채팅창을 닫으면 바로 내려요.",
-                                "How long Gemma stays in memory after a reply, so the next one starts at once. Closing the chat window unloads it."))
+                        .help(L("답한 뒤 모델을 메모리에 남겨 두는 시간. 다시 부를 때 기다리지 않아요. 채팅창을 닫으면 바로 내려요.",
+                                "How long the model stays in memory after a reply, so the next one starts at once. Closing the chat window unloads it."))
                     }
                     if account.provider != .gemini && account.provider != .ollama {
                         Toggle(L("엔터프라이즈", "Enterprise"), isOn: Binding(
@@ -831,7 +874,7 @@ private struct AccountRow: View {
                 .frame(width: 22, height: 24)
                 .help(L("끌어서 순서 변경", "Drag to reorder"))
             Menu {
-                Button(account.provider == .ollama ? L("설치·업데이트…", "Install or update…") : L("로그인…", "Sign in…")) { model.login(account) }
+                Button(account.provider == .ollama ? L("다시 받기·업데이트", "Download again or update") : L("로그인…", "Sign in…")) { model.login(account) }
                 if let dir = account.dir {
                     Button(L("Finder에서 폴더 열기", "Show folder in Finder")) { DataFolders.open(dir) }
                 }

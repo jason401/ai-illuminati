@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "models": [
+    {"name": "gemma4:e2b", "title": "Gemma 4 E2B", "sizeGB": 4.59, "vision": true, "note": "Google · smallest Gemma 4, fast", "noteKo": "Google · 가장 작은 Gemma 4, 빠름"},
+    {"name": "gemma4:e4b", "title": "Gemma 4 E4B", "sizeGB": 6.58, "vision": true, "note": "Google · fast, light, reads pictures", "noteKo": "Google · 빠르고 가벼움, 그림 인식"},
+    {"name": "gemma4:12b", "title": "Gemma 4 12B", "sizeGB": 8.02, "vision": true, "note": "Google · smarter, heavier", "noteKo": "Google · 더 똑똑하고 무거움"},
+    {"name": "gemma4:26b", "title": "Gemma 4 26B", "sizeGB": 18.73, "vision": true, "note": "Google · large, needs plenty of memory", "noteKo": "Google · 큰 모델, 메모리 많이 필요"},
+    {"name": "gemma3:4b", "title": "Gemma 3 4B", "sizeGB": 3.35, "vision": true, "note": "Google · previous generation, small", "noteKo": "Google · 이전 세대, 작음"},
+    {"name": "qwen3.5:4b", "title": "Qwen3.5 4B", "sizeGB": 3.32, "vision": true, "note": "Alibaba · small, reads pictures", "noteKo": "Alibaba · 작고 그림 인식"},
+    {"name": "qwen3.5:9b", "title": "Qwen3.5 9B", "sizeGB": 6.55, "vision": true, "note": "Alibaba · good all-rounder, reads pictures", "noteKo": "Alibaba · 두루 무난, 그림 인식"},
+    {"name": "qwen3:8b", "title": "Qwen3 8B", "sizeGB": 5.23, "vision": false, "note": "Alibaba · thinks step by step", "noteKo": "Alibaba · 단계별로 생각함"},
+    {"name": "qwen3:14b", "title": "Qwen3 14B", "sizeGB": 9.28, "vision": false, "note": "Alibaba · stronger reasoning", "noteKo": "Alibaba · 추론이 더 강함"},
+    {"name": "qwen3:30b", "title": "Qwen3 30B", "sizeGB": 18.56, "vision": false, "note": "Alibaba · mixture of experts, quick for its size", "noteKo": "Alibaba · MoE, 크기에 비해 빠름"},
+    {"name": "llama3.2:3b", "title": "Llama 3.2 3B", "sizeGB": 2.02, "vision": false, "note": "Meta · very small and fast", "noteKo": "Meta · 아주 작고 빠름"},
+    {"name": "llama3.1:8b", "title": "Llama 3.1 8B", "sizeGB": 4.92, "vision": false, "note": "Meta · widely used", "noteKo": "Meta · 널리 쓰임"},
+    {"name": "mistral:7b", "title": "Mistral 7B", "sizeGB": 4.37, "vision": false, "note": "Mistral AI · light", "noteKo": "Mistral AI · 가벼움"},
+    {"name": "ministral-3:8b", "title": "Ministral 3 8B", "sizeGB": 6.02, "vision": true, "note": "Mistral AI · reads pictures", "noteKo": "Mistral AI · 그림 인식"},
+    {"name": "mistral-small3.2:24b", "title": "Mistral Small 3.2 24B", "sizeGB": 15.18, "vision": true, "note": "Mistral AI · large, reads pictures", "noteKo": "Mistral AI · 큰 모델, 그림 인식"},
+    {"name": "deepseek-r1:8b", "title": "DeepSeek-R1 8B", "sizeGB": 5.23, "vision": false, "note": "DeepSeek · reasoning model", "noteKo": "DeepSeek · 추론 모델"},
+    {"name": "deepseek-r1:14b", "title": "DeepSeek-R1 14B", "sizeGB": 8.99, "vision": false, "note": "DeepSeek · stronger reasoning", "noteKo": "DeepSeek · 추론이 더 강함"},
+    {"name": "phi4:14b", "title": "Phi-4 14B", "sizeGB": 9.05, "vision": false, "note": "Microsoft · strong at math and logic", "noteKo": "Microsoft · 수학·논리에 강함"},
+    {"name": "gpt-oss:20b", "title": "gpt-oss 20B", "sizeGB": 13.79, "vision": false, "note": "OpenAI · open-weight reasoning model", "noteKo": "OpenAI · 공개 가중치 추론 모델"},
+    {"name": "qwen2.5-coder:7b", "title": "Qwen2.5 Coder 7B", "sizeGB": 4.68, "vision": false, "note": "Alibaba · made for code", "noteKo": "Alibaba · 코드 특화"}
+  ]
+}

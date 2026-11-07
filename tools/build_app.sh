@@ -52,7 +52,7 @@ if ! xcrun swiftc -swift-version 5 -O -target "$ARCH-apple-macos13.0" \
   exit 1
 fi
 mkdir -p "$OUT/Contents/Resources"
-cp app/resources/workspace_mcp.py app/resources/project_process.py tools/install_app.py "$OUT/Contents/Resources/"
+cp app/resources/workspace_mcp.py app/resources/project_process.py app/resources/local_models.json tools/install_app.py "$OUT/Contents/Resources/"
 if ! xcrun swiftc -swift-version 5 -O -o "$OUT/Contents/Resources/WorkspaceDocument" tools/workspace_document.swift >>"$LOG" 2>&1; then
   cat "$LOG"
   exit 1

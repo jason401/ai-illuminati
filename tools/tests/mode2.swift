@@ -1612,8 +1612,10 @@ do {
     print("PASS: @ mentions (list with Gemini, narrowing, Korean names, order, second reads first, automatic again, name only)")
 }
 
-// Gemma on this Mac (Ollama): models listed, replies streamed, errors reported, never picked automatically,
+// Ollama models on this Mac: models listed, replies streamed, errors reported, never picked automatically,
 // the last resort when every cloud account is out, and an account list with an unknown entry still loads.
+// Then any model: the recommended list, fit by memory, ollama.com's list, registry sizes, download, delete,
+// and text-only models getting no pictures.
 do {
     Discussion.modernModes = true
     Discussion.availableModes = [0, 1, 2, 3, 4]
@@ -1627,12 +1629,27 @@ do {
         loaded = set()
         keep = None
         most = 0      # the most models in memory at once
+        last = {}     # the last chat request: model, pictures, conversation length
+        deleted = []
+        def send(self, body, code=200, kind="application/json"):
+            self.send_response(code); self.send_header("Content-Type", kind); self.end_headers(); self.wfile.write(body)
+        def do_DELETE(self):
+            req = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            if req.get("model") in ("gemma4:12b", "qwen3:8b"):
+                H.deleted.append(req["model"]); self.send(b"{}")
+            else:
+                self.send(b'{"error":"model not found"}', 404)
         def do_GET(self):
-            if self.path == "/api/ps":
+            if self.path.startswith("/v2/library/qwen3/manifests/8b"):
+                assert "manifest.v2" in self.headers["Accept"]
+                body = json.dumps({"layers": [{"size": 5_000_000_000}, {"size": 1000}]}).encode()
+            elif self.path.startswith("/v2/"):
+                return self.send(b'{"errors":[{"code":"MANIFEST_UNKNOWN"}]}', 404)
+            elif self.path == "/api/ps":
                 models = [{"name": n, "size": 10_000_000_000, "expires_at": "2099-01-01T00:00:00.000000+00:00"} for n in sorted(H.loaded)]
                 body = json.dumps({"models": models}).encode()
             elif self.path == "/last":
-                body = json.dumps({"keep": H.keep, "most": H.most}).encode()
+                body = json.dumps({"keep": H.keep, "most": H.most, "chat": H.last, "deleted": H.deleted}).encode()
             else:
                 body = json.dumps({"models": [{"name": "gemma4:e4b"}, {"name": "gemma4:12b"}]}).encode()
             self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(body)
@@ -1641,12 +1658,24 @@ do {
             if self.path == "/api/generate":
                 if req.get("keep_alive") == 0: H.loaded.discard(req["model"])
                 self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(b"{}"); return
+            if self.path == "/api/show":
+                if req["model"] == "textonly:1b":
+                    return self.send(json.dumps({"capabilities": ["completion"], "model_info": {"llama.context_length": 8192}}).encode())
+                return self.send(json.dumps({"capabilities": ["completion", "vision"], "model_info": {"gemma4.context_length": 131072}}).encode())
+            if self.path == "/api/pull":
+                self.send_response(200); self.send_header("Content-Type", "application/x-ndjson"); self.end_headers()
+                if req["model"] != "qwen3:8b":
+                    self.wfile.write(b'{"error":"pull model manifest: file does not exist"}\\n'); return
+                for done in (0, 2_500_000_000, 5_000_000_000):
+                    self.wfile.write(json.dumps({"status": "pulling a3de86cd", "total": 5_000_000_000, "completed": done}).encode() + b"\\n"); self.wfile.flush(); time.sleep(0.25)
+                self.wfile.write(b'{"status":"success"}\\n'); return
             H.keep = req.get("keep_alive"); H.loaded.add(req["model"]); H.most = max(H.most, len(H.loaded))
+            H.last = {"model": req["model"], "images": len(req["messages"][0].get("images", [])), "num_ctx": req["options"]["num_ctx"]}
             self.send_response(200); self.send_header("Content-Type", "application/x-ndjson"); self.end_headers()
             if "SLOW" in req["messages"][0]["content"]: time.sleep(0.6)
             if "FAIL" in req["messages"][0]["content"]:
                 self.wfile.write(b'{"error":"model failed"}\\n'); return
-            assert req["model"] in ("gemma4:e4b", "gemma4:12b") and req["stream"] and req["options"]["num_ctx"] >= 32768
+            assert req["model"] in ("gemma4:e4b", "gemma4:12b", "textonly:1b") and req["stream"] and req["options"]["num_ctx"] >= 8192
             for piece in ["Hello ", "from ", "Gemma"]:
                 self.wfile.write(json.dumps({"message": {"role": "assistant", "content": piece}, "done": False}).encode() + b"\\n"); self.wfile.flush()
             self.wfile.write(b'{"message":{"role":"assistant","content":""},"done":true}\\n')
@@ -1661,7 +1690,7 @@ do {
     LocalModel.server = URL(string: "http://127.0.0.1:\(port)")!
     var names: [String]?
     for _ in 0..<40 where names == nil { names = LocalModel.installedModels(timeout: 1); if names == nil { Thread.sleep(forTimeInterval: 0.1) } }
-    expect(names.map { LocalModel.hasModel($0) } == true && LocalModel.ensureServer(), "the model is listed and the server is up")
+    expect(names.map { LocalModel.hasModel($0, LocalModel.legacy[0]) } == true && LocalModel.ensureServer(), "the model is listed and the server is up")
 
     var streamed: [String] = []
     let lock = NSLock()
@@ -1706,7 +1735,7 @@ do {
     expect(usage.needsLogin == (LocalModel.binary == nil), "no Ollama installed: the entry asks for installing")
 
     // Two models: only one in memory. Asking the other unloads the first; two chats asking both at once take turns.
-    let e4b = LocalModel.variants[0], big = LocalModel.variants[1]
+    let e4b = LocalModel.legacy[0], big = LocalModel.legacy[1]
     expect(names.map { LocalModel.hasModel($0, big) } == true, "12B listed too")
     _ = LocalModel.ask(e4b, prompt: "hi", images: [], timeout: 20, cancellation: nil, progress: nil)
     expect(LocalModel.loadedModels().map(\.title) == [e4b.title], "E4B in memory")
@@ -1727,7 +1756,8 @@ do {
     let gemmas = [Account(id: e4b.id, provider: .ollama, name: e4b.title, dir: nil), Account(id: big.id, provider: .ollama, name: big.title, dir: nil)]
     let pick = AppModel(); pick.accounts = gemmas
     let picker = Discussion(model: pick)
-    expect(picker.lastResort(usage: [:], excluded: [])?.id == LocalModel.loaded().flatMap { LocalModel.variant(named: $0.name) }?.id, "last resort: the Gemma already in memory")
+    let inMemory = LocalModel.loaded().flatMap { loaded in gemmas.first { LocalModel.matches(loaded.name, LocalModel.variant($0).model) } }
+    expect(inMemory != nil && picker.lastResort(usage: [:], excluded: [])?.id == inMemory?.id, "last resort: the Gemma already in memory")
     LocalModel.unload()
     expect(LocalModel.loaded() == nil && picker.lastResort(usage: [:], excluded: [])?.id == e4b.id, "none in memory: the first Gemma (E4B)")
     picker.configure { $0.mode = 4 }
@@ -1758,6 +1788,70 @@ do {
     [{"id":"a","provider":"claude","name":"Claude"},{"id":"b","provider":"future-ai","name":"New"},{"id":"c","provider":"ollama","name":"Gemma"}]
     """
     expect(AccountStore.decode(Data(list.utf8))?.map(\.id) == ["a", "c"], "an unknown kind of AI is skipped, the rest of the list kept")
+
+    // Any Ollama model. The recommended list ships with the app; every entry has a size and a title.
+    let catalog = LocalModel.catalog
+    expect(catalog.count >= 10 && Set(catalog.map(\.name)).count == catalog.count && catalog.allSatisfy { $0.name.contains(":") && $0.sizeGB > 0 && !$0.title.isEmpty },
+           "the recommended list loads: sizes, titles, no duplicates")
+    expect(catalog.contains { $0.name == "gemma4:e4b" } && catalog.contains { $0.name == "gemma4:12b" }, "the recommended list keeps both Gemma 4 models")
+    expect(LocalModel.fit(downloadGB: 6.58, memoryGB: 18) == .good && LocalModel.fit(downloadGB: 8.02, memoryGB: 18) == .tight
+           && LocalModel.fit(downloadGB: 18.73, memoryGB: 18) == .tooBig && LocalModel.fit(downloadGB: 18.73, memoryGB: 64) == .good,
+           "fit by memory: good, tight, too big, and bigger Macs take bigger models")
+    expect(LocalModel.fit(downloadGB: 2.0, memoryGB: 8) != .tooBig, "a small model is offered on an 8 GB Mac (no fixed 16 GB minimum)")
+    expect(LocalModel.estimatedGB("8b") == 5.5 && LocalModel.estimatedGB("270m") == 0.5 && LocalModel.estimatedGB("e4b") == 2.9
+           && (LocalModel.estimatedGB("16x17b") ?? 0) > 100 && LocalModel.estimatedGB("cloud") == nil && LocalModel.estimatedGB("vision") == nil,
+           "sizes on ollama.com read as about how many GB")
+    let page = """
+    <a href="/library/qwen3" class="group"><div title="qwen3"><p class="max-w-lg break-words text-md">Qwen &amp; friends.</p></div>
+      <span class="inline-flex items-center bg-indigo-50">tools</span> <span class="inline-flex items-center bg-[#ddf4ff]">0.6b</span>
+      <span class="inline-flex items-center bg-[#ddf4ff]">8b</span></a>
+    <a href="/library/nomic-embed-text" class="group"><span class="inline-flex items-center">embedding</span><span class="inline-flex">137m</span></a>
+    <a href="/library/kimi-k2" class="group"><span class="inline-flex items-center">cloud</span></a>
+    <a href="/library/qwen3" class="group">again</a>
+    """
+    expect(LocalModel.parseLibrary(page) == [LocalModel.LibraryModel(name: "qwen3", summary: "Qwen & friends.", capabilities: ["tools"], sizes: ["0.6b", "8b"])],
+           "ollama.com's list: chat models with their sizes; embedding and cloud-only models left out")
+    expect(LocalModel.parseLibrary("<html>changed</html>").isEmpty, "a page that changed shape yields nothing, not an error")
+    expect(LocalModel.title(for: "qwen3:8b") == "Qwen3 8B" && LocalModel.title(for: "foo-bar:7b") == "Foo-bar 7B" && LocalModel.title(for: "llava") == "Llava"
+           && LocalModel.title(for: "someone/tiny:1b") == "Tiny 1B", "titles: the recommended name, else made from the model name")
+    expect(LocalModel.same("llava", "llava:latest") && LocalModel.matches("gemma4:e4b-it-q4", "gemma4:e4b") && !LocalModel.matches("gemma4:e4b", "gemma4:e2b"),
+           "model names: no tag means latest, a longer tag is the same model")
+    let qwen = LocalModel.account(for: "Qwen3:8b")
+    expect(qwen.id == "ollama:qwen3:8b" && qwen.model == "qwen3:8b" && qwen.name.hasPrefix("Qwen3 8B") && LocalModel.variant(qwen).model == "qwen3:8b",
+           "a new model gets its own entry, saving its model name")
+    expect(LocalModel.id(for: "gemma4:e4b") == "ollama-local" && LocalModel.id(for: "gemma4:12b") == "ollama-12b"
+           && LocalModel.variant(Account(id: "ollama-12b", provider: .ollama, name: "x", dir: nil)).model == "gemma4:12b",
+           "the old Gemma entries keep their ids, so their chats and order stay")
+    let savedList = try! JSONEncoder().encode([qwen])
+    expect(AccountStore.decode(savedList)?.first?.model == "qwen3:8b"
+           && AccountStore.decode(Data(#"[{"id":"ollama-local","provider":"ollama","name":"Gemma"}]"#.utf8))?.first?.model == nil,
+           "the model name is saved, and lists from before load as before")
+    let adding = AppModel(); adding.accounts = [Account(id: e4b.id, provider: .ollama, name: e4b.title, dir: nil)]
+    adding.addInstalled("gemma4:e4b"); adding.addInstalled("qwen3:8b"); adding.addInstalled("qwen3:8b")
+    expect(adding.accounts.map(\.id) == ["ollama-local", "ollama:qwen3:8b"] && adding.hasLocal("qwen3:8b") && !adding.hasLocal("qwen3:14b"),
+           "a model already on this Mac joins the list once")
+    expect(Discussion.aiNames[.ollama]?.contains("ollama") == true && Account.Provider.ollama.title == "Ollama", "the kind is called Ollama, and @ollama works")
+    LocalModel.registry = URL(string: "http://127.0.0.1:\(port)")!
+    expect(LocalModel.downloadGB("qwen3:8b").map { abs($0 - 5.0) < 0.01 } == true && LocalModel.downloadGB("nope:1b") == nil,
+           "the registry gives the exact size, and nil for a name that does not exist")
+    var steps: [Double?] = []
+    let pulled = LocalModel.pull("qwen3:8b", cancellation: nil) { _, fraction in lock.lock(); steps.append(fraction); lock.unlock() }
+    expect(pulled == nil && steps.last == 1 && steps.contains { ($0 ?? 0) > 0 && ($0 ?? 0) < 1 }, "download in the app: progress, then done")
+    let missing = LocalModel.pull("nope:1b", cancellation: nil) { _, _ in }
+    expect(missing?.contains("does not exist") == true, "a failed download says why")
+    expect(LocalModel.delete("qwen3:8b") && !LocalModel.delete("nope:1b"), "delete: Ollama removes the files, a missing model fails")
+    let picture = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("dot.png")
+    try! Data([0x89, 0x50, 0x4E, 0x47]).write(to: picture)
+    func lastChat() -> [String: Any] {
+        let data = try? Data(contentsOf: URL(string: "http://127.0.0.1:\(port)/last")!)
+        return (data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] })?["chat"] as? [String: Any] ?? [:]
+    }
+    _ = LocalModel.ask(LocalModel.Variant(id: "ollama:textonly:1b", model: "textonly:1b", title: "Text only"), prompt: "hi", images: [picture], timeout: 20, cancellation: nil, progress: nil)
+    expect(lastChat()["images"] as? Int == 0 && lastChat()["num_ctx"] as? Int == 8192, "a text-only model gets no pictures, and its shorter conversation length")
+    _ = LocalModel.ask(e4b, prompt: "hi", images: [picture], timeout: 20, cancellation: nil, progress: nil)
+    expect(lastChat()["images"] as? Int == 1 && lastChat()["num_ctx"] as? Int == 32768, "a model that reads pictures gets them, with 32K")
+    LocalModel.unload()
+    print("PASS: Ollama on this Mac (recommended list, fit by memory, ollama.com list, titles and ids, old entries kept, registry size, download, delete, pictures only for models that read them)")
     print("PASS: Gemma on this Mac (models, streamed reply, errors, keep-alive, unload now and after the window closes, on/off, not automatic, last resort, account list with unknown entry, E4B and 12B one at a time)")
 }
 

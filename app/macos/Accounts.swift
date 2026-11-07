@@ -11,13 +11,13 @@ import CryptoKit
 struct Account: Codable, Equatable {
     enum Provider: String, Codable, CaseIterable {
         case claude, codex, gemini
-        case ollama   // Gemma 4 on this Mac (Local.swift)
+        case ollama   // a model on this Mac through Ollama (Local.swift)
         var title: String {
             switch self {
             case .claude: return "Claude"
             case .codex: return "ChatGPT"
             case .gemini: return "Gemini"
-            case .ollama: return "Gemma"
+            case .ollama: return "Ollama"
             }
         }
     }
@@ -26,6 +26,7 @@ struct Account: Codable, Equatable {
     var name: String
     var dir: String?
     var school: Bool?   // an Enterprise (school or work) account, set in Settings; nil = guessed from the name
+    var model: String?   // Ollama's name for the model ("qwen3:8b"); nil for the first two Gemma entries (their ids say)
 
     // Enterprise accounts hand work only to other Enterprise accounts (Settings can turn that off).
     var isSchool: Bool {

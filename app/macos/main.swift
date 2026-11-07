@@ -303,14 +303,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(action(L("채팅창 열기…", "Open Chat…"), #selector(openChat), key: "n"))
         menu.addItem(action(L("게임 열기…", "Open Games…"), #selector(openGame), key: "g"))
         if model.hasLocal {
-            // Gemma on this Mac, only while it is in memory: how much and until when, with Unload now.
+            // The Ollama model on this Mac, only while it is in memory: how much and until when, with Unload now.
             // (Its on/off switch is in Settings → Accounts.)
             if let loaded = localLoaded {
                 menu.addItem(.separator())
                 let size = String(format: "%.1f", Double(loaded.bytes) / 1_073_741_824)
                 let minutes = loaded.until.map { max(0, Int(($0.timeIntervalSinceNow / 60).rounded(.up))) }
                 menu.addItem(info(loaded.title + L(" · 메모리 \(size)GB 사용 중", " · using \(size) GB of memory") + (minutes.map { L(" · \($0)분 뒤 내려감", " · unloads in \($0) min") } ?? "")))
-                menu.addItem(action(L("Gemma 지금 내리기", "Unload Gemma Now"), #selector(unloadLocal)))
+                menu.addItem(action(L("로컬 모델 지금 내리기", "Unload Local Model Now"), #selector(unloadLocal)))
             }
         }
         if let next = model.updater.available {

@@ -176,8 +176,8 @@ extension Discussion {
     // Gemma on this Mac when every cloud account is out: the one already in memory, else the first in the list.
     func lastResort(usage: [String: AIUsage], excluded: Set<String>) -> Account? {
         let ready = model.accounts.filter { $0.provider == .ollama && model.localEnabled && !excluded.contains($0.id) && usage[$0.id]?.needsLogin != true }
-        guard ready.count > 1, let inMemory = LocalModel.loaded().flatMap({ LocalModel.variant(named: $0.name) }) else { return ready.first }
-        return ready.first { LocalModel.variant($0) == inMemory } ?? ready.first
+        guard ready.count > 1, let inMemory = LocalModel.loaded() else { return ready.first }
+        return ready.first { LocalModel.matches(inMemory.name, LocalModel.variant($0).model) } ?? ready.first
     }
 
     // The @ list: every account (Gemini too: it only never answers automatically), matching what was typed

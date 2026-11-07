@@ -237,5 +237,8 @@ func testFullAuto() {
     }
     expect(carded && published["isError"] as? Bool == true && (try? ProjectProcess.git(["rev-parse", "--verify", "refs/heads/stable"], root: origin.path)) == nil,
            "full auto still asks before publishing stable; refusal publishes nothing")
+    let note = Discussion.fullAutoNote
+    expect(!note.contains("will not answer") && !note.contains("Do not publish stable") && note.contains("git_publish_stable") && note.contains("card"),
+           "full auto lets a requested stable publish reach its card")
     print("PASS: full auto (no cards for commands, 8 hours, stable still asks, no Git credentials, git push blocked, rm to Trash outside temp)")
 }

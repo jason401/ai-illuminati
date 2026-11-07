@@ -184,10 +184,11 @@ extension Discussion {
     }
 
     static let fullAutoNote = """
-    [FULL AUTO] The user is away and will not answer. Work to completion without asking; make reasonable decisions and list them at the end.
+    [FULL AUTO] The user may be away. Work to completion without asking questions; make reasonable decisions and list them at the end.
     You may run any command, use the network, install tools and run tests/builds directly (project_run needs no approval).
     Your shell has no Git/GitHub credentials: commit locally with git, push only with the git_push tool. Never force push or rewrite pushed history.
-    rm moves files to the Trash. Do not publish stable; finish with a summary of what is ready for the user to publish.
+    rm moves files to the Trash. Stable still needs the user's card: call git_publish_stable only when the user's latest message asks to publish/deploy stable,
+    and the app shows the card and waits for the user. Otherwise do not publish; finish with a summary of what is ready for the user to publish.
     """
 
     func toggleFullAuto() {

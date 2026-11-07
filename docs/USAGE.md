@@ -121,6 +121,7 @@ approval cards, uses the network, runs registered commands directly and pushes m
 no Git/GitHub credentials and `git push` is refused), and permanent deletes (`rm` moves files to the Trash,
 except temporary folders). These guard mistakes, not a deliberately malicious script.
 
-Stable publishing always asks approval for the exact main SHA and remote shown on the card.
+Stable publishing always asks approval for the exact main SHA and remote shown on the card, in full auto too: ask in the chat
+and the card appears; without a request the AI only reports what is ready to publish.
 Ordinary push does not update stable. Undo is unavailable after commit or push; use Git to
 review and revert those changes. Google Drive permissions are separate from project work.

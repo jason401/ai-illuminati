@@ -34,9 +34,8 @@ private struct EmptyPreviewLogin: GoogleTokenStore {
             let host = NSHostingController(rootView: ChatView(discussion: chat, model: model).environment(\.colorScheme, appearance == .darkAqua ? .dark : .light))
             host.sizingOptions = []
             let window = ChatDragWindow(contentViewController: host)
-            window.isMovable = false
             window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
-            window.titlebarAppearsTransparent = true; window.titleVisibility = .hidden
+            window.titlebarSeparatorStyle = .none; window.titleVisibility = .hidden
             window.appearance = NSAppearance(named: appearance)
             window.contentMinSize = ChatView.minSize
             // CHAT_WIDTH renders a narrow window; CHAT_SIDEBAR=1 opens the sliding sidebar there.

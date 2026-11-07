@@ -1,8 +1,10 @@
 import Cocoa
 import SwiftUI
 
-// Window coordinates and NSEvent.mouseLocation are both global points, including across displays.
-// Do not use event.locationInWindow or AppKit's native title-bar drag (transparent-titlebar jump).
+// Empty header areas move the window with macOS's own drag (performDrag), so edge tiling and
+// Mission Control work like other apps. The chat title bar must NOT be transparent: with
+// titlebarAppearsTransparent, macOS (27) makes a dragged window jump hundreds of points as the
+// pointer crosses to another display (measured 2026-11-06 with test windows; opaque title bars do not jump).
 enum WindowDoubleClickAction {
     case zoom, minimize, none, fill
     static func resolve(_ preference: String?, legacyMinimize: Bool = false) -> Self {
@@ -39,14 +41,11 @@ class ChatDragWindow: NSWindow {
 }
 
 final class WindowDragView: NSView {
-    var mousePosition: () -> NSPoint = { NSEvent.mouseLocation }
     var doubleClickAction: () -> WindowDoubleClickAction = { .system }
-    private var anchor: (mouse: NSPoint, origin: NSPoint)?
-    private weak var draggedWindow: NSWindow?
+    var startDrag: (NSWindow, NSEvent) -> Void = { $0.performDrag(with: $1) }
     override var mouseDownCanMoveWindow: Bool { false }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override func mouseDown(with event: NSEvent) {
-        anchor = nil; draggedWindow = nil
         guard let window, !window.styleMask.contains(.fullScreen) else { return }
         if event.clickCount == 2 {
             if let chat = window as? ChatDragWindow { chat.performTitlebarAction(doubleClickAction()) }
@@ -58,16 +57,9 @@ final class WindowDragView: NSView {
                 }
             }
         } else {
-            draggedWindow = window; anchor = (mousePosition(), window.frame.origin)
+            startDrag(window, event)
         }
     }
-    override func mouseDragged(with event: NSEvent) {
-        guard let anchor, let window = draggedWindow, window === self.window else { return }
-        let point = mousePosition()
-        window.setFrameOrigin(NSPoint(x: anchor.origin.x + point.x - anchor.mouse.x,
-                                      y: anchor.origin.y + point.y - anchor.mouse.y))
-    }
-    override func mouseUp(with event: NSEvent) { anchor = nil; draggedWindow = nil }
 }
 
 // Only insert this in dedicated empty slots. Never place it behind a whole SwiftUI header with buttons.

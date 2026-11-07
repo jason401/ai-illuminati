@@ -1376,8 +1376,8 @@ final class ChatWindow {
             w.title = L("AI Illuminati 채팅", "AI Illuminati Chat")
             // One surface from the title bar down, like the desktop chat apps.
             w.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
-            w.isMovable = false
-            w.titlebarAppearsTransparent = true
+            // Opaque title bar on purpose (see WindowDrag.swift): a transparent one jumps between displays.
+            w.titlebarSeparatorStyle = .none
             w.titleVisibility = .hidden
             w.contentMinSize = ChatView.minSize
             w.setContentSize(NSSize(width: 1040, height: 720))

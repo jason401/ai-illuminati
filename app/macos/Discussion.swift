@@ -221,7 +221,7 @@ enum Answerer {
         }
         var executionEnvironment = account.environment
         if workspace?.binding.projectRunID != nil { executionEnvironment["AI_ILLUMINATI_PROJECT_PROCESS"] = "1" }
-        if workspace?.binding.fullAuto == true && workspace?.binding.projectRunID != nil { executionEnvironment = AutoGuard.environment(executionEnvironment) }
+        if workspace?.binding.isFullAuto == true && workspace?.binding.projectRunID != nil { executionEnvironment = AutoGuard.environment(executionEnvironment) }
         process.environment = executionEnvironment
         process.currentDirectoryURL = executionDirectory
         let out = Pipe(), err = Pipe()

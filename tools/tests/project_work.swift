@@ -204,7 +204,9 @@ func testFullAuto() {
     expect(shell("rm '\(scratch.path)'").status != 0 && shell("rm -f '\(scratch.path)'").status == 0, "rm keeps missing-file and -f semantics")
 
     // CLI options: no prompts, no sandbox, Git push denied.
-    binding.fullAuto = true; binding.level = .execute; binding.projectRunID = UUID()
+    expect(binding.isFullAuto && !WorkspaceBinding(roots: binding.roots).isFullAuto, "project work is full auto by default; plain folders are not")
+    binding.fullAuto = false; expect(!binding.isFullAuto, "full auto can be turned off per chat")
+    binding.fullAuto = nil; binding.level = .execute; binding.projectRunID = UUID()
     let room = UUID()
     let backup = try! WorkspaceBackup.begin(WorkspaceBinding(roots: binding.roots, level: .write), room: room, runID: binding.projectRunID!)
     let invocation = WorkspaceInvocation(binding: binding, room: room, readOnly: false, backupPath: backup.directory)

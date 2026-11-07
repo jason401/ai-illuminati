@@ -37,7 +37,7 @@ extension Discussion {
             let project = try ProjectProcess.inspect(folder.path)
             let alert = NSAlert()
             alert.messageText = L("이 채팅에서 프로젝트 작업 허용", "Allow project work in this chat")
-            alert.informativeText = project.root + "\n\n" + L("Claude/Codex가 파일을 수정하고 일반 commit/push를 할 수 있어요. 앱 권한으로 시험·빌드를 실행하거나 stable을 배포할 때는 승인 카드를 보여줘요. 프로젝트 코드는 사용자 권한으로 실행되므로 신뢰하는 프로젝트만 연결하세요.", "Claude/Codex may edit files and commit/push the current project. Tests/builds outside the AI sandbox and stable publishing require an approval card. Only connect projects you trust to run as your user.")
+            alert.informativeText = project.root + "\n\n" + L("완전 자동으로 일해요: AI가 승인 카드 없이 모든 명령을 실행하고 인터넷을 쓰고 main에 push해요. 한 번에 최대 8시간, 그동안 Mac이 잠들지 않아요.\n\n막아 두는 것: 강제 push·기록 지우기, 영구 삭제(rm은 휴지통으로). stable 배포는 매번 직접 허용해요.\n\n카드로 하나씩 확인하려면 + 메뉴에서 완전 자동을 끄세요. 신뢰하는 프로젝트만 연결하세요.", "Works in full auto: the AI runs any command without approval cards, uses the network and pushes to main. Up to 8 hours per task, with the Mac kept awake.\n\nStill blocked: force push and history rewrites, permanent deletes (rm moves to the Trash). Publishing stable always asks you.\n\nTo confirm steps with cards, turn off full auto in the + menu. Only connect projects you trust.")
             alert.addButton(withTitle: L("허용", "Allow")); alert.addButton(withTitle: L("취소", "Cancel"))
             guard alert.runModal() == .alertFirstButtonReturn else { return }
             change(currentID, save: true) { conversation in
@@ -51,7 +51,7 @@ extension Discussion {
     func runProjectSolo(question: String, history: [ChatTurn], rules: String, config: ChatConfiguration,
                         mentions: [String], cancellation: DebateCancellation, id: UUID, index: Int, binding: WorkspaceBinding) {
         guard let selected = binding.project else { finish(id, index, error: "No project selected."); return }
-        let fullAuto = binding.fullAuto == true
+        let fullAuto = binding.isFullAuto
         let run = ProjectRun(room: id, binding: selected, token: cancellation, fullAuto: fullAuto)
         // Full auto keeps the Mac awake while the AI works (the display may still sleep).
         let awake = fullAuto ? ProcessInfo.processInfo.beginActivity(options: [.userInitiated, .idleSystemSleepDisabled], reason: "AI Illuminati full-auto project work") : nil
@@ -192,13 +192,7 @@ extension Discussion {
 
     func toggleFullAuto() {
         guard !running, current.workspace?.project != nil else { return }
-        if current.workspace?.fullAuto == true { change(currentID, save: true) { $0.workspace?.fullAuto = nil }; return }
-        let alert = NSAlert()
-        alert.messageText = L("완전 자동으로 맡기기", "Full auto")
-        alert.informativeText = L("AI가 승인 카드 없이 모든 명령을 실행하고 인터넷을 쓰고 main에 push해요. 최대 8시간 동안 Mac이 잠들지 않아요.\n\n막아 두는 것: 강제 push·기록 지우기, 영구 삭제(rm은 휴지통으로). stable 배포는 계속 직접 허용해야 해요.\n\n신뢰하는 프로젝트에서만 켜세요.",
-                                  "The AI runs any command without approval cards, uses the network and pushes to main. The Mac stays awake for up to 8 hours.\n\nStill blocked: force push and history rewrites, permanent deletes (rm moves to the Trash). Publishing stable still needs your approval.\n\nOnly for projects you trust.")
-        alert.addButton(withTitle: L("켜기", "Turn on")); alert.addButton(withTitle: L("취소", "Cancel"))
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        change(currentID, save: true) { $0.workspace?.fullAuto = true }
+        let on = current.workspace?.isFullAuto == true
+        change(currentID, save: true) { $0.workspace?.fullAuto = on ? false : nil }
     }
 }

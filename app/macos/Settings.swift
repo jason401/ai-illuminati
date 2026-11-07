@@ -1,6 +1,7 @@
 import Cocoa
 import ServiceManagement
 import SwiftUI
+import UniformTypeIdentifiers
 
 // What the menu and the Settings window share: the account list (saved on every change) and
 // the display options. The menu listens through the two callbacks.
@@ -21,6 +22,7 @@ final class AppModel: ObservableObject {
             onAccountsChange?()
         }
     }
+    @Published var draggingAccount: String?   // Settings > Accounts row being dragged
     @Published var showPercent: Bool {
         didSet {
             UserDefaults.standard.set(showPercent, forKey: "showPercent")
@@ -255,6 +257,14 @@ final class AppModel: ObservableObject {
         let to = from + offset
         guard accounts.indices.contains(to) else { return }
         accounts.swapAt(from, to)
+    }
+
+    // Drag to reorder: the dragged account takes the place of the one it is over.
+    func move(_ id: String, to target: String) {
+        guard id != target,
+              let from = accounts.firstIndex(where: { $0.id == id }),
+              let to = accounts.firstIndex(where: { $0.id == target }) else { return }
+        accounts.insert(accounts.remove(at: from), at: to)
     }
 
     func rename(_ id: String, to name: String) {
@@ -616,12 +626,19 @@ struct AccountsSettingsTab: View {
                     if account.id != model.accounts.first?.id { Divider() }
                     AccountRow(model: model, account: account)
                         .padding(.horizontal, 10).padding(.vertical, 6)
+                        .contentShape(Rectangle())
+                        .onDrag {
+                            model.draggingAccount = account.id
+                            return NSItemProvider(object: account.id as NSString)
+                        }
+                        .onDrop(of: [UTType.text], delegate: AccountDropDelegate(model: model, target: account.id))
                 }
             }
             .background(Color(nsColor: .controlBackgroundColor))
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(0.07)))
-            Text(L("이름을 눌러 수정 · 화살표로 순서 변경 · ⋯에서 로그인과 폴더 열기", "Edit names directly · Arrows reorder · ⋯ for sign-in and folders"))
+            .onDisappear { model.draggingAccount = nil }
+            Text(L("이름을 눌러 수정 · 끌어서 순서 변경 · ⋯에서 로그인과 폴더 열기", "Edit names directly · Drag to reorder · ⋯ for sign-in and folders"))
                 .font(.system(size: 11)).foregroundStyle(.secondary)
             Text(L("계정을 추가하면 브라우저 로그인을 위해 터미널이 열려요. 같은 ChatGPT 계정을 중복 추가하지 마세요.",
                    "Adding opens Terminal for browser sign-in. Add each ChatGPT account only once."))
@@ -640,6 +657,25 @@ struct AccountsSettingsTab: View {
                 }
             }
         }
+    }
+}
+
+private struct AccountDropDelegate: DropDelegate {
+    let model: AppModel
+    let target: String
+
+    func validateDrop(info: DropInfo) -> Bool { model.draggingAccount != nil }
+
+    func dropEntered(info: DropInfo) {
+        guard let id = model.draggingAccount else { return }
+        withAnimation(.easeInOut(duration: 0.15)) { model.move(id, to: target) }
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: .move) }
+
+    func performDrop(info: DropInfo) -> Bool {
+        model.draggingAccount = nil
+        return true
     }
 }
 
@@ -764,12 +800,10 @@ private struct AccountRow: View {
                 }.font(.system(size: 10)).lineLimit(1)
             }
             Spacer(minLength: 4)
-            Button(action: { model.move(account, by: -1) }) { Image(systemName: "chevron.up") }
-                .buttonStyle(.borderless)
-                .disabled(model.accounts.first?.id == account.id)
-            Button(action: { model.move(account, by: 1) }) { Image(systemName: "chevron.down") }
-                .buttonStyle(.borderless)
-                .disabled(model.accounts.last?.id == account.id)
+            Image(systemName: "line.3.horizontal")
+                .foregroundStyle(.secondary)
+                .frame(width: 22, height: 24)
+                .help(L("끌어서 순서 변경", "Drag to reorder"))
             Menu {
                 Button(account.provider == .ollama ? L("설치·업데이트…", "Install or update…") : L("로그인…", "Sign in…")) { model.login(account) }
                 if let dir = account.dir {
@@ -785,6 +819,8 @@ private struct AccountRow: View {
             .fixedSize()
         }
         .padding(.vertical, 1)
+        .accessibilityAction(named: L("위로 이동", "Move up")) { model.move(account, by: -1) }
+        .accessibilityAction(named: L("아래로 이동", "Move down")) { model.move(account, by: 1) }
     }
 
     // Like AI Face's "Connected": green when signed in, orange when a sign-in is needed.

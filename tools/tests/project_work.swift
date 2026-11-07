@@ -240,5 +240,9 @@ func testFullAuto() {
     let note = Discussion.fullAutoNote
     expect(!note.contains("will not answer") && !note.contains("Do not publish stable") && note.contains("git_publish_stable") && note.contains("card"),
            "full auto lets a requested stable publish reach its card")
+    expect(Discussion.projectFaceRule(face: true, active: true, moods: ["happy"]).contains("<face>MOOD</face>")
+           && Discussion.projectFaceRule(face: true, active: false, moods: ["happy"]).isEmpty
+           && Discussion.projectFaceRule(face: false, active: true, moods: ["happy"]).isEmpty,
+           "project turns ask for a face tag when AI Face is connected")
     print("PASS: full auto (no cards for commands, 8 hours, stable still asks, no Git credentials, git push blocked, rm to Trash outside temp)")
 }

@@ -627,6 +627,8 @@ final class Discussion: ObservableObject {
     // Sidebar: hidden by the button in a wide window; in a narrow window it slides over the chat instead.
     @Published var sidebarHidden = false
     @Published var sidebarOverlay = false
+    // The transcript's end is out of view: the chat shows a jump-to-bottom button above the message box.
+    @Published var awayFromBottom = false
     @Published var hoverKey: String?
     @Published var teamSettingsOpen = false   // the team mode settings popover in the message box
     // @ in the message box: the accounts picked so far, and the list while it is open.

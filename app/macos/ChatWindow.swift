@@ -348,6 +348,7 @@ struct ChatView: View {
 
     private var transcript: some View {
     ScrollViewReader { proxy in
+      GeometryReader { viewport in
         ScrollView {
             VStack(alignment: .leading, spacing: 28) {
                 let conversation = discussion.current
@@ -374,16 +375,48 @@ struct ChatView: View {
                     }
                     TurnView(turn: turn, discussion: discussion).id(turn.id)
                 }
+                // Where the transcript ends, for the jump-to-bottom button (macOS 13 has no scroll position API).
+                Color.clear.frame(height: 1).id(Self.bottomID)
+                    .background(GeometryReader { marker in
+                        Color.clear.preference(key: TranscriptBottomKey.self, value: marker.frame(in: .named(Self.bottomID)).maxY)
+                    })
             }
             .frame(maxWidth: 760, alignment: .leading)
             .padding(.horizontal, 28).padding(.vertical, 20)
             .frame(maxWidth: .infinity)
         }
+        .coordinateSpace(name: Self.bottomID)
+        .onPreferenceChange(TranscriptBottomKey.self) { end in
+            let away = end > viewport.size.height + Self.bottomSlack
+            if away != discussion.awayFromBottom { withAnimation(.easeOut(duration: 0.15)) { discussion.awayFromBottom = away } }
+        }
+        .overlay(alignment: .bottom) {
+            if discussion.awayFromBottom {
+                Button(action: { withAnimation { proxy.scrollTo(Self.bottomID, anchor: .bottom) } }) {
+                    Image(systemName: "arrow.down")
+                        .font(.system(size: 13, weight: .semibold))
+                        .frame(width: 30, height: 30)
+                        .background(Circle().fill(Color(nsColor: .controlBackgroundColor)))
+                        .overlay(Circle().stroke(Color.secondary.opacity(0.25)))
+                        .shadow(color: .black.opacity(0.2), radius: 4, y: 1)
+                }
+                .buttonStyle(.plainHit).foregroundColor(.primary)
+                .padding(.bottom, 10)
+                .help(L("맨 아래로", "Scroll to bottom"))
+                .accessibilityLabel(L("맨 아래로", "Scroll to bottom"))
+                .transition(.opacity)
+            }
+        }
         .onChange(of: discussion.current.turns.count) { _ in
             if let last = discussion.current.turns.last { withAnimation { proxy.scrollTo(last.id, anchor: .top) } }
         }
+      }
     }
     }
+
+    static let bottomID = "transcript-bottom"
+    // How far (pt) the end may sit below the visible area and still count as the bottom, so the button does not flicker.
+    static let bottomSlack: CGFloat = 80
 
     // The message box: text on top, then + on the left and who answers and send on the right.
     private var composer: some View {
@@ -976,6 +1009,11 @@ struct ChatView: View {
         f.setLocalizedDateFormatFromTemplate(Calendar.current.isDateInToday(date) ? "jm" : "MdEEE")
         return f.string(from: date)
     }
+}
+
+private struct TranscriptBottomKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
 }
 
 private struct ParticipantDropDelegate: DropDelegate {

@@ -63,7 +63,7 @@ AI Illuminati behaves like the other desktop apps: **the app itself** is AI Face
   The face itself never needs a tool call by the model (see 4); other tools are used only when the user asks.
 - The data a tool returns (calendar events, mail text) goes to whichever model answers, which may be a
   school/Enterprise account. AI Face should say so next to the Illuminati switches.
-- Only plain chat (mode 0). Debate, collaboration and vote modes do not get AI Face.
+- Only plain chat (mode 0), including project work linked to a plain chat (the writing AI tags its reply; a read-only reviewer does not). Debate, collaboration and vote modes do not get AI Face.
 - If the file is missing, invalid or AI Face is closed, chats work as before, without a face.
 
 ## What AI Face needs to change

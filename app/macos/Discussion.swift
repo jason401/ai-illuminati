@@ -212,9 +212,16 @@ enum Answerer {
         guard let binary else { return .failure(.missingTool) }
 
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: binary)
-        process.arguments = arguments
-        process.environment = account.environment
+        if workspace?.binding.projectRunID != nil {
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+            process.arguments = [WorkspaceInvocation.resources.appendingPathComponent("project_process.py").path, binary] + arguments
+        } else {
+            process.executableURL = URL(fileURLWithPath: binary)
+            process.arguments = arguments
+        }
+        var executionEnvironment = account.environment
+        if workspace?.binding.projectRunID != nil { executionEnvironment["AI_ILLUMINATI_PROJECT_PROCESS"] = "1" }
+        process.environment = executionEnvironment
         process.currentDirectoryURL = executionDirectory
         let out = Pipe(), err = Pipe()
         process.standardOutput = out
@@ -235,7 +242,10 @@ enum Answerer {
         guard (try? process.run()) != nil else { return .failure(.missingTool) }
 
         cancellation?.attach(process)
-        defer { cancellation?.detach(process) }
+        defer {
+            cancellation?.detach(process)
+            if workspace?.binding.projectRunID != nil { kill(-process.processIdentifier, SIGKILL) }
+        }
         // Read both pipes while it runs (a full pipe would stop the tool).
         var stdout = Data(), stderr = Data()
         let readers = DispatchGroup()
@@ -406,6 +416,8 @@ struct ChatTurn: Identifiable, Codable {
     var modeVersion: Int?
     var tasks: [CollaborationTask]?
     var artifact: String?
+    var projectCommitted: Bool?
+    var projectPushed: Bool?
     var backupPath: String?
     var workspaceChanges: [WorkspaceChange]?
     var undone: Bool?
@@ -895,6 +907,12 @@ final class Discussion: ObservableObject {
         activeMaterials = current.documents ?? []
         let solo = Self.modernModes && config.mode == 0
         activeWorkspace = solo ? soloBinding(id) : current.workspace
+        if !solo, var readOnly = activeWorkspace, readOnly.project != nil {
+            readOnly.project = nil
+            readOnly.level = .view
+            readOnly.roots = readOnly.roots.map { WorkspaceRoot(path: $0.path, directory: $0.directory) }
+            activeWorkspace = readOnly
+        }
         activeAdversarial = Self.modernModes && config.mode == 2
         activeSpeechLength = SpeechLength.clamp(config.speechLength)
         // Mode 0 names its folders after the session marker, so a new file does not restart the session.
@@ -950,6 +968,10 @@ final class Discussion: ObservableObject {
         let rules = model.chatRules.trimmingCharacters(in: .whitespacesAndNewlines)
         let debateLeader = Self.modernModes && !team.contains(where: { $0.provider == config.leader }) ? team[0].provider : config.leader
         worker.work.async {
+            let projectLocks: [String]
+            do { projectLocks = try ProjectWork.acquire(worker.activeWorkspace) }
+            catch { worker.finish(id, index, error: error.localizedDescription); return }
+            defer { ProjectWork.release(projectLocks) }
             if solo {
                 worker.runSolo(question: question, history: history, rules: rules, config: config, mentions: mentioned,
                              cancellation: cancellation, id: id, index: index)

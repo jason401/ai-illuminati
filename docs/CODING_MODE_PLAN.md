@@ -1,6 +1,21 @@
 # Plain chat에서 프로젝트 개발 — 구현 계획
 
-작성: 2026-11-06. **계획 문서이며 아직 구현하지 않음.**
+작성: 2026-11-06. **아래 설계의 첫 구현을 실행 코드에 반영함.**
+
+구현: plain chat + 메뉴의 프로젝트 연결, repo별 동시 writer 잠금, Claude/Codex 인계,
+앱 Git 도구, 승인 카드, 등록 명령 실행, 프로세스 그룹 종료와 journal, commit/push 이후 Undo 제한.
+자동 시험은 임시 Git 원격·가짜 AI 응답과 실제 MCP 통로를 사용한다. 실제 계정의 CLI 작업과
+앱 업데이트 후 Google Keychain 확인은 사용자와 함께 별도로 확인한다.
+
+사용: plain chat의 `+` 메뉴 → 프로젝트 작업 허용 → Git 최상위 폴더 선택.
+`.ai-illuminati.json`의 `commands`에 실행 파일의 절대 경로와 `args` 배열을 등록한다.
+등록 명령은 AI sandbox 밖의 사용자 권한으로 실행되며, 실행마다 승인한다.
+앱 내부 잠금은 이 앱의 writer끼리 조정하며 외부 에디터/다른 coding agent까지 잠그지는 않는다.
+재시작 후 자동 인계는 제공하지 않으며 journal과 미완성 파일은 보존한다.
+
+긴 도구 대기는 Python socket과 vendor MCP timeout을 모두 늘린다.
+[Codex 설정](https://developers.openai.com/codex/config-reference/)의 `tool_timeout_sec`와
+[Claude 설정](https://code.claude.com/docs/en/env-vars)의 서버 `timeout`을 프로젝트 호출에만 적용한다.
 
 ## 1. 확정한 사용자 흐름
 

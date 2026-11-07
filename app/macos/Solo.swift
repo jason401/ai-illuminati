@@ -93,7 +93,7 @@ extension Discussion {
         for root in conversations.first(where: { $0.id == room })?.workspace?.roots ?? [] where !roots.contains(where: { $0.path == root.path }) {
             roots.append(WorkspaceRoot(path: root.path, directory: root.directory, writable: root.directory ? true : nil))
         }
-        return WorkspaceBinding(roots: roots, level: .view, face: true)
+        return WorkspaceBinding(roots: roots, level: .view, project: conversations.first(where: { $0.id == room })?.workspace?.project, face: true)
     }
 
     static func soloFolders(_ binding: WorkspaceBinding, shared: [String]) -> String {
@@ -233,6 +233,7 @@ extension Discussion {
         let fresh = freshTranscript.map { Self.soloContext(rules: rules, transcript: $0) }
         let keepState = previous.count + question.count > Self.stateFrom
         var binding = activeWorkspace ?? soloBinding(id)
+        if binding.project != nil { return runProjectSolo(question: question, history: history, rules: rules, config: config, mentions: mentions, cancellation: cancellation, id: id, index: index, binding: binding) }
         let own = Self.chatFolder(id)
         let before = Self.stamps(own)
         // Linked folders may change: back them up first (APFS clones, so it is quick) for the Undo button.

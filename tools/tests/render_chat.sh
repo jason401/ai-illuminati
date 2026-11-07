@@ -20,4 +20,4 @@ for SOURCE in app/macos/*.swift; do
 done
 xcrun swiftc -swift-version 5 -target "$(uname -m)-apple-macos13.0" -module-cache-path "$PREVIEW_DIR/cache" -o "$PREVIEW_DIR/render" \
   "${SOURCES[@]}" "$PREVIEW_DIR/Accounts.swift" tools/tests/render_chat.swift
-"$PREVIEW_DIR/render" "$OUTPUT_DIR"
+"$PREVIEW_DIR/render" "$OUTPUT_DIR" "${@:2}"

@@ -1,0 +1,172 @@
+import Foundation
+
+func testProjectWork() {
+    let base = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("project-fixture-" + UUID().uuidString)
+    try! FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+    let root = base.appendingPathComponent("repo"), origin = base.appendingPathComponent("origin.git")
+    func git(_ args: [String], at folder: URL? = nil) -> String { try! ProjectProcess.git(args, root: (folder ?? base).path) }
+    _ = git(["init", "--bare", origin.path]); _ = git(["init", "-b", "main", root.path])
+    _ = git(["config", "user.name", "Fixture"], at: root); _ = git(["config", "user.email", "fixture@example.invalid"], at: root)
+    _ = git(["remote", "add", "origin", origin.path], at: root)
+    func write(_ name: String, _ text: String) { try! text.write(to: root.appendingPathComponent(name), atomically: true, encoding: .utf8) }
+    write("README.md", "First\n"); write("user.txt", "User baseline\n")
+    _ = git(["add", "."], at: root); _ = git(["commit", "-m", "Initial"], at: root); _ = git(["push", "-u", "origin", "main"], at: root)
+    let selected = try! ProjectProcess.inspect(root.path)
+    let binding = WorkspaceBinding(roots: [WorkspaceRoot(path: root.path, directory: true, writable: true)], project: selected)
+    let lease = try! ProjectWork.acquire(binding)
+    defer { ProjectWork.release(lease) }
+    do { _ = try ProjectWork.acquire(binding); expect(false, "concurrent project writer refused") } catch {}
+    write("user.txt", "Existing user edit\n"); _ = git(["add", "user.txt"], at: root)
+    let outer = DebateCancellation(), run = ProjectRun(room: UUID(), binding: selected, token: outer)
+    ProjectWork.register(run); run.nextAttempt()
+    defer { ProjectWork.finish(run) }
+    var context = ToolContext(room: run.room, roots: binding.roots, projectRun: run.id, projectGeneration: run.generation)
+    let provider = GitLink.shared
+    func call(_ name: String, _ args: [String: Any] = [:]) -> [String: Any] { provider.call(name, args, context: context) }
+    func ok(_ name: String, _ args: [String: Any] = [:]) -> String {
+        let reply = call(name, args)
+        expect(reply["isError"] as? Bool == false, "project tool succeeds: \(name) \(reply)")
+        return (reply["content"] as! [[String: Any]])[0]["text"] as! String
+    }
+    expect(!provider.tools(context: context).isEmpty && provider.tools().isEmpty, "Git tools are scoped, never global")
+    expect(provider.tools(context: ToolContext(room: UUID(), roots: binding.roots, projectRun: run.id, projectGeneration: run.generation)).isEmpty, "another room cannot use project scope")
+    expect(call("git_pull")["isError"] as? Bool == true, "dirty pull refused")
+    write("README.md", "AI edit\n")
+    _ = ok("git_commit", ["message": "AI change", "paths": ["README.md"]])
+    expect(git(["diff", "--cached", "--name-only"], at: root) == "user.txt", "commit preserves unrelated user staging")
+    _ = ok("git_push")
+    let pushed = git(["rev-parse", "refs/heads/main"], at: origin)
+    expect(pushed == git(["rev-parse", "HEAD"], at: root) && run.committed && run.pushed, "app records real commit and push")
+    expect(call("git_commit", ["message": "bad", "paths": ["../outside"]])["isError"] as? Bool == true, "traversal commit refused")
+    expect(call("git_switch", ["name": "stable"])["isError"] as? Bool == true, "direct stable switch refused")
+    expect(call("git_force_push")["isError"] as? Bool == true, "force push tool not provided")
+    let previous = context
+    run.nextAttempt(); context.projectGeneration = run.generation
+    expect(provider.call("git_status", [:], context: previous)["isError"] as? Bool == true, "handoff revokes previous generation")
+    expect(ok("git_status").contains("user.txt"), "next AI inherits dirty worktree")
+    // Complete the preserved user change explicitly outside app tools for a clean publishing fixture.
+    _ = git(["commit", "-m", "User edit"], at: root)
+    func approved(_ name: String, _ args: [String: Any] = [:], allow: Bool = true, onCard: (() -> Void)? = nil) -> [String: Any] {
+        let done = DispatchSemaphore(value: 0); var output: [String: Any] = [:]; var acted = false
+        DispatchQueue.global().async { output = call(name, args); done.signal() }
+        let limit = Date().addingTimeInterval(15)
+        while done.wait(timeout: .now()) != .success && Date() < limit {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+            if !acted, let request = ProjectCenter.shared.requests.first(where: { $0.run == run.id }) {
+                acted = true; onCard?(); ProjectCenter.shared.decide(request.id, allow: allow)
+            }
+        }
+        expect(acted && !output.isEmpty, "approval card and tool complete")
+        return output
+    }
+    let sha = git(["rev-parse", "HEAD"], at: root)
+    let published = approved("git_publish_stable", onCard: {
+        write("README.md", "Newer main after approval shown\n")
+        _ = git(["add", "README.md"], at: root); _ = git(["commit", "-m", "Later main"], at: root)
+    })
+    expect(published["isError"] as? Bool == false && git(["rev-parse", "refs/heads/stable"], at: origin) == sha, "stable publishes approved SHA, not main changed during approval")
+    let denied = approved("git_publish_stable", allow: false)
+    expect(denied["isError"] as? Bool == true && git(["rev-parse", "refs/heads/stable"], at: origin) == sha, "denied deployment leaves stable unchanged")
+    let config = #"{"version":1,"commands":{"test":{"executable":"/usr/bin/python3","args":["-c","print('fixture command')"]}}}"#
+    write(".ai-illuminati.json", config)
+    expect(approved("project_run", ["name": "test"])["isError"] as? Bool == false, "named command runs after approval")
+    expect(call("project_run", ["name": "not-registered"])["isError"] as? Bool == true, "unknown command cannot run")
+    expect(approved("project_run", ["name": "test"], onCard: { write(".ai-illuminati.json", config + " ") })["isError"] as? Bool == true, "command mutation invalidates approval")
+    write(".ai-illuminati.json", config)
+    expect(approved("project_run", ["name": "test"], allow: false)["isError"] as? Bool == true, "denied command never starts")
+    let expired = ProjectCenter.shared.approve(ProjectApproval(room: run.room, run: run.id, title: "Expired", detail: "fixture"), token: run.attempt, deadline: Date())
+    expect(!expired, "approval timeout refuses execution")
+    // Exercise the real Python stdio bridge and app socket beyond the old 15-second timeout.
+    write(".ai-illuminati.json", #"{"version":1,"commands":{"delayed":{"executable":"/usr/bin/python3","args":["-c","import time; time.sleep(16); print('long command fixture')"]}}}"#)
+    let capability = ToolHub.shared.register(room: run.room, roots: binding.roots, projectRun: run.id, generation: run.generation)
+    let manifest = base.appendingPathComponent("bridge.json")
+    let object: [String: Any] = ["roots": [["path": root.path, "directory": true]], "level": "view", "cache": base.appendingPathComponent("cache").path, "extractor": WorkspaceInvocation.resources.appendingPathComponent("WorkspaceDocument").path, "tools": ToolHub.socketPath, "toolSession": capability]
+    try! JSONSerialization.data(withJSONObject: object).write(to: manifest)
+    let client = base.appendingPathComponent("client.py")
+    try! """
+    import subprocess, sys, json
+    p = subprocess.Popen([sys.executable, sys.argv[1], sys.argv[2]], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+    def request(i, method, params=None):
+        p.stdin.write(json.dumps({'jsonrpc':'2.0','id':i,'method':method,'params':params or {}})+'\\n'); p.stdin.flush()
+        return json.loads(p.stdout.readline())['result']
+    request(1, 'initialize')
+    names = [t['name'] for t in request(2, 'tools/list')['tools']]
+    assert 'git_status' in names
+    result = request(3, 'tools/call', {'name':'project_run','arguments':{'name':'delayed'}})
+    print(json.dumps(result))
+    p.stdin.close(); p.wait(timeout=5)
+    """.write(to: client, atomically: true, encoding: .utf8)
+    let bridgeDone = DispatchSemaphore(value: 0); var bridgeResult = ""; var bridgeApproved = false
+    DispatchQueue.global().async {
+        bridgeResult = (try? ProjectProcess.run("/usr/bin/python3", [client.path, WorkspaceInvocation.resources.appendingPathComponent("workspace_mcp.py").path, manifest.path], cwd: root.path, token: run.attempt, deadline: Date().addingTimeInterval(40)).output) ?? "bridge failed"
+        bridgeDone.signal()
+    }
+    let bridgeDeadline = Date().addingTimeInterval(45)
+    while bridgeDone.wait(timeout: .now()) != .success && Date() < bridgeDeadline {
+        RunLoop.main.run(until: Date().addingTimeInterval(0.03))
+        if let card = ProjectCenter.shared.requests.first(where: { $0.run == run.id }) { bridgeApproved = true; ProjectCenter.shared.decide(card.id, allow: true) }
+    }
+    expect(bridgeApproved && bridgeResult.contains("long command fixture") && !bridgeResult.contains("timed out"), "long project tool survives Python bridge timeout and approval")
+    // Stop must kill background writers, not merely the foreground build process.
+    let startedFile = root.appendingPathComponent("process-started"), leakedFile = root.appendingPathComponent("orphan-wrote")
+    let childCode = "import time,pathlib; time.sleep(2); pathlib.Path(" + String(reflecting: leakedFile.path) + ").write_text('leaked')"
+    let parentCode = "import subprocess,sys,time,pathlib; subprocess.Popen([sys.executable,'-c'," + String(reflecting: childCode) + "]); pathlib.Path(" + String(reflecting: startedFile.path) + ").write_text('ready'); time.sleep(30)"
+    let longConfig: [String: Any] = ["version": 1, "commands": ["long": ["executable": "/usr/bin/python3", "args": ["-c", parentCode]]]]
+    try! JSONSerialization.data(withJSONObject: longConfig).write(to: root.appendingPathComponent(".ai-illuminati.json"))
+    let stoppedDone = DispatchSemaphore(value: 0); var stoppedResult: [String: Any] = [:]
+    DispatchQueue.global().async { stoppedResult = call("project_run", ["name": "long"]); stoppedDone.signal() }
+    let stopDeadline = Date().addingTimeInterval(15)
+    while !FileManager.default.fileExists(atPath: startedFile.path) && Date() < stopDeadline {
+        RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+        if let card = ProjectCenter.shared.requests.first(where: { $0.run == run.id }) { ProjectCenter.shared.decide(card.id, allow: true) }
+    }
+    expect(FileManager.default.fileExists(atPath: startedFile.path), "approved background-writer fixture started")
+    outer.cancel()
+    while stoppedDone.wait(timeout: .now()) != .success && Date() < stopDeadline { RunLoop.main.run(until: Date().addingTimeInterval(0.03)) }
+    let verifyUntil = Date().addingTimeInterval(2.2)
+    while Date() < verifyUntil { RunLoop.main.run(until: Date().addingTimeInterval(0.03)) }
+    expect(stoppedResult["isError"] as? Bool == true && !FileManager.default.fileExists(atPath: leakedFile.path), "Stop kills foreground and background project writers")
+    outer.cancel()
+    for _ in 0..<50 where !run.attempt.isCancelled { Thread.sleep(forTimeInterval: 0.02) }
+    expect(run.attempt.isCancelled && call("git_status")["isError"] as? Bool == true, "outer Stop cancels current AI and tool capability")
+    print("PASS: plain-chat projects (repo locks, scoped tools, selective commits, push, dirty handoff, exact-SHA approval, named command approval and Stop)")
+}
+
+func testProjectHandoff() {
+    let root = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("handoff-project")
+    try! FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    func git(_ args: [String]) { _ = try! ProjectProcess.git(args, root: root.path) }
+    git(["init", "-b", "main"]); git(["config", "user.name", "Fixture"]); git(["config", "user.email", "fixture@example.invalid"])
+    git(["remote", "add", "origin", root.path + "/unused-origin"])
+    try! "Baseline".write(to: root.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
+    git(["add", "README.md"]); git(["commit", "-m", "Initial"])
+    let project = try! ProjectProcess.inspect(root.path)
+    let model = AppModel()
+    model.accounts = [Account(id: "project-claude", provider: .claude, name: "Fixture Claude"), Account(id: "project-codex", provider: .codex, name: "Fixture Codex")]
+    model.schoolOnlyHandoff = false
+    let chat = Discussion(model: model)
+    chat.configure { $0.mode = 0; $0.soloAccountID = "project-claude" }
+    chat.change(chat.currentID) { $0.workspace = WorkspaceBinding(roots: [WorkspaceRoot(path: root.path, directory: true)], project: project) }
+    let file = root.appendingPathComponent("unfinished.txt")
+    var accounts: [String] = [], oldContext: ToolContext?
+    chat.workspaceAnswer = { account, prompt, binding, _, _ in
+        accounts.append(account.id)
+        if account.id == "project-claude" {
+            try! "partial work".write(to: file, atomically: true, encoding: .utf8)
+            oldContext = ToolContext(room: chat.currentID, roots: binding.roots, projectRun: binding.projectRunID, projectGeneration: binding.projectGeneration)
+            do { _ = try ProjectWork.acquire(binding); expect(false, "other writers cannot enter during an AI turn") } catch {}
+            return .failure(.failed("usage limit reached (429)"))
+        }
+        expect((try! String(contentsOf: file, encoding: .utf8)) == "partial work" && prompt.contains("Usage exhausted"), "next AI receives unfinished file and verified checkpoint")
+        expect(GitLink.shared.call("git_status", [:], context: oldContext!)["isError"] as? Bool == true, "old AI capability is revoked before next AI starts")
+        try! "completed work".write(to: file, atomically: true, encoding: .utf8)
+        return .success("Project continued.")
+    }
+    chat.draft = "Continue this project."; chat.send()
+    let deadline = Date().addingTimeInterval(30)
+    while Date() < deadline && (chat.anyRunning || chat.current.turns.last?.projectCommitted == nil) { RunLoop.main.run(until: Date().addingTimeInterval(0.03)) }
+    expect(accounts == ["project-claude", "project-codex"] && chat.current.turns.last?.final == "Project continued.", "plain-chat project hands off Claude to Codex within the same turn")
+    expect((try! String(contentsOf: file, encoding: .utf8)) == "completed work", "working tree survives handoff without forced commit or pull")
+    expect((try! ProjectProcess.git(["log", "--oneline"], root: root.path)).split(separator: "\n").count == 1, "handoff never fabricates a checkpoint commit")
+    print("PASS: project AI handoff (same plain chat, same dirty files, next AI continuation, old-token revocation and no forced commit)")
+}

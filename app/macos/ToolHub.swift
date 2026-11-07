@@ -4,12 +4,19 @@ import Darwin
 struct ToolContext {
     var room: UUID
     var roots: [WorkspaceRoot]
+    var projectRun: UUID? = nil
+    var projectGeneration: Int? = nil
 }
 
 protocol ToolProvider: AnyObject {
     var active: Bool { get }
     func tools() -> [[String: Any]]
+    func tools(context: ToolContext) -> [[String: Any]]
     func call(_ name: String, _ arguments: [String: Any], context: ToolContext) -> [String: Any]
+}
+
+extension ToolProvider {
+    func tools(context: ToolContext) -> [[String: Any]] { tools() }
 }
 
 extension FaceLink: ToolProvider {
@@ -22,20 +29,22 @@ extension FaceLink: ToolProvider {
 final class ToolHub {
     static let shared = ToolHub()
     static var socketPath = AccountStore.supportDir + "/tools.sock"
-    private var providers: [ToolProvider] { [FaceLink.shared, DriveLink.shared] }
+    private var providers: [ToolProvider] { [FaceLink.shared, DriveLink.shared, GitLink.shared] }
     var active: Bool { providers.contains { $0.active } }
     private let lock = NSLock()
     private var sockets: Set<String> = []
     private var sessions: [String: (ToolContext, Date)] = [:]
 
-    func register(room: UUID, roots: [WorkspaceRoot]) -> String {
+    func register(room: UUID, roots: [WorkspaceRoot], projectRun: UUID? = nil, generation: Int? = nil) -> String {
         start()
         lock.lock(); defer { lock.unlock() }
         sessions = sessions.filter { $0.value.1 > Date() }
         let key = UUID().uuidString
-        sessions[key] = (ToolContext(room: room, roots: roots), Date().addingTimeInterval(7200))
+        sessions[key] = (ToolContext(room: room, roots: roots, projectRun: projectRun, projectGeneration: generation), Date().addingTimeInterval(7200))
         return key
     }
+
+    func revoke(project: UUID) { lock.lock(); sessions = sessions.filter { $0.value.0.projectRun != project }; lock.unlock() }
 
     func start() { listen(at: Self.socketPath, legacy: false) }
     // One release of compatibility for already prepared face-only manifests.
@@ -59,10 +68,10 @@ final class ToolHub {
         let available: [ToolProvider] = legacy ? [FaceLink.shared] : providers
         switch message["op"] as? String {
         case "tools":
-            return ["tools": available.filter { $0.active }.flatMap { $0.tools() }]
+            return ["tools": available.filter { $0.active }.flatMap { $0.tools(context: context) }]
         case "call":
             let name = message["name"] as? String ?? ""
-            guard let provider = available.first(where: { $0.active && $0.tools().contains { $0["name"] as? String == name } }) else {
+            guard let provider = available.first(where: { $0.active && $0.tools(context: context).contains { $0["name"] as? String == name } }) else {
                 return Self.failure("Tool is disconnected, switched off or unavailable: " + name)
             }
             return provider.call(name, message["arguments"] as? [String: Any] ?? [:], context: context)

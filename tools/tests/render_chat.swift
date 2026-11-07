@@ -27,6 +27,9 @@ private struct EmptyPreviewLogin: GoogleTokenStore {
         turn.finalBy = "Preview AI"
         conversation.turns = [turn]
         chat.conversations = [conversation]; chat.currentID = conversation.id
+        if CommandLine.arguments.contains("--project-approval") {
+            ProjectCenter.shared.requests = [ProjectApproval(room: conversation.id, run: UUID(), title: "Run project command", detail: "Runs outside the AI sandbox as your user.\n/Example/Project\n/bin/zsh tools/tests/run_mode2.sh")]
+        }
         for appearance in [NSAppearance.Name.darkAqua, .aqua] {
             let host = NSHostingController(rootView: ChatView(discussion: chat, model: model).environment(\.colorScheme, appearance == .darkAqua ? .dark : .light))
             host.sizingOptions = []

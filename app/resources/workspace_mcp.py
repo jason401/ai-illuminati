@@ -23,7 +23,8 @@ class Workspace:
 
     def ask_hub(self, message):
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
-            timeout = 65 if message.get('name', '').startswith('drive_') else 15
+            name = message.get('name', '')
+            timeout = 3610 if name.startswith('git_') or name == 'project_run' else (65 if name.startswith('drive_') else 15)
             s.settimeout(timeout); s.connect(self.hub)
             if self.tool_session: message = dict(message, session=self.tool_session)
             s.sendall(json.dumps(message).encode() + b'\n')
@@ -158,7 +159,9 @@ class Workspace:
         return content
 
     def writable(self, p=None):
+        if self.manifest.get("project") and p is not None and ".git" in p.parts: raise PermissionError("Use app git tools; .git is read only")
         if p is not None and any(p == r or r in p.parents for r in self.own): return
+        if self.manifest.get('project'): raise PermissionError('Project writes are limited to the authorized project and chat folder')
         if self.manifest.get('level') not in ('write','execute'): raise PermissionError('View mode cannot modify files')
         backup=pathlib.Path(self.manifest.get('backup',''))/'complete.json'
         try: record=json.loads(backup.read_text())

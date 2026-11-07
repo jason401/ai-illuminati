@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "commands": {
+    "test": {"executable": "/bin/zsh", "args": ["tools/tests/run_mode2.sh"]},
+    "build": {"executable": "/bin/zsh", "args": ["tools/build_app.sh", "--stage"]}
+  }
+}

@@ -88,3 +88,32 @@ allow writing, force read only, or inherit the parent. Dim icons indicate inheri
 need not be added as separate shared roots. Root eye switches pause the whole shared tree; removing a root
 only removes sharing and its associated permission overrides, never the real Drive folder. Double-click
 opens the folder in the browser. Expanded branches refresh about once a minute while visible.
+
+
+## Project work in plain chat
+
+In plain chat, open `+` → **Allow project work**, then choose the top-level Git folder.
+Claude or Codex can edit it and use app-hosted Git tools for status/diff/log, fast-forward pull,
+explicit-path commit, and normal push to main or feature/fix/codex branches.
+The project permission remains attached to that chat until disabled from the same menu.
+Only one writer in this app may work on a repository at a time. External editors and agents
+are not locked. On a usage limit, the previous attempt is cancelled and another supported
+account continues the same files; no automatic stash, reset, checkpoint commit, or dirty pull.
+Additional mentioned accounts review the completed work read-only.
+
+Register build/test commands in `.ai-illuminati.json`, for example:
+
+```json
+{"version":1,"commands":{"test":{"executable":"/bin/zsh","args":["tools/tests/run_mode2.sh"]}}}
+```
+
+Each registered command requires an approval card and runs outside the AI sandbox with your
+user permissions. Trust and review the project code before allowing it. A changed command or
+working tree while approval is pending invalidates that approval. Stop cancels the process
+group. Approval expires after 15 minutes; a project turn allows 45 minutes of active work
+and at most 60 minutes including approvals. App restart preserves unfinished files and a
+local journal, but does not automatically resume the task.
+
+Stable publishing always asks approval for the exact main SHA and remote shown on the card.
+Ordinary push does not update stable. Undo is unavailable after commit or push; use Git to
+review and revert those changes. Google Drive permissions are separate from project work.

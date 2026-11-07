@@ -19,6 +19,7 @@ final class DebateCancellation {
         active.forEach(Self.end)
     }
     static func end(_ process: Process) {
+        if process.environment?["AI_ILLUMINATI_PROJECT_PROCESS"] == "1" { kill(-process.processIdentifier, SIGKILL) }
         guard process.isRunning else { return }
         // Stop command/MCP descendants too, before collecting the final source diff.
         // Killing only the CLI can leave a Python writer running after Stop.

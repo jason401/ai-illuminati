@@ -10,6 +10,9 @@ struct WorkspaceRoot: Codable, Equatable { var path: String; var directory: Bool
 struct WorkspaceBinding: Codable {
     var roots: [WorkspaceRoot]
     var level: WorkspaceLevel = .view
+    var project: ProjectBinding? = nil
+    var projectRunID: UUID? = nil
+    var projectGeneration: Int? = nil
     var face: Bool? = nil   // plain chat: the bridge also offers AI Face's tools through the app (FaceLink)
     func inventory() -> [String] {
         var result: [String] = []
@@ -44,7 +47,7 @@ struct WorkspaceInvocation {
     }
     func prepare(in directory: URL) throws -> (String, [String]) {
         if level != .view {
-            guard let backupPath, let backup = try? WorkspaceBackup.load(backupPath), backup.roots == binding.roots, !backup.restored else { throw MaterialReader.error("자동 백업 완료 전에는 쓰기를 시작할 수 없습니다.") }
+            guard let backupPath, let backup = try? WorkspaceBackup.load(backupPath), backup.roots == (binding.projectRunID == nil ? binding.roots : binding.roots.filter { $0.writable == true }), !backup.restored else { throw MaterialReader.error("자동 백업 완료 전에는 쓰기를 시작할 수 없습니다.") }
         }
         let manifest = directory.appendingPathComponent("workspace-\(UUID().uuidString).json")
         let roots: [[String: Any]] = binding.roots.map { root in
@@ -55,9 +58,10 @@ struct WorkspaceInvocation {
         var object: [String: Any] = ["roots": roots, "level": level.rawValue, "backup": backupPath ?? "",
                                       "cache": NativeSessions.directory(room).appendingPathComponent("document-cache").path,
                                       "extractor": Self.resources.appendingPathComponent("WorkspaceDocument").path]
-        if binding.face == true && ToolHub.shared.active {
+        object["project"] = binding.projectRunID != nil
+        if (binding.face == true || binding.projectRunID != nil) && ToolHub.shared.active {
             object["tools"] = ToolHub.socketPath
-            object["toolSession"] = ToolHub.shared.register(room: room, roots: binding.roots)
+            object["toolSession"] = ToolHub.shared.register(room: room, roots: binding.roots, projectRun: binding.projectRunID, generation: binding.projectGeneration)
             if FaceLink.active() != nil { object["face"] = FaceLink.socketPath } // legacy manifests
         }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
@@ -99,6 +103,7 @@ struct WorkspaceInvocation {
         return (text.joined(separator: "\n\n"), images)
     }
 
+    var executionFolders: [String] { binding.projectRunID == nil ? binding.roots.filter(\.directory).map(\.path) : ownFolders }
     var ownFolders: [String] { binding.roots.filter { $0.directory && $0.writable == true }.map(\.path) }
 
     func arguments(provider: Account.Provider, original: [String], directory: URL, web: Bool) throws -> [String] {
@@ -113,19 +118,28 @@ struct WorkspaceInvocation {
             // safe-mode disables even explicitly configured MCP servers. restricted mode
             // confines file tools and ignores project/user settings while allowing this bridge.
             result.removeAll { $0 == "--safe-mode" }
-            let mcp = ["mcpServers": ["illuminati": ["command": command, "args": args] as [String: Any]]]
+            var server: [String: Any] = ["command": command, "args": args]
+            if binding.projectRunID != nil { server["timeout"] = 3_610_000 }
+            let mcp = ["mcpServers": ["illuminati": server]]
             let config = String(data: try JSONSerialization.data(withJSONObject: mcp), encoding: .utf8)!
             if let i = result.firstIndex(of: "--mcp-config") { result[i + 1] = config }
             // In view, only the writable roots may change: an Edit(//absolute/**) rule covers Edit and Write.
-            let own = level == .view ? ownFolders : []
+            let own = level == .view || binding.projectRunID != nil ? ownFolders : []
             let edit = level != .view || !own.isEmpty
             if let i = result.firstIndex(of: "--tools") { result[i + 1] = "Read,Grep,Glob" + (edit ? ",Edit,Write" : "") + (level == .execute ? ",Bash" : "") + (web ? ",WebSearch,WebFetch" : "") }
             if let i = result.firstIndex(of: "--allowedTools") { result.removeSubrange(i...i + 1) }
-            let allowedEdit = level != .view ? ",Edit,Write" : own.map { ",Edit(/" + $0 + "/**)" }.joined()
+            let allowedEdit = level != .view && binding.projectRunID == nil ? ",Edit,Write" : own.map { ",Edit(/" + $0 + "/**)" }.joined()
             result += ["--restricted", "--setting-sources", "", "--disable-slash-commands", "--permission-mode", "dontAsk", "--allowedTools", "Read,Grep,Glob,mcp__illuminati__*" + allowedEdit + (level == .execute ? ",Bash" : "") + (web ? ",WebSearch,WebFetch" : "")]
             if level == .execute {
-                let settings: [String: Any] = ["sandbox": ["enabled": true, "autoAllowBashIfSandboxed": true, "allowUnsandboxedCommands": false,
-                    "filesystem": ["allowWrite": binding.roots.filter(\.directory).map(\.path)]]]
+                var settings: [String: Any] = ["sandbox": ["enabled": true, "autoAllowBashIfSandboxed": true, "allowUnsandboxedCommands": false,
+                    "filesystem": ["allowWrite": executionFolders, "denyWrite": binding.project.map { [$0.common, $0.root + "/.git"] } ?? []]]]
+                if let project = binding.project {
+                    let protected = [project.common, project.root + "/.git"]
+                    let denied: [String] = protected.flatMap { path -> [String] in
+                        ["Edit(/\(path))", "Edit(/\(path)/**)", "Write(/\(path))", "Write(/\(path)/**)"]
+                    }
+                    settings["permissions"] = ["deny": denied]
+                }
                 result += ["--settings", String(data: try JSONSerialization.data(withJSONObject: settings), encoding: .utf8)!]
             }
             for root in binding.roots where root.directory { result += ["--add-dir", root.path] }
@@ -139,9 +153,9 @@ struct WorkspaceInvocation {
                 if base[i] == "-C", i + 1 < base.count { base[i + 1] = directory.path }
                 i += 1
             }
-            let own = level == .view ? ownFolders : []
+            let own = level == .view || binding.projectRunID != nil ? ownFolders : []
             result = ["-c", "sandbox_mode=" + json(level == .view && own.isEmpty ? "read-only" : "workspace-write"), "-c", "approval_policy=\"never\"", "-c", "features.shell_tool=" + (level == .execute ? "true" : "false"),
-                      "-c", "features.multi_agent=false", "-c", "sandbox_workspace_write.writable_roots=" + json(level == .view ? own : binding.roots.filter(\.directory).map(\.path)),
+                      "-c", "features.multi_agent=false", "-c", "sandbox_workspace_write.writable_roots=" + json(level == .view ? own : executionFolders),
                       "-c", "sandbox_workspace_write.exclude_slash_tmp=true", "-c", "sandbox_workspace_write.exclude_tmpdir_env_var=true",
                       "-c", "sandbox_workspace_write.network_access=false", "-c", "web_search=" + json(web ? "live" : "disabled"),
                       "-c", "mcp_servers.illuminati.command=" + json(command), "-c", "mcp_servers.illuminati.args=" + json(args),
@@ -149,6 +163,7 @@ struct WorkspaceInvocation {
                       // The bridge itself allows writes only in the chat folder (or after a backup), so its calls
                       // need no approval; "auto" still asked for write_file, which fails with approval "never".
                       "-c", "mcp_servers.illuminati.default_tools_approval_mode=" + json(own.isEmpty ? "auto" : "approve")]
+            if binding.projectRunID != nil { result += ["-c", "mcp_servers.illuminati.tool_timeout_sec=3610"] }
             result += base
         case .ollama:
             break   // no CLI: it reads files through the app's workspace_reads requests
@@ -187,7 +202,7 @@ extension Discussion {
 
 extension Discussion {
     func undoWorkspace(_ turn: ChatTurn) {
-        guard !running, !importingMaterials, let path = turn.backupPath else { return }
+        guard !running, !importingMaterials, turn.projectCommitted != true, turn.projectPushed != true, let path = turn.backupPath else { return }
         let room = currentID
         runningRooms.insert(room)
         DispatchQueue.global(qos: .userInitiated).async {

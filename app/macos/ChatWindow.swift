@@ -143,6 +143,7 @@ struct ChatView: View {
             // Every mode shares the plain chat's layout; a team mode only adds a pill and a settings chip
             // in the message box.
             soloHeader.padding(.horizontal, 18).frame(height: 40)
+            ProjectApprovalView(room: discussion.currentID)
             if discussion.current.turns.isEmpty {
                 // A new chat: the greeting and the message box in the middle, like the desktop apps.
                 VStack(spacing: 28) {
@@ -643,6 +644,9 @@ struct ChatView: View {
         Menu {
             Button(L("이미지 첨부", "Attach images")) { discussion.chooseImages() }
             Button(L("폴더 연결 (읽기·쓰기)", "Link folder (read and write)")) { discussion.chooseMaterials(folder: true) }
+            if discussion.configuration.mode == 0 {
+                Button(discussion.current.workspace?.project == nil ? L("프로젝트 작업 허용…", "Enable Project Work…") : L("프로젝트 작업 해제", "Disable Project Work")) { discussion.configureProject() }
+            }
             Button(L("파일 연결 (읽기)", "Link files (read)")) { discussion.chooseMaterials(folder: false) }
             Divider()
             Menu(L("여럿에게 묻기", "Ask several AIs")) {
@@ -1152,7 +1156,7 @@ private struct TurnView: View {
                 changesView(changes, title: L("실제 변경 파일 \(changes.count)개", "\(changes.count) changed files"))
             }
             // Plain chat: Undo only when the answer changed a linked folder (the chat's own folder is not backed up).
-            if let backupPath = turn.backupPath, FileManager.default.fileExists(atPath: backupPath) && (turn.mode != 0 || (turn.workspaceChanges ?? []).contains { !$0.path.hasPrefix(Discussion.chatFolder(discussion.currentID).path + "/") }) {
+            if turn.projectCommitted != true, turn.projectPushed != true, let backupPath = turn.backupPath, FileManager.default.fileExists(atPath: backupPath) && (turn.mode != 0 || (turn.workspaceChanges ?? []).contains { !$0.path.hasPrefix(Discussion.chatFolder(discussion.currentID).path + "/") }) {
                 Button(turn.undone == true ? L("되돌림 완료", "Restored") : L("되돌리기", "Undo file changes")) { discussion.undoWorkspace(turn) }
                     .disabled(turn.undone == true || discussion.running || discussion.importingMaterials)
             }
@@ -1352,6 +1356,7 @@ final class ChatWindow {
             w.center()
             window = w
             closing = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: w, queue: .main) { [weak self] _ in
+                ProjectCenter.shared.cancel()
                 NSApp.setActivationPolicy(.accessory)
                 // No chat open: Gemma need not hold its memory (an answer under way finishes first).
                 if discussion.model.hasLocal {
@@ -1359,6 +1364,7 @@ final class ChatWindow {
                 }
             }
         }
+        ProjectCenter.shared.resume()
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)

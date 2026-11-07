@@ -14,6 +14,7 @@ struct WorkspaceBackup: Codable {
     var after: [String: Stamp]?
     var changes: [WorkspaceChange] = []
     var gitStates: [String] = []
+    var gitHeads: [String: String]? = nil
     var restored = false
     // Files only in the cloud when the backup was made: not copied, so Undo cannot bring them back
     // (the cloud's own version history and trash can).
@@ -143,6 +144,8 @@ struct WorkspaceBackup: Codable {
         for root in binding.roots where root.directory {
             if let top = try? run("/usr/bin/git", ["-C", root.path, "rev-parse", "--show-toplevel"]), URL(fileURLWithPath: top).resolvingSymlinksInPath().path == root.path {
                 let head = (try? run("/usr/bin/git", ["-C", root.path, "rev-parse", "HEAD"])) ?? "unborn"
+                if backup.gitHeads == nil { backup.gitHeads = [:] }
+                backup.gitHeads?[root.path] = head
                 if let commit = try? run("/usr/bin/git", ["-C", root.path, "stash", "create", "AI Illuminati backup"]), !commit.isEmpty {
                     try run("/usr/bin/git", ["-C", root.path, "update-ref", "refs/ai-illuminati/" + runID.uuidString, commit])
                     backup.gitStates.append(root.path + ": " + commit)
@@ -198,6 +201,9 @@ struct WorkspaceBackup: Codable {
     // Puts back only what the answer changed, entry by entry (the rest of the folder, including files
     // only in the cloud, is left alone). Refuses when anything changed after the answer.
     mutating func restore() throws {
+        for (root, head) in gitHeads ?? [:] {
+            guard (try? Self.run("/usr/bin/git", ["-C", root, "rev-parse", "HEAD"])) == head else { throw MaterialReader.error("Git HEAD changed after this backup. Use a new correction commit instead of file Undo.") }
+        }
         guard !restored, let after, try Self.stamps(roots) == after else { throw MaterialReader.error("작업 후 다른 변경이 있어 자동으로 덮어쓰지 않았습니다. 백업과 현재 파일을 먼저 비교하세요.") }
         let manager = FileManager.default
         let cloudKeys = Set(cloud ?? [])

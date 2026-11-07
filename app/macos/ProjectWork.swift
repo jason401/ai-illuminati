@@ -84,16 +84,12 @@ struct ProjectApproval: Identifiable {
 final class ProjectCenter: ObservableObject {
     static let shared = ProjectCenter()
     @Published var requests: [ProjectApproval] = []
-    @Published var events: [UUID: [String]] = [:]
     private let lock = NSLock()
     private var decisions: [UUID: Bool] = [:]
     private var accepting = true
     private var approvalEpoch = 0
     func resume() { lock.lock(); accepting = true; lock.unlock() }
     func decide(_ id: UUID, allow: Bool) { guard requests.contains(where: { $0.id == id }) else { return }; lock.lock(); decisions[id] = allow; lock.unlock(); requests.removeAll { $0.id == id } }
-    func note(_ room: UUID, _ text: String) {
-        DispatchQueue.main.async { self.events[room, default: []].append(text); self.events[room] = Array(self.events[room, default: []].suffix(20)) }
-    }
     func approve(_ request: ProjectApproval, token: DebateCancellation, deadline: Date) -> Bool {
         lock.lock(); let enabled = accepting, epoch = approvalEpoch; lock.unlock()
         guard enabled else { return false }
@@ -140,6 +136,11 @@ final class ProjectRun {
     private var ended = false
     func stop() { lifecycle.lock(); ended = true; lifecycle.unlock(); attempt.cancel() }
     var committed = false, pushed = false
+    // Tool results for this turn's work log; the chat shows them under the reply, not above the chat.
+    var onNote: (([String]) -> Void)?
+    private var notes: [String] = []
+    var log: [String] { clock.lock(); defer { clock.unlock() }; return notes }
+    func note(_ text: String) { clock.lock(); notes = Array((notes + [text]).suffix(50)); let report = onNote, all = notes; clock.unlock(); report?(all) }
     var initialDirty: Set<String> = []
     let operations = NSRecursiveLock()
     init(room: UUID, binding: ProjectBinding, token: DebateCancellation, fullAuto: Bool = false) {
@@ -235,9 +236,9 @@ final class GitLink: ToolProvider {
             _ = run.checkpoint("Starting \(name); inspect remote state if interrupted.")
             let output = try execute(name, arguments, run, generation)
             _ = run.checkpoint("\(name) completed")
-            ProjectCenter.shared.note(run.room, name + " → " + String(output.prefix(180)))
+            run.note(name + " → " + String(output.prefix(180)))
             return ["content": [["type": "text", "text": output]], "isError": false]
-        } catch { _ = run.checkpoint(name + " failed: " + String(error.localizedDescription.prefix(500))); ProjectCenter.shared.note(run.room, name + " failed"); return ToolHub.failure(error.localizedDescription) }
+        } catch { _ = run.checkpoint(name + " failed: " + String(error.localizedDescription.prefix(500))); run.note(name + " failed"); return ToolHub.failure(error.localizedDescription) }
     }
     private func execute(_ name: String, _ args: [String: Any], _ run: ProjectRun, _ generation: Int) throws -> String {
         func git(_ argv: [String], timeout: TimeInterval = 120) throws -> String { try run.validate(generation); return try ProjectProcess.git(argv, root: run.binding.root, token: run.attempt, timeout: min(timeout, run.deadline.timeIntervalSinceNow)) }
@@ -294,7 +295,7 @@ final class GitLink: ToolProvider {
                   let exe = command["executable"] as? String, exe.hasPrefix("/"), let argv = command["args"] as? [String] else { throw MaterialReader.error("Unknown or invalid named project command. Add it to .ai-illuminati.json (absolute executable, args array) and call project_run again.") }
             let status = try git(["status", "--short"])
             let tree = try WorkspaceBackup.stamps([WorkspaceRoot(path: run.binding.root, directory: true)])
-            if run.fullAuto { ProjectCenter.shared.note(run.room, "project_run (full auto): " + exe + " " + argv.joined(separator: " ")) }
+            if run.fullAuto { run.note("project_run (full auto): " + exe + " " + argv.joined(separator: " ")) }
             else { try approve("프로젝트 실행 / Run project command", "Runs outside the AI sandbox as your user.\n" + run.binding.root + "\n" + exe + " " + argv.joined(separator: " ") + "\n" + status) }
             guard try Data(contentsOf: url) == data, try WorkspaceBackup.stamps([WorkspaceRoot(path: run.binding.root, directory: true)]) == tree else { throw MaterialReader.error("Command changed after approval. Request it again.") }
             let reply = try ProjectProcess.run(exe, argv, cwd: run.binding.root, token: run.attempt, deadline: min(run.deadline, Date().addingTimeInterval(2700)), guarded: run.fullAuto)

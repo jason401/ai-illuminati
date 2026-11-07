@@ -172,7 +172,6 @@ struct ChatView: View {
                 soloHeader
             }
             .padding(.leading, 12).padding(.trailing, 18).frame(height: 40)
-            ProjectApprovalView(room: discussion.currentID)
             if discussion.current.turns.isEmpty {
                 // A new chat: the greeting and the message box in the middle, like the desktop apps.
                 VStack(spacing: 28) {
@@ -196,6 +195,11 @@ struct ChatView: View {
                 .frame(maxWidth: .infinity)
             } else {
                 transcript
+                // Approval cards sit right above the message box, where the user is looking.
+                ProjectApprovalView(room: discussion.currentID)
+                    .frame(maxWidth: 760)
+                    .padding(.horizontal, 28)
+                    .frame(maxWidth: .infinity)
                 composer
                     .frame(maxWidth: 760)
                     .padding(.horizontal, 28).padding(.top, 4).padding(.bottom, 18)
@@ -1207,6 +1211,10 @@ private struct TurnView: View {
                     Text(turn.activity ?? turn.status).foregroundColor(.secondary)
                 }
                 .font(turn.mode == 0 ? .system(size: 12) : .body)
+                // Project work: the latest tool result, under what the AI is doing now.
+                if let latest = turn.projectLog?.last {
+                    Text(latest).font(.system(size: 11)).foregroundColor(.secondary).lineLimit(2)
+                }
             }
             if let error = turn.error {
                 Text(error).foregroundColor(.red)
@@ -1319,6 +1327,17 @@ private struct TurnView: View {
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
+            }
+            if turn.mode == 0, turn.status.isEmpty, let log = turn.projectLog, !log.isEmpty {
+                DisclosureGroup(L("작업 기록 \(log.count)개", "\(log.count) project steps")) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(Array(log.enumerated()), id: \.offset) { _, line in
+                            Text(line).font(.system(size: 11, design: .monospaced)).foregroundColor(.secondary)
+                                .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                }
+                .font(.callout)
             }
             if turn.mode == 0, let changes = turn.workspaceChanges {
                 changesView(changes, title: L("이 대화 폴더의 파일 \(changes.count)개", "\(changes.count) files in this chat's folder"))

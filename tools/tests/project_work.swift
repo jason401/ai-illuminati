@@ -22,6 +22,8 @@ func testProjectWork() {
     defer { ProjectWork.finish(run) }
     var context = ToolContext(room: run.room, roots: binding.roots, projectRun: run.id, projectGeneration: run.generation)
     let provider = GitLink.shared
+    var reported: [String] = []
+    run.onNote = { reported = $0 }
     func call(_ name: String, _ args: [String: Any] = [:]) -> [String: Any] { provider.call(name, args, context: context) }
     func ok(_ name: String, _ args: [String: Any] = [:]) -> String {
         let reply = call(name, args)
@@ -35,6 +37,8 @@ func testProjectWork() {
     _ = ok("git_commit", ["message": "AI change", "paths": ["README.md"]])
     expect(git(["diff", "--cached", "--name-only"], at: root) == "user.txt", "commit preserves unrelated user staging")
     _ = ok("git_push")
+    expect(run.log.count == 3 && run.log[0] == "git_pull failed" && run.log[1].hasPrefix("git_commit → ") && run.log[2].hasPrefix("git_push → ") && reported == run.log,
+           "project tools land in this turn's work log, failures included")
     let pushed = git(["rev-parse", "refs/heads/main"], at: origin)
     expect(pushed == git(["rev-parse", "HEAD"], at: root) && run.committed && run.pushed, "app records real commit and push")
     expect(call("git_commit", ["message": "bad", "paths": ["../outside"]])["isError"] as? Bool == true, "traversal commit refused")

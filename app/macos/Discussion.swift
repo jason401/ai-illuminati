@@ -421,6 +421,7 @@ struct ChatTurn: Identifiable, Codable {
     var projectPushed: Bool?
     var backupPath: String?
     var workspaceChanges: [WorkspaceChange]?
+    var projectLog: [String]?   // project tools this turn used, e.g. "git_push → …", newest last
     var undone: Bool?
     var sessionTranscript: String?
     var debateFocus: String?

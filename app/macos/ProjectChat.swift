@@ -17,8 +17,7 @@ struct ProjectApprovalView: View {
                     }
                 }.padding(12).background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
             }
-            if let latest = center.events[room]?.last { Text(latest).font(.system(size: 11)).foregroundColor(.secondary).lineLimit(2) }
-        }.padding(.horizontal, 18)
+        }
     }
 }
 
@@ -53,6 +52,7 @@ extension Discussion {
         guard let selected = binding.project else { finish(id, index, error: "No project selected."); return }
         let fullAuto = binding.isFullAuto
         let run = ProjectRun(room: id, binding: selected, token: cancellation, fullAuto: fullAuto)
+        run.onNote = { [weak self] log in self?.changeTurn(id, index) { $0.projectLog = log } }
         // Full auto keeps the Mac awake while the AI works (the display may still sleep).
         let awake = fullAuto ? ProcessInfo.processInfo.beginActivity(options: [.userInitiated, .idleSystemSleepDisabled], reason: "AI Illuminati full-auto project work") : nil
         defer { if let awake { ProcessInfo.processInfo.endActivity(awake) } }
@@ -65,7 +65,7 @@ extension Discussion {
         defer {
             if var saved = backup, (try? saved.finish()) != nil {
                 let changes = saved.changes
-                changeTurn(id, index, save: true) { $0.workspaceChanges = changes; $0.projectCommitted = run.committed; $0.projectPushed = run.pushed }
+                changeTurn(id, index, save: true) { $0.workspaceChanges = changes; $0.projectCommitted = run.committed; $0.projectPushed = run.pushed; $0.projectLog = run.log.isEmpty ? nil : run.log }
             }
         }
         var workspace = binding
@@ -177,7 +177,7 @@ extension Discussion {
             case .failure(let failure) where Self.isOutOfUsage(failure):
                 checkpoint = run.checkpoint("Usage exhausted: " + speaker + ". Continue the same unfinished project without overwriting it.")
                 excluded.insert(account.id); preferred = nil
-                ProjectCenter.shared.note(id, speaker + L(" 한도 소진 → 다른 AI로 인계", " reached its limit → handing off"))
+                run.note(speaker + L(" 한도 소진 → 다른 AI로 인계", " reached its limit → handing off"))
             case .failure(let failure): finish(id, index, error: Self.describe(failure)); return
             }
         }

@@ -115,6 +115,10 @@ group. Approval expires after 15 minutes; a project turn allows 45 minutes of ac
 and at most 60 minutes including approvals. App restart preserves unfinished files and a
 local journal, but does not automatically resume the task.
 
+Approval cards appear right above the message box. While the AI works, the latest project tool
+result shows under its progress line; afterwards the reply has a collapsed **project steps** list
+with every tool it used in that turn, kept with the chat.
+
 **Full auto** is the default for project work (turn it off per chat in `+` to confirm steps with cards): the AI runs any command without
 approval cards, uses the network, runs registered commands directly and pushes main through the app's
 `git_push`. Up to 8 hours, and the Mac stays awake. Still blocked: force push and history rewrites (its shell has

@@ -38,8 +38,11 @@ private struct EmptyPreviewLogin: GoogleTokenStore {
             window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
             window.titlebarAppearsTransparent = true; window.titleVisibility = .hidden
             window.appearance = NSAppearance(named: appearance)
-            window.contentMinSize = NSSize(width: 820, height: 520)
-            window.setContentSize(NSSize(width: 1040, height: 720))
+            window.contentMinSize = ChatView.minSize
+            // CHAT_WIDTH renders a narrow window; CHAT_SIDEBAR=1 opens the sliding sidebar there.
+            let width = Double(ProcessInfo.processInfo.environment["CHAT_WIDTH"] ?? "") ?? 1040
+            chat.sidebarOverlay = ProcessInfo.processInfo.environment["CHAT_SIDEBAR"] == "1"
+            window.setContentSize(NSSize(width: width, height: 720))
             for _ in 0..<5 { host.view.layoutSubtreeIfNeeded(); window.displayIfNeeded(); RunLoop.main.run(until: Date().addingTimeInterval(0.04)) }
             let view = window.contentView!.superview ?? host.view
             let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds)!

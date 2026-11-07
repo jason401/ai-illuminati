@@ -623,6 +623,9 @@ final class Discussion: ObservableObject {
     // Chat window only (not saved): sidebar search and which row the pointer is over.
     @Published var sidebarSearching = false
     @Published var sidebarSearch = ""
+    // Sidebar: hidden by the button in a wide window; in a narrow window it slides over the chat instead.
+    @Published var sidebarHidden = false
+    @Published var sidebarOverlay = false
     @Published var hoverKey: String?
     @Published var teamSettingsOpen = false   // the team mode settings popover in the message box
     // @ in the message box: the accounts picked so far, and the list while it is open.

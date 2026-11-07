@@ -8,13 +8,34 @@ struct ChatView: View {
     @ObservedObject var discussion: Discussion
     @ObservedObject var model: AppModel
 
+    // Smallest window, about the Claude and ChatGPT apps; below `wide` the sidebar slides over the chat.
+    static let minSize = NSSize(width: 440, height: 420)
+    static let wide: CGFloat = 700
+
     var body: some View {
-        HStack(spacing: 0) {
-            sidebar
-            Divider().opacity(0.5)
-            chat
+        GeometryReader { geometry in
+            let wide = geometry.size.width >= Self.wide
+            let inline = wide && !discussion.sidebarHidden
+            ZStack(alignment: .leading) {
+                HStack(spacing: 0) {
+                    if inline {
+                        sidebar
+                        Divider().opacity(0.5)
+                    }
+                    chat(sidebarShown: inline, wide: wide)
+                }
+                if !wide && discussion.sidebarOverlay {
+                    // Click outside to close, like the desktop apps.
+                    Color.black.opacity(0.18).contentShape(Rectangle())
+                        .onTapGesture { discussion.sidebarOverlay = false }
+                    sidebar
+                        .background(Color(nsColor: .windowBackgroundColor))
+                        .shadow(color: .black.opacity(0.25), radius: 12)
+                }
+            }
         }
-        .frame(minWidth: 820, minHeight: 520)
+        .onChange(of: discussion.currentID) { _ in discussion.sidebarOverlay = false }
+        .frame(minWidth: Self.minSize.width, minHeight: Self.minSize.height)
         .background(Color(nsColor: .textBackgroundColor))
         .background(WindowTitlebarDragBridge())
         // A photo dropped anywhere in the window is attached, not only on the message box.
@@ -138,11 +159,19 @@ struct ChatView: View {
         .disabled(discussion.importingMaterials)
     }
 
-    private var chat: some View {
+    private func chat(sidebarShown: Bool, wide: Bool) -> some View {
         VStack(spacing: 0) {
             // Every mode shares the plain chat's layout; a team mode only adds a pill and a settings chip
             // in the message box.
-            soloHeader.padding(.horizontal, 18).frame(height: 40)
+            HStack(spacing: 8) {
+                Button(action: {
+                    if wide { discussion.sidebarHidden.toggle() } else { discussion.sidebarOverlay.toggle() }
+                }) { Image(systemName: "sidebar.left").frame(width: 24, height: 24) }
+                    .buttonStyle(.plainHit).foregroundColor(.secondary)
+                    .help(sidebarShown ? L("사이드바 숨기기", "Hide sidebar") : L("사이드바 보기", "Show sidebar"))
+                soloHeader
+            }
+            .padding(.leading, 12).padding(.trailing, 18).frame(height: 40)
             ProjectApprovalView(room: discussion.currentID)
             if discussion.current.turns.isEmpty {
                 // A new chat: the greeting and the message box in the middle, like the desktop apps.
@@ -1350,7 +1379,7 @@ final class ChatWindow {
             w.isMovable = false
             w.titlebarAppearsTransparent = true
             w.titleVisibility = .hidden
-            w.contentMinSize = NSSize(width: 820, height: 520)
+            w.contentMinSize = ChatView.minSize
             w.setContentSize(NSSize(width: 1040, height: 720))
             w.isReleasedWhenClosed = false
             w.center()

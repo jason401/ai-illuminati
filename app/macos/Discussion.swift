@@ -795,7 +795,7 @@ final class Discussion: ObservableObject {
         var sent = Set(earlier..<pictures.count).union(max(0, earlier - recentImages)..<earlier)
         let pattern = try! NSRegularExpression(pattern: #"(?i)(?:image|picture|photo|사진|그림|이미지)\s*(\d{1,4})"#)
         for match in pattern.matches(in: question, range: NSRange(question.startIndex..., in: question)) {
-            if let range = Range(match.range(at: 1), in: question), let n = Int(question[range]), (1...pictures.count).contains(n) { sent.insert(n - 1) }
+            if let range = Range(match.range(at: 1), in: question), let n = Int(question[range]), n >= 1, n <= pictures.count { sent.insert(n - 1) }
         }
         return sent
     }

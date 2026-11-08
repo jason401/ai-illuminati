@@ -24,6 +24,15 @@ class WorkspaceTests(unittest.TestCase):
         path.write_text('value 386 changed')
         third=json.loads(self.ws.read_document('notes.txt')[0]['text'])
         self.assertFalse(third['cache_hit']);self.assertIn('386',third['text'])
+    def test_code_file_line_range(self):
+        (self.folder/'code.swift').write_text(''.join('line %d\n'%i for i in range(1,1520)))
+        whole=json.loads(self.ws.read_document('code.swift')[0]['text'])
+        self.assertIn('line 1519',whole['text'])
+        part=json.loads(self.ws.read_document('code.swift',start=1100,end=1800)[0]['text'])
+        self.assertTrue(part['text'].startswith('[lines 1100-1519 of 1519]\nline 1100\n'));self.assertNotIn('line 1099\n',part['text'])
+        self.assertEqual(part['total_lines'],1519);self.assertIsNone(part['next_offset'])
+        rest=json.loads(self.ws.read_document('code.swift',start=1500)[0]['text'])
+        self.assertIn('line 1519',rest['text']);self.assertNotIn('line 1499\n',rest['text'])
     def test_view_exposes_no_mutations(self):
         self.assertEqual([t['name'] for t in self.ws.tools()],['list_files','read_document'])
         with self.assertRaises(PermissionError):self.ws.call('write_file',{'path':'notes.txt','content':'bad'})

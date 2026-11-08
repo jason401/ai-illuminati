@@ -1319,7 +1319,7 @@ private struct ModeChangeMarker: View {
 // written and checked, and "Continue on this Mac".
 private struct RemoteChatView: View {
     let viewing: RemoteViewing
-    let discussion: Discussion
+    @ObservedObject var discussion: Discussion   // unfolded AI replies live in discussion.openEntries
     @ObservedObject var sync: DeviceSync
 
     var body: some View {
@@ -1328,7 +1328,8 @@ private struct RemoteChatView: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 28) {
                         ForEach(snap.turns) { turn in
-                            TurnView(turn: turn, discussion: discussion, busy: true, openEntries: [], accountLabels: [:],
+                            TurnView(turn: turn, discussion: discussion, busy: true,
+                                     openEntries: discussion.openEntries.intersection(turn.entries.map(\.id)), accountLabels: [:],
                                      chatFolder: "", language: AppLanguage.current)
                         }
                     }

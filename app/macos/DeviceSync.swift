@@ -163,9 +163,10 @@ final class DeviceSync: ObservableObject {
 
     // MARK: What is shared
 
-    // A chat is Enterprise when it was marked so, or an Enterprise account picked or answered it.
+    // A chat is Enterprise when it was marked so, or an Enterprise account picked or answered it (even in a
+    // chat marked personal, as when one is called with @ or chats are not kept apart).
     static func isSchool(_ conversation: Conversation, accounts: [Account]) -> Bool {
-        if let school = conversation.configuration?.school { return school }
+        if conversation.configuration?.school == true { return true }
         let config = conversation.configuration
         let ids = Set([config?.soloAccountID, config?.lastSoloAccountID, config?.leaderAccountID].compactMap { $0 } + (config?.accountIDs ?? []))
         let schoolNames = Set(accounts.filter(\.isSchool).flatMap { [$0.name, "\($0.provider.title) (\($0.name))"] })
@@ -228,6 +229,9 @@ final class DeviceSync: ObservableObject {
     }
 
     // MARK: Writing this Mac's folder
+    // What to write is worked out on the main thread (the chat, its side, whether it is answering); reading
+    // the state, encoding and the file work happen on the io queue, in order, so long chats never hold up
+    // the window.
 
     // A chat was saved (ChatStore.save) or deleted: write or remove its copy a few seconds later.
     func noteSaved(_ conversation: Conversation) {
@@ -236,7 +240,11 @@ final class DeviceSync: ObservableObject {
     }
     func noteDeleted(_ id: UUID) {
         guard settings.enabled else { return }
-        onMain { self.pending[id] = nil; self.remove(id) }
+        onMain {
+            self.pending[id] = nil
+            let file = self.myChats.appendingPathComponent(id.uuidString + ".json")
+            self.io.async { Self.removeFile(file) }
+        }
     }
     // A chat finished answering: its last turn can go out now.
     func noteFinished(_ conversation: Conversation?) {
@@ -254,66 +262,110 @@ final class DeviceSync: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.delay) { [weak self] in
             guard let self else { return }
             self.flushScheduled = false
-            let batch = self.pending
-            self.pending = [:]
             let accounts = self.accounts()
-            for conversation in batch.values { self.publish(conversation, accounts: accounts) }
-            self.writeDeviceInfo()
+            let copies = self.pending.values.map { self.copy($0, accounts: accounts) }
+            self.pending = [:]
+            let folder = self.myChats, info = self.deviceInfo()
+            self.io.async {
+                let outcomes = copies.map { Self.write($0, to: folder) }
+                info?()
+                self.report(outcomes)
+            }
         }
     }
 
-    // Writes this chat's copy if it is shared (only when it changed), else removes the copy.
+    // One chat's copy as worked out on the main thread.
+    struct Copy {
+        var conversation: Conversation
+        var shared: Bool
+        var school: Bool
+        var busy: Bool
+    }
+    enum Outcome: Equatable { case removed, nothing, saved, failed(String) }
+
+    func copy(_ conversation: Conversation, accounts: [Account]) -> Copy {
+        Copy(conversation: conversation, shared: shares(conversation, accounts: accounts),
+             school: Self.isSchool(conversation, accounts: accounts), busy: isBusy(conversation.id))
+    }
+
+    // Writes a shared chat's copy (only when it changed), else removes it. Safe off the main thread.
+    // With no finished turn yet (the first question still being answered), any copy is left as it is.
+    static func write(_ copy: Copy, to folder: URL) -> Outcome {
+        let file = folder.appendingPathComponent(copy.conversation.id.uuidString + ".json")
+        guard copy.shared else { removeFile(file); return .removed }
+        let id = copy.conversation.id
+        let snap = snapshot(copy.conversation, school: copy.school, busy: copy.busy,
+                            state: Discussion.loadState(id), stateTurn: Discussion.loadStateTurn(id))
+        guard !snap.turns.isEmpty, let data = try? encoder().encode(snap) else { return .nothing }
+        if (try? Data(contentsOf: file)) == data { return .saved }
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try data.write(to: file, options: .atomic)
+            return .saved
+        } catch {
+            return .failed(error.localizedDescription)
+        }
+    }
+
+    private func report(_ outcomes: [Outcome]) {
+        let failure = outcomes.lazy.compactMap { if case .failed(let why) = $0 { return why } else { return nil } }.first
+        let saved = outcomes.contains(.saved)
+        guard failure != nil || saved else { return }
+        DispatchQueue.main.async {
+            self.problem = failure.map { L("동기화 폴더에 쓰지 못했어요: ", "Could not write to the sync folder: ") + $0 }
+        }
+    }
+
+    // Writes or removes one chat's copy right away (tests). True when the chat's copy is in place.
     @discardableResult
     func publish(_ conversation: Conversation, accounts: [Account]) -> Bool {
-        guard shares(conversation, accounts: accounts) else { remove(conversation.id); return false }
-        let snap = Self.snapshot(conversation, school: Self.isSchool(conversation, accounts: accounts), busy: isBusy(conversation.id),
-                                 state: Discussion.loadState(conversation.id), stateTurn: Discussion.loadStateTurn(conversation.id))
-        guard !snap.turns.isEmpty, let data = try? Self.encoder().encode(snap) else { return false }
-        let file = myChats.appendingPathComponent(conversation.id.uuidString + ".json")
-        if (try? Data(contentsOf: file)) == data { return true }
-        do {
-            try FileManager.default.createDirectory(at: myChats, withIntermediateDirectories: true)
-            try data.write(to: file, options: .atomic)
-            problem = nil
-            return true
-        } catch {
-            problem = L("동기화 폴더에 쓰지 못했어요: ", "Could not write to the sync folder: ") + error.localizedDescription
-            return false
-        }
+        Self.write(copy(conversation, accounts: accounts), to: myChats) == .saved
     }
 
-    func remove(_ id: UUID) {
-        let file = myChats.appendingPathComponent(id.uuidString + ".json")
+    static func removeFile(_ file: URL) {
         if FileManager.default.fileExists(atPath: file.path) { try? FileManager.default.removeItem(at: file) }
     }
 
-    func writeDeviceInfo() {
-        guard settings.enabled else { return }
+    // Writes device.json when run (on the io queue); nil when sharing is off.
+    private func deviceInfo() -> (() -> Void)? {
+        guard settings.enabled else { return nil }
         let info = SyncDeviceInfo(id: deviceID, name: deviceName,
                                   app: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "", writtenAt: Date())
-        try? FileManager.default.createDirectory(at: myFolder, withIntermediateDirectories: true)
-        try? Self.encoder().encode(info).write(to: myFolder.appendingPathComponent("device.json"), options: .atomic)
+        let folder = myFolder
+        return {
+            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try? Self.encoder().encode(info).write(to: folder.appendingPathComponent("device.json"), options: .atomic)
+        }
     }
 
     // Brings this Mac's folder in line with the settings: copies of shared chats written, every other copy
     // (unshared, deleted while the app was closed, Enterprise after "include" was turned off) removed.
+    // A shared chat's copy stays even when it could not be written just now: a passing write error must not
+    // look to the other Macs as if the chat was taken away.
     func reconcile() {
         guard settings.enabled else { return }
         let accounts = self.accounts()
-        var kept: Set<String> = []
-        for conversation in conversations() where publish(conversation, accounts: accounts) {
-            kept.insert(conversation.id.uuidString + ".json")
+        let copies = conversations().map { copy($0, accounts: accounts) }
+        let folder = myChats, info = deviceInfo()
+        io.async {
+            let outcomes = copies.map { Self.write($0, to: folder) }
+            let kept = Set(copies.filter(\.shared).map { $0.conversation.id.uuidString + ".json" })
+            for name in (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [] where !kept.contains(name) {
+                try? FileManager.default.removeItem(at: folder.appendingPathComponent(name))
+            }
+            info?()
+            self.report(outcomes)
         }
-        for name in (try? FileManager.default.contentsOfDirectory(atPath: myChats.path)) ?? [] where !kept.contains(name) {
-            try? FileManager.default.removeItem(at: myChats.appendingPathComponent(name))
-        }
-        writeDeviceInfo()
     }
 
-    // Removes every copy this Mac wrote (Settings → "Remove this Mac's copies").
+    // Removes every copy this Mac wrote (Settings → "Remove this Mac's copies"), after any write still queued.
     func removeMine() {
-        try? FileManager.default.removeItem(at: myFolder)
+        let folder = myFolder
+        io.async { try? FileManager.default.removeItem(at: folder) }
     }
+
+    // Waits for the queued file work (tests).
+    func waitForWrites() { io.sync {} }
 
     // MARK: Reading the other Macs
 

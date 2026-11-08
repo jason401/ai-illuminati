@@ -67,11 +67,44 @@ func testDeviceSync() {
     a.conversations = { [chat, school] }
     a.accounts = { accounts }
     a.settings.includeSchool = false   // reconciles
+    a.waitForWrites()
     expect(!fm.fileExists(atPath: schoolFile.path) && fm.fileExists(atPath: file.path), "turning Enterprise off removes only the Enterprise copies")
     let gone = a.myChats.appendingPathComponent(UUID().uuidString + ".json")
     try! Data("{}".utf8).write(to: gone)
-    a.reconcile()
+    a.reconcile(); a.waitForWrites()
     expect(!fm.fileExists(atPath: gone.path), "copies of chats deleted while the app was closed are removed")
+
+    // A write that fails (the folder read only for a moment) keeps a shared chat's existing copy, and so does
+    // a chat with nothing finished yet; neither looks to the other Macs as if it was taken away.
+    var steady = Conversation(); steady.shareToDevices = true; steady.title = "Steady"
+    var answered = ChatTurn(question: "STEADY one"); answered.final = "a"; steady.turns = [answered]
+    let steadyFile = a.myChats.appendingPathComponent(steady.id.uuidString + ".json")
+    expect(a.publish(steady, accounts: accounts), "copied")
+    let before = try! Data(contentsOf: steadyFile)
+    steady.turns.append(ChatTurn(question: "STEADY two"))
+    var answering = Conversation(); answering.shareToDevices = true; answering.title = "Answering"
+    answering.turns = [ChatTurn(question: "still answering")]
+    let answeringFile = a.myChats.appendingPathComponent(answering.id.uuidString + ".json")
+    try! Data("{}".utf8).write(to: answeringFile)
+    a.conversations = { [chat, steady, answering] }
+    a.isBusy = { $0 == answering.id }
+    try! fm.setAttributes([.posixPermissions: 0o555], ofItemAtPath: a.myChats.path)
+    a.reconcile(); a.waitForWrites()
+    try! fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: a.myChats.path)
+    expect((try? Data(contentsOf: steadyFile)) == before, "a copy that could not be written just now is kept, not removed")
+    expect(fm.fileExists(atPath: answeringFile.path), "a chat with nothing finished yet keeps its copy")
+    a.reconcile(); a.waitForWrites()
+    expect((try? String(contentsOf: steadyFile, encoding: .utf8))?.contains("STEADY two") == true, "once writable, the copy is written again")
+    a.isBusy = { _ in false }
+    a.conversations = { [chat] }
+    a.reconcile(); a.waitForWrites()
+    expect(!fm.fileExists(atPath: steadyFile.path) && !fm.fileExists(atPath: answeringFile.path) && fm.fileExists(atPath: file.path), "cleaned up")
+
+    // A chat marked personal that an Enterprise account answered (called with @) counts as Enterprise.
+    var mixed = Conversation(); mixed.configuration = ChatConfiguration(); mixed.configuration?.school = false
+    var atWork = ChatTurn(question: "q"); atWork.final = "a"; atWork.finalBy = "ChatGPT (Work)"; mixed.turns = [atWork]
+    expect(DeviceSync.isSchool(mixed, accounts: accounts), "a personal chat with an Enterprise reply is Enterprise")
+    expect(!DeviceSync.isSchool(chat, accounts: accounts), "a personal chat answered by personal accounts stays personal")
 
     // The other Mac reads them; broken, half-written, newer and not-yet-downloaded files are handled.
     let chats = a.myChats

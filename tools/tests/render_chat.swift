@@ -37,6 +37,12 @@ private struct EmptyPreviewLogin: GoogleTokenStore {
             chat.conversations[0].turns.insert(earlier, at: 0)
             chat.findOpen = true; chat.findText = "spacing"; chat.findStep(0)
         }
+        if CommandLine.arguments.contains("--search") {
+            // Sidebar search: Korean words with endings, a filter menu and results with their lines.
+            AppLanguage.current = .korean
+            chat.conversations += searchFixtures()
+            chat.sidebarSearching = true; chat.sidebarSearch = "청룡영화제"
+        }
         if CommandLine.arguments.contains("--list") {
             // List marks: a work chat (Git project), an Enterprise chat, an unsure copy and a personal chat.
             func listed(_ title: String, _ edit: (inout Conversation) -> Void) -> Conversation {

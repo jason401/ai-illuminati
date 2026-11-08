@@ -151,3 +151,43 @@ func testChatFind() {
     expect(!chat.findOpen && chat.findText.isEmpty && chat.jumpTurn == nil, "opening another chat closes find")
     print("PASS: find in a chat (turns with the words, counts, newest first, earlier and next with wrap, earlier turns drawn, highlights, closed on another chat)")
 }
+
+// Search across chats: words with endings, title first, filters, the best turn and a line from it.
+func testChatSearch() {
+    let chats = searchFixtures()
+    let found = ChatSearch.search("청룡영화제", in: chats)
+    expect(found.first?.title == "청룡영화제 후보", "a title match comes first")
+    expect(Set(found.map(\.title)) == ["청룡영화제 후보", "영화 이야기", "AI Illuminati 작업", "연구 노트"], "messages and answers are searched, with endings (는, 에서, 와는)")
+    let story = found.first { $0.title == "영화 이야기" }!
+    expect(story.turn == chats[0].turns[1].id && story.snippet.contains("청룡영화제") && story.words == "청룡영화제", "the matching turn and a line from it")
+    expect(ChatSearch.search("청룡영화제에서", in: chats).contains { $0.title == "영화 이야기" }, "a word with another ending still finds it")
+    expect(!ChatSearch.search("청룡영화제 얘기했던거", in: chats).isEmpty, "half of the words is enough")
+    expect(ChatSearch.search("우주 로켓 발사", in: chats).isEmpty, "unrelated words find nothing")
+    expect(ChatSearch.search("앱", in: chats).first?.title == "앱 아이콘", "a one-letter word")
+    expect(ChatSearch.search("  ", in: chats).isEmpty, "blank finds nothing")
+    expect(ChatSearch.search("MHZ", in: chats).first?.title == "연구 노트", "case does not matter")
+
+    func titles(_ side: ChatSearch.SideFilter, _ kind: ChatSearch.KindFilter) -> Set<String> {
+        Set(chats.filter { ChatSearch.passes($0, side: side, kind: kind) }.map(\.title))
+    }
+    expect(titles(.enterprise, .all) == ["연구 노트"] && !titles(.personal, .all).contains("연구 노트"), "personal / Enterprise filter")
+    expect(titles(.all, .work) == ["AI Illuminati 작업"] && titles(.all, .plain).count == 5, "plain / work filter")
+    var unsure = Conversation(); unsure.enterpriseUnsure = true
+    expect(ChatSearch.passes(unsure, side: .enterprise, kind: .all) && !ChatSearch.passes(unsure, side: .personal, kind: .all), "an unsure chat is listed with Enterprise")
+
+    // A result opens its chat at the turn, with the words found.
+    let m = AppModel()
+    let chat = Discussion(model: m)
+    chat.conversations = chats; chat.currentID = chats[5].id
+    chat.openResult(story)
+    expect(chat.currentID == chats[0].id && chat.jumpTurn == chats[0].turns[1].id && chat.findOpen && chat.findText == "청룡영화제", "opened at the turn with ⌘F on the words")
+
+    // A broken chat file is skipped, the others load.
+    try? FileManager.default.createDirectory(atPath: ChatStore.dir, withIntermediateDirectories: true)
+    let broken = URL(fileURLWithPath: ChatStore.dir).appendingPathComponent("\(UUID().uuidString).json")
+    try! Data("{ not json".utf8).write(to: broken)
+    ChatStore.save(chats[1])
+    expect(ChatStore.loadAll().contains { $0.id == chats[1].id }, "a broken chat file does not stop the others")
+    try? FileManager.default.removeItem(at: broken)
+    print("PASS: chat search (messages and answers, endings, title first, half the words, one letter, filters, best turn and line, opens at the turn, broken files skipped)")
+}

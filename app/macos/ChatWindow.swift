@@ -100,11 +100,15 @@ struct ChatView: View {
                     HStack(spacing: 8) {
                         Image(systemName: "magnifyingglass").foregroundColor(.secondary).frame(width: 18)
                         TextField(L("대화 검색", "Search chats"), text: $discussion.sidebarSearch).textFieldStyle(.plain)
-                        Button(action: { discussion.sidebarSearching = false; discussion.sidebarSearch = "" }) { Image(systemName: "xmark.circle.fill").frame(width: 22, height: 22) }
+                        Button(action: {
+                            discussion.sidebarSearching = false; discussion.sidebarSearch = ""
+                            discussion.searchSide = .all; discussion.searchKind = .all
+                        }) { Image(systemName: "xmark.circle.fill").frame(width: 22, height: 22) }
                             .buttonStyle(.plainHit).foregroundColor(.secondary)
                     }
                     .padding(.horizontal, 10).padding(.vertical, 7)
                     .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+                    ChatSearchFilters(discussion: discussion)
                 } else {
                     SidebarRow(discussion: discussion, title: L("검색", "Search"), symbol: "magnifyingglass") { discussion.sidebarSearching = true }
                 }
@@ -117,16 +121,37 @@ struct ChatView: View {
                     sharedFolders
                     DriveSidebarSection().disabled(discussion.importingMaterials)
                     // A new chat with nothing in it yet is not listed (like the desktop apps); it appears once it has a message.
-                    let chats = discussion.listedConversations.filter { $0.hasContent && (discussion.sidebarSearch.isEmpty || $0.title.localizedCaseInsensitiveContains(discussion.sidebarSearch)) }
-                    let pinned = chats.filter { $0.pinned == true }
-                    if !pinned.isEmpty {
-                        SidebarHeader(title: L("고정됨", "Pinned"))
-                        ForEach(pinned) { chatRow($0) }
+                    // Searching: the filters apply, and words find chats by their messages and answers too.
+                    let chats = discussion.listedConversations.filter {
+                        $0.hasContent && (!discussion.sidebarSearching || ChatSearch.passes($0, side: discussion.searchSide, kind: discussion.searchKind))
                     }
-                    let recents = chats.filter { $0.pinned != true }
-                    if !recents.isEmpty {
-                        SidebarHeader(title: L("최근", "Recents"))
-                        ForEach(recents) { chatRow($0) }
+                    let query = discussion.sidebarSearching ? discussion.sidebarSearch.trimmingCharacters(in: .whitespacesAndNewlines) : ""
+                    if !query.isEmpty {
+                        let results = ChatSearch.search(query, in: chats)
+                        SidebarHeader(title: L("검색 결과", "Results"))
+                        if results.isEmpty {
+                            Text(L("찾은 대화가 없어요", "No chats found")).font(.system(size: 12)).foregroundColor(.secondary).padding(.horizontal, 10)
+                        }
+                        ForEach(results) { result in
+                            ChatSearchRow(result: result, conversation: chats.first { $0.id == result.id },
+                                          selected: result.id == discussion.currentID && discussion.viewingRemote == nil,
+                                          hovered: discussion.hoverKey == "search." + result.id.uuidString)
+                                .onTapGesture { discussion.openResult(result) }
+                                .onHover { inside in discussion.hover("search." + result.id.uuidString, inside) }
+                                .help(dateText(result.updatedAt))
+                                .disabled(discussion.importingMaterials)
+                        }
+                    } else {
+                        let pinned = chats.filter { $0.pinned == true }
+                        if !pinned.isEmpty {
+                            SidebarHeader(title: L("고정됨", "Pinned"))
+                            ForEach(pinned) { chatRow($0) }
+                        }
+                        let recents = chats.filter { $0.pinned != true }
+                        if !recents.isEmpty {
+                            SidebarHeader(title: L("최근", "Recents"))
+                            ForEach(recents) { chatRow($0) }
+                        }
                     }
                     if sync.settings.enabled { otherMacs }
                 }

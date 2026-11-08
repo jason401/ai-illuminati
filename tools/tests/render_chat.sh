@@ -10,5 +10,5 @@ for SOURCE in app/macos/*.swift; do
   SOURCES+=("$SOURCE")
 done
 xcrun swiftc -swift-version 5 -target "$(uname -m)-apple-macos13.0" -module-cache-path "$PREVIEW_DIR/cache" -o "$PREVIEW_DIR/render" \
-  "${SOURCES[@]}" tools/tests/render_chat.swift
+  "${SOURCES[@]}" tools/tests/render_chat.swift tools/tests/search_fixtures.swift
 AI_ILLUMINATI_TEST_HOME="$PREVIEW_DIR/data" "$PREVIEW_DIR/render" "$OUTPUT_DIR" "${@:2}"

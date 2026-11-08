@@ -822,6 +822,8 @@ final class Discussion: ObservableObject {
     // Chat window only (not saved): sidebar search and which row the pointer is over.
     @Published var sidebarSearching = false
     @Published var sidebarSearch = ""
+    @Published var searchSide = ChatSearch.SideFilter.all
+    @Published var searchKind = ChatSearch.KindFilter.all
     // Sidebar: hidden by the button in a wide window; in a narrow window it slides over the chat instead.
     @Published var sidebarHidden = false
     @Published var sidebarOverlay = false

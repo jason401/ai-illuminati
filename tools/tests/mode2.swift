@@ -661,6 +661,40 @@ do {
     print("PASS: backup by size and time, cloud-only files skipped and marked, Undo per entry, old backups pruned")
 }
 
+// GPT's file requests: a wrong path comes back to it with same-name files and the other files still arrive;
+// asking for the same range again gets "already sent", then "answer now", and only ignoring that fails.
+do {
+    let root = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("read-request-fixture").resolvingSymlinksInPath()
+    try FileManager.default.createDirectory(at: root.appendingPathComponent("app/macos"), withIntermediateDirectories: true)
+    try "line one\nline two\n".write(to: root.appendingPathComponent("app/macos/Discussion.swift"), atomically: true, encoding: .utf8)
+    try "notes 731\n".write(to: root.appendingPathComponent("notes.txt"), atomically: true, encoding: .utf8)
+    let invocation = WorkspaceInvocation(binding: WorkspaceBinding(roots: [WorkspaceRoot(path: root.path, directory: true)], level: .view), room: UUID(), readOnly: true)
+    let account = Account(id: "read-request-fake", provider: .codex, name: "Codex", dir: nil)
+    defer { Answerer.replyForTests = nil }
+    func reads(_ paths: [String]) -> String {
+        "{\"workspace_reads\":[" + paths.map { "{\"path\":\"\($0)\",\"start\":1,\"end\":5}" }.joined(separator: ",") + "]}"
+    }
+    var prompts: [String] = []
+    Answerer.replyForTests = { prompt in
+        prompts.append(prompt)
+        return .success(prompts.count == 1 ? reads([root.appendingPathComponent("Discussion.swift").path, root.appendingPathComponent("notes.txt").path]) : "done")
+    }
+    let fixed = Answerer.ask(account, prompt: "review", workspace: invocation)
+    guard case .success("done") = fixed else { fatalError("a wrong path must not end the answer: \(fixed)") }
+    expect(prompts.count == 2 && prompts[1].contains("read_failed") && prompts[1].contains("notes 731"), "the wrong path's error and the other file both go back")
+    expect(prompts[1].contains(root.appendingPathComponent("app/macos/Discussion.swift").path), "the same-name file is suggested")
+
+    prompts = []
+    Answerer.replyForTests = { prompt in prompts.append(prompt); return .success(reads([root.appendingPathComponent("notes.txt").path])) }
+    guard case .failure(.failed(let message)) = Answerer.ask(account, prompt: "review", workspace: invocation) else { fatalError("endless requests must stop") }
+    expect(prompts.count == 4 && prompts[2].contains("already sent") && prompts[3].contains("No more data") && message.contains("계속 요청"), "repeat: data, already sent, answer now, then stop")
+
+    prompts = []
+    Answerer.replyForTests = { prompt in prompts.append(prompt); return .success(prompts.count < 4 ? reads([root.appendingPathComponent("notes.txt").path]) : "answer from notes") }
+    guard case .success("answer from notes") = Answerer.ask(account, prompt: "review", workspace: invocation) else { fatalError("answer now must let it answer") }
+    print("PASS: file requests keep good files, return wrong paths with same-name files, and end repeats with an answer")
+}
+
 // Fresh/resume permissions are explicit at every invocation; no broad bypass flags.
 do {
     let root = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("permission-fixture")

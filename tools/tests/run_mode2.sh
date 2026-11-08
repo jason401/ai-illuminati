@@ -27,6 +27,7 @@ mkdir -p "$TEST_DIR/resources"
 cp app/resources/workspace_mcp.py app/resources/project_process.py app/resources/local_models.json "$TEST_DIR/resources/"
 xcrun swiftc -swift-version 5 -module-cache-path "$TEST_DIR/cache" -o "$TEST_DIR/resources/WorkspaceDocument" tools/workspace_document.swift
 PYTHONDONTWRITEBYTECODE=1 python3 tools/tests/test_install_app.py
+PYTHONDONTWRITEBYTECODE=1 python3 tools/tests/test_workspace_mcp.py
 PYTHONDONTWRITEBYTECODE=1 python3 tools/tests/material_fixtures.py "$TEST_DIR/data/material-fixtures"
 xcrun swiftc -swift-version 5 -module-cache-path "$TEST_DIR/cache" -o "$TEST_DIR/run" \
     app/macos/ProjectWork.swift app/macos/ProjectChat.swift app/macos/WindowDrag.swift app/macos/Language.swift app/macos/Usage.swift app/macos/Accounts.swift app/macos/Login.swift \

@@ -44,6 +44,36 @@ class Workspace:
             raise PermissionError('Path is outside linked roots (including symlink targets)')
         return p
 
+    def similar(self, value, limit=5, max_dirs=4000, max_files=20000):
+        """Linked files with the same name as a missing path, so the AI can fix a guessed path."""
+        name = pathlib.PurePath(str(value)).name
+        found, dirs_seen, files_seen = [], 0, 0
+        if not name: return found
+        for base, directory in self.roots:
+            if not directory:
+                if base.name == name and str(base) not in found: found.append(str(base))
+                continue
+            for folder, dirs, files in os.walk(base, followlinks=False):
+                dirs_seen += 1; files_seen += len(files)
+                dirs[:] = sorted(d for d in dirs if not d.startswith('.') and not pathlib.Path(folder, d).is_symlink() and not d.endswith(('.app', '.bundle')))
+                if name in files:
+                    child = pathlib.Path(folder, name)
+                    try:
+                        if not child.is_symlink() and child.is_file() and str(self.path(str(child))) not in found: found.append(str(self.path(str(child))))
+                    except (OSError, PermissionError, ValueError): pass
+                if len(found) >= limit or dirs_seen > max_dirs or files_seen > max_files: return found[:limit]
+        return found[:limit]
+
+    def read_failure(self, request, error):
+        """One failed read as a result entry: the other requests still come back."""
+        path = request.get('path', '') if isinstance(request, dict) else ''
+        entry = {'path': path, 'error': str(error) or type(error).__name__}
+        if isinstance(error, FileNotFoundError) and path:
+            try: entry['similar'] = self.similar(path)
+            except Exception: pass
+            entry['hint'] = ('Not found. Same-name files: ' + ', '.join(entry['similar'])) if entry.get('similar') else 'Not found. Check the path with list_files or a nearby folder.'
+        return [{'type': 'text', 'text': json.dumps({'read_failed': entry}, ensure_ascii=False)}]
+
     def list_files(self, path='', root=0, pattern='*', **_):
         base, directory = self.roots[root]
         p = self.path(path or str(base), root)
@@ -228,7 +258,9 @@ def serve(workspace):
                     except Exception as e: result={'content':[{'type':'text','text':'App tool: '+str(e)}],'isError':True}
                 else:
                     try: result={'content':workspace.call(name,msg['params'].get('arguments',{})),'isError':False}
-                    except Exception as e: result={'content':[{'type':'text','text':str(e)}],'isError':True}
+                    except Exception as e:
+                        content=workspace.read_failure(msg['params'].get('arguments',{}),e) if name=='read_document' else [{'type':'text','text':str(e)}]
+                        result={'content':content,'isError':True}
             elif method=='ping': result={}
             else:
                 print(json.dumps({'jsonrpc':'2.0','id':ident,'error':{'code':-32601,'message':'Unknown method'}}),flush=True);continue
@@ -240,8 +272,16 @@ if __name__=='__main__':
     workspace=Workspace(json.loads(pathlib.Path(sys.argv[1]).read_text()))
     if len(sys.argv)>2 and sys.argv[2]=='--read-requests':
         try:
-            results=[workspace.read_document(**r) for r in json.load(sys.stdin)]
-            print(json.dumps({'results':results},ensure_ascii=False))
+            requests=json.load(sys.stdin)
+            if not isinstance(requests,list): raise ValueError('workspace_reads must be a list')
         except Exception as e:
             print(json.dumps({'error':str(e)},ensure_ascii=False));sys.exit(1)
+        # Each request on its own: a wrong path comes back as that entry's error, the rest are kept.
+        results=[]
+        for r in requests:
+            try:
+                if not isinstance(r,dict): raise ValueError('Each read request must be an object')
+                results.append(workspace.read_document(**r))
+            except Exception as e: results.append(workspace.read_failure(r,e))
+        print(json.dumps({'results':results},ensure_ascii=False))
     else: serve(workspace)

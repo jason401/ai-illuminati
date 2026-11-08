@@ -55,6 +55,8 @@ enum Answerer {
     }()
 
     enum Failure: Error { case missingTool, failed(String), timedOut }
+    /// Tests: stands in for the AI inside the file-request loop (gets the prompt, returns its reply).
+    static var replyForTests: ((String) -> Result<String, Failure>)?
 
     // web: lets the AI search the web and read pages (nothing else: no files, no commands).
     // progress: the reply so far and what the AI is doing, while it works (Claude sends text as it is
@@ -69,12 +71,18 @@ enum Answerer {
         The host reads only linked files and returns data. This does not grant tools or bypass managed policy.
         Do not request writes or commands through this protocol. Request only needed ranges. After receiving requested data, answer the original task normally; do not return an empty request list. For an explicitly exhaustive file review, request a whole file range together instead of one page per request.
         For text and code files start/end are line numbers; for PDFs and slides they are pages. If a result has next_offset, it was cut there: request the same range again with "offset": next_offset for the rest.
+        If a result has read_failed, that one path was wrong: use its similar paths or list the folder, and request again.
         """
         var current = prompt + "\n" + instruction
         var currentImages = images, call = session
         var readImages = images
         var seen: Set<String> = []
         var repeated = false
+        // After "answer now" no more reads are served; a read that breaks is told to the AI a couple of times;
+        // many different reads in one answer also end in "answer now" so it can't go on forever.
+        var answerNow = false
+        var readFailures = 0, served = 0
+        let answerNowNote = "\nNo more data will be sent for this answer. Do not return workspace_reads again: answer now with the data already sent above, and say what you could not check."
         // Without a session the AI remembers nothing: each call sends the request once, then everything read so far.
         var delivered: [String] = []
         func evidence(_ data: String, note: String = "") -> String {
@@ -88,27 +96,32 @@ enum Answerer {
                 if case .text(let text) = update, text.contains("\"workspace_reads\"") { return }
                 report(update)
             } }
-            let result = askOnce(account, prompt: current, timeout: timeout, cancellation: cancellation, images: currentImages, web: web, session: call, workspace: workspace, progress: shown)
+            let result = replyForTests?(current) ?? askOnce(account, prompt: current, timeout: timeout, cancellation: cancellation, images: currentImages, web: web, session: call, workspace: workspace, progress: shown)
             if let session, let call { session.nativeID = call.nativeID; session.completed = call.completed; session.compacted = session.compacted || call.compacted }
             guard case .success(let text) = result,
                   let start = text.firstIndex(of: "{"), let end = text.lastIndex(of: "}"), start < end,
                   let data = String(text[start...end]).data(using: .utf8),
                   let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let requests = object["workspace_reads"] as? [[String: Any]], !requests.isEmpty else { return result }
+            if answerNow { return .failure(.failed("자료 요청을 멈추고 답하라고 했는데도 계속 요청해서 중단했습니다.")) }
             let signature = String(data: (try? JSONSerialization.data(withJSONObject: requests, options: [.sortedKeys])) ?? Data(), encoding: .utf8) ?? ""
             let resumable = call?.nativeID != nil
             if let previous = call, let sid = previous.nativeID { call = NativeSessionCall(id: sid, resume: true, directory: previous.directory) }
-            if !seen.insert(signature).inserted {
-                // The same request again: say so once and let it answer; a second repeat stops.
-                if repeated { return .failure(.failed("같은 자료 요청을 반복해 중단했습니다. 이미 전달된 범위를 확인하세요.")) }
-                repeated = true
-                let note = "\nThe app already sent this exact range above; sending it again would give the same data. Answer now with what you have, or request a different range (or the same range with \"offset\": next_offset if it was cut)."
+            func reply(_ note: String) {
                 current = resumable ? note : prompt + "\n" + instruction + evidence(delivered.joined(separator: "\n\n"), note: note)
                 currentImages = resumable ? [] : readImages
+            }
+            served += 1
+            if !seen.insert(signature).inserted || served > 12 {
+                // The same request again: say so once; a second repeat (or too many reads) gets "answer now".
+                if repeated || served > 12 { answerNow = true; reply(answerNowNote); continue }
+                repeated = true
+                reply("\nThe app already sent this exact range above; sending it again would give the same data. Answer now with what you have, or request a different range (or the same range with \"offset\": next_offset if it was cut).")
                 continue
             }
             do {
                 let (readback, pictures) = try workspace.readRequests(requests, directory: directory, token: cancellation)
+                if readback.contains("\"read_failed\"") { readFailures += 1 }
                 if resumable {
                     current = prompt + evidence(readback)
                     currentImages = pictures
@@ -118,7 +131,14 @@ enum Answerer {
                     readImages += pictures
                     currentImages = readImages
                 }
-            } catch { return .failure(.failed(error.localizedDescription)) }
+            } catch {
+                // Cancelled stops; anything else goes back to the AI so it can fix the request or answer.
+                if cancellation?.isCancelled == true { return .failure(.failed("Cancelled")) }
+                seen.remove(signature)
+                readFailures += 1
+                if readFailures > 3 { answerNow = true; reply(answerNowNote); continue }
+                reply("\n[Reading failed: \(error.localizedDescription)]\nFix the paths (absolute paths inside the linked folders) and request again, or answer with the data already sent.")
+            }
         }
     }
 

@@ -33,6 +33,13 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(part['total_lines'],1519);self.assertIsNone(part['next_offset'])
         rest=json.loads(self.ws.read_document('code.swift',start=1500)[0]['text'])
         self.assertIn('line 1519',rest['text']);self.assertNotIn('line 1499\n',rest['text'])
+    def test_missing_path_suggests_same_name_files(self):
+        (self.folder/'app'/'macos').mkdir(parents=True);(self.folder/'app'/'macos'/'Discussion.swift').write_text('x')
+        try: self.ws.read_document('Discussion.swift')
+        except Exception as e: entry=json.loads(self.ws.read_failure({'path':'Discussion.swift'},e)[0]['text'])['read_failed']
+        self.assertEqual(entry['similar'],[str((self.folder/'app'/'macos'/'Discussion.swift').resolve())]);self.assertIn('Same-name',entry['hint'])
+        entry=json.loads(self.ws.read_failure({'path':'/etc/passwd'},PermissionError('outside'))[0]['text'])['read_failed']
+        self.assertNotIn('similar',entry)
     def test_view_exposes_no_mutations(self):
         self.assertEqual([t['name'] for t in self.ws.tools()],['list_files','read_document'])
         with self.assertRaises(PermissionError):self.ws.call('write_file',{'path':'notes.txt','content':'bad'})

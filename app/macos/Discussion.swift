@@ -1197,7 +1197,7 @@ final class Discussion: ObservableObject {
                 var route = forced ?? .work, by: String?
                 if forced == nil {
                     worker.changeTurn(id, index) { $0.status = L("한 명이 답할지, 모두 답할지, 작업할지 판정하는 중…", "Deciding: one answer, everyone, or work…") }
-                    (route, by) = worker.decideRoute(question: question, previous: history.last, judges: judges, cancellation: cancellation)
+                    (route, by) = worker.decideRoute(question: question, history: history, judges: judges, cancellation: cancellation)
                     if cancellation.isCancelled { return worker.endSolo(id, index, stopped: true) }
                 }
                 let name = { (accountID: String) in worker.model.accounts.first { $0.id == accountID }.map(worker.label) ?? accountID }
@@ -1222,7 +1222,7 @@ final class Discussion: ObservableObject {
                 } else {
                     let peer = worker.beginPeer(id: id, index: index, question: question, reviewers: reviewers, binding: binding, cancellation: cancellation)
                     worker.runSolo(question: question, history: history, rules: rules, config: config, mentions: called,
-                                   reviewers: reviewers, cancellation: cancellation, id: id, index: index)
+                                   reviewers: reviewers, cancellation: cancellation, id: id, index: index, extra: forced == nil ? Route.workNote() : "")
                     worker.endPeer(peer)
                 }
             } else if solo {

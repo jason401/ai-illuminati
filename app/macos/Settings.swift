@@ -160,6 +160,10 @@ final class AppModel: ObservableObject {
     @Published var localKeepAlive: Int {
         didSet { defaults.set(localKeepAlive, forKey: "localKeepAlive") }
     }
+    // Which model on this Mac sorts a project chat's messages into one, all or work (Route.swift).
+    @Published var routeSorter: RouteSorter {
+        didSet { defaults.set(routeSorter.rawValue, forKey: "routeSorter") }
+    }
     @Published var schoolOnlyHandoff: Bool {
         didSet { defaults.set(schoolOnlyHandoff, forKey: "schoolOnlyHandoff") }
     }
@@ -203,6 +207,7 @@ final class AppModel: ObservableObject {
         pictureMakersOff = Set(defaults.stringArray(forKey: "pictureMakersOff") ?? [])
         localEnabled = persist ? LocalModel.enabled : true
         localKeepAlive = persist ? LocalModel.keepAlive : 5
+        routeSorter = persist ? RouteSorter.current : .gemma
         // A saved default in either language becomes the default in today's language.
         let saved = defaults.string(forKey: "chatRules")
         chatRules = (saved == nil || saved == Self.koreanChatRules || saved == Self.rules(for: .english)
@@ -812,6 +817,15 @@ struct AccountsSettingsTab: View {
                         Spacer()
                         Toggle(L("Ollama 모델 쓰기", "Use Ollama models"), isOn: $model.localEnabled).labelsHidden().toggleStyle(.switch)
                     }
+                    SettingsRow(title: L("메시지 판정", "Message sorter")) {
+                        SettingsMenu(options: RouteSorter.allCases.map { ($0.title, $0) }, selection: $model.routeSorter)
+                            .help(L("프로젝트 채팅에서 메시지마다 한 명이 답할지, 모두 답할지, 작업할지 정하는 모델이에요. 받아 두지 않았으면 참여 AI가 판정해요.",
+                                    "Decides for each project-chat message: one answer, everyone, or work. Not downloaded: a member AI judges."))
+                    }
+                    Text(model.routeSorter.summary)
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 10).padding(.bottom, 6)
                 }
             }
         }

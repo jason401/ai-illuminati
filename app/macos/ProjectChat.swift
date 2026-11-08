@@ -49,7 +49,7 @@ extension Discussion {
 
     func runProjectSolo(question: String, history: [ChatTurn], rules: String, config: ChatConfiguration,
                         mentions: [String], reviewers: [String] = [], cancellation: DebateCancellation, id: UUID, index: Int,
-                        binding: WorkspaceBinding, fresh: String? = nil, keepState: Bool = false) {
+                        binding: WorkspaceBinding, fresh: String? = nil, keepState: Bool = false, note: String = "") {
         guard let selected = binding.project else { finish(id, index, error: "No project selected."); return }
         let fullAuto = binding.isFullAuto
         let run = ProjectRun(room: id, binding: selected, token: cancellation, fullAuto: fullAuto)
@@ -108,6 +108,7 @@ extension Discussion {
             func attempt(_ extra: String, transcript: String, fresh: String?) -> Result<String, Answerer.Failure> {
                 var instruction = soloInstruction(account, binding: workspace, helper: "",
                                                   project: ProjectPart(root: selected.root, fullAuto: fullAuto, rules: projectRules), chat: id)
+                if !note.isEmpty { instruction += "\n" + note }
                 if keepState { instruction += "\n" + Self.stateRule(current: Self.loadState(id)) }
                 instruction += "\n[Verified app checkpoint; do not repeat completed operations blindly]\n" + checkpoint + extra
                 let prompt = Self.soloContext(rules: rules, transcript: transcript) + "\n[SOLO TURN]\n" + instruction

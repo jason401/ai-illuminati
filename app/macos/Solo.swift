@@ -368,7 +368,7 @@ extension Discussion {
         let fresh = freshTranscript.map { Self.soloContext(rules: rules, transcript: $0) }
         let keepState = previous.count + question.count > Self.stateFrom
         var binding = activeWorkspace ?? soloBinding(id)
-        if binding.project != nil { return runProjectSolo(question: question, history: history, rules: rules, config: config, mentions: mentions, reviewers: reviewers, cancellation: cancellation, id: id, index: index, binding: binding, fresh: freshTranscript, keepState: keepState) }
+        if binding.project != nil { return runProjectSolo(question: question, history: history, rules: rules, config: config, mentions: mentions, reviewers: reviewers, cancellation: cancellation, id: id, index: index, binding: binding, fresh: freshTranscript, keepState: keepState, note: extra) }
         let own = Self.chatFolder(id)
         let awake = binding.fullAccess == true ? ProcessInfo.processInfo.beginActivity(options: [.userInitiated, .idleSystemSleepDisabled], reason: "AI Illuminati full-access chat") : nil
         defer { if let awake { ProcessInfo.processInfo.endActivity(awake) } }

@@ -380,8 +380,9 @@ func testPeerReview() {
     expect(prompts.count == asked + 1 && chat.current.turns.last?.final == "Done 2." && chat.current.turns.last?.peerNotes?.first?.failed == false, "no issues: the answer stands")
 
     expect(judged.count == 3 && judged[1].contains("Change README to Second.") && judged[1].contains("What does the README say?")
-           && chat.current.turns.last?.route == .work && chat.current.turns.last?.routeNote?.contains("Judge") == true,
-           "every message is sorted first, with the one before it; work is shown with who judged")
+           && chat.current.turns.last?.route == .work && chat.current.turns.last?.routeNote?.contains("Judge") == true
+           && prompts.last?.contains("[Work mode]") == true,
+           "every message is sorted first, with the one before it; work is shown with who judged and told it may be wrong")
 
     // Opinion: both members answer at the same time, the project read only, no ask_peer and no review.
     nextRoute = .all
@@ -455,12 +456,21 @@ func testPeerReview() {
 func testRoute() {
     expect(Route.parse("WORK") == .work && Route.parse(" one.") == .one && Route.parse("ALL") == .all && Route.parse("Opinion") == .all
            && Route.parse("ONE, not ALL") == nil && Route.parse("NONE") == nil && Route.parse("음") == nil, "the sorter's word is read, whole words only")
-    let prompt = Route.prompt(question: "수정하지 말고 의견만", previous: nil)
-    expect(prompt.contains("수정하지 말고 의견만") && prompt.contains("ONE") && prompt.contains("ALL") && prompt.contains("가자") && !prompt.contains("[Previous"), "the sorter gets the message and the rules")
+    let prompt = Route.prompt(question: "수정하지 말고 의견만", history: [])
+    expect(prompt.contains("수정하지 말고 의견만") && prompt.contains("ONE") && prompt.contains("ALL") && prompt.contains("가자") && !prompt.contains("[Last answer]")
+           && prompt.contains("forbids changes"), "the sorter gets the message and the rules")
+    var offered = ChatTurn(question: "버튼 고칠 수 있어?"); offered.final = String(repeating: "설명. ", count: 1000) + "괜찮으시면 \"가자\"라고 해 주세요."
+    let long = Route.prompt(question: String(repeating: "가", count: 5000) + "끝\n> 예전 지시", history: [ChatTurn(question: "첫 질문"), offered])
+    expect(long.contains("- 첫 질문") && long.contains("가자\"라고 해 주세요.") && long.contains("끝") && long.contains("(quoted) 예전 지시") && long.count < 9000,
+           "long texts keep their start and end; quotes are marked")
+    expect(Route.rule(question: "가자", previous: offered) == .work && Route.rule(question: "가자", previous: ChatTurn(question: "q")) == nil
+           && Route.rule(question: "좋네!", previous: offered) == .one && Route.rule(question: "버튼 고쳐줘", previous: offered) == nil, "fixed rules: go after an offer, plain agreement")
+    expect(Route.adjust(.work, question: "읽어만 봐") == .one && Route.adjust(.one, question: "어떻게 생각해?") == .all && Route.adjust(.work, question: "고쳐줘") == .work,
+           "after the judge: no work when told not to change, views for everyone")
     let claude = Account(id: "route-claude", provider: .claude, name: "C")
     var asked = 0
     func decide(_ local: String?, _ member: String?, judge: Account? = claude) -> (RouteChoice, String?) {
-        let r = Route.decide(local: { local }, localName: "Gemma", judge: judge, ask: { _ in asked += 1; return member }, label: { $0.name })
+        let r = Route.decide(local: { local.flatMap(Route.parse) }, localName: "Gemma", judge: judge, ask: { _ in asked += 1; return member }, label: { $0.name })
         return (r.route, r.by)
     }
     expect(decide("WORK", "ALL") == (.work, "Gemma") && asked == 0, "Gemma judges first; no AI is asked")

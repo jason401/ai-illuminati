@@ -207,6 +207,11 @@ struct WorkspaceInvocation {
             if level != .execute && (allow.contains(where: { $0.hasPrefix("command(") || $0.hasPrefix("unsandboxed(") }) || ["always-proceed", "proceed-in-sandbox"].contains(auto)) {
                 throw MaterialReader.error("agy 개인 설정에 명령 자동 허용이 있어 이 권한 단계를 보장할 수 없습니다. 개인 설정은 바꾸지 않았습니다. 다른 AI를 선택하세요.")
             }
+            // Headless agy ends the whole answer at the first denied tool (it tried `ls` for a plain question),
+            // so the prompt says which tools this mode blocks.
+            if let i = result.firstIndex(of: "-p"), i + 1 < result.count {
+                result[i + 1] = GeminiLinks.workspaceNote(level: level, readsPages: allow.contains("read_url(*)")) + result[i + 1]
+            }
             result += ["--mode", level == .view ? "plan" : "accept-edits"]
             for root in binding.roots where root.directory { result += ["--add-dir", root.path] }
         }

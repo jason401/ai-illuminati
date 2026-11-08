@@ -724,6 +724,12 @@ do {
     expect(read.contains("sandbox_mode=\"read-only\"") && read.contains("features.shell_tool=false"), "review must remain read-only even in execution room")
     let agy = try viewing.arguments(provider: .gemini, original: ["-p","test","--sandbox","--disable-slash-commands"], directory: dir, web: true)
     expect(!agy.contains("--disable-slash-commands") && agy.contains("plan"), "agy mode disabled by conflicting slash flag")
+    expect(agy[1].hasPrefix("[도구 안내]") && agy[1].contains("run_command") && agy[1].contains("만들거나 고칠 수 없어요") && agy[1].hasSuffix("test"),
+           "agy in a linked folder must be told commands are blocked, before the prompt")
+    let edits = try invocation.arguments(provider: .gemini, original: ["-p","test","--sandbox"], directory: dir, web: true)
+    expect(edits.contains("accept-edits") && edits[1].contains("허락된 명령만") && !edits[1].contains("만들거나 고칠 수 없어요"), "agy note must follow the level")
+    let denied = Discussion.describe(.failed(#"jetski: no output produced — a tool required the "command" permission that headless mode cannot prompt for, so it was auto-denied."#))
+    expect(denied.contains(L("터미널 명령", "terminal command")) && !denied.contains("dangerously"), "a denied tool must be named, without the CLI's bypass advice")
     print("PASS: explicit resume sandbox, linked write roots, no temporary roots and read-only review")
 }
 

@@ -1203,7 +1203,8 @@ final class Discussion: ObservableObject {
                 let name = { (accountID: String) in worker.model.accounts.first { $0.id == accountID }.map(worker.label) ?? accountID }
                 // Opinions never fall back to work: with fewer than two members ready, the lead answers alone.
                 if route == .all && opinionMembers.count < 2 { route = .one }
-                let answering = route == .one ? Array(opinionMembers.prefix(1)) : opinionMembers
+                // Run again after members dropped out (none of them standing): whoever answers this chat now.
+                let answering = route == .one ? Array((opinionMembers.isEmpty ? team.map(\.id) : opinionMembers).prefix(1)) : opinionMembers
                 guard route == .work || !answering.isEmpty else {
                     worker.changeTurn(id, index, save: true) { $0.error = L("답할 수 있는 AI가 없어요.", "No AI is available.") }
                     return worker.endSolo(id, index, stopped: false)

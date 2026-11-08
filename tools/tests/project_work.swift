@@ -440,6 +440,14 @@ func testPeerReview() {
     expect(prompts.last?.contains("[Review is on]") == false && peerPrompts.count == before && PeerLink.shared.tools(context: ToolContext(room: room, roots: [])).isEmpty,
            "one member: no ask_peer and no reviews")
     expect(judged.count == judgedAlone && chat.current.turns.last?.route == nil, "one member: nothing to sort")
+    // Ask for opinions again with one member left: that member answers alone, read only, instead of failing.
+    let aloneHead = git(["rev-parse", "HEAD"]), aloneViews = opinionViews.count
+    if let aloneTurn = chat.current.turns.last { chat.rerun(aloneTurn, as: .all) }
+    let aloneDeadline = Date().addingTimeInterval(30)
+    while Date() < aloneDeadline && (chat.anyRunning || (chat.current.turns.last?.final == nil && chat.current.turns.last?.error == nil)) { RunLoop.main.run(until: Date().addingTimeInterval(0.03)) }
+    let alone = chat.current.turns.last
+    expect(alone?.routeChoice == .one && alone?.error == nil && alone?.final == "Claude's view: keep it short." && opinionViews.count == aloneViews + 1
+           && git(["rev-parse", "HEAD"]) == aloneHead && peerPrompts.count == before, "opinions again with one member left: it answers alone, read only")
     testRoute()
     print("PASS: review (members: lead works, the other opines and reviews read only, two asks per answer, only changes reviewed, one fix in the same turn, older review chats migrate)")
 }

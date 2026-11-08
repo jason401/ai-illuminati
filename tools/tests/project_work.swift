@@ -403,7 +403,12 @@ func testPeerReview() {
 
     // Run again as opinions: the same message, no judging.
     let judgedBefore = judged.count
+    let pending = ChatImage(conversationID: chat.currentID, name: "pending.png")
+    chat.draft = "half written"; chat.pendingImages = [pending]
     if let goTurn = chat.current.turns.last { chat.rerun(goTurn, as: .opinion) }
+    expect(chat.draft == "half written" && chat.pendingImages.map(\.id) == [pending.id] && chat.current.turns.last?.images == nil,
+           "run again keeps the message being written and its pictures in the box")
+    chat.pendingImages = []
     let deadline = Date().addingTimeInterval(30)
     while Date() < deadline && (chat.anyRunning || chat.current.turns.last?.final == nil) { RunLoop.main.run(until: Date().addingTimeInterval(0.03)) }
     expect(chat.current.turns.last?.question == "가자" && chat.current.turns.last?.route == .opinion && judged.count == judgedBefore

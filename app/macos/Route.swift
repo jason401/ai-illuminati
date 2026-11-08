@@ -128,11 +128,12 @@ extension Discussion {
     // Sends the last message again in the other mode, as a new turn. Files the first run changed stay changed.
     func rerun(_ turn: ChatTurn, as route: ChatRoute) {
         guard !anyRunning, current.turns.last?.id == turn.id else { return }
-        let saved = draft, savedMentions = draftMentions
-        draft = turn.question; draftMentions = []
+        // What the user is writing now (text, @ names, attached pictures) stays in the message box.
+        let saved = draft, savedMentions = draftMentions, savedImages = pendingImages
+        draft = turn.question; draftMentions = []; pendingImages = []
         forcedRoute = route
         send()
         forcedRoute = nil
-        draft = saved; draftMentions = savedMentions
+        draft = saved; draftMentions = savedMentions; pendingImages = savedImages
     }
 }

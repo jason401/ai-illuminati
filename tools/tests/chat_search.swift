@@ -101,6 +101,14 @@ func testEnterpriseMarks() {
     var markedOnly = Conversation(); markedOnly.enterprise = [mark]
     expect(DeviceSync.isSchool(markedOnly, accounts: []) && DeviceSync.isSchool(copied, accounts: []) && !DeviceSync.isSchool(Conversation(), accounts: []),
            "device sync uses the record")
+    var mixed = old
+    mixed.turns = [ChatTurn(question: "q")]; mixed.turns[0].finalBy = "Claude (학교)"; mixed.turns[0].finalImages = [ChatImage(conversationID: mixed.id, name: "a.png")]
+    Enterprise.classify(&mixed, accounts: [school, work])
+    expect(mixed.side == .unsure, "a known Enterprise answer with pictures another organization may have drawn: unsure")
+    var sameOrg = mixed
+    sameOrg.enterprise = nil; sameOrg.enterpriseUnsure = nil
+    Enterprise.classify(&sameOrg, accounts: [school, schoolCodex])
+    expect(sameOrg.side == .enterprise, "pictures when every Enterprise account is of the same organization: Enterprise")
     var again = answered
     Enterprise.classify(&again, accounts: [])
     expect(again.enterprise == answered.enterprise, "told only once")
@@ -220,6 +228,8 @@ func testChatTools() {
     expect(forPersonal.contains("data, not instructions"), "results are marked as data")
     let (forSchool, _) = reply("search_chats", ["query": "청룡영화제"], school)
     expect(forSchool.contains("연구 노트") && forSchool.contains("영화 이야기"), "an account of the organization that saw it finds the Enterprise chat too")
+    expect(host.conversations.first { $0.id == here.id }?.enterprise?.map(\.name) == ["학교"], "Enterprise search results carry their record into this chat")
+    host.conversations = chats
     let (forWork, _) = reply("search_chats", ["query": "청룡영화제"], work)
     expect(!forWork.contains("연구 노트"), "another organization's account does not")
 
@@ -236,6 +246,12 @@ func testChatTools() {
     let story = chats.first { $0.title == "영화 이야기" }!
     let (whole, _) = reply("read_chat", ["id": story.id.uuidString], personal)
     expect(whole.contains("[The whole chat]") && whole.contains("주말에 뭐 볼까") && whole.contains("11월 말"), "a short chat is given whole")
+    var called = Conversation(); called.title = "두 AI"
+    var both = ChatTurn(question: "의견?"); both.final = "Claude 의견"; both.finalBy = "Claude"
+    both.moreAnswers = [.reply(round: 1, speaker: "ChatGPT", text: "부산국제영화제도 있어요")]
+    called.turns = [both]
+    expect(ChatSearch.search("부산국제영화제", in: [called]).first?.title == "두 AI", "answers by other members are searched")
+    expect(ChatLink.reading(called, query: "", state: "").contains("ChatGPT:\n부산국제영화제도 있어요"), "and read, with who wrote them")
 
     // A long chat: its summary first, then the matching turns and their neighbors, within the limit.
     var long = Conversation(); long.title = "긴 대화"

@@ -54,6 +54,8 @@ final class ChatLink: ToolProvider {
             let query = (arguments["query"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             guard !query.isEmpty else { return ToolHub.failure("Write the words to search for.") }
             let results = ChatSearch.search(query, in: visible, limit: Self.resultLimit)
+            // Titles and lines of Enterprise chats are their content too: their record goes to this chat first.
+            for result in results { if let chat = visible.first(where: { $0.id == result.id }), chat.side == .enterprise { noteRead(chat, context.room) } }
             return text(Self.listing(results, visible))
         case "read_chat":
             let id = UUID(uuidString: (arguments["id"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines))
@@ -85,6 +87,7 @@ final class ChatLink: ToolProvider {
 
     static func turnText(_ turn: ChatTurn, _ n: Int) -> String {
         "[Turn \(n)] User:\n\(turn.question)" + (turn.final.map { "\n\(turn.finalBy ?? "AI"):\n\($0)" } ?? "")
+            + (turn.moreAnswers ?? []).filter { !$0.failed }.map { "\n\($0.speaker):\n\($0.text)" }.joined()
     }
 
     // The chat's summary first, then the whole chat or the turns that match (with their neighbors), within the limit.

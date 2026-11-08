@@ -31,7 +31,9 @@ enum ChatSearch {
     }
 
     // What a chat is searched by (titles separately).
-    static func texts(_ turn: ChatTurn) -> [String] { [turn.question] + [turn.final].compactMap { $0 } }
+    static func texts(_ turn: ChatTurn) -> [String] {
+        [turn.question] + [turn.final].compactMap { $0 } + (turn.moreAnswers ?? []).filter { !$0.failed }.map(\.text)
+    }
 
     static func normalized(_ text: String) -> [Character] {
         text.lowercased().filter { !$0.isWhitespace && !$0.isPunctuation && !$0.isSymbol }.map { $0 }

@@ -63,10 +63,12 @@ enum Enterprise {
         conversation.enterprise = marks
         // Helpers left no account name: the YouTube search (Gemini) and picture makers. With an Enterprise
         // account of that kind on this Mac, which one helped cannot be told.
+        // Unsure also when such a helper could be of an organization the marks do not cover.
+        func uncovered(_ list: [Account]) -> Bool { list.contains { helper in !marks.contains { $0.covers(helper) } } }
         let helpers = accounts.filter(counts)
-        let youTube = speakers.contains { $0.hasPrefix("Gemini · ") } && helpers.contains { $0.provider == .gemini }
-        let pictures = conversation.turns.contains { !($0.finalImages ?? []).isEmpty } && !helpers.isEmpty
-        if conversation.origin != nil || (marks.isEmpty && (DeviceSync.isSchool(conversation, accounts: accounts) || youTube || pictures)) {
+        let youTube = speakers.contains { $0.hasPrefix("Gemini · ") } && uncovered(helpers.filter { $0.provider == .gemini })
+        let pictures = conversation.turns.contains { !($0.finalImages ?? []).isEmpty } && uncovered(helpers)
+        if conversation.origin != nil || youTube || pictures || (marks.isEmpty && DeviceSync.isSchool(conversation, accounts: accounts)) {
             conversation.enterpriseUnsure = true
         }
     }

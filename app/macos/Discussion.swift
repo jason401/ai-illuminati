@@ -674,10 +674,11 @@ final class Discussion: ObservableObject {
     @Published var conversations: [Conversation]
     @Published var currentID: UUID {
         // Coming back to a chat starts again from its latest turns.
-        didSet { if currentID != oldValue { showLatestTurns() } }
+        didSet { if currentID != oldValue { closeFind(); showLatestTurns() } }
     }
     func showLatestTurns() {
         shownTurns = Self.turnPage; reachedBottom = false; loadingEarlier = false; earlierRowInView = false
+        jumpTurn = nil
         transcriptGeneration += 1
     }
     @Published var importingMaterials = false
@@ -836,6 +837,14 @@ final class Discussion: ObservableObject {
     var loadingEarlier = false
     var earlierRowInView = false
     @Published var transcriptGeneration = 0   // bumped to open the transcript afresh
+    // ⌘F in the open chat (ChatFind.swift), and a turn the transcript is asked to scroll to (also from search results).
+    @Published var findOpen = false
+    @Published var findText = ""
+    @Published var findPosition = 0
+    @Published var findFocus = 0
+    var findFresh = true
+    @Published var jumpTurn: UUID?
+    @Published var jumpCount = 0
     @Published var hoverKey: String?
     // The notes panel on the right of the chat window, open or folded (the same for every chat).
     @Published var notesShown = UserDefaults.standard.bool(forKey: "notesShown") {

@@ -30,6 +30,13 @@ private struct EmptyPreviewLogin: GoogleTokenStore {
         }
         conversation.turns = [turn]
         chat.conversations = [conversation]; chat.currentID = conversation.id
+        if CommandLine.arguments.contains("--find") {
+            // ⌘F: two turns with the words, the newer one moved to.
+            var earlier = ChatTurn(question: "Which spacing did we pick for the sidebar?")
+            earlier.mode = 0; earlier.final = "We kept 16 pt above the first row."; earlier.finalBy = "Preview AI"
+            chat.conversations[0].turns.insert(earlier, at: 0)
+            chat.findOpen = true; chat.findText = "spacing"; chat.findStep(0)
+        }
         if CommandLine.arguments.contains("--list") {
             // List marks: a work chat (Git project), an Enterprise chat, an unsure copy and a personal chat.
             func listed(_ title: String, _ edit: (inout Conversation) -> Void) -> Conversation {

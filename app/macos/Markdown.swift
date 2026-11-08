@@ -206,6 +206,7 @@ enum ChatMarkdown {
 struct MarkdownText: View {
     let text: String
     var size: CGFloat = 13
+    var highlight = FindHighlight()   // ⌘F words
 
     var body: some View {
         let blocks = ChatMarkdown.cachedBlocks(text)
@@ -213,9 +214,9 @@ struct MarkdownText: View {
             ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
                 switch block {
                 case .text(let body):
-                    Text(ChatMarkdown.inline(body)).frame(maxWidth: .infinity, alignment: .leading)
+                    Text(highlight.apply(ChatMarkdown.inline(body))).frame(maxWidth: .infinity, alignment: .leading)
                 case .heading(let level, let body):
-                    Text(ChatMarkdown.inline(body))
+                    Text(highlight.apply(ChatMarkdown.inline(body)))
                         .font(.system(size: size + CGFloat(max(0, 4 - level) * 2), weight: level <= 2 ? .bold : .semibold))
                         .padding(.top, level <= 2 ? 6 : 2)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -239,7 +240,7 @@ struct MarkdownText: View {
             ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
                 GridRow {
                     ForEach(Array(row.enumerated()), id: \.offset) { _, cell in
-                        Text(ChatMarkdown.inline(cell))
+                        Text(highlight.apply(ChatMarkdown.inline(cell)))
                     }
                 }
             }

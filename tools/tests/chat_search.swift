@@ -110,3 +110,44 @@ func testEnterpriseMarks() {
     expect(!folders.isProjectChat, "linked folders alone are a plain chat")
     print("PASS: Enterprise marks (saved before sending, failed answers and reviewers count, kept after removal, organizations apart, older chats told once, copies unsure, work chats)")
 }
+
+// ⌘F in a chat: turns with the words, moves between them, earlier turns drawn first, highlights.
+func testChatFind() {
+    let m = AppModel()
+    let chat = Discussion(model: m)
+    var c = Conversation(); c.title = "find"
+    c.turns = (0..<45).map { i in
+        var t = ChatTurn(question: "질문 \(i)"); t.mode = 0
+        t.final = i == 2 ? "청룡영화제는 11월에 열려요. 청룡영화제 수상작" : i == 30 ? "작년 청룡영화제 얘기" : "다른 답 \(i)"
+        if i == 40 { t.moreAnswers = [.reply(round: 1, speaker: "ChatGPT", text: "청룡영화제 후보")] }
+        return t
+    }
+    chat.conversations = [c]; chat.currentID = c.id
+    let hits = ChatFind.hits(chat.current, " 청룡영화제 ")
+    expect(hits.map(\.count) == [2, 1, 1] && hits.map(\.turn) == [c.turns[2].id, c.turns[30].id, c.turns[40].id], "turns with the words, oldest first, with counts (answers by other members too)")
+    expect(ChatFind.hits(chat.current, "   ").isEmpty && ChatFind.hits(chat.current, "CHUNG").isEmpty, "blank words find nothing")
+    expect(ChatFind.ranges("Spacing and spacing", "SPACING").count == 2, "case does not matter")
+
+    chat.findOpen = true; chat.findText = "청룡영화제"; chat.findFresh = true
+    chat.findStep(0)
+    expect(chat.jumpTurn == c.turns[40].id && chat.findPosition == 2, "a new search starts at the newest turn")
+    chat.findStep(-1); chat.findStep(-1)
+    expect(chat.jumpTurn == c.turns[2].id && chat.findPosition == 0, "earlier moves up")
+    expect(chat.shownTurns >= 43, "a turn not drawn yet is drawn before scrolling to it")
+    chat.findStep(-1)
+    expect(chat.jumpTurn == c.turns[40].id, "and wraps around")
+    let count = chat.jumpCount
+    chat.jump(to: UUID())
+    expect(chat.jumpCount == count, "an unknown turn is ignored")
+
+    let marked = ChatFind.highlighted(AttributedString("a 청룡영화제 b 청룡영화제"), "청룡영화제", current: true)
+    expect(marked.runs.filter { $0.backgroundColor != nil }.count == 2 && String(marked.characters) == "a 청룡영화제 b 청룡영화제", "the words are highlighted, the text unchanged")
+    expect(FindHighlight().apply(AttributedString("x")) == AttributedString("x"), "no words: nothing changes")
+
+    // Another chat closes the search.
+    var other = Conversation(); other.turns = [ChatTurn(question: "x")]
+    chat.conversations.append(other)
+    chat.open(other.id)
+    expect(!chat.findOpen && chat.findText.isEmpty && chat.jumpTurn == nil, "opening another chat closes find")
+    print("PASS: find in a chat (turns with the words, counts, newest first, earlier and next with wrap, earlier turns drawn, highlights, closed on another chat)")
+}

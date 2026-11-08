@@ -22,11 +22,15 @@ struct ChatView: View {
 
     var body: some View {
         let wide = layout.wide
+        // ⌘F: find in the open chat (again: back to the words).
+        let findKey = Button("") { discussion.findOpen = true; discussion.findFocus += 1 }
+            .keyboardShortcut("f", modifiers: .command).opacity(0).frame(width: 0, height: 0).accessibilityHidden(true)
         let inline = wide && !discussion.sidebarHidden
         // The notes sit beside the chat when it keeps at least `wide` points, else they slide over it.
         let notesInline = inline ? layout.notesFit : layout.notesFitAlone
         Group {
             ZStack(alignment: .leading) {
+                findKey
                 HStack(spacing: 0) {
                     if inline {
                         sidebar
@@ -273,6 +277,9 @@ struct ChatView: View {
             .padding(.leading, 12).padding(.trailing, 18).frame(height: 40)
             // Another chat waits for approval: say so here, whichever chat is open.
             ApprovalBanner(discussion: discussion)
+            if discussion.findOpen && discussion.viewingRemote == nil && !discussion.current.turns.isEmpty {
+                ChatFindBar(discussion: discussion).padding(.horizontal, 28).padding(.bottom, 4)
+            }
             if let remote = discussion.viewingRemote {
                 RemoteChatView(viewing: remote, discussion: discussion, sync: sync)
             } else if discussion.current.turns.isEmpty {
@@ -462,6 +469,7 @@ struct ChatView: View {
                 let busy = discussion.running || discussion.importingMaterials
                 let accountLabels = Dictionary(discussion.model.accounts.map { ($0.id, discussion.label($0)) }, uniquingKeysWith: { first, _ in first })
                 let chatFolder = Discussion.chatFolder(discussion.currentID).path
+                let found = discussion.findOpen ? Set(ChatFind.hits(conversation, discussion.findText).map(\.turn)) : []
                 if conversation.turns.isEmpty {
                     Text(L("자료를 연결하고 협업 참여 계정을 선택하세요. 보기에서는 읽기만, 작성에서는 자동 백업 후 파일을 고치고 결과물을 만듭니다.", "Link materials and select collaboration accounts. View only reads; Write backs up linked files before editing and creating deliverables."))
                         .foregroundColor(.secondary)
@@ -509,7 +517,8 @@ struct ChatView: View {
                                      accountLabels: accountLabels, chatFolder: chatFolder, language: AppLanguage.current,
                                      askedTime: turn.askedAt.map { ChatTime.stamp($0) },
                                      answeredTime: (turn.answeredAt ?? (last && turn.askedAt == nil && turn.final != nil ? conversation.updatedAt : nil)).map { ChatTime.stamp($0) },
-                                     last: last)
+                                     last: last,
+                                     highlight: found.contains(turn.id) ? FindHighlight(words: discussion.findText, current: turn.id == discussion.jumpTurn) : FindHighlight())
                                 .equatable()
                         }
                         .id(turn.id)
@@ -558,6 +567,7 @@ struct ChatView: View {
         // Only a new turn in the same chat: switching chats makes a new scroll view, which does not fire this.
         // Not animated, and once more after the lazy list has laid the new turn out: an animated jump
         // to a turn it knew only by estimate could stop in empty space until the next scroll.
+        .onChange(of: discussion.jumpCount) { _ in scrollToJump(proxy) }
         .onChange(of: discussion.current.turns.count) { _ in
             guard let last = discussion.current.turns.last?.id else { return }
             proxy.scrollTo(last, anchor: .top)
@@ -584,6 +594,8 @@ struct ChatView: View {
     // then lets scrolling to the top add earlier turns.
     private func openAtLatestTurn(_ proxy: ScrollViewProxy) {
         let chat = discussion.currentID
+        // Opened from a search result: show that turn instead.
+        if discussion.jumpTurn != nil { return scrollToJump(proxy, opening: true) }
         DispatchQueue.main.async {
             if let last = discussion.current.turns.last { proxy.scrollTo(last.id, anchor: .top) }
             DispatchQueue.main.async {
@@ -596,6 +608,19 @@ struct ChatView: View {
             // A short last page leaves the row in view already: no scroll would add the next one.
             if discussion.earlierRowInView { showEarlierTurns(proxy) }
         }
+    }
+
+    // Scrolls to the turn asked for (⌘F, a search result). Again after layout: far turns are known only by estimate.
+    private func scrollToJump(_ proxy: ScrollViewProxy, opening: Bool = false) {
+        guard let target = discussion.jumpTurn else { return }
+        let chat = discussion.currentID
+        for delay in [0.0, 0.05, 0.2] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                if discussion.currentID == chat, discussion.jumpTurn == target { proxy.scrollTo(target, anchor: .top) }
+            }
+        }
+        // Earlier pages load only after the user scrolls up from here.
+        if opening { DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { if discussion.currentID == chat { discussion.reachedBottom = true } } }
     }
 
     // Adds the next page of earlier turns and keeps the turn being read where it was.
@@ -1476,9 +1501,10 @@ private struct TurnView: View, Equatable {
     let askedTime: String?       // "오후 3:12" under the message
     let answeredTime: String?    // the same next to the answer's Copy
     var last = false             // the chat's newest turn: it may be run again in the other mode
+    var highlight = FindHighlight()   // ⌘F words, for turns that have them
 
     static func == (a: TurnView, b: TurnView) -> Bool {
-        a.turn == b.turn && a.busy == b.busy && a.openEntries == b.openEntries && a.last == b.last
+        a.turn == b.turn && a.busy == b.busy && a.openEntries == b.openEntries && a.last == b.last && a.highlight == b.highlight
             && a.accountLabels == b.accountLabels && a.chatFolder == b.chatFolder && a.language == b.language
             && a.askedTime == b.askedTime && a.answeredTime == b.answeredTime
     }
@@ -1498,7 +1524,7 @@ private struct TurnView: View, Equatable {
                 }
                 HStack {
                     Spacer(minLength: 120)
-                    Text(turn.question)
+                    Text(highlight.apply(AttributedString(turn.question)))
                         .font(.system(size: 14))
                         .lineSpacing(3)
                         .textSelection(.enabled)
@@ -1610,7 +1636,7 @@ private struct TurnView: View, Equatable {
                             Text(by).font(.system(size: 12, weight: .medium)).foregroundColor(.secondary)
                         }
                     }
-                    MarkdownText(text: final, size: 15)
+                    MarkdownText(text: final, size: 15, highlight: highlight)
                         .font(.system(size: 15))
                         .lineSpacing(5)
                         .textSelection(.enabled)
@@ -1624,7 +1650,7 @@ private struct TurnView: View, Equatable {
                 }
             } else if let final = turn.final {
                 VStack(alignment: .leading, spacing: 6) {
-                    MarkdownText(text: final)
+                    MarkdownText(text: final, highlight: highlight)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     let pictures = Self.finalPictures(turn, final: final)
@@ -1651,7 +1677,7 @@ private struct TurnView: View, Equatable {
                         Text(answer.speaker).font(.system(size: 12, weight: .medium)).foregroundColor(.secondary)
                     }
                     Group {
-                        if answer.failed { Text(answer.text) } else { MarkdownText(text: answer.text, size: 15) }
+                        if answer.failed { Text(answer.text) } else { MarkdownText(text: answer.text, size: 15, highlight: highlight) }
                     }
                         .font(.system(size: 15)).lineSpacing(5)
                         .foregroundColor(answer.failed ? .red : .primary)

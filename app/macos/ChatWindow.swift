@@ -493,7 +493,8 @@ struct ChatView: View {
                                      openEntries: discussion.openEntries.intersection((turn.entries + (turn.peerNotes ?? [])).map(\.id)),
                                      accountLabels: accountLabels, chatFolder: chatFolder, language: AppLanguage.current,
                                      askedTime: turn.askedAt.map { ChatTime.stamp($0) },
-                                     answeredTime: (turn.answeredAt ?? (last && turn.askedAt == nil && turn.final != nil ? conversation.updatedAt : nil)).map { ChatTime.stamp($0) })
+                                     answeredTime: (turn.answeredAt ?? (last && turn.askedAt == nil && turn.final != nil ? conversation.updatedAt : nil)).map { ChatTime.stamp($0) },
+                                     last: last)
                                 .equatable()
                         }
                         .id(turn.id)
@@ -1459,9 +1460,10 @@ private struct TurnView: View, Equatable {
     let language: AppLanguage
     let askedTime: String?       // "오후 3:12" under the message
     let answeredTime: String?    // the same next to the answer's Copy
+    var last = false             // the chat's newest turn: it may be run again in the other mode
 
     static func == (a: TurnView, b: TurnView) -> Bool {
-        a.turn == b.turn && a.busy == b.busy && a.openEntries == b.openEntries
+        a.turn == b.turn && a.busy == b.busy && a.openEntries == b.openEntries && a.last == b.last
             && a.accountLabels == b.accountLabels && a.chatFolder == b.chatFolder && a.language == b.language
             && a.askedTime == b.askedTime && a.answeredTime == b.answeredTime
     }
@@ -1550,6 +1552,26 @@ private struct TurnView: View, Equatable {
             if let file = turn.artifact { Button(L("최종 결과물 열기", "Open final deliverable")) { discussion.openArtifact(file) } }
             if let options = turn.voteOptions {
                 VoteResultView(options: options, votes: turn.votes)
+            }
+            if turn.mode == 0, let route = turn.route, let note = turn.routeNote {
+                // Project chat with members: how the app answered this message, and the other way for the newest one.
+                HStack(spacing: 8) {
+                    Label(note, systemImage: route == .opinion ? "bubble.left.and.bubble.right" : "hammer")
+                        .font(.system(size: 11)).foregroundColor(.secondary)
+                        .padding(.horizontal, 10).padding(.vertical, 4)
+                        .background(Color.primary.opacity(0.06), in: Capsule())
+                    if last && !busy && (turn.final != nil || turn.error != nil) {
+                        let other: ChatRoute = route == .opinion ? .work : .opinion
+                        Button(other == .work ? L("작업으로 다시", "Run as work") : L("의견으로 다시", "Ask for opinions")) {
+                            discussion.rerun(turn, as: other)
+                        }
+                        .buttonStyle(.link).font(.system(size: 11))
+                        .help(route == .work && !(turn.workspaceChanges ?? []).isEmpty
+                              ? L("같은 메시지를 의견 모드로 다시 보내요. 이번 답에서 바뀐 파일은 그대로 남아요.", "Sends the same message again for opinions. Files this answer changed stay changed.")
+                              : other == .work ? L("같은 메시지를 작업 모드로 다시 보내요. 담당 AI가 작업하고 다른 AI가 검수해요.", "Sends the same message again as work: the lead works and the others review.")
+                              : L("같은 메시지를 의견 모드로 다시 보내요. 모두 읽기만 하고 답해요.", "Sends the same message again for opinions: everyone answers, read only."))
+                    }
+                }
             }
             if turn.mode == 0, let note = turn.orderNote {
                 Label(note, systemImage: "arrow.triangle.2.circlepath")

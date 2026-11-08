@@ -317,7 +317,10 @@ func testPeerReview() {
     let room = chat.currentID
     var prompts: [String] = [], peerPrompts: [String] = [], peerViews: [WorkspaceBinding] = [], replies: [String] = []
     var step = 0, verdict = "1. README.md:1 says Second; the user asked for Third."
+    var judged: [String] = [], nextRoute = ChatRoute.work, opinionViews: [WorkspaceBinding] = []
+    chat.routeJudge = { prompt in judged.append(prompt); return (nextRoute, "Judge") }
     chat.workspaceAnswer = { account, prompt, binding, _, _ in
+        if prompt.contains("[Opinion mode]") && account.id == claude.id { opinionViews.append(binding); return .success("Claude's view: keep it short.") }
         if account.id == codex.id {
             peerPrompts.append(prompt); peerViews.append(binding)
             return .success(prompt.hasPrefix("[REVIEW]") ? verdict : "Plan is fine, but add a test.")
@@ -376,12 +379,72 @@ func testPeerReview() {
     send("Change README again.")
     expect(prompts.count == asked + 1 && chat.current.turns.last?.final == "Done 2." && chat.current.turns.last?.peerNotes?.first?.failed == false, "no issues: the answer stands")
 
+    expect(judged.count == 3 && judged[1].contains("Change README to Second.") && judged[1].contains("What does the README say?")
+           && chat.current.turns.last?.route == .work && chat.current.turns.last?.routeNote?.contains("Judge") == true,
+           "every message is sorted first, with the one before it; work is shown with who judged")
+
+    // Opinion: both members answer at the same time, the project read only, no ask_peer and no review.
+    nextRoute = .opinion
+    let opinionBefore = peerPrompts.filter { $0.hasPrefix("[REVIEW]") }.count, head = git(["rev-parse", "HEAD"])
+    send("Is splitting the README a good idea? What do you both think?")
+    let opinion = chat.current.turns.last
+    expect(opinion?.route == .opinion && opinion?.final == "Claude's view: keep it short." && opinion?.moreAnswers?.first?.text.contains("Plan is fine") == true
+           && opinion?.routeNote?.contains("2") == true, "opinion: every member answers")
+    expect(opinionViews.count == 1 && opinionViews[0].project == nil && opinionViews[0].roots.first { $0.path == root.path }?.writable != true
+           && peerViews.last?.roots.allSatisfy { $0.writable != true } == true, "opinion: the project is read only for everyone")
+    expect(peerPrompts.filter { $0.hasPrefix("[REVIEW]") }.count == opinionBefore && opinion?.peerNotes == nil && git(["rev-parse", "HEAD"]) == head,
+           "opinion: no ask_peer, no review, nothing changed")
+
+    // "가자" after the opinions: work, and the lead reads both opinions.
+    nextRoute = .work; step = 4
+    send("가자")
+    expect(chat.current.turns.last?.route == .work && prompts.last?.contains("Claude's view: keep it short.") == true && prompts.last?.contains("Plan is fine") == true,
+           "go: the lead works with every opinion in the transcript")
+
+    // Run again as opinions: the same message, no judging.
+    let judgedBefore = judged.count
+    if let goTurn = chat.current.turns.last { chat.rerun(goTurn, as: .opinion) }
+    let deadline = Date().addingTimeInterval(30)
+    while Date() < deadline && (chat.anyRunning || chat.current.turns.last?.final == nil) { RunLoop.main.run(until: Date().addingTimeInterval(0.03)) }
+    expect(chat.current.turns.last?.question == "가자" && chat.current.turns.last?.route == .opinion && judged.count == judgedBefore
+           && chat.current.turns.last?.routeNote?.contains(L("직접", "by you")) == true, "run again in the other mode: forced, not judged")
+
     // One member left: no ask_peer, no review.
+    let judgedAlone = judged.count
     chat.toggleMember(codex.id)
     step = 3
     let before = peerPrompts.count
     send("Change README once more.")
     expect(prompts.last?.contains("[Review is on]") == false && peerPrompts.count == before && PeerLink.shared.tools(context: ToolContext(room: room, roots: [])).isEmpty,
            "one member: no ask_peer and no reviews")
+    expect(judged.count == judgedAlone && chat.current.turns.last?.route == nil, "one member: nothing to sort")
+    testRoute()
     print("PASS: review (members: lead works, the other opines and reviews read only, two asks per answer, only changes reviewed, one fix in the same turn, older review chats migrate)")
+}
+
+func testRoute() {
+    expect(Route.parse("WORK") == .work && Route.parse(" opinion.") == .opinion && Route.parse("Opinion, not work") == nil && Route.parse("음") == nil, "the sorter's word is read")
+    let prompt = Route.prompt(question: "수정하지 말고 의견만", previous: nil)
+    expect(prompt.contains("수정하지 말고 의견만") && prompt.contains("OPINION") && prompt.contains("가자") && !prompt.contains("[Previous"), "the sorter gets the message and the rules")
+    let claude = Account(id: "route-claude", provider: .claude, name: "C")
+    var asked = 0
+    func decide(_ local: String?, _ member: String?, judge: Account? = claude) -> (ChatRoute, String?) {
+        let r = Route.decide(local: { local }, localName: "Gemma", judge: judge, ask: { _ in asked += 1; return member }, label: { $0.name })
+        return (r.route, r.by)
+    }
+    expect(decide("WORK", "OPINION") == (.work, "Gemma") && asked == 0, "Gemma judges first; no AI is asked")
+    expect(decide(nil, "WORK") == (.work, "C") && asked == 1, "no Gemma: the member judges")
+    expect(decide("maybe", "OPINION") == (.opinion, "C"), "Gemma's unclear reply: the member judges")
+    expect(decide(nil, nil) == (.opinion, nil) && decide(nil, "WORK", judge: nil) == (.opinion, nil), "nobody can judge: opinion")
+    let chatFolder = "/chat/files"
+    let binding = WorkspaceBinding(roots: [WorkspaceRoot(path: chatFolder, directory: true, writable: true), WorkspaceRoot(path: "/repo", directory: true, writable: true)],
+                                   level: .execute, project: nil, face: true)
+    let view = Route.opinionView(binding, chatFolder: chatFolder)
+    expect(view.roots[0].writable == true && view.roots[1].writable != true && view.level == .view && view.project == nil && view.face == true, "opinion view: only the chat folder is writable")
+    var turn = ChatTurn(question: "q"); turn.route = .opinion; turn.routeNote = "Opinion"
+    let again = try? JSONDecoder().decode(ChatTurn.self, from: JSONEncoder().encode(turn))
+    var plain = ChatTurn(question: "q"); plain.route = nil
+    let older = try? JSONDecoder().decode(ChatTurn.self, from: JSONEncoder().encode(plain))
+    expect(again?.route == .opinion && again?.routeNote == "Opinion" && older != nil && older?.route == nil, "the route is saved with the turn; turns without one still load")
+    print("PASS: route (Gemma first, then the member, else opinion; opinion view read only)")
 }

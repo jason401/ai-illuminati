@@ -452,6 +452,8 @@ struct ChatTurn: Identifiable, Codable, Equatable {
     var askedAt: Date?          // when the message was sent (missing in older chats)
     var answeredAt: Date?       // when the answer finished
     var peerNotes: [Entry]?     // mode 0: opinions the AI asked for and reviews of the work (Peer.swift)
+    var route: ChatRoute?       // project chat with members: how this message was answered (Route.swift)
+    var routeNote: String?      // "Opinion · 3 AIs · judged by Gemma 4 E4B", shown above the answer
 }
 
 // Times under the messages and the day lines between them, like the desktop apps.
@@ -683,6 +685,9 @@ final class Discussion: ObservableObject {
     var activeImages: [URL] = []
     // Tests only: answers requests that have folders attached (mode 0 always does) without calling the real tools.
     var workspaceAnswer: ((Account, String, WorkspaceBinding, DebateCancellation, ((AnswerProgress) -> Void)?) -> Result<String, Answerer.Failure>)?
+    // Tests only: sorts a project chat's message (Route.swift) without calling Gemma or an AI.
+    var routeJudge: ((String) -> (route: ChatRoute, by: String?))?
+    var forcedRoute: ChatRoute?     // "Run as work / opinion" under the last answer, for the next send only
     // Tests only: answers requests that carry pictures without calling the real tools.
     var pictureAnswer: ((Account, String, [URL], TimeInterval, DebateCancellation, Bool) -> Result<String, Answerer.Failure>)?
     var imageContext = ""
@@ -878,6 +883,7 @@ final class Discussion: ObservableObject {
         debateAnswer = host.debateAnswer
         collaborationAnswer = host.collaborationAnswer
         workspaceAnswer = host.workspaceAnswer
+        routeJudge = host.routeJudge
         pictureAnswer = host.pictureAnswer
         useClaude = host.useClaude; useCodex = host.useCodex; useGemini = host.useGemini
     }
@@ -1065,6 +1071,14 @@ final class Discussion: ObservableObject {
         let members = crew.map { project ? [$0.lead] : [$0.lead] + $0.others } ?? []
         let reviewers = project ? crew?.others ?? [] : []
         let called = mentioned.isEmpty ? members : mentioned
+        // A project chat with two or more members taking part: each message is sorted into opinion (all answer, read
+        // only) or work (the lead works, the others review) before anyone starts (Route.swift). @ skips this.
+        let standing = plain && project && mentioned.isEmpty ? standingMembers() : []
+        let forced = forcedRoute
+        let sorting = standing.count >= 2 || (forced != nil && project && plain && mentioned.isEmpty)
+        let opinionLead = crew?.lead ?? standing.first { id in model.accounts.contains { $0.id == id && [.claude, .codex].contains($0.provider) } } ?? standing.first
+        let opinionMembers = opinionLead.map { lead in [lead] + standing.filter { $0 != lead } } ?? []
+        let judges = standing.compactMap { id in model.accounts.first { $0.id == id && [.claude, .codex].contains($0.provider) } }
         let team = called.isEmpty ? pickTeam() : called.compactMap { id in model.accounts.first { $0.id == id } }
         let id = currentID
         var turn = ChatTurn(question: question)
@@ -1155,7 +1169,30 @@ final class Discussion: ObservableObject {
             do { projectLocks = try ProjectWork.acquire(worker.activeWorkspace) }
             catch { worker.finish(id, index, error: error.localizedDescription); return }
             defer { ProjectWork.release(projectLocks) }
-            if solo {
+            if solo && sorting {
+                var route = forced ?? .work, by: String?
+                if forced == nil {
+                    worker.changeTurn(id, index) { $0.status = L("의견을 들을지 작업할지 판정하는 중…", "Deciding: opinions or work…") }
+                    (route, by) = worker.decideRoute(question: question, previous: history.last, judges: judges, cancellation: cancellation)
+                    if cancellation.isCancelled { return worker.endSolo(id, index, stopped: true) }
+                }
+                let name = { (accountID: String) in worker.model.accounts.first { $0.id == accountID }.map(worker.label) ?? accountID }
+                let opinion = route == .opinion && opinionMembers.count >= 2
+                let note = opinion ? Self.routeNote(.opinion, by: by, names: opinionMembers.map(name), forced: forced != nil)
+                    : Self.routeNote(.work, by: by, names: called.isEmpty ? team.map(worker.label) : called.map(name), reviewers: reviewers.map(name), forced: forced != nil)
+                worker.changeTurn(id, index, save: true) { $0.route = opinion ? .opinion : .work; $0.routeNote = note }
+                let binding = worker.activeWorkspace ?? worker.soloBinding(id)
+                if opinion {
+                    worker.activeWorkspace = Route.opinionView(binding, chatFolder: Self.chatFolder(id).path)
+                    worker.runSolo(question: question, history: history, rules: rules, config: config, mentions: opinionMembers,
+                                   cancellation: cancellation, id: id, index: index, extra: Route.opinionNote(project: binding.project?.root ?? ""))
+                } else {
+                    let peer = worker.beginPeer(id: id, index: index, question: question, reviewers: reviewers, binding: binding, cancellation: cancellation)
+                    worker.runSolo(question: question, history: history, rules: rules, config: config, mentions: called,
+                                   reviewers: reviewers, cancellation: cancellation, id: id, index: index)
+                    worker.endPeer(peer)
+                }
+            } else if solo {
                 // Reviewers (a project chat with two or more members, Peer.swift): ask_peer during the work, then
                 // a review of what changed, and the lead fixes what is right.
                 let binding = worker.activeWorkspace ?? worker.soloBinding(id)

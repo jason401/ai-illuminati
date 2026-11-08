@@ -441,7 +441,7 @@ enum LocalModel {
     }
 
     // One answer at a time across every chat, so two models never sit in memory together.
-    private static let gate = DispatchSemaphore(value: 1)
+    static let gate = DispatchSemaphore(value: 1)
 
     // One reply from POST /api/chat, streamed: each line carries the next piece of text.
     static func ask(_ variant: Variant = legacy[0], prompt: String, images: [URL], timeout: TimeInterval, cancellation: DebateCancellation?,

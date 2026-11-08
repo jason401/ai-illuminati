@@ -179,7 +179,7 @@ extension Discussion {
             let kind = root.path == project ? "linked Git project — edit files here; use the git_* tools for Git"
                 : shared.contains(root.path)
                 ? (root.writable == true ? "shared folder — you may read, edit, create and delete files here (backed up before this answer)" : "shared folder — read only")
-                : root.writable != true ? "linked file — read only"
+                : root.writable != true ? (root.directory ? "linked folder — read only" : "linked file — read only")
                 : root.path == binding.roots.first?.path ? "chat folder — you may create, edit and delete files here"
                 : "folder linked to this chat — you may read, edit, create and delete files here (backed up before this answer)"
             lines.append("- \(root.path) (\(kind))")
@@ -341,7 +341,7 @@ extension Discussion {
     // mentions: accounts called with @. They answer at the same time without seeing each other's replies;
     // nobody is picked automatically and the next message is automatic again.
     func runSolo(question: String, history: [ChatTurn], rules: String, config: ChatConfiguration, mentions: [String] = [],
-                 reviewers: [String] = [], cancellation: DebateCancellation, id: UUID, index: Int) {
+                 reviewers: [String] = [], cancellation: DebateCancellation, id: UUID, index: Int, extra: String = "") {
         let origin = conversations.first { $0.id == id }?.origin
         let previous = [Self.originNote(origin), Self.transcript(history)].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n\n")
         let asked = (previous.isEmpty ? "" : previous + "\n\n") + "[User]\n" + question
@@ -438,6 +438,7 @@ extension Discussion {
             for (k, account) in called.enumerated() {
                 let speaker = label(account)
                 var instruction = soloInstruction(account, binding: binding, helper: helper, chat: id)
+                if !extra.isEmpty { instruction += "\n" + extra }
                 if called.count > 1 {
                     instruction += "\nSeveral AIs answer this message at the same time and do not see each other's replies: give your own view."
                     // Only the first may change files, so two AIs never edit the same files at once: the others
@@ -696,7 +697,7 @@ extension Discussion {
         return parts.map { $0.trimmingCharacters(in: .newlines) }.filter { !$0.isEmpty }.joined(separator: "\n")
     }
 
-    private func endSolo(_ id: UUID, _ index: Int, stopped: Bool = false) {
+    func endSolo(_ id: UUID, _ index: Int, stopped: Bool = false) {
         changeTurn(id, index, save: true) { t in
             t.status = ""
             t.activity = nil

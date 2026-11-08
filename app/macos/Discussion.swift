@@ -548,6 +548,9 @@ struct ChatConfiguration: Codable {
     var voteSkippedIDs: [String]?  // mode 4: accounts turned off; every other account votes
     var soloAccountID: String?      // mode 0: the account picked by hand (nil = automatic)
     var lastSoloAccountID: String?  // mode 0: who answered last; it keeps going while it has usage left
+    // mode 0: accounts that answer every message, in order (two or more answer at the same time, like @).
+    // One member is the same as soloAccountID; nil or empty = automatic. Not synced: account IDs differ per Mac.
+    var memberIDs: [String]?
     var school: Bool?               // mode 0: a school chat (continued only by school accounts)
     // mode 0, review (Peer.swift): another kind of AI gives opinions when asked and checks recent work now and then
     var peerReview: Bool?
@@ -798,8 +801,9 @@ final class Discussion: ObservableObject {
         Answerer.ask($0, prompt: $1, timeout: $2)
     }
 
-    // New mode numbers are versioned; legacy engines remain available for regression checks.
-    static var availableModes = [0, 1, 2, 3, 4]
+    // Only plain chat is offered; chats saved in a team mode open as plain chat (their old turns still show
+    // as they were). The team engines remain for regression checks, which turn them on explicitly.
+    static var availableModes = [0]
     static var modernModes = true
 
     var configuration: ChatConfiguration {
@@ -1050,7 +1054,10 @@ final class Discussion: ObservableObject {
         mentionQuery = nil
         let question = !typed.isEmpty ? typed : !mentioned.isEmpty ? L("지금까지의 대화에 대해 네 의견을 말해 줘.", "What do you think about this conversation so far?")
             : L("첨부한 이미지를 설명해줘.", "Describe the attached images.")
-        let team = mentioned.isEmpty ? pickTeam() : mentioned.compactMap { id in model.accounts.first { $0.id == id } }
+        // Two or more members of this chat answer every message; @ replaces them for this one message.
+        let members = plain && mentioned.isEmpty ? standingMembers() : []
+        let called = mentioned.isEmpty ? members : mentioned
+        let team = called.isEmpty ? pickTeam() : called.compactMap { id in model.accounts.first { $0.id == id } }
         let id = currentID
         var turn = ChatTurn(question: question)
         turn.askedAt = Date()
@@ -1145,7 +1152,7 @@ final class Discussion: ObservableObject {
                 let binding = worker.activeWorkspace ?? worker.soloBinding(id)
                 let startHead = config.peerReview == true ? binding.project.flatMap { try? ProjectProcess.git(["rev-parse", "HEAD"], root: $0.root) } : nil
                 let peer = worker.beginPeer(id: id, index: index, question: question, config: config, binding: binding, cancellation: cancellation)
-                worker.runSolo(question: question, history: history, rules: rules, config: config, mentions: mentioned,
+                worker.runSolo(question: question, history: history, rules: rules, config: config, mentions: called,
                              cancellation: cancellation, id: id, index: index)
                 let asked = (peer?.asked ?? 0) > 0
                 worker.endPeer(peer)

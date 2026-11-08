@@ -81,6 +81,36 @@ extension Discussion {
         return AutoPick.choose(model.accounts, usage: model.latestUsage, school: soloSchool, current: config.lastSoloAccountID)
     }
 
+    // The chat's members, in order: memberIDs, or the one account picked by hand in older chats.
+    var memberIDs: [String] {
+        let config = configuration
+        let ids = config.memberIDs ?? config.soloAccountID.map { [$0] } ?? []
+        return ids.filter { id in model.accounts.contains { $0.id == id } }
+    }
+
+    // Members who answer the next message together: only when two or more are checked, skipping accounts
+    // that need sign-in or have no usage left (if fewer than two remain, the usual single answer runs).
+    func standingMembers() -> [String] {
+        let ids = memberIDs
+        guard ids.count >= 2 else { return [] }
+        let ready = ids.filter { id in
+            guard let account = model.accounts.first(where: { $0.id == id }) else { return false }
+            let usage = model.latestUsage[id]
+            return (account.provider != .ollama || model.localEnabled) && usage?.needsLogin != true && (usage?.leftNow ?? 50) > 0
+        }
+        return ready.count >= 2 ? ready : []
+    }
+
+    // Checks or unchecks a member. One member answers alone (as picked by hand); none is automatic.
+    func toggleMember(_ id: String) {
+        configure { config in
+            var ids = (config.memberIDs ?? config.soloAccountID.map { [$0] } ?? []).filter { id in self.model.accounts.contains { $0.id == id } }
+            if let at = ids.firstIndex(of: id) { ids.remove(at: at) } else { ids.append(id) }
+            config.memberIDs = ids.isEmpty ? nil : ids
+            config.soloAccountID = ids.count == 1 ? ids[0] : nil
+        }
+    }
+
     // Folders this chat's AI sees: its own folder and the chat's linked folders (it may read, edit and
     // delete there; linked folders are backed up before each answer), and the shared folders (read only).
     func soloBinding(_ room: UUID) -> WorkspaceBinding {
@@ -366,7 +396,9 @@ extension Discussion {
                 let speaker = label(account)
                 var instruction = soloInstruction(account, binding: binding, helper: helper, chat: id)
                 if called.count > 1 {
-                    instruction += "\nThe user called several AIs for this message. They answer at the same time and do not see each other's replies: give your own view."
+                    instruction += "\nSeveral AIs answer this message at the same time and do not see each other's replies: give your own view."
+                    // Only the first may change files, so two AIs never edit the same files at once.
+                    if k > 0 { instruction += " \(label(called[0])) handles any file changes: read files if useful, but do not create, edit or delete any." }
                 }
                 if keepState && k == 0 { instruction += "\n" + Self.stateRule(current: Self.loadState(id)) }
                 // One reply is shown as it is written at a time: whoever starts first, then the next.

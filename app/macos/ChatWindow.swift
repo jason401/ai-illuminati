@@ -647,7 +647,6 @@ struct ChatView: View {
                 }
                 HStack(spacing: 10) {
                     plusMenu
-                    if discussion.configuration.mode != 0 { modePill }
                     if discussion.importingMaterials {
                         ProgressView().controlSize(.small)
                         Text(L("자료를 가져오는 중…", "Importing materials…")).font(.system(size: 12)).foregroundColor(.secondary)
@@ -669,32 +668,6 @@ struct ChatView: View {
             .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(Color.primary.opacity(0.10)))
             .shadow(color: .black.opacity(0.07), radius: 10, y: 3)
         }
-    }
-
-    // The team mode, as a pill next to +: click to switch mode, ✕ for plain chat again.
-    private var modePill: some View {
-        let mode = discussion.configuration.mode
-        let symbol = [1: "person.2", 2: "exclamationmark.bubble", 3: "square.stack.3d.up", 4: "checklist"][mode] ?? "person.2"
-        return HStack(spacing: 4) {
-            Menu {
-                ForEach([1, 2, 3, 4], id: \.self) { other in
-                    Button((other == mode ? "✓ " : "") + ModeChangeMarker.name(other)) { discussion.setMode(other) }
-                }
-                Divider()
-                Button(L("기본 대화로 돌아가기", "Back to plain chat")) { discussion.setMode(0) }
-            } label: {
-                Label(Self.shortName(mode), systemImage: symbol).font(.system(size: 12, weight: .medium))
-            }
-            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-            Button(action: { discussion.setMode(0) }) { Image(systemName: "xmark").font(.system(size: 9, weight: .bold)) }
-                .buttonStyle(.plain)
-                .help(L("기본 대화로 돌아가기", "Back to plain chat"))
-                .accessibilityLabel(L("기본 대화로 돌아가기", "Back to plain chat"))
-        }
-        .foregroundColor(.accentColor)
-        .padding(.leading, 10).padding(.trailing, 8).padding(.vertical, 4)
-        .background(Color.accentColor.opacity(0.13), in: Capsule())
-        .disabled(discussion.running || discussion.importingMaterials)
     }
 
     static func shortName(_ mode: Int) -> String {
@@ -890,15 +863,6 @@ struct ChatView: View {
                     Button(discussion.current.workspace?.isFullAuto == true ? L("완전 자동 끄기 (카드로 확인)", "Turn off full auto (confirm with cards)") : L("완전 자동 켜기", "Turn on full auto")) { discussion.toggleFullAuto() }
                 }
             }
-            Divider()
-            Menu(L("여럿에게 묻기", "Ask several AIs")) {
-                ForEach([1, 2, 3, 4], id: \.self) { mode in
-                    Button(ModeChangeMarker.name(mode)) { discussion.setMode(mode) }
-                }
-            }
-            if discussion.configuration.mode != 0 {
-                Button(L("기본 대화로 돌아가기", "Back to plain chat")) { discussion.setMode(0) }
-            }
         } label: {
             Image(systemName: "plus").font(.system(size: 15, weight: .medium))
                 .frame(width: 28, height: 28)
@@ -906,8 +870,8 @@ struct ChatView: View {
         }
         .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
         .foregroundColor(.secondary)
-        .accessibilityLabel(L("첨부와 여럿에게 묻기", "Attach or ask several AIs"))
-        .help(L("사진·파일·폴더 첨부, 여럿에게 묻기", "Attach photos, files or folders, or ask several AIs"))
+        .accessibilityLabel(L("첨부", "Attach"))
+        .help(L("사진·파일·폴더 첨부", "Attach photos, files or folders"))
         .disabled(discussion.running || discussion.importingMaterials)
     }
 
@@ -1074,20 +1038,23 @@ struct ChatView: View {
         }
     }
 
-    // Who answers next: automatic (most usage left) or an account picked by hand; and the chat's side.
+    // Who answers: automatic (most usage left), or the accounts checked for this chat. Two or more checked
+    // all answer every message at the same time; @ in a message calls others for that message only.
     private var accountChip: some View {
         let config = discussion.configuration
+        let members = discussion.memberIDs
         let next = discussion.soloNext
         let usage = next.flatMap { discussion.model.latestUsage[$0.id] }
         return Menu {
-            Button((config.soloAccountID == nil ? "✓ " : "") + L("자동 (남은 사용량 기준)", "Automatic (most usage left)")) {
-                discussion.configure { $0.soloAccountID = nil }
+            Button((members.isEmpty ? "✓ " : "") + L("자동 (남은 사용량 기준)", "Automatic (most usage left)")) {
+                discussion.configure { $0.soloAccountID = nil; $0.memberIDs = nil }
             }
             Divider()
+            Text(L("체크한 AI가 모두 답해요", "Every checked AI answers"))
             ForEach(discussion.model.accounts.filter { $0.provider != .gemini }, id: \.id) { account in
-                Button((config.soloAccountID == account.id ? "✓ " : "") + discussion.label(account) + " · "
+                Button((members.contains(account.id) ? "✓ " : "") + discussion.label(account) + " · "
                        + AutoPick.describe(discussion.model.latestUsage[account.id])) {
-                    discussion.configure { $0.soloAccountID = account.id }
+                    discussion.toggleMember(account.id)
                 }
             }
             if discussion.model.schoolOnlyHandoff {
@@ -1100,16 +1067,23 @@ struct ChatView: View {
             }
         } label: {
             // A menu label keeps a single text view, so the name and usage are one concatenated Text.
-            let name = ((config.school ?? next?.isSchool) == true && discussion.model.schoolOnlyHandoff ? L("엔터프라이즈 · ", "Enterprise · ") : "")
-                + (next.map { discussion.label($0) } ?? L("쓸 수 있는 계정 없음", "No account available"))
-            (Text(config.soloAccountID == nil ? Image(systemName: "sparkles") : Image(systemName: "person.crop.circle"))
-             + Text(" " + name).foregroundColor(.primary)
-             + Text(next == nil ? "" : "  " + AutoPick.describe(usage)).foregroundColor(.secondary))
-                .font(.system(size: 12))
+            if members.count >= 2 {
+                let names = members.compactMap { id in discussion.model.accounts.first { $0.id == id }.map { discussion.label($0) } }
+                (Text(Image(systemName: "person.2")) + Text(" " + names.joined(separator: " + ")).foregroundColor(.primary))
+                    .font(.system(size: 12))
+            } else {
+                let name = ((config.school ?? next?.isSchool) == true && discussion.model.schoolOnlyHandoff ? L("엔터프라이즈 · ", "Enterprise · ") : "")
+                    + (next.map { discussion.label($0) } ?? L("쓸 수 있는 계정 없음", "No account available"))
+                (Text(members.isEmpty ? Image(systemName: "sparkles") : Image(systemName: "person.crop.circle"))
+                 + Text(" " + name).foregroundColor(.primary)
+                 + Text(next == nil ? "" : "  " + AutoPick.describe(usage)).foregroundColor(.secondary))
+                    .font(.system(size: 12))
+            }
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
-        .help(L("답할 AI: 자동이면 5시간이 15% 이상 남은 계정 중 주간이 가장 많이 남은 계정", "Who answers: automatic picks, among accounts with at least 15% of the 5-hour limit left, the one with the most weekly usage left"))
+        .help(L("답할 AI: 자동이면 5시간이 15% 이상 남은 계정 중 주간이 가장 많이 남은 계정. 여러 명을 체크하면 메시지마다 모두 동시에 답해요 (@는 그 메시지에만 적용).",
+                "Who answers: automatic picks, among accounts with at least 15% of the 5-hour limit left, the one with the most weekly usage left. Check several and they all answer every message at the same time (@ applies to one message only)."))
     }
 
     // Review (Peer.swift): on or off, and who reviews (automatic: the other kind of AI on the chat's side).

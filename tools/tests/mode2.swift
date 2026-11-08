@@ -73,10 +73,15 @@ do {
     print("PASS: test home and settings kept apart, preview model writes nothing, account backups (shrink, limits, failure stops the save)")
 }
 
-// Offer the three new modes, then check legacy engines separately.
-expect(Discussion.availableModes == [0, 1, 2, 3, 4], "plain chat and the four team modes should be offered")
+// Only plain chat is offered; a chat saved in a team mode opens as plain chat. Legacy engines are checked separately.
+expect(Discussion.availableModes == [0], "only plain chat should be offered")
 let hiddenDefault = Discussion(model: AppModel())
 expect(hiddenDefault.configuration.mode == 0, "a new room must start as a plain chat (mode 0)")
+for old in [1, 2, 3, 4] {
+    hiddenDefault.change(hiddenDefault.currentID) { $0.configuration = ChatConfiguration(mode: old, modeVersion: 2) }
+    expect(hiddenDefault.configuration.mode == 0, "a chat saved in team mode \(old) opens as a plain chat")
+}
+hiddenDefault.change(hiddenDefault.currentID) { $0.configuration = nil }
 expect(!hiddenDefault.configuration.participants.contains(.gemini) && !hiddenDefault.useGemini, "Gemini must be off by default in new chats")
 Discussion.modernModes = false
 Discussion.availableModes = [1, 2, 3]
@@ -1750,6 +1755,69 @@ do {
     expect(Set(asked.map(\.0)).count == 2 && Set(asked.map(\.0)).contains("at-claude") && last.question == "너네는 어떻게 생각해?",
            "typed names call both AIs and leave the message")
     print("PASS: @ mentions (list with Gemini, narrowing, Korean names, at the same time, automatic again, name only, typed names and initials)")
+}
+
+// Plain chat, part 4: accounts checked in the chip answer every message. One is a hand pick; two or more answer
+// at the same time like @ (only the first may change files); @ replaces them for one message; accounts out of
+// usage sit out, and fewer than two left means the usual single answer.
+do {
+    Discussion.modernModes = true
+    Discussion.availableModes = [0]
+    let m = AppModel()
+    m.accounts = [Account(id: "mb-claude", provider: .claude, name: "Claude", dir: nil, school: false),
+                  Account(id: "mb-codex", provider: .codex, name: "ChatGPT", dir: nil, school: false),
+                  Account(id: "mb-gemini", provider: .gemini, name: "Gemini", dir: nil)]
+    var full = AIUsage(name: "u"); full.fiveHour = UsageWindow(usedPercent: 10, resetsAt: nil); full.weekly = UsageWindow(usedPercent: 10, resetsAt: nil)
+    m.latestUsage = ["mb-claude": full, "mb-codex": full, "mb-gemini": full]
+    m.sharedFolders = []
+    m.schoolOnlyHandoff = false
+    let chat = Discussion(model: m)
+    let labels = Dictionary(uniqueKeysWithValues: m.accounts.map { ($0.id, chat.label($0)) })
+    let lock = NSLock()
+    var asked: [(String, String)] = []
+    chat.workspaceAnswer = { account, prompt, _, _, _ in
+        lock.lock(); asked.append((account.id, prompt)); lock.unlock()
+        return .success("Reply from \(account.id)")
+    }
+
+    chat.configure { $0.soloAccountID = "mb-codex" }
+    expect(chat.memberIDs == ["mb-codex"], "an account picked by hand in an older chat is its one member")
+    chat.toggleMember("mb-claude")
+    expect(chat.configuration.memberIDs == ["mb-codex", "mb-claude"] && chat.configuration.soloAccountID == nil, "a second check makes two members, in order")
+    chat.draft = "hello both"
+    chat.send(); waitFor(chat)
+    var turn = chat.current.turns[0]
+    expect(Set(asked.map(\.0)) == ["mb-codex", "mb-claude"] && asked.count == 2, "both members answer the message")
+    expect(turn.mentions == nil && turn.final != nil && turn.moreAnswers?.count == 1, "both replies are shown and no @ names are added to the message")
+    let writer = asked.first { $0.0 == "mb-codex" }!.1, other = asked.first { $0.0 == "mb-claude" }!.1
+    expect(writer.contains("do not see each other's replies") && !writer.contains("do not create, edit or delete"), "the first member may change files")
+    expect(other.contains("\(labels["mb-codex"]!) handles any file changes"), "the other members only read files")
+
+    asked.removeAll()
+    chat.draft = "and again"
+    chat.send(); waitFor(chat)
+    expect(asked.count == 2, "members keep answering every message")
+
+    asked.removeAll()
+    chat.draft = "@\(labels["mb-gemini"]!) only you"
+    chat.draftMentions = ["mb-gemini"]
+    chat.send(); waitFor(chat)
+    expect(asked.map(\.0) == ["mb-gemini"] && chat.memberIDs == ["mb-codex", "mb-claude"], "@ replaces the members for one message and keeps them")
+
+    var empty = AIUsage(name: "u"); empty.fiveHour = UsageWindow(usedPercent: 100, resetsAt: nil); empty.weekly = UsageWindow(usedPercent: 10, resetsAt: nil)
+    m.latestUsage["mb-claude"] = empty
+    expect(chat.standingMembers().isEmpty, "with only one member left, the usual single answer runs")
+    m.latestUsage["mb-claude"] = full
+
+    chat.toggleMember("mb-codex")
+    expect(chat.configuration.memberIDs == ["mb-claude"] && chat.configuration.soloAccountID == "mb-claude", "one member left is a hand pick again")
+    asked.removeAll()
+    chat.draft = "just one"
+    chat.send(); waitFor(chat)
+    expect(asked.map(\.0) == ["mb-claude"], "a single member answers alone")
+    chat.toggleMember("mb-claude")
+    expect(chat.configuration.memberIDs == nil && chat.configuration.soloAccountID == nil, "no member is automatic")
+    print("PASS: chat members (hand pick kept, two answer every message, only the first changes files, @ for one message, out of usage, back to automatic)")
 }
 
 // Ollama models on this Mac: models listed, replies streamed, errors reported, never picked automatically,

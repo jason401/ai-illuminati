@@ -134,7 +134,7 @@ extension Discussion {
                 let (tagless, mood) = FaceLink.extract(raw)
                 if let mood { FaceLink.shared.show(mood) }
                 let (reply, newState) = Self.extractState(tagless)
-                if let newState { Self.saveText(newState, to: Self.stateFile(id)) }
+                if let newState { self.saveState(newState, room: id, index: index) }
                 let harvest = collectPictures(reply, account: account, since: started, id: id, index: index, cancellation: cancellation)
                 let text = harvest.text
                 changeTurn(id, index, save: true) {

@@ -890,6 +890,7 @@ struct ChatSettingsTab: View {
                            "Checked ChatGPT accounts draw every picture for the other AIs. With the setting above on, Enterprise AIs ask only Enterprise ChatGPT and personal AIs only personal ChatGPT. Charts and diagrams that must be exact are still drawn by each AI."))
                 }
             }
+            DeviceSyncSettingsView()
             MCPSettings()
         }
     }
@@ -950,6 +951,122 @@ struct ChatRulesView: View {
         }
         .padding(14)
         .background(Color(nsColor: .windowBackgroundColor))
+    }
+}
+
+// Chats from your other Macs (DeviceSync.swift): read only, continued here as a new chat.
+private struct DeviceSyncSettingsView: View {
+    @ObservedObject var sync = DeviceSync.shared
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            SettingsCard(title: L("다른 기기의 대화", "Chats from other Macs")) {
+                SettingsRow(title: L("켜기", "On")) {
+                    Text(sync.settings.enabled ? status : L("꺼짐", "Off")).font(.system(size: 11))
+                        .foregroundStyle(sync.problem != nil || (sync.settings.enabled && !sync.folderAvailable) ? .orange : .secondary).lineLimit(1)
+                    Spacer()
+                    Toggle(L("켜기", "On"), isOn: Binding(get: { sync.settings.enabled }, set: setEnabled)).labelsHidden().toggleStyle(.switch)
+                }
+                if sync.settings.enabled {
+                    Divider()
+                    SettingsRow(title: L("이 Mac 이름", "This Mac's name")) {
+                        TextField(Host.current().localizedName ?? "Mac", text: Binding(
+                            get: { sync.settings.deviceName ?? "" },
+                            set: { sync.settings.deviceName = $0.isEmpty ? nil : $0 }))
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    Divider()
+                    SettingsRow(title: L("보일 대화", "Chats shown")) {
+                        SettingsSegments(options: [(L("고른 대화만", "Chosen chats"), false), (L("전부", "All"), true)],
+                                         selection: Binding(get: { sync.settings.shareAll }, set: { sync.settings.shareAll = $0 }))
+                    }
+                    Divider()
+                    SettingsRow(title: L("엔터프라이즈", "Enterprise")) {
+                        Text(L("엔터프라이즈 대화도 올리기", "Include Enterprise chats")).font(.system(size: 11)).foregroundStyle(.secondary)
+                        Spacer()
+                        Toggle("", isOn: Binding(get: { sync.settings.includeSchool }, set: { sync.settings.includeSchool = $0 }))
+                            .labelsHidden().toggleStyle(.switch)
+                    }
+                    Divider()
+                    SettingsRow(title: L("폴더", "Folder")) {
+                        Text(sync.folder.path.replacingOccurrences(of: DeviceSync.iCloudDrive.path, with: "iCloud Drive"))
+                            .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                            .help(sync.folder.path)
+                        Spacer()
+                        Button(L("바꾸기…", "Change…"), action: chooseFolder)
+                        if sync.settings.folder != nil { Button(L("기본값", "Default")) { sync.settings.folder = nil } }
+                    }
+                    Divider()
+                    SettingsRow(title: L("관리", "Manage")) {
+                        SettingsAction(title: L("지금 확인", "Check now")) { sync.reconcile(); sync.scan() }
+                        SettingsAction(title: L("이 Mac 사본 지우기", "Remove this Mac's copies"), action: removeMine)
+                    }
+                }
+            }
+            hint(L("다른 Mac에서 하던 대화를 읽기 전용으로 보고, 원하면 이 Mac에서 새 대화로 이어가요. 각 Mac은 동기화 폴더의 자기 폴더에만 써서 서로 덮어쓰지 않아요. ‘고른 대화만’이면 대화 메뉴(⋯)의 ‘다른 기기에 보이기’로 골라요. 엔터프라이즈 대화는 켜야만 올라가고, 끄면 이미 올린 사본도 지워져요. 그림, 연결한 폴더, 세션 기록은 올라가지 않아요.",
+                   "See chats from your other Macs read only, and continue one here as a new chat. Each Mac writes only its own folder in the sync folder, so nothing is overwritten. With ‘Chosen chats’, pick them with ‘Show on other Macs’ in a chat's ⋯ menu. Enterprise chats go up only when included; turning that off removes their copies. Pictures, linked folders and sessions are not copied."))
+        }
+    }
+
+    private var status: String {
+        if let problem = sync.problem { return problem }
+        if !sync.folderAvailable { return L("iCloud Drive가 꺼져 있어요", "iCloud Drive is off") }
+        let macs = L("다른 Mac \(sync.devices.count)대", "\(sync.devices.count) other Macs")
+        return sync.lastChecked.map { macs + L(" · 확인 ", " · checked ") + DeviceSync.ago($0) } ?? macs
+    }
+
+    private func setEnabled(_ on: Bool) {
+        if on {
+            let alert = NSAlert()
+            alert.messageText = L("다른 기기의 대화를 켤까요?", "Turn on chats from other Macs?")
+            alert.informativeText = L("고른 대화의 질문과 답이 동기화 폴더(기본: iCloud Drive)에 누구나 읽을 수 있는 파일로 저장돼요. 같은 iCloud 계정의 다른 Mac에서 읽기 전용으로 보여요. 엔터프라이즈 대화는 따로 켜야 올라가요.",
+                                      "The messages and answers of the chats you pick are saved as plain readable files in the sync folder (iCloud Drive by default), and shown read only on your other Macs with the same iCloud account. Enterprise chats go up only if you include them.")
+            alert.addButton(withTitle: L("켜기", "Turn On"))
+            alert.addButton(withTitle: L("취소", "Cancel"))
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+            sync.settings.enabled = true
+        } else {
+            let alert = NSAlert()
+            alert.messageText = L("끌까요?", "Turn off?")
+            alert.informativeText = L("이 Mac이 올린 사본은 남겨 두면 다른 Mac에서 계속 보여요.", "Copies this Mac wrote stay visible on your other Macs unless you remove them.")
+            alert.addButton(withTitle: L("끄기", "Turn Off"))
+            alert.addButton(withTitle: L("끄고 사본 지우기", "Turn Off and Remove Copies"))
+            alert.addButton(withTitle: L("취소", "Cancel"))
+            switch alert.runModal() {
+            case .alertFirstButtonReturn: sync.settings.enabled = false
+            case .alertSecondButtonReturn: sync.removeMine(); sync.settings.enabled = false
+            default: return
+            }
+        }
+    }
+
+    private func removeMine() {
+        let alert = NSAlert()
+        alert.messageText = L("이 Mac이 올린 사본을 지울까요?", "Remove the copies this Mac wrote?")
+        alert.informativeText = L("동기화 폴더에서만 지워요. 이 Mac의 대화는 그대로예요. 켜 둔 상태면 다음에 대화가 바뀔 때 다시 올라가요.",
+                                  "Only the sync folder is cleared; the chats on this Mac stay. While on, chats go up again when they change.")
+        alert.addButton(withTitle: L("지우기", "Remove"))
+        alert.addButton(withTitle: L("취소", "Cancel"))
+        alert.buttons.first?.hasDestructiveAction = true
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        sync.removeMine()
+    }
+
+    private func chooseFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.prompt = L("이 폴더 쓰기", "Use This Folder")
+        panel.message = L("모든 Mac에서 같은 폴더를 골라 주세요.", "Pick the same folder on every Mac.")
+        panel.directoryURL = FileManager.default.fileExists(atPath: DeviceSync.iCloudDrive.path) ? DeviceSync.iCloudDrive : nil
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        sync.settings.folder = url.path
+    }
+
+    private func hint(_ text: String) -> some View {
+        Text(text).font(.system(size: 11)).foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true).padding(.horizontal, 2)
     }
 }
 

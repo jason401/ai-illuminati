@@ -214,15 +214,17 @@ extension Discussion {
     // nobody is picked automatically and the next message is automatic again.
     func runSolo(question: String, history: [ChatTurn], rules: String, config: ChatConfiguration, mentions: [String] = [],
                  cancellation: DebateCancellation, id: UUID, index: Int) {
-        let previous = Self.transcript(history)
+        let origin = conversations.first { $0.id == id }?.origin
+        let previous = [Self.originNote(origin), Self.transcript(history)].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n\n")
         let asked = (previous.isEmpty ? "" : previous + "\n\n") + "[User]\n" + question
         let context = Self.soloContext(rules: rules, transcript: asked)
         let state = Self.loadState(id)
         var freshTranscript: String?
         if previous.count > Self.compactFrom, !state.isEmpty {
             Self.saveText(previous, to: Self.historyFile(id))
-            let recent = Self.transcript(Array(history.suffix(Self.recentTurns)))
-            freshTranscript = """
+            // Every turn after the one the state last covered, so nothing between them is lost.
+            let recent = Self.transcript(Array(history.suffix(Self.recentCount(history, stateTurn: Self.loadStateTurn(id)))))
+            freshTranscript = (Self.originNote(origin).map { $0 + "\n\n" } ?? "") + """
                 [Chat state — a summary of the earlier turns, kept by the AIs of this chat]
                 \(state)
 
@@ -324,7 +326,7 @@ extension Discussion {
                     let (tagless, mood) = FaceLink.extract(raw)
                     if let mood, binding.face == true { FaceLink.shared.show(mood) }
                     let (text, newState) = Self.extractState(tagless)
-                    if let newState { Self.saveText(newState, to: Self.stateFile(id)) }
+                    if let newState { self.saveState(newState, room: id, index: index) }
                     let harvest = collectPictures(text, account: account, since: started, id: id, index: index, cancellation: cancellation)
                     said += "\n\n[\(speaker)]\n" + harvest.text
                     if k == 0 {
@@ -426,7 +428,7 @@ extension Discussion {
                 let (tagless, mood) = FaceLink.extract(raw)
                 if let mood, binding.face == true { FaceLink.shared.show(mood) }
                 let (text, newState) = Self.extractState(tagless)
-                if let newState { Self.saveText(newState, to: Self.stateFile(id)) }
+                if let newState { self.saveState(newState, room: id, index: index) }
                 let harvest = collectPictures(text, account: account, since: started, id: id, index: index, cancellation: cancellation)
                 var changes = Self.changes(own, since: before)
                 if var made = backup, (try? made.finish()) != nil { changes += made.changes.filter { $0.kind != "directory" } }

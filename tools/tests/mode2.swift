@@ -1974,6 +1974,7 @@ testWindowDrag()
 
 testProjectWork()
 testUpdateChannels()
+testDeviceSync()
 
 testProjectHandoff()
 testFullAuto()

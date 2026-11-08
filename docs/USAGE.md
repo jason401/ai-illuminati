@@ -65,6 +65,16 @@ Planning and review remain read-only. Undo may refuse to overwrite files changed
 
 Use a chat's ⋯ or context menu to pin or delete it. Deletion cleans up the app-owned JSON, copies, and associated app-owned session and backup records. It does not delete original external linked files or guarantee deletion of provider-side records and every unrelated CLI session.
 
+### Chats from other Macs
+
+Settings → Chat → **Chats from other Macs** (off by default) shows chats from your other Macs read only, under **Other Macs** in the sidebar. Turn it on on each Mac with the same iCloud account (or pick the same folder on each). Each Mac writes copies only into its own folder (`AI Illuminati Sync/devices/<this Mac>/`) and only reads the others, so nothing is overwritten or merged.
+
+- **Chats shown:** *Chosen chats* (default: pick them with **Show on other Macs** in a chat's ⋯ menu) or *All*.
+- **Enterprise chats** are not copied unless you include them; turning that off removes their copies at once.
+- A copy holds the messages, finished answers, summary and chat state. Pictures, linked folders, backups, results, sessions and the reply being written stay on the Mac they came from.
+- **Continue on this Mac** makes a new chat here from the copy, on the same Enterprise/personal side, with no folders or project linked. Its first message starts a new session from the chat state and the turns after it. The original chat is unchanged; continuing again offers the chat you already continued first.
+- The bar under a copy shows when it last changed and when this Mac last checked. iCloud may take a while to bring changes over.
+
 Open Game (⌘G) starts AI poker with virtual chips. Each AI decision consumes usage for the corresponding account. There are no real-money transactions.
 
 ## Language, updates, and reports

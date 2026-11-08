@@ -108,6 +108,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         updateTitle()
         model.updater.start()
         FaceLink.shared.start()
+        // Chats from your other Macs (off until turned on in Settings → Chat).
+        DeviceSync.shared.start(discussion: discussion)
         model.refreshLoginItemStatus()
     }
 

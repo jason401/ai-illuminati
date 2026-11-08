@@ -17,6 +17,7 @@ struct ChatView: View {
     // Which side panels fit. Kept apart from the window size so resizing rebuilds the views only when one
     // of these changes, not on every frame of the drag.
     @ObservedObject private var layout = ChatLayout.shared
+    @ObservedObject private var sync = DeviceSync.shared
 
     var body: some View {
         let wide = layout.wide
@@ -122,6 +123,7 @@ struct ChatView: View {
                         SidebarHeader(title: L("최근", "Recents"))
                         ForEach(recents) { chatRow($0) }
                     }
+                    if sync.settings.enabled { otherMacs }
                 }
                 .padding(.horizontal, 10).padding(.bottom, 12)
             }
@@ -149,13 +151,18 @@ struct ChatView: View {
         Button(L("이름 바꾸기…", "Rename…")) { discussion.rename(conversation.id) }
         Button(conversation.pinned == true ? L("고정 해제", "Unpin") : L("맨 위에 고정", "Pin to top")) { discussion.togglePin(conversation.id) }
         Button(L("이 대화 폴더 열기", "Show this chat's folder")) { discussion.openChatFolder(conversation.id) }
+        if sync.settings.enabled && !sync.settings.shareAll {
+            Button(conversation.shareToDevices == true ? L("다른 기기에서 숨기기", "Hide on other Macs") : L("다른 기기에 보이기", "Show on other Macs")) {
+                discussion.toggleShareToDevices(conversation.id)
+            }
+        }
         Divider()
         Button(L("대화 삭제…", "Delete chat…"), role: .destructive) { discussion.delete(conversation.id) }
             .disabled(discussion.runningRooms.contains(conversation.id))
     }
 
     private func chatRow(_ conversation: Conversation) -> some View {
-        let selected = conversation.id == discussion.currentID
+        let selected = conversation.id == discussion.currentID && discussion.viewingRemote == nil
         let hovered = discussion.hoverKey == conversation.id.uuidString
         return HStack(spacing: 4) {
             Text(conversation.turns.isEmpty ? L("새 대화", "New chat") : conversation.title)
@@ -185,6 +192,52 @@ struct ChatView: View {
         .disabled(discussion.importingMaterials)
     }
 
+    // Chats on your other Macs (read only): one header per Mac, newest first.
+    @ViewBuilder private var otherMacs: some View {
+        let search = discussion.sidebarSearch
+        SidebarHeader(title: L("다른 기기", "Other Macs")) {
+            Button(action: { sync.scan() }) { Image(systemName: "arrow.clockwise").font(.system(size: 10)) }
+                .buttonStyle(.plainHit).foregroundColor(.secondary)
+                .help(sync.lastChecked.map { L("지금 확인 · 마지막 확인 ", "Check now · last checked ") + DeviceSync.ago($0) } ?? L("지금 확인", "Check now"))
+        }
+        if !sync.folderAvailable {
+            Text(L("iCloud Drive가 꺼져 있거나 동기화 폴더가 없어요. 설정 → 채팅에서 확인해 주세요.", "iCloud Drive is off or the sync folder is missing. Check Settings → Chat."))
+                .font(.system(size: 11)).foregroundColor(.secondary).padding(.horizontal, 10)
+        } else if sync.devices.isEmpty {
+            Text(sync.lastChecked == nil ? L("확인하는 중…", "Checking…") : L("아직 다른 Mac의 대화가 없어요. 다른 Mac에서도 켜 주세요.", "No chats from other Macs yet. Turn this on there too."))
+                .font(.system(size: 11)).foregroundColor(.secondary).padding(.horizontal, 10)
+        }
+        ForEach(sync.devices) { device in
+            let chats = device.chats.filter { search.isEmpty || $0.title.localizedCaseInsensitiveContains(search) }
+            if !chats.isEmpty || search.isEmpty {
+                Text(device.name).font(.system(size: 11)).foregroundColor(.secondary)
+                    .padding(.horizontal, 10).padding(.top, 6).padding(.bottom, 2)
+                    .help(device.writtenAt.map { L("마지막으로 올린 시각 ", "Last written ") + DeviceSync.ago($0) } ?? "")
+                ForEach(chats) { remoteRow($0) }
+            }
+        }
+    }
+
+    private func remoteRow(_ chat: RemoteChat) -> some View {
+        let selected = discussion.viewingRemote?.chat.id == chat.id
+        let hovered = discussion.hoverKey == "remote." + chat.id
+        return HStack(spacing: 4) {
+            Image(systemName: chat.status == .ready ? "desktopcomputer" : chat.status == .downloading ? "icloud.and.arrow.down" : "exclamationmark.triangle")
+                .font(.system(size: 10)).foregroundColor(.secondary).frame(width: 14)
+            Text(chat.title).lineLimit(1).truncationMode(.tail)
+                .foregroundColor(chat.status == .ready ? .primary : .secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .font(.system(size: 13))
+        .padding(.horizontal, 10).frame(height: 30)
+        .background(selected ? Color.primary.opacity(0.10) : hovered ? Color.primary.opacity(0.05) : .clear, in: RoundedRectangle(cornerRadius: 8))
+        .contentShape(Rectangle())
+        .onTapGesture { discussion.openRemote(chat) }
+        .onHover { inside in discussion.hover("remote." + chat.id, inside) }
+        .help(chat.updatedAt.map { L("내용 ", "Changed ") + DeviceSync.ago($0) } ?? "")
+        .disabled(discussion.importingMaterials)
+    }
+
     private func chat(sidebarShown: Bool, wide: Bool) -> some View {
         VStack(spacing: 0) {
             // Every mode shares the plain chat's layout; a team mode only adds a pill and a settings chip
@@ -195,10 +248,19 @@ struct ChatView: View {
                 }) { Image(systemName: "sidebar.left").frame(width: 24, height: 24) }
                     .buttonStyle(.plainHit).foregroundColor(.secondary)
                     .help(sidebarShown ? L("사이드바 숨기기", "Hide sidebar") : L("사이드바 보기", "Show sidebar"))
-                soloHeader
+                if let remote = discussion.viewingRemote {
+                    Text(remote.snapshot?.title ?? remote.chat.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                    Text(L("\(remote.chat.deviceName) · 읽기 전용", "\(remote.chat.deviceName) · read only"))
+                        .font(.system(size: 11)).foregroundColor(.secondary).lineLimit(1)
+                    WindowDragRegion().frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    soloHeader
+                }
             }
             .padding(.leading, 12).padding(.trailing, 18).frame(height: 40)
-            if discussion.current.turns.isEmpty {
+            if let remote = discussion.viewingRemote {
+                RemoteChatView(viewing: remote, discussion: discussion, sync: sync)
+            } else if discussion.current.turns.isEmpty {
                 // A new chat: the greeting and the message box in the middle, like the desktop apps.
                 VStack(spacing: 28) {
                     Spacer(minLength: 0)
@@ -1250,6 +1312,94 @@ private struct ModeChangeMarker: View {
         case 2: return L("모드2 · 비판 토론", "Mode 2 · Critical debate")
         default: return L("모드1 · 토론", "Mode 1 · Discussion")
         }
+    }
+}
+
+// A chat from another Mac, read only: its turns as usual, and in place of the message box when it was
+// written and checked, and "Continue on this Mac".
+private struct RemoteChatView: View {
+    let viewing: RemoteViewing
+    let discussion: Discussion
+    @ObservedObject var sync: DeviceSync
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if let snap = viewing.snapshot {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 28) {
+                        ForEach(snap.turns) { turn in
+                            TurnView(turn: turn, discussion: discussion, busy: true, openEntries: [], accountLabels: [:],
+                                     chatFolder: "", language: AppLanguage.current)
+                        }
+                    }
+                    .frame(maxWidth: 760, alignment: .leading)
+                    .padding(.horizontal, 28).padding(.vertical, 20)
+                    .frame(maxWidth: .infinity)
+                }
+            } else {
+                VStack(spacing: 8) {
+                    Spacer()
+                    Image(systemName: viewing.chat.status == .downloading ? "icloud.and.arrow.down" : "exclamationmark.triangle")
+                        .font(.system(size: 28)).foregroundColor(.secondary)
+                    Text(message).foregroundColor(.secondary).multilineTextAlignment(.center)
+                    Spacer()
+                }
+                .padding(32).frame(maxWidth: .infinity)
+            }
+            bar
+                .frame(maxWidth: 760)
+                .padding(.horizontal, 28).padding(.top, 4).padding(.bottom, 18)
+                .frame(maxWidth: .infinity)
+        }
+        // A newer copy arrived while it is open: show it.
+        .onChange(of: sync.devices) { devices in
+            guard let fresh = devices.first(where: { $0.id == viewing.chat.device })?.chats.first(where: { $0.chat == viewing.chat.chat }),
+                  fresh != viewing.chat else { return }
+            discussion.openRemote(fresh)
+        }
+    }
+
+    private var message: String {
+        switch viewing.chat.status {
+        case .downloading: return L("iCloud에서 받는 중이에요. 잠시 뒤 다시 눌러 주세요.", "Downloading from iCloud. Click it again in a moment.")
+        case .newerVersion: return L("이 대화는 더 새 버전의 앱이 저장했어요. 이 Mac의 앱을 업데이트하면 볼 수 있어요.", "A newer version of the app saved this chat. Update the app on this Mac to read it.")
+        default: return L("이 대화를 읽을 수 없어요. 아직 동기화 중이거나 파일이 손상됐어요.", "This chat cannot be read. It may still be syncing, or the file is damaged.")
+        }
+    }
+
+    private var bar: some View {
+        let continued = discussion.continued(from: viewing.chat)
+        return HStack(spacing: 10) {
+            Image(systemName: "lock").foregroundColor(.secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(status).font(.system(size: 12)).foregroundColor(.secondary).lineLimit(2)
+                if let snap = viewing.snapshot, snap.pictures > 0 {
+                    Text(L("그림 \(snap.pictures)개는 \(viewing.chat.deviceName)에만 있어요.", "\(snap.pictures) pictures stay on \(viewing.chat.deviceName)."))
+                        .font(.system(size: 11)).foregroundColor(.secondary)
+                }
+                if let earlier = continued.first {
+                    Button(L("이 Mac에서 이어간 대화 열기: ", "Open the chat continued here: ") + earlier.title) { discussion.open(earlier.id) }
+                        .buttonStyle(.link).font(.system(size: 11)).lineLimit(1)
+                }
+            }
+            Spacer()
+            Button(L("이 Mac에서 이어서 하기", "Continue on this Mac")) { discussion.continueRemote(viewing) }
+                .buttonStyle(.borderedProminent)
+                .disabled(viewing.snapshot == nil || discussion.importingMaterials)
+                .help(L("이 Mac에 새 대화를 만들고 지금까지의 내용을 복사해요. 원래 기기의 대화는 그대로예요.",
+                        "Makes a new chat on this Mac with everything so far. The chat on the other Mac stays as it is."))
+        }
+        .padding(.horizontal, 14).padding(.vertical, 12)
+        .background(RoundedRectangle(cornerRadius: 16).fill(Color.primary.opacity(0.045)))
+        .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Color.primary.opacity(0.10)))
+    }
+
+    private var status: String {
+        var parts = [viewing.chat.deviceName]
+        if let changed = viewing.snapshot?.updatedAt ?? viewing.chat.updatedAt { parts.append(L("내용 ", "changed ") + DeviceSync.ago(changed)) }
+        if let checked = sync.lastChecked { parts.append(L("확인 ", "checked ") + DeviceSync.ago(checked)) }
+        parts.append(L("읽기 전용", "read only"))
+        return parts.joined(separator: " · ")
     }
 }
 

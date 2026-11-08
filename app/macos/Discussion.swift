@@ -500,6 +500,8 @@ struct Conversation: Identifiable, Codable {
     var documents: [RoomDocument]?
     var workspace: WorkspaceBinding?
     var pinned: Bool?   // kept at the top of the list
+    var origin: SyncOrigin?       // continued on this Mac from another Mac's copy (DeviceSync.swift)
+    var shareToDevices: Bool?     // shown on your other Macs (when only chosen chats are shared)
 
     // Something worth keeping: messages, materials or a linked folder. A chat with only settings is
     // "blank": it is not kept in the list once you leave it.
@@ -527,6 +529,7 @@ enum ChatStore {
         let file = URL(fileURLWithPath: dir + "/\(conversation.id.uuidString).json")
         try? encoder.encode(conversation).write(to: file, options: .atomic)
         try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+        DeviceSync.shared.noteSaved(conversation)
     }
 
     static func delete(_ conversation: Conversation) throws {
@@ -543,6 +546,7 @@ enum ChatStore {
         if FileManager.default.fileExists(atPath: path) {
             try FileManager.default.removeItem(atPath: path)
         }
+        DeviceSync.shared.noteDeleted(conversation.id)
     }
 }
 
@@ -558,6 +562,7 @@ final class Discussion: ObservableObject {
     }
     func showLatestTurns() { shownTurns = Self.turnPage; reachedBottom = false; loadingEarlier = false }
     @Published var importingMaterials = false
+    @Published var viewingRemote: RemoteViewing?   // a chat from another Mac, shown read only
     // Several chats can work at once. Each sent message runs on its own worker (a Discussion with `host`
     // set and only that chat), so the run state below (active…, pictures, cancellation) is per chat; the
     // worker hands every change back to the host, which the window shows.
@@ -802,13 +807,14 @@ final class Discussion: ObservableObject {
         stoppingRooms.remove(room)
         workers[room] = nil
         model.onAccountsChange?()   // refresh the usage numbers after the answer
+        DeviceSync.shared.noteFinished(conversations.first { $0.id == room })
     }
 
     /// Stops every chat that is working (quitting the app).
     func cancelAll() { for worker in workers.values { worker.runCancellation?.cancel() } }
 
     // Leaving a blank chat: drop it from the list and remove its settings-only file.
-    private func dropBlanks(except keep: UUID?) {
+    func dropBlanks(except keep: UUID?) {
         for blank in conversations where !blank.hasContent && blank.id != keep { try? ChatStore.delete(blank) }
         conversations.removeAll { !$0.hasContent && $0.id != keep }
     }
@@ -818,8 +824,10 @@ final class Discussion: ObservableObject {
     // Starts an empty chat (reuses the open one if it is still empty).
     func newConversation() {
         guard !importingMaterials else { return }
+        if viewingRemote != nil && current.turns.isEmpty { viewingRemote = nil; return }
         if current.turns.isEmpty && (current.documents ?? []).isEmpty && current.workspace == nil { return }
         discardPendingImages()
+        viewingRemote = nil
         dropBlanks(except: nil)
         let fresh = Conversation()
         conversations.insert(fresh, at: 0)
@@ -829,6 +837,7 @@ final class Discussion: ObservableObject {
     func open(_ id: UUID) {
         guard !importingMaterials else { return }
         if currentID != id { discardPendingImages() }
+        viewingRemote = nil
         dropBlanks(except: id)
         currentID = id
         sessionNote = ""
@@ -1373,6 +1382,7 @@ final class Discussion: ObservableObject {
             self.runningRooms.remove(room)
             self.stoppingRooms.remove(room)
             self.model.onAccountsChange?()   // refresh the usage numbers after the discussion
+            DeviceSync.shared.noteFinished(self.conversations.first { $0.id == room })
         }
     }
 

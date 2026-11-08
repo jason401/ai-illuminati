@@ -2146,6 +2146,7 @@ testUpdateChannels()
 testDeviceSync()
 
 testProjectHandoff()
+testProjectSnapshot()
 testFullAuto()
 testPeerReview()
 

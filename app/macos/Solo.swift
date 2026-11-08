@@ -395,6 +395,7 @@ extension Discussion {
                 binding.roots = binding.roots.map { root in
                     linked.contains(root) ? WorkspaceRoot(path: root.path, directory: root.directory) : root
                 }
+                binding.fullAccess = nil   // full access would still run unsandboxed and write them
                 activeWorkspace = binding
                 notes.append(L("연결 폴더를 백업하지 못해 이번 답은 읽기만 해요: ", "Could not back up the linked folders, so this answer only reads them: ")
                              + error.localizedDescription)

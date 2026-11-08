@@ -508,3 +508,21 @@ func testRoute() {
            && savedOne?.routeChoice == .one && savedOne?.route == .opinion, "the route is saved with the turn (one as opinion plus routeOne); turns without one still load")
     print("PASS: route (one, all or work; Gemma first, then the member, else all; opinion view read only)")
 }
+
+// The review sees a user's uncommitted change that the answer put back to HEAD.
+func testProjectSnapshot() {
+    let root = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("snapshot-project")
+    try! FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    func git(_ args: [String]) { _ = try! ProjectProcess.git(args, root: root.path) }
+    git(["init", "-b", "main"]); git(["config", "user.name", "Fixture"]); git(["config", "user.email", "fixture@example.invalid"])
+    let file = root.appendingPathComponent("notes.txt")
+    try! "Baseline".write(to: file, atomically: true, encoding: .utf8)
+    git(["add", "notes.txt"]); git(["commit", "-m", "Initial"])
+    try! "User edit".write(to: file, atomically: true, encoding: .utf8)
+    let start = ProjectSnapshot.take(root: root.path)
+    expect(start.changes(root: root.path) == nil, "nothing to review when the answer changed nothing")
+    git(["checkout", "--", "notes.txt"])
+    let review = start.changes(root: root.path) ?? ""
+    expect(review.contains("discarded") && review.contains("notes.txt"), "a user change put back to HEAD is in the review")
+    print("PASS: project snapshot (discarded user changes)")
+}

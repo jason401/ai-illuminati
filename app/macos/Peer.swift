@@ -297,6 +297,12 @@ struct ProjectSnapshot {
             if diff.count > Peer.diffLimit { diff = String(diff.prefix(Peer.diffLimit)) + "\n[Diff cut here; open the files for the rest]" }
             parts.append("[Uncommitted files changed in this answer (new files: open them)]\n" + touched.prefix(60).joined(separator: "\n") + (diff.isEmpty ? "" : "\n[Diff]\n" + diff))
         }
+        // Uncommitted at the start and clean now: this answer discarded the user's changes.
+        let discarded = now.status.count < 500 ? status.keys.filter { now.status[$0] == nil }.sorted() : []   // past the cap, missing ≠ clean
+        if !discarded.isEmpty {
+            parts.append("[Files with uncommitted changes before this answer that now match HEAD (the earlier changes were discarded)]\n"
+                         + discarded.prefix(60).joined(separator: "\n"))
+        }
         return parts.isEmpty ? nil : parts.joined(separator: "\n\n")
     }
 }

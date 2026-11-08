@@ -125,7 +125,7 @@ struct WorkspaceInvocation {
             // confines file tools and ignores project/user settings while allowing this bridge.
             result.removeAll { $0 == "--safe-mode" }
             var server: [String: Any] = ["command": command, "args": args]
-            if binding.projectRunID != nil { server["timeout"] = 3_610_000 }
+            server["timeout"] = 3_610_000   // approval cards and ask_peer may take a while; each tool has its own limit in the bridge
             let mcp = ["mcpServers": ["illuminati": server]]
             let config = String(data: try JSONSerialization.data(withJSONObject: mcp), encoding: .utf8)!
             if let i = result.firstIndex(of: "--mcp-config") { result[i + 1] = config }
@@ -187,7 +187,7 @@ struct WorkspaceInvocation {
                       // The bridge itself allows writes only in the chat folder (or after a backup), so its calls
                       // need no approval; "auto" still asked for write_file, which fails with approval "never".
                       "-c", "mcp_servers.illuminati.default_tools_approval_mode=" + json(own.isEmpty ? "auto" : "approve")]
-            if binding.projectRunID != nil { result += ["-c", "mcp_servers.illuminati.tool_timeout_sec=3610"] }
+            result += ["-c", "mcp_servers.illuminati.tool_timeout_sec=3610"]
             result += base
         case .ollama:
             break   // no CLI: it reads files through the app's workspace_reads requests

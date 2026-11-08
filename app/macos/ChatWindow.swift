@@ -490,7 +490,7 @@ struct ChatView: View {
                                     .frame(maxWidth: .infinity)
                             }
                             TurnView(turn: turn, discussion: discussion, busy: busy,
-                                     openEntries: discussion.openEntries.intersection(turn.entries.map(\.id)),
+                                     openEntries: discussion.openEntries.intersection((turn.entries + (turn.peerNotes ?? [])).map(\.id)),
                                      accountLabels: accountLabels, chatFolder: chatFolder, language: AppLanguage.current,
                                      askedTime: turn.askedAt.map { ChatTime.stamp($0) },
                                      answeredTime: (turn.answeredAt ?? (last && turn.askedAt == nil && turn.final != nil ? conversation.updatedAt : nil)).map { ChatTime.stamp($0) })
@@ -657,7 +657,7 @@ struct ChatView: View {
                             .font(.system(size: 12)).foregroundColor(.secondary)
                     }
                     Spacer()
-                    if discussion.configuration.mode == 0 && !discussion.running { accountChip }
+                    if discussion.configuration.mode == 0 && !discussion.running { peerChip; accountChip }
                     if discussion.configuration.mode != 0 && !discussion.running { teamChip }
                     composerAction
                 }
@@ -1112,6 +1112,41 @@ struct ChatView: View {
         .help(L("답할 AI: 자동이면 5시간이 15% 이상 남은 계정 중 주간이 가장 많이 남은 계정", "Who answers: automatic picks, among accounts with at least 15% of the 5-hour limit left, the one with the most weekly usage left"))
     }
 
+    // Review (Peer.swift): on or off, and who reviews (automatic: the other kind of AI on the chat's side).
+    private var peerChip: some View {
+        let config = discussion.configuration
+        let on = config.peerReview == true
+        let peer = discussion.peerNext
+        let school = discussion.model.schoolOnlyHandoff ? (config.school ?? discussion.soloNext?.isSchool) : nil
+        return Menu {
+            Button((on ? "✓ " : "") + L("검수 켜기", "Review on")) {
+                discussion.configure { c in
+                    c.peerReview = on ? nil : true
+                    // Start the timing again from the next answer.
+                    c.nextReviewAt = nil; c.lastReviewSHA = nil; c.lastReviewAt = nil; c.pendingReview = nil
+                }
+            }
+            Divider()
+            Button((config.peerAccountID == nil ? "✓ " : "") + L("자동 (다른 종류의 AI)", "Automatic (the other kind of AI)")) {
+                discussion.configure { $0.peerAccountID = nil }
+            }
+            ForEach(discussion.model.accounts.filter { [.claude, .codex].contains($0.provider) && (school == nil || $0.isSchool == school) }, id: \.id) { account in
+                Button((config.peerAccountID == account.id ? "✓ " : "") + discussion.label(account)) {
+                    discussion.configure { $0.peerAccountID = account.id; $0.peerReview = true }
+                }
+            }
+        } label: {
+            (Text(Image(systemName: on ? "checkmark.shield.fill" : "checkmark.shield"))
+             + Text(" " + (on ? L("검수 · ", "Review · ") + (peer.map { discussion.label($0) } ?? L("없음", "none")) : L("검수 끔", "Review off"))))
+                .font(.system(size: 12))
+                .foregroundColor(on ? .primary : .secondary)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help(L("검수: 켜면 답하는 AI가 계획이 복잡할 때 다른 종류의 AI에게 의견을 묻고, 대략 1시간에 한 번 다른 AI가 최근 작업을 살펴봐요. 지적은 다음 답에서 AI가 판단해 반영해요.",
+                "Review: when on, the answering AI asks the other kind of AI when its plan is complex, and about once an hour the other AI looks over the recent work. The next answer weighs its findings."))
+    }
+
     // Mode 4: every account votes unless unchecked; the crown drafts the choices when none are listed.
     private var voteControls: some View {
         ScrollView(.horizontal, showsIndicators: true) {
@@ -1370,7 +1405,7 @@ private struct RemoteChatView: View {
                     LazyVStack(alignment: .leading, spacing: 28) {
                         ForEach(snap.turns) { turn in
                             TurnView(turn: turn, discussion: discussion, busy: true,
-                                     openEntries: discussion.openEntries.intersection(turn.entries.map(\.id)), accountLabels: [:],
+                                     openEntries: discussion.openEntries.intersection((turn.entries + (turn.peerNotes ?? [])).map(\.id)), accountLabels: [:],
                                      chatFolder: "", language: AppLanguage.current,
                                      askedTime: turn.askedAt.map { ChatTime.stamp($0) }, answeredTime: turn.answeredAt.map { ChatTime.stamp($0) })
                         }
@@ -1634,6 +1669,20 @@ private struct TurnView: View, Equatable {
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
+            }
+            if turn.mode == 0, let notes = turn.peerNotes, !notes.isEmpty {
+                // Opinions the AI asked for and reviews of the work, one line each (click for the full text).
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(notes) { entry in
+                        EntryRow(entry: entry,
+                                 isOpen: Binding(get: { openEntries.contains(entry.id) },
+                                                 set: { if $0 { discussion.openEntries.insert(entry.id) } else { discussion.openEntries.remove(entry.id) } }),
+                                 label: entry.speaker)
+                    }
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
             }
             if turn.mode == 0, turn.status.isEmpty, let log = turn.projectLog, !log.isEmpty {
                 DisclosureGroup(L("작업 기록 \(log.count)개", "\(log.count) project steps")) {

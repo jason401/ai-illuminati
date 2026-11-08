@@ -29,7 +29,7 @@ extension FaceLink: ToolProvider {
 final class ToolHub {
     static let shared = ToolHub()
     static var socketPath = AccountStore.supportDir + "/tools.sock"
-    private var providers: [ToolProvider] { [FaceLink.shared, DriveLink.shared, GitLink.shared] }
+    private var providers: [ToolProvider] { [FaceLink.shared, DriveLink.shared, GitLink.shared, PeerLink.shared] }
     var active: Bool { providers.contains { $0.active } }
     private let lock = NSLock()
     private var sockets: Set<String> = []

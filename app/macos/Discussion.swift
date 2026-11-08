@@ -436,6 +436,7 @@ struct ChatTurn: Identifiable, Codable, Equatable {
     var votes: [VoteBallot]?    // mode 4: one ballot per AI, in the team's order
     var askedAt: Date?          // when the message was sent (missing in older chats)
     var answeredAt: Date?       // when the answer finished
+    var peerNotes: [Entry]?     // mode 0: opinions the AI asked for and reviews of the work (Peer.swift)
 }
 
 // Times under the messages and the day lines between them, like the desktop apps.
@@ -533,6 +534,13 @@ struct ChatConfiguration: Codable {
     var soloAccountID: String?      // mode 0: the account picked by hand (nil = automatic)
     var lastSoloAccountID: String?  // mode 0: who answered last; it keeps going while it has usage left
     var school: Bool?               // mode 0: a school chat (continued only by school accounts)
+    // mode 0, review (Peer.swift): another kind of AI gives opinions when asked and checks recent work now and then
+    var peerReview: Bool?
+    var peerAccountID: String?      // the reviewer picked by hand (nil = automatic)
+    var lastReviewSHA: String?      // project chats: the last commit a random review covered
+    var lastReviewAt: Date?
+    var nextReviewAt: Date?
+    var pendingReview: String?      // findings not yet handed to an answer
 }
 
 struct Conversation: Identifiable, Codable {
@@ -648,6 +656,8 @@ final class Discussion: ObservableObject {
     var activeDocumentText = ""
     var activeMaterials: [RoomDocument] = []
     var activeWorkspace: WorkspaceBinding?
+    var activePeerSession: PeerLink.Session?   // review on: this answer's ask_peer (Peer.swift)
+    var activePendingReview: String?
     var activeWorkspaceBackupPath: String?
     var activeAdversarial = false
     var activeSpeechLength = SpeechLength.unlimited
@@ -1107,8 +1117,18 @@ final class Discussion: ObservableObject {
             catch { worker.finish(id, index, error: error.localizedDescription); return }
             defer { ProjectWork.release(projectLocks) }
             if solo {
+                // Review on (Peer.swift): ask_peer during the answer, then a review if one is due.
+                let binding = worker.activeWorkspace ?? worker.soloBinding(id)
+                let startHead = config.peerReview == true ? binding.project.flatMap { try? ProjectProcess.git(["rev-parse", "HEAD"], root: $0.root) } : nil
+                let peer = worker.beginPeer(id: id, index: index, question: question, config: config, binding: binding, cancellation: cancellation)
                 worker.runSolo(question: question, history: history, rules: rules, config: config, mentions: mentioned,
                              cancellation: cancellation, id: id, index: index)
+                let asked = (peer?.asked ?? 0) > 0
+                worker.endPeer(peer)
+                if peer != nil, !cancellation.isCancelled {
+                    // After this block, so the project lock is free for the next message while the review runs.
+                    DispatchQueue.global().async { worker.reviewIfDue(id: id, index: index, binding: binding, startHead: startHead, asked: asked) }
+                }
             } else if Self.modernModes && config.mode == 4 {
                 worker.runVote(question: question, history: history, rules: rules, team: team,
                              leader: team.first { $0.id == config.leaderAccountID } ?? team.first { $0.provider == config.leader } ?? team[0],

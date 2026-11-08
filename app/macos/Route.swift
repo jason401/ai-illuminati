@@ -1,11 +1,25 @@
 import Foundation
 
 // A project chat with two or more members decides per message how to answer, before anyone starts:
-// opinion — every member answers at the same time and the project is read only;
+// one — the lead answers alone, the project read only (facts, checks, explanations, short follow-ups);
+// all — every member answers at the same time, the project read only (views, design choices, ideas);
 // work — the lead works and the others review its changes (Peer.swift).
 // Gemma 4 E4B on this Mac judges (checked or not; it answers only when checked). Without it, the checked member
-// with the most usage left judges without tools. If nobody can judge, opinion: a wrong opinion changes no file.
+// with the most usage left judges without tools. If nobody can judge, all: a wrong opinion changes no file, and
+// several answers lose less than one.
+// Saved on the turn as `route` (opinion or work, as older builds read it) plus `routeOne` for one.
 enum ChatRoute: String, Codable { case opinion, work }
+
+enum RouteChoice: Equatable {
+    case work, one, all
+    var route: ChatRoute { self == .work ? .work : .opinion }
+}
+
+extension ChatTurn {
+    var routeChoice: RouteChoice? {
+        route.map { $0 == .work ? .work : routeOne == true ? .one : .all }
+    }
+}
 
 enum Route {
     static let localTimeout: TimeInterval = 10   // Gemma: "a few seconds", cold start included
@@ -19,32 +33,42 @@ enum Route {
             earlier += "\n\n"
         }
         return """
-            You sort chat messages for a coding project chat. Reply with exactly one word: OPINION or WORK.
+            You sort chat messages for a coding project chat with several AIs. Reply with exactly one word: WORK, ONE or ALL.
             WORK: the user wants the project changed now — edit code or files, fix, implement, build, test, commit, push,
             or approves doing what was just discussed ("가자", "그걸로 하자", "해줘", "go ahead").
-            OPINION: anything else — questions, explanations, reviews or reading without changes, ideas, "is it possible?",
-            "what do you think?", checks and thanks ("다 된듯?", "됐어?", "좋아 고마워"), and every message that says not to
-            change anything ("수정하지 말고", "읽어만 봐", "의견만").
-            Judge by meaning, not by words: "구현 가능할까?" is OPINION; "이 버그 고쳐줘" is WORK. If unsure, OPINION.
+            ONE: one answer is enough — a question of fact about the code or the app, an explanation, a status check,
+            a short follow-up, thanks ("이거 어디서 정해져?", "그럼 계속 유지돼?", "다 된듯?", "좋아 고마워").
+            ALL: the user wants several views — opinions, judgment, design choices, pros and cons, ideas, plans, reviews,
+            or asks the AIs by name or all together ("어떻게 생각해?", "어느 쪽이 나아?", "둘 다 의견 줘").
+            Messages that say not to change anything ("수정하지 말고", "읽어만 봐", "의견만") are ONE or ALL, never WORK.
+            Judge by meaning, not by words: "구현 가능할까?" is not WORK; "이 버그 고쳐줘" is WORK.
+            If unsure between WORK and the others, not WORK. If unsure between ONE and ALL, ALL.
 
             \(earlier)[Message to sort]
             \(String(question.prefix(2000)))
             """
     }
 
-    // OPINION or WORK in the reply; nil when it says neither or both.
-    static func parse(_ text: String) -> ChatRoute? {
-        let upper = text.uppercased()
-        let opinion = upper.contains("OPINION"), work = upper.contains("WORK")
-        return opinion == work ? nil : opinion ? .opinion : .work
+    // WORK, ONE or ALL in the reply (OPINION, the older word, is ALL); nil when it says none or more than one.
+    static func parse(_ text: String) -> RouteChoice? {
+        let words = Set(text.uppercased().split { !$0.isLetter }.map(String.init))
+        let found = Set(words.compactMap { word -> RouteChoice? in
+            switch word {
+            case "WORK": return .work
+            case "ONE": return .one
+            case "ALL", "OPINION": return .all
+            default: return nil
+            }
+        })
+        return found.count == 1 ? found.first : nil
     }
 
     // Gemma first, then the member with the most usage left; the name of whoever judged (nil: nobody could).
     static func decide(local: () -> String?, localName: String, judge: Account?, ask: (Account) -> String?, label: (Account) -> String)
-        -> (route: ChatRoute, by: String?) {
+        -> (route: RouteChoice, by: String?) {
         if let reply = local(), let route = parse(reply) { return (route, localName) }
         if let judge, let reply = ask(judge), let route = parse(reply) { return (route, label(judge)) }
-        return (.opinion, nil)
+        return (.all, nil)
     }
 
     // What the members see in opinion mode: every folder read only except the chat's own, no project tools.
@@ -56,10 +80,12 @@ enum Route {
         return view
     }
 
-    static func opinionNote(project: String) -> String {
-        """
+    static func opinionNote(project: String, alone: Bool = false) -> String {
+        let who = alone ? "one answer is enough: you answer it alone, other members stay quiet unless the user asks them,"
+            : "every member answers it at the same time,"
+        return """
         [Opinion mode] This chat is linked to the Git project at \(project), and the app judged that this message asks
-        for views, not changes: every member answers it at the same time and the project is read only for this answer.
+        for views, not changes: \(who) and the project is read only for this answer.
         Read code as needed and answer about the code. Do not try to edit files or run Git writes; if the user seems to
         want changes, say what you would change — they can say "가자" (go) or press "Run as work" to have it done.
         """
@@ -101,7 +127,7 @@ extension LocalModel {
 
 extension Discussion {
     // The app's own sorter for one message (tests replace it with `routeJudge`).
-    func decideRoute(question: String, previous: ChatTurn?, judges: [Account], cancellation: DebateCancellation) -> (route: ChatRoute, by: String?) {
+    func decideRoute(question: String, previous: ChatTurn?, judges: [Account], cancellation: DebateCancellation) -> (route: RouteChoice, by: String?) {
         let prompt = Route.prompt(question: question, previous: previous)
         if let routeJudge { return routeJudge(prompt) }
         let judge = AutoPick.choose(judges, usage: model.latestUsage, school: nil, current: nil)
@@ -113,10 +139,12 @@ extension Discussion {
         }, label: label)
     }
 
-    static func routeNote(_ route: ChatRoute, by: String?, names: [String], reviewers: [String] = [], forced: Bool = false) -> String {
+    static func routeNote(_ route: RouteChoice, by: String?, names: [String], reviewers: [String] = [], forced: Bool = false) -> String {
         let how = forced ? L("직접 고름", "picked by you") : by.map { L("\($0) 판정", "judged by \($0)") } ?? L("판정 못 함 → 의견", "could not judge → opinion")
         switch route {
-        case .opinion:
+        case .one:
+            return L("의견 · ", "Opinion · ") + (names.first.map { L("\($0) 혼자", "\($0) alone") } ?? L("한 명", "one AI")) + " · " + how
+        case .all:
             return L("의견 · \(names.count)명", "Opinion · \(names.count) AIs") + " · " + how
         case .work:
             let who = names.first.map { L("\($0) 작업", "\($0) works") } ?? L("작업", "Work")
@@ -125,12 +153,12 @@ extension Discussion {
         }
     }
 
-    // Sends the last message again in the other mode, as a new turn. Files the first run changed stay changed.
-    func rerun(_ turn: ChatTurn, as route: ChatRoute) {
+    // Sends the last message again in another mode, as a new turn, with its pictures. Files the first run changed stay changed.
+    func rerun(_ turn: ChatTurn, as route: RouteChoice) {
         guard !anyRunning, current.turns.last?.id == turn.id else { return }
         // What the user is writing now (text, @ names, attached pictures) stays in the message box.
         let saved = draft, savedMentions = draftMentions, savedImages = pendingImages
-        draft = turn.question; draftMentions = []; pendingImages = []
+        draft = turn.question; draftMentions = []; pendingImages = turn.images ?? []
         forcedRoute = route
         send()
         forcedRoute = nil

@@ -476,6 +476,7 @@ struct ChatTurn: Identifiable, Codable, Equatable {
     var peerNotes: [Entry]?     // mode 0: opinions the AI asked for and reviews of the work (Peer.swift)
     var route: ChatRoute?       // project chat with members: how this message was answered (Route.swift)
     var routeNote: String?      // "Opinion · 3 AIs · judged by Gemma 4 E4B", shown above the answer
+    var routeOne: Bool?         // with route opinion: only the lead answered (nil: everyone did)
 }
 
 // Times under the messages and the day lines between them, like the desktop apps.
@@ -708,8 +709,8 @@ final class Discussion: ObservableObject {
     // Tests only: answers requests that have folders attached (mode 0 always does) without calling the real tools.
     var workspaceAnswer: ((Account, String, WorkspaceBinding, DebateCancellation, ((AnswerProgress) -> Void)?) -> Result<String, Answerer.Failure>)?
     // Tests only: sorts a project chat's message (Route.swift) without calling Gemma or an AI.
-    var routeJudge: ((String) -> (route: ChatRoute, by: String?))?
-    var forcedRoute: ChatRoute?     // "Run as work / opinion" under the last answer, for the next send only
+    var routeJudge: ((String) -> (route: RouteChoice, by: String?))?
+    var forcedRoute: RouteChoice?   // "Run as work / opinion" under the last answer, for the next send only
     // Tests only: answers requests that carry pictures without calling the real tools.
     var pictureAnswer: ((Account, String, [URL], TimeInterval, DebateCancellation, Bool) -> Result<String, Answerer.Failure>)?
     var imageContext = ""
@@ -1093,8 +1094,9 @@ final class Discussion: ObservableObject {
         let members = crew.map { project ? [$0.lead] : [$0.lead] + $0.others } ?? []
         let reviewers = project ? crew?.others ?? [] : []
         let called = mentioned.isEmpty ? members : mentioned
-        // A project chat with two or more members taking part: each message is sorted into opinion (all answer, read
-        // only) or work (the lead works, the others review) before anyone starts (Route.swift). @ skips this.
+        // A project chat with two or more members taking part: each message is sorted into one (the lead answers, read
+        // only), all (every member answers, read only) or work (the lead works, the others review) before anyone
+        // starts (Route.swift). @ skips this.
         let standing = plain && project && mentioned.isEmpty ? standingMembers() : []
         let forced = forcedRoute
         let sorting = standing.count >= 2 || (forced != nil && project && plain && mentioned.isEmpty)
@@ -1194,20 +1196,28 @@ final class Discussion: ObservableObject {
             if solo && sorting {
                 var route = forced ?? .work, by: String?
                 if forced == nil {
-                    worker.changeTurn(id, index) { $0.status = L("의견을 들을지 작업할지 판정하는 중…", "Deciding: opinions or work…") }
+                    worker.changeTurn(id, index) { $0.status = L("한 명이 답할지, 모두 답할지, 작업할지 판정하는 중…", "Deciding: one answer, everyone, or work…") }
                     (route, by) = worker.decideRoute(question: question, previous: history.last, judges: judges, cancellation: cancellation)
                     if cancellation.isCancelled { return worker.endSolo(id, index, stopped: true) }
                 }
                 let name = { (accountID: String) in worker.model.accounts.first { $0.id == accountID }.map(worker.label) ?? accountID }
-                let opinion = route == .opinion && opinionMembers.count >= 2
-                let note = opinion ? Self.routeNote(.opinion, by: by, names: opinionMembers.map(name), forced: forced != nil)
-                    : Self.routeNote(.work, by: by, names: called.isEmpty ? team.map(worker.label) : called.map(name), reviewers: reviewers.map(name), forced: forced != nil)
-                worker.changeTurn(id, index, save: true) { $0.route = opinion ? .opinion : .work; $0.routeNote = note }
+                // Opinions never fall back to work: with fewer than two members ready, the lead answers alone.
+                if route == .all && opinionMembers.count < 2 { route = .one }
+                let answering = route == .one ? Array(opinionMembers.prefix(1)) : opinionMembers
+                guard route == .work || !answering.isEmpty else {
+                    worker.changeTurn(id, index, save: true) { $0.error = L("답할 수 있는 AI가 없어요.", "No AI is available.") }
+                    return worker.endSolo(id, index, stopped: false)
+                }
+                let note = route == .work
+                    ? Self.routeNote(.work, by: by, names: called.isEmpty ? team.map(worker.label) : called.map(name), reviewers: reviewers.map(name), forced: forced != nil)
+                    : Self.routeNote(route, by: by, names: answering.map(name), forced: forced != nil)
+                worker.changeTurn(id, index, save: true) { $0.route = route.route; $0.routeOne = route == .one ? true : nil; $0.routeNote = note }
                 let binding = worker.activeWorkspace ?? worker.soloBinding(id)
-                if opinion {
+                if route != .work {
                     worker.activeWorkspace = Route.opinionView(binding, chatFolder: Self.chatFolder(id).path)
-                    worker.runSolo(question: question, history: history, rules: rules, config: config, mentions: opinionMembers,
-                                   cancellation: cancellation, id: id, index: index, extra: Route.opinionNote(project: binding.project?.root ?? ""))
+                    worker.runSolo(question: question, history: history, rules: rules, config: config, mentions: answering,
+                                   cancellation: cancellation, id: id, index: index,
+                                   extra: Route.opinionNote(project: binding.project?.root ?? "", alone: answering.count == 1))
                 } else {
                     let peer = worker.beginPeer(id: id, index: index, question: question, reviewers: reviewers, binding: binding, cancellation: cancellation)
                     worker.runSolo(question: question, history: history, rules: rules, config: config, mentions: called,

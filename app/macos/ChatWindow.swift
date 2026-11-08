@@ -1553,23 +1553,30 @@ private struct TurnView: View, Equatable {
             if let options = turn.voteOptions {
                 VoteResultView(options: options, votes: turn.votes)
             }
-            if turn.mode == 0, let route = turn.route, let note = turn.routeNote {
-                // Project chat with members: how the app answered this message, and the other way for the newest one.
+            if turn.mode == 0, let route = turn.routeChoice, let note = turn.routeNote {
+                // Project chat with members: how the app answered this message, and the other ways for the newest one.
                 HStack(spacing: 8) {
-                    Label(note, systemImage: route == .opinion ? "bubble.left.and.bubble.right" : "hammer")
+                    Label(note, systemImage: route == .work ? "hammer" : route == .one ? "bubble.left" : "bubble.left.and.bubble.right")
                         .font(.system(size: 11)).foregroundColor(.secondary)
                         .padding(.horizontal, 10).padding(.vertical, 4)
                         .background(Color.primary.opacity(0.06), in: Capsule())
                     if last && !busy && (turn.final != nil || turn.error != nil) {
-                        let other: ChatRoute = route == .opinion ? .work : .opinion
-                        Button(other == .work ? L("작업으로 다시", "Run as work") : L("의견으로 다시", "Ask for opinions")) {
-                            discussion.rerun(turn, as: other)
+                        if route == .one {
+                            Button(L("다른 AI 의견도 듣기", "Ask the others too")) { discussion.rerun(turn, as: .all) }
+                                .buttonStyle(.link).font(.system(size: 11))
+                                .help(L("같은 메시지를 다시 보내 모든 AI가 읽기만 하고 답해요.", "Sends the same message again: every AI answers, read only."))
                         }
-                        .buttonStyle(.link).font(.system(size: 11))
-                        .help(route == .work && !(turn.workspaceChanges ?? []).isEmpty
-                              ? L("같은 메시지를 의견 모드로 다시 보내요. 이번 답에서 바뀐 파일은 그대로 남아요.", "Sends the same message again for opinions. Files this answer changed stay changed.")
-                              : other == .work ? L("같은 메시지를 작업 모드로 다시 보내요. 담당 AI가 작업하고 다른 AI가 검수해요.", "Sends the same message again as work: the lead works and the others review.")
-                              : L("같은 메시지를 의견 모드로 다시 보내요. 모두 읽기만 하고 답해요.", "Sends the same message again for opinions: everyone answers, read only."))
+                        if route == .work {
+                            Button(L("의견으로 다시", "Ask for opinions")) { discussion.rerun(turn, as: .all) }
+                                .buttonStyle(.link).font(.system(size: 11))
+                                .help((turn.workspaceChanges ?? []).isEmpty
+                                      ? L("같은 메시지를 의견 모드로 다시 보내요. 모두 읽기만 하고 답해요.", "Sends the same message again for opinions: everyone answers, read only.")
+                                      : L("같은 메시지를 의견 모드로 다시 보내요. 이번 답에서 바뀐 파일은 그대로 남아요.", "Sends the same message again for opinions. Files this answer changed stay changed."))
+                        } else {
+                            Button(L("작업으로 다시", "Run as work")) { discussion.rerun(turn, as: .work) }
+                                .buttonStyle(.link).font(.system(size: 11))
+                                .help(L("같은 메시지를 작업 모드로 다시 보내요. 담당 AI가 작업하고 다른 AI가 검수해요.", "Sends the same message again as work: the lead works and the others review."))
+                        }
                     }
                 }
             }

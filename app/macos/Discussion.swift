@@ -560,7 +560,10 @@ final class Discussion: ObservableObject {
         // Coming back to a chat starts again from its latest turns.
         didSet { if currentID != oldValue { showLatestTurns() } }
     }
-    func showLatestTurns() { shownTurns = Self.turnPage; reachedBottom = false; loadingEarlier = false }
+    func showLatestTurns() {
+        shownTurns = Self.turnPage; reachedBottom = false; loadingEarlier = false; earlierRowInView = false
+        transcriptGeneration += 1
+    }
     @Published var importingMaterials = false
     @Published var viewingRemote: RemoteViewing?   // a chat from another Mac, shown read only
     // Several chats can work at once. Each sent message runs on its own worker (a Discussion with `host`
@@ -694,6 +697,8 @@ final class Discussion: ObservableObject {
     // Earlier turns are added only after the chat has opened at its latest turn, so opening it does not load them all.
     var reachedBottom = false
     var loadingEarlier = false
+    var earlierRowInView = false
+    @Published var transcriptGeneration = 0   // bumped to open the transcript afresh
     @Published var hoverKey: String?
     // The notes panel on the right of the chat window, open or folded (the same for every chat).
     @Published var notesShown = UserDefaults.standard.bool(forKey: "notesShown") {

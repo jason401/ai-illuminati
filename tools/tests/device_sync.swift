@@ -73,6 +73,14 @@ func testDeviceSync() {
     try! Data("{}".utf8).write(to: gone)
     a.reconcile(); a.waitForWrites()
     expect(!fm.fileExists(atPath: gone.path), "copies of chats deleted while the app was closed are removed")
+    let unreadable = UUID().uuidString + ".json"
+    let unreadableCopy = a.myChats.appendingPathComponent(unreadable)
+    try! Data("{}".utf8).write(to: unreadableCopy)
+    a.hasLocalFile = { $0 == unreadable }
+    a.reconcile(); a.waitForWrites()
+    expect(fm.fileExists(atPath: unreadableCopy.path), "a chat whose own file is here but could not be read keeps its copy")
+    a.hasLocalFile = { _ in false }
+    try? fm.removeItem(at: unreadableCopy)
 
     // A write that fails (the folder read only for a moment) keeps a shared chat's existing copy, and so does
     // a chat with nothing finished yet; neither looks to the other Macs as if it was taken away.
@@ -132,6 +140,9 @@ func testDeviceSync() {
     let here = Discussion(model: m)
     let remote = listed.first { $0.chat == chat.id }!
     here.openRemote(remote)
+    expect(here.viewingRemote?.loading == true, "the copy is read off the main thread")
+    let opening = Date().addingTimeInterval(5)
+    while here.viewingRemote?.loading == true && Date() < opening { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
     expect(here.viewingRemote?.snapshot?.turns.count == 2, "the copy opens read only")
     let id = here.continueFromDevice(here.viewingRemote!.snapshot!, device: remote.device, deviceName: remote.deviceName)
     let copy = here.current

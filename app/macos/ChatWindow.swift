@@ -508,7 +508,8 @@ struct ChatView: View {
         }
         .onPreferenceChange(TranscriptTopKey.self) { top in
             // The "show earlier" row came into view near the top: add the next page.
-            if discussion.reachedBottom && top > -40 && top < viewport.size.height { showEarlierTurns(proxy) }
+            discussion.earlierRowInView = top > -40 && top < viewport.size.height
+            if discussion.reachedBottom && discussion.earlierRowInView { showEarlierTurns(proxy) }
         }
         // A new scroll view for each chat (the .id below), so it opens at the latest turn once,
         // instead of keeping the last chat's offset and landing in empty space.
@@ -534,7 +535,8 @@ struct ChatView: View {
         .onChange(of: discussion.current.turns.count) { _ in
             if let last = discussion.current.turns.last { withAnimation { proxy.scrollTo(last.id, anchor: .top) } }
         }
-        .id(discussion.currentID)
+        // A new scroll view also when the window is reopened (showLatestTurns), so it opens at the latest turn again.
+        .id("\(discussion.currentID)-\(discussion.transcriptGeneration)")
       }
     }
     }
@@ -552,7 +554,10 @@ struct ChatView: View {
             }
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            if discussion.currentID == chat { discussion.reachedBottom = true }
+            guard discussion.currentID == chat else { return }
+            discussion.reachedBottom = true
+            // A short last page leaves the row in view already: no scroll would add the next one.
+            if discussion.earlierRowInView { showEarlierTurns(proxy) }
         }
     }
 
@@ -1173,7 +1178,8 @@ struct ChatView: View {
 
 private struct TranscriptTopKey: PreferenceKey {
     static var defaultValue: CGFloat = -.infinity
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+    // Only the "show earlier" row sets it; the larger value keeps it from being overwritten by the views after it.
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
 
 private struct TranscriptBottomKey: PreferenceKey {
@@ -1351,6 +1357,8 @@ private struct RemoteChatView: View {
                     .padding(.horizontal, 28).padding(.vertical, 20)
                     .frame(maxWidth: .infinity)
                 }
+            } else if viewing.loading {
+                VStack { Spacer(); ProgressView().controlSize(.small); Spacer() }.frame(maxWidth: .infinity)
             } else {
                 VStack(spacing: 8) {
                     Spacer()

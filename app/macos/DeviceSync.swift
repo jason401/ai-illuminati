@@ -95,6 +95,8 @@ final class DeviceSync: ObservableObject {
     var conversations: () -> [Conversation] = { [] }
     var isBusy: (UUID) -> Bool = { _ in false }
     var accounts: () -> [Account] = { AccountStore.load() }
+    // Whether this Mac still has the chat's own file (one the list could not read, so not deleted).
+    var hasLocalFile: (String) -> Bool = { FileManager.default.fileExists(atPath: ChatStore.dir + "/" + $0) }
 
     private var pending: [UUID: Conversation] = [:]
     private var flushScheduled = false
@@ -350,7 +352,10 @@ final class DeviceSync: ObservableObject {
         io.async {
             let outcomes = copies.map { Self.write($0, to: folder) }
             let kept = Set(copies.filter(\.shared).map { $0.conversation.id.uuidString + ".json" })
-            for name in (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [] where !kept.contains(name) {
+            let listed = Set(copies.map { $0.conversation.id.uuidString + ".json" })
+            // A chat missing from the list whose file is still here could not be read: its copy may be the only good one.
+            for name in (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
+            where !kept.contains(name) && (listed.contains(name) || !self.hasLocalFile(name)) {
                 try? FileManager.default.removeItem(at: folder.appendingPathComponent(name))
             }
             info?()
@@ -465,6 +470,7 @@ final class DeviceSync: ObservableObject {
 struct RemoteViewing: Equatable {
     var chat: RemoteChat
     var snapshot: SyncSnapshot?
+    var loading = false
 }
 
 extension Discussion {
@@ -499,7 +505,16 @@ extension Discussion {
     }
 
     func openRemote(_ chat: RemoteChat) {
-        viewingRemote = RemoteViewing(chat: chat, snapshot: DeviceSync.load(chat))
+        // Read and decoded off the main thread, so a long chat does not hold up the window.
+        let shown = viewingRemote?.chat.id == chat.id ? viewingRemote?.snapshot : nil   // a newer copy: keep the old one up meanwhile
+        viewingRemote = RemoteViewing(chat: chat, snapshot: shown, loading: true)
+        DispatchQueue.global(qos: .userInitiated).async {
+            let snapshot = DeviceSync.load(chat)
+            DispatchQueue.main.async {
+                guard self.viewingRemote?.chat.id == chat.id else { return }
+                self.viewingRemote = RemoteViewing(chat: chat, snapshot: snapshot)
+            }
+        }
     }
 
     // Chats already continued on this Mac from this copy, newest first.

@@ -692,6 +692,11 @@ do {
     prompts = []
     Answerer.replyForTests = { prompt in prompts.append(prompt); return .success(prompts.count < 4 ? reads([root.appendingPathComponent("notes.txt").path]) : "answer from notes") }
     guard case .success("answer from notes") = Answerer.ask(account, prompt: "review", workspace: invocation) else { fatalError("answer now must let it answer") }
+    prompts = []
+    let missing = root.appendingPathComponent("missing.txt").path
+    Answerer.replyForTests = { prompt in prompts.append(prompt); return .success(reads([missing])) }
+    guard case .failure = Answerer.ask(account, prompt: "review", workspace: invocation) else { fatalError("endless failing reads must stop") }
+    expect(prompts.count == 5 && !prompts[1].contains("already sent") && prompts[4].contains("read_failed") && prompts[4].contains("No more data"), "a failed read may be retried, up to the failure limit")
     print("PASS: file requests keep good files, return wrong paths with same-name files, and end repeats with an answer")
 }
 

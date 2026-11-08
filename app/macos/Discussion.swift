@@ -121,7 +121,8 @@ enum Answerer {
             }
             do {
                 let (readback, pictures) = try workspace.readRequests(requests, directory: directory, token: cancellation)
-                if readback.contains("\"read_failed\"") { readFailures += 1 }
+                // A request with a failed file may be sent again (timeouts, a file that changed); failures are capped.
+                if readback.contains("\"read_failed\"") { seen.remove(signature); readFailures += 1 }
                 if resumable {
                     current = prompt + evidence(readback)
                     currentImages = pictures
@@ -131,6 +132,7 @@ enum Answerer {
                     readImages += pictures
                     currentImages = readImages
                 }
+                if readFailures > 3 { answerNow = true; current += answerNowNote }
             } catch {
                 // Cancelled stops; anything else goes back to the AI so it can fix the request or answer.
                 if cancellation?.isCancelled == true { return .failure(.failed("Cancelled")) }

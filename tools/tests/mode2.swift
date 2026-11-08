@@ -372,6 +372,10 @@ expect(imageChat.addPastedImages(paste), "clipboard PNG must be recognized")
 expect(imageChat.pendingImages.count == 1, "clipboard image not imported")
 imageChat.removePendingImage(imageChat.pendingImages[0])
 expect(imageChat.pendingImages.isEmpty, "remove pending image failed")
+let fifteen = (1...15).map { "picture \($0)" }
+expect(Discussion.picturesToSend(fifteen, current: 2, question: "이거 봐") == Set(7..<15), "send this message's photos and the latest earlier ones only")
+expect(Discussion.picturesToSend(fifteen, current: 0, question: "Image 3 다시 보고 사진 40도") == Set(9..<15).union([2]), "a named earlier picture is sent again; out-of-range numbers are ignored")
+expect(Discussion.picturesToSend(Array(fifteen.prefix(4)), current: 1, question: "") == Set(0..<4), "a short chat sends everything")
 print("PASS: normalized attachment copy, image-only send, persistence, transcript image links, actual image deletion, invalid input, clipboard image import")
 
 // Switching modes inside one chat: 1 → 2 → 1. Mode 1 must see what was said in mode 2.

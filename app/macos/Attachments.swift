@@ -82,8 +82,9 @@ extension Discussion {
 
     func addImage(_ data: Data, name: String) throws {
         guard !running else { return }
-        guard pendingImages.count < 4, current.turns.flatMap({ $0.images ?? [] }).count + pendingImages.count < 12 else {
-            attachmentError = L("한 메시지에 4장, 한 대화에 12장까지 첨부할 수 있습니다.", "Attach up to 4 images per message and 12 per chat.")
+        // The AIs get only this message's photos and the latest few (Discussion.recentImages), so a chat can hold many.
+        guard pendingImages.count < 4, current.turns.flatMap({ $0.images ?? [] }).count + pendingImages.count < 200 else {
+            attachmentError = L("한 메시지에 4장, 한 대화에 200장까지 첨부할 수 있습니다.", "Attach up to 4 images per message and 200 per chat.")
             return
         }
         let item = try ImageStore.importImage(data, name: name, conversationID: currentID)

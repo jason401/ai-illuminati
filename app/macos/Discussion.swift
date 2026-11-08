@@ -714,6 +714,7 @@ final class Discussion: ObservableObject {
     // Tests only: answers requests that carry pictures without calling the real tools.
     var pictureAnswer: ((Account, String, [URL], TimeInterval, DebateCancellation, Bool) -> Result<String, Answerer.Failure>)?
     var imageContext = ""
+    var imageNumber = 0   // pictures in the numbered list (activeImages holds only the ones sent)
     // Pictures made during a turn are added to activeImages/imageContext while other calls may be
     // reading them, so both go through this lock; nextPicture numbers pictures across the chat.
     let pictureLock = NSLock()
@@ -780,8 +781,23 @@ final class Discussion: ObservableObject {
         pictureLock.lock(); defer { pictureLock.unlock() }
         for image in images {
             activeImages.append(image.url)
-            imageContext += (imageContext.isEmpty ? "" : "\n") + "Image \(activeImages.count): \(image.name.replacingOccurrences(of: ".png", with: "")) drawn by \(speaker)"
+            imageNumber += 1
+            imageContext += (imageContext.isEmpty ? "" : "\n") + "Image \(imageNumber): \(image.name.replacingOccurrences(of: ".png", with: "")) drawn by \(speaker)"
         }
+    }
+
+    // Earlier pictures sent again with each message besides the ones attached to it. Older ones stay in the
+    // chat and in the numbered list, as a line only, unless the message names them ("Image 3", "사진 3").
+    static let recentImages = 6
+    // Indexes of `pictures` (every picture in the chat, in order; the last `current` belong to this message) to attach.
+    static func picturesToSend(_ pictures: [String], current: Int, question: String) -> Set<Int> {
+        let earlier = max(0, pictures.count - current)
+        var sent = Set(earlier..<pictures.count).union(max(0, earlier - recentImages)..<earlier)
+        let pattern = try! NSRegularExpression(pattern: #"(?i)(?:image|picture|photo|사진|그림|이미지)\s*(\d{1,4})"#)
+        for match in pattern.matches(in: question, range: NSRange(question.startIndex..., in: question)) {
+            if let range = Range(match.range(at: 1), in: question), let n = Int(question[range]), (1...pictures.count).contains(n) { sent.insert(n - 1) }
+        }
+        return sent
     }
     @Published var inputHeight: CGFloat = 40
     // Chat window only (not saved): sidebar search and which row the pointer is over.
@@ -1144,9 +1160,13 @@ final class Discussion: ObservableObject {
             for entry in t.entries { shared += (entry.images ?? []).map { ($0, "\($0.name.replacingOccurrences(of: ".png", with: "")) drawn by \(entry.speaker)") } }
             shared += (t.finalImages ?? []).map { ($0, "\($0.name.replacingOccurrences(of: ".png", with: "")) in the final answer by \(t.finalBy ?? "")") }
         }
+        let sent = Self.picturesToSend(shared.map(\.1), current: (turn.images ?? []).count, question: question)
         pictureLock.lock()
-        activeImages = shared.map(\.0.url)
-        imageContext = shared.enumerated().map { "Image \($0.offset + 1): \($0.element.1)" }.joined(separator: "\n")
+        activeImages = shared.indices.filter(sent.contains).map { shared[$0].0.url }
+        imageNumber = shared.count
+        imageContext = shared.enumerated().map {
+            "Image \($0.offset + 1): " + (sent.contains($0.offset) ? "" : "(not attached; the user can name \"Image \($0.offset + 1)\" to show it again) ") + $0.element.1
+        }.joined(separator: "\n")
         nextPicture = history.reduce(1) { n, t in n + t.entries.reduce(0) { $0 + ($1.images?.count ?? 0) } + (t.finalImages?.count ?? 0) }
         pictureLock.unlock()
         pendingImages = []
@@ -1180,7 +1200,7 @@ final class Discussion: ObservableObject {
         worker.activeSpeechLength = activeSpeechLength
         worker.activeDocumentText = activeDocumentText
         pictureLock.lock()
-        worker.activeImages = activeImages; worker.imageContext = imageContext; worker.nextPicture = nextPicture
+        worker.activeImages = activeImages; worker.imageContext = imageContext; worker.imageNumber = imageNumber; worker.nextPicture = nextPicture
         pictureLock.unlock()
         workers[id] = worker
         runningRooms.insert(id)

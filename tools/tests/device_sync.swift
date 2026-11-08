@@ -62,6 +62,7 @@ func testDeviceSync() {
     expect(DeviceSync.isSchool(named, accounts: accounts), "an older chat is Enterprise when an Enterprise account's name answered")
     expect(!a.publish(school, accounts: accounts), "Enterprise chats are not copied by default")
     a.settings.includeSchool = true
+    a.waitForWrites()   // the reconcile that change starts, before this write
     expect(a.publish(school, accounts: accounts), "included Enterprise chats are copied")
     let schoolFile = a.myChats.appendingPathComponent(school.id.uuidString + ".json")
     a.conversations = { [chat, school] }
@@ -113,6 +114,20 @@ func testDeviceSync() {
     var atWork = ChatTurn(question: "q"); atWork.final = "a"; atWork.finalBy = "ChatGPT (Work)"; mixed.turns = [atWork]
     expect(DeviceSync.isSchool(mixed, accounts: accounts), "a personal chat with an Enterprise reply is Enterprise")
     expect(!DeviceSync.isSchool(chat, accounts: accounts), "a personal chat answered by personal accounts stays personal")
+    var reviewed = Conversation(); var lead = ChatTurn(question: "q"); lead.final = "a"; lead.finalBy = "Claude"
+    lead.peerNotes = [ChatTurn.Entry(round: 1, speaker: "ChatGPT (Work)", text: "review", failed: false)]; reviewed.turns = [lead]
+    expect(DeviceSync.isSchool(reviewed, accounts: accounts), "a chat an Enterprise account reviewed is Enterprise")
+
+    // It stays Enterprise after its account is removed, or set to personal, on this Mac.
+    a.accounts = { accounts }
+    expect(!a.shares(school, accounts: a.sideAccounts()), "Enterprise chats are not shared")
+    mixed.shareToDevices = true
+    a.accounts = { accounts.filter { $0.id != work.id } }
+    expect(!a.shares(school, accounts: a.sideAccounts()) && !a.shares(mixed, accounts: a.sideAccounts()), "an Enterprise chat stays off after its account is removed")
+    a.accounts = { accounts.map { var personal = $0; personal.school = false; return personal } }
+    expect(!a.shares(school, accounts: a.sideAccounts()) && !a.shares(mixed, accounts: a.sideAccounts()), "and after its account is set to personal")
+    expect(a.shares(chat, accounts: a.sideAccounts()), "a personal chat is still shared")
+    a.accounts = { accounts }
 
     // The other Mac reads them; broken, half-written, newer and not-yet-downloaded files are handled.
     let chats = a.myChats

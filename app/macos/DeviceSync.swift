@@ -105,7 +105,11 @@ final class DeviceSync: ObservableObject {
     private var scanning = false
     private var headers: [String: (Date, RemoteChat)] = [:]   // file path → (modification date, listing)
     private let io = DispatchQueue(label: "device-sync")
+    // Every Enterprise account this Mac has had: a chat one answered stays Enterprise after the account is
+    // removed, renamed or set to personal.
+    private var schoolSeen: [Account] = []
     static let settingsKey = "deviceSync"
+    static let schoolKey = "deviceSyncSchoolAccounts"
     static let delay: TimeInterval = 3        // several saves in a row become one write
     static let interval: TimeInterval = 180   // look at the other Macs this often while the app runs
 
@@ -116,6 +120,8 @@ final class DeviceSync: ObservableObject {
         else if persist, let data = UserDefaults.app.data(forKey: Self.settingsKey),
                 let saved = try? JSONDecoder().decode(DeviceSyncSettings.self, from: data) { self.settings = saved }
         else { self.settings = DeviceSyncSettings() }
+        if persist, let data = UserDefaults.app.data(forKey: Self.schoolKey),
+           let saved = try? JSONDecoder().decode([Account].self, from: data) { schoolSeen = saved }
     }
 
     // MARK: Places
@@ -175,8 +181,21 @@ final class DeviceSync: ObservableObject {
         if accounts.contains(where: { $0.isSchool && ids.contains($0.id) }) { return true }
         // Older chats did not save who answered: the reply's speaker name still tells.
         return conversation.turns.contains { turn in
-            (turn.finalBy.map(schoolNames.contains) ?? false) || (turn.entries + (turn.moreAnswers ?? [])).contains { schoolNames.contains($0.speaker) }
+            (turn.finalBy.map(schoolNames.contains) ?? false) || (turn.entries + (turn.moreAnswers ?? []) + (turn.peerNotes ?? [])).contains { schoolNames.contains($0.speaker) }
         }
+    }
+
+    // The accounts that tell a chat's side: this Mac's accounts and every Enterprise account it had before.
+    func sideAccounts() -> [Account] {
+        let current = accounts()
+        let fresh = current.filter { account in
+            account.isSchool && !schoolSeen.contains { $0.id == account.id && $0.name == account.name && $0.provider == account.provider }
+        }
+        if !fresh.isEmpty {
+            schoolSeen += fresh.map { Account(id: $0.id, provider: $0.provider, name: $0.name, school: true) }
+            if persist, let data = try? JSONEncoder().encode(schoolSeen) { UserDefaults.app.set(data, forKey: Self.schoolKey) }
+        }
+        return current + schoolSeen
     }
 
     func shares(_ conversation: Conversation, accounts: [Account]) -> Bool {
@@ -264,7 +283,7 @@ final class DeviceSync: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.delay) { [weak self] in
             guard let self else { return }
             self.flushScheduled = false
-            let accounts = self.accounts()
+            let accounts = self.sideAccounts()
             let copies = self.pending.values.map { self.copy($0, accounts: accounts) }
             self.pending = [:]
             let folder = self.myChats, info = self.deviceInfo()
@@ -346,7 +365,7 @@ final class DeviceSync: ObservableObject {
     // look to the other Macs as if the chat was taken away.
     func reconcile() {
         guard settings.enabled else { return }
-        let accounts = self.accounts()
+        let accounts = self.sideAccounts()
         let copies = conversations().map { copy($0, accounts: accounts) }
         let folder = myChats, info = deviceInfo()
         io.async {
@@ -526,6 +545,7 @@ extension Discussion {
     // side, with no folders, sessions or project. The copy itself is never changed.
     @discardableResult
     func continueFromDevice(_ snap: SyncSnapshot, device: String, deviceName: String) -> UUID {
+        discardPendingImages()   // their files live with the chat being left, which may be removed below
         var chat = Conversation()
         chat.title = snap.title
         chat.turns = snap.turns

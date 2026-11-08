@@ -62,9 +62,14 @@ enum Route {
         if let last = history.last?.final, !last.isEmpty {
             text += "[Last answer]\n" + cut(last, answer, head: answer / 3, tail: answer - answer / 3) + "\n"
         }
-        let lines = cut(question, message, head: message * 3 / 4, tail: message / 4).components(separatedBy: "\n")
-        let marked = lines.map { $0.hasPrefix(">") ? "(quoted) " + $0.dropFirst().trimmingCharacters(in: .whitespaces) : $0 }
-        return text + "\n[Message to sort]\n" + marked.joined(separator: "\n")
+        return text + "\n[Message to sort]\n" + marked(cut(question, message, head: message * 3 / 4, tail: message / 4))
+    }
+
+    // Quoted lines (">") marked as quotes.
+    static func marked(_ text: String) -> String {
+        text.components(separatedBy: "\n")
+            .map { $0.hasPrefix(">") ? "(quoted) " + $0.dropFirst().trimmingCharacters(in: .whitespaces) : $0 }
+            .joined(separator: "\n")
     }
 
     static func prompt(question: String, history: [ChatTurn]) -> String {
@@ -168,7 +173,7 @@ enum RouteSorter: String, CaseIterable {
     var title: String { variant.title }
     var summary: String {
         self == .gemma ? L("기본 · 100문제 중 91개 맞힘 · 메모리 많이 씀", "Default · 91 of 100 right · more memory")
-            : L("가벼움 · 100문제 중 67개 · 한국어 작업 지시를 자주 놓쳐요", "Light · 67 of 100 · often misses Korean work requests")
+            : L("가벼움 · 빠름 · 169문제 중 140개 · 시키지 않은 작업이 조금 더 많아요", "Light · fast · 140 of 169 · a few more needless work runs")
     }
 }
 
@@ -195,17 +200,24 @@ extension LocalModel {
             return ((json?["message"] as? [String: Any])?["content"] as? String).flatMap(Route.parse)
         case .decider:
             // A decision model answers yes/no questions with a probability (https://docs.ollama.com/capabilities/decision).
-            // Two Korean questions and these thresholds scored best on the tuning messages.
-            let questions = [
-                "work": "사용자가 마지막 메시지에서 AI에게 지금 프로젝트 코드를 고치거나 만들거나 배포하라고 시키나요? 설명·정리·계획·조사 요청은 아니에요.",
-                "all": "사용자가 마지막 메시지에서 여러 AI의 의견, 어느 쪽이 나은지, 찬반을 묻나요?",
-            ].mapValues { ["type": "noul", "instructions": $0] }
+            // The message alone: with earlier messages and the last answer it mixed in the AI's own "수정할게요".
+            // Korean questions with what true and false mean; examples in the work question made it worse.
+            // On 169 messages: 140 right, 4 missed work, 17 needless work (route-check in the project chat).
+            let questions: [String: Any] = [
+                "work": ["type": "noul", "instructions": "사용자가 AI에게 말로 답하는 것 말고 지금 작업을 하라고 시키나요?",
+                         "criteria": ["true": "사용자가 AI에게 지금 무언가를 실행하라고 시켜요: 수정, 구현, 빌드, 실행, 테스트, 돌려서 비교, 커밋, 배포.",
+                                      "false": "사용자는 말로 된 답만 원해요: 설명, 의견, 정리, 계획, 상태 확인, 감사, 동의."]],
+                "all": ["type": "noul", "instructions": "사용자가 AI들의 의견을 묻나요?",
+                        "criteria": ["true": "의견, 어느 쪽이 나은지, 찬반, 동의하는지를 물어요. 예: 어떻게 생각해?, 어때?, 뭐가 나아?",
+                                     "false": "작업, 사실, 설명, 정리를 원하거나 그냥 반응해요."]],
+            ]
             let body: [String: Any] = ["model": variant.model, "keep_alive": keep, "questions": questions,
-                                       "state": Route.context(question: question, history: history, answer: 1500, message: 2500)]
+                                       "state": Route.marked(Route.cut(question, 2500, head: 1800, tail: 700))]
             guard let answers = post("v1/systemone", body, timeout: timeout)?["answers"] as? [String: Any],
                   let work = (answers["work"] as? [String: Any])?["noul"] as? Double,
                   let all = (answers["all"] as? [String: Any])?["noul"] as? Double else { return nil }
-            return work > 0.30 ? .work : all > 0.35 ? .all : .one
+            // Work above 0.85 would miss 9 instead of 4: missing work costs most.
+            return work > 0.75 ? .work : all > 0.70 ? .all : .one
         }
     }
 

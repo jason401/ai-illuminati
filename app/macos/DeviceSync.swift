@@ -170,7 +170,7 @@ final class DeviceSync: ObservableObject {
     static func isSchool(_ conversation: Conversation, accounts: [Account]) -> Bool {
         if conversation.configuration?.school == true { return true }
         let config = conversation.configuration
-        let ids = Set([config?.soloAccountID, config?.lastSoloAccountID, config?.leaderAccountID].compactMap { $0 } + (config?.accountIDs ?? []))
+        let ids = Set([config?.soloAccountID, config?.lastSoloAccountID, config?.leaderAccountID].compactMap { $0 } + (config?.accountIDs ?? []) + (config?.memberIDs ?? []))
         let schoolNames = Set(accounts.filter(\.isSchool).flatMap { [$0.name, "\($0.provider.title) (\($0.name))"] })
         if accounts.contains(where: { $0.isSchool && ids.contains($0.id) }) { return true }
         // Older chats did not save who answered: the reply's speaker name still tells.

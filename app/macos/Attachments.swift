@@ -113,7 +113,10 @@ extension Discussion {
 
     // fresh: a shorter prompt (summary + recent turns) for an AI that starts without a session it can resume.
     func requestDebate(_ account: Account, _ prompt: String, _ timeout: TimeInterval, _ token: DebateCancellation, web: Bool = false,
-                       fresh: String? = nil, progress: ((AnswerProgress) -> Void)? = nil) -> Result<String, Answerer.Failure> {
+                       fresh: String? = nil, workspace: WorkspaceBinding? = nil,
+                       progress: ((AnswerProgress) -> Void)? = nil) -> Result<String, Answerer.Failure> {
+        // `workspace` replaces the chat's folders for this one request (a read-only view for a second AI).
+        let activeWorkspace = workspace ?? self.activeWorkspace
         let selected: [MaterialContext.Part] = []
         let materialText = selected.isEmpty ? "" : "\n[Selected source excerpts; not an exhaustive review. Use Collaboration for full coverage.]\n" + MaterialContext.quote(selected)
         pictureLock.lock(); let shared = activeImages, sharedContext = imageContext; pictureLock.unlock()
@@ -125,7 +128,7 @@ extension Discussion {
         if let room = activeSessionRoom, NativeSessions.eligible(account) {
             return nativeSessions.ask(account, room: room, prompt: full, images: pictures, timeout: timeout,
                                       token: token, web: web, speaker: label(account), fresh: fresh.map(wrap), invoke: { text, images, session in
-                Answerer.ask(account, prompt: text, timeout: timeout, cancellation: token, images: images, web: web, session: session, workspace: self.activeWorkspace.map { WorkspaceInvocation(binding: $0, room: room) }, progress: progress)
+                Answerer.ask(account, prompt: text, timeout: timeout, cancellation: token, images: images, web: web, session: session, workspace: activeWorkspace.map { WorkspaceInvocation(binding: $0, room: room) }, progress: progress)
             }, note: { text in DispatchQueue.main.async { self.sessionNote = text } })
         }
         if let workspaceAnswer, let binding = activeWorkspace { return workspaceAnswer(account, start, binding, token, progress) }

@@ -1775,8 +1775,9 @@ do {
     let labels = Dictionary(uniqueKeysWithValues: m.accounts.map { ($0.id, chat.label($0)) })
     let lock = NSLock()
     var asked: [(String, String)] = []
-    chat.workspaceAnswer = { account, prompt, _, _, _ in
-        lock.lock(); asked.append((account.id, prompt)); lock.unlock()
+    var bindings: [String: WorkspaceBinding] = [:]
+    chat.workspaceAnswer = { account, prompt, binding, _, _ in
+        lock.lock(); asked.append((account.id, prompt)); bindings[account.id] = binding; lock.unlock()
         return .success("Reply from \(account.id)")
     }
 
@@ -1792,6 +1793,12 @@ do {
     let writer = asked.first { $0.0 == "mb-codex" }!.1, other = asked.first { $0.0 == "mb-claude" }!.1
     expect(writer.contains("do not see each other's replies") && !writer.contains("do not create, edit or delete"), "the first member may change files")
     expect(other.contains("\(labels["mb-codex"]!) handles any file changes"), "the other members only read files")
+    expect(bindings["mb-codex"]?.roots.contains { $0.writable == true } == true && bindings["mb-claude"]?.roots.allSatisfy { $0.writable != true } == true,
+           "the others get the folders read only, not just told so")
+    expect(chat.configuration.lastSoloAccountID == "mb-codex" && chat.crew(project: false)?.lead == "mb-codex", "the app keeps the lead it picked")
+    chat.configure { $0.leadID = "mb-claude" }
+    expect(chat.crew(project: false).map { $0.lead == "mb-claude" && $0.others == ["mb-codex"] } == true, "a lead picked by hand works")
+    chat.configure { $0.leadID = nil }
 
     asked.removeAll()
     chat.draft = "and again"

@@ -656,7 +656,7 @@ struct ChatView: View {
                             .font(.system(size: 12)).foregroundColor(.secondary)
                     }
                     Spacer()
-                    if discussion.configuration.mode == 0 && !discussion.running { peerChip; accountChip }
+                    if discussion.configuration.mode == 0 && !discussion.running { accountChip }
                     if discussion.configuration.mode != 0 && !discussion.running { teamChip }
                     composerAction
                 }
@@ -1038,23 +1038,42 @@ struct ChatView: View {
         }
     }
 
-    // Who answers: automatic (most usage left), or the accounts checked for this chat. Two or more checked
-    // all answer every message at the same time; @ in a message calls others for that message only.
+    // Who answers: automatic (most usage left), or the accounts checked for this chat. Two or more checked: in a
+    // plain chat all answer every message at the same time; in a project chat one works (the lead) and the others
+    // review its changes. @ in a message calls others for that message only.
     private var accountChip: some View {
         let config = discussion.configuration
         let members = discussion.memberIDs
+        let project = discussion.current.workspace?.project != nil
+        let crew = discussion.crew(project: project)
         let next = discussion.soloNext
         let usage = next.flatMap { discussion.model.latestUsage[$0.id] }
+        func name(_ id: String) -> String { discussion.model.accounts.first { $0.id == id }.map { discussion.label($0) } ?? id }
         return Menu {
             Button((members.isEmpty ? "✓ " : "") + L("자동 (남은 사용량 기준)", "Automatic (most usage left)")) {
-                discussion.configure { $0.soloAccountID = nil; $0.memberIDs = nil }
+                discussion.configure { c in
+                    c.soloAccountID = nil; c.memberIDs = nil; c.leadID = nil
+                    c.peerReview = nil; c.peerAccountID = nil; c.pendingReview = nil
+                }
             }
             Divider()
-            Text(L("체크한 AI가 모두 답해요", "Every checked AI answers"))
+            Text(project ? L("여러 명 체크: 한 명이 작업하고 나머지가 검수해요", "Check several: one works, the others review")
+                         : L("여러 명 체크: 모두 함께 답해요", "Check several: they all answer"))
             ForEach(discussion.model.accounts.filter { $0.provider != .gemini }, id: \.id) { account in
                 Button((members.contains(account.id) ? "✓ " : "") + discussion.label(account) + " · "
                        + AutoPick.describe(discussion.model.latestUsage[account.id])) {
                     discussion.toggleMember(account.id)
+                }
+            }
+            if members.count >= 2 {
+                Divider()
+                Menu(L("작업 담당", "Who does the work")) {
+                    Button((config.leadID == nil ? "✓ " : "") + L("자동 (앱이 정하고 유지)", "Automatic (the app picks and keeps one)")) {
+                        discussion.configure { $0.leadID = nil }
+                    }
+                    ForEach(members.filter { id in !project || discussion.model.accounts.contains { $0.id == id && [.claude, .codex].contains($0.provider) } }, id: \.self) { id in
+                        Button((config.leadID == id ? "✓ " : "") + name(id)) { discussion.configure { $0.leadID = id } }
+                    }
                 }
             }
             if discussion.model.schoolOnlyHandoff {
@@ -1067,9 +1086,15 @@ struct ChatView: View {
             }
         } label: {
             // A menu label keeps a single text view, so the name and usage are one concatenated Text.
-            if members.count >= 2 {
-                let names = members.compactMap { id in discussion.model.accounts.first { $0.id == id }.map { discussion.label($0) } }
-                (Text(Image(systemName: "person.2")) + Text(" " + names.joined(separator: " + ")).foregroundColor(.primary))
+            if let crew, project {
+                (Text(Image(systemName: "person.2")) + Text(" " + L("작업 ", "Work ")).foregroundColor(.secondary) + Text(name(crew.lead)).foregroundColor(.primary)
+                 + Text(" · " + L("검수 ", "Review ")).foregroundColor(.secondary) + Text(crew.others.map(name).joined(separator: ", ")).foregroundColor(.primary))
+                    .font(.system(size: 12))
+            } else if let crew {
+                (Text(Image(systemName: "person.2")) + Text(" " + ([crew.lead] + crew.others).map(name).joined(separator: " + ")).foregroundColor(.primary))
+                    .font(.system(size: 12))
+            } else if members.count >= 2 {
+                (Text(Image(systemName: "person.2")) + Text(" " + members.map(name).joined(separator: " + ")).foregroundColor(.secondary))
                     .font(.system(size: 12))
             } else {
                 let name = ((config.school ?? next?.isSchool) == true && discussion.model.schoolOnlyHandoff ? L("엔터프라이즈 · ", "Enterprise · ") : "")
@@ -1082,43 +1107,8 @@ struct ChatView: View {
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
-        .help(L("답할 AI: 자동이면 5시간이 15% 이상 남은 계정 중 주간이 가장 많이 남은 계정. 여러 명을 체크하면 메시지마다 모두 동시에 답해요 (@는 그 메시지에만 적용).",
-                "Who answers: automatic picks, among accounts with at least 15% of the 5-hour limit left, the one with the most weekly usage left. Check several and they all answer every message at the same time (@ applies to one message only)."))
-    }
-
-    // Review (Peer.swift): on or off, and who reviews (automatic: the other kind of AI on the chat's side).
-    private var peerChip: some View {
-        let config = discussion.configuration
-        let on = config.peerReview == true
-        let peer = discussion.peerNext
-        let school = discussion.model.schoolOnlyHandoff ? (config.school ?? discussion.soloNext?.isSchool) : nil
-        return Menu {
-            Button((on ? "✓ " : "") + L("검수 켜기", "Review on")) {
-                discussion.configure { c in
-                    c.peerReview = on ? nil : true
-                    // Start the timing again from the next answer.
-                    c.nextReviewAt = nil; c.lastReviewSHA = nil; c.lastReviewAt = nil; c.pendingReview = nil
-                }
-            }
-            Divider()
-            Button((config.peerAccountID == nil ? "✓ " : "") + L("자동 (다른 종류의 AI)", "Automatic (the other kind of AI)")) {
-                discussion.configure { $0.peerAccountID = nil }
-            }
-            ForEach(discussion.model.accounts.filter { [.claude, .codex].contains($0.provider) && (school == nil || $0.isSchool == school) }, id: \.id) { account in
-                Button((config.peerAccountID == account.id ? "✓ " : "") + discussion.label(account)) {
-                    discussion.configure { $0.peerAccountID = account.id; $0.peerReview = true }
-                }
-            }
-        } label: {
-            (Text(Image(systemName: on ? "checkmark.shield.fill" : "checkmark.shield"))
-             + Text(" " + (on ? L("검수 · ", "Review · ") + (peer.map { discussion.label($0) } ?? L("없음", "none")) : L("검수 끔", "Review off"))))
-                .font(.system(size: 12))
-                .foregroundColor(on ? .primary : .secondary)
-        }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
-        .help(L("검수: 켜면 답하는 AI가 계획이 복잡할 때 다른 종류의 AI에게 의견을 묻고, 대략 1시간에 한 번 다른 AI가 최근 작업을 살펴봐요. 지적은 다음 답에서 AI가 판단해 반영해요.",
-                "Review: when on, the answering AI asks the other kind of AI when its plan is complex, and about once an hour the other AI looks over the recent work. The next answer weighs its findings."))
+        .help(L("답할 AI: 자동이면 5시간이 15% 이상 남은 계정 중 주간이 가장 많이 남은 계정. 여러 명을 체크하면 일반 채팅에서는 모두 동시에 답하고, 프로젝트 채팅에서는 한 명이 작업하고 나머지가 바뀐 내용을 검수해요 (@는 그 메시지에만 적용).",
+                "Who answers: automatic picks, among accounts with at least 15% of the 5-hour limit left, the one with the most weekly usage left. Check several: in a plain chat they all answer at the same time; in a project chat one works and the others review its changes (@ applies to one message only)."))
     }
 
     // Mode 4: every account votes unless unchecked; the crown drafts the choices when none are listed.

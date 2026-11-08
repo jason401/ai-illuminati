@@ -81,15 +81,40 @@ extension Discussion {
         return AutoPick.choose(model.accounts, usage: model.latestUsage, school: soloSchool, current: config.lastSoloAccountID)
     }
 
-    // The chat's members, in order: memberIDs, or the one account picked by hand in older chats.
+    // The chat's members, in order: memberIDs, else what an older chat picked (see migratedMembers).
     var memberIDs: [String] {
-        let config = configuration
-        let ids = config.memberIDs ?? config.soloAccountID.map { [$0] } ?? []
-        return ids.filter { id in model.accounts.contains { $0.id == id } }
+        Self.migratedMembers(configuration, accounts: model.accounts, strict: model.schoolOnlyHandoff)
     }
 
-    // Members who answer the next message together: only when two or more are checked, skipping accounts
-    // that need sign-in or have no usage left (if fewer than two remain, the usual single answer runs).
+    // Older chats: the one account picked by hand, and with review on, the reviewer as a second member (the one
+    // picked, else the first account of the other kind on the chat's side). Accounts no longer here drop out.
+    static func migratedMembers(_ config: ChatConfiguration, accounts: [Account], strict: Bool) -> [String] {
+        var ids = config.memberIDs ?? config.soloAccountID.map { [$0] } ?? []
+        if config.memberIDs == nil && config.peerReview == true {
+            let worker = accounts.first { $0.id == (config.soloAccountID ?? config.lastSoloAccountID) }
+                ?? AutoPick.candidates(accounts, usage: [:], school: strict ? config.school : nil).first
+            let side = strict ? (config.school ?? worker?.isSchool) : nil
+            let peer = config.peerAccountID.flatMap { id in accounts.first { $0.id == id && $0.id != worker?.id } }
+                ?? accounts.first { [.claude, .codex].contains($0.provider) && $0.provider != worker?.provider && (side == nil || $0.isSchool == side) }
+            ids = [worker?.id, peer?.id].compactMap { $0 }
+        }
+        var seen = Set<String>()
+        return ids.filter { id in accounts.contains { $0.id == id } && seen.insert(id).inserted }
+    }
+
+    // Saves the members worked out from an older chat's settings, so they no longer change with the account list.
+    func settleMembers() {
+        let config = configuration
+        guard config.memberIDs == nil, config.peerReview == true else { return }
+        let ids = memberIDs
+        configure { c in
+            c.memberIDs = ids.isEmpty ? nil : ids; c.soloAccountID = ids.count == 1 ? ids[0] : nil
+            c.peerReview = nil; c.peerAccountID = nil; c.pendingReview = nil; c.nextReviewAt = nil; c.lastReviewSHA = nil; c.lastReviewAt = nil
+        }
+    }
+
+    // Members who take part in the next message: only when two or more are checked, skipping accounts that need
+    // sign-in or have no usage left (if fewer than two remain, the usual single answer runs).
     func standingMembers() -> [String] {
         let ids = memberIDs
         guard ids.count >= 2 else { return [] }
@@ -101,13 +126,31 @@ extension Discussion {
         return ready.count >= 2 ? ready : []
     }
 
+    // Who does the work among the members taking part, and who reviews. The lead is the one picked by hand, else the
+    // one who worked last while it has usage left, else the member with the most usage left; in a project only Claude
+    // and ChatGPT accounts may lead or review. nil: fewer than two members take part (or no lead in a project).
+    func crew(project: Bool) -> (lead: String, others: [String])? {
+        let ready = standingMembers()
+        let able = ready.compactMap { id in model.accounts.first { $0.id == id } }
+            .filter { !project || [.claude, .codex].contains($0.provider) }
+        let config = configuration
+        guard let lead = able.first(where: { $0.id == config.leadID })
+                ?? AutoPick.choose(able, usage: model.latestUsage, school: nil, current: config.lastSoloAccountID)
+                ?? able.first else { return nil }
+        let others = (project ? able.map(\.id) : ready).filter { $0 != lead.id }
+        if project && others.isEmpty { return nil }
+        return (lead.id, others)
+    }
+
     // Checks or unchecks a member. One member answers alone (as picked by hand); none is automatic.
     func toggleMember(_ id: String) {
+        settleMembers()
         configure { config in
-            var ids = (config.memberIDs ?? config.soloAccountID.map { [$0] } ?? []).filter { id in self.model.accounts.contains { $0.id == id } }
+            var ids = Self.migratedMembers(config, accounts: self.model.accounts, strict: self.model.schoolOnlyHandoff)
             if let at = ids.firstIndex(of: id) { ids.remove(at: at) } else { ids.append(id) }
             config.memberIDs = ids.isEmpty ? nil : ids
             config.soloAccountID = ids.count == 1 ? ids[0] : nil
+            if let lead = config.leadID, !ids.contains(lead) { config.leadID = nil }
         }
     }
 
@@ -298,7 +341,7 @@ extension Discussion {
     // mentions: accounts called with @. They answer at the same time without seeing each other's replies;
     // nobody is picked automatically and the next message is automatic again.
     func runSolo(question: String, history: [ChatTurn], rules: String, config: ChatConfiguration, mentions: [String] = [],
-                 cancellation: DebateCancellation, id: UUID, index: Int) {
+                 reviewers: [String] = [], cancellation: DebateCancellation, id: UUID, index: Int) {
         let origin = conversations.first { $0.id == id }?.origin
         let previous = [Self.originNote(origin), Self.transcript(history)].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n\n")
         let asked = (previous.isEmpty ? "" : previous + "\n\n") + "[User]\n" + question
@@ -325,7 +368,7 @@ extension Discussion {
         let fresh = freshTranscript.map { Self.soloContext(rules: rules, transcript: $0) }
         let keepState = previous.count + question.count > Self.stateFrom
         var binding = activeWorkspace ?? soloBinding(id)
-        if binding.project != nil { return runProjectSolo(question: question, history: history, rules: rules, config: config, mentions: mentions, cancellation: cancellation, id: id, index: index, binding: binding, fresh: freshTranscript, keepState: keepState) }
+        if binding.project != nil { return runProjectSolo(question: question, history: history, rules: rules, config: config, mentions: mentions, reviewers: reviewers, cancellation: cancellation, id: id, index: index, binding: binding, fresh: freshTranscript, keepState: keepState) }
         let own = Self.chatFolder(id)
         let awake = binding.fullAccess == true ? ProcessInfo.processInfo.beginActivity(options: [.userInitiated, .idleSystemSleepDisabled], reason: "AI Illuminati full-access chat") : nil
         defer { if let awake { ProcessInfo.processInfo.endActivity(awake) } }
@@ -397,8 +440,9 @@ extension Discussion {
                 var instruction = soloInstruction(account, binding: binding, helper: helper, chat: id)
                 if called.count > 1 {
                     instruction += "\nSeveral AIs answer this message at the same time and do not see each other's replies: give your own view."
-                    // Only the first may change files, so two AIs never edit the same files at once.
-                    if k > 0 { instruction += " \(label(called[0])) handles any file changes: read files if useful, but do not create, edit or delete any." }
+                    // Only the first may change files, so two AIs never edit the same files at once: the others
+                    // get the folders read only.
+                    if k > 0 { instruction += " \(label(called[0])) handles any file changes: your folders are read only, so read files if useful but do not try to create, edit or delete any." }
                 }
                 if keepState && k == 0 { instruction += "\n" + Self.stateRule(current: Self.loadState(id)) }
                 // One reply is shown as it is written at a time: whoever starts first, then the next.
@@ -420,9 +464,9 @@ extension Discussion {
                     defer { group.leave() }
                     let started = Date()
                     let result = self.requestDebate(account, Self.soloContext(rules: rules, transcript: asked) + "\n[SOLO TURN]\n" + instruction,
-                                                    binding.fullAccess == true ? 8 * 3600 : self.activePeerSession != nil ? 1800 : 900, cancellation, web: true,
+                                                    binding.fullAccess == true ? 8 * 3600 : 900, cancellation, web: true,
                                                     fresh: freshTranscript.map { Self.soloContext(rules: rules, transcript: $0) + "\n[SOLO TURN]\n" + instruction },
-                                                    progress: progress)
+                                                    workspace: k > 0 && called.count > 1 ? Self.peerView(binding) : nil, progress: progress)
                     doneLock.lock(); done.insert(speaker); doneLock.unlock()
                     if cancellation.isCancelled { return }
                     var entry: ChatTurn.Entry
@@ -523,7 +567,7 @@ extension Discussion {
                     self.changeTurn(id, index) { $0.activity = what }
                 }
             }
-            let result = requestDebate(account, prompt, activePeerSession != nil ? 1800 : 900, cancellation, web: true,
+            let result = requestDebate(account, prompt, 900, cancellation, web: true,
                                        fresh: fresh.map { $0 + "\n[SOLO TURN]\n" + instruction }, progress: progress)
             if cancellation.isCancelled { break }
             switch result {
@@ -589,7 +633,7 @@ extension Discussion {
                                 fullAccess: binding.fullAccess == true, picture: pictureRule(account, chat: id), helper: helper,
                                 face: Self.projectFaceRule(face: binding.face == true), project: project,
                                 notes: id.map { ChatNotes.rule(ChatNotes.current($0)) } ?? "",
-                                peer: peerInstruction(account, project: project != nil))
+                                peer: project == nil ? "" : peerInstruction(account))
     }
 
     static func composeInstruction(name: String, provider: Account.Provider, folders: String, drive: String, fullAccess: Bool,

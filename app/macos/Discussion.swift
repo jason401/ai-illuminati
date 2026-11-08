@@ -548,17 +548,19 @@ struct ChatConfiguration: Codable {
     var voteSkippedIDs: [String]?  // mode 4: accounts turned off; every other account votes
     var soloAccountID: String?      // mode 0: the account picked by hand (nil = automatic)
     var lastSoloAccountID: String?  // mode 0: who answered last; it keeps going while it has usage left
-    // mode 0: accounts that answer every message, in order (two or more answer at the same time, like @).
-    // One member is the same as soloAccountID; nil or empty = automatic. Not synced: account IDs differ per Mac.
+    // mode 0: the chat's members (Solo.swift). Two or more: in a plain chat they all answer every message at the
+    // same time; in a project chat the lead works and the others review (Peer.swift). One member is the same as
+    // soloAccountID; nil or empty = automatic. Not synced: account IDs differ per Mac.
     var memberIDs: [String]?
+    var leadID: String?             // the member picked by hand to do the work (nil = the app picks and keeps one)
     var school: Bool?               // mode 0: a school chat (continued only by school accounts)
-    // mode 0, review (Peer.swift): another kind of AI gives opinions when asked and checks recent work now and then
+    // Older review settings, read once to make the reviewer a member (Discussion.migratedMembers).
     var peerReview: Bool?
-    var peerAccountID: String?      // the reviewer picked by hand (nil = automatic)
-    var lastReviewSHA: String?      // project chats: the last commit a random review covered
+    var peerAccountID: String?
+    var lastReviewSHA: String?
     var lastReviewAt: Date?
     var nextReviewAt: Date?
-    var pendingReview: String?      // findings not yet handed to an answer
+    var pendingReview: String?
 }
 
 struct Conversation: Identifiable, Codable {
@@ -674,8 +676,7 @@ final class Discussion: ObservableObject {
     var activeDocumentText = ""
     var activeMaterials: [RoomDocument] = []
     var activeWorkspace: WorkspaceBinding?
-    var activePeerSession: PeerLink.Session?   // review on: this answer's ask_peer (Peer.swift)
-    var activePendingReview: String?
+    var activePeerSession: PeerLink.Session?   // a project chat with reviewers: this answer's ask_peer (Peer.swift)
     var activeWorkspaceBackupPath: String?
     var activeAdversarial = false
     var activeSpeechLength = SpeechLength.unlimited
@@ -1054,8 +1055,15 @@ final class Discussion: ObservableObject {
         mentionQuery = nil
         let question = !typed.isEmpty ? typed : !mentioned.isEmpty ? L("지금까지의 대화에 대해 네 의견을 말해 줘.", "What do you think about this conversation so far?")
             : L("첨부한 이미지를 설명해줘.", "Describe the attached images.")
-        // Two or more members of this chat answer every message; @ replaces them for this one message.
-        let members = plain && mentioned.isEmpty ? standingMembers() : []
+        // Two or more members: in a plain chat they all answer every message (the lead first, the only one that may
+        // change files); in a project chat the lead works and the others review (Peer.swift). @ replaces them for
+        // this one message.
+        if plain { settleMembers() }
+        let project = current.workspace?.project != nil
+        let crew = plain && mentioned.isEmpty ? self.crew(project: project) : nil
+        if let crew, configuration.lastSoloAccountID != crew.lead { configure { $0.lastSoloAccountID = crew.lead } }
+        let members = crew.map { project ? [$0.lead] : [$0.lead] + $0.others } ?? []
+        let reviewers = project ? crew?.others ?? [] : []
         let called = mentioned.isEmpty ? members : mentioned
         let team = called.isEmpty ? pickTeam() : called.compactMap { id in model.accounts.first { $0.id == id } }
         let id = currentID
@@ -1148,18 +1156,13 @@ final class Discussion: ObservableObject {
             catch { worker.finish(id, index, error: error.localizedDescription); return }
             defer { ProjectWork.release(projectLocks) }
             if solo {
-                // Review on (Peer.swift): ask_peer during the answer, then a review if one is due.
+                // Reviewers (a project chat with two or more members, Peer.swift): ask_peer during the work, then
+                // a review of what changed, and the lead fixes what is right.
                 let binding = worker.activeWorkspace ?? worker.soloBinding(id)
-                let startHead = config.peerReview == true ? binding.project.flatMap { try? ProjectProcess.git(["rev-parse", "HEAD"], root: $0.root) } : nil
-                let peer = worker.beginPeer(id: id, index: index, question: question, config: config, binding: binding, cancellation: cancellation)
+                let peer = worker.beginPeer(id: id, index: index, question: question, reviewers: reviewers, binding: binding, cancellation: cancellation)
                 worker.runSolo(question: question, history: history, rules: rules, config: config, mentions: called,
-                             cancellation: cancellation, id: id, index: index)
-                let asked = (peer?.asked ?? 0) > 0
+                             reviewers: reviewers, cancellation: cancellation, id: id, index: index)
                 worker.endPeer(peer)
-                if peer != nil, !cancellation.isCancelled {
-                    // After this block, so the project lock is free for the next message while the review runs.
-                    DispatchQueue.global().async { worker.reviewIfDue(id: id, index: index, binding: binding, startHead: startHead, asked: asked) }
-                }
             } else if Self.modernModes && config.mode == 4 {
                 worker.runVote(question: question, history: history, rules: rules, team: team,
                              leader: team.first { $0.id == config.leaderAccountID } ?? team.first { $0.provider == config.leader } ?? team[0],

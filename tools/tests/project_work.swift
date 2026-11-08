@@ -280,20 +280,23 @@ func testPeerReview() {
     expect(Peer.choose(asker: claude, picked: claude2.id, accounts: [claude, claude2, codex], usage: [:], school: nil)?.id == codex.id, "a picked reviewer of the same kind gives way to the other kind")
     expect(Peer.choose(asker: claude, picked: nil, accounts: [claude, claude2], usage: [:], school: nil)?.id == claude2.id, "same kind only when there is no other")
     expect(Peer.choose(asker: claude, picked: nil, accounts: [claude, gemini], usage: [:], school: nil) == nil, "nobody else: no reviewer")
-    let now = Date()
-    let soon = Peer.nextReview(after: now, random: 0).timeIntervalSince(now), late = Peer.nextReview(after: now, random: 1).timeIntervalSince(now)
-    expect(soon == 40 * 60 && late == 80 * 60, "random review comes 40 to 80 minutes later")
-    expect(Peer.shortStat(" 6 files changed, 150 insertions(+), 60 deletions(-)") == (6, 210) && Peer.shortStat(" 1 file changed, 1 deletion(-)") == (1, 1), "diff size")
     expect(Peer.noIssues("No issues.") && Peer.noIssues("**문제 없음**") && !Peer.noIssues("No issues except one: a crash"), "a clean review is recognised")
     // Older chat files and other Macs' copies have none of the new fields.
     let oldConfig = try? JSONDecoder().decode(ChatConfiguration.self, from: Data(#"{"mode":0,"order":["claude"],"participants":["claude"],"leader":"claude"}"#.utf8))
-    expect(oldConfig != nil && oldConfig?.peerReview == nil && oldConfig?.pendingReview == nil, "older chat settings still load (review off)")
+    expect(oldConfig != nil && oldConfig?.memberIDs == nil && oldConfig?.leadID == nil, "older chat settings still load (no members)")
+    // A chat that had review on: its worker and its reviewer become the two members.
+    var reviewed = ChatConfiguration(); reviewed.soloAccountID = claude.id; reviewed.peerReview = true
+    expect(Discussion.migratedMembers(reviewed, accounts: [claude, claude2, codex], strict: false) == [claude.id, codex.id], "review on: the other kind of AI joins as a member")
+    reviewed.peerAccountID = claude2.id
+    expect(Discussion.migratedMembers(reviewed, accounts: [claude, claude2, codex], strict: false) == [claude.id, claude2.id], "the reviewer picked by hand joins")
+    reviewed.memberIDs = [codex.id]
+    expect(Discussion.migratedMembers(reviewed, accounts: [claude, codex], strict: false) == [codex.id], "members saved since then win")
     var turn = ChatTurn(question: "q"); turn.peerNotes = [.init(round: 1, speaker: "G", text: "ok", failed: false)]
     let again = try? JSONDecoder().decode(ChatTurn.self, from: JSONEncoder().encode(turn))
     expect(again?.peerNotes?.first?.text == "ok", "review notes are saved with the turn")
-    expect(PeerLink.shared.tools(context: ToolContext(room: UUID(), roots: [])).isEmpty && PeerLink.shared.tools().isEmpty, "ask_peer only in a chat with review on")
+    expect(PeerLink.shared.tools(context: ToolContext(room: UUID(), roots: [])).isEmpty && PeerLink.shared.tools().isEmpty, "ask_peer only in a chat with reviewers")
 
-    // A project chat with review on: Claude asks, ChatGPT answers read only; a due review follows the next answer.
+    // A project chat with Claude and ChatGPT as members: Claude leads; ChatGPT gives opinions and reviews changes, read only.
     let root = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("peer-project-" + UUID().uuidString)
     try! FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     func git(_ args: [String]) -> String { try! ProjectProcess.git(args, root: root.path) }
@@ -301,71 +304,84 @@ func testPeerReview() {
     _ = git(["remote", "add", "origin", root.path + "/unused-origin"])
     try! "Baseline\n".write(to: root.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
     _ = git(["add", "README.md"]); _ = git(["commit", "-m", "Initial"])
+    // The user's own unfinished file is not part of any answer's changes.
+    try! "mine\n".write(to: root.appendingPathComponent("user-notes.txt"), atomically: true, encoding: .utf8)
     let model = AppModel()
     model.accounts = [claude, codex]
     model.schoolOnlyHandoff = false
     let chat = Discussion(model: model)
-    chat.configure { $0.mode = 0; $0.soloAccountID = claude.id; $0.peerReview = true }
+    chat.configure { $0.mode = 0; $0.leadID = claude.id }
+    chat.toggleMember(claude.id); chat.toggleMember(codex.id)
     chat.change(chat.currentID) { $0.workspace = WorkspaceBinding(roots: [WorkspaceRoot(path: root.path, directory: true)], project: try! ProjectProcess.inspect(root.path)) }
+    expect(chat.crew(project: true).map { $0.lead == claude.id && $0.others == [codex.id] } == true, "the lead works, the other member reviews")
     let room = chat.currentID
     var prompts: [String] = [], peerPrompts: [String] = [], peerViews: [WorkspaceBinding] = [], replies: [String] = []
-    var step = 0
+    var step = 0, verdict = "1. README.md:1 says Second; the user asked for Third."
     chat.workspaceAnswer = { account, prompt, binding, _, _ in
         if account.id == codex.id {
             peerPrompts.append(prompt); peerViews.append(binding)
-            return .success(prompt.hasPrefix("[REVIEW]") ? "1. README.md:1 says Second; the user asked for Third." : "Plan is fine, but add a test.")
+            return .success(prompt.hasPrefix("[REVIEW]") ? verdict : "Plan is fine, but add a test.")
         }
         prompts.append(prompt)
         let context = ToolContext(room: room, roots: binding.roots)
+        if prompt.contains("[Review of the changes you just made") {
+            try! "Third\n".write(to: root.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
+            _ = try! ProjectProcess.git(["commit", "-am", "Third"], root: root.path)
+            return .success("Took point 1: README now says Third.")
+        }
         if step == 0 {
-            expect(PeerLink.shared.tools(context: context).contains { $0["name"] as? String == "ask_peer" }, "review on: the answering AI has ask_peer")
+            expect(PeerLink.shared.tools(context: context).contains { $0["name"] as? String == "ask_peer" }, "the lead has ask_peer")
             for _ in 0..<3 {
                 let reply = PeerLink.shared.call("ask_peer", ["message": "My plan: edit README.md"], context: context)
                 replies.append(((reply["content"] as? [[String: Any]])?.first?["text"] as? String) ?? "")
             }
-        } else if step == 1 {
-            try! "Second\n".write(to: root.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
+        } else {
+            try! "Second \(step)\n".write(to: root.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
             _ = try! ProjectProcess.git(["commit", "-am", "Second"], root: root.path)
         }
         return .success("Done \(step).")
     }
-    func send(_ text: String, until done: () -> Bool) {
+    func send(_ text: String) {
         chat.draft = text; chat.send()
         let deadline = Date().addingTimeInterval(30)
-        while Date() < deadline && (chat.anyRunning || !done()) { RunLoop.main.run(until: Date().addingTimeInterval(0.03)) }
+        while Date() < deadline && (chat.anyRunning || chat.current.turns.last?.final == nil) { RunLoop.main.run(until: Date().addingTimeInterval(0.03)) }
     }
-    send("Edit the README.") { chat.configuration.nextReviewAt != nil }
+    send("What does the README say?")
     expect(prompts.first?.contains("[Review is on]") == true && prompts.first?.contains("ask_peer") == true && prompts.first?.contains(chat.label(codex)) == true,
            "the instruction names the reviewer and when to ask")
     expect(replies.count == 3 && replies[0].contains("Plan is fine") && replies[1].contains("Plan is fine") && replies[2].contains("already asked") && peerPrompts.count == 2,
            "ask_peer answers twice per answer, then says to continue alone")
-    expect(peerViews.allSatisfy { $0.project == nil && $0.face == false && $0.roots.allSatisfy { $0.writable != true } }, "the other AI only reads, with no tools of its own")
-    expect(peerPrompts.first?.contains("Edit the README.") == true && peerPrompts.first?.contains("My plan: edit README.md") == true, "the other AI sees the user's message and the plan")
     expect(chat.current.turns.last?.peerNotes?.count == 2 && chat.current.turns.last?.peerNotes?.first?.text.contains("Plan is fine") == true, "each opinion shows under the answer")
-    expect(chat.configuration.nextReviewAt != nil && chat.configuration.pendingReview == nil && peerPrompts.allSatisfy { !$0.hasPrefix("[REVIEW]") }, "first answer only schedules the random review")
+    expect(peerPrompts.allSatisfy { !$0.hasPrefix("[REVIEW]") } && prompts.count == 1, "a question that changes nothing is not reviewed")
+    expect(chat.configuration.lastSoloAccountID == claude.id, "the lead is kept")
 
-    // The review is due and there is a new commit: the other AI reviews the diff and its findings wait for the next answer.
+    // A change: ChatGPT reviews this answer's commit (not the user's file); Claude fixes what is right, once.
     step = 1
-    chat.change(room, save: true) { $0.configuration?.nextReviewAt = Date().addingTimeInterval(-1) }
-    send("Change README to Second.") { chat.configuration.pendingReview != nil }
+    send("Change README to Second.")
     let review = peerPrompts.last ?? ""
-    expect(review.hasPrefix("[REVIEW]") && review.contains("+Second") && review.contains("Second"), "random review reads the commits since the last review")
-    expect(chat.configuration.pendingReview?.contains("README.md:1") == true && chat.configuration.lastReviewSHA == git(["rev-parse", "HEAD"])
-           && (chat.configuration.nextReviewAt ?? .distantPast) > Date().addingTimeInterval(39 * 60), "review findings are kept, and the next review is 40–80 minutes away")
-    let card = chat.current.turns.last?.peerNotes?.last
-    expect(card?.failed == false && card?.text.contains("README.md:1") == true && card?.headline?.contains("README.md:1") == true, "the review shows as a card under the answer")
+    expect(review.hasPrefix("[REVIEW]") && review.contains("+Second 1") && review.contains("Change README to Second.") && !review.contains("user-notes.txt"),
+           "the review reads only what this answer changed")
+    expect(peerViews.allSatisfy { $0.project == nil && $0.face == false && $0.roots.allSatisfy { $0.writable != true } }, "the reviewer only reads, with no tools of its own")
+    let fix = prompts.last ?? ""
+    expect(fix.contains("[Review of the changes you just made") && fix.contains("README.md:1 says Second") && fix.contains("Done 1."), "the lead gets the findings and its own reply")
+    let last = chat.current.turns.last
+    expect(last?.final?.contains("Done 1.") == true && last?.final?.contains("README now says Third") == true && git(["log", "-1", "--format=%s"]) == "Third",
+           "the fix is made in the same turn and shown after the first reply")
+    expect(last?.peerNotes?.count == 1 && last?.peerNotes?.first?.headline?.contains("README.md:1") == true && peerPrompts.filter { $0.hasPrefix("[REVIEW]") }.count == 1,
+           "one review card, and no second review after the fix")
 
-    step = 2
-    send("Anything else?") { chat.current.turns.last?.final != nil && !chat.anyRunning }
-    expect(prompts.last?.contains("[Review of the recent work by") == true && prompts.last?.contains("README.md:1") == true && chat.configuration.pendingReview == nil,
-           "the next answer gets the findings once, to judge itself")
+    // A clean review: no fix pass.
+    step = 2; verdict = "No issues"
+    let asked = prompts.count
+    send("Change README again.")
+    expect(prompts.count == asked + 1 && chat.current.turns.last?.final == "Done 2." && chat.current.turns.last?.peerNotes?.first?.failed == false, "no issues: the answer stands")
 
-    // Review off: no tool, no rule, no review.
-    chat.configure { $0.peerReview = nil }
+    // One member left: no ask_peer, no review.
+    chat.toggleMember(codex.id)
     step = 3
     let before = peerPrompts.count
-    send("Thanks.") { chat.current.turns.last?.final != nil && !chat.anyRunning }
+    send("Change README once more.")
     expect(prompts.last?.contains("[Review is on]") == false && peerPrompts.count == before && PeerLink.shared.tools(context: ToolContext(room: room, roots: [])).isEmpty,
-           "review off: no ask_peer and no reviews")
-    print("PASS: review (ask_peer both ways, read-only other AI, two asks per answer, random review of new commits, findings handed on once, older files load)")
+           "one member: no ask_peer and no reviews")
+    print("PASS: review (members: lead works, the other opines and reviews read only, two asks per answer, only changes reviewed, one fix in the same turn, older review chats migrate)")
 }

@@ -48,8 +48,8 @@ extension Discussion {
     }
 
     func runProjectSolo(question: String, history: [ChatTurn], rules: String, config: ChatConfiguration,
-                        mentions: [String], cancellation: DebateCancellation, id: UUID, index: Int, binding: WorkspaceBinding,
-                        fresh: String? = nil, keepState: Bool = false) {
+                        mentions: [String], reviewers: [String] = [], cancellation: DebateCancellation, id: UUID, index: Int,
+                        binding: WorkspaceBinding, fresh: String? = nil, keepState: Bool = false) {
         guard let selected = binding.project else { finish(id, index, error: "No project selected."); return }
         let fullAuto = binding.isFullAuto
         let run = ProjectRun(room: id, binding: selected, token: cancellation, fullAuto: fullAuto)
@@ -93,6 +93,9 @@ extension Discussion {
         var projectSchool = config.school
         var excluded = Set<String>(), checkpoint = run.checkpoint("Project turn started")
         var preferred = mentions.first ?? config.soloAccountID ?? config.lastSoloAccountID
+        // Before the work starts: what the project looks like, so the review covers only this answer's changes
+        // (also when another AI took over after a usage limit).
+        let start = reviewers.isEmpty ? nil : ProjectSnapshot.take(root: selected.root)
         while !cancellation.isCancelled && Date() < run.deadline && !run.activeExpired {
             let eligible = model.accounts.filter { [.claude, .codex].contains($0.provider) && !excluded.contains($0.id) }
             let account = preferred.flatMap { wanted in eligible.first { $0.id == wanted } }
@@ -102,30 +105,30 @@ extension Discussion {
             run.nextAttempt(); workspace.projectGeneration = run.generation; activeWorkspace = workspace
             let speaker = label(account)
             changeTurn(id, index) { $0.status = speaker + L(" · 프로젝트 작업 중", " · working on project") }
-            var instruction = soloInstruction(account, binding: workspace, helper: "",
-                                              project: ProjectPart(root: selected.root, fullAuto: fullAuto, rules: projectRules), chat: id)
-            if keepState { instruction += "\n" + Self.stateRule(current: Self.loadState(id)) }
-            instruction += "\n[Verified app checkpoint; do not repeat completed operations blindly]\n" + checkpoint
-            let prompt = Self.soloContext(rules: rules, transcript: transcript) + "\n[SOLO TURN]\n" + instruction
-            let freshPrompt = fresh.map { Self.soloContext(rules: rules, transcript: $0) + "\n[SOLO TURN]\n" + instruction }
-            let progress: (AnswerProgress) -> Void = { update in
-                switch update {
-                case .text(let text): self.changeTurn(id, index) { $0.partial = Self.extractState(FaceLink.extract(text).text).reply; $0.partialBy = speaker }
-                case .activity(let text): self.changeTurn(id, index) { $0.activity = text }
+            func attempt(_ extra: String, transcript: String, fresh: String?) -> Result<String, Answerer.Failure> {
+                var instruction = soloInstruction(account, binding: workspace, helper: "",
+                                                  project: ProjectPart(root: selected.root, fullAuto: fullAuto, rules: projectRules), chat: id)
+                if keepState { instruction += "\n" + Self.stateRule(current: Self.loadState(id)) }
+                instruction += "\n[Verified app checkpoint; do not repeat completed operations blindly]\n" + checkpoint + extra
+                let prompt = Self.soloContext(rules: rules, transcript: transcript) + "\n[SOLO TURN]\n" + instruction
+                let freshPrompt = fresh.map { Self.soloContext(rules: rules, transcript: $0) + "\n[SOLO TURN]\n" + instruction }
+                let progress: (AnswerProgress) -> Void = { update in
+                    switch update {
+                    case .text(let text): self.changeTurn(id, index) { $0.partial = Self.extractState(FaceLink.extract(text).text).reply; $0.partialBy = speaker }
+                    case .activity(let text): self.changeTurn(id, index) { $0.activity = text }
+                    }
                 }
-            }
-            let started = Date()
-            let result: Result<String, Answerer.Failure>
-            if let workspaceAnswer { result = workspaceAnswer(account, prompt, workspace, run.attempt, progress) }
-            else {
-                result = nativeSessions.ask(account, room: id, prompt: prompt, images: activeImages,
-                                            timeout: run.deadline.timeIntervalSinceNow, token: run.attempt, web: true, speaker: speaker, fresh: freshPrompt,
-                                            invoke: { text, images, session in
+                if let workspaceAnswer { return workspaceAnswer(account, prompt, workspace, run.attempt, progress) }
+                return nativeSessions.ask(account, room: id, prompt: prompt, images: activeImages,
+                                          timeout: run.deadline.timeIntervalSinceNow, token: run.attempt, web: true, speaker: speaker, fresh: freshPrompt,
+                                          invoke: { text, images, session in
                     Answerer.ask(account, prompt: text, timeout: run.deadline.timeIntervalSinceNow, cancellation: run.attempt,
                                  images: images, web: true, session: session,
                                  workspace: WorkspaceInvocation(binding: workspace, room: id, readOnly: false, backupPath: self.activeWorkspaceBackupPath), progress: progress)
                 }, note: { text in DispatchQueue.main.async { self.sessionNote = text } })
             }
+            let started = Date()
+            let result = attempt("", transcript: transcript, fresh: fresh)
             run.attempt.cancel() // All app commands and CLI descendants finish before another AI can write.
             ToolHub.shared.revoke(project: run.id)
             if cancellation.isCancelled { break }
@@ -146,6 +149,36 @@ extension Discussion {
                     saved.lastSoloAccountID = account.id
                     if self.model.schoolOnlyHandoff && saved.school == nil { saved.school = account.isSchool }
                     conversation.configuration = saved
+                }
+                // Members who review: when this answer changed the project, one of them reads the changes and the
+                // lead fixes what is right, once, in the same turn (with the same backup and project lock).
+                if let start, !cancellation.isCancelled {
+                    run.attempt.cancel(); ToolHub.shared.revoke(project: run.id)
+                    run.nextAttempt()
+                    if let findings = reviewChanges(id: id, index: index, worker: account, reviewers: reviewers, binding: workspace,
+                                                    root: selected.root, start: start, question: question, reply: text, token: run.attempt),
+                       !cancellation.isCancelled {
+                        workspace.projectGeneration = run.generation; activeWorkspace = workspace
+                        checkpoint = run.checkpoint("Work done by " + speaker + "; review findings received. Fix what is right; do not redo finished steps.")
+                        changeTurn(id, index) { $0.status = speaker + L(" · 검수 반영 중", " · fixing review findings") }
+                        let after = transcript + "\n[" + speaker + "]\n" + text
+                        let fixed = attempt("\n" + findings, transcript: after, fresh: fresh.map { $0 + "\n[" + speaker + "]\n" + text })
+                        run.attempt.cancel(); ToolHub.shared.revoke(project: run.id)
+                        if !cancellation.isCancelled {
+                            switch fixed {
+                            case .success(let raw):
+                                let (tagless, mood) = FaceLink.extract(raw)
+                                if let mood { FaceLink.shared.show(mood) }
+                                let (reply, newState) = Self.extractState(tagless)
+                                if let newState { self.saveState(newState, room: id, index: index) }
+                                let combined = text + "\n\n---\n\n**" + L("검수 반영", "After the review") + "**\n\n" + reply
+                                changeTurn(id, index, save: true) { $0.final = combined; $0.partial = nil; $0.activity = nil; $0.status = "" }
+                            case .failure(let failure):
+                                let entry = ChatTurn.Entry(round: 1, speaker: speaker, text: L("검수 반영 실패: ", "Could not apply the review: ") + Self.describe(failure), failed: true)
+                                changeTurn(id, index, save: true) { $0.moreAnswers = ($0.moreAnswers ?? []) + [entry]; $0.partial = nil; $0.activity = nil }
+                            }
+                        }
+                    }
                 }
                 for reviewerID in mentions.dropFirst() where reviewerID != account.id && !cancellation.isCancelled {
                     guard let reviewer = model.accounts.first(where: { $0.id == reviewerID }) else { continue }

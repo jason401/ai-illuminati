@@ -8,7 +8,7 @@ import UniformTypeIdentifiers
 final class AppModel: ObservableObject {
     @Published var accounts: [Account] {
         didSet {
-            if persist { AccountStore.save(accounts) }
+            if persist { AccountStore.save(accounts); DeviceSync.shared.remember(oldValue + accounts) }
             onAccountsChange?()
         }
     }

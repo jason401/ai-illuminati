@@ -166,6 +166,7 @@ final class DeviceSync: ObservableObject {
         ticker.tolerance = 30
         RunLoop.main.add(ticker, forMode: .common)
         timer = ticker
+        remember(accounts())
         if settings.enabled { reconcile(); scan() }
     }
 
@@ -188,14 +189,20 @@ final class DeviceSync: ObservableObject {
     // The accounts that tell a chat's side: this Mac's accounts and every Enterprise account it had before.
     func sideAccounts() -> [Account] {
         let current = accounts()
-        let fresh = current.filter { account in
-            account.isSchool && !schoolSeen.contains { $0.id == account.id && $0.name == account.name && $0.provider == account.provider }
-        }
-        if !fresh.isEmpty {
-            schoolSeen += fresh.map { Account(id: $0.id, provider: $0.provider, name: $0.name, school: true) }
-            if persist, let data = try? JSONEncoder().encode(schoolSeen) { UserDefaults.app.set(data, forKey: Self.schoolKey) }
-        }
+        remember(current)
         return current + schoolSeen
+    }
+
+    // Keeps the Enterprise ones among these accounts, sync on or off (called before an account is removed,
+    // renamed or set to personal, and at launch).
+    func remember(_ list: [Account]) {
+        let before = schoolSeen.count
+        for account in list where account.isSchool
+            && !schoolSeen.contains(where: { $0.id == account.id && $0.name == account.name && $0.provider == account.provider }) {
+            schoolSeen.append(Account(id: account.id, provider: account.provider, name: account.name, school: true))
+        }
+        guard schoolSeen.count > before else { return }
+        if persist, let data = try? JSONEncoder().encode(schoolSeen) { UserDefaults.app.set(data, forKey: Self.schoolKey) }
     }
 
     func shares(_ conversation: Conversation, accounts: [Account]) -> Bool {

@@ -118,7 +118,15 @@ func testDeviceSync() {
     lead.peerNotes = [ChatTurn.Entry(round: 1, speaker: "ChatGPT (Work)", text: "review", failed: false)]; reviewed.turns = [lead]
     expect(DeviceSync.isSchool(reviewed, accounts: accounts), "a chat an Enterprise account reviewed is Enterprise")
 
-    // It stays Enterprise after its account is removed, or set to personal, on this Mac.
+    // It stays Enterprise after its account is removed, or set to personal, on this Mac, even when sync was
+    // off while that happened (the accounts are kept as they change).
+    let off = DeviceSync(deviceID: "mac-off", persist: false, settings: DeviceSyncSettings())
+    off.remember(accounts)
+    off.accounts = { [personal] }
+    var offOn = on; offOn.folder = folder.appendingPathComponent("off").path
+    off.settings = offOn
+    off.waitForWrites()
+    expect(!off.shares(school, accounts: off.sideAccounts()), "an Enterprise account removed while sync was off still keeps its chats off")
     a.accounts = { accounts }
     expect(!a.shares(school, accounts: a.sideAccounts()), "Enterprise chats are not shared")
     mixed.shareToDevices = true

@@ -406,6 +406,7 @@ extension Discussion {
         if Self.asksAboutYouTube(question), let gemini = model.accounts.first(where: { $0.provider == .gemini }), !mentions.contains(gemini.id),
            model.latestUsage[gemini.id]?.needsLogin != true {
             changeTurn(id, index) { $0.status = L("Gemini가 유튜브를 찾는 중…", "Gemini is searching YouTube…") }
+            noteSent(gemini, room: id)
             let result = debateAnswer(gemini, """
                 \(GeminiLinks.toolNote)Find YouTube videos for the user's request below. For each useful one give the title, channel, link,
                 and what its page, description or transcript found by search says. Say plainly that you read pages and search

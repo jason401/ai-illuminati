@@ -260,6 +260,7 @@ extension Discussion {
             let sorter = RouteSorter.current
             (route, by) = Route.decide(local: { LocalModel.judge(question: question, history: history, sorter: sorter) }, localName: sorter.title, judge: judge, ask: { account in
                 if cancellation.isCancelled { return nil }
+                self.noteSent(account, room: self.currentID)
                 // No workspace and no web: the judge has no tools at all.
                 guard case .success(let text) = Answerer.ask(account, prompt: prompt, timeout: Route.memberTimeout, cancellation: cancellation) else { return nil }
                 return text

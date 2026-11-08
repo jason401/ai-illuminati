@@ -108,6 +108,7 @@ extension Discussion {
     }
 
     func request(_ account: Account, prompt: String, timeout: TimeInterval = 240) -> Result<String, Answerer.Failure> {
+        noteSent(account, room: currentID)
         if activeImages.isEmpty { return answer(account, activeDocumentText + "\n" + prompt, timeout) }
         return Answerer.ask(account, prompt: activeDocumentText + "\n" + imageContext + "\n" + prompt, timeout: timeout, images: activeImages)
     }
@@ -118,6 +119,7 @@ extension Discussion {
                        progress: ((AnswerProgress) -> Void)? = nil) -> Result<String, Answerer.Failure> {
         // `workspace` replaces the chat's folders for this one request (a read-only view for a second AI).
         let activeWorkspace = workspace ?? self.activeWorkspace
+        noteSent(account, room: activeSessionRoom ?? currentID)
         let selected: [MaterialContext.Part] = []
         let materialText = selected.isEmpty ? "" : "\n[Selected source excerpts; not an exhaustive review. Use Collaboration for full coverage.]\n" + MaterialContext.quote(selected)
         pictureLock.lock(); let shared = activeImages, sharedContext = imageContext; pictureLock.unlock()

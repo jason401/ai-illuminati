@@ -166,7 +166,8 @@ extension Discussion {
 
     func peerAnswer(_ peer: Account, prompt: String, view: WorkspaceBinding, room: UUID, timeout: TimeInterval,
                     token: DebateCancellation) -> Result<String, Answerer.Failure> {
-        workspaceAnswer?(peer, prompt, view, token, nil)
+        noteSent(peer, room: room)
+        return workspaceAnswer?(peer, prompt, view, token, nil)
             ?? Answerer.ask(peer, prompt: prompt, timeout: timeout, cancellation: token, web: true,
                             workspace: WorkspaceInvocation(binding: view, room: room))
     }

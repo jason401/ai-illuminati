@@ -166,9 +166,17 @@ struct ChatView: View {
         let selected = conversation.id == discussion.currentID && discussion.viewingRemote == nil
         let hovered = discussion.hoverKey == conversation.id.uuidString
         return HStack(spacing: 4) {
-            Text(conversation.turns.isEmpty ? L("새 대화", "New chat") : conversation.title)
-                .lineLimit(1).truncationMode(.tail)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            if conversation.isProjectChat {
+                Image(systemName: "chevron.left.forwardslash.chevron.right")
+                    .font(.system(size: 9, weight: .semibold)).foregroundColor(.secondary).frame(width: 14)
+                    .help(L("작업방: Git 프로젝트가 연결된 대화", "Work chat: a Git project is linked"))
+            }
+            HStack(spacing: 5) {
+                Text(conversation.turns.isEmpty ? L("새 대화", "New chat") : conversation.title)
+                    .lineLimit(1).truncationMode(.tail)
+                if conversation.side != .personal { EnterpriseBadge(side: conversation.side) }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
             if approvals.requests.contains(where: { $0.room == conversation.id }) {
                 Circle().fill(Color.orange).frame(width: 7, height: 7)
                     .help(L("허가를 기다려요", "Waiting for approval"))

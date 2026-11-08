@@ -614,6 +614,10 @@ struct Conversation: Identifiable, Codable {
     var pinned: Bool?   // kept at the top of the list
     var origin: SyncOrigin?       // continued on this Mac from another Mac's copy (DeviceSync.swift)
     var shareToDevices: Bool?     // shown on your other Macs (when only chosen chats are shared)
+    // The Enterprise accounts this chat's content was sent to (Enterprise.swift). Empty = personal;
+    // nil = an older chat, told once at launch. Unsure: could not be told for certain (kept apart like Enterprise).
+    var enterprise: [EnterpriseMark]? = []
+    var enterpriseUnsure: Bool?
 
     // Something worth keeping: messages, materials or a linked folder. A chat with only settings is
     // "blank": it is not kept in the list once you leave it.
@@ -771,6 +775,7 @@ final class Discussion: ObservableObject {
                 while files == nil, !token.isCancelled, let maker = pictureMakers(for: account, chat: id, excluded: excluded).first {
                     if let index { changeTurn(id, index) { $0.status = L("\(self.label(maker))가 그림 그리는 중…", "\(self.label(maker)) is drawing…") } }
                     let started = Date()
+                    noteSent(maker, room: id)
                     switch debateAnswer(maker, Pictures.makerPrompt(block.request), 600, token, false) {
                     case .success:
                         let made = Pictures.newCodexImages(maker, since: started).compactMap { try? Data(contentsOf: $0) }
@@ -922,6 +927,7 @@ final class Discussion: ObservableObject {
         let fresh = blanks.first ?? Conversation()
         conversations = [fresh] + loaded.filter(\.hasContent)
         currentID = fresh.id
+        classifyOldChats(accounts: model.accounts + DeviceSync.shared.rememberedSchool)
     }
 
     // A worker for one message in one chat: same accounts, sessions and test hooks, only that chat.

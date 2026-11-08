@@ -66,6 +66,7 @@ extension Discussion {
     func collaborationCall(_ account: Account, prompt: String, images: [URL], role: String,
                            room: UUID, token: DebateCancellation, web: Bool = false, mutable: Bool = false) -> Result<String, Answerer.Failure> {
         if token.isCancelled { return .failure(.failed("Cancelled")) }
+        noteSent(account, room: room)
         let marker = ["Plan", "계획", "Integrate deliverable", "최종 통합"].contains(role) ? "[MODE3 MODERATION]" : "[MODE3 SPEECH]"
         let full = "[COLLABORATION]\n" + prompt + "\n" + marker + "\nRole: " + role
         let invoke: (String, [URL], NativeSessionCall?) -> Result<String, Answerer.Failure> = { text, pictures, session in

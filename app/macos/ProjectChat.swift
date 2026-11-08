@@ -234,6 +234,7 @@ extension Discussion {
                     case .activity(let text): self.changeTurn(id, index) { $0.activity = text }
                     }
                 }
+                noteSent(account, room: id)
                 if let workspaceAnswer { return workspaceAnswer(account, prompt, workspace, run.attempt, progress) }
                 return nativeSessions.ask(account, room: id, prompt: prompt, images: activeImages,
                                           timeout: run.deadline.timeIntervalSinceNow, token: run.attempt, web: true, speaker: speaker, fresh: freshPrompt,
@@ -303,6 +304,7 @@ extension Discussion {
                     view.level = .view; view.project = nil; view.projectRunID = nil; view.projectGeneration = nil
                     view.roots = workspace.roots.map { WorkspaceRoot(path: $0.path, directory: $0.directory, writable: $0.path == Self.chatFolder(id).path ? true : nil) }
                     let reviewPrompt = Self.soloContext(rules: rules, transcript: transcript + "\n[Writer result]\n" + text) + "\n[SOLO TURN]\nReview the linked project read-only. Do not edit the project or run Git writes.\n" + run.checkpoint("Read-only review")
+                    noteSent(reviewer, room: id)
                     let reviewResult = workspaceAnswer?(reviewer, reviewPrompt, view, run.attempt, nil)
                         ?? Answerer.ask(reviewer, prompt: reviewPrompt, timeout: min(900, run.deadline.timeIntervalSinceNow), cancellation: run.attempt, workspace: WorkspaceInvocation(binding: view, room: id))
                     run.attempt.cancel()

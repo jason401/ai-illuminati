@@ -30,6 +30,18 @@ private struct EmptyPreviewLogin: GoogleTokenStore {
         }
         conversation.turns = [turn]
         chat.conversations = [conversation]; chat.currentID = conversation.id
+        if CommandLine.arguments.contains("--list") {
+            // List marks: a work chat (Git project), an Enterprise chat, an unsure copy and a personal chat.
+            func listed(_ title: String, _ edit: (inout Conversation) -> Void) -> Conversation {
+                var c = Conversation(); c.title = title; c.turns = [ChatTurn(question: title)]; edit(&c); return c
+            }
+            chat.conversations += [
+                listed("AI Illuminati work") { $0.workspace = WorkspaceBinding(roots: [], project: ProjectBinding(root: "/tmp/p", common: "", remote: "", remoteURL: "")) },
+                listed("Grant draft for school") { $0.enterprise = [EnterpriseMark(Account(id: "s", provider: .claude, name: "School", dir: nil, school: true))] },
+                listed("Copied from the iMac") { $0.enterpriseUnsure = true },
+                listed("Weekend trip ideas") { _ in },
+            ]
+        }
         if CommandLine.arguments.contains("--project-approval") {
             ProjectCenter.shared.requests = [ProjectApproval(room: conversation.id, run: UUID(), title: "Run project command", detail: "Runs outside the AI sandbox as your user.\n/Example/Project\n/bin/zsh tools/tests/run_mode2.sh")]
         }

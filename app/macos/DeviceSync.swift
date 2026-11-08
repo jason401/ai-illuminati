@@ -172,10 +172,10 @@ final class DeviceSync: ObservableObject {
 
     // MARK: What is shared
 
-    // A chat is Enterprise when it was marked so, or an Enterprise account picked or answered it (even in a
+    // A chat is Enterprise when its record says so (Enterprise.swift), it was marked so, or an Enterprise account picked or answered it (even in a
     // chat marked personal, as when one is called with @ or chats are not kept apart).
     static func isSchool(_ conversation: Conversation, accounts: [Account]) -> Bool {
-        if conversation.configuration?.school == true { return true }
+        if conversation.side != .personal || conversation.configuration?.school == true { return true }
         let config = conversation.configuration
         let ids = Set([config?.soloAccountID, config?.lastSoloAccountID, config?.leaderAccountID].compactMap { $0 } + (config?.accountIDs ?? []) + (config?.memberIDs ?? []))
         let schoolNames = Set(accounts.filter(\.isSchool).flatMap { [$0.name, "\($0.provider.title) (\($0.name))"] })
@@ -187,6 +187,8 @@ final class DeviceSync: ObservableObject {
     }
 
     // The accounts that tell a chat's side: this Mac's accounts and every Enterprise account it had before.
+    var rememberedSchool: [Account] { schoolSeen }
+
     func sideAccounts() -> [Account] {
         let current = accounts()
         remember(current)
@@ -562,6 +564,7 @@ extension Discussion {
                                        modeVersion: Self.modernModes ? 2 : nil)
         config.school = snap.school
         chat.configuration = config
+        chat.enterpriseUnsure = true   // which accounts saw it there is not in the copy
         chat.origin = SyncOrigin(device: device, deviceName: deviceName, chat: snap.id, lastTurn: snap.turns.last?.id,
                                  contentAt: snap.updatedAt, importedAt: Date())
         if let state = snap.state {

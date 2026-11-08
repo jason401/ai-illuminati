@@ -483,9 +483,17 @@ struct ChatView: View {
                             if index > 0, (turn.mode ?? 1) != (conversation.turns[index - 1].mode ?? 1) || turn.modeVersion != conversation.turns[index - 1].modeVersion {
                                 ModeChangeMarker(mode: turn.mode ?? 1, version: turn.modeVersion)
                             }
+                            let last = index == conversation.turns.count - 1
+                            if let day = Self.dayLine(conversation, index) {
+                                Text(day)
+                                    .font(.system(size: 12, weight: .medium)).foregroundColor(.secondary)
+                                    .frame(maxWidth: .infinity)
+                            }
                             TurnView(turn: turn, discussion: discussion, busy: busy,
                                      openEntries: discussion.openEntries.intersection(turn.entries.map(\.id)),
-                                     accountLabels: accountLabels, chatFolder: chatFolder, language: AppLanguage.current)
+                                     accountLabels: accountLabels, chatFolder: chatFolder, language: AppLanguage.current,
+                                     askedTime: turn.askedAt.map { ChatTime.stamp($0) },
+                                     answeredTime: (turn.answeredAt ?? (last && turn.askedAt == nil && turn.final != nil ? conversation.updatedAt : nil)).map { ChatTime.stamp($0) })
                                 .equatable()
                         }
                         .id(turn.id)
@@ -532,8 +540,12 @@ struct ChatView: View {
             }
         }
         // Only a new turn in the same chat: switching chats makes a new scroll view, which does not fire this.
+        // Not animated, and once more after the lazy list has laid the new turn out: an animated jump
+        // to a turn it knew only by estimate could stop in empty space until the next scroll.
         .onChange(of: discussion.current.turns.count) { _ in
-            if let last = discussion.current.turns.last { withAnimation { proxy.scrollTo(last.id, anchor: .top) } }
+            guard let last = discussion.current.turns.last?.id else { return }
+            proxy.scrollTo(last, anchor: .top)
+            DispatchQueue.main.async { if discussion.current.turns.last?.id == last { proxy.scrollTo(last, anchor: .top) } }
         }
         // A new scroll view also when the window is reopened (showLatestTurns), so it opens at the latest turn again.
         .id("\(discussion.currentID)-\(discussion.transcriptGeneration)")
@@ -542,6 +554,15 @@ struct ChatView: View {
     }
 
     static let bottomID = "transcript-bottom"
+
+    // The day above a turn when it starts a new day (turns from before times were saved have none).
+    static func dayLine(_ conversation: Conversation, _ index: Int) -> String? {
+        let turns = conversation.turns
+        let when = { (i: Int) in ChatTime.when(turns[i], last: i == turns.count - 1, updatedAt: conversation.updatedAt) }
+        guard let date = when(index) else { return nil }
+        if index > 0, let before = when(index - 1), Calendar.current.isDate(before, inSameDayAs: date) { return nil }
+        return ChatTime.day(date)
+    }
 
     // Scrolls a just opened chat to its latest turn (twice: the lazy list knows far turns only by estimate),
     // then lets scrolling to the top add earlier turns.
@@ -1350,7 +1371,8 @@ private struct RemoteChatView: View {
                         ForEach(snap.turns) { turn in
                             TurnView(turn: turn, discussion: discussion, busy: true,
                                      openEntries: discussion.openEntries.intersection(turn.entries.map(\.id)), accountLabels: [:],
-                                     chatFolder: "", language: AppLanguage.current)
+                                     chatFolder: "", language: AppLanguage.current,
+                                     askedTime: turn.askedAt.map { ChatTime.stamp($0) }, answeredTime: turn.answeredAt.map { ChatTime.stamp($0) })
                         }
                     }
                     .frame(maxWidth: 760, alignment: .leading)
@@ -1436,10 +1458,13 @@ private struct TurnView: View, Equatable {
     let accountLabels: [String: String]
     let chatFolder: String
     let language: AppLanguage
+    let askedTime: String?       // "오후 3:12" under the message
+    let answeredTime: String?    // the same next to the answer's Copy
 
     static func == (a: TurnView, b: TurnView) -> Bool {
         a.turn == b.turn && a.busy == b.busy && a.openEntries == b.openEntries
             && a.accountLabels == b.accountLabels && a.chatFolder == b.chatFolder && a.language == b.language
+            && a.askedTime == b.askedTime && a.answeredTime == b.answeredTime
     }
 
     var body: some View {
@@ -1471,6 +1496,7 @@ private struct TurnView: View, Equatable {
                         Text("@ " + mentions.map { accountLabels[$0] ?? $0 }.joined(separator: ", "))
                             .font(.system(size: 11)).foregroundColor(.secondary)
                     }
+                    if let askedTime { timeText(askedTime) }
                     CopyButton(text: turn.question, key: "question-\(turn.id)")
                 }
             }
@@ -1548,7 +1574,10 @@ private struct TurnView: View, Equatable {
                         .frame(maxWidth: .infinity, alignment: .leading)
                     let pictures = Self.finalPictures(turn, final: final)
                     if !pictures.isEmpty { PictureStrip(images: pictures, size: 180) }
-                    CopyButton(text: final, key: "final-\(turn.id)")
+                    HStack(spacing: 6) {
+                        CopyButton(text: final, key: "final-\(turn.id)")
+                        if let answeredTime { timeText(answeredTime) }
+                    }
                 }
             } else if let final = turn.final {
                 VStack(alignment: .leading, spacing: 6) {
@@ -1564,6 +1593,7 @@ private struct TurnView: View, Equatable {
                                 .font(.caption)
                         }
                         CopyButton(text: final, key: "final-\(turn.id)")
+                        if let answeredTime { timeText(answeredTime) }
                     }
                 }
                 .padding(12)
@@ -1636,6 +1666,10 @@ private struct TurnView: View, Equatable {
                 }
             }
         }
+    }
+
+    private func timeText(_ time: String) -> some View {
+        Text(time).font(.system(size: 11)).foregroundColor(.secondary)
     }
 
     private func attachedImages(_ images: [ChatImage]) -> some View {

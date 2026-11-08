@@ -2051,3 +2051,36 @@ func testChatNotes() {
     print("PASS: chat notes are the user's, saved per chat, read by the AI")
 }
 testChatNotes()
+
+func testChatTime() {
+    // macOS puts a narrow no-break space before AM/PM.
+    func plain(_ text: String) -> String { text.replacingOccurrences(of: "\u{202F}", with: " ") }
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = .current
+    let now = calendar.date(from: DateComponents(year: 2026, month: 11, day: 7, hour: 18, minute: 30))!
+    let today = calendar.date(from: DateComponents(year: 2026, month: 11, day: 7, hour: 15, minute: 12))!
+    let yesterday = calendar.date(from: DateComponents(year: 2026, month: 11, day: 6, hour: 15, minute: 12))!
+    let earlier = calendar.date(from: DateComponents(year: 2026, month: 10, day: 24, hour: 15, minute: 12))!
+    let lastYear = calendar.date(from: DateComponents(year: 2025, month: 10, day: 24, hour: 0, minute: 47))!
+    expect(plain(ChatTime.stamp(today, now: now, language: .korean)) == "오후 3:12", "today: time only (ko) \(plain(ChatTime.stamp(today, now: now, language: .korean)))")
+    expect(plain(ChatTime.stamp(today, now: now, language: .english)) == "3:12 PM", "today: time only (en) \(plain(ChatTime.stamp(today, now: now, language: .english)))")
+    expect(plain(ChatTime.stamp(yesterday, now: now, language: .korean)) == "어제 오후 3:12", "yesterday (ko)")
+    expect(plain(ChatTime.stamp(yesterday, now: now, language: .english)) == "Yesterday 3:12 PM", "yesterday (en)")
+    let ko = plain(ChatTime.stamp(earlier, now: now, language: .korean))
+    expect(ko.contains("10월 24일") && ko.contains("3:12") && !ko.contains("2026"), "earlier this year: date and time (ko) \(ko)")
+    let en = plain(ChatTime.stamp(earlier, now: now, language: .english))
+    expect(en.contains("Oct 24") && en.contains("3:12") && !en.contains("2026"), "earlier this year: date and time (en) \(en)")
+    expect(plain(ChatTime.stamp(lastYear, now: now, language: .english)).contains("2025"), "another year shows the year")
+    expect(plain(ChatTime.day(earlier, now: now, language: .korean)) == "10월 24일 (토)", "day line (ko) \(plain(ChatTime.day(earlier, now: now, language: .korean)))")
+    expect(plain(ChatTime.day(earlier, now: now, language: .english)) == "Sat, Oct 24", "day line (en) \(plain(ChatTime.day(earlier, now: now, language: .english)))")
+    // Older chats have no times: they still open, and only their last turn borrows the chat's time.
+    let old = try! JSONDecoder().decode(ChatTurn.self, from: Data(#"{"id":"\#(UUID().uuidString)","question":"q","status":"","entries":[]}"#.utf8))
+    expect(old.askedAt == nil && old.answeredAt == nil, "turns saved before times decode without them")
+    expect(ChatTime.when(old, last: false, updatedAt: now) == nil && ChatTime.when(old, last: true, updatedAt: now) == now, "only the last old turn uses the chat's time")
+    var turn = ChatTurn(question: "q")
+    turn.askedAt = today; turn.answeredAt = now
+    let back = try! JSONDecoder().decode(ChatTurn.self, from: JSONEncoder().encode(turn))
+    expect(back.askedAt == today && back.answeredAt == now, "times are saved with the turn")
+    print("PASS: chat times (today, yesterday, earlier, day lines, older chats without times)")
+}
+testChatTime()

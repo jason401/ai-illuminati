@@ -434,6 +434,52 @@ struct ChatTurn: Identifiable, Codable, Equatable {
     var activity: String?       // mode 0: what that AI is doing now (reading files, searching…)
     var voteOptions: [String]?  // mode 4: the choices voted on
     var votes: [VoteBallot]?    // mode 4: one ballot per AI, in the team's order
+    var askedAt: Date?          // when the message was sent (missing in older chats)
+    var answeredAt: Date?       // when the answer finished
+}
+
+// Times under the messages and the day lines between them, like the desktop apps.
+enum ChatTime {
+    static func calendar(_ language: AppLanguage) -> Calendar {
+        var calendar = Calendar.current
+        calendar.locale = language.locale
+        return calendar
+    }
+
+    private static func format(_ template: String, _ date: Date, _ language: AppLanguage) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = language.locale
+        formatter.setLocalizedDateFormatFromTemplate(template)
+        return formatter.string(from: date)
+    }
+
+    // "오후 3:12" today, "어제 오후 3:12", then "10월 24일 오후 3:12" (with the year when not this year).
+    static func stamp(_ date: Date, now: Date = Date(), language: AppLanguage = .current) -> String {
+        let calendar = calendar(language)
+        let time = format("jmm", date, language)
+        if calendar.isDate(date, inSameDayAs: now) { return time }
+        if let yesterday = calendar.date(byAdding: .day, value: -1, to: now), calendar.isDate(date, inSameDayAs: yesterday) {
+            return (language == .korean ? "어제 " : "Yesterday ") + time
+        }
+        let sameYear = calendar.component(.year, from: date) == calendar.component(.year, from: now)
+        return format(sameYear ? "MMMdjmm" : "yMMMdjmm", date, language)
+    }
+
+    // The line above the first message of each day: "10월 24일 (토)" / "Sat, Oct 24".
+    static func day(_ date: Date, now: Date = Date(), language: AppLanguage = .current) -> String {
+        let calendar = calendar(language)
+        let sameYear = calendar.component(.year, from: date) == calendar.component(.year, from: now)
+        if language == .korean {
+            return format(sameYear ? "MMMd" : "yMMMd", date, language) + " (" + format("EEE", date, language) + ")"
+        }
+        return format(sameYear ? "EEEMMMd" : "EEEyMMMd", date, language)
+    }
+
+    // When the turn happened, for the day lines: older turns have no time of their own,
+    // except the chat's last turn, which ended about when the chat was last changed.
+    static func when(_ turn: ChatTurn, last: Bool, updatedAt: Date) -> Date? {
+        turn.askedAt ?? (last ? updatedAt : nil)
+    }
 }
 
 // How much each AI may say per turn in the discussion modes. The user mostly reads the one-line
@@ -973,6 +1019,7 @@ final class Discussion: ObservableObject {
         let team = mentioned.isEmpty ? pickTeam() : mentioned.compactMap { id in model.accounts.first { $0.id == id } }
         let id = currentID
         var turn = ChatTurn(question: question)
+        turn.askedAt = Date()
         turn.mentions = mentioned.isEmpty ? nil : mentioned
         let config = configuration
         turn.mode = config.mode
@@ -1028,6 +1075,9 @@ final class Discussion: ObservableObject {
                 summary += (summary.isEmpty ? "" : "\n\n") + "[요약 이후 다른 방식으로 나눈 대화 원문]\n" + Self.transcript(Array(since))
             }
         }
+        // One more turn shown, so the oldest shown one does not drop off the top while the
+        // view scrolls to the new one (that left the transcript blank until the next scroll).
+        if id == currentID { shownTurns += 1 }
         change(id, save: true) { c in
             if c.turns.isEmpty { c.title = String(question.prefix(40)) }
             c.turns.append(turn)
@@ -1375,11 +1425,12 @@ final class Discussion: ObservableObject {
     }
 
     func finish(_ id: UUID, _ index: Int, error: String? = nil) {
-        if let error {
-            changeTurn(id, index, save: true) { t in
+        changeTurn(id, index, save: true) { t in
+            if let error {
                 t.error = error
                 t.status = ""
             }
+            if t.askedAt != nil { t.answeredAt = Date() }
         }
         let room = currentID
         DispatchQueue.main.async {

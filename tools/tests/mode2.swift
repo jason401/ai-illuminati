@@ -1084,6 +1084,22 @@ do {
     print("PASS: menu bar 5-hour / weekly choice")
 }
 
+// Menu bar accounts: all shown by default, hidden ones left out; message sorting off by default and off asks no local model.
+do {
+    let m = AppModel(persist: false)
+    m.accounts = [Account(id: "t-a", provider: .claude, name: "a", dir: nil), Account(id: "t-b", provider: .codex, name: "b", dir: nil)]
+    expect(m.menuBarAccounts.map(\.name) == ["a", "b"], "every account shown by default")
+    m.menuBarHidden.insert(m.accounts[0].id)
+    expect(m.menuBarAccounts.map(\.name) == ["b"], "hidden account left out of the menu bar")
+    expect(m.routeSorter == .off && RouteSorter.off.variant == nil, "message sorting model off by default")
+    expect(LocalModel.judge(question: "이 버그 고쳐줘", history: [], sorter: .off) == nil, "off asks no local model")
+    let saved = UserDefaults.app.string(forKey: "routeSorter")
+    UserDefaults.app.removeObject(forKey: "routeSorter")
+    expect(RouteSorter.current == .off, "no saved choice is off")
+    if let saved { UserDefaults.app.set(saved, forKey: "routeSorter") }
+    print("PASS: menu bar accounts and message sorting off")
+}
+
 // Poker: hand ranking, betting rules, side pots, AI answers and a full fake game.
 do {
     func c(_ s: String) -> [Card] { s.split(separator: " ").map { Card(String($0))! } }

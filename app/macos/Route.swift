@@ -4,7 +4,7 @@ import Foundation
 // one — the lead answers alone, the project read only (facts, checks, explanations, short follow-ups);
 // all — every member answers at the same time, the project read only (views, design choices, ideas);
 // work — the lead works and the others review its changes (Peer.swift).
-// A model on this Mac judges (Settings → Accounts → Ollama: Gemma 4 E4B, the default, or Strands Decider; it
+// A model on this Mac may judge (Settings → Chat: off, the default, Gemma 4 E4B or Strands Decider; it
 // answers only when downloaded). Without it, the checked member with the most usage left judges without tools. If
 // nobody can judge, all: a wrong opinion changes no file, and several answers lose less than one. Fixed rules come
 // first and last (plain agreement is one, "가자" after an offer is work, "수정하지 마" is never work), whoever judges.
@@ -163,17 +163,25 @@ enum Route {
     }
 }
 
-// Which model on this Mac sorts messages (Settings → Accounts → Ollama).
+// Which model on this Mac sorts messages (Settings → Chat). Off by default: not every Mac can run a local model,
+// so a member AI judges.
 enum RouteSorter: String, CaseIterable {
-    case gemma, decider
-    static var current: RouteSorter { UserDefaults.app.string(forKey: "routeSorter").flatMap(RouteSorter.init) ?? .gemma }
-    var variant: LocalModel.Variant {
-        self == .gemma ? LocalModel.legacy[0] : LocalModel.Variant(id: "ollama:strands-decider:latest", model: "strands-decider:latest", title: "Strands Decider")
+    case off, gemma, decider
+    static var current: RouteSorter { UserDefaults.app.string(forKey: "routeSorter").flatMap(RouteSorter.init) ?? .off }
+    var variant: LocalModel.Variant? {
+        switch self {
+        case .off: return nil
+        case .gemma: return LocalModel.legacy[0]
+        case .decider: return LocalModel.Variant(id: "ollama:strands-decider:latest", model: "strands-decider:latest", title: "Strands Decider")
+        }
     }
-    var title: String { variant.title }
+    var title: String { variant?.title ?? L("안 씀", "Off") }
     var summary: String {
-        self == .gemma ? L("기본 · 100문제 중 91개 맞힘 · 메모리 많이 씀", "Default · 91 of 100 right · more memory")
-            : L("가벼움 · 빠름 · 169문제 중 140개 · 시키지 않은 작업이 조금 더 많아요", "Light · fast · 140 of 169 · a few more needless work runs")
+        switch self {
+        case .off: return L("기본 · 참여한 Claude나 ChatGPT 중 사용량이 더 남은 쪽이 판정해요", "Default · the member Claude or ChatGPT with more usage left judges")
+        case .gemma: return L("100문제 중 91개 맞힘 · 메모리 많이 씀", "91 of 100 right · more memory")
+        case .decider: return L("가벼움 · 빠름 · 169문제 중 140개 · 시키지 않은 작업이 조금 더 많아요", "Light · fast · 140 of 169 · a few more needless work runs")
+        }
     }
 }
 
@@ -182,8 +190,7 @@ extension LocalModel {
     // this), the model not downloaded, another chat using the local model, or no clear reply within `timeout`.
     // A model that was not in memory leaves it right after (keep_alive 0); one already loaded keeps its time.
     static func judge(question: String, history: [ChatTurn], sorter: RouteSorter = .current, timeout: TimeInterval = Route.localTimeout) -> RouteChoice? {
-        let variant = sorter.variant
-        guard enabled, let names = installedModels(timeout: 1.5), hasModel(names, variant) else { return nil }
+        guard let variant = sorter.variant, enabled, let names = installedModels(timeout: 1.5), hasModel(names, variant) else { return nil }
         guard gate.wait(timeout: .now() + 0.5) == .success else { return nil }
         defer { gate.signal() }
         let loaded = loadedModels()
@@ -191,6 +198,8 @@ extension LocalModel {
         if loaded.contains(where: { !matches($0.name, variant.model) }) { unload(except: variant.model) }
         let keep: Any = warm ? "\(max(keepAlive, 1))m" : 0
         switch sorter {
+        case .off:
+            return nil
         case .gemma:
             // 8K: the message (up to 4,000 characters) and the last answer (3,000) fit; Ollama's default 4K does not.
             let body: [String: Any] = ["model": variant.model, "stream": false, "think": false, "keep_alive": keep,

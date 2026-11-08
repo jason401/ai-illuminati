@@ -62,6 +62,15 @@ final class AppModel: ObservableObject {
             onDisplayChange?()
         }
     }
+    // Accounts left out of the menu bar bars and numbers (Settings → Appearance). The usage menu still lists them;
+    // a new account starts shown.
+    @Published var menuBarHidden: Set<String> {
+        didSet {
+            defaults.set(menuBarHidden.sorted(), forKey: "menuBarHidden")
+            onDisplayChange?()
+        }
+    }
+    var menuBarAccounts: [Account] { accounts.filter { !menuBarHidden.contains($0.id) } }
     @Published var menuBarColored: Bool {
         didSet {
             defaults.set(menuBarColored, forKey: "menuBarColored")
@@ -198,6 +207,7 @@ final class AppModel: ObservableObject {
         menuBarAnimation = defaults.object(forKey: "menuBarAnimation") as? Bool ?? true
         menuBarWindow = defaults.string(forKey: "menuBarWindow").flatMap(MenuBarWindow.init(rawValue:)) ?? .fiveHour
         menuBarColored = defaults.bool(forKey: "menuBarColored")
+        menuBarHidden = Set(defaults.stringArray(forKey: "menuBarHidden") ?? [])
         usageMenuStyle = defaults.string(forKey: "usageMenuStyle").flatMap(UsageMenuStyle.init(rawValue:)) ?? .cards
         openAtLogin = SMAppService.mainApp.status == .enabled
         sharedFolders = defaults.stringArray(forKey: "sharedFolders") ?? []
@@ -207,7 +217,7 @@ final class AppModel: ObservableObject {
         pictureMakersOff = Set(defaults.stringArray(forKey: "pictureMakersOff") ?? [])
         localEnabled = persist ? LocalModel.enabled : true
         localKeepAlive = persist ? LocalModel.keepAlive : 5
-        routeSorter = persist ? RouteSorter.current : .gemma
+        routeSorter = persist ? RouteSorter.current : .off
         // A saved default in either language becomes the default in today's language.
         let saved = defaults.string(forKey: "chatRules")
         chatRules = (saved == nil || saved == Self.koreanChatRules || saved == Self.rules(for: .english)
@@ -570,6 +580,20 @@ struct AppearanceSettingsTab: View {
                         .help(L("눈 깜빡임과 후광. macOS '동작 줄이기'를 켜면 멈춰요.", "Eye blinks and halo. Stops with macOS Reduce Motion."))
                 }
             }
+            if !model.accounts.isEmpty {
+                SettingsCard(title: L("메뉴바에 보일 계정", "Accounts in the menu bar")) {
+                    ForEach(model.accounts, id: \.id) { account in
+                        if account.id != model.accounts.first?.id { Divider() }
+                        SettingsRow(title: account.name) {
+                            Spacer()
+                            Toggle(account.name, isOn: Binding(
+                                get: { !model.menuBarHidden.contains(account.id) },
+                                set: { on in if on { model.menuBarHidden.remove(account.id) } else { model.menuBarHidden.insert(account.id) } }))
+                                .labelsHidden().toggleStyle(.switch)
+                        }
+                    }
+                }
+            }
             SettingsCard(title: L("사용량 메뉴", "Usage menu")) {
                 SettingsRow(title: L("모양", "Style")) {
                     SettingsMenu(options: menuOptions, selection: $model.usageMenuStyle)
@@ -817,15 +841,6 @@ struct AccountsSettingsTab: View {
                         Spacer()
                         Toggle(L("Ollama 모델 쓰기", "Use Ollama models"), isOn: $model.localEnabled).labelsHidden().toggleStyle(.switch)
                     }
-                    SettingsRow(title: L("메시지 판정", "Message sorter")) {
-                        SettingsMenu(options: RouteSorter.allCases.map { ($0.title, $0) }, selection: $model.routeSorter)
-                            .help(L("프로젝트 채팅에서 메시지마다 한 명이 답할지, 모두 답할지, 작업할지 정하는 모델이에요. 받아 두지 않았으면 참여 AI가 판정해요.",
-                                    "Decides for each project-chat message: one answer, everyone, or work. Not downloaded: a member AI judges."))
-                    }
-                    Text(model.routeSorter.summary)
-                        .font(.system(size: 11)).foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 10).padding(.bottom, 6)
                 }
             }
         }
@@ -883,6 +898,20 @@ struct ChatSettingsTab: View {
                     .toggleStyle(.switch)
                 hint(L("켜면 엔터프라이즈 대화는 엔터프라이즈 계정끼리, 개인 대화는 개인 계정끼리만 이어받아요. 엔터프라이즈 계정은 계정 탭에서 표시해요.",
                        "On: Enterprise chats are continued only by Enterprise accounts, personal chats only by personal ones. Mark Enterprise accounts in the Accounts tab."))
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                SettingsCard(title: L("메시지 판정", "Message sorting")) {
+                    SettingsRow(title: L("내 Mac 모델", "Model on this Mac")) {
+                        SettingsMenu(options: RouteSorter.allCases.map { ($0.title, $0) }, selection: $model.routeSorter)
+                    }
+                    Divider()
+                    Text(model.routeSorter.summary)
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 10).padding(.vertical, 6)
+                }
+                hint(L("프로젝트 채팅에서 메시지마다 한 명이 답할지, 모두 답할지, 작업할지 정해요. 고른 모델을 받아 두지 않았거나 Ollama를 껐으면 참여한 AI가 판정해요.",
+                       "Decides for each project-chat message: one answer, everyone, or work. Model not downloaded or Ollama off: a member AI judges."))
             }
             let makers = model.accounts.filter { $0.provider == .codex }
             if !makers.isEmpty {

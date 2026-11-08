@@ -216,15 +216,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    // Bars show every connected account in Settings order, including unknown readings.
+    // Bars show the accounts checked in Settings → Appearance, in Settings order, including unknown readings.
     // Percentage text keeps its existing per-provider summary.
     private func updateTitle() {
         let groups: [(String, Account.Provider)] = [("Cl", .claude), ("Cx", .codex), ("Gm", .gemini)]
-        let present = groups.filter { g in usages.contains { $0.account?.provider == g.1 } }
+        // Only the accounts checked in Settings → Appearance.
+        let listed = model.menuBarAccounts
+        let shown = Set(listed.map(\.id))
+        let visible = usages.filter { $0.account.map { shown.contains($0.id) } == true }
+        let present = groups.filter { g in visible.contains { $0.account?.provider == g.1 } }
         // One limit everywhere in the menu bar: the 5-hour or the weekly one, as chosen in Settings.
         let window = model.menuBarWindow
-        let best = present.map { g in usages.filter { $0.account?.provider == g.1 }.compactMap { window.left($0) }.max() }
-        let listed = accounts
+        let best = present.map { g in visible.filter { $0.account?.provider == g.1 }.compactMap { window.left($0) }.max() }
         let levels = listed.map { account in usages.first { $0.account?.id == account.id }.flatMap { window.left($0) } }
         item.button?.toolTip = window.title + "\n" + zip(listed, levels).map { account, left in
             let usage = usages.first { $0.account?.id == account.id }
@@ -232,7 +235,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 : left.map { "\(Int($0.rounded()))%" } ?? "–"
             return account.name + " " + text
         }.joined(separator: "\n")
-        let style = model.menuBarStyle
+        // Every account hidden: the mark alone, so the menu bar item never shrinks to nothing.
+        let style = listed.isEmpty && model.menuBarStyle != .mark ? .mark : model.menuBarStyle
         let colored = model.menuBarColored
         func tint(_ provider: Account.Provider) -> NSColor {
             switch provider {

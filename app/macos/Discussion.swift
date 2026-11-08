@@ -691,7 +691,7 @@ final class Discussion: ObservableObject {
     @Published var shownTurns = Discussion.turnPage
     // Turns drawn when a chat opens, and how many each scroll to the top adds.
     static let turnPage = 20
-    // Earlier turns are added only after the chat has been seen at its end, so opening it does not load them all.
+    // Earlier turns are added only after the chat has opened at its latest turn, so opening it does not load them all.
     var reachedBottom = false
     var loadingEarlier = false
     @Published var hoverKey: String?

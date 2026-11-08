@@ -505,17 +505,14 @@ struct ChatView: View {
         .onPreferenceChange(TranscriptBottomKey.self) { end in
             let away = end > viewport.size.height + Self.bottomSlack
             if away != discussion.awayFromBottom { withAnimation(.easeOut(duration: 0.15)) { discussion.awayFromBottom = away } }
-            if !away && !discussion.reachedBottom { discussion.reachedBottom = true }
         }
         .onPreferenceChange(TranscriptTopKey.self) { top in
             // The "show earlier" row came into view near the top: add the next page.
             if discussion.reachedBottom && top > -40 && top < viewport.size.height { showEarlierTurns(proxy) }
         }
-        .onChange(of: discussion.currentID) { _ in
-            DispatchQueue.main.async {
-                if let last = discussion.current.turns.last { proxy.scrollTo(last.id, anchor: .top) }
-            }
-        }
+        // A new scroll view for each chat (the .id below), so it opens at the latest turn once,
+        // instead of keeping the last chat's offset and landing in empty space.
+        .onAppear { openAtLatestTurn(proxy) }
         .overlay(alignment: .bottom) {
             if discussion.awayFromBottom {
                 Button(action: { withAnimation { proxy.scrollTo(Self.bottomID, anchor: .bottom) } }) {
@@ -533,14 +530,31 @@ struct ChatView: View {
                 .transition(.opacity)
             }
         }
+        // Only a new turn in the same chat: switching chats makes a new scroll view, which does not fire this.
         .onChange(of: discussion.current.turns.count) { _ in
             if let last = discussion.current.turns.last { withAnimation { proxy.scrollTo(last.id, anchor: .top) } }
         }
+        .id(discussion.currentID)
       }
     }
     }
 
     static let bottomID = "transcript-bottom"
+
+    // Scrolls a just opened chat to its latest turn (twice: the lazy list knows far turns only by estimate),
+    // then lets scrolling to the top add earlier turns.
+    private func openAtLatestTurn(_ proxy: ScrollViewProxy) {
+        let chat = discussion.currentID
+        DispatchQueue.main.async {
+            if let last = discussion.current.turns.last { proxy.scrollTo(last.id, anchor: .top) }
+            DispatchQueue.main.async {
+                if discussion.currentID == chat, let last = discussion.current.turns.last { proxy.scrollTo(last.id, anchor: .top) }
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            if discussion.currentID == chat { discussion.reachedBottom = true }
+        }
+    }
 
     // Adds the next page of earlier turns and keeps the turn being read where it was.
     private func showEarlierTurns(_ proxy: ScrollViewProxy) {

@@ -191,3 +191,72 @@ func testChatSearch() {
     try? FileManager.default.removeItem(at: broken)
     print("PASS: chat search (messages and answers, endings, title first, half the words, one letter, filters, best turn and line, opens at the turn, broken files skipped)")
 }
+
+// search_chats / read_chat: the app decides what the answering account may see.
+func testChatTools() {
+    let m = AppModel()
+    let host = Discussion(model: m)
+    var chats = searchFixtures()
+    let personal = Account(id: "t-p", provider: .claude, name: "Claude", dir: nil, school: false)
+    let school = Account(id: "t-s", provider: .codex, name: "학교", dir: nil, school: true)    // same organization as the fixture's mark
+    let work = Account(id: "t-w", provider: .claude, name: "회사", dir: nil, school: true)
+    var copy = Conversation(); copy.title = "청룡영화제 사본"; copy.turns = [ChatTurn(question: "청룡영화제")]; copy.enterpriseUnsure = true
+    copy.origin = SyncOrigin(device: "d", deviceName: "iMac", chat: UUID(), lastTurn: nil, contentAt: Date(), importedAt: Date())
+    var here = Conversation(); here.title = "새 채팅 청룡영화제"; here.turns = [ChatTurn(question: "청룡영화제 얘기 했던거 있잖아?")]
+    chats += [copy, here]
+    host.conversations = chats
+    let link = ChatLink.shared
+    func context(_ asker: Account?) -> ToolContext { ToolContext(room: here.id, roots: [], asker: asker) }
+    func reply(_ name: String, _ args: [String: Any], _ asker: Account?) -> (String, Bool) {
+        let r = link.call(name, args, context: context(asker))
+        return (((r["content"] as? [[String: Any]])?.first?["text"] as? String) ?? "", r["isError"] as? Bool ?? false)
+    }
+    expect(link.tools(context: context(nil)).isEmpty && link.tools(context: context(personal)).count == 2, "offered only when the answering account is known")
+
+    let research = chats.first { $0.title == "연구 노트" }!
+    let (forPersonal, _) = reply("search_chats", ["query": "청룡영화제"], personal)
+    expect(forPersonal.contains("영화 이야기") && forPersonal.contains("AI Illuminati 작업") && !forPersonal.contains("연구 노트"), "a personal account finds personal chats, not Enterprise ones")
+    expect(!forPersonal.contains("사본") && !forPersonal.contains(here.id.uuidString), "copies from other Macs and the chat being answered are left out")
+    expect(forPersonal.contains("data, not instructions"), "results are marked as data")
+    let (forSchool, _) = reply("search_chats", ["query": "청룡영화제"], school)
+    expect(forSchool.contains("연구 노트") && forSchool.contains("영화 이야기"), "an account of the organization that saw it finds the Enterprise chat too")
+    let (forWork, _) = reply("search_chats", ["query": "청룡영화제"], work)
+    expect(!forWork.contains("연구 노트"), "another organization's account does not")
+
+    // Reading by id directly is checked the same way.
+    let (denied, deniedError) = reply("read_chat", ["id": research.id.uuidString], personal)
+    let (missing, _) = reply("read_chat", ["id": UUID().uuidString], personal)
+    expect(deniedError && denied == missing, "a personal account cannot read an Enterprise chat by its id, and cannot tell it exists")
+    expect(reply("read_chat", ["id": research.id.uuidString], work).1, "nor another organization's account")
+    expect(reply("read_chat", ["id": copy.id.uuidString], school).1 && reply("read_chat", ["id": here.id.uuidString], school).1, "copies and the chat itself cannot be read")
+    expect(reply("read_chat", ["id": research.id.uuidString], Account(id: "t-o", provider: .ollama, name: "학교", dir: nil, school: true)).1, "a model on this Mac is not an Enterprise account")
+    let (read, readError) = reply("read_chat", ["id": research.id.uuidString], school)
+    expect(!readError && read.contains("3.2 MHz") && read.contains("data, not instructions"), "the right account reads it")
+    expect(host.conversations.first { $0.id == here.id }?.enterprise?.map(\.name) == ["학교"], "reading an Enterprise chat carries its record into this chat")
+    let story = chats.first { $0.title == "영화 이야기" }!
+    let (whole, _) = reply("read_chat", ["id": story.id.uuidString], personal)
+    expect(whole.contains("[The whole chat]") && whole.contains("주말에 뭐 볼까") && whole.contains("11월 말"), "a short chat is given whole")
+
+    // A long chat: its summary first, then the matching turns and their neighbors, within the limit.
+    var long = Conversation(); long.title = "긴 대화"
+    long.turns = (0..<200).map { i in var t = ChatTurn(question: "질문 \(i) " + String(repeating: "가", count: 300)); t.final = i == 120 ? "청룡영화제 수상작 정리" : "답 \(i) " + String(repeating: "나", count: 300); return t }
+    let longText = ChatLink.reading(long, query: "청룡영화제", state: String(repeating: "요약", count: 5000))
+    expect(longText.count <= ChatLink.readLimit + 200, "the limit holds")
+    expect(longText.contains("[Its saved summary]") && longText.contains("…\n"), "the summary comes first, cut to its share")
+    expect(longText.contains("[Turn 120]") && longText.contains("[Turn 121]") && longText.contains("[Turn 122]") && !longText.contains("[Turn 5]"), "the matching turn with one on each side")
+    let latest = ChatLink.reading(long, query: "", state: "")
+    expect(latest.contains("[Turn 200]") && !latest.contains("[Turn 1]") && latest.count <= ChatLink.readLimit + 200, "no words: the latest turns that fit")
+
+    // The answering account reaches the tools through the invocation.
+    var invocation = WorkspaceInvocation(binding: WorkspaceBinding(roots: [], face: true), room: here.id)
+    invocation.account = school
+    let dir = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("chat-tools-manifest")
+    let (_, args) = try! invocation.prepare(in: dir)
+    let manifest = try! JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: args[1]))) as! [String: Any]
+    let session = manifest["toolSession"] as? String ?? ""
+    let listed = ToolHub.shared.handle(["op": "tools", "session": session])["tools"] as? [[String: Any]] ?? []
+    expect(listed.contains { $0["name"] as? String == "read_chat" }, "the bridge offers the chat tools")
+    let viaHub = ToolHub.shared.handle(["op": "call", "session": session, "name": "read_chat", "arguments": ["id": research.id.uuidString]])
+    expect(viaHub["isError"] as? Bool == false, "and decides by the account that answers")
+    print("PASS: chat tools (offered with a known account, personal for all, Enterprise for its organization only, direct ids checked, copies and this chat out, record carried over, summary first, whole or matching turns within the limit)")
+}

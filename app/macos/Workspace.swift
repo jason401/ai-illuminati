@@ -44,6 +44,7 @@ struct WorkspaceInvocation {
     var room: UUID
     var readOnly: Bool = true
     var backupPath: String?
+    var account: Account? = nil   // who answers (set by Answerer right before the call), for the chat tools
     var level: WorkspaceLevel { readOnly ? .view : binding.level }
     static var resources: URL {
         // Test executables may supply resources explicitly; production never follows #filePath.
@@ -67,7 +68,7 @@ struct WorkspaceInvocation {
         object["project"] = binding.projectRunID != nil
         if (binding.face == true || binding.projectRunID != nil) && ToolHub.shared.active {
             object["tools"] = ToolHub.socketPath
-            object["toolSession"] = ToolHub.shared.register(room: room, roots: binding.roots, projectRun: binding.projectRunID, generation: binding.projectGeneration)
+            object["toolSession"] = ToolHub.shared.register(room: room, roots: binding.roots, projectRun: binding.projectRunID, generation: binding.projectGeneration, asker: account)
             if FaceLink.active() != nil { object["face"] = FaceLink.socketPath } // legacy manifests
         }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])

@@ -16,7 +16,7 @@ struct EnterpriseMark: Codable, Equatable {
 
     // The same account, or one of the same organization.
     func covers(_ account: Account) -> Bool {
-        id == account.id || Self.organization(name) == Self.organization(account.name)
+        id == account.id || (!Self.organization(name).isEmpty && Self.organization(name) == Self.organization(account.name))
     }
 
     static func organization(_ name: String) -> String {

@@ -230,7 +230,8 @@ enum Answerer {
         }
         var executionDirectory = session?.directory ?? workspace.map { NativeSessions.directory($0.room).appendingPathComponent("stateless-\(UUID().uuidString)") } ?? URL(fileURLWithPath: chatDir)
         if let geminiPictures, session == nil, workspace == nil { executionDirectory = geminiPictures }
-        if let workspace {
+        if var workspace {
+            workspace.account = account
             do { arguments = try workspace.arguments(provider: account.provider, original: arguments, directory: executionDirectory, web: web) }
             catch { return .failure(.failed("Workspace setup failed: " + error.localizedDescription)) }
         }
@@ -939,6 +940,7 @@ final class Discussion: ObservableObject {
         conversations = [fresh] + loaded.filter(\.hasContent)
         currentID = fresh.id
         classifyOldChats(accounts: model.accounts + DeviceSync.shared.rememberedSchool)
+        linkChatTools()
     }
 
     // A worker for one message in one chat: same accounts, sessions and test hooks, only that chat.

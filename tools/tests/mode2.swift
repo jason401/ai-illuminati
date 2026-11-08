@@ -2152,6 +2152,7 @@ testPeerReview()
 testEnterpriseMarks()
 testChatFind()
 testChatSearch()
+testChatTools()
 
 // Chat Markdown: one ~ is a range, not strikethrough; headings and tables are drawn.
 func testChatMarkdown() {

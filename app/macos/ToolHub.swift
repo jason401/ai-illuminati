@@ -6,6 +6,7 @@ struct ToolContext {
     var roots: [WorkspaceRoot]
     var projectRun: UUID? = nil
     var projectGeneration: Int? = nil
+    var asker: Account? = nil   // the account answering (search_chats / read_chat decide by it)
 }
 
 protocol ToolProvider: AnyObject {
@@ -29,18 +30,18 @@ extension FaceLink: ToolProvider {
 final class ToolHub {
     static let shared = ToolHub()
     static var socketPath = AccountStore.supportDir + "/tools.sock"
-    private var providers: [ToolProvider] { [FaceLink.shared, DriveLink.shared, GitLink.shared, PeerLink.shared] }
+    private var providers: [ToolProvider] { [FaceLink.shared, DriveLink.shared, GitLink.shared, PeerLink.shared, ChatLink.shared] }
     var active: Bool { providers.contains { $0.active } }
     private let lock = NSLock()
     private var sockets: Set<String> = []
     private var sessions: [String: (ToolContext, Date)] = [:]
 
-    func register(room: UUID, roots: [WorkspaceRoot], projectRun: UUID? = nil, generation: Int? = nil) -> String {
+    func register(room: UUID, roots: [WorkspaceRoot], projectRun: UUID? = nil, generation: Int? = nil, asker: Account? = nil) -> String {
         start()
         lock.lock(); defer { lock.unlock() }
         sessions = sessions.filter { $0.value.1 > Date() }
         let key = UUID().uuidString
-        sessions[key] = (ToolContext(room: room, roots: roots, projectRun: projectRun, projectGeneration: generation), Date().addingTimeInterval(7200))
+        sessions[key] = (ToolContext(room: room, roots: roots, projectRun: projectRun, projectGeneration: generation, asker: asker), Date().addingTimeInterval(7200))
         return key
     }
 

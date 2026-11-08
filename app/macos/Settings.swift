@@ -933,6 +933,7 @@ struct ChatSettingsTab: View {
                            "Checked ChatGPT accounts draw every picture for the other AIs. With the setting above on, Enterprise AIs ask only Enterprise ChatGPT and personal AIs only personal ChatGPT. Charts and diagrams that must be exact are still drawn by each AI."))
                 }
             }
+            ApprovalAlertSettingsView()
             DeviceSyncSettingsView()
             MCPSettings()
         }
@@ -1306,4 +1307,37 @@ struct SidebarHeader<Accessory: View>: View {
 
 extension SidebarHeader where Accessory == EmptyView {
     init(title: String) { self.init(title: title) { EmptyView() } }
+}
+
+// How a waiting approval reaches you outside its chat (ApprovalAlerts). The menu bar count, the banner and
+// the dot in the chat list always show; these only change the macOS notification.
+private struct ApprovalAlertSettingsView: View {
+    @AppStorage(ApprovalAlertSettings.notifyKey, store: .app) private var notify = true
+    @AppStorage(ApprovalAlertSettings.soundKey, store: .app) private var sound = false
+    @AppStorage(ApprovalAlertSettings.repeatKey, store: .app) private var repeats = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            SettingsCard(title: L("허가 요청", "Approval requests")) {
+                SettingsRow(title: L("알림", "Notify")) {
+                    Spacer()
+                    Toggle(L("알림", "Notify"), isOn: $notify).labelsHidden().toggleStyle(.switch)
+                }
+                Divider()
+                SettingsRow(title: L("소리", "Sound")) {
+                    Spacer()
+                    Toggle(L("소리", "Sound"), isOn: $sound).labelsHidden().toggleStyle(.switch).disabled(!notify)
+                }
+                Divider()
+                SettingsRow(title: L("5분마다 다시", "Every 5 min")) {
+                    Spacer()
+                    Toggle(L("5분마다 다시", "Every 5 min"), isOn: $repeats).labelsHidden().toggleStyle(.switch).disabled(!notify)
+                }
+            }
+            Text(L("다른 채팅이나 다른 앱을 보고 있을 때 허가 요청을 macOS 알림으로 알려요. 메뉴바 숫자와 채팅 목록의 점은 늘 보여요. 15분 안에 답하지 않으면 거절로 처리해요.",
+                   "Notifies you in macOS when an approval waits while you look at another chat or app. The menu bar count and the dot in the chat list always show. Unanswered for 15 minutes counts as denied."))
+                .font(.system(size: 11)).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true).padding(.horizontal, 2)
+        }
+    }
 }

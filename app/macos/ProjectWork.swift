@@ -80,10 +80,17 @@ struct ProjectApproval: Identifiable {
     var run: UUID
     var title: String
     var detail: String
+    var created = Date()
+    var deadline: Date?
 }
+// One list for every place that shows approvals: the chat card, the banner, the menu bar, the approval
+// window and the macOS notification all follow `requests`, so deciding in one place clears them all.
 final class ProjectCenter: ObservableObject {
     static let shared = ProjectCenter()
     @Published var requests: [ProjectApproval] = []
+    // Requests that ran out of time (counted as refused); the chat keeps a note with Ask again until dismissed.
+    @Published var expired: [ProjectApproval] = []
+    func dismiss(_ id: UUID) { expired.removeAll { $0.id == id } }
     private let lock = NSLock()
     private var decisions: [UUID: Bool] = [:]
     private var accepting = true
@@ -93,9 +100,11 @@ final class ProjectCenter: ObservableObject {
     func approve(_ request: ProjectApproval, token: DebateCancellation, deadline: Date) -> Bool {
         lock.lock(); let enabled = accepting, epoch = approvalEpoch; lock.unlock()
         guard enabled else { return false }
+        var request = request
+        request.deadline = deadline
         DispatchQueue.main.async {
             self.lock.lock(); let current = self.accepting && self.approvalEpoch == epoch; self.lock.unlock()
-            if current { self.requests.append(request) }
+            if current { self.expired.removeAll { $0.room == request.room }; self.requests.append(request) }
         }
         defer {
             lock.lock(); decisions.removeValue(forKey: request.id); lock.unlock()
@@ -107,12 +116,19 @@ final class ProjectCenter: ObservableObject {
             if let answer { return answer }
             Thread.sleep(forTimeInterval: 0.1)
         }
+        if !token.isCancelled {
+            DispatchQueue.main.async {
+                self.lock.lock(); let current = self.accepting && self.approvalEpoch == epoch; self.lock.unlock()
+                if current { self.expired.append(request) }
+            }
+        }
         return false
     }
     func cancel(room: UUID? = nil) {
         if room == nil { lock.lock(); accepting = false; approvalEpoch += 1; lock.unlock() }
         let selected = requests.filter { room == nil || $0.room == room }
         for request in selected { decide(request.id, allow: false) }
+        expired.removeAll { room == nil || $0.room == room }
     }
 }
 
@@ -245,7 +261,12 @@ final class GitLink: ToolProvider {
         func clean() throws { guard try git(["status", "--porcelain"]).isEmpty else { throw MaterialReader.error("Working tree is not clean; preserve edits and do not pull/switch/stash.") } }
         func approve(_ title: String, _ detail: String) throws {
             run.beginApproval(); defer { run.endApproval() }
-            guard ProjectCenter.shared.approve(ProjectApproval(room: run.room, run: run.id, title: title, detail: detail), token: run.attempt, deadline: min(run.deadline, Date().addingTimeInterval(900))) else { throw MaterialReader.error("Project approval refused or cancelled.") }
+            let deadline = min(run.deadline, Date().addingTimeInterval(900))
+            guard ProjectCenter.shared.approve(ProjectApproval(room: run.room, run: run.id, title: title, detail: detail), token: run.attempt, deadline: deadline) else {
+                // 15 minutes unanswered counts as no: the user is away. The chat keeps a note with Ask again.
+                if Date() >= deadline, !run.attempt.isCancelled { throw MaterialReader.error("Project approval timed out after 15 minutes; treated as refused. Stop and tell the user they can ask again.") }
+                throw MaterialReader.error("Project approval refused or cancelled.")
+            }
             try run.validate(generation)
         }
         switch name {

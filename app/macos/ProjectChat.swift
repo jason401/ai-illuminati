@@ -3,6 +3,7 @@ import SwiftUI
 
 struct ProjectApprovalView: View {
     let room: UUID
+    var discussion: Discussion?
     @ObservedObject private var center = ProjectCenter.shared
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -17,11 +18,125 @@ struct ProjectApprovalView: View {
                     }
                 }.padding(12).background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
             }
+            // Unanswered for 15 minutes counts as no; the note stays so the user can pick it up again.
+            ForEach(center.expired.filter { $0.room == room }) { request in
+                HStack(spacing: 8) {
+                    Image(systemName: "clock.badge.xmark").foregroundStyle(.orange)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(L("허가 기한 지남 · 거절로 처리했어요", "Approval timed out · treated as denied")).font(.system(size: 12, weight: .semibold))
+                        Text(request.title).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                    Spacer()
+                    Button(L("닫기", "Dismiss")) { center.dismiss(request.id) }
+                    if let discussion {
+                        Button(L("다시 요청", "Ask again")) { discussion.askAgain(request) }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(discussion.runningRooms.contains(room))
+                    }
+                }.padding(10).background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+            }
         }
     }
 }
 
+// Shown above any other chat while a chat waits for approval, so a card in a chat you are not looking at
+// is not missed. Allow only where the details are shown (the card or the approval window).
+struct ApprovalBanner: View {
+    @ObservedObject var discussion: Discussion
+    @ObservedObject private var center = ProjectCenter.shared
+    var body: some View {
+        let others = center.requests.filter { $0.room != discussion.currentID || discussion.viewingRemote != nil }
+        if !others.isEmpty {
+            VStack(spacing: 4) {
+                ForEach(others) { request in
+                    HStack(spacing: 8) {
+                        Circle().fill(Color.orange).frame(width: 8, height: 8)
+                        Text(discussion.approvalChatName(request.room)).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                        Text(request.title).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+                        Spacer(minLength: 4)
+                        Button(L("거절", "Deny")) { center.decide(request.id, allow: false) }
+                        Button(L("열기", "Open")) { discussion.open(request.room) }.buttonStyle(.borderedProminent)
+                    }
+                    .controlSize(.small)
+                    .padding(.horizontal, 10).padding(.vertical, 6)
+                    .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+                }
+            }
+            .padding(.horizontal, 12).padding(.bottom, 4)
+        }
+    }
+}
+
+// Every waiting approval in one place (opened from the menu bar or a notification).
+struct ApprovalListView: View {
+    let discussion: Discussion
+    var openChat: (UUID) -> Void
+    @ObservedObject private var center = ProjectCenter.shared
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if center.requests.isEmpty {
+                Spacer()
+                Text(L("기다리는 허가 요청이 없어요. 이미 처리됐거나 끝난 요청이에요.", "No approvals waiting. Those requests were already handled or ended."))
+                    .font(.system(size: 13)).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
+                Spacer()
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach(center.requests) { request in row(request) }
+                    }
+                }
+            }
+        }
+        .padding(14)
+        .frame(minWidth: 420, minHeight: 220)
+    }
+
+    private func row(_ request: ProjectApproval) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(discussion.approvalChatName(request.room)).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                Spacer()
+                TimelineView(.periodic(from: .now, by: 30)) { context in
+                    Text(Self.timing(request, now: context.date)).font(.system(size: 11)).foregroundStyle(.secondary)
+                }
+            }
+            Text(request.title).font(.headline)
+            ScrollView { Text(request.detail).font(.system(size: 11, design: .monospaced)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }.frame(maxHeight: 120)
+            HStack {
+                Button(L("거절", "Deny")) { center.decide(request.id, allow: false) }
+                Button(L("채팅 열기", "Open chat")) { openChat(request.room) }
+                Spacer()
+                Button(L("허용", "Allow")) { center.decide(request.id, allow: true) }.buttonStyle(.borderedProminent)
+            }
+        }.padding(12).background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    static func timing(_ request: ProjectApproval, now: Date) -> String {
+        let format = DateFormatter(); format.timeStyle = .short; format.dateStyle = .none
+        let asked = L("요청 ", "Asked ") + format.string(from: request.created)
+        guard let deadline = request.deadline else { return asked }
+        let minutes = max(0, Int((deadline.timeIntervalSince(now) / 60).rounded(.up)))
+        return asked + L(" · \(minutes)분 남음", " · \(minutes) min left")
+    }
+}
+
 extension Discussion {
+    func approvalChatName(_ room: UUID) -> String {
+        let title = conversations.first(where: { $0.id == room })?.title ?? ""
+        return title.isEmpty ? L("새 대화", "New chat") : title
+    }
+    // Ask again: opens the chat and sends a short message so the AI checks again and shows a new card.
+    // A draft or attached images the user already has there are kept, not sent (the note stays).
+    func askAgain(_ request: ProjectApproval) {
+        open(request.room)
+        let text = request.title.hasPrefix("stable") ? L("stable 배포 다시 진행해 줘", "Please publish stable again")
+            : L("방금 허가를 기다리던 작업 다시 진행해 줘", "Please continue the work that was waiting for approval")
+        guard draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, pendingImages.isEmpty else { return }
+        ProjectCenter.shared.dismiss(request.id)
+        draft = text
+        send()
+    }
     func configureProject() {
         guard !running, configuration.mode == 0 else { return }
         if current.workspace?.project != nil {
@@ -233,4 +348,12 @@ extension Discussion {
         let on = current.workspace?.isFullAuto == true
         change(currentID, save: true) { $0.workspace?.fullAuto = on ? false : nil }
     }
+}
+
+// Settings → Chat → Approval requests. Read by ApprovalAlerts; missing keys mean the defaults.
+enum ApprovalAlertSettings {
+    static let notifyKey = "approvalNotify", soundKey = "approvalSound", repeatKey = "approvalRepeat"
+    static var notify: Bool { UserDefaults.app.object(forKey: notifyKey) as? Bool ?? true }
+    static var sound: Bool { UserDefaults.app.bool(forKey: soundKey) }
+    static var repeats: Bool { UserDefaults.app.bool(forKey: repeatKey) }
 }

@@ -80,6 +80,21 @@ func testProjectWork() {
     expect(approved("project_run", ["name": "test"], allow: false)["isError"] as? Bool == true, "denied command never starts")
     let expired = ProjectCenter.shared.approve(ProjectApproval(room: run.room, run: run.id, title: "Expired", detail: "fixture"), token: run.attempt, deadline: Date())
     expect(!expired, "approval timeout refuses execution")
+    RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+    let note = ProjectCenter.shared.expired.filter { $0.run == run.id }
+    expect(note.map(\.title) == ["Expired"] && note.first?.deadline != nil && ProjectCenter.shared.requests.isEmpty, "timed-out approval leaves one Ask-again note, not a waiting card")
+    ProjectCenter.shared.dismiss(note.first!.id)
+    expect(ProjectCenter.shared.expired.isEmpty, "dismissing the note removes it")
+    // Deciding twice (card and approval window at once) counts once; denied requests leave no timeout note.
+    let twice = DispatchSemaphore(value: 0); var twiceAnswer: Bool?
+    DispatchQueue.global().async { twiceAnswer = ProjectCenter.shared.approve(ProjectApproval(room: run.room, run: run.id, title: "Twice", detail: "fixture"), token: run.attempt, deadline: Date().addingTimeInterval(10)); twice.signal() }
+    var twiceAt = Date().addingTimeInterval(5)
+    while ProjectCenter.shared.requests.isEmpty && Date() < twiceAt { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
+    if let card = ProjectCenter.shared.requests.first { ProjectCenter.shared.decide(card.id, allow: false); ProjectCenter.shared.decide(card.id, allow: true) }
+    twiceAt = Date().addingTimeInterval(5)
+    while twice.wait(timeout: .now()) != .success && Date() < twiceAt { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
+    RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+    expect(twiceAnswer == false && ProjectCenter.shared.requests.isEmpty && ProjectCenter.shared.expired.isEmpty, "first decision wins; a second click is ignored")
     // Exercise the real Python stdio bridge and app socket beyond the old 15-second timeout.
     write(".ai-illuminati.json", #"{"version":1,"commands":{"delayed":{"executable":"/usr/bin/python3","args":["-c","import time; time.sleep(16); print('long command fixture')"]}}}"#)
     let capability = ToolHub.shared.register(room: run.room, roots: binding.roots, projectRun: run.id, generation: run.generation)

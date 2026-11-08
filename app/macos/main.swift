@@ -14,6 +14,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let poker = PokerWindow()
     private lazy var pokerGame = PokerGame(model: model)
     private lazy var discussion = Discussion(model: model)
+    private lazy var approvals = ApprovalAlerts(discussion: discussion) { [weak self] room in
+        guard let self else { return }
+        self.chat.show(discussion: self.discussion)
+        if let room { self.discussion.open(room) }
+    }
+    private var approvalObservation: AnyCancellable?
+    // The menu bar text without the waiting-approval count (see showPending).
+    private var baseTitle = NSAttributedString(string: "")
     private var accounts: [Account] { model.accounts }
     private var usages: [AIUsage] = []
     private var timer: Timer?
@@ -106,6 +114,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil, queue: .main
         ) { [weak self] _ in self?.configureMarkAnimation() }
         updateTitle()
+        approvals.start()
+        approvalObservation = ProjectCenter.shared.$requests.map(\.count).removeDuplicates().receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.showPending(); self?.rebuildMenu() }
         model.updater.start()
         FaceLink.shared.start()
         // Chats from your other Macs (off until turned on in Settings → Chat).
@@ -256,7 +267,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         configureMarkAnimation()
         guard style == .markPercent else {
-            item.button?.attributedTitle = NSAttributedString(string: "")
+            baseTitle = NSAttributedString(string: "")
+            showPending()
             return
         }
         let font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
@@ -267,12 +279,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             title.append(NSAttributedString(string: g.0 + " ", attributes: [.font: font, .foregroundColor: NSColor.secondaryLabelColor]))
             title.append(NSAttributedString(string: left.map { "\(Int($0.rounded()))%" } ?? "?", attributes: [.font: font, .foregroundColor: colored ? colors[index] : NSColor.labelColor]))
         }
+        baseTitle = title
+        showPending()
+    }
+
+    // An orange count beside the mark while approvals wait; it stays until each one is decided.
+    private func showPending() {
+        let count = ProjectCenter.shared.requests.count
+        guard count > 0 else { item.button?.attributedTitle = baseTitle; return }
+        let font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
+        let title = NSMutableAttributedString(string: " ●\(count)", attributes: [.font: font, .foregroundColor: NSColor.systemOrange])
+        title.append(baseTitle)
         item.button?.attributedTitle = title
     }
 
     private func rebuildMenu() {
         guard !usageMenuIsOpen else { return }
         menu.removeAllItems()
+        let pending = ProjectCenter.shared.requests.count
+        if pending > 0 {
+            let waiting = action(L("허가 대기 \(pending)건…", "\(pending) Approval\(pending == 1 ? "" : "s") Waiting…"), #selector(openApprovals))
+            waiting.image = NSImage(systemSymbolName: "exclamationmark.circle.fill", accessibilityDescription: nil)?
+                .withSymbolConfiguration(.init(paletteColors: [.systemOrange]))
+            menu.addItem(waiting)
+            menu.addItem(.separator())
+        }
         if usages.isEmpty && !accounts.isEmpty { menu.addItem(info(L("확인 중…", "Checking…"))) }
         // Current order and names from the list (readings may be a little older).
         let shown = accounts.compactMap { account in
@@ -334,6 +365,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     @objc private func installUpdate() { model.updater.install() }
     @objc private func openChat() { chat.show(discussion: discussion) }
+    @objc private func openApprovals() { approvals.show() }
     @objc private func openGame() { poker.show(game: pokerGame) }
 
     // MARK: Helpers

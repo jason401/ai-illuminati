@@ -18,6 +18,7 @@ struct ChatView: View {
     // of these changes, not on every frame of the drag.
     @ObservedObject private var layout = ChatLayout.shared
     @ObservedObject private var sync = DeviceSync.shared
+    @ObservedObject private var approvals = ProjectCenter.shared
 
     var body: some View {
         let wide = layout.wide
@@ -168,6 +169,10 @@ struct ChatView: View {
             Text(conversation.turns.isEmpty ? L("새 대화", "New chat") : conversation.title)
                 .lineLimit(1).truncationMode(.tail)
                 .frame(maxWidth: .infinity, alignment: .leading)
+            if approvals.requests.contains(where: { $0.room == conversation.id }) {
+                Circle().fill(Color.orange).frame(width: 7, height: 7)
+                    .help(L("허가를 기다려요", "Waiting for approval"))
+            }
             if discussion.runningRooms.contains(conversation.id) {
                 ProgressView().controlSize(.mini)
                     .help(L("답하는 중", "Answering"))
@@ -258,6 +263,8 @@ struct ChatView: View {
                 }
             }
             .padding(.leading, 12).padding(.trailing, 18).frame(height: 40)
+            // Another chat waits for approval: say so here, whichever chat is open.
+            ApprovalBanner(discussion: discussion)
             if let remote = discussion.viewingRemote {
                 RemoteChatView(viewing: remote, discussion: discussion, sync: sync)
             } else if discussion.current.turns.isEmpty {
@@ -284,7 +291,7 @@ struct ChatView: View {
             } else {
                 transcript
                 // Approval cards sit right above the message box, where the user is looking.
-                ProjectApprovalView(room: discussion.currentID)
+                ProjectApprovalView(room: discussion.currentID, discussion: discussion)
                     .frame(maxWidth: 760)
                     .padding(.horizontal, 28)
                     .frame(maxWidth: .infinity)

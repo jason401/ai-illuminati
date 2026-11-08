@@ -174,6 +174,61 @@ extension Discussion {
         }
     }
 
+    // Korean initial consonants: "클로드" → "ㅋㄹㄷ", so "@ㅋㄹㄷ" can call Claude.
+    static func initials(_ word: String) -> String {
+        let table = Array("ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ")
+        return String(word.unicodeScalars.map { scalar -> Character in
+            let v = Int(scalar.value)
+            return (0xAC00...0xD7A3).contains(v) ? table[(v - 0xAC00) / 588] : Character(scalar)
+        })
+    }
+
+    // "@지피 @ㅋㄹㄷ" typed without picking from the list: each word after @ that names one kind of AI (an
+    // account name, an AI name in English or Korean, or its initials, with up to 2 letters after it such as
+    // "@클로드야") calls one account of that kind. When the kind has several accounts: with Enterprise and
+    // personal chats kept apart only the chat's side, else the chat's side first, then one signed in, then
+    // Settings order. A word that fits no kind or several is left as text. Returns (account, the "@word").
+    static func typedMentions(in draft: String, accounts: [Account], label: (Account) -> String, school: Bool?, strict: Bool,
+                              usage: [String: AIUsage], localEnabled: Bool) -> [(id: String, token: String)] {
+        let usable = accounts.filter { $0.provider != .ollama || localEnabled }
+        var result: [(id: String, token: String)] = []
+        let words = draft.split(whereSeparator: \.isWhitespace).map(String.init)
+        for (n, word) in words.enumerated() where word.hasPrefix("@") && word.count > 1 {
+            let token = word.trimmingCharacters(in: CharacterSet(charactersIn: ",.?!:;~"))
+            let name = String(token.dropFirst()).lowercased()
+            guard !name.isEmpty else { continue }
+            // An account named exactly ("@ChatGPT(학교)", spaces left out; a name two accounts share is not enough).
+            let squeezed = { (text: String) in text.lowercased().replacingOccurrences(of: " ", with: "") }
+            // "@ChatGPT (학교)" typed with its space: the next word is the side in brackets.
+            if n + 1 < words.count, words[n + 1].hasPrefix("("),
+               let exact = usable.first(where: { squeezed(label($0)) == name + squeezed(words[n + 1]) }) {
+                if !result.contains(where: { $0.id == exact.id }) { result.append((exact.id, token + " " + words[n + 1])) }
+                continue
+            }
+            let named = usable.filter { squeezed(label($0)) == name || squeezed($0.name) == name }
+            if named.count == 1, let exact = named.first {
+                if !result.contains(where: { $0.id == exact.id }) { result.append((exact.id, token)) }
+                continue
+            }
+            // An exact name wins over one with letters after it ("@ㅈㅁㄴㅇ" is Gemini, not "ㅈㅁ" (젬마) + 2).
+            func matching(_ fits: (String) -> Bool) -> Set<Account.Provider> {
+                Set(usable.map(\.provider)).filter { kind in (aiNames[kind] ?? []).contains { fits($0) || fits(initials($0)) } }
+            }
+            let exactKinds = matching { name == $0 }
+            let kinds = exactKinds.isEmpty ? matching { $0.count >= 2 && name.hasPrefix($0) && name.count - $0.count <= 2 } : exactKinds
+            guard kinds.count == 1, let kind = kinds.first else { continue }
+            var candidates = usable.filter { $0.provider == kind }
+            if strict, let school, kind != .ollama { candidates = candidates.filter { $0.isSchool == school } }
+            func rank(_ account: Account) -> Int {
+                (school != nil && account.isSchool != school ? 2 : 0) + (usage[account.id]?.needsLogin == true ? 1 : 0)
+            }
+            guard let chosen = candidates.enumerated().min(by: { (rank($0.element), $0.offset) < (rank($1.element), $1.offset) })?.element,
+                  !result.contains(where: { $0.id == chosen.id }) else { continue }
+            result.append((chosen.id, token))
+        }
+        return result
+    }
+
     // Gemma on this Mac when every cloud account is out: the one already in memory, else the first in the list.
     func lastResort(usage: [String: AIUsage], excluded: Set<String>) -> Account? {
         let ready = model.accounts.filter { $0.provider == .ollama && model.localEnabled && !excluded.contains($0.id) && usage[$0.id]?.needsLogin != true }
@@ -210,7 +265,7 @@ extension Discussion {
         """
     }
 
-    // mentions: accounts called with @ (in order). Each answers in turn and sees the replies before it;
+    // mentions: accounts called with @. They answer at the same time without seeing each other's replies;
     // nobody is picked automatically and the next message is automatic again.
     func runSolo(question: String, history: [ChatTurn], rules: String, config: ChatConfiguration, mentions: [String] = [],
                  cancellation: DebateCancellation, id: UUID, index: Int) {
@@ -297,56 +352,72 @@ extension Discussion {
         }
 
         if !mentions.isEmpty {
-            var said = ""   // the replies already given in this turn, which the next AI reads
-            for (k, accountID) in mentions.enumerated() where !cancellation.isCancelled {
-                guard let account = model.accounts.first(where: { $0.id == accountID }) else { continue }
+            // Everyone called answers at the same time and does not see the others' replies. The first good
+            // reply to finish is the main answer; the others (and failures) go below it. Only the first called
+            // keeps the chat state, so two AIs never write it at once.
+            let called = mentions.compactMap { accountID in model.accounts.first { $0.id == accountID } }
+            let note = notes.joined(separator: "\n")
+            let names = called.map { label($0) }.joined(separator: ", ")
+            changeTurn(id, index) { t in t.status = L("\(names)가 답하는 중…", "\(names) answering…"); t.orderNote = note.isEmpty ? nil : note }
+            let group = DispatchGroup()
+            let doneLock = NSLock()
+            var done: Set<String> = []
+            for (k, account) in called.enumerated() {
                 let speaker = label(account)
-                let note = notes.joined(separator: "\n")
-                changeTurn(id, index) { t in t.status = L("\(speaker)가 답하는 중…", "\(speaker) is answering…"); t.orderNote = note.isEmpty ? nil : note }
                 var instruction = soloInstruction(account, binding: binding, helper: helper, chat: id)
-                if k > 0 {
-                    instruction += "\nThe user called several AIs for this message. The replies before yours are above: give your own view, briefly agree where they are right, add what they missed and say where you disagree and why."
+                if called.count > 1 {
+                    instruction += "\nThe user called several AIs for this message. They answer at the same time and do not see each other's replies: give your own view."
                 }
-                if keepState { instruction += "\n" + Self.stateRule(current: Self.loadState(id)) }
+                if keepState && k == 0 { instruction += "\n" + Self.stateRule(current: Self.loadState(id)) }
+                // One reply is shown as it is written at a time: whoever starts first, then the next.
                 let progress: (AnswerProgress) -> Void = { update in
+                    doneLock.lock(); let finished = done.contains(speaker); doneLock.unlock()
+                    guard !finished else { return }
                     switch update {
-                    case .text(let text): self.changeTurn(id, index) { $0.partial = Self.extractState(FaceLink.extract(text).text).reply; $0.partialBy = speaker }
+                    case .text(let text):
+                        let shown = Self.extractState(FaceLink.extract(text).text).reply
+                        self.changeTurn(id, index) { t in
+                            guard t.partialBy == nil || t.partialBy == speaker else { return }
+                            t.partial = shown; t.partialBy = speaker
+                        }
                     case .activity(let what): self.changeTurn(id, index) { $0.activity = what }
                     }
                 }
-                let started = Date()
-                let result = requestDebate(account, Self.soloContext(rules: rules, transcript: asked + said) + "\n[SOLO TURN]\n" + instruction,
-                                           binding.fullAccess == true ? 8 * 3600 : activePeerSession != nil ? 1800 : 900, cancellation, web: true,
-                                           fresh: freshTranscript.map { Self.soloContext(rules: rules, transcript: $0 + said) + "\n[SOLO TURN]\n" + instruction },
-                                           progress: progress)
-                if cancellation.isCancelled { break }
-                var entry: ChatTurn.Entry
-                switch result {
-                case .success(let raw):
-                    let (tagless, mood) = FaceLink.extract(raw)
-                    if let mood, binding.face == true { FaceLink.shared.show(mood) }
-                    let (text, newState) = Self.extractState(tagless)
-                    if let newState { self.saveState(newState, room: id, index: index) }
-                    let harvest = collectPictures(text, account: account, since: started, id: id, index: index, cancellation: cancellation)
-                    said += "\n\n[\(speaker)]\n" + harvest.text
-                    if k == 0 {
-                        changeTurn(id, index, save: true) { t in
-                            t.final = harvest.text; t.finalBy = speaker
-                            t.finalImages = harvest.images.isEmpty ? nil : harvest.images
-                            t.partial = nil; t.activity = nil
-                        }
-                        continue
+                group.enter()
+                DispatchQueue.global(qos: .userInitiated).async {
+                    defer { group.leave() }
+                    let started = Date()
+                    let result = self.requestDebate(account, Self.soloContext(rules: rules, transcript: asked) + "\n[SOLO TURN]\n" + instruction,
+                                                    binding.fullAccess == true ? 8 * 3600 : self.activePeerSession != nil ? 1800 : 900, cancellation, web: true,
+                                                    fresh: freshTranscript.map { Self.soloContext(rules: rules, transcript: $0) + "\n[SOLO TURN]\n" + instruction },
+                                                    progress: progress)
+                    doneLock.lock(); done.insert(speaker); doneLock.unlock()
+                    if cancellation.isCancelled { return }
+                    var entry: ChatTurn.Entry
+                    switch result {
+                    case .success(let raw):
+                        let (tagless, mood) = FaceLink.extract(raw)
+                        if let mood, binding.face == true { FaceLink.shared.show(mood) }
+                        let (text, newState) = Self.extractState(tagless)
+                        if let newState, k == 0 { self.saveState(newState, room: id, index: index) }
+                        let harvest = self.collectPictures(text, account: account, since: started, id: id, index: index, cancellation: cancellation)
+                        entry = .init(round: 1, speaker: speaker, text: harvest.text, failed: false)
+                        entry.images = harvest.images.isEmpty ? nil : harvest.images
+                    case .failure(let failure):
+                        entry = .init(round: 1, speaker: speaker, text: Self.describe(failure), failed: true)
                     }
-                    entry = .init(round: 1, speaker: speaker, text: harvest.text, failed: false)
-                    entry.images = harvest.images.isEmpty ? nil : harvest.images
-                case .failure(let failure):
-                    entry = .init(round: 1, speaker: speaker, text: Self.describe(failure), failed: true)
-                }
-                changeTurn(id, index, save: true) { t in
-                    t.moreAnswers = (t.moreAnswers ?? []) + [entry]
-                    t.partial = nil; t.activity = nil
+                    let finished = entry
+                    self.changeTurn(id, index, save: true) { t in
+                        if t.partialBy == speaker { t.partial = nil; t.partialBy = nil; t.activity = nil }
+                        if !finished.failed && t.final == nil {
+                            t.final = finished.text; t.finalBy = speaker; t.finalImages = finished.images
+                        } else {
+                            t.moreAnswers = (t.moreAnswers ?? []) + [finished]
+                        }
+                    }
                 }
             }
+            group.wait()
             var changes = Self.changes(own, since: before)
             if var made = backup, (try? made.finish()) != nil { changes += made.changes.filter { $0.kind != "directory" } }
             let found = changes

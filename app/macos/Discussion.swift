@@ -1017,10 +1017,19 @@ final class Discussion: ObservableObject {
 
     func send() {
         guard canSend else { return }
-        // Plain chat: "@Name" picked from the list sends this one message to those accounts, in order.
-        let mentioned = Self.modernModes && configuration.mode == 0 ? Self.mentions(in: draft, picked: draftMentions, accounts: model.accounts, label: label) : []
+        // Plain chat: "@Name" picked from the list, or typed ("@지피", "@ㅋㄹㄷ"), sends this one message to those accounts.
+        let plain = Self.modernModes && configuration.mode == 0
+        var mentioned = plain ? Self.mentions(in: draft, picked: draftMentions, accounts: model.accounts, label: label) : []
         var typed = draft
         for id in mentioned { if let account = model.accounts.first(where: { $0.id == id }) { typed = typed.replacingOccurrences(of: "@" + label(account), with: "") } }
+        if plain {
+            let side = configuration.school ?? soloNext?.isSchool
+            for found in Self.typedMentions(in: typed, accounts: model.accounts, label: label, school: side, strict: model.schoolOnlyHandoff,
+                                            usage: model.latestUsage, localEnabled: model.localEnabled) {
+                if let range = typed.range(of: found.token) { typed.replaceSubrange(range, with: "") }
+                if !mentioned.contains(found.id) { mentioned.append(found.id) }
+            }
+        }
         typed = typed.replacingOccurrences(of: "  ", with: " ").trimmingCharacters(in: .whitespacesAndNewlines)
         draftMentions = []
         mentionQuery = nil

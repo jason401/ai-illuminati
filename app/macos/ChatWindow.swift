@@ -1636,7 +1636,7 @@ private struct TurnView: View, Equatable {
                 .cornerRadius(10)
             }
             ForEach(turn.mode == 0 ? (turn.moreAnswers ?? []) : []) { answer in
-                // A second (third…) AI called with @, which read the replies before it.
+                // A second (third…) AI called with @, which answered at the same time without seeing the others.
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 6) {
                         Circle().fill(Account.Provider.of(speaker: answer.speaker)?.color ?? .secondary).frame(width: 7, height: 7)

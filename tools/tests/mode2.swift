@@ -1667,8 +1667,8 @@ do {
     print("PASS: several chats at once (own worker per message, switch and start chats meanwhile, limit of \(Discussion.maxRunning), answers land in their own chats)")
 }
 
-// Plain chat, part 3: @ calls one or more accounts for one message, Gemini included; the second reads the
-// first reply; the next message is automatic again and sees both replies.
+// Plain chat, part 3: @ calls one or more accounts for one message, Gemini included; they answer at the same
+// time without seeing each other; the next message is automatic again and sees both replies.
 do {
     Discussion.modernModes = true
     Discussion.availableModes = [0, 1, 2, 3, 4]
@@ -1696,32 +1696,60 @@ do {
 
     let lock = NSLock()
     var asked: [(String, String)] = []
+    // Both called AIs must be asking before either answers: they answer at the same time.
+    var waitForBoth = 2
     chat.workspaceAnswer = { account, prompt, _, _, _ in
-        lock.lock(); asked.append((account.id, prompt)); let n = asked.count; lock.unlock()
-        return .success("Reply \(n) from \(account.id)\n<face>focused</face>")
+        lock.lock(); asked.append((account.id, prompt)); lock.unlock()
+        let deadline = Date().addingTimeInterval(5)
+        while Date() < deadline { lock.lock(); let n = asked.count; lock.unlock(); if n >= waitForBoth { break }; usleep(10_000) }
+        if account.id == "at-gemini" { usleep(200_000) }
+        return .success("Reply from \(account.id)\n<face>focused</face>")
     }
     chat.draft = "@\(labels["at-codex-s"]!) @\(labels["at-gemini"]!) what do you think?"
     chat.draftMentions = ["at-codex-s", "at-gemini"]
     chat.send(); waitFor(chat)
     let turn = chat.current.turns[0]
-    expect(asked.map(\.0) == ["at-codex-s", "at-gemini"], "the called accounts answer, in order (Gemini too)")
+    expect(Set(asked.map(\.0)) == ["at-codex-s", "at-gemini"] && asked.count == 2, "the called accounts answer (Gemini too)")
     expect(turn.question == "what do you think?" && turn.mentions == ["at-codex-s", "at-gemini"], "the names leave the message and are kept as mentions")
-    expect(asked[1].1.contains("[\(labels["at-codex-s"]!)]\nReply 1 from at-codex-s") && asked[1].1.contains("The user called several AIs"), "the second reads the first reply")
-    expect(turn.final == "Reply 1 from at-codex-s" && turn.finalBy == labels["at-codex-s"] && turn.moreAnswers?.map(\.text) == ["Reply 2 from at-gemini"], "both replies are shown")
+    expect(asked.allSatisfy { !$0.1.contains("Reply from") && $0.1.contains("do not see each other's replies") }, "they answer at the same time without seeing each other")
+    expect(turn.final == "Reply from at-codex-s" && turn.finalBy == labels["at-codex-s"] && turn.moreAnswers?.map(\.text) == ["Reply from at-gemini"], "both replies are shown, the first done on top")
     expect(chat.draftMentions.isEmpty && chat.configuration.lastSoloAccountID == nil, "picks are cleared and do not become the automatic choice")
 
+    waitForBoth = 1
     asked.removeAll()
     chat.draft = "and now?"
     chat.send(); waitFor(chat)
     expect(asked.count == 1 && asked[0].0 != "at-gemini", "the next message is automatic again (never Gemini)")
-    expect(asked[0].1.contains("[\(labels["at-gemini"]!)]\nReply 2 from at-gemini") && asked[0].1.contains("[User]\nwhat do you think?"), "the next AI sees both replies")
+    expect(asked[0].1.contains("[\(labels["at-gemini"]!)]\nReply from at-gemini") && asked[0].1.contains("[User]\nwhat do you think?"), "the next AI sees both replies")
 
     asked.removeAll()
     chat.draft = "@\(labels["at-claude"]!)"
     chat.draftMentions = ["at-claude"]
     chat.send(); waitFor(chat)
     expect(asked.map(\.0) == ["at-claude"] && chat.current.turns[2].question == L("지금까지의 대화에 대해 네 의견을 말해 줘.", "What do you think about this conversation so far?"), "only a name: asks for its view on the chat")
-    print("PASS: @ mentions (list with Gemini, narrowing, Korean names, order, second reads first, automatic again, name only)")
+
+    // Typed without the list: names, Korean names and initials; unclear words stay text.
+    func typed(_ text: String, school: Bool? = nil, strict: Bool = false) -> [String] {
+        Discussion.typedMentions(in: text, accounts: m.accounts, label: chat.label, school: school, strict: strict, usage: m.latestUsage, localEnabled: true).map(\.id)
+    }
+    expect(typed("@ㅋㄹㄷ @지피 너네는?") == ["at-claude", "at-codex"], "initials and Korean nicknames call the AI")
+    expect(typed("@클로드야, @gpt 어때?") == ["at-claude", "at-codex"], "a short ending and punctuation are fine")
+    expect(typed("@지피", school: true) == ["at-codex-s"], "the chat's side comes first")
+    expect(typed("@지피", school: true, strict: true) == ["at-codex-s"] && typed("@클로드", school: true, strict: true).isEmpty,
+           "Enterprise and personal kept apart: only the chat's side, none on that side means no call")
+    expect(typed("@ㅈㅁㄴㅇ") == ["at-gemini"], "an exact Gemini name is not taken for Gemma")
+    expect(typed("mail me@example.com @someone @") .isEmpty, "addresses and unknown names stay text")
+    expect(typed("@chatgpt(school)") == ["at-codex-s"] && typed("@ChatGPT (School) hi") == ["at-codex-s"], "an account named exactly")
+
+    asked.removeAll(); waitForBoth = 2
+    m.schoolOnlyHandoff = false   // this test has no school Claude
+    chat.draft = "@ㅈㅍ @ㅋㄹㄷ 너네는 어떻게 생각해?"
+    chat.draftMentions = []
+    chat.send(); waitFor(chat)
+    let last = chat.current.turns[3]
+    expect(Set(asked.map(\.0)).count == 2 && Set(asked.map(\.0)).contains("at-claude") && last.question == "너네는 어떻게 생각해?",
+           "typed names call both AIs and leave the message")
+    print("PASS: @ mentions (list with Gemini, narrowing, Korean names, at the same time, automatic again, name only, typed names and initials)")
 }
 
 // Ollama models on this Mac: models listed, replies streamed, errors reported, never picked automatically,

@@ -63,8 +63,9 @@ final class MemoryStore: ObservableObject {
         return saved
     }
 
+    // Always the latest saved state, so a late copy from another thread never shows an older one.
     private func publish(_ copy: MemoryData) {
-        if Thread.isMainThread { data = copy } else { DispatchQueue.main.async { self.data = copy } }
+        if Thread.isMainThread { data = snapshot } else { DispatchQueue.main.async { self.data = self.snapshot } }
     }
 
     private static func write(_ data: MemoryData) -> Bool {
@@ -168,8 +169,10 @@ final class MemoryStore: ObservableObject {
     }
 
     // May an AI answering this chat's newest message save a fact now?
-    static func mayRemember(_ data: MemoryData, chat: Conversation?) -> Bool {
+    // `turn`: the message the tool session was made for; a session of an earlier answer never saves to a later one.
+    static func mayRemember(_ data: MemoryData, chat: Conversation?, turn wanted: UUID? = nil) -> Bool {
         guard data.enabled, let chat, !chat.isEnterprise, let turn = chat.turns.last, turn.answeredAt == nil else { return false }
+        if let wanted, wanted != turn.id { return false }
         return data.autoSave || asksToRemember(turn.question)
     }
 
@@ -197,8 +200,11 @@ final class MemoryLink: ToolProvider {
         return Thread.isMainThread ? read() : DispatchQueue.main.sync(execute: read)
     }
 
+    // The newest message of a chat now, for a tool session made for it (ToolHub.register).
+    func newestTurn(_ room: UUID) -> UUID? { chat(room)?.turns.last?.id }
+
     func tools(context: ToolContext) -> [[String: Any]] {
-        guard context.asker != nil, MemoryStore.mayRemember(store.snapshot, chat: chat(context.room)) else { return [] }
+        guard context.asker != nil, let turn = context.turn, MemoryStore.mayRemember(store.snapshot, chat: chat(context.room), turn: turn) else { return [] }
         return [["name": "remember",
                  "description": "Save one short fact about the user to their long-term memory, which every AI in this app reads in later chats. One line, no secrets.",
                  "inputSchema": ["type": "object", "properties": ["text": ["type": "string"]], "required": ["text"], "additionalProperties": false]]]
@@ -207,10 +213,10 @@ final class MemoryLink: ToolProvider {
     func call(_ name: String, _ arguments: [String: Any], context: ToolContext) -> [String: Any] {
         guard name == "remember" else { return ToolHub.failure("Unknown tool: " + name) }
         let found = chat(context.room)
-        guard context.asker != nil, MemoryStore.mayRemember(store.snapshot, chat: found) else {
+        guard context.asker != nil, let turn = context.turn, MemoryStore.mayRemember(store.snapshot, chat: found, turn: turn) else {
             return ToolHub.failure("Memory saving is off for this answer.")
         }
-        switch store.remember(arguments["text"] as? String ?? "", room: context.room, turn: found?.turns.last?.id,
+        switch store.remember(arguments["text"] as? String ?? "", room: context.room, turn: turn,
                               roomTitle: found?.title, by: context.asker?.name) {
         case .saved(let item): return ["content": [["type": "text", "text": "Saved to memory: " + item.text]], "isError": false]
         case .duplicate: return ["content": [["type": "text", "text": "Already in memory."]], "isError": false]

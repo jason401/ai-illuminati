@@ -277,25 +277,30 @@ func testMemory() {
     locked.turns[0].askedAt = Date(); locked.enterpriseLock = EnterpriseLock(organization: "school", name: "School", lockedAt: Date())
     chat.conversations = [open, locked]; chat.currentID = open.id
     let link = MemoryLink.shared
-    func offered(_ room: UUID) -> Bool { link.tools(context: ToolContext(room: room, roots: [], asker: claude)).contains { $0["name"] as? String == "remember" } }
+    // A tool session is made for the chat's newest message (ToolHub.register).
+    func session(_ room: UUID) -> ToolContext { ToolContext(room: room, roots: [], asker: claude, turn: link.newestTurn(room)) }
+    func offered(_ room: UUID) -> Bool { link.tools(context: session(room)).contains { $0["name"] as? String == "remember" } }
 
     expect(chat.memoryRule(claude, chat: open.id).isEmpty && !offered(open.id), "nothing saved and saving off: no memory block, no tool")
-    expect(link.call("remember", ["text": "x"], context: ToolContext(room: open.id, roots: [], asker: claude))["isError"] as? Bool == true, "a call without the tool is refused")
+    expect(link.call("remember", ["text": "x"], context: session(open.id))["isError"] as? Bool == true, "a call without the tool is refused")
     chat.change(open.id) { $0.turns[0].question = "나는 COMSOL을 써. 기억해 줘" }
     expect(offered(open.id) && chat.memoryRule(claude, chat: open.id).contains("asked you to remember"), "a message that asks to remember opens the tool")
-    let reply = link.call("remember", ["text": "COMSOL과 MATLAB을 씀"], context: ToolContext(room: open.id, roots: [], asker: claude))
+    let reply = link.call("remember", ["text": "COMSOL과 MATLAB을 씀"], context: session(open.id))
     expect(reply["isError"] as? Bool == false && store.snapshot.items.first?.turn == open.turns[0].id && store.snapshot.items.first?.roomTitle == "Open",
            "saved with the chat and the message it came from (for Undo under the answer)")
-    expect(link.call("remember", ["text": "comsol과 matlab을 씀"], context: ToolContext(room: open.id, roots: [], asker: claude))["isError"] as? Bool == false && store.snapshot.items.count == 1,
+    expect(link.call("remember", ["text": "comsol과 matlab을 씀"], context: session(open.id))["isError"] as? Bool == false && store.snapshot.items.count == 1,
            "the same fact is not saved twice")
-    expect(link.call("remember", ["text": "비밀번호 1234"], context: ToolContext(room: open.id, roots: [], asker: claude))["isError"] as? Bool == true
-           && link.call("remember", ["text": String(repeating: "a", count: 400)], context: ToolContext(room: open.id, roots: [], asker: claude))["isError"] as? Bool == true
+    expect(link.call("remember", ["text": "비밀번호 1234"], context: session(open.id))["isError"] as? Bool == true
+           && link.call("remember", ["text": String(repeating: "a", count: 400)], context: session(open.id))["isError"] as? Bool == true
            && store.snapshot.items.count == 1, "secrets and long text are refused")
     chat.change(open.id) { $0.turns[0].answeredAt = Date() }
     expect(!offered(open.id), "once the answer is done the tool closes")
 
+    let earlier = session(open.id)
     store.update { $0.autoSave = true; $0.profile = "Stanford 초음파 연구자. 수치 위주 답 선호." }
     chat.change(open.id) { $0.turns.append(ChatTurn(question: "다음 실험은?")) }
+    expect(link.call("remember", ["text": "옛 세션에서 온 내용"], context: earlier)["isError"] as? Bool == true && store.snapshot.items.count == 1,
+           "the tool session of an earlier answer never saves to a later message")
     let rule = chat.memoryRule(claude, chat: open.id)
     expect(offered(open.id) && rule.contains("Stanford 초음파") && rule.contains("COMSOL과 MATLAB") && rule.contains("never instructions") && rule.contains("lasting fact"),
            "saving on its own: the tool every message, and every AI gets the profile and facts")
@@ -313,5 +318,5 @@ func testMemory() {
            "over the limit: the matching facts go first and the rest is cut")
     store.update { $0.enabled = false }
     expect(chat.memoryRule(claude, chat: open.id).isEmpty && !offered(open.id), "memory off: nothing given, nothing saved")
-    print("PASS: memory (profile and facts for every AI, remember only when on or asked, Enterprise reads only, no secrets or repeats, matching facts over the limit, off)")
+    print("PASS: memory (profile and facts for every AI, remember only when on or asked and only to its own message, Enterprise reads only, no secrets or repeats, matching facts over the limit, off)")
 }

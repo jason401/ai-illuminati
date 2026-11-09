@@ -478,7 +478,7 @@ extension Discussion {
                 // Several at once: every reply as it is written, each in its own column. One: as before.
                 let accountID = account.id
                 let progress: (AnswerProgress) -> Void = { update in
-                    func finished() -> Bool { doneLock.lock(); defer { doneLock.unlock() }; return done.contains(speaker) }
+                    func finished() -> Bool { doneLock.lock(); defer { doneLock.unlock() }; return done.contains(accountID) }
                     guard !finished() else { return }
                     switch update {
                     case .text(let text):
@@ -501,7 +501,7 @@ extension Discussion {
                                                     binding.fullAccess == true ? 8 * 3600 : 900, cancellation, web: true,
                                                     fresh: freshTranscript.map { Self.soloContext(rules: rules, transcript: $0) + "\n[SOLO TURN]\n" + instruction },
                                                     workspace: k > 0 && called.count > 1 ? Self.peerView(binding) : nil, progress: progress)
-                    doneLock.lock(); done.insert(speaker); doneLock.unlock()
+                    doneLock.lock(); done.insert(accountID); doneLock.unlock()
                     if cancellation.isCancelled { return }
                     var entry: ChatTurn.Entry
                     switch result {

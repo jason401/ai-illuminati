@@ -13,7 +13,7 @@ struct ProjectBinding: Codable, Equatable {
 enum ProjectProcess {
     struct Reply { var status: Int32; var output: String }
     static func run(_ executable: String, _ args: [String], cwd: String, token: DebateCancellation? = nil,
-                    deadline: Date = Date().addingTimeInterval(60), guarded: Bool = false,
+                    deadline: Date = Date().addingTimeInterval(60), guarded: Bool = false, extra: [String: String] = [:],
                     onLine: ((String) -> Void)? = nil) throws -> Reply {
         if token?.isCancelled == true { throw MaterialReader.error("Project operation cancelled.") }
         let p = Process(), out = Pipe(), err = Pipe(), lock = NSLock(), done = DispatchGroup()
@@ -24,6 +24,7 @@ enum ProjectProcess {
         environment["GIT_TERMINAL_PROMPT"] = "0"; environment["GIT_SSH_COMMAND"] = "/usr/bin/ssh -o BatchMode=yes"
         environment["AI_ILLUMINATI_PROJECT_PROCESS"] = "1"
         if guarded { environment = AutoGuard.environment(environment) }
+        environment.merge(extra) { $1 }
         p.environment = environment; p.standardInput = FileHandle.nullDevice; p.standardOutput = out; p.standardError = err
         var captured = Data()
         for pipe in [out, err] {

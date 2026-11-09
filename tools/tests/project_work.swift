@@ -656,3 +656,136 @@ func testWorkTiming() {
            && (all?["fail"] as? [[String: Any]])?.last?["exit"] as? Int == 3 && (all?["test"] as? [[String: Any]])?.count == 1, "without a doing step the stage is noted; a failure is recorded as failed")
     print("PASS: work timing (step times by text, [n/m] stages under the doing step, split lines, recorded runs and failures)")
 }
+
+// create_project and + → New project: a fake gh (no network) whose "GitHub" is bare repositories in the fixture.
+func testProjectCreate() {
+    let base = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("project-create-" + UUID().uuidString)
+    let fm = FileManager.default, projects = base.appendingPathComponent("Projects"), remotes = base.appendingPathComponent("remotes")
+    try! fm.createDirectory(at: projects, withIntermediateDirectories: true); try! fm.createDirectory(at: remotes, withIntermediateDirectories: true)
+    try! fm.createDirectory(at: base.appendingPathComponent("Library"), withIntermediateDirectories: true)
+    let fake = base.appendingPathComponent("gh")
+    try! """
+    #!/bin/bash
+    F='\(base.path)'
+    case "$1 $2" in
+      "api user") [ -e "$F/logged-out" ] && { echo "You are not logged into any GitHub hosts. Run gh auth login" >&2; exit 4; }; echo tester;;
+      "repo view") [ -e "$F/offline" ] && { echo "error connecting to api.github.com" >&2; exit 1; }
+                   n="${3#*/}"; [ -d "$F/remotes/$n.git" ] && { echo '{"name":"'$n'"}'; exit 0; }
+                   echo "GraphQL: Could not resolve to a Repository with the name '$3'. (repository)" >&2; exit 1;;
+      "repo create") n="${3#*/}"; o="${3%%/*}"
+                     /usr/bin/git init -q --bare "$F/remotes/$n.git" && echo "$4" > "$F/remotes/$n.visibility"
+                     /usr/bin/git remote add origin "https://github.com/$o/$n.git"
+                     /usr/bin/git config "url.$F/remotes/.insteadOf" "https://github.com/$o/"
+                     [ -e "$F/push-fails" ] && { echo "push failed: network" >&2; exit 1; }
+                     /usr/bin/git push -q -u origin main;;
+      *) echo "unexpected gh $*" >&2; exit 2;;
+    esac
+    """.write(to: fake, atomically: true, encoding: .utf8)
+    try! fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: fake.path)
+    let savedCandidates = ProjectCreator.ghCandidates, savedHome = ProjectCreator.home, savedChats = ChatLink.shared.conversations
+    let savedAdd = ProjectMakerLink.shared.addChat
+    for (key, value) in ["GIT_AUTHOR_NAME": "Fixture", "GIT_AUTHOR_EMAIL": "fixture@example.invalid", "GIT_COMMITTER_NAME": "Fixture", "GIT_COMMITTER_EMAIL": "fixture@example.invalid"] { setenv(key, value, 1) }
+    defer {
+        ProjectCreator.ghCandidates = savedCandidates; ProjectCreator.home = savedHome; ChatLink.shared.conversations = savedChats
+        ProjectMakerLink.shared.addChat = savedAdd
+        for key in ["GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"] { unsetenv(key) }
+        try? fm.removeItem(at: base)
+    }
+    ProjectCreator.home = base.path
+    func fails(_ work: () throws -> Any, _ text: String, _ message: String) {
+        do { _ = try work(); expect(false, message) } catch { expect(error.localizedDescription.contains(text), message + ": " + error.localizedDescription) }
+    }
+    func remoteMain(_ name: String) -> String? { try? ProjectProcess.git(["rev-parse", "refs/heads/main"], root: remotes.appendingPathComponent(name + ".git").path) }
+
+    // Names, places and remotes.
+    expect((try? ProjectCreator.name(" my app ")) == "my-app", "spaces become -")
+    for bad in ["", "새프로젝트", ".hidden", "-x", "a/b", String(repeating: "a", count: 101)] { expect((try? ProjectCreator.name(bad)) == nil, "bad name refused: \(bad)") }
+    fails({ try ProjectCreator.location("/") }, "home", "outside home refused")
+    fails({ try ProjectCreator.location(base.appendingPathComponent("Library").path) }, "Library", "Library refused")
+    fails({ try ProjectCreator.location(base.appendingPathComponent("missing").path) }, "missing", "missing location refused")
+    try! fm.createSymbolicLink(at: base.appendingPathComponent("escape"), withDestinationURL: URL(fileURLWithPath: "/tmp"))
+    fails({ try ProjectCreator.location(base.appendingPathComponent("escape").path) }, "home", "a symlink out of home refused")
+    let plan = ProjectCreator.Plan(folder: "/x/app", owner: "Tester", repo: "App", isPrivate: true)
+    for remote in ["https://github.com/tester/app.git", "git@github.com:Tester/App.git", "ssh://git@github.com/tester/app", "https://github.com/tester/app/"] {
+        expect(ProjectCreator.sameRepo(remote, plan), "same repository: \(remote)")
+    }
+    for remote in ["https://github.com/evil/app.git", "https://github.com/tester/app2.git", "https://gitlab.com/tester/app.git", "/tmp/app.git"] {
+        expect(!ProjectCreator.sameRepo(remote, plan), "another repository: \(remote)")
+    }
+
+    // gh missing, logged out, offline: stop before any card, with what to do.
+    ProjectCreator.ghCandidates = [base.appendingPathComponent("none").path]
+    fails({ try ProjectCreator.prepare(name: "a", location: projects.path, isPrivate: true, token: nil) }, "brew install gh", "no gh: install hint")
+    ProjectCreator.ghCandidates = [fake.path]
+    fm.createFile(atPath: base.appendingPathComponent("logged-out").path, contents: Data())
+    fails({ try ProjectCreator.prepare(name: "a", location: projects.path, isPrivate: true, token: nil) }, "gh auth login", "logged out: login hint")
+    try! fm.removeItem(at: base.appendingPathComponent("logged-out"))
+    fm.createFile(atPath: base.appendingPathComponent("offline").path, contents: Data())
+    fails({ try ProjectCreator.prepare(name: "a", location: projects.path, isPrivate: true, token: nil) }, "api.github.com", "offline is not \"no such repository\"")
+    try! fm.removeItem(at: base.appendingPathComponent("offline"))
+    let ready = try! ProjectCreator.prepare(name: "fresh", location: projects.path, isPrivate: true, token: nil)
+    expect(ready.plan == ProjectCreator.Plan(folder: projects.resolvingSymlinksInPath().path + "/fresh", owner: "tester", repo: "fresh", isPrivate: true) && !ready.resume, "plan: folder, gh account, private")
+    expect(ProjectCreator.summary(ready.plan, resume: false).contains("tester/fresh (private)"), "the card shows account, name and visibility")
+
+    // The tool: only for a known AI in an open chat; nothing made before the card is allowed.
+    let room = Conversation(), account = Account(id: "maker", provider: .claude, name: "Maker", dir: nil)
+    var locked = Conversation(); locked.enterpriseLock = EnterpriseLock(organization: "org", name: "Org", lockedAt: Date())
+    ChatLink.shared.conversations = { [room, locked] }
+    var added: [(ProjectBinding, String)] = []
+    ProjectMakerLink.shared.addChat = { project, title in added.append((project, title)); return title }
+    let link = ProjectMakerLink.shared
+    let context = ToolContext(room: room.id, roots: [], asker: account)
+    expect(link.tools().isEmpty && link.tools(context: ToolContext(room: room.id, roots: [])).isEmpty, "no tool without a known AI")
+    expect(link.tools(context: ToolContext(room: locked.id, roots: [], asker: account)).isEmpty, "no tool in an Enterprise chat")
+    expect(link.tools(context: context).first?["name"] as? String == "create_project", "offered in an open chat")
+    ProjectCenter.shared.resume()
+    func create(_ args: [String: Any], allow: Bool?) -> [String: Any] {
+        let done = DispatchSemaphore(value: 0); var output: [String: Any] = [:]; var acted = false
+        DispatchQueue.global().async { output = link.call("create_project", args, context: context); done.signal() }
+        let limit = Date().addingTimeInterval(30)
+        while done.wait(timeout: .now()) != .success && Date() < limit {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+            if !acted, let allow, let card = ProjectCenter.shared.requests.first(where: { $0.room == room.id }) {
+                acted = true; expect(card.detail.contains("tester/"), "card names the repository"); ProjectCenter.shared.decide(card.id, allow: allow)
+            }
+        }
+        expect(allow == nil || acted, "a card was shown: \(output)")
+        return output
+    }
+    var reply = create(["name": "denied", "location": projects.path], allow: false)
+    expect(reply["isError"] as? Bool == true && !fm.fileExists(atPath: projects.appendingPathComponent("denied").path) && remoteMain("denied") == nil && added.isEmpty,
+           "denied: no folder, no repository, no chat")
+    reply = create(["name": "My App", "location": projects.path, "private": false], allow: true)
+    let made = projects.appendingPathComponent("My-App").path
+    expect(reply["isError"] as? Bool == false, "created: \(reply)")
+    expect(remoteMain("My-App") == (try? ProjectProcess.git(["rev-parse", "HEAD"], root: made)) && remoteMain("My-App") != nil, "main is pushed")
+    expect((try? String(contentsOfFile: remotes.appendingPathComponent("My-App.visibility").path, encoding: .utf8))?.contains("--public") == true, "visibility as asked")
+    expect((try? String(contentsOfFile: made + "/README.md", encoding: .utf8)) == "# My-App\n", "README first commit")
+    expect(added.count == 1 && added[0].0.root == URL(fileURLWithPath: made).resolvingSymlinksInPath().path && added[0].1 == "My-App", "a chat linked to the new project")
+    expect((try? ProjectProcess.git(["status", "--porcelain"], root: made)) == "", "the marker stays out of the commit")
+    // Asked again: the folder and the repository exist now, so it stops before a card.
+    reply = create(["name": "My App", "location": projects.path, "private": false], allow: nil)
+    expect(reply["isError"] as? Bool == true && added.count == 1, "an existing project is not made again")
+    _ = try? ProjectProcess.git(["init", "-q", "--bare", remotes.appendingPathComponent("taken.git").path], root: base.path)
+    fails({ try ProjectCreator.prepare(name: "taken", location: projects.path, isPrivate: true, token: nil) }, "already exists on GitHub", "an existing GitHub repository refused")
+
+    // The repository was made but the push failed: asking again only pushes.
+    fm.createFile(atPath: base.appendingPathComponent("push-fails").path, contents: Data())
+    let retry = try! ProjectCreator.prepare(name: "retry", location: projects.path, isPrivate: true, token: nil).plan
+    fails({ try ProjectCreator.create(retry, token: nil) }, "Ask again", "push failure reported")
+    expect(remoteMain("retry") == nil, "nothing pushed yet")
+    try! fm.removeItem(at: base.appendingPathComponent("push-fails"))
+    // origin changed to another repository meanwhile: stop instead of pushing there.
+    let retryRoot = projects.resolvingSymlinksInPath().path + "/retry"
+    _ = try! ProjectProcess.git(["remote", "set-url", "origin", "https://github.com/evil/retry.git"], root: retryRoot)
+    fails({ try ProjectCreator.create(retry, token: nil) }, "evil", "a foreign origin is never pushed to")
+    _ = try! ProjectProcess.git(["remote", "set-url", "origin", "https://github.com/tester/retry.git"], root: retryRoot)
+    let again = try! ProjectCreator.prepare(name: "retry", location: projects.path, isPrivate: true, token: nil)
+    expect(again.resume && again.plan == retry, "the same plan continues")
+    fails({ try ProjectCreator.prepare(name: "retry", location: projects.path, isPrivate: false, token: nil) }, "already exists", "another visibility is not the same plan")
+    let project = try! ProjectCreator.create(again.plan, token: nil)
+    expect(remoteMain("retry") == (try? ProjectProcess.git(["rev-parse", "HEAD"], root: project.root)) && (try? ProjectProcess.git(["rev-list", "--count", "HEAD"], root: project.root)) == "1",
+           "pushed on retry, one commit")
+    fails({ try ProjectCreator.prepare(name: "retry", location: projects.path, isPrivate: true, token: nil) }, "already exists", "once done, it is an existing project")
+    print("PASS: new project (names and places, gh missing/logged out/offline, card first, deny makes nothing, folder + first commit + GitHub + push + linked chat, retry pushes only, foreign origin refused, Enterprise chats without it)")
+}

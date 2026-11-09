@@ -982,6 +982,8 @@ final class Discussion: ObservableObject {
 
     /// Stops every chat that is working (quitting the app).
     func cancelAll() { for worker in workers.values { worker.runCancellation?.cancel() } }
+    // The stop button of the chat that is answering now (create_project waits on it).
+    func runToken(_ room: UUID) -> DebateCancellation? { workers[room]?.runCancellation }
 
     // Leaving a blank chat: drop it from the list and remove its settings-only file.
     func dropBlanks(except keep: UUID?) {

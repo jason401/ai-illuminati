@@ -2215,6 +2215,7 @@ testGoogleDrive()
 testWindowDrag()
 
 testProjectWork()
+testProjectCreate()
 testUpdateChannels()
 testDeviceSync()
 

@@ -120,5 +120,6 @@ extension Discussion {
     // The app's chats for search_chats / read_chat.
     func linkChatTools() {
         ChatLink.shared.conversations = { [weak self] in self?.conversations ?? [] }
+        linkProjectMaker()
     }
 }

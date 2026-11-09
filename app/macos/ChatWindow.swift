@@ -255,10 +255,12 @@ struct ChatView: View {
             let rooms = SidebarProjects.todoRooms(group.todoRooms, todo: todos.snapshot)
             ForEach(rooms.going) { todoRoom($0) }
             if !rooms.finished.isEmpty {
-                // Searching lists every match; folded, only the chat open now stays.
+                // Searching lists every match; folded, only the chat open now (or the one whose meeting is open) stays.
                 let unfolded = folds.openFinished.contains(group.id) || discussion.sidebarSearching
                 finishedRow(group, count: rooms.finished.count, open: unfolded)
-                ForEach(unfolded ? rooms.finished : rooms.finished.filter { $0.id == discussion.currentID }) { todoRoom($0) }
+                ForEach(unfolded ? rooms.finished : rooms.finished.filter { room in
+                    room.id == discussion.currentID || discussion.meetings(of: room.id).contains { $0.id == discussion.currentID }
+                }) { todoRoom($0) }
             }
         }
     }

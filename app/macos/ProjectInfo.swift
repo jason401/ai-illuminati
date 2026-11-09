@@ -24,8 +24,9 @@ struct ProjectInfo: Codable, Equatable {
     private enum Keys: String, CodingKey { case folders, links }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
-        folders = (try? c.decode([ProjectFolder].self, forKey: .folders)) ?? []
-        links = (try? c.decode([ProjectLink].self, forKey: .links)) ?? []
+        // A missing list is empty; a broken one fails the whole file, so it is held instead of saved over.
+        folders = try c.decodeIfPresent([ProjectFolder].self, forKey: .folders) ?? []
+        links = try c.decodeIfPresent([ProjectLink].self, forKey: .links) ?? []
     }
     var isEmpty: Bool { folders.isEmpty && links.isEmpty }
 }
@@ -34,6 +35,17 @@ struct ProjectInfoData: Codable, Equatable {
     static let currentVersion = 1
     var version = currentVersion
     var projects: [String: ProjectInfo] = [:]
+    init() {}
+    private enum Keys: String, CodingKey { case version, projects }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        version = try c.decodeIfPresent(Int.self, forKey: .version) ?? Self.currentVersion
+        projects = try c.decodeIfPresent([String: ProjectInfo].self, forKey: .projects) ?? [:]
+    }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: Keys.self)
+        try c.encode(version, forKey: .version); try c.encode(projects, forKey: .projects)
+    }
 }
 
 enum ProjectInfoError: LocalizedError, Equatable {
@@ -61,7 +73,14 @@ final class ProjectInfoStore: ObservableObject {
     init(url: URL) {
         self.url = url
         var loaded = ProjectInfoData(), why: String?
-        if let raw = try? Data(contentsOf: url) {
+        // Only a file that is not there starts empty; one that cannot be read (permissions, a passing error) is held.
+        let raw: Data?
+        do { raw = try Data(contentsOf: url) } catch {
+            let missing = (error as NSError).domain == NSCocoaErrorDomain && (error as NSError).code == NSFileReadNoSuchFileError
+            raw = nil
+            if !missing { why = L("project-info.json을 열지 못해서 바꾸지 않았어요. 앱을 다시 열어 주세요.", "project-info.json could not be opened, so it is left as it is. Please reopen the app.") }
+        }
+        if let raw {
             if let decoded = try? JSONDecoder().decode(ProjectInfoData.self, from: raw), decoded.version <= ProjectInfoData.currentVersion {
                 loaded = decoded
             } else {

@@ -32,13 +32,25 @@ func testProjectInfo() {
     expect(FileManager.default.fileExists(atPath: notes.path), "unlinking leaves the file")
 
     // A file it cannot read (broken, or from a newer app) is left as it is, and changes are refused.
-    for raw in ["{ broken", #"{"version": 99, "projects": {}}"#] {
+    for raw in ["{ broken", #"{"version": 99, "projects": {}}"#,
+                #"{"version": 1, "projects": {"k": {"folders": [{"path": "/x", "directory": "yes"}], "links": []}}}"#,
+                #"{"version": 1, "projects": {"k": {"folders": [], "links": [{"title": "a"}]}}}"#] {
         try! raw.write(to: file, atomically: true, encoding: .utf8)
         let held = ProjectInfoStore(url: file)
         expect(held.saveError != nil && (try? held.addLink(title: "", url: "https://a.org", to: key)) == nil, "unreadable file: changes refused (\(raw))")
         expect((try? String(contentsOf: file, encoding: .utf8)) == raw, "unreadable file left as it is")
     }
+    // A file that is there but cannot be opened is held too, never started over empty.
     try! FileManager.default.removeItem(at: file)
+    try! FileManager.default.createDirectory(at: file, withIntermediateDirectories: true)   // a folder in its place: reading fails
+    let unopened = ProjectInfoStore(url: file)
+    expect(unopened.saveError != nil && (try? unopened.addLink(title: "", url: "https://a.org", to: key)) == nil, "a file that cannot be opened: changes refused")
+    try! FileManager.default.removeItem(at: file)
+    expect(ProjectInfoStore(url: file).saveError == nil, "no file yet: starts empty")
+    let old = base.appendingPathComponent("old.json")
+    try! #"{"projects": {"k": {"links": [{"id": "6F9619FF-8B86-D011-B42D-00C04FC964FF", "title": "a", "url": "https://a.org"}]}}}"#.write(to: old, atomically: true, encoding: .utf8)
+    let partial = ProjectInfoStore(url: old)
+    expect(partial.saveError == nil && partial.info("k").links.count == 1 && partial.info("k").folders.isEmpty, "missing fields read as empty")
 
     // Git remotes on the web: never with a password, only web addresses.
     expect(ProjectInfoStore.webURL("git@github.com:jason/app.git")?.absoluteString == "https://github.com/jason/app", "ssh remote")

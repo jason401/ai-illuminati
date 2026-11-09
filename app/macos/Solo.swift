@@ -491,6 +491,7 @@ extension Discussion {
                             t.partial = shown; t.partialBy = speaker
                         }
                     case .activity(let what): self.changeTurn(id, index) { $0.activity = what }
+                    case .plan: break
                     }
                 }
                 group.enter()
@@ -603,6 +604,7 @@ extension Discussion {
                     self.changeTurn(id, index) { $0.partial = shown; $0.partialBy = speaker }
                 case .activity(let what):
                     self.changeTurn(id, index) { $0.activity = what }
+                case .plan: break
                 }
             }
             let result = requestDebate(account, prompt, 900, cancellation, web: true,
@@ -726,6 +728,7 @@ extension Discussion {
                 (absolute executable, args array, commands from the project's CLAUDE.md/AGENTS.md/README), then call project_run; the user approves the exact command.
                 Run relevant tests before commit/push. If tests could not pass (including sandbox-only failures), do not push; report and ask.
                 Commit explicit changed paths, then push main/current feature branch when complete.
+                If the work has 3 or more steps, first show your steps with work_plan and update it whenever a step starts or ends; mark a test step done only after the tests pass.
                 Publish stable only if the user requested it; an app approval card is mandatory. Do not bypass approvals via scripts.
                 """)
             if project.fullAuto { parts.append(Self.fullAutoNote) }

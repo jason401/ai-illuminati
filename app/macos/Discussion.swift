@@ -367,6 +367,7 @@ enum Answerer {
 enum AnswerProgress {
     case text(String)      // the reply so far (the whole text, not only the new part)
     case activity(String)  // what the AI is doing now, e.g. reading files or searching the web
+    case plan([WorkStep])  // Claude's own TodoWrite list (project work shows it like work_plan)
 }
 
 // Turns a CLI's JSON lines into progress. Claude: text deltas within the current message (a new message,
@@ -404,6 +405,13 @@ final class StreamParser {
     private func handle(_ json: [String: Any]) {
         switch provider {
         case .claude:
+            // A whole assistant message: its TodoWrite input arrives complete here, not in pieces.
+            if json["type"] as? String == "assistant", let content = (json["message"] as? [String: Any])?["content"] as? [[String: Any]] {
+                for block in content where block["type"] as? String == "tool_use" && block["name"] as? String == "TodoWrite" {
+                    if let steps = PlanLink.todos((block["input"] as? [String: Any])?["todos"]) { report(.plan(steps)) }
+                }
+                return
+            }
             guard json["type"] as? String == "stream_event", let event = json["event"] as? [String: Any] else { return }
             switch event["type"] as? String {
             case "message_start":
@@ -498,6 +506,12 @@ struct ChatTurn: Identifiable, Codable, Equatable {
     var route: ChatRoute?       // project chat with members: how this message was answered (Route.swift)
     var routeNote: String?      // "Opinion · 3 AIs · judged by Gemma 4 E4B", shown above the answer
     var routeOne: Bool?         // with route opinion: only the lead answered (nil: everyone did)
+    // Project work: the step list (the AI's, then the app's review steps), why it last changed, when the AI last
+    // did something (the chat says "last activity 4 min ago", never "stuck") and whether an approval card waits.
+    var plan: [WorkStep]?
+    var planNote: String?
+    var lastActivityAt: Date?
+    var waitingApproval: Bool?
 }
 
 // Times under the messages and the day lines between them, like the desktop apps.

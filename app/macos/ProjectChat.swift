@@ -169,13 +169,24 @@ extension Discussion {
         let fullAuto = binding.isFullAuto
         let run = ProjectRun(room: id, binding: selected, token: cancellation, fullAuto: fullAuto)
         run.onNote = { [weak self] log in self?.changeTurn(id, index) { $0.projectLog = log } }
+        run.onPlan = { [weak self] steps, note in self?.changeTurn(id, index) { $0.plan = steps; $0.planNote = note } }
+        run.onWaiting = { [weak self] waiting in self?.changeTurn(id, index) { $0.waitingApproval = waiting ? true : nil; $0.lastActivityAt = Date() } }
+        // Last, after the backup and the status are settled: a macOS notice that the work ended (ApprovalAlerts),
+        // unless the user stopped it. A failed review fix is not a success.
+        var fixFailed = false
+        defer {
+            let stopped = cancellation.isCancelled, failedFix = fixFailed
+            DispatchQueue.main.async {
+                if !stopped { NotificationCenter.default.post(name: .projectWorkEnded, object: nil, userInfo: ["room": id, "index": index, "fixFailed": failedFix]) }
+            }
+        }
         // Full auto keeps the Mac awake while the AI works (the display may still sleep).
         let awake = fullAuto ? ProcessInfo.processInfo.beginActivity(options: [.userInitiated, .idleSystemSleepDisabled], reason: "AI Illuminati full-auto project work") : nil
         defer { if let awake { ProcessInfo.processInfo.endActivity(awake) } }
         ProjectWork.register(run)
         defer {
             ProjectWork.finish(run)
-            changeTurn(id, index) { $0.partial = nil; $0.activity = nil; $0.status = "" }
+            changeTurn(id, index) { $0.partial = nil; $0.activity = nil; $0.status = ""; $0.waitingApproval = nil }
         }
         var backup: WorkspaceBackup?
         defer {
@@ -211,6 +222,7 @@ extension Discussion {
         // account keeps going while 5-hour and weekly usage both have 15% or more left (AutoPick). During the
         // work only a usage-limit error hands it to another AI.
         var preferred = mentions.first ?? config.soloAccountID
+        var handedFrom: String?   // the AI that reached its usage limit, shown while the next one takes over
         // Before the work starts: what the project looks like, so the review covers only this answer's changes
         // (also when another AI took over after a usage limit).
         let start = reviewers.isEmpty ? nil : ProjectSnapshot.take(root: selected.root)
@@ -225,7 +237,9 @@ extension Discussion {
             }
             run.nextAttempt(); workspace.projectGeneration = run.generation; activeWorkspace = workspace
             let speaker = label(account)
-            changeTurn(id, index) { $0.status = speaker + L(" · 프로젝트 작업 중", " · working on project") }
+            let working = handedFrom.map { L("\($0) 한도 → \(speaker)가 이어받아 작업 중", "\($0) hit its limit → \(speaker) took over") }
+                ?? speaker + L(" · 프로젝트 작업 중", " · working on project")
+            changeTurn(id, index) { $0.status = working; $0.activity = nil; $0.lastActivityAt = Date() }
             func attempt(_ extra: String, transcript: String, fresh: String?) -> Result<String, Answerer.Failure> {
                 var instruction = soloInstruction(account, binding: workspace, helper: "",
                                                   project: ProjectPart(root: selected.root, fullAuto: fullAuto, rules: projectRules), chat: id)
@@ -234,10 +248,12 @@ extension Discussion {
                 instruction += "\n[Verified app checkpoint; do not repeat completed operations blindly]\n" + checkpoint + extra
                 let prompt = Self.soloContext(rules: rules, transcript: transcript) + "\n[SOLO TURN]\n" + instruction
                 let freshPrompt = fresh.map { Self.soloContext(rules: rules, transcript: $0) + "\n[SOLO TURN]\n" + instruction }
+                let generation = run.generation
                 let progress: (AnswerProgress) -> Void = { update in
                     switch update {
-                    case .text(let text): self.changeTurn(id, index) { $0.partial = Self.extractState(FaceLink.extract(text).text).reply; $0.partialBy = speaker }
-                    case .activity(let text): self.changeTurn(id, index) { $0.activity = text }
+                    case .text(let text): self.changeTurn(id, index) { $0.partial = Self.extractState(FaceLink.extract(text).text).reply; $0.partialBy = speaker; $0.lastActivityAt = Date() }
+                    case .activity(let text): self.changeTurn(id, index) { $0.activity = text; $0.lastActivityAt = Date() }
+                    case .plan(let steps): run.setPlan(steps, note: nil, generation: generation, tool: false)
                     }
                 }
                 guard permits(account, room: id) else { return .failure(Enterprise.blocked(account)) }
@@ -277,9 +293,14 @@ extension Discussion {
                 if let start, !cancellation.isCancelled {
                     run.attempt.cancel(); ToolHub.shared.revoke(project: run.id)
                     run.nextAttempt()
-                    if let findings = reviewChanges(id: id, index: index, worker: account, reviewers: reviewers, binding: workspace,
-                                                    root: selected.root, start: start, question: question, reply: text, token: run.attempt),
-                       !cancellation.isCancelled {
+                    var reviewer: String?
+                    let findings = reviewChanges(id: id, index: index, worker: account, reviewers: reviewers, binding: workspace,
+                                                 root: selected.root, start: start, question: question, reply: text, token: run.attempt) { name in
+                        reviewer = name; run.setAppStep(0, L("검토: \(name)", "Review: \(name)"), .doing)
+                    }
+                    if let reviewer { run.setAppStep(0, L("검토: \(reviewer)", "Review: \(reviewer)"), .done) }
+                    if let findings, !cancellation.isCancelled {
+                        run.setAppStep(1, L("검토 반영", "Apply the review"), .doing)
                         workspace.projectGeneration = run.generation; activeWorkspace = workspace
                         checkpoint = run.checkpoint("Work done by " + speaker + "; review findings received. Fix what is right; do not redo finished steps.")
                         changeTurn(id, index) { $0.status = speaker + L(" · 검수 반영 중", " · fixing review findings") }
@@ -293,9 +314,11 @@ extension Discussion {
                                 if let mood { FaceLink.shared.show(mood) }
                                 let (reply, newState) = Self.extractState(tagless)
                                 if let newState { self.saveState(newState, room: id, index: index) }
+                                run.setAppStep(1, L("검토 반영", "Apply the review"), .done)
                                 let combined = text + "\n\n---\n\n**" + L("검수 반영", "After the review") + "**\n\n" + reply
                                 changeTurn(id, index, save: true) { $0.final = combined; $0.partial = nil; $0.activity = nil; $0.status = "" }
                             case .failure(let failure):
+                                fixFailed = true; run.setAppStep(1, L("검토 반영", "Apply the review"), .blocked)
                                 let entry = ChatTurn.Entry(round: 1, speaker: speaker, text: L("검수 반영 실패: ", "Could not apply the review: ") + Self.describe(failure), failed: true)
                                 changeTurn(id, index, save: true) { $0.moreAnswers = ($0.moreAnswers ?? []) + [entry]; $0.partial = nil; $0.activity = nil }
                             }
@@ -326,7 +349,7 @@ extension Discussion {
                 finish(id, index); return
             case .failure(let failure) where Self.isOutOfUsage(failure):
                 checkpoint = run.checkpoint("Usage exhausted: " + speaker + ". Continue the same unfinished project without overwriting it.")
-                excluded.insert(account.id); preferred = nil
+                excluded.insert(account.id); preferred = nil; handedFrom = speaker
                 run.note(speaker + L(" 한도 소진 → 다른 AI로 인계", " reached its limit → handing off"))
             case .failure(let failure): finish(id, index, error: Self.describe(failure)); return
             }
@@ -354,6 +377,11 @@ extension Discussion {
         let on = current.workspace?.isFullAuto == true
         change(currentID, save: true) { $0.workspace?.fullAuto = on ? false : nil }
     }
+}
+
+extension Notification.Name {
+    // A project turn ended (not stopped by the user): room, index, fixFailed. ApprovalAlerts tells the user.
+    static let projectWorkEnded = Notification.Name("AIIlluminatiProjectWorkEnded")
 }
 
 // Settings → Chat → Approval requests. Read by ApprovalAlerts; missing keys mean the defaults.

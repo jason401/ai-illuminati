@@ -1633,6 +1633,13 @@ do {
     expect(texts.first == "Let me " && texts.last == "Final answer", "Claude text streams per message, split lines are joined")
     expect(doing == [StreamParser.activity(tool: "Read")], "Claude tool use shows as an activity")
     seen.removeAll()
+    // Claude's own TodoWrite list arrives whole in an assistant message and becomes the plan.
+    claude.feed(line(["type": "assistant", "message": ["content": [["type": "tool_use", "name": "TodoWrite", "input": ["todos": [
+        ["content": "Read code", "status": "completed"], ["content": "Fix bug", "status": "in_progress"], ["content": "Run tests", "status": "pending"]]]]]]]))
+    if seen.count == 1, case .plan(let steps) = seen[0] {
+        expect(steps.map(\.status) == [.done, .doing, .todo] && steps[1].text == "Fix bug", "TodoWrite becomes the work plan")
+    } else { expect(false, "TodoWrite reported once as a plan: \(seen)") }
+    seen.removeAll()
     let codex = StreamParser(provider: .codex) { seen.append($0) }
     codex.feed(line(["type": "item.completed", "item": ["type": "error", "message": "config warning"]]))
     codex.feed(line(["type": "item.started", "item": ["type": "mcp_tool_call", "tool": "read_document"]]))

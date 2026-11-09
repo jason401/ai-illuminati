@@ -172,11 +172,24 @@ func testProjectHandoff() {
         if account.id == "project-claude" {
             try! "partial work".write(to: file, atomically: true, encoding: .utf8)
             oldContext = ToolContext(room: chat.currentID, roots: binding.roots, projectRun: binding.projectRunID, projectGeneration: binding.projectGeneration)
+            // The AI shows its steps; a bad list and another room are refused.
+            expect(PlanLink.shared.tools(context: oldContext!).first?["name"] as? String == "work_plan" && PlanLink.shared.tools().isEmpty, "work_plan is scoped to the live project attempt")
+            expect(PlanLink.shared.call("work_plan", ["steps": [["text": "x", "status": "maybe"]]], context: oldContext!)["isError"] as? Bool == true, "work_plan refuses an unknown status")
+            var elsewhere = oldContext!; elsewhere.room = UUID()
+            expect(PlanLink.shared.call("work_plan", ["steps": [["text": "x", "status": "todo"]]], context: elsewhere)["isError"] as? Bool == true, "work_plan refuses another chat")
+            let shown = PlanLink.shared.call("work_plan", ["steps": [["text": "Read code", "status": "done"], ["text": "Write fix", "status": "doing"], ["text": "Run tests", "status": "todo"]],
+                                                           "note": "found a second bug"], context: oldContext!)
+            expect(shown["isError"] as? Bool == false, "work_plan accepts the steps: \(shown)")
+            // Claude's TodoWrite does not replace a list made with work_plan.
+            let run = ProjectWork.get(binding.projectRunID)!
+            expect(!run.setPlan([WorkStep(text: "todo list", status: .todo)], note: nil, generation: run.generation, tool: false), "TodoWrite is ignored once work_plan was used")
             do { _ = try ProjectWork.acquire(binding); expect(false, "other writers cannot enter during an AI turn") } catch {}
             return .failure(.failed("usage limit reached (429)"))
         }
         expect((try! String(contentsOf: file, encoding: .utf8)) == "partial work" && prompt.contains("Usage exhausted"), "next AI receives unfinished file and verified checkpoint")
         expect(GitLink.shared.call("git_status", [:], context: oldContext!)["isError"] as? Bool == true, "old AI capability is revoked before next AI starts")
+        expect(prompt.contains("[done] Read code\n[doing] Write fix\n[todo] Run tests"), "next AI gets the work plan in the checkpoint")
+        expect(PlanLink.shared.call("work_plan", ["steps": [["text": "stale", "status": "done"]]], context: oldContext!)["isError"] as? Bool == true, "the old AI cannot change the plan after the handoff")
         try! "completed work".write(to: file, atomically: true, encoding: .utf8)
         return .success("Project continued.")
     }
@@ -185,6 +198,8 @@ func testProjectHandoff() {
     while Date() < deadline && (chat.anyRunning || chat.current.turns.last?.projectCommitted == nil) { RunLoop.main.run(until: Date().addingTimeInterval(0.03)) }
     expect(accounts == ["project-claude", "project-codex"] && chat.current.turns.last?.final == "Project continued.", "plain-chat project hands off Claude to Codex within the same turn")
     expect((try! String(contentsOf: file, encoding: .utf8)) == "completed work", "working tree survives handoff without forced commit or pull")
+    expect(chat.current.turns.last?.plan?.map(\.text) == ["Read code", "Write fix", "Run tests"] && chat.current.turns.last?.planNote == "found a second bug"
+           && chat.current.turns.last?.lastActivityAt != nil, "the plan and the last activity stay on the turn being answered")
     expect((try! ProjectProcess.git(["log", "--oneline"], root: root.path)).split(separator: "\n").count == 1, "handoff never fabricates a checkpoint commit")
 
     // Not picked by hand: the same 15% rule as a plain chat. The last account (Codex) has 10% of its 5-hour limit

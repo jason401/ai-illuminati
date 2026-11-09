@@ -226,9 +226,11 @@ extension Discussion {
     // member, not the AI that did the work) reads the changes. Returns the card shown under the answer and the
     // findings for the lead (nil when there is nothing to fix, no reviewer or the review failed).
     func reviewChanges(id: UUID, index: Int, worker: Account, reviewers: [String], binding: WorkspaceBinding, root: String,
-                       start: ProjectSnapshot, question: String, reply: String, token: DebateCancellation) -> String? {
+                       start: ProjectSnapshot, question: String, reply: String, token: DebateCancellation,
+                       started: (String) -> Void = { _ in }) -> String? {
         guard let work = start.changes(root: root), let peer = peerAccount(for: worker, reviewers: reviewers.filter { $0 != worker.id }) else { return nil }
         let name = label(peer)
+        started(name)
         var entry = ChatTurn.Entry(round: 1, speaker: name, text: L("검수 중…", "Reviewing…"), failed: false)
         entry.headline = L("변경 검수 · 검수 중…", "Review of the changes · reviewing…")
         let entryID = entry.id

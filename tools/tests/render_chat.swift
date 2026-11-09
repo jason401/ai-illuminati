@@ -41,6 +41,18 @@ private struct EmptyPreviewLogin: GoogleTokenStore {
             if !CommandLine.arguments.contains("--three") { turn.answerOrder = ["c", "g"]; turn.moreAnswers = nil }
             UserDefaults.standard.set(ProcessInfo.processInfo.environment["CHAT_STACKED"] != "1", forKey: "answersSideBySide")
         }
+        if CommandLine.arguments.contains("--progress") {
+            // Project work under way: 12 minutes in, quiet for 3, a plan with a step added after a failing test.
+            turn.question = "Add the progress display from the plan."
+            turn.final = nil; turn.finalBy = nil
+            turn.askedAt = Date().addingTimeInterval(-12 * 60); turn.lastActivityAt = Date().addingTimeInterval(-3 * 60 - 5)
+            turn.status = "Claude (School) · working on project"; turn.activity = "Running a command…"
+            turn.plan = [WorkStep(text: "Read the status line code", status: .done), WorkStep(text: "Add work_plan tool", status: .done),
+                         WorkStep(text: "Fix the failing handoff test", status: .doing), WorkStep(text: "Build the app", status: .todo),
+                         WorkStep(text: "Review: ChatGPT (School)", status: .todo)]
+            turn.planNote = "a test failed, added a fix step"
+            turn.waitingApproval = CommandLine.arguments.contains("--waiting") ? true : nil
+        }
         conversation.turns = [turn]
         chat.conversations = [conversation]; chat.currentID = conversation.id
         if CommandLine.arguments.contains("--find") {

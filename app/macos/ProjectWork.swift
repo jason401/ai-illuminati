@@ -143,8 +143,9 @@ final class ProjectRun {
     private let clock = NSLock()
     private var waitingSince: Date?
     private var waited: TimeInterval = 0
-    func beginApproval() { clock.lock(); waitingSince = Date(); clock.unlock() }
-    func endApproval() { clock.lock(); if let date = waitingSince { waited += Date().timeIntervalSince(date) }; waitingSince = nil; clock.unlock() }
+    func beginApproval() { clock.lock(); waitingSince = Date(); let report = onWaiting; clock.unlock(); report?(true) }
+    func endApproval() { clock.lock(); if let date = waitingSince { waited += Date().timeIntervalSince(date) }; waitingSince = nil; let report = onWaiting; clock.unlock(); report?(false) }
+    var onWaiting: ((Bool) -> Void)?   // the chat shows "waiting for approval" while a card waits
     var activeExpired: Bool { clock.lock(); defer { clock.unlock() }; return Date().timeIntervalSince(started) - waited - (waitingSince.map { Date().timeIntervalSince($0) } ?? 0) > activeLimit }
     private(set) var generation = 0
     var attempt = DebateCancellation()
@@ -157,6 +158,27 @@ final class ProjectRun {
     private var notes: [String] = []
     var log: [String] { clock.lock(); defer { clock.unlock() }; return notes }
     func note(_ text: String) { clock.lock(); notes = Array((notes + [text]).suffix(50)); let report = onNote, all = notes; clock.unlock(); report?(all) }
+    // The work plan the chat shows: the AI's steps (work_plan, or Claude's own TodoWrite until work_plan is used),
+    // then the steps the app runs itself (review, applying it). A new AI after a usage limit gets it in the checkpoint.
+    var onPlan: (([WorkStep], String?) -> Void)?
+    private var aiSteps: [WorkStep] = [], appSteps: [WorkStep] = [], planNote: String?, planByTool = false
+    var plan: [WorkStep] { clock.lock(); defer { clock.unlock() }; return aiSteps + appSteps }
+    // From an old attempt (another generation) or TodoWrite once work_plan was used: ignored.
+    @discardableResult
+    func setPlan(_ steps: [WorkStep], note: String?, generation: Int, tool: Bool) -> Bool {
+        clock.lock()
+        guard generation == self.generation, tool || !planByTool else { clock.unlock(); return false }
+        if tool { planByTool = true }
+        aiSteps = Array(steps.prefix(20)); planNote = note.flatMap { $0.isEmpty ? nil : String($0.prefix(200)) }
+        let report = onPlan, all = aiSteps + appSteps, why = planNote
+        clock.unlock(); report?(all, why); return true
+    }
+    func setAppStep(_ i: Int, _ text: String, _ status: WorkStep.Status) {
+        clock.lock()
+        if appSteps.indices.contains(i) { appSteps[i] = WorkStep(text: text, status: status) } else { appSteps.append(WorkStep(text: text, status: status)) }
+        let report = onPlan, all = aiSteps + appSteps, why = planNote
+        clock.unlock(); report?(all, why)
+    }
     var initialDirty: Set<String> = []
     let operations = NSRecursiveLock()
     init(room: UUID, binding: ProjectBinding, token: DebateCancellation, fullAuto: Bool = false) {
@@ -183,7 +205,7 @@ final class ProjectRun {
         let head = (try? ProjectProcess.git(["rev-parse", "HEAD"], root: binding.root)) ?? ""
         let status = (try? ProjectProcess.git(["status", "--short"], root: binding.root)) ?? ""
         let diff = (try? ProjectProcess.git(["diff", "--no-ext-diff", "--no-textconv", "--stat"], root: binding.root)) ?? ""
-        let text = "Project: \(binding.root)\n\(note)\nHEAD: \(head)\n\(status)\n\(diff)\nCommitted: \(committed); pushed: \(pushed). Preserve unfinished files. Do not pull a dirty tree."
+        let text = "Project: \(binding.root)\n\(note)\nHEAD: \(head)\n\(status)\n\(diff)\nCommitted: \(committed); pushed: \(pushed). Preserve unfinished files. Do not pull a dirty tree." + WorkStep.summary(plan)
         let base = URL(fileURLWithPath: AccountStore.supportDir).appendingPathComponent("project-work", isDirectory: true)
         try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         try? text.write(to: base.appendingPathComponent(id.uuidString + ".txt"), atomically: true, encoding: .utf8)
@@ -224,6 +246,65 @@ enum ProjectWork {
         } catch { for path in acquired { if let fd = held.removeValue(forKey: path) { close(fd) } }; throw error }
     }
     static func release(_ paths: [String]) { mutex.lock(); defer { mutex.unlock() }; for path in paths { if let fd = held.removeValue(forKey: path) { close(fd) } } }
+}
+
+struct WorkStep: Codable, Equatable {
+    enum Status: String, Codable { case todo, doing, done, blocked }
+    var text: String
+    var status: Status
+    // For the checkpoint the next AI reads: "[done] Read the code" one per line.
+    static func summary(_ steps: [WorkStep]) -> String {
+        steps.isEmpty ? "" : "\nWork plan so far (continue from the first step not done; update it with work_plan):\n"
+            + steps.map { "[\($0.status.rawValue)] " + $0.text }.joined(separator: "\n")
+    }
+}
+
+// work_plan: the project AI's step list, shown above its reply. Only for the live attempt of a project turn.
+final class PlanLink: ToolProvider {
+    static let shared = PlanLink()
+    var active: Bool { ProjectWork.active }
+    func tools() -> [[String: Any]] { [] }
+    private func live(_ context: ToolContext) -> ProjectRun? {
+        guard let run = ProjectWork.get(context.projectRun), run.room == context.room, context.projectGeneration == run.generation, !run.cancelled else { return nil }
+        return run
+    }
+    func tools(context: ToolContext) -> [[String: Any]] {
+        guard live(context) != nil else { return [] }
+        let step: [String: Any] = ["type": "object", "properties": ["text": ["type": "string"], "status": ["type": "string", "enum": ["todo", "doing", "done", "blocked"]]],
+                                   "required": ["text", "status"], "additionalProperties": false]
+        return [["name": "work_plan",
+                 "description": "Show the user your step list for this task (replaces the previous list). Call it first when the work has 3 or more steps and again whenever a step starts or ends. Short steps in the user's language. Mark a test step done only after the tests pass.",
+                 "inputSchema": ["type": "object", "properties": ["steps": ["type": "array", "items": step, "maxItems": 20],
+                                                                   "note": ["type": "string", "description": "Why the list changed, e.g. a failing test added a step"]],
+                                 "required": ["steps"], "additionalProperties": false]]]
+    }
+    func call(_ name: String, _ arguments: [String: Any], context: ToolContext) -> [String: Any] {
+        guard name == "work_plan" else { return ToolHub.failure("Unknown tool: " + name) }
+        guard let run = live(context), let generation = context.projectGeneration else { return ToolHub.failure("No live project work for this plan.") }
+        guard let steps = Self.steps(arguments["steps"]) else { return ToolHub.failure("steps must be 1-20 items of {text, status: todo|doing|done|blocked}.") }
+        guard run.setPlan(steps, note: arguments["note"] as? String, generation: generation, tool: true) else { return ToolHub.failure("This plan belongs to an earlier attempt.") }
+        return ["content": [["type": "text", "text": "Plan shown: \(steps.filter { $0.status == .done }.count)/\(steps.count) done."]], "isError": false]
+    }
+    static func steps(_ value: Any?) -> [WorkStep]? {
+        guard let items = value as? [[String: Any]], (1...20).contains(items.count) else { return nil }
+        var steps: [WorkStep] = []
+        for item in items {
+            let text = (item["text"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty, let status = (item["status"] as? String).flatMap(WorkStep.Status.init(rawValue:)) else { return nil }
+            steps.append(WorkStep(text: String(text.prefix(200)), status: status))
+        }
+        return steps
+    }
+    // Claude's own TodoWrite list (full auto): pending / in_progress / completed.
+    static func todos(_ value: Any?) -> [WorkStep]? {
+        guard let items = value as? [[String: Any]], !items.isEmpty else { return nil }
+        let steps = items.compactMap { item -> WorkStep? in
+            guard let text = item["content"] as? String, !text.isEmpty else { return nil }
+            let status: WorkStep.Status = item["status"] as? String == "completed" ? .done : item["status"] as? String == "in_progress" ? .doing : .todo
+            return WorkStep(text: String(text.prefix(200)), status: status)
+        }
+        return steps.isEmpty ? nil : Array(steps.prefix(20))
+    }
 }
 
 final class GitLink: ToolProvider {

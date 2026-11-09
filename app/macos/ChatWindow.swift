@@ -1535,6 +1535,16 @@ private struct TurnView: View, Equatable {
             && a.askedTime == b.askedTime && a.answeredTime == b.answeredTime
     }
 
+    // "· 7분째" and, with no news for 2 minutes or more, "· 마지막 활동 3분 전".
+    static func timing(asked: Date, last: Date?, now: Date) -> String {
+        let minutes = max(0, Int(now.timeIntervalSince(asked) / 60))
+        var text = minutes < 1 ? L("· 방금 시작", "· just started") : L("· \(minutes)분째", "· \(minutes) min")
+        if let last, now.timeIntervalSince(last) >= 120 {
+            text += L(" · 마지막 활동 \(Int(now.timeIntervalSince(last) / 60))분 전", " · last activity \(Int(now.timeIntervalSince(last) / 60)) min ago")
+        }
+        return text
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             // The user's side, all on the right like the desktop apps: attached pictures, the message,
@@ -1572,13 +1582,27 @@ private struct TurnView: View, Equatable {
             if !turn.status.isEmpty {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
-                    Text(turn.activity ?? turn.status).foregroundColor(.secondary)
+                    if turn.waitingApproval == true {
+                        Text(L("승인 대기 중 · 아래 카드에서 허용하거나 거절하세요", "Waiting for your approval · allow or deny on the card below")).foregroundColor(.orange)
+                    } else {
+                        Text(turn.activity ?? turn.status).foregroundColor(.secondary)
+                    }
+                    // Project work: how long it has run and, after a quiet spell, when the AI last did something.
+                    if turn.plan != nil || turn.lastActivityAt != nil, let asked = turn.askedAt {
+                        TimelineView(.periodic(from: .now, by: 15)) { context in
+                            Text(Self.timing(asked: asked, last: turn.waitingApproval == true ? nil : turn.lastActivityAt, now: context.date))
+                                .foregroundColor(.secondary).monospacedDigit()
+                        }
+                    }
                 }
                 .font(turn.mode == 0 ? .system(size: 12) : .body)
                 // Project work: the latest tool result, under what the AI is doing now.
                 if let latest = turn.projectLog?.last {
                     Text(latest).font(.system(size: 11)).foregroundColor(.secondary).lineLimit(2)
                 }
+            }
+            if let plan = turn.plan, !plan.isEmpty {
+                WorkPlanView(steps: plan, note: turn.planNote, running: !turn.status.isEmpty)
             }
             if let error = turn.error {
                 Text(error).foregroundColor(.red)
@@ -2344,6 +2368,54 @@ private struct ParallelAnswers: View {
 }
 
 // What an AI saved to memory in this answer (Memory.swift), with Undo.
+// The project AI's steps: folded, one line ("3/5 · 테스트 실행"); unfolded, every step with its state.
+private struct WorkPlanView: View {
+    let steps: [WorkStep]
+    let note: String?
+    let running: Bool
+
+    var body: some View {
+        let done = steps.filter { $0.status == .done }.count
+        let now = steps.first { $0.status == .doing } ?? steps.first { $0.status == .blocked }
+        DisclosureGroup {
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(Array(steps.enumerated()), id: \.offset) { _, step in
+                    HStack(alignment: .top, spacing: 6) {
+                        Image(systemName: Self.icon(step.status)).foregroundColor(Self.color(step.status)).frame(width: 14)
+                        Text(step.text).foregroundColor(step.status == .done ? .secondary : .primary).lineLimit(3)
+                    }
+                }
+                if let note { Text(L("바뀐 이유: ", "Changed: ") + note).foregroundColor(.secondary).lineLimit(2).padding(.top, 2) }
+            }
+            .padding(.top, 4)
+        } label: {
+            Text(L("작업 \(done)/\(steps.count)", "Steps \(done)/\(steps.count)")
+                 + (running ? now.map { " · " + $0.text } ?? "" : ""))
+                .lineLimit(1)
+        }
+        .font(.system(size: 12))
+        .padding(.horizontal, 10).padding(.vertical, 6)
+        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    static func icon(_ status: WorkStep.Status) -> String {
+        switch status {
+        case .done: return "checkmark.circle.fill"
+        case .doing: return "circle.dotted"
+        case .blocked: return "exclamationmark.circle"
+        case .todo: return "circle"
+        }
+    }
+    static func color(_ status: WorkStep.Status) -> Color {
+        switch status {
+        case .done: return .green
+        case .doing: return .accentColor
+        case .blocked: return .orange
+        case .todo: return .secondary
+        }
+    }
+}
+
 private struct RememberedLine: View {
     let turnID: UUID
     @ObservedObject var memory = MemoryStore.shared

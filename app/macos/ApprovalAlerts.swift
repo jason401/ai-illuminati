@@ -8,11 +8,12 @@ import UserNotifications
 // in the window or the chat card, where the details are shown. Nothing pulls a window to the front
 // by itself; a notification closed without a choice leaves the request waiting.
 final class ApprovalAlerts: NSObject, UNUserNotificationCenterDelegate {
-    static let category = "approval", openAction = "open", denyAction = "deny"
+    static let category = "approval", openAction = "open", denyAction = "deny", doneCategory = "workDone"
     private let discussion: Discussion
     private let openChatWindow: (UUID?) -> Void
     private var window: NSWindow?
     private var watching: AnyCancellable?
+    private var ended: NSObjectProtocol?
     private var known: Set<UUID> = []
     private var lastPosted: [UUID: Date] = [:]
     private var repeatTimer: Timer?
@@ -29,7 +30,9 @@ final class ApprovalAlerts: NSObject, UNUserNotificationCenterDelegate {
         center.delegate = self
         let open = UNNotificationAction(identifier: Self.openAction, title: L("열기", "Open"), options: [.foreground])
         let deny = UNNotificationAction(identifier: Self.denyAction, title: L("거절", "Deny"), options: [.destructive])
-        center.setNotificationCategories([UNNotificationCategory(identifier: Self.category, actions: [open, deny], intentIdentifiers: [])])
+        center.setNotificationCategories([UNNotificationCategory(identifier: Self.category, actions: [open, deny], intentIdentifiers: []),
+                                          UNNotificationCategory(identifier: Self.doneCategory, actions: [], intentIdentifiers: [])])
+        ended = NotificationCenter.default.addObserver(forName: .projectWorkEnded, object: nil, queue: .main) { [weak self] note in self?.workEnded(note) }
         watching = ProjectCenter.shared.$requests.receive(on: DispatchQueue.main).sink { [weak self] requests in self?.changed(requests) }
         let timer = Timer(timeInterval: 30, repeats: true) { [weak self] _ in self?.remind() }
         RunLoop.main.add(timer, forMode: .common)
@@ -56,6 +59,33 @@ final class ApprovalAlerts: NSObject, UNUserNotificationCenterDelegate {
         }
         known = ids
         NSApp.dockTile.badgeLabel = requests.isEmpty ? nil : String(requests.count)
+    }
+
+    // Project work ended while the user looks elsewhere: "작업 완료 · 5/5" or "작업 실패", opening that chat.
+    private func workEnded(_ note: Notification) {
+        guard ApprovalAlertSettings.notify, let room = note.userInfo?["room"] as? UUID, let index = note.userInfo?["index"] as? Int,
+              let turns = discussion.conversations.first(where: { $0.id == room })?.turns, turns.indices.contains(index) else { return }
+        let turn = turns[index]
+        let seen = NSApp.isActive && discussion.currentID == room && discussion.viewingRemote == nil
+            && NSApp.keyWindow?.title == L("AI Illuminati 채팅", "AI Illuminati Chat")
+        if seen { return }
+        let ok = turn.error == nil && note.userInfo?["fixFailed"] as? Bool != true
+        let steps = turn.plan ?? []
+        let count = steps.isEmpty ? "" : " · \(steps.filter { $0.status == .done }.count)/\(steps.count)"
+        let content = UNMutableNotificationContent()
+        content.title = (ok ? L("작업 완료", "Work done") : L("작업이 끝나지 못했어요", "Work did not finish")) + count
+        content.subtitle = discussion.approvalChatName(room)
+        content.body = ok ? String((turn.final ?? "").prefix(140)) : (turn.error ?? L("검토 반영에 실패했어요.", "Could not apply the review."))
+        content.categoryIdentifier = Self.doneCategory
+        content.userInfo = ["room": room.uuidString]
+        if ApprovalAlertSettings.sound { content.sound = .default }
+        let center = UNUserNotificationCenter.current()
+        let send = { center.add(UNNotificationRequest(identifier: "done-" + turn.id.uuidString, content: content, trigger: nil)) }
+        if asked { send(); return }
+        center.requestAuthorization(options: [.alert, .sound, .badge]) { [weak self] granted, _ in
+            DispatchQueue.main.async { self?.asked = true; if granted { send() } }
+        }
+        if !NSApp.isActive { NSApp.requestUserAttention(.informationalRequest) }
     }
 
     // Optional reminder every 5 minutes while a request still waits (Settings → Chat).
@@ -100,7 +130,13 @@ final class ApprovalAlerts: NSObject, UNUserNotificationCenterDelegate {
                                 withCompletionHandler completionHandler: @escaping () -> Void) {
         let info = response.notification.request.content.userInfo
         let id = (info["request"] as? String).flatMap(UUID.init(uuidString:))
+        let room = (info["room"] as? String).flatMap(UUID.init(uuidString:))
+        let done = response.notification.request.content.categoryIdentifier == Self.doneCategory
         DispatchQueue.main.async {
+            if done {
+                if response.actionIdentifier != UNNotificationDismissActionIdentifier, let room { self.openChatWindow(room) }
+                completionHandler(); return
+            }
             switch response.actionIdentifier {
             case Self.denyAction:
                 // Only a request still waiting; an old notification does nothing.

@@ -71,7 +71,7 @@ func testTodoStore() {
     let again = TodoStore(url: url)
     expect(again.current == store.current, "the store reads back what it saved")
     let old = """
-        {"lists":[{"id":"\(UUID().uuidString)","title":"Old","future":1}],"items":[{"id":"\(UUID().uuidString)","listID":"\(UUID().uuidString)","title":"t","state":"someday","extra":true}]}
+        {"lists":[{"id":"\(UUID().uuidString)","title":"Old","future":1}],"items":[{"id":"\(UUID().uuidString)","listID":"\(UUID().uuidString)","title":"t","extra":true}]}
         """
     let oldURL = todoStoreFile("old")
     try! FileManager.default.createDirectory(at: oldURL.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -94,11 +94,32 @@ func testTodoStore() {
     expect(released == 1, "releasing locks is announced, releasing none is not: \(released)")
     // A save that fails changes nothing and says so (a folder stands where the file goes).
     let blockedURL = todoStoreFile("blocked")
+    let blocked = TodoStore(url: blockedURL)   // read while missing, so not held; the folder comes after
     try! FileManager.default.createDirectory(at: blockedURL.appendingPathComponent("inside"), withIntermediateDirectories: true)
-    let blocked = TodoStore(url: blockedURL)
     do { _ = try blocked.add(title: "lost", project: a, projectName: "A"); expect(false, "a failed save is an error") } catch { expect(error is TodoError, "the save error is a TODO error: \(error)") }
     expect(blocked.current.items.isEmpty && blocked.snapshot.items.isEmpty && blocked.saveError != nil, "a failed save leaves the TODOs as they were and is shown")
-    print("PASS: TODO store (drafts, joining a running list, release wakes, order and folder, gate review/done, other lists, circles refused, move, cancelled link, saved and read back, older files, failed save)")
+    // A file this version cannot read (broken, a field that does not fit, a newer state or version, a folder that
+    // cannot be opened) is held: nothing is saved over it and the board says why.
+    let listText = "{\"id\":\"\(UUID().uuidString)\",\"title\":\"Keep\"}"
+    for (name, text) in [("broken", "{\"lists\": ["), ("badfield", "{\"lists\":[\(listText)],\"items\":[{\"id\":\"\(UUID().uuidString)\",\"listID\":\"\(UUID().uuidString)\",\"notes\":\"oops\"}]}"),
+                         ("newstate", "{\"lists\":[\(listText)],\"items\":[{\"id\":\"\(UUID().uuidString)\",\"listID\":\"\(UUID().uuidString)\",\"state\":\"someday\"}]}"),
+                         ("newversion", "{\"version\":2,\"lists\":[\(listText)]}")] {
+        let heldURL = todoStoreFile("held-" + name)
+        try! FileManager.default.createDirectory(at: heldURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try! text.write(to: heldURL, atomically: true, encoding: .utf8)
+        let held = TodoStore(url: heldURL)
+        expect(held.locked != nil && held.saveError != nil, "\(name): the file is held and the board says so")
+        do { _ = try held.add(title: "over", project: a, projectName: "A"); expect(false, "\(name): a held file refuses changes") } catch {
+            expect(error as? TodoError == .locked(held.locked!), "\(name): the refusal is the held reason: \(error)")
+        }
+        held.startDrafts()
+        expect((try? String(contentsOf: heldURL, encoding: .utf8)) == text, "\(name): the file is left byte for byte")
+    }
+    let unreadable = todoStoreFile("unreadable")
+    try! FileManager.default.createDirectory(at: unreadable, withIntermediateDirectories: true)
+    expect(TodoStore(url: unreadable).locked != nil, "a todos.json that cannot be opened is held too")
+    expect(TodoStore(url: todoStoreFile("missing-\(UUID().uuidString)")).locked == nil, "only a missing file starts empty")
+    print("PASS: TODO store (held unreadable files, drafts, joining a running list, release wakes, order and folder, gate review/done, other lists, circles refused, move, cancelled link, saved and read back, older files, failed save)")
 }
 
 func testTodoScheduler() {

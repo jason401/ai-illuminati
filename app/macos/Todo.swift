@@ -62,6 +62,7 @@ struct TodoItem: Codable, Identifiable, Equatable {
     var assumptions: [String] = []
     var files: [String] = []
     var report: TodoReport?         // the running attempt's report, not final yet
+    var workers: [String]?          // the running attempt's allowed accounts (the list's pick when it started); nil: any
     var interrupted = false         // the app quit while it ran: the next attempt checks git status first
     var unreported = false          // review or needsYou not yet announced (macOS notification)
     var createdAt = Date()
@@ -77,40 +78,46 @@ struct TodoItem: Codable, Identifiable, Equatable {
         self.listID = listID; self.title = title; self.detail = detail; self.askFirst = askFirst; self.after = after; self.originRoom = originRoom
     }
 
-    // Older or newer files: unknown fields are ignored, missing ones get their defaults.
+    // Older or newer files: unknown fields are ignored, missing ones get their defaults. A field that is there but
+    // cannot be read fails the whole file, which TodoStore then keeps as it is (no default silently saved over it).
     private enum Keys: String, CodingKey {
-        case id, listID, title, detail, attachments, askFirst, state, after, room, originRoom, notes, question, attempts, lastError, result, assumptions, files, report, interrupted, unreported, createdAt, updatedAt,
+        case id, listID, title, detail, attachments, askFirst, state, after, room, originRoom, notes, question, attempts, lastError, result, assumptions, files, report, workers, interrupted, unreported, createdAt, updatedAt,
              workSeconds, waitSeconds, stateSince, startedAt, finishedAt
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
         id = try c.decode(UUID.self, forKey: .id)
         listID = try c.decode(UUID.self, forKey: .listID)
-        title = (try? c.decode(String.self, forKey: .title)) ?? ""
-        detail = (try? c.decode(String.self, forKey: .detail)) ?? ""
-        attachments = (try? c.decode([TodoAttachment].self, forKey: .attachments)) ?? []
-        askFirst = (try? c.decode(Bool.self, forKey: .askFirst)) ?? false
-        state = (try? c.decode(String.self, forKey: .state)).flatMap(State.init(rawValue:)) ?? .draft
-        after = (try? c.decode([UUID].self, forKey: .after)) ?? []
-        room = try? c.decode(UUID.self, forKey: .room)
-        originRoom = try? c.decode(UUID.self, forKey: .originRoom)
-        notes = (try? c.decode([TodoNote].self, forKey: .notes)) ?? []
-        question = try? c.decode(TodoQuestion.self, forKey: .question)
-        attempts = (try? c.decode(Int.self, forKey: .attempts)) ?? 0
-        lastError = try? c.decode(String.self, forKey: .lastError)
-        result = try? c.decode(String.self, forKey: .result)
-        assumptions = (try? c.decode([String].self, forKey: .assumptions)) ?? []
-        files = (try? c.decode([String].self, forKey: .files)) ?? []
-        report = try? c.decode(TodoReport.self, forKey: .report)
-        interrupted = (try? c.decode(Bool.self, forKey: .interrupted)) ?? false
-        unreported = (try? c.decode(Bool.self, forKey: .unreported)) ?? false
-        createdAt = (try? c.decode(Date.self, forKey: .createdAt)) ?? Date()
-        updatedAt = (try? c.decode(Date.self, forKey: .updatedAt)) ?? createdAt
-        workSeconds = (try? c.decode(Double.self, forKey: .workSeconds)) ?? 0
-        waitSeconds = (try? c.decode(Double.self, forKey: .waitSeconds)) ?? 0
-        stateSince = try? c.decode(Date.self, forKey: .stateSince)
-        startedAt = try? c.decode(Date.self, forKey: .startedAt)
-        finishedAt = try? c.decode(Date.self, forKey: .finishedAt)
+        title = (try c.decodeIfPresent(String.self, forKey: .title)) ?? ""
+        detail = (try c.decodeIfPresent(String.self, forKey: .detail)) ?? ""
+        attachments = (try c.decodeIfPresent([TodoAttachment].self, forKey: .attachments)) ?? []
+        askFirst = (try c.decodeIfPresent(Bool.self, forKey: .askFirst)) ?? false
+        // An unknown state (a newer app's) is not read as a draft: the file is held, not rewritten.
+        if let raw = try c.decodeIfPresent(String.self, forKey: .state) {
+            guard let known = State(rawValue: raw) else { throw DecodingError.dataCorruptedError(forKey: .state, in: c, debugDescription: "Unknown state \(raw)") }
+            state = known
+        } else { state = .draft }
+        after = (try c.decodeIfPresent([UUID].self, forKey: .after)) ?? []
+        room = try c.decodeIfPresent(UUID.self, forKey: .room)
+        originRoom = try c.decodeIfPresent(UUID.self, forKey: .originRoom)
+        notes = (try c.decodeIfPresent([TodoNote].self, forKey: .notes)) ?? []
+        question = try c.decodeIfPresent(TodoQuestion.self, forKey: .question)
+        attempts = (try c.decodeIfPresent(Int.self, forKey: .attempts)) ?? 0
+        lastError = try c.decodeIfPresent(String.self, forKey: .lastError)
+        result = try c.decodeIfPresent(String.self, forKey: .result)
+        assumptions = (try c.decodeIfPresent([String].self, forKey: .assumptions)) ?? []
+        files = (try c.decodeIfPresent([String].self, forKey: .files)) ?? []
+        report = try c.decodeIfPresent(TodoReport.self, forKey: .report)
+        workers = try c.decodeIfPresent([String].self, forKey: .workers)
+        interrupted = (try c.decodeIfPresent(Bool.self, forKey: .interrupted)) ?? false
+        unreported = (try c.decodeIfPresent(Bool.self, forKey: .unreported)) ?? false
+        createdAt = (try c.decodeIfPresent(Date.self, forKey: .createdAt)) ?? Date()
+        updatedAt = (try c.decodeIfPresent(Date.self, forKey: .updatedAt)) ?? createdAt
+        workSeconds = (try c.decodeIfPresent(Double.self, forKey: .workSeconds)) ?? 0
+        waitSeconds = (try c.decodeIfPresent(Double.self, forKey: .waitSeconds)) ?? 0
+        stateSince = try c.decodeIfPresent(Date.self, forKey: .stateSince)
+        startedAt = try c.decodeIfPresent(Date.self, forKey: .startedAt)
+        finishedAt = try c.decodeIfPresent(Date.self, forKey: .finishedAt)
     }
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: Keys.self)
@@ -120,7 +127,7 @@ struct TodoItem: Codable, Identifiable, Equatable {
         try c.encodeIfPresent(room, forKey: .room); try c.encodeIfPresent(originRoom, forKey: .originRoom); try c.encode(notes, forKey: .notes)
         try c.encodeIfPresent(question, forKey: .question); try c.encode(attempts, forKey: .attempts); try c.encodeIfPresent(lastError, forKey: .lastError)
         try c.encodeIfPresent(result, forKey: .result); try c.encode(assumptions, forKey: .assumptions); try c.encode(files, forKey: .files)
-        try c.encodeIfPresent(report, forKey: .report)
+        try c.encodeIfPresent(report, forKey: .report); try c.encodeIfPresent(workers, forKey: .workers)
         try c.encode(interrupted, forKey: .interrupted); try c.encode(unreported, forKey: .unreported)
         try c.encode(createdAt, forKey: .createdAt); try c.encode(updatedAt, forKey: .updatedAt)
         try c.encode(workSeconds, forKey: .workSeconds); try c.encode(waitSeconds, forKey: .waitSeconds)
@@ -179,15 +186,15 @@ struct TodoList: Codable, Identifiable, Equatable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
         id = try c.decode(UUID.self, forKey: .id)
-        title = (try? c.decode(String.self, forKey: .title)) ?? ""
-        project = try? c.decode(ProjectBinding.self, forKey: .project)
-        sequential = (try? c.decode(Bool.self, forKey: .sequential)) ?? true
-        waitForDone = (try? c.decode(Bool.self, forKey: .waitForDone)) ?? false
-        order = (try? c.decode([UUID].self, forKey: .order)) ?? []
-        lock = try? c.decode(EnterpriseLock.self, forKey: .lock)
-        accounts = (try? c.decode([String].self, forKey: .accounts)) ?? []
-        paused = (try? c.decode(Bool.self, forKey: .paused)) ?? false
-        stopAfter = try? c.decode(UUID.self, forKey: .stopAfter)
+        title = (try c.decodeIfPresent(String.self, forKey: .title)) ?? ""
+        project = try c.decodeIfPresent(ProjectBinding.self, forKey: .project)
+        sequential = (try c.decodeIfPresent(Bool.self, forKey: .sequential)) ?? true
+        waitForDone = (try c.decodeIfPresent(Bool.self, forKey: .waitForDone)) ?? false
+        order = (try c.decodeIfPresent([UUID].self, forKey: .order)) ?? []
+        lock = try c.decodeIfPresent(EnterpriseLock.self, forKey: .lock)
+        accounts = (try c.decodeIfPresent([String].self, forKey: .accounts)) ?? []
+        paused = (try c.decodeIfPresent(Bool.self, forKey: .paused)) ?? false
+        stopAfter = try c.decodeIfPresent(UUID.self, forKey: .stopAfter)
     }
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: Keys.self)
@@ -201,20 +208,21 @@ struct TodoList: Codable, Identifiable, Equatable {
 }
 
 enum TodoError: LocalizedError, Equatable {
-    case cycle, notFound, busy, notEditable, save(String), attachment(String)
+    case cycle, notFound, busy, notEditable, save(String), attachment(String), locked(String)
     var errorDescription: String? {
         switch self {
         case .cycle: return L("순서가 돌고 돌아요: 서로 기다리는 TODO가 생겨요.", "That order goes in a circle: these TODOs would wait for each other.")
         case .notFound: return L("TODO를 찾지 못했어요.", "TODO not found.")
         case .busy: return L("진행 중인 TODO는 먼저 멈춰야 해요.", "Stop the running TODO first.")
         case .notEditable: return L("AI가 이미 가져간 TODO는 고칠 수 없어요. 결과에 수정 요청이나 답으로 알려 주세요.", "The AI already took this TODO; tell it through a change request or an answer.")
-        case .attachment(let why): return why
+        case .attachment(let why), .locked(let why): return why
         case .save(let why): return L("TODO를 저장하지 못했어요: ", "Could not save the TODOs: ") + why
         }
     }
 }
 
 struct TodoData: Codable, Equatable {
+    static let currentVersion = 1
     var version = 1
     var lists: [TodoList] = []
     var items: [TodoItem] = []
@@ -222,12 +230,15 @@ struct TodoData: Codable, Equatable {
     private enum Keys: String, CodingKey { case version, lists, items }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
-        version = (try? c.decode(Int.self, forKey: .version)) ?? 1
-        lists = (try? c.decode([TodoList].self, forKey: .lists)) ?? []
-        items = (try? c.decode([TodoItem].self, forKey: .items)) ?? []
+        version = (try c.decodeIfPresent(Int.self, forKey: .version)) ?? 1
+        lists = (try c.decodeIfPresent([TodoList].self, forKey: .lists)) ?? []
+        items = (try c.decodeIfPresent([TodoItem].self, forKey: .items)) ?? []
     }
 
     func item(_ id: UUID) -> TodoItem? { items.first { $0.id == id } }
+    // Who may work in a chat: the accounts a TODO running in it was given when it started; nil: not limited
+    // (no TODO running there, or one whose list lets every Claude/Codex work).
+    func workers(room: UUID) -> [String]? { items.first { $0.room == room && $0.state == .running }?.workers }
     func list(_ id: UUID) -> TodoList? { lists.first { $0.id == id } }
     // A list's TODOs in the user's order (ones missing from `order` last, oldest first).
     func ordered(_ listID: UUID) -> [TodoItem] {
@@ -296,14 +307,31 @@ final class TodoStore: ObservableObject {
     let url: URL
     private let lock = NSLock()
     private var data: TodoData
+    // A file this version cannot read (broken, or from a newer app) is never overwritten: changes are refused
+    // (the same rule as ProjectInfoStore).
+    let locked: String?
     var now: () -> Date = Date.init   // tests set the clock
     @Published private(set) var snapshot: TodoData
     @Published private(set) var saveError: String?   // the last save failed: shown on the board until one succeeds
 
     init(url: URL) {
         self.url = url
-        let loaded = (try? Data(contentsOf: url)).flatMap { try? Self.decoder.decode(TodoData.self, from: $0) } ?? TodoData()
-        data = loaded; snapshot = loaded
+        var loaded = TodoData(), why: String?
+        // Only a file that is not there starts empty; one that cannot be read (permissions, a passing error) is held.
+        let raw: Data?
+        do { raw = try Data(contentsOf: url) } catch {
+            let missing = (error as NSError).domain == NSCocoaErrorDomain && (error as NSError).code == NSFileReadNoSuchFileError
+            raw = nil
+            if !missing { why = L("todos.json을 열지 못해서 TODO를 바꾸지 않았어요. 앱을 다시 열어 주세요.", "todos.json could not be opened, so the TODOs are left as they are. Please reopen the app.") }
+        }
+        if let raw {
+            if let decoded = try? Self.decoder.decode(TodoData.self, from: raw), decoded.version <= TodoData.currentVersion {
+                loaded = decoded
+            } else {
+                why = L("todos.json을 읽지 못해서 TODO를 바꾸지 않았어요. 파일을 확인해 주세요.", "todos.json could not be read, so the TODOs are left as they are. Please check the file.")
+            }
+        }
+        data = loaded; snapshot = loaded; locked = why; saveError = why
     }
     static let decoder = JSONDecoder()
     static let encoder: JSONEncoder = { let e = JSONEncoder(); e.outputFormatting = [.prettyPrinted, .sortedKeys]; return e }()
@@ -313,6 +341,7 @@ final class TodoStore: ObservableObject {
     // One change, saved at once. A change that makes TODOs wait for each other in a circle is refused.
     @discardableResult
     func update<T>(_ edit: (inout TodoData) throws -> T) throws -> T {
+        if let locked { throw TodoError.locked(locked) }
         lock.lock()
         var copy = data
         let result: T
@@ -793,7 +822,7 @@ final class TodoScheduler: ObservableObject {
         }
         let question = Self.question(item, files: delivered.paths)
         // Running before the turn starts: the AI's first tool call must find it.
-        do { try store.change(item.id) { $0.state = .running; $0.room = room; $0.lastError = nil; $0.report = nil } } catch {
+        do { try store.change(item.id) { $0.state = .running; $0.room = room; $0.lastError = nil; $0.report = nil; $0.workers = list.accounts.isEmpty ? nil : list.accounts } } catch {
             for image in delivered.images { try? ImageStore.remove(image) }
             return error.localizedDescription
         }

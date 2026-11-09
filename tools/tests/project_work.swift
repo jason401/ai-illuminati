@@ -226,7 +226,22 @@ func testProjectHandoff() {
     chat.configure { $0.lastSoloAccountID = "project-codex" }
     accounts = []; run()
     expect(accounts == ["project-codex"], "project work: the last account keeps going with 15% or more left")
-    print("PASS: project AI handoff (same plain chat, same dirty files, next AI continuation, old-token revocation and no forced commit, 15% rule at the start)")
+
+    // A TODO's chat: after a usage limit only the AIs picked for its list (when it started) take over, never the others.
+    let savedTodos = TodoStore.shared
+    let todos = TodoStore(url: URL(fileURLWithPath: AccountStore.home).appendingPathComponent("handoff-todos-\(UUID().uuidString).json"))
+    TodoStore.shared = todos
+    defer { TodoStore.shared = savedTodos }
+    let todo = try! todos.add(title: "limited", project: project, projectName: "handoff")
+    try! todos.change(todo.id) { $0.state = .running; $0.room = chat.currentID; $0.workers = ["project-claude"] }
+    expect(todos.current.workers(room: chat.currentID) == ["project-claude"] && todos.current.workers(room: UUID()) == nil, "a chat's workers come from the TODO running in it")
+    chat.configure { $0.soloAccountID = "project-claude"; $0.lastSoloAccountID = nil }
+    accounts = []
+    chat.workspaceAnswer = { account, _, _, _, _ in accounts.append(account.id); return .failure(.failed("usage limit reached (429)")) }
+    run()
+    expect(accounts == ["project-claude"] && chat.current.turns.last?.error?.contains(L("이 TODO에 고른 AI", "picked for this TODO")) == true,
+           "a TODO's work is not handed to an AI outside its pick: \(accounts) \(chat.current.turns.last?.error ?? "-")")
+    print("PASS: project AI handoff (same plain chat, same dirty files, next AI continuation, old-token revocation and no forced commit, 15% rule at the start, TODO pick kept)")
 }
 
 func testFullAuto() {

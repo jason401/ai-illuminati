@@ -249,15 +249,19 @@ extension Discussion {
         // work only a usage-limit error hands it to another AI.
         var preferred = mentions.first ?? config.soloAccountID
         var handedFrom: String?   // the AI that reached its usage limit, shown while the next one takes over
+        // A TODO's work, also after a usage limit, stays with the AIs picked for its list when it started.
+        let workers = TodoStore.shared.current.workers(room: id)
         // Before the work starts: what the project looks like, so the review covers only this answer's changes
         // (also when another AI took over after a usage limit).
         let start = reviewers.isEmpty ? nil : ProjectSnapshot.take(root: selected.root)
         while !cancellation.isCancelled && Date() < run.deadline && !run.activeExpired {
-            let eligible = model.accounts.filter { [.claude, .codex].contains($0.provider) && !excluded.contains($0.id) && Enterprise.permits($0, lock: chatLock) }
+            let eligible = model.accounts.filter { [.claude, .codex].contains($0.provider) && !excluded.contains($0.id) && Enterprise.permits($0, lock: chatLock) && (workers?.contains($0.id) ?? true) }
             let account = preferred.flatMap { wanted in eligible.first { $0.id == wanted } }
                 ?? AutoPick.choose(eligible, usage: model.latestUsage, lock: chatLock, current: config.lastSoloAccountID)
             guard let account else {
-                finish(id, index, error: chatLock != nil
+                finish(id, index, error: workers != nil
+                       ? L("이 TODO에 고른 AI 중 이어서 작업할 계정이 없어요. 파일 변경은 보존했어요.", "None of the AIs picked for this TODO can continue. Changes are preserved.")
+                       : chatLock != nil
                        ? L("이 Enterprise 방에서 작업할 \(chatLock?.name ?? "") Claude/Codex 계정이 필요해요. 파일 변경은 보존했어요.", "This Enterprise chat needs a \(chatLock?.name ?? "") Claude/Codex account to continue. Changes are preserved.")
                        : L("이어서 작업할 Claude/Codex 계정이 필요해요. 파일 변경은 보존했어요.", "No Claude/Codex account is available to continue. Changes are preserved.")); return
             }

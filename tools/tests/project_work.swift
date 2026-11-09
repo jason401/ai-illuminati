@@ -482,6 +482,24 @@ func testPeerReview() {
     expect(everyone?.question == "Does the README still say Third?" && everyone?.routeChoice == .all && everyone?.moreAnswers?.first?.text.contains("Plan is fine") == true
            && everyone?.images?.map(\.id) == [photo.id] && chat.pendingImages.isEmpty, "ask the others too: everyone answers the same message, with its pictures")
 
+    // @ two members: their opinions, read only, not judged; @ one: that one works, not judged.
+    let pickedJudged = judged.count, pickedViews = opinionViews.count, pickedReviews = peerPrompts.filter { $0.hasPrefix("[REVIEW]") }.count, pickedHead = git(["rev-parse", "HEAD"])
+    chat.draftMentions = [claude.id, codex.id]
+    send("@\(chat.label(claude)) @\(chat.label(codex)) Should the README be split?")
+    let picked = chat.current.turns.last
+    expect(judged.count == pickedJudged && picked?.route == .opinion && picked?.routeChoice == .all && picked?.mentions == [claude.id, codex.id]
+           && picked?.routeNote?.contains("2") == true && picked?.routeNote?.contains(L("직접", "by you")) == true, "@ two: opinions, not judged")
+    expect(Set([picked?.final ?? ""] + (picked?.moreAnswers?.map(\.text) ?? [])) == ["Claude's view: keep it short.", "Plan is fine, but add a test."],
+           "@ two: both answer")
+    expect(opinionViews.count == pickedViews + 1 && opinionViews.last?.project == nil && opinionViews.last?.roots.first { $0.path == root.path }?.writable != true
+           && peerViews.last?.roots.allSatisfy { $0.writable != true } == true && peerPrompts.filter { $0.hasPrefix("[REVIEW]") }.count == pickedReviews
+           && picked?.peerNotes == nil && git(["rev-parse", "HEAD"]) == pickedHead, "@ two: the project is read only, nothing reviewed or changed")
+    step = 5
+    chat.draftMentions = [claude.id]
+    send("@\(chat.label(claude)) Change README to five.")
+    expect(judged.count == pickedJudged && chat.current.turns.last?.route == nil && chat.current.turns.last?.final == "Done 5."
+           && git(["log", "-1", "--format=%s"]) == "Second", "@ one: that AI works, not judged")
+
     // One member left: no ask_peer, no review.
     let judgedAlone = judged.count
     chat.toggleMember(codex.id)

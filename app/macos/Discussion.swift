@@ -1156,10 +1156,12 @@ final class Discussion: ObservableObject {
         let called = mentioned.isEmpty ? members : mentioned
         // A project chat with two or more members taking part: each message is sorted into one (the lead answers, read
         // only), all (every member answers, read only) or work (the lead works, the others review) before anyone
-        // starts (Route.swift). @ skips this.
+        // starts (Route.swift). @ skips this: one picked AI handles it, two or more give opinions.
         let standing = plain && project && mentioned.isEmpty ? standingMembers() : []
         let forced = forcedRoute
         let sorting = standing.count >= 2 || (forced != nil && project && plain && mentioned.isEmpty)
+        // Two or more picked with @ in a project chat: their opinions, read only, never work.
+        let pickedOpinion = plain && project && mentioned.count >= 2
         let opinionLead = crew?.lead ?? standing.first { id in model.accounts.contains { $0.id == id && [.claude, .codex].contains($0.provider) } } ?? standing.first
         let opinionMembers = opinionLead.map { lead in [lead] + standing.filter { $0 != lead } } ?? []
         let judges = standing.compactMap { id in model.accounts.first { $0.id == id && [.claude, .codex].contains($0.provider) } }
@@ -1257,7 +1259,17 @@ final class Discussion: ObservableObject {
             do { projectLocks = try ProjectWork.acquire(worker.activeWorkspace) }
             catch { worker.finish(id, index, error: error.localizedDescription); return }
             defer { ProjectWork.release(projectLocks) }
-            if solo && sorting {
+            if pickedOpinion {
+                // Two or more picked with @ in a project chat: each gives an opinion, read only. "Run as work" sends it again without the @.
+                let name = { (accountID: String) in worker.model.accounts.first { $0.id == accountID }.map(worker.label) ?? accountID }
+                let note = Self.routeNote(.all, by: nil, names: mentioned.map(name), forced: true)
+                worker.changeTurn(id, index, save: true) { $0.route = RouteChoice.all.route; $0.routeNote = note }
+                let binding = worker.activeWorkspace ?? worker.soloBinding(id)
+                worker.activeWorkspace = Route.opinionView(binding, chatFolder: Self.chatFolder(id).path)
+                worker.runSolo(question: question, history: history, rules: rules, config: config, mentions: mentioned,
+                               cancellation: cancellation, id: id, index: index,
+                               extra: Route.opinionNote(project: binding.project?.root ?? "", alone: false))
+            } else if solo && sorting {
                 var route = forced ?? .work, by: String?
                 if forced == nil {
                     worker.changeTurn(id, index) { $0.status = L("한 명이 답할지, 모두 답할지, 작업할지 판정하는 중…", "Deciding: one answer, everyone, or work…") }

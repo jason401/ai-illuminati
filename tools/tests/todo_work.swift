@@ -81,13 +81,24 @@ func testTodoStore() {
     do { try store.delete(three.id) } catch { expect(false, "delete") }
     try! store.change(one.id) { $0.state = .running }
     do { try store.delete(one.id); expect(false, "a running TODO is not deleted") } catch {}
+    // Added while its list is going (one running): it joins the queue as ready and is next after it; another project's list stays a draft.
+    let joined = try! store.add(title: "joined", project: a, projectName: "A")
+    expect(store.current.item(joined.id)?.state == .ready, "a TODO added to a running list is ready")
+    let idle = try! store.add(title: "idle", project: ProjectBinding(root: "/tmp/todo-c", common: "", remote: "", remoteURL: ""), projectName: "C")
+    expect(store.current.item(idle.id)?.state == .draft, "a TODO added to a list that is not going is a draft")
+    // A chat letting go of a repository is announced (the scheduler wakes for the next TODO at once).
+    var released = 0
+    let releaseWatch = NotificationCenter.default.addObserver(forName: .projectReleased, object: nil, queue: nil) { _ in released += 1 }
+    ProjectWork.release([]); ProjectWork.release(["/tmp/todo-not-held"])
+    NotificationCenter.default.removeObserver(releaseWatch)
+    expect(released == 1, "releasing locks is announced, releasing none is not: \(released)")
     // A save that fails changes nothing and says so (a folder stands where the file goes).
     let blockedURL = todoStoreFile("blocked")
     try! FileManager.default.createDirectory(at: blockedURL.appendingPathComponent("inside"), withIntermediateDirectories: true)
     let blocked = TodoStore(url: blockedURL)
     do { _ = try blocked.add(title: "lost", project: a, projectName: "A"); expect(false, "a failed save is an error") } catch { expect(error is TodoError, "the save error is a TODO error: \(error)") }
     expect(blocked.current.items.isEmpty && blocked.snapshot.items.isEmpty && blocked.saveError != nil, "a failed save leaves the TODOs as they were and is shown")
-    print("PASS: TODO store (drafts, order and folder, gate review/done, other lists, circles refused, move, cancelled link, saved and read back, older files, failed save)")
+    print("PASS: TODO store (drafts, joining a running list, release wakes, order and folder, gate review/done, other lists, circles refused, move, cancelled link, saved and read back, older files, failed save)")
 }
 
 func testTodoScheduler() {

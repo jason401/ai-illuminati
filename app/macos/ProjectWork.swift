@@ -274,7 +274,17 @@ enum ProjectWork {
         mutex.lock(); defer { mutex.unlock() }
         return held[common] != nil
     }
-    static func release(_ paths: [String]) { mutex.lock(); defer { mutex.unlock() }; for path in paths { if let fd = held.removeValue(forKey: path) { close(fd) } } }
+    static func release(_ paths: [String]) {
+        mutex.lock()
+        for path in paths { if let fd = held.removeValue(forKey: path) { close(fd) } }
+        mutex.unlock()
+        if !paths.isEmpty { NotificationCenter.default.post(name: .projectReleased, object: nil) }
+    }
+}
+
+extension Notification.Name {
+    // A chat stopped writing a repository (TodoScheduler looks for the next TODO).
+    static let projectReleased = Notification.Name("AIIlluminatiProjectReleased")
 }
 
 struct WorkStep: Codable, Equatable {

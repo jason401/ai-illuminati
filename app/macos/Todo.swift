@@ -277,7 +277,8 @@ final class TodoStore: ObservableObject {
 
     // MARK: The board's actions (main thread)
 
-    // A new TODO is a draft: the scheduler does not take it until the user presses Start.
+    // A new TODO is a draft: the scheduler does not take it until the user presses Start. Added to a list that is
+    // already going (a TODO of it running or ready), it joins the queue as ready, so the work goes on to it by itself.
     // files: the photos and files attached to it (copied in; the originals are left as they are).
     @discardableResult
     func add(title: String, detail: String = "", files: [URL] = [], project: ProjectBinding, projectName: String, after: [UUID] = [], askFirst: Bool = false, originRoom: UUID? = nil, lock: EnterpriseLock? = nil) throws -> TodoItem {
@@ -291,6 +292,7 @@ final class TodoStore: ObservableObject {
             } else { let list = TodoList(title: projectName, project: project, lock: lock); data.lists.append(list); listID = list.id }
             var item = TodoItem(listID: listID, title: title, detail: detail, askFirst: askFirst, after: after, originRoom: originRoom)
             item.id = id; item.attachments = attachments
+            if data.items.contains(where: { $0.listID == listID && ($0.state == .running || $0.state == .ready) }) { item.state = .ready }
             data.items.append(item)
             if let i = data.lists.firstIndex(where: { $0.id == listID }) { data.lists[i].order = data.ordered(listID).map(\.id) }
             return item
@@ -531,7 +533,9 @@ final class TodoScheduler: ObservableObject {
         self.timer = timer
         nextCheck = Date().addingTimeInterval(Self.interval)
         watching = [discussion.$runningRooms.receive(on: DispatchQueue.main).sink { [weak self] _ in self?.wake() },
-                    store.$snapshot.receive(on: DispatchQueue.main).sink { [weak self] _ in self?.wake() }]
+                    store.$snapshot.receive(on: DispatchQueue.main).sink { [weak self] _ in self?.wake() },
+                    // A chat lets go of a repository after its answer is marked finished: the next TODO need not wait 30 minutes.
+                    NotificationCenter.default.publisher(for: .projectReleased).receive(on: DispatchQueue.main).sink { [weak self] _ in self?.wake() }]
         wake()
     }
 

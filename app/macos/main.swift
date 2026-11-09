@@ -314,6 +314,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             usages.first { $0.account?.id == account.id }.map { usage -> AIUsage in
                 var copy = usage
                 copy.account = account
+                // The local model has no limit: its full bars stay in the menu bar only; here it shows "—" like a missing limit.
+                if account.provider == .ollama, copy.fiveHour != nil || copy.weekly != nil {
+                    copy.fiveHour = nil
+                    copy.weekly = nil
+                    copy.extras.insert(L("한도 없음", "No limit"), at: 0)
+                }
                 return copy
             }
         }

@@ -135,9 +135,29 @@ extension SidebarProjects {
 }
 
 extension Discussion {
-    // The TODO board in place of the chat: one project's (a click on its folder) or every project's.
-    func openBoard(project: String?) {
+    // The TODO board in place of the chat: one project's (a click on its folder) or every project's. A project's
+    // opens on the tab the user last chose for it (Project info the first time); `tab` asks for one.
+    func openBoard(project: String?, tab: BoardTab? = nil) {
         viewingRemote = nil; boardProject = project; viewingBoard = true; sidebarOverlay = false
+        if let project { showBoardTab(tab ?? BoardTab.saved(project) ?? .info) } else { boardTab = .todo }
+    }
+    func showBoardTab(_ tab: BoardTab) {
+        boardTab = tab
+        if let project = boardProject { BoardTab.save(tab, for: project) }
+    }
+}
+
+// The two tabs of a project folder: what belongs to the project, and its TODOs.
+enum BoardTab: String {
+    case info, todo
+    static let key = "sidebar.projectTabs"
+    static func saved(_ project: String) -> BoardTab? {
+        (UserDefaults.app.dictionary(forKey: key)?[project] as? String).flatMap(BoardTab.init(rawValue:))
+    }
+    static func save(_ tab: BoardTab, for project: String) {
+        var all = UserDefaults.app.dictionary(forKey: key) ?? [:]
+        all[project] = tab.rawValue
+        UserDefaults.app.set(all, forKey: key)
     }
 }
 

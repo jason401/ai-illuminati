@@ -339,11 +339,12 @@ struct ChatView: View {
             }
         }
         .onHover { inside in discussion.hover(key, inside) }
-        .help((group.bindings.map(\.root) + [todoCount > 0 ? L("눌러서 할 일 보드 (할 일 \(todoCount))", "Click for the TODO board (\(todoCount) TODOs)")
-                                                             : L("눌러서 할 일 보드", "Click for the TODO board")]).joined(separator: "\n"))
+        .help((group.bindings.map(\.root) + [todoCount > 0 ? L("눌러서 프로젝트 정보·할 일 보드 (할 일 \(todoCount))", "Click for the project info and TODO board (\(todoCount) TODOs)")
+                                                             : L("눌러서 프로젝트 정보·할 일 보드", "Click for the project info and TODO board")]).joined(separator: "\n"))
         .contextMenu {
             if let binding = group.bindings.first { Button(L("이 프로젝트에 새 대화", "New chat in this project")) { newChat(in: group, binding) } }
-            Button(L("할 일 보드", "TODO board")) { discussion.openBoard(project: group.id) }
+            Button(L("프로젝트 정보", "Project info")) { discussion.openBoard(project: group.id, tab: .info) }
+            Button(L("할 일 보드", "TODO board")) { discussion.openBoard(project: group.id, tab: .todo) }
             Button(group.pinned ? L("프로젝트 고정 해제", "Unpin project") : L("프로젝트 맨 위에 고정", "Pin project to top")) { folds.togglePin(group.id) }
             if let binding = group.bindings.first {
                 Button(L("Finder에서 열기", "Open in Finder")) { NSWorkspace.shared.open(URL(fileURLWithPath: binding.root)) }
@@ -528,7 +529,15 @@ struct ChatView: View {
                 }) { Image(systemName: "sidebar.left").frame(width: 24, height: 24) }
                     .buttonStyle(.plainHit).foregroundColor(.secondary)
                     .help(sidebarShown ? L("사이드바 숨기기", "Hide sidebar") : L("사이드바 보기", "Show sidebar"))
-                if discussion.viewingBoard {
+                if discussion.viewingBoard, discussion.boardProject != nil {
+                    // A project folder: two tabs, what belongs to the project and its TODOs.
+                    Picker("", selection: Binding(get: { discussion.boardTab }, set: { discussion.showBoardTab($0) })) {
+                        Text(L("프로젝트 정보", "Project info")).tag(BoardTab.info)
+                        Text(L("할 일", "TODOs")).tag(BoardTab.todo)
+                    }
+                    .pickerStyle(.segmented).labelsHidden().fixedSize()
+                    WindowDragRegion().frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if discussion.viewingBoard {
                     Text(L("할 일 보드", "TODO board")).font(.system(size: 13, weight: .medium)).lineLimit(1)
                     WindowDragRegion().frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if let remote = discussion.viewingRemote {
@@ -546,7 +555,9 @@ struct ChatView: View {
             if discussion.findOpen && discussion.viewingRemote == nil && !discussion.viewingBoard && !discussion.current.turns.isEmpty {
                 ChatFindBar(discussion: discussion).padding(.horizontal, 28).padding(.bottom, 4)
             }
-            if discussion.viewingBoard {
+            if discussion.viewingBoard, let project = discussion.boardProject, discussion.boardTab == .info {
+                ProjectInfoView(discussion: discussion, project: project)
+            } else if discussion.viewingBoard {
                 TodoBoardView(discussion: discussion)
             } else if let remote = discussion.viewingRemote {
                 RemoteChatView(viewing: remote, discussion: discussion, sync: sync)

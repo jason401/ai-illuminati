@@ -708,6 +708,7 @@ final class Discussion: ObservableObject {
     @Published var viewingRemote: RemoteViewing?   // a chat from another Mac, shown read only
     @Published var viewingBoard = false            // the TODO board in place of the chat (Todo.swift)
     @Published var boardProject: String?           // the board shows only this project (SidebarProjects.key); nil = all
+    @Published var boardTab: BoardTab = .todo       // a project's board: its Project info or its TODOs (ProjectInfoView.swift)
     // Several chats can work at once. Each sent message runs on its own worker (a Discussion with `host`
     // set and only that chat), so the run state below (active…, pictures, cancellation) is per chat; the
     // worker hands every change back to the host, which the window shows.

@@ -197,6 +197,13 @@ extension Discussion {
             roots.append(WorkspaceRoot(path: root.path, directory: root.directory, writable: root.directory ? true : nil))
         }
         let linked = conversations.first(where: { $0.id == room })?.workspace
+        // The project's own folders and files (Project info tab), read at every answer and read only. A path the
+        // chat already has keeps the chat's access.
+        if let project = linked?.project {
+            for folder in ProjectInfoStore.shared.activeFolders(SidebarProjects.key(project)) where !roots.contains(where: { $0.path == folder.path }) {
+                roots.append(WorkspaceRoot(path: folder.path, directory: folder.directory))
+            }
+        }
         var binding = WorkspaceBinding(roots: roots, level: .view, project: linked?.project, face: true)
         // A folder linked to this chat (not Git project work) gets full access too, unless turned off.
         if linked?.project == nil, linked?.isFullAuto == true { binding.fullAccess = true }
@@ -205,8 +212,11 @@ extension Discussion {
 
     static func soloFolders(_ binding: WorkspaceBinding, shared: [String], project: String? = nil) -> String {
         var lines = ["[Folders]"]
+        let info = binding.project.map { ProjectInfoStore.shared.info(SidebarProjects.key($0)) } ?? ProjectInfo()
+        let projectPaths = Set(info.folders.map(\.path))
         for root in binding.roots {
             let kind = root.path == project ? "linked Git project — edit files here; use the git_* tools for Git"
+                : projectPaths.contains(root.path) && root.writable != true ? (root.directory ? "project folder, shared by every chat of this project — read only" : "project file — read only")
                 : shared.contains(root.path)
                 ? (root.writable == true ? "shared folder — you may read, edit, create and delete files here (backed up before this answer)" : "shared folder — read only")
                 : root.writable != true ? (root.directory ? "linked folder — read only" : "linked file — read only")
@@ -218,6 +228,8 @@ extension Discussion {
         lines.append("[Some files, contents not read]")
         lines += files.prefix(150).map { $0.replacingOccurrences(of: #"^root \d+: "#, with: "", options: .regularExpression) }
         if files.count > 150 { lines.append("… \(files.count - 150) more: list or search the folders for the rest.") }
+        let links = ProjectInfoStore.linksRule(info)
+        if !links.isEmpty { lines.append(links) }
         return lines.joined(separator: "\n")
     }
 

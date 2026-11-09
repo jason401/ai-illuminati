@@ -43,7 +43,7 @@ enum ImageStore {
 
 extension Discussion {
     var hasImages: Bool { !pendingImages.isEmpty || current.turns.contains { !($0.images ?? []).isEmpty } || (current.documents ?? []).contains { ($0.units ?? []).contains { !$0.images.isEmpty } } }
-    var canSend: Bool { !running && runningRooms.count < Self.maxRunning && !importingMaterials && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !pendingImages.isEmpty) }
+    var canSend: Bool { !running && runningRooms.count < Self.maxRunning && !importingMaterials && current.meetingOf == nil && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !pendingImages.isEmpty) }
 
     func chooseImages() {
         guard !running else { return }

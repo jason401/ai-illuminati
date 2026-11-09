@@ -674,8 +674,30 @@ struct ChatView: View {
     // How far (pt) the end may sit below the visible area and still count as the bottom, so the button does not flicker.
     static let bottomSlack: CGFloat = 80
 
-    // The message box: text on top, then + on the left and who answers and send on the right.
-    private var composer: some View {
+    // The message box: text on top, then + on the left and who answers and send on the right. A meeting's own chat
+    // is read only: a bar back to the chat it was held for instead.
+    @ViewBuilder private var composer: some View {
+        if let link = discussion.current.meetingOf { meetingBar(link) } else { messageBox }
+    }
+
+    private func meetingBar(_ link: MeetingLink) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "person.3").foregroundColor(.secondary)
+            Text(L("회의 기록 · 읽기 전용", "Meeting record · read only")).font(.system(size: 13)).foregroundColor(.secondary)
+            Spacer()
+            if discussion.conversations.contains(where: { $0.id == link.room }) {
+                Button(L("← 원래 채팅으로", "← Back to the chat")) {
+                    discussion.open(link.room); discussion.jumpTurn = link.turn; discussion.jumpCount += 1
+                }
+                .buttonStyle(.link).font(.system(size: 13))
+            }
+        }
+        .padding(.horizontal, 16).padding(.vertical, 12)
+        .background(RoundedRectangle(cornerRadius: 20).fill(Color.primary.opacity(0.045)))
+        .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(Color.primary.opacity(0.10)))
+    }
+
+    private var messageBox: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let error = discussion.attachmentError {
                 Text(error).font(.caption).foregroundColor(.red)
@@ -733,6 +755,7 @@ struct ChatView: View {
                             .font(.system(size: 12)).foregroundColor(.secondary)
                     }
                     Spacer()
+                    if !discussion.routeChoices.isEmpty && !discussion.running { routeChip }
                     if discussion.configuration.mode == 0 && !discussion.running { accountChip }
                     if discussion.configuration.mode != 0 && !discussion.running { teamChip }
                     composerAction
@@ -1119,6 +1142,32 @@ struct ChatView: View {
     // Who answers: automatic (most usage left), or the accounts checked for this chat. Two or more checked: in a
     // plain chat all answer every message at the same time; in a project chat one works (the lead) and the others
     // review its changes. @ in a message calls others for that message only.
+    // How the next message is answered: the app decides (automatic), or the way picked here, for that message only.
+    private var routeChip: some View {
+        let picked = discussion.pickedRoute
+        return Menu {
+            Button((picked == nil ? "✓ " : "") + L("자동 (앱이 판단)", "Automatic (the app decides)")) { discussion.pickedRoute = nil }
+            Divider()
+            ForEach(discussion.routeChoices, id: \.self) { choice in
+                Button((picked == choice ? "✓ " : "") + choice.title + "  /" + (Route.slashes.first { $0.value == choice && $0.key.allSatisfy(\.isASCII) }?.key ?? "")) {
+                    discussion.pickedRoute = choice
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: picked?.icon ?? "wand.and.stars").font(.system(size: 11))
+                Text(picked?.title ?? L("자동", "Auto"))
+            }
+            .font(.system(size: 12))
+            .foregroundColor(picked == nil ? .secondary : .accentColor)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help(L("이 메시지를 어떻게 답할지 고르기. 보내면 다시 자동이 돼요. 메시지 앞에 /work, /meet 처럼 써도 돼요.",
+                "How to answer this message. Back to automatic after sending. You can also start the message with /work, /meet…"))
+    }
+
     private var accountChip: some View {
         let config = discussion.configuration
         let members = discussion.memberIDs
@@ -1658,11 +1707,19 @@ private struct TurnView: View, Equatable {
             if turn.mode == 0, let route = turn.routeChoice, let note = turn.routeNote {
                 // Project chat with members: how the app answered this message, and the other ways for the newest one.
                 HStack(spacing: 8) {
-                    Label(note, systemImage: route == .work ? "hammer" : route == .one ? "bubble.left" : "bubble.left.and.bubble.right")
+                    Label(note, systemImage: route.icon)
                         .font(.system(size: 11)).foregroundColor(.secondary)
                         .padding(.horizontal, 10).padding(.vertical, 4)
                         .background(Color.primary.opacity(0.06), in: Capsule())
-                    if last && !busy && (turn.final != nil || turn.error != nil) {
+                    if let meeting = turn.meetingRoom {
+                        // The meeting's own chat (on this Mac only).
+                        if discussion.conversations.contains(where: { $0.id == meeting }) {
+                            Button(L("회의 과정 보기", "Show the meeting")) { discussion.open(meeting) }
+                                .buttonStyle(.link).font(.system(size: 11))
+                        } else {
+                            Text(L("회의 기록은 다른 Mac에 있어요", "The meeting record is on another Mac")).font(.system(size: 11)).foregroundColor(.secondary)
+                        }
+                    } else if last && !busy && (turn.final != nil || turn.error != nil) {
                         if route == .one {
                             Button(L("다른 AI 의견도 듣기", "Ask the others too")) { discussion.rerun(turn, as: .all) }
                                 .buttonStyle(.link).font(.system(size: 11))

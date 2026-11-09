@@ -30,7 +30,7 @@ final class ChatLink: ToolProvider {
     }
 
     static func allowed(_ conversation: Conversation, asker: Account?, room: UUID) -> Bool {
-        asker != nil && conversation.id != room && !conversation.turns.isEmpty && !conversation.isEnterprise
+        asker != nil && conversation.id != room && !conversation.turns.isEmpty && !conversation.isEnterprise && conversation.meetingOf == nil
     }
 
     private func snapshot() -> [Conversation] {

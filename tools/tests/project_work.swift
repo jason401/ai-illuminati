@@ -857,3 +857,129 @@ func testStartTurn() {
     expect(chat.conversation(background).turns.count == 3 && chat.conversation(background).turns.last?.final != nil, "Ask again started a turn in its chat")
     print("PASS: startTurn (background chat, own settings, open chat and draft untouched, busy and full refused, Ask again keeps the draft)")
 }
+
+// The way picked before sending (the chip, "/work ") and meetings (Meeting.swift), with fake answers.
+func testPickedRoute() {
+    let offered = RouteChoice.offered(project: true)
+    expect(Route.slash("/work 고쳐줘", offered: offered)! == (.work, "고쳐줘") && Route.slash("/회의\n주제", offered: offered)! == (.meeting, "주제")
+           && Route.slash("/Users/me/file 봐줘", offered: offered) == nil && Route.slash("이거 /work 해줘", offered: offered) == nil
+           && Route.slash("/work", offered: offered) == nil && Route.slash("/work 고쳐", offered: RouteChoice.offered(project: false)) == nil,
+           "slash: only a known word at the start, before a space; only the ways the chat offers")
+    expect(RouteChoice.offered(project: false) == [.meeting], "a plain chat offers only a meeting")
+
+    let claude = Account(id: "pick-claude", provider: .claude, name: "PC"), codex = Account(id: "pick-codex", provider: .codex, name: "PG")
+    let gemini = Account(id: "pick-gemini", provider: .gemini, name: "PM")
+    let root = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("pick-project-" + UUID().uuidString)
+    try! FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    func git(_ args: [String]) -> String { try! ProjectProcess.git(args, root: root.path) }
+    _ = git(["init", "-b", "main"]); _ = git(["config", "user.name", "Fixture"]); _ = git(["config", "user.email", "fixture@example.invalid"])
+    _ = git(["remote", "add", "origin", root.path + "/unused-origin"])
+    try! "One\n".write(to: root.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
+    _ = git(["add", "README.md"]); _ = git(["commit", "-m", "Initial"])
+    let model = AppModel()
+    model.accounts = [claude, codex, gemini]
+    let chat = Discussion(model: model)
+    chat.configure { $0.mode = 0; $0.leadID = claude.id }
+    chat.toggleMember(claude.id); chat.toggleMember(codex.id)
+    chat.change(chat.currentID) { $0.workspace = WorkspaceBinding(roots: [WorkspaceRoot(path: root.path, directory: true)], project: try! ProjectProcess.inspect(root.path)) }
+    let room = chat.currentID
+    var judged = 0, asked: [(String, String)] = [], views: [WorkspaceBinding] = [], moderations = 0
+    chat.routeJudge = { _ in judged += 1; return (.one, "Judge") }
+    chat.workspaceAnswer = { account, prompt, binding, _, _ in
+        asked.append((account.id, prompt)); views.append(binding)
+        if prompt.contains("[MEETING RESULT]") { return .success("결론: README는 그대로 두자.\n이견: PG는 나누자고 했어.\n가자라고 하면 README를 정리할게.") }
+        if prompt.contains("[MODE3 MODERATION]") {
+            moderations += 1
+            return .success(moderations == 1 ? #"{"action":"speak","speaker":"codex","focus":"check the README","board":"Agreed: keep"}"# : #"{"action":"finish","reason":"enough","board":"Agreed: keep"}"#)
+        }
+        if prompt.contains("[MODE3 SPEECH]") { return .success("TL;DR: \(account.name) view\n\n\(account.name) thinks so.") }
+        if prompt.hasPrefix("[REVIEW]") { return .success("No issues") }
+        if account.id == codex.id { return .success("Codex here.") }
+        if !prompt.contains("[Opinion mode]") {
+            try! "Two\n".write(to: root.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
+            _ = try! ProjectProcess.git(["commit", "-am", "Two"], root: root.path)
+        }
+        return .success("Claude here.")
+    }
+    func wait() {
+        let deadline = Date().addingTimeInterval(30)
+        while Date() < deadline && (chat.anyRunning || (chat.current.turns.last?.final == nil && chat.current.turns.last?.error == nil)) {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.03))
+        }
+    }
+
+    // The chip: work, even when the message says not to change anything; not judged; back to automatic after sending.
+    chat.pickedRoute = .work
+    chat.draft = "수정하지 말고 README 봐줘"; chat.send(); wait()
+    let work = chat.current.turns.last
+    expect(judged == 0 && work?.route == .work && work?.question == "수정하지 말고 README 봐줘" && chat.pickedRoute == nil
+           && work?.routeNote?.contains(L("직접", "by you")) == true && git(["log", "-1", "--format=%s"]) == "Two",
+           "chip work: works without judging, the no-change rule does not override it, then the chip is automatic again")
+    // "/one " at the start: one answer, read only, and the word is not part of the message.
+    chat.draft = "/one README 뭐라고 써 있어?"; chat.send(); wait()
+    expect(judged == 0 && chat.current.turns.last?.routeChoice == .one && chat.current.turns.last?.question == "README 뭐라고 써 있어?", "slash one: one answer, the word removed")
+    // @A @B with work: A works and B reviews (without a way picked, two @ are opinions).
+    chat.pickedRoute = .work
+    chat.draftMentions = [codex.id, claude.id]
+    chat.draft = "@\(chat.label(codex)) @\(chat.label(claude)) README 고쳐"; chat.send(); wait()
+    let pair = chat.current.turns.last
+    expect(pair?.route == .work && pair?.routeNote?.contains(L("\(chat.label(codex)) 작업", "\(chat.label(codex)) works")) == true
+           && pair?.routeNote?.contains(L("\(chat.label(claude)) 검수", "\(chat.label(claude)) reviews")) == true && pair?.final == "Codex here." && judged == 0,
+           "@A @B + work: A works, B reviews")
+
+    // A meeting: in its own hidden chat, with the chat's members; the result comes back as the answer.
+    chat.toggleMember(gemini.id)
+    let turnsBefore = chat.current.turns.count, askedBefore = asked.count
+    chat.pickedRoute = .meeting
+    chat.draft = "README를 나눌까?"; chat.send(); wait()
+    let met = chat.current.turns.last
+    let meetingID = met?.meetingRoom
+    let meeting = chat.conversations.first { $0.id == meetingID }
+    expect(chat.current.turns.count == turnsBefore + 1 && met?.routeChoice == .meeting && met?.route == .opinion && met?.final?.contains("결론") == true
+           && met?.finalBy?.contains(L("회의", "Meeting")) == true && met?.entries.isEmpty == true && chat.pickedRoute == nil,
+           "meeting: the result is the answer; the speeches are not in this chat")
+    expect(meeting?.meetingOf == MeetingLink(room: room, turn: met!.id) && meeting?.turns.first?.entries.filter { !$0.failed }.count == 4
+           && !chat.listedConversations.contains { $0.id == meetingID } && !DeviceSync.shared.shares(meeting!)
+           && !ChatLink.allowed(meeting!, asker: claude, room: room),
+           "meeting: three opening views and one review in the hidden chat, not listed, synced or readable by tools")
+    let meetingPrompts = asked[askedBefore...]
+    expect(meetingPrompts.allSatisfy { !$0.1.contains("[Opinion mode]") } && meetingPrompts.contains { $0.1.contains("meeting-source.md") }
+           && Set(meetingPrompts.map(\.0)) == [claude.id, codex.id, gemini.id]
+           && views[askedBefore...].allSatisfy { $0.project == nil && $0.roots.allSatisfy { $0.writable != true || $0.path.contains(meetingID!.uuidString) } },
+           "meeting: everyone knows the chat, the folders read only except the meeting's own")
+    let source = try? String(contentsOf: Discussion.chatFolder(meetingID!).appendingPathComponent(Discussion.meetingSource), encoding: .utf8)
+    expect(source?.contains("README 뭐라고 써 있어?") == true && source?.contains("README를 나눌까?") == true, "meeting: the chat so far is saved for it")
+    let after = Discussion.transcript(chat.current.turns)
+    expect(after.contains("결론: README는 그대로 두자.") && !after.contains("PM thinks so."), "later prompts carry the result only")
+    expect(Route.rule(question: "가자", previous: met) == .work, "the result's offer makes 가자 work")
+    let old = try? JSONDecoder().decode(ChatTurn.self, from: JSONEncoder().encode(met!))
+    expect(old?.route == .opinion && old?.meetingRoom == meetingID, "a meeting turn is saved as an opinion with its room")
+
+    // Deleting the chat deletes its meeting.
+    chat.removeChats([chat.current])
+    expect(!chat.conversations.contains { $0.id == meetingID }, "the meeting goes with its chat")
+
+    // An Enterprise chat: the meeting is locked the same, and only AIs of its organization meet.
+    var school = Account(id: "pick-school", provider: .claude, name: "Claude (Uni)"); school.school = true
+    model.accounts = [school, codex, gemini]
+    let locked = Discussion(model: model)
+    let lock = Enterprise.organizations([school]).first!
+    locked.configure { $0.mode = 0 }
+    locked.change(locked.currentID) { $0.enterpriseLock = lock; $0.turns = [ChatTurn(question: "earlier")] }
+    locked.toggleMember(school.id); locked.toggleMember(codex.id); locked.toggleMember(gemini.id)
+    var lockedAsked: Set<String> = []
+    locked.workspaceAnswer = { account, prompt, _, _, _ in
+        lockedAsked.insert(account.id)
+        if prompt.contains("[MEETING RESULT]") { return .success("결론: 됐어.") }
+        if prompt.contains("[MODE3 MODERATION]") { return .success(#"{"action":"finish","reason":"enough","board":""}"#) }
+        return .success("TL;DR: ok\n\nok")
+    }
+    expect(locked.routeChoices == [.meeting], "a plain chat's chip offers a meeting only")
+    locked.draft = "/meet 정리해줘"; locked.send()
+    let deadline = Date().addingTimeInterval(30)
+    while Date() < deadline && (locked.anyRunning || locked.current.turns.last?.final == nil) { RunLoop.main.run(until: Date().addingTimeInterval(0.03)) }
+    let lockedMeeting = locked.conversations.first { $0.id == locked.current.turns.last?.meetingRoom }
+    expect(lockedMeeting?.enterpriseLock == lock && lockedAsked == [school.id] && locked.current.turns.last?.final == "결론: 됐어.",
+           "Enterprise: the meeting keeps the lock and only the organization's AI meets")
+    print("PASS: picked way (chip, slash, @ with work) and meetings (hidden chat, chat's context, result back, lock kept, deleted with the chat)")
+}

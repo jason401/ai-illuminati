@@ -159,7 +159,8 @@ extension Discussion {
               When another AI is right, say so briefly and build on it. Change your own view freely if the discussion shows a better one.
               No attacks, no repeating, no separate summary.
               """)
-        Use only web search and reading web pages. Do not change files or run commands.
+        \(activeMeeting ? "This is a meeting: you may read the folders listed above (read only) and search the web. Do not change files or run commands."
+            : "Use only web search and reading web pages. Do not change files or run commands.")
         \(pictureRule(account))
         \(Self.headlineRule)
         [Moderator focus]
@@ -167,10 +168,15 @@ extension Discussion {
         """
     }
 
+    // meeting: a meeting's brief in place of the chat's history (Meeting.swift). Then the result is written for the
+    // user, it is returned and the turn is left running for the meeting to finish; nil when there is none.
+    @discardableResult
     func runDebate(question: String, history: [ChatTurn], rules: String, team: [Account],
-                   leader: Account.Provider, perAI: Int, cancellation: DebateCancellation, id: UUID, index: Int) {
+                   leader: Account.Provider, perAI: Int, cancellation: DebateCancellation, id: UUID, index: Int,
+                   meeting: String? = nil) -> (text: String, images: [ChatImage])? {
         let limit = perAI * team.count
-        let previous = Self.transcript(history)
+        let previous = meeting ?? Self.transcript(history)
+        var outcome: (text: String, images: [ChatImage])?
         let prefix = previous.isEmpty ? "" : previous + "\n\n"
         var transcript = prefix + "[User]\n" + question
         var successful: Set<Account.Provider> = []
@@ -329,7 +335,10 @@ extension Discussion {
         if !cancellation.isCancelled, let moderator, successful.contains(leader) {
             changeTurn(id, index) { $0.status = L("대표가 최종 답을 정리하는 중…", "Moderator is writing the final answer…") }
             let finalStarted = Date()
-            let result = requestDebate(moderator, """
+            let missing = team.filter { !successful.contains($0.provider) }.map(label)
+            let result = meeting != nil ? requestDebate(moderator, Self.debateContext(rules: rules, transcript: transcript) + "\n"
+                + (board.isEmpty ? "" : "Moderator board:\n" + board + "\n") + "End reason: \(ending)\n" + Self.meetingFinal(missing: missing)
+                + "\n\(pictureRule(moderator))\nDo not change files or execute commands.", 180, cancellation) : requestDebate(moderator, """
                 \(Self.debateContext(rules: rules, transcript: transcript))
                 [MODE3 FINAL]
                 Write the final answer to the latest user question, using the best of what the team found.
@@ -351,6 +360,7 @@ extension Discussion {
                         $0.final = harvest.text; $0.finalBy = self.label(moderator)
                         $0.finalImages = harvest.images.isEmpty ? nil : harvest.images
                     }
+                    outcome = (harvest.text, harvest.images)
                 case .failure:
                     changeTurn(id, index, save: true) { $0.error = L("최종 정리에 실패했습니다. 위 발언은 저장됐습니다.", "Final synthesis failed. The contributions have been saved.") }
                 }
@@ -360,6 +370,7 @@ extension Discussion {
             t.status = ""
             if cancellation.isCancelled { t.endReason = L("사용자가 중지했습니다.", "Stopped by you.") }
         }
-        finish(id, index)
+        if meeting == nil { finish(id, index) }
+        return outcome
     }
 }

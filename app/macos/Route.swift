@@ -10,17 +10,38 @@ import Foundation
 // first and last (plain agreement is one, "가자" after an offer is work, "수정하지 마" is never work), whoever judges.
 // Missing work costs most (the user asked and nothing happened), so the work answer is told to change nothing when
 // the message turns out not to ask for a change. Checked on 100 real messages: route-check in the project chat.
-// Saved on the turn as `route` (opinion or work, as older builds read it) plus `routeOne` for one.
+// Saved on the turn as `route` (opinion or work, as older builds read it) plus `routeOne` for one and `meetingRoom`
+// for a meeting (Meeting.swift). The user can also pick the way before sending (the chip in the message box, or
+// "/work " at the start of the message): that one message skips the sorter.
 enum ChatRoute: String, Codable { case opinion, work }
 
-enum RouteChoice: Equatable {
-    case work, one, all
+enum RouteChoice: Hashable, CaseIterable {
+    case work, one, all, meeting
     var route: ChatRoute { self == .work ? .work : .opinion }
+    var title: String {
+        switch self {
+        case .one: return L("한 명", "One")
+        case .all: return L("모두", "Everyone")
+        case .work: return L("작업", "Work")
+        case .meeting: return L("회의", "Meeting")
+        }
+    }
+    var icon: String {
+        switch self {
+        case .work: return "hammer"
+        case .one: return "bubble.left"
+        case .all: return "bubble.left.and.bubble.right"
+        case .meeting: return "person.3"
+        }
+    }
+    // The ways a chat offers: a project chat all of them; a plain chat answers with all its members anyway and has no project to work on.
+    static func offered(project: Bool) -> [RouteChoice] { project ? [.one, .all, .work, .meeting] : [.meeting] }
 }
 
 extension ChatTurn {
     var routeChoice: RouteChoice? {
-        route.map { $0 == .work ? .work : routeOne == true ? .one : .all }
+        if meetingRoom != nil { return .meeting }
+        return route.map { $0 == .work ? .work : routeOne == true ? .one : .all }
     }
 }
 
@@ -111,6 +132,18 @@ enum Route {
         if route == .work && forbidsChanges(question) { return .one }
         if route == .one && found(asksViews, question) { return .all }
         return route
+    }
+
+    // "/work " (or /one, /all, /meet and the Korean words) at the start of a message picks the way for it; the rest is
+    // the message. Only before a space or a line break, so a path like "/Users/…" stays text; only the ways `offered`.
+    static let slashes: [String: RouteChoice] = ["one": .one, "한명": .one, "all": .all, "모두": .all,
+                                                  "work": .work, "작업": .work, "meet": .meeting, "회의": .meeting]
+    static func slash(_ text: String, offered: [RouteChoice]) -> (route: RouteChoice, rest: String)? {
+        let trimmed = text.drop { $0 == " " }
+        guard trimmed.hasPrefix("/"), let end = trimmed.firstIndex(where: \.isWhitespace) else { return nil }
+        let word = trimmed[trimmed.index(after: trimmed.startIndex)..<end].lowercased()
+        guard let route = slashes[word], offered.contains(route) else { return nil }
+        return (route, String(trimmed[end...]).trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     // WORK, ONE or ALL in the reply (OPINION, the older word, is ALL); nil when it says none or more than one.
@@ -303,6 +336,8 @@ extension Discussion {
             let who = names.first.map { L("\($0) 작업", "\($0) works") } ?? L("작업", "Work")
             let check = reviewers.isEmpty ? "" : ", " + L("\(reviewers.joined(separator: ", ")) 검수", "\(reviewers.joined(separator: ", ")) reviews")
             return L("작업 · ", "Work · ") + who + check + " · " + how
+        case .meeting:
+            return L("회의 · ", "Meeting · ") + names.joined(separator: ", ") + " · " + how
         }
     }
 

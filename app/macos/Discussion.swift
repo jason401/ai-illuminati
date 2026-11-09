@@ -506,6 +506,7 @@ struct ChatTurn: Identifiable, Codable, Equatable {
     var route: ChatRoute?       // project chat with members: how this message was answered (Route.swift)
     var routeNote: String?      // "Opinion · 3 AIs · judged by Gemma 4 E4B", shown above the answer
     var routeOne: Bool?         // with route opinion: only the lead answered (nil: everyone did)
+    var meetingRoom: UUID?      // with route opinion: the members met in this hidden chat and `final` is their result (Meeting.swift)
     // Project work: the step list (the AI's, then the app's review steps), why it last changed, when the AI last
     // did something (the chat says "last activity 4 min ago", never "stuck") and whether an approval card waits.
     var plan: [WorkStep]?
@@ -638,6 +639,8 @@ struct Conversation: Identifiable, Codable {
     var shareToDevices: Bool?     // shown on your other Macs (when only chosen chats are shared)
     // Locked by the user as an Enterprise chat (Enterprise.swift); never removed. nil = an open chat.
     var enterpriseLock: EnterpriseLock?
+    // A meeting's own chat (Meeting.swift): the message it was held for. Not listed, searched or synced; deleted with that chat.
+    var meetingOf: MeetingLink?
 
     // Something worth keeping: messages, materials or a linked folder. A chat with only settings is
     // "blank": it is not kept in the list once you leave it.
@@ -694,7 +697,7 @@ final class Discussion: ObservableObject {
     @Published var conversations: [Conversation]
     @Published var currentID: UUID {
         // Coming back to a chat starts again from its latest turns.
-        didSet { if currentID != oldValue { closeFind(); showLatestTurns() } }
+        didSet { if currentID != oldValue { closeFind(); showLatestTurns(); pickedRoute = nil } }
     }
     func showLatestTurns() {
         shownTurns = Self.turnPage; reachedBottom = false; loadingEarlier = false; earlierRowInView = false
@@ -743,6 +746,7 @@ final class Discussion: ObservableObject {
     var activePeerSession: PeerLink.Session?   // a project chat with reviewers: this answer's ask_peer (Peer.swift)
     var activeWorkspaceBackupPath: String?
     var activeAdversarial = false
+    var activeMeeting = false   // this answer is a meeting (Meeting.swift): the AIs may read the folders
     var activeSpeechLength = SpeechLength.unlimited
     var activeImages: [URL] = []
     // Tests only: answers requests that have folders attached (mode 0 always does) without calling the real tools.
@@ -750,6 +754,7 @@ final class Discussion: ObservableObject {
     // Tests only: sorts a project chat's message (Route.swift) without calling Gemma or an AI.
     var routeJudge: ((String) -> (route: RouteChoice, by: String?))?
     var forcedRoute: RouteChoice?   // "Run as work / opinion" under the last answer, for the next send only
+    @Published var pickedRoute: RouteChoice?   // the way picked in the message box for the next message (nil: the app decides)
     // Tests only: answers requests that carry pictures without calling the real tools.
     var pictureAnswer: ((Account, String, [URL], TimeInterval, DebateCancellation, Bool) -> Result<String, Answerer.Failure>)?
     var imageContext = ""
@@ -1023,7 +1028,8 @@ final class Discussion: ObservableObject {
 
     // Pinned chats first (in their usual order), then the rest.
     var listedConversations: [Conversation] {
-        conversations.filter { $0.pinned == true } + conversations.filter { $0.pinned != true }
+        let listed = conversations.filter { $0.meetingOf == nil }
+        return listed.filter { $0.pinned == true } + listed.filter { $0.pinned != true }
     }
 
     // Asks for a new name; the list keeps its order (renaming is not new activity).
@@ -1053,7 +1059,7 @@ final class Discussion: ObservableObject {
     // Deletes every saved chat (or all but the pinned ones), each the same way as deleting one.
     func deleteAll() {
         guard !anyRunning, !importingMaterials else { return }
-        let saved = conversations.filter(\.hasContent)
+        let saved = conversations.filter { $0.hasContent && $0.meetingOf == nil }
         guard !saved.isEmpty else { return }
         let pinnedCount = saved.filter { $0.pinned == true }.count
         let alert = NSAlert()
@@ -1088,6 +1094,7 @@ final class Discussion: ObservableObject {
             do {
                 try ChatStore.delete(conversation)
                 conversations.removeAll { $0.id == conversation.id }
+                removeMeetings(of: conversation.id)
             } catch { failed += 1 }
         }
         // Leave exactly one empty "new chat": the open one if it is empty, else a fresh one.
@@ -1122,6 +1129,7 @@ final class Discussion: ObservableObject {
             return
         }
         conversations.removeAll { $0.id == id }
+        removeMeetings(of: id)
         if currentID == id {
             pendingImages = []
             attachmentError = nil
@@ -1136,9 +1144,12 @@ final class Discussion: ObservableObject {
         guard canSend else { return }
         // Plain chat: "@Name" picked from the list, or typed ("@지피", "@ㅋㄹㄷ"), sends this one message to those accounts.
         let plain = Self.modernModes && configuration.mode == 0
-        let allowed = model.accounts.filter { Enterprise.permits($0, lock: current.enterpriseLock) }
-        var mentioned = plain ? Self.mentions(in: draft, picked: draftMentions, accounts: allowed, label: label) : []
+        // "/work " at the start picks the way for this message, like the chip in the message box.
+        var picked = forcedRoute ?? pickedRoute
         var typed = draft
+        if plain, forcedRoute == nil, let found = Route.slash(draft, offered: routeChoices) { picked = found.route; typed = found.rest }
+        let allowed = model.accounts.filter { Enterprise.permits($0, lock: current.enterpriseLock) }
+        var mentioned = plain ? Self.mentions(in: typed, picked: draftMentions, accounts: allowed, label: label) : []
         for id in mentioned { if let account = model.accounts.first(where: { $0.id == id }) { typed = typed.replacingOccurrences(of: "@" + label(account), with: "") } }
         if plain {
             for found in Self.typedMentions(in: typed, accounts: model.accounts, label: label, lock: current.enterpriseLock,
@@ -1148,17 +1159,24 @@ final class Discussion: ObservableObject {
             }
         }
         typed = typed.replacingOccurrences(of: "  ", with: " ").trimmingCharacters(in: .whitespacesAndNewlines)
-        draftMentions = []
-        mentionQuery = nil
-        let question = !typed.isEmpty ? typed : !mentioned.isEmpty ? L("지금까지의 대화에 대해 네 의견을 말해 줘.", "What do you think about this conversation so far?")
+        let question = !typed.isEmpty ? typed : !mentioned.isEmpty || picked != nil ? L("지금까지의 대화에 대해 네 의견을 말해 줘.", "What do you think about this conversation so far?")
             : L("첨부한 이미지를 설명해줘.", "Describe the attached images.")
-        if let reason = startTurn(room: currentID, question: question, mentioned: mentioned, images: pendingImages, forced: forcedRoute) {
+        if let reason = startTurn(room: currentID, question: question, mentioned: mentioned, images: pendingImages, forced: picked) {
             attachmentError = reason
             return
         }
+        draftMentions = []
+        mentionQuery = nil
         pendingImages = []
         draft = ""
+        pickedRoute = nil
         attachmentError = nil
+    }
+
+    // The ways the message box offers for the open chat (RouteChoice.offered); none in the team modes.
+    var routeChoices: [RouteChoice] {
+        guard Self.modernModes && configuration.mode == 0, current.meetingOf == nil else { return [] }
+        return RouteChoice.offered(project: current.workspace?.project != nil)
     }
 
     // Starts a turn in any chat, whether it is open or not (send() is the message box's way in): the same
@@ -1188,13 +1206,24 @@ final class Discussion: ObservableObject {
         // only), all (every member answers, read only) or work (the lead works, the others review) before anyone
         // starts (Route.swift). @ skips this: one picked AI handles it, two or more give opinions.
         let standing = plain && project && mentioned.isEmpty ? standingMembers(room: id) : []
-        let sorting = standing.count >= 2 || (forced != nil && project && plain && mentioned.isEmpty)
-        // Two or more picked with @ in a project chat: their opinions, read only, never work.
-        let pickedOpinion = plain && project && mentioned.count >= 2
+        // A way picked by the user (the chip, "/work", "Run as work") is not sorted. With @ the picked AIs answer that way:
+        // @A @B + work, A works and B reviews; @A + work, A works and the other members review.
+        let meeting = plain && forced == .meeting
+        let sorting = !meeting && (standing.count >= 2 || (forced != nil && project && plain))
+        // Two or more picked with @ in a project chat and no way picked: their opinions, read only, never work.
+        let pickedOpinion = plain && project && mentioned.count >= 2 && forced == nil
         let opinionLead = crew?.lead ?? standing.first { id in model.accounts.contains { $0.id == id && [.claude, .codex].contains($0.provider) } } ?? standing.first
-        let opinionMembers = opinionLead.map { lead in [lead] + standing.filter { $0 != lead } } ?? []
+        let opinionMembers = !mentioned.isEmpty ? mentioned : opinionLead.map { lead in [lead] + standing.filter { $0 != lead } } ?? []
         let judges = standing.compactMap { id in model.accounts.first { $0.id == id && [.claude, .codex].contains($0.provider) } }
+        let doers = mentioned.isEmpty ? called : Array(mentioned.prefix(1))
+        let checkers = mentioned.isEmpty ? reviewers : mentioned.count >= 2 ? Array(mentioned.dropFirst())
+            : project ? (self.crew(project: true, room: id).map { [$0.lead] + $0.others } ?? []).filter { $0 != mentioned[0] } : []
         let team = called.isEmpty ? pickTeam(room: id) : called.compactMap { id in model.accounts.first { $0.id == id } }
+        // A meeting (Meeting.swift): who meets, in a hidden chat of its own.
+        let meetingTeam = meeting ? meetingMembers(room: id, mentioned: mentioned, fallback: team) : []
+        if meeting && meetingTeam.isEmpty {
+            return L("회의할 수 있는 AI가 없어요. Claude·ChatGPT·Gemini 중 로그인된 AI를 참여시켜 주세요.", "No AI can meet. Add a signed-in Claude, ChatGPT or Gemini.")
+        }
         var turn = ChatTurn(question: question)
         turn.askedAt = Date()
         turn.mentions = mentioned.isEmpty ? nil : mentioned
@@ -1261,6 +1290,7 @@ final class Discussion: ObservableObject {
             c.turns.append(turn)
         }
         let index = conversation(id).turns.count - 1
+        let meetingID = meeting ? openMeeting(for: id, turn: turn, history: history) : UUID()
         let cancellation = DebateCancellation()
         let worker = Discussion(workerFor: self, room: id)
         worker.runCancellation = (Self.modernModes || config.mode == 3) ? cancellation : nil
@@ -1284,7 +1314,10 @@ final class Discussion: ObservableObject {
             do { projectLocks = try ProjectWork.acquire(worker.activeWorkspace) }
             catch { worker.finish(id, index, error: error.localizedDescription); return }
             defer { ProjectWork.release(projectLocks) }
-            if pickedOpinion {
+            if meeting {
+                worker.runMeeting(question: question, history: history, rules: rules, team: meetingTeam, room: meetingID,
+                                  cancellation: cancellation, id: id, index: index)
+            } else if pickedOpinion {
                 // Two or more picked with @ in a project chat: each gives an opinion, read only. "Run as work" sends it again without the @.
                 let name = { (accountID: String) in worker.model.accounts.first { $0.id == accountID }.map(worker.label) ?? accountID }
                 let note = Self.routeNote(.all, by: nil, names: mentioned.map(name), forced: true)
@@ -1311,7 +1344,7 @@ final class Discussion: ObservableObject {
                     return worker.endSolo(id, index, stopped: false)
                 }
                 let note = route == .work
-                    ? Self.routeNote(.work, by: by, names: called.isEmpty ? team.map(worker.label) : called.map(name), reviewers: reviewers.map(name), forced: forced != nil)
+                    ? Self.routeNote(.work, by: by, names: doers.isEmpty ? team.map(worker.label) : doers.map(name), reviewers: checkers.map(name), forced: forced != nil)
                     : Self.routeNote(route, by: by, names: answering.map(name), forced: forced != nil)
                 worker.changeTurn(id, index, save: true) { $0.route = route.route; $0.routeOne = route == .one ? true : nil; $0.routeNote = note }
                 let binding = worker.activeWorkspace ?? worker.soloBinding(id)
@@ -1321,9 +1354,9 @@ final class Discussion: ObservableObject {
                                    cancellation: cancellation, id: id, index: index,
                                    extra: Route.opinionNote(project: binding.project?.root ?? "", alone: answering.count == 1))
                 } else {
-                    let peer = worker.beginPeer(id: id, index: index, question: question, reviewers: reviewers, binding: binding, cancellation: cancellation)
-                    worker.runSolo(question: question, history: history, rules: rules, config: config, mentions: called,
-                                   reviewers: reviewers, cancellation: cancellation, id: id, index: index, extra: (forced == nil ? Route.workNote() : "") + extra)
+                    let peer = worker.beginPeer(id: id, index: index, question: question, reviewers: checkers, binding: binding, cancellation: cancellation)
+                    worker.runSolo(question: question, history: history, rules: rules, config: config, mentions: doers,
+                                   reviewers: checkers, cancellation: cancellation, id: id, index: index, extra: (forced == nil ? Route.workNote() : "") + extra)
                     worker.endPeer(peer)
                 }
             } else if solo {

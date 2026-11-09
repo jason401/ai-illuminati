@@ -151,7 +151,7 @@ final class DeviceSync: ObservableObject {
     // MARK: Starting (the app only; tests call the methods directly)
 
     func start(discussion: Discussion) {
-        conversations = { [weak discussion] in discussion?.conversations.filter(\.hasContent) ?? [] }
+        conversations = { [weak discussion] in discussion?.conversations.filter { $0.hasContent && $0.meetingOf == nil } ?? [] }
         isBusy = { [weak discussion] id in discussion?.runningRooms.contains(id) ?? false }
         activation = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             self?.scan()
@@ -175,7 +175,8 @@ final class DeviceSync: ObservableObject {
     }
 
     func shares(_ conversation: Conversation) -> Bool {
-        guard settings.enabled, conversation.hasContent, !conversation.turns.isEmpty else { return false }
+        // A meeting's hidden chat stays on this Mac (Meeting.swift).
+        guard settings.enabled, conversation.hasContent, !conversation.turns.isEmpty, conversation.meetingOf == nil else { return false }
         if !settings.shareAll && conversation.shareToDevices != true { return false }
         if !settings.includeSchool && Self.isSchool(conversation) { return false }
         return true

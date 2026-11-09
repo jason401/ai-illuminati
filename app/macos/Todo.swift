@@ -649,9 +649,14 @@ final class TodoScheduler: ObservableObject {
 
     // The crew a list's next TODO would get if it started now (the board shows it).
     func crew(for list: TodoList) -> (lead: Account, reviewer: Account?)? {
+        guard list.project != nil else { return nil }
+        return crew(lock: lock(for: list), allowed: list.accounts)
+    }
+    // The lock of the list's next TODO to start (the board's picker and preview use the same one).
+    func lock(for list: TodoList) -> EnterpriseLock? {
         guard let project = list.project else { return nil }
         let item = store.current.ordered(list.id).first { $0.state == .ready || $0.state == .draft } ?? TodoItem(listID: list.id, title: "")
-        return crew(lock: lock(for: item, list: list, project: project), allowed: list.accounts)
+        return lock(for: item, list: list, project: project)
     }
 
     // Why nobody can take a list's TODOs: the picked accounts are gone, kept out by the Enterprise lock, or low on usage.

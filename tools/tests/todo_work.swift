@@ -520,6 +520,16 @@ func testTodoCrew() {
     scheduler.held = { _ in false }
     scheduler.tick()
     expect(store.current.item(item.id)?.state == .ready && scheduler.waiting?.contains("30%") == true, "the scheduler waits for the picked AI: \(scheduler.waiting ?? "-")")
+    // The picker's lock is the next TODO's, as the start uses: a finished first TODO does not decide it.
+    let school = Account(id: "s1", provider: .claude, name: "Claude (학교)")
+    let other = Account(id: "o1", provider: .codex, name: "ChatGPT (회사)")
+    model.accounts += [school, other]
+    let lockedChat = scheduler.discussion.addProjectChat(a, title: "locked", open: false, lock: EnterpriseLock(organization: Enterprise.organization(other.name), name: "회사", lockedAt: Date()))
+    try! store.change(item.id) { $0.state = .done }
+    let next = try! store.add(title: "next", project: a, projectName: "A", originRoom: lockedChat)
+    try! store.change(next.id) { $0.state = .draft }
+    expect(scheduler.lock(for: store.current.list(listID)!)?.organization == Enterprise.organization(other.name),
+           "the picker uses the next TODO's lock")
     try! store.setList(listID, accounts: [])
     expect(store.current.list(listID)?.accounts.isEmpty == true, "back to automatic")
     print("PASS: TODO crew (picked AIs saved, only they work, no fallback, reasons)")

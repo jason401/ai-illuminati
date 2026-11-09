@@ -373,11 +373,7 @@ struct TodoCrewRow: View {
     let error: (String?) -> Void
 
     private var workers: [Account] { discussion.model.accounts.filter { [.claude, .codex].contains($0.provider) } }
-    private var lock: EnterpriseLock? {
-        guard let project = list.project else { return nil }
-        let item = TodoStore.shared.current.ordered(list.id).first ?? TodoItem(listID: list.id, title: "")
-        return scheduler.lock(for: item, list: list, project: project)
-    }
+    private var lock: EnterpriseLock? { scheduler.lock(for: list) }
     private func name(_ id: String) -> String { discussion.model.accounts.first { $0.id == id }.map(discussion.label) ?? L("없어진 계정", "Removed account") }
     private func left(_ account: Account) -> String {
         let usage = discussion.model.latestUsage[account.id]
@@ -409,7 +405,9 @@ struct TodoCrewRow: View {
                 if !gone.isEmpty {
                     Divider()
                     ForEach(gone, id: \.self) { id in
+                        // The last one stays (taking it off would mean every account): pick another first.
                         Button(L("없어진 계정 빼기", "Remove a removed account") + " (\(id.prefix(8)))") { save(list.accounts.filter { $0 != id }) }
+                            .disabled(list.accounts.count == 1)
                     }
                 }
             } label: {

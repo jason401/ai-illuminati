@@ -31,13 +31,26 @@ func testProjectInfo() {
     expect(store.info(key).folders.map(\.path) == [docsPath] && store.info(key).links.isEmpty, "unlinked")
     expect(FileManager.default.fileExists(atPath: notes.path), "unlinking leaves the file")
 
+    // The project's own name: one line, at most 80 characters, kept with the folders; empty gives the folder its name back.
+    try! store.rename(key, to: "  Paper\n draft  ")
+    expect(store.info(key).name == "Paper draft" && store.names[key] == "Paper draft", "renamed, one line: \(String(describing: store.info(key).name))")
+    expect(ProjectInfoStore(url: file).info(key).name == "Paper draft", "the name is saved")
+    expect(ProjectInfoStore.cleanName(String(repeating: "가", count: 100))?.count == 80 && ProjectInfoStore.cleanName(" \t ") == nil, "long names cut, blank is none")
+    try! store.rename(key, to: "")
+    expect(store.info(key).name == nil && store.names[key] == nil && store.info(key).folders.map(\.path) == [docsPath], "an empty name resets it, the folders stay")
+    let named = "/tmp/only-named/.git"
+    try! store.rename(named, to: "Named")
+    try! store.rename(named, to: " ")
+    expect(store.current.projects[named] == nil, "a project with nothing left is dropped from the file")
+
     // A file it cannot read (broken, or from a newer app) is left as it is, and changes are refused.
     for raw in ["{ broken", #"{"version": 99, "projects": {}}"#,
                 #"{"version": 1, "projects": {"k": {"folders": [{"path": "/x", "directory": "yes"}], "links": []}}}"#,
                 #"{"version": 1, "projects": {"k": {"folders": [], "links": [{"title": "a"}]}}}"#] {
         try! raw.write(to: file, atomically: true, encoding: .utf8)
         let held = ProjectInfoStore(url: file)
-        expect(held.saveError != nil && (try? held.addLink(title: "", url: "https://a.org", to: key)) == nil, "unreadable file: changes refused (\(raw))")
+        expect(held.saveError != nil && (try? held.addLink(title: "", url: "https://a.org", to: key)) == nil && (try? held.rename(key, to: "x")) == nil,
+               "unreadable file: changes refused (\(raw))")
         expect((try? String(contentsOf: file, encoding: .utf8)) == raw, "unreadable file left as it is")
     }
     // A file that is there but cannot be opened is held too, never started over empty.

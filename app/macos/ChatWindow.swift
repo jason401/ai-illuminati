@@ -25,6 +25,7 @@ struct ChatView: View {
     @ObservedObject private var approvals = ProjectCenter.shared
     @ObservedObject private var folds = SidebarFold.shared
     @ObservedObject private var todos = TodoStore.shared
+    @ObservedObject private var projectInfo = ProjectInfoStore.shared
 
     var body: some View {
         let wide = layout.wide
@@ -156,7 +157,8 @@ struct ChatView: View {
                         }
                     } else {
                         // Chats with a Git project under its folder (SidebarProjects.swift); the rest pinned or recent.
-                        let grouped = SidebarProjects.group(chats, todo: todos.snapshot, pinned: folds.pinnedProjects, withLists: !discussion.sidebarSearching)
+                        let grouped = SidebarProjects.group(chats, todo: todos.snapshot, pinned: folds.pinnedProjects, withLists: !discussion.sidebarSearching,
+                                                             names: projectInfo.names)
                         SidebarHeader(title: L("프로젝트", "Projects"), fold: "projects", badge: todos.waitingForUser) { addProjectMenu }
                         if folds.isFolded("projects") {
                         } else if grouped.projects.isEmpty {
@@ -240,7 +242,8 @@ struct ChatView: View {
 
     // The same as dragging the chat onto a project folder: the projects it can go into.
     @ViewBuilder private func moveMenu(_ conversation: Conversation) -> some View {
-        let projects = SidebarProjects.group(discussion.listedConversations.filter(\.hasContent), todo: todos.snapshot, pinned: folds.pinnedProjects).projects
+        let projects = SidebarProjects.group(discussion.listedConversations.filter(\.hasContent), todo: todos.snapshot, pinned: folds.pinnedProjects,
+                                             names: projectInfo.names).projects
         let targets = projects.filter {
             SidebarProjects.moveRefusal(conversation, into: $0, todo: todos.snapshot, running: false, mode: discussion.configuration(of: conversation.id).mode) == nil
         }
@@ -377,6 +380,7 @@ struct ChatView: View {
             if let binding = group.bindings.first { Button(L("이 프로젝트에 새 대화", "New chat in this project")) { newChat(in: group, binding) } }
             Button(L("프로젝트 정보", "Project info")) { discussion.openBoard(project: group.id, tab: .info) }
             Button(L("할 일 보드", "TODO board")) { discussion.openBoard(project: group.id, tab: .todo) }
+            Button(L("이름 바꾸기…", "Rename…")) { ProjectInfoView.rename(group.id, current: group.name) }
             Button(group.pinned ? L("프로젝트 고정 해제", "Unpin project") : L("프로젝트 맨 위에 고정", "Pin project to top")) { folds.togglePin(group.id) }
             if let binding = group.bindings.first {
                 Button(L("Finder에서 열기", "Open in Finder")) { NSWorkspace.shared.open(URL(fileURLWithPath: binding.root)) }

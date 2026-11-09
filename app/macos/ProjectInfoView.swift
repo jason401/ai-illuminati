@@ -23,7 +23,7 @@ struct ProjectInfoView: View {
     @ObservedObject private var draft = ProjectInfoDraft.shared
 
     private var group: ProjectGroup? {
-        SidebarProjects.group(discussion.listedConversations.filter(\.hasContent), todo: todos.snapshot, pinned: []).projects.first { $0.id == project }
+        SidebarProjects.group(discussion.listedConversations.filter(\.hasContent), todo: todos.snapshot, pinned: [], names: store.names).projects.first { $0.id == project }
     }
     private var info: ProjectInfo { store.snapshot.projects[project] ?? ProjectInfo() }
 
@@ -48,8 +48,16 @@ struct ProjectInfoView: View {
     private func header(_ group: ProjectGroup?) -> some View {
         let left = todos.snapshot.items.filter { (group?.lists ?? []).contains($0.listID) && $0.state != .done && $0.state != .cancelled }.count
         let chats = group?.chats.count ?? 0
+        let name = group?.name ?? store.names[project] ?? (project as NSString).lastPathComponent
         return VStack(alignment: .leading, spacing: 4) {
-            Text(group?.name ?? (project as NSString).lastPathComponent).font(.system(size: 22, weight: .semibold))
+            HStack(spacing: 6) {
+                Text(name).font(.system(size: 22, weight: .semibold)).lineLimit(1).truncationMode(.tail)
+                    .onTapGesture(count: 2) { rename(name) }
+                    .help(L("두 번 눌러 이름 바꾸기", "Double-click to rename"))
+                Button(action: { rename(name) }) { Image(systemName: "pencil").font(.system(size: 12)).frame(width: 22, height: 22) }
+                    .buttonStyle(.plainHit).foregroundColor(.secondary)
+                    .help(L("프로젝트 이름 바꾸기 (폴더 이름은 그대로)", "Rename the project (the folder keeps its name)"))
+            }
             HStack(spacing: 6) {
                 Text(L("대화 \(chats)개", "\(chats) chats"))
                 Text("·")
@@ -57,6 +65,33 @@ struct ProjectInfoView: View {
             }
             .font(.system(size: 12)).foregroundColor(.secondary)
         }
+    }
+
+    private func rename(_ current: String) {
+        if let why = Self.askName(project, current: current) { draft.error = why } else { draft.error = nil }
+    }
+
+    // Asks for the project's name in the sidebar and on its tabs; only the shown name changes, not the folder on disk.
+    // An empty name gives it back its TODO list's or folder's name. From the sidebar, a failure shows in an alert.
+    static func rename(_ project: String, current: String) {
+        guard let why = askName(project, current: current) else { return }
+        let alert = NSAlert()
+        alert.messageText = why
+        alert.runModal()
+    }
+    private static func askName(_ project: String, current: String) -> String? {
+        let alert = NSAlert()
+        alert.messageText = L("프로젝트 이름 바꾸기", "Rename project")
+        alert.informativeText = L("사이드바와 보드에 보이는 이름만 바뀌어요. 폴더 이름은 그대로예요. 비우면 원래 이름으로 돌아가요.",
+                                  "Only the name in the sidebar and on the board changes; the folder keeps its name. Leave it empty for the original name.")
+        let field = NSTextField(string: current)
+        field.frame = NSRect(x: 0, y: 0, width: 280, height: 24)
+        alert.accessoryView = field
+        alert.addButton(withTitle: L("바꾸기", "Rename"))
+        alert.addButton(withTitle: L("취소", "Cancel"))
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        do { try ProjectInfoStore.shared.rename(project, to: field.stringValue); return nil } catch { return error.localizedDescription }
     }
 
     // MARK: Git repository

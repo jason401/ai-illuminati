@@ -117,15 +117,17 @@ struct TodoBoardView: View {
     @ObservedObject var discussion: Discussion
     @ObservedObject private var store = TodoStore.shared
     @ObservedObject private var draft = TodoDraft.shared
+    @ObservedObject private var projectInfo = ProjectInfoStore.shared
 
     // Projects to write TODOs for: every linked Git project of the chats (newest first); on one project's board
     // only its roots (a repository with several worktrees has one per root).
     private var projects: [(name: String, binding: ProjectBinding)] {
         var seen = Set<String>(), result: [(String, ProjectBinding)] = []
         let mine = { (p: ProjectBinding) in discussion.boardProject.map { SidebarProjects.key(p) == $0 } ?? true }
-        for list in store.snapshot.lists { if let p = list.project, mine(p), seen.insert(p.root).inserted { result.append((list.title, p)) } }
+        let names = projectInfo.names
+        for list in store.snapshot.lists { if let p = list.project, mine(p), seen.insert(p.root).inserted { result.append((names[SidebarProjects.key(p)] ?? list.title, p)) } }
         for chat in discussion.conversations.sorted(by: { $0.updatedAt > $1.updatedAt }) {
-            if let p = chat.workspace?.project, mine(p), seen.insert(p.root).inserted { result.append(((p.root as NSString).lastPathComponent, p)) }
+            if let p = chat.workspace?.project, mine(p), seen.insert(p.root).inserted { result.append((names[SidebarProjects.key(p)] ?? (p.root as NSString).lastPathComponent, p)) }
         }
         return result
     }
@@ -145,7 +147,7 @@ struct TodoBoardView: View {
                 let lists = shownLists
                 if let scheduler = TodoScheduler.shared {
                     TodoBoardHeader(scheduler: scheduler, discussion: discussion,
-                                    project: discussion.boardProject.map { _ in projects.first?.name ?? lists.first?.title ?? "" }, lists: Set(lists.map(\.id)))
+                                    project: discussion.boardProject.map { projectInfo.names[$0] ?? projects.first?.name ?? lists.first.map(title) ?? "" }, lists: Set(lists.map(\.id)))
                 }
                 if let error = draft.error ?? store.saveError { Text(error).font(.system(size: 12)).foregroundColor(.red) }
                 ForEach(lists) { list in listView(list) }
@@ -163,20 +165,23 @@ struct TodoBoardView: View {
         .onDisappear { draft.endEdit() }   // an edit left open would hold the TODO back
     }
 
+    // A list is shown with the name the user gave its project, else the name it was made with.
+    private func title(_ list: TodoList) -> String { list.project.flatMap { projectInfo.names[SidebarProjects.key($0)] } ?? list.title }
+
     private func listView(_ list: TodoList) -> some View {
         let rows = store.snapshot.ordered(list.id).filter { draft.showDone || ($0.state != .done && $0.state != .cancelled) }
         return VStack(alignment: .leading, spacing: 6) {
             // A narrow window puts the order choice on its own line instead of pushing the board wider.
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 10) {
-                    Text(list.title).font(.system(size: 15, weight: .semibold)).lineLimit(1)
+                    Text(title(list)).font(.system(size: 15, weight: .semibold)).lineLimit(1)
                     orderControls(list)
                     Spacer()
                     pauseControl(list)
                 }
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 10) {
-                        Text(list.title).font(.system(size: 15, weight: .semibold)).lineLimit(1).truncationMode(.middle)
+                        Text(title(list)).font(.system(size: 15, weight: .semibold)).lineLimit(1).truncationMode(.middle)
                         Spacer(minLength: 6)
                         pauseControl(list)
                     }

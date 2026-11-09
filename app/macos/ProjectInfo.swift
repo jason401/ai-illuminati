@@ -18,17 +18,19 @@ struct ProjectLink: Codable, Equatable, Identifiable {
 }
 
 struct ProjectInfo: Codable, Equatable {
+    var name: String?                  // the name the user gave the project folder; nil: its TODO list or folder name
     var folders: [ProjectFolder] = []
     var links: [ProjectLink] = []
     init() {}
-    private enum Keys: String, CodingKey { case folders, links }
+    private enum Keys: String, CodingKey { case name, folders, links }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
         // A missing list is empty; a broken one fails the whole file, so it is held instead of saved over.
+        name = try c.decodeIfPresent(String.self, forKey: .name)
         folders = try c.decodeIfPresent([ProjectFolder].self, forKey: .folders) ?? []
         links = try c.decodeIfPresent([ProjectLink].self, forKey: .links) ?? []
     }
-    var isEmpty: Bool { folders.isEmpty && links.isEmpty }
+    var isEmpty: Bool { name == nil && folders.isEmpty && links.isEmpty }
 }
 
 struct ProjectInfoData: Codable, Equatable {
@@ -92,6 +94,20 @@ final class ProjectInfoStore: ObservableObject {
 
     var current: ProjectInfoData { lock.lock(); defer { lock.unlock() }; return data }
     func info(_ project: String) -> ProjectInfo { current.projects[project] ?? ProjectInfo() }
+
+    // The names the user gave project folders, by SidebarProjects.key (from the published snapshot, for the views).
+    var names: [String: String] { snapshot.projects.compactMapValues(\.name) }
+
+    // One line, at most 80 characters; an empty name gives the folder its own name back.
+    func rename(_ project: String, to name: String) throws {
+        let clean = Self.cleanName(name)
+        try update(project) { $0.name = clean }
+    }
+    static func cleanName(_ name: String) -> String? {
+        let line = String(name.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) }.map(Character.init))
+        let clean = String(line.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80)).trimmingCharacters(in: .whitespaces)
+        return clean.isEmpty ? nil : clean
+    }
 
     // Folders for an AI call: the ones still there (a folder that went away stays listed on the tab only).
     func activeFolders(_ project: String) -> [ProjectFolder] {

@@ -31,8 +31,9 @@ enum SidebarProjects {
     }
 
     // Chats with a Git project go under their repository; the rest stay in Pinned and Recents. A project with
-    // TODO lists but no chat yet still gets its folder (withLists), so its board is one click away.
-    static func group(_ chats: [Conversation], todo: TodoData, pinned: Set<String>, withLists: Bool = true) -> (projects: [ProjectGroup], loose: [Conversation]) {
+    // TODO lists but no chat yet still gets its folder (withLists), so its board is one click away. A name the user
+    // gave the folder (names, ProjectInfoStore.names) comes before its TODO list's title and the folder's own name.
+    static func group(_ chats: [Conversation], todo: TodoData, pinned: Set<String>, withLists: Bool = true, names: [String: String] = [:]) -> (projects: [ProjectGroup], loose: [Conversation]) {
         let todoRooms = Set(todo.items.compactMap(\.room))
         var groups: [String: ProjectGroup] = [:]
         var loose: [Conversation] = []
@@ -56,6 +57,7 @@ enum SidebarProjects {
             add(project, name: list.title, at: latest)
             groups[key(project)]!.lists.append(list.id)
         }
+        for (id, name) in names where groups[id] != nil { groups[id]!.name = name }
         for id in groups.keys { groups[id]!.chats.sort { ($0.pinned == true) != ($1.pinned == true) ? $0.pinned == true : newerFirst($0, $1) } }
         let projects = groups.values.sorted { a, b in
             if a.pinned != b.pinned { return a.pinned }

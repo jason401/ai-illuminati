@@ -326,6 +326,11 @@ func testSidebarProjects() {
            "searching: no folder for a project without a matching chat")
     expect(SidebarProjects.group(chats, todo: store.current, pinned: ["/tmp/side-quiet/.git"]).projects.first?.id == "/tmp/side-quiet/.git",
            "a pinned project comes first")
+    let renamed = SidebarProjects.group(chats, todo: store.current, pinned: [], names: [common: "My app", "/tmp/side-quiet/.git": "Quiet one", "/tmp/nowhere/.git": "Gone"]).projects
+    expect(renamed.first { $0.id == common }?.name == "My app" && renamed.first { $0.id == "/tmp/side-quiet/.git" }?.name == "Quiet one"
+           && renamed.first { $0.id == "/tmp/side-other/.git" }?.name == grouped.projects.first { $0.id == "/tmp/side-other/.git" }?.name
+           && renamed.map(\.id) == grouped.projects.map(\.id),
+           "a name the user gave comes before the TODO list title and the folder name; others and the order stay: \(renamed.map(\.name))")
     expect(SidebarProjects.folderName(tree) == "side-repo" && SidebarProjects.key(ProjectBinding(root: "/x", common: "", remote: "", remoteURL: "")) == "/x",
            "a folder is named after its repository; no common dir falls back to the root")
 

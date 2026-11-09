@@ -1029,6 +1029,8 @@ struct SortModelStatus: View {
         }
         .padding(.horizontal, 10).padding(.vertical, 6)
         .onAppear { store.refresh() }
+        // Back from Terminal (Ollama installed, model pulled) or from turning Ollama on elsewhere.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in store.refresh() }
     }
 
     private func action(_ title: String, _ run: @escaping () -> Void) -> some View {

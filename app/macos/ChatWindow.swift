@@ -2573,7 +2573,8 @@ private struct AttachmentThumbnail: View {
 private struct ImageAttachmentDropDelegate: DropDelegate {
     let discussion: Discussion
     func validateDrop(info: DropInfo) -> Bool {
-        !discussion.running && (info.hasItemsConforming(to: [UTType.fileURL, UTType.image]) || PictureDrop.hasPromises())
+        // The board and Project info take their own drops; the chat behind them is not shown.
+        !discussion.running && !discussion.viewingBoard && (info.hasItemsConforming(to: [UTType.fileURL, UTType.image]) || PictureDrop.hasPromises())
     }
     func dropEntered(info: DropInfo) { discussion.imageDropActive = validateDrop(info: info) }
     func dropExited(info: DropInfo) { discussion.imageDropActive = false }

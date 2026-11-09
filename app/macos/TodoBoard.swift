@@ -76,6 +76,9 @@ final class TodoDraft: ObservableObject {
     @Published var detail = ""
     struct File: Equatable { var id = UUID(); var url: URL }
     @Published var files: [File] = []   // photos and files to attach (copied in when the TODO is added)
+    @Published var dropFolders: [URL] = []   // temporary folders of dropped Photos/screenshot files, removed once added
+    @Published var dropTarget: UUID?   // where a drag is over now: a TODO, or `addBar`
+    static let addBar = UUID()
     @Published var projectRoot = ""
     @Published var after: Set<UUID> = []
     @Published var askFirst = false
@@ -277,6 +280,14 @@ struct TodoBoardView: View {
         .padding(.horizontal, 12).padding(.vertical, 9)
         .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 9))
         .overlay(item.state == .draft ? RoundedRectangle(cornerRadius: 9).strokeBorder(Color.secondary.opacity(0.4), style: StrokeStyle(lineWidth: 1, dash: [5, 4])) : nil)
+        .overlay(draft.dropTarget == item.id ? RoundedRectangle(cornerRadius: 9).strokeBorder(Color.accentColor, lineWidth: 2) : nil)
+        // Photos or files dropped on a TODO the AI is not working on are attached to it right away.
+        .onDrop(of: [UTType.fileURL, UTType.image, UTType.item],
+                delegate: TodoFileDrop(target: item.id, accepts: item.state != .running && item.state != .done && item.state != .cancelled) { urls, folder in
+            defer { if let folder { try? FileManager.default.removeItem(at: folder) } }
+            if urls.isEmpty { draft.error = L("파일을 첨부할 수 없어요.", "Could not attach the file."); return }
+            act { try store.attach(item.id, files: urls) }
+        })
     }
 
     // In place of the title and details while editing: [Cancel] / [Save] (Return in the title saves, Esc cancels).
@@ -329,7 +340,7 @@ struct TodoBoardView: View {
                     .fixedSize()
                 }
                 Button(action: { addDraftFiles(Self.chooseFiles()) }) { Label(L("첨부", "Attach"), systemImage: "paperclip") }
-                    .help(L("사진이나 파일을 첨부해요 (끌어다 놓아도 돼요)", "Attach photos or files (or drop them here)"))
+                    .help(L("사진이나 파일을 첨부해요 (여기나 TODO 줄 위에 끌어다 놓아도 돼요 · 사진 앱·스크린샷도)", "Attach photos or files (or drop them here or on a TODO, also from Photos or a screenshot)"))
                 Menu(draft.after.isEmpty ? L("먼저 끝나야 할 TODO", "Must finish first") : L("먼저: \(draft.after.count)개", "First: \(draft.after.count)")) {
                     ForEach(store.snapshot.items.filter { $0.state != .done && $0.state != .cancelled }) { other in
                         Button((draft.after.contains(other.id) ? "✓ " : "") + other.title) { if draft.after.contains(other.id) { draft.after.remove(other.id) } else { draft.after.insert(other.id) } }
@@ -352,14 +363,13 @@ struct TodoBoardView: View {
         }
         .padding(12)
         .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
-        .onDrop(of: [.fileURL], isTargeted: nil) { providers in
-            for provider in providers {
-                _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                    if let url, url.isFileURL { DispatchQueue.main.async { addDraftFiles([url]) } }
-                }
-            }
-            return !providers.isEmpty
-        }
+        .overlay(draft.dropTarget == TodoDraft.addBar ? RoundedRectangle(cornerRadius: 10).strokeBorder(Color.accentColor, lineWidth: 2) : nil)
+        .onDrop(of: [UTType.fileURL, UTType.image, UTType.item], delegate: TodoFileDrop(target: TodoDraft.addBar, accepts: true) { urls, folder in
+            if urls.isEmpty { draft.error = L("파일을 첨부할 수 없어요.", "Could not attach the file."); if let folder { try? FileManager.default.removeItem(at: folder) }; return }
+            // Promised files (Photos, screenshots) live in a temporary folder until the TODO is added.
+            if let folder { draft.dropFolders.append(folder) }
+            addDraftFiles(urls)
+        })
     }
 
     static func chooseFiles() -> [URL] {
@@ -392,6 +402,8 @@ struct TodoBoardView: View {
             try store.add(title: text, detail: draft.detail.trimmingCharacters(in: .whitespacesAndNewlines), files: draft.files.map(\.url), project: project.binding, projectName: project.name,
                           after: Array(draft.after), askFirst: draft.askFirst, originRoom: origin, lock: lock)
             draft.title = ""; draft.detail = ""; draft.files = []; draft.after = []
+            for folder in draft.dropFolders { try? FileManager.default.removeItem(at: folder) }
+            draft.dropFolders = []
         }
     }
 
@@ -471,6 +483,26 @@ struct TodoCrewRow: View {
         } else {
             Text(TodoScheduler.noCrew(list.accounts, accounts: discussion.model.accounts, lock: lock)).foregroundColor(.orange).lineLimit(2)
         }
+    }
+}
+
+// Photos and files dragged onto the add bar or a TODO row: from Finder, the Photos app or a screenshot
+// thumbnail (PictureDrop). `receive` runs on the main thread; a temporary `folder` is the caller's to remove.
+private struct TodoFileDrop: DropDelegate {
+    let target: UUID
+    let accepts: Bool
+    let receive: ([URL], URL?) -> Void
+    func validateDrop(info: DropInfo) -> Bool {
+        accepts && (info.hasItemsConforming(to: [UTType.fileURL, UTType.image]) || PictureDrop.hasPromises())
+    }
+    func dropEntered(info: DropInfo) { if validateDrop(info: info) { TodoDraft.shared.dropTarget = target } }
+    func dropExited(info: DropInfo) { if TodoDraft.shared.dropTarget == target { TodoDraft.shared.dropTarget = nil } }
+    func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: validateDrop(info: info) ? .copy : .forbidden) }
+    func performDrop(info: DropInfo) -> Bool {
+        TodoDraft.shared.dropTarget = nil
+        guard validateDrop(info: info) else { return false }
+        PictureDrop.receive(info.itemProviders(for: [UTType.image]), done: receive)
+        return true
     }
 }
 

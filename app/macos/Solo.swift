@@ -20,11 +20,12 @@ enum AutoPick {
     static func enough(_ usage: AIUsage?) -> Bool { fiveHour(usage) >= threshold && weekly(usage) >= threshold }
 
     // Claude and ChatGPT accounts that may work in this chat. Gemini (YouTube helper) and Gemma on this Mac
-    // answer only when called with @; Gemma is also the last resort (see runSolo).
-    static func candidates(_ accounts: [Account], usage: [String: AIUsage], school: Bool?, excluded: Set<String> = []) -> [Account] {
+    // answer only when called with @; Gemma is also the last resort (see runSolo). In an Enterprise chat (`lock`)
+    // only accounts of its organization.
+    static func candidates(_ accounts: [Account], usage: [String: AIUsage], lock: EnterpriseLock?, excluded: Set<String> = []) -> [Account] {
         accounts.filter { account in
             account.provider != .gemini && account.provider != .ollama && !excluded.contains(account.id) && usage[account.id]?.needsLogin != true
-            && (school == nil || account.isSchool == school)
+            && Enterprise.permits(account, lock: lock)
         }
     }
 
@@ -35,9 +36,9 @@ enum AutoPick {
     // Stay with the current account while it has enough left. Otherwise, among accounts with enough
     // 5-hour usage left, the one with the most weekly usage left (Enterprise first when close). If none
     // has enough, the one with the most left at all (still above 0).
-    static func choose(_ accounts: [Account], usage: [String: AIUsage], school: Bool?, current: String?,
+    static func choose(_ accounts: [Account], usage: [String: AIUsage], lock: EnterpriseLock?, current: String?,
                        excluded: Set<String> = []) -> Account? {
-        let list = candidates(accounts, usage: usage, school: school, excluded: excluded)
+        let list = candidates(accounts, usage: usage, lock: lock, excluded: excluded)
         if let current, let keep = list.first(where: { $0.id == current }), enough(usage[keep.id]) { return keep }
         func bonus(_ account: Account) -> Double { account.isSchool ? enterpriseBonus : 0 }
         let ready = list.filter { enough(usage[$0.id]) }
@@ -66,36 +67,29 @@ extension Discussion {
         NSWorkspace.shared.activateFileViewerSelecting([folder])
     }
 
-    // The chat's school/personal side decides which accounts may continue it (nil: any account).
-    // A new chat has no side yet: its first answer may come from either (Enterprise first when the usage
-    // left is close), and that account's side becomes the chat's.
-    var soloSchool: Bool? {
-        guard model.schoolOnlyHandoff else { return nil }
-        return configuration.school
-    }
-
-    // Who answers the next message if it were sent now (shown under the message box).
+    // Who answers the next message if it were sent now (shown under the message box). In an Enterprise chat
+    // only accounts of its organization (Enterprise.swift).
     var soloNext: Account? {
-        let config = configuration
-        if let id = config.soloAccountID, let chosen = model.accounts.first(where: { $0.id == id }) { return chosen }
-        return AutoPick.choose(model.accounts, usage: model.latestUsage, school: soloSchool, current: config.lastSoloAccountID)
+        let config = configuration, lock = current.enterpriseLock
+        if let id = config.soloAccountID, let chosen = model.accounts.first(where: { $0.id == id }), Enterprise.permits(chosen, lock: lock) { return chosen }
+        return AutoPick.choose(model.accounts, usage: model.latestUsage, lock: lock, current: config.lastSoloAccountID)
     }
 
     // The chat's members, in order: memberIDs, else what an older chat picked (see migratedMembers).
     var memberIDs: [String] {
-        Self.migratedMembers(configuration, accounts: model.accounts, strict: model.schoolOnlyHandoff)
+        Self.migratedMembers(configuration, accounts: model.accounts, lock: current.enterpriseLock)
     }
 
     // Older chats: the one account picked by hand, and with review on, the reviewer as a second member (the one
-    // picked, else the first account of the other kind on the chat's side). Accounts no longer here drop out.
-    static func migratedMembers(_ config: ChatConfiguration, accounts: [Account], strict: Bool) -> [String] {
+    // picked, else the first account of the other kind). Accounts no longer here, or not allowed in an Enterprise chat, drop out.
+    static func migratedMembers(_ config: ChatConfiguration, accounts: [Account], lock: EnterpriseLock?) -> [String] {
+        let accounts = accounts.filter { Enterprise.permits($0, lock: lock) }
         var ids = config.memberIDs ?? config.soloAccountID.map { [$0] } ?? []
         if config.memberIDs == nil && config.peerReview == true {
             let worker = accounts.first { $0.id == (config.soloAccountID ?? config.lastSoloAccountID) }
-                ?? AutoPick.candidates(accounts, usage: [:], school: strict ? config.school : nil).first
-            let side = strict ? (config.school ?? worker?.isSchool) : nil
+                ?? AutoPick.candidates(accounts, usage: [:], lock: nil).first
             let peer = config.peerAccountID.flatMap { id in accounts.first { $0.id == id && $0.id != worker?.id } }
-                ?? accounts.first { [.claude, .codex].contains($0.provider) && $0.provider != worker?.provider && (side == nil || $0.isSchool == side) }
+                ?? accounts.first { [.claude, .codex].contains($0.provider) && $0.provider != worker?.provider }
             ids = [worker?.id, peer?.id].compactMap { $0 }
         }
         var seen = Set<String>()
@@ -135,7 +129,7 @@ extension Discussion {
             .filter { !project || [.claude, .codex].contains($0.provider) }
         let config = configuration
         guard let lead = able.first(where: { $0.id == config.leadID })
-                ?? AutoPick.choose(able, usage: model.latestUsage, school: nil, current: config.lastSoloAccountID)
+                ?? AutoPick.choose(able, usage: model.latestUsage, lock: nil, current: config.lastSoloAccountID)
                 ?? able.first else { return nil }
         let others = (project ? able.map(\.id) : ready).filter { $0 != lead.id }
         if project && others.isEmpty { return nil }
@@ -146,7 +140,7 @@ extension Discussion {
     func toggleMember(_ id: String) {
         settleMembers()
         configure { config in
-            var ids = Self.migratedMembers(config, accounts: self.model.accounts, strict: self.model.schoolOnlyHandoff)
+            var ids = Self.migratedMembers(config, accounts: self.model.accounts, lock: self.current.enterpriseLock)
             if let at = ids.firstIndex(of: id) { ids.remove(at: at) } else { ids.append(id) }
             config.memberIDs = ids.isEmpty ? nil : ids
             config.soloAccountID = ids.count == 1 ? ids[0] : nil
@@ -258,12 +252,12 @@ extension Discussion {
 
     // "@지피 @ㅋㄹㄷ" typed without picking from the list: each word after @ that names one kind of AI (an
     // account name, an AI name in English or Korean, or its initials, with up to 2 letters after it such as
-    // "@클로드야") calls one account of that kind. When the kind has several accounts: with Enterprise and
-    // personal chats kept apart only the chat's side, else the chat's side first, then one signed in, then
-    // Settings order. A word that fits no kind or several is left as text. Returns (account, the "@word").
-    static func typedMentions(in draft: String, accounts: [Account], label: (Account) -> String, school: Bool?, strict: Bool,
+    // "@클로드야") calls one account of that kind. When the kind has several accounts: one signed in, then
+    // Settings order. In an Enterprise chat (`lock`) only accounts of its organization are called.
+    // A word that fits no kind or several is left as text. Returns (account, the "@word").
+    static func typedMentions(in draft: String, accounts: [Account], label: (Account) -> String, lock: EnterpriseLock?,
                               usage: [String: AIUsage], localEnabled: Bool) -> [(id: String, token: String)] {
-        let usable = accounts.filter { $0.provider != .ollama || localEnabled }
+        let usable = accounts.filter { ($0.provider != .ollama || localEnabled) && Enterprise.permits($0, lock: lock) }
         var result: [(id: String, token: String)] = []
         let words = draft.split(whereSeparator: \.isWhitespace).map(String.init)
         for (n, word) in words.enumerated() where word.hasPrefix("@") && word.count > 1 {
@@ -290,11 +284,8 @@ extension Discussion {
             let exactKinds = matching { name == $0 }
             let kinds = exactKinds.isEmpty ? matching { $0.count >= 2 && name.hasPrefix($0) && name.count - $0.count <= 2 } : exactKinds
             guard kinds.count == 1, let kind = kinds.first else { continue }
-            var candidates = usable.filter { $0.provider == kind }
-            if strict, let school, kind != .ollama { candidates = candidates.filter { $0.isSchool == school } }
-            func rank(_ account: Account) -> Int {
-                (school != nil && account.isSchool != school ? 2 : 0) + (usage[account.id]?.needsLogin == true ? 1 : 0)
-            }
+            let candidates = usable.filter { $0.provider == kind }
+            func rank(_ account: Account) -> Int { usage[account.id]?.needsLogin == true ? 1 : 0 }
             guard let chosen = candidates.enumerated().min(by: { (rank($0.element), $0.offset) < (rank($1.element), $1.offset) })?.element,
                   !result.contains(where: { $0.id == chosen.id }) else { continue }
             result.append((chosen.id, token))
@@ -404,9 +395,8 @@ extension Discussion {
 
         var helper = ""
         if Self.asksAboutYouTube(question), let gemini = model.accounts.first(where: { $0.provider == .gemini }), !mentions.contains(gemini.id),
-           model.latestUsage[gemini.id]?.needsLogin != true {
+           model.latestUsage[gemini.id]?.needsLogin != true, permits(gemini, room: id) {
             changeTurn(id, index) { $0.status = L("Gemini가 유튜브를 찾는 중…", "Gemini is searching YouTube…") }
-            noteSent(gemini, room: id)
             let result = debateAnswer(gemini, """
                 \(GeminiLinks.toolNote)Find YouTube videos for the user's request below. For each useful one give the title, channel, link,
                 and what its page, description or transcript found by search says. Say plainly that you read pages and search
@@ -504,7 +494,7 @@ extension Discussion {
             return endSolo(id, index, stopped: cancellation.isCancelled)
         }
 
-        let school: Bool? = model.schoolOnlyHandoff ? config.school : nil
+        let chatLock = lock(of: id)
         var excluded: Set<String> = []
         var handedOver = false
         var unfinished: (by: String, text: String)?
@@ -513,9 +503,9 @@ extension Discussion {
         while !cancellation.isCancelled {
             let usage = model.latestUsage
             let account: Account
-            if let id = manual, let chosen = model.accounts.first(where: { $0.id == id }), !excluded.contains(id) {
+            if let id = manual, let chosen = model.accounts.first(where: { $0.id == id }), !excluded.contains(id), Enterprise.permits(chosen, lock: chatLock) {
                 account = chosen
-            } else if let chosen = AutoPick.choose(model.accounts, usage: usage, school: school, current: last, excluded: excluded) {
+            } else if let chosen = AutoPick.choose(model.accounts, usage: usage, lock: chatLock, current: last, excluded: excluded) {
                 account = chosen
             } else if let local = lastResort(usage: usage, excluded: excluded) {
                 // Every cloud account is out: Gemma on this Mac answers (its data never leaves the Mac,
@@ -524,7 +514,7 @@ extension Discussion {
                 notes.append(L("모든 클라우드 계정이 한도에 걸려 \(label(local))가 답해요", "Every cloud account is out of usage, so \(label(local)) answers"))
                 handedOver = true
             } else {
-                let error = school == true
+                let error = chatLock != nil
                     ? L("이어받을 엔터프라이즈 계정이 없어요. 모두 한도에 걸렸거나 로그인이 필요해요.", "No Enterprise account can continue: all are out of usage or signed out.")
                     : L("이어받을 계정이 없어요. 모두 한도에 걸렸거나 로그인이 필요해요.", "No account can continue: all are out of usage or signed out.")
                 changeTurn(id, index, save: true) { $0.error = error }
@@ -586,7 +576,6 @@ extension Discussion {
                 change(id, save: true) { c in
                     var saved = c.configuration ?? config
                     saved.lastSoloAccountID = account.id
-                    if self.model.schoolOnlyHandoff && saved.school == nil { saved.school = account.isSchool }
                     c.configuration = saved
                     guard c.turns.indices.contains(index) else { return }
                     c.turns[index].final = harvest.text

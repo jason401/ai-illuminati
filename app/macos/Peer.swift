@@ -11,16 +11,16 @@ enum Peer {
     static let diffLimit = 80_000                // characters of diff the reviewer gets in the prompt
 
     // The reviewer for an answer by `asker`: the account picked for this chat when it is a different kind of AI,
-    // else the other kind with the most usage left on the chat's side (Enterprise or personal). Another account of the
-    // same kind only when there is no other kind; nil when there is nobody else.
-    static func choose(asker: Account?, picked: String?, accounts: [Account], usage: [String: AIUsage], school: Bool?) -> Account? {
+    // else the other kind with the most usage left (in an Enterprise chat, of its organization only). Another account of
+    // the same kind only when there is no other kind; nil when there is nobody else.
+    static func choose(asker: Account?, picked: String?, accounts: [Account], usage: [String: AIUsage], lock: EnterpriseLock?) -> Account? {
         let able = accounts.filter { [.claude, .codex].contains($0.provider) && $0.id != asker?.id && usage[$0.id]?.needsLogin != true
-            && (school == nil || $0.isSchool == school) }
+            && Enterprise.permits($0, lock: lock) }
         if let picked, let chosen = able.first(where: { $0.id == picked }), chosen.provider != asker?.provider { return chosen }
         let other = able.filter { $0.provider != asker?.provider }
-        return AutoPick.choose(other, usage: usage, school: nil, current: nil)
+        return AutoPick.choose(other, usage: usage, lock: nil, current: nil)
             ?? other.first
-            ?? AutoPick.choose(able, usage: usage, school: nil, current: nil)
+            ?? AutoPick.choose(able, usage: usage, lock: nil, current: nil)
     }
 
     // What the lead is told when the chat has reviewers.
@@ -151,10 +151,9 @@ extension Discussion {
         return Thread.isMainThread ? read() : DispatchQueue.main.sync(execute: read)
     }
 
-    // The member who reviews work by `asker`: the other kind of AI first, on the chat's side.
+    // The member who reviews work by `asker`: the other kind of AI first; in an Enterprise chat one of its organization.
     func peerAccount(for asker: Account?, reviewers: [String]) -> Account? {
-        let school = model.schoolOnlyHandoff ? (savedConversation(currentID)?.configuration?.school ?? asker?.isSchool) : nil
-        return Peer.choose(asker: asker, picked: nil, accounts: model.accounts.filter { reviewers.contains($0.id) }, usage: model.latestUsage, school: school)
+        Peer.choose(asker: asker, picked: nil, accounts: model.accounts.filter { reviewers.contains($0.id) }, usage: model.latestUsage, lock: lock(of: currentID))
     }
 
     // What the other AI may see: every folder of this answer, read only, with no tools of its own.
@@ -166,7 +165,7 @@ extension Discussion {
 
     func peerAnswer(_ peer: Account, prompt: String, view: WorkspaceBinding, room: UUID, timeout: TimeInterval,
                     token: DebateCancellation) -> Result<String, Answerer.Failure> {
-        noteSent(peer, room: room)
+        guard permits(peer, room: room) else { return .failure(Enterprise.blocked(peer)) }
         return workspaceAnswer?(peer, prompt, view, token, nil)
             ?? Answerer.ask(peer, prompt: prompt, timeout: timeout, cancellation: token, web: true,
                             workspace: WorkspaceInvocation(binding: view, room: room))

@@ -1,6 +1,7 @@
 import Foundation
 
-// A chat becomes Enterprise right before its content goes to an Enterprise account, and stays so.
+// An Enterprise chat: locked by the user, never unlocked. In it only accounts of its organization and models on
+// this Mac are sent anything; every other chat (older ones too) is open to every account.
 func testEnterpriseMarks() {
     func usage(_ five: Double, _ week: Double) -> AIUsage {
         var u = AIUsage(name: "u")
@@ -12,111 +13,83 @@ func testEnterpriseMarks() {
     let school = Account(id: "ent-s-claude", provider: .claude, name: "학교", dir: nil, school: true)
     let schoolCodex = Account(id: "ent-s-codex", provider: .codex, name: "학교", dir: nil, school: true)
     let work = Account(id: "ent-w-codex", provider: .codex, name: "회사", dir: nil, school: true)
-    let local = Account(id: "ent-ollama", provider: .ollama, name: "학교 Gemma", dir: nil, school: true)
+    let local = Account(id: "ent-ollama", provider: .ollama, name: "Gemma", dir: nil, school: false)
+    let gemini = Account(id: "ent-gemini", provider: .gemini, name: "학교", dir: nil, school: true)
     let m = AppModel()
-    m.accounts = [personal, school]
-    m.latestUsage = ["ent-p-claude": usage(90, 90), "ent-s-claude": usage(90, 90)]
+    m.accounts = [personal, school, schoolCodex, work]
+    m.latestUsage = ["ent-p-claude": usage(95, 95), "ent-s-claude": usage(60, 60), "ent-s-codex": usage(50, 50), "ent-w-codex": usage(40, 40)]
     let chat = Discussion(model: m)
     let lock = NSLock()
-    var seenBeforeAnswer: [EnterpriseMark]?
+    var asked: [String] = []
     chat.workspaceAnswer = { account, _, _, _, _ in
-        // The mark is already there (and saved) when the content goes out.
-        let room = chat.currentID
-        let saved = ChatStore.loadAll().first { $0.id == room }
-        lock.lock(); if account.id == school.id { seenBeforeAnswer = saved?.enterprise }; lock.unlock()
-        return account.id == school.id ? .failure(.failed("boom")) : .success("ok")
+        lock.lock(); asked.append(account.id); lock.unlock()
+        return .success("ok")
     }
 
-    // A personal account only: personal.
-    chat.configure { $0.soloAccountID = personal.id }
-    chat.draft = "개인 질문"
-    chat.send(); waitFor(chat)
-    let personalID = chat.currentID
-    expect(chat.current.enterprise == [] && chat.current.side == .personal, "a chat answered by a personal account stays personal")
-
-    // An Enterprise account that fails still saw the message.
-    chat.newConversation()
-    chat.configure { $0.soloAccountID = school.id }
-    chat.draft = "학교 질문"
-    chat.send(); waitFor(chat)
-    let schoolID = chat.currentID
-    expect(seenBeforeAnswer?.map(\.id) == [school.id], "the mark is saved before the content is sent")
-    expect(chat.current.turns[0].final == nil && chat.current.enterprise?.map(\.id) == [school.id] && chat.current.side == .enterprise,
-           "a failed answer still makes the chat Enterprise")
-
-    // A reviewer only (ask_peer / review): counts too, once per account.
-    chat.open(personalID)
-    let view = WorkspaceBinding(roots: [])
-    _ = chat.peerAnswer(schoolCodex, prompt: "review", view: view, room: personalID, timeout: 5, token: DebateCancellation())
-    _ = chat.peerAnswer(schoolCodex, prompt: "review", view: view, room: personalID, timeout: 5, token: DebateCancellation())
-    expect(chat.conversations.first { $0.id == personalID }?.enterprise?.map(\.id) == [schoolCodex.id], "a reviewer that read the chat marks it, once")
-    // A model on this Mac sends nothing out.
-    chat.noteSent(local, room: schoolID)
-    expect(chat.conversations.first { $0.id == schoolID }?.enterprise?.count == 1, "a local model does not mark a chat")
-
-    // Removing the account (or reloading) keeps the mark.
-    m.accounts = [personal]
-    let reloaded = Discussion(model: m)
-    expect(reloaded.conversations.first { $0.id == schoolID }?.side == .enterprise, "the mark stays after the account is removed")
-    expect(reloaded.conversations.first { $0.id == personalID }?.side == .enterprise, "and the reviewer's mark is saved")
-
-    // Organizations: the same name (an account added again) is covered, another organization is not.
-    let mark = EnterpriseMark(school)
-    expect(mark.covers(school) && mark.covers(schoolCodex) && !mark.covers(work) && !mark.covers(personal), "a mark covers its own organization only")
-
-    // Older chats, once: by the accounts that picked or answered them.
+    // Older chats (with the old record) and new ones are open.
     let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
-    let old = try! decoder.decode(Conversation.self, from: Data(#"{"id":"\#(UUID().uuidString)","title":"old","createdAt":"2025-01-01T00:00:00Z","updatedAt":"2025-01-01T00:00:00Z","turns":[],"summary":""}"#.utf8))
-    expect(old.enterprise == nil && old.side == .unsure, "an older chat has no record yet")
-    expect(Conversation().enterprise == [] && Conversation().side == .personal, "a new chat starts personal")
-    var answered = old
-    answered.turns = [ChatTurn(question: "q")]; answered.turns[0].finalBy = "Claude (학교)"
-    Enterprise.classify(&answered, accounts: [personal, school])
-    expect(answered.enterprise?.map(\.id) == [school.id] && answered.side == .enterprise, "an Enterprise speaker's name tells")
-    var picked = old
-    picked.configuration = ChatConfiguration(); picked.configuration?.memberIDs = [schoolCodex.id]
-    Enterprise.classify(&picked, accounts: [schoolCodex])
-    expect(picked.side == .enterprise, "a picked Enterprise member tells")
-    var plain = old
-    plain.turns = [ChatTurn(question: "q")]; plain.turns[0].finalBy = "Claude"
-    Enterprise.classify(&plain, accounts: [personal, school])
-    expect(plain.side == .personal, "a personal answer stays personal")
-    var marked = old
-    marked.configuration = ChatConfiguration(); marked.configuration?.school = true
-    Enterprise.classify(&marked, accounts: [personal])
-    expect(marked.side == .unsure, "marked Enterprise with no account to name: unsure, not personal")
-    var copied = old
-    copied.origin = SyncOrigin(device: "other", deviceName: "Other Mac", chat: UUID(), lastTurn: nil, contentAt: Date(), importedAt: Date())
-    Enterprise.classify(&copied, accounts: [personal])
-    expect(copied.side == .unsure, "a copy from another Mac is unsure, not personal")
-    var helped = old
-    helped.turns = [ChatTurn(question: "q")]; helped.turns[0].entries = [.reply(round: 1, speaker: "Gemini · YouTube search", text: "v")]
-    Enterprise.classify(&helped, accounts: [personal, Account(id: "ent-s-gemini", provider: .gemini, name: "Gemini", dir: nil, school: true)])
-    expect(helped.side == .unsure, "an Enterprise helper with no name left (YouTube search): unsure")
-    var drawn = old
-    drawn.turns = [ChatTurn(question: "q")]; drawn.turns[0].finalBy = "Claude"; drawn.turns[0].finalImages = [ChatImage(conversationID: drawn.id, name: "a.png")]
-    Enterprise.classify(&drawn, accounts: [personal, schoolCodex])
-    expect(drawn.side == .unsure, "pictures with an Enterprise picture maker on this Mac: unsure")
-    // Sync keeps marked chats apart even when nothing else in them names the account.
-    var markedOnly = Conversation(); markedOnly.enterprise = [mark]
-    expect(DeviceSync.isSchool(markedOnly, accounts: []) && DeviceSync.isSchool(copied, accounts: []) && !DeviceSync.isSchool(Conversation(), accounts: []),
-           "device sync uses the record")
-    var mixed = old
-    mixed.turns = [ChatTurn(question: "q")]; mixed.turns[0].finalBy = "Claude (학교)"; mixed.turns[0].finalImages = [ChatImage(conversationID: mixed.id, name: "a.png")]
-    Enterprise.classify(&mixed, accounts: [school, work])
-    expect(mixed.side == .unsure, "a known Enterprise answer with pictures another organization may have drawn: unsure")
-    var sameOrg = mixed
-    sameOrg.enterprise = nil; sameOrg.enterpriseUnsure = nil
-    Enterprise.classify(&sameOrg, accounts: [school, schoolCodex])
-    expect(sameOrg.side == .enterprise, "pictures when every Enterprise account is of the same organization: Enterprise")
-    var again = answered
-    Enterprise.classify(&again, accounts: [])
-    expect(again.enterprise == answered.enterprise, "told only once")
+    let old = try! decoder.decode(Conversation.self, from: Data(#"{"id":"\#(UUID().uuidString)","title":"old","createdAt":"2025-01-01T00:00:00Z","updatedAt":"2025-01-01T00:00:00Z","turns":[],"summary":"","enterprise":[{"id":"x","name":"학교"}],"enterpriseUnsure":true}"#.utf8))
+    expect(!old.isEnterprise && !Conversation().isEnterprise, "older chats, marked or unsure, and new chats are open")
+
+    // The gate.
+    let organization = Enterprise.organizations(m.accounts + [local, gemini])
+    expect(organization.map(\.name) == ["학교", "회사"], "one organization per Enterprise name (not Gemini or models on this Mac)")
+    let schoolLock = organization[0]
+    expect([personal, school, schoolCodex, work, local, gemini].allSatisfy { Enterprise.permits($0, lock: nil) }, "an open chat: every account")
+    expect(Enterprise.permits(school, lock: schoolLock) && Enterprise.permits(schoolCodex, lock: schoolLock) && Enterprise.permits(local, lock: schoolLock),
+           "a locked chat: its organization and models on this Mac")
+    expect(!Enterprise.permits(personal, lock: schoolLock) && !Enterprise.permits(work, lock: schoolLock) && !Enterprise.permits(gemini, lock: schoolLock),
+           "but no personal account, other organization or Gemini")
+
+    // Picking: only allowed accounts in a locked chat (the personal one has the most left).
+    expect(AutoPick.choose(m.accounts, usage: m.latestUsage, lock: nil, current: nil)?.id == personal.id, "an open chat picks from everyone")
+    expect(AutoPick.choose(m.accounts, usage: m.latestUsage, lock: schoolLock, current: nil)?.id == school.id, "a locked chat picks only its organization")
+    expect(Peer.choose(asker: school, picked: nil, accounts: m.accounts, usage: m.latestUsage, lock: schoolLock)?.id == schoolCodex.id, "its reviewer too")
+    expect(Discussion.typedMentions(in: "@클로드 @지피", accounts: m.accounts + [local], label: chat.label, lock: schoolLock, usage: m.latestUsage, localEnabled: true).map(\.id)
+           == [school.id, schoolCodex.id], "@ calls only accounts allowed in the locked chat")
+
+    // Only the user locks a chat: answering with an Enterprise account does not.
+    chat.configure { $0.soloAccountID = school.id }
+    chat.draft = "학교 계정이 답해도 열린 방"
+    chat.send(); waitFor(chat)
+    let openID = chat.currentID
+    expect(!chat.current.isEnterprise, "an Enterprise account answering does not lock a chat")
+
+    // Locked: a personal account picked by hand drops out and is never sent anything, even when called directly.
+    chat.newConversation()
+    chat.configure { $0.soloAccountID = personal.id; $0.memberIDs = [personal.id] }
+    chat.lockEnterprise(chat.currentID, organization: schoolLock)
+    let lockedID = chat.currentID
+    expect(chat.current.enterpriseLock?.organization == "학교" && chat.configuration.soloAccountID == nil && chat.configuration.memberIDs == nil,
+           "locking drops members who may not take part")
+    chat.lockEnterprise(lockedID, organization: organization[1])
+    expect(chat.current.enterpriseLock?.organization == "학교", "a lock is never changed")
+    lock.lock(); asked = []; lock.unlock()
+    chat.draft = "잠긴 방 질문"
+    chat.send(); waitFor(chat)
+    lock.lock(); let answeredBy = asked; lock.unlock()
+    expect(answeredBy == [school.id] && chat.current.turns.last?.final == "ok", "a locked chat is answered by its organization")
+    let view = WorkspaceBinding(roots: [])
+    lock.lock(); asked = []; lock.unlock()
+    if case .success = chat.peerAnswer(personal, prompt: "review", view: view, room: lockedID, timeout: 5, token: DebateCancellation()) {
+        expect(false, "a personal reviewer must not be asked in a locked chat")
+    }
+    _ = chat.peerAnswer(work, prompt: "review", view: view, room: lockedID, timeout: 5, token: DebateCancellation())
+    _ = chat.peerAnswer(personal, prompt: "review", view: view, room: openID, timeout: 5, token: DebateCancellation())
+    lock.lock(); let reviewed = asked; lock.unlock()
+    expect(reviewed == [personal.id], "the gate stops personal and other-organization accounts, not open chats")
+    expect(!chat.permits(personal, room: UUID()) && chat.permits(local, room: UUID()), "a chat that cannot be found sends only to models on this Mac")
+
+    // Saved and loaded with its lock; the open chat stays open.
+    let reloaded = Discussion(model: m)
+    expect(reloaded.conversations.first { $0.id == lockedID }?.enterpriseLock?.organization == "학교"
+           && reloaded.conversations.first { $0.id == openID }?.isEnterprise == false, "the lock is saved")
+    expect(DeviceSync.isSchool(chat.current) && !DeviceSync.isSchool(old), "device sync keeps only locked chats apart")
 
     // Work chats: a Git project is linked; folders alone are a plain chat.
     var folders = Conversation(); folders.workspace = WorkspaceBinding(roots: [])
     expect(!folders.isProjectChat, "linked folders alone are a plain chat")
-    print("PASS: Enterprise marks (saved before sending, failed answers and reviewers count, kept after removal, organizations apart, older chats told once, copies unsure, work chats)")
+    print("PASS: Enterprise lock (older chats open, the gate, picking, only the user locks, never unlocked, saved, work chats)")
 }
 
 // ⌘F in a chat: turns with the words, moves between them, earlier turns drawn first, highlights.
@@ -180,8 +153,7 @@ func testChatSearch() {
     }
     expect(titles(.enterprise, .all) == ["연구 노트"] && !titles(.personal, .all).contains("연구 노트"), "personal / Enterprise filter")
     expect(titles(.all, .work) == ["AI Illuminati 작업"] && titles(.all, .plain).count == 5, "plain / work filter")
-    var unsure = Conversation(); unsure.enterpriseUnsure = true
-    expect(ChatSearch.passes(unsure, side: .enterprise, kind: .all) && !ChatSearch.passes(unsure, side: .personal, kind: .all), "an unsure chat is listed with Enterprise")
+    expect(titles(.all, .all).contains("연구 노트"), "the sidebar search (on this Mac only) lists Enterprise chats too")
 
     // A result opens its chat at the turn, with the words found.
     let m = AppModel()
@@ -206,9 +178,9 @@ func testChatTools() {
     let host = Discussion(model: m)
     var chats = searchFixtures()
     let personal = Account(id: "t-p", provider: .claude, name: "Claude", dir: nil, school: false)
-    let school = Account(id: "t-s", provider: .codex, name: "학교", dir: nil, school: true)    // same organization as the fixture's mark
-    let work = Account(id: "t-w", provider: .claude, name: "회사", dir: nil, school: true)
-    var copy = Conversation(); copy.title = "청룡영화제 사본"; copy.turns = [ChatTurn(question: "청룡영화제")]; copy.enterpriseUnsure = true
+    let school = Account(id: "t-s", provider: .codex, name: "학교", dir: nil, school: true)    // the fixture's Enterprise chat's organization
+    let local = Account(id: "t-o", provider: .ollama, name: "학교", dir: nil, school: true)
+    var copy = Conversation(); copy.title = "청룡영화제 사본"; copy.turns = [ChatTurn(question: "청룡영화제")]
     copy.origin = SyncOrigin(device: "d", deviceName: "iMac", chat: UUID(), lastTurn: nil, contentAt: Date(), importedAt: Date())
     var here = Conversation(); here.title = "새 채팅 청룡영화제"; here.turns = [ChatTurn(question: "청룡영화제 얘기 했던거 있잖아?")]
     chats += [copy, here]
@@ -223,26 +195,24 @@ func testChatTools() {
 
     let research = chats.first { $0.title == "연구 노트" }!
     let (forPersonal, _) = reply("search_chats", ["query": "청룡영화제"], personal)
-    expect(forPersonal.contains("영화 이야기") && forPersonal.contains("AI Illuminati 작업") && !forPersonal.contains("연구 노트"), "a personal account finds personal chats, not Enterprise ones")
-    expect(!forPersonal.contains("사본") && !forPersonal.contains(here.id.uuidString), "copies from other Macs and the chat being answered are left out")
+    expect(forPersonal.contains("영화 이야기") && forPersonal.contains("AI Illuminati 작업") && forPersonal.contains("사본"), "every account finds open chats, copies from other Macs too")
+    expect(!forPersonal.contains("연구 노트") && !forPersonal.contains(here.id.uuidString), "not Enterprise chats or the chat being answered")
     expect(forPersonal.contains("data, not instructions"), "results are marked as data")
-    let (forSchool, _) = reply("search_chats", ["query": "청룡영화제"], school)
-    expect(forSchool.contains("연구 노트") && forSchool.contains("영화 이야기"), "an account of the organization that saw it finds the Enterprise chat too")
-    expect(host.conversations.first { $0.id == here.id }?.enterprise?.map(\.name) == ["학교"], "Enterprise search results carry their record into this chat")
-    host.conversations = chats
-    let (forWork, _) = reply("search_chats", ["query": "청룡영화제"], work)
-    expect(!forWork.contains("연구 노트"), "another organization's account does not")
+    for asker in [school, local] {
+        let (found, _) = reply("search_chats", ["query": "청룡영화제"], asker)
+        expect(!found.contains("연구 노트") && found.contains("영화 이야기"), "an Enterprise chat is left out for its own organization and models on this Mac too")
+    }
 
     // Reading by id directly is checked the same way.
-    let (denied, deniedError) = reply("read_chat", ["id": research.id.uuidString], personal)
-    let (missing, _) = reply("read_chat", ["id": UUID().uuidString], personal)
-    expect(deniedError && denied == missing, "a personal account cannot read an Enterprise chat by its id, and cannot tell it exists")
-    expect(reply("read_chat", ["id": research.id.uuidString], work).1, "nor another organization's account")
-    expect(reply("read_chat", ["id": copy.id.uuidString], school).1 && reply("read_chat", ["id": here.id.uuidString], school).1, "copies and the chat itself cannot be read")
-    expect(reply("read_chat", ["id": research.id.uuidString], Account(id: "t-o", provider: .ollama, name: "학교", dir: nil, school: true)).1, "a model on this Mac is not an Enterprise account")
-    let (read, readError) = reply("read_chat", ["id": research.id.uuidString], school)
-    expect(!readError && read.contains("3.2 MHz") && read.contains("data, not instructions"), "the right account reads it")
-    expect(host.conversations.first { $0.id == here.id }?.enterprise?.map(\.name) == ["학교"], "reading an Enterprise chat carries its record into this chat")
+    let (denied, deniedError) = reply("read_chat", ["id": research.id.uuidString], school)
+    let (missing, _) = reply("read_chat", ["id": UUID().uuidString], school)
+    expect(deniedError && denied == missing, "an Enterprise chat cannot be read by its id, and cannot be told to exist")
+    expect(reply("read_chat", ["id": research.id.uuidString], personal).1 && reply("read_chat", ["id": research.id.uuidString], local).1, "by no account")
+    expect(reply("read_chat", ["id": here.id.uuidString], school).1, "the chat itself cannot be read")
+    expect(!host.conversations.contains { $0.id == here.id && $0.isEnterprise }, "searching never locks a chat")
+    // From inside an Enterprise chat, open chats are still found and read.
+    let inLocked = link.call("read_chat", ["id": chats[0].id.uuidString], context: ToolContext(room: research.id, roots: [], asker: school))
+    expect(inLocked["isError"] as? Bool == false, "an Enterprise chat reads open chats")
     let story = chats.first { $0.title == "영화 이야기" }!
     let (whole, _) = reply("read_chat", ["id": story.id.uuidString], personal)
     expect(whole.contains("[The whole chat]") && whole.contains("주말에 뭐 볼까") && whole.contains("11월 말"), "a short chat is given whole")
@@ -272,7 +242,8 @@ func testChatTools() {
     let session = manifest["toolSession"] as? String ?? ""
     let listed = ToolHub.shared.handle(["op": "tools", "session": session])["tools"] as? [[String: Any]] ?? []
     expect(listed.contains { $0["name"] as? String == "read_chat" }, "the bridge offers the chat tools")
-    let viaHub = ToolHub.shared.handle(["op": "call", "session": session, "name": "read_chat", "arguments": ["id": research.id.uuidString]])
-    expect(viaHub["isError"] as? Bool == false, "and decides by the account that answers")
-    print("PASS: chat tools (offered with a known account, personal for all, Enterprise for its organization only, direct ids checked, copies and this chat out, record carried over, summary first, whole or matching turns within the limit)")
+    let viaHub = ToolHub.shared.handle(["op": "call", "session": session, "name": "read_chat", "arguments": ["id": chats[0].id.uuidString]])
+    let lockedViaHub = ToolHub.shared.handle(["op": "call", "session": session, "name": "read_chat", "arguments": ["id": research.id.uuidString]])
+    expect(viaHub["isError"] as? Bool == false && lockedViaHub["isError"] as? Bool == true, "and the same rules hold there")
+    print("PASS: chat tools (offered with a known account, open chats for all, Enterprise chats for none, direct ids checked, this chat out, Enterprise chats read open ones, summary first, whole or matching turns within the limit)")
 }

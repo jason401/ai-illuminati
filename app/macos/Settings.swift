@@ -8,7 +8,7 @@ import UniformTypeIdentifiers
 final class AppModel: ObservableObject {
     @Published var accounts: [Account] {
         didSet {
-            if persist { AccountStore.save(accounts); DeviceSync.shared.remember(oldValue + accounts) }
+            if persist { AccountStore.save(accounts) }
             onAccountsChange?()
         }
     }
@@ -173,9 +173,6 @@ final class AppModel: ObservableObject {
     @Published var routeSorter: RouteSorter {
         didSet { defaults.set(routeSorter.rawValue, forKey: "routeSorter") }
     }
-    @Published var schoolOnlyHandoff: Bool {
-        didSet { defaults.set(schoolOnlyHandoff, forKey: "schoolOnlyHandoff") }
-    }
     // ChatGPT accounts unchecked as picture makers (Settings → Chat). The others draw every picture the
     // other AIs need; a new ChatGPT account starts checked.
     @Published var pictureMakersOff: Set<String> {
@@ -213,7 +210,6 @@ final class AppModel: ObservableObject {
         sharedFolders = defaults.stringArray(forKey: "sharedFolders") ?? []
         pausedSharedFolders = Set(defaults.stringArray(forKey: "pausedSharedFolders") ?? [])
         writableSharedFolders = Set(defaults.stringArray(forKey: "writableSharedFolders") ?? [])
-        schoolOnlyHandoff = defaults.object(forKey: "schoolOnlyHandoff") as? Bool ?? true
         pictureMakersOff = Set(defaults.stringArray(forKey: "pictureMakersOff") ?? [])
         localEnabled = persist ? LocalModel.enabled : true
         localKeepAlive = persist ? LocalModel.keepAlive : 5
@@ -894,12 +890,6 @@ struct ChatSettingsTab: View {
                        "Style and instructions for every AI request. Choose response length in the chat window."))
             }
             VStack(alignment: .leading, spacing: 6) {
-                Toggle(L("엔터프라이즈·개인 대화를 따로 이어받기", "Keep Enterprise and personal chats apart"), isOn: $model.schoolOnlyHandoff)
-                    .toggleStyle(.switch)
-                hint(L("켜면 엔터프라이즈 대화는 엔터프라이즈 계정끼리, 개인 대화는 개인 계정끼리만 이어받아요. 엔터프라이즈 계정은 계정 탭에서 표시해요.",
-                       "On: Enterprise chats are continued only by Enterprise accounts, personal chats only by personal ones. Mark Enterprise accounts in the Accounts tab."))
-            }
-            VStack(alignment: .leading, spacing: 6) {
                 SettingsCard(title: L("메시지 판정", "Message sorting")) {
                     SettingsRow(title: L("내 Mac 모델", "Model on this Mac")) {
                         SettingsMenu(options: RouteSorter.allCases.map { ($0.title, $0) }, selection: $model.routeSorter)
@@ -1197,7 +1187,7 @@ private struct AccountRow: View {
                             get: { model.accounts.first { $0.id == account.id }?.isSchool ?? false },
                             set: { model.setSchool(account.id, $0) }))
                             .toggleStyle(.checkbox).controlSize(.mini)
-                            .help(L("엔터프라이즈(학교·회사) 계정: 엔터프라이즈 대화는 이런 계정끼리만 이어받아요", "Enterprise (school or work) account: Enterprise chats are continued only by these accounts"))
+                            .help(L("엔터프라이즈(학교·회사) 계정: 직접 잠근 Enterprise 방에는 이름이 같은 엔터프라이즈 계정과 내 Mac 모델만 참여해요", "Enterprise (school or work) account: a chat you lock as Enterprise is answered only by Enterprise accounts of the same name and models on this Mac"))
                     }
                 }.font(.system(size: 10)).lineLimit(1)
             }

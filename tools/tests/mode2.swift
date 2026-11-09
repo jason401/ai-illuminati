@@ -981,8 +981,8 @@ do {
     m.accounts = [Account(id: "maker-claude", provider: .claude, name: "Claude (학교)", dir: nil, school: true),
                   Account(id: "maker-p-codex", provider: .codex, name: "ChatGPT (개인)", dir: personalDir, school: false),
                   Account(id: "maker-s-codex", provider: .codex, name: "ChatGPT (학교)", dir: schoolDir, school: true),
-                  Account(id: "maker-s-codex2", provider: .codex, name: "ChatGPT (회사)", dir: schoolDir + "2", school: true)]
-    m.schoolOnlyHandoff = true
+                  Account(id: "maker-s-codex2", provider: .codex, name: "학교", dir: schoolDir + "2", school: true),
+                  Account(id: "maker-w-codex", provider: .codex, name: "ChatGPT (회사)", dir: schoolDir + "3", school: true)]
     m.pictureMakersOff = []
     func left(_ week: Double) -> AIUsage {
         var u = AIUsage(name: "u")
@@ -992,7 +992,9 @@ do {
     m.latestUsage = Dictionary(uniqueKeysWithValues: m.accounts.map { ($0.id, left($0.id == "maker-s-codex" ? 95 : 80)) })
     let chat = Discussion(model: m)
     chat.newConversation()
-    chat.configure { $0.mode = 0; $0.soloAccountID = "maker-claude"; $0.school = true }
+    chat.configure { $0.mode = 0; $0.soloAccountID = "maker-claude" }
+    chat.lockEnterprise(chat.currentID, organization: Enterprise.organizations(m.accounts)[0])
+    expect(chat.current.enterpriseLock?.name == "학교", "\"Claude (학교)\" locks for the organization 학교")
     let png = Pictures.render(svg: "<svg viewBox='0 0 10 10'><rect width='10' height='10' fill='blue'/></svg>")!
     let lock = NSLock()
     var writerPrompts: [String] = [], makers: [String] = [], makerPrompts: [String] = []
@@ -1015,7 +1017,7 @@ do {
     var turn = chat.current.turns[0]
     expect(writerPrompts.first?.contains("```picture") == true && writerPrompts.first?.contains("do not draw it yourself") == true,
            "with a picture maker, the AI is told to write a picture request")
-    expect(makers == ["maker-s-codex", "maker-s-codex2"], "only Enterprise makers draw for an Enterprise Claude; the next one takes over after a limit")
+    expect(makers == ["maker-s-codex", "maker-s-codex2"], "in an Enterprise chat only makers of its organization draw; the next one takes over after a limit")
     expect(makerPrompts.last?.contains("[PICTURE REQUEST]") == true && makerPrompts.last?.contains("labels 'lens' and 'focus'") == true,
            "the maker gets the request")
     expect(turn.finalImages?.count == 1 && (turn.final?.contains("[그림 1]") == true || turn.final?.contains("[Picture 1]") == true) && turn.final?.contains("```picture") == false,
@@ -1024,7 +1026,7 @@ do {
     failing = ["maker-s-codex", "maker-s-codex2"]; makers.removeAll()
     chat.draft = "하나 더"; chat.send(); waitFor(chat)
     turn = chat.current.turns[1]
-    expect(!makers.contains("maker-p-codex"), "a personal maker never draws for an Enterprise AI")
+    expect(!makers.contains("maker-p-codex") && !makers.contains("maker-w-codex"), "a personal maker or another organization's never draws in an Enterprise chat")
     expect(turn.finalImages == nil && (turn.final?.contains("[그림을 만들지 못했어요]") == true || turn.final?.contains("[The picture could not be made]") == true) && turn.final?.contains("> A lens") == true,
            "a picture no maker could make keeps its request")
 
@@ -1036,7 +1038,7 @@ do {
     expect(turn.final?.contains("```picture") == true, "request blocks stay when there is no maker")
     expect(chat.pictureMakers(for: m.accounts[1], chat: chat.currentID).isEmpty, "a maker draws its own pictures")
     m.pictureMakersOff = []
-    print("PASS: picture makers draw requested pictures on the same Enterprise/personal side")
+    print("PASS: picture makers draw requested pictures, only of the organization in an Enterprise chat")
 }
 
 // Pin to top and delete all.
@@ -1354,34 +1356,35 @@ do {
         return u
     }
     let personalClaude = Account(id: "solo-p-claude", provider: .claude, name: "Claude", dir: nil, school: false)
-    let schoolClaude = Account(id: "solo-s-claude", provider: .claude, name: "School Claude", dir: nil)
+    let schoolClaude = Account(id: "solo-s-claude", provider: .claude, name: "Claude (School)", dir: nil)
     let personalCodex = Account(id: "solo-p-codex", provider: .codex, name: "ChatGPT", dir: nil)
-    let schoolCodex = Account(id: "solo-s-codex", provider: .codex, name: "ChatGPT", dir: nil, school: true)
+    let schoolCodex = Account(id: "solo-s-codex", provider: .codex, name: "ChatGPT (School)", dir: nil, school: true)
+    let schoolLock = Enterprise.organizations([schoolClaude, schoolCodex])[0]
+    let personalOnly: Set<String> = ["solo-s-claude", "solo-s-codex"]
     let gemini = Account(id: "solo-gemini", provider: .gemini, name: "Gemini", dir: nil)
     let all = [personalClaude, schoolClaude, personalCodex, schoolCodex, gemini]
     expect(schoolClaude.isSchool && schoolCodex.isSchool && !personalClaude.isSchool && !personalCodex.isSchool, "school accounts: by name or by the setting")
 
     var levels: [String: AIUsage] = ["solo-p-claude": usage(60, 30), "solo-p-codex": usage(40, 80), "solo-gemini": usage(nil, 100),
                                      "solo-s-claude": usage(90, nil), "solo-s-codex": usage(10, 99)]
-    expect(AutoPick.choose(all, usage: levels, school: false, current: nil)?.id == "solo-p-codex", "most weekly left among accounts with enough 5-hour left")
-    expect(AutoPick.choose(all, usage: levels, school: false, current: "solo-p-claude")?.id == "solo-p-claude", "keep the current account while it has enough")
+    expect(AutoPick.choose(all, usage: levels, lock: nil, current: nil, excluded: personalOnly)?.id == "solo-p-codex", "most weekly left among accounts with enough 5-hour left")
+    expect(AutoPick.choose(all, usage: levels, lock: nil, current: "solo-p-claude", excluded: personalOnly)?.id == "solo-p-claude", "keep the current account while it has enough")
     levels["solo-p-claude"] = usage(14, 30)
-    expect(AutoPick.choose(all, usage: levels, school: false, current: "solo-p-claude")?.id == "solo-p-codex", "switch under 15% of the 5-hour limit")
+    expect(AutoPick.choose(all, usage: levels, lock: nil, current: "solo-p-claude", excluded: personalOnly)?.id == "solo-p-codex", "switch under 15% of the 5-hour limit")
     levels["solo-p-codex"] = usage(40, 12)
-    expect(AutoPick.choose(all, usage: levels, school: false, current: nil)?.id == "solo-p-claude", "nobody has enough: the one with the most left (smaller of the two limits) still answers")
-    expect(AutoPick.choose(all, usage: levels, school: true, current: nil)?.id == "solo-s-claude", "school chats: school accounts only (5-hour of the other is under 15%)")
-    expect(!AutoPick.candidates(all, usage: levels, school: nil).contains { $0.provider == .gemini }, "Gemini never answers a plain chat")
+    expect(AutoPick.choose(all, usage: levels, lock: nil, current: nil, excluded: personalOnly)?.id == "solo-p-claude", "nobody has enough: the one with the most left (smaller of the two limits) still answers")
+    expect(AutoPick.choose(all, usage: levels, lock: schoolLock, current: nil)?.id == "solo-s-claude", "Enterprise chats: accounts of the organization only (5-hour of the other is under 15%)")
+    expect(!AutoPick.candidates(all, usage: levels, lock: nil).contains { $0.provider == .gemini }, "Gemini never answers a plain chat")
     // Close levels: Enterprise first; a clear lead still wins.
     let close: [String: AIUsage] = ["solo-p-codex": usage(90, 70), "solo-s-codex": usage(90, 63)]
-    expect(AutoPick.choose(all, usage: close, school: nil, current: nil, excluded: ["solo-p-claude", "solo-s-claude"])?.id == "solo-s-codex", "about the same left: the Enterprise account goes first")
+    expect(AutoPick.choose(all, usage: close, lock: nil, current: nil, excluded: ["solo-p-claude", "solo-s-claude"])?.id == "solo-s-codex", "about the same left: the Enterprise account goes first")
     let apart: [String: AIUsage] = ["solo-p-codex": usage(90, 80), "solo-s-codex": usage(90, 60)]
-    expect(AutoPick.choose(all, usage: apart, school: nil, current: nil, excluded: ["solo-p-claude", "solo-s-claude"])?.id == "solo-p-codex", "clearly more left: the personal account still goes first")
+    expect(AutoPick.choose(all, usage: apart, lock: nil, current: nil, excluded: ["solo-p-claude", "solo-s-claude"])?.id == "solo-p-codex", "clearly more left: the personal account still goes first")
     levels["solo-p-codex"] = usage(0, 0); levels["solo-p-claude"] = usage(50, 50, login: true)
-    expect(AutoPick.choose(all, usage: levels, school: false, current: nil) == nil, "signed out or empty accounts are left out")
+    expect(AutoPick.choose(all, usage: levels, lock: nil, current: nil, excluded: personalOnly) == nil, "signed out or empty accounts are left out")
 
     let m = AppModel()
     m.accounts = all
-    m.schoolOnlyHandoff = true
     let shared = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("shared-papers")
     try! FileManager.default.createDirectory(at: shared, withIntermediateDirectories: true)
     try! "measured 3.2 MHz".write(to: shared.appendingPathComponent("data.txt"), atomically: true, encoding: .utf8)
@@ -1404,9 +1407,9 @@ do {
         geminiPrompts.append(prompt)
         return .success("TL;DR: Two videos\n\nFound: lens focusing lecture (youtube.com/watch?v=abc)")
     }
-    // A new chat has no side: its first answer goes to an Enterprise account when the usage left is close.
+    // An open chat: any account, an Enterprise one first when the usage left is close.
     expect(chat.soloNext?.id == "solo-s-claude", "a new chat starts with the Enterprise account that has the most left")
-    chat.configure { $0.school = false }
+    m.accounts = [personalClaude, personalCodex, gemini]   // personal accounts only for the handoff below
     chat.draft = "Write the Methods from the shared data"
     chat.send(); waitFor(chat)
     var turn = chat.current.turns[0]
@@ -1445,19 +1448,20 @@ do {
     expect(asked[0].1.contains("Write the Methods from the shared data") && asked[0].1.contains("Saved methods.md"), "earlier turns are in the context")
     expect(turn.entries.first?.speaker.contains("Gemini") == true, "Gemini's search is shown in the chat")
 
-    // A school chat is continued only by school accounts.
+    // An Enterprise chat is continued only by accounts of its organization.
+    m.accounts = all
     asked.removeAll(); limitHit = ["solo-s-codex"]
     chat.newConversation()
-    chat.configure { $0.school = true }
+    chat.lockEnterprise(chat.currentID, organization: schoolLock)
     chat.draft = "school question"
     chat.send(); waitFor(chat)
     // School Claude has no overall weekly limit, so it counts as 100% weekly and goes first.
-    expect(asked.map(\.0) == ["solo-s-claude"], "school chat: school accounts only, most weekly left first")
+    expect(asked.map(\.0) == ["solo-s-claude"], "Enterprise chat: its organization only, most weekly left first")
     asked.removeAll(); limitHit = ["solo-s-codex", "solo-s-claude"]
-    chat.newConversation(); chat.configure { $0.school = true }
+    chat.newConversation(); chat.lockEnterprise(chat.currentID, organization: schoolLock)
     chat.draft = "again"
     chat.send(); waitFor(chat)
-    expect(asked.count == 2 && chat.current.turns[0].error != nil && chat.current.turns[0].final == nil, "no school account left: say so instead of using a personal one")
+    expect(asked.count == 2 && chat.current.turns[0].error != nil && chat.current.turns[0].final == nil, "no account of the organization left: say so instead of using a personal one")
 
     // Picked by hand: that account answers even with less left.
     asked.removeAll(); limitHit = []
@@ -1734,7 +1738,7 @@ do {
         expect(chat.conversations.first { $0.id == room }?.turns.last?.final == "answer to \(question)", "\(question) answer lands in its own chat")
     }
     expect(!chat.anyRunning && chat.stoppingRooms.isEmpty, "all done")
-    expect(!m.schoolOnlyHandoff || chat.conversations.first { $0.id == first }?.configuration?.school == false, "the first answer sets a new chat's side (personal account here)")
+    expect(chat.conversations.first { $0.id == first }?.isEnterprise == false, "answering never locks a chat")
     print("PASS: several chats at once (own worker per message, switch and start chats meanwhile, limit of \(Discussion.maxRunning), answers land in their own chats)")
 }
 
@@ -1800,20 +1804,20 @@ do {
     expect(asked.map(\.0) == ["at-claude"] && chat.current.turns[2].question == L("지금까지의 대화에 대해 네 의견을 말해 줘.", "What do you think about this conversation so far?"), "only a name: asks for its view on the chat")
 
     // Typed without the list: names, Korean names and initials; unclear words stay text.
-    func typed(_ text: String, school: Bool? = nil, strict: Bool = false) -> [String] {
-        Discussion.typedMentions(in: text, accounts: m.accounts, label: chat.label, school: school, strict: strict, usage: m.latestUsage, localEnabled: true).map(\.id)
+    let schoolLock = Enterprise.organizations(m.accounts)[0]
+    func typed(_ text: String, lock: EnterpriseLock? = nil) -> [String] {
+        Discussion.typedMentions(in: text, accounts: m.accounts, label: chat.label, lock: lock, usage: m.latestUsage, localEnabled: true).map(\.id)
     }
     expect(typed("@ㅋㄹㄷ @지피 너네는?") == ["at-claude", "at-codex"], "initials and Korean nicknames call the AI")
     expect(typed("@클로드야, @gpt 어때?") == ["at-claude", "at-codex"], "a short ending and punctuation are fine")
-    expect(typed("@지피", school: true) == ["at-codex-s"], "the chat's side comes first")
-    expect(typed("@지피", school: true, strict: true) == ["at-codex-s"] && typed("@클로드", school: true, strict: true).isEmpty,
-           "Enterprise and personal kept apart: only the chat's side, none on that side means no call")
+    expect(typed("@지피") == ["at-codex"], "an open chat: Settings order")
+    expect(typed("@지피", lock: schoolLock) == ["at-codex-s"] && typed("@클로드", lock: schoolLock).isEmpty,
+           "an Enterprise chat: only its organization, none there means no call")
     expect(typed("@ㅈㅁㄴㅇ") == ["at-gemini"], "an exact Gemini name is not taken for Gemma")
     expect(typed("mail me@example.com @someone @") .isEmpty, "addresses and unknown names stay text")
     expect(typed("@chatgpt(school)") == ["at-codex-s"] && typed("@ChatGPT (School) hi") == ["at-codex-s"], "an account named exactly")
 
     asked.removeAll(); waitForBoth = 2
-    m.schoolOnlyHandoff = false   // this test has no school Claude
     chat.draft = "@ㅈㅍ @ㅋㄹㄷ 너네는 어떻게 생각해?"
     chat.draftMentions = []
     chat.send(); waitFor(chat)
@@ -1836,7 +1840,6 @@ do {
     var full = AIUsage(name: "u"); full.fiveHour = UsageWindow(usedPercent: 10, resetsAt: nil); full.weekly = UsageWindow(usedPercent: 10, resetsAt: nil)
     m.latestUsage = ["mb-claude": full, "mb-codex": full, "mb-gemini": full]
     m.sharedFolders = []
-    m.schoolOnlyHandoff = false
     let chat = Discussion(model: m)
     let labels = Dictionary(uniqueKeysWithValues: m.accounts.map { ($0.id, chat.label($0)) })
     let lock = NSLock()
@@ -2049,7 +2052,7 @@ do {
 
     let local = Account(id: "ollama-local", provider: .ollama, name: "Gemma 4 (this Mac)", dir: nil)
     let cloud = Account(id: "lm-codex", provider: .codex, name: "ChatGPT", dir: nil, school: false)
-    expect(!AutoPick.candidates([cloud, local], usage: [:], school: nil).contains { $0.provider == .ollama }, "Gemma is never picked automatically")
+    expect(!AutoPick.candidates([cloud, local], usage: [:], lock: nil).contains { $0.provider == .ollama }, "Gemma is never picked automatically")
     let m = AppModel()
     m.accounts = [cloud, local]
     m.sharedFolders = []

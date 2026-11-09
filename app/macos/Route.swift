@@ -256,11 +256,11 @@ extension Discussion {
         let prompt = Route.prompt(question: question, history: history)
         let (route, by): (RouteChoice, String?)
         if let routeJudge { (route, by) = routeJudge(prompt) } else {
-            let judge = AutoPick.choose(judges, usage: model.latestUsage, school: nil, current: nil)
+            let judge = AutoPick.choose(judges, usage: model.latestUsage, lock: lock(of: currentID), current: nil)
             let sorter = RouteSorter.current
             (route, by) = Route.decide(local: { LocalModel.judge(question: question, history: history, sorter: sorter) }, localName: sorter.title, judge: judge, ask: { account in
                 if cancellation.isCancelled { return nil }
-                self.noteSent(account, room: self.currentID)
+                guard self.permits(account, room: self.currentID) else { return nil }
                 // No workspace and no web: the judge has no tools at all.
                 guard case .success(let text) = Answerer.ask(account, prompt: prompt, timeout: Route.memberTimeout, cancellation: cancellation) else { return nil }
                 return text

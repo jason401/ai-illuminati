@@ -162,7 +162,6 @@ func testProjectHandoff() {
     let project = try! ProjectProcess.inspect(root.path)
     let model = AppModel()
     model.accounts = [Account(id: "project-claude", provider: .claude, name: "Fixture Claude"), Account(id: "project-codex", provider: .codex, name: "Fixture Codex")]
-    model.schoolOnlyHandoff = false
     let chat = Discussion(model: model)
     chat.configure { $0.mode = 0; $0.soloAccountID = "project-claude" }
     chat.change(chat.currentID) { $0.workspace = WorkspaceBinding(roots: [WorkspaceRoot(path: root.path, directory: true)], project: project) }
@@ -285,27 +284,28 @@ func testFullAuto() {
 }
 
 func testPeerReview() {
-    // Who reviews: the other kind of AI on the chat's side; the same kind only when there is no other.
+    // Who reviews: the other kind of AI (in an Enterprise chat, of its organization); the same kind only when there is no other.
     let claude = Account(id: "peer-claude", provider: .claude, name: "C"), codex = Account(id: "peer-codex", provider: .codex, name: "G")
     var schoolCodex = Account(id: "peer-codex-school", provider: .codex, name: "GS"); schoolCodex.school = true
+    let gsLock = EnterpriseLock(organization: "gs", name: "GS", lockedAt: Date())
     let claude2 = Account(id: "peer-claude-2", provider: .claude, name: "C2"), gemini = Account(id: "peer-gemini", provider: .gemini, name: "Gem")
-    expect(Peer.choose(asker: claude, picked: nil, accounts: [claude, codex, gemini], usage: [:], school: nil)?.id == codex.id, "Claude's reviewer is ChatGPT")
-    expect(Peer.choose(asker: codex, picked: nil, accounts: [claude, codex], usage: [:], school: nil)?.id == claude.id, "ChatGPT's reviewer is Claude")
-    expect(Peer.choose(asker: claude, picked: nil, accounts: [claude, codex, schoolCodex], usage: [:], school: true)?.id == schoolCodex.id, "Enterprise chats keep an Enterprise reviewer")
-    expect(Peer.choose(asker: claude, picked: claude2.id, accounts: [claude, claude2, codex], usage: [:], school: nil)?.id == codex.id, "a picked reviewer of the same kind gives way to the other kind")
-    expect(Peer.choose(asker: claude, picked: nil, accounts: [claude, claude2], usage: [:], school: nil)?.id == claude2.id, "same kind only when there is no other")
-    expect(Peer.choose(asker: claude, picked: nil, accounts: [claude, gemini], usage: [:], school: nil) == nil, "nobody else: no reviewer")
+    expect(Peer.choose(asker: claude, picked: nil, accounts: [claude, codex, gemini], usage: [:], lock: nil)?.id == codex.id, "Claude's reviewer is ChatGPT")
+    expect(Peer.choose(asker: codex, picked: nil, accounts: [claude, codex], usage: [:], lock: nil)?.id == claude.id, "ChatGPT's reviewer is Claude")
+    expect(Peer.choose(asker: claude, picked: nil, accounts: [claude, codex, schoolCodex], usage: [:], lock: gsLock)?.id == schoolCodex.id, "Enterprise chats keep an Enterprise reviewer of their organization")
+    expect(Peer.choose(asker: claude, picked: claude2.id, accounts: [claude, claude2, codex], usage: [:], lock: nil)?.id == codex.id, "a picked reviewer of the same kind gives way to the other kind")
+    expect(Peer.choose(asker: claude, picked: nil, accounts: [claude, claude2], usage: [:], lock: nil)?.id == claude2.id, "same kind only when there is no other")
+    expect(Peer.choose(asker: claude, picked: nil, accounts: [claude, gemini], usage: [:], lock: nil) == nil, "nobody else: no reviewer")
     expect(Peer.noIssues("No issues.") && Peer.noIssues("**문제 없음**") && !Peer.noIssues("No issues except one: a crash"), "a clean review is recognised")
     // Older chat files and other Macs' copies have none of the new fields.
     let oldConfig = try? JSONDecoder().decode(ChatConfiguration.self, from: Data(#"{"mode":0,"order":["claude"],"participants":["claude"],"leader":"claude"}"#.utf8))
     expect(oldConfig != nil && oldConfig?.memberIDs == nil && oldConfig?.leadID == nil, "older chat settings still load (no members)")
     // A chat that had review on: its worker and its reviewer become the two members.
     var reviewed = ChatConfiguration(); reviewed.soloAccountID = claude.id; reviewed.peerReview = true
-    expect(Discussion.migratedMembers(reviewed, accounts: [claude, claude2, codex], strict: false) == [claude.id, codex.id], "review on: the other kind of AI joins as a member")
+    expect(Discussion.migratedMembers(reviewed, accounts: [claude, claude2, codex], lock: nil) == [claude.id, codex.id], "review on: the other kind of AI joins as a member")
     reviewed.peerAccountID = claude2.id
-    expect(Discussion.migratedMembers(reviewed, accounts: [claude, claude2, codex], strict: false) == [claude.id, claude2.id], "the reviewer picked by hand joins")
+    expect(Discussion.migratedMembers(reviewed, accounts: [claude, claude2, codex], lock: nil) == [claude.id, claude2.id], "the reviewer picked by hand joins")
     reviewed.memberIDs = [codex.id]
-    expect(Discussion.migratedMembers(reviewed, accounts: [claude, codex], strict: false) == [codex.id], "members saved since then win")
+    expect(Discussion.migratedMembers(reviewed, accounts: [claude, codex], lock: nil) == [codex.id], "members saved since then win")
     var turn = ChatTurn(question: "q"); turn.peerNotes = [.init(round: 1, speaker: "G", text: "ok", failed: false)]
     let again = try? JSONDecoder().decode(ChatTurn.self, from: JSONEncoder().encode(turn))
     expect(again?.peerNotes?.first?.text == "ok", "review notes are saved with the turn")
@@ -323,7 +323,6 @@ func testPeerReview() {
     try! "mine\n".write(to: root.appendingPathComponent("user-notes.txt"), atomically: true, encoding: .utf8)
     let model = AppModel()
     model.accounts = [claude, codex]
-    model.schoolOnlyHandoff = false
     let chat = Discussion(model: model)
     chat.configure { $0.mode = 0; $0.leadID = claude.id }
     chat.toggleMember(claude.id); chat.toggleMember(codex.id)

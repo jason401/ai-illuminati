@@ -592,7 +592,7 @@ struct ChatConfiguration: Codable {
     // soloAccountID; nil or empty = automatic. Not synced: account IDs differ per Mac.
     var memberIDs: [String]?
     var leadID: String?             // the member picked by hand to do the work (nil = the app picks and keeps one)
-    var school: Bool?               // mode 0: a school chat (continued only by school accounts)
+    var school: Bool?               // older: the side the first answer picked (no longer used; Enterprise.swift)
     // Older review settings, read once to make the reviewer a member (Discussion.migratedMembers).
     var peerReview: Bool?
     var peerAccountID: String?
@@ -615,10 +615,8 @@ struct Conversation: Identifiable, Codable {
     var pinned: Bool?   // kept at the top of the list
     var origin: SyncOrigin?       // continued on this Mac from another Mac's copy (DeviceSync.swift)
     var shareToDevices: Bool?     // shown on your other Macs (when only chosen chats are shared)
-    // The Enterprise accounts this chat's content was sent to (Enterprise.swift). Empty = personal;
-    // nil = an older chat, told once at launch. Unsure: could not be told for certain (kept apart like Enterprise).
-    var enterprise: [EnterpriseMark]? = []
-    var enterpriseUnsure: Bool?
+    // Locked by the user as an Enterprise chat (Enterprise.swift); never removed. nil = an open chat.
+    var enterpriseLock: EnterpriseLock?
 
     // Something worth keeping: messages, materials or a linked folder. A chat with only settings is
     // "blank": it is not kept in the list once you leave it.
@@ -740,19 +738,13 @@ final class Discussion: ObservableObject {
     var nextPicture = 1
 
     // The ChatGPT accounts that draw for `account` (Settings → Chat → Picture makers), best first. Empty when
-    // none is checked or `account` is one of them (it draws itself). With Enterprise and personal chats kept
-    // apart, only makers on the same side: an Enterprise Claude asks only an Enterprise ChatGPT.
+    // none is checked or `account` is one of them (it draws itself). In an Enterprise chat only makers of its organization.
     func pictureMakers(for account: Account, chat id: UUID, excluded: Set<String> = []) -> [Account] {
         let makers = model.pictureMakers
         guard !makers.contains(where: { $0.id == account.id }) else { return [] }
-        var side: Bool?
-        if model.schoolOnlyHandoff {
-            // Gemma on this Mac belongs to no side: the chat's side decides.
-            let chat = conversations.first { $0.id == id }?.configuration?.school
-            side = account.provider == .ollama ? (chat ?? false) : account.isSchool
-        }
-        var left = makers.filter { !excluded.contains($0.id) }, ordered: [Account] = []
-        while let best = AutoPick.choose(left, usage: model.latestUsage, school: side, current: nil) {
+        let chatLock = lock(of: id)
+        var left = makers.filter { !excluded.contains($0.id) && Enterprise.permits($0, lock: chatLock) }, ordered: [Account] = []
+        while let best = AutoPick.choose(left, usage: model.latestUsage, lock: nil, current: nil) {
             ordered.append(best); left.removeAll { $0.id == best.id }
         }
         return ordered
@@ -777,7 +769,7 @@ final class Discussion: ObservableObject {
                 while files == nil, !token.isCancelled, let maker = pictureMakers(for: account, chat: id, excluded: excluded).first {
                     if let index { changeTurn(id, index) { $0.status = L("\(self.label(maker))가 그림 그리는 중…", "\(self.label(maker)) is drawing…") } }
                     let started = Date()
-                    noteSent(maker, room: id)
+                    guard permits(maker, room: id) else { excluded.insert(maker.id); continue }
                     switch debateAnswer(maker, Pictures.makerPrompt(block.request), 600, token, false) {
                     case .success:
                         let made = Pictures.newCodexImages(maker, since: started).compactMap { try? Data(contentsOf: $0) }
@@ -939,7 +931,6 @@ final class Discussion: ObservableObject {
         let fresh = blanks.first ?? Conversation()
         conversations = [fresh] + loaded.filter(\.hasContent)
         currentID = fresh.id
-        classifyOldChats(accounts: model.accounts + DeviceSync.shared.rememberedSchool)
         linkChatTools()
     }
 
@@ -1120,8 +1111,7 @@ final class Discussion: ObservableObject {
         var typed = draft
         for id in mentioned { if let account = model.accounts.first(where: { $0.id == id }) { typed = typed.replacingOccurrences(of: "@" + label(account), with: "") } }
         if plain {
-            let side = configuration.school ?? soloNext?.isSchool
-            for found in Self.typedMentions(in: typed, accounts: model.accounts, label: label, school: side, strict: model.schoolOnlyHandoff,
+            for found in Self.typedMentions(in: typed, accounts: model.accounts, label: label, lock: current.enterpriseLock,
                                             usage: model.latestUsage, localEnabled: model.localEnabled) {
                 if let range = typed.range(of: found.token) { typed.replaceSubrange(range, with: "") }
                 if !mentioned.contains(found.id) { mentioned.append(found.id) }

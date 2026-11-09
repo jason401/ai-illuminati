@@ -205,18 +205,21 @@ extension Discussion {
             }
         }
         let transcript = Self.transcript(history) + "\n[User]\n" + question
-        var projectSchool = config.school
+        let chatLock = self.lock(of: id)
         var excluded = Set<String>(), checkpoint = run.checkpoint("Project turn started")
         var preferred = mentions.first ?? config.soloAccountID ?? config.lastSoloAccountID
         // Before the work starts: what the project looks like, so the review covers only this answer's changes
         // (also when another AI took over after a usage limit).
         let start = reviewers.isEmpty ? nil : ProjectSnapshot.take(root: selected.root)
         while !cancellation.isCancelled && Date() < run.deadline && !run.activeExpired {
-            let eligible = model.accounts.filter { [.claude, .codex].contains($0.provider) && !excluded.contains($0.id) }
+            let eligible = model.accounts.filter { [.claude, .codex].contains($0.provider) && !excluded.contains($0.id) && Enterprise.permits($0, lock: chatLock) }
             let account = preferred.flatMap { wanted in eligible.first { $0.id == wanted } }
-                ?? AutoPick.choose(eligible, usage: model.latestUsage, school: model.schoolOnlyHandoff ? projectSchool : nil, current: nil)
-            guard let account else { finish(id, index, error: L("이어서 작업할 Claude/Codex 계정이 필요해요. 파일 변경은 보존했어요.", "No Claude/Codex account is available to continue. Changes are preserved.")); return }
-            if model.schoolOnlyHandoff && projectSchool == nil { projectSchool = account.isSchool }
+                ?? AutoPick.choose(eligible, usage: model.latestUsage, lock: chatLock, current: nil)
+            guard let account else {
+                finish(id, index, error: chatLock != nil
+                       ? L("이 Enterprise 방에서 작업할 \(chatLock?.name ?? "") Claude/Codex 계정이 필요해요. 파일 변경은 보존했어요.", "This Enterprise chat needs a \(chatLock?.name ?? "") Claude/Codex account to continue. Changes are preserved.")
+                       : L("이어서 작업할 Claude/Codex 계정이 필요해요. 파일 변경은 보존했어요.", "No Claude/Codex account is available to continue. Changes are preserved.")); return
+            }
             run.nextAttempt(); workspace.projectGeneration = run.generation; activeWorkspace = workspace
             let speaker = label(account)
             changeTurn(id, index) { $0.status = speaker + L(" · 프로젝트 작업 중", " · working on project") }
@@ -234,7 +237,7 @@ extension Discussion {
                     case .activity(let text): self.changeTurn(id, index) { $0.activity = text }
                     }
                 }
-                noteSent(account, room: id)
+                guard permits(account, room: id) else { return .failure(Enterprise.blocked(account)) }
                 if let workspaceAnswer { return workspaceAnswer(account, prompt, workspace, run.attempt, progress) }
                 return nativeSessions.ask(account, room: id, prompt: prompt, images: activeImages,
                                           timeout: run.deadline.timeIntervalSinceNow, token: run.attempt, web: true, speaker: speaker, fresh: freshPrompt,
@@ -264,7 +267,6 @@ extension Discussion {
                 change(id, save: true) { conversation in
                     var saved = conversation.configuration ?? config
                     saved.lastSoloAccountID = account.id
-                    if self.model.schoolOnlyHandoff && saved.school == nil { saved.school = account.isSchool }
                     conversation.configuration = saved
                 }
                 // Members who review: when this answer changed the project, one of them reads the changes and the
@@ -304,9 +306,8 @@ extension Discussion {
                     view.level = .view; view.project = nil; view.projectRunID = nil; view.projectGeneration = nil
                     view.roots = workspace.roots.map { WorkspaceRoot(path: $0.path, directory: $0.directory, writable: $0.path == Self.chatFolder(id).path ? true : nil) }
                     let reviewPrompt = Self.soloContext(rules: rules, transcript: transcript + "\n[Writer result]\n" + text) + "\n[SOLO TURN]\nReview the linked project read-only. Do not edit the project or run Git writes.\n" + run.checkpoint("Read-only review")
-                    noteSent(reviewer, room: id)
-                    let reviewResult = workspaceAnswer?(reviewer, reviewPrompt, view, run.attempt, nil)
-                        ?? Answerer.ask(reviewer, prompt: reviewPrompt, timeout: min(900, run.deadline.timeIntervalSinceNow), cancellation: run.attempt, workspace: WorkspaceInvocation(binding: view, room: id))
+                    let reviewResult = !permits(reviewer, room: id) ? .failure(Enterprise.blocked(reviewer))
+                        : workspaceAnswer?(reviewer, reviewPrompt, view, run.attempt, nil) ?? Answerer.ask(reviewer, prompt: reviewPrompt, timeout: min(900, run.deadline.timeIntervalSinceNow), cancellation: run.attempt, workspace: WorkspaceInvocation(binding: view, room: id))
                     run.attempt.cancel()
                     let reviewText: String, failed: Bool
                     switch reviewResult {

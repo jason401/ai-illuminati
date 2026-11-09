@@ -20,8 +20,8 @@ enum ChatSearch {
     static func passes(_ conversation: Conversation, side: SideFilter, kind: KindFilter) -> Bool {
         switch side {
         case .all: break
-        case .personal: if conversation.side != .personal { return false }
-        case .enterprise: if conversation.side == .personal { return false }
+        case .personal: if conversation.isEnterprise { return false }
+        case .enterprise: if !conversation.isEnterprise { return false }
         }
         switch kind {
         case .all: return true
@@ -159,17 +159,18 @@ extension Discussion {
     }
 }
 
-// The sidebar's filters while searching: personal / Enterprise and plain / work chats.
+// The sidebar's filters while searching: open / Enterprise and plain / work chats. The sidebar search runs on
+// this Mac only, so it lists Enterprise chats too (AI chat search does not).
 struct ChatSearchFilters: View {
     @ObservedObject var discussion: Discussion
     var body: some View {
         HStack(spacing: 6) {
             Picker("", selection: $discussion.searchSide) {
-                Text(L("개인·Enterprise", "Personal · Enterprise")).tag(ChatSearch.SideFilter.all)
-                Text(L("개인", "Personal")).tag(ChatSearch.SideFilter.personal)
+                Text(L("Enterprise 포함", "With Enterprise")).tag(ChatSearch.SideFilter.all)
+                Text(L("Enterprise 아님", "Not Enterprise")).tag(ChatSearch.SideFilter.personal)
                 Text("Enterprise").tag(ChatSearch.SideFilter.enterprise)
             }
-            .help(L("개인 / Enterprise 대화", "Personal / Enterprise chats"))
+            .help(L("Enterprise 방: 직접 잠근 대화", "Enterprise chats: the ones you locked"))
             Picker("", selection: $discussion.searchKind) {
                 Text(L("일반·작업", "Plain · Work")).tag(ChatSearch.KindFilter.all)
                 Text(L("일반", "Plain")).tag(ChatSearch.KindFilter.plain)
@@ -195,7 +196,7 @@ struct ChatSearchRow: View {
                     Image(systemName: "chevron.left.forwardslash.chevron.right").font(.system(size: 9, weight: .semibold)).foregroundColor(.secondary)
                 }
                 Text(result.title).font(.system(size: 13)).lineLimit(1).truncationMode(.tail)
-                if let side = conversation?.side, side != .personal { EnterpriseBadge(side: side) }
+                if conversation?.isEnterprise == true { EnterpriseBadge() }
             }
             if !result.snippet.isEmpty {
                 Text(FindHighlight(words: result.words).apply(AttributedString(result.snippet)))

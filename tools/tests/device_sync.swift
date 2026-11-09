@@ -10,15 +10,14 @@ func testDeviceSync() {
     on.deviceName = "MacBook"
     let b = DeviceSync(deviceID: "mac-b", persist: false, settings: on)
     let personal = Account(id: "ds-claude", provider: .claude, name: "Claude", dir: nil)
-    var work = Account(id: "ds-work", provider: .codex, name: "Work", dir: nil); work.school = true
-    let accounts = [personal, work]
+    let workLock = EnterpriseLock(organization: "work", name: "Work", lockedAt: Date())
     expect(DeviceSync.shared.settings.enabled == false, "chats from other Macs are off until turned on")
     expect(DeviceSync.hardwareID().count == 16 && DeviceSync.hardwareID() == DeviceSync.hardwareID(), "this Mac's ID is stable")
 
     // A chat with this Mac's paths, pictures and a reply still being written.
     var chat = Conversation()
     chat.title = "Lens notes"
-    var config = ChatConfiguration(); config.mode = 0; config.modeVersion = 2; config.school = false
+    var config = ChatConfiguration(); config.mode = 0; config.modeVersion = 2
     chat.configuration = config
     var done = ChatTurn(question: "FIRST question")
     done.mode = 0; done.modeVersion = 2
@@ -35,38 +34,37 @@ func testDeviceSync() {
     Discussion.saveText(done.id.uuidString, to: Discussion.stateTurnFile(chat.id))
     let file = a.myChats.appendingPathComponent(chat.id.uuidString + ".json")
 
-    expect(!a.publish(chat, accounts: accounts) && !fm.fileExists(atPath: file.path), "with ‘chosen chats’, an unchosen chat is not copied")
+    expect(!a.publish(chat) && !fm.fileExists(atPath: file.path), "with ‘chosen chats’, an unchosen chat is not copied")
     chat.shareToDevices = true
     a.isBusy = { _ in true }
-    expect(a.publish(chat, accounts: accounts), "a chosen chat is copied")
+    expect(a.publish(chat), "a chosen chat is copied")
     let text = (try? String(contentsOf: file, encoding: .utf8)) ?? ""
     expect(!text.contains("/Users/someone") && !text.contains("git_push") && !text.contains("photo.png"), "the copy leaves out this Mac's paths, project steps and pictures")
     expect(!text.contains("SECOND question") && !text.contains("half"), "the turn being answered stays out of the copy")
     let snap = DeviceSync.load(RemoteChat(device: "mac-a", deviceName: "", chat: chat.id, title: "", updatedAt: nil, school: false, status: .ready, file: file))!
     expect(snap.turns.count == 1 && snap.pictures == 1 && snap.state == "Goal: lenses" && snap.stateTurn == done.id, "the copy has the finished turns, the chat state and which turn it covers")
     a.isBusy = { _ in false }
-    expect(a.publish(chat, accounts: accounts), "copied again")
+    expect(a.publish(chat), "copied again")
     let finished = (try? String(contentsOf: file, encoding: .utf8)) ?? ""
     expect(finished.contains("SECOND question") && !finished.contains("\"half\""), "once answered, the last turn goes out too, without the work in progress")
     let old = Date(timeIntervalSince1970: 1_000_000)
     try! fm.setAttributes([.modificationDate: old], ofItemAtPath: file.path)
-    a.publish(chat, accounts: accounts)
+    a.publish(chat)
     expect((try? fm.attributesOfItem(atPath: file.path)[.modificationDate] as? Date) == old, "an unchanged chat is not written again")
 
-    // Enterprise chats stay off unless included; turning that off removes their copies.
+    // Enterprise (locked) chats stay off unless included; turning that off removes their copies.
     var school = Conversation(); school.title = "Work chat"; school.shareToDevices = true
     school.turns = [ChatTurn(question: "work question")]
-    school.configuration = ChatConfiguration(); school.configuration?.lastSoloAccountID = work.id
-    expect(DeviceSync.isSchool(school, accounts: accounts), "a chat an Enterprise account answered is Enterprise")
+    school.enterpriseLock = workLock
+    expect(DeviceSync.isSchool(school), "a locked chat is Enterprise")
     var named = Conversation(); var reply = ChatTurn(question: "q"); reply.finalBy = "ChatGPT (Work)"; named.turns = [reply]
-    expect(DeviceSync.isSchool(named, accounts: accounts), "an older chat is Enterprise when an Enterprise account's name answered")
-    expect(!a.publish(school, accounts: accounts), "Enterprise chats are not copied by default")
+    expect(!DeviceSync.isSchool(named), "a chat an Enterprise account answered is not, unless locked")
+    expect(!a.publish(school), "Enterprise chats are not copied by default")
     a.settings.includeSchool = true
     a.waitForWrites()   // the reconcile that change starts, before this write
-    expect(a.publish(school, accounts: accounts), "included Enterprise chats are copied")
+    expect(a.publish(school), "included Enterprise chats are copied")
     let schoolFile = a.myChats.appendingPathComponent(school.id.uuidString + ".json")
     a.conversations = { [chat, school] }
-    a.accounts = { accounts }
     a.settings.includeSchool = false   // reconciles
     a.waitForWrites()
     expect(!fm.fileExists(atPath: schoolFile.path) && fm.fileExists(atPath: file.path), "turning Enterprise off removes only the Enterprise copies")
@@ -88,7 +86,7 @@ func testDeviceSync() {
     var steady = Conversation(); steady.shareToDevices = true; steady.title = "Steady"
     var answered = ChatTurn(question: "STEADY one"); answered.final = "a"; steady.turns = [answered]
     let steadyFile = a.myChats.appendingPathComponent(steady.id.uuidString + ".json")
-    expect(a.publish(steady, accounts: accounts), "copied")
+    expect(a.publish(steady), "copied")
     let before = try! Data(contentsOf: steadyFile)
     steady.turns.append(ChatTurn(question: "STEADY two"))
     var answering = Conversation(); answering.shareToDevices = true; answering.title = "Answering"
@@ -109,33 +107,17 @@ func testDeviceSync() {
     a.reconcile(); a.waitForWrites()
     expect(!fm.fileExists(atPath: steadyFile.path) && !fm.fileExists(atPath: answeringFile.path) && fm.fileExists(atPath: file.path), "cleaned up")
 
-    // A chat marked personal that an Enterprise account answered (called with @) counts as Enterprise.
-    var mixed = Conversation(); mixed.configuration = ChatConfiguration(); mixed.configuration?.school = false
-    var atWork = ChatTurn(question: "q"); atWork.final = "a"; atWork.finalBy = "ChatGPT (Work)"; mixed.turns = [atWork]
-    expect(DeviceSync.isSchool(mixed, accounts: accounts), "a personal chat with an Enterprise reply is Enterprise")
-    expect(!DeviceSync.isSchool(chat, accounts: accounts), "a personal chat answered by personal accounts stays personal")
-    var reviewed = Conversation(); var lead = ChatTurn(question: "q"); lead.final = "a"; lead.finalBy = "Claude"
-    lead.peerNotes = [ChatTurn.Entry(round: 1, speaker: "ChatGPT (Work)", text: "review", failed: false)]; reviewed.turns = [lead]
-    expect(DeviceSync.isSchool(reviewed, accounts: accounts), "a chat an Enterprise account reviewed is Enterprise")
-
-    // It stays Enterprise after its account is removed, or set to personal, on this Mac, even when sync was
-    // off while that happened (the accounts are kept as they change).
-    let off = DeviceSync(deviceID: "mac-off", persist: false, settings: DeviceSyncSettings())
-    off.remember(accounts)
-    off.accounts = { [personal] }
-    var offOn = on; offOn.folder = folder.appendingPathComponent("off").path
-    off.settings = offOn
-    off.waitForWrites()
-    expect(!off.shares(school, accounts: off.sideAccounts()), "an Enterprise account removed while sync was off still keeps its chats off")
-    a.accounts = { accounts }
-    expect(!a.shares(school, accounts: a.sideAccounts()), "Enterprise chats are not shared")
-    mixed.shareToDevices = true
-    a.accounts = { accounts.filter { $0.id != work.id } }
-    expect(!a.shares(school, accounts: a.sideAccounts()) && !a.shares(mixed, accounts: a.sideAccounts()), "an Enterprise chat stays off after its account is removed")
-    a.accounts = { accounts.map { var personal = $0; personal.school = false; return personal } }
-    expect(!a.shares(school, accounts: a.sideAccounts()) && !a.shares(mixed, accounts: a.sideAccounts()), "and after its account is set to personal")
-    expect(a.shares(chat, accounts: a.sideAccounts()), "a personal chat is still shared")
-    a.accounts = { accounts }
+    // Locking a shared chat takes its copy down at once.
+    var later = Conversation(); later.title = "Locked later"; later.shareToDevices = true
+    var laterTurn = ChatTurn(question: "q"); laterTurn.final = "a"; later.turns = [laterTurn]
+    let laterFile = a.myChats.appendingPathComponent(later.id.uuidString + ".json")
+    expect(a.publish(later) && fm.fileExists(atPath: laterFile.path), "an open chat is copied")
+    later.enterpriseLock = workLock
+    a.chatLocked(later)
+    let removing = Date().addingTimeInterval(5)
+    while fm.fileExists(atPath: laterFile.path) && Date() < removing { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+    a.waitForWrites()
+    expect(!fm.fileExists(atPath: laterFile.path) && !a.shares(later) && a.shares(chat), "locking removes its copy; open chats stay shared")
 
     // The other Mac reads them; broken, half-written, newer and not-yet-downloaded files are handled.
     let chats = a.myChats
@@ -172,19 +154,27 @@ func testDeviceSync() {
     expect(id != chat.id && copy.id == id && here.viewingRemote == nil, "continuing makes a new chat and opens it")
     expect(copy.turns.map(\.question) == ["FIRST question", "SECOND question"] && copy.workspace == nil, "the new chat has the turns and no linked folders")
     expect(here.configuration.mode == 0, "a plain chat stays a plain chat")
-    expect(copy.configuration?.school == false && copy.origin?.device == "mac-a" && copy.origin?.chat == chat.id, "it keeps its side and where it came from")
+    expect(!copy.isEnterprise && copy.origin?.device == "mac-a" && copy.origin?.chat == chat.id, "an open chat stays open and keeps where it came from")
     expect(Discussion.loadState(id) == "Goal: lenses" && Discussion.loadStateTurn(id) == done.id, "the chat state comes along")
     expect(here.continued(from: remote).map(\.id) == [id], "a second ‘continue’ finds the chat already continued")
     expect(fm.fileExists(atPath: file.path), "the other Mac's copy is never changed")
     here.openRemote(remote); here.open(id)
     expect(here.viewingRemote == nil, "opening a chat here leaves the read-only view")
 
+    // A locked chat's copy is continued locked; an older copy marked Enterprise (no lock) is open.
+    let lockedID = here.continueFromDevice(DeviceSync.snapshot(school, school: true, busy: false, state: nil, stateTurn: nil), device: "mac-a", deviceName: "Mac mini")
+    expect(here.conversations.first { $0.id == lockedID }?.enterpriseLock == workLock, "a locked chat stays locked on the other Mac")
+    var olderSnap = DeviceSync.snapshot(school, school: true, busy: false, state: nil, stateTurn: nil); olderSnap.enterpriseLock = nil
+    let olderID = here.continueFromDevice(olderSnap, device: "mac-a", deviceName: "Mac mini")
+    expect(here.conversations.first { $0.id == olderID }?.isEnterprise == false, "an older copy is open")
+    here.open(id)
+
     // The first message: a new session that knows the chat came from another Mac and reads every turn after the state.
     var legacy = ChatConfiguration(); legacy.mode = 0
     expect(DeviceSync.mode(legacy) == 1 && DeviceSync.mode(nil) == 0, "a copy carries the mode the chat really runs in")
     expect(Discussion.recentCount(Array(repeating: ChatTurn(question: ""), count: 2), stateTurn: nil) == Discussion.recentTurns, "without a state turn, the usual recent turns")
     var long = Conversation(); long.title = "Long"
-    long.configuration = ChatConfiguration(); long.configuration?.mode = 0; long.configuration?.modeVersion = 2; long.configuration?.school = false
+    long.configuration = ChatConfiguration(); long.configuration?.mode = 0; long.configuration?.modeVersion = 2
     let words = ["ZERO", "ONE", "TWO", "THREE", "FOUR", "FIVE"]
     long.turns = words.map { w in
         var t = ChatTurn(question: "QUESTION-\(w)"); t.mode = 0; t.modeVersion = 2

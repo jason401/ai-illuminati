@@ -36,6 +36,7 @@ struct SyncSnapshot: Codable, Equatable {
     var turns: [ChatTurn]
     var pictures: Int         // pictures left out of the copy
     var origin: SyncOrigin?   // set when this chat was itself continued from another Mac
+    var enterpriseLock: EnterpriseLock?   // an Enterprise chat (`school` is true then too, for older apps)
 }
 
 struct SyncDeviceInfo: Codable {
@@ -94,7 +95,6 @@ final class DeviceSync: ObservableObject {
     // Set by the app: the chats to share (the saved list) and whether a chat is answering right now.
     var conversations: () -> [Conversation] = { [] }
     var isBusy: (UUID) -> Bool = { _ in false }
-    var accounts: () -> [Account] = { AccountStore.load() }
     // Whether this Mac still has the chat's own file (one the list could not read, so not deleted).
     var hasLocalFile: (String) -> Bool = { FileManager.default.fileExists(atPath: ChatStore.dir + "/" + $0) }
 
@@ -105,11 +105,7 @@ final class DeviceSync: ObservableObject {
     private var scanning = false
     private var headers: [String: (Date, RemoteChat)] = [:]   // file path → (modification date, listing)
     private let io = DispatchQueue(label: "device-sync")
-    // Every Enterprise account this Mac has had: a chat one answered stays Enterprise after the account is
-    // removed, renamed or set to personal.
-    private var schoolSeen: [Account] = []
     static let settingsKey = "deviceSync"
-    static let schoolKey = "deviceSyncSchoolAccounts"
     static let delay: TimeInterval = 3        // several saves in a row become one write
     static let interval: TimeInterval = 180   // look at the other Macs this often while the app runs
 
@@ -120,8 +116,6 @@ final class DeviceSync: ObservableObject {
         else if persist, let data = UserDefaults.app.data(forKey: Self.settingsKey),
                 let saved = try? JSONDecoder().decode(DeviceSyncSettings.self, from: data) { self.settings = saved }
         else { self.settings = DeviceSyncSettings() }
-        if persist, let data = UserDefaults.app.data(forKey: Self.schoolKey),
-           let saved = try? JSONDecoder().decode([Account].self, from: data) { schoolSeen = saved }
     }
 
     // MARK: Places
@@ -166,51 +160,24 @@ final class DeviceSync: ObservableObject {
         ticker.tolerance = 30
         RunLoop.main.add(ticker, forMode: .common)
         timer = ticker
-        remember(accounts())
         if settings.enabled { reconcile(); scan() }
     }
 
     // MARK: What is shared
 
-    // A chat is Enterprise when its record says so (Enterprise.swift), it was marked so, or an Enterprise account picked or answered it (even in a
-    // chat marked personal, as when one is called with @ or chats are not kept apart).
-    static func isSchool(_ conversation: Conversation, accounts: [Account]) -> Bool {
-        if conversation.side != .personal || conversation.configuration?.school == true { return true }
-        let config = conversation.configuration
-        let ids = Set([config?.soloAccountID, config?.lastSoloAccountID, config?.leaderAccountID].compactMap { $0 } + (config?.accountIDs ?? []) + (config?.memberIDs ?? []))
-        let schoolNames = Set(accounts.filter(\.isSchool).flatMap { [$0.name, "\($0.provider.title) (\($0.name))"] })
-        if accounts.contains(where: { $0.isSchool && ids.contains($0.id) }) { return true }
-        // Older chats did not save who answered: the reply's speaker name still tells.
-        return conversation.turns.contains { turn in
-            (turn.finalBy.map(schoolNames.contains) ?? false) || (turn.entries + (turn.moreAnswers ?? []) + (turn.peerNotes ?? [])).contains { schoolNames.contains($0.speaker) }
-        }
+    // An Enterprise chat: one the user locked (Enterprise.swift). Older chats and older copies are open chats.
+    static func isSchool(_ conversation: Conversation) -> Bool { conversation.isEnterprise }
+
+    // A chat was just locked: with Enterprise chats not shared, its copy is taken down now.
+    func chatLocked(_ conversation: Conversation) {
+        guard settings.enabled else { return }
+        if shares(conversation) { noteSaved(conversation) } else { noteDeleted(conversation.id) }
     }
 
-    // The accounts that tell a chat's side: this Mac's accounts and every Enterprise account it had before.
-    var rememberedSchool: [Account] { schoolSeen }
-
-    func sideAccounts() -> [Account] {
-        let current = accounts()
-        remember(current)
-        return current + schoolSeen
-    }
-
-    // Keeps the Enterprise ones among these accounts, sync on or off (called before an account is removed,
-    // renamed or set to personal, and at launch).
-    func remember(_ list: [Account]) {
-        let before = schoolSeen.count
-        for account in list where account.isSchool
-            && !schoolSeen.contains(where: { $0.id == account.id && $0.name == account.name && $0.provider == account.provider }) {
-            schoolSeen.append(Account(id: account.id, provider: account.provider, name: account.name, school: true))
-        }
-        guard schoolSeen.count > before else { return }
-        if persist, let data = try? JSONEncoder().encode(schoolSeen) { UserDefaults.app.set(data, forKey: Self.schoolKey) }
-    }
-
-    func shares(_ conversation: Conversation, accounts: [Account]) -> Bool {
+    func shares(_ conversation: Conversation) -> Bool {
         guard settings.enabled, conversation.hasContent, !conversation.turns.isEmpty else { return false }
         if !settings.shareAll && conversation.shareToDevices != true { return false }
-        if !settings.includeSchool && Self.isSchool(conversation, accounts: accounts) { return false }
+        if !settings.includeSchool && Self.isSchool(conversation) { return false }
         return true
     }
 
@@ -237,7 +204,7 @@ final class DeviceSync: ObservableObject {
                             updatedAt: conversation.updatedAt, school: school, mode: mode(conversation.configuration),
                             summary: conversation.summary, state: state?.isEmpty == false ? state : nil,
                             stateTurn: state?.isEmpty == false && turns.contains { $0.id == stateTurn } ? stateTurn : nil,
-                            turns: turns, pictures: pictures, origin: conversation.origin)
+                            turns: turns, pictures: pictures, origin: conversation.origin, enterpriseLock: conversation.enterpriseLock)
     }
 
     // The mode the chat runs in (an unversioned saved mode is an old number: Discussion.configuration).
@@ -292,8 +259,7 @@ final class DeviceSync: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.delay) { [weak self] in
             guard let self else { return }
             self.flushScheduled = false
-            let accounts = self.sideAccounts()
-            let copies = self.pending.values.map { self.copy($0, accounts: accounts) }
+            let copies = self.pending.values.map { self.copy($0) }
             self.pending = [:]
             let folder = self.myChats, info = self.deviceInfo()
             self.io.async {
@@ -313,9 +279,9 @@ final class DeviceSync: ObservableObject {
     }
     enum Outcome: Equatable { case removed, nothing, saved, failed(String) }
 
-    func copy(_ conversation: Conversation, accounts: [Account]) -> Copy {
-        Copy(conversation: conversation, shared: shares(conversation, accounts: accounts),
-             school: Self.isSchool(conversation, accounts: accounts), busy: isBusy(conversation.id))
+    func copy(_ conversation: Conversation) -> Copy {
+        Copy(conversation: conversation, shared: shares(conversation),
+             school: Self.isSchool(conversation), busy: isBusy(conversation.id))
     }
 
     // Writes a shared chat's copy (only when it changed), else removes it. Safe off the main thread.
@@ -348,8 +314,8 @@ final class DeviceSync: ObservableObject {
 
     // Writes or removes one chat's copy right away (tests). True when the chat's copy is in place.
     @discardableResult
-    func publish(_ conversation: Conversation, accounts: [Account]) -> Bool {
-        Self.write(copy(conversation, accounts: accounts), to: myChats) == .saved
+    func publish(_ conversation: Conversation) -> Bool {
+        Self.write(copy(conversation), to: myChats) == .saved
     }
 
     static func removeFile(_ file: URL) {
@@ -374,8 +340,7 @@ final class DeviceSync: ObservableObject {
     // look to the other Macs as if the chat was taken away.
     func reconcile() {
         guard settings.enabled else { return }
-        let accounts = self.sideAccounts()
-        let copies = conversations().map { copy($0, accounts: accounts) }
+        let copies = conversations().map { copy($0) }
         let folder = myChats, info = deviceInfo()
         io.async {
             let outcomes = copies.map { Self.write($0, to: folder) }
@@ -560,11 +525,10 @@ extension Discussion {
         chat.turns = snap.turns
         chat.summary = snap.summary
         // Versioned like a new chat here, or the mode would be read as an old number (plain chat became a discussion).
-        var config = ChatConfiguration(mode: Self.availableModes.contains(snap.mode) ? snap.mode : Self.availableModes[0],
+        let config = ChatConfiguration(mode: Self.availableModes.contains(snap.mode) ? snap.mode : Self.availableModes[0],
                                        modeVersion: Self.modernModes ? 2 : nil)
-        config.school = snap.school
         chat.configuration = config
-        chat.enterpriseUnsure = true   // which accounts saw it there is not in the copy
+        chat.enterpriseLock = snap.enterpriseLock   // an Enterprise chat stays one here (older copies have no lock: open)
         chat.origin = SyncOrigin(device: device, deviceName: deviceName, chat: snap.id, lastTurn: snap.turns.last?.id,
                                  contentAt: snap.updatedAt, importedAt: Date())
         if let state = snap.state {

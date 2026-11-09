@@ -1,117 +1,160 @@
+import Cocoa
 import SwiftUI
 
-// Which Enterprise accounts (school or work) were sent a chat's content. A mark is added right before the content
-// goes out, so a failed or stopped answer counts too, and it is never removed (not when the account or the
-// message is deleted). The account's name stands for its organization: a chat seen by one Enterprise account
-// is not opened to another organization's account (ChatSearch's AI tools), but an account added again under
-// the same name keeps it.
-struct EnterpriseMark: Codable, Equatable {
-    var id: String
-    var name: String
-    var provider: Account.Provider?
-
-    init(_ account: Account) {
-        id = account.id; name = account.name; provider = account.provider
-    }
-
-    // The same account, or one of the same organization.
-    func covers(_ account: Account) -> Bool {
-        id == account.id || (!Self.organization(name).isEmpty && Self.organization(name) == Self.organization(account.name))
-    }
-
-    static func organization(_ name: String) -> String {
-        name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-    }
-}
-
-enum ChatSide: Equatable {
-    case personal, enterprise
-    case unsure   // not known for certain (a copy from another Mac, or an older chat that could not be told): treated as Enterprise
+// An Enterprise chat: one the user locked (the chat menu, or "New Enterprise chat"). Only the user locks a chat,
+// and a lock is never removed. In a locked chat only Enterprise accounts of the organization it was locked for,
+// and models on this Mac, are sent its content; AI chat search (ChatTools.swift) never shows it. Every other chat,
+// older ones included, is open to every account. The account's name without its AI's name stands for its
+// organization, so "Claude (학교)" and "ChatGPT (학교)" are one organization.
+struct EnterpriseLock: Codable, Equatable {
+    var organization: String   // Enterprise.organization(account name)
+    var name: String           // the name as shown
+    var lockedAt: Date
 }
 
 extension Conversation {
-    var side: ChatSide {
-        if enterpriseUnsure == true || enterprise == nil { return .unsure }
-        return (enterprise ?? []).isEmpty ? .personal : .enterprise
-    }
+    var isEnterprise: Bool { enterpriseLock != nil }
     // A work chat: a Git project is linked. A chat with only folders linked is a plain chat.
     var isProjectChat: Bool { workspace?.project != nil }
 }
 
 enum Enterprise {
-    // An account whose use makes a chat Enterprise (a model on this Mac sends nothing out).
-    static func counts(_ account: Account) -> Bool { account.provider != .ollama && account.isSchool }
+    static func organization(_ name: String) -> String { organizationName(name).lowercased() }
 
-    // Older chats, once: the Enterprise accounts that picked or answered them (DeviceSync.isSchool's rule).
-    // A copy from another Mac, or a chat marked Enterprise without an account to name, stays unsure.
-    static func classify(_ conversation: inout Conversation, accounts: [Account]) {
-        guard conversation.enterprise == nil else { return }
-        let config = conversation.configuration
-        let ids = Set([config?.soloAccountID, config?.lastSoloAccountID, config?.leaderAccountID].compactMap { $0 }
-                      + (config?.accountIDs ?? []) + (config?.memberIDs ?? []))
-        var speakers: Set<String> = []
-        for turn in conversation.turns {
-            if let by = turn.finalBy { speakers.insert(by) }
-            for entry in turn.entries + (turn.moreAnswers ?? []) + (turn.peerNotes ?? []) { speakers.insert(entry.speaker) }
+    // "ChatGPT (학교)" → "학교". A name that is only the AI's name stays as it is.
+    static func organizationName(_ name: String) -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        for title in Account.Provider.allCases.map(\.title) + ["Codex"] where trimmed.lowercased().hasPrefix(title.lowercased()) {
+            let rest = String(trimmed.dropFirst(title.count)).trimmingCharacters(in: CharacterSet.whitespaces.union(CharacterSet(charactersIn: "()-·:")))
+            if !rest.isEmpty { return rest }
         }
-        var marks: [EnterpriseMark] = []
-        for account in accounts where counts(account)
-            && (ids.contains(account.id) || speakers.contains(account.name) || speakers.contains("\(account.provider.title) (\(account.name))"))
-            && !marks.contains(where: { $0.id == account.id }) {
-            marks.append(EnterpriseMark(account))
+        return trimmed
+    }
+
+    // Whether `account` may be sent the content of a chat with `lock` (nil: an open chat, every account may).
+    // Gemini cannot be marked Enterprise in Settings, so it never joins a locked chat.
+    static func permits(_ account: Account, lock: EnterpriseLock?) -> Bool {
+        guard let lock else { return true }
+        if account.provider == .ollama { return true }
+        return account.provider != .gemini && account.isSchool && organization(account.name) == lock.organization
+    }
+
+    // The organizations a chat may be locked for: one per name among the Enterprise accounts.
+    static func organizations(_ accounts: [Account]) -> [EnterpriseLock] {
+        var seen = Set<String>()
+        return accounts.filter { $0.provider != .ollama && $0.provider != .gemini && $0.isSchool }.compactMap { account in
+            let key = organization(account.name)
+            guard !key.isEmpty, seen.insert(key).inserted else { return nil }
+            return EnterpriseLock(organization: key, name: organizationName(account.name), lockedAt: Date())
         }
-        conversation.enterprise = marks
-        // Helpers left no account name: the YouTube search (Gemini) and picture makers. With an Enterprise
-        // account of that kind on this Mac, which one helped cannot be told.
-        // Unsure also when such a helper could be of an organization the marks do not cover.
-        func uncovered(_ list: [Account]) -> Bool { list.contains { helper in !marks.contains { $0.covers(helper) } } }
-        let helpers = accounts.filter(counts)
-        let youTube = speakers.contains { $0.hasPrefix("Gemini · ") } && uncovered(helpers.filter { $0.provider == .gemini })
-        let pictures = conversation.turns.contains { !($0.finalImages ?? []).isEmpty } && uncovered(helpers)
-        if conversation.origin != nil || youTube || pictures || (marks.isEmpty && DeviceSync.isSchool(conversation, accounts: accounts)) {
-            conversation.enterpriseUnsure = true
-        }
+    }
+
+    static func blocked(_ account: Account) -> Answerer.Failure {
+        .failed(L("Enterprise 방이라 \(account.provider.title) (\(account.name))에게는 보내지 않았어요.",
+                  "This is an Enterprise chat, so nothing was sent to \(account.provider.title) (\(account.name))."))
     }
 }
 
 extension Discussion {
-    // Called right before a chat's content is sent to `account`. Saved at once, without moving the chat up.
-    func noteSent(_ account: Account, room: UUID) {
-        guard Enterprise.counts(account) else { return }
-        if let host { return host.noteSent(account, room: room) }
-        let apply = {
-            guard let i = self.conversations.firstIndex(where: { $0.id == room }) else { return }
-            var marks = self.conversations[i].enterprise ?? []
-            guard !marks.contains(where: { $0.id == account.id }) else { return }
-            marks.append(EnterpriseMark(account))
-            self.conversations[i].enterprise = marks
-            if self.conversations[i].hasContent { ChatStore.save(self.conversations[i]) }
-        }
-        if Thread.isMainThread { apply() } else { DispatchQueue.main.sync(execute: apply) }
+    // The lock of a chat as saved now (a worker's own copy may be older). A chat that cannot be found is
+    // treated as locked to nobody, so its content goes only to models on this Mac.
+    func lock(of room: UUID) -> EnterpriseLock? {
+        let read = { (self.host ?? self).conversations.first { $0.id == room } ?? self.conversations.first { $0.id == room } }
+        let found = Thread.isMainThread ? read() : DispatchQueue.main.sync(execute: read)
+        guard let found else { return EnterpriseLock(organization: "", name: "", lockedAt: .distantPast) }
+        return found.enterpriseLock
     }
 
-    // Older chats get their side once (at launch).
-    func classifyOldChats(accounts: [Account]) {
-        for i in conversations.indices where conversations[i].enterprise == nil {
-            Enterprise.classify(&conversations[i], accounts: accounts)
-            if conversations[i].hasContent { ChatStore.save(conversations[i]) }
+    // The gate: called right before a chat's content is sent to `account`. false = do not send.
+    func permits(_ account: Account, room: UUID) -> Bool {
+        Enterprise.permits(account, lock: lock(of: room))
+    }
+
+    // The open chat's lock (for picking accounts).
+    var currentLock: EnterpriseLock? { lock(of: currentID) }
+
+    // Locks a chat for `organization`, by the user only (the chat menu). It cannot be undone. Its copy on iCloud
+    // is taken down (DeviceSync shares no Enterprise chat by default).
+    func lockEnterprise(_ room: UUID, organization: EnterpriseLock) {
+        guard let i = conversations.firstIndex(where: { $0.id == room }), conversations[i].enterpriseLock == nil,
+              !runningRooms.contains(room) else { return }
+        var lock = organization
+        lock.lockedAt = Date()
+        conversations[i].enterpriseLock = lock
+        // Accounts picked by hand that may no longer take part drop out.
+        if var config = conversations[i].configuration {
+            let allowed = { (id: String) in self.model.accounts.first { $0.id == id }.map { Enterprise.permits($0, lock: lock) } ?? false }
+            if let id = config.soloAccountID, !allowed(id) { config.soloAccountID = nil }
+            if let ids = config.memberIDs { let kept = ids.filter(allowed); config.memberIDs = kept.isEmpty ? nil : kept }
+            if let id = config.leadID, !allowed(id) { config.leadID = nil }
+            if let id = config.lastSoloAccountID, !allowed(id) { config.lastSoloAccountID = nil }
+            conversations[i].configuration = config
+        }
+        if conversations[i].hasContent { ChatStore.save(conversations[i]) }
+        DeviceSync.shared.chatLocked(conversations[i])
+        objectWillChange.send()
+    }
+}
+
+extension Discussion {
+    // Asks before locking (it cannot be undone), then locks.
+    func askToLock(_ room: UUID, organization: EnterpriseLock) {
+        let alert = NSAlert()
+        alert.messageText = L("이 대화를 \(organization.name) Enterprise 방으로 잠글까요?", "Lock this chat as a \(organization.name) Enterprise chat?")
+        alert.informativeText = L("""
+            되돌릴 수 없어요. 잠근 뒤에는 \(organization.name) 엔터프라이즈 계정과 내 Mac 모델만 이 대화에 참여하고, 다른 대화의 AI 검색에 나오지 않아요.
+
+            잠그기 전에 이 대화에서 개인 AI에게 보낸 내용은 이미 보낸 거예요. 학교·회사 자료는 잠근 다음에 넣으세요.
+            공유 폴더와 프로젝트 폴더는 일반 방과 같이 쓰는 곳이에요. 여기에 쓴 파일은 일반 방의 AI도 읽을 수 있어요.
+            """, """
+            This cannot be undone. Once locked, only \(organization.name) Enterprise accounts and models on this Mac take part, and AI search from other chats never shows it.
+
+            Whatever this chat already sent to personal AIs was sent. Add school or work material after locking.
+            Shared and project folders are also used by open chats: files written there can be read by their AIs.
+            """)
+        alert.addButton(withTitle: L("영구히 잠그기", "Lock for good"))
+        alert.addButton(withTitle: L("취소", "Cancel"))
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        lockEnterprise(room, organization: organization)
+    }
+
+    // "New Enterprise chat": a new chat, locked before anything is sent.
+    func newEnterpriseConversation(_ organization: EnterpriseLock) {
+        newConversation()
+        guard current.turns.isEmpty, current.enterpriseLock == nil else { return }
+        askToLock(currentID, organization: organization)
+    }
+}
+
+// The lock items in a menu: one per organization (room nil: a new chat). None without an Enterprise account.
+struct EnterpriseLockButtons: View {
+    @ObservedObject var discussion: Discussion
+    let room: UUID?
+    var body: some View {
+        let organizations = Enterprise.organizations(discussion.model.accounts)
+        ForEach(organizations, id: \.organization) { organization in
+            let suffix = organizations.count > 1 ? " (\(organization.name))" : ""
+            if let room {
+                Button(L("Enterprise 방으로 잠그기", "Lock as Enterprise chat") + suffix + "…") { discussion.askToLock(room, organization: organization) }
+                    .disabled(discussion.runningRooms.contains(room) || discussion.importingMaterials)
+            } else {
+                Button(L("새 Enterprise 대화", "New Enterprise chat") + suffix + "…") { discussion.newEnterpriseConversation(organization) }
+                    .disabled(discussion.importingMaterials)
+            }
         }
     }
 }
 
 // The small "E" after an Enterprise chat's title in the list.
 struct EnterpriseBadge: View {
-    let side: ChatSide
     var body: some View {
         Text("E")
             .font(.system(size: 9, weight: .bold))
             .foregroundColor(.secondary)
             .frame(width: 14, height: 14)
             .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(Color.secondary.opacity(0.6), lineWidth: 1))
-            .help(side == .unsure
-                  ? L("Enterprise로 다뤄요: 어느 계정이 봤는지 확실하지 않아요(다른 Mac에서 가져온 대화 등). AI의 채팅 검색에서는 빠져요.",
-                      "Treated as Enterprise: which accounts saw it is not certain (a copy from another Mac, for example). AI chat search leaves it out.")
-                  : L("Enterprise: Enterprise 계정이 이 대화를 봤어요.", "Enterprise: an Enterprise account has seen this chat."))
+            .help(L("Enterprise 방: 개인 클라우드 AI가 참여하지 않고, AI 채팅 검색에 나오지 않아요.",
+                    "Enterprise chat: personal cloud AIs do not take part, and AI chat search leaves it out."))
             .accessibilityLabel("Enterprise")
     }
 }

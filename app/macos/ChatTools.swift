@@ -1,10 +1,9 @@
 import Foundation
 
 // search_chats and read_chat (note 3): the AI answering one chat finds and reads the user's other chats.
-// The app decides what it may see, for both tools, from the chat's record (Enterprise.swift) and the account
-// that is answering: a personal chat is open to any account; an Enterprise chat only to an Enterprise account of
-// every organization that saw it. Unsure chats (copies from other Macs, older chats that cannot be told), the
-// chat being answered and pictures are never given. With no known account, the tools are not offered.
+// Every open chat may be found and read by any account; an Enterprise chat (Enterprise.swift) never, not even from
+// another Enterprise chat, and its id reads as "no such chat". The chat being answered and pictures are never
+// given. With no known account, the tools are not offered. An Enterprise chat may still search open chats.
 final class ChatLink: ToolProvider {
     static let shared = ChatLink()
     static let resultLimit = 8
@@ -14,8 +13,6 @@ final class ChatLink: ToolProvider {
 
     // The chats as the app has them now (set by the app's Discussion; read on the main thread).
     var conversations: () -> [Conversation] = { [] }
-    // Records that the receiving chat now holds an Enterprise chat's content (the app's Discussion).
-    var noteRead: (_ source: Conversation, _ room: UUID) -> Void = { _, _ in }
 
     var active: Bool { true }
     func tools() -> [[String: Any]] { [] }
@@ -33,13 +30,7 @@ final class ChatLink: ToolProvider {
     }
 
     static func allowed(_ conversation: Conversation, asker: Account?, room: UUID) -> Bool {
-        guard let asker, conversation.id != room, !conversation.turns.isEmpty, conversation.origin == nil else { return false }
-        switch conversation.side {
-        case .unsure: return false
-        case .personal: return true
-        case .enterprise:
-            return Enterprise.counts(asker) && (conversation.enterprise ?? []).allSatisfy { $0.covers(asker) }
-        }
+        asker != nil && conversation.id != room && !conversation.turns.isEmpty && !conversation.isEnterprise
     }
 
     private func snapshot() -> [Conversation] {
@@ -54,14 +45,11 @@ final class ChatLink: ToolProvider {
             let query = (arguments["query"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             guard !query.isEmpty else { return ToolHub.failure("Write the words to search for.") }
             let results = ChatSearch.search(query, in: visible, limit: Self.resultLimit)
-            // Titles and lines of Enterprise chats are their content too: their record goes to this chat first.
-            for result in results { if let chat = visible.first(where: { $0.id == result.id }), chat.side == .enterprise { noteRead(chat, context.room) } }
             return text(Self.listing(results, visible))
         case "read_chat":
             let id = UUID(uuidString: (arguments["id"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines))
             // The same answer for a chat that does not exist and one this account may not read.
             guard let id, let chat = visible.first(where: { $0.id == id }) else { return ToolHub.failure("No chat with that id is available to you. Use search_chats first.") }
-            if chat.side == .enterprise { noteRead(chat, context.room) }
             return text(Self.reading(chat, query: arguments["query"] as? String ?? "", state: Discussion.loadState(chat.id)))
         default:
             return ToolHub.failure("Unknown tool: " + name)
@@ -129,20 +117,8 @@ final class ChatLink: ToolProvider {
 }
 
 extension Discussion {
-    // The app's chats for search_chats / read_chat; reading an Enterprise chat into another chat carries its record there.
+    // The app's chats for search_chats / read_chat.
     func linkChatTools() {
         ChatLink.shared.conversations = { [weak self] in self?.conversations ?? [] }
-        ChatLink.shared.noteRead = { [weak self] source, room in
-            guard let self else { return }
-            let apply = {
-                guard let i = self.conversations.firstIndex(where: { $0.id == room }) else { return }
-                var marks = self.conversations[i].enterprise ?? []
-                for mark in source.enterprise ?? [] where !marks.contains(where: { $0.id == mark.id }) { marks.append(mark) }
-                guard marks != self.conversations[i].enterprise else { return }
-                self.conversations[i].enterprise = marks
-                if self.conversations[i].hasContent { ChatStore.save(self.conversations[i]) }
-            }
-            if Thread.isMainThread { apply() } else { DispatchQueue.main.sync(execute: apply) }
-        }
     }
 }

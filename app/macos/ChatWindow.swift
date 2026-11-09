@@ -96,6 +96,7 @@ struct ChatView: View {
             Color.clear.frame(height: 16)
             VStack(alignment: .leading, spacing: 1) {
                 SidebarRow(discussion: discussion, title: L("새 대화", "New chat"), symbol: "square.and.pencil") { discussion.newConversation() }
+                    .contextMenu { EnterpriseLockButtons(discussion: discussion, room: nil) }
                 if discussion.sidebarSearching {
                     HStack(spacing: 8) {
                         Image(systemName: "magnifyingglass").foregroundColor(.secondary).frame(width: 18)
@@ -203,7 +204,7 @@ struct ChatView: View {
             HStack(spacing: 5) {
                 Text(conversation.turns.isEmpty ? L("새 대화", "New chat") : conversation.title)
                     .lineLimit(1).truncationMode(.tail)
-                if conversation.side != .personal { EnterpriseBadge(side: conversation.side) }
+                if conversation.isEnterprise { EnterpriseBadge() }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             if approvals.requests.contains(where: { $0.room == conversation.id }) {
@@ -1114,6 +1115,7 @@ struct ChatView: View {
         let crew = discussion.crew(project: project)
         let next = discussion.soloNext
         let usage = next.flatMap { discussion.model.latestUsage[$0.id] }
+        let lock = discussion.current.enterpriseLock
         func name(_ id: String) -> String { discussion.model.accounts.first { $0.id == id }.map { discussion.label($0) } ?? id }
         return Menu {
             Button((members.isEmpty ? "✓ " : "") + L("자동 (남은 사용량 기준)", "Automatic (most usage left)")) {
@@ -1130,6 +1132,7 @@ struct ChatView: View {
                        + AutoPick.describe(discussion.model.latestUsage[account.id])) {
                     discussion.toggleMember(account.id)
                 }
+                .disabled(!Enterprise.permits(account, lock: lock))   // an Enterprise chat: personal accounts cannot take part
             }
             if members.count >= 2 {
                 Divider()
@@ -1142,13 +1145,11 @@ struct ChatView: View {
                     }
                 }
             }
-            if discussion.model.schoolOnlyHandoff {
-                Divider()
-                Picker(L("이 대화", "This chat"), selection: Binding(get: { config.school ?? next?.isSchool ?? false },
-                                                                set: { school in discussion.configure { $0.school = school; $0.lastSoloAccountID = nil } })) {
-                    Text(L("개인 대화 (개인 계정끼리 이어받기)", "Personal (personal accounts continue)")).tag(false)
-                    Text(L("엔터프라이즈 대화 (엔터프라이즈 계정끼리 이어받기)", "Enterprise (Enterprise accounts continue)")).tag(true)
-                }
+            Divider()
+            if let lock {
+                Text(L("🔒 \(lock.name) Enterprise 방 (해제할 수 없어요)", "🔒 \(lock.name) Enterprise chat (cannot be undone)"))
+            } else {
+                EnterpriseLockButtons(discussion: discussion, room: discussion.currentID)
             }
         } label: {
             // A menu label keeps a single text view, so the name and usage are one concatenated Text.
@@ -1163,7 +1164,7 @@ struct ChatView: View {
                 (Text(Image(systemName: "person.2")) + Text(" " + members.map(name).joined(separator: " + ")).foregroundColor(.secondary))
                     .font(.system(size: 12))
             } else {
-                let name = ((config.school ?? next?.isSchool) == true && discussion.model.schoolOnlyHandoff ? L("엔터프라이즈 · ", "Enterprise · ") : "")
+                let name = (lock != nil ? "Enterprise · " : "")
                     + (next.map { discussion.label($0) } ?? L("쓸 수 있는 계정 없음", "No account available"))
                 (Text(members.isEmpty ? Image(systemName: "sparkles") : Image(systemName: "person.crop.circle"))
                  + Text(" " + name).foregroundColor(.primary)

@@ -884,6 +884,10 @@ final class Discussion: ObservableObject {
     }
     @Published var imageDropActive = false  // a photo is being dragged over the chat window
     @Published var openEntries: Set<UUID> = []  // AI replies unfolded in the chat (not saved)
+    // The meetings under a chat in the sidebar (Meeting.swift), unfolded or folded by the user, and those showing all (not saved).
+    @Published var meetingsOpen: Set<UUID> = []
+    @Published var meetingsClosed: Set<UUID> = []
+    @Published var meetingsAll: Set<UUID> = []
     @Published var draggingProvider: Account.Provider?
     var draggingConversationID: UUID?
     @Published var useClaude = true

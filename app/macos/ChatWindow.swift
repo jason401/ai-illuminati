@@ -147,12 +147,12 @@ struct ChatView: View {
                         let pinned = chats.filter { $0.pinned == true }
                         if !pinned.isEmpty {
                             SidebarHeader(title: L("고정됨", "Pinned"))
-                            ForEach(pinned) { chatRow($0) }
+                            ForEach(pinned) { chatGroup($0) }
                         }
                         let recents = chats.filter { $0.pinned != true }
                         if !recents.isEmpty {
                             SidebarHeader(title: L("최근", "Recents"))
-                            ForEach(recents) { chatRow($0) }
+                            ForEach(recents) { chatGroup($0) }
                         }
                     }
                     if sync.settings.enabled { otherMacs }
@@ -193,7 +193,48 @@ struct ChatView: View {
             .disabled(discussion.runningRooms.contains(conversation.id))
     }
 
-    private func chatRow(_ conversation: Conversation) -> some View {
+    // A chat and, under it, the meetings held for it (Meeting.swift): the newest 5 until "show all".
+    @ViewBuilder private func chatGroup(_ conversation: Conversation) -> some View {
+        let meetings = discussion.meetings(of: conversation.id)
+        let shown = !meetings.isEmpty && discussion.meetingsShown(conversation.id, meetings)
+        chatRow(conversation, meetings: meetings.count, shown: shown)
+        if shown {
+            let all = discussion.meetingsAll.contains(conversation.id)
+            ForEach(all ? meetings : Array(meetings.prefix(5))) { meetingRow($0) }
+            if meetings.count > 5 && !all {
+                Button(L("전체 보기 (\(meetings.count))", "Show all (\(meetings.count))")) { discussion.meetingsAll.insert(conversation.id) }
+                    .buttonStyle(.link).font(.system(size: 11)).padding(.leading, 34).frame(height: 22)
+            }
+        }
+    }
+
+    // A meeting held for the chat above: its topic and when (its chat is read only).
+    private func meetingRow(_ meeting: Conversation) -> some View {
+        let selected = meeting.id == discussion.currentID && discussion.viewingRemote == nil
+        let key = "meeting." + meeting.id.uuidString
+        let hovered = discussion.hoverKey == key
+        return HStack(spacing: 5) {
+            Image(systemName: "person.3").font(.system(size: 9)).foregroundColor(.secondary).frame(width: 18)
+            Text(meeting.turns.first?.question ?? meeting.title).lineLimit(1).truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if discussion.meetingRunning(meeting) {
+                ProgressView().controlSize(.mini).help(L("회의 중", "Meeting"))
+            } else {
+                Text(dateText(meeting.createdAt)).font(.system(size: 10)).foregroundColor(.secondary)
+            }
+        }
+        .font(.system(size: 12))
+        .padding(.leading, 24).padding(.trailing, 10).frame(height: 26)
+        .background(selected ? Color.primary.opacity(0.10) : hovered ? Color.primary.opacity(0.05) : .clear,
+                    in: RoundedRectangle(cornerRadius: 8))
+        .contentShape(Rectangle())
+        .onTapGesture { discussion.open(meeting.id) }
+        .onHover { inside in discussion.hover(key, inside) }
+        .help(meeting.title)
+        .disabled(discussion.importingMaterials)
+    }
+
+    private func chatRow(_ conversation: Conversation, meetings: Int = 0, shown: Bool = false) -> some View {
         let selected = conversation.id == discussion.currentID && discussion.viewingRemote == nil
         let hovered = discussion.hoverKey == conversation.id.uuidString
         return HStack(spacing: 4) {
@@ -215,6 +256,17 @@ struct ChatView: View {
             if discussion.runningRooms.contains(conversation.id) {
                 ProgressView().controlSize(.mini)
                     .help(L("답하는 중", "Answering"))
+            }
+            if meetings > 0 {
+                Button(action: { discussion.toggleMeetings(conversation.id) }) {
+                    HStack(spacing: 2) {
+                        Image(systemName: shown ? "chevron.down" : "chevron.right").font(.system(size: 8, weight: .semibold))
+                        Text("\(meetings)").font(.system(size: 10))
+                    }
+                    .padding(.horizontal, 3).frame(height: 18).contentShape(Rectangle())
+                }
+                .buttonStyle(.plainHit).foregroundColor(.secondary)
+                .help(shown ? L("회의 접기", "Hide meetings") : L("회의 \(meetings)개 보기", "Show \(meetings) meetings"))
             }
             if conversation.hasContent && (hovered || selected) {
                 Menu { chatMenu(conversation) } label: { Image(systemName: "ellipsis").frame(width: 18, height: 18) }

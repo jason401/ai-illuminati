@@ -49,6 +49,7 @@ extension Discussion {
         Self.saveText(source, to: Self.chatFolder(room.id).appendingPathComponent(Self.meetingSource))
         conversations.append(room)
         ChatStore.save(room)
+        meetingsClosed.remove(id)
         return room.id
     }
 
@@ -114,6 +115,29 @@ extension Discussion {
         a consensus. Name who said what where it matters. Short bullet points; links the team found.
         \(missing.isEmpty ? "" : "These AIs did not answer in the meeting; say so in one line: \(missing.joined(separator: ", ")).\n")If there is a next step an AI could do in the project, end with one line offering it: \(L("\"가자라고 하면 …할게.\"", "\"Say 가자 (go) and I will ….\""))
         """
+    }
+
+    // The meeting chats held for chat `id`, newest first: the sidebar lists them under it.
+    func meetings(of id: UUID) -> [Conversation] {
+        conversations.filter { $0.meetingOf?.room == id }.sorted { $0.createdAt > $1.createdAt }
+    }
+
+    // Still being held: its chat is answering and the meeting has no end yet.
+    func meetingRunning(_ meeting: Conversation) -> Bool {
+        guard let link = meeting.meetingOf else { return false }
+        return runningRooms.contains(link.room) && meeting.turns.first?.answeredAt == nil
+    }
+
+    // Unfolded by the user, or (unless folded by the user) while one runs or the chat or one of them is open.
+    func meetingsShown(_ id: UUID, _ meetings: [Conversation]) -> Bool {
+        if meetingsOpen.contains(id) { return true }
+        if meetingsClosed.contains(id) { return false }
+        return currentID == id || meetings.contains { $0.id == currentID || meetingRunning($0) }
+    }
+
+    func toggleMeetings(_ id: UUID) {
+        if meetingsShown(id, meetings(of: id)) { meetingsOpen.remove(id); meetingsClosed.insert(id) }
+        else { meetingsClosed.remove(id); meetingsOpen.insert(id) }
     }
 
     // Removes the hidden meeting chats of a deleted chat (files, sessions and backups too).

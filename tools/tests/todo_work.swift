@@ -586,3 +586,41 @@ func testTodoCrew() {
     expect(store.current.list(listID)?.accounts.isEmpty == true, "back to automatic")
     print("PASS: TODO crew (picked AIs saved, only they work, no fallback, reasons)")
 }
+
+// Time per TODO: work (running, all attempts), waiting for the user, since the first start; the app's off time is not work.
+func testTodoTime() {
+    let a = ProjectBinding(root: "/tmp/todo-time", common: "", remote: "", remoteURL: "")
+    let url = todoStoreFile("time")
+    let store = TodoStore(url: url)
+    var clock = Date(timeIntervalSince1970: 1_000_000)
+    store.now = { clock }
+    let item = try! store.add(title: "timed", project: a, projectName: "T")
+    expect(store.current.item(item.id)?.timeLine(at: clock) == nil, "a TODO that never started shows no time")
+    clock += 3600; try! store.change(item.id) { $0.state = .running }
+    clock += 600; try! store.change(item.id) { $0.report = TodoReport(summary: "half") }
+    expect(store.current.item(item.id)?.work(at: clock + 60) == 660, "other changes keep the running clock")
+    clock += 300; try! store.change(item.id) { $0.state = .review }
+    clock += 120; store.requestChanges(item.id, "more")
+    clock += 60; try! store.change(item.id) { $0.state = .running }
+    // Quit during the second attempt: closed at quit, the time the app is off is not counted.
+    clock += 240
+    let scheduler = TodoScheduler(discussion: Discussion(model: AppModel()), store: store)
+    scheduler.closeClocks(); scheduler.closeClocks()
+    clock += 86_400; scheduler.recover()
+    var t = store.current.item(item.id)!
+    expect(t.state == .ready && t.workSeconds == 1140 && t.waitSeconds == 120, "work sums both attempts, quit time is not work: \(t.workSeconds) \(t.waitSeconds)")
+    clock += 60; try! store.change(item.id) { $0.state = .running }
+    // A crash: the run counts up to its last saved change.
+    clock += 100; try! store.change(item.id) { $0.report = TodoReport(summary: "x") }
+    clock += 5000; scheduler.recover()
+    t = store.current.item(item.id)!
+    expect(t.workSeconds == 1240, "after a crash only the run up to its last change counts: \(t.workSeconds)")
+    clock += 10; try! store.change(item.id) { $0.state = .review }
+    clock += 30; store.accept(item.id)
+    t = TodoStore(url: url).current.item(item.id)!
+    expect(t.finishedAt == clock && t.startedAt == Date(timeIntervalSince1970: 1_003_600) && t.waitSeconds == 150, "start, finish and wait are saved: \(t.waitSeconds)")
+    expect(t.timeLine(at: clock + 99_999) == L("AI 작업 20분 · 확인 기다림 2분 · 시작 후 1일 1시간", "AI work 20 min · waiting for you 2 min · since start 1 d 1 h"),
+           "the line stops at done: \(t.timeLine(at: clock) ?? "-")")
+    expect(TodoItem.span(30) == L("1분 미만", "<1 min") && TodoItem.span(7200) == L("2시간", "2 h"), "short and round spans")
+    print("PASS: TODO time (work over attempts, waiting for you, since start, app off time not work, crash lower bound, saved)")
+}

@@ -252,6 +252,16 @@ struct TodoBoardView: View {
                     .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
             }
             if !item.detail.isEmpty { Text(item.detail).font(.system(size: 12)).foregroundColor(.secondary).lineLimit(3) }
+            if item.startedAt != nil {
+                let live = item.state == .running || item.state == .review || item.state == .needsYou
+                TimelineView(.periodic(from: .now, by: live ? 30 : 3600)) { context in
+                    if let line = item.timeLine(at: context.date) {
+                        Label(line, systemImage: "clock").font(.system(size: 11)).foregroundColor(.secondary).lineLimit(1)
+                            .help(L("AI 작업: AI가 맡아 일한 시간(검수 포함, 여러 번 시도한 것 합침). 확인 기다림: 확인이나 답을 기다린 시간. 시작 후: 처음 시작부터 끝(완료·취소) 또는 지금까지.",
+                                    "AI work: time the AI had it (review included, all attempts). Waiting for you: time it waited for your check or answer. Since start: from the first start to done or cancelled, or now."))
+                    }
+                }
+            }
             }
             if !item.attachments.isEmpty {
                 TodoChips(items: item.attachments.map { a in (a.id, a.name, a.image) },

@@ -131,6 +131,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         markTimer?.invalidate()
         if let motionObservation { NSWorkspace.shared.notificationCenter.removeObserver(motionObservation) }
+        TodoScheduler.shared?.closeClocks()
         discussion.cancelAll()
         discussion.discardPendingImages()
     }

@@ -66,6 +66,12 @@ struct TodoItem: Codable, Identifiable, Equatable {
     var unreported = false          // review or needsYou not yet announced (macOS notification)
     var createdAt = Date()
     var updatedAt = Date()
+    // Time kept by TodoStore.update on every state change (none for TODOs started before it was added).
+    var workSeconds: Double = 0     // in .running, all attempts (work and review)
+    var waitSeconds: Double = 0     // in .review or .needsYou: waiting for the user
+    var stateSince: Date?           // the current state began; nil: not timed (old TODO, or settled when the app quit)
+    var startedAt: Date?            // first went running
+    var finishedAt: Date?           // became done or cancelled
 
     init(listID: UUID, title: String, detail: String = "", askFirst: Bool = false, after: [UUID] = [], originRoom: UUID? = nil) {
         self.listID = listID; self.title = title; self.detail = detail; self.askFirst = askFirst; self.after = after; self.originRoom = originRoom
@@ -73,7 +79,8 @@ struct TodoItem: Codable, Identifiable, Equatable {
 
     // Older or newer files: unknown fields are ignored, missing ones get their defaults.
     private enum Keys: String, CodingKey {
-        case id, listID, title, detail, attachments, askFirst, state, after, room, originRoom, notes, question, attempts, lastError, result, assumptions, files, report, interrupted, unreported, createdAt, updatedAt
+        case id, listID, title, detail, attachments, askFirst, state, after, room, originRoom, notes, question, attempts, lastError, result, assumptions, files, report, interrupted, unreported, createdAt, updatedAt,
+             workSeconds, waitSeconds, stateSince, startedAt, finishedAt
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
@@ -99,6 +106,11 @@ struct TodoItem: Codable, Identifiable, Equatable {
         unreported = (try? c.decode(Bool.self, forKey: .unreported)) ?? false
         createdAt = (try? c.decode(Date.self, forKey: .createdAt)) ?? Date()
         updatedAt = (try? c.decode(Date.self, forKey: .updatedAt)) ?? createdAt
+        workSeconds = (try? c.decode(Double.self, forKey: .workSeconds)) ?? 0
+        waitSeconds = (try? c.decode(Double.self, forKey: .waitSeconds)) ?? 0
+        stateSince = try? c.decode(Date.self, forKey: .stateSince)
+        startedAt = try? c.decode(Date.self, forKey: .startedAt)
+        finishedAt = try? c.decode(Date.self, forKey: .finishedAt)
     }
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: Keys.self)
@@ -111,6 +123,41 @@ struct TodoItem: Codable, Identifiable, Equatable {
         try c.encodeIfPresent(report, forKey: .report)
         try c.encode(interrupted, forKey: .interrupted); try c.encode(unreported, forKey: .unreported)
         try c.encode(createdAt, forKey: .createdAt); try c.encode(updatedAt, forKey: .updatedAt)
+        try c.encode(workSeconds, forKey: .workSeconds); try c.encode(waitSeconds, forKey: .waitSeconds)
+        try c.encodeIfPresent(stateSince, forKey: .stateSince); try c.encodeIfPresent(startedAt, forKey: .startedAt); try c.encodeIfPresent(finishedAt, forKey: .finishedAt)
+    }
+
+    // The time so far: the stored sums plus the current state's open part.
+    func work(at now: Date) -> Double { workSeconds + (state == .running ? stateSince.map { max(0, now.timeIntervalSince($0)) } ?? 0 : 0) }
+    func wait(at now: Date) -> Double { waitSeconds + (state == .review || state == .needsYou ? stateSince.map { max(0, now.timeIntervalSince($0)) } ?? 0 : 0) }
+
+    // The board's time line: "AI 작업 12분 · 확인 기다림 3분 · 시작 후 2시간 5분". Never started since timing came: nothing.
+    func timeLine(at now: Date) -> String? {
+        guard let started = startedAt else { return nil }
+        var parts = [L("AI 작업 ", "AI work ") + Self.span(work(at: now))]
+        let wait = wait(at: now)
+        if wait >= 60 || state == .review || state == .needsYou { parts.append(L("확인 기다림 ", "waiting for you ") + Self.span(wait)) }
+        parts.append(L("시작 후 ", "since start ") + Self.span((finishedAt ?? now).timeIntervalSince(started)))
+        return parts.joined(separator: " · ")
+    }
+    static func span(_ seconds: Double) -> String {
+        let m = max(0, Int(seconds)) / 60
+        if m < 1 { return L("1분 미만", "<1 min") }
+        if m < 60 { return L("\(m)분", "\(m) min") }
+        let h = m / 60
+        if h < 24 { return m % 60 == 0 ? L("\(h)시간", "\(h) h") : L("\(h)시간 \(m % 60)분", "\(h) h \(m % 60) min") }
+        return h % 24 == 0 ? L("\(h / 24)일", "\(h / 24) d") : L("\(h / 24)일 \(h % 24)시간", "\(h / 24) d \(h % 24) h")
+    }
+
+    // The old state's time goes to its sum; the new state starts now.
+    mutating func clock(from old: State, at now: Date) {
+        if let since = stateSince {
+            let spent = max(0, now.timeIntervalSince(since))
+            if old == .running { workSeconds += spent } else if old == .review || old == .needsYou { waitSeconds += spent }
+        }
+        stateSince = now
+        if state == .running, startedAt == nil { startedAt = now }
+        finishedAt = state == .done || state == .cancelled ? finishedAt ?? now : nil
     }
 }
 
@@ -249,6 +296,7 @@ final class TodoStore: ObservableObject {
     let url: URL
     private let lock = NSLock()
     private var data: TodoData
+    var now: () -> Date = Date.init   // tests set the clock
     @Published private(set) var snapshot: TodoData
     @Published private(set) var saveError: String?   // the last save failed: shown on the board until one succeeds
 
@@ -270,8 +318,12 @@ final class TodoStore: ObservableObject {
         let result: T
         do { result = try edit(&copy) } catch { lock.unlock(); throw error }
         if copy.hasCycle { lock.unlock(); throw TodoError.cycle }
-        let now = Date()
-        for i in copy.items.indices where data.item(copy.items[i].id) != copy.items[i] { copy.items[i].updatedAt = now }
+        let now = now()
+        for i in copy.items.indices {
+            let old = data.item(copy.items[i].id)
+            if let old, old.state != copy.items[i].state { copy.items[i].clock(from: old.state, at: now) }
+            if old != copy.items[i] { copy.items[i].updatedAt = now }
+        }
         // Saved first: a change that is not on disk is not made (it would be lost or run again after a restart).
         do {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -602,10 +654,24 @@ final class TodoScheduler: ObservableObject {
         DispatchQueue.main.async { self.pending = false; self.tick() }
     }
 
+    // The app quits: running TODOs stop counting work time now (not while the app is off).
+    func closeClocks() {
+        let now = store.now()
+        try? store.update { data in
+            for i in data.items.indices where data.items[i].state == .running {
+                if let since = data.items[i].stateSince { data.items[i].workSeconds += max(0, now.timeIntervalSince(since)) }
+                data.items[i].stateSince = nil
+            }
+        }
+    }
+
     // The app quit while TODOs ran: they are ready again, and the next attempt first looks at what is left.
     func recover() {
         try? store.update { data in
             for i in data.items.indices where data.items[i].state == .running {
+                // Not closed at quit (a crash): the work counts up to its last saved change, a lower bound.
+                if let since = data.items[i].stateSince { data.items[i].workSeconds += max(0, data.items[i].updatedAt.timeIntervalSince(since)) }
+                data.items[i].stateSince = nil
                 data.items[i].attempts += 1
                 data.items[i].interrupted = true
                 data.items[i].report = nil

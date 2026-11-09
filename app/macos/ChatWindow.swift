@@ -200,7 +200,9 @@ struct ChatView: View {
         chatRow(conversation, meetings: meetings.count, shown: shown)
         if shown {
             let all = discussion.meetingsAll.contains(conversation.id)
-            ForEach(all ? meetings : Array(meetings.prefix(5))) { meetingRow($0) }
+            // The open meeting stays listed even when it is older than the newest 5.
+            let listed = all ? meetings : meetings.enumerated().filter { $0.offset < 5 || $0.element.id == discussion.currentID }.map(\.element)
+            ForEach(listed) { meetingRow($0) }
             if meetings.count > 5 && !all {
                 Button(L("전체 보기 (\(meetings.count))", "Show all (\(meetings.count))")) { discussion.meetingsAll.insert(conversation.id) }
                     .buttonStyle(.link).font(.system(size: 11)).padding(.leading, 34).frame(height: 22)

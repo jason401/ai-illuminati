@@ -145,6 +145,8 @@ func testProjectWork() {
     let verifyUntil = Date().addingTimeInterval(2.2)
     while Date() < verifyUntil { RunLoop.main.run(until: Date().addingTimeInterval(0.03)) }
     expect(stoppedResult["isError"] as? Bool == true && !FileManager.default.fileExists(atPath: leakedFile.path), "Stop kills foreground and background project writers")
+    let stoppedRecord = ((try? JSONSerialization.jsonObject(with: Data(contentsOf: RunTimings.file(root.path)))) as? [String: Any])?["long"] as? [[String: Any]]
+    expect(stoppedRecord?.last?["outcome"] as? String == "stopped" && stoppedRecord?.last?["exit"] == nil, "a stopped command is recorded as stopped")
     outer.cancel()
     for _ in 0..<50 where !run.attempt.isCancelled { Thread.sleep(forTimeInterval: 0.02) }
     expect(run.attempt.isCancelled && call("git_status")["isError"] as? Bool == true, "outer Stop cancels current AI and tool capability")
@@ -597,6 +599,8 @@ func testWorkTiming() {
     expect(RunProgress.stage("[7/9] Compile app tests")! == (7, 9, "Compile app tests") && RunProgress.stage("[0/3] x") == nil && RunProgress.stage("[4/3] x") == nil
            && RunProgress.stage("[1/3]") == nil && RunProgress.stage("[a/b] x") == nil && RunProgress.stage("1/3 x") == nil && RunProgress.stage("[1/0] x") == nil,
            "only well-formed [n/m] name lines are stages")
+    expect(RunProgress.outcome(timedOut: true, stopped: true) == "timeout" && RunProgress.outcome(timedOut: false, stopped: true) == "stopped"
+           && RunProgress.outcome(timedOut: false, stopped: false) == "error", "a time limit, a stop and a command that could not run are told apart")
 
     let base = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("timing-fixture-" + UUID().uuidString)
     let root = base.appendingPathComponent("repo"), origin = base.appendingPathComponent("origin.git")

@@ -450,13 +450,14 @@ final class GitLink: ToolProvider {
             // "[n/m] name" lines show under the current step; their times go to project-timings for later estimates.
             let progress = RunProgress(command: selected) { text in if !run.setSub(text) { run.note(text) } }
             defer { run.setSub(nil) }
+            let deadline = min(run.deadline, Date().addingTimeInterval(2700))
             do {
-                let reply = try ProjectProcess.run(exe, argv, cwd: run.binding.root, token: run.attempt, deadline: min(run.deadline, Date().addingTimeInterval(2700)), guarded: run.fullAuto,
+                let reply = try ProjectProcess.run(exe, argv, cwd: run.binding.root, token: run.attempt, deadline: deadline, guarded: run.fullAuto,
                                                    onLine: progress.line)
                 RunTimings.record(root: run.binding.root, command: selected, progress.finish(reply.status == 0 ? "ok" : "failed", exit: reply.status))
                 return "exit=\(reply.status)\n" + reply.output
             } catch {
-                RunTimings.record(root: run.binding.root, command: selected, progress.finish(run.cancelled ? "stopped" : "timeout", exit: nil))
+                RunTimings.record(root: run.binding.root, command: selected, progress.finish(RunProgress.outcome(timedOut: Date() >= deadline || run.activeExpired, stopped: run.outer.isCancelled || run.attempt.isCancelled), exit: nil))
                 throw error
             }
         default: throw MaterialReader.error("Unknown project tool.")
@@ -488,6 +489,8 @@ final class RunProgress {
         guard count.count == 2, let n = Int(count[0]), let total = Int(count[1]), total >= 1, total <= 100, (1...total).contains(n), !name.isEmpty else { return nil }
         return (n, total, String(name.prefix(80)))
     }
+    // A command that threw: out of time (its own or the turn's), stopped (the user, or a handoff), or it could not run.
+    static func outcome(timedOut: Bool, stopped: Bool) -> String { timedOut ? "timeout" : stopped ? "stopped" : "error" }
     func finish(_ outcome: String, exit: Int32?) -> [String: Any] {
         lock.lock(); defer { lock.unlock() }
         let now = Date()

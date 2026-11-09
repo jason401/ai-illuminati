@@ -1,4 +1,6 @@
 import SwiftUI
+import AppKit
+import UniformTypeIdentifiers
 
 // The TODO board (Todo.swift): sidebar entry with the count waiting for the user, the board shown in place of the
 // chat, and the report cards above the message box of a TODO's own chat and of the chat it was written from.
@@ -72,6 +74,8 @@ final class TodoDraft: ObservableObject {
     static let shared = TodoDraft()
     @Published var title = ""
     @Published var detail = ""
+    struct File: Equatable { var id = UUID(); var url: URL }
+    @Published var files: [File] = []   // photos and files to attach (copied in when the TODO is added)
     @Published var projectRoot = ""
     @Published var after: Set<UUID> = []
     @Published var askFirst = false
@@ -179,6 +183,9 @@ struct TodoBoardView: View {
                             }
                         }
                     }
+                    if item.state != .running && item.state != .done && item.state != .cancelled {
+                        Button(L("사진·파일 첨부…", "Attach photos or files…")) { let urls = Self.chooseFiles(); if !urls.isEmpty { act { try store.attach(item.id, files: urls) } } }
+                    }
                     if item.state == .draft { Button(L("대기로 (바로 가져가도 됨)", "Make ready")) { try? store.change(item.id) { $0.state = .ready } } }
                     if item.state == .ready { Button(L("초안으로 되돌리기", "Back to draft")) { try? store.change(item.id) { $0.state = .draft } } }
                     Divider()
@@ -188,6 +195,11 @@ struct TodoBoardView: View {
                     .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
             }
             if !item.detail.isEmpty { Text(item.detail).font(.system(size: 12)).foregroundColor(.secondary).lineLimit(3) }
+            if !item.attachments.isEmpty {
+                TodoChips(items: item.attachments.map { a in (a.id, a.name, a.image) },
+                          open: { id in if let a = item.attachments.first(where: { $0.id == id }) { NSWorkspace.shared.open(store.file(item.id, a)) } },
+                          remove: item.state == .running ? nil : { id in act { try store.detach(item.id, id) } })
+            }
             if item.state == .review || item.state == .needsYou { TodoCard(item: item, discussion: discussion, compact: true) }
         }
         .padding(.horizontal, 12).padding(.vertical, 9)
@@ -207,6 +219,11 @@ struct TodoBoardView: View {
         return VStack(alignment: .leading, spacing: 8) {
             TextField(L("+ 할 일 추가…", "+ Add a TODO…"), text: $draft.title).textFieldStyle(.roundedBorder).onSubmit(add)
             TextField(L("자세한 내용 (선택)", "Details (optional)"), text: $draft.detail, axis: .vertical).textFieldStyle(.roundedBorder).lineLimit(1...5)
+            if !draft.files.isEmpty {
+                TodoChips(items: draft.files.map { f in (f.id, f.url.lastPathComponent, (try? f.url.resourceValues(forKeys: [.contentTypeKey]).contentType?.conforms(to: .image)) == true) },
+                          open: { id in if let f = draft.files.first(where: { $0.id == id }) { NSWorkspace.shared.open(f.url) } },
+                          remove: { id in draft.files.removeAll { $0.id == id } })
+            }
             HStack(spacing: 10) {
                 // One project's board: its only root needs no picking.
                 if discussion.boardProject == nil || options.count > 1 {
@@ -217,6 +234,8 @@ struct TodoBoardView: View {
                     }
                     .fixedSize()
                 }
+                Button(action: { addDraftFiles(Self.chooseFiles()) }) { Label(L("첨부", "Attach"), systemImage: "paperclip") }
+                    .help(L("사진이나 파일을 첨부해요 (끌어다 놓아도 돼요)", "Attach photos or files (or drop them here)"))
                 Menu(draft.after.isEmpty ? L("먼저 끝나야 할 TODO", "Must finish first") : L("먼저: \(draft.after.count)개", "First: \(draft.after.count)")) {
                     ForEach(store.snapshot.items.filter { $0.state != .done && $0.state != .cancelled }) { other in
                         Button((draft.after.contains(other.id) ? "✓ " : "") + other.title) { if draft.after.contains(other.id) { draft.after.remove(other.id) } else { draft.after.insert(other.id) } }
@@ -239,6 +258,30 @@ struct TodoBoardView: View {
         }
         .padding(12)
         .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
+        .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+            for provider in providers {
+                _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                    if let url, url.isFileURL { DispatchQueue.main.async { addDraftFiles([url]) } }
+                }
+            }
+            return !providers.isEmpty
+        }
+    }
+
+    static func chooseFiles() -> [URL] {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        panel.message = L("TODO에 첨부할 사진이나 파일", "Photos or files for the TODO")
+        return panel.runModal() == .OK ? panel.urls : []
+    }
+
+    private func addDraftFiles(_ urls: [URL]) {
+        let fresh = urls.filter { url in !draft.files.contains { $0.url == url } }.map { TodoDraft.File(url: $0) }
+        guard draft.files.count + fresh.count <= TodoStore.maxAttachments else {
+            draft.error = L("TODO 하나에 \(TodoStore.maxAttachments)개까지 첨부할 수 있어요.", "Up to \(TodoStore.maxAttachments) attachments per TODO."); return
+        }
+        draft.files += fresh
     }
 
     private func add() {
@@ -252,14 +295,42 @@ struct TodoBoardView: View {
         let lock = (discussion.current.workspace?.project?.root == root ? discussion.current.enterpriseLock : nil)
             ?? discussion.conversations.first { $0.workspace?.project?.root == root && $0.enterpriseLock != nil }?.enterpriseLock
         act {
-            try store.add(title: text, detail: draft.detail.trimmingCharacters(in: .whitespacesAndNewlines), project: project.binding, projectName: project.name,
+            try store.add(title: text, detail: draft.detail.trimmingCharacters(in: .whitespacesAndNewlines), files: draft.files.map(\.url), project: project.binding, projectName: project.name,
                           after: Array(draft.after), askFirst: draft.askFirst, originRoom: origin, lock: lock)
-            draft.title = ""; draft.detail = ""; draft.after = []
+            draft.title = ""; draft.detail = ""; draft.files = []; draft.after = []
         }
     }
 
     private func act(_ change: () throws -> Void) {
         do { try change(); draft.error = nil } catch { draft.error = error.localizedDescription }
+    }
+}
+
+// Attached photos and files: click opens one, × takes it off (when `remove` is given).
+struct TodoChips: View {
+    let items: [(id: UUID, name: String, image: Bool)]
+    let open: (UUID) -> Void
+    let remove: ((UUID) -> Void)?
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(items, id: \.id) { item in
+                    HStack(spacing: 4) {
+                        Button(action: { open(item.id) }) {
+                            Label(item.name, systemImage: item.image ? "photo" : "paperclip").lineLimit(1).frame(maxWidth: 200, minHeight: 22)
+                        }
+                        .buttonStyle(.plainHit).help(L("열기", "Open"))
+                        if let remove {
+                            Button(action: { remove(item.id) }) { Image(systemName: "xmark").frame(width: 22, height: 22) }
+                                .buttonStyle(.plainHit).help(L("첨부 빼기", "Remove attachment"))
+                        }
+                    }
+                    .font(.system(size: 11))
+                    .padding(.leading, 8).padding(.trailing, remove == nil ? 8 : 2)
+                    .background(Color.primary.opacity(0.07), in: Capsule())
+                }
+            }
+        }
     }
 }
 

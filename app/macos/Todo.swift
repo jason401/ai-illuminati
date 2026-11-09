@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import UniformTypeIdentifiers
 
 // TODO work (TODO_PLAN.md): the user writes TODOs on the board, presses Start, and the app gives the next one
 // that may start to a Claude/Codex account in a chat of its own (the project work path, with a review by another
@@ -31,6 +32,14 @@ struct TodoReport: Codable, Equatable {
     var question: TodoQuestion?   // task_ask: the user decides, whatever task_done said
 }
 
+// A photo or file the user attached to a TODO's details. The copy lives in the store's todo-files/<TODO id>/ folder
+// (TodoStore.file); the AI gets it in its chat's own folder when the TODO starts (TodoScheduler.deliver).
+struct TodoAttachment: Codable, Identifiable, Equatable {
+    var id = UUID()
+    var name: String
+    var image: Bool
+}
+
 struct TodoItem: Codable, Identifiable, Equatable {
     // draft (not taken yet) → ready → running → review (the AI is done; waits for the user's check) → done.
     // needsYou: a question, or the work cannot go on; the user's answer makes it ready again, Stop cancels it.
@@ -39,6 +48,7 @@ struct TodoItem: Codable, Identifiable, Equatable {
     var listID: UUID
     var title: String
     var detail = ""
+    var attachments: [TodoAttachment] = []
     var askFirst = false            // ask before starting; otherwise assume, go on and list the assumptions
     var state: State = .draft
     var after: [UUID] = []          // TODOs that must be finished first (any list)
@@ -63,7 +73,7 @@ struct TodoItem: Codable, Identifiable, Equatable {
 
     // Older or newer files: unknown fields are ignored, missing ones get their defaults.
     private enum Keys: String, CodingKey {
-        case id, listID, title, detail, askFirst, state, after, room, originRoom, notes, question, attempts, lastError, result, assumptions, files, report, interrupted, unreported, createdAt, updatedAt
+        case id, listID, title, detail, attachments, askFirst, state, after, room, originRoom, notes, question, attempts, lastError, result, assumptions, files, report, interrupted, unreported, createdAt, updatedAt
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
@@ -71,6 +81,7 @@ struct TodoItem: Codable, Identifiable, Equatable {
         listID = try c.decode(UUID.self, forKey: .listID)
         title = (try? c.decode(String.self, forKey: .title)) ?? ""
         detail = (try? c.decode(String.self, forKey: .detail)) ?? ""
+        attachments = (try? c.decode([TodoAttachment].self, forKey: .attachments)) ?? []
         askFirst = (try? c.decode(Bool.self, forKey: .askFirst)) ?? false
         state = (try? c.decode(String.self, forKey: .state)).flatMap(State.init(rawValue:)) ?? .draft
         after = (try? c.decode([UUID].self, forKey: .after)) ?? []
@@ -92,6 +103,7 @@ struct TodoItem: Codable, Identifiable, Equatable {
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: Keys.self)
         try c.encode(id, forKey: .id); try c.encode(listID, forKey: .listID); try c.encode(title, forKey: .title); try c.encode(detail, forKey: .detail)
+        try c.encode(attachments, forKey: .attachments)
         try c.encode(askFirst, forKey: .askFirst); try c.encode(state.rawValue, forKey: .state); try c.encode(after, forKey: .after)
         try c.encodeIfPresent(room, forKey: .room); try c.encodeIfPresent(originRoom, forKey: .originRoom); try c.encode(notes, forKey: .notes)
         try c.encodeIfPresent(question, forKey: .question); try c.encode(attempts, forKey: .attempts); try c.encodeIfPresent(lastError, forKey: .lastError)
@@ -133,12 +145,13 @@ struct TodoList: Codable, Identifiable, Equatable {
 }
 
 enum TodoError: LocalizedError, Equatable {
-    case cycle, notFound, busy, save(String)
+    case cycle, notFound, busy, save(String), attachment(String)
     var errorDescription: String? {
         switch self {
         case .cycle: return L("순서가 돌고 돌아요: 서로 기다리는 TODO가 생겨요.", "That order goes in a circle: these TODOs would wait for each other.")
         case .notFound: return L("TODO를 찾지 못했어요.", "TODO not found.")
         case .busy: return L("진행 중인 TODO는 먼저 멈춰야 해요.", "Stop the running TODO first.")
+        case .attachment(let why): return why
         case .save(let why): return L("TODO를 저장하지 못했어요: ", "Could not save the TODOs: ") + why
         }
     }
@@ -265,19 +278,23 @@ final class TodoStore: ObservableObject {
     // MARK: The board's actions (main thread)
 
     // A new TODO is a draft: the scheduler does not take it until the user presses Start.
+    // files: the photos and files attached to it (copied in; the originals are left as they are).
     @discardableResult
-    func add(title: String, detail: String = "", project: ProjectBinding, projectName: String, after: [UUID] = [], askFirst: Bool = false, originRoom: UUID? = nil, lock: EnterpriseLock? = nil) throws -> TodoItem {
-        try update { data in
+    func add(title: String, detail: String = "", files: [URL] = [], project: ProjectBinding, projectName: String, after: [UUID] = [], askFirst: Bool = false, originRoom: UUID? = nil, lock: EnterpriseLock? = nil) throws -> TodoItem {
+        let id = UUID()
+        let attachments = try copyIn(files, to: id, already: 0)
+        do { return try update { data in
             let listID: UUID
             if let l = data.lists.firstIndex(where: { $0.project?.root == project.root }) {
                 listID = data.lists[l].id
                 if data.lists[l].lock == nil { data.lists[l].lock = lock }   // like a chat's lock, never removed
             } else { let list = TodoList(title: projectName, project: project, lock: lock); data.lists.append(list); listID = list.id }
-            let item = TodoItem(listID: listID, title: title, detail: detail, askFirst: askFirst, after: after, originRoom: originRoom)
+            var item = TodoItem(listID: listID, title: title, detail: detail, askFirst: askFirst, after: after, originRoom: originRoom)
+            item.id = id; item.attachments = attachments
             data.items.append(item)
             if let i = data.lists.firstIndex(where: { $0.id == listID }) { data.lists[i].order = data.ordered(listID).map(\.id) }
             return item
-        }
+        } } catch { try? FileManager.default.removeItem(at: folder(id)); throw error }
     }
     // ▶ Start now: every draft may be taken.
     // lists: only these (▶ on one project's board); nil = every list.
@@ -312,6 +329,7 @@ final class TodoStore: ObservableObject {
             for i in data.lists.indices { data.lists[i].order.removeAll { $0 == id } }
             data.lists.removeAll { list in !data.items.contains { $0.listID == list.id } }
         }
+        try? FileManager.default.removeItem(at: folder(id))   // only once the TODO is gone from the saved file
     }
     // Up (-1) or down (+1) in its list.
     func move(_ id: UUID, by step: Int) throws {
@@ -331,6 +349,78 @@ final class TodoStore: ObservableObject {
             if let waitForDone { data.lists[l].waitForDone = waitForDone }
         }
     }
+    // MARK: Attachments
+
+    static let maxAttachments = 10
+    static let maxAttachmentBytes = 25 * 1024 * 1024
+    var filesDir: URL { url.deletingLastPathComponent().appendingPathComponent("todo-files") }
+    func folder(_ id: UUID) -> URL { filesDir.appendingPathComponent(id.uuidString) }
+    func file(_ item: UUID, _ attachment: TodoAttachment) -> URL { folder(item).appendingPathComponent(attachment.id.uuidString + "-" + attachment.name) }
+
+    // A name that stays one file name (no folders, no hidden file).
+    static func safeName(_ name: String) -> String {
+        var clean = name.replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: ":", with: "_")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        while clean.hasPrefix(".") { clean.removeFirst() }
+        if clean.count > 120 { let ext = (clean as NSString).pathExtension; clean = String(clean.prefix(110)) + (ext.isEmpty ? "" : "." + ext) }
+        return clean.isEmpty ? "file" : clean
+    }
+
+    // Copies the files into the TODO's folder before anything is saved: on any failure the copies made are removed.
+    private func copyIn(_ urls: [URL], to id: UUID, already: Int) throws -> [TodoAttachment] {
+        guard !urls.isEmpty else { return [] }
+        guard already + urls.count <= Self.maxAttachments else {
+            throw TodoError.attachment(L("TODO 하나에 \(Self.maxAttachments)개까지 첨부할 수 있어요.", "Up to \(Self.maxAttachments) attachments per TODO."))
+        }
+        var made: [URL] = []
+        do {
+            try FileManager.default.createDirectory(at: folder(id), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            return try urls.map { source in
+                let values = try source.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey, .contentTypeKey])
+                guard values.isRegularFile == true, values.isSymbolicLink != true else {
+                    throw TodoError.attachment(L("일반 파일만 첨부할 수 있어요: ", "Only regular files can be attached: ") + source.lastPathComponent)
+                }
+                guard (values.fileSize ?? 0) <= Self.maxAttachmentBytes else {
+                    throw TodoError.attachment(L("25MB 이하만 첨부할 수 있어요: ", "Attachments must be under 25 MB: ") + source.lastPathComponent)
+                }
+                let attachment = TodoAttachment(name: Self.safeName(source.lastPathComponent), image: values.contentType?.conforms(to: .image) == true)
+                let target = file(id, attachment)
+                try FileManager.default.copyItem(at: source, to: target)
+                made.append(target)
+                return attachment
+            }
+        } catch {
+            for url in made { try? FileManager.default.removeItem(at: url) }
+            if let error = error as? TodoError { throw error }
+            throw TodoError.attachment(L("파일을 첨부하지 못했어요: ", "Could not attach the file: ") + error.localizedDescription)
+        }
+    }
+
+    // More files for a TODO that is not running (the running one already got its files).
+    func attach(_ id: UUID, files: [URL]) throws {
+        guard let item = current.item(id) else { throw TodoError.notFound }
+        guard item.state != .running else { throw TodoError.busy }
+        let added = try copyIn(files, to: id, already: item.attachments.count)
+        do {
+            try change(id) { t in
+                guard t.state != .running else { throw TodoError.busy }
+                guard t.attachments.count + added.count <= Self.maxAttachments else {
+                    throw TodoError.attachment(L("TODO 하나에 \(Self.maxAttachments)개까지 첨부할 수 있어요.", "Up to \(Self.maxAttachments) attachments per TODO."))
+                }
+                t.attachments += added
+            }
+        } catch { for a in added { try? FileManager.default.removeItem(at: file(id, a)) }; throw error }
+    }
+    func detach(_ id: UUID, _ attachment: UUID) throws {
+        var gone: TodoAttachment?
+        try change(id) { t in
+            guard t.state != .running else { throw TodoError.busy }
+            gone = t.attachments.first { $0.id == attachment }
+            t.attachments.removeAll { $0.id == attachment }
+        }
+        if let gone { try? FileManager.default.removeItem(at: file(id, gone)) }
+    }
+
     // Waiting for the user (the sidebar badge): a decision, or a result to check.
     var waitingForUser: Int { snapshot.items.filter { $0.state == .needsYou || $0.state == .review }.count }
 }
@@ -537,15 +627,50 @@ final class TodoScheduler: ObservableObject {
         discussion.configure(room: room) { c in
             c.mode = 0; c.memberIDs = members; c.leadID = crew.lead.id; c.soloAccountID = members.count == 1 ? crew.lead.id : nil
         }
-        let question = Self.question(item)
+        // The attachments go into the chat's own folder (the AI reads them there); photos it has not seen yet also go with the message.
+        let delivered: (paths: [String], images: [ChatImage])
+        do { delivered = try deliver(item, room: room) } catch { return error.localizedDescription }
+        let question = Self.question(item, files: delivered.paths)
         // Running before the turn starts: the AI's first tool call must find it.
-        do { try store.change(item.id) { $0.state = .running; $0.room = room; $0.lastError = nil; $0.report = nil } } catch { return error.localizedDescription }
-        if let reason = discussion.startTurn(room: room, question: question, forced: crew.reviewer == nil ? nil : .work, extra: Self.instruction(item)) {
+        do { try store.change(item.id) { $0.state = .running; $0.room = room; $0.lastError = nil; $0.report = nil } } catch {
+            for image in delivered.images { try? ImageStore.remove(image) }
+            return error.localizedDescription
+        }
+        if let reason = discussion.startTurn(room: room, question: question, images: delivered.images, forced: crew.reviewer == nil ? nil : .work, extra: Self.instruction(item)) {
+            for image in delivered.images { try? ImageStore.remove(image) }
             try? store.change(item.id) { $0.state = .ready; $0.lastError = reason }
             return reason
         }
         try? store.change(item.id) { $0.interrupted = false }
         return nil
+    }
+
+    // Copies the TODO's attachments into its chat's folder (kept when already there) and returns their paths, with
+    // the photos not yet sent in that chat (at most 4 per message, like the message box). A photo carries its
+    // attachment's ID, so a retry in the same chat does not send it twice.
+    static let attachmentFolder = "TODO attachments"
+    func deliver(_ item: TodoItem, room: UUID) throws -> (paths: [String], images: [ChatImage]) {
+        guard !item.attachments.isEmpty else { return ([], []) }
+        let target = Discussion.chatFolder(room).appendingPathComponent(Self.attachmentFolder)
+        let sent = Set(discussion.conversation(room).turns.flatMap { $0.images ?? [] }.map(\.id))
+        var paths: [String] = [], images: [ChatImage] = []
+        do {
+            try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            for attachment in item.attachments {
+                let source = store.file(item.id, attachment)
+                let copy = target.appendingPathComponent(String(attachment.id.uuidString.prefix(8)) + "-" + attachment.name)
+                if !FileManager.default.fileExists(atPath: copy.path) { try FileManager.default.copyItem(at: source, to: copy) }
+                paths.append(copy.path)
+                if attachment.image, !sent.contains(attachment.id), images.count < 4,
+                   let image = try? ImageStore.importImage(Data(contentsOf: source), name: attachment.name, conversationID: room, id: attachment.id) {
+                    images.append(image)
+                }
+            }
+        } catch {
+            for image in images { try? ImageStore.remove(image) }
+            throw TodoError.attachment(L("첨부 파일을 TODO 채팅에 넣지 못했어요: ", "Could not put the attachments into the TODO's chat: ") + error.localizedDescription)
+        }
+        return (paths, images)
     }
 
     // A TODO chat stopped answering while its TODO still runs: the AI did not report.
@@ -607,9 +732,11 @@ final class TodoScheduler: ObservableObject {
     }
 
     // What the AI is asked: the TODO, then everything the user said about it since.
-    static func question(_ item: TodoItem) -> String {
+    // files: where its attachments are for the AI (deliver).
+    static func question(_ item: TodoItem, files: [String] = []) -> String {
         var text = "TODO: " + item.title
         if !item.detail.isEmpty { text += "\n\n" + item.detail }
+        if !files.isEmpty { text += "\n\n" + L("[첨부 파일]", "[Attached files]") + "\n" + files.map { "- " + $0 }.joined(separator: "\n") }
         let said = item.notes.filter { $0.kind == .answer || $0.kind == .feedback }
         if !said.isEmpty {
             text += "\n\n" + L("[내 답과 수정 요청]", "[My answers and change requests]") + "\n"

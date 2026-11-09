@@ -1,4 +1,5 @@
 import Foundation
+import Cocoa
 
 // TODO work (Todo.swift): the store and its order rules, task_done / task_ask, and the scheduler running TODOs
 // in their own chats with fake AI answers. Every store is a file in the test folder, never the real todos.json.
@@ -329,3 +330,57 @@ func testSidebarProjects() {
     expect(start.current.item(theirs.id)?.state == .ready, "the start on every project's board takes them all")
     print("PASS: sidebar by project (worktrees in one folder, TODO chats apart, folders for TODO-only projects, pinned projects first, finished TODO chats capped, folds and pins kept, adopted once, one project's start)")
 }
+
+// Photos and files on a TODO: copied in before saving, removed with it, refused while it runs, and given to the AI
+// in its chat's folder (photos also with the message, once per chat).
+func testTodoAttachments() {
+    let project = ProjectBinding(root: "/tmp/todo-files", common: "", remote: "", remoteURL: "")
+    let url = todoStoreFile("files")
+    let store = TodoStore(url: url)
+    let sources = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("todo-tests/sources")
+    try? FileManager.default.removeItem(at: sources)
+    try! FileManager.default.createDirectory(at: sources, withIntermediateDirectories: true)
+    let note = sources.appendingPathComponent("notes.txt"), photo = sources.appendingPathComponent("shot.png")
+    try! "read me".write(to: note, atomically: true, encoding: .utf8)
+    let canvas = NSImage(size: NSSize(width: 8, height: 8)); canvas.lockFocus(); NSColor.red.setFill(); NSRect(x: 0, y: 0, width: 8, height: 8).fill(); canvas.unlockFocus()
+    try! NSBitmapImageRep(data: canvas.tiffRepresentation!)!.representation(using: .png, properties: [:])!.write(to: photo)
+
+    let item = try! store.add(title: "with files", detail: "see the shot", files: [note, photo], project: project, projectName: "F")
+    expect(item.attachments.map(\.name) == ["notes.txt", "shot.png"] && item.attachments.map(\.image) == [false, true], "attachments are kept with names and kinds: \(item.attachments)")
+    expect(item.attachments.allSatisfy { FileManager.default.fileExists(atPath: store.file(item.id, $0).path) } && FileManager.default.fileExists(atPath: note.path), "files are copied in; the originals stay")
+    expect(TodoStore(url: url).current.item(item.id)?.attachments == item.attachments, "attachments are saved and read back")
+    expect(TodoStore.safeName("../../.secret/x:y") == "_.._.secret_x_y" && TodoStore.safeName("...") == "file", "a name stays one plain file name: \(TodoStore.safeName("../../.secret/x:y"))")
+    do { try store.attach(item.id, files: [sources]); expect(false, "a folder is refused") } catch { expect(store.current.item(item.id)?.attachments.count == 2, "a refused attachment changes nothing") }
+    do { _ = try store.add(title: "many", files: Array(repeating: note, count: TodoStore.maxAttachments + 1), project: project, projectName: "F"); expect(false, "too many") } catch {}
+    // Running: no changes to its files.
+    try! store.change(item.id) { $0.state = .running }
+    do { try store.attach(item.id, files: [note]); expect(false, "no attaching while running") } catch { expect(error as? TodoError == .busy, "attaching while running is refused") }
+    do { try store.detach(item.id, item.attachments[0].id); expect(false, "no removing while running") } catch {}
+    try! store.change(item.id) { $0.state = .ready }
+    try! store.detach(item.id, item.attachments[0].id)
+    expect(store.current.item(item.id)?.attachments.map(\.name) == ["shot.png"] && !FileManager.default.fileExists(atPath: store.file(item.id, item.attachments[0]).path), "removing an attachment removes its copy")
+    try! store.attach(item.id, files: [note])
+
+    // Delivery: into the chat's folder, listed in the question; the photo once per chat.
+    let saved = TodoStore.shared
+    TodoStore.shared = store
+    defer { TodoStore.shared = saved }
+    let chat = Discussion(model: AppModel())
+    let scheduler = TodoScheduler(discussion: chat, store: store)
+    let room = chat.addProjectChat(project, title: "files", open: false)
+    let current = store.current.item(item.id)!
+    let first = try! scheduler.deliver(current, room: room)
+    expect(first.paths.count == 2 && first.paths.allSatisfy { $0.hasPrefix(Discussion.chatFolder(room).path + "/") && FileManager.default.fileExists(atPath: $0) },
+           "attachments go into the TODO chat's folder: \(first.paths)")
+    expect(first.images.map(\.id) == [current.attachments.first { $0.image }!.id], "the photo goes with the message, under its attachment's ID")
+    let question = TodoScheduler.question(current, files: first.paths)
+    expect(question.contains("see the shot") && first.paths.allSatisfy(question.contains), "the question lists where the files are")
+    chat.change(room, save: false) { c in var turn = ChatTurn(question: question); turn.images = first.images; c.turns.append(turn) }
+    let again = try! scheduler.deliver(current, room: room)
+    expect(again.paths == first.paths && again.images.isEmpty, "a retry in the same chat reuses the copies and does not send the photo again")
+    try! store.delete(item.id)
+    expect(!FileManager.default.exists(store.folder(item.id)) && FileManager.default.fileExists(atPath: first.paths[0]), "deleting the TODO removes its files; the chat keeps its copies")
+    print("PASS: TODO attachments (copied in, saved, safe names, limits, refused while running, removed, delivered to the chat once)")
+}
+
+private extension FileManager { func exists(_ url: URL) -> Bool { fileExists(atPath: url.path) } }

@@ -13,7 +13,7 @@ struct ChatImage: Identifiable, Codable, Equatable {
 }
 
 enum ImageStore {
-    static func importImage(_ data: Data, name: String, conversationID: UUID, maxEdge: Int = 1600) throws -> ChatImage {
+    static func importImage(_ data: Data, name: String, conversationID: UUID, id: UUID = UUID(), maxEdge: Int = 1600) throws -> ChatImage {
         guard data.count <= 25 * 1024 * 1024,
               let source = CGImageSourceCreateWithData(data as CFData, nil),
               let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
@@ -21,7 +21,7 @@ enum ImageStore {
                 kCGImageSourceCreateThumbnailWithTransform: true,
                 kCGImageSourceThumbnailMaxPixelSize: maxEdge
               ] as CFDictionary) else { throw Failure.invalid }
-        let item = ChatImage(conversationID: conversationID, name: name)
+        let item = ChatImage(id: id, conversationID: conversationID, name: name)
         try FileManager.default.createDirectory(at: item.url.deletingLastPathComponent(), withIntermediateDirectories: true,
                                                 attributes: [.posixPermissions: 0o700])
         let encoded = NSMutableData()
@@ -30,7 +30,7 @@ enum ImageStore {
         guard CGImageDestinationFinalize(target) else { throw Failure.invalid }
         if encoded.length > 4_500_000 {
             guard maxEdge > 1024 else { throw Failure.invalid }
-            return try importImage(data, name: name, conversationID: conversationID, maxEdge: 1024)
+            return try importImage(data, name: name, conversationID: conversationID, id: id, maxEdge: 1024)
         }
         try (encoded as Data).write(to: item.url, options: .atomic)
         return item

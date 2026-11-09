@@ -350,6 +350,9 @@ func testTodoAttachments() {
     expect(item.attachments.allSatisfy { FileManager.default.fileExists(atPath: store.file(item.id, $0).path) } && FileManager.default.fileExists(atPath: note.path), "files are copied in; the originals stay")
     expect(TodoStore(url: url).current.item(item.id)?.attachments == item.attachments, "attachments are saved and read back")
     expect(TodoStore.safeName("../../.secret/x:y") == "_.._.secret_x_y" && TodoStore.safeName("...") == "file", "a name stays one plain file name: \(TodoStore.safeName("../../.secret/x:y"))")
+    let long = TodoStore.safeName(String(repeating: "가", count: 120) + ".png")
+    expect(long.utf8.count <= TodoStore.maxNameBytes && long.hasSuffix(".png") && (UUID().uuidString + "-" + long).utf8.count <= 255,
+           "a long Korean name fits in bytes with its extension: \(long.utf8.count)")
     do { try store.attach(item.id, files: [sources]); expect(false, "a folder is refused") } catch { expect(store.current.item(item.id)?.attachments.count == 2, "a refused attachment changes nothing") }
     do { _ = try store.add(title: "many", files: Array(repeating: note, count: TodoStore.maxAttachments + 1), project: project, projectName: "F"); expect(false, "too many") } catch {}
     // Running: no changes to its files.

@@ -358,11 +358,19 @@ final class TodoStore: ObservableObject {
     func file(_ item: UUID, _ attachment: TodoAttachment) -> URL { folder(item).appendingPathComponent(attachment.id.uuidString + "-" + attachment.name) }
 
     // A name that stays one file name (no folders, no hidden file).
+    static let maxNameBytes = 200
     static func safeName(_ name: String) -> String {
         var clean = name.replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: ":", with: "_")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         while clean.hasPrefix(".") { clean.removeFirst() }
-        if clean.count > 120 { let ext = (clean as NSString).pathExtension; clean = String(clean.prefix(110)) + (ext.isEmpty ? "" : "." + ext) }
+        // File names are limited in UTF-8 bytes (255); the stored copy adds a UUID and "-" (37 bytes).
+        if clean.utf8.count > maxNameBytes {
+            let ext = (clean as NSString).pathExtension
+            let tail = ext.isEmpty || ext.utf8.count > 20 ? "" : "." + ext
+            var stem = tail.isEmpty ? clean : (clean as NSString).deletingPathExtension
+            while !stem.isEmpty && stem.utf8.count + tail.utf8.count > maxNameBytes { stem.removeLast() }
+            clean = stem + tail
+        }
         return clean.isEmpty ? "file" : clean
     }
 
@@ -629,7 +637,10 @@ final class TodoScheduler: ObservableObject {
         }
         // The attachments go into the chat's own folder (the AI reads them there); photos it has not seen yet also go with the message.
         let delivered: (paths: [String], images: [ChatImage])
-        do { delivered = try deliver(item, room: room) } catch { return error.localizedDescription }
+        do { delivered = try deliver(item, room: room) } catch {
+            try? store.change(item.id) { $0.room = room }   // the next try reuses this chat and the copies already made
+            return error.localizedDescription
+        }
         let question = Self.question(item, files: delivered.paths)
         // Running before the turn starts: the AI's first tool call must find it.
         do { try store.change(item.id) { $0.state = .running; $0.room = room; $0.lastError = nil; $0.report = nil } } catch {

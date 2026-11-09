@@ -741,7 +741,7 @@ final class TodoScheduler: ObservableObject {
             let report = item.report
             if let error = turn?.error {
                 // Another chat writing the repository is not the TODO's fault: try again later.
-                let busy = error.contains("Another AI is writing") || error.contains("Repository is busy")
+                let busy = ProjectWork.isBusy(error)
                 try? store.change(item.id) { t in
                     if !busy { t.attempts += 1 }
                     t.lastError = error

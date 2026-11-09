@@ -1323,10 +1323,14 @@ final class Discussion: ObservableObject {
         let rules = model.chatRules.trimmingCharacters(in: .whitespacesAndNewlines)
         let debateLeader = Self.modernModes && !team.contains(where: { $0.provider == config.leader }) ? team[0].provider : config.leader
         worker.work.async {
-            let projectLocks: [String]
-            do { projectLocks = try ProjectWork.acquire(worker.activeWorkspace) }
-            catch { worker.finish(id, index, error: error.localizedDescription); return }
+            // Only work that may write takes the repository lock, once its route is known: meetings, opinions and
+            // one-member answers read the project, so other chats can talk while a TODO or chat is changing it.
+            var projectLocks: [String] = []
             defer { ProjectWork.release(projectLocks) }
+            func lock() -> Bool {
+                do { projectLocks = try ProjectWork.acquire(worker.activeWorkspace); return true }
+                catch { worker.finish(id, index, error: error.localizedDescription); return false }
+            }
             if meeting {
                 worker.runMeeting(question: question, history: history, rules: rules, team: meetingTeam, room: meetingID,
                                   cancellation: cancellation, id: id, index: index)
@@ -1356,6 +1360,7 @@ final class Discussion: ObservableObject {
                     worker.changeTurn(id, index, save: true) { $0.error = L("답할 수 있는 AI가 없어요.", "No AI is available.") }
                     return worker.endSolo(id, index, stopped: false)
                 }
+                if route == .work { guard lock() else { return } }
                 let note = route == .work
                     ? Self.routeNote(.work, by: by, names: doers.isEmpty ? team.map(worker.label) : doers.map(name), reviewers: checkers.map(name), forced: forced != nil)
                     : Self.routeNote(route, by: by, names: answering.map(name), forced: forced != nil)
@@ -1373,6 +1378,7 @@ final class Discussion: ObservableObject {
                     worker.endPeer(peer)
                 }
             } else if solo {
+                guard lock() else { return }
                 // Reviewers (a project chat with two or more members, Peer.swift): ask_peer during the work, then
                 // a review of what changed, and the lead fixes what is right.
                 let binding = worker.activeWorkspace ?? worker.soloBinding(id)
@@ -1380,6 +1386,8 @@ final class Discussion: ObservableObject {
                 worker.runSolo(question: question, history: history, rules: rules, config: config, mentions: called,
                              reviewers: reviewers, cancellation: cancellation, id: id, index: index, extra: extra)
                 worker.endPeer(peer)
+            } else if !lock() {
+                return
             } else if Self.modernModes && config.mode == 4 {
                 worker.runVote(question: question, history: history, rules: rules, team: team,
                              leader: team.first { $0.id == config.leaderAccountID } ?? team.first { $0.provider == config.leader } ?? team[0],

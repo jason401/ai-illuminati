@@ -15,7 +15,11 @@ func testProjectWork() {
     let binding = WorkspaceBinding(roots: [WorkspaceRoot(path: root.path, directory: true, writable: true)], project: selected)
     let lease = try! ProjectWork.acquire(binding)
     defer { ProjectWork.release(lease) }
-    do { _ = try ProjectWork.acquire(binding); expect(false, "concurrent project writer refused") } catch {}
+    do { _ = try ProjectWork.acquire(binding); expect(false, "concurrent project writer refused") }
+    catch { expect(ProjectWork.isBusy(error.localizedDescription), "a busy repository is told apart (TODOs retry without counting)") }
+    // While one chat writes, other chats of the project still read it: opinions and meetings take no lock.
+    let reading = Route.opinionView(binding, chatFolder: base.appendingPathComponent("chat").path)
+    expect((try? ProjectWork.acquire(reading)) == [], "a read-only answer needs no repository lock")
     write("user.txt", "Existing user edit\n"); _ = git(["add", "user.txt"], at: root)
     let outer = DebateCancellation(), run = ProjectRun(room: UUID(), binding: selected, token: outer)
     ProjectWork.register(run); run.nextAttempt()

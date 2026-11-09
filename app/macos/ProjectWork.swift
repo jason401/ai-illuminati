@@ -239,6 +239,12 @@ enum ProjectWork {
     private static let mutex = NSLock()
     private static var held: [String: Int32] = [:]
     private static var runs: [UUID: ProjectRun] = [:]
+    // Another chat holds the repository (TodoScheduler.settle retries without counting an attempt).
+    static let busyKorean = "다른 AI가 지금 이 프로젝트를 고치는 중이에요. 끝나면 다시 시켜 주세요. 회의(/m)나 의견(/a, /1)은 지금도 돼요."
+    static let busyEnglish = "Another AI is changing this project now. Ask again when it finishes; a meeting (/m) or opinions (/a, /1) work now."
+    static func isBusy(_ error: String) -> Bool {
+        error.contains(busyKorean) || error.contains(busyEnglish) || error.contains("Another AI is writing") || error.contains("Repository is busy")
+    }
     static var active: Bool { mutex.lock(); defer { mutex.unlock() }; return !runs.isEmpty }
     static func get(_ id: UUID?) -> ProjectRun? { mutex.lock(); defer { mutex.unlock() }; return id.flatMap { runs[$0] } }
     static func register(_ run: ProjectRun) { mutex.lock(); runs[run.id] = run; mutex.unlock() }
@@ -255,7 +261,7 @@ enum ProjectWork {
         var acquired: [String] = []
         do {
             for path in common.sorted() {
-                guard held[path] == nil else { throw MaterialReader.error("Another AI is writing this repository. Wait until it finishes.") }
+                guard held[path] == nil else { throw MaterialReader.error(L(busyKorean, busyEnglish)) }
                 let base = URL(fileURLWithPath: AccountStore.supportDir).appendingPathComponent("project-locks")
                 try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
                 let name = SHA256.hash(data: Data(path.utf8)).map { String(format: "%02x", $0) }.joined()

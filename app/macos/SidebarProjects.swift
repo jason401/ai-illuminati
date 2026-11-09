@@ -91,6 +91,7 @@ final class SidebarFold: ObservableObject {
     @Published private(set) var folded: Set<String>
     @Published private(set) var pinnedProjects: Set<String>
     @Published var allTodoRooms: Set<String> = []   // projects whose finished TODO chats are all listed (until the app quits)
+    @Published var dropProject: String?             // the project folder a dragged chat is over
     private static let foldedKey = "sidebar.folded", pinnedKey = "sidebar.pinnedProjects", adoptedKey = "sidebar.pinsAdopted"
 
     init(defaults: UserDefaults) {
@@ -132,5 +133,42 @@ extension Discussion {
     // The TODO board in place of the chat: one project's (a click on its folder) or every project's.
     func openBoard(project: String?) {
         viewingRemote = nil; boardProject = project; viewingBoard = true; sidebarOverlay = false
+    }
+}
+
+// Dragging a chat onto a project folder (or "Move to project" in its menu) links it to that project, like
+// "Link folder" does: its other linked files stay, an earlier project's root goes.
+extension SidebarProjects {
+    static let dragPrefix = "ai-illuminati-chat:"
+
+    // The project's Enterprise lock, if its chats or TODO lists have one (as a new chat in it gets).
+    static func lock(of group: ProjectGroup, todo: TodoData) -> EnterpriseLock? {
+        (group.chats + group.todoRooms).first { $0.enterpriseLock != nil }?.enterpriseLock
+            ?? todo.lists.first { group.lists.contains($0.id) && $0.lock != nil }?.lock
+    }
+
+    // Why this chat cannot go into this project (nil: it can). mode: the chat's mode (project work is plain chat only).
+    static func moveRefusal(_ chat: Conversation, into group: ProjectGroup, todo: TodoData, running: Bool, mode: Int) -> String? {
+        guard group.bindings.first != nil else { return L("이 프로젝트에는 연결할 폴더가 없어요.", "This project has no folder to link.") }
+        if let project = chat.workspace?.project, key(project) == group.id { return L("이미 이 프로젝트에 있어요.", "Already in this project.") }
+        if chat.meetingOf != nil { return L("회의 기록은 옮길 수 없어요.", "Meeting records cannot be moved.") }
+        if todo.items.contains(where: { $0.room == chat.id }) { return L("TODO 작업방은 그 TODO의 프로젝트에 남아요.", "A TODO chat stays in its TODO's project.") }
+        if running { return L("답하는 중에는 옮길 수 없어요. 끝난 뒤 다시 해 주세요.", "Cannot move a chat while it answers. Try again when it is done.") }
+        if mode != 0 { return L("프로젝트에는 일반 대화만 넣을 수 있어요.", "Only plain chats can go into a project.") }
+        if chat.enterpriseLock?.organization != lock(of: group, todo: todo)?.organization {
+            return L("Enterprise 대화와 일반 대화는 서로의 프로젝트로 옮길 수 없어요.", "Enterprise and open chats cannot move into each other's projects.")
+        }
+        return nil
+    }
+
+    // The chat's link after the move: the project's newest root, writable, plus what else it had linked.
+    static func moved(_ workspace: WorkspaceBinding?, to project: ProjectBinding) -> WorkspaceBinding {
+        var binding = workspace ?? WorkspaceBinding(roots: [])
+        let old = binding.project?.root
+        binding.roots.removeAll { $0.path == old || $0.path == project.root }
+        binding.roots.insert(WorkspaceRoot(path: project.root, directory: true, writable: true), at: 0)
+        binding.project = project
+        binding.projectRunID = nil; binding.projectGeneration = nil
+        return binding
     }
 }

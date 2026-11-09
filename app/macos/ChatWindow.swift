@@ -194,6 +194,7 @@ struct ChatView: View {
         } else {
             Button(conversation.pinned == true ? L("고정 해제", "Unpin") : L("맨 위에 고정", "Pin to top")) { discussion.togglePin(conversation.id) }
         }
+        moveMenu(conversation)
         Button(L("이 대화 폴더 열기", "Show this chat's folder")) { discussion.openChatFolder(conversation.id) }
         if sync.settings.enabled && !sync.settings.shareAll {
             Button(conversation.shareToDevices == true ? L("다른 기기에서 숨기기", "Hide on other Macs") : L("다른 기기에 보이기", "Show on other Macs")) {
@@ -203,6 +204,45 @@ struct ChatView: View {
         Divider()
         Button(L("대화 삭제…", "Delete chat…"), role: .destructive) { discussion.delete(conversation.id) }
             .disabled(discussion.runningRooms.contains(conversation.id))
+    }
+
+    // The same as dragging the chat onto a project folder: the projects it can go into.
+    @ViewBuilder private func moveMenu(_ conversation: Conversation) -> some View {
+        let projects = SidebarProjects.group(discussion.listedConversations.filter(\.hasContent), todo: todos.snapshot, pinned: folds.pinnedProjects).projects
+        let targets = projects.filter {
+            SidebarProjects.moveRefusal(conversation, into: $0, todo: todos.snapshot, running: false, mode: discussion.configuration(of: conversation.id).mode) == nil
+        }
+        if !targets.isEmpty {
+            Menu(L("프로젝트로 옮기기", "Move to project")) {
+                ForEach(targets) { group in Button(group.name) { discussion.moveChat(conversation.id, into: group) } }
+            }
+            .disabled(discussion.runningRooms.contains(conversation.id))
+        }
+    }
+
+    // A chat that may be dragged onto a project folder: not a TODO's chat (it stays with its TODO).
+    private func draggable(_ conversation: Conversation, todo: TodoItem.State?) -> Bool {
+        conversation.hasContent && todo == nil && conversation.meetingOf == nil && !todos.snapshot.items.contains { $0.room == conversation.id }
+    }
+
+    // A chat dragged over a project folder outlines it; dropped, the chat joins the project (unfolded to show it).
+    private func dropTargeted(_ project: String) -> Binding<Bool> {
+        Binding(get: { folds.dropProject == project },
+                set: { inside in
+                    if inside { folds.dropProject = project } else if folds.dropProject == project { folds.dropProject = nil }
+                })
+    }
+    private func dropChat(_ providers: [NSItemProvider], into group: ProjectGroup) -> Bool {
+        guard let provider = providers.first(where: { $0.canLoadObject(ofClass: NSString.self) }) else { return false }
+        let key = "project." + group.id
+        _ = provider.loadObject(ofClass: NSString.self) { item, _ in
+            guard let text = item as? String, text.hasPrefix(SidebarProjects.dragPrefix),
+                  let id = UUID(uuidString: String(text.dropFirst(SidebarProjects.dragPrefix.count))) else { return }
+            DispatchQueue.main.async {
+                if discussion.moveChat(id, into: group), folds.isFolded(key) { folds.toggle(key) }
+            }
+        }
+        return true
     }
 
     // A project folder: click to open its TODO board (and unfold), the chevron to fold, + for a new chat in it,
@@ -259,7 +299,10 @@ struct ChatView: View {
         .font(.system(size: 13, weight: .medium))
         .padding(.horizontal, 10).frame(height: 30)
         .background(selected ? Color.primary.opacity(0.10) : hovered ? Color.primary.opacity(0.05) : .clear, in: RoundedRectangle(cornerRadius: 8))
+        // A chat dragged over it: outlined; dropped, it joins this project.
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.accentColor, lineWidth: 2).opacity(folds.dropProject == group.id ? 1 : 0))
         .contentShape(Rectangle())
+        .onDrop(of: [UTType.text], isTargeted: dropTargeted(group.id)) { providers in dropChat(providers, into: group) }
         .onTapGesture {
             // Clicking the folder already showing its board folds or unfolds it; otherwise it opens the board, unfolded.
             if selected { folds.toggle(key) } else {
@@ -391,6 +434,11 @@ struct ChatView: View {
         .help(dateText(conversation.updatedAt))
         .contextMenu {
             if conversation.hasContent { chatMenu(conversation) }
+        }
+        // Drag it onto a project folder to put it in that project.
+        .onDrag {
+            guard draggable(conversation, todo: todo) else { return NSItemProvider() }
+            return NSItemProvider(object: (SidebarProjects.dragPrefix + conversation.id.uuidString) as NSString)
         }
         .disabled(discussion.importingMaterials)
     }

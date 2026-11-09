@@ -161,6 +161,33 @@ extension Discussion {
         } catch { attachmentError = error.localizedDescription }
     }
 
+    // A chat dragged onto a project folder in the sidebar (or "Move to project" in its menu) joins that project.
+    // The first time it says what that allows (full auto, like "Link folder"); "Don't ask again" skips it.
+    @discardableResult
+    func moveChat(_ id: UUID, into group: ProjectGroup) -> Bool {
+        guard host == nil, !importingMaterials, let chat = conversations.first(where: { $0.id == id }), let project = group.bindings.first else { return false }
+        if let reason = SidebarProjects.moveRefusal(chat, into: group, todo: TodoStore.shared.snapshot, running: runningRooms.contains(id), mode: configuration(of: id).mode) {
+            attachmentError = reason; return false
+        }
+        let confirmed = "sidebar.moveToProjectConfirmed"
+        if !UserDefaults.app.bool(forKey: confirmed) {
+            let alert = NSAlert()
+            alert.messageText = L("\"\(chat.title)\"을(를) \(group.name) 프로젝트로 옮길까요?", "Move \"\(chat.title)\" into \(group.name)?")
+            alert.informativeText = project.root + "\n\n" + L("이 대화에서 AI가 이 프로젝트 폴더에서 일할 수 있어요 (완전 자동: 명령 실행·main에 push, stable 배포만 직접 허용). 지난 대화 내용은 그대로 남아요.", "The AI in this chat can then work in this project folder (full auto: runs commands and pushes to main; publishing stable always asks you). The chat's messages stay.")
+            alert.showsSuppressionButton = true
+            alert.suppressionButton?.title = L("다시 묻지 않기", "Don't ask again")
+            alert.addButton(withTitle: L("옮기기", "Move")); alert.addButton(withTitle: L("취소", "Cancel"))
+            guard alert.runModal() == .alertFirstButtonReturn else { return false }
+            if alert.suppressionButton?.state == .on { UserDefaults.app.set(true, forKey: confirmed) }
+        }
+        // The AI's earlier sessions knew other folders: the next question starts fresh ones from the chat.
+        do { try nativeSessions.reset(id) } catch { attachmentError = error.localizedDescription; return false }
+        change(id, save: true) { $0.workspace = SidebarProjects.moved($0.workspace, to: project) }
+        attachmentError = nil
+        sessionNote = L("\(group.name) 프로젝트로 옮겼어요", "Moved into \(group.name)")
+        return true
+    }
+
     func runProjectSolo(question: String, history: [ChatTurn], rules: String, config: ChatConfiguration,
                         mentions: [String], reviewers: [String] = [], cancellation: DebateCancellation, id: UUID, index: Int,
                         binding: WorkspaceBinding, fresh: String? = nil, keepState: Bool = false, note: String = "") {

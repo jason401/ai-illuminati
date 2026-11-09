@@ -398,3 +398,42 @@ func testTodoAttachments() {
 }
 
 private extension FileManager { func exists(_ url: URL) -> Bool { fileExists(atPath: url.path) } }
+
+// Dragging a chat onto a project folder (SidebarProjects.moveRefusal/moved): which chats may go, and the link they get.
+func testMoveChatToProject() {
+    let repo = ProjectBinding(root: "/tmp/move-repo", common: "/tmp/move-repo/.git", remote: "origin", remoteURL: "")
+    let other = ProjectBinding(root: "/tmp/move-other", common: "/tmp/move-other/.git", remote: "origin", remoteURL: "")
+    func chat(_ title: String, _ project: ProjectBinding?) -> Conversation {
+        var c = Conversation(); c.title = title
+        c.turns = [ChatTurn(question: "hi")]
+        if let project { c.workspace = WorkspaceBinding(roots: [WorkspaceRoot(path: project.root, directory: true, writable: true)], project: project) }
+        return c
+    }
+    let member = chat("member", repo), plain = chat("plain", nil), elsewhere = chat("elsewhere", other)
+    let todoChat = chat("TODO · x", nil)
+    var data = TodoData()
+    var item = TodoItem(listID: UUID(), title: "x"); item.room = todoChat.id
+    data.items.append(item)
+    let group = SidebarProjects.group([member, plain, elsewhere, todoChat], todo: data, pinned: []).projects.first { $0.id == repo.common }!
+    func refused(_ c: Conversation, running: Bool = false, mode: Int = 0, todo: TodoData? = nil) -> Bool {
+        SidebarProjects.moveRefusal(c, into: group, todo: todo ?? data, running: running, mode: mode) != nil
+    }
+    expect(!refused(plain) && !refused(elsewhere), "a plain chat and another project's chat can move in")
+    expect(refused(member), "a chat already in the project does not move")
+    expect(refused(todoChat), "a TODO's chat stays with its TODO")
+    expect(refused(plain, running: true) && refused(plain, mode: 1), "not while answering, and only plain chats")
+    var locked = plain; locked.enterpriseLock = EnterpriseLock(organization: "acme", name: "Acme", lockedAt: Date())
+    expect(refused(locked), "an Enterprise chat does not go into an open project")
+
+    // The link: the project's root first and writable, other linked files kept, the earlier project's root gone.
+    var linked = elsewhere.workspace!
+    linked.roots.append(WorkspaceRoot(path: "/tmp/notes.txt", directory: false))
+    linked.projectRunID = UUID()
+    let moved = SidebarProjects.moved(linked, to: repo)
+    expect(moved.project == repo && moved.roots.map(\.path) == ["/tmp/move-repo", "/tmp/notes.txt"] && moved.roots[0].writable == true
+           && moved.projectRunID == nil, "moved link: \(moved.roots.map(\.path))")
+    expect(SidebarProjects.moved(nil, to: repo).roots.map(\.path) == ["/tmp/move-repo"], "a chat with nothing linked gets the project root")
+    expect(SidebarProjects.group([SidebarProjects.moved(nil, to: repo)].map { w -> Conversation in var c = plain; c.workspace = w; return c }, todo: TodoData(), pinned: [])
+           .projects.first?.id == repo.common, "the moved chat shows under the project's folder")
+    print("PASS: move chat to project (who may move, the new link, shows in the folder)")
+}

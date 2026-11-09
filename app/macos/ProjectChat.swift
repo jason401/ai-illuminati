@@ -207,14 +207,17 @@ extension Discussion {
         let transcript = Self.transcript(history) + "\n[User]\n" + question
         let chatLock = self.lock(of: id)
         var excluded = Set<String>(), checkpoint = run.checkpoint("Project turn started")
-        var preferred = mentions.first ?? config.soloAccountID ?? config.lastSoloAccountID
+        // Picked by hand (@ or one account checked): that one. Otherwise the same rule as a plain chat: the last
+        // account keeps going while 5-hour and weekly usage both have 15% or more left (AutoPick). During the
+        // work only a usage-limit error hands it to another AI.
+        var preferred = mentions.first ?? config.soloAccountID
         // Before the work starts: what the project looks like, so the review covers only this answer's changes
         // (also when another AI took over after a usage limit).
         let start = reviewers.isEmpty ? nil : ProjectSnapshot.take(root: selected.root)
         while !cancellation.isCancelled && Date() < run.deadline && !run.activeExpired {
             let eligible = model.accounts.filter { [.claude, .codex].contains($0.provider) && !excluded.contains($0.id) && Enterprise.permits($0, lock: chatLock) }
             let account = preferred.flatMap { wanted in eligible.first { $0.id == wanted } }
-                ?? AutoPick.choose(eligible, usage: model.latestUsage, lock: chatLock, current: nil)
+                ?? AutoPick.choose(eligible, usage: model.latestUsage, lock: chatLock, current: config.lastSoloAccountID)
             guard let account else {
                 finish(id, index, error: chatLock != nil
                        ? L("이 Enterprise 방에서 작업할 \(chatLock?.name ?? "") Claude/Codex 계정이 필요해요. 파일 변경은 보존했어요.", "This Enterprise chat needs a \(chatLock?.name ?? "") Claude/Codex account to continue. Changes are preserved.")

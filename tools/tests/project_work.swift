@@ -186,7 +186,26 @@ func testProjectHandoff() {
     expect(accounts == ["project-claude", "project-codex"] && chat.current.turns.last?.final == "Project continued.", "plain-chat project hands off Claude to Codex within the same turn")
     expect((try! String(contentsOf: file, encoding: .utf8)) == "completed work", "working tree survives handoff without forced commit or pull")
     expect((try! ProjectProcess.git(["log", "--oneline"], root: root.path)).split(separator: "\n").count == 1, "handoff never fabricates a checkpoint commit")
-    print("PASS: project AI handoff (same plain chat, same dirty files, next AI continuation, old-token revocation and no forced commit)")
+
+    // Not picked by hand: the same 15% rule as a plain chat. The last account (Codex) has 10% of its 5-hour limit
+    // left, so Claude starts; with enough left it keeps going.
+    func left(_ five: Double) -> AIUsage { var u = AIUsage(name: "u"); u.fiveHour = UsageWindow(usedPercent: 100 - five, resetsAt: nil); u.weekly = UsageWindow(usedPercent: 20, resetsAt: nil); return u }
+    model.latestUsage = ["project-claude": left(70), "project-codex": left(10)]
+    chat.configure { $0.soloAccountID = nil; $0.lastSoloAccountID = "project-codex" }
+    accounts = []
+    chat.workspaceAnswer = { account, _, _, _, _ in accounts.append(account.id); return .success("Picked.") }
+    func run() {
+        chat.draft = "Next step."; chat.send()
+        let until = Date().addingTimeInterval(30)
+        while Date() < until && (chat.anyRunning || chat.current.turns.last?.final == nil) { RunLoop.main.run(until: Date().addingTimeInterval(0.03)) }
+    }
+    run()
+    expect(accounts == ["project-claude"], "project work: the last account under 15% is not started")
+    model.latestUsage["project-codex"] = left(60)
+    chat.configure { $0.lastSoloAccountID = "project-codex" }
+    accounts = []; run()
+    expect(accounts == ["project-codex"], "project work: the last account keeps going with 15% or more left")
+    print("PASS: project AI handoff (same plain chat, same dirty files, next AI continuation, old-token revocation and no forced commit, 15% rule at the start)")
 }
 
 func testFullAuto() {

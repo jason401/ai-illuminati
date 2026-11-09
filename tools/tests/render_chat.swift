@@ -55,6 +55,26 @@ private struct EmptyPreviewLogin: GoogleTokenStore {
         }
         conversation.turns = [turn]
         chat.conversations = [conversation]; chat.currentID = conversation.id
+        if CommandLine.arguments.contains("--projects") {
+            // The sidebar by project: a repository with a chat, its meeting and a TODO chat; a folded one; a plain chat.
+            let repo = ProjectBinding(root: "/tmp/preview/AI Illuminati", common: "/tmp/preview/AI Illuminati/.git", remote: "origin", remoteURL: "")
+            let face = ProjectBinding(root: "/tmp/preview/AI Face", common: "/tmp/preview/AI Face/.git", remote: "origin", remoteURL: "")
+            func linked(_ title: String, _ project: ProjectBinding) -> Conversation {
+                var c = Conversation(); c.title = title; c.turns = [ChatTurn(question: title)]
+                c.workspace = WorkspaceBinding(roots: [WorkspaceRoot(path: project.root, directory: true, writable: true)], project: project)
+                return c
+            }
+            conversation.workspace = WorkspaceBinding(roots: [WorkspaceRoot(path: repo.root, directory: true, writable: true)], project: repo)
+            conversation.pinned = true
+            var meeting = Conversation(); meeting.title = "Meeting"; meeting.turns = [ChatTurn(question: "Sidebar structure: folders or chats?")]
+            meeting.meetingOf = MeetingLink(room: conversation.id, turn: turn.id)
+            let todoRoom = linked("TODO · Drag and drop PDFs", repo)
+            let item = try? TodoStore.shared.add(title: "Drag and drop PDFs", project: repo, projectName: "AI Illuminati")
+            if let item { try? TodoStore.shared.change(item.id) { $0.room = todoRoom.id; $0.state = .review } }
+            var notes = Conversation(); notes.title = "Todo list structure idea"; notes.turns = [ChatTurn(question: "ideas")]; notes.pinned = true
+            chat.conversations = [conversation, meeting, todoRoom, linked("Face expressions", face), notes]
+            SidebarFold.shared.toggle("project." + face.common)
+        }
         if CommandLine.arguments.contains("--find") {
             // ⌘F: two turns with the words, the newer one moved to.
             var earlier = ChatTurn(question: "Which spacing did we pick for the sidebar?")

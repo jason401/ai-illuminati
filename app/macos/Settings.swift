@@ -1542,24 +1542,44 @@ final class SettingsWindow {
     }
 }
 
-// A section title in the chat sidebar, with an optional accessory (a + button) on the right.
+// A section title in the chat sidebar, with an optional accessory (a + button) on the right. With a fold key a
+// click on it folds the section (kept in SidebarFold); the accessory's buttons still work on their own. A folded
+// section shows its badge (what waits for you inside) next to the title.
 struct SidebarHeader<Accessory: View>: View {
     let title: String
+    let fold: String?
+    let badge: Int
     let accessory: Accessory
-    init(title: String, @ViewBuilder accessory: () -> Accessory) { self.title = title; self.accessory = accessory() }
+    @ObservedObject private var folds = SidebarFold.shared
+    init(title: String, fold: String? = nil, badge: Int = 0, @ViewBuilder accessory: () -> Accessory) {
+        self.title = title; self.fold = fold; self.badge = badge; self.accessory = accessory()
+    }
 
     var body: some View {
-        HStack {
+        let folded = fold.map(folds.isFolded) ?? false
+        HStack(spacing: 4) {
             Text(title).font(.system(size: 11, weight: .medium)).foregroundColor(.secondary)
+            if fold != nil {
+                Image(systemName: folded ? "chevron.right" : "chevron.down").font(.system(size: 8, weight: .semibold))
+                    .foregroundColor(.secondary.opacity(0.8))
+            }
+            if folded && badge > 0 {
+                Text("\(badge)").font(.system(size: 10, weight: .semibold)).foregroundColor(.white)
+                    .padding(.horizontal, 5).frame(minWidth: 16, minHeight: 16).background(Color.orange, in: Capsule())
+            }
             Spacer()
             accessory
         }
         .padding(.horizontal, 10).padding(.top, 16).padding(.bottom, 4)
+        .contentShape(Rectangle())
+        .onTapGesture { if let fold { folds.toggle(fold) } }
+        .help(fold == nil ? "" : folded ? L("눌러서 펼치기", "Click to show") : L("눌러서 접기", "Click to fold"))
+        .accessibilityAddTraits(fold == nil ? [] : .isButton)
     }
 }
 
 extension SidebarHeader where Accessory == EmptyView {
-    init(title: String) { self.init(title: title) { EmptyView() } }
+    init(title: String, fold: String? = nil, badge: Int = 0) { self.init(title: title, fold: fold, badge: badge) { EmptyView() } }
 }
 
 // How a waiting approval reaches you outside its chat (ApprovalAlerts). The menu bar count, the banner and

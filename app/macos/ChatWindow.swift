@@ -19,6 +19,8 @@ struct ChatView: View {
     @ObservedObject private var layout = ChatLayout.shared
     @ObservedObject private var sync = DeviceSync.shared
     @ObservedObject private var approvals = ProjectCenter.shared
+    @ObservedObject private var folds = SidebarFold.shared
+    @ObservedObject private var todos = TodoStore.shared
 
     var body: some View {
         let wide = layout.wide
@@ -144,15 +146,21 @@ struct ChatView: View {
                                 .disabled(discussion.importingMaterials)
                         }
                     } else {
-                        let pinned = chats.filter { $0.pinned == true }
-                        if !pinned.isEmpty {
-                            SidebarHeader(title: L("고정됨", "Pinned"))
-                            ForEach(pinned) { chatGroup($0) }
+                        // Chats with a Git project under its folder (SidebarProjects.swift); the rest pinned or recent.
+                        let grouped = SidebarProjects.group(chats, todo: todos.snapshot, pinned: folds.pinnedProjects, withLists: !discussion.sidebarSearching)
+                        if !grouped.projects.isEmpty {
+                            SidebarHeader(title: L("프로젝트", "Projects"), fold: "projects", badge: todos.waitingForUser)
+                            if !folds.isFolded("projects") { ForEach(grouped.projects) { projectGroup($0) } }
                         }
-                        let recents = chats.filter { $0.pinned != true }
+                        let pinned = grouped.loose.filter { $0.pinned == true }
+                        if !pinned.isEmpty {
+                            SidebarHeader(title: L("고정됨", "Pinned"), fold: "pinned")
+                            if !folds.isFolded("pinned") { ForEach(pinned) { chatGroup($0) } }
+                        }
+                        let recents = grouped.loose.filter { $0.pinned != true }
                         if !recents.isEmpty {
-                            SidebarHeader(title: L("최근", "Recents"))
-                            ForEach(recents) { chatGroup($0) }
+                            SidebarHeader(title: L("최근", "Recents"), fold: "recents")
+                            if !folds.isFolded("recents") { ForEach(recents) { chatGroup($0) } }
                         }
                     }
                     if sync.settings.enabled { otherMacs }
@@ -181,7 +189,11 @@ struct ChatView: View {
     // The same items in the ⋯ menu and on right-click.
     @ViewBuilder private func chatMenu(_ conversation: Conversation) -> some View {
         Button(L("이름 바꾸기…", "Rename…")) { discussion.rename(conversation.id) }
-        Button(conversation.pinned == true ? L("고정 해제", "Unpin") : L("맨 위에 고정", "Pin to top")) { discussion.togglePin(conversation.id) }
+        if conversation.isProjectChat {
+            Button(conversation.pinned == true ? L("고정 해제", "Unpin") : L("프로젝트 안에서 맨 위에 고정", "Pin to the top of its project")) { discussion.togglePin(conversation.id) }
+        } else {
+            Button(conversation.pinned == true ? L("고정 해제", "Unpin") : L("맨 위에 고정", "Pin to top")) { discussion.togglePin(conversation.id) }
+        }
         Button(L("이 대화 폴더 열기", "Show this chat's folder")) { discussion.openChatFolder(conversation.id) }
         if sync.settings.enabled && !sync.settings.shareAll {
             Button(conversation.shareToDevices == true ? L("다른 기기에서 숨기기", "Hide on other Macs") : L("다른 기기에 보이기", "Show on other Macs")) {
@@ -193,25 +205,121 @@ struct ChatView: View {
             .disabled(discussion.runningRooms.contains(conversation.id))
     }
 
-    // A chat and, under it, the meetings held for it (Meeting.swift): the newest 5 until "show all".
-    @ViewBuilder private func chatGroup(_ conversation: Conversation) -> some View {
-        let meetings = discussion.meetings(of: conversation.id)
-        let shown = !meetings.isEmpty && discussion.meetingsShown(conversation.id, meetings)
-        chatRow(conversation, meetings: meetings.count, shown: shown)
-        if shown {
-            let all = discussion.meetingsAll.contains(conversation.id)
-            // The open meeting stays listed even when it is older than the newest 5.
-            let listed = all ? meetings : meetings.enumerated().filter { $0.offset < 5 || $0.element.id == discussion.currentID }.map(\.element)
-            ForEach(listed) { meetingRow($0) }
-            if meetings.count > 5 && !all {
-                Button(L("전체 보기 (\(meetings.count))", "Show all (\(meetings.count))")) { discussion.meetingsAll.insert(conversation.id) }
+    // A project folder: click to fold, + for a new chat in it, right-click to pin. Inside: its TODO board, its chats
+    // (each with its meetings) and the chats its TODOs work in.
+    @ViewBuilder private func projectGroup(_ group: ProjectGroup) -> some View {
+        let open = !folds.isFolded("project." + group.id)
+        projectRow(group, open: open)
+        if open {
+            projectBoardRow(group)
+            ForEach(group.chats) { chatGroup($0, depth: 1) }
+            let rooms = SidebarProjects.shownTodoRooms(group.todoRooms, todo: todos.snapshot, all: folds.allTodoRooms.contains(group.id))
+            ForEach(rooms.shown) { room in chatGroup(room, depth: 1, todo: todos.snapshot.items.first { $0.room == room.id }?.state) }
+            if rooms.hidden > 0 {
+                Button(L("끝난 TODO 더 보기 (\(rooms.hidden))", "Show \(rooms.hidden) more finished TODOs")) { folds.allTodoRooms.insert(group.id) }
                     .buttonStyle(.link).font(.system(size: 11)).padding(.leading, 34).frame(height: 22)
             }
         }
     }
 
+    private func projectRow(_ group: ProjectGroup, open: Bool) -> some View {
+        let key = "project." + group.id
+        let hovered = discussion.hoverKey == key
+        let rooms = Set((group.chats + group.todoRooms).map(\.id))
+        let waiting = SidebarProjects.waiting(todos.snapshot, lists: group.lists)
+        return HStack(spacing: 5) {
+            Image(systemName: "chevron.right").font(.system(size: 8, weight: .semibold)).foregroundColor(.secondary)
+                .rotationEffect(.degrees(open ? 90 : 0)).frame(width: 10)
+            Image(systemName: open ? "folder" : "folder.fill").font(.system(size: 12)).foregroundColor(.secondary).frame(width: 16)
+            Text(group.name).lineLimit(1).truncationMode(.tail).frame(maxWidth: .infinity, alignment: .leading)
+            if group.pinned { Image(systemName: "pin.fill").font(.system(size: 8)).foregroundColor(.secondary).help(L("고정된 프로젝트", "Pinned project")) }
+            // Folded: what is going on inside still shows.
+            if !open {
+                if approvals.requests.contains(where: { rooms.contains($0.room) }) {
+                    Circle().fill(Color.orange).frame(width: 7, height: 7).help(L("허가를 기다려요", "Waiting for approval"))
+                }
+                if !discussion.runningRooms.isDisjoint(with: rooms) { ProgressView().controlSize(.mini).help(L("답하는 중", "Answering")) }
+                if waiting > 0 {
+                    Text("\(waiting)").font(.system(size: 10, weight: .semibold)).foregroundColor(.white)
+                        .padding(.horizontal, 5).frame(minWidth: 16, minHeight: 16).background(Color.orange, in: Capsule())
+                }
+            }
+            if hovered, let binding = group.bindings.first {
+                Button(action: { newChat(in: group, binding) }) { Image(systemName: "square.and.pencil").font(.system(size: 11)).frame(width: 20, height: 20) }
+                    .buttonStyle(.plainHit).foregroundColor(.secondary)
+                    .help(L("이 프로젝트에 새 대화", "New chat in this project"))
+            }
+        }
+        .font(.system(size: 13, weight: .medium))
+        .padding(.horizontal, 10).frame(height: 30)
+        .background(hovered ? Color.primary.opacity(0.05) : .clear, in: RoundedRectangle(cornerRadius: 8))
+        .contentShape(Rectangle())
+        .onTapGesture { folds.toggle(key) }
+        .onHover { inside in discussion.hover(key, inside) }
+        .help(group.bindings.map(\.root).joined(separator: "\n"))
+        .contextMenu {
+            if let binding = group.bindings.first { Button(L("이 프로젝트에 새 대화", "New chat in this project")) { newChat(in: group, binding) } }
+            Button(L("할 일 보드", "TODO board")) { discussion.openBoard(project: group.id) }
+            Button(group.pinned ? L("프로젝트 고정 해제", "Unpin project") : L("프로젝트 맨 위에 고정", "Pin project to top")) { folds.togglePin(group.id) }
+            if let binding = group.bindings.first {
+                Button(L("Finder에서 열기", "Open in Finder")) { NSWorkspace.shared.open(URL(fileURLWithPath: binding.root)) }
+            }
+        }
+        .disabled(discussion.importingMaterials)
+    }
+
+    // A new chat linked to the project's newest root, locked like its chats when they are Enterprise.
+    private func newChat(in group: ProjectGroup, _ binding: ProjectBinding) {
+        let lock = (group.chats + group.todoRooms).first { $0.enterpriseLock != nil && $0.workspace?.project?.root == binding.root }?.enterpriseLock
+        discussion.addProjectChat(binding, title: L("새 대화", "New chat"), open: true, lock: lock)
+        if folds.isFolded("project." + group.id) { folds.toggle("project." + group.id) }
+    }
+
+    // ☑ The project's own TODO board, with what waits for you there.
+    private func projectBoardRow(_ group: ProjectGroup) -> some View {
+        let key = "board." + group.id
+        let selected = discussion.viewingBoard && discussion.boardProject == group.id
+        let hovered = discussion.hoverKey == key
+        let waiting = SidebarProjects.waiting(todos.snapshot, lists: group.lists)
+        let open = todos.snapshot.items.filter { group.lists.contains($0.listID) && $0.state != .done && $0.state != .cancelled }.count
+        return HStack(spacing: 5) {
+            Image(systemName: "checklist").font(.system(size: 11)).foregroundColor(.secondary).frame(width: 14)
+            Text(open > 0 ? L("할 일 \(open)", "TODOs \(open)") : L("할 일", "TODOs")).frame(maxWidth: .infinity, alignment: .leading)
+            if waiting > 0 {
+                Text("\(waiting)").font(.system(size: 10, weight: .semibold)).foregroundColor(.white)
+                    .padding(.horizontal, 5).frame(minWidth: 16, minHeight: 16).background(Color.orange, in: Capsule())
+                    .help(L("네 결정이나 확인을 기다리는 TODO", "TODOs waiting for your decision or check"))
+            }
+        }
+        .font(.system(size: 12))
+        .padding(.leading, 22).padding(.trailing, 10).frame(height: 26)
+        .background(selected ? Color.primary.opacity(0.10) : hovered ? Color.primary.opacity(0.05) : .clear, in: RoundedRectangle(cornerRadius: 8))
+        .contentShape(Rectangle())
+        .onTapGesture { discussion.openBoard(project: group.id) }
+        .onHover { inside in discussion.hover(key, inside) }
+        .disabled(discussion.importingMaterials)
+    }
+
+    // A chat and, under it, the meetings held for it (Meeting.swift): the newest 5 until "show all".
+    // depth 1: inside a project folder. todo: the state of the TODO this chat works on.
+    @ViewBuilder private func chatGroup(_ conversation: Conversation, depth: Int = 0, todo: TodoItem.State? = nil) -> some View {
+        let meetings = discussion.meetings(of: conversation.id)
+        let shown = !meetings.isEmpty && discussion.meetingsShown(conversation.id, meetings)
+        chatRow(conversation, meetings: meetings.count, shown: shown, depth: depth, todo: todo)
+        if shown {
+            let all = discussion.meetingsAll.contains(conversation.id)
+            // The open meeting stays listed even when it is older than the newest 5.
+            let listed = all ? meetings : meetings.enumerated().filter { $0.offset < 5 || $0.element.id == discussion.currentID }.map(\.element)
+            ForEach(listed) { meetingRow($0, depth: depth) }
+            if meetings.count > 5 && !all {
+                Button(L("전체 보기 (\(meetings.count))", "Show all (\(meetings.count))")) { discussion.meetingsAll.insert(conversation.id) }
+                    .buttonStyle(.link).font(.system(size: 11)).padding(.leading, 34 + CGFloat(depth) * 12).frame(height: 22)
+            }
+        }
+    }
+
     // A meeting held for the chat above: its topic and when (its chat is read only).
-    private func meetingRow(_ meeting: Conversation) -> some View {
+    private func meetingRow(_ meeting: Conversation, depth: Int = 0) -> some View {
         let selected = meeting.id == discussion.currentID && discussion.viewingRemote == nil
         let key = "meeting." + meeting.id.uuidString
         let hovered = discussion.hoverKey == key
@@ -226,7 +334,7 @@ struct ChatView: View {
             }
         }
         .font(.system(size: 12))
-        .padding(.leading, 24).padding(.trailing, 10).frame(height: 26)
+        .padding(.leading, 24 + CGFloat(depth) * 12).padding(.trailing, 10).frame(height: 26)
         .background(selected ? Color.primary.opacity(0.10) : hovered ? Color.primary.opacity(0.05) : .clear,
                     in: RoundedRectangle(cornerRadius: 8))
         .contentShape(Rectangle())
@@ -236,17 +344,22 @@ struct ChatView: View {
         .disabled(discussion.importingMaterials)
     }
 
-    private func chatRow(_ conversation: Conversation, meetings: Int = 0, shown: Bool = false) -> some View {
-        let selected = conversation.id == discussion.currentID && discussion.viewingRemote == nil
+    private func chatRow(_ conversation: Conversation, meetings: Int = 0, shown: Bool = false, depth: Int = 0, todo: TodoItem.State? = nil) -> some View {
+        let selected = conversation.id == discussion.currentID && discussion.viewingRemote == nil && !discussion.viewingBoard
         let hovered = discussion.hoverKey == conversation.id.uuidString
+        let todoPrefix = "TODO · "
         return HStack(spacing: 4) {
-            if conversation.isProjectChat {
+            if let todo {
+                Image(systemName: "checkmark.square").font(.system(size: 10)).foregroundColor(todo.color).frame(width: 14)
+                    .help(L("TODO 작업방 · ", "TODO chat · ") + todo.title)
+            } else if conversation.isProjectChat && depth == 0 {
                 Image(systemName: "chevron.left.forwardslash.chevron.right")
                     .font(.system(size: 9, weight: .semibold)).foregroundColor(.secondary).frame(width: 14)
                     .help(L("작업방: Git 프로젝트가 연결된 대화", "Work chat: a Git project is linked"))
             }
             HStack(spacing: 5) {
-                Text(conversation.turns.isEmpty ? L("새 대화", "New chat") : conversation.title)
+                Text(conversation.turns.isEmpty && todo == nil ? L("새 대화", "New chat")
+                     : todo != nil && conversation.title.hasPrefix(todoPrefix) ? String(conversation.title.dropFirst(todoPrefix.count)) : conversation.title)
                     .lineLimit(1).truncationMode(.tail)
                 if conversation.isEnterprise { EnterpriseBadge() }
             }
@@ -265,10 +378,10 @@ struct ChatView: View {
                         Image(systemName: shown ? "chevron.down" : "chevron.right").font(.system(size: 8, weight: .semibold))
                         Text("\(meetings)").font(.system(size: 10))
                     }
-                    .padding(.horizontal, 3).frame(height: 18).contentShape(Rectangle())
+                    .padding(.horizontal, 6).frame(minWidth: 30, minHeight: 24).contentShape(Rectangle())
                 }
                 .buttonStyle(.plainHit).foregroundColor(.secondary)
-                .help(shown ? L("회의 접기", "Hide meetings") : L("회의 \(meetings)개 보기", "Show \(meetings) meetings"))
+                .help(shown ? L("회의 접기 (줄을 두 번 눌러도 돼요)", "Hide meetings (or double-click the row)") : L("회의 \(meetings)개 보기 (줄을 두 번 눌러도 돼요)", "Show \(meetings) meetings (or double-click the row)"))
             }
             if conversation.hasContent && (hovered || selected) {
                 Menu { chatMenu(conversation) } label: { Image(systemName: "ellipsis").frame(width: 18, height: 18) }
@@ -277,11 +390,13 @@ struct ChatView: View {
             }
         }
         .font(.system(size: 13))
-        .padding(.horizontal, 10).frame(height: 30)
+        .padding(.leading, 10 + CGFloat(depth) * 12).padding(.trailing, 10).frame(height: 30)
         .background(selected ? Color.primary.opacity(0.10) : hovered ? Color.primary.opacity(0.05) : .clear,
                     in: RoundedRectangle(cornerRadius: 8))
         .contentShape(Rectangle())
-        .onTapGesture { discussion.open(conversation.id) }
+        // Double-click folds or unfolds its meetings. The single click runs alongside, so opening is not delayed.
+        .onTapGesture(count: 2) { if meetings > 0 { discussion.toggleMeetings(conversation.id) } }
+        .simultaneousGesture(TapGesture().onEnded { discussion.open(conversation.id) })
         .onHover { inside in discussion.hover(conversation.id.uuidString, inside) }
         .help(dateText(conversation.updatedAt))
         .contextMenu {
@@ -293,19 +408,20 @@ struct ChatView: View {
     // Chats on your other Macs (read only): one header per Mac, newest first.
     @ViewBuilder private var otherMacs: some View {
         let search = discussion.sidebarSearch
-        SidebarHeader(title: L("다른 기기", "Other Macs")) {
+        SidebarHeader(title: L("다른 기기", "Other Macs"), fold: "devices") {
             Button(action: { sync.scan() }) { Image(systemName: "arrow.clockwise").font(.system(size: 10)) }
                 .buttonStyle(.plainHit).foregroundColor(.secondary)
                 .help(sync.lastChecked.map { L("지금 확인 · 마지막 확인 ", "Check now · last checked ") + DeviceSync.ago($0) } ?? L("지금 확인", "Check now"))
         }
-        if !sync.folderAvailable {
+        if folds.isFolded("devices") {
+        } else if !sync.folderAvailable {
             Text(L("iCloud Drive가 꺼져 있거나 동기화 폴더가 없어요. 설정 → 채팅에서 확인해 주세요.", "iCloud Drive is off or the sync folder is missing. Check Settings → Chat."))
                 .font(.system(size: 11)).foregroundColor(.secondary).padding(.horizontal, 10)
         } else if sync.devices.isEmpty {
             Text(sync.lastChecked == nil ? L("확인하는 중…", "Checking…") : L("아직 다른 Mac의 대화가 없어요. 다른 Mac에서도 켜 주세요.", "No chats from other Macs yet. Turn this on there too."))
                 .font(.system(size: 11)).foregroundColor(.secondary).padding(.horizontal, 10)
         }
-        ForEach(sync.devices) { device in
+        ForEach(folds.isFolded("devices") ? [] : sync.devices) { device in
             let chats = device.chats.filter { search.isEmpty || $0.title.localizedCaseInsensitiveContains(search) }
             if !chats.isEmpty || search.isEmpty {
                 Text(device.name).font(.system(size: 11)).foregroundColor(.secondary)
@@ -1087,13 +1203,14 @@ struct ChatView: View {
     // Folders every chat's AI may read (read only for now). Right-click to open or remove.
     private var sharedFolders: some View {
         VStack(alignment: .leading, spacing: 1) {
-            SidebarHeader(title: L("공동 폴더", "Shared folders")) {
+            SidebarHeader(title: L("공동 폴더", "Shared folders"), fold: "shared") {
                 Button(action: { model.addSharedFolder() }) { Image(systemName: "plus").font(.system(size: 11, weight: .semibold)).frame(width: 22, height: 22) }
                     .buttonStyle(.plainHit).foregroundColor(.secondary)
                     .help(L("모든 대화의 AI가 읽을 폴더 추가", "Add a folder every chat's AI can read"))
                     .accessibilityLabel(L("공동 폴더 추가", "Add shared folder"))
             }
-            if model.sharedFolders.isEmpty {
+            if folds.isFolded("shared") {
+            } else if model.sharedFolders.isEmpty {
                 Button(action: { model.addSharedFolder() }) {
                     Label(L("폴더 추가 · 모든 대화에서 읽기", "Add a folder · read in every chat"), systemImage: "folder.badge.plus")
                         .font(.system(size: 12)).foregroundColor(.secondary)
@@ -1103,7 +1220,7 @@ struct ChatView: View {
             }
             // Double-click opens the folder in Finder; the pencil lets the AIs change it (backed up before each
             // answer); the eye turns sharing on or off (the folder stays listed); right-click to remove it.
-            ForEach(model.sharedFolders, id: \.self) { path in
+            ForEach(folds.isFolded("shared") ? [] : model.sharedFolders, id: \.self) { path in
                 let paused = model.pausedSharedFolders.contains(path)
                 let writable = model.writableSharedFolders.contains(path)
                 let toggleWrite = { if writable { model.writableSharedFolders.remove(path) } else { model.writableSharedFolders.insert(path) } }

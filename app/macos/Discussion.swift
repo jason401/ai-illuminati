@@ -707,6 +707,7 @@ final class Discussion: ObservableObject {
     @Published var importingMaterials = false
     @Published var viewingRemote: RemoteViewing?   // a chat from another Mac, shown read only
     @Published var viewingBoard = false            // the TODO board in place of the chat (Todo.swift)
+    @Published var boardProject: String?           // the board shows only this project (SidebarProjects.key); nil = all
     // Several chats can work at once. Each sent message runs on its own worker (a Discussion with `host`
     // set and only that chat), so the run state below (active…, pictures, cancellation) is per chat; the
     // worker hands every change back to the host, which the window shows.
@@ -965,6 +966,7 @@ final class Discussion: ObservableObject {
         conversations = [fresh] + loaded.filter(\.hasContent)
         currentID = fresh.id
         linkChatTools()
+        SidebarFold.shared.adoptPins(conversations)
     }
 
     // A worker for one message in one chat: same accounts, sessions and test hooks, only that chat.

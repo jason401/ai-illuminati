@@ -6,15 +6,23 @@ import SwiftUI
 struct TodoSidebarSection: View {
     @ObservedObject var discussion: Discussion
     @ObservedObject private var store = TodoStore.shared
+    @ObservedObject private var folds = SidebarFold.shared
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
-            SidebarHeader(title: "TODO")
-            let selected = discussion.viewingBoard
+            SidebarHeader(title: "TODO", fold: "todo", badge: store.waitingForUser)
+            if !folds.isFolded("todo") { boardRow }
+        }
+    }
+
+    // Every project's TODOs (the folders below have one project's each).
+    private var boardRow: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            let selected = discussion.viewingBoard && discussion.boardProject == nil
             let hovered = discussion.hoverKey == "todo.board"
-            Button(action: { discussion.viewingRemote = nil; discussion.viewingBoard = true; discussion.sidebarOverlay = false }) {
+            Button(action: { discussion.openBoard(project: nil) }) {
                 HStack(spacing: 8) {
                     Image(systemName: "checklist").frame(width: 18)
-                    Text(L("할 일 보드", "TODO board"))
+                    Text(L("전체 할 일 보드", "All TODOs"))
                     Spacer()
                     let count = store.waitingForUser
                     if count > 0 {
@@ -77,23 +85,38 @@ struct TodoBoardView: View {
     @ObservedObject private var store = TodoStore.shared
     @ObservedObject private var draft = TodoDraft.shared
 
-    // Projects to write TODOs for: every linked Git project of the chats (newest first).
+    // Projects to write TODOs for: every linked Git project of the chats (newest first); on one project's board
+    // only its roots (a repository with several worktrees has one per root).
     private var projects: [(name: String, binding: ProjectBinding)] {
         var seen = Set<String>(), result: [(String, ProjectBinding)] = []
-        for list in store.snapshot.lists { if let p = list.project, seen.insert(p.root).inserted { result.append((list.title, p)) } }
+        let mine = { (p: ProjectBinding) in discussion.boardProject.map { SidebarProjects.key(p) == $0 } ?? true }
+        for list in store.snapshot.lists { if let p = list.project, mine(p), seen.insert(p.root).inserted { result.append((list.title, p)) } }
         for chat in discussion.conversations.sorted(by: { $0.updatedAt > $1.updatedAt }) {
-            if let p = chat.workspace?.project, seen.insert(p.root).inserted { result.append(((p.root as NSString).lastPathComponent, p)) }
+            if let p = chat.workspace?.project, mine(p), seen.insert(p.root).inserted { result.append(((p.root as NSString).lastPathComponent, p)) }
         }
         return result
+    }
+
+    private var shownLists: [TodoList] {
+        store.snapshot.lists.filter { list in discussion.boardProject.map { list.project.map(SidebarProjects.key) == $0 } ?? true }
+    }
+
+    // The root a new TODO goes to: the one picked, if it is on this board, else the newest.
+    private func pickedRoot(_ options: [(name: String, binding: ProjectBinding)]) -> String {
+        options.contains { $0.binding.root == draft.projectRoot } ? draft.projectRoot : options.first?.binding.root ?? ""
     }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                if let scheduler = TodoScheduler.shared { TodoBoardHeader(scheduler: scheduler) }
+                let lists = shownLists
+                if let scheduler = TodoScheduler.shared {
+                    TodoBoardHeader(scheduler: scheduler, discussion: discussion,
+                                    project: discussion.boardProject.map { _ in projects.first?.name ?? lists.first?.title ?? "" }, lists: Set(lists.map(\.id)))
+                }
                 if let error = draft.error ?? store.saveError { Text(error).font(.system(size: 12)).foregroundColor(.red) }
-                ForEach(store.snapshot.lists) { list in listView(list) }
-                if store.snapshot.lists.isEmpty {
+                ForEach(lists) { list in listView(list) }
+                if lists.isEmpty {
                     Text(L("아직 TODO가 없어요. 아래에서 프로젝트를 고르고 적어 주세요.", "No TODOs yet. Pick a project below and write one."))
                         .font(.system(size: 13)).foregroundColor(.secondary)
                 }
@@ -180,15 +203,20 @@ struct TodoBoardView: View {
 
     private var addBar: some View {
         let options = projects
-        let root = draft.projectRoot.isEmpty ? options.first?.binding.root ?? "" : draft.projectRoot
+        let root = pickedRoot(options)
         return VStack(alignment: .leading, spacing: 8) {
             TextField(L("+ 할 일 추가…", "+ Add a TODO…"), text: $draft.title).textFieldStyle(.roundedBorder).onSubmit(add)
             TextField(L("자세한 내용 (선택)", "Details (optional)"), text: $draft.detail, axis: .vertical).textFieldStyle(.roundedBorder).lineLimit(1...5)
             HStack(spacing: 10) {
-                Picker(L("프로젝트", "Project"), selection: Binding(get: { root }, set: { draft.projectRoot = $0 })) {
-                    ForEach(options, id: \.binding.root) { Text($0.name).tag($0.binding.root) }
+                // One project's board: its only root needs no picking.
+                if discussion.boardProject == nil || options.count > 1 {
+                    Picker(L("프로젝트", "Project"), selection: Binding(get: { root }, set: { draft.projectRoot = $0 })) {
+                        ForEach(options, id: \.binding.root) { option in
+                            Text(discussion.boardProject == nil ? option.name : (option.binding.root as NSString).lastPathComponent).tag(option.binding.root)
+                        }
+                    }
+                    .fixedSize()
                 }
-                .fixedSize()
                 Menu(draft.after.isEmpty ? L("먼저 끝나야 할 TODO", "Must finish first") : L("먼저: \(draft.after.count)개", "First: \(draft.after.count)")) {
                     ForEach(store.snapshot.items.filter { $0.state != .done && $0.state != .cancelled }) { other in
                         Button((draft.after.contains(other.id) ? "✓ " : "") + other.title) { if draft.after.contains(other.id) { draft.after.remove(other.id) } else { draft.after.insert(other.id) } }
@@ -216,7 +244,7 @@ struct TodoBoardView: View {
     private func add() {
         let text = draft.title.trimmingCharacters(in: .whitespacesAndNewlines)
         let options = projects
-        let root = draft.projectRoot.isEmpty ? options.first?.binding.root ?? "" : draft.projectRoot
+        let root = pickedRoot(options)
         guard !text.isEmpty, let project = options.first(where: { $0.binding.root == root }) else { return }
         // The chat open before the board, when it works on the same project, gets the report card too.
         let origin = discussion.current.workspace?.project?.root == root && !store.snapshot.items.contains { $0.room == discussion.currentID } ? discussion.currentID : nil
@@ -236,21 +264,34 @@ struct TodoBoardView: View {
 }
 
 // Title, when the board is checked next, why nothing starts, and ▶ Start now.
+// On one project's board (project: its name) ▶ starts only its drafts, and a link goes back to every project's.
 struct TodoBoardHeader: View {
     @ObservedObject var scheduler: TodoScheduler
+    @ObservedObject var discussion: Discussion
+    var project: String? = nil
+    var lists: Set<UUID> = []
     var body: some View {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(L("할 일 보드", "TODO board")).font(.system(size: 22, weight: .semibold))
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Text(project.map { $0 + L(" · 할 일", " · TODOs") } ?? L("전체 할 일 보드", "All TODOs")).font(.system(size: 22, weight: .semibold))
+                    if project != nil {
+                        Button(L("전체 보드 보기", "All projects")) { discussion.openBoard(project: nil) }.buttonStyle(.link).font(.system(size: 12))
+                    }
+                }
                 let next = scheduler.nextCheck.map { DateFormatter.localizedString(from: $0, dateStyle: .none, timeStyle: .short) } ?? "–"
                 Text(L("할 일이 없을 때는 30분마다 확인 · 다음 확인 \(next)", "Checks every 30 minutes when idle · next \(next)"))
                     .font(.system(size: 12)).foregroundColor(.secondary)
                 if let waiting = scheduler.waiting { Text(waiting).font(.system(size: 12)).foregroundColor(.orange) }
             }
             Spacer()
-            Button(action: { scheduler.startNow() }) { Label(L("지금 작업 시작", "Start now"), systemImage: "play.fill") }
+            Button(action: { scheduler.startNow(lists: project == nil ? nil : lists) }) {
+                Label(project == nil ? L("모든 프로젝트 작업 시작", "Start all projects") : L("이 프로젝트 작업 시작", "Start this project"), systemImage: "play.fill")
+            }
                 .buttonStyle(.borderedProminent).controlSize(.large)
-                .help(L("초안을 모두 대기로 바꾸고 바로 확인해요", "Makes every draft ready and checks now"))
+                .help(project == nil ? L("모든 프로젝트의 초안을 대기로 바꾸고 바로 확인해요", "Makes every project's drafts ready and checks now")
+                                     : L("이 프로젝트의 초안만 대기로 바꾸고 바로 확인해요. 다른 프로젝트에서 이미 대기인 TODO도 차례가 되면 시작돼요.",
+                                         "Makes only this project's drafts ready and checks now. Ready TODOs of other projects may start too."))
         }
     }
 }

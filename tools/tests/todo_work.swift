@@ -248,3 +248,84 @@ func testTodoScheduler() {
            "an Enterprise project's TODO keeps the lock: \(asked)")
     print("PASS: TODO scheduler (drafts wait, own chat, 30% rule, task_done/task_ask scoped, order gate, answer resent, no report, retries, one place free, folder lock, restart, report final at the end, busy chat waits, Enterprise lock)")
 }
+
+// The sidebar by project (SidebarProjects.swift): worktrees of one repository in one folder, TODO chats and meetings
+// in their place, pinned projects, folds kept per Mac, and ▶ on one project's board starting only its drafts.
+func testSidebarProjects() {
+    let common = "/tmp/side-repo/.git"
+    let main = ProjectBinding(root: "/tmp/side-repo", common: common, remote: "origin", remoteURL: "")
+    let tree = ProjectBinding(root: "/tmp/side-repo-wt", common: common, remote: "origin", remoteURL: "")
+    let other = ProjectBinding(root: "/tmp/side-other", common: "/tmp/side-other/.git", remote: "origin", remoteURL: "")
+    let quiet = ProjectBinding(root: "/tmp/side-quiet", common: "/tmp/side-quiet/.git", remote: "origin", remoteURL: "")
+    let base = Date().addingTimeInterval(60)
+    func chat(_ title: String, _ project: ProjectBinding?, minutes: Double, pinned: Bool = false) -> Conversation {
+        var c = Conversation()
+        c.title = title
+        c.updatedAt = base.addingTimeInterval(minutes * 60)   // after the TODOs below, made now
+        if let project { c.workspace = WorkspaceBinding(roots: [WorkspaceRoot(path: project.root, directory: true, writable: true)], project: project) }
+        if pinned { c.pinned = true }
+        return c
+    }
+    let a = chat("A", main, minutes: 1, pinned: true), b = chat("B", tree, minutes: 5), c = chat("C", other, minutes: 9)
+    let plain = chat("plain", nil, minutes: 7), plainPinned = chat("plain pinned", nil, minutes: 2, pinned: true)
+    let todoChat = chat("TODO · fix", main, minutes: 3)
+    let store = TodoStore(url: todoStoreFile("sidebar"))
+    let fix = try! store.add(title: "fix", project: main, projectName: "Main repo")
+    try! store.change(fix.id) { $0.room = todoChat.id; $0.state = .running }
+    _ = try! store.add(title: "later", project: quiet, projectName: "Quiet")
+    let chats = [plain, a, b, c, plainPinned, todoChat]
+
+    let grouped = SidebarProjects.group(chats, todo: store.current, pinned: [])
+    let repo = grouped.projects.first { $0.id == common }
+    expect(grouped.projects.map(\.id) == ["/tmp/side-other/.git", common, "/tmp/side-quiet/.git"],
+           "folders by repository, newest first; a project with only TODOs still has one: \(grouped.projects.map(\.id))")
+    expect(repo?.chats.map(\.title) == ["A", "B"] && repo?.todoRooms.map(\.title) == ["TODO · fix"] && repo?.name == "Main repo"
+           && repo?.bindings.map(\.root) == ["/tmp/side-repo-wt", "/tmp/side-repo"] && repo?.lists.count == 1,
+           "worktrees share the folder (each root kept), the pinned chat on top, the TODO chat apart: \(String(describing: repo))")
+    expect(grouped.loose.map(\.title) == ["plain pinned", "plain"], "chats without a project stay in Pinned and Recents")
+    let all = grouped.projects.flatMap { $0.chats + $0.todoRooms } + grouped.loose
+    expect(all.count == chats.count && Set(all.map(\.id)).count == chats.count, "every chat shows once")
+    expect(SidebarProjects.group(chats, todo: store.current, pinned: [], withLists: false).projects.map(\.id) == ["/tmp/side-other/.git", common],
+           "searching: no folder for a project without a matching chat")
+    expect(SidebarProjects.group(chats, todo: store.current, pinned: ["/tmp/side-quiet/.git"]).projects.first?.id == "/tmp/side-quiet/.git",
+           "a pinned project comes first")
+    expect(SidebarProjects.folderName(tree) == "side-repo" && SidebarProjects.key(ProjectBinding(root: "/x", common: "", remote: "", remoteURL: "")) == "/x",
+           "a folder is named after its repository; no common dir falls back to the root")
+
+    // Finished TODO chats: the newest 3 until "show all"; the ones still going always.
+    var rooms: [Conversation] = [], data = TodoData()
+    for (i, state) in [TodoItem.State.done, .running, .done, .cancelled, .done, .review].enumerated() {
+        let room = chat("t\(i)", main, minutes: Double(20 - i))
+        var item = TodoItem(listID: UUID(), title: "t\(i)")
+        item.room = room.id; item.state = state
+        rooms.append(room); data.items.append(item)
+    }
+    let shown = SidebarProjects.shownTodoRooms(rooms, todo: data, all: false)
+    expect(shown.shown.map(\.title) == ["t0", "t1", "t2", "t3", "t5"] && shown.hidden == 1, "finished TODO chats: 3 shown: \(shown.shown.map(\.title))")
+    expect(SidebarProjects.shownTodoRooms(rooms, todo: data, all: true).hidden == 0, "show all lists every one")
+
+    // Folds and pins are kept, in the test's own defaults; old pinned project chats pin their project once.
+    let suite = "ai-illuminati-sidebar-test-\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let fold = SidebarFold(defaults: defaults)
+    fold.toggle("recents"); fold.toggle("project." + common)
+    fold.adoptPins(chats)
+    expect(fold.pinnedProjects == [common], "a pinned project chat pins its project: \(fold.pinnedProjects)")
+    fold.togglePin(common)
+    fold.adoptPins(chats)
+    expect(fold.pinnedProjects.isEmpty, "the pins are adopted once; unpinning stays")
+    let again = SidebarFold(defaults: defaults)
+    expect(again.isFolded("recents") && again.isFolded("project." + common) && !again.isFolded("pinned") && again.pinnedProjects.isEmpty,
+           "folds and pins come back after a restart")
+
+    // ▶ on one project's board: only its drafts become ready.
+    let start = TodoStore(url: todoStoreFile("sidebar-start"))
+    let mine = try! start.add(title: "mine", project: main, projectName: "Main")
+    let theirs = try! start.add(title: "theirs", project: other, projectName: "Other")
+    start.startDrafts(lists: [mine.listID])
+    expect(start.current.item(mine.id)?.state == .ready && start.current.item(theirs.id)?.state == .draft, "one project's start leaves the other drafts")
+    start.startDrafts()
+    expect(start.current.item(theirs.id)?.state == .ready, "the start on every project's board takes them all")
+    print("PASS: sidebar by project (worktrees in one folder, TODO chats apart, folders for TODO-only projects, pinned projects first, finished TODO chats capped, folds and pins kept, adopted once, one project's start)")
+}

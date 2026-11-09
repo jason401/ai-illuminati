@@ -280,7 +280,10 @@ final class TodoStore: ObservableObject {
         }
     }
     // ▶ Start now: every draft may be taken.
-    func startDrafts() { try? update { data in for i in data.items.indices where data.items[i].state == .draft { data.items[i].state = .ready } } }
+    // lists: only these (▶ on one project's board); nil = every list.
+    func startDrafts(lists: Set<UUID>? = nil) {
+        try? update { data in for i in data.items.indices where data.items[i].state == .draft && lists.map({ $0.contains(data.items[i].listID) }) ?? true { data.items[i].state = .ready } }
+    }
     func accept(_ id: UUID) { try? change(id) { guard $0.state == .review else { return }; $0.state = .done; $0.unreported = false } }
     // Change request: the feedback goes with the next attempt, in the same chat.
     func requestChanges(_ id: UUID, _ text: String) {
@@ -435,7 +438,7 @@ final class TodoScheduler: ObservableObject {
     }
 
     // ▶ Start now on the board.
-    func startNow() { store.startDrafts(); tick() }
+    func startNow(lists: Set<UUID>? = nil) { store.startDrafts(lists: lists); tick() }
 
     // Once per run of the main loop, however many changes came in.
     func wake() {

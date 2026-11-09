@@ -873,6 +873,7 @@ func testPickedRoute() {
     expect(Route.slashMenu("/", cursor: 1, offered: offered)!.choices == [.one, .all, .work, .meeting]
            && Route.slashMenu("  /w", cursor: 4, offered: offered)! == (2, "w", [.work])
            && Route.slashMenu("/m", cursor: 2, offered: offered)!.choices == [.meeting]
+           && Route.slashMenu("/work 설명", cursor: 2, offered: offered) == nil && Route.slashMenu("/w 설명", cursor: 2, offered: offered)! == (0, "w", [.work])
            && Route.slashMenu("/Users", cursor: 6, offered: offered) == nil && Route.slashMenu("/work 고쳐", cursor: 8, offered: offered) == nil
            && Route.slashMenu("이거 /w", cursor: 5, offered: offered) == nil && Route.slashMenu("/", cursor: 1, offered: []) == nil
            && Route.slashMenu("/w", cursor: 2, offered: RouteChoice.offered(project: false)) == nil

@@ -152,6 +152,8 @@ enum Route {
         guard start < chars.count, chars[start] == 47, cursor > start, cursor <= chars.count else { return nil }   // "/"
         let query = String(decoding: chars[(start + 1)..<cursor], as: UTF16.self)
         guard !query.contains(where: \.isWhitespace) else { return nil }
+        // The cursor inside a word already typed ("/w|ork"): no list, so picking never leaves the rest of it behind.
+        if cursor < chars.count, let next = UnicodeScalar(chars[cursor]), !CharacterSet.whitespacesAndNewlines.contains(next) { return nil }
         let key = query.lowercased()
         let choices = offered.filter { choice in words(choice).contains { $0.hasPrefix(key) } }
         return choices.isEmpty ? nil : (start, query, choices)

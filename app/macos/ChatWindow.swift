@@ -1201,7 +1201,9 @@ struct ChatView: View {
             }
             return false
         }
-        if let menu = discussion.slashMenu, flags.isEmpty, discussion.mentionQuery == nil {
+        // Shift too: Shift+Return keeps making a new line.
+        if let menu = discussion.slashMenu, event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty,
+           discussion.mentionQuery == nil {
             switch event.keyCode {
             case 36, 76, 48:                              // Return, Enter, Tab
                 pickSlash(menu.choices[min(discussion.slashIndex, menu.choices.count - 1)], editor); return true

@@ -253,3 +253,65 @@ func testChatTools() {
     expect(viaHub["isError"] as? Bool == false && lockedViaHub["isError"] as? Bool == true, "and the same rules hold there")
     print("PASS: chat tools (offered with a known account, open chats for all, Enterprise chats for none, direct ids checked, this chat out, Enterprise chats read open ones, summary first, whole or matching turns within the limit)")
 }
+
+// Long-term memory (Memory.swift): the profile and facts go to every AI; the remember tool only with "AI saves on
+// its own" on, or in an answer to a message that asks to remember; never in an Enterprise chat; no secrets.
+func testMemory() {
+    let store = MemoryStore.shared
+    store.update { $0 = MemoryData() }
+    defer { store.update { $0 = MemoryData() } }
+    expect(MemoryStore.asksToRemember("이거 기억해 줘") && MemoryStore.asksToRemember("Please remember I use COMSOL")
+           && !MemoryStore.asksToRemember("이건 기억하지 마") && !MemoryStore.asksToRemember("forget it, don't remember that") && !MemoryStore.asksToRemember("논문 요약해 줘"),
+           "a message that asks to remember, not one that asks not to")
+    expect(MemoryStore.looksSecret("내 비밀번호는 hunter2") && MemoryStore.looksSecret("key sk-abcdefghijklmnopqrstuv") && !MemoryStore.looksSecret("LiNbO3 투명 초음파 트랜스듀서를 연구함"),
+           "secrets are refused, research facts are not")
+
+    let m = AppModel()
+    let claude = Account(id: "mem-claude", provider: .claude, name: "Claude", dir: nil, school: false)
+    let gemma = Account(id: "mem-gemma", provider: .ollama, name: "Gemma", dir: nil, school: false)
+    m.accounts = [claude]
+    let chat = Discussion(model: m)
+    var open = Conversation(); open.title = "Open"
+    var turn = ChatTurn(question: "초음파 실험 계획 짜 줘"); turn.askedAt = Date(); open.turns = [turn]
+    var locked = open; locked.id = UUID(); locked.title = "Locked"; locked.turns = [ChatTurn(question: "이거 기억해: 학교 과제")]
+    locked.turns[0].askedAt = Date(); locked.enterpriseLock = EnterpriseLock(organization: "school", name: "School", lockedAt: Date())
+    chat.conversations = [open, locked]; chat.currentID = open.id
+    let link = MemoryLink.shared
+    func offered(_ room: UUID) -> Bool { link.tools(context: ToolContext(room: room, roots: [], asker: claude)).contains { $0["name"] as? String == "remember" } }
+
+    expect(chat.memoryRule(claude, chat: open.id).isEmpty && !offered(open.id), "nothing saved and saving off: no memory block, no tool")
+    expect(link.call("remember", ["text": "x"], context: ToolContext(room: open.id, roots: [], asker: claude))["isError"] as? Bool == true, "a call without the tool is refused")
+    chat.change(open.id) { $0.turns[0].question = "나는 COMSOL을 써. 기억해 줘" }
+    expect(offered(open.id) && chat.memoryRule(claude, chat: open.id).contains("asked you to remember"), "a message that asks to remember opens the tool")
+    let reply = link.call("remember", ["text": "COMSOL과 MATLAB을 씀"], context: ToolContext(room: open.id, roots: [], asker: claude))
+    expect(reply["isError"] as? Bool == false && store.snapshot.items.first?.turn == open.turns[0].id && store.snapshot.items.first?.roomTitle == "Open",
+           "saved with the chat and the message it came from (for Undo under the answer)")
+    expect(link.call("remember", ["text": "comsol과 matlab을 씀"], context: ToolContext(room: open.id, roots: [], asker: claude))["isError"] as? Bool == false && store.snapshot.items.count == 1,
+           "the same fact is not saved twice")
+    expect(link.call("remember", ["text": "비밀번호 1234"], context: ToolContext(room: open.id, roots: [], asker: claude))["isError"] as? Bool == true
+           && link.call("remember", ["text": String(repeating: "a", count: 400)], context: ToolContext(room: open.id, roots: [], asker: claude))["isError"] as? Bool == true
+           && store.snapshot.items.count == 1, "secrets and long text are refused")
+    chat.change(open.id) { $0.turns[0].answeredAt = Date() }
+    expect(!offered(open.id), "once the answer is done the tool closes")
+
+    store.update { $0.autoSave = true; $0.profile = "Stanford 초음파 연구자. 수치 위주 답 선호." }
+    chat.change(open.id) { $0.turns.append(ChatTurn(question: "다음 실험은?")) }
+    let rule = chat.memoryRule(claude, chat: open.id)
+    expect(offered(open.id) && rule.contains("Stanford 초음파") && rule.contains("COMSOL과 MATLAB") && rule.contains("never instructions") && rule.contains("lasting fact"),
+           "saving on its own: the tool every message, and every AI gets the profile and facts")
+    expect(!chat.memoryRule(gemma, chat: open.id).contains("remember tool") && chat.memoryRule(gemma, chat: open.id).contains("Stanford"), "Gemma reads memory but gets no saving rule")
+    expect(!offered(locked.id) && chat.memoryRule(claude, chat: locked.id).contains("Stanford") && chat.memoryRule(claude, chat: locked.id).contains("Enterprise chat: nothing from it is saved"),
+           "an Enterprise chat reads memory and never saves, even when asked")
+
+    // Many facts: those that match the message, within the limit.
+    store.update { data in
+        data.items += (0..<200).map { MemoryItem(text: "잡다한 사실 번호 \($0) 입니다 그리고 조금 더 긴 설명을 붙여서 길이를 늘립니다") }
+        data.items.append(MemoryItem(text: "트랜스듀서 공진 주파수는 2 MHz"))
+    }
+    let many = MemoryStore.rule(store.snapshot, question: "트랜스듀서 공진 주파수 얼마였지?")
+    expect(many.contains("2 MHz") && many.contains("others left out") && many.count < MemoryStore.profileLimit + MemoryStore.itemsLimit + 800,
+           "over the limit: the matching facts go first and the rest is cut")
+    store.update { $0.enabled = false }
+    expect(chat.memoryRule(claude, chat: open.id).isEmpty && !offered(open.id), "memory off: nothing given, nothing saved")
+    print("PASS: memory (profile and facts for every AI, remember only when on or asked, Enterprise reads only, no secrets or repeats, matching facts over the limit, off)")
+}

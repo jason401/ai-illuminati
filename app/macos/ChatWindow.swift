@@ -1698,6 +1698,7 @@ private struct TurnView: View, Equatable {
                 .background(Color(nsColor: .controlBackgroundColor))
                 .cornerRadius(10)
             }
+            if turn.mode == 0 { RememberedLine(turnID: turn.id) }
             ForEach(turn.mode == 0 && (turn.answerOrder?.count ?? 0) < 2 ? (turn.moreAnswers ?? []) : []) { answer in
                 // A second (third…) AI called with @, which answered at the same time without seeing the others.
                 VStack(alignment: .leading, spacing: 8) {
@@ -2337,6 +2338,30 @@ private struct ParallelAnswers: View {
             } else {
                 Text(column.writing ? L("쓰는 중…", "Writing…") : L("답 없음", "No reply"))
                     .font(.system(size: 13)).foregroundColor(.secondary)
+            }
+        }
+    }
+}
+
+// What an AI saved to memory in this answer (Memory.swift), with Undo.
+private struct RememberedLine: View {
+    let turnID: UUID
+    @ObservedObject var memory = MemoryStore.shared
+
+    var body: some View {
+        let saved = memory.data.items.filter { $0.turn == turnID }
+        if !saved.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(saved) { item in
+                    HStack(spacing: 6) {
+                        Image(systemName: "brain.head.profile").foregroundColor(.secondary)
+                        Text(L("기억함: ", "Remembered: ") + item.text).foregroundColor(.secondary).lineLimit(2)
+                        Button(L("취소", "Undo")) { memory.remove(item.id) }
+                            .buttonStyle(.link)
+                            .help(L("이 기억을 지워요.", "Removes this from memory."))
+                    }
+                    .font(.system(size: 11))
+                }
             }
         }
     }

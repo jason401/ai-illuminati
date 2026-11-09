@@ -936,6 +936,160 @@ struct ChatSettingsTab: View {
     }
 }
 
+// Long-term memory (Memory.swift): on/off, whether the AI saves on its own, and a window to edit it.
+struct MemorySettingsTab: View {
+    @ObservedObject var memory = MemoryStore.shared
+
+    var body: some View {
+        SettingsPage {
+            VStack(alignment: .leading, spacing: 6) {
+                SettingsCard(title: L("기억", "Memory")) {
+                    SettingsRow(title: L("기억 사용", "Use memory")) {
+                        Spacer()
+                        Toggle(L("기억 사용", "Use memory"), isOn: Binding(
+                            get: { memory.data.enabled }, set: { on in memory.update { $0.enabled = on } }))
+                            .labelsHidden().toggleStyle(.switch)
+                    }
+                    Divider()
+                    SettingsRow(title: L("AI가 알아서 저장", "AI saves on its own")) {
+                        Spacer()
+                        Toggle(L("AI가 알아서 저장", "AI saves on its own"), isOn: Binding(
+                            get: { memory.data.autoSave }, set: { on in memory.update { $0.autoSave = on } }))
+                            .labelsHidden().toggleStyle(.switch)
+                            .disabled(!memory.data.enabled)
+                    }
+                }
+                hint(memory.data.autoSave
+                     ? L("AI가 기억할 만한 내용을 스스로 저장해요. 저장하면 답 아래에 \"기억함\"과 취소 버튼이 떠요.",
+                         "AIs save lasting facts on their own. Each one shows under the answer with Undo.")
+                     : L("꺼져 있으면 \"기억해\"라고 말한 메시지에서만 저장해요.",
+                         "Off: facts are saved only when your message asks to remember."))
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                SettingsCard(title: L("저장된 내용", "Saved")) {
+                    SettingsRow(title: L("프로필", "Profile")) {
+                        Text(memory.data.profile.isEmpty ? L("없음", "None") : L("\(memory.data.profile.count)자", "\(memory.data.profile.count) characters"))
+                            .font(.system(size: 11)).foregroundStyle(.secondary)
+                    }
+                    Divider()
+                    SettingsRow(title: L("기억", "Facts")) {
+                        Text(L("\(memory.data.items.count)개", "\(memory.data.items.count)"))
+                            .font(.system(size: 11)).foregroundStyle(.secondary)
+                    }
+                    Divider()
+                    SettingsRow(title: L("편집", "Edit")) {
+                        SettingsAction(title: L("기억 열기…", "Open memory…")) { MemoryWindow.shared.show() }
+                    }
+                }
+                hint(L("모든 AI가 같은 기억을 읽어요. 이 Mac에만 저장되지만 답할 때 그 AI에게 보내져요. Enterprise 방은 읽기만 하고 저장하지 않아요. 비밀번호나 키는 저장하지 않아요.",
+                       "Every AI reads the same memory. It stays on this Mac but is sent to the AI that answers. Enterprise chats only read it. Passwords and keys are never saved."))
+            }
+        }
+    }
+
+    private func hint(_ text: String) -> some View {
+        Text(text).font(.system(size: 11)).foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true).padding(.horizontal, 2)
+    }
+}
+
+final class MemoryWindow {
+    static let shared = MemoryWindow()
+    private var window: NSWindow?
+
+    func show() {
+        if window == nil {
+            let host = NSHostingController(rootView: MemoryView(close: { [weak self] in self?.window?.close() })
+                .frame(minWidth: 460, idealWidth: 560, minHeight: 420, idealHeight: 560))
+            let w = NSWindow(contentViewController: host)
+            w.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+            w.title = L("기억", "Memory")
+            w.setContentSize(NSSize(width: 560, height: 560))
+            w.isReleasedWhenClosed = false
+            w.center()
+            window = w
+        }
+        MemoryStore.shared.reload()
+        NSApp.activate(ignoringOtherApps: true)
+        window?.makeKeyAndOrderFront(nil)
+    }
+}
+
+struct MemoryView: View {
+    @ObservedObject var memory = MemoryStore.shared
+    let close: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(L("프로필", "Profile")).font(.system(size: 12, weight: .semibold))
+            Text(L("직업, 연구, 원하는 답 방식처럼 모든 AI가 늘 알았으면 하는 것을 짧게 적어요. 고치면 바로 저장돼요.",
+                   "Who you are, your work and how you like answers: what every AI should always know. Saves as you type."))
+                .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            TextEditor(text: Binding(get: { memory.data.profile }, set: { memory.setProfile($0) }))
+                .font(.system(size: 12))
+                .scrollContentBackground(.hidden)
+                .padding(8)
+                .background(Color(nsColor: .textBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(0.1)))
+                .frame(minHeight: 90, maxHeight: 150)
+            Text("\(memory.data.profile.count) / \(MemoryStore.profileLimit)").font(.system(size: 10)).foregroundStyle(.secondary)
+            HStack {
+                Text(L("기억 \(memory.data.items.count)개", "\(memory.data.items.count) facts")).font(.system(size: 12, weight: .semibold))
+                Spacer()
+                Button(L("모두 지우기…", "Remove all…")) { confirmClear() }.disabled(memory.data.items.isEmpty)
+            }
+            if memory.data.items.isEmpty {
+                Text(L("아직 없어요. 채팅에서 \"기억해\"라고 말하면 여기에 쌓여요.", "Nothing yet. Say \"remember …\" in a chat and it lands here."))
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                Spacer()
+            } else {
+                List {
+                    ForEach(memory.data.items.reversed()) { item in
+                        MemoryRow(item: item)
+                    }
+                }
+                .listStyle(.inset)
+            }
+            HStack {
+                Spacer()
+                Button(L("완료", "Done"), action: close).keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(14)
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private func confirmClear() {
+        let alert = NSAlert()
+        alert.messageText = L("기억을 모두 지울까요?", "Remove every saved fact?")
+        alert.informativeText = L("프로필은 남아요.", "The profile stays.")
+        alert.addButton(withTitle: L("모두 지우기", "Remove all"))
+        alert.addButton(withTitle: L("취소", "Cancel"))
+        if alert.runModal() == .alertFirstButtonReturn { memory.removeAll() }
+    }
+}
+
+private struct MemoryRow: View {
+    let item: MemoryItem
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                // Saves as you type; emptying it keeps the fact (the trash button removes it).
+                TextField("", text: Binding(get: { item.text }, set: { MemoryStore.shared.setItem(item.id, text: $0) }), axis: .vertical)
+                    .textFieldStyle(.plain).font(.system(size: 12))
+                Text([ChatLink.day(item.createdAt), item.roomTitle, item.by].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
+                    .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Spacer()
+            Button(action: { MemoryStore.shared.remove(item.id) }) { Image(systemName: "trash") }
+                .buttonStyle(.borderless).help(L("지우기", "Remove"))
+        }
+        .padding(.vertical, 2)
+    }
+}
+
 // Chat rules get their own resizable window: the settings window is too small for a useful editor.
 final class ChatRulesWindow {
     static let shared = ChatRulesWindow()
@@ -1249,8 +1403,8 @@ final class SettingsWindow {
     }
 
     func updateLanguage() {
-        guard let items = tabs?.tabViewItems, items.count == 4 else { return }
-        for (item, title) in zip(items, [L("일반", "General"), L("모양", "Appearance"), L("계정", "Accounts"), L("채팅", "Chat")]) {
+        guard let items = tabs?.tabViewItems, items.count == 5 else { return }
+        for (item, title) in zip(items, [L("일반", "General"), L("모양", "Appearance"), L("계정", "Accounts"), L("채팅", "Chat"), L("기억", "Memory")]) {
             item.label = title
             item.viewController?.title = title
         }
@@ -1265,6 +1419,7 @@ final class SettingsWindow {
             t.addTabViewItem(tab(AppearanceSettingsTab(model: model), symbol: "paintbrush"))
             t.addTabViewItem(tab(AccountsSettingsTab(model: model), symbol: "person.2"))
             t.addTabViewItem(tab(ChatSettingsTab(model: model), symbol: "bubble.left.and.bubble.right"))
+            t.addTabViewItem(tab(MemorySettingsTab(), symbol: "brain.head.profile"))
             tabs = t
             let w = NSWindow(contentViewController: t)
             w.styleMask = [.titled, .closable, .miniaturizable]

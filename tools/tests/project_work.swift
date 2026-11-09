@@ -674,8 +674,8 @@ func testProjectCreate() {
                    echo "GraphQL: Could not resolve to a Repository with the name '$3'. (repository)" >&2; exit 1;;
       "repo create") n="${3#*/}"; o="${3%%/*}"
                      /usr/bin/git init -q --bare "$F/remotes/$n.git" && echo "$4" > "$F/remotes/$n.visibility"
+                     [ -e "$F/no-remote" ] && { echo "stopped" >&2; exit 1; }
                      /usr/bin/git remote add origin "https://github.com/$o/$n.git"
-                     /usr/bin/git config "url.$F/remotes/.insteadOf" "https://github.com/$o/"
                      [ -e "$F/push-fails" ] && { echo "push failed: network" >&2; exit 1; }
                      /usr/bin/git push -q -u origin main;;
       *) echo "unexpected gh $*" >&2; exit 2;;
@@ -683,12 +683,16 @@ func testProjectCreate() {
     """.write(to: fake, atomically: true, encoding: .utf8)
     try! fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: fake.path)
     let savedCandidates = ProjectCreator.ghCandidates, savedHome = ProjectCreator.home, savedChats = ChatLink.shared.conversations
-    let savedAdd = ProjectMakerLink.shared.addChat
-    for (key, value) in ["GIT_AUTHOR_NAME": "Fixture", "GIT_AUTHOR_EMAIL": "fixture@example.invalid", "GIT_COMMITTER_NAME": "Fixture", "GIT_COMMITTER_EMAIL": "fixture@example.invalid"] { setenv(key, value, 1) }
+    let savedAdd = ProjectMakerLink.shared.addChat, savedTarget = ProjectCreator.pushTarget
+    // "GitHub" is the fixture's bare repositories: every git here rewrites github.com/tester/ to them.
+    let env = ["GIT_AUTHOR_NAME": "Fixture", "GIT_AUTHOR_EMAIL": "fixture@example.invalid", "GIT_COMMITTER_NAME": "Fixture", "GIT_COMMITTER_EMAIL": "fixture@example.invalid",
+               "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "url.\(remotes.path)/.insteadOf", "GIT_CONFIG_VALUE_0": "https://github.com/tester/"]
+    for (key, value) in env { setenv(key, value, 1) }
+    ProjectCreator.pushTarget = { target, plan in target.hasPrefix(remotes.path + "/" + plan.repo) }
     defer {
         ProjectCreator.ghCandidates = savedCandidates; ProjectCreator.home = savedHome; ChatLink.shared.conversations = savedChats
-        ProjectMakerLink.shared.addChat = savedAdd
-        for key in ["GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"] { unsetenv(key) }
+        ProjectMakerLink.shared.addChat = savedAdd; ProjectCreator.pushTarget = savedTarget
+        for key in env.keys { unsetenv(key) }
         try? fm.removeItem(at: base)
     }
     ProjectCreator.home = base.path
@@ -703,6 +707,7 @@ func testProjectCreate() {
     fails({ try ProjectCreator.location("/") }, "home", "outside home refused")
     fails({ try ProjectCreator.location(base.appendingPathComponent("Library").path) }, "Library", "Library refused")
     fails({ try ProjectCreator.location(base.appendingPathComponent("missing").path) }, "missing", "missing location refused")
+    expect((try? ProjectCreator.location(nil)) == base.resolvingSymlinksInPath().path + "/Documents/Projects", "the default place may be missing (made with the project)")
     try! fm.createSymbolicLink(at: base.appendingPathComponent("escape"), withDestinationURL: URL(fileURLWithPath: "/tmp"))
     fails({ try ProjectCreator.location(base.appendingPathComponent("escape").path) }, "home", "a symlink out of home refused")
     let plan = ProjectCreator.Plan(folder: "/x/app", owner: "Tester", repo: "App", isPrivate: true)
@@ -775,8 +780,12 @@ func testProjectCreate() {
     fails({ try ProjectCreator.create(retry, token: nil) }, "Ask again", "push failure reported")
     expect(remoteMain("retry") == nil, "nothing pushed yet")
     try! fm.removeItem(at: base.appendingPathComponent("push-fails"))
-    // origin changed to another repository meanwhile: stop instead of pushing there.
     let retryRoot = projects.resolvingSymlinksInPath().path + "/retry"
+    // A pushurl to another repository: stop, even with origin itself right.
+    _ = try! ProjectProcess.git(["config", "remote.origin.pushurl", "https://github.com/evil/retry.git"], root: retryRoot)
+    fails({ try ProjectCreator.create(retry, token: nil) }, "pushurl", "the real push target is checked")
+    _ = try! ProjectProcess.git(["config", "--unset", "remote.origin.pushurl"], root: retryRoot)
+    // origin changed to another repository meanwhile: stop instead of pushing there.
     _ = try! ProjectProcess.git(["remote", "set-url", "origin", "https://github.com/evil/retry.git"], root: retryRoot)
     fails({ try ProjectCreator.create(retry, token: nil) }, "evil", "a foreign origin is never pushed to")
     _ = try! ProjectProcess.git(["remote", "set-url", "origin", "https://github.com/tester/retry.git"], root: retryRoot)
@@ -787,5 +796,13 @@ func testProjectCreate() {
     expect(remoteMain("retry") == (try? ProjectProcess.git(["rev-parse", "HEAD"], root: project.root)) && (try? ProjectProcess.git(["rev-list", "--count", "HEAD"], root: project.root)) == "1",
            "pushed on retry, one commit")
     fails({ try ProjectCreator.prepare(name: "retry", location: projects.path, isPrivate: true, token: nil) }, "already exists", "once done, it is an existing project")
+    // Made on GitHub but stopped before origin was added; the default place did not exist yet.
+    fm.createFile(atPath: base.appendingPathComponent("no-remote").path, contents: Data())
+    let late = try! ProjectCreator.prepare(name: "late", location: nil, isPrivate: true, token: nil).plan
+    fails({ try ProjectCreator.create(late, token: nil) }, "Ask again", "stopped after the repository was made")
+    try! fm.removeItem(at: base.appendingPathComponent("no-remote"))
+    let lateProject = try! ProjectCreator.create(try! ProjectCreator.prepare(name: "late", location: nil, isPrivate: true, token: nil).plan, token: nil)
+    expect(lateProject.root.hasSuffix("/Documents/Projects/late") && remoteMain("late") == (try? ProjectProcess.git(["rev-parse", "HEAD"], root: lateProject.root)),
+           "origin added and pushed, default place made")
     print("PASS: new project (names and places, gh missing/logged out/offline, card first, deny makes nothing, folder + first commit + GitHub + push + linked chat, retry pushes only, foreign origin refused, Enterprise chats without it)")
 }

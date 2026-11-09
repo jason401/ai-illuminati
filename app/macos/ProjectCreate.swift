@@ -13,6 +13,8 @@ enum ProjectCreator {
         var isPrivate: Bool
         var url: String { "https://github.com/\(owner)/\(repo)" }
     }
+    // Where a push may really go (after pushurl and insteadOf); tests add their local "GitHub".
+    static var pushTarget: (String, Plan) -> Bool = { sameRepo($0, $1) }
     static var ghCandidates = ["/opt/homebrew/bin/gh", "/usr/local/bin/gh"]
     static var home = NSHomeDirectory()   // new projects go under here (tests: their own folder)
     static var defaultLocation: String { (home as NSString).appendingPathComponent("Documents/Projects") }
@@ -40,6 +42,9 @@ enum ProjectCreator {
         let resolved = URL(fileURLWithPath: expanded).resolvingSymlinksInPath().standardizedFileURL.path
         let base = URL(fileURLWithPath: home).resolvingSymlinksInPath().standardizedFileURL.path
         var folder: ObjCBool = false
+        let fallback = raw.map { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } ?? true
+        // The default ~/Documents/Projects may not exist yet: it is made with the project (create).
+        if fallback, !FileManager.default.fileExists(atPath: resolved), resolved.hasPrefix(base + "/") { return resolved }
         guard FileManager.default.fileExists(atPath: resolved, isDirectory: &folder), folder.boolValue else {
             throw error("위치 폴더가 없어요: \(resolved)", "The location folder does not exist: \(resolved)")
         }
@@ -138,6 +143,8 @@ enum ProjectCreator {
         let folder = plan.folder
         func git(_ args: [String]) throws -> String { try ProjectProcess.git(args, root: folder, token: token) }
         if !exists(folder) {
+            let parent = (folder as NSString).deletingLastPathComponent
+            if !exists(parent) { try FileManager.default.createDirectory(atPath: parent, withIntermediateDirectories: true) }
             try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: false)
             _ = try git(["init", "-b", "main"])
             try JSONEncoder().encode(plan).write(to: URL(fileURLWithPath: folder).appendingPathComponent(".git/" + markerName), options: .atomic)
@@ -157,10 +164,21 @@ enum ProjectCreator {
                 throw error
             }
         }
-        if let remote = try? git(["config", "--get", "remote.origin.url"]) {
+        var remote = try? git(["config", "--get", "remote.origin.url"])
+        if remote == nil, try repoExists(plan.owner, plan.repo, token: token) {
+            // Made on GitHub, but stopped before origin was added (it did not exist before the card): add it and push.
+            remote = plan.url + ".git"
+            _ = try git(["remote", "add", "origin", plan.url + ".git"])
+        }
+        if let remote {
             // The repository was made before and only the push failed: push again, to that repository only.
             guard sameRepo(remote, plan) else {
                 throw error("origin이 \(remote)를 가리켜요. 계획한 \(plan.url)와 달라서 멈췄어요.", "origin points to \(remote), not \(plan.url); stopped.")
+            }
+            let targets = ((try? git(["remote", "get-url", "--push", "--all", "origin"])) ?? "").split(separator: "\n").map(String.init)
+            guard !targets.isEmpty, targets.allSatisfy({ pushTarget($0, plan) }) else {
+                throw error("push가 \(targets.joined(separator: ", "))로 가게 설정돼 있어요 (pushurl·insteadOf). 계획한 \(plan.url)와 달라서 멈췄어요.",
+                            "The push would go to \(targets.joined(separator: ", ")) (pushurl/insteadOf), not \(plan.url); stopped.")
             }
             let gh = try requireGH()
             let reply = try ProjectProcess.run("/usr/bin/git", ["-c", "credential.helper=", "-c", "credential.helper=!" + gh + " auth git-credential",

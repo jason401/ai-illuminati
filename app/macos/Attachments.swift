@@ -69,8 +69,8 @@ extension Discussion {
     func addPastedImages(_ pasteboard: NSPasteboard) -> Bool {
         guard !running else { return false }
         if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL], !urls.isEmpty {
-            let images = urls.filter { (try? $0.resourceValues(forKeys: [.contentTypeKey]).contentType?.conforms(to: .image)) == true }
-            if !images.isEmpty { images.forEach(importImageFile); return true }
+            attachFiles(urls)   // pictures into the question, other files (PDFs…) linked whole
+            return true
         }
         if let data = pasteboard.data(forType: .png) ?? pasteboard.data(forType: .tiff) {
             do { try addImage(data, name: L("붙여넣은 이미지", "Pasted image")) }

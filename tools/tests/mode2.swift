@@ -372,6 +372,26 @@ expect(imageChat.addPastedImages(paste), "clipboard PNG must be recognized")
 expect(imageChat.pendingImages.count == 1, "clipboard image not imported")
 imageChat.removePendingImage(imageChat.pendingImages[0])
 expect(imageChat.pendingImages.isEmpty, "remove pending image failed")
+// A dropped PDF is a file, not a picture: it is linked whole (the old path rendered only page 1 as an image).
+do {
+    let pdfFolder = FileManager.default.temporaryDirectory.appendingPathComponent("mode2-drop-" + UUID().uuidString)
+    try FileManager.default.createDirectory(at: pdfFolder, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: pdfFolder) }
+    let pdfURL = pdfFolder.appendingPathComponent("two pages.pdf")
+    let pdfData = NSMutableData()
+    var box = CGRect(x: 0, y: 0, width: 200, height: 200)
+    let pdfContext = CGContext(consumer: CGDataConsumer(data: pdfData)!, mediaBox: &box, nil)!
+    for _ in 0..<2 { pdfContext.beginPDFPage(nil); pdfContext.endPDFPage() }
+    pdfContext.closePDF()
+    try (pdfData as Data).write(to: pdfURL)
+    let drop = NSPasteboard.withUniqueName()
+    drop.writeObjects([pdfURL as NSURL])
+    expect(imageChat.addPastedImages(drop), "dropped PDF must be taken by the attachment path")
+    expect(imageChat.pendingImages.isEmpty, "a PDF must not become a one-page picture")
+    let linked = imageChat.current.workspace?.roots ?? []
+    expect(linked.contains { $0.path == pdfURL.resolvingSymlinksInPath().path && !$0.directory }, "dropped PDF must be linked as a whole file")
+    imageChat.change(imageChat.currentID, save: false) { $0.workspace = nil }
+}
 let fifteen = (1...15).map { "picture \($0)" }
 expect(Discussion.picturesToSend(fifteen, current: 2, question: "이거 봐") == Set(7..<15), "send this message's photos and the latest earlier ones only")
 expect(Discussion.picturesToSend(fifteen, current: 0, question: "Image 3 다시 보고 사진 40도") == Set(9..<15).union([2]), "a named earlier picture is sent again; out-of-range numbers are ignored")

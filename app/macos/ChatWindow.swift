@@ -78,7 +78,7 @@ struct ChatView: View {
                     RoundedRectangle(cornerRadius: 12)
                         .strokeBorder(Color.accentColor, style: StrokeStyle(lineWidth: 2, dash: [8, 6]))
                         .padding(8)
-                    Label(L("놓으면 사진이 첨부돼요", "Drop to attach photos"), systemImage: "photo.on.rectangle")
+                    Label(L("놓으면 파일이 첨부돼요", "Drop to attach files"), systemImage: "paperclip")
                         .font(.title3.weight(.medium))
                         .padding(.horizontal, 18).padding(.vertical, 10)
                         .background(.regularMaterial, in: Capsule())
@@ -2322,8 +2322,13 @@ private struct ImageAttachmentDropDelegate: DropDelegate {
         PictureDrop.receive(info.itemProviders(for: [UTType.image])) { urls, folder in
             defer { if let folder { try? FileManager.default.removeItem(at: folder) } }
             guard discussion.currentID == conversationID, !discussion.running else { return }
-            if urls.isEmpty { discussion.attachmentError = L("이미지를 첨부할 수 없습니다.", "Could not attach image."); return }
-            urls.forEach(discussion.importImageFile)   // reads each file right away
+            if urls.isEmpty { discussion.attachmentError = L("파일을 첨부할 수 없습니다.", "Could not attach file."); return }
+            // Finder files: pictures attach, others (PDFs…) are linked whole. Promised or copied files live in
+            // a temporary folder removed below, so only their pictures can attach (read right away).
+            guard folder != nil else { discussion.attachFiles(urls); return }
+            let images = urls.filter { (try? $0.resourceValues(forKeys: [.contentTypeKey]).contentType?.conforms(to: .image)) == true }
+            if images.isEmpty { discussion.attachmentError = L("이 파일은 Finder에서 끌어다 놓아 주세요.", "Drag this file from Finder instead."); return }
+            images.forEach(discussion.importImageFile)
         }
         return true
     }

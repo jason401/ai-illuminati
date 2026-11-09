@@ -80,9 +80,16 @@ extension Discussion {
         panel.canChooseDirectories = false; panel.canChooseFiles = true; panel.allowsMultipleSelection = true
         panel.message = L("사진은 질문에 바로 붙이고, 다른 파일은 AI가 필요할 때 열어 봐요.", "Pictures go into the question; other files are opened by the AI when needed.")
         guard panel.runModal() == .OK else { return }
+        attachFiles(panel.urls)
+    }
+
+    // Shared by Attach file, drag and drop and paste. A PDF is not a picture: rendering it as one kept
+    // only its first page, so it is linked like any other file and the AI reads all of it.
+    func attachFiles(_ urls: [URL]) {
+        guard !running && !importingMaterials else { return }
         let isImage = { (url: URL) in (try? url.resourceValues(forKeys: [.contentTypeKey]).contentType?.conforms(to: .image)) == true }
-        for url in panel.urls where isImage(url) { importImageFile(url) }
-        let others = panel.urls.filter { !isImage($0) }
+        for url in urls where isImage(url) { importImageFile(url) }
+        let others = urls.filter { !isImage($0) }
         guard !others.isEmpty else { return }
         do {
             let roots = try others.map { url -> WorkspaceRoot in

@@ -294,49 +294,100 @@ enum ProjectWork {
     static func get(_ id: UUID?) -> ProjectRun? { mutex.lock(); defer { mutex.unlock() }; return id.flatMap { runs[$0] } }
     static func register(_ run: ProjectRun) { mutex.lock(); runs[run.id] = run; mutex.unlock() }
     static func finish(_ run: ProjectRun) { run.stop(); run.operations.lock(); defer { run.operations.unlock() }; ToolHub.shared.revoke(project: run.id); mutex.lock(); runs.removeValue(forKey: run.id); mutex.unlock() }
+    // Writers of folders without Git (a documents project's folder, or a folder linked to a plain chat) must not overlap a
+    // documents project: a documents folder is taken alone, with nothing inside or around it being written. Plain linked
+    // folders may still be written by several chats at once, as before. Across app instances the same rule holds through
+    // lock files: an exclusive one for the folder and shared ones for every folder above it (a writer below or above
+    // a documents folder then fails to lock); a plain folder around a documents folder is only seen inside this app.
+    private static var documentsHeld: Set<String> = []
+    private static var plainHeld: [String: Int] = [:]
+    private static var leases: [String: (plain: [String], files: [Int32])] = [:]
+    private static func overlaps(_ a: String, _ b: String) -> Bool { a == b || a.hasPrefix(b + "/") || b.hasPrefix(a + "/") }
+    private static func ancestors(_ path: String) -> [String] {
+        var result: [String] = [], current = (path as NSString).deletingLastPathComponent
+        while !current.isEmpty && current != "/" { result.append(current); current = (current as NSString).deletingLastPathComponent }
+        return result + ["/"]
+    }
+    private static func lockFile(_ path: String, _ operation: Int32) throws -> Int32 {
+        let base = URL(fileURLWithPath: AccountStore.supportDir).appendingPathComponent("project-locks")
+        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        let name = SHA256.hash(data: Data(path.utf8)).map { String(format: "%02x", $0) }.joined()
+        let fd = open(base.appendingPathComponent(name).path, O_CREAT | O_RDWR | O_CLOEXEC, S_IRUSR | S_IWUSR)
+        guard fd >= 0 else { throw MaterialReader.error("Could not create repository lock.") }
+        guard flock(fd, operation | LOCK_NB) == 0 else { close(fd); throw MaterialReader.error("Repository is busy in another app instance.") }
+        return fd
+    }
     static func acquire(_ binding: WorkspaceBinding?) throws -> [String] {
         guard let binding else { return [] }
-        var common = Set<String>()
+        let support = URL(fileURLWithPath: AccountStore.supportDir).resolvingSymlinksInPath().standardizedFileURL.path
+        var common = Set<String>(), plain = Set<String>(), above: [String: String] = [:]   // above: Git common dir → its work tree
         for root in binding.roots where root.directory && (root.writable == true || binding.level != .view) {
             if let path = try? ProjectProcess.git(["rev-parse", "--git-common-dir"], root: root.path) {
-                common.insert((path.hasPrefix("/") ? URL(fileURLWithPath: path) : URL(fileURLWithPath: root.path).appendingPathComponent(path)).resolvingSymlinksInPath().standardizedFileURL.path)
+                let dir = (path.hasPrefix("/") ? URL(fileURLWithPath: path) : URL(fileURLWithPath: root.path).appendingPathComponent(path)).resolvingSymlinksInPath().standardizedFileURL.path
+                common.insert(dir); above[dir] = URL(fileURLWithPath: root.path).resolvingSymlinksInPath().standardizedFileURL.path
+            } else {
+                let path = URL(fileURLWithPath: root.path).resolvingSymlinksInPath().standardizedFileURL.path
+                if path != support && !path.hasPrefix(support + "/") { plain.insert(path) }   // a chat's own folder overlaps nothing
             }
         }
-        // A documents project has no Git: its folder is the lock, and a folder inside it (or around it) counts as the same.
+        // A documents project has no Git: its folder is the lock.
         let documents = binding.project.flatMap { $0.isDocuments ? $0.root : nil }
-        if let documents { common.insert(documents) }
+        if let documents { common.insert(documents); plain.remove(documents) }
+        let busy = MaterialReader.error(L(busyKorean, busyEnglish))
         mutex.lock(); defer { mutex.unlock() }
-        var acquired: [String] = []
+        var acquired: [String] = [], files: [Int32] = []
         do {
             for path in common.sorted() {
-                guard held[path] == nil else { throw MaterialReader.error(L(busyKorean, busyEnglish)) }
-                if path == documents, held.keys.contains(where: { path.hasPrefix($0 + "/") || $0.hasPrefix(path + "/") }) { throw MaterialReader.error(L(busyKorean, busyEnglish)) }
-                let base = URL(fileURLWithPath: AccountStore.supportDir).appendingPathComponent("project-locks")
-                try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
-                let name = SHA256.hash(data: Data(path.utf8)).map { String(format: "%02x", $0) }.joined()
-                let fd = open(base.appendingPathComponent(name).path, O_CREAT | O_RDWR | O_CLOEXEC, S_IRUSR | S_IWUSR)
-                guard fd >= 0 else { throw MaterialReader.error("Could not create repository lock.") }
-                guard flock(fd, LOCK_EX | LOCK_NB) == 0 else { close(fd); throw MaterialReader.error("Repository is busy in another app instance.") }
-                held[path] = fd; acquired.append(path)
+                guard held[path] == nil else { throw busy }
+                let tree = above[path] ?? path
+                if path == documents {
+                    if held.keys.contains(where: { overlaps($0, path) || workTrees[$0].map { overlaps($0, path) } == true }) || plainHeld.keys.contains(where: { overlaps($0, path) }) { throw busy }
+                } else if documentsHeld.contains(where: { overlaps($0, tree) }) { throw busy }
+                held[path] = try lockFile(path, LOCK_EX); acquired.append(path)
+                if path == documents { documentsHeld.insert(path) }
+                for folder in ancestors(tree) + (path == documents ? [] : [tree]) { files.append(try lockFile(folder, LOCK_SH)) }
+                if let tree = above[path] { workTrees[path] = tree }
             }
-            return acquired
-        } catch { for path in acquired { if let fd = held.removeValue(forKey: path) { close(fd) } }; throw error }
+            for path in plain.sorted() {
+                guard !documentsHeld.contains(where: { overlaps($0, path) }) else { throw busy }
+                for folder in [path] + ancestors(path) { files.append(try lockFile(folder, LOCK_SH)) }
+            }
+        } catch {
+            for path in acquired { if let fd = held.removeValue(forKey: path) { close(fd) }; documentsHeld.remove(path); workTrees.removeValue(forKey: path) }
+            for fd in files { close(fd) }
+            throw error
+        }
+        guard !plain.isEmpty || !files.isEmpty else { return acquired }
+        for path in plain { plainHeld[path, default: 0] += 1 }
+        let token = Self.leasePrefix + UUID().uuidString
+        leases[token] = (Array(plain), files)
+        return acquired + [token]
     }
+    static let leasePrefix = "lease:"
+    private static var workTrees: [String: String] = [:]   // held Git common dir → the work tree it was locked for
     // A chat is writing this repository now (TODO work waits instead of failing on acquire).
     static func isHeld(_ root: String) -> Bool {
         guard let path = try? ProjectProcess.git(["rev-parse", "--git-common-dir"], root: root) else {
-            // No Git: a documents project's folder, or one inside or around it.
+            // No Git: a documents project's folder, or one inside or around it, or that folder being written by a plain chat.
             mutex.lock(); defer { mutex.unlock() }
-            return held.keys.contains { $0 == root || root.hasPrefix($0 + "/") || $0.hasPrefix(root + "/") }
+            return documentsHeld.contains { overlaps($0, root) } || plainHeld.keys.contains { overlaps($0, root) } || held[root] != nil
         }
         let common = (path.hasPrefix("/") ? URL(fileURLWithPath: path) : URL(fileURLWithPath: root).appendingPathComponent(path)).resolvingSymlinksInPath().standardizedFileURL.path
         mutex.lock(); defer { mutex.unlock() }
-        return held[common] != nil
+        return held[common] != nil || documentsHeld.contains { overlaps($0, root) }
     }
     static func release(_ paths: [String]) {
         mutex.lock()
-        for path in paths { if let fd = held.removeValue(forKey: path) { close(fd) } }
+        for path in paths {
+            if let lease = leases.removeValue(forKey: path) {
+                for fd in lease.files { close(fd) }
+                for folder in lease.plain { plainHeld[folder, default: 1] -= 1; if plainHeld[folder] == 0 { plainHeld.removeValue(forKey: folder) } }
+            } else if let fd = held.removeValue(forKey: path) {
+                close(fd); documentsHeld.remove(path); workTrees.removeValue(forKey: path)
+            }
+        }
         mutex.unlock()
+        // Also a plain chat's folders: a documents TODO may be waiting for them.
         if !paths.isEmpty { NotificationCenter.default.post(name: .projectReleased, object: nil) }
     }
 }

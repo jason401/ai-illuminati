@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 func testProjectWork() {
     let base = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("project-fixture-" + UUID().uuidString)
@@ -1057,12 +1058,40 @@ func testDocumentsProject() {
     // One writer per documents folder, also for a folder inside it.
     let binding = WorkspaceBinding(roots: [WorkspaceRoot(path: project.root, directory: true, writable: true)], project: project)
     let lease = try! ProjectWork.acquire(binding)
-    expect(lease == [project.root] && ProjectWork.isHeld(project.root) && ProjectWork.isHeld(project.root + "/figures"), "the documents folder is locked while one AI writes")
+    expect(lease.first == project.root && ProjectWork.isHeld(project.root) && ProjectWork.isHeld(project.root + "/figures"), "the documents folder is locked while one AI writes")
     do { _ = try ProjectWork.acquire(binding); expect(false, "a second writer is refused") } catch { expect(ProjectWork.isBusy(error.localizedDescription), "a busy documents project is told apart") }
     let inner = try! ProjectProcess.documents(paper.appendingPathComponent("figures").path)
     do { _ = try ProjectWork.acquire(WorkspaceBinding(roots: [WorkspaceRoot(path: inner.root, directory: true, writable: true)], project: inner)); expect(false, "a nested documents project is refused") } catch {}
+    // Other writers of the same files: a plain chat with the folder linked ("Link folder"), or a Git repository inside it.
+    let plainChat = WorkspaceBinding(roots: [WorkspaceRoot(path: project.root + "/figures", directory: true, writable: true)], level: .execute)
+    do { _ = try ProjectWork.acquire(plainChat); expect(false, "a plain chat cannot write inside a documents project being worked on") } catch { expect(ProjectWork.isBusy(error.localizedDescription), "told as busy") }
+    let nested = paper.appendingPathComponent("analysis")
+    try! FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+    _ = try! ProjectProcess.git(["init", "-b", "main"], root: nested.path)
+    do { _ = try ProjectWork.acquire(WorkspaceBinding(roots: [WorkspaceRoot(path: nested.path, directory: true, writable: true)], level: .execute)); expect(false, "a Git repository inside the documents folder is refused") } catch {}
     ProjectWork.release(lease)
     expect(!ProjectWork.isHeld(project.root), "released after the answer")
+    try! FileManager.default.removeItem(at: nested)
+    // The other way round: while a plain chat writes inside, the documents project waits; plain chats still share a folder.
+    let plainLease = try! ProjectWork.acquire(plainChat), plainLease2 = try! ProjectWork.acquire(plainChat)
+    expect(ProjectWork.isHeld(project.root), "a plain chat writing inside counts as busy for the TODO board")
+    do { _ = try ProjectWork.acquire(binding); expect(false, "a documents project waits for a plain chat writing inside it") } catch {}
+    ProjectWork.release(plainLease); ProjectWork.release(plainLease2)
+    expect(!ProjectWork.isHeld(project.root), "plain chat locks are released")
+    // Another app instance writing below the folder (it holds the shared lock file of every folder above it).
+    func lockFile(_ path: String) -> String {
+        URL(fileURLWithPath: AccountStore.supportDir).appendingPathComponent("project-locks/" + SHA256.hash(data: Data(path.utf8)).map { String(format: "%02x", $0) }.joined()).path
+    }
+    let other = open(lockFile(project.root), O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
+    expect(other >= 0 && flock(other, LOCK_SH | LOCK_NB) == 0, "fixture holds another instance's lock")
+    do { _ = try ProjectWork.acquire(binding); expect(false, "a writer below in another app instance is seen") } catch {}
+    close(other)
+    let free = try! ProjectWork.acquire(binding)
+    expect(free.first == project.root, "free again once the other instance is done")
+    let parent = open(lockFile(base.resolvingSymlinksInPath().path), O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
+    expect(flock(parent, LOCK_EX | LOCK_NB) != 0, "another instance cannot take a folder above it alone")
+    close(parent)
+    ProjectWork.release(free)
 
     // No Git tools; project_run stays. The checkpoint says there is no Git.
     let run = ProjectRun(room: UUID(), binding: project, token: DebateCancellation())

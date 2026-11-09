@@ -136,6 +136,14 @@ extension Discussion {
         if let reason = startTurn(room: request.room, question: text) { attachmentError = reason; return }
         ProjectCenter.shared.dismiss(request.id)
     }
+    // The permission dialog before a Git project works in full auto (+ menu of a chat and the sidebar Projects +).
+    static func allowProjectWork(_ project: ProjectBinding) -> Bool {
+        let alert = NSAlert()
+        alert.messageText = L("이 채팅에서 프로젝트 작업 허용", "Allow project work in this chat")
+        alert.informativeText = project.root + "\n\n" + L("완전 자동으로 일해요: AI가 승인 카드 없이 모든 명령을 실행하고 인터넷을 쓰고 main에 push해요. 한 번에 최대 8시간, 그동안 Mac이 잠들지 않아요.\n\n막아 두는 것: 강제 push·기록 지우기, 영구 삭제(rm은 휴지통으로). stable 배포는 매번 직접 허용해요.\n\n카드로 하나씩 확인하려면 + 메뉴에서 완전 자동을 끄세요. 신뢰하는 프로젝트만 연결하세요.", "Works in full auto: the AI runs any command without approval cards, uses the network and pushes to main. Up to 8 hours per task, with the Mac kept awake.\n\nStill blocked: force push and history rewrites, permanent deletes (rm moves to the Trash). Publishing stable always asks you.\n\nTo confirm steps with cards, turn off full auto in the + menu. Only connect projects you trust.")
+        alert.addButton(withTitle: L("허용", "Allow")); alert.addButton(withTitle: L("취소", "Cancel"))
+        return alert.runModal() == .alertFirstButtonReturn
+    }
     func configureProject() {
         guard !running, configuration.mode == 0 else { return }
         if current.workspace?.project != nil {
@@ -148,11 +156,7 @@ extension Discussion {
         guard panel.runModal() == .OK, let folder = panel.url else { return }
         do {
             let project = try ProjectProcess.inspect(folder.path)
-            let alert = NSAlert()
-            alert.messageText = L("이 채팅에서 프로젝트 작업 허용", "Allow project work in this chat")
-            alert.informativeText = project.root + "\n\n" + L("완전 자동으로 일해요: AI가 승인 카드 없이 모든 명령을 실행하고 인터넷을 쓰고 main에 push해요. 한 번에 최대 8시간, 그동안 Mac이 잠들지 않아요.\n\n막아 두는 것: 강제 push·기록 지우기, 영구 삭제(rm은 휴지통으로). stable 배포는 매번 직접 허용해요.\n\n카드로 하나씩 확인하려면 + 메뉴에서 완전 자동을 끄세요. 신뢰하는 프로젝트만 연결하세요.", "Works in full auto: the AI runs any command without approval cards, uses the network and pushes to main. Up to 8 hours per task, with the Mac kept awake.\n\nStill blocked: force push and history rewrites, permanent deletes (rm moves to the Trash). Publishing stable always asks you.\n\nTo confirm steps with cards, turn off full auto in the + menu. Only connect projects you trust.")
-            alert.addButton(withTitle: L("허용", "Allow")); alert.addButton(withTitle: L("취소", "Cancel"))
-            guard alert.runModal() == .alertFirstButtonReturn else { return }
+            guard Self.allowProjectWork(project) else { return }
             change(currentID, save: true) { conversation in
                 var binding = conversation.workspace ?? WorkspaceBinding(roots: [])
                 if !binding.roots.contains(where: { $0.path == project.root }) { binding.roots.append(WorkspaceRoot(path: project.root, directory: true, writable: true)) }
@@ -204,13 +208,14 @@ extension Discussion {
         do {
             let project: ProjectBinding
             if let git = try? ProjectProcess.inspect(folder.path) {
+                guard Self.allowProjectWork(git) else { return }
                 project = git
             } else {
                 project = try ProjectProcess.documents(folder.path)
                 let alert = NSAlert()
                 alert.messageText = L("문서 프로젝트로 연결", "Link as a documents project")
-                alert.informativeText = project.root + "\n\n" + L("Git 저장소가 아니라서 문서 프로젝트로 연결해요. AI가 이 폴더의 파일을 고칠 수 있어요 (완전 자동). 답할 때마다 폴더를 먼저 백업해서 되돌릴 수 있어요.",
-                                                                    "This is not a Git repository, so it is linked as a documents project. The AI may change the files in this folder (full auto). The folder is backed up before each answer, so it can be undone.")
+                alert.informativeText = project.root + "\n\n" + L("Git 저장소가 아니라서 문서 프로젝트로 연결해요. AI가 이 폴더의 파일을 고칠 수 있어요 (완전 자동: 명령 실행·인터넷 사용). 신뢰하는 폴더만 연결하세요. 답할 때마다 폴더를 먼저 백업해서 되돌릴 수 있어요.",
+                                                                    "This is not a Git repository, so it is linked as a documents project. The AI may change the files in this folder (full auto: runs commands, uses the network). Only link folders you trust. The folder is backed up before each answer, so it can be undone.")
                 alert.addButton(withTitle: L("연결", "Link")); alert.addButton(withTitle: L("취소", "Cancel"))
                 guard alert.runModal() == .alertFirstButtonReturn else { return }
             }

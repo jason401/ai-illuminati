@@ -268,9 +268,11 @@ struct ChatView: View {
         .disabled(discussion.importingMaterials)
     }
 
-    // A new chat linked to the project's newest root, locked like its chats when they are Enterprise.
+    // A new chat linked to the project's newest root, locked like its chats or its TODO list when they are Enterprise
+    // (a project may have only a locked list left).
     private func newChat(in group: ProjectGroup, _ binding: ProjectBinding) {
         let lock = (group.chats + group.todoRooms).first { $0.enterpriseLock != nil && $0.workspace?.project?.root == binding.root }?.enterpriseLock
+            ?? todos.snapshot.lists.first { $0.lock != nil && $0.project?.root == binding.root }?.lock
         discussion.addProjectChat(binding, title: L("새 대화", "New chat"), open: true, lock: lock)
         if folds.isFolded("project." + group.id) { folds.toggle("project." + group.id) }
     }

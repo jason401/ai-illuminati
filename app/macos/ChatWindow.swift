@@ -2323,12 +2323,11 @@ private struct ImageAttachmentDropDelegate: DropDelegate {
             defer { if let folder { try? FileManager.default.removeItem(at: folder) } }
             guard discussion.currentID == conversationID, !discussion.running else { return }
             if urls.isEmpty { discussion.attachmentError = L("파일을 첨부할 수 없습니다.", "Could not attach file."); return }
-            // Finder files: pictures attach, others (PDFs…) are linked whole. Promised or copied files live in
-            // a temporary folder removed below, so only their pictures can attach (read right away).
+            // Pictures attach, others (PDFs…) are linked whole. Promised files (Mail, …) sit in a temporary
+            // folder removed below, so those are first copied into the chat's own folder.
             guard folder != nil else { discussion.attachFiles(urls); return }
-            let images = urls.filter { (try? $0.resourceValues(forKeys: [.contentTypeKey]).contentType?.conforms(to: .image)) == true }
-            if images.isEmpty { discussion.attachmentError = L("이 파일은 Finder에서 끌어다 놓아 주세요.", "Drag this file from Finder instead."); return }
-            images.forEach(discussion.importImageFile)
+            do { discussion.attachFiles(try RoomDocuments.keepDropped(urls, room: conversationID)) }
+            catch { discussion.attachmentError = L("파일을 첨부할 수 없습니다.", "Could not attach file.") }
         }
         return true
     }

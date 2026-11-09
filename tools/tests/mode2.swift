@@ -391,6 +391,13 @@ do {
     let linked = imageChat.current.workspace?.roots ?? []
     expect(linked.contains { $0.path == pdfURL.resolvingSymlinksInPath().path && !$0.directory }, "dropped PDF must be linked as a whole file")
     imageChat.change(imageChat.currentID, save: false) { $0.workspace = nil }
+    // A promised PDF (Mail…) arrives in a temporary folder: it is copied into the chat's folder and linked.
+    let kept = try RoomDocuments.keepDropped([pdfURL], room: imageChat.currentID)
+    expect(kept.count == 1 && kept[0].path.hasPrefix(RoomDocuments.directory(imageChat.currentID).path) && kept[0].lastPathComponent == "two pages.pdf", "promised PDF must be copied into the chat folder")
+    imageChat.attachFiles(kept)
+    expect(imageChat.pendingImages.isEmpty && (imageChat.current.workspace?.roots ?? []).contains { $0.path == kept[0].resolvingSymlinksInPath().path }, "promised PDF must be linked whole")
+    imageChat.change(imageChat.currentID, save: false) { $0.workspace = nil }
+    try? FileManager.default.removeItem(at: RoomDocuments.directory(imageChat.currentID))
 }
 let fifteen = (1...15).map { "picture \($0)" }
 expect(Discussion.picturesToSend(fifteen, current: 2, question: "이거 봐") == Set(7..<15), "send this message's photos and the latest earlier ones only")

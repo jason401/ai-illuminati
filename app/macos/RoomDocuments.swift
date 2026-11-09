@@ -13,6 +13,18 @@ enum RoomDocuments {
     static func directory(_ id: UUID) -> URL {
         URL(fileURLWithPath: ChatStore.dir).appendingPathComponent("\(id.uuidString).documents")
     }
+    // Dropped files that only exist in a temporary folder (promised by Mail and others) are copied into
+    // the chat's folder, removed with the chat, so they can be linked. Pictures are read at once and stay put.
+    static func keepDropped(_ urls: [URL], room: UUID) throws -> [URL] {
+        try urls.map { url in
+            if (try? url.resourceValues(forKeys: [.contentTypeKey]).contentType?.conforms(to: .image)) == true { return url }
+            let folder = directory(room).appendingPathComponent("Dropped " + String(UUID().uuidString.prefix(8)))
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            let copy = folder.appendingPathComponent(url.lastPathComponent)
+            try FileManager.default.copyItem(at: url, to: copy)
+            return copy
+        }
+    }
     static let extensions: Set<String> = ["pdf", "txt", "md", "csv", "tsv", "tex", "json", "py", "m", "swift"]
     static func read(_ url: URL) throws -> RoomDocument {
         let info = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])

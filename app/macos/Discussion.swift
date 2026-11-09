@@ -1217,7 +1217,10 @@ final class Discussion: ObservableObject {
         let judges = standing.compactMap { id in model.accounts.first { $0.id == id && [.claude, .codex].contains($0.provider) } }
         let doers = mentioned.isEmpty ? called : Array(mentioned.prefix(1))
         let checkers = mentioned.isEmpty ? reviewers : mentioned.count >= 2 ? Array(mentioned.dropFirst())
-            : project ? (self.crew(project: true, room: id).map { [$0.lead] + $0.others } ?? []).filter { $0 != mentioned[0] } : []
+            : project ? memberIDs(room: id).filter { member in
+                member != mentioned[0] && model.accounts.contains { $0.id == member && [.claude, .codex].contains($0.provider) && permits($0, room: id) }
+                && model.latestUsage[member]?.needsLogin != true && (model.latestUsage[member]?.leftNow ?? 50) > 0
+            } : []
         let team = called.isEmpty ? pickTeam(room: id) : called.compactMap { id in model.accounts.first { $0.id == id } }
         // A meeting (Meeting.swift): who meets, in a hidden chat of its own.
         let meetingTeam = meeting ? meetingMembers(room: id, mentioned: mentioned, fallback: team) : []

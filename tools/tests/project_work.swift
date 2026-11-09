@@ -927,6 +927,15 @@ func testPickedRoute() {
            && pair?.routeNote?.contains(L("\(chat.label(claude)) 검수", "\(chat.label(claude)) reviews")) == true && pair?.final == "Codex here." && judged == 0,
            "@A @B + work: A works, B reviews")
 
+    // @A + work with only B checked: B still reviews.
+    chat.toggleMember(codex.id)
+    chat.pickedRoute = .work
+    chat.draftMentions = [codex.id]
+    chat.draft = "@\(chat.label(codex)) README 고쳐"; chat.send(); wait()
+    expect(chat.current.turns.last?.routeNote?.contains(L("\(chat.label(claude)) 검수", "\(chat.label(claude)) reviews")) == true && chat.current.turns.last?.final == "Codex here.",
+           "@A + work: the one checked member reviews")
+    chat.toggleMember(codex.id)
+
     // A meeting: in its own hidden chat, with the chat's members; the result comes back as the answer.
     chat.toggleMember(gemini.id)
     let turnsBefore = chat.current.turns.count, askedBefore = asked.count

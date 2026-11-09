@@ -252,9 +252,10 @@ extension Discussion {
 
     // A chat linked to a new project, as "Link folder" makes it (full auto unless turned off).
     @discardableResult
-    func addProjectChat(_ project: ProjectBinding, title: String, open: Bool) -> UUID {
+    func addProjectChat(_ project: ProjectBinding, title: String, open: Bool, lock: EnterpriseLock? = nil) -> UUID {
         var chat = Conversation()
         chat.title = String(title.prefix(80))
+        chat.enterpriseLock = lock   // locked before anything is sent (a TODO of an Enterprise project)
         chat.workspace = WorkspaceBinding(roots: [WorkspaceRoot(path: project.root, directory: true, writable: true)], project: project)
         conversations.insert(chat, at: 0)
         ChatStore.save(chat)

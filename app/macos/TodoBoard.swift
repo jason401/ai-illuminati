@@ -91,7 +91,7 @@ struct TodoBoardView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 if let scheduler = TodoScheduler.shared { TodoBoardHeader(scheduler: scheduler) }
-                if let error = draft.error { Text(error).font(.system(size: 12)).foregroundColor(.red) }
+                if let error = draft.error ?? store.saveError { Text(error).font(.system(size: 12)).foregroundColor(.red) }
                 ForEach(store.snapshot.lists) { list in listView(list) }
                 if store.snapshot.lists.isEmpty {
                     Text(L("아직 TODO가 없어요. 아래에서 프로젝트를 고르고 적어 주세요.", "No TODOs yet. Pick a project below and write one."))
@@ -220,9 +220,12 @@ struct TodoBoardView: View {
         guard !text.isEmpty, let project = options.first(where: { $0.binding.root == root }) else { return }
         // The chat open before the board, when it works on the same project, gets the report card too.
         let origin = discussion.current.workspace?.project?.root == root && !store.snapshot.items.contains { $0.room == discussion.currentID } ? discussion.currentID : nil
+        // Written for a project worked on in an Enterprise chat: its TODOs keep that lock.
+        let lock = (discussion.current.workspace?.project?.root == root ? discussion.current.enterpriseLock : nil)
+            ?? discussion.conversations.first { $0.workspace?.project?.root == root && $0.enterpriseLock != nil }?.enterpriseLock
         act {
             try store.add(title: text, detail: draft.detail.trimmingCharacters(in: .whitespacesAndNewlines), project: project.binding, projectName: project.name,
-                          after: Array(draft.after), askFirst: draft.askFirst, originRoom: origin)
+                          after: Array(draft.after), askFirst: draft.askFirst, originRoom: origin, lock: lock)
             draft.title = ""; draft.detail = ""; draft.after = []
         }
     }
@@ -277,6 +280,7 @@ struct TodoCard: View {
                 if !item.assumptions.isEmpty {
                     Text(L("가정: ", "Assumed: ") + item.assumptions.joined(separator: " · ")).font(.system(size: 11)).foregroundColor(.secondary)
                 }
+                if let error = item.lastError { Text(error).font(.system(size: 11)).foregroundColor(.orange) }
                 if item.room.map({ discussion.conversation($0).configuration?.memberIDs?.count ?? 0 }) == 1 {
                     Text(L("리뷰 없음 (리뷰할 계정이 없었어요)", "No review (no account was free to review)")).font(.system(size: 11)).foregroundColor(.orange)
                 }

@@ -80,7 +80,13 @@ func testTodoStore() {
     do { try store.delete(three.id) } catch { expect(false, "delete") }
     try! store.change(one.id) { $0.state = .running }
     do { try store.delete(one.id); expect(false, "a running TODO is not deleted") } catch {}
-    print("PASS: TODO store (drafts, order and folder, gate review/done, other lists, circles refused, move, cancelled link, saved and read back, older files)")
+    // A save that fails changes nothing and says so (a folder stands where the file goes).
+    let blockedURL = todoStoreFile("blocked")
+    try! FileManager.default.createDirectory(at: blockedURL.appendingPathComponent("inside"), withIntermediateDirectories: true)
+    let blocked = TodoStore(url: blockedURL)
+    do { _ = try blocked.add(title: "lost", project: a, projectName: "A"); expect(false, "a failed save is an error") } catch { expect(error is TodoError, "the save error is a TODO error: \(error)") }
+    expect(blocked.current.items.isEmpty && blocked.snapshot.items.isEmpty && blocked.saveError != nil, "a failed save leaves the TODOs as they were and is shown")
+    print("PASS: TODO store (drafts, order and folder, gate review/done, other lists, circles refused, move, cancelled link, saved and read back, older files, failed save)")
 }
 
 func testTodoScheduler() {
@@ -126,6 +132,14 @@ func testTodoScheduler() {
             _ = TaskLink.shared.call("task_ask", ["kind": "question", "reason": "Which way?", "questions": [["text": "A or B?", "options": ["A", "B"], "recommended": "B"]]], context: context)
             return .success("I need your decision.")
         }
+        if current.hasPrefix("TODO: late") {
+            // Reported, then the rest of the attempt (the review, the fixes) fails: not waiting for the check.
+            _ = TaskLink.shared.call("task_done", ["summary": "Too early"], context: context)
+            let now = store.current.items.first { $0.room == room }
+            expect(now?.state == .running && now?.report?.summary == "Too early" && toolsSeen.contains("task_ask"), "task_done keeps the TODO running until the attempt is over")
+            return .failure(.failed("review broke"))
+        }
+        if current.hasPrefix("TODO: secret") { _ = TaskLink.shared.call("task_done", ["summary": "Kept inside"], context: context); return .success("Done.") }
         if current.hasPrefix("TODO: flaky") { return asked.filter { $0 == account.id }.count < 99 ? .failure(.failed("network down")) : .success("") }
         return .success("Ended without a report.")
     }
@@ -199,5 +213,38 @@ func testTodoScheduler() {
     let back = store.current.item(waits.id)!
     expect(back.state == .ready && back.interrupted && back.attempts == 1 && TodoScheduler.question(back).contains("git status"), "restart: running TODOs are ready again with a note")
     try! store.cancel(waits.id)
-    print("PASS: TODO scheduler (drafts wait, own chat, 30% rule, task_done/task_ask scoped, order gate, answer resent, no report, retries, one place free, folder lock, restart)")
+    // task_done, then an error later in the attempt: retried (checking what is there first), never "waits for the check".
+    let late = try! store.add(title: "late", project: project, projectName: "P")
+    scheduler.startNow()
+    settle { store.current.item(late.id)?.state == .needsYou }
+    let broke = store.current.item(late.id)!
+    expect(broke.result == nil && broke.report == nil && broke.interrupted && broke.question?.reason.contains("review broke") == true, "a report before an error is not kept: \(broke.state)")
+    try! store.cancel(late.id)
+    // Its chat answering (the user talks in it): it stays ready without saving again and again, and waits a while.
+    let queued = try! store.add(title: "queued", project: project, projectName: "P")
+    store.startDrafts()
+    let busyRoom = chat.addProjectChat(project, title: "q", open: false)
+    try! store.change(queued.id) { $0.room = busyRoom }
+    chat.runningRooms = [busyRoom]
+    scheduler.held = { _ in false }   // the last attempt's folder lock may still be letting go
+    scheduler.tick()
+    let stamp = store.current.item(queued.id)!.updatedAt
+    for _ in 0..<5 { RunLoop.main.run(until: Date().addingTimeInterval(0.03)); scheduler.tick() }
+    expect(store.current.item(queued.id)?.state == .ready && store.current.item(queued.id)?.updatedAt == stamp && scheduler.waiting != nil,
+           "a TODO whose chat is answering is not started and not saved again")
+    chat.runningRooms = []
+    scheduler.held = ProjectWork.isHeld
+    try! store.cancel(queued.id)
+    // A project worked on in an Enterprise chat: its TODO goes only to that organization's accounts, in a locked chat.
+    model.accounts.append(Account(id: "todo-school", provider: .claude, name: "Claude (학교)"))
+    model.latestUsage["todo-school"] = left(80, 50)   // less left than the personal Claude: picked only because of the lock
+    _ = chat.addProjectChat(project, title: "school", open: false, lock: EnterpriseLock(organization: "학교", name: "학교", lockedAt: Date()))
+    let secret = try! store.add(title: "secret", project: project, projectName: "P")
+    asked = []
+    scheduler.startNow()
+    settle { store.current.item(secret.id)?.state == .review }
+    let secretRoom = store.current.item(secret.id)?.room.map { chat.conversation($0) }
+    expect(asked == ["todo-school"] && secretRoom?.enterpriseLock?.organization == "학교" && secretRoom?.configuration?.memberIDs == ["todo-school"],
+           "an Enterprise project's TODO keeps the lock: \(asked)")
+    print("PASS: TODO scheduler (drafts wait, own chat, 30% rule, task_done/task_ask scoped, order gate, answer resent, no report, retries, one place free, folder lock, restart, report final at the end, busy chat waits, Enterprise lock)")
 }

@@ -103,7 +103,9 @@ func testTodoStore() {
     let listText = "{\"id\":\"\(UUID().uuidString)\",\"title\":\"Keep\"}"
     for (name, text) in [("broken", "{\"lists\": ["), ("badfield", "{\"lists\":[\(listText)],\"items\":[{\"id\":\"\(UUID().uuidString)\",\"listID\":\"\(UUID().uuidString)\",\"notes\":\"oops\"}]}"),
                          ("newstate", "{\"lists\":[\(listText)],\"items\":[{\"id\":\"\(UUID().uuidString)\",\"listID\":\"\(UUID().uuidString)\",\"state\":\"someday\"}]}"),
-                         ("newversion", "{\"version\":2,\"lists\":[\(listText)]}")] {
+                         ("newversion", "{\"version\":2,\"lists\":[\(listText)]}"),
+                         ("nullitems", "{\"lists\":[\(listText)],\"items\":null}"),
+                         ("nullstate", "{\"lists\":[\(listText)],\"items\":[{\"id\":\"\(UUID().uuidString)\",\"listID\":\"\(UUID().uuidString)\",\"state\":null}]}")] {
         let heldURL = todoStoreFile("held-" + name)
         try! FileManager.default.createDirectory(at: heldURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try! text.write(to: heldURL, atomically: true, encoding: .utf8)
@@ -119,6 +121,8 @@ func testTodoStore() {
     try! FileManager.default.createDirectory(at: unreadable, withIntermediateDirectories: true)
     expect(TodoStore(url: unreadable).locked != nil, "a todos.json that cannot be opened is held too")
     expect(TodoStore(url: todoStoreFile("missing-\(UUID().uuidString)")).locked == nil, "only a missing file starts empty")
+    let nullRoom = "{\"id\":\"\(UUID().uuidString)\",\"listID\":\"\(UUID().uuidString)\",\"room\":null,\"report\":null}"
+    expect((try? JSONDecoder().decode(TodoItem.self, from: Data(nullRoom.utf8)))?.room == nil, "null in a field that may be empty is just empty")
     print("PASS: TODO store (held unreadable files, drafts, joining a running list, release wakes, order and folder, gate review/done, other lists, circles refused, move, cancelled link, saved and read back, older files, failed save)")
 }
 

@@ -88,33 +88,33 @@ struct TodoItem: Codable, Identifiable, Equatable {
         let c = try decoder.container(keyedBy: Keys.self)
         id = try c.decode(UUID.self, forKey: .id)
         listID = try c.decode(UUID.self, forKey: .listID)
-        title = (try c.decodeIfPresent(String.self, forKey: .title)) ?? ""
-        detail = (try c.decodeIfPresent(String.self, forKey: .detail)) ?? ""
-        attachments = (try c.decodeIfPresent([TodoAttachment].self, forKey: .attachments)) ?? []
-        askFirst = (try c.decodeIfPresent(Bool.self, forKey: .askFirst)) ?? false
+        title = (try c.decodeIfThere(String.self, forKey: .title)) ?? ""
+        detail = (try c.decodeIfThere(String.self, forKey: .detail)) ?? ""
+        attachments = (try c.decodeIfThere([TodoAttachment].self, forKey: .attachments)) ?? []
+        askFirst = (try c.decodeIfThere(Bool.self, forKey: .askFirst)) ?? false
         // An unknown state (a newer app's) is not read as a draft: the file is held, not rewritten.
-        if let raw = try c.decodeIfPresent(String.self, forKey: .state) {
+        if let raw = try c.decodeIfThere(String.self, forKey: .state) {
             guard let known = State(rawValue: raw) else { throw DecodingError.dataCorruptedError(forKey: .state, in: c, debugDescription: "Unknown state \(raw)") }
             state = known
         } else { state = .draft }
-        after = (try c.decodeIfPresent([UUID].self, forKey: .after)) ?? []
+        after = (try c.decodeIfThere([UUID].self, forKey: .after)) ?? []
         room = try c.decodeIfPresent(UUID.self, forKey: .room)
         originRoom = try c.decodeIfPresent(UUID.self, forKey: .originRoom)
-        notes = (try c.decodeIfPresent([TodoNote].self, forKey: .notes)) ?? []
+        notes = (try c.decodeIfThere([TodoNote].self, forKey: .notes)) ?? []
         question = try c.decodeIfPresent(TodoQuestion.self, forKey: .question)
-        attempts = (try c.decodeIfPresent(Int.self, forKey: .attempts)) ?? 0
+        attempts = (try c.decodeIfThere(Int.self, forKey: .attempts)) ?? 0
         lastError = try c.decodeIfPresent(String.self, forKey: .lastError)
         result = try c.decodeIfPresent(String.self, forKey: .result)
-        assumptions = (try c.decodeIfPresent([String].self, forKey: .assumptions)) ?? []
-        files = (try c.decodeIfPresent([String].self, forKey: .files)) ?? []
+        assumptions = (try c.decodeIfThere([String].self, forKey: .assumptions)) ?? []
+        files = (try c.decodeIfThere([String].self, forKey: .files)) ?? []
         report = try c.decodeIfPresent(TodoReport.self, forKey: .report)
         workers = try c.decodeIfPresent([String].self, forKey: .workers)
-        interrupted = (try c.decodeIfPresent(Bool.self, forKey: .interrupted)) ?? false
-        unreported = (try c.decodeIfPresent(Bool.self, forKey: .unreported)) ?? false
-        createdAt = (try c.decodeIfPresent(Date.self, forKey: .createdAt)) ?? Date()
-        updatedAt = (try c.decodeIfPresent(Date.self, forKey: .updatedAt)) ?? createdAt
-        workSeconds = (try c.decodeIfPresent(Double.self, forKey: .workSeconds)) ?? 0
-        waitSeconds = (try c.decodeIfPresent(Double.self, forKey: .waitSeconds)) ?? 0
+        interrupted = (try c.decodeIfThere(Bool.self, forKey: .interrupted)) ?? false
+        unreported = (try c.decodeIfThere(Bool.self, forKey: .unreported)) ?? false
+        createdAt = (try c.decodeIfThere(Date.self, forKey: .createdAt)) ?? Date()
+        updatedAt = (try c.decodeIfThere(Date.self, forKey: .updatedAt)) ?? createdAt
+        workSeconds = (try c.decodeIfThere(Double.self, forKey: .workSeconds)) ?? 0
+        waitSeconds = (try c.decodeIfThere(Double.self, forKey: .waitSeconds)) ?? 0
         stateSince = try c.decodeIfPresent(Date.self, forKey: .stateSince)
         startedAt = try c.decodeIfPresent(Date.self, forKey: .startedAt)
         finishedAt = try c.decodeIfPresent(Date.self, forKey: .finishedAt)
@@ -186,14 +186,14 @@ struct TodoList: Codable, Identifiable, Equatable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
         id = try c.decode(UUID.self, forKey: .id)
-        title = (try c.decodeIfPresent(String.self, forKey: .title)) ?? ""
+        title = (try c.decodeIfThere(String.self, forKey: .title)) ?? ""
         project = try c.decodeIfPresent(ProjectBinding.self, forKey: .project)
-        sequential = (try c.decodeIfPresent(Bool.self, forKey: .sequential)) ?? true
-        waitForDone = (try c.decodeIfPresent(Bool.self, forKey: .waitForDone)) ?? false
-        order = (try c.decodeIfPresent([UUID].self, forKey: .order)) ?? []
+        sequential = (try c.decodeIfThere(Bool.self, forKey: .sequential)) ?? true
+        waitForDone = (try c.decodeIfThere(Bool.self, forKey: .waitForDone)) ?? false
+        order = (try c.decodeIfThere([UUID].self, forKey: .order)) ?? []
         lock = try c.decodeIfPresent(EnterpriseLock.self, forKey: .lock)
-        accounts = (try c.decodeIfPresent([String].self, forKey: .accounts)) ?? []
-        paused = (try c.decodeIfPresent(Bool.self, forKey: .paused)) ?? false
+        accounts = (try c.decodeIfThere([String].self, forKey: .accounts)) ?? []
+        paused = (try c.decodeIfThere(Bool.self, forKey: .paused)) ?? false
         stopAfter = try c.decodeIfPresent(UUID.self, forKey: .stopAfter)
     }
     func encode(to encoder: Encoder) throws {
@@ -221,6 +221,14 @@ enum TodoError: LocalizedError, Equatable {
     }
 }
 
+// Fields that always have a value: missing (an older file) gets the default, but an explicit null is a broken
+// file (this app never writes one), so it fails like any other bad value and the file is held.
+extension KeyedDecodingContainer {
+    func decodeIfThere<T: Decodable>(_ type: T.Type, forKey key: Key) throws -> T? {
+        contains(key) ? try decode(type, forKey: key) : nil
+    }
+}
+
 struct TodoData: Codable, Equatable {
     static let currentVersion = 1
     var version = 1
@@ -230,9 +238,9 @@ struct TodoData: Codable, Equatable {
     private enum Keys: String, CodingKey { case version, lists, items }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
-        version = (try c.decodeIfPresent(Int.self, forKey: .version)) ?? 1
-        lists = (try c.decodeIfPresent([TodoList].self, forKey: .lists)) ?? []
-        items = (try c.decodeIfPresent([TodoItem].self, forKey: .items)) ?? []
+        version = (try c.decodeIfThere(Int.self, forKey: .version)) ?? 1
+        lists = (try c.decodeIfThere([TodoList].self, forKey: .lists)) ?? []
+        items = (try c.decodeIfThere([TodoItem].self, forKey: .items)) ?? []
     }
 
     func item(_ id: UUID) -> TodoItem? { items.first { $0.id == id } }

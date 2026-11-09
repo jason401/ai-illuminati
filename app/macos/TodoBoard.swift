@@ -89,6 +89,16 @@ final class TodoDraft: ObservableObject {
     @Published var editAskFirst = false
 
     func beginEdit(_ item: TodoItem) {
+        // Another TODO open for editing: saved first (it would otherwise lose the text and start with the old one).
+        if let open = editing, open != item.id {
+            if let other = TodoStore.shared.current.item(open), TodoStore.editable(other) {
+                guard !editTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    error = L("고치던 TODO의 제목이 비어 있어요. 먼저 저장하거나 취소해 주세요.", "The TODO you are editing has no title. Save or cancel it first."); return
+                }
+                saveEdit()
+                guard editing == nil else { return }   // not saved: its editor stays open with the error
+            }
+        }
         editTitle = item.title; editDetail = item.detail; editAskFirst = item.askFirst
         editing = item.id; TodoScheduler.shared?.editing = item.id
     }

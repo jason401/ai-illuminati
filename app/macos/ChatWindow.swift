@@ -957,6 +957,7 @@ struct ChatView: View {
             }
             VStack(alignment: .leading, spacing: 8) {
                 if discussion.mentionQuery != nil { mentionList }
+                if discussion.slashMenu != nil { slashList }
                 if !discussion.pendingImages.isEmpty {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 8) {
@@ -1092,10 +1093,63 @@ struct ChatView: View {
         .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
     }
 
+    // "/" at the start of a message: the ways this chat offers, narrowed as the word is typed. Return or Tab picks
+    // (the word becomes "/work "), ↑↓ moves, Esc closes.
+    private var slashList: some View {
+        let list = discussion.slashMenu?.choices ?? []
+        return VStack(alignment: .leading, spacing: 1) {
+            ForEach(Array(list.enumerated()), id: \.element) { n, choice in
+                Button(action: { if let editor = discussion.mentionEditor { pickSlash(choice, editor) } }) {
+                    HStack(spacing: 8) {
+                        Image(systemName: choice.icon).font(.system(size: 11)).frame(width: 18, height: 18)
+                        Text(choice.title).font(.system(size: 13))
+                        Text(Route.words(choice).map { "/" + $0 }.joined(separator: "  "))
+                            .font(.system(size: 11).monospaced()).foregroundColor(.secondary)
+                        Spacer()
+                        Text(Route.hint(choice)).font(.system(size: 11)).foregroundColor(.secondary)
+                    }
+                    .padding(.horizontal, 8).frame(height: 28)
+                    .background(n == discussion.slashIndex ? Color.accentColor.opacity(0.16) : .clear, in: RoundedRectangle(cornerRadius: 6))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            Text(L("Enter나 Tab으로 고르기 · Esc 닫기 · 이 메시지에만 적용돼요", "Return or Tab to pick · Esc to close · for this message only"))
+                .font(.system(size: 10)).foregroundColor(.secondary).padding(.horizontal, 8).padding(.top, 2)
+        }
+        .padding(4)
+        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func slashChanged(_ editor: NSTextView) {
+        let menu = discussion.mentionQuery == nil
+            ? Route.slashMenu(editor.string, cursor: editor.selectedRange().location, offered: discussion.routeChoices) : nil
+        if menu?.query != discussion.slashMenu?.query { discussion.slashIndex = 0 }
+        discussion.slashMenu = menu
+    }
+
+    private func pickSlash(_ choice: RouteChoice, _ editor: NSTextView) {
+        guard let menu = discussion.slashMenu else { return }
+        discussion.slashMenu = nil
+        let range = NSRange(location: menu.location, length: 1 + (menu.query as NSString).length)
+        guard NSMaxRange(range) <= (editor.string as NSString).length else { return }
+        // Keep a space already there after the word instead of doubling it.
+        let after = NSMaxRange(range) < (editor.string as NSString).length
+            && CharacterSet.whitespacesAndNewlines.contains(UnicodeScalar((editor.string as NSString).character(at: NSMaxRange(range))) ?? "x")
+        let token = "/" + (Route.words(choice).first ?? "") + (after ? "" : " ")
+        if editor.shouldChangeText(in: range, replacementString: token) {
+            editor.replaceCharacters(in: range, with: token)
+            editor.didChangeText()
+        }
+        if after { editor.setSelectedRange(NSRange(location: menu.location + (token as NSString).length + 1, length: 0)) }
+        discussion.slashMenu = nil
+        editor.window?.makeFirstResponder(editor)
+    }
+
     // Opens, narrows or closes the list as the text after @ changes; colors the picked names.
     private func mentionChanged(_ editor: NSTextView) {
         discussion.mentionEditor = editor
-        defer { colorMentions(editor) }
+        defer { colorMentions(editor); slashChanged(editor) }
         guard discussion.configuration.mode == 0 else { discussion.mentionQuery = nil; return }
         let text = editor.string as NSString
         let cursor = editor.selectedRange().location
@@ -1146,6 +1200,16 @@ struct ChatView: View {
                 }
             }
             return false
+        }
+        if let menu = discussion.slashMenu, flags.isEmpty, discussion.mentionQuery == nil {
+            switch event.keyCode {
+            case 36, 76, 48:                              // Return, Enter, Tab
+                pickSlash(menu.choices[min(discussion.slashIndex, menu.choices.count - 1)], editor); return true
+            case 125: discussion.slashIndex = min(discussion.slashIndex + 1, menu.choices.count - 1); return true   // ↓
+            case 126: discussion.slashIndex = max(discussion.slashIndex - 1, 0); return true                        // ↑
+            case 53: discussion.slashMenu = nil; return true                                                        // Esc
+            default: return false
+            }
         }
         guard discussion.mentionQuery != nil, flags.isEmpty else { return false }
         let list = discussion.mentionCandidates()
@@ -1397,7 +1461,7 @@ struct ChatView: View {
             Button((picked == nil ? "✓ " : "") + L("자동 (앱이 판단)", "Automatic (the app decides)")) { discussion.pickedRoute = nil }
             Divider()
             ForEach(discussion.routeChoices, id: \.self) { choice in
-                Button((picked == choice ? "✓ " : "") + choice.title + "  /" + (Route.slashes.first { $0.value == choice && $0.key.allSatisfy(\.isASCII) }?.key ?? "")) {
+                Button((picked == choice ? "✓ " : "") + choice.title + "  /" + (Route.words(choice).first ?? "")) {
                     discussion.pickedRoute = choice
                 }
             }
@@ -1412,8 +1476,8 @@ struct ChatView: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
-        .help(L("이 메시지를 어떻게 답할지 고르기. 보내면 다시 자동이 돼요. 메시지 앞에 /work, /meet 처럼 써도 돼요.",
-                "How to answer this message. Back to automatic after sending. You can also start the message with /work, /meet…"))
+        .help(L("이 메시지를 어떻게 답할지 고르기. 보내면 다시 자동이 돼요. 메시지 앞에 /work(/w), /meet(/m) 처럼 써도 돼요. / 만 치면 목록이 나와요.",
+                "How to answer this message. Back to automatic after sending. You can also start the message with /work (/w), /meet (/m)… Type / for the list."))
     }
 
     private var accountChip: some View {

@@ -881,6 +881,8 @@ final class Discussion: ObservableObject {
     @Published var mentionIndex = 0
     var mentionLocation = 0
     weak var mentionEditor: NSTextView?      // the message box, for picking from the list with the mouse
+    @Published var slashMenu: (location: Int, query: String, choices: [RouteChoice])?   // "/" typed first: the ways to pick
+    @Published var slashIndex = 0
     func hover(_ key: String, _ inside: Bool) {
         if inside { hoverKey = key } else if hoverKey == key { hoverKey = nil }
     }
@@ -1174,6 +1176,7 @@ final class Discussion: ObservableObject {
         }
         draftMentions = []
         mentionQuery = nil
+        slashMenu = nil
         pendingImages = []
         draft = ""
         pickedRoute = nil

@@ -134,10 +134,37 @@ enum Route {
         return route
     }
 
-    // "/work " (or /one, /all, /meet and the Korean words) at the start of a message picks the way for it; the rest is
-    // the message. Only before a space or a line break, so a path like "/Users/…" stays text; only the ways `offered`.
-    static let slashes: [String: RouteChoice] = ["one": .one, "한명": .one, "all": .all, "모두": .all,
-                                                  "work": .work, "작업": .work, "meet": .meeting, "회의": .meeting]
+    // "/work " (or /one, /all, /meet, their short forms and the Korean words) at the start of a message picks the way
+    // for it; the rest is the message. Only before a space or a line break, so a path like "/Users/…" stays text; only
+    // the ways `offered`. The first word of each is the one shown in menus.
+    static let commands: [(choice: RouteChoice, words: [String])] = [
+        (.one, ["one", "1", "한명"]), (.all, ["all", "a", "opinion", "모두"]),
+        (.work, ["work", "w", "작업"]), (.meeting, ["meet", "m", "meeting", "회의"])]
+    static let slashes: [String: RouteChoice] = Dictionary(uniqueKeysWithValues: commands.flatMap { c in c.words.map { ($0, c.choice) } })
+    static func words(_ choice: RouteChoice) -> [String] { commands.first { $0.choice == choice }?.words ?? [] }
+
+    // While the first word of the message is being typed after "/": the ways it may become (all of them for a bare "/"),
+    // with where the "/" is. nil when the message does not start that way or nothing matches ("/Users…").
+    static func slashMenu(_ text: String, cursor: Int, offered: [RouteChoice]) -> (location: Int, query: String, choices: [RouteChoice])? {
+        let chars = Array(text.utf16)
+        var start = 0
+        while start < chars.count && chars[start] == 32 { start += 1 }
+        guard start < chars.count, chars[start] == 47, cursor > start, cursor <= chars.count else { return nil }   // "/"
+        let query = String(decoding: chars[(start + 1)..<cursor], as: UTF16.self)
+        guard !query.contains(where: \.isWhitespace) else { return nil }
+        let key = query.lowercased()
+        let choices = offered.filter { choice in words(choice).contains { $0.hasPrefix(key) } }
+        return choices.isEmpty ? nil : (start, query, choices)
+    }
+
+    static func hint(_ choice: RouteChoice) -> String {
+        switch choice {
+        case .one: return L("한 AI만 답해요", "One AI answers")
+        case .all: return L("모두 의견을 말해요", "Everyone gives a view")
+        case .work: return L("프로젝트를 고쳐요", "Changes the project")
+        case .meeting: return L("회의를 열어요", "Holds a meeting")
+        }
+    }
     static func slash(_ text: String, offered: [RouteChoice]) -> (route: RouteChoice, rest: String)? {
         let trimmed = text.drop { $0 == " " }
         guard trimmed.hasPrefix("/"), let end = trimmed.firstIndex(where: \.isWhitespace) else { return nil }

@@ -866,6 +866,20 @@ func testPickedRoute() {
            && Route.slash("/work", offered: offered) == nil && Route.slash("/work 고쳐", offered: RouteChoice.offered(project: false)) == nil,
            "slash: only a known word at the start, before a space; only the ways the chat offers")
     expect(RouteChoice.offered(project: false) == [.meeting], "a plain chat offers only a meeting")
+    expect(Route.slash("/w 고쳐줘", offered: offered)! == (.work, "고쳐줘") && Route.slash("/M 주제", offered: offered)! == (.meeting, "주제")
+           && Route.slash("/a 어때?", offered: offered)! == (.all, "어때?") && Route.slash("/opinion 어때?", offered: offered)! == (.all, "어때?")
+           && Route.slash("/1 짧게", offered: offered)! == (.one, "짧게") && Route.slash("/x 뭐", offered: offered) == nil,
+           "slash: short forms /w /m /a /1 and /opinion")
+    expect(Route.slashMenu("/", cursor: 1, offered: offered)!.choices == [.one, .all, .work, .meeting]
+           && Route.slashMenu("  /w", cursor: 4, offered: offered)! == (2, "w", [.work])
+           && Route.slashMenu("/m", cursor: 2, offered: offered)!.choices == [.meeting]
+           && Route.slashMenu("/Users", cursor: 6, offered: offered) == nil && Route.slashMenu("/work 고쳐", cursor: 8, offered: offered) == nil
+           && Route.slashMenu("이거 /w", cursor: 5, offered: offered) == nil && Route.slashMenu("/", cursor: 1, offered: []) == nil
+           && Route.slashMenu("/w", cursor: 2, offered: RouteChoice.offered(project: false)) == nil
+           && Route.slashMenu("/", cursor: 1, offered: RouteChoice.offered(project: false))!.choices == [.meeting],
+           "slash list: only while the first word after / is typed, only the ways the chat offers")
+    expect(Set(Route.commands.map(\.choice)) == Set(RouteChoice.allCases) && Route.slashes.count == Route.commands.flatMap(\.words).count,
+           "every way has slash words, none shared")
 
     let claude = Account(id: "pick-claude", provider: .claude, name: "PC"), codex = Account(id: "pick-codex", provider: .codex, name: "PG")
     let gemini = Account(id: "pick-gemini", provider: .gemini, name: "PM")

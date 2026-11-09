@@ -166,24 +166,39 @@ struct TodoBoardView: View {
     private func listView(_ list: TodoList) -> some View {
         let rows = store.snapshot.ordered(list.id).filter { draft.showDone || ($0.state != .done && $0.state != .cancelled) }
         return VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 10) {
-                Text(list.title).font(.system(size: 15, weight: .semibold))
-                Picker("", selection: Binding(get: { list.sequential }, set: { value in act { try store.setList(list.id, sequential: value) } })) {
-                    Text(L("순서대로", "In order")).tag(true)
-                    Text(L("상관없음", "Any order")).tag(false)
+            // A narrow window puts the order choice on its own line instead of pushing the board wider.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
+                    Text(list.title).font(.system(size: 15, weight: .semibold)).lineLimit(1)
+                    orderControls(list)
+                    Spacer()
+                    pauseControl(list)
                 }
-                .pickerStyle(.segmented).fixedSize()
-                if list.sequential {
-                    Toggle(L("내 확인 후 다음", "Next after my check"), isOn: Binding(get: { list.waitForDone }, set: { value in act { try store.setList(list.id, waitForDone: value) } }))
-                        .toggleStyle(.checkbox).font(.system(size: 12))
-                        .help(L("켜면 앞 TODO에 [완료]를 눌러야 다음이 시작돼요. 끄면 앞 TODO가 확인 대기가 될 때 시작해요.",
-                                "On: the next starts after you press Done. Off: it starts when the previous one waits for your check."))
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 10) {
+                        Text(list.title).font(.system(size: 15, weight: .semibold)).lineLimit(1).truncationMode(.middle)
+                        Spacer(minLength: 6)
+                        pauseControl(list)
+                    }
+                    HStack(spacing: 10) { orderControls(list) }
                 }
-                Spacer()
-                pauseControl(list)
             }
             if let scheduler = TodoScheduler.shared { TodoCrewRow(list: list, scheduler: scheduler, discussion: discussion, error: { draft.error = $0 }) }
             ForEach(Array(rows.enumerated()), id: \.element.id) { index, item in row(item, index: index + 1, list: list) }
+        }
+    }
+
+    @ViewBuilder private func orderControls(_ list: TodoList) -> some View {
+        Picker("", selection: Binding(get: { list.sequential }, set: { value in act { try store.setList(list.id, sequential: value) } })) {
+            Text(L("순서대로", "In order")).tag(true)
+            Text(L("상관없음", "Any order")).tag(false)
+        }
+        .pickerStyle(.segmented).fixedSize()
+        if list.sequential {
+            Toggle(L("내 확인 후 다음", "Next after my check"), isOn: Binding(get: { list.waitForDone }, set: { value in act { try store.setList(list.id, waitForDone: value) } }))
+                .toggleStyle(.checkbox).font(.system(size: 12)).fixedSize()
+                .help(L("켜면 앞 TODO에 [완료]를 눌러야 다음이 시작돼요. 끄면 앞 TODO가 확인 대기가 될 때 시작해요.",
+                        "On: the next starts after you press Done. Off: it starts when the previous one waits for your check."))
         }
     }
 
@@ -318,6 +333,41 @@ struct TodoBoardView: View {
         return " · " + discussion.label(account)
     }
 
+    // The add bar's controls, laid out by addBar to fit the width.
+    @ViewBuilder private func projectPicker(_ options: [(name: String, binding: ProjectBinding)], _ root: String) -> some View {
+        // One project's board: its only root needs no picking.
+        if discussion.boardProject == nil || options.count > 1 {
+            Picker(L("프로젝트", "Project"), selection: Binding(get: { root }, set: { draft.projectRoot = $0 })) {
+                ForEach(options, id: \.binding.root) { option in
+                    Text(discussion.boardProject == nil ? option.name : (option.binding.root as NSString).lastPathComponent).tag(option.binding.root)
+                }
+            }
+            .fixedSize()
+        }
+    }
+
+    @ViewBuilder private var fileAndOrder: some View {
+        Button(action: { addDraftFiles(Self.chooseFiles()) }) { Label(L("첨부", "Attach"), systemImage: "paperclip") }
+            .help(L("사진이나 파일을 첨부해요 (여기나 TODO 줄 위에 끌어다 놓아도 돼요 · 사진 앱·스크린샷도)", "Attach photos or files (or drop them here or on a TODO, also from Photos or a screenshot)"))
+            .fixedSize()
+        Menu(draft.after.isEmpty ? L("먼저 끝나야 할 TODO", "Must finish first") : L("먼저: \(draft.after.count)개", "First: \(draft.after.count)")) {
+            ForEach(store.snapshot.items.filter { $0.state != .done && $0.state != .cancelled }) { other in
+                Button((draft.after.contains(other.id) ? "✓ " : "") + other.title) { if draft.after.contains(other.id) { draft.after.remove(other.id) } else { draft.after.insert(other.id) } }
+            }
+        }
+        .fixedSize()
+    }
+
+    @ViewBuilder private func askAndAdd(_ root: String) -> some View {
+        Picker("", selection: $draft.askFirst) {
+            Text(L("가정하고 표시", "Assume and note")).tag(false)
+            Text(L("먼저 묻기", "Ask first")).tag(true)
+        }
+        .pickerStyle(.segmented).fixedSize()
+        Spacer()
+        Button(L("추가", "Add"), action: add).disabled(draft.title.trimmingCharacters(in: .whitespaces).isEmpty || root.isEmpty).fixedSize()
+    }
+
     private var addBar: some View {
         let options = projects
         let root = pickedRoot(options)
@@ -329,31 +379,18 @@ struct TodoBoardView: View {
                           open: { id in if let f = draft.files.first(where: { $0.id == id }) { NSWorkspace.shared.open(f.url) } },
                           remove: { id in draft.files.removeAll { $0.id == id } })
             }
-            HStack(spacing: 10) {
-                // One project's board: its only root needs no picking.
-                if discussion.boardProject == nil || options.count > 1 {
-                    Picker(L("프로젝트", "Project"), selection: Binding(get: { root }, set: { draft.projectRoot = $0 })) {
-                        ForEach(options, id: \.binding.root) { option in
-                            Text(discussion.boardProject == nil ? option.name : (option.binding.root as NSString).lastPathComponent).tag(option.binding.root)
-                        }
-                    }
-                    .fixedSize()
+            // All in one line when it fits, else the project on its own line, then the choices over two lines.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) { projectPicker(options, root); fileAndOrder; askAndAdd(root) }
+                VStack(alignment: .leading, spacing: 8) {
+                    projectPicker(options, root)
+                    HStack(spacing: 10) { fileAndOrder; askAndAdd(root) }
                 }
-                Button(action: { addDraftFiles(Self.chooseFiles()) }) { Label(L("첨부", "Attach"), systemImage: "paperclip") }
-                    .help(L("사진이나 파일을 첨부해요 (여기나 TODO 줄 위에 끌어다 놓아도 돼요 · 사진 앱·스크린샷도)", "Attach photos or files (or drop them here or on a TODO, also from Photos or a screenshot)"))
-                Menu(draft.after.isEmpty ? L("먼저 끝나야 할 TODO", "Must finish first") : L("먼저: \(draft.after.count)개", "First: \(draft.after.count)")) {
-                    ForEach(store.snapshot.items.filter { $0.state != .done && $0.state != .cancelled }) { other in
-                        Button((draft.after.contains(other.id) ? "✓ " : "") + other.title) { if draft.after.contains(other.id) { draft.after.remove(other.id) } else { draft.after.insert(other.id) } }
-                    }
+                VStack(alignment: .leading, spacing: 8) {
+                    projectPicker(options, root)
+                    HStack(spacing: 10) { fileAndOrder }
+                    HStack(spacing: 10) { askAndAdd(root) }
                 }
-                .fixedSize()
-                Picker("", selection: $draft.askFirst) {
-                    Text(L("가정하고 표시", "Assume and note")).tag(false)
-                    Text(L("먼저 묻기", "Ask first")).tag(true)
-                }
-                .pickerStyle(.segmented).fixedSize()
-                Spacer()
-                Button(L("추가", "Add"), action: add).disabled(draft.title.trimmingCharacters(in: .whitespaces).isEmpty || root.isEmpty)
             }
             .font(.system(size: 12))
             if options.isEmpty {

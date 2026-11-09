@@ -74,6 +74,10 @@ private struct EmptyPreviewLogin: GoogleTokenStore {
             var notes = Conversation(); notes.title = "Todo list structure idea"; notes.turns = [ChatTurn(question: "ideas")]; notes.pinned = true
             chat.conversations = [conversation, meeting, todoRoom, linked("Face expressions", face), notes]
             SidebarFold.shared.toggle("project." + face.common)
+            // CHAT_BOARD=todo|info|all opens the project's folder (its TODO board or Project info) or every project's board in place of the chat.
+            if let tab = ProcessInfo.processInfo.environment["CHAT_BOARD"] {
+                chat.openBoard(project: tab == "all" ? nil : SidebarProjects.key(repo), tab: tab == "info" ? .info : .todo)
+            }
         }
         if CommandLine.arguments.contains("--find") {
             // ⌘F: two turns with the words, the newer one moved to.
@@ -103,6 +107,7 @@ private struct EmptyPreviewLogin: GoogleTokenStore {
         if CommandLine.arguments.contains("--project-approval") {
             ProjectCenter.shared.requests = [ProjectApproval(room: conversation.id, run: UUID(), title: "Run project command", detail: "Runs outside the AI sandbox as your user.\n/Example/Project\n/bin/zsh tools/tests/run_mode2.sh")]
         }
+        if ProcessInfo.processInfo.environment["CHAT_KOREAN"] == "1" { AppLanguage.current = .korean }
         for appearance in [NSAppearance.Name.darkAqua, .aqua] {
             let host = NSHostingController(rootView: ChatView(discussion: chat, model: model).environment(\.colorScheme, appearance == .darkAqua ? .dark : .light))
             host.sizingOptions = []
@@ -111,9 +116,10 @@ private struct EmptyPreviewLogin: GoogleTokenStore {
             window.titlebarSeparatorStyle = .none; window.titleVisibility = .hidden
             window.appearance = NSAppearance(named: appearance)
             window.contentMinSize = ChatView.minSize
-            // CHAT_WIDTH renders a narrow window; CHAT_SIDEBAR=1 opens the sliding sidebar there.
+            // CHAT_WIDTH renders a narrow window; CHAT_SIDEBAR=1 opens the sliding sidebar there, 0 hides the sidebar.
             let width = Double(ProcessInfo.processInfo.environment["CHAT_WIDTH"] ?? "") ?? 1040
             chat.sidebarOverlay = ProcessInfo.processInfo.environment["CHAT_SIDEBAR"] == "1"
+            chat.sidebarHidden = ProcessInfo.processInfo.environment["CHAT_SIDEBAR"] == "0"
             window.setContentSize(NSSize(width: width, height: 720))
             for _ in 0..<5 { host.view.layoutSubtreeIfNeeded(); window.displayIfNeeded(); RunLoop.main.run(until: Date().addingTimeInterval(0.04)) }
             let view = window.contentView!.superview ?? host.view

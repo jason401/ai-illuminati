@@ -9,8 +9,12 @@ struct ChatView: View {
     @ObservedObject var discussion: Discussion
     @ObservedObject var model: AppModel
 
-    // Smallest window, about the Claude and ChatGPT apps; below `wide` the sidebar slides over the chat.
-    static let minSize = NSSize(width: 440, height: 420)
+    // Smallest window: room for the chat or the TODO board (its rows fold onto more lines) on their own. The sidebar
+    // sits beside them only while they keep that width (`sidebarFits`); narrower, it slides over them.
+    static let minSize = NSSize(width: 560, height: 480)
+    static let sidebarWidth: CGFloat = 250
+    static let sidebarFits = sidebarWidth + 1 + minSize.width
+    // The notes sit beside a chat that keeps at least this much.
     static let wide: CGFloat = 700
     static let notesWidth: CGFloat = 280
 
@@ -41,7 +45,9 @@ struct ChatView: View {
                         sidebar
                         Divider().opacity(0.5)
                     }
+                    // Never wider than what is left: something too wide is cut on the right, the sidebar stays whole.
                     chat(sidebarShown: inline, wide: wide)
+                        .frame(minWidth: 0, maxWidth: .infinity).clipped()
                     if notesShown && notesInline {
                         Divider().opacity(0.5)
                         NotesPanel(room: discussion.currentID) { discussion.notesShown = false }
@@ -185,7 +191,7 @@ struct ChatView: View {
             .padding(.horizontal, 16).padding(.vertical, 10)
             .disabled(discussion.importingMaterials)
         }
-        .frame(width: 250)
+        .frame(width: Self.sidebarWidth)
         .background(Color.primary.opacity(0.035))
     }
 
@@ -2426,8 +2432,8 @@ private final class ChatLayout: ObservableObject {
     @Published private(set) var notesFitAlone = true
 
     func measure(_ width: CGFloat) {
-        let isWide = width >= ChatView.wide
-        let fit = width - 251 - ChatView.notesWidth >= ChatView.wide
+        let isWide = width >= ChatView.sidebarFits
+        let fit = width - ChatView.sidebarWidth - 1 - ChatView.notesWidth >= ChatView.wide
         let fitAlone = width - ChatView.notesWidth >= ChatView.wide
         if isWide != wide { wide = isWide }
         if fit != notesFit { notesFit = fit }

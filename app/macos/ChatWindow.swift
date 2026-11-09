@@ -205,13 +205,12 @@ struct ChatView: View {
             .disabled(discussion.runningRooms.contains(conversation.id))
     }
 
-    // A project folder: click to fold, + for a new chat in it, right-click to pin. Inside: its TODO board, its chats
-    // (each with its meetings) and the chats its TODOs work in.
+    // A project folder: click to open its TODO board (and unfold), the chevron to fold, + for a new chat in it,
+    // right-click to pin. Inside: its chats (each with its meetings) and the chats its TODOs work in.
     @ViewBuilder private func projectGroup(_ group: ProjectGroup) -> some View {
         let open = !folds.isFolded("project." + group.id)
         projectRow(group, open: open)
         if open {
-            projectBoardRow(group)
             ForEach(group.chats) { chatGroup($0, depth: 1) }
             let rooms = SidebarProjects.shownTodoRooms(group.todoRooms, todo: todos.snapshot, all: folds.allTodoRooms.contains(group.id))
             ForEach(rooms.shown) { room in chatGroup(room, depth: 1, todo: todos.snapshot.items.first { $0.room == room.id }?.state) }
@@ -227,22 +226,29 @@ struct ChatView: View {
         let hovered = discussion.hoverKey == key
         let rooms = Set((group.chats + group.todoRooms).map(\.id))
         let waiting = SidebarProjects.waiting(todos.snapshot, lists: group.lists)
+        let selected = discussion.viewingBoard && discussion.boardProject == group.id
+        let todoCount = todos.snapshot.items.filter { group.lists.contains($0.listID) && $0.state != .done && $0.state != .cancelled }.count
         return HStack(spacing: 5) {
-            Image(systemName: "chevron.right").font(.system(size: 8, weight: .semibold)).foregroundColor(.secondary)
-                .rotationEffect(.degrees(open ? 90 : 0)).frame(width: 10)
+            Button(action: { folds.toggle(key) }) {
+                Image(systemName: "chevron.right").font(.system(size: 8, weight: .semibold)).foregroundColor(.secondary)
+                    .rotationEffect(.degrees(open ? 90 : 0)).frame(width: 22, height: 22)
+            }
+            .buttonStyle(.plainHit).padding(.leading, -6).padding(.trailing, -6)
+            .help(open ? L("접기", "Fold") : L("펼치기", "Unfold"))
             Image(systemName: open ? "folder" : "folder.fill").font(.system(size: 12)).foregroundColor(.secondary).frame(width: 16)
             Text(group.name).lineLimit(1).truncationMode(.tail).frame(maxWidth: .infinity, alignment: .leading)
             if group.pinned { Image(systemName: "pin.fill").font(.system(size: 8)).foregroundColor(.secondary).help(L("고정된 프로젝트", "Pinned project")) }
+            if waiting > 0 {
+                Text("\(waiting)").font(.system(size: 10, weight: .semibold)).foregroundColor(.white)
+                    .padding(.horizontal, 5).frame(minWidth: 16, minHeight: 16).background(Color.orange, in: Capsule())
+                    .help(L("네 결정이나 확인을 기다리는 TODO", "TODOs waiting for your decision or check"))
+            }
             // Folded: what is going on inside still shows.
             if !open {
                 if approvals.requests.contains(where: { rooms.contains($0.room) }) {
                     Circle().fill(Color.orange).frame(width: 7, height: 7).help(L("허가를 기다려요", "Waiting for approval"))
                 }
                 if !discussion.runningRooms.isDisjoint(with: rooms) { ProgressView().controlSize(.mini).help(L("답하는 중", "Answering")) }
-                if waiting > 0 {
-                    Text("\(waiting)").font(.system(size: 10, weight: .semibold)).foregroundColor(.white)
-                        .padding(.horizontal, 5).frame(minWidth: 16, minHeight: 16).background(Color.orange, in: Capsule())
-                }
             }
             if hovered, let binding = group.bindings.first {
                 Button(action: { newChat(in: group, binding) }) { Image(systemName: "square.and.pencil").font(.system(size: 11)).frame(width: 20, height: 20) }
@@ -252,11 +258,18 @@ struct ChatView: View {
         }
         .font(.system(size: 13, weight: .medium))
         .padding(.horizontal, 10).frame(height: 30)
-        .background(hovered ? Color.primary.opacity(0.05) : .clear, in: RoundedRectangle(cornerRadius: 8))
+        .background(selected ? Color.primary.opacity(0.10) : hovered ? Color.primary.opacity(0.05) : .clear, in: RoundedRectangle(cornerRadius: 8))
         .contentShape(Rectangle())
-        .onTapGesture { folds.toggle(key) }
+        .onTapGesture {
+            // Clicking the folder already showing its board folds or unfolds it; otherwise it opens the board, unfolded.
+            if selected { folds.toggle(key) } else {
+                discussion.openBoard(project: group.id)
+                if !open { folds.toggle(key) }
+            }
+        }
         .onHover { inside in discussion.hover(key, inside) }
-        .help(group.bindings.map(\.root).joined(separator: "\n"))
+        .help((group.bindings.map(\.root) + [todoCount > 0 ? L("눌러서 할 일 보드 (할 일 \(todoCount))", "Click for the TODO board (\(todoCount) TODOs)")
+                                                             : L("눌러서 할 일 보드", "Click for the TODO board")]).joined(separator: "\n"))
         .contextMenu {
             if let binding = group.bindings.first { Button(L("이 프로젝트에 새 대화", "New chat in this project")) { newChat(in: group, binding) } }
             Button(L("할 일 보드", "TODO board")) { discussion.openBoard(project: group.id) }
@@ -275,31 +288,6 @@ struct ChatView: View {
             ?? todos.snapshot.lists.first { $0.lock != nil && $0.project?.root == binding.root }?.lock
         discussion.addProjectChat(binding, title: L("새 대화", "New chat"), open: true, lock: lock)
         if folds.isFolded("project." + group.id) { folds.toggle("project." + group.id) }
-    }
-
-    // ☑ The project's own TODO board, with what waits for you there.
-    private func projectBoardRow(_ group: ProjectGroup) -> some View {
-        let key = "board." + group.id
-        let selected = discussion.viewingBoard && discussion.boardProject == group.id
-        let hovered = discussion.hoverKey == key
-        let waiting = SidebarProjects.waiting(todos.snapshot, lists: group.lists)
-        let open = todos.snapshot.items.filter { group.lists.contains($0.listID) && $0.state != .done && $0.state != .cancelled }.count
-        return HStack(spacing: 5) {
-            Image(systemName: "checklist").font(.system(size: 11)).foregroundColor(.secondary).frame(width: 14)
-            Text(open > 0 ? L("할 일 \(open)", "TODOs \(open)") : L("할 일", "TODOs")).frame(maxWidth: .infinity, alignment: .leading)
-            if waiting > 0 {
-                Text("\(waiting)").font(.system(size: 10, weight: .semibold)).foregroundColor(.white)
-                    .padding(.horizontal, 5).frame(minWidth: 16, minHeight: 16).background(Color.orange, in: Capsule())
-                    .help(L("네 결정이나 확인을 기다리는 TODO", "TODOs waiting for your decision or check"))
-            }
-        }
-        .font(.system(size: 12))
-        .padding(.leading, 22).padding(.trailing, 10).frame(height: 26)
-        .background(selected ? Color.primary.opacity(0.10) : hovered ? Color.primary.opacity(0.05) : .clear, in: RoundedRectangle(cornerRadius: 8))
-        .contentShape(Rectangle())
-        .onTapGesture { discussion.openBoard(project: group.id) }
-        .onHover { inside in discussion.hover(key, inside) }
-        .disabled(discussion.importingMaterials)
     }
 
     // A chat and, under it, the meetings held for it (Meeting.swift): the newest 5 until "show all".

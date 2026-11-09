@@ -129,7 +129,7 @@ extension SidebarProjects {
 }
 
 extension Discussion {
-    // The TODO board in place of the chat: one project's (a folder's ☑ row) or every project's.
+    // The TODO board in place of the chat: one project's (a click on its folder) or every project's.
     func openBoard(project: String?) {
         viewingRemote = nil; boardProject = project; viewingBoard = true; sidebarOverlay = false
     }

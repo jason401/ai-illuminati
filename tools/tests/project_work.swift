@@ -579,7 +579,16 @@ func testProjectSnapshot() {
     git(["checkout", "--", "notes.txt"])
     let review = start.changes(root: root.path) ?? ""
     expect(review.contains("discarded") && review.contains("notes.txt"), "a user change put back to HEAD is in the review")
-    print("PASS: project snapshot (discarded user changes)")
+    let gone = root.appendingPathComponent("gone.txt")
+    try! "Old".write(to: gone, atomically: true, encoding: .utf8)
+    git(["add", "gone.txt"]); git(["commit", "-m", "Add gone"])
+    try! "User edit".write(to: file, atomically: true, encoding: .utf8)
+    try! FileManager.default.removeItem(at: gone)
+    let before = ProjectSnapshot.take(root: root.path)
+    git(["add", "-A"]); git(["commit", "-m", "Commit the user's edit and deletion"])
+    let kept = before.changes(root: root.path) ?? ""
+    expect(kept.contains("Commits made") && !kept.contains("discarded"), "a user change committed by the answer is not called discarded")
+    print("PASS: project snapshot (discarded user changes; committed ones are not)")
 }
 
 // Step times (A) and project_run's "[n/m] name" stages with their record (C).

@@ -300,8 +300,13 @@ struct ProjectSnapshot {
             if diff.count > Peer.diffLimit { diff = String(diff.prefix(Peer.diffLimit)) + "\n[Diff cut here; open the files for the rest]" }
             parts.append("[Uncommitted files changed in this answer (new files: open them)]\n" + touched.prefix(60).joined(separator: "\n") + (diff.isEmpty ? "" : "\n[Diff]\n" + diff))
         }
-        // Uncommitted at the start and clean now: this answer discarded the user's changes.
-        let discarded = now.status.count < 500 ? status.keys.filter { now.status[$0] == nil }.sorted() : []   // past the cap, missing ≠ clean
+        // Uncommitted at the start and clean now: discarded, unless HEAD now holds the starting content (committed).
+        func committed(_ path: String) -> Bool {
+            let hash = String(status[path]?.dropFirst(3) ?? "")   // empty: the file was deleted at the start
+            let inHead = git(["rev-parse", "--verify", "--quiet", "HEAD:" + path])
+            return hash.isEmpty ? inHead == nil : inHead == hash
+        }
+        let discarded = now.status.count < 500 ? status.keys.filter { now.status[$0] == nil && !committed($0) }.sorted() : []   // past the cap, missing ≠ clean
         if !discarded.isEmpty {
             parts.append("[Files with uncommitted changes before this answer that now match HEAD (the earlier changes were discarded)]\n"
                          + discarded.prefix(60).joined(separator: "\n"))

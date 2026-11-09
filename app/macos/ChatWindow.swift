@@ -2303,7 +2303,8 @@ private struct ParallelAnswers: View {
             if sideBySide {
                 ViewThatFits(in: .horizontal) {
                     HStack(alignment: .top, spacing: 14) {
-                        ForEach(columns) { column in card(column).frame(minWidth: 280, maxWidth: .infinity, alignment: .topLeading) }
+                        // ViewThatFits measures the ideal width, and a reply's text would report its whole length on one line.
+                        ForEach(columns) { column in card(column).frame(minWidth: 280, idealWidth: 280, maxWidth: .infinity, alignment: .topLeading) }
                     }
                     if columns.count > 2 {
                         ScrollView(.horizontal) {

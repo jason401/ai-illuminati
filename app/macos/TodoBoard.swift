@@ -82,6 +82,22 @@ final class TodoDraft: ObservableObject {
     @Published var error: String?
     @Published var showDone = false
     @Published var replies: [UUID: String] = [:]   // a card's answer or change request, by TODO
+    // Editing a TODO the AI has not taken yet (TodoStore.editable); the scheduler leaves it alone meanwhile.
+    @Published private(set) var editing: UUID?
+    @Published var editTitle = ""
+    @Published var editDetail = ""
+    @Published var editAskFirst = false
+
+    func beginEdit(_ item: TodoItem) {
+        editTitle = item.title; editDetail = item.detail; editAskFirst = item.askFirst
+        editing = item.id; TodoScheduler.shared?.editing = item.id
+    }
+    func endEdit() { editing = nil; TodoScheduler.shared?.editing = nil }
+    func saveEdit() {
+        guard let id = editing, !editTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        do { try TodoStore.shared.edit(id, title: editTitle, detail: editDetail, askFirst: editAskFirst); error = nil; endEdit() }
+        catch { self.error = error.localizedDescription }
+    }
 }
 
 struct TodoBoardView: View {
@@ -131,6 +147,7 @@ struct TodoBoardView: View {
             .padding(.horizontal, 28).padding(.vertical, 16)
             .frame(maxWidth: .infinity)
         }
+        .onDisappear { draft.endEdit() }   // an edit left open would hold the TODO back
     }
 
     private func listView(_ list: TodoList) -> some View {
@@ -158,7 +175,9 @@ struct TodoBoardView: View {
     private func row(_ item: TodoItem, index: Int, list: TodoList) -> some View {
         let data = store.snapshot
         let waits = data.blockers(item).compactMap(data.item).filter { !data.satisfied($0, for: item) && $0.state != .cancelled }
+        let editing = draft.editing == item.id && TodoStore.editable(item)
         return VStack(alignment: .leading, spacing: 4) {
+            if editing { editor(item) } else {
             HStack(spacing: 8) {
                 Text(list.sequential ? "\(index). " + item.title : item.title).font(.system(size: 13, weight: .medium))
                     .foregroundColor(item.state == .draft ? .secondary : .primary).lineLimit(2)
@@ -170,10 +189,15 @@ struct TodoBoardView: View {
                 if item.state == .review {
                     Button(L("완료", "Done")) { store.accept(item.id) }.buttonStyle(.borderedProminent).controlSize(.small)
                 }
+                if TodoStore.editable(item) {
+                    Button(action: { draft.beginEdit(item) }) { Image(systemName: "pencil").frame(width: 22, height: 22) }
+                        .buttonStyle(.plainHit).help(L("고치기 (AI가 아직 가져가지 않은 TODO)", "Edit (the AI has not taken it yet)"))
+                }
                 if let room = item.room {
                     Button(action: { discussion.open(room) }) { Image(systemName: "bubble.left") }.buttonStyle(.plainHit).help(L("이 TODO의 채팅 열기", "Open this TODO's chat"))
                 }
                 Menu {
+                    if TodoStore.editable(item) { Button(L("고치기…", "Edit…")) { draft.beginEdit(item) } }
                     Button(L("위로", "Move up")) { act { try store.move(item.id, by: -1) } }
                     Button(L("아래로", "Move down")) { act { try store.move(item.id, by: 1) } }
                     Menu(L("먼저 끝나야 할 TODO", "Must finish first")) {
@@ -195,6 +219,7 @@ struct TodoBoardView: View {
                     .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
             }
             if !item.detail.isEmpty { Text(item.detail).font(.system(size: 12)).foregroundColor(.secondary).lineLimit(3) }
+            }
             if !item.attachments.isEmpty {
                 TodoChips(items: item.attachments.map { a in (a.id, a.name, a.image) },
                           open: { id in if let a = item.attachments.first(where: { $0.id == id }) { NSWorkspace.shared.open(store.file(item.id, a)) } },
@@ -205,6 +230,28 @@ struct TodoBoardView: View {
         .padding(.horizontal, 12).padding(.vertical, 9)
         .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 9))
         .overlay(item.state == .draft ? RoundedRectangle(cornerRadius: 9).strokeBorder(Color.secondary.opacity(0.4), style: StrokeStyle(lineWidth: 1, dash: [5, 4])) : nil)
+    }
+
+    // In place of the title and details while editing: [Cancel] / [Save] (Return in the title saves, Esc cancels).
+    private func editor(_ item: TodoItem) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            TextField(L("할 일", "TODO"), text: $draft.editTitle).textFieldStyle(.roundedBorder).onSubmit { draft.saveEdit() }
+            TextField(L("자세한 내용 (선택)", "Details (optional)"), text: $draft.editDetail, axis: .vertical).textFieldStyle(.roundedBorder).lineLimit(1...8)
+            HStack(spacing: 8) {
+                Picker("", selection: $draft.editAskFirst) {
+                    Text(L("가정하고 표시", "Assume and note")).tag(false)
+                    Text(L("먼저 묻기", "Ask first")).tag(true)
+                }
+                .pickerStyle(.segmented).fixedSize()
+                Text(L("고치는 동안은 시작하지 않아요", "It does not start while you edit")).foregroundColor(.secondary)
+                Spacer()
+                Button(L("취소", "Cancel")) { draft.endEdit() }
+                Button(L("저장", "Save")) { draft.saveEdit() }.buttonStyle(.borderedProminent)
+                    .disabled(draft.editTitle.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+            .font(.system(size: 12)).controlSize(.small)
+        }
+        .onExitCommand { draft.endEdit() }
     }
 
     private func runner(_ item: TodoItem) -> String {

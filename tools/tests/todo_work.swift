@@ -344,6 +344,40 @@ func testSidebarProjects() {
 
 // Photos and files on a TODO: copied in before saving, removed with it, refused while it runs, and given to the AI
 // in its chat's folder (photos also with the message, once per chat).
+func testTodoEdit() {
+    let a = ProjectBinding(root: "/tmp/todo-edit", common: "", remote: "", remoteURL: "")
+    let url = todoStoreFile("edit")
+    let store = TodoStore(url: url)
+    let item = try! store.add(title: "old", detail: "old details", project: a, projectName: "A")
+    try! store.edit(item.id, title: "  new  ", detail: " new details ", askFirst: true)
+    let now = store.current.item(item.id)!
+    expect(now.title == "new" && now.detail == "new details" && now.askFirst && now.state == .draft, "a draft is edited (trimmed): \(now.title) / \(now.detail)")
+    expect(TodoStore(url: url).current.item(item.id)?.title == "new", "the edit is saved")
+    try! store.edit(item.id, title: "   ", detail: "x", askFirst: false)
+    expect(store.current.item(item.id)?.title == "new", "an empty title changes nothing")
+    try! store.change(item.id) { $0.state = .ready }
+    try! store.edit(item.id, title: "ready edit", detail: "", askFirst: false)
+    expect(store.current.item(item.id)?.title == "ready edit", "a ready TODO is edited too")
+    for state in [TodoItem.State.running, .review, .done, .needsYou, .cancelled] {
+        try! store.change(item.id) { $0.state = state }
+        do { try store.edit(item.id, title: "no", detail: "", askFirst: false); expect(false, "no edit when \(state)") }
+        catch { expect(error as? TodoError == .notEditable && store.current.item(item.id)?.title == "ready edit", "editing is refused when \(state)") }
+    }
+
+    // The TODO open for editing is not started; once the edit ends it is.
+    try! store.change(item.id) { $0.state = .ready }
+    let scheduler = TodoScheduler(discussion: Discussion(model: AppModel()), store: store)
+    scheduler.held = { _ in false }
+    scheduler.editing = item.id
+    scheduler.tick()
+    expect(store.current.item(item.id)?.state == .ready && (scheduler.waiting?.contains("edited") == true || scheduler.waiting?.contains("고치는") == true),
+           "the TODO being edited is not started: \(scheduler.waiting ?? "-")")
+    scheduler.editing = nil
+    scheduler.tick()
+    expect(scheduler.waiting?.contains("edited") != true && scheduler.waiting?.contains("고치는") != true, "once the edit ends it may start: \(scheduler.waiting ?? "-")")
+    print("PASS: TODO edit (draft and ready only, trimmed, saved; refused once taken)")
+}
+
 func testTodoAttachments() {
     let project = ProjectBinding(root: "/tmp/todo-files", common: "", remote: "", remoteURL: "")
     let url = todoStoreFile("files")

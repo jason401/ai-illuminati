@@ -145,12 +145,13 @@ struct TodoList: Codable, Identifiable, Equatable {
 }
 
 enum TodoError: LocalizedError, Equatable {
-    case cycle, notFound, busy, save(String), attachment(String)
+    case cycle, notFound, busy, notEditable, save(String), attachment(String)
     var errorDescription: String? {
         switch self {
         case .cycle: return L("순서가 돌고 돌아요: 서로 기다리는 TODO가 생겨요.", "That order goes in a circle: these TODOs would wait for each other.")
         case .notFound: return L("TODO를 찾지 못했어요.", "TODO not found.")
         case .busy: return L("진행 중인 TODO는 먼저 멈춰야 해요.", "Stop the running TODO first.")
+        case .notEditable: return L("AI가 이미 가져간 TODO는 고칠 수 없어요. 결과에 수정 요청이나 답으로 알려 주세요.", "The AI already took this TODO; tell it through a change request or an answer.")
         case .attachment(let why): return why
         case .save(let why): return L("TODO를 저장하지 못했어요: ", "Could not save the TODOs: ") + why
         }
@@ -319,6 +320,16 @@ final class TodoStore: ObservableObject {
             data.items[i].after.removeAll { gone.contains($0) }
             if !text.isEmpty { data.items[i].notes.append(TodoNote(kind: .answer, text: text)) }
             data.items[i].state = .ready; data.items[i].question = nil; data.items[i].attempts = 0; data.items[i].lastError = nil; data.items[i].unreported = false
+        }
+    }
+    // Editing: only a TODO the AI has not taken yet (draft or ready); once it runs, the AI already has the text.
+    static func editable(_ item: TodoItem) -> Bool { item.state == .draft || item.state == .ready }
+    func edit(_ id: UUID, title: String, detail: String, askFirst: Bool) throws {
+        let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else { return }
+        try change(id) { item in
+            guard Self.editable(item) else { throw TodoError.notEditable }
+            item.title = title; item.detail = detail.trimmingCharacters(in: .whitespacesAndNewlines); item.askFirst = askFirst
         }
     }
     func cancel(_ id: UUID) throws { try change(id) { guard $0.state != .running else { throw TodoError.busy }; $0.state = .cancelled; $0.unreported = false } }
@@ -523,6 +534,8 @@ final class TodoScheduler: ObservableObject {
     private var retryAt: [UUID: (at: Date, reason: String)] = [:]   // a TODO whose chat refused to start: not tried again before `at`
     static let retryDelay: TimeInterval = 60
     var held: (String) -> Bool = ProjectWork.isHeld
+    // The TODO open for editing on the board: not started until the edit is saved or dropped.
+    var editing: UUID? { didSet { if oldValue != editing { wake() } } }
 
     init(discussion: Discussion, store: TodoStore) { self.discussion = discussion; self.store = store }
 
@@ -586,6 +599,7 @@ final class TodoScheduler: ObservableObject {
                 note = L("다른 대화가 답하는 중이라 기다려요.", "Waiting for other chats to finish."); break
             }
             if let retry = retryAt[item.id], retry.at > Date() { note = retry.reason; continue }
+            if item.id == editing { note = L("고치는 중인 TODO는 저장할 때까지 기다려요.", "The TODO being edited waits until it is saved."); continue }
             guard data.item(item.id)?.state == .ready, let list = data.list(item.listID), let project = list.project,
                   !data.items.contains(where: { $0.state == .running && data.list($0.listID)?.project?.root == project.root }) else { continue }
             let lock = lock(for: item, list: list, project: project)

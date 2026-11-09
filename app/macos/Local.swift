@@ -273,6 +273,29 @@ enum LocalModel {
             .first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
+    // Ollama's version (GET /api/version), or nil when it is not running.
+    static func version(timeout: TimeInterval = 2) -> String? {
+        guard let data = fetch(URLRequest(url: server.appendingPathComponent("api/version")), timeout: timeout) else { return nil }
+        return (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["version"] as? String
+    }
+
+    // "0.40.14" against "0.40.0", number by number; a suffix such as "-rc1" is ignored.
+    static func atLeast(_ version: String, _ minimum: String) -> Bool {
+        func parts(_ text: String) -> [Int] {
+            text.split(separator: "-").first.map { $0.split(separator: ".").map { Int($0) ?? 0 } } ?? []
+        }
+        let a = parts(version), b = parts(minimum)
+        for i in 0..<max(a.count, b.count) where (i < a.count ? a[i] : 0) != (i < b.count ? b[i] : 0) {
+            return (i < a.count ? a[i] : 0) > (i < b.count ? b[i] : 0)
+        }
+        return true
+    }
+
+    // A model that only sorts messages (Settings → Chat): it never becomes a chat account.
+    static func sortOnly(_ model: String) -> Bool {
+        normalized(model).split(separator: ":").first == "strands-decider"
+    }
+
     // Why this Mac should not get a model of this size, or nil when it can (how well it fits is shown apart).
     static func unsuitable(downloadGB: Double = 0) -> String? {
         #if !arch(arm64)
@@ -436,7 +459,7 @@ enum LocalModel {
         echo "\(L("모델 받는 중", "Downloading the model") + terms)"
         "$OLLAMA" pull \(variant.model) || { echo "\(L("받기 실패", "Download failed"))"; read; exit 1; }
         echo
-        read "?\(L("끝났어요. AI Illuminati에서 @\(variant.title)로 불러 보세요. 엔터를 누르면 창이 닫혀요.", "Done. Call it with @\(variant.title) in AI Illuminati. Press Enter to close this window."))"
+        read "?\(sortOnly(variant.model) ? L("끝났어요. 이제 메시지 판정에 써요. 엔터를 누르면 창이 닫혀요.", "Done. It now sorts messages. Press Enter to close this window.") : L("끝났어요. AI Illuminati에서 @\(variant.title)로 불러 보세요. 엔터를 누르면 창이 닫혀요.", "Done. Call it with @\(variant.title) in AI Illuminati. Press Enter to close this window."))"
         """)
     }
 

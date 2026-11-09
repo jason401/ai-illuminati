@@ -1108,6 +1108,34 @@ do {
     print("PASS: menu bar accounts and message sorting off")
 }
 
+// Message-sorting model status (Settings → Chat): the one step missing, in order; Decider never becomes a chat account.
+do {
+    let d = RouteSorter.decider, g = RouteSorter.gemma
+    func st(_ s: RouteSorter = .decider, checked: Bool = true, binary: Bool = true, enabled: Bool = true, installed: [String]? = ["strands-decider:latest"],
+            version: String? = "0.40.14", pull: (String, Double?)? = nil, failure: String? = nil) -> RouteSorter.State {
+        s.state(checked: checked, hasBinary: binary, enabled: enabled, installed: installed, version: version, pull: pull, failure: failure)
+    }
+    expect(st(.off) == .off && st() == .ready, "off, and ready when downloaded")
+    expect(st(checked: false, installed: nil) == .checking, "not asked yet is not 'Ollama off'")
+    expect(st(binary: false, installed: nil) == .noOllama && st(installed: nil) == .ollamaOff, "no Ollama, Ollama off")
+    expect(st(binary: false) == .ready, "a running Ollama without a CLI found still counts")
+    expect(st(version: "0.39.9") == .outdated("0.39.9") && st(g, installed: ["gemma4:e4b"], version: "0.12.0") == .ready, "Decider alone needs 0.40")
+    expect(st(installed: ["gemma4:e4b"]) == .missing && st(installed: [], failure: "net") == .failed("net"), "missing, failed")
+    expect(st(installed: [], pull: ("받는 중", 0.5)) == .downloading("받는 중", 0.5), "downloading comes first")
+    expect(st(enabled: false) == .localOff && st(enabled: false, installed: []) == .missing, "Ollama models off shows once downloaded")
+    expect(LocalModel.atLeast("0.40.14", "0.40.0") && LocalModel.atLeast("0.40", "0.40.0") && LocalModel.atLeast("1.0.0-rc1", "0.40.0")
+           && !LocalModel.atLeast("0.39.12", "0.40.0") && !LocalModel.atLeast("0.4.0", "0.40.0"), "version compare by number")
+    expect(LocalModel.sortOnly("strands-decider") && LocalModel.sortOnly("strands-decider:latest") && LocalModel.sortOnly("strands-decider:small")
+           && !LocalModel.sortOnly("strands-decider-x") && !LocalModel.sortOnly("gemma4:e4b"), "Decider is sort-only by name")
+    expect(d.downloadGB > 1 && d.downloadGB < 3 && g.downloadGB > 5 && RouteSorter.off.downloadGB == 0, "download sizes")
+    let m = AppModel(persist: false)
+    m.accounts = []
+    m.addInstalled("strands-decider:latest")
+    m.addInstalled("qwen3:8b")
+    expect(m.accounts.map(\.model) == ["qwen3:8b"], "Add to List skips Decider")
+    print("PASS: message sorting model status")
+}
+
 // Poker: hand ranking, betting rules, side pots, AI answers and a full fake game.
 do {
     func c(_ s: String) -> [Card] { s.split(separator: " ").map { Card(String($0))! } }

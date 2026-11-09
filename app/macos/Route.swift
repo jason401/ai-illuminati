@@ -176,6 +176,29 @@ enum RouteSorter: String, CaseIterable {
         }
     }
     var title: String { variant?.title ?? L("안 씀", "Off") }
+    // The Ollama that has the decision API (/v1/systemone); https://ollama.com/library/strands-decider
+    var minimumOllama: String? { self == .decider ? "0.40.0" : nil }
+    var downloadGB: Double {
+        guard let variant else { return 0 }
+        return LocalModel.catalog.first { LocalModel.same($0.name, variant.model) }?.sizeGB ?? (self == .decider ? 1.98 : 6.58)
+    }
+
+    // Whether the chosen model can sort now, and what to do if not (the line under the menu in Settings → Chat).
+    enum State: Equatable {
+        case off, checking, ready, missing, downloading(String, Double?), failed(String)
+        case noOllama, ollamaOff, outdated(String), localOff
+    }
+    // `installed` nil: Ollama did not answer; `checked` false: not asked yet.
+    func state(checked: Bool, hasBinary: Bool, enabled: Bool, installed: [String]?, version: String?,
+               pull: (String, Double?)?, failure: String?) -> State {
+        guard let variant else { return .off }
+        if let pull { return .downloading(pull.0, pull.1) }
+        guard checked else { return .checking }
+        guard let installed else { return hasBinary ? .ollamaOff : .noOllama }
+        if let minimumOllama, let version, !LocalModel.atLeast(version, minimumOllama) { return .outdated(version) }
+        guard LocalModel.hasModel(installed, variant) else { return failure.map(State.failed) ?? .missing }
+        return enabled ? .ready : .localOff
+    }
     var summary: String {
         switch self {
         case .off: return L("기본 · 참여한 Claude나 ChatGPT 중 사용량이 더 남은 쪽이 판정해요", "Default · the member Claude or ChatGPT with more usage left judges")

@@ -13,6 +13,9 @@ final class LocalModelStore: ObservableObject {
     @Published var library: [LocalModel.LibraryModel] = []
     @Published var loadingLibrary = false
     @Published var installed: [LocalModel.Installed]?   // nil: Ollama is off or not installed
+    @Published var checked = false                       // asked Ollama at least once
+    @Published var version: String?                      // Ollama's, nil while it is off
+    @Published var failures: [String: String] = [:]      // why the last download failed, by normalized model name
     @Published var pulls: [String: Pull] = [:]           // by normalized model name
     @Published var message: String?                      // the last failure, shown at the top
     @Published var query = ""
@@ -21,10 +24,11 @@ final class LocalModelStore: ObservableObject {
     }
     @Published var checking = false                      // looking up a typed name's size
 
-    func refresh() {
+    func refresh(then done: (() -> Void)? = nil) {
         DispatchQueue.global(qos: .userInitiated).async {
             let list = LocalModel.installed(timeout: 2)
-            DispatchQueue.main.async { self.installed = list }
+            let version = list == nil ? nil : LocalModel.version()
+            DispatchQueue.main.async { self.installed = list; self.version = version; self.checked = true; done?() }
             if LocalModel.refreshCatalog() { DispatchQueue.main.async { self.catalog = LocalModel.catalog } }
         }
     }
@@ -70,6 +74,7 @@ final class LocalModelStore: ObservableObject {
         let cancellation = DebateCancellation()
         pulls[model] = Pull(status: L("시작하는 중…", "Starting…"), fraction: nil, cancellation: cancellation)
         message = nil
+        failures[model] = nil
         DispatchQueue.global(qos: .userInitiated).async {
             let failure = LocalModel.pull(model, cancellation: cancellation) { status, fraction in
                 DispatchQueue.main.async { self.pulls[model]?.status = status; self.pulls[model]?.fraction = fraction }
@@ -78,12 +83,38 @@ final class LocalModelStore: ObservableObject {
             DispatchQueue.main.async {
                 self.pulls[model] = nil
                 self.installed = list
-                if let failure, !cancellation.isCancelled { self.message = "\(LocalModel.title(for: model)): \(failure)" }
+                if let failure, !cancellation.isCancelled {
+                    self.message = "\(LocalModel.title(for: model)): \(failure)"
+                    self.failures[model] = failure
+                }
             }
         }
     }
 
     func cancel(_ model: String) { pulling(model)?.cancellation.cancel() }
+
+    @Published var starting = false
+    @Published var startFailure: String?
+    // Turns Ollama on: its app when there is one (it keeps running on its own), else `ollama serve`; waits up to 15 s.
+    func start() {
+        guard !starting else { return }
+        starting = true
+        startFailure = nil
+        let app = URL(fileURLWithPath: "/Applications/Ollama.app")
+        let hasApp = FileManager.default.fileExists(atPath: app.path)
+        if hasApp { NSWorkspace.shared.open(app) }
+        DispatchQueue.global(qos: .userInitiated).async {
+            var ok = false
+            if hasApp {
+                for _ in 0..<30 where !ok { Thread.sleep(forTimeInterval: 0.5); ok = LocalModel.installedModels(timeout: 1) != nil }
+            } else { ok = LocalModel.ensureServer() }
+            DispatchQueue.main.async {
+                self.starting = false
+                if !ok { self.startFailure = L("Ollama를 켜지 못했어요.", "Could not start Ollama.") }
+                self.refresh()
+            }
+        }
+    }
 
     func delete(_ name: String) {
         DispatchQueue.global(qos: .userInitiated).async {
@@ -180,7 +211,10 @@ struct LocalModelsView: View {
             ForEach(list, id: \.name) { item in
                 row(title: LocalModel.title(for: item.name), detail: item.name + " · " + String(format: "%.1fGB", Double(item.bytes) / 1e9),
                     vision: item.capabilities?.contains("vision")) {
-                    if model.hasLocal(item.name) {
+                    if LocalModel.sortOnly(item.name) {
+                        Text(L("메시지 판정용", "Sorts messages")).font(.system(size: 11)).foregroundStyle(.secondary)
+                            .help(L("설정 → 채팅 → 메시지 판정에서 써요", "Used in Settings → Chat → Message sorting"))
+                    } else if model.hasLocal(item.name) {
                         Image(systemName: "checkmark").foregroundStyle(.green).help(L("계정 목록에 있어요", "In the account list"))
                     } else {
                         Button(L("목록에 추가", "Add to List")) { model.addInstalled(item.name) }

@@ -246,8 +246,9 @@ final class AppModel: ObservableObject {
     // An Ollama model on this Mac: check the Mac, ask, add the entry, then download it in the app (or, without
     // Ollama, open the installer in Terminal). `downloadGB` is nil when the size is not known yet.
     func addLocal(_ name: String, downloadGB: Double?) {
-        NSApp.activate(ignoringOtherApps: true)
         let model = LocalModel.normalized(name)
+        if LocalModel.sortOnly(model) { return addSortModel(.decider) }
+        NSApp.activate(ignoringOtherApps: true)
         let title = LocalModel.title(for: model)
         if let why = LocalModel.unsuitable(downloadGB: downloadGB ?? 0) {
             let alert = NSAlert()
@@ -275,7 +276,32 @@ final class AppModel: ObservableObject {
 
     // A model already on this Mac (downloaded in Terminal, say) joins the list without downloading.
     func addInstalled(_ name: String) {
-        if !hasLocal(name) { accounts.append(LocalModel.account(for: name)) }
+        if !hasLocal(name) && !LocalModel.sortOnly(name) { accounts.append(LocalModel.account(for: name)) }
+    }
+
+    // The message-sorting model (Settings → Chat): ask, then download it in the app, or open the Ollama installer in
+    // Terminal. It does not join the account list.
+    func addSortModel(_ sorter: RouteSorter) {
+        guard let variant = sorter.variant else { return }
+        NSApp.activate(ignoringOtherApps: true)
+        if let why = LocalModel.unsuitable(downloadGB: sorter.downloadGB) {
+            let alert = NSAlert()
+            alert.messageText = L("이 Mac에서는 \(variant.title)를 설치할 수 없어요", "\(variant.title) cannot be installed on this Mac")
+            alert.informativeText = why
+            alert.runModal()
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = L("\(variant.title)를 이 Mac에 받을까요?", "Download \(variant.title) to this Mac?")
+        let size = String(format: "%.1f", sorter.downloadGB)
+        let ollama = LocalModel.binary == nil ? L(" Ollama(무료)가 없어서 터미널에서 먼저 설치해요.", " Ollama (free) is not installed yet, so Terminal installs it first.") : ""
+        let only = LocalModel.sortOnly(variant.model) ? L(" 채팅 목록이나 @에는 나오지 않아요.", " It does not appear in the chat list or with @.") : ""
+        alert.informativeText = L("모델 \(variant.model) 약 \(size)GB를 받아요.\(ollama) 프로젝트 채팅에서 메시지 판정에 써요.\(only)",
+                                  "Downloads \(variant.model), about \(size) GB.\(ollama) It sorts messages in project chats.\(only)")
+        alert.addButton(withTitle: L("받기", "Download"))
+        alert.addButton(withTitle: L("취소", "Cancel"))
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        if LocalModel.binary == nil { LocalModel.install(variant) } else { LocalModelStore.shared.pull(variant.model) }
     }
 
     func login(_ account: Account) {
@@ -894,11 +920,16 @@ struct ChatSettingsTab: View {
                     SettingsRow(title: L("내 Mac 모델", "Model on this Mac")) {
                         SettingsMenu(options: RouteSorter.allCases.map { ($0.title, $0) }, selection: $model.routeSorter)
                     }
+                    .onChange(of: model.routeSorter) { SortModelStatus.offer($0, model: model) }
                     Divider()
                     Text(model.routeSorter.summary)
                         .font(.system(size: 11)).foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 10).padding(.vertical, 6)
+                    if model.routeSorter != .off {
+                        Divider()
+                        SortModelStatus(model: model, store: .shared)
+                    }
                 }
                 hint(L("프로젝트 채팅에서 메시지마다 한 명이 답할지, 모두 답할지, 작업할지 정해요. 고른 모델을 받아 두지 않았거나 Ollama를 껐으면 참여한 AI가 판정해요.",
                        "Decides for each project-chat message: one answer, everyone, or work. Model not downloaded or Ollama off: a member AI judges."))
@@ -933,6 +964,81 @@ struct ChatSettingsTab: View {
     private func hint(_ text: String) -> some View {
         Text(text).font(.system(size: 11)).foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true).padding(.horizontal, 2)
+    }
+}
+
+// Under the message-sorting menu: whether the chosen model can sort now, with the one step that fixes it.
+// Picking a model that is not downloaded asks to download it right away.
+struct SortModelStatus: View {
+    @ObservedObject var model: AppModel
+    @ObservedObject var store: LocalModelStore
+
+    private var state: RouteSorter.State { Self.state(model.routeSorter, store) }
+    static func state(_ sorter: RouteSorter, _ store: LocalModelStore) -> RouteSorter.State {
+        let name = sorter.variant.map { LocalModel.normalized($0.model) } ?? ""
+        return sorter.state(checked: store.checked, hasBinary: LocalModel.binary != nil, enabled: LocalModel.enabled,
+                            installed: store.installed?.map(\.name), version: store.version,
+                            pull: store.pulls[name].map { ($0.status, $0.fraction) }, failure: store.failures[name])
+    }
+
+    // Just picked from the menu: look again, then offer the download when that is the step missing.
+    static func offer(_ sorter: RouteSorter, model: AppModel) {
+        guard sorter != .off else { return }
+        LocalModelStore.shared.refresh {
+            guard model.routeSorter == sorter else { return }
+            switch state(sorter, .shared) {
+            case .missing, .failed, .noOllama: model.addSortModel(sorter)
+            default: break
+            }
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            switch state {
+            case .off, .checking:
+                line(L("확인하는 중…", "Checking…"))
+            case .ready:
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                line(L("준비됨", "Ready"))
+            case .missing:
+                line(L("아직 받지 않았어요 · 약 \(String(format: "%.1f", model.routeSorter.downloadGB))GB · 지금은 참여한 AI가 판정해요",
+                       "Not downloaded · about \(String(format: "%.1f", model.routeSorter.downloadGB)) GB · a member AI judges for now"))
+                action(L("받기", "Download")) { model.addSortModel(model.routeSorter) }
+            case .downloading(let status, let fraction):
+                if let fraction { ProgressView(value: fraction).frame(width: 80) } else { ProgressView().controlSize(.small) }
+                line(status)
+                action(L("취소", "Cancel")) { if let v = model.routeSorter.variant { store.cancel(v.model) } }
+            case .failed(let why):
+                line(L("받지 못했어요 · \(why)", "Download failed · \(why)"), warn: true)
+                action(L("다시 시도", "Try Again")) { if let v = model.routeSorter.variant { store.pull(v.model) } }
+            case .noOllama:
+                line(L("Ollama(무료)가 필요해요", "Needs Ollama (free)"), warn: true)
+                action(L("설치…", "Install…")) { model.addSortModel(model.routeSorter) }
+            case .ollamaOff:
+                line(store.startFailure ?? L("Ollama가 꺼져 있어요", "Ollama is off"), warn: true)
+                if store.starting { ProgressView().controlSize(.small) }
+                action(L("켜기", "Turn On")) { store.start() }.disabled(store.starting)
+            case .outdated(let version):
+                line(L("Ollama \(version)이라 쓸 수 없어요 · \(model.routeSorter.minimumOllama ?? "") 이상으로 업데이트해 주세요",
+                       "Ollama \(version) cannot run it · update to \(model.routeSorter.minimumOllama ?? "") or later"), warn: true)
+            case .localOff:
+                line(L("받아 뒀지만 Ollama 모델이 꺼져 있어요 · 메뉴 막대나 설정 → 계정에서 켜요",
+                       "Downloaded, but Ollama models are off · turn them on from the menu bar or Settings → Accounts"), warn: true)
+            }
+        }
+        .padding(.horizontal, 10).padding(.vertical, 6)
+        .onAppear { store.refresh() }
+    }
+
+    private func action(_ title: String, _ run: @escaping () -> Void) -> some View {
+        SettingsAction(title: title, action: run).frame(width: 84)
+    }
+
+    private func line(_ text: String, warn: Bool = false) -> some View {
+        Text(text).font(.system(size: 11)).foregroundStyle(warn ? Color.orange : Color.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

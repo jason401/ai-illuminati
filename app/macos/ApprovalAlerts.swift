@@ -69,13 +69,14 @@ final class ApprovalAlerts: NSObject, UNUserNotificationCenterDelegate {
         let seen = NSApp.isActive && discussion.currentID == room && discussion.viewingRemote == nil
             && NSApp.keyWindow?.title == L("AI Illuminati 채팅", "AI Illuminati Chat")
         if seen { return }
-        let ok = turn.error == nil && note.userInfo?["fixFailed"] as? Bool != true
+        let problem = note.userInfo?["problem"] as? String
+        let ok = turn.error == nil && problem == nil
         let steps = turn.plan ?? []
         let count = steps.isEmpty ? "" : " · \(steps.filter { $0.status == .done }.count)/\(steps.count)"
         let content = UNMutableNotificationContent()
         content.title = (ok ? L("작업 완료", "Work done") : L("작업이 끝나지 못했어요", "Work did not finish")) + count
         content.subtitle = discussion.approvalChatName(room)
-        content.body = ok ? String((turn.final ?? "").prefix(140)) : (turn.error ?? L("검토 반영에 실패했어요.", "Could not apply the review."))
+        content.body = ok ? String((turn.final ?? "").prefix(140)) : (turn.error ?? problem ?? "")
         content.categoryIdentifier = Self.doneCategory
         content.userInfo = ["room": room.uuidString]
         if ApprovalAlertSettings.sound { content.sound = .default }

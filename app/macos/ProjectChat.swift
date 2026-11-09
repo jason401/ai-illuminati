@@ -168,16 +168,16 @@ extension Discussion {
         guard let selected = binding.project else { finish(id, index, error: "No project selected."); return }
         let fullAuto = binding.isFullAuto
         let run = ProjectRun(room: id, binding: selected, token: cancellation, fullAuto: fullAuto)
-        run.onNote = { [weak self] log in self?.changeTurn(id, index) { $0.projectLog = log } }
-        run.onPlan = { [weak self] steps, note in self?.changeTurn(id, index) { $0.plan = steps; $0.planNote = note } }
+        run.onNote = { [weak self] log in self?.changeTurn(id, index) { $0.projectLog = log; $0.lastActivityAt = Date() } }
+        run.onPlan = { [weak self] steps, note in self?.changeTurn(id, index) { $0.plan = steps; $0.planNote = note; $0.lastActivityAt = Date() } }
         run.onWaiting = { [weak self] waiting in self?.changeTurn(id, index) { $0.waitingApproval = waiting ? true : nil; $0.lastActivityAt = Date() } }
         // Last, after the backup and the status are settled: a macOS notice that the work ended (ApprovalAlerts),
-        // unless the user stopped it. A failed review fix is not a success.
-        var fixFailed = false
+        // unless the user stopped it. A review that failed, or a fix of it that failed, is not a success.
+        var problem: String?
         defer {
-            let stopped = cancellation.isCancelled, failedFix = fixFailed
+            let stopped = cancellation.isCancelled, why = problem
             DispatchQueue.main.async {
-                if !stopped { NotificationCenter.default.post(name: .projectWorkEnded, object: nil, userInfo: ["room": id, "index": index, "fixFailed": failedFix]) }
+                if !stopped { NotificationCenter.default.post(name: .projectWorkEnded, object: nil, userInfo: ["room": id, "index": index, "problem": why as Any]) }
             }
         }
         // Full auto keeps the Mac awake while the AI works (the display may still sleep).
@@ -293,12 +293,15 @@ extension Discussion {
                 if let start, !cancellation.isCancelled {
                     run.attempt.cancel(); ToolHub.shared.revoke(project: run.id)
                     run.nextAttempt()
-                    var reviewer: String?
+                    var reviewer: String?, reviewOK = false
                     let findings = reviewChanges(id: id, index: index, worker: account, reviewers: reviewers, binding: workspace,
                                                  root: selected.root, start: start, question: question, reply: text, token: run.attempt) { name in
                         reviewer = name; run.setAppStep(0, L("검토: \(name)", "Review: \(name)"), .doing)
+                    } reviewed: { reviewOK = $0 }
+                    if let reviewer {
+                        run.setAppStep(0, L("검토: \(reviewer)", "Review: \(reviewer)"), reviewOK ? .done : .blocked)
+                        if !reviewOK && !cancellation.isCancelled { problem = L("\(reviewer)가 검토하지 못했어요.", "\(reviewer) could not review the changes.") }
                     }
-                    if let reviewer { run.setAppStep(0, L("검토: \(reviewer)", "Review: \(reviewer)"), .done) }
                     if let findings, !cancellation.isCancelled {
                         run.setAppStep(1, L("검토 반영", "Apply the review"), .doing)
                         workspace.projectGeneration = run.generation; activeWorkspace = workspace
@@ -318,7 +321,7 @@ extension Discussion {
                                 let combined = text + "\n\n---\n\n**" + L("검수 반영", "After the review") + "**\n\n" + reply
                                 changeTurn(id, index, save: true) { $0.final = combined; $0.partial = nil; $0.activity = nil; $0.status = "" }
                             case .failure(let failure):
-                                fixFailed = true; run.setAppStep(1, L("검토 반영", "Apply the review"), .blocked)
+                                problem = L("검토 반영에 실패했어요.", "Could not apply the review."); run.setAppStep(1, L("검토 반영", "Apply the review"), .blocked)
                                 let entry = ChatTurn.Entry(round: 1, speaker: speaker, text: L("검수 반영 실패: ", "Could not apply the review: ") + Self.describe(failure), failed: true)
                                 changeTurn(id, index, save: true) { $0.moreAnswers = ($0.moreAnswers ?? []) + [entry]; $0.partial = nil; $0.activity = nil }
                             }
@@ -380,7 +383,7 @@ extension Discussion {
 }
 
 extension Notification.Name {
-    // A project turn ended (not stopped by the user): room, index, fixFailed. ApprovalAlerts tells the user.
+    // A project turn ended (not stopped by the user): room, index, problem (nil: done). ApprovalAlerts tells the user.
     static let projectWorkEnded = Notification.Name("AIIlluminatiProjectWorkEnded")
 }
 

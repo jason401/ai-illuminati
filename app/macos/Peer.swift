@@ -227,7 +227,7 @@ extension Discussion {
     // findings for the lead (nil when there is nothing to fix, no reviewer or the review failed).
     func reviewChanges(id: UUID, index: Int, worker: Account, reviewers: [String], binding: WorkspaceBinding, root: String,
                        start: ProjectSnapshot, question: String, reply: String, token: DebateCancellation,
-                       started: (String) -> Void = { _ in }) -> String? {
+                       started: (String) -> Void = { _ in }, reviewed: (Bool) -> Void = { _ in }) -> String? {
         guard let work = start.changes(root: root), let peer = peerAccount(for: worker, reviewers: reviewers.filter { $0 != worker.id }) else { return nil }
         let name = label(peer)
         started(name)
@@ -257,6 +257,7 @@ extension Discussion {
             if let i = turn.peerNotes?.firstIndex(where: { $0.id == entryID }) { turn.peerNotes?[i] = finished }
             turn.status = ""
         }
+        reviewed(!finished.failed && !token.isCancelled)   // false: the review failed, timed out or was stopped
         return token.isCancelled ? nil : findings
     }
 }

@@ -420,12 +420,14 @@ func testPeerReview() {
            "the fix is made in the same turn and shown after the first reply")
     expect(last?.peerNotes?.count == 1 && last?.peerNotes?.first?.headline?.contains("README.md:1") == true && peerPrompts.filter { $0.hasPrefix("[REVIEW]") }.count == 1,
            "one review card, and no second review after the fix")
+    expect(last?.plan?.map(\.status) == [.done, .done] && last?.plan?.first?.text.contains(chat.label(codex)) == true, "the app's review and fix steps end done")
 
     // A clean review: no fix pass.
     step = 2; verdict = "No issues"
     let asked = prompts.count
     send("Change README again.")
     expect(prompts.count == asked + 1 && chat.current.turns.last?.final == "Done 2." && chat.current.turns.last?.peerNotes?.first?.failed == false, "no issues: the answer stands")
+    expect(chat.current.turns.last?.plan?.map(\.status) == [.done], "a clean review: one done review step, no fix step")
 
     expect(judged.count == 3 && judged[1].contains("Change README to Second.") && judged[1].contains("What does the README say?")
            && chat.current.turns.last?.route == .work && chat.current.turns.last?.routeNote?.contains("Judge") == true

@@ -64,6 +64,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func applicationDidFinishLaunching(_ note: Notification) {
+        // TODO work (Todo.swift): running TODOs from before a quit are ready again, then the board is checked.
+        let todos = TodoScheduler(discussion: discussion, store: .shared)
+        TodoScheduler.shared = todos
+        todos.start()
         model.updater.onAvailableChange = { [weak self] in self?.rebuildMenu() }
         model.updater.isBusy = { [weak self] in
             guard let self else { return false }

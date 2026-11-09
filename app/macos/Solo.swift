@@ -17,7 +17,7 @@ enum AutoPick {
         if let w = usage.weekly { return w.left() }
         return usage.fiveHour != nil ? 100 : 50
     }
-    static func enough(_ usage: AIUsage?) -> Bool { fiveHour(usage) >= threshold && weekly(usage) >= threshold }
+    static func enough(_ usage: AIUsage?, threshold: Double = threshold) -> Bool { fiveHour(usage) >= threshold && weekly(usage) >= threshold }
 
     // Claude and ChatGPT accounts that may work in this chat. Gemini (YouTube helper) and Gemma on this Mac
     // answer only when called with @; Gemma is also the last resort (see runSolo). In an Enterprise chat (`lock`)
@@ -101,15 +101,17 @@ extension Discussion {
 
     // Who answers the next message if it were sent now (shown under the message box). In an Enterprise chat
     // only accounts of its organization (Enterprise.swift).
-    var soloNext: Account? {
-        let config = configuration, lock = current.enterpriseLock
+    var soloNext: Account? { soloNext(room: currentID) }
+    func soloNext(room: UUID) -> Account? {
+        let config = configuration(of: room), lock = conversation(room).enterpriseLock
         if let id = config.soloAccountID, let chosen = model.accounts.first(where: { $0.id == id }), Enterprise.permits(chosen, lock: lock) { return chosen }
         return AutoPick.choose(model.accounts, usage: model.latestUsage, lock: lock, current: config.lastSoloAccountID)
     }
 
     // The chat's members, in order: memberIDs, else what an older chat picked (see migratedMembers).
-    var memberIDs: [String] {
-        Self.migratedMembers(configuration, accounts: model.accounts, lock: current.enterpriseLock)
+    var memberIDs: [String] { memberIDs(room: currentID) }
+    func memberIDs(room: UUID) -> [String] {
+        Self.migratedMembers(configuration(of: room), accounts: model.accounts, lock: conversation(room).enterpriseLock)
     }
 
     // Older chats: the one account picked by hand, and with review on, the reviewer as a second member (the one
@@ -129,11 +131,11 @@ extension Discussion {
     }
 
     // Saves the members worked out from an older chat's settings, so they no longer change with the account list.
-    func settleMembers() {
-        let config = configuration
+    func settleMembers(room: UUID) {
+        let config = configuration(of: room)
         guard config.memberIDs == nil, config.peerReview == true else { return }
-        let ids = memberIDs
-        configure { c in
+        let ids = memberIDs(room: room)
+        configure(room: room) { c in
             c.memberIDs = ids.isEmpty ? nil : ids; c.soloAccountID = ids.count == 1 ? ids[0] : nil
             c.peerReview = nil; c.peerAccountID = nil; c.pendingReview = nil; c.nextReviewAt = nil; c.lastReviewSHA = nil; c.lastReviewAt = nil
         }
@@ -141,8 +143,9 @@ extension Discussion {
 
     // Members who take part in the next message: only when two or more are checked, skipping accounts that need
     // sign-in or have no usage left (if fewer than two remain, the usual single answer runs).
-    func standingMembers() -> [String] {
-        let ids = memberIDs
+    func standingMembers() -> [String] { standingMembers(room: currentID) }
+    func standingMembers(room: UUID) -> [String] {
+        let ids = memberIDs(room: room)
         guard ids.count >= 2 else { return [] }
         let ready = ids.filter { id in
             guard let account = model.accounts.first(where: { $0.id == id }) else { return false }
@@ -155,11 +158,12 @@ extension Discussion {
     // Who does the work among the members taking part, and who reviews. The lead is the one picked by hand, else the
     // one who worked last while it has usage left, else the member with the most usage left; in a project only Claude
     // and ChatGPT accounts may lead or review. nil: fewer than two members take part (or no lead in a project).
-    func crew(project: Bool) -> (lead: String, others: [String])? {
-        let ready = standingMembers()
+    func crew(project: Bool) -> (lead: String, others: [String])? { crew(project: project, room: currentID) }
+    func crew(project: Bool, room: UUID) -> (lead: String, others: [String])? {
+        let ready = standingMembers(room: room)
         let able = ready.compactMap { id in model.accounts.first { $0.id == id } }
             .filter { !project || [.claude, .codex].contains($0.provider) }
-        let config = configuration
+        let config = configuration(of: room)
         guard let lead = able.first(where: { $0.id == config.leadID })
                 ?? AutoPick.choose(able, usage: model.latestUsage, lock: nil, current: config.lastSoloAccountID)
                 ?? able.first else { return nil }
@@ -170,7 +174,7 @@ extension Discussion {
 
     // Checks or unchecks a member. One member answers alone (as picked by hand); none is automatic.
     func toggleMember(_ id: String) {
-        settleMembers()
+        settleMembers(room: currentID)
         configure { config in
             var ids = Self.migratedMembers(config, accounts: self.model.accounts, lock: self.current.enterpriseLock)
             if let at = ids.firstIndex(of: id) { ids.remove(at: at) } else { ids.append(id) }

@@ -121,6 +121,7 @@ struct ChatView: View {
                 VStack(alignment: .leading, spacing: 1) {
                     sharedFolders
                     DriveSidebarSection().disabled(discussion.importingMaterials)
+                    TodoSidebarSection(discussion: discussion)
                     // A new chat with nothing in it yet is not listed (like the desktop apps); it appears once it has a message.
                     // Searching: the filters apply, and words find chats by their messages and answers too.
                     let chats = discussion.listedConversations.filter {
@@ -291,7 +292,10 @@ struct ChatView: View {
                 }) { Image(systemName: "sidebar.left").frame(width: 24, height: 24) }
                     .buttonStyle(.plainHit).foregroundColor(.secondary)
                     .help(sidebarShown ? L("사이드바 숨기기", "Hide sidebar") : L("사이드바 보기", "Show sidebar"))
-                if let remote = discussion.viewingRemote {
+                if discussion.viewingBoard {
+                    Text(L("할 일 보드", "TODO board")).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                    WindowDragRegion().frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if let remote = discussion.viewingRemote {
                     Text(remote.snapshot?.title ?? remote.chat.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
                     Text(L("\(remote.chat.deviceName) · 읽기 전용", "\(remote.chat.deviceName) · read only"))
                         .font(.system(size: 11)).foregroundColor(.secondary).lineLimit(1)
@@ -303,10 +307,12 @@ struct ChatView: View {
             .padding(.leading, 12).padding(.trailing, 18).frame(height: 40)
             // Another chat waits for approval: say so here, whichever chat is open.
             ApprovalBanner(discussion: discussion)
-            if discussion.findOpen && discussion.viewingRemote == nil && !discussion.current.turns.isEmpty {
+            if discussion.findOpen && discussion.viewingRemote == nil && !discussion.viewingBoard && !discussion.current.turns.isEmpty {
                 ChatFindBar(discussion: discussion).padding(.horizontal, 28).padding(.bottom, 4)
             }
-            if let remote = discussion.viewingRemote {
+            if discussion.viewingBoard {
+                TodoBoardView(discussion: discussion)
+            } else if let remote = discussion.viewingRemote {
                 RemoteChatView(viewing: remote, discussion: discussion, sync: sync)
             } else if discussion.current.turns.isEmpty {
                 // A new chat: the greeting and the message box in the middle, like the desktop apps.
@@ -331,7 +337,11 @@ struct ChatView: View {
                 .frame(maxWidth: .infinity)
             } else {
                 transcript
-                // Approval cards sit right above the message box, where the user is looking.
+                // TODO report cards and approval cards sit right above the message box, where the user is looking.
+                TodoCardsView(room: discussion.currentID, discussion: discussion)
+                    .frame(maxWidth: 760)
+                    .padding(.horizontal, 28)
+                    .frame(maxWidth: .infinity)
                 ProjectApprovalView(room: discussion.currentID, discussion: discussion)
                     .frame(maxWidth: 760)
                     .padding(.horizontal, 28)

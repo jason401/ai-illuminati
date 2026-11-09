@@ -14,6 +14,7 @@ final class ApprovalAlerts: NSObject, UNUserNotificationCenterDelegate {
     private var window: NSWindow?
     private var watching: AnyCancellable?
     private var ended: NSObjectProtocol?
+    private var todo: NSObjectProtocol?
     private var known: Set<UUID> = []
     private var lastPosted: [UUID: Date] = [:]
     private var repeatTimer: Timer?
@@ -33,6 +34,7 @@ final class ApprovalAlerts: NSObject, UNUserNotificationCenterDelegate {
         center.setNotificationCategories([UNNotificationCategory(identifier: Self.category, actions: [open, deny], intentIdentifiers: []),
                                           UNNotificationCategory(identifier: Self.doneCategory, actions: [], intentIdentifiers: [])])
         ended = NotificationCenter.default.addObserver(forName: .projectWorkEnded, object: nil, queue: .main) { [weak self] note in self?.workEnded(note) }
+        todo = NotificationCenter.default.addObserver(forName: .todoNeedsUser, object: nil, queue: .main) { [weak self] note in self?.todoNeedsUser(note) }
         watching = ProjectCenter.shared.$requests.receive(on: DispatchQueue.main).sink { [weak self] requests in self?.changed(requests) }
         let timer = Timer(timeInterval: 30, repeats: true) { [weak self] _ in self?.remind() }
         RunLoop.main.add(timer, forMode: .common)
@@ -66,6 +68,8 @@ final class ApprovalAlerts: NSObject, UNUserNotificationCenterDelegate {
         guard ApprovalAlertSettings.notify, let room = note.userInfo?["room"] as? UUID, let index = note.userInfo?["index"] as? Int,
               let turns = discussion.conversations.first(where: { $0.id == room })?.turns, turns.indices.contains(index) else { return }
         let turn = turns[index]
+        // A TODO's chat says it with its own notice (todoNeedsUser), once the result or the question is there.
+        if TodoStore.shared.current.items.contains(where: { $0.room == room }) { return }
         let seen = NSApp.isActive && discussion.currentID == room && discussion.viewingRemote == nil
             && NSApp.keyWindow?.title == L("AI Illuminati 채팅", "AI Illuminati Chat")
         if seen { return }
@@ -87,6 +91,24 @@ final class ApprovalAlerts: NSObject, UNUserNotificationCenterDelegate {
             DispatchQueue.main.async { self?.asked = true; if granted { send() } }
         }
         if !NSApp.isActive { NSApp.requestUserAttention(.informationalRequest) }
+    }
+
+    // A TODO waits for the user: its result to check, or a decision. Opens its chat.
+    private func todoNeedsUser(_ note: Notification) {
+        guard ApprovalAlertSettings.notify, let title = note.userInfo?["title"] as? String else { return }
+        let room = note.userInfo?["room"] as? UUID
+        let content = UNMutableNotificationContent()
+        content.title = (note.userInfo?["review"] as? Bool == true ? L("TODO 확인 대기", "TODO ready to check") : L("TODO · 네 결정 필요", "TODO needs you")) + " · " + title
+        content.body = String((note.userInfo?["body"] as? String ?? "").prefix(160))
+        content.categoryIdentifier = Self.doneCategory
+        if let room { content.userInfo = ["room": room.uuidString] }
+        if ApprovalAlertSettings.sound { content.sound = .default }
+        let center = UNUserNotificationCenter.current()
+        let send = { center.add(UNNotificationRequest(identifier: "todo-" + UUID().uuidString, content: content, trigger: nil)) }
+        if asked { send(); return }
+        center.requestAuthorization(options: [.alert, .sound, .badge]) { [weak self] granted, _ in
+            DispatchQueue.main.async { self?.asked = true; if granted { send() } }
+        }
     }
 
     // Optional reminder every 5 minutes while a request still waits (Settings → Chat).

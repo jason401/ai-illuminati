@@ -127,15 +127,14 @@ extension Discussion {
         return title.isEmpty ? L("새 대화", "New chat") : title
     }
     // Ask again: opens the chat and sends a short message so the AI checks again and shows a new card.
-    // A draft or attached images the user already has there are kept, not sent (the note stays).
+    // A draft or attached images the user has in the message box stay there, unsent. When the chat cannot
+    // answer now (busy, or three chats answering), the note stays so the user can ask again later.
     func askAgain(_ request: ProjectApproval) {
         open(request.room)
         let text = request.title.hasPrefix("stable") ? L("stable 배포 다시 진행해 줘", "Please publish stable again")
             : L("방금 허가를 기다리던 작업 다시 진행해 줘", "Please continue the work that was waiting for approval")
-        guard draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, pendingImages.isEmpty else { return }
+        if let reason = startTurn(room: request.room, question: text) { attachmentError = reason; return }
         ProjectCenter.shared.dismiss(request.id)
-        draft = text
-        send()
     }
     func configureProject() {
         guard !running, configuration.mode == 0 else { return }

@@ -806,3 +806,54 @@ func testProjectCreate() {
            "origin added and pushed, default place made")
     print("PASS: new project (names and places, gh missing/logged out/offline, card first, deny makes nothing, folder + first commit + GitHub + push + linked chat, retry pushes only, foreign origin refused, Enterprise chats without it)")
 }
+
+// startTurn: a turn in a chat that is not open, started without the message box (TODO work and "Ask again"
+// use it). The open chat, its draft and its pictures stay as they were; the background chat uses its own
+// settings; a busy chat or three answering chats refuse; "Ask again" keeps the user's draft and is sent anyway.
+func testStartTurn() {
+    let model = AppModel()
+    model.accounts = [Account(id: "start-claude", provider: .claude, name: "Start Claude"), Account(id: "start-codex", provider: .codex, name: "Start Codex")]
+    let chat = Discussion(model: model)
+    chat.configure { $0.mode = 0; $0.soloAccountID = "start-claude" }
+    chat.change(chat.currentID, save: true) { $0.turns = [ChatTurn(question: "open chat")] }
+    let open = chat.currentID
+    chat.newConversation()
+    let background = chat.currentID
+    chat.configure { $0.mode = 0; $0.soloAccountID = "start-codex" }
+    chat.change(background, save: true) { $0.turns = [ChatTurn(question: "earlier")] }
+    chat.open(open)
+    chat.draft = "half-written message"
+    let gate = DispatchSemaphore(value: 0)
+    var answered: [String] = []
+    chat.workspaceAnswer = { account, prompt, _, _, _ in
+        answered.append(account.id)
+        if answered.count == 1 { gate.wait() }   // only the first turn waits (later prompts repeat it in the transcript)
+        return .success("Background done.")
+    }
+    expect(chat.startTurn(room: background, question: "hold on") == nil, "startTurn starts a turn in a chat that is not open")
+    expect(chat.currentID == open && chat.draft == "half-written message" && chat.current.turns.count == 1, "the open chat and its draft are untouched")
+    expect(chat.startTurn(room: background, question: "again") != nil, "a chat still answering refuses another turn")
+    let saved = chat.runningRooms
+    chat.runningRooms = saved.union([UUID(), UUID()])
+    expect(chat.startTurn(room: open, question: "full") != nil, "three chats answering: no fourth turn")
+    chat.runningRooms = saved
+    expect(chat.startTurn(room: UUID(), question: "x") != nil, "an unknown chat is refused")
+    gate.signal()
+    let until = Date().addingTimeInterval(15)
+    while Date() < until && (chat.anyRunning || chat.conversation(background).turns.last?.final == nil) { RunLoop.main.run(until: Date().addingTimeInterval(0.03)) }
+    let turn = chat.conversation(background).turns.last
+    expect(turn?.question == "hold on" && turn?.final == "Background done." && answered == ["start-codex"],
+           "the background chat answers with its own account: \(answered)")
+    expect(chat.conversation(open).turns.count == 1 && chat.draft == "half-written message", "the open chat got no turn")
+    // Ask again: sent even with a draft in the box, which stays; the request card goes away.
+    let request = ProjectApproval(room: background, run: UUID(), title: "git_push", detail: "")
+    ProjectCenter.shared.expired.append(request)
+    chat.open(background)
+    chat.draft = "my note here"
+    chat.askAgain(request)
+    expect(!ProjectCenter.shared.expired.contains { $0.id == request.id } && chat.draft == "my note here", "Ask again sends without taking the draft")
+    let after = Date().addingTimeInterval(15)
+    while Date() < after && (chat.anyRunning || chat.conversation(background).turns.count < 3) { RunLoop.main.run(until: Date().addingTimeInterval(0.03)) }
+    expect(chat.conversation(background).turns.count == 3 && chat.conversation(background).turns.last?.final != nil, "Ask again started a turn in its chat")
+    print("PASS: startTurn (background chat, own settings, open chat and draft untouched, busy and full refused, Ask again keeps the draft)")
+}

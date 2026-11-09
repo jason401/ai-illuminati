@@ -703,6 +703,7 @@ final class Discussion: ObservableObject {
     }
     @Published var importingMaterials = false
     @Published var viewingRemote: RemoteViewing?   // a chat from another Mac, shown read only
+    @Published var viewingBoard = false            // the TODO board in place of the chat (Todo.swift)
     // Several chats can work at once. Each sent message runs on its own worker (a Discussion with `host`
     // set and only that chat), so the run state below (active…, pictures, cancellation) is per chat; the
     // worker hands every change back to the host, which the window shows.
@@ -894,9 +895,10 @@ final class Discussion: ObservableObject {
     static var availableModes = [0]
     static var modernModes = true
 
-    var configuration: ChatConfiguration {
+    var configuration: ChatConfiguration { configuration(of: currentID) }
+    func configuration(of room: UUID) -> ChatConfiguration {
         // A new chat starts as a plain chat with one AI (mode 0).
-        var config = current.configuration ?? ChatConfiguration(mode: Self.availableModes.contains(0) ? 0 : 1, modeVersion: Self.modernModes ? 2 : nil)
+        var config = conversation(room).configuration ?? ChatConfiguration(mode: Self.availableModes.contains(0) ? 0 : 1, modeVersion: Self.modernModes ? 2 : nil)
         if Self.modernModes && config.modeVersion != 2 {
             config.mode = 1
             config.modeVersion = 2
@@ -905,11 +907,12 @@ final class Discussion: ObservableObject {
         return config
     }
 
-    func configure(_ edit: (inout ChatConfiguration) -> Void) {
-        guard !running && !importingMaterials else { return }
-        var config = configuration
+    func configure(_ edit: (inout ChatConfiguration) -> Void) { configure(room: currentID, edit) }
+    func configure(room: UUID, _ edit: (inout ChatConfiguration) -> Void) {
+        guard host == nil, !runningRooms.contains(room), !importingMaterials else { return }
+        var config = configuration(of: room)
         edit(&config)
-        change(currentID, save: true) { $0.configuration = config }
+        change(room, save: true) { $0.configuration = config }
     }
 
     // Any time except while answering; applies from the next message (each turn keeps its own mode).
@@ -991,11 +994,13 @@ final class Discussion: ObservableObject {
         conversations.removeAll { !$0.hasContent && $0.id != keep }
     }
 
-    var current: Conversation { conversations.first { $0.id == currentID } ?? Conversation() }
+    var current: Conversation { conversation(currentID) }
+    func conversation(_ room: UUID) -> Conversation { conversations.first { $0.id == room } ?? Conversation() }
 
     // Starts an empty chat (reuses the open one if it is still empty).
     func newConversation() {
         guard !importingMaterials else { return }
+        viewingBoard = false
         if viewingRemote != nil && current.turns.isEmpty { viewingRemote = nil; return }
         if current.turns.isEmpty && (current.documents ?? []).isEmpty && current.workspace == nil { return }
         discardPendingImages()
@@ -1010,6 +1015,7 @@ final class Discussion: ObservableObject {
         guard !importingMaterials else { return }
         if currentID != id { discardPendingImages() }
         viewingRemote = nil
+        viewingBoard = false
         dropBlanks(except: id)
         currentID = id
         sessionNote = ""
@@ -1146,49 +1152,69 @@ final class Discussion: ObservableObject {
         mentionQuery = nil
         let question = !typed.isEmpty ? typed : !mentioned.isEmpty ? L("지금까지의 대화에 대해 네 의견을 말해 줘.", "What do you think about this conversation so far?")
             : L("첨부한 이미지를 설명해줘.", "Describe the attached images.")
+        if let reason = startTurn(room: currentID, question: question, mentioned: mentioned, images: pendingImages, forced: forcedRoute) {
+            attachmentError = reason
+            return
+        }
+        pendingImages = []
+        draft = ""
+        attachmentError = nil
+    }
+
+    // Starts a turn in any chat, whether it is open or not (send() is the message box's way in): the same
+    // members, routes and workers as a typed message. The message box, its pictures and the open chat are
+    // left as they are. On the main thread. Returns why nothing started, nil when the turn started.
+    @discardableResult
+    func startTurn(room id: UUID, question: String, mentioned: [String] = [], images: [ChatImage] = [],
+                   forced: RouteChoice? = nil, extra: String = "") -> String? {
+        guard host == nil, conversations.contains(where: { $0.id == id }) else { return L("대화를 찾지 못했어요.", "Chat not found.") }
+        if runningRooms.contains(id) { return L("이 대화는 아직 답하는 중이에요.", "This chat is still answering.") }
+        guard runningRooms.count < Self.maxRunning, !importingMaterials else {
+            return L("동시에 \(Self.maxRunning)개 대화까지 답할 수 있어요. 하나가 끝나면 보낼 수 있어요.",
+                     "Up to \(Self.maxRunning) chats can answer at once. Send when one finishes.")
+        }
+        let plain = Self.modernModes && configuration(of: id).mode == 0
         // Two or more members: in a plain chat they all answer every message (the lead first, the only one that may
         // change files); in a project chat the lead works and the others review (Peer.swift). @ replaces them for
         // this one message.
-        if plain { settleMembers() }
-        let project = current.workspace?.project != nil
-        let crew = plain && mentioned.isEmpty ? self.crew(project: project) : nil
-        if let crew, configuration.lastSoloAccountID != crew.lead { configure { $0.lastSoloAccountID = crew.lead } }
+        if plain { settleMembers(room: id) }
+        let project = conversation(id).workspace?.project != nil
+        let crew = plain && mentioned.isEmpty ? self.crew(project: project, room: id) : nil
+        if let crew, configuration(of: id).lastSoloAccountID != crew.lead { configure(room: id) { $0.lastSoloAccountID = crew.lead } }
         let members = crew.map { project ? [$0.lead] : [$0.lead] + $0.others } ?? []
         let reviewers = project ? crew?.others ?? [] : []
         let called = mentioned.isEmpty ? members : mentioned
         // A project chat with two or more members taking part: each message is sorted into one (the lead answers, read
         // only), all (every member answers, read only) or work (the lead works, the others review) before anyone
         // starts (Route.swift). @ skips this: one picked AI handles it, two or more give opinions.
-        let standing = plain && project && mentioned.isEmpty ? standingMembers() : []
-        let forced = forcedRoute
+        let standing = plain && project && mentioned.isEmpty ? standingMembers(room: id) : []
         let sorting = standing.count >= 2 || (forced != nil && project && plain && mentioned.isEmpty)
         // Two or more picked with @ in a project chat: their opinions, read only, never work.
         let pickedOpinion = plain && project && mentioned.count >= 2
         let opinionLead = crew?.lead ?? standing.first { id in model.accounts.contains { $0.id == id && [.claude, .codex].contains($0.provider) } } ?? standing.first
         let opinionMembers = opinionLead.map { lead in [lead] + standing.filter { $0 != lead } } ?? []
         let judges = standing.compactMap { id in model.accounts.first { $0.id == id && [.claude, .codex].contains($0.provider) } }
-        let team = called.isEmpty ? pickTeam() : called.compactMap { id in model.accounts.first { $0.id == id } }
-        let id = currentID
+        let team = called.isEmpty ? pickTeam(room: id) : called.compactMap { id in model.accounts.first { $0.id == id } }
         var turn = ChatTurn(question: question)
         turn.askedAt = Date()
         turn.mentions = mentioned.isEmpty ? nil : mentioned
-        let config = configuration
+        let config = configuration(of: id)
         turn.mode = config.mode
         turn.modeVersion = Self.modernModes ? 2 : nil
-        turn.images = pendingImages.isEmpty ? nil : pendingImages
+        turn.images = images.isEmpty ? nil : images
         let perAI = min(10, max(2, config.turnsPerAI ?? 4))
         if (Self.modernModes && (1...2).contains(config.mode)) || (!Self.modernModes && config.mode == 3) {
             turn.turnsPerAI = perAI; turn.maxTurns = perAI * team.count
         }
         guard team.count > 0 else {
             turn.error = L("답할 수 있는 AI가 없어요. 참여 AI를 켜고, 설정에서 로그인됐는지 확인해 주세요.", "No AI is available. Enable a participant and check its sign-in in Settings.")
-            attachmentError = turn.error
-            return
+            return turn.error
         }
         activeSessionRoom = config.sessionsOn && (Self.modernModes || config.mode == 3) ? id : nil
-        activeMaterials = current.documents ?? []
+        let chat = conversation(id)
+        activeMaterials = chat.documents ?? []
         let solo = Self.modernModes && config.mode == 0
-        activeWorkspace = solo ? soloBinding(id) : current.workspace
+        activeWorkspace = solo ? soloBinding(id) : chat.workspace
         if !solo, var readOnly = activeWorkspace, readOnly.project != nil {
             readOnly.project = nil
             readOnly.level = .view
@@ -1199,7 +1225,7 @@ final class Discussion: ObservableObject {
         activeSpeechLength = SpeechLength.clamp(config.speechLength)
         // Mode 0 names its folders after the session marker, so a new file does not restart the session.
         activeDocumentText = solo ? MaterialContext.overview(activeMaterials) : activeWorkspace?.description ?? MaterialContext.overview(activeMaterials)
-        let history = current.turns
+        let history = chat.turns
         // Everything earlier in this chat that the AIs should see: the user's photos and the pictures
         // the AIs drew, in order. New pictures made in this turn are added as they arrive.
         var shared: [(ChatImage, String)] = []
@@ -1217,12 +1243,9 @@ final class Discussion: ObservableObject {
         }.joined(separator: "\n")
         nextPicture = history.reduce(1) { n, t in n + t.entries.reduce(0) { $0 + ($1.images?.count ?? 0) } + (t.finalImages?.count ?? 0) }
         pictureLock.unlock()
-        pendingImages = []
-        draft = ""
-        attachmentError = nil
         // Mode 1 sends the running summary, which only mode 1 updates. After messages in modes 2/3,
         // add those exchanges in full so mode 1 (and its next summary) knows about them.
-        var summary = current.summary
+        var summary = chat.summary
         if config.mode == 1 {
             let lastSummarized = history.lastIndex { ($0.mode ?? 1) == 1 && $0.final != nil }
             let since = history[(lastSummarized.map { $0 + 1 } ?? 0)...].filter { ($0.mode ?? 1) != 1 }
@@ -1237,7 +1260,7 @@ final class Discussion: ObservableObject {
             if c.turns.isEmpty { c.title = String(question.prefix(40)) }
             c.turns.append(turn)
         }
-        let index = current.turns.count - 1
+        let index = conversation(id).turns.count - 1
         let cancellation = DebateCancellation()
         let worker = Discussion(workerFor: self, room: id)
         worker.runCancellation = (Self.modernModes || config.mode == 3) ? cancellation : nil
@@ -1300,7 +1323,7 @@ final class Discussion: ObservableObject {
                 } else {
                     let peer = worker.beginPeer(id: id, index: index, question: question, reviewers: reviewers, binding: binding, cancellation: cancellation)
                     worker.runSolo(question: question, history: history, rules: rules, config: config, mentions: called,
-                                   reviewers: reviewers, cancellation: cancellation, id: id, index: index, extra: forced == nil ? Route.workNote() : "")
+                                   reviewers: reviewers, cancellation: cancellation, id: id, index: index, extra: (forced == nil ? Route.workNote() : "") + extra)
                     worker.endPeer(peer)
                 }
             } else if solo {
@@ -1309,7 +1332,7 @@ final class Discussion: ObservableObject {
                 let binding = worker.activeWorkspace ?? worker.soloBinding(id)
                 let peer = worker.beginPeer(id: id, index: index, question: question, reviewers: reviewers, binding: binding, cancellation: cancellation)
                 worker.runSolo(question: question, history: history, rules: rules, config: config, mentions: called,
-                             reviewers: reviewers, cancellation: cancellation, id: id, index: index)
+                             reviewers: reviewers, cancellation: cancellation, id: id, index: index, extra: extra)
                 worker.endPeer(peer)
             } else if Self.modernModes && config.mode == 4 {
                 worker.runVote(question: question, history: history, rules: rules, team: team,
@@ -1329,10 +1352,13 @@ final class Discussion: ObservableObject {
                 worker.run(question: question, summary: summary, rules: rules, team: team, usage: usage, id: id, index: index)
             }
         }
+        return nil
     }
 
     // Per AI, the logged-in account with the most usage left (accounts at 0% are skipped).
-    func pickTeam() -> [Account] {
+    func pickTeam() -> [Account] { pickTeam(room: currentID) }
+    func pickTeam(room: UUID) -> [Account] {
+        let configuration = configuration(of: room)
         var providers: [Account.Provider] = []
         if useClaude { providers.append(.claude) }
         if useCodex { providers.append(.codex) }
@@ -1340,7 +1366,7 @@ final class Discussion: ObservableObject {
         if Self.modernModes || configuration.mode >= 2 {
             providers = configuration.order.filter { configuration.participants.contains($0) }
         }
-        if Self.modernModes && configuration.mode == 0 { return soloNext.map { [$0] } ?? [] }
+        if Self.modernModes && configuration.mode == 0 { return soloNext(room: room).map { [$0] } ?? [] }
         // Vote: every account votes (personal and school ones too), except the ones turned off.
         if Self.modernModes && configuration.mode == 4 {
             let skipped = configuration.voteSkippedIDs ?? []
@@ -1369,7 +1395,7 @@ final class Discussion: ObservableObject {
                 .max {
                     func score(_ item: (Account, Double)) -> Double {
                         guard configuration.sessionsOn else { return item.1 }
-                        if nativeSessions.pinnedAccount(provider, room: currentID) == item.0.id { return 300 + item.1 }
+                        if nativeSessions.pinnedAccount(provider, room: room) == item.0.id { return 300 + item.1 }
                         return (NativeSessions.eligible(item.0) ? 200 : 0) + item.1
                     }
                     return score($0) < score($1)

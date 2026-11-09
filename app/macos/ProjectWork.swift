@@ -267,6 +267,13 @@ enum ProjectWork {
             return acquired
         } catch { for path in acquired { if let fd = held.removeValue(forKey: path) { close(fd) } }; throw error }
     }
+    // A chat is writing this repository now (TODO work waits instead of failing on acquire).
+    static func isHeld(_ root: String) -> Bool {
+        guard let path = try? ProjectProcess.git(["rev-parse", "--git-common-dir"], root: root) else { return false }
+        let common = (path.hasPrefix("/") ? URL(fileURLWithPath: path) : URL(fileURLWithPath: root).appendingPathComponent(path)).resolvingSymlinksInPath().standardizedFileURL.path
+        mutex.lock(); defer { mutex.unlock() }
+        return held[common] != nil
+    }
     static func release(_ paths: [String]) { mutex.lock(); defer { mutex.unlock() }; for path in paths { if let fd = held.removeValue(forKey: path) { close(fd) } } }
 }
 

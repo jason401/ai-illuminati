@@ -75,10 +75,10 @@ enum Peer {
         """
     }
 
-    static func reviewPrompt(peer: String, worker: String, project: String, roots: [WorkspaceRoot], question: String, work: String) -> String {
+    static func reviewPrompt(peer: String, worker: String, project: String, roots: [WorkspaceRoot], question: String, work: String, documents: Bool = false) -> String {
         """
         [REVIEW]
-        You are \(peer). \(worker), another AI working with the user on the Git project \(project), has just changed the project
+        You are \(peer). \(worker), another AI working with the user on the \(documents ? "documents project (papers, slides, figures; no Git)" : "Git project") \(project), has just changed the project
         for the user's latest message. Review those changes. You are not talking to the user directly: your findings go
         to \(worker), which fixes what is right in the same turn.
         [Folders you may read — read only]
@@ -88,11 +88,18 @@ enum Peer {
         [\(worker)'s reply]
         \(work)
         Read only: do not edit anything, run commands that change files or use Git writes. Open files for context when needed.
-        Look for bugs, regressions, missing cases, risky or unclear parts and anything that does not match what the user asked.
-        Skip style nits. Reply with a short list, most important first, each naming the file and line.
+        \(documents ? Peer.documentReview : "Look for bugs, regressions, missing cases, risky or unclear parts and anything that does not match what the user asked.")
+        Skip style nits. Reply with a short list, most important first, each naming the file and line\(documents ? ", page or slide" : "").
         If you find nothing worth fixing, reply with only "No issues". Reply in the language of the user's messages.
         """
     }
+
+    static let documentReview = """
+        Check that the changes do what the user asked and nothing else: the right file was changed (not a copy); no numbers, \
+        data or results changed unless asked; no invented references or citations; the user's own text not rewritten beyond the request; \
+        figures, captions and text still agree; no broken references (??), overflowing or overlapping layout in built PDFs or slides; \
+        nothing else in the folder damaged. Compare with the backup copy where needed.
+        """
 
     static func noIssues(_ text: String) -> Bool {
         let plain = text.trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: ".*!。 "))
@@ -235,9 +242,10 @@ extension Discussion {
         entry.headline = L("변경 검수 · 검수 중…", "Review of the changes · reviewing…")
         let entryID = entry.id
         changeTurn(id, index, save: true) { $0.peerNotes = ($0.peerNotes ?? []) + [entry]; $0.status = L("\(name)가 검수하는 중…", "\(name) is reviewing…") }
-        let view = Self.peerView(binding)
+        var view = Self.peerView(binding)
+        if let before = start.before { view.roots.append(WorkspaceRoot(path: before, directory: true)) }
         let prompt = Peer.reviewPrompt(peer: name, worker: label(worker), project: root, roots: view.roots, question: question,
-                                       work: String(reply.prefix(12_000)) + "\n" + work)
+                                       work: String(reply.prefix(12_000)) + "\n" + work, documents: start.before != nil)
         let result = peerAnswer(peer, prompt: prompt, view: view, room: id, timeout: Peer.reviewTimeout, token: token)
         var done = entry
         var findings: String?
@@ -268,6 +276,45 @@ struct ProjectSnapshot {
     var head: String?
     var status: [String: String] = [:]   // path → porcelain state and content hash, for uncommitted files
     var stored: [String: String] = [:]   // path → the blob a commit of that file would store (line endings and filters applied)
+    // A documents project (no Git): the copy of its folder in this answer's backup, and that copy's stamps.
+    var before: String?
+    var stamps: [String: WorkspaceBackup.Stamp] = [:]
+
+    // The backup made before the answer is the starting point: same moment, and its copy keeps the old contents.
+    static func documents(backup: WorkspaceBackup, root: String) -> ProjectSnapshot? {
+        guard let i = backup.roots.firstIndex(where: { $0.path == root }) else { return nil }
+        let prefix = "\(i)/"
+        var snapshot = ProjectSnapshot(head: nil)
+        snapshot.before = URL(fileURLWithPath: backup.directory).appendingPathComponent(String(i)).path
+        for (key, stamp) in backup.before where key.hasPrefix(prefix) && !(backup.cloud ?? []).contains(key) { snapshot.stamps[String(key.dropFirst(prefix.count))] = stamp }
+        return snapshot
+    }
+    static let textTypes: Set<String> = ["tex", "bib", "md", "markdown", "txt", "typ", "rst", "csv", "tsv", "json", "yaml", "yml", "py", "m", "r", "jl",
+                                         "sty", "cls", "bst", "html", "css", "js", "svg", "tikz", "sh", "toml", "ini", "cfg", "xml"]
+    // Changed files of a documents project, with a line diff of text files against the backup copy.
+    func documentChanges(root: String) -> String? {
+        guard let before else { return nil }
+        let now = (try? WorkspaceBackup.stamps([WorkspaceRoot(path: root, directory: true)])) ?? [:]
+        var current: [String: WorkspaceBackup.Stamp] = [:]
+        for (key, stamp) in now where key.hasPrefix("0/") { current[String(key.dropFirst(2))] = stamp }
+        let changed = Set(stamps.keys).union(current.keys).filter { stamps[$0] != current[$0] && stamps[$0]?.kind != "directory" && current[$0]?.kind != "directory" && ($0 as NSString).lastPathComponent != ".DS_Store" }.sorted()
+        guard !changed.isEmpty else { return nil }
+        var lines: [String] = [], diffs = ""
+        for path in changed.prefix(80) {
+            let kind = stamps[path] == nil ? "added" : current[path] == nil ? "deleted" : "modified"
+            lines.append("\(kind): \(path)")
+            guard diffs.count < Peer.diffLimit, Self.textTypes.contains((path as NSString).pathExtension.lowercased()) else { continue }
+            let old = stamps[path] == nil ? "/dev/null" : before + "/" + path, new = current[path] == nil ? "/dev/null" : root + "/" + path
+            let sizes = [old, new].map { (try? FileManager.default.attributesOfItem(atPath: $0)[.size] as? Int) ?? 0 }
+            guard sizes.allSatisfy({ $0 <= 400_000 }), let reply = try? ProjectProcess.run("/usr/bin/diff", ["-u", "--label", "before/" + path, "--label", "now/" + path, old, new], cwd: root, deadline: Date().addingTimeInterval(20)) else { continue }
+            diffs += reply.output + "\n"
+        }
+        if changed.count > 80 { lines.append("… \(changed.count - 80) more") }
+        if diffs.count > Peer.diffLimit { diffs = String(diffs.prefix(Peer.diffLimit)) + "\n[Diff cut here; open the files for the rest]" }
+        return "[Files changed in this answer (documents project, no Git)]\n" + lines.joined(separator: "\n")
+            + "\n[Before this answer: the same paths under \(before) (read only). Open Word, PowerPoint, PDF and image files in both places to compare.]"
+            + (diffs.isEmpty ? "" : "\n[Diff of text files]\n" + diffs)
+    }
 
     static func take(root: String) -> ProjectSnapshot {
         func git(_ args: [String]) -> String? { try? ProjectProcess.git(args, root: root, timeout: 60) }
@@ -286,6 +333,7 @@ struct ProjectSnapshot {
     // The review material: commits and diff since the start, and uncommitted files this answer touched; nil when
     // nothing changed.
     func changes(root: String) -> String? {
+        if before != nil { return documentChanges(root: root) }
         func git(_ args: [String]) -> String? { try? ProjectProcess.git(args, root: root, timeout: 60) }
         let now = Self.take(root: root)
         var parts: [String] = []

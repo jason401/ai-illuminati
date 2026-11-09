@@ -1282,6 +1282,9 @@ struct ChatView: View {
             Button(L("폴더 연결 (모든 권한)", "Link folder (full access)")) { discussion.chooseMaterials(folder: true) }
             if discussion.configuration.mode == 0 {
                 Button(L("새 프로젝트… (Git·GitHub)", "New project… (Git and GitHub)")) { discussion.newProjectFromMenu() }
+                if discussion.current.workspace?.project == nil {
+                    Button(L("문서 프로젝트 연결… (논문·슬라이드, Git 없음)", "Documents project… (papers and slides, no Git)")) { discussion.linkDocumentsProject() }
+                }
                 if discussion.current.workspace?.project != nil || discussion.current.workspace?.roots.contains(where: \.directory) == true {
                     Button(discussion.current.workspace?.isFullAuto == true ? L("완전 자동 끄기 (카드로 확인)", "Turn off full auto (confirm with cards)") : L("완전 자동 켜기", "Turn on full auto")) { discussion.toggleFullAuto() }
                 }

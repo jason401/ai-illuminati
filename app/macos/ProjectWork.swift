@@ -7,6 +7,13 @@ struct ProjectBinding: Codable, Equatable {
     var common: String
     var remote: String
     var remoteURL: String
+    // nil: a Git project (code). "documents": a plain folder of papers, slides, figures and data, without Git:
+    // every answer backs it up first (Undo), and the review compares with that backup.
+    var kind: String? = nil
+    var isDocuments: Bool { kind == Self.documentsKind }
+    static let documentsKind = "documents"
+    // What the AI's sandbox never writes: the Git data (a documents project's common is its own folder).
+    var protectedPaths: [String] { isDocuments ? [root + "/.git"] : [common, root + "/.git"] }
 }
 
 // All privileged commands use fixed argv, closed stdin, bounded output and a cancellable process group.
@@ -82,6 +89,36 @@ enum ProjectProcess {
         let remote = try git(["remote", "get-url", "origin"], root: canonical)
         guard URLComponents(string: remote)?.password == nil else { throw MaterialReader.error("Remove embedded credentials from the Git remote URL first.") }
         return ProjectBinding(root: canonical, common: commonURL, remote: "origin", remoteURL: remote)
+    }
+    // A documents project: a folder that is not inside a Git work tree (a Git folder is linked as a code project).
+    // Not the home folder, a top folder or the app's own data, so a backup before each answer stays reasonable.
+    static func documents(_ path: String) throws -> ProjectBinding {
+        let canonical = URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
+        var folder: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: canonical, isDirectory: &folder), folder.boolValue else {
+            throw MaterialReader.error(L("문서 폴더가 없어요: ", "The documents folder does not exist: ") + canonical)
+        }
+        let home = URL(fileURLWithPath: NSHomeDirectory()).resolvingSymlinksInPath().standardizedFileURL.path
+        let support = URL(fileURLWithPath: AccountStore.supportDir).resolvingSymlinksInPath().standardizedFileURL.path
+        let top = ["/", "/Users", "/Volumes", "/Applications", "/System", "/Library", home, home + "/Documents", home + "/Desktop", home + "/Downloads", home + "/Library"]
+        guard !top.contains(canonical), canonical.split(separator: "/").count >= 2,
+              support != canonical, !support.hasPrefix(canonical + "/"), !canonical.hasPrefix(support + "/") else {
+            throw MaterialReader.error(L("너무 큰 폴더예요. 논문·발표 하나의 폴더를 골라 주세요.", "That folder is too big. Pick the folder of one paper or talk."))
+        }
+        if isGitWorkTree(canonical) {
+            throw MaterialReader.error(L("이 폴더는 Git 저장소 안에 있어요. 코드 프로젝트로 연결하거나 Git 밖의 폴더를 골라 주세요.",
+                                         "This folder is inside a Git repository. Link it as a code project, or pick a folder outside Git."))
+        }
+        return ProjectBinding(root: canonical, common: canonical, remote: "", remoteURL: "", kind: ProjectBinding.documentsKind)
+    }
+    // Inside a Git work tree (also one without origin, or a subfolder of one). Any other git error: not Git.
+    static func isGitWorkTree(_ path: String) -> Bool {
+        (try? git(["rev-parse", "--is-inside-work-tree"], root: path)) == "true"
+    }
+    // The binding as it is now on disk, for the check before each tool call: documents stay documents only while
+    // the folder exists and is still not Git.
+    static func current(_ binding: ProjectBinding) throws -> ProjectBinding {
+        binding.isDocuments ? try documents(binding.root) : try inspect(binding.root)
     }
 }
 
@@ -206,7 +243,7 @@ final class ProjectRun {
     init(room: UUID, binding: ProjectBinding, token: DebateCancellation, fullAuto: Bool = false) {
         self.room = room; self.binding = binding; self.outer = token; self.fullAuto = fullAuto
         deadline = Date().addingTimeInterval(fullAuto ? 8 * 3600 + 600 : 3600)
-        let status = (try? ProjectProcess.git(["status", "--porcelain", "-z"], root: binding.root)) ?? ""
+        let status = binding.isDocuments ? "" : (try? ProjectProcess.git(["status", "--porcelain", "-z"], root: binding.root)) ?? ""
         initialDirty = Set(status.split(separator: "\0").map { String($0.dropFirst(3)) })
         Thread.detachNewThread { [self] in
             while true {
@@ -221,17 +258,25 @@ final class ProjectRun {
     var cancelled: Bool { outer.isCancelled || attempt.isCancelled || Date() >= deadline || activeExpired }
     func validate(_ generation: Int) throws {
         guard !cancelled, generation == self.generation else { throw MaterialReader.error("Project capability expired or operation cancelled.") }
-        guard try ProjectProcess.inspect(binding.root) == binding else { throw MaterialReader.error("Project repository or remote changed. Reconnect it first.") }
+        guard try ProjectProcess.current(binding) == binding else { throw MaterialReader.error("Project repository or remote changed. Reconnect it first.") }
     }
     func checkpoint(_ note: String) -> String {
+        if binding.isDocuments {
+            let text = "Documents project: \(binding.root)\n\(note)\nNo Git: the app backed the folder up before this answer (Undo). Keep unfinished files; do not redo finished steps." + WorkStep.summary(plan)
+            save(checkpoint: text)
+            return text
+        }
         let head = (try? ProjectProcess.git(["rev-parse", "HEAD"], root: binding.root)) ?? ""
         let status = (try? ProjectProcess.git(["status", "--short"], root: binding.root)) ?? ""
         let diff = (try? ProjectProcess.git(["diff", "--no-ext-diff", "--no-textconv", "--stat"], root: binding.root)) ?? ""
         let text = "Project: \(binding.root)\n\(note)\nHEAD: \(head)\n\(status)\n\(diff)\nCommitted: \(committed); pushed: \(pushed). Preserve unfinished files. Do not pull a dirty tree." + WorkStep.summary(plan)
+        save(checkpoint: text)
+        return text
+    }
+    private func save(checkpoint text: String) {
         let base = URL(fileURLWithPath: AccountStore.supportDir).appendingPathComponent("project-work", isDirectory: true)
         try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         try? text.write(to: base.appendingPathComponent(id.uuidString + ".txt"), atomically: true, encoding: .utf8)
-        return text
     }
 }
 
@@ -257,11 +302,15 @@ enum ProjectWork {
                 common.insert((path.hasPrefix("/") ? URL(fileURLWithPath: path) : URL(fileURLWithPath: root.path).appendingPathComponent(path)).resolvingSymlinksInPath().standardizedFileURL.path)
             }
         }
+        // A documents project has no Git: its folder is the lock, and a folder inside it (or around it) counts as the same.
+        let documents = binding.project.flatMap { $0.isDocuments ? $0.root : nil }
+        if let documents { common.insert(documents) }
         mutex.lock(); defer { mutex.unlock() }
         var acquired: [String] = []
         do {
             for path in common.sorted() {
                 guard held[path] == nil else { throw MaterialReader.error(L(busyKorean, busyEnglish)) }
+                if path == documents, held.keys.contains(where: { path.hasPrefix($0 + "/") || $0.hasPrefix(path + "/") }) { throw MaterialReader.error(L(busyKorean, busyEnglish)) }
                 let base = URL(fileURLWithPath: AccountStore.supportDir).appendingPathComponent("project-locks")
                 try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
                 let name = SHA256.hash(data: Data(path.utf8)).map { String(format: "%02x", $0) }.joined()
@@ -275,7 +324,11 @@ enum ProjectWork {
     }
     // A chat is writing this repository now (TODO work waits instead of failing on acquire).
     static func isHeld(_ root: String) -> Bool {
-        guard let path = try? ProjectProcess.git(["rev-parse", "--git-common-dir"], root: root) else { return false }
+        guard let path = try? ProjectProcess.git(["rev-parse", "--git-common-dir"], root: root) else {
+            // No Git: a documents project's folder, or one inside or around it.
+            mutex.lock(); defer { mutex.unlock() }
+            return held.keys.contains { $0 == root || root.hasPrefix($0 + "/") || $0.hasPrefix(root + "/") }
+        }
         let common = (path.hasPrefix("/") ? URL(fileURLWithPath: path) : URL(fileURLWithPath: root).appendingPathComponent(path)).resolvingSymlinksInPath().standardizedFileURL.path
         mutex.lock(); defer { mutex.unlock() }
         return held[common] != nil
@@ -388,13 +441,15 @@ final class GitLink: ToolProvider {
         func tool(_ name: String, _ description: String, _ props: [String: Any] = [:], _ required: [String] = []) -> [String: Any] {
             ["name": name, "description": description, "inputSchema": ["type": "object", "properties": props, "required": required, "additionalProperties": false]]
         }
+        let run_ = tool("project_run", "Run a named command from .ai-illuminati.json after user approval. Never pass shell commands.", ["name": string], ["name"])
+        if run.binding.isDocuments { return [run_] }   // no Git in a documents project
         return [tool("git_status", "Read linked project status and branch."), tool("git_diff", "Read staged or unstaged diff; never executes external diff tools.", ["staged": ["type": "boolean"]]), tool("git_log", "Recent project commits."),
                 tool("git_pull", "Fast-forward only, clean worktree required. Never stash/reset."),
                 tool("git_commit", "Commit only explicit relative paths; existing user changes require approval.", ["message": string, "paths": ["type": "array", "items": string]], ["message", "paths"]),
                 tool("git_push", "Push current main/feature branch; never stable or force."),
                 tool("git_publish_stable", "Publish an exact main SHA to stable after the user's approval card."),
                 tool("git_branch", "Create a new branch from a clean tree.", ["name": string], ["name"]), tool("git_switch", "Switch an existing branch with a clean tree.", ["name": string], ["name"]),
-                tool("project_run", "Run a named command from .ai-illuminati.json after user approval. Never pass shell commands.", ["name": string], ["name"])]
+                run_]
     }
     func call(_ name: String, _ arguments: [String: Any], context: ToolContext) -> [String: Any] {
         guard let run = ProjectWork.get(context.projectRun), run.room == context.room, let generation = context.projectGeneration else { return ToolHub.failure("No project capability.") }
@@ -421,6 +476,7 @@ final class GitLink: ToolProvider {
             }
             try run.validate(generation)
         }
+        if run.binding.isDocuments && name != "project_run" { throw MaterialReader.error("This is a documents project without Git; there are no git tools. The app backed the folder up before this answer.") }
         switch name {
         case "git_status": return try git(["status", "--short", "--branch"])
         case "git_log": return try git(["log", "-10", "--oneline"])
@@ -466,7 +522,7 @@ final class GitLink: ToolProvider {
             guard data.count < 64_000, let config = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let commands = config["commands"] as? [String: [String: Any]], let command = commands[selected],
                   let exe = command["executable"] as? String, exe.hasPrefix("/"), let argv = command["args"] as? [String] else { throw MaterialReader.error("Unknown or invalid named project command. Add it to .ai-illuminati.json (absolute executable, args array) and call project_run again.") }
-            let status = try git(["status", "--short"])
+            let status = run.binding.isDocuments ? "" : try git(["status", "--short"])
             let tree = try WorkspaceBackup.stamps([WorkspaceRoot(path: run.binding.root, directory: true)])
             if run.fullAuto { run.note("project_run (full auto): " + exe + " " + argv.joined(separator: " ")) }
             else { try approve("프로젝트 실행 / Run project command", "Runs outside the AI sandbox as your user.\n" + run.binding.root + "\n" + exe + " " + argv.joined(separator: " ") + "\n" + status) }

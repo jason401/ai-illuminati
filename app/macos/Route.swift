@@ -217,9 +217,9 @@ enum Route {
         let who = alone ? "one answer is enough: you answer it alone, other members stay quiet unless the user asks them,"
             : "every member answers it at the same time,"
         return """
-        [Opinion mode] This chat is linked to the Git project at \(project), and the app judged that this message asks
+        [Opinion mode] This chat is linked to the project at \(project), and the app judged that this message asks
         for views, not changes: \(who) and the project is read only for this answer.
-        Read code as needed and answer about the code. Do not try to edit files or run Git writes; if the user seems to
+        Read the files as needed and answer about them. Do not try to edit files or run Git writes; if the user seems to
         want changes, say what you would change — they can say "가자" (go) or press "Run as work" to have it done.
         """
     }

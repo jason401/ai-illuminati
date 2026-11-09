@@ -215,7 +215,8 @@ extension Discussion {
         let info = binding.project.map { ProjectInfoStore.shared.info(SidebarProjects.key($0)) } ?? ProjectInfo()
         let projectPaths = Set(info.folders.map(\.path))
         for root in binding.roots {
-            let kind = root.path == project ? "linked Git project — edit files here; use the git_* tools for Git"
+            let kind = root.path == project ? (binding.project?.isDocuments == true ? "linked documents project (no Git) — edit files here; backed up before this answer"
+                                                                                    : "linked Git project — edit files here; use the git_* tools for Git")
                 : projectPaths.contains(root.path) && root.writable != true ? (root.directory ? "project folder, shared by every chat of this project — read only" : "project file — read only")
                 : shared.contains(root.path)
                 ? (root.writable == true ? "shared folder — you may read, edit, create and delete files here (backed up before this answer)" : "shared folder — read only")
@@ -676,6 +677,7 @@ extension Discussion {
         var root: String
         var fullAuto: Bool
         var rules: String   // the project's AGENTS.md / CLAUDE.md
+        var documents = false   // a documents project: no Git, papers/slides/figures (documentsNote)
     }
 
     // One instruction for every plain chat. A linked Git project only adds its own part and drops the lines that
@@ -711,6 +713,10 @@ extension Discussion {
             You are \(name), working with the user in a desktop chat app (documents, papers, research and
             summaries, not code). Answer the latest user message in the transcript. Earlier turns may have been
             answered by other AIs; continue their work as your own.
+            """ : project?.documents == true ? """
+            You are \(name), working with the user in a desktop chat app. This chat is linked to a documents project (papers,
+            slides, posters, figures and data in one folder, without Git), so you also edit its files. Answer the latest user
+            message in the transcript. Earlier turns may have been answered by other AIs; continue their work as your own.
             """ : """
             You are \(name), working with the user in a desktop chat app. This chat is linked to a Git project, so you
             also work on its code. Answer the latest user message in the transcript. Earlier turns may have been
@@ -734,7 +740,10 @@ extension Discussion {
             parts.append("You can search the web. Cite what you used as [source: URL]; never invent a source.")
         }
         parts.append(drive)
-        if let project {
+        if let project, project.documents {
+            parts.append("[Documents project] Folder: \(project.root).\n" + Self.documentsNote)
+            if project.fullAuto { parts.append(Self.documentsAutoNote) }
+        } else if let project {
             parts.append("""
                 [Project work] Project: \(project.root).
                 Use native file tools to inspect/edit, but use git_* for all Git actions and project_run for named privileged test/build commands.

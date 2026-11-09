@@ -1026,3 +1026,102 @@ func testPickedRoute() {
            "Enterprise: the meeting keeps the lock and only the organization's AI meets")
     print("PASS: picked way (chip, slash, @ with work) and meetings (hidden chat, chat's context, result back, lock kept, deleted with the chat)")
 }
+
+// A documents project: a plain folder (no Git) of papers, slides and figures, worked on like a project with a backup.
+func testDocumentsProject() {
+    let base = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("documents-fixture-" + UUID().uuidString)
+    let paper = base.appendingPathComponent("Lamb Wave Paper"), repo = base.appendingPathComponent("code")
+    try! FileManager.default.createDirectory(at: paper.appendingPathComponent("figures"), withIntermediateDirectories: true)
+    try! FileManager.default.createDirectory(at: repo.appendingPathComponent("docs"), withIntermediateDirectories: true)
+    _ = try! ProjectProcess.git(["init", "-b", "main"], root: repo.path)   // Git without origin
+    try! "\\section{Results}\nThe velocity is 3.2 km/s.\n".write(to: paper.appendingPathComponent("main.tex"), atomically: true, encoding: .utf8)
+    try! Data([0x50, 0x4b, 3, 4]).write(to: paper.appendingPathComponent("talk.pptx"))
+
+    // Linking: a plain folder yes; a Git folder (also one without origin, or a folder inside it) or a top folder no.
+    let project = try! ProjectProcess.documents(paper.path)
+    expect(project.isDocuments && project.root == paper.resolvingSymlinksInPath().path && project.common == project.root && project.remoteURL.isEmpty,
+           "a plain folder links as a documents project")
+    expect((try? ProjectProcess.documents(repo.path)) == nil && (try? ProjectProcess.documents(repo.appendingPathComponent("docs").path)) == nil,
+           "a Git folder (no origin) or a folder inside one is not a documents project")
+    expect((try? ProjectProcess.inspect(repo.path)) == nil && ProjectProcess.isGitWorkTree(repo.path) && !ProjectProcess.isGitWorkTree(paper.path),
+           "a Git folder without origin is told apart from a folder without Git")
+    expect((try? ProjectProcess.documents(NSHomeDirectory())) == nil && (try? ProjectProcess.documents("/")) == nil && (try? ProjectProcess.documents(base.appendingPathComponent("missing").path)) == nil,
+           "home, / and missing folders are refused")
+    expect(project.protectedPaths == [project.root + "/.git"] && ProjectBinding(root: "/r", common: "/r/.git", remote: "origin", remoteURL: "").protectedPaths == ["/r/.git", "/r/.git"],
+           "the sandbox protects only .git in a documents project, not the whole folder")
+    // Saved chats and TODO lists from before have no kind: they stay Git projects.
+    let old = try? JSONDecoder().decode(ProjectBinding.self, from: Data(#"{"root":"/r","common":"/r/.git","remote":"origin","remoteURL":"u"}"#.utf8))
+    let again = try? JSONDecoder().decode(ProjectBinding.self, from: JSONEncoder().encode(project))
+    expect(old != nil && old?.kind == nil && old?.isDocuments == false && again == project, "older project bindings still load; documents round-trip")
+
+    // One writer per documents folder, also for a folder inside it.
+    let binding = WorkspaceBinding(roots: [WorkspaceRoot(path: project.root, directory: true, writable: true)], project: project)
+    let lease = try! ProjectWork.acquire(binding)
+    expect(lease == [project.root] && ProjectWork.isHeld(project.root) && ProjectWork.isHeld(project.root + "/figures"), "the documents folder is locked while one AI writes")
+    do { _ = try ProjectWork.acquire(binding); expect(false, "a second writer is refused") } catch { expect(ProjectWork.isBusy(error.localizedDescription), "a busy documents project is told apart") }
+    let inner = try! ProjectProcess.documents(paper.appendingPathComponent("figures").path)
+    do { _ = try ProjectWork.acquire(WorkspaceBinding(roots: [WorkspaceRoot(path: inner.root, directory: true, writable: true)], project: inner)); expect(false, "a nested documents project is refused") } catch {}
+    ProjectWork.release(lease)
+    expect(!ProjectWork.isHeld(project.root), "released after the answer")
+
+    // No Git tools; project_run stays. The checkpoint says there is no Git.
+    let run = ProjectRun(room: UUID(), binding: project, token: DebateCancellation())
+    ProjectWork.register(run); run.nextAttempt()
+    let context = ToolContext(room: run.room, roots: binding.roots, projectRun: run.id, projectGeneration: run.generation)
+    expect(GitLink.shared.tools(context: context).compactMap { $0["name"] as? String } == ["project_run"], "a documents project offers project_run only")
+    expect(GitLink.shared.call("git_status", [:], context: context)["isError"] as? Bool == true && GitLink.shared.call("git_commit", ["message": "m", "paths": ["main.tex"]], context: context)["isError"] as? Bool == true,
+           "git tools are refused in a documents project")
+    expect(run.checkpoint("x").contains("No Git") && !run.checkpoint("x").contains("HEAD:"), "the checkpoint has no Git state")
+    ProjectWork.finish(run)
+
+    // Work in a chat: Claude edits, ChatGPT reviews against the backup copy, the instruction is the documents one, Undo works.
+    let claude = Account(id: "docs-claude", provider: .claude, name: "C"), codex = Account(id: "docs-codex", provider: .codex, name: "G")
+    let model = AppModel(); model.accounts = [claude, codex]
+    let chat = Discussion(model: model)
+    chat.configure { $0.mode = 0; $0.leadID = claude.id }
+    chat.toggleMember(claude.id); chat.toggleMember(codex.id)
+    chat.change(chat.currentID) { $0.workspace = binding }
+    chat.routeJudge = { _ in (.work, "Judge") }
+    var prompts: [String] = [], reviews: [String] = [], reviewRoots: [[WorkspaceRoot]] = []
+    chat.workspaceAnswer = { account, prompt, view, _, _ in
+        if account.id == codex.id { reviews.append(prompt); reviewRoots.append(view.roots); return .success("No issues") }
+        prompts.append(prompt)
+        try! "\\section{Results}\nThe phase velocity is 3.2 km/s.\n".write(to: paper.appendingPathComponent("main.tex"), atomically: true, encoding: .utf8)
+        try! "new figure".write(to: paper.appendingPathComponent("figures/fig1.svg"), atomically: true, encoding: .utf8)
+        return .success("Edited the Results paragraph.")
+    }
+    chat.draft = "Results 문단 다듬어 줘"; chat.send()
+    let deadline = Date().addingTimeInterval(30)
+    while Date() < deadline && (chat.anyRunning || chat.current.turns.last?.final == nil) { RunLoop.main.run(until: Date().addingTimeInterval(0.03)) }
+    let prompt = prompts.first ?? ""
+    expect(prompt.contains("[Documents project]") && prompt.contains("Never invent references") && prompt.contains("linked documents project (no Git)")
+           && !prompt.contains("Start with git_status") && !prompt.contains("git_push"), "the documents instruction replaces the Git one")
+    let review = reviews.first ?? ""
+    expect(review.hasPrefix("[REVIEW]") && review.contains("documents project") && review.contains("modified: main.tex") && review.contains("added: figures/fig1.svg")
+           && review.contains("+The phase velocity is 3.2 km/s.") && review.contains("-The velocity is 3.2 km/s.") && !review.contains("talk.pptx"),
+           "the review lists this answer's changes with a text diff against the backup")
+    let turn = chat.current.turns.last
+    expect(reviewRoots.first?.contains { $0.path.contains("workspace-backups") } == true, "the reviewer may read the backup copy")
+    expect(turn?.workspaceChanges?.map(\.path).sorted() == [paper.appendingPathComponent("figures/fig1.svg").resolvingSymlinksInPath().path, paper.appendingPathComponent("main.tex").resolvingSymlinksInPath().path].sorted()
+           && turn?.backupPath != nil && turn?.projectCommitted == false, "the changes are listed with a backup")
+    if let turn { chat.undoWorkspace(turn) }
+    let until = Date().addingTimeInterval(10)
+    while Date() < until && chat.current.turns.last?.undone != true { RunLoop.main.run(until: Date().addingTimeInterval(0.03)) }
+    expect((try? String(contentsOf: paper.appendingPathComponent("main.tex"), encoding: .utf8)) == "\\section{Results}\nThe velocity is 3.2 km/s.\n"
+           && !FileManager.default.fileExists(atPath: paper.appendingPathComponent("figures/fig1.svg").path), "Undo puts the folder back")
+
+    // TODO text for documents: no commit/push, no git status.
+    var item = TodoItem(listID: UUID(), title: "Fig. 2 다시 그리기"); item.interrupted = true
+    expect(!TodoScheduler.instruction(item, documents: true).contains("commit and push") && TodoScheduler.instruction(item).contains("commit and push")
+           && !TodoScheduler.question(item, documents: true).contains("git status"), "a documents TODO is not told to commit or check git status")
+
+    // create_project kind documents: a folder name with spaces, no Git.
+    let savedHome = ProjectCreator.home
+    ProjectCreator.home = AccountStore.home
+    defer { ProjectCreator.home = savedHome }
+    let folder = try! ProjectCreator.documentsFolder(name: "Poster 2026", location: base.path)
+    let made = try! ProjectCreator.createDocuments(folder)
+    expect(made.isDocuments && !FileManager.default.fileExists(atPath: folder + "/.git") && (try? ProjectCreator.documentsFolder(name: "../x", location: base.path)) == nil,
+           "a new documents project is a plain folder")
+    print("PASS: documents project (plain folder, not Git, one writer per folder, no git tools, documents instruction, review against the backup, Undo, TODO text, create)")
+}

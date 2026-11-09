@@ -161,6 +161,36 @@ extension Discussion {
         } catch { attachmentError = error.localizedDescription }
     }
 
+    // + → Documents project…: a folder (new or existing, not Git) of papers, slides and figures becomes a project with its
+    // own sidebar folder and TODO board. This chat links to it, full auto like "Link folder", with a backup before each answer.
+    func linkDocumentsProject() {
+        guard !running, !importingMaterials, configuration.mode == 0 else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.allowsMultipleSelection = false; panel.canCreateDirectories = true
+        panel.prompt = L("연결", "Link")
+        panel.message = L("논문·발표 하나의 폴더를 고르거나 새로 만드세요 (Google Drive 폴더도 돼요). Git은 쓰지 않아요.",
+                          "Pick or create the folder of one paper or talk (a Google Drive folder works too). No Git is used.")
+        guard panel.runModal() == .OK, let folder = panel.url else { return }
+        do {
+            let project = try ProjectProcess.documents(folder.path)
+            let alert = NSAlert()
+            alert.messageText = L("문서 프로젝트로 연결", "Link as a documents project")
+            alert.informativeText = project.root + "\n\n" + L("AI가 이 폴더의 글·그림·슬라이드를 고칠 수 있어요 (완전 자동: 명령 실행·인터넷 사용). 답할 때마다 폴더를 먼저 백업해서 되돌릴 수 있어요. 클라우드에만 있는 파일과 Google 문서에서 고친 것은 백업에 없어요 (Google 버전 기록으로 되돌려요).\n\n왼쪽 목록에 프로젝트 폴더가 생기고 할 일 보드를 쓸 수 있어요.",
+                                                                "The AI may change the text, figures and slides in this folder (full auto: runs commands, uses the network). The folder is backed up before each answer, so it can be undone. Files only in the cloud and edits in Google Docs are not in the backup (use Google's version history).\n\nThe project gets its own folder in the sidebar and a TODO board.")
+            alert.addButton(withTitle: L("연결", "Link")); alert.addButton(withTitle: L("취소", "Cancel"))
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+            try nativeSessions.reset(currentID)
+            change(currentID, save: true) { conversation in
+                var binding = conversation.workspace ?? WorkspaceBinding(roots: [])
+                binding.roots.removeAll { $0.path == project.root }
+                binding.roots.insert(WorkspaceRoot(path: project.root, directory: true, writable: true), at: 0)
+                binding.project = project; conversation.workspace = binding
+            }
+            attachmentError = nil
+            sessionNote = L("문서 프로젝트 연결됨 · 완전 자동 (답할 때마다 백업, Undo 가능)", "Documents project linked · full auto (backed up before each answer, Undo available)")
+        } catch { attachmentError = error.localizedDescription }
+    }
+
     // A chat dragged onto a project folder in the sidebar (or "Move to project" in its menu) joins that project.
     // The first time it says what that allows (full auto, like "Link folder"); "Don't ask again" skips it.
     @discardableResult
@@ -253,7 +283,7 @@ extension Discussion {
         let workers = TodoStore.shared.current.workers(room: id)
         // Before the work starts: what the project looks like, so the review covers only this answer's changes
         // (also when another AI took over after a usage limit).
-        let start = reviewers.isEmpty ? nil : ProjectSnapshot.take(root: selected.root)
+        let start = reviewers.isEmpty ? nil : selected.isDocuments ? backup.flatMap { ProjectSnapshot.documents(backup: $0, root: selected.root) } : ProjectSnapshot.take(root: selected.root)
         while !cancellation.isCancelled && Date() < run.deadline && !run.activeExpired {
             let eligible = model.accounts.filter { [.claude, .codex].contains($0.provider) && !excluded.contains($0.id) && Enterprise.permits($0, lock: chatLock) && (workers?.contains($0.id) ?? true) }
             let account = preferred.flatMap { wanted in eligible.first { $0.id == wanted } }
@@ -272,7 +302,7 @@ extension Discussion {
             changeTurn(id, index) { $0.status = working; $0.activity = nil; $0.lastActivityAt = Date() }
             func attempt(_ extra: String, transcript: String, fresh: String?) -> Result<String, Answerer.Failure> {
                 var instruction = soloInstruction(account, binding: workspace, helper: "",
-                                                  project: ProjectPart(root: selected.root, fullAuto: fullAuto, rules: projectRules), chat: id)
+                                                  project: ProjectPart(root: selected.root, fullAuto: fullAuto, rules: projectRules, documents: selected.isDocuments), chat: id)
                 if !note.isEmpty { instruction += "\n" + note }
                 if keepState { instruction += "\n" + Self.stateRule(current: Self.loadState(id)) }
                 instruction += "\n[Verified app checkpoint; do not repeat completed operations blindly]\n" + checkpoint + extra
@@ -397,6 +427,32 @@ extension Discussion {
     Your shell has no Git/GitHub credentials: commit locally with git, push only with the git_push tool. Never force push or rewrite pushed history.
     rm moves files to the Trash. Stable still needs the user's card: call git_publish_stable only when the user's latest message asks to publish/deploy stable,
     and the app shows the card and waits for the user. Otherwise do not publish; finish with a summary of what is ready for the user to publish.
+    """
+
+    // A documents project (papers, slides, posters, figures and data mixed in one folder, without Git).
+    static let documentsNote = """
+    One task may touch several kinds of files (text, figures, slides); pick how to change and check each file by its type:
+    - Text sources (.tex .md .typ .bib .txt): edit them directly. When the folder can be built (LaTeX, Typst, Markdown to PDF), build it and look at the
+      changed pages as pictures: overflow, broken figures, ?? references, page count.
+    - Figures: change the script or data-to-figure code that makes them and run it again; do not paint over the picture. Look at the new figure.
+      Keep the old output unless the user asked to replace it.
+    - Word/PowerPoint (.docx .pptx): change them with a small python-docx/python-pptx script, run it, and check the result (read it back; render to PDF
+      with LibreOffice if it is installed). Leave slides with SmartArt or animations alone and ask. If a "~$" lock file is next to the file, the user has it
+      open: do not write it; ask. In Word, prefer tracked changes for edits to the user's text.
+    - Google Docs/Slides (.gdoc .gslides pointer files): read them with drive_read; change them only with drive_edit_doc / drive_edit_slides, in folders
+      the Drive settings allow writing. The app's backup cannot undo these (Google's version history can): say what you changed there.
+    - PDF, images and raw data: read only unless the user asks to change that very file.
+    Never invent references, citations or data: leave \\cite{TODO} or a clear [TODO] and ask. Never change numbers, results or measured data unless asked.
+    Ask before rewriting large parts of the user's own text. Change the user's original files, not a copy, unless asked for a new version.
+    Steps only the user can do (insert a picture into a Google Doc, accept tracked changes, final check in Office) are not done by you: list them as user steps.
+    There is no Git: do not run git init or git commands. The app backed this folder up before this answer (the user can Undo it); files only in the cloud
+    were not copied. Run registered build commands with project_run when the folder has a .ai-illuminati.json; you may add one (absolute executable, args array).
+    If the work has 3 or more steps, first show your steps with work_plan and update it whenever a step starts or ends.
+    Use foreground commands only, never leave background writers.
+    """
+    static let documentsAutoNote = """
+    [FULL AUTO] The user may be away. Work to completion without asking questions, except for the rules above (references, numbers, large rewrites,
+    open files); make reasonable decisions and list them at the end. You may run commands, use the network and install tools. rm moves files to the Trash.
     """
 
     // The writing AI ends its reply with a <face> tag (plain chat and project work alike).

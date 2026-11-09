@@ -828,13 +828,13 @@ final class TodoScheduler: ObservableObject {
             try? store.change(item.id) { $0.room = room }   // the next try reuses this chat and the copies already made
             return error.localizedDescription
         }
-        let question = Self.question(item, files: delivered.paths)
+        let question = Self.question(item, files: delivered.paths, documents: project.isDocuments)
         // Running before the turn starts: the AI's first tool call must find it.
         do { try store.change(item.id) { $0.state = .running; $0.room = room; $0.lastError = nil; $0.report = nil; $0.workers = list.accounts.isEmpty ? nil : list.accounts } } catch {
             for image in delivered.images { try? ImageStore.remove(image) }
             return error.localizedDescription
         }
-        if let reason = discussion.startTurn(room: room, question: question, images: delivered.images, forced: crew.reviewer == nil ? nil : .work, extra: Self.instruction(item)) {
+        if let reason = discussion.startTurn(room: room, question: question, images: delivered.images, forced: crew.reviewer == nil ? nil : .work, extra: Self.instruction(item, documents: project.isDocuments)) {
             for image in delivered.images { try? ImageStore.remove(image) }
             try? store.change(item.id) { $0.state = .ready; $0.lastError = reason }
             return reason
@@ -931,7 +931,7 @@ final class TodoScheduler: ObservableObject {
 
     // What the AI is asked: the TODO, then everything the user said about it since.
     // files: where its attachments are for the AI (deliver).
-    static func question(_ item: TodoItem, files: [String] = []) -> String {
+    static func question(_ item: TodoItem, files: [String] = [], documents: Bool = false) -> String {
         var text = "TODO: " + item.title
         if !item.detail.isEmpty { text += "\n\n" + item.detail }
         if !files.isEmpty { text += "\n\n" + L("[첨부 파일]", "[Attached files]") + "\n" + files.map { "- " + $0 }.joined(separator: "\n") }
@@ -940,16 +940,20 @@ final class TodoScheduler: ObservableObject {
             text += "\n\n" + L("[내 답과 수정 요청]", "[My answers and change requests]") + "\n"
                 + said.map { ($0.kind == .feedback ? L("수정 요청: ", "Change request: ") : L("답: ", "Answer: ")) + $0.text }.joined(separator: "\n")
         }
-        if item.interrupted { text += "\n\n" + L("이전 시도가 중간에 끊겼어. git status부터 확인하고 남은 것만 이어서 해.", "The previous attempt was cut off. Check git status first and continue only what is left.") }
+        if item.interrupted {
+            text += "\n\n" + (documents ? L("이전 시도가 중간에 끊겼어. 파일 상태부터 확인하고 남은 것만 이어서 해.", "The previous attempt was cut off. Check the files first and continue only what is left.")
+                                        : L("이전 시도가 중간에 끊겼어. git status부터 확인하고 남은 것만 이어서 해.", "The previous attempt was cut off. Check git status first and continue only what is left."))
+        }
         else if item.attempts > 0, let error = item.lastError { text += "\n\n" + L("이전 시도가 오류로 끝났어: ", "The previous attempt ended with an error: ") + String(error.prefix(300)) }
         return text
     }
 
-    static func instruction(_ item: TodoItem) -> String {
-        """
-        [TODO work] This is a TODO from the user's board, done while the user may be away. Work in this project as usual \
-        (plan, change, test, commit and push when the project rules say so).
-        When it is finished and tested, call task_done with a summary, the assumptions you made and the files you changed, then end with a short report.
+    static func instruction(_ item: TodoItem, documents: Bool = false) -> String {
+        let usual = documents ? "Work in this documents project as usual (plan, change the files, build or render and look at the result where you can)."
+            : "Work in this project as usual (plan, change, test, commit and push when the project rules say so)."
+        return """
+        [TODO work] This is a TODO from the user's board, done while the user may be away. \(usual)
+        When it is finished and \(documents ? "checked" : "tested"), call task_done with a summary, the assumptions you made and the files you changed\(documents ? " (and any steps left for the user)" : ""), then end with a short report.
         If you cannot go on (missing information, a decision or an approval only the user can give, contradicting requirements), call task_ask and stop.
         \(item.askFirst ? "Before changing anything, ask with task_ask what is unclear (at most 3 questions, with options and your recommendation). If nothing is unclear, go ahead."
                        : "Where something is unclear, make a reasonable assumption, go on, and list it in task_done.")

@@ -2247,6 +2247,7 @@ testUpdateChannels()
 testDeviceSync()
 
 testProjectHandoff()
+testDocumentsProject()
 testStartTurn()
 testTodoStore()
 testTodoScheduler()

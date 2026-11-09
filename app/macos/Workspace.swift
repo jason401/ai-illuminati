@@ -155,9 +155,9 @@ struct WorkspaceInvocation {
             result += ["--restricted", "--setting-sources", "", "--disable-slash-commands", "--permission-mode", "dontAsk", "--allowedTools", "Read,Grep,Glob,mcp__illuminati__*" + allowedEdit + (level == .execute ? ",Bash" : "") + (web ? ",WebSearch,WebFetch" : "")]
             if level == .execute {
                 var settings: [String: Any] = ["sandbox": ["enabled": true, "autoAllowBashIfSandboxed": true, "allowUnsandboxedCommands": false,
-                    "filesystem": ["allowWrite": executionFolders, "denyWrite": binding.project.map { [$0.common, $0.root + "/.git"] } ?? []]]]
+                    "filesystem": ["allowWrite": executionFolders, "denyWrite": binding.project.map(\.protectedPaths) ?? []]]]
                 if let project = binding.project {
-                    let protected = [project.common, project.root + "/.git"]
+                    let protected = project.protectedPaths
                     let denied: [String] = protected.flatMap { path -> [String] in
                         ["Edit(/\(path))", "Edit(/\(path)/**)", "Write(/\(path))", "Write(/\(path)/**)"]
                     }

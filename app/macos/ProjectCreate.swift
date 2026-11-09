@@ -54,6 +54,20 @@ enum ProjectCreator {
         return resolved
     }
 
+    // A documents project (create_project kind "documents"): a folder only, no Git or GitHub. Its name may have spaces
+    // and Korean; an existing folder there is linked as it is.
+    static func documentsFolder(name raw: String, location: String?) throws -> String {
+        let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard (1...100).contains(name.count), !name.hasPrefix("."), !name.contains("/"), !name.contains(":") else {
+            throw error("폴더 이름은 100자까지, / : 없이, 점으로 시작하지 않게 주세요.", "Give a folder name up to 100 characters, without / or :, not starting with a dot.")
+        }
+        return (try self.location(location) as NSString).appendingPathComponent(name)
+    }
+    static func createDocuments(_ folder: String) throws -> ProjectBinding {
+        try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+        return try ProjectProcess.documents(folder)
+    }
+
     private static var ghEnvironment: [String: String] {
         let dir = gh.map { ($0 as NSString).deletingLastPathComponent } ?? "/usr/local/bin"
         return ["PATH": dir + ":/usr/bin:/bin:/usr/sbin:/sbin", "GH_PROMPT_DISABLED": "1", "GH_NO_UPDATE_NOTIFIER": "1", "NO_COLOR": "1"]
@@ -212,7 +226,7 @@ final class ProjectMakerLink: ToolProvider {
 
     var active: Bool { true }
     func tools() -> [[String: Any]] { [] }
-    private func main<T>(_ work: () -> T) -> T { Thread.isMainThread ? work() : DispatchQueue.main.sync(execute: work) }
+    fileprivate func main<T>(_ work: () -> T) -> T { Thread.isMainThread ? work() : DispatchQueue.main.sync(execute: work) }
 
     func tools(context: ToolContext) -> [[String: Any]] {
         guard context.asker != nil else { return [] }
@@ -220,14 +234,15 @@ final class ProjectMakerLink: ToolProvider {
         guard let chat, !chat.isEnterprise else { return [] }
         let string: [String: Any] = ["type": "string"]
         return [["name": "create_project",
-                 "description": "When the user asks for a new project: create its folder with Git and a first commit, a GitHub repository under the user's own account (gh login), push, and add a new chat linked to it. The user approves a card first. name: letters, digits, . _ - only (turn a Korean name into a short English one). location: absolute folder path, default ~/Documents/Projects. private: default true. If it fails midway, calling it again with the same arguments continues.",
-                 "inputSchema": ["type": "object", "properties": ["name": string, "location": string, "private": ["type": "boolean"]],
+                 "description": "When the user asks for a new project: create its folder with Git and a first commit, a GitHub repository under the user's own account (gh login), push, and add a new chat linked to it. The user approves a card first. name: letters, digits, . _ - only (turn a Korean name into a short English one). location: absolute folder path, default ~/Documents/Projects. private: default true. If it fails midway, calling it again with the same arguments continues. kind \"documents\" (papers, slides, posters, figures; no code): only a folder (an existing one is linked as it is), no Git or GitHub; name may then be any folder name.",
+                 "inputSchema": ["type": "object", "properties": ["name": string, "location": string, "private": ["type": "boolean"], "kind": ["type": "string", "enum": ["code", ProjectBinding.documentsKind]]],
                                  "required": ["name"], "additionalProperties": false]]]
     }
 
     func call(_ name: String, _ arguments: [String: Any], context: ToolContext) -> [String: Any] {
         guard name == "create_project", !tools(context: context).isEmpty else { return ToolHub.failure("Unknown tool: " + name) }
         let token = main { cancellation(context.room) } ?? DebateCancellation()
+        if arguments["kind"] as? String == ProjectBinding.documentsKind { return documents(arguments, context: context, token: token) }
         do {
             let (plan, resume) = try ProjectCreator.prepare(name: arguments["name"] as? String ?? "", location: arguments["location"] as? String,
                                                             isPrivate: arguments["private"] as? Bool ?? true, token: token)
@@ -240,6 +255,28 @@ final class ProjectMakerLink: ToolProvider {
             let project = try ProjectCreator.create(plan, token: token)
             let title = main { addChat(project, plan.repo) }
             return ["content": [["type": "text", "text": "Created \(plan.folder) and \(plan.url) (\(plan.isPrivate ? "private" : "public")); main is pushed. A new chat \"\(title)\" linked to this project is at the top of the chat list (full auto). Tell the user to open it and ask for the work there; this chat is not linked to the project."]], "isError": false]
+        } catch { return ToolHub.failure(error.localizedDescription) }
+    }
+}
+
+extension ProjectMakerLink {
+    func documents(_ arguments: [String: Any], context: ToolContext, token: DebateCancellation) -> [String: Any] {
+        do {
+            let folder = try ProjectCreator.documentsFolder(name: arguments["name"] as? String ?? "", location: arguments["location"] as? String)
+            let exists = FileManager.default.fileExists(atPath: folder)
+            if exists { _ = try ProjectProcess.documents(folder) }   // refused before the card: Git inside, too big
+            let detail = folder + "\n\n" + (exists ? L("이미 있는 폴더를 문서 프로젝트로 연결해요.", "Links the existing folder as a documents project.")
+                                                    : L("새 폴더를 만들어 문서 프로젝트로 연결해요.", "Creates the folder and links it as a documents project."))
+                + "\n" + L("Git·GitHub는 쓰지 않아요. AI가 답할 때마다 폴더를 백업해요 (Undo).", "No Git or GitHub. The folder is backed up before each answer (Undo).")
+            let deadline = Date().addingTimeInterval(900)
+            let card = ProjectApproval(room: context.room, run: UUID(), title: L("문서 프로젝트 만들기", "Create a documents project"), detail: detail)
+            guard ProjectCenter.shared.approve(card, token: token, deadline: deadline) else {
+                if Date() >= deadline, !token.isCancelled { return ToolHub.failure("Approval timed out after 15 minutes; treated as refused. Nothing was created. Tell the user they can ask again.") }
+                return ToolHub.failure("The user did not allow creating the project. Nothing new was created; stop and say so.")
+            }
+            let project = try ProjectCreator.createDocuments(folder)
+            let title = main { addChat(project, (folder as NSString).lastPathComponent) }
+            return ["content": [["type": "text", "text": "Linked \(project.root) as a documents project (no Git). A new chat \"\(title)\" linked to it is at the top of the chat list (full auto, backed up before each answer). Tell the user to open it, or its TODO board, and ask for the work there; this chat is not linked to the project."]], "isError": false]
         } catch { return ToolHub.failure(error.localizedDescription) }
     }
 }

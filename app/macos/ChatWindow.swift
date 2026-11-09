@@ -30,6 +30,9 @@ struct ChatView: View {
         let inline = wide && !discussion.sidebarHidden
         // The notes sit beside the chat when it keeps at least `wide` points, else they slide over it.
         let notesInline = inline ? layout.notesFit : layout.notesFitAlone
+        // Notes belong to a chat: a project folder (board or info) or another Mac's chat hides them, and they come
+        // back when a chat of this Mac is open again.
+        let notesShown = discussion.notesShown && !discussion.viewingBoard && discussion.viewingRemote == nil
         Group {
             ZStack(alignment: .leading) {
                 findKey
@@ -39,12 +42,12 @@ struct ChatView: View {
                         Divider().opacity(0.5)
                     }
                     chat(sidebarShown: inline, wide: wide)
-                    if discussion.notesShown && notesInline {
+                    if notesShown && notesInline {
                         Divider().opacity(0.5)
                         NotesPanel(room: discussion.currentID) { discussion.notesShown = false }
                     }
                 }
-                if discussion.notesShown && !notesInline {
+                if notesShown && !notesInline {
                     HStack(spacing: 0) {
                         Spacer(minLength: 0)
                         NotesPanel(room: discussion.currentID) { discussion.notesShown = false }

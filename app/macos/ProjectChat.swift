@@ -362,7 +362,8 @@ extension Discussion {
 
     static let fullAutoNote = """
     [FULL AUTO] The user may be away. Work to completion without asking questions; make reasonable decisions and list them at the end.
-    You may run any command, use the network, install tools and run tests/builds directly (project_run needs no approval).
+    You may run any command, use the network and install tools. Run the registered test/build commands with project_run (no approval needed),
+    not your shell: the user sees their progress and how long they usually take.
     Your shell has no Git/GitHub credentials: commit locally with git, push only with the git_push tool. Never force push or rewrite pushed history.
     rm moves files to the Trash. Stable still needs the user's card: call git_publish_stable only when the user's latest message asks to publish/deploy stable,
     and the app shows the card and waits for the user. Otherwise do not publish; finish with a summary of what is ready for the user to publish.

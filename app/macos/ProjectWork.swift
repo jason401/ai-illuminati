@@ -13,7 +13,8 @@ struct ProjectBinding: Codable, Equatable {
 enum ProjectProcess {
     struct Reply { var status: Int32; var output: String }
     static func run(_ executable: String, _ args: [String], cwd: String, token: DebateCancellation? = nil,
-                    deadline: Date = Date().addingTimeInterval(60), guarded: Bool = false) throws -> Reply {
+                    deadline: Date = Date().addingTimeInterval(60), guarded: Bool = false,
+                    onLine: ((String) -> Void)? = nil) throws -> Reply {
         if token?.isCancelled == true { throw MaterialReader.error("Project operation cancelled.") }
         let p = Process(), out = Pipe(), err = Pipe(), lock = NSLock(), done = DispatchGroup()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
@@ -28,11 +29,20 @@ enum ProjectProcess {
         for pipe in [out, err] {
             done.enter()
             DispatchQueue.global().async {
+                var partial = Data()  // onLine: this pipe's unfinished line, bounded
                 while true {
                     let data = pipe.fileHandleForReading.availableData
                     if data.isEmpty { break }
                     lock.lock(); captured.append(data.prefix(max(0, 240_000 - captured.count))); lock.unlock()
+                    guard let onLine else { continue }
+                    partial.append(data)
+                    while let end = partial.firstIndex(of: 10) {
+                        onLine(String(decoding: partial[partial.startIndex..<end], as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
+                        partial.removeSubrange(partial.startIndex...end)
+                    }
+                    if partial.count > 4096 { partial.removeAll() }
                 }
+                if let onLine, !partial.isEmpty { onLine(String(decoding: partial, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)) }
                 done.leave()
             }
         }
@@ -169,15 +179,26 @@ final class ProjectRun {
         clock.lock()
         guard generation == self.generation, tool || !planByTool else { clock.unlock(); return false }
         if tool { planByTool = true }
-        aiSteps = Array(steps.prefix(20)); planNote = note.flatMap { $0.isEmpty ? nil : String($0.prefix(200)) }
+        aiSteps = WorkStep.timed(Array(steps.prefix(20)), after: aiSteps); planNote = note.flatMap { $0.isEmpty ? nil : String($0.prefix(200)) }
         let report = onPlan, all = aiSteps + appSteps, why = planNote
         clock.unlock(); report?(all, why); return true
     }
     func setAppStep(_ i: Int, _ text: String, _ status: WorkStep.Status) {
         clock.lock()
-        if appSteps.indices.contains(i) { appSteps[i] = WorkStep(text: text, status: status) } else { appSteps.append(WorkStep(text: text, status: status)) }
+        let step = WorkStep(text: text, status: status)
+        if appSteps.indices.contains(i) { appSteps[i] = WorkStep.timed([step], after: [appSteps[i]])[0] } else { appSteps.append(WorkStep.timed([step], after: [])[0]) }
         let report = onPlan, all = aiSteps + appSteps, why = planNote
         clock.unlock(); report?(all, why)
+    }
+    // project_run's "[n/m] name" lines, shown under the AI's current step. Without one: false (the caller notes it).
+    @discardableResult
+    func setSub(_ text: String?) -> Bool {
+        clock.lock()
+        guard let i = aiSteps.firstIndex(where: { $0.status == .doing }) ?? (text == nil ? aiSteps.firstIndex { $0.sub != nil } : nil) else { clock.unlock(); return false }
+        if aiSteps[i].sub == text { clock.unlock(); return true }
+        aiSteps[i].sub = text; aiSteps[i].subStarted = text == nil ? nil : Date()
+        let report = onPlan, all = aiSteps + appSteps, why = planNote
+        clock.unlock(); report?(all, why); return true
     }
     var initialDirty: Set<String> = []
     let operations = NSRecursiveLock()
@@ -252,6 +273,32 @@ struct WorkStep: Codable, Equatable {
     enum Status: String, Codable { case todo, doing, done, blocked }
     var text: String
     var status: Status
+    // Set by the app, not the AI: when the step became doing and when it ended (older chats: nil, no time shown).
+    var started: Date?
+    var ended: Date?
+    // While a project_run command runs in this step: its current "[n/m] name" line and since when.
+    var sub: String?
+    var subStarted: Date?
+    init(text: String, status: Status) { self.text = text; self.status = status }
+    // work_plan replaces the whole list: a step keeps its times only from the earlier step with the same text.
+    static func timed(_ steps: [WorkStep], after old: [WorkStep], now: Date = Date()) -> [WorkStep] {
+        var unused = old
+        return steps.map { step in
+            var step = step
+            if let i = unused.firstIndex(where: { $0.text == step.text }) {
+                let before = unused.remove(at: i)
+                step.started = before.started; step.ended = before.ended
+                if step.status == .doing { step.sub = before.sub; step.subStarted = before.subStarted }
+            }
+            switch step.status {
+            case .doing: if step.started == nil || step.ended != nil { step.started = step.started ?? now; step.ended = nil }
+            case .done, .blocked: if step.started != nil, step.ended == nil { step.ended = now }
+            case .todo: step.started = nil; step.ended = nil
+            }
+            if step.status != .doing { step.sub = nil; step.subStarted = nil }
+            return step
+        }
+    }
     // For the checkpoint the next AI reads: "[done] Read the code" one per line.
     static func summary(_ steps: [WorkStep]) -> String {
         steps.isEmpty ? "" : "\nWork plan so far (continue from the first step not done; update it with work_plan):\n"
@@ -400,10 +447,73 @@ final class GitLink: ToolProvider {
             if run.fullAuto { run.note("project_run (full auto): " + exe + " " + argv.joined(separator: " ")) }
             else { try approve("프로젝트 실행 / Run project command", "Runs outside the AI sandbox as your user.\n" + run.binding.root + "\n" + exe + " " + argv.joined(separator: " ") + "\n" + status) }
             guard try Data(contentsOf: url) == data, try WorkspaceBackup.stamps([WorkspaceRoot(path: run.binding.root, directory: true)]) == tree else { throw MaterialReader.error("Command changed after approval. Request it again.") }
-            let reply = try ProjectProcess.run(exe, argv, cwd: run.binding.root, token: run.attempt, deadline: min(run.deadline, Date().addingTimeInterval(2700)), guarded: run.fullAuto)
-            return "exit=\(reply.status)\n" + reply.output
+            // "[n/m] name" lines show under the current step; their times go to project-timings for later estimates.
+            let progress = RunProgress(command: selected) { text in if !run.setSub(text) { run.note(text) } }
+            defer { run.setSub(nil) }
+            do {
+                let reply = try ProjectProcess.run(exe, argv, cwd: run.binding.root, token: run.attempt, deadline: min(run.deadline, Date().addingTimeInterval(2700)), guarded: run.fullAuto,
+                                                   onLine: progress.line)
+                RunTimings.record(root: run.binding.root, command: selected, progress.finish(reply.status == 0 ? "ok" : "failed", exit: reply.status))
+                return "exit=\(reply.status)\n" + reply.output
+            } catch {
+                RunTimings.record(root: run.binding.root, command: selected, progress.finish(run.cancelled ? "stopped" : "timeout", exit: nil))
+                throw error
+            }
         default: throw MaterialReader.error("Unknown project tool.")
         }
+    }
+}
+
+// One project_run command's "[n/m] name" lines (the test and build scripts print them before each stage).
+final class RunProgress {
+    let command: String
+    private let show: (String) -> Void
+    private let lock = NSLock(), start = Date()
+    private var open = true, current: (name: String, at: Date)?, stages: [[String: Any]] = []
+    init(command: String, show: @escaping (String) -> Void) { self.command = command; self.show = show }
+    // A stage line is shown as "test [5/9] Compile app tests". Lines after the command ended are ignored.
+    func line(_ line: String) {
+        guard let (n, total, name) = Self.stage(line) else { return }
+        lock.lock(); defer { lock.unlock() }
+        guard open else { return }
+        let now = Date()
+        if let current { stages.append(["name": current.name, "seconds": (now.timeIntervalSince(current.at) * 10).rounded() / 10]) }
+        current = (name, now)
+        show("\(command) [\(n)/\(total)] \(name)")  // under the lock, so no stage appears after finish
+    }
+    static func stage(_ line: String) -> (Int, Int, String)? {
+        guard line.hasPrefix("["), let close = line.firstIndex(of: "]") else { return nil }
+        let count = line[line.index(after: line.startIndex)..<close].split(separator: "/")
+        let name = line[line.index(after: close)...].trimmingCharacters(in: .whitespaces)
+        guard count.count == 2, let n = Int(count[0]), let total = Int(count[1]), total >= 1, total <= 100, (1...total).contains(n), !name.isEmpty else { return nil }
+        return (n, total, String(name.prefix(80)))
+    }
+    func finish(_ outcome: String, exit: Int32?) -> [String: Any] {
+        lock.lock(); defer { lock.unlock() }
+        let now = Date()
+        if let current, open { stages.append(["name": current.name, "seconds": (now.timeIntervalSince(current.at) * 10).rounded() / 10]) }
+        open = false; current = nil
+        var entry: [String: Any] = ["at": ISO8601DateFormatter().string(from: start), "seconds": (now.timeIntervalSince(start) * 10).rounded() / 10,
+                                    "outcome": outcome, "stages": stages]
+        if let exit { entry["exit"] = Int(exit) }
+        return entry
+    }
+}
+
+// project-timings/<sha256 of the project root>.json: {"test": [last 20 runs], "build": [...]}, for a later "usually about 4 min".
+enum RunTimings {
+    private static let lock = NSLock()
+    static func file(_ root: String) -> URL {
+        let name = SHA256.hash(data: Data(root.utf8)).map { String(format: "%02x", $0) }.joined()
+        return URL(fileURLWithPath: AccountStore.supportDir).appendingPathComponent("project-timings", isDirectory: true).appendingPathComponent(name + ".json")
+    }
+    static func record(root: String, command: String, _ entry: [String: Any]) {
+        lock.lock(); defer { lock.unlock() }
+        let url = file(root)
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        var all = (try? Data(contentsOf: url)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+        all[command] = Array(((all[command] as? [[String: Any]]) ?? []) + [entry]).suffix(20).map { $0 }
+        if let data = try? JSONSerialization.data(withJSONObject: all, options: [.sortedKeys]) { try? data.write(to: url, options: .atomic) }
     }
 }
 

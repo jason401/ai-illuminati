@@ -2368,21 +2368,39 @@ private struct ParallelAnswers: View {
 }
 
 // What an AI saved to memory in this answer (Memory.swift), with Undo.
-// The project AI's steps: folded, one line ("3/5 · 테스트 실행"); unfolded, every step with its state.
+// The project AI's steps: folded, one line ("3/5 · 테스트 실행 · test [7/9] Compile app tests"); unfolded, every step
+// with its state and how long it took (the current one counts up), and under it the test/build stage it is in.
 private struct WorkPlanView: View {
     let steps: [WorkStep]
     let note: String?
     let running: Bool
 
     var body: some View {
+        // Times count up only while the work runs; a saved or interrupted turn shows no live time.
+        TimelineView(.periodic(from: .now, by: running ? 1 : 3600)) { context in content(context.date) }
+    }
+
+    private func content(_ now: Date) -> some View {
         let done = steps.filter { $0.status == .done }.count
-        let now = steps.first { $0.status == .doing } ?? steps.first { $0.status == .blocked }
-        DisclosureGroup {
+        let current = steps.first { $0.status == .doing } ?? steps.first { $0.status == .blocked }
+        return DisclosureGroup {
             VStack(alignment: .leading, spacing: 4) {
                 ForEach(Array(steps.enumerated()), id: \.offset) { _, step in
                     HStack(alignment: .top, spacing: 6) {
                         Image(systemName: Self.icon(step.status)).foregroundColor(Self.color(step.status)).frame(width: 14)
                         Text(step.text).foregroundColor(step.status == .done ? .secondary : .primary).lineLimit(3)
+                        Spacer(minLength: 8)
+                        if let time = Self.duration(step, now: now, running: running) {
+                            Text(time).foregroundColor(.secondary).monospacedDigit()
+                        }
+                    }
+                    if running, step.status == .doing, let sub = step.sub {
+                        HStack(spacing: 6) {
+                            Text(sub).foregroundColor(.secondary).lineLimit(1)
+                            Spacer(minLength: 8)
+                            if let since = step.subStarted { Text(Self.clock(now.timeIntervalSince(since))).foregroundColor(.secondary).monospacedDigit() }
+                        }
+                        .font(.system(size: 11)).padding(.leading, 20)
                     }
                 }
                 if let note { Text(L("바뀐 이유: ", "Changed: ") + note).foregroundColor(.secondary).lineLimit(2).padding(.top, 2) }
@@ -2390,12 +2408,23 @@ private struct WorkPlanView: View {
             .padding(.top, 4)
         } label: {
             Text(L("작업 \(done)/\(steps.count)", "Steps \(done)/\(steps.count)")
-                 + (running ? now.map { " · " + $0.text } ?? "" : ""))
+                 + (running ? current.map { " · " + $0.text + ($0.status == .doing ? $0.sub.map { " · " + $0 } ?? "" : "") } ?? "" : ""))
                 .lineLimit(1)
         }
         .font(.system(size: 12))
         .padding(.horizontal, 10).padding(.vertical, 6)
         .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    // Done or blocked: how long it took. Doing: so far, only while running. No start time (older chats): nothing.
+    static func duration(_ step: WorkStep, now: Date, running: Bool) -> String? {
+        guard let started = step.started else { return nil }
+        if let ended = step.ended { return clock(ended.timeIntervalSince(started)) }
+        return running && step.status == .doing ? clock(now.timeIntervalSince(started)) : nil
+    }
+    static func clock(_ seconds: TimeInterval) -> String {
+        let s = max(0, Int(seconds))
+        return s >= 3600 ? String(format: "%d:%02d:%02d", s / 3600, s / 60 % 60, s % 60) : String(format: "%d:%02d", s / 60, s % 60)
     }
 
     static func icon(_ status: WorkStep.Status) -> String {

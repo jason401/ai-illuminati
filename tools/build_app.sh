@@ -39,9 +39,10 @@ fi
 
 OUT="$STAGED"
 rm -rf "$OUT"
-echo "1/3 Prepare a candidate (the running app is unchanged)"
+# "[n/m] name" before each stage: the app shows it under the current step (project_run).
+echo "[1/5] Prepare a candidate (the running app is unchanged)"
 
-echo "2/3 Compile"
+echo "[2/5] Compile the app"
 mkdir -p "$OUT/Contents/MacOS"
 ARCH="$(uname -m)"
 if ! xcrun swiftc -swift-version 5 -O -target "$ARCH-apple-macos13.0" \
@@ -57,6 +58,7 @@ for lang in en ko; do
   mkdir -p "$OUT/Contents/Resources/$lang.lproj"
   printf '"CFBundleDisplayName" = "AI Illuminati";\n' > "$OUT/Contents/Resources/$lang.lproj/InfoPlist.strings"
 done
+echo "[3/5] Helpers"
 cp app/resources/workspace_mcp.py app/resources/project_process.py app/resources/local_models.json tools/install_app.py THIRD_PARTY_NOTICES.md LICENSE "$OUT/Contents/Resources/"
 if ! xcrun swiftc -swift-version 5 -O -o "$OUT/Contents/Resources/WorkspaceDocument" tools/workspace_document.swift >>"$LOG" 2>&1; then
   cat "$LOG"
@@ -66,6 +68,7 @@ if ! xcrun swiftc -swift-version 5 -O -o "$OUT/Contents/Resources/InstallBridge"
   cat "$LOG"
   exit 1
 fi
+echo "[4/5] App icon"
 # App icon: the menu bar mark drawn large by app/macos/Icon.swift.
 ICON_TMP="$(mktemp -d)"
 if ! xcrun swiftc -swift-version 5 -O -o "$ICON_TMP/MakeIcon" app/macos/Icon.swift tools/make_icon.swift >>"$LOG" 2>&1 \
@@ -99,6 +102,7 @@ cat > "$OUT/Contents/Info.plist" <<PLIST
 </dict></plist>
 PLIST
 
+echo "[5/5] Sign"
 # Pin the designated requirement to a persistent certificate, rather than each build's hash.
 REQUIREMENT="=designated => identifier \"local.aiilluminati\" and anchor H\"$SIGNING_ID\""
 if ! codesign --force --sign "$SIGNING_ID" --keychain "$KEYCHAIN" \

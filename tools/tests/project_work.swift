@@ -579,3 +579,60 @@ func testProjectSnapshot() {
     expect(review.contains("discarded") && review.contains("notes.txt"), "a user change put back to HEAD is in the review")
     print("PASS: project snapshot (discarded user changes)")
 }
+
+// Step times (A) and project_run's "[n/m] name" stages with their record (C).
+func testWorkTiming() {
+    let t0 = Date(timeIntervalSince1970: 1000), t1 = t0.addingTimeInterval(60), t2 = t0.addingTimeInterval(130)
+    var steps = WorkStep.timed([WorkStep(text: "Fix", status: .doing), WorkStep(text: "Test", status: .todo)], after: [], now: t0)
+    expect(steps[0].started == t0 && steps[0].ended == nil && steps[1].started == nil, "a step starts when it becomes doing")
+    steps = WorkStep.timed([WorkStep(text: "Fix", status: .done), WorkStep(text: "Docs", status: .todo), WorkStep(text: "Test", status: .doing)], after: steps, now: t1)
+    expect(steps[0].started == t0 && steps[0].ended == t1 && steps[1].started == nil && steps[2].started == t1, "times follow the same text, not the position")
+    steps[2].sub = "test [1/2] a"
+    steps = WorkStep.timed([WorkStep(text: "Fix", status: .done), WorkStep(text: "Test", status: .blocked)], after: steps, now: t2)
+    expect(steps[0].ended == t1 && steps[1].ended == t2 && steps[1].sub == nil, "a finished step keeps its end and loses its stage line")
+    steps = WorkStep.timed([WorkStep(text: "Fix", status: .done), WorkStep(text: "Test", status: .doing)], after: steps, now: t2.addingTimeInterval(5))
+    expect(steps[1].started == t1 && steps[1].ended == nil, "blocked then doing again counts on")
+    let old = try? JSONDecoder().decode(WorkStep.self, from: Data(#"{"text":"x","status":"done"}"#.utf8))
+    expect(old == WorkStep(text: "x", status: .done) && old?.started == nil, "steps saved before times decode without times")
+    expect(RunProgress.stage("[7/9] Compile app tests")! == (7, 9, "Compile app tests") && RunProgress.stage("[0/3] x") == nil && RunProgress.stage("[4/3] x") == nil
+           && RunProgress.stage("[1/3]") == nil && RunProgress.stage("[a/b] x") == nil && RunProgress.stage("1/3 x") == nil && RunProgress.stage("[1/0] x") == nil,
+           "only well-formed [n/m] name lines are stages")
+
+    let base = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("timing-fixture-" + UUID().uuidString)
+    let root = base.appendingPathComponent("repo"), origin = base.appendingPathComponent("origin.git")
+    try! FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+    func git(_ args: [String], at folder: URL? = nil) -> String { try! ProjectProcess.git(args, root: (folder ?? base).path) }
+    _ = git(["init", "--bare", origin.path]); _ = git(["init", "-b", "main", root.path])
+    _ = git(["config", "user.name", "Fixture"], at: root); _ = git(["config", "user.email", "fixture@example.invalid"], at: root)
+    _ = git(["remote", "add", "origin", origin.path], at: root)
+    // Stage lines arrive split across writes and on both pipes; the last line has no newline.
+    let script = "import sys,time\nw=sys.stdout.write\nw('[1/2] Com'); sys.stdout.flush(); time.sleep(0.2); w('pile\\nnoise 3/4 x\\n'); sys.stdout.flush(); time.sleep(0.3)\nsys.stderr.write('[2/2] Run\\r\\n'); sys.stderr.flush(); time.sleep(0.3); w('[9/2] bad')"
+    let config: [String: Any] = ["version": 1, "commands": ["test": ["executable": "/usr/bin/python3", "args": ["-c", script]], "fail": ["executable": "/bin/sh", "args": ["-c", "echo '[1/1] Only'; exit 3"]]]]
+    try! JSONSerialization.data(withJSONObject: config).write(to: root.appendingPathComponent(".ai-illuminati.json"))
+    _ = git(["add", "."], at: root); _ = git(["commit", "-m", "Initial"], at: root); _ = git(["push", "-u", "origin", "main"], at: root)
+    let selected = try! ProjectProcess.inspect(root.path)
+    let binding = WorkspaceBinding(roots: [WorkspaceRoot(path: root.path, directory: true, writable: true)], project: selected)
+    let run = ProjectRun(room: UUID(), binding: selected, token: DebateCancellation(), fullAuto: true)
+    ProjectWork.register(run); run.nextAttempt()
+    defer { ProjectWork.finish(run) }
+    let context = ToolContext(room: run.room, roots: binding.roots, projectRun: run.id, projectGeneration: run.generation)
+    let lock = NSLock(); var shown: [String?] = [], notes: [String] = []
+    run.onPlan = { all, _ in lock.lock(); if shown.last != .some(all[1].sub) { shown.append(all[1].sub) }; lock.unlock() }
+    run.onNote = { log in lock.lock(); notes = log; lock.unlock() }
+    run.setPlan([WorkStep(text: "Edit", status: .done), WorkStep(text: "Test", status: .doing)], note: nil, generation: run.generation, tool: true)
+    let reply = GitLink.shared.call("project_run", ["name": "test"], context: context)
+    lock.lock(); let seen = shown; lock.unlock()
+    expect(reply["isError"] as? Bool == false && seen == [nil, "test [1/2] Compile", "test [2/2] Run", nil], "stages show under the doing step, then clear: \(seen)")
+    var all = (try? JSONSerialization.jsonObject(with: Data(contentsOf: RunTimings.file(root.path)))) as? [String: Any]
+    let entry = (all?["test"] as? [[String: Any]])?.last, stages = entry?["stages"] as? [[String: Any]]
+    expect(entry?["outcome"] as? String == "ok" && entry?["exit"] as? Int == 0 && stages?.map { $0["name"] as? String } == ["Compile", "Run"]
+           && ((stages?[0]["seconds"] as? Double) ?? 0) >= 0.2 && ((entry?["seconds"] as? Double) ?? 0) >= 0.7, "the run and its stages are recorded: \(String(describing: entry))")
+    // No doing step: the stage goes to the work log instead.
+    run.setPlan([WorkStep(text: "Edit", status: .done), WorkStep(text: "Test", status: .done)], note: nil, generation: run.generation, tool: true)
+    _ = GitLink.shared.call("project_run", ["name": "fail"], context: context)
+    lock.lock(); let logged = notes; lock.unlock()
+    all = (try? JSONSerialization.jsonObject(with: Data(contentsOf: RunTimings.file(root.path)))) as? [String: Any]
+    expect(logged.contains("fail [1/1] Only") && (all?["fail"] as? [[String: Any]])?.last?["outcome"] as? String == "failed"
+           && (all?["fail"] as? [[String: Any]])?.last?["exit"] as? Int == 3 && (all?["test"] as? [[String: Any]])?.count == 1, "without a doing step the stage is noted; a failure is recorded as failed")
+    print("PASS: work timing (step times by text, [n/m] stages under the doing step, split lines, recorded runs and failures)")
+}

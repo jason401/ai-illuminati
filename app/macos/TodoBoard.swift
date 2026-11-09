@@ -177,9 +177,28 @@ struct TodoBoardView: View {
                                 "On: the next starts after you press Done. Off: it starts when the previous one waits for your check."))
                 }
                 Spacer()
+                pauseControl(list)
             }
             if let scheduler = TodoScheduler.shared { TodoCrewRow(list: list, scheduler: scheduler, discussion: discussion, error: { draft.error = $0 }) }
             ForEach(Array(rows.enumerated()), id: \.element.id) { index, item in row(item, index: index + 1, list: list) }
+        }
+    }
+
+    // ⏸ Pause / Resume for one list, with what holds it: paused now, or going on only up to a TODO.
+    @ViewBuilder private func pauseControl(_ list: TodoList) -> some View {
+        let stop = list.stopAfter.flatMap(store.snapshot.item)
+        if list.paused {
+            Label(L("멈춤", "Paused"), systemImage: "pause.fill").font(.system(size: 12, weight: .medium)).foregroundColor(.orange)
+        } else if let stop {
+            Label(L("「\(stop.title)」까지 진행", "Up to \"\(stop.title)\""), systemImage: "flag.checkered").font(.system(size: 12, weight: .medium)).foregroundColor(.orange).lineLimit(1)
+        }
+        if list.paused || stop != nil {
+            Button(L("다시 진행", "Resume")) { act { try store.resume(lists: [list.id]); TodoScheduler.shared?.wake() } }.controlSize(.small)
+                .help(L("대기 중인 TODO가 다시 차례대로 시작돼요. 초안은 그대로예요(▶ 작업 시작을 누르면 초안도 대기로 바뀌어요).",
+                        "Ready TODOs start again in turn. Drafts stay drafts (▶ Start also makes them ready)."))
+        } else {
+            Button(action: { act { try store.pause(lists: [list.id]) } }) { Label(L("멈추기", "Pause"), systemImage: "pause") }.controlSize(.small)
+                .help(L("지금 하는 TODO는 마치고, 다음 TODO부터 자동으로 시작하지 않아요.", "The running TODO finishes; the next ones do not start by themselves."))
         }
     }
 
@@ -196,7 +215,7 @@ struct TodoBoardView: View {
                 if item.state == .ready, !waits.isEmpty {
                     Label(waits.map(\.title).joined(separator: ", ") + L(" 기다림", " first"), systemImage: "hourglass").font(.system(size: 11)).foregroundColor(.secondary).lineLimit(1)
                 }
-                Text(item.state.title + (item.state == .running ? runner(item) : "")).font(.system(size: 12, weight: .medium)).foregroundColor(item.state.color)
+                Text(item.state.title + (item.state == .running ? runner(item) : "") + (item.state == .ready && data.stopped(item) ? L(" · 멈춤", " · paused") : "")).font(.system(size: 12, weight: .medium)).foregroundColor(item.state.color)
                 if item.state == .review {
                     Button(L("완료", "Done")) { store.accept(item.id) }.buttonStyle(.borderedProminent).controlSize(.small)
                 }
@@ -223,6 +242,9 @@ struct TodoBoardView: View {
                     }
                     if item.state == .draft { Button(L("대기로 (바로 가져가도 됨)", "Make ready")) { try? store.change(item.id) { $0.state = .ready } } }
                     if item.state == .ready { Button(L("초안으로 되돌리기", "Back to draft")) { try? store.change(item.id) { $0.state = .draft } } }
+                    Button(list.stopAfter == item.id ? L("멈춤 지점 지우기", "Remove the stop point") : L("여기까지 하고 멈추기", "Stop after this one")) {
+                        act { try store.stop(after: item.id); TodoScheduler.shared?.wake() }
+                    }
                     Divider()
                     if item.state != .done && item.state != .cancelled { Button(L("그만 (취소)", "Stop (cancel)")) { TodoScheduler.shared?.cancel(item.id) } }
                     Button(L("삭제", "Delete"), role: .destructive) { act { try store.delete(item.id) } }.disabled(item.state == .running)
@@ -237,6 +259,10 @@ struct TodoBoardView: View {
                           remove: item.state == .running ? nil : { id in act { try store.detach(item.id, id) } })
             }
             if item.state == .review || item.state == .needsYou { TodoCard(item: item, discussion: discussion, compact: true) }
+            if list.stopAfter == item.id, !list.paused {
+                Label(L("이 TODO까지 하고 멈춰요. 아래 TODO는 자동으로 시작하지 않아요.", "Stops after this TODO; the ones below do not start by themselves."), systemImage: "flag.checkered")
+                    .font(.system(size: 11)).foregroundColor(.orange)
+            }
         }
         .padding(.horizontal, 12).padding(.vertical, 9)
         .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 9))
@@ -488,13 +514,19 @@ struct TodoBoardHeader: View {
                 if let waiting = scheduler.waiting { Text(waiting).font(.system(size: 12)).foregroundColor(.orange) }
             }
             Spacer()
+            Button(action: { try? TodoStore.shared.pause(lists: project == nil ? nil : lists) }) {
+                Label(project == nil ? L("모두 멈추기", "Pause all") : L("멈추기", "Pause"), systemImage: "pause.fill")
+            }
+                .controlSize(.large)
+                .help(L("지금 하는 TODO는 마치고, 다음 TODO부터 자동으로 시작하지 않아요. ▶ 작업 시작이나 목록의 [다시 진행]으로 이어서 해요.",
+                        "The running TODO finishes; the next ones do not start by themselves. ▶ Start or the list's Resume goes on."))
             Button(action: { scheduler.startNow(lists: project == nil ? nil : lists) }) {
                 Label(project == nil ? L("모든 프로젝트 작업 시작", "Start all projects") : L("이 프로젝트 작업 시작", "Start this project"), systemImage: "play.fill")
             }
                 .buttonStyle(.borderedProminent).controlSize(.large)
-                .help(project == nil ? L("모든 프로젝트의 초안을 대기로 바꾸고 바로 확인해요", "Makes every project's drafts ready and checks now")
-                                     : L("이 프로젝트의 초안만 대기로 바꾸고 바로 확인해요. 다른 프로젝트에서 이미 대기인 TODO도 차례가 되면 시작돼요.",
-                                         "Makes only this project's drafts ready and checks now. Ready TODOs of other projects may start too."))
+                .help(project == nil ? L("모든 프로젝트의 초안을 대기로 바꾸고 멈춤도 풀어서 바로 확인해요", "Makes every project's drafts ready, lifts the pauses and checks now")
+                                     : L("이 프로젝트의 초안만 대기로 바꾸고 멈춤도 풀어서 바로 확인해요. 다른 프로젝트에서 이미 대기인 TODO도 차례가 되면 시작돼요.",
+                                         "Makes only this project's drafts ready, lifts its pause and checks now. Ready TODOs of other projects may start too."))
         }
     }
 }

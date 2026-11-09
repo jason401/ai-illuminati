@@ -349,6 +349,58 @@ func testSidebarProjects() {
 
 // Photos and files on a TODO: copied in before saving, removed with it, refused while it runs, and given to the AI
 // in its chat's folder (photos also with the message, once per chat).
+func testTodoPause() {
+    let a = ProjectBinding(root: "/tmp/todo-pause-a", common: "", remote: "", remoteURL: "")
+    let b = ProjectBinding(root: "/tmp/todo-pause-b", common: "", remote: "", remoteURL: "")
+    let url = todoStoreFile("pause")
+    let store = TodoStore(url: url)
+    let one = try! store.add(title: "one", project: a, projectName: "A")
+    let two = try! store.add(title: "two", project: a, projectName: "A")
+    let three = try! store.add(title: "three", project: a, projectName: "A")
+    let other = try! store.add(title: "other", project: b, projectName: "B")
+    let free = { (_: String) in false }
+    let listA = one.listID
+    store.startDrafts()
+    try! store.change(one.id) { $0.state = .running }
+    try! store.pause(lists: [listA])
+    expect(TodoStore(url: url).current.list(listA)?.paused == true, "the pause is saved")
+    try! store.change(one.id) { $0.state = .review }
+    expect(store.current.eligible(held: free).map(\.title) == ["other"], "a paused list starts nothing; other lists go on: \(store.current.eligible(held: free).map(\.title))")
+    expect(store.current.item(two.id)?.state == .ready, "paused TODOs stay ready")
+    let late = try! store.add(title: "late", project: a, projectName: "A")
+    expect(late.state == .draft, "a TODO added to a paused list is a draft")
+    store.requestChanges(one.id, "again")
+    expect(!store.current.eligible(held: free).contains { $0.id == one.id }, "a change request waits while paused")
+    try! store.resume(lists: [listA])
+    expect(store.current.eligible(held: free).map(\.title) == ["one", "other"], "resume goes on with the ready ones: \(store.current.eligible(held: free).map(\.title))")
+    expect(store.current.item(late.id)?.state == .draft, "resume keeps drafts")
+
+    // Stop after "two" (in order and not): "three" and "late" below it never start.
+    try! store.stop(after: two.id)
+    expect(TodoStore(url: url).current.list(listA)?.stopAfter == two.id, "the stop point is saved")
+    try! store.setList(listA, sequential: false)
+    try! store.change(late.id) { $0.state = .ready }
+    expect(store.current.eligible(held: free).map(\.title) == ["one", "two", "other"], "below the stop point nothing starts: \(store.current.eligible(held: free).map(\.title))")
+    try! store.move(three.id, by: -1)
+    expect(store.current.eligible(held: free).map(\.title) == ["one", "three", "two", "other"], "the stop point follows the board order")
+    try! store.stop(after: two.id)
+    expect(store.current.list(listA)?.stopAfter == nil && store.current.eligible(held: free).count == 5, "the same TODO again lifts it")
+    try! store.stop(after: two.id)
+    try! store.delete(two.id)
+    expect(store.current.list(listA)?.paused == true && store.current.list(listA)?.stopAfter == nil, "deleting the stop point keeps the list stopped")
+    store.startDrafts(lists: [other.listID])
+    expect(store.current.list(listA)?.paused == true, "▶ on another project leaves this pause")
+    store.startDrafts(lists: [listA])
+    expect(store.current.list(listA)?.paused == false, "▶ Start lifts the pause")
+    try! store.pause()
+    expect(store.current.lists.allSatisfy(\.paused) && store.current.eligible(held: free).isEmpty, "pause all")
+    // Old files without the fields load as not paused.
+    let old = Data(#"{"version":1,"lists":[{"id":"\#(UUID().uuidString)","title":"x","sequential":true,"waitForDone":false,"order":[]}],"items":[]}"#.utf8)
+    let decoded = try! JSONDecoder().decode(TodoData.self, from: old)
+    expect(decoded.lists.first?.paused == false && decoded.lists.first?.stopAfter == nil, "an old todos.json is not paused")
+    print("PASS: TODO pause (list pause, stop point, resume, saved)")
+}
+
 func testTodoEdit() {
     let a = ProjectBinding(root: "/tmp/todo-edit", common: "", remote: "", remoteURL: "")
     let url = todoStoreFile("edit")

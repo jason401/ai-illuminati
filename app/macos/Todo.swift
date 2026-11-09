@@ -125,8 +125,10 @@ struct TodoList: Codable, Identifiable, Equatable {
     var order: [UUID] = []
     var lock: EnterpriseLock?       // the project is worked on in an Enterprise chat: its TODOs go only to those accounts
     var accounts: [String] = []     // the accounts the user picked to work and review its TODOs; empty: automatic (every Claude/Codex)
+    var paused = false              // ⏸ nothing new starts (a running TODO finishes); ready ones stay ready for the resume
+    var stopAfter: UUID?            // "stop after this one": TODOs below it on the board do not start
     init(title: String, project: ProjectBinding?, lock: EnterpriseLock? = nil) { self.title = title; self.project = project; self.lock = lock }
-    private enum Keys: String, CodingKey { case id, title, project, sequential, waitForDone, order, lock, accounts }
+    private enum Keys: String, CodingKey { case id, title, project, sequential, waitForDone, order, lock, accounts, paused, stopAfter }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
         id = try c.decode(UUID.self, forKey: .id)
@@ -137,6 +139,8 @@ struct TodoList: Codable, Identifiable, Equatable {
         order = (try? c.decode([UUID].self, forKey: .order)) ?? []
         lock = try? c.decode(EnterpriseLock.self, forKey: .lock)
         accounts = (try? c.decode([String].self, forKey: .accounts)) ?? []
+        paused = (try? c.decode(Bool.self, forKey: .paused)) ?? false
+        stopAfter = try? c.decode(UUID.self, forKey: .stopAfter)
     }
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: Keys.self)
@@ -144,6 +148,8 @@ struct TodoList: Codable, Identifiable, Equatable {
         try c.encode(sequential, forKey: .sequential); try c.encode(waitForDone, forKey: .waitForDone); try c.encode(order, forKey: .order)
         try c.encodeIfPresent(lock, forKey: .lock)
         if !accounts.isEmpty { try c.encode(accounts, forKey: .accounts) }
+        if paused { try c.encode(paused, forKey: .paused) }
+        try c.encodeIfPresent(stopAfter, forKey: .stopAfter)
     }
 }
 
@@ -200,13 +206,22 @@ struct TodoData: Codable, Equatable {
     }
     // "After" links to TODOs the user cancelled: the TODO cannot go on without the user (the answer drops the link).
     func cancelledBlockers(_ item: TodoItem) -> [TodoItem] { item.after.compactMap(self.item).filter { $0.state == .cancelled } }
+    // Held by the user: its list is paused, or it is below the list's stop point on the board (in any order mode).
+    func stopped(_ item: TodoItem) -> Bool {
+        guard let list = list(item.listID) else { return false }
+        if list.paused { return true }
+        guard let stop = list.stopAfter else { return false }
+        let row = ordered(list.id).map(\.id)
+        guard let at = row.firstIndex(of: stop), let mine = row.firstIndex(of: item.id) else { return false }
+        return mine > at
+    }
 
     // The TODOs that may start now, in board order: ready, everything they wait for far enough, a project, and
     // their folder free (no other TODO running in it, no chat writing it: `held`).
     func eligible(held: (String) -> Bool) -> [TodoItem] {
         let busy = Set(items.filter { $0.state == .running }.compactMap { list($0.listID)?.project?.root })
         return lists.flatMap { ordered($0.id) }.filter { item in
-            guard item.state == .ready, let root = list(item.listID)?.project?.root, !busy.contains(root), cancelledBlockers(item).isEmpty else { return false }
+            guard item.state == .ready, !stopped(item), let root = list(item.listID)?.project?.root, !busy.contains(root), cancelledBlockers(item).isEmpty else { return false }
             guard blockers(item).allSatisfy({ id in self.item(id).map { satisfied($0, for: item) } ?? true }) else { return false }
             return !held(root)
         }
@@ -296,16 +311,34 @@ final class TodoStore: ObservableObject {
             } else { let list = TodoList(title: projectName, project: project, lock: lock); data.lists.append(list); listID = list.id }
             var item = TodoItem(listID: listID, title: title, detail: detail, askFirst: askFirst, after: after, originRoom: originRoom)
             item.id = id; item.attachments = attachments
-            if data.items.contains(where: { $0.listID == listID && ($0.state == .running || $0.state == .ready) }) { item.state = .ready }
+            if data.list(listID)?.paused != true, data.items.contains(where: { $0.listID == listID && ($0.state == .running || $0.state == .ready) }) { item.state = .ready }
             data.items.append(item)
             if let i = data.lists.firstIndex(where: { $0.id == listID }) { data.lists[i].order = data.ordered(listID).map(\.id) }
             return item
         } } catch { try? FileManager.default.removeItem(at: folder(id)); throw error }
     }
-    // ▶ Start now: every draft may be taken.
+    // ▶ Start now: every draft may be taken, and the lists' pause and stop point are lifted.
     // lists: only these (▶ on one project's board); nil = every list.
     func startDrafts(lists: Set<UUID>? = nil) {
-        try? update { data in for i in data.items.indices where data.items[i].state == .draft && lists.map({ $0.contains(data.items[i].listID) }) ?? true { data.items[i].state = .ready } }
+        try? update { data in
+            for i in data.items.indices where data.items[i].state == .draft && lists.map({ $0.contains(data.items[i].listID) }) ?? true { data.items[i].state = .ready }
+            for l in data.lists.indices where lists.map({ $0.contains(data.lists[l].id) }) ?? true { data.lists[l].paused = false; data.lists[l].stopAfter = nil }
+        }
+    }
+    // ⏸ Pause: nothing new of these lists starts (a running TODO finishes); ready TODOs stay ready for the resume.
+    func pause(lists: Set<UUID>? = nil) throws {
+        try update { data in for l in data.lists.indices where lists.map({ $0.contains(data.lists[l].id) }) ?? true { data.lists[l].paused = true } }
+    }
+    // Resume: the ready TODOs go on again; drafts stay drafts (▶ Start makes them ready).
+    func resume(lists: Set<UUID>? = nil) throws {
+        try update { data in for l in data.lists.indices where lists.map({ $0.contains(data.lists[l].id) }) ?? true { data.lists[l].paused = false; data.lists[l].stopAfter = nil } }
+    }
+    // Stop after this TODO: the ones below it on the board do not start. The same TODO again lifts the stop point.
+    func stop(after id: UUID) throws {
+        try update { data in
+            guard let item = data.item(id), let l = data.lists.firstIndex(where: { $0.id == item.listID }) else { throw TodoError.notFound }
+            data.lists[l].stopAfter = data.lists[l].stopAfter == id ? nil : id
+        }
     }
     func accept(_ id: UUID) { try? change(id) { guard $0.state == .review else { return }; $0.state = .done; $0.unreported = false } }
     // Change request: the feedback goes with the next attempt, in the same chat.
@@ -341,6 +374,8 @@ final class TodoStore: ObservableObject {
             guard let item = data.item(id) else { throw TodoError.notFound }
             guard item.state != .running else { throw TodoError.busy }
             data.items.removeAll { $0.id == id }
+            // The stop point deleted: the list stays stopped (paused) rather than going on below it by itself.
+            for l in data.lists.indices where data.lists[l].stopAfter == id { data.lists[l].stopAfter = nil; data.lists[l].paused = true }
             for i in data.items.indices { data.items[i].after.removeAll { $0 == id } }
             for i in data.lists.indices { data.lists[i].order.removeAll { $0 == id } }
             data.lists.removeAll { list in !data.items.contains { $0.listID == list.id } }

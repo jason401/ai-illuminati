@@ -1653,7 +1653,10 @@ private struct TurnView: View, Equatable {
                     .padding(.horizontal, 10).padding(.vertical, 4)
                     .background(Color.orange.opacity(0.10), in: Capsule())
             }
-            if turn.mode == 0, let final = turn.final {
+            if turn.mode == 0, let order = turn.answerOrder, order.count > 1 {
+                // Several AIs answered at once: side by side (or one under the other), each reply as it is written.
+                ParallelAnswers(turn: turn, order: order, highlight: highlight, answeredTime: answeredTime)
+            } else if turn.mode == 0, let final = turn.final {
                 // Plain chat: the answer reads like the desktop apps, without a card, under who wrote it.
                 VStack(alignment: .leading, spacing: 8) {
                     if let by = turn.finalBy {
@@ -1695,7 +1698,7 @@ private struct TurnView: View, Equatable {
                 .background(Color(nsColor: .controlBackgroundColor))
                 .cornerRadius(10)
             }
-            ForEach(turn.mode == 0 ? (turn.moreAnswers ?? []) : []) { answer in
+            ForEach(turn.mode == 0 && (turn.answerOrder?.count ?? 0) < 2 ? (turn.moreAnswers ?? []) : []) { answer in
                 // A second (third…) AI called with @, which answered at the same time without seeing the others.
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 6) {
@@ -2245,4 +2248,96 @@ extension Account.Provider {
 
     // Speaker labels start with the AI's name (for example, "Claude (Work)"), so older replies get a color too.
     static func of(speaker: String) -> Self? { allCases.first { speaker.hasPrefix($0.title) } }
+}
+
+// Several AIs answering one message at once (Solo.swift): one column each, in the order they were called, with
+// its reply as it is written, then the finished reply (or the error in red). Two fit side by side; three or more
+// scroll sideways; a narrow window, or "one under the other" (remembered), stacks them.
+private struct ParallelAnswers: View {
+    let turn: ChatTurn
+    let order: [String]
+    let highlight: FindHighlight
+    let answeredTime: String?
+    @AppStorage("answersSideBySide") private var sideBySide = true
+
+    typealias Column = ChatTurn.Column
+
+    var body: some View {
+        let columns = turn.columns(order)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Spacer()
+                Button(action: { sideBySide.toggle() }) {
+                    Label(sideBySide ? L("위아래로 보기", "One under the other") : L("나란히 보기", "Side by side"),
+                          systemImage: sideBySide ? "rectangle.split.1x2" : "rectangle.split.2x1")
+                        .font(.system(size: 11))
+                }
+                .buttonStyle(.link)
+                .help(L("여러 AI의 답을 나란히 또는 위아래로 보여 줘요. 고른 방식은 기억해요.", "Shows the AIs' replies side by side or one under the other. Your choice is kept."))
+            }
+            if sideBySide {
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .top, spacing: 14) {
+                        ForEach(columns) { column in card(column).frame(minWidth: 280, maxWidth: .infinity, alignment: .topLeading) }
+                    }
+                    if columns.count > 2 {
+                        ScrollView(.horizontal) {
+                            HStack(alignment: .top, spacing: 14) {
+                                ForEach(columns) { column in card(column).frame(width: 320, alignment: .topLeading) }
+                            }
+                            .padding(.bottom, 8)
+                        }
+                        // ViewThatFits measures the ideal width: sideways scrolling needs room for about two columns.
+                        .frame(minWidth: 600, idealWidth: 600, maxWidth: .infinity)
+                    }
+                    stacked(columns)
+                }
+            } else {
+                stacked(columns)
+            }
+        }
+    }
+
+    private func stacked(_ columns: [Column]) -> some View {
+        VStack(alignment: .leading, spacing: 18) {
+            ForEach(columns) { column in content(column).frame(maxWidth: .infinity, alignment: .leading) }
+        }
+    }
+
+    private func card(_ column: Column) -> some View {
+        content(column)
+            .padding(12)
+            .frame(maxHeight: .infinity, alignment: .top)
+            .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func content(_ column: Column) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Circle().fill(Account.Provider.of(speaker: column.name)?.color ?? .secondary).frame(width: 7, height: 7)
+                Text(column.name).font(.system(size: 12, weight: .medium)).foregroundColor(.secondary)
+                if column.writing { ProgressView().controlSize(.mini) }
+            }
+            if let text = column.text {
+                Group {
+                    if column.failed { Text(text) } else { MarkdownText(text: text, size: 15, highlight: column.writing ? FindHighlight() : highlight) }
+                }
+                .font(.system(size: 15)).lineSpacing(5)
+                .foregroundColor(column.failed ? .red : .primary)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                let pictures = column.final ? TurnView.finalPictures(turn, final: text) : column.images
+                if !pictures.isEmpty { PictureStrip(images: pictures, size: 160) }
+                if column.done && !column.failed {
+                    HStack(spacing: 6) {
+                        CopyButton(text: text, key: "answer-\(turn.id)-\(column.id)")
+                        if let answeredTime { Text(answeredTime).font(.system(size: 11)).foregroundColor(.secondary) }
+                    }
+                }
+            } else {
+                Text(column.writing ? L("쓰는 중…", "Writing…") : L("답 없음", "No reply"))
+                    .font(.system(size: 13)).foregroundColor(.secondary)
+            }
+        }
+    }
 }

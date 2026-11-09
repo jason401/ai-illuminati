@@ -28,6 +28,19 @@ private struct EmptyPreviewLogin: GoogleTokenStore {
         if CommandLine.arguments.contains("--markdown") {
             turn.final = "Memory first.\n\n## Models\n\n| Model | Memory | Time |\n|---|---|---|\n| SD 1.5 | 2~4GB | 10~20s |\n| **SDXL** | 7~9GB | 30s~1min |\n\n---\n### Notes\nKeep ~~old~~ text and `a~b` code."
         }
+        if CommandLine.arguments.contains("--parallel") {
+            // Several AIs at once: one finished, one still writing, one failed (CHAT_STACKED=1: one under the other).
+            turn.question = "Which plot style reads better for the paper?"
+            turn.answerOrder = ["c", "g", "m"]; turn.answerNames = ["Claude (School)", "ChatGPT (School)", "Gemma 4 E4B"]
+            turn.final = "**Line plot** with shared axes.\n\n- Easier to compare the three samples\n- Keeps the 2 MHz peak visible"
+            turn.finalBy = "Claude (School)"; turn.finalAccountID = "c"
+            turn.partials = ["g": "A small-multiples layout could work, because each sample"]
+            var failed = ChatTurn.Entry(round: 1, speaker: "Gemma 4 E4B", text: "Ollama is not running.", failed: true); failed.accountID = "m"
+            turn.moreAnswers = [failed]
+            turn.status = "ChatGPT (School) answering…"
+            if !CommandLine.arguments.contains("--three") { turn.answerOrder = ["c", "g"]; turn.moreAnswers = nil }
+            UserDefaults.standard.set(ProcessInfo.processInfo.environment["CHAT_STACKED"] != "1", forKey: "answersSideBySide")
+        }
         conversation.turns = [turn]
         chat.conversations = [conversation]; chat.currentID = conversation.id
         if CommandLine.arguments.contains("--find") {

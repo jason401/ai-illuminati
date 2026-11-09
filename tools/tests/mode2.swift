@@ -1859,6 +1859,10 @@ do {
     var turn = chat.current.turns[0]
     expect(Set(asked.map(\.0)) == ["mb-codex", "mb-claude"] && asked.count == 2, "both members answer the message")
     expect(turn.mentions == nil && turn.final != nil && turn.moreAnswers?.count == 1, "both replies are shown and no @ names are added to the message")
+    let columns = turn.columns(turn.answerOrder ?? [])
+    expect(turn.answerOrder == ["mb-codex", "mb-claude"] && turn.answerNames == [labels["mb-codex"]!, labels["mb-claude"]!]
+           && columns.map(\.text) == ["Reply from mb-codex", "Reply from mb-claude"] && columns.allSatisfy { $0.done && !$0.writing } && turn.partials == nil,
+           "side by side: one column per AI in the called order, each with its own reply")
     let writer = asked.first { $0.0 == "mb-codex" }!.1, other = asked.first { $0.0 == "mb-claude" }!.1
     expect(writer.contains("do not see each other's replies") && !writer.contains("do not create, edit or delete"), "the first member may change files")
     expect(other.contains("\(labels["mb-codex"]!) handles any file changes"), "the other members only read files")
@@ -1869,10 +1873,41 @@ do {
     expect(chat.crew(project: false).map { $0.lead == "mb-claude" && $0.others == ["mb-codex"] } == true, "a lead picked by hand works")
     chat.configure { $0.leadID = nil }
 
+    // Both write at the same time: each column shows its own reply so far; text arriving after a reply is
+    // done does not bring the partial back.
+    var seen: [[String: String]] = []
+    chat.workspaceAnswer = { account, prompt, binding, _, progress in
+        lock.lock(); asked.append((account.id, prompt)); lock.unlock()
+        progress?(.text("so far \(account.id)"))
+        let until = Date().addingTimeInterval(0.5)
+        while Date() < until {
+            let now = DispatchQueue.main.sync { chat.current.turns.last?.partials ?? [:] }
+            if now.count == 2 { lock.lock(); seen.append(now); lock.unlock(); break }
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+        return .success("Reply from \(account.id)")
+    }
     asked.removeAll()
     chat.draft = "and again"
     chat.send(); waitFor(chat)
     expect(asked.count == 2, "members keep answering every message")
+    expect(seen.contains { $0 == ["mb-codex": "so far mb-codex", "mb-claude": "so far mb-claude"] } && chat.current.turns.last?.partials == nil,
+           "both replies are written in their own columns at the same time, and none is left when done")
+    var stopped = ChatTurn(question: "q"); stopped.status = "x"; stopped.mode = 0
+    stopped.answerOrder = ["a", "b", "c"]; stopped.answerNames = ["A", "B", "C"]; stopped.partials = ["b": "half of B", "c": "half of C"]
+    expect(stopped.columns(["a", "b", "c"]).map(\.writing) == [true, true, true] && stopped.columns(["a", "b", "c"])[1].text == "half of B",
+           "a column without text yet says it is writing")
+    let side = Discussion(model: m)
+    side.change(side.currentID) { $0.turns = [stopped] }
+    side.endSolo(side.currentID, 0, stopped: true)
+    let kept = side.current.turns[0]
+    expect(kept.final == "half of B" && kept.finalAccountID == "b" && kept.moreAnswers?.map(\.text) == ["half of C"] && kept.partials == nil
+           && kept.columns(["a", "b", "c"]).map(\.done) == [false, true, true] && !kept.columns(["a", "b", "c"])[0].writing,
+           "stopped: every reply written so far is kept in its column")
+    chat.workspaceAnswer = { account, prompt, binding, _, _ in
+        lock.lock(); asked.append((account.id, prompt)); bindings[account.id] = binding; lock.unlock()
+        return .success("Reply from \(account.id)")
+    }
 
     asked.removeAll()
     chat.draft = "@\(labels["mb-gemini"]!) only you"

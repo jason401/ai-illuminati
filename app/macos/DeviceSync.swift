@@ -196,7 +196,7 @@ final class DeviceSync: ObservableObject {
             t.moreAnswers = t.moreAnswers?.map { var e = $0; e.images = nil; return e }
             t.backupPath = nil; t.workspaceChanges = nil; t.projectLog = nil; t.artifact = nil
             t.tasks = t.tasks?.map { var task = $0; task.output = nil; task.expectedFiles = nil; return task }
-            t.partial = nil; t.partialBy = nil; t.activity = nil; t.status = ""
+            t.partial = nil; t.partialBy = nil; t.partials = nil; t.activity = nil; t.status = ""
             return t
         }
         let state = state?.trimmingCharacters(in: .whitespacesAndNewlines)

@@ -452,6 +452,7 @@ struct ChatTurn: Identifiable, Codable, Equatable {
         var focus: String?
         var headline: String?  // one short line the chat shows; `text` opens on click
         var images: [ChatImage]?  // pictures this AI made in this reply (Pictures.swift)
+        var accountID: String?    // mode 0, several AIs at once: whose reply this is (labels can repeat)
     }
     var id = UUID()
     var question: String
@@ -482,6 +483,12 @@ struct ChatTurn: Identifiable, Codable, Equatable {
     var moreAnswers: [Entry]?   // mode 0: replies after the first when several AIs were called with @
     var partial: String?        // mode 0: the reply so far while it is being written (cleared when done)
     var partialBy: String?      // mode 0: who is writing it
+    // Mode 0, several AIs answering at once (shown side by side, ChatWindow.swift): the accounts called, in order,
+    // their names then, each one's reply so far while it is written, and the account of `final`.
+    var answerOrder: [String]?
+    var answerNames: [String]?
+    var partials: [String: String]?
+    var finalAccountID: String?
     var activity: String?       // mode 0: what that AI is doing now (reading files, searching…)
     var voteOptions: [String]?  // mode 4: the choices voted on
     var votes: [VoteBallot]?    // mode 4: one ballot per AI, in the team's order

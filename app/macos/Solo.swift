@@ -55,6 +55,38 @@ enum AutoPick {
     }
 }
 
+// Several AIs answering one message at once: what each one's column shows now (ChatWindow.swift ParallelAnswers).
+extension ChatTurn {
+    struct Column: Identifiable, Equatable {
+        let id: String       // the account
+        let name: String
+        var text: String?
+        var images: [ChatImage] = []
+        var final = false    // the main answer (its pictures include those it names)
+        var failed = false
+        var writing = false
+        var done = false
+    }
+
+    // In the order they were called. Replies saved without an account match by name.
+    func columns(_ order: [String]) -> [Column] {
+        order.enumerated().map { k, accountID in
+            let name = answerNames?.indices.contains(k) == true ? answerNames![k] : accountID
+            var column = Column(id: accountID, name: name)
+            if let final, finalAccountID == accountID || (finalAccountID == nil && finalBy == name) {
+                column.text = final; column.images = finalImages ?? []; column.final = true; column.done = true
+            } else if let entry = (moreAnswers ?? []).first(where: { $0.accountID == accountID || ($0.accountID == nil && $0.speaker == name) }) {
+                column.text = entry.text; column.images = entry.images ?? []; column.failed = entry.failed; column.done = true
+            } else if let partial = partials?[accountID], !partial.isEmpty {
+                column.text = partial; column.writing = true
+            } else {
+                column.writing = !status.isEmpty
+            }
+            return column
+        }
+    }
+}
+
 extension Discussion {
     // The chat's own folder, where its AI saves what it writes. Deleted with the chat (ChatStore.delete).
     static func chatFolder(_ room: UUID) -> URL {
@@ -424,7 +456,11 @@ extension Discussion {
             let called = mentions.compactMap { accountID in model.accounts.first { $0.id == accountID } }
             let note = notes.joined(separator: "\n")
             let names = called.map { label($0) }.joined(separator: ", ")
-            changeTurn(id, index) { t in t.status = L("\(names)가 답하는 중…", "\(names) answering…"); t.orderNote = note.isEmpty ? nil : note }
+            let together = called.count > 1   // shown side by side, each reply as it is written
+            changeTurn(id, index) { t in
+                t.status = L("\(names)가 답하는 중…", "\(names) answering…"); t.orderNote = note.isEmpty ? nil : note
+                if together { t.answerOrder = called.map(\.id); t.answerNames = called.map { self.label($0) } }
+            }
             let group = DispatchGroup()
             let doneLock = NSLock()
             var done: Set<String> = []
@@ -439,14 +475,18 @@ extension Discussion {
                     if k > 0 { instruction += " \(label(called[0])) handles any file changes: your folders are read only, so read files if useful but do not try to create, edit or delete any." }
                 }
                 if keepState && k == 0 { instruction += "\n" + Self.stateRule(current: Self.loadState(id)) }
-                // One reply is shown as it is written at a time: whoever starts first, then the next.
+                // Several at once: every reply as it is written, each in its own column. One: as before.
+                let accountID = account.id
                 let progress: (AnswerProgress) -> Void = { update in
-                    doneLock.lock(); let finished = done.contains(speaker); doneLock.unlock()
-                    guard !finished else { return }
+                    func finished() -> Bool { doneLock.lock(); defer { doneLock.unlock() }; return done.contains(speaker) }
+                    guard !finished() else { return }
                     switch update {
                     case .text(let text):
                         let shown = Self.extractState(FaceLink.extract(text).text).reply
                         self.changeTurn(id, index) { t in
+                            // Checked again here: text that arrives after the reply is done must not bring it back.
+                            guard !finished() else { return }
+                            if together { t.partials = (t.partials ?? [:]).merging([accountID: shown]) { $1 }; return }
                             guard t.partialBy == nil || t.partialBy == speaker else { return }
                             t.partial = shown; t.partialBy = speaker
                         }
@@ -476,11 +516,15 @@ extension Discussion {
                     case .failure(let failure):
                         entry = .init(round: 1, speaker: speaker, text: Self.describe(failure), failed: true)
                     }
+                    if together { entry.accountID = accountID }
                     let finished = entry
                     self.changeTurn(id, index, save: true) { t in
                         if t.partialBy == speaker { t.partial = nil; t.partialBy = nil; t.activity = nil }
+                        t.partials?[accountID] = nil
+                        if t.partials?.isEmpty == true { t.partials = nil }
                         if !finished.failed && t.final == nil {
                             t.final = finished.text; t.finalBy = speaker; t.finalImages = finished.images
+                            if together { t.finalAccountID = accountID }
                         } else {
                             t.moreAnswers = (t.moreAnswers ?? []) + [finished]
                         }
@@ -696,6 +740,16 @@ extension Discussion {
             // Stopped while writing: keep what was written so far as the answer.
             if stopped, t.final == nil, let partial = t.partial, !partial.isEmpty { t.final = partial; t.finalBy = t.partialBy }
             t.partial = nil; t.partialBy = nil
+            // Several at once, stopped: every reply written so far stays, in the order they were called.
+            if stopped, let partials = t.partials, let order = t.answerOrder {
+                for (k, accountID) in order.enumerated() {
+                    guard let text = partials[accountID], !text.isEmpty else { continue }
+                    let name = t.answerNames?.indices.contains(k) == true ? t.answerNames![k] : accountID
+                    if t.final == nil { t.final = text; t.finalBy = name; t.finalAccountID = accountID }
+                    else { var entry = ChatTurn.Entry(round: 1, speaker: name, text: text, failed: false); entry.accountID = accountID; t.moreAnswers = (t.moreAnswers ?? []) + [entry] }
+                }
+            }
+            t.partials = nil
             if stopped { t.endReason = L("사용자가 중지했습니다.", "Stopped by you.") }
         }
         finish(id, index)

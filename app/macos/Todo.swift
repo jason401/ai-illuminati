@@ -124,8 +124,9 @@ struct TodoList: Codable, Identifiable, Equatable {
     var waitForDone = false
     var order: [UUID] = []
     var lock: EnterpriseLock?       // the project is worked on in an Enterprise chat: its TODOs go only to those accounts
+    var accounts: [String] = []     // the accounts the user picked to work and review its TODOs; empty: automatic (every Claude/Codex)
     init(title: String, project: ProjectBinding?, lock: EnterpriseLock? = nil) { self.title = title; self.project = project; self.lock = lock }
-    private enum Keys: String, CodingKey { case id, title, project, sequential, waitForDone, order, lock }
+    private enum Keys: String, CodingKey { case id, title, project, sequential, waitForDone, order, lock, accounts }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
         id = try c.decode(UUID.self, forKey: .id)
@@ -135,12 +136,14 @@ struct TodoList: Codable, Identifiable, Equatable {
         waitForDone = (try? c.decode(Bool.self, forKey: .waitForDone)) ?? false
         order = (try? c.decode([UUID].self, forKey: .order)) ?? []
         lock = try? c.decode(EnterpriseLock.self, forKey: .lock)
+        accounts = (try? c.decode([String].self, forKey: .accounts)) ?? []
     }
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: Keys.self)
         try c.encode(id, forKey: .id); try c.encode(title, forKey: .title); try c.encodeIfPresent(project, forKey: .project)
         try c.encode(sequential, forKey: .sequential); try c.encode(waitForDone, forKey: .waitForDone); try c.encode(order, forKey: .order)
         try c.encodeIfPresent(lock, forKey: .lock)
+        if !accounts.isEmpty { try c.encode(accounts, forKey: .accounts) }
     }
 }
 
@@ -355,11 +358,13 @@ final class TodoStore: ObservableObject {
         }
     }
     func setAfter(_ id: UUID, _ after: [UUID]) throws { try change(id) { $0.after = after.filter { $0 != id } } }
-    func setList(_ listID: UUID, sequential: Bool? = nil, waitForDone: Bool? = nil) throws {
+    // accounts: [] goes back to automatic. Takes effect from the next start; a running attempt keeps its crew.
+    func setList(_ listID: UUID, sequential: Bool? = nil, waitForDone: Bool? = nil, accounts: [String]? = nil) throws {
         try update { data in
             guard let l = data.lists.firstIndex(where: { $0.id == listID }) else { throw TodoError.notFound }
             if let sequential { data.lists[l].sequential = sequential }
             if let waitForDone { data.lists[l].waitForDone = waitForDone }
+            if let accounts { var seen = Set<String>(); data.lists[l].accounts = accounts.filter { !$0.isEmpty && seen.insert($0).inserted } }
         }
     }
     // MARK: Attachments
@@ -603,8 +608,10 @@ final class TodoScheduler: ObservableObject {
             guard data.item(item.id)?.state == .ready, let list = data.list(item.listID), let project = list.project,
                   !data.items.contains(where: { $0.state == .running && data.list($0.listID)?.project?.root == project.root }) else { continue }
             let lock = lock(for: item, list: list, project: project)
-            guard let crew = crew(lock: lock) else {
-                note = L("남은 사용량이 30% 넘는 Claude/Codex 계정이 없어서 기다려요.", "Waiting for a Claude/Codex account with 30% usage left."); break
+            guard let crew = crew(lock: lock, allowed: list.accounts) else {
+                // Picked AIs: only this project waits, the others may still start.
+                if !list.accounts.isEmpty { note = Self.noCrew(list.accounts, accounts: discussion.model.accounts, lock: lock); continue }
+                note = Self.noCrew([], accounts: discussion.model.accounts, lock: lock); break
             }
             if let reason = begin(item, list: list, project: project, crew: crew, lock: lock) {
                 note = reason
@@ -628,15 +635,34 @@ final class TodoScheduler: ObservableObject {
 
     // Who works and who reviews: Claude/Codex accounts with 30% of both limits left (and allowed by the lock), the
     // most weekly usage first (Enterprise first when close, like AutoPick); the reviewer of the other kind when there is one.
-    func crew(lock: EnterpriseLock? = nil) -> (lead: Account, reviewer: Account?)? {
+    // allowed: the accounts picked for the list (TodoList.accounts); empty: any. Never falls back to the others.
+    func crew(lock: EnterpriseLock? = nil, allowed: [String] = []) -> (lead: Account, reviewer: Account?)? {
         let usage = discussion.model.latestUsage
         let ready = AutoPick.candidates(discussion.model.accounts, usage: usage, lock: lock)
-            .filter { [.claude, .codex].contains($0.provider) && AutoPick.enough(usage[$0.id], threshold: Self.threshold) }
+            .filter { [.claude, .codex].contains($0.provider) && AutoPick.enough(usage[$0.id], threshold: Self.threshold) && (allowed.isEmpty || allowed.contains($0.id)) }
         func score(_ a: Account) -> (Double, Double) { (AutoPick.weekly(usage[a.id]) + (a.isSchool ? AutoPick.enterpriseBonus : 0), AutoPick.fiveHour(usage[a.id])) }
         guard let lead = ready.max(by: { score($0) < score($1) }) else { return nil }
         let others = ready.filter { $0.id != lead.id }
         let reviewer = others.filter { $0.provider != lead.provider }.max { score($0) < score($1) } ?? others.max { score($0) < score($1) }
         return (lead, reviewer)
+    }
+
+    // The crew a list's next TODO would get if it started now (the board shows it).
+    func crew(for list: TodoList) -> (lead: Account, reviewer: Account?)? {
+        guard let project = list.project else { return nil }
+        let item = store.current.ordered(list.id).first { $0.state == .ready || $0.state == .draft } ?? TodoItem(listID: list.id, title: "")
+        return crew(lock: lock(for: item, list: list, project: project), allowed: list.accounts)
+    }
+
+    // Why nobody can take a list's TODOs: the picked accounts are gone, kept out by the Enterprise lock, or low on usage.
+    static func noCrew(_ allowed: [String], accounts: [Account], lock: EnterpriseLock?) -> String {
+        guard !allowed.isEmpty else { return L("남은 사용량이 30% 넘는 Claude/Codex 계정이 없어서 기다려요.", "Waiting for a Claude/Codex account with 30% usage left.") }
+        let picked = accounts.filter { allowed.contains($0.id) && [.claude, .codex].contains($0.provider) }
+        if picked.isEmpty { return L("고른 AI 계정이 모두 없어졌어요. 보드에서 일할 AI를 다시 골라 주세요.", "The picked AI accounts are gone. Pick the AIs again on the board.") }
+        if !picked.contains(where: { Enterprise.permits($0, lock: lock) }) {
+            return L("고른 AI가 이 프로젝트의 회사·학교 잠금에 맞지 않아요. 일할 AI를 다시 골라 주세요.", "The picked AIs are not allowed by this project's Enterprise lock. Pick them again.")
+        }
+        return L("고른 AI의 남은 사용량이 30% 넘을 때까지 기다려요.", "Waiting until a picked AI has 30% usage left.")
     }
 
     // Starts one TODO in its own chat. Returns why it did not start (it stays ready).

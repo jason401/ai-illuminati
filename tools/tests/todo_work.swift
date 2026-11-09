@@ -476,3 +476,51 @@ func testMoveChatToProject() {
            .projects.first?.id == repo.common, "the moved chat shows under the project's folder")
     print("PASS: move chat to project (who may move, the new link, shows in the folder)")
 }
+
+// The AIs picked for a project's TODOs: saved with the list (old files: automatic), only they work and review,
+// never a fallback to the others, and the reason shown when none of them can.
+func testTodoCrew() {
+    let a = ProjectBinding(root: "/tmp/todo-crew", common: "", remote: "", remoteURL: "")
+    let url = todoStoreFile("crew")
+    let store = TodoStore(url: url)
+    let item = try! store.add(title: "pick", project: a, projectName: "A")
+    let listID = item.listID
+    let old = try! JSONSerialization.data(withJSONObject: ["id": listID.uuidString, "title": "A"])
+    expect(try! JSONDecoder().decode(TodoList.self, from: old).accounts.isEmpty, "an old list is automatic")
+    let plain = String(data: try! TodoStore.encoder.encode(store.current.list(listID)!), encoding: .utf8)!
+    expect(!plain.contains("accounts"), "automatic is not written")
+    try! store.setList(listID, accounts: ["c2", "x1", "c2", ""])
+    expect(TodoStore(url: url).current.list(listID)?.accounts == ["c2", "x1"], "the picked accounts are saved, once each")
+
+    let model = AppModel()
+    model.accounts = [Account(id: "c1", provider: .claude, name: "Claude One"), Account(id: "c2", provider: .claude, name: "Claude Two"),
+                      Account(id: "x1", provider: .codex, name: "Codex One"), Account(id: "g1", provider: .gemini, name: "Gemini")]
+    func left(_ five: Double, _ week: Double) -> AIUsage {
+        var u = AIUsage(name: "x"); u.fiveHour = UsageWindow(usedPercent: 100 - five, resetsAt: nil); u.weekly = UsageWindow(usedPercent: 100 - week, resetsAt: nil); return u
+    }
+    model.latestUsage = ["c1": left(100, 100), "c2": left(60, 60), "x1": left(50, 50), "g1": left(100, 100)]
+    let scheduler = TodoScheduler(discussion: Discussion(model: model), store: store)
+    let auto = scheduler.crew()
+    expect(auto?.lead.id == "c1" && auto?.reviewer?.id == "x1", "automatic: the most left works, the other kind reviews")
+    let list = store.current.list(listID)!
+    let picked = scheduler.crew(for: list)
+    expect(picked?.lead.id == "c2" && picked?.reviewer?.id == "x1", "picked: only those work and review: \(picked.map { $0.lead.id } ?? "-")")
+    try! store.setList(listID, accounts: ["c2"])
+    let one = scheduler.crew(for: store.current.list(listID)!)
+    expect(one?.lead.id == "c2" && one?.reviewer == nil, "one picked: it works without a review")
+    model.latestUsage["c2"] = left(20, 60)
+    expect(scheduler.crew(for: store.current.list(listID)!) == nil, "a picked AI under 30% waits, the others do not step in")
+    expect(TodoScheduler.noCrew(["c2"], accounts: model.accounts, lock: nil).contains("30%"), "the reason is the usage")
+    expect(!TodoScheduler.noCrew(["gone"], accounts: model.accounts, lock: nil).contains("30%"), "a removed account has its own reason")
+    let lock = EnterpriseLock(organization: "school", name: "School", lockedAt: Date())
+    expect(!TodoScheduler.noCrew(["c2"], accounts: model.accounts, lock: lock).contains("30%"), "an Enterprise lock has its own reason")
+
+    // The scheduler: the picked AI waits; the TODO is not started by another.
+    try! store.change(item.id) { $0.state = .ready }
+    scheduler.held = { _ in false }
+    scheduler.tick()
+    expect(store.current.item(item.id)?.state == .ready && scheduler.waiting?.contains("30%") == true, "the scheduler waits for the picked AI: \(scheduler.waiting ?? "-")")
+    try! store.setList(listID, accounts: [])
+    expect(store.current.list(listID)?.accounts.isEmpty == true, "back to automatic")
+    print("PASS: TODO crew (picked AIs saved, only they work, no fallback, reasons)")
+}

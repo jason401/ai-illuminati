@@ -178,6 +178,7 @@ struct TodoBoardView: View {
                 }
                 Spacer()
             }
+            if let scheduler = TodoScheduler.shared { TodoCrewRow(list: list, scheduler: scheduler, discussion: discussion, error: { draft.error = $0 }) }
             ForEach(Array(rows.enumerated()), id: \.element.id) { index, item in row(item, index: index + 1, list: list) }
         }
     }
@@ -360,6 +361,82 @@ struct TodoBoardView: View {
 
     private func act(_ change: () throws -> Void) {
         do { try change(); draft.error = nil } catch { draft.error = error.localizedDescription }
+    }
+}
+
+// Which AIs take a project's TODOs: [AI ▾] picks them (automatic = every Claude/Codex with 30% left), then who
+// works now (a running TODO's chat) or who would if one started now, or why nobody can.
+struct TodoCrewRow: View {
+    let list: TodoList
+    let scheduler: TodoScheduler
+    @ObservedObject var discussion: Discussion
+    let error: (String?) -> Void
+
+    private var workers: [Account] { discussion.model.accounts.filter { [.claude, .codex].contains($0.provider) } }
+    private var lock: EnterpriseLock? {
+        guard let project = list.project else { return nil }
+        let item = TodoStore.shared.current.ordered(list.id).first ?? TodoItem(listID: list.id, title: "")
+        return scheduler.lock(for: item, list: list, project: project)
+    }
+    private func name(_ id: String) -> String { discussion.model.accounts.first { $0.id == id }.map(discussion.label) ?? L("없어진 계정", "Removed account") }
+    private func left(_ account: Account) -> String {
+        let usage = discussion.model.latestUsage[account.id]
+        return L(" · 5시간 \(Int(AutoPick.fiveHour(usage)))% · 주간 \(Int(AutoPick.weekly(usage)))% 남음", " · 5h \(Int(AutoPick.fiveHour(usage)))% · week \(Int(AutoPick.weekly(usage)))% left")
+    }
+    private func save(_ accounts: [String]) {
+        do { try TodoStore.shared.setList(list.id, accounts: accounts); error(nil) } catch { self.error(error.localizedDescription) }
+    }
+    // Picking one while automatic: only that one. The last one picked cannot be taken off (that would mean every account).
+    private func toggle(_ id: String) {
+        if list.accounts.isEmpty { save([id]) }
+        else if list.accounts.contains(id) { if list.accounts.count > 1 { save(list.accounts.filter { $0 != id }) } }
+        else { save(list.accounts + [id]) }
+    }
+
+    var body: some View {
+        let lock = self.lock
+        let gone = list.accounts.filter { id in !workers.contains { $0.id == id } }
+        HStack(spacing: 8) {
+            Menu {
+                Button((list.accounts.isEmpty ? "✓ " : "") + L("자동 (Claude·Codex 모두)", "Automatic (every Claude/Codex)")) { save([]) }
+                Divider()
+                ForEach(workers, id: \.id) { account in
+                    let picked = list.accounts.contains(account.id)
+                    let allowed = Enterprise.permits(account, lock: lock)
+                    Button((picked ? "✓ " : "") + discussion.label(account) + (allowed ? left(account) : L(" · 회사·학교 잠금 밖", " · outside the Enterprise lock"))) { toggle(account.id) }
+                        .disabled(!allowed && !picked || picked && list.accounts.count == 1)
+                }
+                if !gone.isEmpty {
+                    Divider()
+                    ForEach(gone, id: \.self) { id in
+                        Button(L("없어진 계정 빼기", "Remove a removed account") + " (\(id.prefix(8)))") { save(list.accounts.filter { $0 != id }) }
+                    }
+                }
+            } label: {
+                Label(list.accounts.isEmpty ? L("일할 AI: 자동", "AIs: automatic") : L("일할 AI: ", "AIs: ") + list.accounts.map(name).joined(separator: ", "), systemImage: "person.2")
+            }
+            .menuStyle(.borderlessButton).fixedSize()
+            .help(L("이 프로젝트의 TODO를 맡을 AI 계정이에요. 남은 사용량이 많은 계정이 일하고, 다른 하나가 검수해요. 바꾸면 다음에 시작할 때부터 적용돼요 (진행 중인 일은 그대로).",
+                    "The AI accounts that take this project's TODOs. The one with the most usage left works, another reviews. Changes apply from the next start (running work goes on)."))
+            status
+            Spacer()
+        }
+        .font(.system(size: 12))
+    }
+
+    // A running TODO's chat has its crew; otherwise the one a start now would get.
+    @ViewBuilder private var status: some View {
+        let running = TodoStore.shared.snapshot.ordered(list.id).first { $0.state == .running }
+        if let room = running?.room, let config = discussion.conversation(room).configuration, let lead = config.leadID {
+            let others = (config.memberIDs ?? []).filter { $0 != lead }
+            Text(L("지금 일하는 중: ", "Working now: ") + name(lead) + (others.isEmpty ? L(" · 검수 없음", " · no review") : L(" · 검수 ", " · review ") + others.map(name).joined(separator: ", ")))
+                .foregroundColor(.blue).lineLimit(1)
+        } else if let crew = scheduler.crew(for: list) {
+            Text(L("지금 시작하면: ", "If started now: ") + discussion.label(crew.lead) + (crew.reviewer.map { L(" · 검수 ", " · review ") + discussion.label($0) } ?? L(" · 검수 없음", " · no review")))
+                .foregroundColor(.secondary).lineLimit(1)
+        } else {
+            Text(TodoScheduler.noCrew(list.accounts, accounts: discussion.model.accounts, lock: lock)).foregroundColor(.orange).lineLimit(2)
+        }
     }
 }
 

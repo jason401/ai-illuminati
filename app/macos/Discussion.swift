@@ -1107,7 +1107,8 @@ final class Discussion: ObservableObject {
         guard canSend else { return }
         // Plain chat: "@Name" picked from the list, or typed ("@지피", "@ㅋㄹㄷ"), sends this one message to those accounts.
         let plain = Self.modernModes && configuration.mode == 0
-        var mentioned = plain ? Self.mentions(in: draft, picked: draftMentions, accounts: model.accounts, label: label) : []
+        let allowed = model.accounts.filter { Enterprise.permits($0, lock: current.enterpriseLock) }
+        var mentioned = plain ? Self.mentions(in: draft, picked: draftMentions, accounts: allowed, label: label) : []
         var typed = draft
         for id in mentioned { if let account = model.accounts.first(where: { $0.id == id }) { typed = typed.replacingOccurrences(of: "@" + label(account), with: "") } }
         if plain {

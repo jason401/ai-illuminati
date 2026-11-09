@@ -79,6 +79,12 @@ func testEnterpriseMarks() {
     lock.lock(); let reviewed = asked; lock.unlock()
     expect(reviewed == [personal.id], "the gate stops personal and other-organization accounts, not open chats")
     expect(!chat.permits(personal, room: UUID()) && chat.permits(local, room: UUID()), "a chat that cannot be found sends only to models on this Mac")
+    chat.mentionQuery = ""
+    expect(Set(chat.mentionCandidates().map(\.id)) == [school.id, schoolCodex.id], "the @ list in a locked chat has only allowed accounts")
+    expect(Discussion.mentions(in: "@" + chat.label(personal) + " hi", picked: [personal.id],
+                               accounts: m.accounts.filter { Enterprise.permits($0, lock: schoolLock) }, label: chat.label).isEmpty,
+           "a personal account picked before cannot be called")
+    chat.mentionQuery = nil
 
     // Saved and loaded with its lock; the open chat stays open.
     let reloaded = Discussion(model: m)

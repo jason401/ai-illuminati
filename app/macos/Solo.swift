@@ -304,8 +304,9 @@ extension Discussion {
     // after @ by name or by the AI's name in English or Korean. At most 9, numbered 1–9.
     func mentionCandidates() -> [Account] {
         guard let query = mentionQuery?.lowercased() else { return [] }
+        let lock = current.enterpriseLock   // an Enterprise chat lists only accounts that may take part
         let list = model.accounts.filter { account in
-            (account.provider != .ollama || model.localEnabled) && (
+            (account.provider != .ollama || model.localEnabled) && Enterprise.permits(account, lock: lock) && (
             query.isEmpty || label(account).lowercased().contains(query) || account.name.lowercased().contains(query)
                 || (Self.aiNames[account.provider] ?? []).contains { $0.hasPrefix(query) || query.hasPrefix($0) })
         }

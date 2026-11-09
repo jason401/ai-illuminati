@@ -191,6 +191,37 @@ extension Discussion {
         } catch { attachmentError = error.localizedDescription }
     }
 
+    // Sidebar Projects + → Link a folder…: a top-level Git folder with a remote becomes a code project, any other folder a
+    // documents project. A new chat opens in it (the current chat is left alone).
+    func linkProjectFromSidebar() {
+        guard !running, !importingMaterials else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.allowsMultipleSelection = false; panel.canCreateDirectories = true
+        panel.prompt = L("연결", "Link")
+        panel.message = L("프로젝트 폴더를 고르세요. Git 저장소면 코드 프로젝트, 아니면 문서 프로젝트(Git 없음)가 돼요.",
+                          "Pick the project folder. A Git repository becomes a code project; any other folder a documents project (no Git).")
+        guard panel.runModal() == .OK, let folder = panel.url?.resolvingSymlinksInPath() else { return }
+        do {
+            let project: ProjectBinding
+            if let git = try? ProjectProcess.inspect(folder.path) {
+                project = git
+            } else {
+                project = try ProjectProcess.documents(folder.path)
+                let alert = NSAlert()
+                alert.messageText = L("문서 프로젝트로 연결", "Link as a documents project")
+                alert.informativeText = project.root + "\n\n" + L("Git 저장소가 아니라서 문서 프로젝트로 연결해요. AI가 이 폴더의 파일을 고칠 수 있어요 (완전 자동). 답할 때마다 폴더를 먼저 백업해서 되돌릴 수 있어요.",
+                                                                    "This is not a Git repository, so it is linked as a documents project. The AI may change the files in this folder (full auto). The folder is backed up before each answer, so it can be undone.")
+                alert.addButton(withTitle: L("연결", "Link")); alert.addButton(withTitle: L("취소", "Cancel"))
+                guard alert.runModal() == .alertFirstButtonReturn else { return }
+            }
+            attachmentError = nil
+            _ = addProjectChat(project, title: L("새 대화", "New chat"), open: true)
+            sessionNote = project.isDocuments
+                ? L("문서 프로젝트 연결됨 · 완전 자동 (답할 때마다 백업, Undo 가능)", "Documents project linked · full auto (backed up before each answer, Undo available)")
+                : L("Git 프로젝트 연결됨 · 완전 자동 (stable 배포만 허용 카드)", "Git project linked · full auto (only stable publishing asks)")
+        } catch { attachmentError = error.localizedDescription }
+    }
+
     // A chat dragged onto a project folder in the sidebar (or "Move to project" in its menu) joins that project.
     // The first time it says what that allows (full auto, like "Link folder"); "Don't ask again" skips it.
     @discardableResult

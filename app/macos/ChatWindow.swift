@@ -157,9 +157,17 @@ struct ChatView: View {
                     } else {
                         // Chats with a Git project under its folder (SidebarProjects.swift); the rest pinned or recent.
                         let grouped = SidebarProjects.group(chats, todo: todos.snapshot, pinned: folds.pinnedProjects, withLists: !discussion.sidebarSearching)
-                        if !grouped.projects.isEmpty {
-                            SidebarHeader(title: L("프로젝트", "Projects"), fold: "projects", badge: todos.waitingForUser)
-                            if !folds.isFolded("projects") { ForEach(grouped.projects) { projectGroup($0) } }
+                        SidebarHeader(title: L("프로젝트", "Projects"), fold: "projects", badge: todos.waitingForUser) { addProjectMenu }
+                        if folds.isFolded("projects") {
+                        } else if grouped.projects.isEmpty {
+                            Button(action: { discussion.linkProjectFromSidebar() }) {
+                                Label(L("프로젝트 추가 · 할 일 보드", "Add a project · TODO board"), systemImage: "folder.badge.plus")
+                                    .font(.system(size: 12)).foregroundColor(.secondary)
+                                    .padding(.horizontal, 10).frame(height: 28, alignment: .leading)
+                            }
+                            .buttonStyle(.plainHit).disabled(discussion.running || discussion.importingMaterials)
+                        } else {
+                            ForEach(grouped.projects) { projectGroup($0) }
                         }
                         let pinned = grouped.loose.filter { $0.pinned == true }
                         if !pinned.isEmpty {
@@ -193,6 +201,21 @@ struct ChatView: View {
         }
         .frame(width: Self.sidebarWidth)
         .background(Color.primary.opacity(0.035))
+    }
+
+    // Projects header +: make a new Git project, or link an existing folder (Git → code project, otherwise documents).
+    private var addProjectMenu: some View {
+        Menu {
+            Button(L("새 프로젝트… (Git·GitHub)", "New project… (Git and GitHub)")) { discussion.newProjectFromMenu() }
+            Button(L("기존 폴더 연결… (Git 저장소 또는 문서 폴더)", "Link a folder… (Git repository or documents)")) { discussion.linkProjectFromSidebar() }
+        } label: {
+            Image(systemName: "plus").font(.system(size: 11, weight: .semibold)).frame(width: 22, height: 22)
+        }
+        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+        .foregroundColor(.secondary)
+        .help(L("프로젝트 추가", "Add a project"))
+        .accessibilityLabel(L("프로젝트 추가", "Add project"))
+        .disabled(discussion.running || discussion.importingMaterials)
     }
 
     // The same items in the ⋯ menu and on right-click.

@@ -588,6 +588,13 @@ func testProjectSnapshot() {
     git(["add", "-A"]); git(["commit", "-m", "Commit the user's edit and deletion"])
     let kept = before.changes(root: root.path) ?? ""
     expect(kept.contains("Commits made") && !kept.contains("discarded"), "a user change committed by the answer is not called discarded")
+    try! "*.txt text\n".write(to: root.appendingPathComponent(".gitattributes"), atomically: true, encoding: .utf8)
+    git(["add", ".gitattributes"]); git(["commit", "-m", "Normalize line endings"])
+    try! "User\r\nedit\r\n".write(to: file, atomically: true, encoding: .utf8)
+    let crlf = ProjectSnapshot.take(root: root.path)
+    git(["add", "notes.txt"]); git(["commit", "-m", "Commit the CRLF edit"])
+    let normalized = crlf.changes(root: root.path) ?? ""
+    expect(normalized.contains("Commits made") && !normalized.contains("discarded"), "a CRLF edit committed as LF is not called discarded")
     print("PASS: project snapshot (discarded user changes; committed ones are not)")
 }
 

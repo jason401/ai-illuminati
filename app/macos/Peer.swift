@@ -267,6 +267,7 @@ extension Discussion {
 struct ProjectSnapshot {
     var head: String?
     var status: [String: String] = [:]   // path → porcelain state and content hash, for uncommitted files
+    var stored: [String: String] = [:]   // path → the blob a commit of that file would store (line endings and filters applied)
 
     static func take(root: String) -> ProjectSnapshot {
         func git(_ args: [String]) -> String? { try? ProjectProcess.git(args, root: root, timeout: 60) }
@@ -277,6 +278,7 @@ struct ProjectSnapshot {
             let code = String(line.prefix(2)), path = String(line.dropFirst(3))
             if code.contains("R") || code.contains("C") { _ = entries.next() }   // a rename's old path follows
             snapshot.status[path] = code + " " + (git(["hash-object", "--no-filters", "--", path]) ?? "")
+            snapshot.stored[path] = git(["hash-object", "--", path]) ?? ""
         }
         return snapshot
     }
@@ -302,7 +304,7 @@ struct ProjectSnapshot {
         }
         // Uncommitted at the start and clean now: discarded, unless HEAD now holds the starting content (committed).
         func committed(_ path: String) -> Bool {
-            let hash = String(status[path]?.dropFirst(3) ?? "")   // empty: the file was deleted at the start
+            let hash = stored[path] ?? ""   // empty: the file was deleted at the start
             let inHead = git(["rev-parse", "--verify", "--quiet", "HEAD:" + path])
             return hash.isEmpty ? inHead == nil : inHead == hash
         }

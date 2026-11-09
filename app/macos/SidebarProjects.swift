@@ -70,17 +70,16 @@ enum SidebarProjects {
         a.updatedAt != b.updatedAt ? a.updatedAt > b.updatedAt : a.id.uuidString < b.id.uuidString
     }
 
-    // TODO chats listed in a folder: the ones still going always, the finished ones newest 3 until "show all".
-    static func shownTodoRooms(_ rooms: [Conversation], todo: TodoData, all: Bool) -> (shown: [Conversation], hidden: Int) {
-        if all { return (rooms, 0) }
-        let finished: Set<TodoItem.State> = [.done, .cancelled]
-        var kept = 0
-        let shown = rooms.filter { room in
-            guard let state = todo.items.first(where: { $0.room == room.id })?.state, finished.contains(state) else { return true }
-            kept += 1
-            return kept <= 3
+    // TODO chats in a folder: the ones still going (or waiting for the user) always listed; the finished ones
+    // (every TODO of the chat done or cancelled) go together under one "Finished TODOs" row, folded by default.
+    static func todoRooms(_ rooms: [Conversation], todo: TodoData) -> (going: [Conversation], finished: [Conversation]) {
+        let finishedStates: Set<TodoItem.State> = [.done, .cancelled]
+        var going: [Conversation] = [], finished: [Conversation] = []
+        for room in rooms {
+            let states = todo.items.filter { $0.room == room.id }.map(\.state)
+            if !states.isEmpty && states.allSatisfy(finishedStates.contains) { finished.append(room) } else { going.append(room) }
         }
-        return (shown, rooms.count - shown.count)
+        return (going, finished)
     }
 }
 
@@ -90,14 +89,20 @@ final class SidebarFold: ObservableObject {
     private let defaults: UserDefaults
     @Published private(set) var folded: Set<String>
     @Published private(set) var pinnedProjects: Set<String>
-    @Published var allTodoRooms: Set<String> = []   // projects whose finished TODO chats are all listed (until the app quits)
+    @Published private(set) var openFinished: Set<String>   // projects whose "Finished TODOs" row is unfolded
     @Published var dropProject: String?             // the project folder a dragged chat is over
-    private static let foldedKey = "sidebar.folded", pinnedKey = "sidebar.pinnedProjects", adoptedKey = "sidebar.pinsAdopted"
+    private static let foldedKey = "sidebar.folded", pinnedKey = "sidebar.pinnedProjects", openFinishedKey = "sidebar.openFinishedTodos", adoptedKey = "sidebar.pinsAdopted"
 
     init(defaults: UserDefaults) {
         self.defaults = defaults
         folded = Set(defaults.stringArray(forKey: Self.foldedKey) ?? [])
         pinnedProjects = Set(defaults.stringArray(forKey: Self.pinnedKey) ?? [])
+        openFinished = Set(defaults.stringArray(forKey: Self.openFinishedKey) ?? [])
+    }
+
+    func toggleFinished(_ project: String) {
+        if openFinished.contains(project) { openFinished.remove(project) } else { openFinished.insert(project) }
+        defaults.set(openFinished.sorted(), forKey: Self.openFinishedKey)
     }
 
     func isFolded(_ key: String) -> Bool { folded.contains(key) }

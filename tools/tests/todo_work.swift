@@ -304,17 +304,20 @@ func testSidebarProjects() {
     expect(SidebarProjects.folderName(tree) == "side-repo" && SidebarProjects.key(ProjectBinding(root: "/x", common: "", remote: "", remoteURL: "")) == "/x",
            "a folder is named after its repository; no common dir falls back to the root")
 
-    // Finished TODO chats: the newest 3 until "show all"; the ones still going always.
+    // Finished TODO chats go together (folded row); a chat with a TODO still going stays out.
     var rooms: [Conversation] = [], data = TodoData()
-    for (i, state) in [TodoItem.State.done, .running, .done, .cancelled, .done, .review].enumerated() {
+    for (i, state) in [TodoItem.State.done, .running, .done, .cancelled, .needsYou, .review].enumerated() {
         let room = chat("t\(i)", main, minutes: Double(20 - i))
         var item = TodoItem(listID: UUID(), title: "t\(i)")
         item.room = room.id; item.state = state
         rooms.append(room); data.items.append(item)
     }
-    let shown = SidebarProjects.shownTodoRooms(rooms, todo: data, all: false)
-    expect(shown.shown.map(\.title) == ["t0", "t1", "t2", "t3", "t5"] && shown.hidden == 1, "finished TODO chats: 3 shown: \(shown.shown.map(\.title))")
-    expect(SidebarProjects.shownTodoRooms(rooms, todo: data, all: true).hidden == 0, "show all lists every one")
+    var again2 = TodoItem(listID: UUID(), title: "t2 again")
+    again2.room = rooms[2].id; again2.state = .ready
+    data.items.append(again2)
+    let split = SidebarProjects.todoRooms(rooms, todo: data)
+    expect(split.going.map(\.title) == ["t1", "t2", "t4", "t5"] && split.finished.map(\.title) == ["t0", "t3"],
+           "finished TODO chats apart, review/needsYou and a chat with an unfinished TODO stay: \(split.going.map(\.title)) \(split.finished.map(\.title))")
 
     // Folds and pins are kept, in the test's own defaults; old pinned project chats pin their project once.
     let suite = "ai-illuminati-sidebar-test-\(UUID().uuidString)"
@@ -327,9 +330,11 @@ func testSidebarProjects() {
     fold.togglePin(common)
     fold.adoptPins(chats)
     expect(fold.pinnedProjects.isEmpty, "the pins are adopted once; unpinning stays")
+    expect(fold.openFinished.isEmpty, "finished TODO chats start folded")
+    fold.toggleFinished(common)
     let again = SidebarFold(defaults: defaults)
-    expect(again.isFolded("recents") && again.isFolded("project." + common) && !again.isFolded("pinned") && again.pinnedProjects.isEmpty,
-           "folds and pins come back after a restart")
+    expect(again.isFolded("recents") && again.isFolded("project." + common) && !again.isFolded("pinned") && again.pinnedProjects.isEmpty
+           && again.openFinished == [common], "folds, pins and the unfolded finished row come back after a restart")
 
     // ▶ on one project's board: only its drafts become ready.
     let start = TodoStore(url: todoStoreFile("sidebar-start"))
@@ -339,7 +344,7 @@ func testSidebarProjects() {
     expect(start.current.item(mine.id)?.state == .ready && start.current.item(theirs.id)?.state == .draft, "one project's start leaves the other drafts")
     start.startDrafts()
     expect(start.current.item(theirs.id)?.state == .ready, "the start on every project's board takes them all")
-    print("PASS: sidebar by project (worktrees in one folder, TODO chats apart, folders for TODO-only projects, pinned projects first, finished TODO chats capped, folds and pins kept, adopted once, one project's start)")
+    print("PASS: sidebar by project (worktrees in one folder, TODO chats apart, folders for TODO-only projects, pinned projects first, finished TODO chats folded together, folds and pins kept, adopted once, one project's start)")
 }
 
 // Photos and files on a TODO: copied in before saving, removed with it, refused while it runs, and given to the AI

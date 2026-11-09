@@ -252,13 +252,39 @@ struct ChatView: View {
         projectRow(group, open: open)
         if open {
             ForEach(group.chats) { chatGroup($0, depth: 1) }
-            let rooms = SidebarProjects.shownTodoRooms(group.todoRooms, todo: todos.snapshot, all: folds.allTodoRooms.contains(group.id))
-            ForEach(rooms.shown) { room in chatGroup(room, depth: 1, todo: todos.snapshot.items.first { $0.room == room.id }?.state) }
-            if rooms.hidden > 0 {
-                Button(L("끝난 TODO 더 보기 (\(rooms.hidden))", "Show \(rooms.hidden) more finished TODOs")) { folds.allTodoRooms.insert(group.id) }
-                    .buttonStyle(.link).font(.system(size: 11)).padding(.leading, 34).frame(height: 22)
+            let rooms = SidebarProjects.todoRooms(group.todoRooms, todo: todos.snapshot)
+            ForEach(rooms.going) { todoRoom($0) }
+            if !rooms.finished.isEmpty {
+                // Searching lists every match; folded, only the chat open now stays.
+                let unfolded = folds.openFinished.contains(group.id) || discussion.sidebarSearching
+                finishedRow(group, count: rooms.finished.count, open: unfolded)
+                ForEach(unfolded ? rooms.finished : rooms.finished.filter { $0.id == discussion.currentID }) { todoRoom($0) }
             }
         }
+    }
+
+    private func todoRoom(_ room: Conversation) -> some View {
+        chatGroup(room, depth: 1, todo: todos.snapshot.items.first { $0.room == room.id }?.state)
+    }
+
+    // The fold row of a project's finished TODO chats.
+    private func finishedRow(_ group: ProjectGroup, count: Int, open: Bool) -> some View {
+        let key = "finished." + group.id
+        let hovered = discussion.hoverKey == key
+        return HStack(spacing: 5) {
+            Image(systemName: "chevron.right").font(.system(size: 8, weight: .semibold)).foregroundColor(.secondary)
+                .rotationEffect(.degrees(open ? 90 : 0)).frame(width: 14)
+            Image(systemName: "checkmark.circle").font(.system(size: 10)).foregroundColor(.secondary).frame(width: 14)
+            Text(L("끝난 TODO", "Finished TODOs")).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
+            Text("\(count)").font(.system(size: 10)).foregroundColor(.secondary)
+        }
+        .font(.system(size: 12)).foregroundColor(.secondary)
+        .padding(.leading, 22).padding(.trailing, 10).frame(height: 26)
+        .background(hovered ? Color.primary.opacity(0.05) : .clear, in: RoundedRectangle(cornerRadius: 8))
+        .contentShape(Rectangle())
+        .onTapGesture { folds.toggleFinished(group.id) }
+        .onHover { inside in discussion.hover(key, inside) }
+        .help(open ? L("끝난 TODO 채팅 접기", "Fold the finished TODO chats") : L("끝난 TODO 채팅 펼치기", "Unfold the finished TODO chats"))
     }
 
     private func projectRow(_ group: ProjectGroup, open: Bool) -> some View {

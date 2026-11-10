@@ -156,11 +156,12 @@ extension Discussion {
         return runningRooms.contains(link.room) && meeting.turns.first?.answeredAt == nil
     }
 
-    // Unfolded by the user, or (unless folded by the user) while one runs or the chat or one of them is open.
+    // Folded until the user unfolds them (double-click or the chevron); opening the chat alone does not unfold them.
+    // Unless folded by the user, they show while one of them is open, so the open meeting stays in the list.
     func meetingsShown(_ id: UUID, _ meetings: [Conversation]) -> Bool {
         if meetingsOpen.contains(id) { return true }
         if meetingsClosed.contains(id) { return false }
-        return currentID == id || meetings.contains { $0.id == currentID || meetingRunning($0) }
+        return meetings.contains { $0.id == currentID }
     }
 
     func toggleMeetings(_ id: UUID) {

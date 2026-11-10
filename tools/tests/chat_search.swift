@@ -99,6 +99,24 @@ func testEnterpriseMarks() {
 }
 
 // ⌘F in a chat: turns with the words, moves between them, earlier turns drawn first, highlights.
+// The meetings under a chat stay folded when the chat is opened or one runs; double-click (toggle) unfolds them.
+func testMeetingFold() {
+    let chat = Discussion(model: AppModel())
+    var room = Conversation(); room.id = UUID()
+    var meeting = Conversation(); meeting.id = UUID(); meeting.meetingOf = MeetingLink(room: room.id, turn: UUID())
+    chat.conversations += [room, meeting]
+    chat.currentID = room.id
+    expect(!chat.meetingsShown(room.id, chat.meetings(of: room.id)), "opening a chat leaves its meetings folded")
+    chat.toggleMeetings(room.id)
+    expect(chat.meetingsShown(room.id, chat.meetings(of: room.id)), "double-click unfolds the meetings")
+    chat.toggleMeetings(room.id)
+    expect(!chat.meetingsShown(room.id, chat.meetings(of: room.id)), "double-click again folds them")
+    chat.meetingsClosed.remove(room.id)
+    chat.currentID = meeting.id
+    expect(chat.meetingsShown(room.id, chat.meetings(of: room.id)), "an open meeting stays listed")
+    print("PASS: meetings folded by default, unfolded by double-click, the open meeting listed")
+}
+
 func testChatFind() {
     let m = AppModel()
     let chat = Discussion(model: m)

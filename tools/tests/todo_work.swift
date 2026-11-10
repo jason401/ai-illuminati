@@ -394,6 +394,20 @@ func testSidebarProjects() {
     expect(!forgotten.isFolded("project." + common) && forgotten.isFolded("recents") && forgotten.pinnedProjects == ["other"] && forgotten.openFinished.isEmpty
            && defaults.dictionary(forKey: BoardTab.key)?.keys.sorted() == ["other"], "a deleted project's sidebar state is forgotten")
 
+    // Recents and each Mac show a page; "Show more" adds one, the open chat stays listed, nothing is saved.
+    struct Row: Identifiable { let id: Int }
+    let rows = (0..<25).map(Row.init)
+    expect(SidebarFold.listed(rows, limit: 10, open: nil).map(\.id) == Array(0..<10), "the newest page is listed")
+    expect(SidebarFold.listed(rows, limit: 10, open: 20).map(\.id) == Array(0..<10) + [20], "an older open chat is listed too, alone")
+    expect(SidebarFold.listed(Array(rows.prefix(3)), limit: 10, open: 1).count == 3, "a short list is listed whole")
+    again.showMore("recents", page: SidebarFold.recentsPage); again.showMore("recents", page: SidebarFold.recentsPage)
+    expect(again.limit("recents", page: SidebarFold.recentsPage) == 30 && again.limit("device.x", page: SidebarFold.devicePage) == 5,
+           "Show more adds a page to that list only")
+    again.showLess("recents")
+    again.showMore("device.x", page: SidebarFold.devicePage)
+    expect(again.limit("recents", page: SidebarFold.recentsPage) == 10 && SidebarFold(defaults: defaults).limit("device.x", page: 5) == 5,
+           "Show less goes back to a page; lengths are not kept after a restart")
+
     // ▶ on one project's board: only its drafts become ready.
     let start = TodoStore(url: todoStoreFile("sidebar-start"))
     let mine = try! start.add(title: "mine", project: main, projectName: "Main")

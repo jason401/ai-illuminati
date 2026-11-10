@@ -128,6 +128,19 @@ final class SidebarFold: ObservableObject {
         openFinished = Set(defaults.stringArray(forKey: Self.openFinishedKey) ?? [])
     }
 
+    // Long lists (Recents, each Mac under Other Macs) show the newest page; "Show more" adds a page.
+    // Kept in memory only: a restart starts short again.
+    static let recentsPage = 10, devicePage = 5
+    @Published private(set) var listLimits: [String: Int] = [:]
+    func limit(_ key: String, page: Int) -> Int { listLimits[key] ?? page }
+    func showMore(_ key: String, page: Int) { listLimits[key] = limit(key, page: page) + page }
+    func showLess(_ key: String) { listLimits[key] = nil }
+
+    // The first `limit` rows, plus the open one when it is further down (only it, so "Show less" still shortens).
+    static func listed<Row: Identifiable>(_ rows: [Row], limit: Int, open: Row.ID?) -> [Row] {
+        rows.enumerated().filter { $0.offset < limit || $0.element.id == open }.map(\.element)
+    }
+
     func toggleFinished(_ project: String) {
         if openFinished.contains(project) { openFinished.remove(project) } else { openFinished.insert(project) }
         defaults.set(openFinished.sorted(), forKey: Self.openFinishedKey)

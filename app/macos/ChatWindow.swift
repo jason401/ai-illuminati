@@ -179,7 +179,14 @@ struct ChatView: View {
                         let recents = grouped.loose.filter { $0.pinned != true }
                         if !recents.isEmpty {
                             SidebarHeader(title: L("최근", "Recents"), fold: "recents")
-                            if !folds.isFolded("recents") { ForEach(recents) { chatGroup($0) } }
+                            if !folds.isFolded("recents") {
+                                // The newest page (and the open chat); every match while searching or filtering.
+                                let page = SidebarFold.recentsPage
+                                let open = discussion.viewingRemote == nil && !discussion.viewingBoard ? discussion.currentID : nil
+                                let listed = discussion.sidebarSearching ? recents : SidebarFold.listed(recents, limit: folds.limit("recents", page: page), open: open)
+                                ForEach(listed) { chatGroup($0) }
+                                if !discussion.sidebarSearching { moreRow("recents", page: page, total: recents.count, listed: listed.count) }
+                            }
                         }
                     }
                     if sync.settings.enabled { otherMacs }
@@ -553,8 +560,26 @@ struct ChatView: View {
                 Text(device.name).font(.system(size: 11)).foregroundColor(.secondary)
                     .padding(.horizontal, 10).padding(.top, 6).padding(.bottom, 2)
                     .help(device.writtenAt.map { L("마지막으로 올린 시각 ", "Last written ") + DeviceSync.ago($0) } ?? "")
-                ForEach(chats) { remoteRow($0) }
+                // Each Mac shows its newest page (and the open chat); every match while searching.
+                let all = discussion.sidebarSearching || !search.isEmpty
+                let key = "device." + device.id, page = SidebarFold.devicePage
+                let listed = all ? chats : SidebarFold.listed(chats, limit: folds.limit(key, page: page), open: discussion.viewingRemote?.chat.id)
+                ForEach(listed) { remoteRow($0) }
+                if !all { moreRow(key, page: page, total: chats.count, listed: listed.count) }
             }
+        }
+    }
+
+    // "Show more (n)" under a shortened list, and "Show less" once it was lengthened.
+    @ViewBuilder private func moreRow(_ key: String, page: Int, total: Int, listed: Int) -> some View {
+        let hidden = total - listed
+        let expanded = folds.limit(key, page: page) > page && total > page
+        if hidden > 0 || expanded {
+            HStack(spacing: 12) {
+                if hidden > 0 { Button(L("더 보기 (\(hidden))", "Show more (\(hidden))")) { folds.showMore(key, page: page) } }
+                if expanded { Button(L("접기", "Show less")) { folds.showLess(key) } }
+            }
+            .buttonStyle(.link).font(.system(size: 11)).padding(.leading, 10).frame(height: 22)
         }
     }
 

@@ -403,19 +403,25 @@ final class AppModel: ObservableObject {
 }
 
 // Compact pages share the same insets and row rhythm instead of Form's large footers.
+// `help` is the card's explanation: a tooltip over the card (rows with their own help keep theirs), marked by ⓘ.
 private struct SettingsCard<Content: View>: View {
     let title: String
+    var help: String? = nil
     @ViewBuilder var content: Content
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
-                .padding(.horizontal, 2)
+            HStack(spacing: 3) {
+                Text(title).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                if help != nil { Image(systemName: "info.circle").font(.system(size: 10)).foregroundStyle(.tertiary) }
+            }
+            .padding(.horizontal, 2)
             VStack(spacing: 0) { content }
                 .background(Color(nsColor: .controlBackgroundColor))
                 .clipShape(RoundedRectangle(cornerRadius: 8))
                 .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(0.07)))
         }
+        .help(help ?? "")
     }
 }
 
@@ -900,58 +906,48 @@ struct ChatSettingsTab: View {
 
     var body: some View {
         SettingsPage {
-            VStack(alignment: .leading, spacing: 6) {
-                SettingsCard(title: L("채팅 규칙", "Chat rules")) {
-                    SettingsRow(title: isDefault ? L("기본값", "Default") : L("직접 고침", "Custom")) {
-                        SettingsAction(title: L("편집…", "Edit…")) { ChatRulesWindow.shared.show(model: model) }
-                    }
-                    Divider()
-                    Text(preview)
-                        .font(.system(size: 11)).foregroundStyle(.secondary)
-                        .lineLimit(2).truncationMode(.tail)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 10).padding(.vertical, 6)
+            SettingsCard(title: L("채팅 규칙", "Chat rules"),
+                         help: L("모든 AI 요청에 적용할 말투와 응답 규칙이에요. 답변 길이는 채팅창에서 선택해요.",
+                                 "Style and instructions for every AI request. Choose response length in the chat window.")) {
+                SettingsRow(title: isDefault ? L("기본값", "Default") : L("직접 고침", "Custom")) {
+                    SettingsAction(title: L("편집…", "Edit…")) { ChatRulesWindow.shared.show(model: model) }
                 }
-                hint(L("모든 AI 요청에 적용할 말투와 응답 규칙이에요. 답변 길이는 채팅창에서 선택해요.",
-                       "Style and instructions for every AI request. Choose response length in the chat window."))
+                Divider()
+                Text(preview)
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    .lineLimit(2).truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 10).padding(.vertical, 6)
             }
-            VStack(alignment: .leading, spacing: 6) {
-                SettingsCard(title: L("메시지 판정", "Message sorting")) {
-                    SettingsRow(title: L("내 Mac 모델", "Model on this Mac")) {
-                        SettingsMenu(options: RouteSorter.allCases.map { ($0.title, $0) }, selection: $model.routeSorter)
-                    }
-                    .onChange(of: model.routeSorter) { SortModelStatus.offer($0, model: model) }
-                    Divider()
-                    Text(model.routeSorter.summary)
-                        .font(.system(size: 11)).foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 10).padding(.vertical, 6)
-                    if model.routeSorter != .off {
-                        Divider()
-                        SortModelStatus(model: model, store: .shared)
-                    }
+            SettingsCard(title: L("메시지 판정", "Message sorting"),
+                         help: L("프로젝트 채팅에서 메시지마다 한 명이 답할지, 모두 답할지, 작업할지 정해요. 고른 모델을 받아 두지 않았거나 Ollama를 껐으면 참여한 AI가 판정해요.",
+                                 "Decides for each project-chat message: one answer, everyone, or work. Model not downloaded or Ollama off: a member AI judges.")) {
+                SettingsRow(title: L("내 Mac 모델", "Model on this Mac")) {
+                    SettingsMenu(options: RouteSorter.allCases.map { ($0.title, $0) }, selection: $model.routeSorter)
                 }
-                hint(L("프로젝트 채팅에서 메시지마다 한 명이 답할지, 모두 답할지, 작업할지 정해요. 고른 모델을 받아 두지 않았거나 Ollama를 껐으면 참여한 AI가 판정해요.",
-                       "Decides for each project-chat message: one answer, everyone, or work. Model not downloaded or Ollama off: a member AI judges."))
+                .help(model.routeSorter.summary)
+                .onChange(of: model.routeSorter) { SortModelStatus.offer($0, model: model) }
+                if model.routeSorter != .off {
+                    Divider()
+                    SortModelStatus(model: model, store: .shared)
+                }
             }
             let makers = model.accounts.filter { $0.provider == .codex }
             if !makers.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    SettingsCard(title: L("그림 담당", "Picture makers")) {
-                        ForEach(makers, id: \.id) { account in
-                            SettingsRow(title: account.name) {
-                                Text(account.isSchool ? L("엔터프라이즈", "Enterprise") : L("개인", "Personal"))
-                                    .font(.system(size: 11)).foregroundStyle(.secondary)
-                                Spacer()
-                                Toggle(account.name, isOn: Binding(
-                                    get: { !model.pictureMakersOff.contains(account.id) },
-                                    set: { on in if on { model.pictureMakersOff.remove(account.id) } else { model.pictureMakersOff.insert(account.id) } }))
-                                    .labelsHidden().toggleStyle(.switch)
-                            }
+                SettingsCard(title: L("그림 담당", "Picture makers"),
+                             help: L("켜 둔 ChatGPT 계정이 다른 AI 대신 모든 그림을 그려요. 위 설정이 켜져 있으면 엔터프라이즈 AI는 엔터프라이즈 ChatGPT에게, 개인 AI는 개인 ChatGPT에게만 맡겨요. 숫자가 정확해야 하는 그래프와 도표는 각 AI가 직접 그려요.",
+                                     "Checked ChatGPT accounts draw every picture for the other AIs. With the setting above on, Enterprise AIs ask only Enterprise ChatGPT and personal AIs only personal ChatGPT. Charts and diagrams that must be exact are still drawn by each AI.")) {
+                    ForEach(makers, id: \.id) { account in
+                        SettingsRow(title: account.name) {
+                            Text(account.isSchool ? L("엔터프라이즈", "Enterprise") : L("개인", "Personal"))
+                                .font(.system(size: 11)).foregroundStyle(.secondary)
+                            Spacer()
+                            Toggle(account.name, isOn: Binding(
+                                get: { !model.pictureMakersOff.contains(account.id) },
+                                set: { on in if on { model.pictureMakersOff.remove(account.id) } else { model.pictureMakersOff.insert(account.id) } }))
+                                .labelsHidden().toggleStyle(.switch)
                         }
                     }
-                    hint(L("켜 둔 ChatGPT 계정이 다른 AI 대신 모든 그림을 그려요. 위 설정이 켜져 있으면 엔터프라이즈 AI는 엔터프라이즈 ChatGPT에게, 개인 AI는 개인 ChatGPT에게만 맡겨요. 숫자가 정확해야 하는 그래프와 도표는 각 AI가 직접 그려요.",
-                           "Checked ChatGPT accounts draw every picture for the other AIs. With the setting above on, Enterprise AIs ask only Enterprise ChatGPT and personal AIs only personal ChatGPT. Charts and diagrams that must be exact are still drawn by each AI."))
                 }
             }
             StorageSettingsCard()
@@ -959,12 +955,6 @@ struct ChatSettingsTab: View {
             DeviceSyncSettingsView()
             MCPSettings()
         }
-    }
-
-    // Wraps instead of truncating; the page scrolls when the notes are long.
-    private func hint(_ text: String) -> some View {
-        Text(text).font(.system(size: 11)).foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true).padding(.horizontal, 2)
     }
 }
 
@@ -1256,52 +1246,50 @@ private struct DeviceSyncSettingsView: View {
     @ObservedObject var sync = DeviceSync.shared
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            SettingsCard(title: L("다른 기기의 대화", "Chats from other Macs")) {
-                SettingsRow(title: L("켜기", "On")) {
-                    Text(sync.settings.enabled ? status : L("꺼짐", "Off")).font(.system(size: 11))
-                        .foregroundStyle(sync.problem != nil || (sync.settings.enabled && !sync.folderAvailable) ? .orange : .secondary).lineLimit(1)
-                    Spacer()
-                    Toggle(L("켜기", "On"), isOn: Binding(get: { sync.settings.enabled }, set: setEnabled)).labelsHidden().toggleStyle(.switch)
+        SettingsCard(title: L("다른 기기의 대화", "Chats from other Macs"),
+                     help: L("다른 Mac에서 하던 대화를 읽기 전용으로 보고, 원하면 이 Mac에서 새 대화로 이어가요. 각 Mac은 동기화 폴더의 자기 폴더에만 써서 서로 덮어쓰지 않아요. ‘고른 대화만’이면 대화 메뉴(⋯)의 ‘다른 기기에 보이기’로 골라요. 엔터프라이즈 대화는 켜야만 올라가고, 끄면 이미 올린 사본도 지워져요. 그림, 연결한 폴더, 세션 기록은 올라가지 않아요.",
+                             "See chats from your other Macs read only, and continue one here as a new chat. Each Mac writes only its own folder in the sync folder, so nothing is overwritten. With ‘Chosen chats’, pick them with ‘Show on other Macs’ in a chat's ⋯ menu. Enterprise chats go up only when included; turning that off removes their copies. Pictures, linked folders and sessions are not copied.")) {
+            SettingsRow(title: L("켜기", "On")) {
+                Text(sync.settings.enabled ? status : L("꺼짐", "Off")).font(.system(size: 11))
+                    .foregroundStyle(sync.problem != nil || (sync.settings.enabled && !sync.folderAvailable) ? .orange : .secondary).lineLimit(1)
+                Spacer()
+                Toggle(L("켜기", "On"), isOn: Binding(get: { sync.settings.enabled }, set: setEnabled)).labelsHidden().toggleStyle(.switch)
+            }
+            if sync.settings.enabled {
+                Divider()
+                SettingsRow(title: L("이 Mac 이름", "This Mac's name")) {
+                    TextField(Host.current().localizedName ?? "Mac", text: Binding(
+                        get: { sync.settings.deviceName ?? "" },
+                        set: { sync.settings.deviceName = $0.isEmpty ? nil : $0 }))
+                        .textFieldStyle(.roundedBorder)
                 }
-                if sync.settings.enabled {
-                    Divider()
-                    SettingsRow(title: L("이 Mac 이름", "This Mac's name")) {
-                        TextField(Host.current().localizedName ?? "Mac", text: Binding(
-                            get: { sync.settings.deviceName ?? "" },
-                            set: { sync.settings.deviceName = $0.isEmpty ? nil : $0 }))
-                            .textFieldStyle(.roundedBorder)
-                    }
-                    Divider()
-                    SettingsRow(title: L("보일 대화", "Chats shown")) {
-                        SettingsSegments(options: [(L("고른 대화만", "Chosen chats"), false), (L("전부", "All"), true)],
-                                         selection: Binding(get: { sync.settings.shareAll }, set: { sync.settings.shareAll = $0 }))
-                    }
-                    Divider()
-                    SettingsRow(title: L("엔터프라이즈", "Enterprise")) {
-                        Text(L("엔터프라이즈 대화도 올리기", "Include Enterprise chats")).font(.system(size: 11)).foregroundStyle(.secondary)
-                        Spacer()
-                        Toggle("", isOn: Binding(get: { sync.settings.includeSchool }, set: { sync.settings.includeSchool = $0 }))
-                            .labelsHidden().toggleStyle(.switch)
-                    }
-                    Divider()
-                    SettingsRow(title: L("폴더", "Folder")) {
-                        Text(sync.folder.path.replacingOccurrences(of: DeviceSync.iCloudDrive.path, with: "iCloud Drive"))
-                            .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-                            .help(sync.folder.path)
-                        Spacer()
-                        Button(L("바꾸기…", "Change…"), action: chooseFolder)
-                        if sync.settings.folder != nil { Button(L("기본값", "Default")) { sync.settings.folder = nil } }
-                    }
-                    Divider()
-                    SettingsRow(title: L("관리", "Manage")) {
-                        SettingsAction(title: L("지금 확인", "Check now")) { sync.reconcile(); sync.scan() }
-                        SettingsAction(title: L("이 Mac 사본 지우기", "Remove this Mac's copies"), action: removeMine)
-                    }
+                Divider()
+                SettingsRow(title: L("보일 대화", "Chats shown")) {
+                    SettingsSegments(options: [(L("고른 대화만", "Chosen chats"), false), (L("전부", "All"), true)],
+                                     selection: Binding(get: { sync.settings.shareAll }, set: { sync.settings.shareAll = $0 }))
+                }
+                Divider()
+                SettingsRow(title: L("엔터프라이즈", "Enterprise")) {
+                    Text(L("엔터프라이즈 대화도 올리기", "Include Enterprise chats")).font(.system(size: 11)).foregroundStyle(.secondary)
+                    Spacer()
+                    Toggle("", isOn: Binding(get: { sync.settings.includeSchool }, set: { sync.settings.includeSchool = $0 }))
+                        .labelsHidden().toggleStyle(.switch)
+                }
+                Divider()
+                SettingsRow(title: L("폴더", "Folder")) {
+                    Text(sync.folder.path.replacingOccurrences(of: DeviceSync.iCloudDrive.path, with: "iCloud Drive"))
+                        .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                        .help(sync.folder.path)
+                    Spacer()
+                    Button(L("바꾸기…", "Change…"), action: chooseFolder)
+                    if sync.settings.folder != nil { Button(L("기본값", "Default")) { sync.settings.folder = nil } }
+                }
+                Divider()
+                SettingsRow(title: L("관리", "Manage")) {
+                    SettingsAction(title: L("지금 확인", "Check now")) { sync.reconcile(); sync.scan() }
+                    SettingsAction(title: L("이 Mac 사본 지우기", "Remove this Mac's copies"), action: removeMine)
                 }
             }
-            hint(L("다른 Mac에서 하던 대화를 읽기 전용으로 보고, 원하면 이 Mac에서 새 대화로 이어가요. 각 Mac은 동기화 폴더의 자기 폴더에만 써서 서로 덮어쓰지 않아요. ‘고른 대화만’이면 대화 메뉴(⋯)의 ‘다른 기기에 보이기’로 골라요. 엔터프라이즈 대화는 켜야만 올라가고, 끄면 이미 올린 사본도 지워져요. 그림, 연결한 폴더, 세션 기록은 올라가지 않아요.",
-                   "See chats from your other Macs read only, and continue one here as a new chat. Each Mac writes only its own folder in the sync folder, so nothing is overwritten. With ‘Chosen chats’, pick them with ‘Show on other Macs’ in a chat's ⋯ menu. Enterprise chats go up only when included; turning that off removes their copies. Pictures, linked folders and sessions are not copied."))
         }
     }
 
@@ -1360,11 +1348,6 @@ private struct DeviceSyncSettingsView: View {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         sync.settings.folder = url.path
     }
-
-    private func hint(_ text: String) -> some View {
-        Text(text).font(.system(size: 11)).foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true).padding(.horizontal, 2)
-    }
 }
 
 // MCP servers the chat's AI may use, one switch each (like the ChatGPT app). AI Face adds itself when
@@ -1385,8 +1368,9 @@ private struct MCPSettings: View {
                 .help(L("AI Face: 일반 채팅의 AI가 표정을 바꿔요. 캘린더·메일·폴더 권한은 AI Face 설정에서 정해요.",
                         "AI Face: the AI in plain chat sets the face. Calendar, mail and folder access is set in AI Face."))
             } else {
-                note(L("ai-face: 없어요. AI Face 설정 → AI에서 AI Illuminati를 연결하면 여기에 보여요.",
-                       "ai-face: none. Connect AI Illuminati in AI Face (Settings → AI) and it shows here."))
+                note("ai-face", L("없음", "None"),
+                     help: L("AI Face 설정 → AI에서 AI Illuminati를 연결하면 여기에 보여요.",
+                             "Connect AI Illuminati in AI Face (Settings → AI) and it shows here."))
             }
             // Google Drive (read only): connected and its folders chosen in the chat window's sidebar.
             if drive.connected || drive.needsReconnect {
@@ -1402,18 +1386,20 @@ private struct MCPSettings: View {
                 .help(L("Google 드라이브: 일반 채팅의 AI가 고른 드라이브 폴더만 읽어요. 연결과 폴더는 채팅창 사이드바에서 정해요.",
                         "Google Drive: the AI in plain chat reads only the chosen Drive folders. Connect and choose folders in the chat window's sidebar."))
             } else {
-                note(L("google-drive: 연결 안 됨. 채팅창 사이드바의 Google Drive에서 연결해요.",
-                       "google-drive: not connected. Connect it under Google Drive in the chat window's sidebar."))
+                note("google-drive", L("연결 안 됨", "Not connected"),
+                     help: L("채팅창 사이드바의 Google Drive에서 연결해요.",
+                             "Connect it under Google Drive in the chat window's sidebar."))
             }
         }
         .onAppear { link.refresh(); drive.refresh() }
     }
 
-    private func note(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 11)).foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 10).padding(.vertical, 8)
+    // A server that is not set up: one short line, with how to add it on hover.
+    private func note(_ name: String, _ status: String, help: String) -> some View {
+        SettingsRow(title: name) {
+            Text(status).foregroundStyle(.secondary)
+        }
+        .help(help)
     }
 }
 
@@ -1546,32 +1532,28 @@ private struct StorageSettingsCard: View {
     @ObservedObject var storage = StorageModel.shared
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            SettingsCard(title: L("저장 공간", "Storage")) {
-                SettingsRow(title: L("전체", "Total")) {
-                    Text(storage.report.map { ChatStorage.format($0.total.allocated) } ?? "–").monospacedDigit()
-                    Spacer()
-                    SettingsAction(title: storage.measuring ? L("계산 중…", "Measuring…") : L("다시 계산", "Measure")) { storage.measure() }
-                        .disabled(storage.measuring).frame(width: 90)
-                }
-                Divider()
-                SettingsRow(title: L("백업", "Backups")) {
-                    Text(storage.report.map { ChatStorage.format(StorageModel.backups($0)) } ?? "–").monospacedDigit()
-                    Spacer()
-                }
-                Divider()
-                SettingsRow(title: L("채팅방별 용량", "By chat")) {
-                    SettingsAction(title: L("목록 보기…", "Show List…")) { StorageWindows.shared.showList() }
-                }
-                Divider()
-                SettingsRow(title: L("백업 자동 정리", "Backup cleanup")) {
-                    SettingsAction(title: L("설정…", "Settings…")) { StorageWindows.shared.showCleanup() }
-                }
+        SettingsCard(title: L("저장 공간", "Storage"),
+                     help: L("앱이 채팅마다 쓰는 디스크 크기예요. 백업은 원본과 블록을 나눠 쓰는 복제라 표시된 크기는 최대치예요.",
+                             "Disk the app uses for chats. Backups are clones that share blocks with the originals: their size is an upper bound.")) {
+            SettingsRow(title: L("전체", "Total")) {
+                Text(storage.report.map { ChatStorage.format($0.total.allocated) } ?? "–").monospacedDigit()
+                Spacer()
+                SettingsAction(title: storage.measuring ? L("계산 중…", "Measuring…") : L("다시 계산", "Measure")) { storage.measure() }
+                    .disabled(storage.measuring).frame(width: 90)
             }
-            Text(L("앱이 채팅마다 쓰는 디스크 크기예요. 백업은 원본과 블록을 나눠 쓰는 복제라 표시된 크기는 최대치예요.",
-                   "Disk the app uses for chats. Backups are clones that share blocks with the originals: their size is an upper bound."))
-                .font(.system(size: 11)).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true).padding(.horizontal, 2)
+            Divider()
+            SettingsRow(title: L("백업", "Backups")) {
+                Text(storage.report.map { ChatStorage.format(StorageModel.backups($0)) } ?? "–").monospacedDigit()
+                Spacer()
+            }
+            Divider()
+            SettingsRow(title: L("채팅방별 용량", "By chat")) {
+                SettingsAction(title: L("목록 보기…", "Show List…")) { StorageWindows.shared.showList() }
+            }
+            Divider()
+            SettingsRow(title: L("백업 자동 정리", "Backup cleanup")) {
+                SettingsAction(title: L("설정…", "Settings…")) { StorageWindows.shared.showCleanup() }
+            }
         }
         .onAppear { if storage.report == nil { storage.measure() } }
     }
@@ -1827,27 +1809,23 @@ private struct ApprovalAlertSettingsView: View {
     @AppStorage(ApprovalAlertSettings.repeatKey, store: .app) private var repeats = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            SettingsCard(title: L("허가 요청", "Approval requests")) {
-                SettingsRow(title: L("알림", "Notify")) {
-                    Spacer()
-                    Toggle(L("알림", "Notify"), isOn: $notify).labelsHidden().toggleStyle(.switch)
-                }
-                Divider()
-                SettingsRow(title: L("소리", "Sound")) {
-                    Spacer()
-                    Toggle(L("소리", "Sound"), isOn: $sound).labelsHidden().toggleStyle(.switch).disabled(!notify)
-                }
-                Divider()
-                SettingsRow(title: L("5분마다 다시", "Every 5 min")) {
-                    Spacer()
-                    Toggle(L("5분마다 다시", "Every 5 min"), isOn: $repeats).labelsHidden().toggleStyle(.switch).disabled(!notify)
-                }
+        SettingsCard(title: L("허가 요청", "Approval requests"),
+                     help: L("다른 채팅이나 다른 앱을 보고 있을 때 허가 요청을 macOS 알림으로 알려요. 메뉴바 숫자와 채팅 목록의 점은 늘 보여요. 15분 안에 답하지 않으면 거절로 처리해요.",
+                             "Notifies you in macOS when an approval waits while you look at another chat or app. The menu bar count and the dot in the chat list always show. Unanswered for 15 minutes counts as denied.")) {
+            SettingsRow(title: L("알림", "Notify")) {
+                Spacer()
+                Toggle(L("알림", "Notify"), isOn: $notify).labelsHidden().toggleStyle(.switch)
             }
-            Text(L("다른 채팅이나 다른 앱을 보고 있을 때 허가 요청을 macOS 알림으로 알려요. 메뉴바 숫자와 채팅 목록의 점은 늘 보여요. 15분 안에 답하지 않으면 거절로 처리해요.",
-                   "Notifies you in macOS when an approval waits while you look at another chat or app. The menu bar count and the dot in the chat list always show. Unanswered for 15 minutes counts as denied."))
-                .font(.system(size: 11)).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true).padding(.horizontal, 2)
+            Divider()
+            SettingsRow(title: L("소리", "Sound")) {
+                Spacer()
+                Toggle(L("소리", "Sound"), isOn: $sound).labelsHidden().toggleStyle(.switch).disabled(!notify)
+            }
+            Divider()
+            SettingsRow(title: L("5분마다 다시", "Every 5 min")) {
+                Spacer()
+                Toggle(L("5분마다 다시", "Every 5 min"), isOn: $repeats).labelsHidden().toggleStyle(.switch).disabled(!notify)
+            }
         }
     }
 }

@@ -1164,7 +1164,8 @@ final class Discussion: ObservableObject {
             if TodoStore.shared.current.items.contains(where: { s.lists.contains($0.listID) && $0.state == .running }) {
                 return L("이 프로젝트의 TODO가 진행 중이에요. 끝나거나 멈춘 뒤 다시 해 주세요.", "A TODO of this project is running. Try again when it is done or stopped.")
             }
-            if !s.lists.isEmpty, let locked = TodoStore.shared.locked { return locked }
+            // A held todos.json reads as empty: its lists for this project could be there, so nothing is deleted.
+            if let locked = TodoStore.shared.locked { return locked }
             if ProjectInfoStore.shared.isLocked { return L("project-info.json을 읽지 못해서 프로젝트를 지우지 않았어요. 파일을 확인해 주세요.", "project-info.json could not be read, so the project was not deleted. Please check the file.") }
             return nil
         }

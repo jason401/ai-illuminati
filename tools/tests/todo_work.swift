@@ -123,6 +123,23 @@ func testTodoStore() {
     expect(TodoStore(url: todoStoreFile("missing-\(UUID().uuidString)")).locked == nil, "only a missing file starts empty")
     let nullRoom = "{\"id\":\"\(UUID().uuidString)\",\"listID\":\"\(UUID().uuidString)\",\"room\":null,\"report\":null}"
     expect((try? JSONDecoder().decode(TodoItem.self, from: Data(nullRoom.utf8)))?.room == nil, "null in a field that may be empty is just empty")
+    // Deleting a project's lists: only theirs go (TODOs and attachments), links from other lists are dropped, a running one refuses.
+    let gone = TodoStore(url: todoStoreFile("delete-lists"))
+    let first = try! gone.add(title: "first", project: a, projectName: "A")
+    let second = try! gone.add(title: "second", project: a, projectName: "A")
+    let shot = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("todo-tests/shot.txt")
+    try! "x".write(to: shot, atomically: true, encoding: .utf8)
+    try! gone.attach(first.id, files: [shot])
+    let kept = try! gone.add(title: "kept", project: b, projectName: "B", after: [second.id])
+    let listA = gone.current.item(first.id)!.listID, listB = gone.current.item(kept.id)!.listID
+    try! gone.change(second.id) { $0.state = .running }
+    do { try gone.deleteLists([listA]); expect(false, "a running TODO keeps its list") } catch { expect(error as? TodoError == .busy && gone.current.items.count == 3, "refused while running, nothing deleted") }
+    try! gone.change(second.id) { $0.state = .review }
+    expect(try! gone.deleteLists([listA]) == 2, "both TODOs of the list deleted")
+    expect(gone.current.lists.map(\.id) == [listB] && gone.current.items.map(\.title) == ["kept"] && gone.current.item(kept.id)?.after.isEmpty == true,
+           "only the other list is left, and it no longer waits for a deleted TODO")
+    expect(!FileManager.default.fileExists(atPath: gone.folder(first.id).path) && FileManager.default.fileExists(atPath: shot.path), "attachment copies go, the original stays")
+    expect(TodoStore(url: gone.url).current == gone.current && (try! gone.deleteLists([])) == 0, "saved; nothing to delete is fine")
     print("PASS: TODO store (held unreadable files, drafts, joining a running list, release wakes, order and folder, gate review/done, other lists, circles refused, move, cancelled link, saved and read back, older files, failed save)")
 }
 
@@ -369,6 +386,13 @@ func testSidebarProjects() {
     let again = SidebarFold(defaults: defaults)
     expect(again.isFolded("recents") && again.isFolded("project." + common) && !again.isFolded("pinned") && again.pinnedProjects.isEmpty
            && again.openFinished == [common], "folds, pins and the unfolded finished row come back after a restart")
+    // A deleted project's fold, pin, unfolded finished row and tab are forgotten; others stay.
+    again.togglePin(common); again.togglePin("other")
+    defaults.set([common: "todo", "other": "info"], forKey: BoardTab.key)
+    again.forget(common)
+    let forgotten = SidebarFold(defaults: defaults)
+    expect(!forgotten.isFolded("project." + common) && forgotten.isFolded("recents") && forgotten.pinnedProjects == ["other"] && forgotten.openFinished.isEmpty
+           && defaults.dictionary(forKey: BoardTab.key)?.keys.sorted() == ["other"], "a deleted project's sidebar state is forgotten")
 
     // ▶ on one project's board: only its drafts become ready.
     let start = TodoStore(url: todoStoreFile("sidebar-start"))

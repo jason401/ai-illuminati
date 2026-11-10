@@ -403,6 +403,8 @@ struct ChatView: View {
             if let binding = group.bindings.first {
                 Button(L("Finder에서 열기", "Open in Finder")) { NSWorkspace.shared.open(URL(fileURLWithPath: binding.root)) }
             }
+            Divider()
+            Button(L("프로젝트 삭제…", "Delete Project…")) { discussion.deleteProject(group.id, name: group.name) }
         }
         .disabled(discussion.importingMaterials)
     }

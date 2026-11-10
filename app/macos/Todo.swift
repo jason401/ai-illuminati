@@ -471,6 +471,27 @@ final class TodoStore: ObservableObject {
         }
         try? FileManager.default.removeItem(at: folder(id))   // only once the TODO is gone from the saved file
     }
+    // Whole lists (a deleted project's) with their TODOs and attachments, in one save; refused while one of them runs.
+    // TODOs of other lists that waited for them no longer wait; a list stopped after one stays stopped (paused).
+    @discardableResult
+    func deleteLists(_ ids: Set<UUID>) throws -> Int {
+        guard !ids.isEmpty else { return 0 }
+        let gone: Set<UUID> = try update { data in
+            let items = data.items.filter { ids.contains($0.listID) }
+            guard !items.contains(where: { $0.state == .running }) else { throw TodoError.busy }
+            let gone = Set(items.map(\.id))
+            data.items.removeAll { gone.contains($0.id) }
+            data.lists.removeAll { ids.contains($0.id) }
+            for l in data.lists.indices {
+                if let stop = data.lists[l].stopAfter, gone.contains(stop) { data.lists[l].stopAfter = nil; data.lists[l].paused = true }
+                data.lists[l].order.removeAll { gone.contains($0) }
+            }
+            for i in data.items.indices { data.items[i].after.removeAll { gone.contains($0) } }
+            return gone
+        }
+        for id in gone { try? FileManager.default.removeItem(at: folder(id)) }   // only once they are gone from the saved file
+        return gone.count
+    }
     // Up (-1) or down (+1) in its list.
     func move(_ id: UUID, by step: Int) throws {
         try update { data in

@@ -109,6 +109,13 @@ final class ProjectInfoStore: ObservableObject {
         return clean.isEmpty ? nil : clean
     }
 
+    // A deleted project: its name, folders and links go.
+    var isLocked: Bool { locked != nil }
+    func forget(_ project: String) throws {
+        guard current.projects[project] != nil else { return }
+        try update(project) { $0 = ProjectInfo() }
+    }
+
     // Folders for an AI call: the ones still there (a folder that went away stays listed on the tab only).
     func activeFolders(_ project: String) -> [ProjectFolder] {
         info(project).folders.filter { folder in

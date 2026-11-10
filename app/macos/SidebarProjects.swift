@@ -143,6 +143,16 @@ final class SidebarFold: ObservableObject {
         defaults.set(pinnedProjects.sorted(), forKey: Self.pinnedKey)
     }
 
+    // A deleted project: its pin, fold and tab are forgotten (a folder linked again starts fresh).
+    func forget(_ project: String) {
+        pinnedProjects.remove(project); folded.remove("project." + project); openFinished.remove(project)
+        defaults.set(pinnedProjects.sorted(), forKey: Self.pinnedKey)
+        defaults.set(folded.sorted(), forKey: Self.foldedKey)
+        defaults.set(openFinished.sorted(), forKey: Self.openFinishedKey)
+        var tabs = defaults.dictionary(forKey: BoardTab.key) ?? [:]
+        if tabs.removeValue(forKey: project) != nil { defaults.set(tabs, forKey: BoardTab.key) }
+    }
+
     // Once, when the sidebar first groups by project: a pinned project chat pins its project's folder (the chat
     // stays pinned too, at the top inside its folder).
     func adoptPins(_ chats: [Conversation]) {

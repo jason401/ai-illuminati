@@ -42,6 +42,13 @@ func testProjectInfo() {
     try! store.rename(named, to: "Named")
     try! store.rename(named, to: " ")
     expect(store.current.projects[named] == nil, "a project with nothing left is dropped from the file")
+    // A deleted project: its name, folders and links go; other projects stay.
+    try! store.rename(named, to: "Other")
+    try! store.forget(key)
+    expect(store.current.projects[key] == nil && store.names[named] == "Other" && ProjectInfoStore(url: file).current.projects[key] == nil, "a deleted project's info is forgotten, others stay")
+    try! store.forget(key)
+    try! store.forget(named)
+    _ = try! store.addFolders([docs], to: key)
 
     // A file it cannot read (broken, or from a newer app) is left as it is, and changes are refused.
     for raw in ["{ broken", #"{"version": 99, "projects": {}}"#,

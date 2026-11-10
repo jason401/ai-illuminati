@@ -1147,6 +1147,61 @@ final class Discussion: ObservableObject {
         }
     }
 
+    // Permanently deletes a whole project from the app (SidebarProjects.key): every chat of it (pinned ones, the
+    // worktrees' chats and the meetings too), its TODO lists with their TODOs and attachments, and its project info.
+    // The folder on disk and its Git history stay. Refused while any of it runs; checked again after asking.
+    func deleteProject(_ key: String, name: String) {
+        guard !importingMaterials else { return }
+        func scope() -> (chats: [Conversation], meetings: Int, lists: Set<UUID>, todos: Int) {
+            let chats = conversations.filter { $0.meetingOf == nil && $0.workspace?.project.map(SidebarProjects.key) == key }
+            let todo = TodoStore.shared.current
+            let lists = Set(todo.lists.filter { $0.project.map(SidebarProjects.key) == key }.map(\.id))
+            return (chats, chats.map { meetings(of: $0.id).count }.reduce(0, +), lists, todo.items.filter { lists.contains($0.listID) }.count)
+        }
+        func refusal(_ s: (chats: [Conversation], meetings: Int, lists: Set<UUID>, todos: Int)) -> String? {
+            let rooms = s.chats.flatMap { [$0.id] + meetings(of: $0.id).map(\.id) }
+            if !runningRooms.isDisjoint(with: rooms) { return L("이 프로젝트의 채팅이 답하는 중이에요. 끝난 뒤 다시 해 주세요.", "A chat of this project is answering. Try again when it is done.") }
+            if TodoStore.shared.current.items.contains(where: { s.lists.contains($0.listID) && $0.state == .running }) {
+                return L("이 프로젝트의 TODO가 진행 중이에요. 끝나거나 멈춘 뒤 다시 해 주세요.", "A TODO of this project is running. Try again when it is done or stopped.")
+            }
+            if !s.lists.isEmpty, let locked = TodoStore.shared.locked { return locked }
+            if ProjectInfoStore.shared.isLocked { return L("project-info.json을 읽지 못해서 프로젝트를 지우지 않았어요. 파일을 확인해 주세요.", "project-info.json could not be read, so the project was not deleted. Please check the file.") }
+            return nil
+        }
+        func tell(_ title: String, _ text: String) {
+            let alert = NSAlert(); alert.messageText = title; alert.informativeText = text; alert.runModal()
+        }
+        let cannot = L("프로젝트를 삭제할 수 없어요", "Cannot delete the project")
+        let first = scope()
+        if let why = refusal(first) { tell(cannot, why); return }
+        let alert = NSAlert()
+        alert.messageText = L("‘\(name)’ 프로젝트를 삭제할까요?", "Delete the project “\(name)”?")
+        alert.informativeText = L("앱에서 이 프로젝트를 통째로 영구 삭제해요. 되돌릴 수 없어요.\n• 채팅 \(first.chats.count)개 (고정한 채팅, 같은 저장소의 다른 작업 폴더 채팅 포함)와 회의 기록 \(first.meetings)개, 그 세션·작업 결과·Undo 백업\n• TODO \(first.todos)개와 그 첨부\n• 프로젝트 정보 (바꾼 이름, 폴더, 링크)\n\n디스크의 프로젝트 폴더와 파일, Git 기록은 그대로예요. 나중에 폴더를 다시 연결하면 새 프로젝트로 시작해요.",
+                                  "This permanently deletes the whole project from the app. This cannot be undone.\n• \(first.chats.count) chats (pinned ones and the chats of other worktrees of this repository too) and \(first.meetings) meeting records, with their sessions, results and Undo backups\n• \(first.todos) TODOs and their attachments\n• The project info (its name, folders and links)\n\nThe project folder on disk, its files and its Git history stay. Linking the folder again starts a new project.")
+        alert.addButton(withTitle: L("프로젝트 삭제", "Delete Project"))
+        alert.addButton(withTitle: L("취소", "Cancel"))
+        alert.buttons.first?.hasDestructiveAction = true
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        // Checked again: a chat may have started answering, a TODO started or a chat joined while the alert was up.
+        let chosen = scope()
+        if let why = refusal(chosen) { tell(cannot, why); return }
+        // The TODOs first, in one save: if that fails nothing is deleted.
+        do { try TodoStore.shared.deleteLists(chosen.lists) } catch { tell(cannot, error.localizedDescription); return }
+        if viewingBoard && boardProject == key { viewingBoard = false; boardProject = nil }
+        let failed = removeChats(chosen.chats)
+        if failed > 0 {
+            // What is left stays a project, with its name, folders and links.
+            tell(L("\(failed)개 채팅을 지우지 못했어요", "Could not delete \(failed) chats"),
+                 L("TODO는 지웠고, 지우지 못한 채팅은 프로젝트에 남겨뒀어요. 다시 삭제해 보세요.", "The TODOs are deleted; the chats that could not be deleted stay in the project. Try deleting it again."))
+            return
+        }
+        do { try ProjectInfoStore.shared.forget(key) } catch {
+            tell(L("프로젝트 정보를 지우지 못했어요", "Could not delete the project info"),
+                 L("채팅과 TODO는 지웠어요. 프로젝트 이름·폴더·링크는 남아 있어서, 폴더를 다시 연결하면 다시 보여요.\n", "The chats and TODOs are deleted. Its name, folders and links are left and show again if the folder is linked again.\n") + error.localizedDescription)
+        }
+        SidebarFold.shared.forget(key)
+    }
+
     func delete(_ id: UUID) {
         guard !runningRooms.contains(id), let conversation = conversations.first(where: { $0.id == id }) else { return }
         let alert = NSAlert()

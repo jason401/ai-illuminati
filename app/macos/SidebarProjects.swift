@@ -130,7 +130,8 @@ final class SidebarFold: ObservableObject {
 
     // Long lists (Recents, each Mac under Other Macs) show the newest page; "Show more" adds a page.
     // Kept in memory only: a restart starts short again.
-    static let recentsPage = 10, devicePage = 5
+    // A project folder's own chats (not its TODO chats) too: pinned ones always, then the newest page.
+    static let recentsPage = 10, devicePage = 5, projectPage = 5
     @Published private(set) var listLimits: [String: Int] = [:]
     func limit(_ key: String, page: Int) -> Int { listLimits[key] ?? page }
     func showMore(_ key: String, page: Int) { listLimits[key] = limit(key, page: page) + page }
@@ -139,6 +140,11 @@ final class SidebarFold: ObservableObject {
     // The first `limit` rows, plus the open one when it is further down (only it, so "Show less" still shortens).
     static func listed<Row: Identifiable>(_ rows: [Row], limit: Int, open: Row.ID?) -> [Row] {
         rows.enumerated().filter { $0.offset < limit || $0.element.id == open }.map(\.element)
+    }
+    static func listedChats(_ chats: [Conversation], limit: Int, open: UUID?) -> (rows: [Conversation], unpinned: Int, listed: Int) {
+        let pinned = chats.filter { $0.pinned == true }, rest = chats.filter { $0.pinned != true }
+        let listed = Self.listed(rest, limit: limit, open: open)
+        return (pinned + listed, rest.count, listed.count)
     }
 
     func toggleFinished(_ project: String) {

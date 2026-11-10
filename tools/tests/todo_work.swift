@@ -400,6 +400,11 @@ func testSidebarProjects() {
     expect(SidebarFold.listed(rows, limit: 10, open: nil).map(\.id) == Array(0..<10), "the newest page is listed")
     expect(SidebarFold.listed(rows, limit: 10, open: 20).map(\.id) == Array(0..<10) + [20], "an older open chat is listed too, alone")
     expect(SidebarFold.listed(Array(rows.prefix(3)), limit: 10, open: 1).count == 3, "a short list is listed whole")
+    var folder = (0..<8).map { _ in Conversation() }; folder[0].pinned = true
+    let paged = SidebarFold.listedChats(folder, limit: SidebarFold.projectPage, open: folder[7].id)
+    let expected: [UUID] = [0, 1, 2, 3, 4, 5, 7].map { folder[$0].id }
+    expect(paged.rows.map(\.id) == expected && paged.unpinned == 7 && paged.listed == 6,
+           "a project folder lists its pinned chats, the newest page and the open chat")
     again.showMore("recents", page: SidebarFold.recentsPage); again.showMore("recents", page: SidebarFold.recentsPage)
     expect(again.limit("recents", page: SidebarFold.recentsPage) == 30 && again.limit("device.x", page: SidebarFold.devicePage) == 5,
            "Show more adds a page to that list only")

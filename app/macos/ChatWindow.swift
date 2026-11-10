@@ -298,7 +298,12 @@ struct ChatView: View {
             // TODO chats still going come first, so the work running now is in sight right away.
             let rooms = SidebarProjects.todoRooms(group.todoRooms, todo: todos.snapshot)
             ForEach(rooms.going) { todoRoom($0) }
-            ForEach(group.chats) { chatGroup($0, depth: 1) }
+            // Its own chats: pinned ones and the newest page (and the open chat); every match while searching.
+            let key = "project-chats." + group.id, page = SidebarFold.projectPage
+            let current = discussion.viewingRemote == nil && !discussion.viewingBoard ? discussion.current.meetingOf?.room ?? discussion.currentID : nil
+            let chats = SidebarFold.listedChats(group.chats, limit: discussion.sidebarSearching ? .max : folds.limit(key, page: page), open: current)
+            ForEach(chats.rows) { chatGroup($0, depth: 1) }
+            if !discussion.sidebarSearching { moreRow(key, page: page, total: chats.unpinned, listed: chats.listed, indent: 22) }
             if !rooms.finished.isEmpty {
                 // Searching lists every match; folded, only the chat open now (or the one whose meeting is open) stays.
                 let unfolded = folds.openFinished.contains(group.id) || discussion.sidebarSearching
@@ -573,7 +578,7 @@ struct ChatView: View {
     }
 
     // "Show more (n)" under a shortened list, and "Show less" once it was lengthened.
-    @ViewBuilder private func moreRow(_ key: String, page: Int, total: Int, listed: Int) -> some View {
+    @ViewBuilder private func moreRow(_ key: String, page: Int, total: Int, listed: Int, indent: CGFloat = 10) -> some View {
         let hidden = total - listed
         let expanded = folds.limit(key, page: page) > page && total > page
         if hidden > 0 || expanded {
@@ -581,7 +586,7 @@ struct ChatView: View {
                 if hidden > 0 { Button(L("더 보기 (\(hidden))", "Show more (\(hidden))")) { folds.showMore(key, page: page) } }
                 if expanded { Button(L("접기", "Show less")) { folds.showLess(key) } }
             }
-            .buttonStyle(.link).font(.system(size: 11)).padding(.leading, 10).frame(height: 22)
+            .buttonStyle(.link).font(.system(size: 11)).padding(.leading, indent).frame(height: 22)
         }
     }
 

@@ -65,6 +65,11 @@ AI Illuminati behaves like the other desktop apps: **the app itself** is AI Face
   school/Enterprise account. AI Face should say so next to the Illuminati switches.
 - Only plain chat (mode 0), including project work linked to a plain chat (the writing AI tags its reply; a read-only reviewer does not). Debate, collaboration and vote modes do not get AI Face.
 - If the file is missing, invalid or AI Face is closed, chats work as before, without a face.
+- A CLI's own AI Face server must not reach AI Face from AI Illuminati's runs. Claude Code runs with
+  `--strict-mcp-config`. Codex reads the account's `config.toml` (`~/.codex` for the main account), where AI Face's
+  Codex Connect adds `ai-face` with `AIFACE_AGENT=gpt`. Every Codex run therefore switches off each configured
+  server that points to `ai_face_mcp.py` or sets `AIFACE_AGENT` (`-c mcp_servers.<name>.enabled=false`; only
+  names that are configured, because Codex refuses to start when an unknown name is switched off).
 
 ## What AI Face needs to change
 

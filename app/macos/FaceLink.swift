@@ -49,6 +49,35 @@ final class FaceLink: ObservableObject {
         return Server(command: command, args: args)
     }
 
+    // MARK: AI Face servers of the CLIs
+
+    /// AI Face servers in a Codex config.toml (AI Face's Codex Connect adds one as "gpt"). Codex loads them in
+    /// AI Illuminati's runs too, so a model could set the face past the app and AI Face would show GPT; each
+    /// run switches them off. Only configured names: switching off an unknown name makes Codex fail to start.
+    static func codexServers(config path: String) -> [String] {
+        guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { return [] }
+        var found: [String] = [], current: String?
+        for raw in text.components(separatedBy: .newlines) {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            if line.hasPrefix("[") {
+                current = nil
+                guard line.hasPrefix("[mcp_servers."), let close = line.firstIndex(of: "]") else { continue }
+                let name = line[line.index(line.startIndex, offsetBy: 13)..<close].split(separator: ".").first.map(String.init) ?? ""
+                if !name.isEmpty, name != "illuminati", name.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_" || $0 == "-") }) { current = name }
+            } else if let current, !found.contains(current),
+                      line.contains("ai_face_mcp.py") || line.contains("AIFACE_AGENT") || line.contains("ESP32_AGENT") {
+                found.append(current)
+            }
+        }
+        return found
+    }
+
+    /// Codex options that switch those servers off for one run of this account.
+    static func codexOff(_ account: Account) -> [String] {
+        let home = account.dir ?? AccountStore.home + "/.codex"
+        return codexServers(config: home + "/config.toml").flatMap { ["-c", "mcp_servers.\($0).enabled=false"] }
+    }
+
     // MARK: The face tag
 
     static let fallbackMoods = ["happy", "talking", "thinking", "curious", "agree", "sympathy", "proud", "apologetic", "shrug"]

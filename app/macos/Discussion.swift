@@ -210,6 +210,8 @@ enum Answerer {
                 if session.resume { arguments.append(session.id) }
                 arguments.append(prompt)
             }
+            // The face goes through the app as "illuminati", never through Codex's own AI Face server ("gpt").
+            arguments = FaceLink.codexOff(account) + arguments
         case .gemini:
             binary = Login.agyInstalled ? Login.home + "/.local/bin/agy" : nil
             if workspace == nil { GeminiLinks.allowWeb() }

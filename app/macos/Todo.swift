@@ -745,8 +745,8 @@ final class TodoAddLink: ToolProvider {
                  "inputSchema": ["type": "object", "properties": ["title": string, "detail": string, "project": string, "ask_first": ["type": "boolean"]],
                                  "required": ["title"], "additionalProperties": false]],
                 ["name": "todo_drafts",
-                 "description": "List the draft TODOs (not started yet) on a project's board with their id, title, ask_first and full detail, before todo_edit. project: as for todo_add\(here.map { "; leave it out for this chat's project \($0.name)" } ?? "; leave it out for every project")).",
-                 "inputSchema": ["type": "object", "properties": ["project": string], "additionalProperties": false]],
+                 "description": "List the draft TODOs (not started yet) on a project's board with their id, title, ask_first and full detail, before todo_edit, 30 at a time (offset: how many to skip, for the next ones). project: as for todo_add\(here.map { "; leave it out for this chat's project \($0.name)" } ?? "; leave it out for every project")).",
+                 "inputSchema": ["type": "object", "properties": ["project": string, "offset": ["type": "integer"]], "additionalProperties": false]],
                 ["name": "todo_edit",
                  "description": "Change a draft TODO (from todo_drafts) when the user asks: only drafts, ready or running ones cannot be changed. id: its id from todo_drafts. Give only what changes: title (one short line), detail (replaces the whole detail: keep what still holds), ask_first. It stays a draft.",
                  "inputSchema": ["type": "object", "properties": ["id": string, "title": string, "detail": string, "ask_first": ["type": "boolean"]],
@@ -794,10 +794,13 @@ final class TodoAddLink: ToolProvider {
             } else if let p = chat.workspace?.project, let found = projects.first(where: { $0.binding.root == p.root }) { shown = [found] }
             let list = drafts(shown, in: store.current)
             guard !list.isEmpty else { return Self.reply("No draft TODOs on " + shown.map(\.name).joined(separator: ", ") + ".") }
-            let lines = list.prefix(30).map { p, item in
+            let skip = min(max(arguments["offset"] as? Int ?? 0, 0), list.count)
+            let page = list.dropFirst(skip).prefix(30)
+            guard !page.isEmpty else { return Self.reply("No drafts after offset \(skip): there are \(list.count).") }
+            let lines = page.map { p, item in
                 "id: \(item.id.uuidString)\nproject: \(p.name)\ntitle: \(item.title)\nask_first: \(item.askFirst)\ndetail:\n\(item.detail.isEmpty ? "(none)" : item.detail)"
             }
-            return Self.reply(lines.joined(separator: "\n\n---\n\n") + (list.count > 30 ? "\n\n(\(list.count - 30) more not shown: name the project.)" : ""))
+            return Self.reply(lines.joined(separator: "\n\n---\n\n") + (skip + page.count < list.count ? "\n\n(\(list.count - skip - page.count) more: call again with offset \(skip + page.count).)" : ""))
         }
         if name == "todo_edit" {
             guard let id = UUID(uuidString: text("id")) else { return ToolHub.failure("id is required: take it from todo_drafts.") }
@@ -809,7 +812,10 @@ final class TodoAddLink: ToolProvider {
             }
             let title = arguments["title"] == nil ? nil : oneLine(text("title"))
             if title?.isEmpty == true { return ToolHub.failure("title cannot be empty.") }
-            let detail = arguments["detail"] == nil ? nil : String(text("detail").prefix(8000))
+            // A detail longer than todo_add's limit (written on the board) may be sent back whole: nothing is cut.
+            let detail = arguments["detail"] == nil ? nil : text("detail")
+            let limit = max(8000, store.current.item(id)?.detail.count ?? 0)
+            if let detail, detail.count > limit { return ToolHub.failure("detail is too long (\(detail.count) characters, at most \(limit)): shorten it; nothing was changed.") }
             let askFirst = arguments["ask_first"] as? Bool
             guard title != nil || detail != nil || askFirst != nil else { return ToolHub.failure("Nothing to change: give title, detail or ask_first.") }
             do {

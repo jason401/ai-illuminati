@@ -843,5 +843,13 @@ func testTodoEditTool() {
     expect(run(locked, "todo_edit", ["id": schoolDraft.id.uuidString, "title": "학교 수정"]).ok && store.current.item(schoolDraft.id)?.title == "학교 수정",
            "its organization's chat can")
     expect((try? store.editDraft(schoolDraft.id, title: "x", detail: nil, askFirst: nil, organization: nil)) == nil, "the store checks the lock too")
-    print("PASS: todo_drafts/todo_edit (drafts only, given fields only, Enterprise apart)")
+    // Long details are not cut, too long ones refused; more than 30 drafts come by offset.
+    let long = String(repeating: "가", count: 9000)
+    try! store.change(draft.id) { $0.detail = long }
+    expect(run(work, "todo_edit", ["id": draft.id.uuidString, "detail": long + "끝"]).ok == false && store.current.item(draft.id)?.detail == long, "a detail over the limit is refused, not cut")
+    expect(run(work, "todo_edit", ["id": draft.id.uuidString, "detail": "앞" + long.dropFirst()]).ok && store.current.item(draft.id)?.detail.count == 9000, "a board detail longer than 8000 is kept whole")
+    for n in 0..<31 { _ = try! store.add(title: "많은 초안 \(n)", project: app, projectName: "App", fromAI: true) }   // drafts although a TODO is ready
+    let first = run(work, "todo_drafts", [:]), second = run(work, "todo_drafts", ["offset": 30])
+    expect(first.text.contains("offset 30") && !first.text.contains("많은 초안 30") && second.text.contains("많은 초안 30") && second.text.contains("많은 초안 29"), "the next drafts by offset")
+    print("PASS: todo_drafts/todo_edit (drafts only, given fields only, Enterprise apart, long details whole, offset)")
 }

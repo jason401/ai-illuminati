@@ -237,3 +237,17 @@ final class ProjectInfoStore: ObservableObject {
             + info.links.map { "- \($0.title): \($0.url)" }.joined(separator: "\n")
     }
 }
+
+// The rules files at a project's root that every project answer gets (ProjectChat) and its "Project info" tab
+// shows. A symlink that points out of the root is skipped, so the tab shows exactly what the AIs read.
+enum ProjectRules {
+    static let names = ["AGENTS.md", "CLAUDE.md"]
+    static func files(root: String) -> [URL] {
+        let base = URL(fileURLWithPath: root).resolvingSymlinksInPath().path
+        return names.map { URL(fileURLWithPath: root).appendingPathComponent($0) }.filter {
+            let real = $0.resolvingSymlinksInPath().path
+            var directory: ObjCBool = false
+            return (real.hasPrefix(base + "/") || real.hasPrefix(root + "/")) && FileManager.default.fileExists(atPath: real, isDirectory: &directory) && !directory.boolValue
+        }
+    }
+}

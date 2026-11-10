@@ -103,5 +103,15 @@ func testProjectInfo() {
     let told = Discussion.soloFolders(binding, shared: [], project: repo.root)
     expect(told.contains(docsPath + " (project folder, shared by every chat of this project — read only)"), "the AI is told what the folder is: \(told)")
     expect(told.contains("[Project links") && told.contains("- Spec: https://example.com/spec"), "and the project's links")
-    print("PASS: project info (folders, files, links, unreadable file kept, read only in every chat of the project)")
+
+    // Rules files shown on the tab are the ones the AIs read: at the root, not a folder, not a symlink out of it.
+    let rulesRoot = base.appendingPathComponent("rules-repo"), outside = base.appendingPathComponent("outside.md")
+    try! FileManager.default.createDirectory(at: rulesRoot.appendingPathComponent("CLAUDE.md"), withIntermediateDirectories: true)
+    try! "# rules".write(to: rulesRoot.appendingPathComponent("AGENTS.md"), atomically: true, encoding: .utf8)
+    expect(ProjectRules.files(root: rulesRoot.path).map(\.lastPathComponent) == ["AGENTS.md"], "AGENTS.md found, a folder named CLAUDE.md skipped")
+    try! FileManager.default.removeItem(at: rulesRoot.appendingPathComponent("AGENTS.md"))
+    try! "secret".write(to: outside, atomically: true, encoding: .utf8)
+    try! FileManager.default.createSymbolicLink(at: rulesRoot.appendingPathComponent("AGENTS.md"), withDestinationURL: outside)
+    expect(ProjectRules.files(root: rulesRoot.path).isEmpty, "a rules symlink out of the project is not read")
+    print("PASS: project info (folders, files, links, unreadable file kept, read only in every chat of the project, rules files)")
 }

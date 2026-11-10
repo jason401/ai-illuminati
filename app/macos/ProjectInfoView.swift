@@ -13,6 +13,7 @@ final class ProjectInfoDraft: ObservableObject {
     @Published var linkURL = ""
     @Published var error: String?
     @Published var dropping = false
+    @Published var shownRules: Set<String> = []   // rules files opened on the tab
 }
 
 struct ProjectInfoView: View {
@@ -33,7 +34,7 @@ struct ProjectInfoView: View {
                 let group = self.group
                 header(group)
                 if let why = draft.error ?? store.saveError { Text(why).font(.system(size: 12)).foregroundColor(.red) }
-                if let group, group.bindings.first?.isFolderless != true { repository(group) }
+                if let group, group.bindings.first?.isFolderless != true { repository(group); rules(group) }
                 folders
                 links
                 if let group { chatOnly(group) }
@@ -136,6 +137,47 @@ struct ProjectInfoView: View {
         guard remote.contains("://"), var parts = URLComponents(string: remote), parts.password != nil || parts.user != nil else { return remote }
         parts.user = nil; parts.password = nil
         return parts.string ?? remote
+    }
+
+    // MARK: Rules for the AIs
+
+    // AGENTS.md / CLAUDE.md at the project's root, the rules every answer of this project gets.
+    private func rules(_ group: ProjectGroup) -> some View {
+        let files = group.bindings.first.map { ProjectRules.files(root: $0.root) } ?? []
+        return section(L("AI 작업 규칙", "Rules for the AIs"), systemImage: "list.bullet.rectangle") {
+            Text(files.isEmpty
+                 ? L("프로젝트 폴더에 AGENTS.md나 CLAUDE.md를 두면 AI가 답할 때마다 읽어요.", "Put an AGENTS.md or CLAUDE.md in the project folder and the AIs read it with every answer.")
+                 : L("AI가 이 프로젝트에서 답할 때마다 읽는 파일이에요.", "The AIs read these with every answer in this project."))
+                .font(.system(size: 12)).foregroundColor(.secondary)
+            ForEach(files, id: \.path) { file in
+                let shown = draft.shownRules.contains(file.path)
+                VStack(alignment: .leading, spacing: 6) {
+                    pathRow(file.path, directory: false, note: nil) {
+                        Button(shown ? L("접기", "Hide") : L("보기", "Show")) {
+                            if shown { draft.shownRules.remove(file.path) } else { draft.shownRules.insert(file.path) }
+                        }.controlSize(.small)
+                        Button(L("열기", "Open")) { NSWorkspace.shared.open(file) }.controlSize(.small)
+                            .help(L("기본 편집기에서 열기", "Open in the default editor"))
+                    }
+                    if shown {
+                        ScrollView {
+                            Text(Self.preview(file)).font(.system(size: 12, design: .monospaced)).textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading).padding(10)
+                        }
+                        .frame(maxHeight: 320)
+                        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
+                    }
+                }
+            }
+        }
+    }
+
+    // The file as the AIs get it: at most 30 000 characters.
+    static func preview(_ file: URL) -> String {
+        guard let data = try? Data(contentsOf: file), let text = String(data: data, encoding: .utf8) else {
+            return L("읽을 수 없는 파일이에요 (UTF-8 텍스트가 아님).", "This file cannot be read (not UTF-8 text).")
+        }
+        return text.count > 30_000 ? String(text.prefix(30_000)) + "\n…" : text
     }
 
     // MARK: The project's folders and files

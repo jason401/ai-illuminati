@@ -300,10 +300,9 @@ extension Discussion {
             changeTurn(id, index, save: true) { $0.backupPath = saved.directory }
         } catch { finish(id, index, error: error.localizedDescription); return }
         var projectRules = ""
-        for name in ["AGENTS.md", "CLAUDE.md"] {
-            let file = URL(fileURLWithPath: selected.root).appendingPathComponent(name)
-            if file.resolvingSymlinksInPath().path.hasPrefix(selected.root + "/"), let data = try? Data(contentsOf: file), let text = String(data: data, encoding: .utf8) {
-                projectRules += "\n[Project rules: \(name)]\n" + String(text.prefix(max(0, 30_000 - projectRules.count)))
+        for file in ProjectRules.files(root: selected.root) {
+            if let data = try? Data(contentsOf: file), let text = String(data: data, encoding: .utf8) {
+                projectRules += "\n[Project rules: \(file.lastPathComponent)]\n" + String(text.prefix(max(0, 30_000 - projectRules.count)))
                 if projectRules.count >= 30_000 { projectRules += "\n[Project rules truncated]"; break }
             }
         }

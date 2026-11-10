@@ -303,11 +303,12 @@ struct TodoBoardView: View {
         })
     }
 
-    // In place of the title and details while editing: [Cancel] / [Save] (Return in the title saves, Esc cancels).
+    // In place of the title and details while editing: [Cancel] / [Save] (Return saves, Shift+Return breaks a detail line, Esc cancels).
     private func editor(_ item: TodoItem) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             TextField(L("할 일", "TODO"), text: $draft.editTitle).textFieldStyle(.roundedBorder).onSubmit { draft.saveEdit() }
             TextField(L("자세한 내용 (선택)", "Details (optional)"), text: $draft.editDetail, axis: .vertical).textFieldStyle(.roundedBorder).lineLimit(1...8)
+                .modifier(ShiftReturnNewline()).onSubmit { draft.saveEdit() }
             HStack(spacing: 8) {
                 Picker("", selection: $draft.editAskFirst) {
                     Text(L("가정하고 표시", "Assume and note")).tag(false)
@@ -372,6 +373,7 @@ struct TodoBoardView: View {
         return VStack(alignment: .leading, spacing: 8) {
             TextField(L("+ 할 일 추가…", "+ Add a TODO…"), text: $draft.title).textFieldStyle(.roundedBorder).onSubmit(add)
             TextField(L("자세한 내용 (선택)", "Details (optional)"), text: $draft.detail, axis: .vertical).textFieldStyle(.roundedBorder).lineLimit(1...5)
+                .modifier(ShiftReturnNewline()).onSubmit(add)
             if !draft.files.isEmpty {
                 TodoChips(items: draft.files.map { f in (f.id, f.url.lastPathComponent, (try? f.url.resourceValues(forKeys: [.contentTypeKey]).contentType?.conforms(to: .image)) == true) },
                           open: { id in if let f = draft.files.first(where: { $0.id == id }) { NSWorkspace.shared.open(f.url) } },
@@ -519,6 +521,30 @@ struct TodoCrewRow: View {
             Text(TodoScheduler.noCrew(list.accounts, accounts: discussion.model.accounts, lock: lock)).foregroundColor(.orange).lineLimit(2)
         }
     }
+}
+
+// Details fields work like the chat box: Return adds or saves (onSubmit), Shift+Return (or Option+Return)
+// starts a new line. Only while this field has focus; Korean text still being composed just finishes on Return.
+private struct ShiftReturnNewline: ViewModifier {
+    @FocusState private var focused: Bool
+    @State private var monitor: Any?
+    func body(content: Content) -> some View {
+        content.focused($focused)
+            .onChange(of: focused) { on in if on { start() } else { stop() } }
+            .onDisappear { stop() }
+    }
+    private func start() {
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard event.keyCode == 36 || event.keyCode == 76,
+                  !event.modifierFlags.intersection([.shift, .option]).isEmpty,
+                  event.modifierFlags.intersection([.command, .control]).isEmpty,
+                  let editor = event.window?.firstResponder as? NSTextView, !editor.hasMarkedText() else { return event }
+            editor.insertNewlineIgnoringFieldEditor(nil)
+            return nil
+        }
+    }
+    private func stop() { if let monitor { NSEvent.removeMonitor(monitor) }; monitor = nil }
 }
 
 // Photos and files dragged onto the add bar or a TODO row: from Finder, the Photos app or a screenshot

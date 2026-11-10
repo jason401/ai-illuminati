@@ -1,6 +1,6 @@
 import Foundation
 
-// How much disk each chat takes (Settings > Storage, and the AIs' chat_storage tool). Read only.
+// How much disk each chat takes (Settings > Chat > Storage, and the AIs' chat_storage tool). Read only.
 // A chat's data is everything under paths carrying its id (the same ones ChatStore.delete removes):
 // its messages, its work folder, dropped files, pictures, the backups made before AI writes, and the
 // CLI session folders. A meeting is counted with the chat it was held for. Linked project folders are
@@ -168,7 +168,7 @@ final class StorageLink: ToolProvider {
             for room in report.rooms.filter({ $0.id != context.room }).prefix(Self.listLimit) {
                 lines.append("- \"\(room.title)\" (id \(room.id.uuidString)): " + ChatStorage.describe(room))
             }
-            lines.append("Total of these: \(ChatStorage.format(report.total.allocated)). The user sees every chat in Settings > Storage.")
+            lines.append("Total of these: \(ChatStorage.format(report.total.allocated)). The user sees every chat in Settings > Chat > Storage > Show List.")
         }
         return ["content": [["type": "text", "text": lines.joined(separator: "\n")]], "isError": false]
     }

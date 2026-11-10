@@ -122,14 +122,8 @@ struct TodoBoardView: View {
     // Projects to write TODOs for: every linked Git project of the chats (newest first); on one project's board
     // only its roots (a repository with several worktrees has one per root).
     private var projects: [(name: String, binding: ProjectBinding)] {
-        var seen = Set<String>(), result: [(String, ProjectBinding)] = []
         let mine = { (p: ProjectBinding) in discussion.boardProject.map { SidebarProjects.key(p) == $0 } ?? true }
-        let names = projectInfo.names
-        for list in store.snapshot.lists { if let p = list.project, mine(p), seen.insert(p.root).inserted { result.append((names[SidebarProjects.key(p)] ?? list.title, p)) } }
-        for chat in discussion.conversations.sorted(by: { $0.updatedAt > $1.updatedAt }) {
-            if let p = chat.workspace?.project, mine(p), seen.insert(p.root).inserted { result.append((names[SidebarProjects.key(p)] ?? (p.root as NSString).lastPathComponent, p)) }
-        }
-        return result
+        return TodoProject.all(store.snapshot, chats: discussion.conversations, names: projectInfo.names).filter { mine($0.binding) }.map { ($0.name, $0.binding) }
     }
 
     private var shownLists: [TodoList] {

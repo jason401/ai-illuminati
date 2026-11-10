@@ -388,23 +388,30 @@ final class TodoStore: ObservableObject {
     // A new TODO is a draft: the scheduler does not take it until the user presses Start. Added to a list that is
     // already going (a TODO of it running or ready), it joins the queue as ready, so the work goes on to it by itself.
     // files: the photos and files attached to it (copied in; the originals are left as they are).
+    // fromAI (the todo_add tool): always a draft, the list's lock must be `lock` exactly (none for a personal chat),
+    // and an open TODO of the same title in that list is returned instead of a new one (all checked in the one save).
     @discardableResult
-    func add(title: String, detail: String = "", files: [URL] = [], project: ProjectBinding, projectName: String, after: [UUID] = [], askFirst: Bool = false, originRoom: UUID? = nil, lock: EnterpriseLock? = nil) throws -> TodoItem {
+    func add(title: String, detail: String = "", files: [URL] = [], project: ProjectBinding, projectName: String, after: [UUID] = [], askFirst: Bool = false, originRoom: UUID? = nil, lock: EnterpriseLock? = nil, fromAI: Bool = false) throws -> TodoItem {
         let id = UUID()
         let attachments = try copyIn(files, to: id, already: 0)
         do { return try update { data in
             let listID: UUID
             if let l = data.lists.firstIndex(where: { $0.project?.root == project.root }) {
                 listID = data.lists[l].id
+                if fromAI, data.lists[l].lock?.organization != lock?.organization { throw TodoError.locked(L("이 채팅에서는 그 프로젝트에 TODO를 적을 수 없어요 (Enterprise).", "This chat cannot add TODOs to that project (Enterprise).")) }
+                if fromAI, let same = data.ordered(listID).first(where: { ![.done, .cancelled].contains($0.state) && Self.sameTitle($0.title, title) }) { return same }
                 if data.lists[l].lock == nil { data.lists[l].lock = lock }   // like a chat's lock, never removed
             } else { let list = TodoList(title: projectName, project: project, lock: lock); data.lists.append(list); listID = list.id }
             var item = TodoItem(listID: listID, title: title, detail: detail, askFirst: askFirst, after: after, originRoom: originRoom)
             item.id = id; item.attachments = attachments
-            if data.list(listID)?.paused != true, data.items.contains(where: { $0.listID == listID && ($0.state == .running || $0.state == .ready) }) { item.state = .ready }
+            if !fromAI, data.list(listID)?.paused != true, data.items.contains(where: { $0.listID == listID && ($0.state == .running || $0.state == .ready) }) { item.state = .ready }
             data.items.append(item)
             if let i = data.lists.firstIndex(where: { $0.id == listID }) { data.lists[i].order = data.ordered(listID).map(\.id) }
             return item
         } } catch { try? FileManager.default.removeItem(at: folder(id)); throw error }
+    }
+    static func sameTitle(_ a: String, _ b: String) -> Bool {
+        a.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(b.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame
     }
     // ▶ Start now: every draft may be taken, and the lists' pause and stop point are lifted.
     // lists: only these (▶ on one project's board); nil = every list.
@@ -665,6 +672,107 @@ final class TaskLink: ToolProvider {
             return ["content": [["type": "text", "text": "Recorded. Stop working now: end your reply with the reason and the questions. The user decides in the chat."]], "isError": false]
         default: return ToolHub.failure("Unknown tool: " + name)
         }
+    }
+}
+
+// The projects TODOs are written for (the board's add bar, the todo_add tool): the TODO lists' and those of the
+// chats (newest first), one per root, with the Enterprise lock its TODOs keep (the list's, else a locked chat's).
+struct TodoProject {
+    var name: String
+    var binding: ProjectBinding
+    var lock: EnterpriseLock?
+    static func all(_ data: TodoData, chats: [Conversation], names: [String: String]) -> [TodoProject] {
+        var seen = Set<String>(), result: [TodoProject] = []
+        func lock(_ p: ProjectBinding) -> EnterpriseLock? {
+            data.lists.first { $0.project?.root == p.root }?.lock ?? chats.first { $0.workspace?.project?.root == p.root && $0.enterpriseLock != nil }?.enterpriseLock
+        }
+        for list in data.lists { if let p = list.project, seen.insert(p.root).inserted { result.append(TodoProject(name: names[SidebarProjects.key(p)] ?? list.title, binding: p, lock: lock(p))) } }
+        for chat in chats.sorted(by: { $0.updatedAt > $1.updatedAt }) {
+            if let p = chat.workspace?.project, seen.insert(p.root).inserted { result.append(TodoProject(name: names[SidebarProjects.key(p)] ?? (p.root as NSString).lastPathComponent, binding: p, lock: lock(p))) }
+        }
+        return result
+    }
+}
+
+// todo_add: from any chat (a project's or not, a TODO's own one too), the AI writes a TODO on a project's board
+// when the user asks, e.g. an idea from another talk. Always a draft: nothing runs until the user presses Start.
+// An Enterprise chat sees and writes only its organization's projects; any other chat only projects without a lock.
+final class TodoAddLink: ToolProvider {
+    static let shared = TodoAddLink()
+    var store: () -> TodoStore = { TodoStore.shared }
+    var names: () -> [String: String] = { ProjectInfoStore.shared.names }
+    var active: Bool { true }
+    func tools() -> [[String: Any]] { [] }
+    private func main<T>(_ work: () -> T) -> T { Thread.isMainThread ? work() : DispatchQueue.main.sync(execute: work) }
+
+    // The asking chat while its newest message is being answered (a session of an earlier answer adds nothing), and the projects it may write to.
+    private func scope(_ context: ToolContext) -> (chat: Conversation, projects: [TodoProject])? {
+        guard context.asker != nil, let turn = context.turn else { return nil }
+        let (chats, names) = main { (ChatLink.shared.conversations(), self.names()) }
+        guard let chat = chats.first(where: { $0.id == context.room }), let last = chat.turns.last, last.id == turn, last.answeredAt == nil else { return nil }
+        let mine = chat.enterpriseLock?.organization
+        let projects = TodoProject.all(store().current, chats: chats, names: names).filter { $0.lock?.organization == mine }
+        return (chat, projects)
+    }
+
+    private static func describe(_ projects: [TodoProject]) -> String {
+        projects.prefix(30).map { "\($0.name) (\($0.binding.isFolderless ? "no folder" : $0.binding.root))" }.joined(separator: "; ")
+    }
+
+    func tools(context: ToolContext) -> [[String: Any]] {
+        guard let (chat, projects) = scope(context), !projects.isEmpty else { return [] }
+        let string: [String: Any] = ["type": "string"]
+        let here = chat.workspace?.project.flatMap { p in projects.first { $0.binding.root == p.root } }
+        return [["name": "todo_add",
+                 "description": "Add a TODO to the user's TODO board for a project, from any chat, when the user asks to add or note one (or clearly agrees to your suggestion). Never on your own. It is added as a draft: it runs only when the user presses Start on the board. title: one short line in the user's language; detail: what to do, the context from this chat and what done looks like (the AI that takes it sees only this). project: a name or folder from the list\(here.map { "; leave it out for this chat's project \($0.name)" } ?? ""). One TODO per call. Projects: " + Self.describe(projects),
+                 "inputSchema": ["type": "object", "properties": ["title": string, "detail": string, "project": string, "ask_first": ["type": "boolean"]],
+                                 "required": ["title"], "additionalProperties": false]]]
+    }
+
+    // A name (any case), a folder path, or a folder name; nil with the reason when none or several fit.
+    static func pick(_ wanted: String, in projects: [TodoProject]) -> (TodoProject?, String?) {
+        let w = wanted.trimmingCharacters(in: .whitespacesAndNewlines)
+        let path = (w as NSString).expandingTildeInPath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let tests: [(TodoProject) -> Bool] = [
+            { $0.name.caseInsensitiveCompare(w) == .orderedSame },
+            { !$0.binding.isFolderless && $0.binding.root.trimmingCharacters(in: CharacterSet(charactersIn: "/")) == path },
+            { !$0.binding.isFolderless && ($0.binding.root as NSString).lastPathComponent.caseInsensitiveCompare(w) == .orderedSame }]
+        for test in tests {
+            let found = projects.filter(test)
+            if found.count == 1 { return (found[0], nil) }
+            if found.count > 1 { return (nil, "Several projects fit \"\(w)\": " + describe(found) + ". Give the folder path.") }
+        }
+        return (nil, "No project \"\(w)\". Projects: " + describe(projects) + ".")
+    }
+
+    func call(_ name: String, _ arguments: [String: Any], context: ToolContext) -> [String: Any] {
+        guard name == "todo_add" else { return ToolHub.failure("Unknown tool: " + name) }
+        guard let (chat, projects) = scope(context), !projects.isEmpty else { return ToolHub.failure("Adding TODOs is not available for this answer.") }
+        func text(_ key: String) -> String { (arguments[key] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
+        let title = String(text("title").split(whereSeparator: \.isNewline).first.map(String.init)?.prefix(200) ?? "")
+        guard !title.isEmpty else { return ToolHub.failure("title is required.") }
+        let target: TodoProject
+        if !text("project").isEmpty {
+            let (found, why) = Self.pick(text("project"), in: projects)
+            guard let found else { return ToolHub.failure(why ?? "No such project.") }
+            target = found
+        } else if let p = chat.workspace?.project, let found = projects.first(where: { $0.binding.root == p.root }) {
+            target = found
+        } else {
+            return ToolHub.failure("This chat is not linked to a project: ask the user which one, then give project. Projects: " + Self.describe(projects) + ".")
+        }
+        // The report card shows in the chat it came from, unless that is a TODO's own chat (it has its own card).
+        let store = store()
+        let origin = store.current.items.contains { $0.room == chat.id } ? nil : chat.id
+        let before = Set(store.current.items.map(\.id))
+        do {
+            let item = try store.add(title: title, detail: String(text("detail").prefix(8000)), project: target.binding, projectName: target.name,
+                                     askFirst: arguments["ask_first"] as? Bool ?? false, originRoom: origin, lock: target.lock, fromAI: true)
+            if before.contains(item.id) {
+                return ["content": [["type": "text", "text": "Already on \(target.name)'s board as \"\(item.title)\" (\(item.state.rawValue)); nothing was added or changed. Tell the user."]], "isError": false]
+            }
+            return ["content": [["type": "text", "text": "Added to \(target.name)'s TODO board as a draft: \"\(item.title)\". It runs only when the user presses Start on the board. Tell the user briefly."]], "isError": false]
+        } catch { return ToolHub.failure(error.localizedDescription) }
     }
 }
 

@@ -729,3 +729,62 @@ func testFinishedTodoCleanup() {
     expect(SidebarProjects.deletable([chat("no todo", updated: old)], todo: store.current).isEmpty, "a chat with no TODO is never a finished TODO chat")
     print("PASS: finished TODO chat cleanup (all done or cancelled, pinned and open kept, 30 days counts chat, TODO and meetings)")
 }
+
+// todo_add: any chat writes a draft TODO for a project the user names; Enterprise chats only their organization's.
+func testTodoAddTool() {
+    let store = TodoStore(url: todoStoreFile("add-tool"))
+    let link = TodoAddLink.shared
+    let savedChats = ChatLink.shared.conversations, savedStore = link.store, savedNames = link.names
+    defer { ChatLink.shared.conversations = savedChats; link.store = savedStore; link.names = savedNames }
+    link.store = { store }; link.names = { ["/tmp/todo-add-face": "AI Face"] }
+    let app = ProjectBinding(root: "/tmp/todo-add-app", common: "", remote: "", remoteURL: "")
+    let face = ProjectBinding(root: "/tmp/todo-add-face", common: "", remote: "", remoteURL: "")
+    let school = ProjectBinding(root: "/tmp/todo-add-school", common: "", remote: "", remoteURL: "")
+    let lock = EnterpriseLock(organization: "학교", name: "학교", lockedAt: Date())
+    func chat(_ title: String, _ project: ProjectBinding?, _ lock: EnterpriseLock? = nil) -> Conversation {
+        var c = Conversation(); c.title = title; var t = ChatTurn(question: title); t.askedAt = Date(); c.turns = [t]
+        if let project { c.workspace = WorkspaceBinding(roots: project.linkedRoots, project: project) }
+        c.enterpriseLock = lock; return c
+    }
+    let plain = chat("다른 얘기", nil), work = chat("앱 작업", app), faceChat = chat("얼굴", face), locked = chat("학교 일", school, lock)
+    var chats = [plain, work, faceChat, locked]
+    ChatLink.shared.conversations = { chats }
+    let claude = Account(id: "todo-add-claude", provider: .claude, name: "Claude", dir: nil, school: false)
+    func session(_ c: Conversation) -> ToolContext { ToolContext(room: c.id, roots: [], asker: claude, turn: chats.first { $0.id == c.id }?.turns.last?.id) }
+    func offered(_ c: Conversation) -> String? { link.tools(context: session(c)).first { $0["name"] as? String == "todo_add" }?["description"] as? String }
+    func add(_ c: Conversation, _ args: [String: Any]) -> (ok: Bool, text: String) {
+        let r = link.call("todo_add", args, context: session(c))
+        return (r["isError"] as? Bool == false, ((r["content"] as? [[String: Any]])?.first?["text"] as? String) ?? "")
+    }
+
+    let menu = offered(plain) ?? ""
+    expect(menu.contains("AI Face") && menu.contains("todo-add-app") && !menu.contains("todo-add-school"), "a plain chat is offered the projects without a lock: \(menu)")
+    expect(add(plain, ["title": "아이디어"]).text.contains("not linked to a project") && store.current.items.isEmpty, "no project named in an unlinked chat: ask, add nothing")
+    let idea = add(plain, ["title": "  얼굴에 날씨 표정 추가\n둘째 줄", "detail": "다른 대화에서 나온 아이디어", "project": "ai face"])
+    let item = store.current.items.first
+    expect(idea.ok && item?.title == "얼굴에 날씨 표정 추가" && item?.state == .draft && item?.originRoom == plain.id
+           && store.current.list(item!.listID)?.project?.root == face.root, "named by its name from another chat: a one-line draft on that board, card in the asking chat")
+    expect(add(plain, ["title": "얼굴에 날씨 표정 추가 ", "project": "AI Face"]).text.contains("Already") && store.current.items.count == 1, "the same open TODO is not added twice")
+    expect(!add(plain, ["title": "x", "project": "todo-add-school"]).ok && !add(plain, ["title": "x", "project": "nothing"]).ok && store.current.items.count == 1,
+           "an Enterprise project or an unknown one is refused")
+    // A running list: the tool's TODO still waits for Start (the board's would join the queue).
+    let running = try! store.add(title: "진행 중", project: app, projectName: "App")
+    store.startDrafts(); try! store.change(running.id) { $0.state = .running }
+    expect(add(work, ["title": "후속 작업"]).ok && store.current.items.first { $0.title == "후속 작업" }?.state == .draft
+           && store.current.items.first { $0.title == "후속 작업" }?.originRoom == work.id, "this chat's project by default, a draft even in a running list")
+    expect(add(chat("경로", nil), ["title": "y", "project": "/tmp/todo-add-app/"]).ok == false, "a chat that is not in the app gets no tool")
+    chats.append(chat("경로", nil)); let byPath = chats.last!
+    expect(add(byPath, ["title": "경로로", "project": "/tmp/todo-add-app/"]).ok, "a folder path picks the project too")
+    // Enterprise: only its organization's projects, with the lock.
+    let lockedMenu = offered(locked) ?? ""
+    expect(lockedMenu.contains("todo-add-school") && !lockedMenu.contains("AI Face"), "an Enterprise chat sees only its organization's projects")
+    expect(!add(locked, ["title": "개인 쪽", "project": "AI Face"]).ok, "an Enterprise chat cannot write to a personal project")
+    expect(add(locked, ["title": "학교 과제"]).ok && store.current.lists.first { $0.project?.root == school.root }?.lock?.organization == "학교", "the Enterprise project's list keeps the lock")
+    // Only while the newest message is being answered.
+    let earlier = session(plain)
+    if let i = chats.firstIndex(where: { $0.id == plain.id }) { chats[i].turns[0].answeredAt = Date() }
+    expect(offered(plain) == nil && !add(plain, ["title": "늦게"]).ok, "once the answer is done the tool closes")
+    if let i = chats.firstIndex(where: { $0.id == plain.id }) { chats[i].turns.append(ChatTurn(question: "다음")) }
+    expect(link.call("todo_add", ["title": "옛 세션", "project": "AI Face"], context: earlier)["isError"] as? Bool == true, "an earlier answer's session adds nothing")
+    print("PASS: todo_add (any chat, by name or path, drafts only, no repeats, Enterprise apart, only for the newest answer)")
+}

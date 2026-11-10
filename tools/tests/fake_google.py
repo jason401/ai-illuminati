@@ -56,6 +56,9 @@ class H(BaseHTTPRequestHandler):
             H.records.append({'path': path, 'query': urlsplit(self.path).query, 'body': meta, 'type': self.headers.get('X-Upload-Content-Type'), 'length': self.headers.get('X-Upload-Content-Length')})
             target = 'http://127.0.0.1:1/steal' if meta.get('name') == 'Evil' else 'http://' + self.headers['Host'] + '/upload/session/fixture'
             return self.reply({}, 200, {'Location': target})
+        if path.startswith('/drive/files/') and path.endswith('/copy'):
+            H.records.append({'path': path, 'query': urlsplit(self.path).query, 'body': json.loads(raw)})
+            return self.reply({'id': 'copied-fixture', 'name': json.loads(raw).get('name', 'Copy of fixture')})
         if path in ['/drive/files', '/upload/files']:
             H.records.append({'path': path, 'body': raw})
             return self.reply({'id': 'created-fixture', 'name': 'Created fixture'})
@@ -80,6 +83,9 @@ class H(BaseHTTPRequestHandler):
     def do_PATCH(self):
         body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
         path = urlsplit(self.path).path
+        if path.startswith('/upload/files/') and 'uploadType=resumable' in urlsplit(self.path).query:
+            H.records.append({'path': path, 'method': 'PATCH', 'query': urlsplit(self.path).query, 'body': body, 'length': self.headers.get('X-Upload-Content-Length')})
+            return self.reply({}, 200, {'Location': 'http://' + self.headers['Host'] + '/upload/session/fixture'})
         H.records.append({'path': path, 'method': 'PATCH', 'body': body})
         if path.startswith('/drive/files/') and body == {'trashed': True}:
             return self.reply({'id': path.split('/')[-1], 'trashed': True})
@@ -88,6 +94,14 @@ class H(BaseHTTPRequestHandler):
         parsed = urlsplit(self.path)
         path, query = unquote(parsed.path), parse_qs(parsed.query)
         if path == '/records': return self.reply(H.records)
+        if path.startswith('/thumb/'):
+            H.records.append({'path': path, 'authorization': self.headers.get('Authorization')})
+            return self.reply(b'\x89PNG\r\n\x1a\n' + path.encode())
+        if path.startswith('/slides/presentations/') and path.endswith('/thumbnail'):
+            bits = path.split('/')
+            H.records.append({'path': path, 'query': query, 'authorization': self.headers.get('Authorization')})
+            link = 'http://127.0.0.1:1/steal' if bits[3] == 'evilthumb' else 'http://' + self.headers['Host'] + '/thumb/' + bits[5]
+            return self.reply({'contentUrl': link, 'width': 800, 'height': 450})
         if path.startswith('/slides/presentations/'):
             return self.reply({'presentationId': 'slides', 'title': 'Fixture Slides', 'revisionId': 'slides-revision-1',
                                'pageSize': {'width': {'magnitude': 9144000, 'unit': 'EMU'}, 'height': {'magnitude': 5143500, 'unit': 'EMU'}},
@@ -131,13 +145,16 @@ class H(BaseHTTPRequestHandler):
                     'pdf': 'application/pdf', 'office': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
                     'folder': 'application/vnd.google-apps.folder', 'allowed': 'application/vnd.google-apps.folder',
                     'other': 'application/vnd.google-apps.folder', 'download': 'text/plain', 'huge': 'application/pdf',
-                    'child': 'application/vnd.google-apps.folder', 'shortcut': 'application/vnd.google-apps.shortcut'}.get(ident, 'application/vnd.google-apps.document')
+                    'child': 'application/vnd.google-apps.folder', 'shortcut': 'application/vnd.google-apps.shortcut',
+                    'made-pdf': 'application/pdf', 'slide-shortcut': 'application/vnd.google-apps.shortcut'}.get(ident, 'application/vnd.google-apps.document')
             result = {'id': ident, 'name': 'fixture.docx' if ident == 'office' else 'Fixture ' + ident, 'mimeType': mime,
                       'size': '999999999' if ident == 'huge' else '100', 'modifiedTime': '2026-01-01T00:00:00Z'}
             if ident == 'escape-shortcut':
                 result['mimeType'] = 'application/vnd.google-apps.shortcut'
                 result['shortcutDetails'] = {'targetId': 'outside'}
             if ident == 'shortcut': result['shortcutDetails'] = {'targetId': 'doc'}
+            if ident == 'slide-shortcut': result['shortcutDetails'] = {'targetId': 'slides'}
+            if ident == 'made-pdf': result['appProperties'] = {'illuminatiCreated': 'true'}
             # Folder tree: allowed and other sit in My Drive; outside is in other; everything else in allowed.
             result['parents'] = {'allowed': ['root-real'], 'other': ['root-real'], 'outside': ['other'], 'child': ['allowed'], 'nested-doc': ['child'], 'root-real': []}.get(ident, ['allowed'])
             return self.reply(result)

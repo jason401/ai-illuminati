@@ -399,6 +399,87 @@ func testGoogleDrive() {
     let trashed = mutationRecords.filter { $0["method"] as? String == "PATCH" }
     expect(trashed.count == 2 && trashed.allSatisfy { ($0["body"] as? [String: Bool]) == ["trashed": true] }, "deletion only sets trash, never permanently deletes")
     print("PASS: Slides structure/create/text/page edits, revision conflicts, scoped trash and invalid-target protection")
+    // Slide pictures: Google's signed image link is fetched without the token, on the allowed image host only.
+    let oldThumbnail = DriveLink.isThumbnailURL
+    DriveLink.isThumbnailURL = { $0.host == base.host && $0.port == base.port }
+    defer { DriveLink.isThumbnailURL = oldThumbnail }
+    let pictures = writer.call("drive_slides_thumbnail", ["file": "slides", "start": 0, "limit": 4, "size": "LARGE"], context: context)
+    let pictureItems = pictures["content"] as? [[String: Any]] ?? []
+    expect(pictures["isError"] as? Bool == false && pictureItems.count == 3 && pictureItems.dropFirst().allSatisfy { $0["type"] as? String == "image" && $0["mimeType"] as? String == "image/png" }
+           && Data(base64Encoded: pictureItems[2]["data"] as? String ?? "").map { String(decoding: $0, as: UTF8.self).hasSuffix("/thumb/page-two") } == true,
+           "thumbnails return one PNG per slide in order, limited to the deck")
+    let pictureText = pictureItems.first?["text"] as? String ?? ""
+    expect(!pictureText.contains("/thumb/") && !pictureText.contains("contentUrl"), "signed image links are not returned")
+    expect((slideCall("drive_slides_thumbnail", ["file": "slides", "slide": "page-two"])["slides"] as? [[String: Any]])?.first?["index"] as? Int == 1, "thumbnail of one slide by ID")
+    expect(writer.call("drive_slides_thumbnail", ["file": "slides", "slide": "unrelated-page"], context: context)["isError"] as? Bool == true, "thumbnail rejects page IDs outside the deck")
+    expect(writer.call("drive_slides_thumbnail", ["file": "slides", "start": 2], context: context)["isError"] as? Bool == true, "thumbnail index beyond the deck refused")
+    expect(writer.call("drive_slides_thumbnail", ["file": "outside"], context: context)["isError"] as? Bool == true, "thumbnail cannot bypass folder gate")
+    expect(writer.call("drive_slides_thumbnail", ["file": "evilthumb"], context: context)["isError"] as? Bool == true, "image link on another host refused")
+    // Copies: readable source, writable destination, marked as made by the app.
+    let copied = slideCall("drive_copy", ["file": "slide-shortcut", "folder": "allowed", "name": "Next week deck"])
+    expect(copied["id"] as? String == "copied-fixture" && copied["source"] as? String == "slides", "copy follows a shortcut to its target")
+    expect(writer.call("drive_copy", ["file": "slides", "folder": "child"], context: context)["isError"] as? Bool == true, "copy into read-only folder refused")
+    expect(writer.call("drive_copy", ["file": "outside", "folder": "allowed"], context: context)["isError"] as? Bool == true, "copy from outside the shared folders refused")
+    expect(writer.call("drive_copy", ["file": "child", "folder": "allowed"], context: context)["isError"] as? Bool == true, "folders are not copied")
+    expect(writer.call("drive_copy", ["file": "slides", "folder": "doc"], context: context)["isError"] as? Bool == true, "copy destination must be a folder")
+    // Trash beyond Docs/Slides: only what the app made.
+    _ = slideCall("drive_trash", ["file": "made-pdf", "confirm_name": "Fixture made-pdf"])
+    expect(writer.call("drive_trash", ["file": "pdf", "confirm_name": "Fixture pdf"], context: context)["isError"] as? Bool == true, "user's own non-Google file cannot be trashed")
+    // Replace: a new version of an existing non-Google file, same ID; never Google-native files.
+    let replaced = slideCall("drive_upload", ["replace": "pdf", "confirm_name": "Fixture pdf", "path": deck.path])
+    expect(replaced["operation"] as? String == "replace", "replace uploads a new version")
+    expect(writer.call("drive_upload", ["replace": "slides", "confirm_name": "Fixture slides", "path": deck.path], context: context)["isError"] as? Bool == true, "Google-native files are not replaced")
+    expect(writer.call("drive_upload", ["replace": "pdf", "confirm_name": "Wrong", "path": deck.path], context: context)["isError"] as? Bool == true, "replace needs the exact current name")
+    expect(writer.call("drive_upload", ["replace": "pdf", "confirm_name": "Fixture pdf", "path": deck.path, "convert": true], context: context)["isError"] as? Bool == true, "replace with convert refused")
+    expect(writer.call("drive_upload", ["replace": "nested-doc", "confirm_name": "Fixture nested-doc", "path": deck.path], context: context)["isError"] as? Bool == true, "replace in read-only folder refused")
+    expect(writer.call("drive_upload", ["replace": "pdf", "confirm_name": "Fixture pdf", "path": "/etc/hosts"], context: context)["isError"] as? Bool == true, "replace from outside linked roots refused")
+    let laterRecords = try! JSONSerialization.jsonObject(with: GoogleHTTP.send(base.appendingPathComponent("records")).data) as! [[String: Any]]
+    expect(laterRecords.filter { ($0["path"] as? String)?.hasPrefix("/thumb/") == true }.allSatisfy { $0["authorization"] == nil || $0["authorization"] is NSNull }
+           && laterRecords.filter { ($0["path"] as? String)?.hasPrefix("/thumb/") == true }.count == 3, "slide images fetched without the Google token")
+    let copies = laterRecords.filter { ($0["path"] as? String)?.hasSuffix("/copy") == true }
+    let copyBody = copies.first?["body"] as? [String: Any]
+    expect(copies.count == 1 && copies[0]["path"] as? String == "/drive/files/slides/copy" && copyBody?["parents"] as? [String] == ["allowed"]
+           && copyBody?["name"] as? String == "Next week deck" && (copyBody?["appProperties"] as? [String: String]) == DriveLink.createdMark, "only the valid copy is sent, marked and placed")
+    let marked = laterRecords.filter { $0["path"] as? String == "/upload/files" && ($0["query"] as? String)?.contains("resumable") == true }
+    expect(marked.allSatisfy { (($0["body"] as? [String: Any])?["appProperties"] as? [String: String]) == DriveLink.createdMark }
+           && laterRecords.contains { $0["path"] as? String == "/upload/files" && ($0["body"] as? String)?.contains("illuminatiCreated") == true }, "new uploads and created files carry the app mark")
+    let patches = laterRecords.filter { $0["method"] as? String == "PATCH" }
+    expect(patches.filter { $0["path"] as? String == "/upload/files/pdf" }.count == 1 && patches.filter { ($0["path"] as? String)?.hasPrefix("/upload/") == true }.count == 1
+           && patches.filter { $0["path"] as? String == "/drive/files/made-pdf" }.count == 1 && !patches.contains { $0["path"] as? String == "/drive/files/pdf" },
+           "one replacement session and one app-file trash; refused calls send nothing")
+    // Downloads: only into the chat's own folder, never overwriting, never through symlinks.
+    let chatFolder = root.appendingPathComponent("chat-files")
+    try? FileManager.default.removeItem(at: chatFolder)
+    try! FileManager.default.createDirectory(at: chatFolder.appendingPathComponent("Figures"), withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: chatFolder) }
+    try! FileManager.default.createSymbolicLink(at: chatFolder.appendingPathComponent("escape"), withDestinationURL: root)
+    let chatContext = ToolContext(room: UUID(), roots: [WorkspaceRoot(path: root.path, directory: true), WorkspaceRoot(path: chatFolder.path, directory: true, writable: true)])
+    expect(writer.tools(context: chatContext).contains { $0["name"] as? String == "drive_download" } && !writer.tools(context: context).contains { $0["name"] as? String == "drive_download" },
+           "download offered only with a chat folder")
+    func save(_ args: [String: Any]) -> [String: Any] {
+        let result = writer.call("drive_download", args, context: chatContext)
+        expect(result["isError"] as? Bool == false, "download succeeds: \(args)")
+        return try! JSONSerialization.jsonObject(with: Data(((result["content"] as! [[String: Any]])[0]["text"] as! String).utf8)) as! [String: Any]
+    }
+    let first = save(["file": "slides"]), second = save(["file": "slides"])
+    let resolvedChat = chatFolder.resolvingSymlinksInPath().path
+    expect(first["path"] as? String == resolvedChat + "/Fixture slides.pptx" && second["path"] as? String == resolvedChat + "/Fixture slides (1).pptx"
+           && (try? String(contentsOfFile: first["path"] as! String, encoding: .utf8)) == "Slide one\nSlide two", "Slides export as pptx without overwriting")
+    expect(((try? FileManager.default.attributesOfItem(atPath: first["path"] as! String))?[.posixPermissions] as? Int) == 0o600, "downloads are owner-only")
+    expect(save(["file": "doc", "format": "pdf", "folder": "Figures"])["path"] as? String == resolvedChat + "/Figures/Fixture doc.pdf", "Doc export as pdf into a subfolder")
+    expect((save(["file": "pdf"])["path"] as? String)?.hasSuffix("/Fixture pdf") == true, "regular file downloads as it is")
+    expect(save(["file": "doc", "name": "../../evil"])["path"] as? String == resolvedChat + "/_.._evil.docx", "names cannot leave the folder or hide")
+    for (args, label) in [(["file": "pdf", "format": "pdf"], "format on a regular file"), (["file": "slides", "format": "xlsx"], "unsupported export format"),
+                          (["file": "slides", "folder": "../"], "folder outside the chat folder"), (["file": "slides", "folder": "escape"], "symlinked folder"),
+                          (["file": "slides", "folder": "/tmp"], "absolute folder"), (["file": "outside"], "file outside the shared folders"),
+                          (["file": "child"], "folders"), (["file": "huge"], "over the size limit")] as [([String: Any], String)] {
+        expect(writer.call("drive_download", args, context: chatContext)["isError"] as? Bool == true, "download refused: " + label)
+    }
+    expect(writer.call("drive_download", ["file": "slides"], context: context)["isError"] as? Bool == true, "no chat folder, no download")
+    let exportRecords = (try! JSONSerialization.jsonObject(with: GoogleHTTP.send(base.appendingPathComponent("records")).data) as! [[String: Any]])
+        .filter { $0["path"] as? String == "/drive/files/slides/export" }.compactMap { ($0["query"] as? [String: [String]])?["mimeType"]?.first }
+    expect(exportRecords.filter { $0.contains("presentationml") }.count == 2, "pptx export requested from Google")
+    print("PASS: Drive thumbnails, copy, app-made trash, replace upload and chat-folder downloads")
     DriveLink.writeRules["child"] = true
     expect(try! writer.isWritable("nested-doc"), "explicit writable child override works")
     DriveLink.pausedFolders = ["child"]

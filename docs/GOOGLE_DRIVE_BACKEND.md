@@ -120,7 +120,7 @@ Google Cloud must include the Drive write scope in consent data access and have 
 Tools: `drive_create` creates a folder, UTF-8 plain text file or native Google Doc (240 KB text maximum).
 `drive_upload` sends a local file from the chat's linked folders (symlinks resolved, folders refused, 100 MB maximum) with a resumable upload; the session URL must stay on the upload host. `convert: true` imports .pptx/.ppt, .docx/.doc and .xlsx/.xls/.csv as native Slides, Docs or Sheets, keeping images and layout.
 `drive_edit_doc` replaces all exact, case-sensitive matches in a native Google Doc using a mandatory
-`requiredRevisionId` from `drive_read`. Stale revisions fail. Sheets edits, binary-file overwrites, renaming, moving, folder/permanent deletion and automatic Undo
+`requiredRevisionId` from `drive_read`. Stale revisions fail. Sheets edits, renaming, moving, folder/permanent deletion and automatic Undo
 are not implemented. Slides edits and file trash are described below.
 The local app's folder backup does not cover cloud writes; recover Doc edits through Google version history.
 Mutation calls are not automatically retried: a timeout can follow a successful server-side change.
@@ -153,3 +153,33 @@ write scope is accepted; no new OAuth client or separate Slides scope is require
 Official API references: https://developers.google.com/workspace/slides/api/reference/rest/v1/presentations/batchUpdate
 and https://developers.google.com/workspace/drive/api/guides/delete . Actual Google writes remain to be
 validated together with the user; automated tests use fake endpoints and memory credentials only.
+
+## Thumbnails, copy, downloads and replacement (2026-11-09)
+
+- `drive_slides_thumbnail(file, slide? | start?, limit? ≤ 4, size?)` (read): Slides API
+  `pages.getThumbnail` (PNG, SMALL/MEDIUM/LARGE), then the signed `contentUrl` is fetched **without** the
+  Google token, only on `*.googleusercontent.com` over HTTPS (redirects refused, 5 MB per image, PNG signature
+  checked). The result is MCP image items after one JSON text item; the signed link is never returned or logged.
+  Google counts thumbnails as expensive reads (quota), so keep `limit` small.
+- `drive_copy(file, folder, name?)` (write): `files.copy` of a readable non-folder file (shortcuts resolved,
+  target inside the shared folders) into a writable folder. Source and destination are checked again right
+  before the request.
+- App mark: `drive_create`, `drive_upload` (new files) and `drive_copy` set `appProperties.illuminatiCreated`.
+  appProperties are private to the OAuth client, and no tool sets arbitrary ones. `drive_trash` additionally
+  accepts any non-folder, non-shortcut file with that mark (still writable folder + exact name). The mark is
+  provenance, not authorization: it means "made by AI Illuminati" (any installation using the same client),
+  not "made in this chat".
+- `drive_upload(replace, confirm_name, path)` (write): a resumable `PATCH upload/files/{id}` sends a new
+  version of an existing **non-Google** file (pptx, pdf, …) in a writable folder; same ID and link. Google
+  Docs/Sheets/Slides, folders, shortcuts and trashed files are refused; `folder`, `name` and `convert` do not
+  apply. Permissions are checked before the session and again before the bytes. Earlier versions stay in
+  Drive's Manage versions only while Google keeps them (normally 30 days or 100 versions); not a guaranteed Undo.
+- `drive_download(file, format?, name?, folder?)` (read; local write): offered only when the answer has a
+  chat-owned root (`WorkspaceRoot.writable == true`), and saves only there (`folder` = existing relative
+  subfolder; resolved path, symlinks included, must stay inside). Docs → docx/pdf/txt/md, Slides →
+  pptx/pdf/txt, Sheets → xlsx/pdf/csv (defaults docx/pptx/xlsx, 10 MB export limit); other files as they are
+  (50 MB). Names lose separators/control characters and leading dots; files are created with
+  `O_CREAT|O_EXCL|O_NOFOLLOW`, mode 0600, and a taken name gets ` (n)` — never overwritten.
+
+Not implemented: uploads as background jobs (an upload still has to finish within the 50-second tool budget),
+sharing/permission changes, inserting images into Slides through public URLs, permanent deletion.

@@ -247,7 +247,12 @@ struct TodoBoardView: View {
                         .buttonStyle(.plainHit).help(L("고치기 (AI가 아직 가져가지 않은 TODO)", "Edit (the AI has not taken it yet)"))
                 }
                 if let room = item.room {
-                    Button(action: { discussion.open(room) }) { Image(systemName: "bubble.left") }.buttonStyle(.plainHit).help(L("이 TODO의 채팅 열기", "Open this TODO's chat"))
+                    if discussion.conversations.contains(where: { $0.id == room }) {
+                        Button(action: { discussion.open(room) }) { Image(systemName: "bubble.left") }.buttonStyle(.plainHit).help(L("이 TODO의 채팅 열기", "Open this TODO's chat"))
+                    } else {
+                        Image(systemName: "bubble.left").foregroundColor(.secondary.opacity(0.4)).frame(width: 22, height: 22)
+                            .help(L("이 TODO의 채팅은 삭제했어요 (기록은 여기 남아요)", "This TODO's chat was deleted (its record stays here)"))
+                    }
                 }
                 Menu {
                     if TodoStore.editable(item) { Button(L("고치기…", "Edit…")) { draft.beginEdit(item) } }
@@ -673,7 +678,7 @@ struct TodoCard: View {
                     Button(L("답하고 계속", "Answer and go on")) { TodoStore.shared.answer(item.id, text.trimmingCharacters(in: .whitespacesAndNewlines)); text = ""; TodoScheduler.shared?.wake() }
                         .buttonStyle(.borderedProminent)
                 }
-                if !compact, let room = item.room, room != discussion.currentID {
+                if !compact, let room = item.room, room != discussion.currentID, discussion.conversations.contains(where: { $0.id == room }) {
                     Button(L("방 열기", "Open chat")) { discussion.open(room) }
                 }
             }

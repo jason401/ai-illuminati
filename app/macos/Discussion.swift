@@ -1100,10 +1100,11 @@ final class Discussion: ObservableObject {
     func removeChats(_ chats: [Conversation]) -> Int {
         var failed = 0
         for conversation in chats {
+            // Its meetings first: a chat whose meeting could not be deleted is kept, so no meeting is left without its chat.
+            guard removeMeetings(of: conversation.id) == 0 else { failed += 1; continue }
             do {
                 try ChatStore.delete(conversation)
                 conversations.removeAll { $0.id == conversation.id }
-                removeMeetings(of: conversation.id)
             } catch { failed += 1 }
         }
         // Leave exactly one empty "new chat": the open one if it is empty, else a fresh one.
@@ -1115,6 +1116,35 @@ final class Discussion: ObservableObject {
             currentID = fresh.id
         }
         return failed
+    }
+
+    // Permanently deletes a project's finished TODO chats (all, or those quiet for `days`), after asking. Their TODOs
+    // stay on the board (title, result, files, time); the chats' messages, sessions, results and Undo backups go.
+    func deleteFinishedTodoChats(_ rooms: [Conversation], olderThan days: Int?) {
+        guard !importingMaterials else { return }
+        // Checked again now: a TODO may have been sent back, a chat pinned or opened since the menu was drawn.
+        var protected = runningRooms.union([currentID])
+        if let parent = current.meetingOf?.room { protected.insert(parent) }
+        let ids = Set(rooms.map(\.id))
+        let cutoff = days.map { Date().addingTimeInterval(-Double($0) * 86400) }
+        let chosen = SidebarProjects.deletable(conversations.filter { ids.contains($0.id) }, todo: TodoStore.shared.current,
+                                               meetings: { self.meetings(of: $0) }, before: cutoff, protected: protected)
+        guard !chosen.isEmpty else { return }
+        let alert = NSAlert()
+        alert.messageText = L("끝난 TODO 채팅 \(chosen.count)개를 영구 삭제할까요?", "Permanently delete \(chosen.count) finished TODO chats?")
+        alert.informativeText = L("채팅의 질문·답변, 회의, 세션 기록, 작업 결과, 파일 되돌리기(Undo) 백업이 지워져요. 되돌릴 수 없어요.\n할 일 보드의 TODO 기록(제목·결과·바뀐 파일·걸린 시간)과 TODO 첨부는 그대로 남아요. 프로젝트 폴더와 Git 기록도 그대로예요.",
+                                  "Their messages, meetings, sessions, results and Undo backups are deleted. This cannot be undone.\nThe TODOs on the board (title, result, changed files, time) and their attachments stay, and so do the project folder and its Git history.")
+        alert.addButton(withTitle: L("영구 삭제", "Delete"))
+        alert.addButton(withTitle: L("취소", "Cancel"))
+        alert.buttons.first?.hasDestructiveAction = true
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let failed = removeChats(chosen)
+        if failed > 0 {
+            let failure = NSAlert()
+            failure.messageText = L("\(failed)개 채팅을 지우지 못했어요", "Could not delete \(failed) chats")
+            failure.informativeText = L("지우지 못한 채팅은 목록에 남겨뒀어요. 일부 자료는 이미 지워졌을 수 있어요.", "Chats that could not be deleted were kept in the list. Some of their files may already be gone.")
+            failure.runModal()
+        }
     }
 
     func delete(_ id: UUID) {

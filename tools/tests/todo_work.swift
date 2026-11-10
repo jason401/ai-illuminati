@@ -658,3 +658,36 @@ func testTodoTime() {
     expect(TodoItem.span(30) == L("1분 미만", "<1 min") && TodoItem.span(7200) == L("2시간", "2 h"), "short and round spans")
     print("PASS: TODO time (work over attempts, waiting for you, since start, app off time not work, crash lower bound, saved)")
 }
+
+// Deleting finished TODO chats (SidebarProjects.deletable): only chats whose TODOs are all done or cancelled, never
+// pinned or protected ones (running, open), and with a cutoff only those with nothing newer (chat, TODO, meeting).
+func testFinishedTodoCleanup() {
+    let project = ProjectBinding(root: "/tmp/clean-repo", common: "/tmp/clean-repo/.git", remote: "origin", remoteURL: "")
+    let now = Date(), old = now.addingTimeInterval(-40 * 86400), cutoff = now.addingTimeInterval(-30 * 86400)
+    func chat(_ title: String, updated: Date, pinned: Bool = false) -> Conversation {
+        var c = Conversation(); c.title = title; c.updatedAt = updated; if pinned { c.pinned = true }; return c
+    }
+    let oldDone = chat("old done", updated: old), talkedLately = chat("talked lately", updated: now), mixed = chat("mixed", updated: old)
+    let pinned = chat("pinned", updated: old, pinned: true), open = chat("open", updated: old), withMeeting = chat("meeting lately", updated: old)
+    let freshDone = chat("fresh done", updated: old)
+    let store = TodoStore(url: todoStoreFile("cleanup"))
+    func todo(_ room: Conversation, _ state: TodoItem.State, finished: Date) {
+        let item = try! store.add(title: room.title, project: project, projectName: "Clean")
+        try! store.update { data in
+            let i = data.items.firstIndex { $0.id == item.id }!
+            data.items[i].room = room.id; data.items[i].state = state; data.items[i].finishedAt = finished; data.items[i].updatedAt = finished
+        }
+    }
+    for room in [oldDone, talkedLately, pinned, open, withMeeting] { todo(room, .done, finished: old) }
+    todo(mixed, .cancelled, finished: old); todo(mixed, .review, finished: old)
+    todo(freshDone, .done, finished: now)
+    var meeting = Conversation(); meeting.updatedAt = now
+    let rooms = [oldDone, talkedLately, mixed, pinned, open, withMeeting, freshDone]
+    let meetings: (UUID) -> [Conversation] = { $0 == withMeeting.id ? [meeting] : [] }
+    let aged = SidebarProjects.deletable(rooms, todo: store.current, meetings: meetings, before: cutoff, protected: [open.id]).map(\.title)
+    expect(aged == ["old done"], "30 days: only a chat quiet in every part (chat, TODO finish, meetings), not pinned, open or half finished: \(aged)")
+    let all = SidebarProjects.deletable(rooms, todo: store.current, protected: [open.id]).map(\.title)
+    expect(all == ["old done", "talked lately", "meeting lately", "fresh done"], "all: every finished, unpinned, unprotected chat: \(all)")
+    expect(SidebarProjects.deletable([chat("no todo", updated: old)], todo: store.current).isEmpty, "a chat with no TODO is never a finished TODO chat")
+    print("PASS: finished TODO chat cleanup (all done or cancelled, pinned and open kept, 30 days counts chat, TODO and meetings)")
+}

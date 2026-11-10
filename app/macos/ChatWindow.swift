@@ -292,7 +292,7 @@ struct ChatView: View {
             if !rooms.finished.isEmpty {
                 // Searching lists every match; folded, only the chat open now (or the one whose meeting is open) stays.
                 let unfolded = folds.openFinished.contains(group.id) || discussion.sidebarSearching
-                finishedRow(group, count: rooms.finished.count, open: unfolded)
+                finishedRow(group, finished: rooms.finished, open: unfolded)
                 ForEach(unfolded ? rooms.finished : rooms.finished.filter { room in
                     room.id == discussion.currentID || discussion.meetings(of: room.id).contains { $0.id == discussion.currentID }
                 }) { todoRoom($0) }
@@ -305,7 +305,9 @@ struct ChatView: View {
     }
 
     // The fold row of a project's finished TODO chats.
-    private func finishedRow(_ group: ProjectGroup, count: Int, open: Bool) -> some View {
+    // Right-click: permanently delete the old ones or all (not while searching: the list then holds only the matches).
+    private func finishedRow(_ group: ProjectGroup, finished: [Conversation], open: Bool) -> some View {
+        let count = finished.count
         let key = "finished." + group.id
         let hovered = discussion.hoverKey == key
         return HStack(spacing: 5) {
@@ -321,6 +323,22 @@ struct ChatView: View {
         .contentShape(Rectangle())
         .onTapGesture { folds.toggleFinished(group.id) }
         .onHover { inside in discussion.hover(key, inside) }
+        .contextMenu {
+            if !discussion.sidebarSearching {
+                let protected = discussion.runningRooms.union([discussion.currentID] + [discussion.current.meetingOf?.room].compactMap { $0 })
+                let old = SidebarProjects.deletable(finished, todo: todos.snapshot, meetings: { discussion.meetings(of: $0) },
+                                                    before: Date().addingTimeInterval(-30 * 86400), protected: protected).count
+                let all = SidebarProjects.deletable(finished, todo: todos.snapshot, protected: protected).count
+                Button(L("30일 지난 채팅 영구 삭제… (\(old)개)", "Delete chats older than 30 days… (\(old))")) {
+                    discussion.deleteFinishedTodoChats(finished, olderThan: 30)
+                }.disabled(old == 0)
+                Button(L("끝난 TODO 채팅 모두 영구 삭제… (\(all)개)", "Delete all finished TODO chats… (\(all))")) {
+                    discussion.deleteFinishedTodoChats(finished, olderThan: nil)
+                }.disabled(all == 0)
+                Divider()
+                Text(L("TODO 기록은 할 일 보드에 남아요. 고정한 채팅은 빼요.", "The TODOs stay on the board. Pinned chats are kept."))
+            }
+        }
         .help(open ? L("끝난 TODO 채팅 접기", "Fold the finished TODO chats") : L("끝난 TODO 채팅 펼치기", "Unfold the finished TODO chats"))
     }
 

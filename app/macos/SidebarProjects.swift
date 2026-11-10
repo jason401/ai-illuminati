@@ -92,6 +92,21 @@ enum SidebarProjects {
         }
         return (going, finished)
     }
+
+    // Finished TODO chats that may be deleted: every TODO of the chat done or cancelled, not pinned, not protected
+    // (running, open, or the parent of the open meeting), and, with a cutoff, nothing in it (the chat, its TODOs'
+    // finishing, its meetings) newer than the cutoff. The TODOs stay on the board as the record.
+    static func deletable(_ rooms: [Conversation], todo: TodoData, meetings: (UUID) -> [Conversation] = { _ in [] },
+                          before cutoff: Date? = nil, protected: Set<UUID> = []) -> [Conversation] {
+        let finishedStates: Set<TodoItem.State> = [.done, .cancelled]
+        return rooms.filter { room in
+            let items = todo.items.filter { $0.room == room.id }
+            guard !items.isEmpty, items.allSatisfy({ finishedStates.contains($0.state) }), room.pinned != true, !protected.contains(room.id) else { return false }
+            guard let cutoff else { return true }
+            let last = ([room.updatedAt] + items.map { $0.finishedAt ?? $0.updatedAt } + meetings(room.id).map(\.updatedAt)).max()!
+            return last < cutoff
+        }
+    }
 }
 
 // Folded sections and project folders, and pinned projects: kept on this Mac (UserDefaults.app).

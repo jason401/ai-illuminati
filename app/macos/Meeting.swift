@@ -141,9 +141,12 @@ extension Discussion {
     }
 
     // Removes the hidden meeting chats of a deleted chat (files, sessions and backups too).
-    func removeMeetings(of id: UUID) {
+    // Returns how many could not be deleted (kept in the list).
+    @discardableResult
+    func removeMeetings(of id: UUID) -> Int {
+        var failed = 0
         for meeting in conversations where meeting.meetingOf?.room == id {
-            guard (try? ChatStore.delete(meeting)) != nil else { continue }
+            guard (try? ChatStore.delete(meeting)) != nil else { failed += 1; continue }
             conversations.removeAll { $0.id == meeting.id }
             if currentID == meeting.id {
                 let fresh = Conversation()
@@ -151,5 +154,6 @@ extension Discussion {
                 currentID = fresh.id
             }
         }
+        return failed
     }
 }

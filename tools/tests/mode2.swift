@@ -1821,13 +1821,18 @@ do {
     [mcp_servers.face2]
     command = "/usr/bin/python3"
     env = { AIFACE_AGENT = "gpt" }
+    [mcp_servers."face3"]
+    args = ["/x/AI Face/ai_face_mcp.py"]
+    [mcp_servers.'face4'.env]
+    AIFACE_AGENT = "gpt"
     [mcp_servers.matlab]
     command = "/bin/matlab-mcp"
     [projects."/x"]
     note = "ai_face_mcp.py"
     """.write(to: codexHome.appendingPathComponent("config.toml"), atomically: true, encoding: .utf8)
     let codexAccount = Account(id: "codex-t", provider: .codex, name: "t", dir: codexHome.path)
-    expect(FaceLink.codexOff(codexAccount) == ["-c", "mcp_servers.ai-face.enabled=false", "-c", "mcp_servers.face2.enabled=false"],
+    expect(FaceLink.codexOff(codexAccount) == ["-c", "mcp_servers.ai-face.enabled=false", "-c", "mcp_servers.face2.enabled=false",
+                                             "-c", "mcp_servers.face3.enabled=false", "-c", "mcp_servers.face4.enabled=false"],
            "only the configured AI Face servers of Codex are switched off")
     expect(FaceLink.codexOff(Account(id: "codex-n", provider: .codex, name: "n", dir: codexHome.path + "/none")).isEmpty, "no config, nothing switched off")
     // The face comes from a hidden tag at the end of the reply; the app sets it.

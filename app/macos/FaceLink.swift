@@ -62,7 +62,12 @@ final class FaceLink: ObservableObject {
             if line.hasPrefix("[") {
                 current = nil
                 guard line.hasPrefix("[mcp_servers."), let close = line.firstIndex(of: "]") else { continue }
-                let name = line[line.index(line.startIndex, offsetBy: 13)..<close].split(separator: ".").first.map(String.init) ?? ""
+                // A quoted key ("ai-face" or 'ai-face') names the same server as the bare one.
+                let key = line[line.index(line.startIndex, offsetBy: 13)..<close]
+                let name: String
+                if let quote = key.first, quote == "\"" || quote == "'" {
+                    name = key.dropFirst().prefix { $0 != quote }.description
+                } else { name = key.split(separator: ".").first.map(String.init) ?? "" }
                 if !name.isEmpty, name != "illuminati", name.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_" || $0 == "-") }) { current = name }
             } else if let current, !found.contains(current),
                       line.contains("ai_face_mcp.py") || line.contains("AIFACE_AGENT") || line.contains("ESP32_AGENT") {

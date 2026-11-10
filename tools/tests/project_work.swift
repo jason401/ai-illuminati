@@ -1181,5 +1181,13 @@ func testDocumentsProject() {
     let made = try! ProjectCreator.createDocuments(folder)
     expect(made.isDocuments && !FileManager.default.fileExists(atPath: folder + "/.git") && (try? ProjectCreator.documentsFolder(name: "../x", location: base.path)) == nil,
            "a new documents project is a plain folder")
-    print("PASS: documents project (plain folder, not Git, one writer per folder, no git tools, documents instruction, review against the backup, Undo, TODO text, create)")
+    // Empty project: a new folder each time, never an existing one.
+    let empty = try! ProjectCreator.emptyFolder(name: "Poster 2026", location: base.path)
+    let empty2 = try! ProjectCreator.emptyFolder(name: "빈 프로젝트", location: base.path)
+    _ = try! ProjectCreator.createDocuments(empty2)
+    let empty3 = try! ProjectCreator.emptyFolder(name: "빈 프로젝트", location: base.path)
+    expect(empty == folder + " 2" && empty2 == base.resolvingSymlinksInPath().path + "/빈 프로젝트" && empty3 == empty2 + " 2"
+           && (try? ProjectCreator.emptyFolder(name: "a/b", location: base.path)) == nil,
+           "an empty project gets a new folder (name 2, … when taken)")
+    print("PASS: documents project (plain folder, not Git, one writer per folder, no git tools, documents instruction, review against the backup, Undo, TODO text, create, empty project)")
 }

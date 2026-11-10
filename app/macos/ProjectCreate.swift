@@ -68,6 +68,16 @@ enum ProjectCreator {
         return try ProjectProcess.documents(folder)
     }
 
+    // An empty project (sidebar + → Empty project…): nothing to pick or link. A new folder is made for it in the
+    // default location ("name", then "name 2", …; an existing folder is never reused) and linked as a documents project.
+    static func emptyFolder(name raw: String, location: String? = nil) throws -> String {
+        let first = try documentsFolder(name: raw, location: location)
+        var folder = first
+        for n in 2...100 where exists(folder) { folder = first + " \(n)" }
+        guard !exists(folder) else { throw error("같은 이름의 폴더가 너무 많아요. 다른 이름을 써 주세요.", "Too many folders with that name. Use another name.") }
+        return folder
+    }
+
     private static var ghEnvironment: [String: String] {
         let dir = gh.map { ($0 as NSString).deletingLastPathComponent } ?? "/usr/local/bin"
         return ["PATH": dir + ":/usr/bin:/bin:/usr/sbin:/sbin", "GH_PROMPT_DISABLED": "1", "GH_NO_UPDATE_NOTIFIER": "1", "NO_COLOR": "1"]
@@ -298,6 +308,30 @@ extension Discussion {
         ChatStore.save(chat)
         if open { self.open(chat.id) }
         return chat.id
+    }
+
+    // Sidebar Projects + → Empty project…: only a name. No Git, no GitHub, no folder to pick: the app makes a new empty
+    // folder for it (ProjectCreator.emptyFolder) and opens a chat in it, like a documents project.
+    func newEmptyProject() {
+        guard !running, !importingMaterials else { return }
+        let alert = NSAlert()
+        alert.messageText = L("빈 프로젝트", "Empty project")
+        alert.informativeText = L("Git·GitHub나 기존 폴더 없이 시작해요. \(ProjectCreator.defaultLocation) 안에 이 이름의 빈 폴더를 새로 만들어요.",
+                                  "Starts without Git, GitHub or an existing folder. A new empty folder with this name is made in \(ProjectCreator.defaultLocation).")
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
+        field.placeholderString = L("새 프로젝트", "New project")
+        alert.accessoryView = field
+        alert.addButton(withTitle: L("만들기", "Create")); alert.addButton(withTitle: L("취소", "Cancel"))
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let typed = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        do {
+            let folder = try ProjectCreator.emptyFolder(name: typed.isEmpty ? L("새 프로젝트", "New project") : typed)
+            let project = try ProjectCreator.createDocuments(folder)
+            attachmentError = nil
+            _ = addProjectChat(project, title: L("새 대화", "New chat"), open: true)
+            sessionNote = L("빈 프로젝트 만듦 · 완전 자동 (답할 때마다 백업, Undo 가능)", "Empty project created · full auto (backed up before each answer, Undo available)")
+        } catch { attachmentError = error.localizedDescription }
     }
 
     // + → New project…: the user's own dialog is the approval (destination, account and visibility shown first).

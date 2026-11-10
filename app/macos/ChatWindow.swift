@@ -205,9 +205,10 @@ struct ChatView: View {
         .background(Color.primary.opacity(0.035))
     }
 
-    // Projects header +: make a new Git project, or link an existing folder (Git → code project, otherwise documents).
+    // Projects header +: make a new Git project or an empty one, or link an existing folder (Git → code project, otherwise documents).
     private var addProjectMenu: some View {
         Menu {
+            Button(L("빈 프로젝트… (연결 없음)", "Empty project… (nothing linked)")) { discussion.newEmptyProject() }
             Button(L("새 프로젝트… (Git·GitHub)", "New project… (Git and GitHub)")) { discussion.newProjectFromMenu() }
             Button(L("기존 폴더 연결… (Git 저장소 또는 문서 폴더)", "Link a folder… (Git repository or documents)")) { discussion.linkProjectFromSidebar() }
         } label: {

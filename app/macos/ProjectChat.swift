@@ -319,7 +319,8 @@ extension Discussion {
         let workers = TodoStore.shared.current.workers(room: id)
         // Before the work starts: what the project looks like, so the review covers only this answer's changes
         // (also when another AI took over after a usage limit).
-        let start = reviewers.isEmpty ? nil : selected.isDocuments ? backup.flatMap { ProjectSnapshot.documents(backup: $0, root: selected.root) } : ProjectSnapshot.take(root: selected.root)
+        let reviewRoot = selected.isFolderless ? Self.chatFolder(id).path : selected.root
+        let start = reviewers.isEmpty ? nil : selected.isDocuments ? backup.flatMap { ProjectSnapshot.documents(backup: $0, root: reviewRoot) } : ProjectSnapshot.take(root: reviewRoot)
         while !cancellation.isCancelled && Date() < run.deadline && !run.activeExpired {
             let eligible = model.accounts.filter { [.claude, .codex].contains($0.provider) && !excluded.contains($0.id) && Enterprise.permits($0, lock: chatLock) && (workers?.contains($0.id) ?? true) }
             let account = preferred.flatMap { wanted in eligible.first { $0.id == wanted } }
@@ -338,7 +339,7 @@ extension Discussion {
             changeTurn(id, index) { $0.status = working; $0.activity = nil; $0.lastActivityAt = Date() }
             func attempt(_ extra: String, transcript: String, fresh: String?) -> Result<String, Answerer.Failure> {
                 var instruction = soloInstruction(account, binding: workspace, helper: "",
-                                                  project: ProjectPart(root: selected.root, fullAuto: fullAuto, rules: projectRules, documents: selected.isDocuments), chat: id)
+                                                  project: ProjectPart(root: selected.root, fullAuto: fullAuto, rules: projectRules, folderless: selected.isFolderless, documents: selected.isDocuments), chat: id)
                 if !note.isEmpty { instruction += "\n" + note }
                 if keepState { instruction += "\n" + Self.stateRule(current: Self.loadState(id)) }
                 instruction += "\n[Verified app checkpoint; do not repeat completed operations blindly]\n" + checkpoint + extra
@@ -391,7 +392,7 @@ extension Discussion {
                     run.nextAttempt()
                     var reviewer: String?, reviewOK = false
                     let findings = reviewChanges(id: id, index: index, worker: account, reviewers: reviewers, binding: workspace,
-                                                 root: selected.root, start: start, question: question, reply: text, token: run.attempt) { name in
+                                                 root: reviewRoot, start: start, question: question, reply: text, token: run.attempt) { name in
                         reviewer = name; run.setAppStep(0, L("검토: \(name)", "Review: \(name)"), .doing)
                     } reviewed: { reviewOK = $0 }
                     if let reviewer {

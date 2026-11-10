@@ -1181,13 +1181,49 @@ func testDocumentsProject() {
     let made = try! ProjectCreator.createDocuments(folder)
     expect(made.isDocuments && !FileManager.default.fileExists(atPath: folder + "/.git") && (try? ProjectCreator.documentsFolder(name: "../x", location: base.path)) == nil,
            "a new documents project is a plain folder")
-    // Empty project: a new folder each time, never an existing one.
-    let empty = try! ProjectCreator.emptyFolder(name: "Poster 2026", location: base.path)
-    let empty2 = try! ProjectCreator.emptyFolder(name: "빈 프로젝트", location: base.path)
-    _ = try! ProjectCreator.createDocuments(empty2)
-    let empty3 = try! ProjectCreator.emptyFolder(name: "빈 프로젝트", location: base.path)
-    expect(empty == folder + " 2" && empty2 == base.resolvingSymlinksInPath().path + "/빈 프로젝트" && empty3 == empty2 + " 2"
-           && (try? ProjectCreator.emptyFolder(name: "a/b", location: base.path)) == nil,
-           "an empty project gets a new folder (name 2, … when taken)")
+    // Folderless projects retain their identity without exposing an internal root.
+    let empty = try! ProjectCreator.createFolderless(name: "빈 프로젝트")
+    let empty2 = try! ProjectCreator.createFolderless(name: "빈 프로젝트")
+    let decoded = try! JSONDecoder().decode(ProjectBinding.self, from: JSONEncoder().encode(empty))
+    expect(empty.isFolderless && empty.isDocuments && empty.linkedRoots.isEmpty
+           && empty.root != empty2.root && decoded == empty
+           && (try? ProjectProcess.current(empty)) == empty,
+           "folderless projects are distinct, persist and validate without linked folders")
+    let folderlessPrompt = Discussion.composeInstruction(name: "AI", provider: .codex, folders: "", drive: "", fullAccess: false, picture: "", helper: "", face: "", project: Discussion.ProjectPart(root: empty.root, fullAuto: false, rules: "", folderless: true, documents: true))
+    expect(folderlessPrompt.contains("[Folderless project]") && !folderlessPrompt.contains(empty.root),
+           "folderless instructions do not expose an internal directory as a linked folder")
+    let workspace = SidebarProjects.moved(nil, to: empty)
+    expect(workspace.roots.isEmpty && workspace.project == empty,
+           "moving into a folderless project does not link its internal directory")
+    let key = SidebarProjects.key(empty)
+    expect(SidebarProjects.pickerName((name: "빈 프로젝트", binding: empty), among: [], board: key) == "빈 프로젝트",
+           "the project picker shows the name instead of the internal UUID")
+    try! ProjectInfoStore.shared.addFolders([base], to: key)
+    expect(ProjectInfoStore.shared.activeFolders(key).count == 1, "folders can be added later")
+    try! ProjectInfoStore.shared.removeFolder(base.resolvingSymlinksInPath().path, from: key)
+    expect(ProjectInfoStore.shared.activeFolders(key).isEmpty && SidebarProjects.key(decoded) == key,
+           "removing the last folder preserves project identity")
+    let emptyRoom = chat.addProjectChat(empty, title: "Folderless", open: true)
+    expect(chat.current.workspace?.roots.isEmpty == true, "a new folderless chat starts with no linked roots")
+    let artifact = Discussion.chatFolder(emptyRoom).appendingPathComponent("result.md")
+    prompts = []; reviews = []
+    chat.workspaceAnswer = { account, prompt, view, _, _ in
+        expect(!view.roots.contains { $0.path == empty.root }, "internal workspace is not an allowed root")
+        if account.id == codex.id { reviews.append(prompt); return .success("No issues") }
+        prompts.append(prompt)
+        try! "Folderless result".write(to: artifact, atomically: true, encoding: .utf8)
+        return .success("Saved result.md")
+    }
+    chat.configure { $0.mode = 0; $0.leadID = claude.id; $0.memberIDs = [claude.id, codex.id] }
+    chat.draft = "Save a result in the chat folder"; chat.send()
+    let emptyDeadline = Date().addingTimeInterval(30)
+    while Date() < emptyDeadline && (chat.anyRunning || chat.current.turns.last?.final == nil) { RunLoop.main.run(until: Date().addingTimeInterval(0.03)) }
+    expect(prompts.first?.contains("[Folderless project]") == true && FileManager.default.fileExists(atPath: artifact.path),
+           "a folderless project executes and saves artifacts in the chat folder")
+    expect(reviews.first?.contains("added: result.md") == true, "folderless artifacts are reviewed against the chat backup")
+    if let resultTurn = chat.current.turns.last { chat.undoWorkspace(resultTurn) }
+    let undoDeadline = Date().addingTimeInterval(10)
+    while Date() < undoDeadline && chat.current.turns.last?.undone != true { RunLoop.main.run(until: Date().addingTimeInterval(0.03)) }
+    expect(!FileManager.default.fileExists(atPath: artifact.path), "Undo removes a new folderless artifact")
     print("PASS: documents project (plain folder, not Git, one writer per folder, no git tools, documents instruction, review against the backup, Undo, TODO text, create, empty project)")
 }

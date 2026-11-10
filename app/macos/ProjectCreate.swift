@@ -68,14 +68,15 @@ enum ProjectCreator {
         return try ProjectProcess.documents(folder)
     }
 
-    // An empty project (sidebar + → Empty project…): nothing to pick or link. A new folder is made for it in the
-    // default location ("name", then "name 2", …; an existing folder is never reused) and linked as a documents project.
-    static func emptyFolder(name raw: String, location: String? = nil) throws -> String {
-        let first = try documentsFolder(name: raw, location: location)
-        var folder = first
-        for n in 2...100 where exists(folder) { folder = first + " \(n)" }
-        guard !exists(folder) else { throw error("같은 이름의 폴더가 너무 많아요. 다른 이름을 써 주세요.", "Too many folders with that name. Use another name.") }
-        return folder
+    // No user folder is created or linked. The internal directory supplies a stable identity
+    // and a cwd for project tools; it is never added to the chat's allowed roots.
+    static func createFolderless(name: String) throws -> ProjectBinding {
+        let folder = URL(fileURLWithPath: AccountStore.supportDir)
+            .appendingPathComponent("folderless-projects").appendingPathComponent(UUID().uuidString).path
+        try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let project = ProjectBinding(root: URL(fileURLWithPath: folder).resolvingSymlinksInPath().path, common: URL(fileURLWithPath: folder).resolvingSymlinksInPath().path, remote: "", remoteURL: "", kind: "folderless")
+        try ProjectInfoStore.shared.rename(SidebarProjects.key(project), to: name)
+        return project
     }
 
     private static var ghEnvironment: [String: String] {
@@ -244,14 +245,15 @@ final class ProjectMakerLink: ToolProvider {
         guard let chat, !chat.isEnterprise else { return [] }
         let string: [String: Any] = ["type": "string"]
         return [["name": "create_project",
-                 "description": "When the user asks for a new project: create its folder with Git and a first commit, a GitHub repository under the user's own account (gh login), push, and add a new chat linked to it. The user approves a card first. name: letters, digits, . _ - only (turn a Korean name into a short English one). location: absolute folder path, default ~/Documents/Projects. private: default true. If it fails midway, calling it again with the same arguments continues. kind \"documents\" (papers, slides, posters, figures; no code): only a folder (an existing one is linked as it is), no Git or GitHub; name may then be any folder name.",
-                 "inputSchema": ["type": "object", "properties": ["name": string, "location": string, "private": ["type": "boolean"], "kind": ["type": "string", "enum": ["code", ProjectBinding.documentsKind]]],
+                 "description": "When the user asks for a new project: create its folder with Git and a first commit, a GitHub repository under the user's own account (gh login), push, and add a new chat linked to it. The user approves a card first. name: letters, digits, . _ - only (turn a Korean name into a short English one). location: absolute folder path, default ~/Documents/Projects. private: default true. If it fails midway, calling it again with the same arguments continues. kind \"folderless\": create a named project without linking or creating a user folder; add shared folders later in Project info. kind \"documents\" (papers, slides, posters, figures; no code): only a folder (an existing one is linked as it is), no Git or GitHub; name may then be any folder name.",
+                 "inputSchema": ["type": "object", "properties": ["name": string, "location": string, "private": ["type": "boolean"], "kind": ["type": "string", "enum": ["code", ProjectBinding.documentsKind, "folderless"]]],
                                  "required": ["name"], "additionalProperties": false]]]
     }
 
     func call(_ name: String, _ arguments: [String: Any], context: ToolContext) -> [String: Any] {
         guard name == "create_project", !tools(context: context).isEmpty else { return ToolHub.failure("Unknown tool: " + name) }
         let token = main { cancellation(context.room) } ?? DebateCancellation()
+        if arguments["kind"] as? String == "folderless" { return folderless(arguments, context: context, token: token) }
         if arguments["kind"] as? String == ProjectBinding.documentsKind { return documents(arguments, context: context, token: token) }
         do {
             let (plan, resume) = try ProjectCreator.prepare(name: arguments["name"] as? String ?? "", location: arguments["location"] as? String,
@@ -270,6 +272,21 @@ final class ProjectMakerLink: ToolProvider {
 }
 
 extension ProjectMakerLink {
+    func folderless(_ arguments: [String: Any], context: ToolContext, token: DebateCancellation) -> [String: Any] {
+        let title = ProjectInfoStore.cleanName(arguments["name"] as? String ?? "") ?? L("새 프로젝트", "New project")
+        let deadline = Date().addingTimeInterval(900)
+        let card = ProjectApproval(room: context.room, run: UUID(), title: L("폴더 없는 프로젝트 만들기", "Create a folderless project"),
+                                   detail: title + "\n" + L("폴더·Git·GitHub 없이 시작해요. 폴더는 나중에 프로젝트 정보에서 추가할 수 있어요.", "Starts without folders, Git or GitHub. Add folders later in Project info."))
+        guard ProjectCenter.shared.approve(card, token: token, deadline: deadline) else {
+            return ToolHub.failure("Creating the folderless project was not approved or timed out. Nothing was created.")
+        }
+        do {
+            let project = try ProjectCreator.createFolderless(name: title)
+            let chat = main { addChat(project, title) }
+            return ["content": [["type": "text", "text": "Created folderless project \(title) and chat \(chat). No user folder, Git or GitHub repository was created or linked. Add folders later in Project info."]], "isError": false]
+        } catch { return ToolHub.failure(error.localizedDescription) }
+    }
+
     func documents(_ arguments: [String: Any], context: ToolContext, token: DebateCancellation) -> [String: Any] {
         do {
             let folder = try ProjectCreator.documentsFolder(name: arguments["name"] as? String ?? "", location: arguments["location"] as? String)
@@ -303,21 +320,20 @@ extension Discussion {
         var chat = Conversation()
         chat.title = String(title.prefix(80))
         chat.enterpriseLock = lock   // locked before anything is sent (a TODO of an Enterprise project)
-        chat.workspace = WorkspaceBinding(roots: [WorkspaceRoot(path: project.root, directory: true, writable: true)], project: project)
+        chat.workspace = WorkspaceBinding(roots: project.linkedRoots, project: project)
         conversations.insert(chat, at: 0)
         ChatStore.save(chat)
         if open { self.open(chat.id) }
         return chat.id
     }
 
-    // Sidebar Projects + → Empty project…: only a name. No Git, no GitHub, no folder to pick: the app makes a new empty
-    // folder for it (ProjectCreator.emptyFolder) and opens a chat in it, like a documents project.
+    // Sidebar Projects + → Empty project: a name only; folders can be added later.
     func newEmptyProject() {
         guard !running, !importingMaterials else { return }
         let alert = NSAlert()
         alert.messageText = L("빈 프로젝트", "Empty project")
-        alert.informativeText = L("Git·GitHub나 기존 폴더 없이 시작해요. \(ProjectCreator.defaultLocation) 안에 이 이름의 빈 폴더를 새로 만들어요.",
-                                  "Starts without Git, GitHub or an existing folder. A new empty folder with this name is made in \(ProjectCreator.defaultLocation).")
+        alert.informativeText = L("폴더 없이 시작해요. 나중에 프로젝트 정보에서 폴더·파일을 추가할 수 있어요.",
+                                  "Starts without folders. Add folders or files later in Project info.")
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
         field.placeholderString = L("새 프로젝트", "New project")
         alert.accessoryView = field
@@ -326,11 +342,10 @@ extension Discussion {
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         let typed = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         do {
-            let folder = try ProjectCreator.emptyFolder(name: typed.isEmpty ? L("새 프로젝트", "New project") : typed)
-            let project = try ProjectCreator.createDocuments(folder)
+            let project = try ProjectCreator.createFolderless(name: typed.isEmpty ? L("새 프로젝트", "New project") : typed)
             attachmentError = nil
             _ = addProjectChat(project, title: L("새 대화", "New chat"), open: true)
-            sessionNote = L("빈 프로젝트 만듦 · 완전 자동 (답할 때마다 백업, Undo 가능)", "Empty project created · full auto (backed up before each answer, Undo available)")
+            sessionNote = L("폴더 없는 프로젝트 만듦 · 폴더는 나중에 추가할 수 있어요", "Project created without folders · add folders later")
         } catch { attachmentError = error.localizedDescription }
     }
 

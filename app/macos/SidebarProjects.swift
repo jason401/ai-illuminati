@@ -25,6 +25,7 @@ enum SidebarProjects {
 
     // "AI Illuminati" for …/AI Illuminati/.git, else the root's folder name.
     static func folderName(_ project: ProjectBinding) -> String {
+        if project.isFolderless { return L("새 프로젝트", "New project") }
         let common = project.common as NSString
         if common.lastPathComponent == ".git" { return (common.deletingLastPathComponent as NSString).lastPathComponent }
         return (project.root as NSString).lastPathComponent
@@ -33,6 +34,7 @@ enum SidebarProjects {
     // How a root is named in the project picker: on one project's board by its folder; on the whole board by the
     // project's name, with the folder after it when worktrees of one repository share that name.
     static func pickerName(_ option: (name: String, binding: ProjectBinding), among options: [(name: String, binding: ProjectBinding)], board: String?) -> String {
+        if option.binding.isFolderless { return option.name }
         let folder = (option.binding.root as NSString).lastPathComponent
         guard board == nil else { return folder }
         let shared = options.filter { $0.name == option.name && $0.binding.root != option.binding.root }
@@ -227,7 +229,7 @@ extension SidebarProjects {
         var binding = workspace ?? WorkspaceBinding(roots: [])
         let old = binding.project?.root
         binding.roots.removeAll { $0.path == old || $0.path == project.root }
-        binding.roots.insert(WorkspaceRoot(path: project.root, directory: true, writable: true), at: 0)
+        binding.roots.insert(contentsOf: project.linkedRoots, at: 0)
         binding.project = project
         binding.projectRunID = nil; binding.projectGeneration = nil
         return binding

@@ -677,6 +677,7 @@ extension Discussion {
         var root: String
         var fullAuto: Bool
         var rules: String   // the project's AGENTS.md / CLAUDE.md
+        var folderless = false
         var documents = false   // a documents project: no Git, papers/slides/figures (documentsNote)
     }
 
@@ -713,6 +714,9 @@ extension Discussion {
             You are \(name), working with the user in a desktop chat app (documents, papers, research and
             summaries, not code). Answer the latest user message in the transcript. Earlier turns may have been
             answered by other AIs; continue their work as your own.
+            """ : project?.folderless == true ? """
+            You are \(name), working with the user in a desktop chat app. This project has no linked core folder or Git
+            repository. Answer the latest user message; use the chat folder for artifacts and respect the listed folders.
             """ : project?.documents == true ? """
             You are \(name), working with the user in a desktop chat app. This chat is linked to a documents project (papers,
             slides, posters, figures and data in one folder, without Git), so you also edit its files. Answer the latest user
@@ -740,7 +744,10 @@ extension Discussion {
             parts.append("You can search the web. Cite what you used as [source: URL]; never invent a source.")
         }
         parts.append(drive)
-        if let project, project.documents {
+        if project?.folderless == true {
+            parts.append("[Folderless project] No core folder or Git repository is linked. Save artifacts in the chat folder. Project folders can be added later; listed read-only folders stay read only. Do not run Git or assume an internal project directory is an editable linked folder.")
+            if project?.fullAuto == true { parts.append(Self.documentsAutoNote) }
+        } else if let project, project.documents {
             parts.append("[Documents project] Folder: \(project.root).\n" + Self.documentsNote)
             if project.fullAuto { parts.append(Self.documentsAutoNote) }
         } else if let project {

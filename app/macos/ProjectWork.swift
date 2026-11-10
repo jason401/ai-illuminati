@@ -10,7 +10,9 @@ struct ProjectBinding: Codable, Equatable {
     // nil: a Git project (code). "documents": a plain folder of papers, slides, figures and data, without Git:
     // every answer backs it up first (Undo), and the review compares with that backup.
     var kind: String? = nil
-    var isDocuments: Bool { kind == Self.documentsKind }
+    var isFolderless: Bool { kind == "folderless" }
+    var isDocuments: Bool { kind == Self.documentsKind || isFolderless }
+    var linkedRoots: [WorkspaceRoot] { isFolderless ? [] : [WorkspaceRoot(path: root, directory: true, writable: true)] }
     static let documentsKind = "documents"
     // What the AI's sandbox never writes: the Git data (a documents project's common is its own folder).
     var protectedPaths: [String] { isDocuments ? [root + "/.git"] : [common, root + "/.git"] }
@@ -118,7 +120,20 @@ enum ProjectProcess {
     // The binding as it is now on disk, for the check before each tool call: documents stay documents only while
     // the folder exists and is still not Git.
     static func current(_ binding: ProjectBinding) throws -> ProjectBinding {
-        binding.isDocuments ? try documents(binding.root) : try inspect(binding.root)
+        if binding.isFolderless {
+            let parent = URL(fileURLWithPath: AccountStore.supportDir).appendingPathComponent("folderless-projects").resolvingSymlinksInPath().path
+            let url = URL(fileURLWithPath: binding.root)
+            var directory: ObjCBool = false
+            guard url.deletingLastPathComponent().path == parent,
+                  UUID(uuidString: url.lastPathComponent) != nil,
+                  url.resolvingSymlinksInPath().path == binding.root,
+                  binding.common == binding.root, binding.remote.isEmpty, binding.remoteURL.isEmpty,
+                  FileManager.default.fileExists(atPath: binding.root, isDirectory: &directory), directory.boolValue else {
+                throw MaterialReader.error("Invalid folderless project workspace.")
+            }
+            return binding
+        }
+        return binding.isDocuments ? try documents(binding.root) : try inspect(binding.root)
     }
 }
 
@@ -261,6 +276,11 @@ final class ProjectRun {
         guard try ProjectProcess.current(binding) == binding else { throw MaterialReader.error("Project repository or remote changed. Reconnect it first.") }
     }
     func checkpoint(_ note: String) -> String {
+        if binding.isFolderless {
+            let text = "Folderless project. No core folder or Git repository is linked. Artifacts belong in the chat folder.\n" + note + WorkStep.summary(plan)
+            save(checkpoint: text)
+            return text
+        }
         if binding.isDocuments {
             let text = "Documents project: \(binding.root)\n\(note)\nNo Git: the app backed the folder up before this answer (Undo). Keep unfinished files; do not redo finished steps." + WorkStep.summary(plan)
             save(checkpoint: text)
@@ -496,6 +516,7 @@ final class GitLink: ToolProvider {
         func tool(_ name: String, _ description: String, _ props: [String: Any] = [:], _ required: [String] = []) -> [String: Any] {
             ["name": name, "description": description, "inputSchema": ["type": "object", "properties": props, "required": required, "additionalProperties": false]]
         }
+        if run.binding.isFolderless { return [] }
         let run_ = tool("project_run", "Run a named command from .ai-illuminati.json after user approval. Never pass shell commands.", ["name": string], ["name"])
         if run.binding.isDocuments { return [run_] }   // no Git in a documents project
         return [tool("git_status", "Read linked project status and branch."), tool("git_diff", "Read staged or unstaged diff; never executes external diff tools.", ["staged": ["type": "boolean"]]), tool("git_log", "Recent project commits."),

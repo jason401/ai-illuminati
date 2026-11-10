@@ -33,7 +33,7 @@ struct ProjectInfoView: View {
                 let group = self.group
                 header(group)
                 if let why = draft.error ?? store.saveError { Text(why).font(.system(size: 12)).foregroundColor(.red) }
-                if let group { repository(group) }
+                if let group, group.bindings.first?.isFolderless != true { repository(group) }
                 folders
                 links
                 if let group { chatOnly(group) }

@@ -1345,11 +1345,19 @@ final class Discussion: ObservableObject {
                                cancellation: cancellation, id: id, index: index,
                                extra: Route.opinionNote(project: binding.project?.root ?? "", alone: false))
             } else if solo && sorting {
-                var route = forced ?? .work, by: String?
+                var route = forced ?? .work, by: String?, busy = false
                 if forced == nil {
+                    // Another chat or TODO is changing the project: the judge picks between one and all, so this chat still answers.
+                    busy = ProjectWork.busy(worker.activeWorkspace)
                     worker.changeTurn(id, index) { $0.status = L("한 명이 답할지, 모두 답할지, 작업할지 판정하는 중…", "Deciding: one answer, everyone, or work…") }
-                    (route, by) = worker.decideRoute(question: question, history: history, judges: judges, cancellation: cancellation)
+                    (route, by) = worker.decideRoute(question: question, history: history, judges: judges, busy: busy, cancellation: cancellation)
                     if cancellation.isCancelled { return worker.endSolo(id, index, stopped: true) }
+                }
+                // Judged work but another writer started meanwhile: an opinion instead. Work the user picked (/w) still says it is busy.
+                if route == .work {
+                    do { projectLocks = try ProjectWork.acquire(worker.activeWorkspace) }
+                    catch let error where forced == nil && ProjectWork.isBusy(error.localizedDescription) { busy = true; route = Route.withoutWork(route, question: question) }
+                    catch { return worker.finish(id, index, error: error.localizedDescription) }
                 }
                 let name = { (accountID: String) in worker.model.accounts.first { $0.id == accountID }.map(worker.label) ?? accountID }
                 // Opinions never fall back to work: with fewer than two members ready, the lead answers alone.
@@ -1360,17 +1368,16 @@ final class Discussion: ObservableObject {
                     worker.changeTurn(id, index, save: true) { $0.error = L("답할 수 있는 AI가 없어요.", "No AI is available.") }
                     return worker.endSolo(id, index, stopped: false)
                 }
-                if route == .work { guard lock() else { return } }
                 let note = route == .work
                     ? Self.routeNote(.work, by: by, names: doers.isEmpty ? team.map(worker.label) : doers.map(name), reviewers: checkers.map(name), forced: forced != nil)
-                    : Self.routeNote(route, by: by, names: answering.map(name), forced: forced != nil)
+                    : Self.routeNote(route, by: by, names: answering.map(name), forced: forced != nil, busy: busy)
                 worker.changeTurn(id, index, save: true) { $0.route = route.route; $0.routeOne = route == .one ? true : nil; $0.routeNote = note }
                 let binding = worker.activeWorkspace ?? worker.soloBinding(id)
                 if route != .work {
                     worker.activeWorkspace = Route.opinionView(binding, chatFolder: Self.chatFolder(id).path)
                     worker.runSolo(question: question, history: history, rules: rules, config: config, mentions: answering,
                                    cancellation: cancellation, id: id, index: index,
-                                   extra: Route.opinionNote(project: binding.project?.root ?? "", alone: answering.count == 1))
+                                   extra: Route.opinionNote(project: binding.project?.root ?? "", alone: answering.count == 1, busy: busy))
                 } else {
                     let peer = worker.beginPeer(id: id, index: index, question: question, reviewers: checkers, binding: binding, cancellation: cancellation)
                     worker.runSolo(question: question, history: history, rules: rules, config: config, mentions: doers,

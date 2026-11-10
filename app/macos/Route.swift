@@ -93,8 +93,9 @@ enum Route {
             .joined(separator: "\n")
     }
 
-    static func prompt(question: String, history: [ChatTurn]) -> String {
-        let forbid = forbidsChanges(question) ? "\nThe message forbids changes: reply ONE or ALL only.\n" : ""
+    static func prompt(question: String, history: [ChatTurn], busy: Bool = false) -> String {
+        let forbid = forbidsChanges(question) ? "\nThe message forbids changes: reply ONE or ALL only.\n"
+            : busy ? "\nAnother AI is changing this project now, so this message cannot be work: reply ONE or ALL only.\n" : ""
         return instructions + "\n" + forbid + "\n" + context(question: question, history: history)
     }
 
@@ -128,6 +129,11 @@ enum Route {
     }
 
     // After the judge: never work when the message says not to change anything; asked for views, everyone answers.
+    // While another chat or TODO is changing the project: the way that answers without writing (views → all, else one).
+    static func withoutWork(_ route: RouteChoice, question: String) -> RouteChoice {
+        route != .work ? route : found(asksViews, question) ? .all : .one
+    }
+
     static func adjust(_ route: RouteChoice, question: String) -> RouteChoice {
         if route == .work && forbidsChanges(question) { return .one }
         if route == .one && found(asksViews, question) { return .all }
@@ -213,7 +219,7 @@ enum Route {
         return view
     }
 
-    static func opinionNote(project: String, alone: Bool = false) -> String {
+    static func opinionNote(project: String, alone: Bool = false, busy: Bool = false) -> String {
         let who = alone ? "one answer is enough: you answer it alone, other members stay quiet unless the user asks them,"
             : "every member answers it at the same time,"
         return """
@@ -221,7 +227,11 @@ enum Route {
         for views, not changes: \(who) and the project is read only for this answer.
         Read the files as needed and answer about them. Do not try to edit files or run Git writes; if the user seems to
         want changes, say what you would change — they can say "가자" (go) or press "Run as work" to have it done.
-        """
+        """ + (busy ? """
+
+        Another chat or TODO is changing this project right now, so this message could not be work. If it asks for
+        changes, say so briefly and help without editing; the user can ask again for the work when the other one finishes.
+        """ : "")
     }
 }
 
@@ -274,7 +284,7 @@ extension LocalModel {
     // The chosen sorter's answer for one message, or nil: local models off, Ollama not running (it is not started for
     // this), the model not downloaded, another chat using the local model, or no clear reply within `timeout`.
     // A model that was not in memory leaves it right after (keep_alive 0); one already loaded keeps its time.
-    static func judge(question: String, history: [ChatTurn], sorter: RouteSorter = .current, timeout: TimeInterval = Route.localTimeout) -> RouteChoice? {
+    static func judge(question: String, history: [ChatTurn], sorter: RouteSorter = .current, busy: Bool = false, timeout: TimeInterval = Route.localTimeout) -> RouteChoice? {
         guard let variant = sorter.variant, enabled, let names = installedModels(timeout: 1.5), hasModel(names, variant) else { return nil }
         guard gate.wait(timeout: .now() + 0.5) == .success else { return nil }
         defer { gate.signal() }
@@ -288,7 +298,7 @@ extension LocalModel {
         case .gemma:
             // 8K: the message (up to 4,000 characters) and the last answer (3,000) fit; Ollama's default 4K does not.
             let body: [String: Any] = ["model": variant.model, "stream": false, "think": false, "keep_alive": keep,
-                                       "messages": [["role": "user", "content": Route.prompt(question: question, history: history)]],
+                                       "messages": [["role": "user", "content": Route.prompt(question: question, history: history, busy: busy)]],
                                        "options": ["num_predict": 8, "temperature": 0, "num_ctx": 8192]]
             let json = post("api/chat", body, timeout: timeout)
             return ((json?["message"] as? [String: Any])?["content"] as? String).flatMap(Route.parse)
@@ -311,7 +321,7 @@ extension LocalModel {
                   let work = (answers["work"] as? [String: Any])?["noul"] as? Double,
                   let all = (answers["all"] as? [String: Any])?["noul"] as? Double else { return nil }
             // Work above 0.85 would miss 9 instead of 4: missing work costs most.
-            return work > 0.75 ? .work : all > 0.70 ? .all : .one
+            return work > 0.75 && !busy ? .work : all > 0.70 ? .all : .one
         }
     }
 
@@ -336,14 +346,15 @@ extension LocalModel {
 
 extension Discussion {
     // The app's own sorter for one message (tests replace the judge with `routeJudge`; the fixed rules still apply).
-    func decideRoute(question: String, history: [ChatTurn], judges: [Account], cancellation: DebateCancellation) -> (route: RouteChoice, by: String?) {
-        if let route = Route.rule(question: question, previous: history.last) { return (route, L("규칙", "rule")) }
-        let prompt = Route.prompt(question: question, history: history)
+    // busy: another chat or TODO is changing the project, so the judge picks between one and all only.
+    func decideRoute(question: String, history: [ChatTurn], judges: [Account], busy: Bool = false, cancellation: DebateCancellation) -> (route: RouteChoice, by: String?) {
+        if let route = Route.rule(question: question, previous: history.last) { return (busy ? Route.withoutWork(route, question: question) : route, L("규칙", "rule")) }
+        let prompt = Route.prompt(question: question, history: history, busy: busy)
         let (route, by): (RouteChoice, String?)
         if let routeJudge { (route, by) = routeJudge(prompt) } else {
             let judge = AutoPick.choose(judges, usage: model.latestUsage, lock: lock(of: currentID), current: nil)
             let sorter = RouteSorter.current
-            (route, by) = Route.decide(local: { LocalModel.judge(question: question, history: history, sorter: sorter) }, localName: sorter.title, judge: judge, ask: { account in
+            (route, by) = Route.decide(local: { LocalModel.judge(question: question, history: history, sorter: sorter, busy: busy) }, localName: sorter.title, judge: judge, ask: { account in
                 if cancellation.isCancelled { return nil }
                 guard self.permits(account, room: self.currentID) else { return nil }
                 // No workspace and no web: the judge has no tools at all.
@@ -351,11 +362,13 @@ extension Discussion {
                 return text
             }, label: label)
         }
-        return (by == nil ? route : Route.adjust(route, question: question), by)
+        let adjusted = by == nil ? route : Route.adjust(route, question: question)
+        return (busy ? Route.withoutWork(adjusted, question: question) : adjusted, by)
     }
 
-    static func routeNote(_ route: RouteChoice, by: String?, names: [String], reviewers: [String] = [], forced: Bool = false) -> String {
-        let how = forced ? L("직접 고름", "picked by you") : by.map { L("\($0) 판정", "judged by \($0)") } ?? L("판정 못 함 → 의견", "could not judge → opinion")
+    static func routeNote(_ route: RouteChoice, by: String?, names: [String], reviewers: [String] = [], forced: Bool = false, busy: Bool = false) -> String {
+        let judged = forced ? L("직접 고름", "picked by you") : by.map { L("\($0) 판정", "judged by \($0)") } ?? L("판정 못 함 → 의견", "could not judge → opinion")
+        let how = busy ? judged + L(" · 다른 AI가 작업 중이라 작업은 빼고", " · another AI is working, so no work") : judged
         switch route {
         case .one:
             return L("의견 · ", "Opinion · ") + (names.first.map { L("\($0) 혼자", "\($0) alone") } ?? L("한 명", "one AI")) + " · " + how

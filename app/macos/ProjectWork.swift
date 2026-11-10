@@ -376,7 +376,11 @@ enum ProjectWork {
         mutex.lock(); defer { mutex.unlock() }
         return held[common] != nil || documentsHeld.contains { overlaps($0, root) }
     }
-    static func release(_ paths: [String]) {
+    // Another writer holds what this binding would write (in this app or another instance); tries the lock and gives it back.
+    static func busy(_ binding: WorkspaceBinding?) -> Bool {
+        do { release(try acquire(binding), notify: false); return false } catch { return isBusy(error.localizedDescription) }
+    }
+    static func release(_ paths: [String], notify: Bool = true) {
         mutex.lock()
         for path in paths {
             if let lease = leases.removeValue(forKey: path) {
@@ -388,7 +392,7 @@ enum ProjectWork {
         }
         mutex.unlock()
         // Also a plain chat's folders: a documents TODO may be waiting for them.
-        if !paths.isEmpty { NotificationCenter.default.post(name: .projectReleased, object: nil) }
+        if notify && !paths.isEmpty { NotificationCenter.default.post(name: .projectReleased, object: nil) }
     }
 }
 

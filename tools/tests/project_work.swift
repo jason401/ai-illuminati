@@ -504,6 +504,27 @@ func testPeerReview() {
     expect(everyone?.question == "Does the README still say Third?" && everyone?.routeChoice == .all && everyone?.moreAnswers?.first?.text.contains("Plan is fine") == true
            && everyone?.images?.map(\.id) == [photo.id] && chat.pendingImages.isEmpty, "ask the others too: everyone answers the same message, with its pictures")
 
+    // Another chat or TODO is changing the project: judged work becomes an opinion (the judge is told), /w still says busy.
+    let writing = chat.soloBinding(chat.currentID), held = try! ProjectWork.acquire(writing)
+    expect(!held.isEmpty && ProjectWork.busy(writing), "a held project is seen as busy")
+    nextRoute = .work
+    let busyHead = git(["rev-parse", "HEAD"]), busyJudged = judged.count, busyViews = opinionViews.count
+    send("Change README to six.")
+    let rerouted = chat.current.turns.last
+    expect(judged.count == busyJudged + 1 && judged.last?.contains("cannot be work") == true && rerouted?.routeChoice == .one && rerouted?.error == nil
+           && rerouted?.final == "Claude's view: keep it short." && rerouted?.routeNote?.contains(L("작업 중", "is working")) == true
+           && opinionViews.count == busyViews + 1 && git(["rev-parse", "HEAD"]) == busyHead, "busy project: judged work answers as one, read only, with a note")
+    nextRoute = .all
+    send("Should the README be split while that runs?")
+    expect(chat.current.turns.last?.routeChoice == .all && chat.current.turns.last?.error == nil, "busy project: opinions still work")
+    chat.draft = "/w Change README to six."; chat.send()
+    let busyDeadline = Date().addingTimeInterval(30)
+    while Date() < busyDeadline && (chat.anyRunning || (chat.current.turns.last?.final == nil && chat.current.turns.last?.error == nil)) { RunLoop.main.run(until: Date().addingTimeInterval(0.03)) }
+    expect(chat.current.turns.last.map { ProjectWork.isBusy($0.error ?? "") } == true && git(["rev-parse", "HEAD"]) == busyHead, "busy project: work picked with /w says it is busy")
+    ProjectWork.release(held)
+    expect(!ProjectWork.busy(writing), "free again after release")
+    nextRoute = .one
+
     // @ two members: their opinions, read only, not judged; @ one: that one works, not judged.
     let pickedJudged = judged.count, pickedViews = opinionViews.count, pickedReviews = peerPrompts.filter { $0.hasPrefix("[REVIEW]") }.count, pickedHead = git(["rev-parse", "HEAD"])
     chat.draftMentions = [claude.id, codex.id]

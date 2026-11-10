@@ -954,7 +954,6 @@ struct ChatSettingsTab: View {
             StorageSettingsCard()
             ApprovalAlertSettingsView()
             DeviceSyncSettingsView()
-            MCPSettings()
         }
     }
 }
@@ -1339,14 +1338,33 @@ private struct DeviceSyncSettingsView: View {
     }
 }
 
-// MCP servers the chat's AI may use, one switch each (like the ChatGPT app). AI Face adds itself when
-// AI Illuminati is connected in AI Face; which of its tools work is set there.
+// Every MCP server the chat's AI may use, in one tab, one switch each (like the ChatGPT app): the app's own
+// tools, AI Face (adds itself when AI Illuminati is connected in AI Face; which of its tools work is set there),
+// Google Drive, and the servers added here (ExternalMCP.swift).
+struct MCPSettingsTab: View {
+    var body: some View {
+        SettingsPage { MCPSettings() }
+    }
+}
+
 private struct MCPSettings: View {
     @ObservedObject var link = FaceLink.shared
     @ObservedObject var drive = DriveCenter.shared
+    @ObservedObject var external = ExternalMCP.shared
+    @ObservedObject var draft = MCPServerDraft.shared
+
+    private var importable: [MCPServerEntry] { ExternalMCP.claudeDesktopServers(existing: external.servers) }
 
     var body: some View {
-        SettingsCard(title: L("MCP 서버", "MCP servers")) {
+        SettingsCard(title: L("앱에 들어 있는 서버", "Built in"),
+                     help: L("일반 채팅과 프로젝트 작업의 AI가 쓰는 도구예요. 다른 모드(토론·협업·투표)는 MCP 도구를 쓰지 않아요.",
+                             "Tools the AI uses in plain chat and project work. Debate, collaboration and vote modes use no MCP tools.")) {
+            SettingsRow(title: "illuminati") {
+                Text(L("늘 켜짐", "Always on")).foregroundStyle(.green)
+            }
+            .help(L("앱 기본 도구: 연결한 폴더 읽기·쓰기, 다른 채팅 찾기, Git, 다른 AI 의견, 할 일 등.",
+                    "The app's own tools: linked folders, other chats, Git, a second opinion, TODOs and more."))
+            Divider()
             if link.configured {
                 SettingsRow(title: "ai-face") {
                     Text(!link.on ? L("꺼짐", "Off") : link.connected ? L("연결됨", "Connected") : L("연결 중…", "Connecting…"))
@@ -1361,6 +1379,7 @@ private struct MCPSettings: View {
                      help: L("AI Face 설정 → AI에서 AI Illuminati를 연결하면 여기에 보여요.",
                              "Connect AI Illuminati in AI Face (Settings → AI) and it shows here."))
             }
+            Divider()
             // Google Drive (read only): connected and its folders chosen in the chat window's sidebar.
             if drive.connected || drive.needsReconnect {
                 SettingsRow(title: "google-drive") {
@@ -1380,7 +1399,33 @@ private struct MCPSettings: View {
                              "Connect it under Google Drive in the chat window's sidebar."))
             }
         }
-        .onAppear { link.refresh(); drive.refresh() }
+        SettingsCard(title: L("직접 추가한 서버", "Added by you"),
+                     help: L("추가한 서버는 이 Mac에서 내 권한으로 실행돼요. 켜 둔 서버의 도구는 일반 채팅과 프로젝트 작업의 AI가 모두 쓸 수 있어요(엔터프라이즈 채팅은 빼고).",
+                             "Servers added here run on this Mac as you. The AI in plain chat and project work may use every tool of a server that is on (not in Enterprise chats).")) {
+            if let error = external.loadError {
+                SettingsRow(title: "mcp-servers.json") { Text(error).foregroundStyle(.orange).lineLimit(3) }
+                Divider()
+            }
+            ForEach(external.servers) { server in
+                MCPServerRow(server: server, status: external.status[server.name], edit: { draft.open(server) })
+                Divider()
+            }
+            HStack(spacing: 8) {
+                Button(L("서버 추가…", "Add Server…")) { draft.open(nil) }
+                if !importable.isEmpty {
+                    Button(L("Claude 데스크톱에서 가져오기 (\(importable.count))", "Import from Claude Desktop (\(importable.count))")) {
+                        _ = external.importClaudeDesktop()
+                    }
+                    .help(L("Claude 데스크톱에 등록한 서버를 꺼진 채로 가져와요. 하나씩 보고 켜세요.",
+                            "Adds the servers set up in Claude desktop, switched off. Look at each one, then turn it on."))
+                }
+                Spacer()
+            }
+            .disabled(external.loadError != nil)
+            .padding(.horizontal, 10).padding(.vertical, 6)
+        }
+        .sheet(isPresented: $draft.showing) { MCPServerEditor(draft: draft) }
+        .onAppear { link.refresh(); drive.refresh(); external.refresh() }
     }
 
     // A server that is not set up: one short line, with how to add it on hover.
@@ -1389,6 +1434,163 @@ private struct MCPSettings: View {
             Text(status).foregroundStyle(.secondary)
         }
         .help(help)
+    }
+}
+
+private struct MCPServerRow: View {
+    let server: MCPServerEntry
+    let status: ExternalMCP.Status?
+    let edit: () -> Void
+
+    private var label: (String, Color) {
+        switch status?.state {
+        case .off: return (L("꺼짐", "Off"), .secondary)
+        case .connected:
+            let count = status?.tools.count ?? 0
+            return (L("연결됨 · 도구 \(count)개", "Connected · \(count) tools"), .green)
+        case .failed: return (L("연결 안 됨", "Not connected"), .orange)
+        default: return (L("연결 중…", "Connecting…"), .secondary)
+        }
+    }
+
+    var body: some View {
+        SettingsRow(title: server.name) {
+            Text(label.0).foregroundStyle(label.1).lineLimit(1)
+            Spacer()
+            Toggle(server.name, isOn: Binding(get: { ExternalMCP.isOn(server.name) && status?.state != .off },
+                                              set: { ExternalMCP.shared.setOn(server.name, $0) }))
+                .labelsHidden().toggleStyle(.switch)
+            Menu {
+                Button(L("편집…", "Edit…"), action: edit)
+                Button(L("다시 연결", "Reconnect")) { ExternalMCP.shared.reconnect(server.name) }
+                    .disabled(status?.state == .off)
+                Divider()
+                Button(L("삭제…", "Delete…")) { delete() }
+            } label: { Image(systemName: "ellipsis.circle") }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+        }
+        .help(details)
+    }
+
+    // On hover: what runs, why it failed, the tools it gives.
+    private var details: String {
+        var lines = [([server.command] + server.args).joined(separator: " ")]
+        if let message = status?.message { lines.append(message) }
+        if let tools = status?.tools, !tools.isEmpty { lines.append(L("도구: ", "Tools: ") + tools.joined(separator: ", ")) }
+        if let skipped = status?.skipped, !skipped.isEmpty { lines.append(L("이름이 길거나 겹쳐서 뺀 도구: ", "Left out (name too long or taken): ") + skipped.joined(separator: ", ")) }
+        return lines.joined(separator: "\n")
+    }
+
+    private func delete() {
+        let alert = NSAlert()
+        alert.messageText = L("‘\(server.name)’ 서버를 삭제할까요?", "Delete the server “\(server.name)”?")
+        alert.informativeText = L("앱 목록에서만 빠져요. 서버 프로그램은 그대로예요.", "It is only removed from the app's list. The server program stays.")
+        alert.addButton(withTitle: L("삭제", "Delete"))
+        alert.addButton(withTitle: L("취소", "Cancel"))
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        do { try ExternalMCP.shared.remove(server.name) } catch { NSAlert(error: error).runModal() }
+    }
+}
+
+// The editor's typing (an ObservableObject: this Mac's Command Line Tools cannot build SwiftUI's @State).
+final class MCPServerDraft: ObservableObject {
+    static let shared = MCPServerDraft()
+    @Published var showing = false
+    @Published var name = ""
+    @Published var command = ""
+    @Published var args = ""
+    @Published var env = ""
+    @Published var pasted = ""
+    @Published var error: String?
+    var original: MCPServerEntry?
+
+    func open(_ entry: MCPServerEntry?) {
+        original = entry
+        name = entry?.name ?? ""; command = entry?.command ?? ""
+        args = entry?.args.joined(separator: "\n") ?? ""
+        env = entry.map(Self.lines) ?? ""
+        pasted = ""; error = nil; showing = true
+    }
+    static func lines(_ entry: MCPServerEntry) -> String { entry.env.keys.sorted().map { "\($0)=\(entry.env[$0] ?? "")" }.joined(separator: "\n") }
+
+    func fill() {
+        guard let entry = MCPServerEntry.parse(pasted).first else {
+            error = L("서버 설정을 찾지 못했어요. command가 있는 JSON을 붙여 주세요.", "No server found. Paste JSON with a command.")
+            return
+        }
+        if !entry.name.isEmpty { name = entry.name }
+        command = entry.command
+        args = entry.args.joined(separator: "\n")
+        env = Self.lines(entry)
+        error = nil
+    }
+
+    /// The entry the fields describe, or why they do not describe one.
+    func entry() -> Result<MCPServerEntry, MCPSession.Failure> {
+        var words = MCPServerEntry.words(command)
+        var list = args.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        // "npx -y some-server" typed into the command field: the first word runs, the rest are arguments.
+        if words.count > 1 { list = Array(words.dropFirst()) + list; words = [words[0]] }
+        var variables: [String: String] = [:]
+        for line in env.split(separator: "\n") {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard !trimmed.isEmpty else { continue }
+            guard let equal = trimmed.firstIndex(of: "="), equal != trimmed.startIndex else {
+                return .failure(.init(message: L("환경 변수는 이름=값 모양으로 적어 주세요: ", "Write variables as NAME=value: ") + trimmed))
+            }
+            variables[String(trimmed[..<equal])] = String(trimmed[trimmed.index(after: equal)...])
+        }
+        let entry = MCPServerEntry(name: MCPServerEntry.normalized(name), command: words.first ?? command, args: list, env: variables)
+        if MCPServerEntry.reserved.contains(entry.name) { return .failure(.init(message: L("이 이름은 앱이 써요. 다른 이름을 골라 주세요.", "The app uses this name. Pick another."))) }
+        return .success(entry)
+    }
+
+    func save() {
+        do { try ExternalMCP.shared.save(entry().get(), replacing: original?.name); showing = false }
+        catch { self.error = (error as? MCPSession.Failure)?.message ?? error.localizedDescription }
+    }
+}
+
+// Add or edit one stdio server: a name, the command and its arguments (one per line), environment variables,
+// or a pasted Claude-desktop-style JSON snippet that fills the fields.
+private struct MCPServerEditor: View {
+    @ObservedObject var draft: MCPServerDraft
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(draft.original == nil ? L("MCP 서버 추가", "Add MCP Server") : L("MCP 서버 편집", "Edit MCP Server")).font(.headline)
+            field(L("이름", "Name"), TextField("filesystem", text: $draft.name))
+            field(L("명령", "Command"), TextField("npx", text: $draft.command))
+            label(L("인자 (한 줄에 하나)", "Arguments (one per line)"))
+            editor($draft.args, height: 64)
+            label(L("환경 변수 (이름=값, 한 줄에 하나)", "Environment (NAME=value, one per line)"))
+            editor($draft.env, height: 40)
+            DisclosureGroup(L("JSON 붙여넣기", "Paste JSON")) {
+                editor($draft.pasted, height: 60)
+                Button(L("JSON으로 채우기", "Fill from JSON")) { draft.fill() }.disabled(draft.pasted.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            Text(L("이 서버는 이 Mac에서 내 권한으로 실행돼요. 믿을 수 있는 서버만 추가하세요. 원격(URL) 서버는 아직 안 돼요.",
+                   "The server runs on this Mac as you. Add only servers you trust. Remote (URL) servers are not supported yet."))
+                .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            if let error = draft.error { Text(error).font(.system(size: 11)).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true) }
+            HStack {
+                Spacer()
+                Button(L("취소", "Cancel")) { draft.showing = false }.keyboardShortcut(.cancelAction)
+                Button(L("저장", "Save")) { draft.save() }.keyboardShortcut(.defaultAction)
+                    .disabled(draft.name.isEmpty || draft.command.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        }
+        .font(.system(size: 12)).controlSize(.small)
+        .padding(14).frame(width: 340)
+    }
+
+    private func label(_ text: String) -> some View { Text(text).font(.system(size: 11)).foregroundStyle(.secondary) }
+    private func field<F: View>(_ title: String, _ control: F) -> some View {
+        HStack { Text(title).frame(width: 44, alignment: .leading); control.textFieldStyle(.roundedBorder) }
+    }
+    private func editor(_ text: Binding<String>, height: CGFloat) -> some View {
+        TextEditor(text: text).font(.system(size: 11, design: .monospaced)).frame(height: height)
+            .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Color.primary.opacity(0.15)))
     }
 }
 
@@ -1719,8 +1921,8 @@ final class SettingsWindow {
     }
 
     func updateLanguage() {
-        guard let items = tabs?.tabViewItems, items.count == 4 else { return }
-        for (item, title) in zip(items, [L("일반", "General"), L("모양", "Appearance"), L("계정", "Accounts"), L("채팅", "Chat")]) {
+        guard let items = tabs?.tabViewItems, items.count == 5 else { return }
+        for (item, title) in zip(items, [L("일반", "General"), L("모양", "Appearance"), L("계정", "Accounts"), L("채팅", "Chat"), "MCP"]) {
             item.label = title
             item.viewController?.title = title
         }
@@ -1735,6 +1937,7 @@ final class SettingsWindow {
             t.addTabViewItem(tab(AppearanceSettingsTab(model: model), symbol: "paintbrush"))
             t.addTabViewItem(tab(AccountsSettingsTab(model: model), symbol: "person.2"))
             t.addTabViewItem(tab(ChatSettingsTab(model: model), symbol: "bubble.left.and.bubble.right"))
+            t.addTabViewItem(tab(MCPSettingsTab(), symbol: "puzzlepiece.extension"))
             tabs = t
             let w = NSWindow(contentViewController: t)
             w.styleMask = [.titled, .closable, .miniaturizable]

@@ -31,7 +31,7 @@ extension FaceLink: ToolProvider {
 final class ToolHub {
     static let shared = ToolHub()
     static var socketPath = AccountStore.supportDir + "/tools.sock"
-    private var providers: [ToolProvider] { [FaceLink.shared, DriveLink.shared, GitLink.shared, PlanLink.shared, PeerLink.shared, ChatLink.shared, MemoryLink.shared, ProjectMakerLink.shared, TaskLink.shared, TodoAddLink.shared, StorageLink.shared] }
+    private var providers: [ToolProvider] { [FaceLink.shared, DriveLink.shared, GitLink.shared, PlanLink.shared, PeerLink.shared, ChatLink.shared, MemoryLink.shared, ProjectMakerLink.shared, TaskLink.shared, TodoAddLink.shared, StorageLink.shared, ExternalMCP.shared] }
     var active: Bool { providers.contains { $0.active } }
     private let lock = NSLock()
     private var sockets: Set<String> = []
@@ -71,7 +71,10 @@ final class ToolHub {
         let available: [ToolProvider] = legacy ? [FaceLink.shared] : providers
         switch message["op"] as? String {
         case "tools":
-            return ["tools": available.filter { $0.active }.flatMap { $0.tools(context: context) }]
+            let tools = available.filter { $0.active }.flatMap { $0.tools(context: context) }
+            // Outside servers' tools may take minutes; the bridge waits longer for exactly these names.
+            let slow = Set(ExternalMCP.shared.slowTools)
+            return ["tools": tools, "slow": tools.compactMap { $0["name"] as? String }.filter(slow.contains)]
         case "call":
             let name = message["name"] as? String ?? ""
             guard let provider = available.first(where: { $0.active && $0.tools(context: context).contains { $0["name"] as? String == name } }) else {

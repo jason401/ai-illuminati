@@ -2442,6 +2442,142 @@ testChatSearch()
 testChatTools()
 testMemory()
 
+// Outside MCP servers (Settings → MCP): saved in their own file, run by the app, offered as "<server>__<tool>".
+func testExternalMCP() {
+    let folder = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("external-mcp")
+    try! FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    let script = folder.appendingPathComponent("fake_server.py")
+    // Two pages of tools; asks the client for sampling before one answer; one slow tool; tells which variables it got.
+    try! Data("""
+        import json, os, sys, time
+        long = 'x' * 60
+        page1 = [{'name': 'echo', 'description': 'Echo', 'inputSchema': {'type': 'object'}}, {'name': 'a.b', 'description': 'dotted'}]
+        page2 = [{'name': 'slow', 'description': 'Slow'}, {'name': 'env', 'description': 'Env'}, {'name': long, 'description': 'too long'}]
+        for line in sys.stdin:
+            m = json.loads(line)
+            if 'id' not in m or 'method' not in m: continue
+            p = m.get('params') or {}
+            if m['method'] == 'initialize': r = {'protocolVersion': '2025-06-18', 'capabilities': {'tools': {}}, 'serverInfo': {'name': 'fake'}}
+            elif m['method'] == 'tools/list': r = {'tools': page2} if p.get('cursor') == 'two' else {'tools': page1, 'nextCursor': 'two'}
+            else:
+                name = p['name']
+                if name == 'echo':
+                    print(json.dumps({'jsonrpc': '2.0', 'id': 'srv-1', 'method': 'sampling/createMessage', 'params': {}}), flush=True)
+                    print(json.dumps({'jsonrpc': '2.0', 'method': 'notifications/message', 'params': {}}), flush=True)
+                    text = 'echo:' + json.dumps(p.get('arguments'))
+                elif name == 'slow': time.sleep(1.5); text = 'slow done'
+                elif name == 'env': text = json.dumps({'token': os.environ.get('TOKEN'), 'leak': 'AI_ILLUMINATI_TEST_HOME' in os.environ, 'path': '/opt/homebrew/bin' in os.environ.get('PATH', '')})
+                else: text = 'called ' + name
+                r = {'content': [{'type': 'text', 'text': text}], 'isError': False}
+            print(json.dumps({'jsonrpc': '2.0', 'id': m['id'], 'result': r}), flush=True)
+        """.utf8).write(to: script)
+    let mcp = ExternalMCP.shared
+    func settle() { mcp.refreshAndWait(); RunLoop.main.run(until: Date().addingTimeInterval(0.1)) }
+    func text(_ result: [String: Any]) -> String { ((result["content"] as? [[String: Any]])?.first?["text"] as? String) ?? "" }
+    let context = ToolContext(room: UUID(), roots: [])
+
+    // Names, pasted JSON and typed command lines.
+    expect(MCPServerEntry.normalized(" My Files!! ") == "my-files" && !MCPServerEntry.validName("ai-face") && !MCPServerEntry.validName("a_b")
+           && MCPServerEntry.validName("fake"), "server names: lower case, letters, digits and -, app names reserved")
+    let pasted = MCPServerEntry.parse(#"{"mcpServers": {"Files": {"command": "npx", "args": ["-y", "@x/server", "/tmp"], "env": {"K": "v"}}, "remote": {"url": "https://x"}}}"#)
+    expect(pasted == [MCPServerEntry(name: "files", command: "npx", args: ["-y", "@x/server", "/tmp"], env: ["K": "v"])], "a Claude-desktop snippet fills a server; remote ones are left out")
+    expect(MCPServerEntry.parse(#""git": {"command": "uvx", "args": ["mcp-server-git"]}"#).first?.name == "git", "a pasted entry without braces works too")
+    expect(MCPServerEntry.words(#"npx -y "my server" a\ b"#) == ["npx", "-y", "my server", "a b"], "a command line is split like a shell")
+
+    // Saving: its own owner-only file, unknown fields kept, duplicates and bad names refused.
+    try! Data(#"{"note": "keep", "mcpServers": {}}"#.utf8).write(to: ExternalMCP.file)
+    try! mcp.save(MCPServerEntry(name: "fake", command: "python3", args: [script.path], env: ["TOKEN": "t-1"]))
+    let saved = try! JSONSerialization.jsonObject(with: Data(contentsOf: ExternalMCP.file)) as! [String: Any]
+    let mode = (try! FileManager.default.attributesOfItem(atPath: ExternalMCP.file.path)[.posixPermissions] as! NSNumber).intValue
+    expect(saved["note"] as? String == "keep" && (saved["mcpServers"] as? [String: Any])?["fake"] != nil && mode == 0o600, "saved owner-only, other fields kept")
+    expect((try? mcp.save(MCPServerEntry(name: "fake", command: "x"))) == nil && (try? mcp.save(MCPServerEntry(name: "ai-face", command: "x"))) == nil,
+           "a taken or reserved name is refused")
+    expect(!FileManager.default.fileExists(atPath: FaceLink.file.path) || !(String(data: try! Data(contentsOf: FaceLink.file), encoding: .utf8) ?? "").contains("fake"),
+           "AI Face's mcp.json is not touched")
+
+    // Connecting: a plain "python3" is found on PATH, tools of both pages offered under the server's name.
+    settle()
+    let names = mcp.tools().compactMap { $0["name"] as? String }
+    expect(Set(names) == ["fake__echo", "fake__a_b", "fake__slow", "fake__env"], "every tool of both pages, renamed for the models: \(names)")
+    expect(mcp.status["fake"]?.state == .connected && mcp.status["fake"]?.skipped.count == 1, "a tool whose name is too long is left out and shown")
+    expect((mcp.tools().first { $0["name"] as? String == "fake__echo" }?["description"] as? String ?? "").hasPrefix("[fake MCP server]"), "the description says which server")
+    let echoed = text(mcp.call("fake__echo", ["x": 1], context: context))
+    expect(echoed == #"echo:{"x": 1}"#, "a call reaches the server's own tool name, past a server request and a notification: \(echoed)")
+    expect(text(mcp.call("fake__a_b", [:], context: context)) == "called a.b", "a renamed tool keeps its own name on the server")
+    let env = text(mcp.call("fake__env", [:], context: context))
+    expect(env.contains(#""token": "t-1""#) && env.contains(#""leak": false"#) && env.contains(#""path": true"#),
+           "the server gets its own variables and a usable PATH, not the app's environment: \(env)")
+
+    // The hub offers them and tells the bridge which ones may be slow.
+    let session = ToolHub.shared.register(room: UUID(), roots: [])
+    let listed = ToolHub.shared.handle(["op": "tools", "session": session])
+    expect(((listed["tools"] as? [[String: Any]]) ?? []).contains { $0["name"] as? String == "fake__echo" }
+           && Set(listed["slow"] as? [String] ?? []) == Set(names), "ToolHub lists them and marks them slow for the bridge")
+    expect(text(ToolHub.shared.handle(["op": "call", "session": session, "name": "fake__echo", "arguments": [:] as [String: Any]])).hasPrefix("echo:"), "and forwards calls")
+
+    // A slow call does not hold up the tool list another answer asks for.
+    // Waits keep the main run loop turning: a call off the main thread asks it about Enterprise first.
+    func pump(until done: () -> Bool, seconds: TimeInterval) {
+        let deadline = Date().addingTimeInterval(seconds)
+        while !done() && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+    }
+    let slowDone = DispatchSemaphore(value: 0)
+    var slow = ""
+    DispatchQueue.global().async { slow = text(mcp.call("fake__slow", [:], context: context)); slowDone.signal() }
+    pump(until: { false }, seconds: 0.2)
+    // Listed off the main thread too, so a listing that blocks fails here instead of hanging the run.
+    let listDone = DispatchSemaphore(value: 0)
+    var listedCount = -1
+    DispatchQueue.global().async { listedCount = mcp.tools(context: context).count; listDone.signal() }
+    var listedInTime = false
+    pump(until: { listedInTime = listDone.wait(timeout: .now()) == .success; return listedInTime }, seconds: 1)
+    expect(listedInTime && listedCount == 4, "listing goes on while a slow call runs")
+    var finished = false
+    pump(until: { finished = slowDone.wait(timeout: .now()) == .success; return finished }, seconds: 10)
+    expect(finished && slow == "slow done", "the slow call finishes")
+
+    // Enterprise chats get none.
+    let enterprise = ExternalMCP.isEnterprise
+    ExternalMCP.isEnterprise = { _ in true }
+    expect(mcp.tools(context: context).isEmpty && mcp.call("fake__echo", [:], context: context)["isError"] as? Bool == true, "no outside servers in Enterprise chats")
+    ExternalMCP.isEnterprise = enterprise
+
+    // The switch: off stops the server and its tools.
+    mcp.setOn("fake", false); settle()
+    expect(mcp.tools().isEmpty && mcp.status["fake"]?.state == .off && mcp.call("fake__echo", [:], context: context)["isError"] as? Bool == true, "switched off: no tools, calls refused")
+    mcp.setOn("fake", true); settle()
+    expect(mcp.tools().count == 4, "and on again")
+
+    // Editing (rename keeps the switch) and a command that is not there.
+    try! mcp.save(MCPServerEntry(name: "renamed", command: "python3", args: [script.path]), replacing: "fake"); settle()
+    expect(mcp.servers.map(\.name) == ["renamed"] && mcp.tools().allSatisfy { ($0["name"] as? String ?? "").hasPrefix("renamed__") }, "a renamed server comes back under its new name")
+    try! mcp.save(MCPServerEntry(name: "missing", command: "no-such-mcp-command-xyz")); settle()
+    expect(mcp.status["missing"]?.state == .failed && (mcp.status["missing"]?.message ?? "").contains("no-such-mcp-command-xyz"), "a missing command shows why")
+    try! mcp.remove("missing"); settle()
+    expect(!mcp.servers.contains { $0.name == "missing" } && ExternalMCP.isOn("missing"), "removed, with no switch left behind")
+
+    // Claude desktop's servers come in switched off, once.
+    let desktop = ExternalMCP.claudeDesktopFile
+    try! FileManager.default.createDirectory(at: desktop.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try! Data(#"{"mcpServers": {"memory": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-memory"]}, "same": {"command": "python3", "args": [\#(String(reflecting: script.path))]}}}"#.utf8).write(to: desktop)
+    expect(ExternalMCP.claudeDesktopServers(existing: mcp.servers).map(\.name) == ["memory"], "a server already added (same command) is not offered again")
+    expect(mcp.importClaudeDesktop() == 1 && !ExternalMCP.isOn("memory"), "imported switched off")
+    settle()
+    expect(ExternalMCP.claudeDesktopServers(existing: mcp.servers).isEmpty, "and not offered twice")
+
+    // A damaged file is shown and never rewritten.
+    mcp.stopAll()
+    try! Data("{broken".utf8).write(to: ExternalMCP.file)
+    settle()
+    expect(mcp.loadError != nil && mcp.tools().isEmpty && (try? mcp.save(MCPServerEntry(name: "new", command: "x"))) == nil
+           && String(decoding: try! Data(contentsOf: ExternalMCP.file), as: UTF8.self) == "{broken", "a damaged mcp-servers.json stays as it is")
+    try! FileManager.default.removeItem(at: ExternalMCP.file)
+    settle()
+    expect(mcp.loadError == nil && mcp.servers.isEmpty, "no file: no servers")
+    print("PASS: outside MCP servers (own file, renamed tools, slow calls, Enterprise, switch, import, damaged file)")
+}
+testExternalMCP()
+
 // Chat Markdown: one ~ is a range, not strikethrough; headings and tables are drawn.
 func testChatMarkdown() {
     func struck(_ text: String) -> Bool { ChatMarkdown.inline(text).runs.contains { $0.inlinePresentationIntent?.contains(.strikethrough) == true } }

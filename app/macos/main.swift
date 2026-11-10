@@ -125,6 +125,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             .sink { [weak self] _ in self?.showPending(); self?.rebuildMenu() }
         model.updater.start()
         FaceLink.shared.start()
+        ExternalMCP.shared.start()   // servers added in Settings → MCP
         // Chats from your other Macs (off until turned on in Settings → Chat).
         DeviceSync.shared.start(discussion: discussion)
         model.refreshLoginItemStatus()
@@ -136,6 +137,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         TodoScheduler.shared?.closeClocks()
         discussion.cancelAll()
         discussion.discardPendingImages()
+        ExternalMCP.shared.stopAll()
     }
 
     // Reopening the app (its Dock icon, Spotlight, Finder) always brings up the chat window,

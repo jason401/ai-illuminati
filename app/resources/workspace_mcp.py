@@ -17,14 +17,17 @@ class Workspace:
         self.hub = manifest.get('tools') or manifest.get('face')
         self.tool_session = manifest.get('toolSession')
         self.hub_tools = []
+        self.slow = set()   # tools of outside MCP servers (the app's list): they may take minutes
         if self.hub:
-            try: self.hub_tools = self.ask_hub({'op': 'tools'}).get('tools', [])
+            try:
+                listed = self.ask_hub({'op': 'tools'})
+                self.hub_tools = listed.get('tools', []); self.slow = set(listed.get('slow', []))
             except Exception: self.hub_tools = []
 
     def ask_hub(self, message):
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
             name = message.get('name', '')
-            timeout = 3610 if name.startswith('git_') or name in ('project_run', 'ask_peer', 'create_project') else (65 if name.startswith('drive_') else 15)
+            timeout = 3610 if name.startswith('git_') or name in ('project_run', 'ask_peer', 'create_project') else 125 if name in getattr(self, 'slow', ()) else (65 if name.startswith('drive_') else 15)
             s.settimeout(timeout); s.connect(self.hub)
             if self.tool_session: message = dict(message, session=self.tool_session)
             s.sendall(json.dumps(message).encode() + b'\n')

@@ -1057,6 +1057,56 @@ func testPickedRoute() {
     print("PASS: picked way (chip, slash, @ with work) and meetings (hidden chat, chat's context, result back, lock kept, deleted with the chat)")
 }
 
+// Members left automatic: a meeting (picked or asked for in words) gets two to four cloud AIs, two of a kind too.
+func testAutoMeeting() {
+    expect(Route.asksMeeting("이거 회의해줘") && Route.asksMeeting("다 같이 미팅 좀 해봐") && Route.asksMeeting("Let's hold a meeting on it")
+           && !Route.asksMeeting("오늘 미팅 노트 정리해줘") && !Route.asksMeeting("회의록 봐줘") && !Route.asksMeeting("어제 회의했던 거 알려줘")
+           && !Route.asksMeeting("> 회의해줘\n이건 인용이야"), "asking for a meeting in words: only an order to the AIs")
+    let c1 = Account(id: "auto-c1", provider: .claude, name: "C1"), x1 = Account(id: "auto-x1", provider: .codex, name: "X1")
+    let g = Account(id: "auto-g", provider: .gemini, name: "G"), c2 = Account(id: "auto-c2", provider: .claude, name: "C2")
+    let x2 = Account(id: "auto-x2", provider: .codex, name: "X2"), local = Account(id: "auto-local", provider: .ollama, name: "Gemma")
+    let all = [c1, x1, g, c2, x2, local]
+    expect(Discussion.meetingTeam(all, usage: [:]) { _ in true }.map(\.id) == [c1.id, x1.id, g.id, c2.id],
+           "auto team: one of each kind first, then a second account, four at most, no local model")
+    expect(Discussion.meetingTeam([c1, local], usage: [:]) { _ in true }.map(\.id) == [c1.id], "auto team: whoever can come")
+    expect(Discussion.meetingTeam(all, usage: [:]) { $0.id != x1.id && $0.id != c2.id }.map(\.id) == [c1.id, g.id, x2.id], "auto team: only AIs allowed in the chat")
+    let keys = Discussion.speakerKeys([c1, x1, c2])
+    expect(keys == [c1.id: "claude1", x1.id: "codex", c2.id: "claude2"], "speaker keys: numbered when two of a kind meet: \(keys)")
+    expect(DebateDecision.parse(#"{"action":"speak","speaker":"Claude2","focus":"x"}"#, team: [c1, x1, c2])?.speaker == "claude2"
+           && DebateDecision.parse(#"{"action":"speak","speaker":"claude","focus":"x"}"#, team: [c1, x1, c2]) == nil,
+           "two of a kind: the moderator names one by its key")
+    expect(Discussion.leastSpoken([c1], spoken: [:], last: c1.id).id == c1.id
+           && Discussion.leastSpoken([c1, c2], spoken: [c1.id: 1, c2.id: 1], last: c1.id).id == c2.id, "least spoken: by account, never none")
+
+    let model = AppModel()
+    model.accounts = all
+    let chat = Discussion(model: model)
+    chat.configure { $0.mode = 0 }
+    var asked: [String] = [], moderations = 0
+    chat.workspaceAnswer = { account, prompt, _, _, _ in
+        asked.append(account.id)
+        if prompt.contains("[MEETING RESULT]") { return .success("결론: 둘 다 괜찮아.") }
+        if prompt.contains("[MODE3 MODERATION]") {
+            moderations += 1
+            return .success(moderations == 1 ? #"{"action":"speak","speaker":"claude2","focus":"check it"}"# : #"{"action":"finish","reason":"enough"}"#)
+        }
+        return .success("TL;DR: \(account.name)\n\n\(account.name) view.")
+    }
+    expect(chat.memberIDs.isEmpty, "the members are automatic")
+    chat.draft = "이 구조로 갈지 회의해줘"; chat.send()
+    let deadline = Date().addingTimeInterval(30)
+    while Date() < deadline && (chat.anyRunning || (chat.current.turns.last?.final == nil && chat.current.turns.last?.error == nil)) {
+        RunLoop.main.run(until: Date().addingTimeInterval(0.03))
+    }
+    let turn = chat.current.turns.last
+    let meeting = chat.conversations.first { $0.id == turn?.meetingRoom }
+    let speeches = meeting?.turns.first?.entries.filter { !$0.failed } ?? []
+    expect(turn?.meetingRoom != nil && turn?.final == "결론: 둘 다 괜찮아." && Set(asked) == [c1.id, x1.id, g.id, c2.id]
+           && speeches.count == 5 && speeches.last?.speaker == chat.label(c2),
+           "auto members: asked in words, four AIs meet (two Claude accounts apart) and the second Claude speaks when named: \(speeches.map(\.speaker))")
+    print("PASS: automatic meeting members (two to four, two of a kind, asked in words)")
+}
+
 // A documents project: a plain folder (no Git) of papers, slides and figures, worked on like a project with a backup.
 func testDocumentsProject() {
     let base = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("documents-fixture-" + UUID().uuidString)

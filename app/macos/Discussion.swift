@@ -1304,8 +1304,16 @@ final class Discussion: ObservableObject {
         let standing = plain && project && mentioned.isEmpty ? standingMembers(room: id) : []
         // A way picked by the user (the chip, "/work", "Run as work") is not sorted. With @ the picked AIs answer that way:
         // @A @B + work, A works and B reviews; @A + work, A works and the other members review.
-        let meeting = plain && forced == .meeting
-        let sorting = !meeting && (standing.count >= 2 || (forced != nil && project && plain))
+        // Members left automatic (none checked): a message that asks for a meeting holds one, and in a project chat one that
+        // asks for views gets everyone's (Route.asksMeeting, Route.asksViews), each with AIs the app picks (meetingTeam:
+        // two to four when that many can come). Not in a TODO's own run: its text is a task, not a way.
+        let todoRun = TodoStore.shared.current.items.contains { $0.room == id && $0.state == .running }
+        let autoMembers = plain && mentioned.isEmpty && memberIDs(room: id).isEmpty
+        let meeting = plain && (forced == .meeting || (forced == nil && !todoRun && Route.asksMeeting(question)))
+        let autoViews = !meeting && autoMembers && project && forced == nil && !todoRun && Route.found(Route.asksViews, question)
+        let autoTeam = autoMembers && project && !meeting && (forced == .all || autoViews)
+            ? Self.meetingTeam(model.accounts, usage: model.latestUsage) { self.permits($0, room: id) }.map(\.id) : []
+        let sorting = !meeting && (standing.count >= 2 || (forced != nil && project && plain) || autoViews)
         // Two or more picked with @ in a project chat and no way picked: their opinions, read only, never work.
         let pickedOpinion = plain && project && mentioned.count >= 2 && forced == nil
         let opinionLead = crew?.lead ?? standing.first { id in model.accounts.contains { $0.id == id && [.claude, .codex].contains($0.provider) } } ?? standing.first
@@ -1434,8 +1442,8 @@ final class Discussion: ObservableObject {
                                cancellation: cancellation, id: id, index: index,
                                extra: Route.opinionNote(project: binding.project?.root ?? "", alone: false))
             } else if solo && sorting {
-                var route = forced ?? .work, by: String?, busy = false
-                if forced == nil {
+                var route = forced ?? (autoViews ? .all : .work), by: String? = autoViews ? L("규칙", "rule") : nil, busy = false
+                if forced == nil && !autoViews {
                     // Another chat or TODO is changing the project: the judge picks between one and all, so this chat still answers.
                     busy = ProjectWork.busy(worker.activeWorkspace)
                     worker.changeTurn(id, index) { $0.status = L("한 명이 답할지, 모두 답할지, 작업할지 판정하는 중…", "Deciding: one answer, everyone, or work…") }
@@ -1449,10 +1457,11 @@ final class Discussion: ObservableObject {
                     catch { return worker.finish(id, index, error: error.localizedDescription) }
                 }
                 let name = { (accountID: String) in worker.model.accounts.first { $0.id == accountID }.map(worker.label) ?? accountID }
-                // Opinions never fall back to work: with fewer than two members ready, the lead answers alone.
-                if route == .all && opinionMembers.count < 2 { route = .one }
+                // Opinions never fall back to work: with fewer than two members ready (or picked by the app), the lead answers alone.
+                let viewers = route == .all && opinionMembers.count < 2 && autoTeam.count >= 2 ? autoTeam : opinionMembers
+                if route == .all && viewers.count < 2 { route = .one }
                 // Run again after members dropped out (none of them standing): whoever answers this chat now.
-                let answering = route == .one ? Array((opinionMembers.isEmpty ? team.map(\.id) : opinionMembers).prefix(1)) : opinionMembers
+                let answering = route == .one ? Array((opinionMembers.isEmpty ? team.map(\.id) : opinionMembers).prefix(1)) : viewers
                 guard route == .work || !answering.isEmpty else {
                     worker.changeTurn(id, index, save: true) { $0.error = L("답할 수 있는 AI가 없어요.", "No AI is available.") }
                     return worker.endSolo(id, index, stopped: false)

@@ -111,6 +111,15 @@ enum Route {
         #"(가자|ㄱㄱ|진행|해 ?줘|해 ?봐)["'”’」]?\s*(라고|하시면|해 주세요)|(고칠|구현할|수정할|바꿀|올릴|배포할|진행할|시작할|넣을)게요"#)
     static let go: Set<String> = ["가자", "ㄱㄱ", "고고", "해줘", "해봐", "진행해", "그걸로하자", "그렇게하자", "그거로하자", "goahead", "go"]
 
+    // Asks the AIs to hold a meeting: "회의해줘", "미팅 좀 해봐", "다 같이 회의하자", "hold a meeting". Not the user's own
+    // meetings ("미팅 노트 정리해줘", "오늘 회의했던 거", "회의록"); quoted lines are not orders.
+    static let meetingAsk = try! NSRegularExpression(pattern:
+        #"(회의|미팅|meeting)\s*(를|을|좀)?\s*(좀\s*)?(해\s*(줘|봐|주세요|보자|라)|하자|합시다|열어|진행해|시작해|ㄱㄱ)|\b(hold|have|run|start)\s+a\s+meeting"#,
+        options: [.caseInsensitive])
+    static func asksMeeting(_ question: String) -> Bool {
+        found(meetingAsk, question.components(separatedBy: "\n").filter { !$0.hasPrefix(">") }.joined(separator: "\n"))
+    }
+
     static func found(_ pattern: NSRegularExpression, _ text: String) -> Bool {
         pattern.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil
     }

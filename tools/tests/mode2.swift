@@ -259,7 +259,7 @@ expect(DebateDecision.parse(#"{"action":"speak","speaker":"unknown","focus":"x"}
 expect(DebateDecision.parse(#"{"action":"finish","reason":""}"#, team: model.accounts) == nil, "empty reason accepted")
 let longFocus = String(repeating: "가", count: 900)
 let wrapped = DebateDecision.parse("Here is my decision:\n```json\n{\"action\":\"speak\",\"speaker\":\"gemini\",\"focus\":\"\(longFocus)\"}\n```", team: model.accounts)
-expect(wrapped?.speaker == .gemini && (wrapped?.focus?.count ?? 0) <= 600, "long or wrapped moderator decision must be accepted and clipped")
+expect(wrapped?.speaker == "gemini" && (wrapped?.focus?.count ?? 0) <= 600, "long or wrapped moderator decision must be accepted and clipped")
 
 // One-line headlines: "TL;DR:" becomes the chat line, the rest stays as the full reply.
 let tldr = ChatTurn.Entry.reply(round: 1, speaker: "Claude", text: "**TL;DR:** 최빈국 부자가 낫다\n\n긴 설명 첫 줄.\n둘째 줄.")
@@ -2266,6 +2266,7 @@ testFullAuto()
 testWorkTiming()
 testPeerReview()
 testPickedRoute()
+testAutoMeeting()
 testEnterpriseMarks()
 testChatFind()
 testChatSearch()

@@ -52,7 +52,7 @@ final class DebateCancellation {
 
 struct DebateDecision: Decodable {
     var action: String
-    var speaker: Account.Provider?
+    var speaker: String?   // the speaker's key (Discussion.speakerKeys): its kind, numbered when two of a kind meet
     var focus: String?   // the task for the next speaker
     var reason: String?
     var board: String?   // the moderator's running notes: agreed / needs checking / still open
@@ -61,7 +61,7 @@ struct DebateDecision: Decodable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         action = try c.decode(String.self, forKey: .action)
-        speaker = try? c.decode(Account.Provider.self, forKey: .speaker)
+        speaker = (try? c.decode(String.self, forKey: .speaker)).map { $0.lowercased() }
         focus = try? c.decode(String.self, forKey: .focus)
         reason = try? c.decode(String.self, forKey: .reason)
         board = try? c.decode(String.self, forKey: .board)  // a board in any other shape is ignored, not fatal
@@ -77,7 +77,7 @@ struct DebateDecision: Decodable {
         decision.reason = decision.reason.map(Self.clip)
         decision.board = decision.board.map(Self.clip).flatMap { $0.isEmpty ? nil : $0 }
         if decision.action == "finish", let reason = decision.reason, !reason.isEmpty { return decision }
-        if decision.action == "speak", let speaker = decision.speaker, team.contains(where: { $0.provider == speaker }),
+        if decision.action == "speak", let speaker = decision.speaker, Discussion.speakerKeys(team).values.contains(speaker),
            let focus = decision.focus, !focus.isEmpty { return decision }
         return nil
     }
@@ -104,10 +104,21 @@ extension Discussion {
         return named + team.filter { account in !named.contains { $0.id == account.id } }
     }
 
-    // Among AIs with turns left, the one who has spoken least (not the last speaker when possible).
-    static func leastSpoken(_ team: [Account], spoken: [Account.Provider: Int], last: Account.Provider) -> Account {
-        let others = team.count > 1 ? team.filter { $0.provider != last } : team
-        return others.min { (spoken[$0.provider] ?? 0) < (spoken[$1.provider] ?? 0) }!
+    // What the moderator calls each AI: its kind ("claude"), numbered when two accounts of one kind meet ("claude1", "claude2").
+    static func speakerKeys(_ team: [Account]) -> [String: String] {
+        var keys: [String: String] = [:], seen: [Account.Provider: Int] = [:]
+        for account in team {
+            let alike = team.filter { $0.provider == account.provider }.count
+            seen[account.provider, default: 0] += 1
+            keys[account.id] = account.provider.rawValue + (alike > 1 ? "\(seen[account.provider]!)" : "")
+        }
+        return keys
+    }
+
+    // Among AIs with turns left, the one who has spoken least (not the last speaker when possible). Keyed by account.
+    static func leastSpoken(_ team: [Account], spoken: [String: Int], last: String) -> Account {
+        let others = team.filter { $0.id != last }
+        return (others.isEmpty ? team : others).min { (spoken[$0.id] ?? 0) < (spoken[$1.id] ?? 0) }!
     }
 
     // A reply that failed because the account's usage limit is used up: asking again would only fail again.
@@ -179,14 +190,18 @@ extension Discussion {
         var outcome: (text: String, images: [ChatImage])?
         let prefix = previous.isEmpty ? "" : previous + "\n\n"
         var transcript = prefix + "[User]\n" + question
-        var successful: Set<Account.Provider> = []
-        var used: [Account.Provider: Int] = [:]     // turns attempted, failures included; at most perAI each
+        // Keyed by account: two accounts of one kind may meet (a meeting, mode 3).
+        var successful: Set<String> = []
+        var used: [String: Int] = [:]     // turns attempted, failures included; at most perAI each
         var count = 0
         // The moderator may not end the debate before this many turns (each AI about twice, or 60% of the cap).
         var focus = ""
         var board = ""
         var reason = L("모든 AI가 발언 횟수를 다 썼습니다.", "Every AI has used all of its turns.")
         let moderator = team.first { $0.provider == leader }
+        let keys = Self.speakerKeys(team)
+        func key(_ account: Account) -> String { keys[account.id] ?? account.provider.rawValue }
+        func moderatorAnswered() -> Bool { moderator.map { successful.contains($0.id) } ?? false }
         var next = team.first!
 
         // Opening round: everyone answers at once without seeing the others (like mode 1's first step).
@@ -195,8 +210,8 @@ extension Discussion {
         changeTurn(id, index) { $0.status = L("각자 첫 의견을 내는 중… (\(names))", "Everyone is giving an opening view… (\(names))") }
         let opening = transcript
         let lock = NSLock()
-        var openings: [Account.Provider: Result<String, Answerer.Failure>] = [:]
-        var openingPictures: [Account.Provider: [ChatImage]] = [:]
+        var openings: [String: Result<String, Answerer.Failure>] = [:]
+        var openingPictures: [String: [ChatImage]] = [:]
         let group = DispatchGroup()
         for account in team {
             let prompt = debateSpeech(account, rules: rules, focus: "", transcript: opening, opening: true)
@@ -209,7 +224,7 @@ extension Discussion {
                     let harvest = self.collectPictures(text, account: account, since: started, id: id, cancellation: cancellation)
                     result = .success(harvest.text); pictures = harvest.images
                 }
-                lock.lock(); openings[account.provider] = result; openingPictures[account.provider] = pictures; lock.unlock()
+                lock.lock(); openings[account.id] = result; openingPictures[account.id] = pictures; lock.unlock()
                 if !cancellation.isCancelled {
                     var entry: ChatTurn.Entry
                     switch result {
@@ -225,14 +240,14 @@ extension Discussion {
         if !cancellation.isCancelled {
             for account in Self.namedFirst(question, team: team) {
                 count += 1
-                used[account.provider, default: 0] += 1
-                switch openings[account.provider] {
+                used[account.id, default: 0] += 1
+                switch openings[account.id] {
                 case .success(let text):
-                    successful.insert(account.provider)
+                    successful.insert(account.id)
                     transcript += "\n\n[\(label(account))]\n" + ChatTurn.Entry.reply(round: 1, speaker: "", text: text).text
-                    sharePictures(openingPictures[account.provider] ?? [], by: label(account))
+                    sharePictures(openingPictures[account.id] ?? [], by: label(account))
                 case .failure(let failure) where Self.isOutOfUsage(failure):
-                    used[account.provider] = perAI  // out of usage: leave it out of the rest of the debate
+                    used[account.id] = perAI  // out of usage: leave it out of the rest of the debate
                 default: break
                 }
             }
@@ -241,13 +256,13 @@ extension Discussion {
 
         // Then the moderator chooses each speaker, who reads everything said so far.
         while count < limit && !cancellation.isCancelled {
-            guard let moderator, successful.contains(leader) else {
+            guard let moderator, moderatorAnswered() else {
                 reason = L("대표가 응답하지 못해 토론을 종료했습니다.", "The moderator was unavailable. Debate ended."); break
             }
             changeTurn(id, index) { $0.status = L("대표가 다음 발언 또는 종료를 판단하는 중…", "Moderator is choosing the next speaker or ending the debate…") }
-            let available = team.filter { (used[$0.provider] ?? 0) < perAI }
+            let available = team.filter { (used[$0.id] ?? 0) < perAI }
             guard !available.isEmpty else { break }
-            let counts = team.map { "\($0.provider.rawValue) \(used[$0.provider] ?? 0)/\(perAI)" }.joined(separator: ", ")
+            let counts = team.map { "\(key($0)) \(used[$0.id] ?? 0)/\(perAI)" }.joined(separator: ", ")
             let prompt = """
             \(Self.debateContext(rules: rules, transcript: transcript))
             [MODE3 MODERATION]
@@ -262,13 +277,13 @@ extension Discussion {
                The focus is a task ("search…", "find…", "calculate…", "propose…", "check…"),
                never "rebut X". One or two sentences, under 250 characters.
             If the latest user message asks for a particular AI to speak, give that AI the turn.
-            Participants: \(team.map { $0.provider.rawValue }.joined(separator: ","))
+            Participants (speaker key = name): \(team.map { "\(key($0)) = \(label($0))" }.joined(separator: ", "))
             Each AI may speak at most \(perAI) times. Turns used so far: \(counts).
-            Only these AIs have turns left: \(available.map { $0.provider.rawValue }.joined(separator: ",")).
+            Only these AIs have turns left: \(available.map(key).joined(separator: ",")).
             Moderation and final synthesis do not count as turns.
             Finish as soon as the answer is good enough: nothing important is missing, or the last turns did not change the board.
             Do not continue just to use up turns.
-            Return ONLY JSON: {"action":"speak","speaker":"claude|codex|gemini","focus":"task for that AI","board":"Agreed: … / Check: … / Open: …"}
+            Return ONLY JSON: {"action":"speak","speaker":"\(team.map(key).joined(separator: "|"))","focus":"task for that AI","board":"Agreed: … / Check: … / Open: …"}
             or {"action":"finish","reason":"why the answer is good enough","board":"…"}.
             Write focus/reason/board in the language of the latest user message unless it requests another language.
             Do not use tools, change files, or run commands.
@@ -279,18 +294,18 @@ extension Discussion {
                 reason = L("대표의 진행 판단을 받지 못해 토론을 종료했습니다.", "Moderator decision failed. Debate ended."); break
             }
             if let notes = decision.board { board = notes }
-            let criticalPending = activeAdversarial ? available.filter { (used[$0.provider] ?? 0) < 2 } : []
+            let criticalPending = activeAdversarial ? available.filter { (used[$0.id] ?? 0) < 2 } : []
             if decision.action == "finish" && criticalPending.isEmpty { reason = decision.reason!; break }
             if decision.action == "finish", let critic = criticalPending.first {
                 next = critic
                 focus = L("다른 AI의 핵심 주장에 대한 가장 강한 반론·대안과 이를 판별할 근거를 제시하세요. 억지 반대나 인신공격은 하지 마세요.", "Give the strongest evidence-based objection or alternative to another claim and a discriminating check. No fabricated disagreement or personal attacks.")
-            } else if let chosen = available.first(where: { $0.provider == decision.speaker }) {
+            } else if let chosen = available.first(where: { key($0) == decision.speaker }) {
                 next = chosen
                 focus = decision.focus!
             } else {
                 // The chosen AI has no turns left: the AI with turns left who has spoken least (not the last
                 // speaker) adds what the answer is missing.
-                next = Self.leastSpoken(available, spoken: used, last: next.provider)
+                next = Self.leastSpoken(available, spoken: used, last: next.id)
                 focus = L("지금 답에서 가장 중요하게 빠진 것을 하나 더하세요: 새 근거나 데이터, 계산, 구체적인 예, 또는 답을 고칠 구체적인 수정안.",
                           "Add the most important thing the answer is still missing: new evidence or data, a calculation, a concrete example, or a specific fix.")
             }
@@ -305,11 +320,11 @@ extension Discussion {
             let speech = requestDebate(account, debateSpeech(account, rules: rules, focus: focus, transcript: transcript, opening: false), 300, cancellation, web: true)
             if cancellation.isCancelled { break }
             count += 1 // Failed attempts count too, so the loop is always bounded.
-            used[account.provider, default: 0] += 1
+            used[account.id, default: 0] += 1
             var entry: ChatTurn.Entry
             switch speech {
             case .success(let text):
-                successful.insert(account.provider)
+                successful.insert(account.id)
                 let harvest = collectPictures(text, account: account, since: started, id: id, cancellation: cancellation)
                 entry = .reply(round: 1, speaker: label(account), text: harvest.text)
                 entry.images = harvest.images.isEmpty ? nil : harvest.images
@@ -319,7 +334,7 @@ extension Discussion {
                 transcript += "\n\n[\(label(account))]\n" + entry.text
             case .failure(let failure):
                 entry = .init(round: 1, speaker: label(account), text: Self.describe(failure), failed: true)
-                if Self.isOutOfUsage(failure) { used[account.provider] = perAI }
+                if Self.isOutOfUsage(failure) { used[account.id] = perAI }
             }
             entry.focus = focus
             changeTurn(id, index, save: true) { $0.entries.append(entry) }
@@ -332,10 +347,10 @@ extension Discussion {
         }
         changeTurn(id, index, save: true) { t in t.endReason = ending; t.debateFocus = nil }
         // Stop never starts another request, including the final synthesis.
-        if !cancellation.isCancelled, let moderator, successful.contains(leader) {
+        if !cancellation.isCancelled, let moderator, moderatorAnswered() {
             changeTurn(id, index) { $0.status = L("대표가 최종 답을 정리하는 중…", "Moderator is writing the final answer…") }
             let finalStarted = Date()
-            let missing = team.filter { !successful.contains($0.provider) }.map(label)
+            let missing = team.filter { !successful.contains($0.id) }.map(label)
             let result = meeting != nil ? requestDebate(moderator, Self.debateContext(rules: rules, transcript: transcript) + "\n"
                 + (board.isEmpty ? "" : "Moderator board:\n" + board + "\n") + "End reason: \(ending)\n" + Self.meetingFinal(missing: missing)
                 + "\n\(pictureRule(moderator))\nDo not change files or execute commands.", 180, cancellation) : requestDebate(moderator, """

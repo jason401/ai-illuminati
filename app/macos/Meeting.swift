@@ -16,18 +16,46 @@ extension Discussion {
     static let meetingTurnsPerAI = 2
     static let meetingSource = "meeting-source.md"
 
-    // Who meets: the AIs picked with @, else the chat's members, else whoever answers now; allowed by the chat's lock.
-    // The discussion keeps one AI of each kind (it keys turns by kind): the first one picked of each.
+    // Who meets: the AIs picked with @, else the chat's members taking part (two or more checked), all of them;
+    // else, with the members automatic (or fewer than two ready), the app picks: up to `meetingMost` cloud AIs that
+    // may meet here (the chat's lock), signed in and with usage left, one of each kind first, then the other accounts
+    // (meetingTeam). Two accounts of one kind may meet: the discussion keys speakers by account.
+    static let meetingMost = 4
+
     func meetingMembers(room: UUID, mentioned: [String], fallback: [Account]) -> [Account] {
         let standing = standingMembers(room: room)
-        let ids = !mentioned.isEmpty ? mentioned : !standing.isEmpty ? standing : memberIDs(room: room).isEmpty ? fallback.map(\.id) : memberIDs(room: room)
-        var kinds: Set<Account.Provider> = [], team: [Account] = []
-        for id in ids {
-            guard let account = model.accounts.first(where: { $0.id == id }), [.claude, .codex, .gemini].contains(account.provider),
-                  permits(account, room: room), model.latestUsage[id]?.needsLogin != true, kinds.insert(account.provider).inserted else { continue }
+        let ids = !mentioned.isEmpty ? mentioned : standing
+        if ids.isEmpty {
+            let picked = Self.meetingTeam(model.accounts, usage: model.latestUsage) { self.permits($0, room: room) }
+            if !picked.isEmpty { return picked }
+        }
+        let chosen = !ids.isEmpty ? ids : memberIDs(room: room).isEmpty ? fallback.map(\.id) : memberIDs(room: room)
+        var seen = Set<String>(), team: [Account] = []
+        for id in chosen {
+            guard let account = model.accounts.first(where: { $0.id == id }), Self.meets(account),
+                  permits(account, room: room), model.latestUsage[id]?.needsLogin != true, seen.insert(id).inserted else { continue }
             team.append(account)
         }
         return team
+    }
+
+    static func meets(_ account: Account) -> Bool { [.claude, .codex, .gemini].contains(account.provider) }
+
+    // The app's own pick for a meeting (or for everyone's views) when the members are automatic: cloud AIs allowed here,
+    // signed in and not out of usage (unknown usage counts as half left), the most left first; one of each kind before
+    // a second account of a kind, so different kinds of AI meet; at most `most`.
+    static func meetingTeam(_ accounts: [Account], usage: [String: AIUsage], most: Int = meetingMost, allowed: (Account) -> Bool) -> [Account] {
+        func left(_ account: Account) -> Double { min(AutoPick.fiveHour(usage[account.id]), AutoPick.weekly(usage[account.id])) }
+        let ready = accounts.filter { meets($0) && allowed($0) && usage[$0.id]?.needsLogin != true && left($0) > 0 }
+            .enumerated().sorted { a, b in
+                let x = left(a.element) + (a.element.isSchool ? AutoPick.enterpriseBonus : 0), y = left(b.element) + (b.element.isSchool ? AutoPick.enterpriseBonus : 0)
+                return x != y ? x > y : a.offset < b.offset
+            }.map(\.element)
+        var kinds = Set<Account.Provider>(), first: [Account] = [], rest: [Account] = []
+        for account in ready {
+            if kinds.insert(account.provider).inserted { first.append(account) } else { rest.append(account) }
+        }
+        return Array((first + rest).prefix(most))
     }
 
     // Makes the meeting's hidden chat for `turn` of chat `id` (on the main thread), with the chat's lock and the

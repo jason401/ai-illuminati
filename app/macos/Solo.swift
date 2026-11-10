@@ -252,22 +252,34 @@ extension Discussion {
         try? text.write(to: url, atomically: true, encoding: .utf8)
     }
 
-    // An answer's <space-patch> block goes to chat `room`'s Space (Space.swift), checked there.
-    static func deliverSpace(_ reply: String, room: UUID, turn: Int, by: String) {
-        guard let raw = SpacePatch.split(reply).raw else { return }
-        SpaceStore.deliver(raw, room: room, by: by, key: SpaceStore.key(turn: turn, by: by, raw: raw))
+    // An answer's <space-build>: checked, saved as a draft and shown as a card under the answer (the first one only).
+    func deliverSpaceBuild(_ reply: String, room: UUID, turn index: Int) {
+        let split = SpaceBuilder.split(reply)
+        guard split.found else { return }
+        var note: SpaceDraftNote
+        switch SpaceBuilder.parse(split.body, new: true) {
+        case .failure(let bad): note = SpaceDraftNote(name: "Space", reason: bad.reason)
+        case .success(let build):
+            do { note = SpaceDraftNote(draft: try SpaceStore.saveDraft(build), name: build.name ?? "Space") }
+            catch { note = SpaceDraftNote(name: build.name ?? "Space", reason: error.localizedDescription) }
+        }
+        let made = note
+        changeTurn(room, index, save: true) { turn in
+            if turn.spaceDraft == nil { turn.spaceDraft = made } else if let draft = made.draft { SpaceStore.discardDraft(draft) }
+        }
     }
 
     // The reply without its trailing <chat-state> block (also while it is still being written), and the block.
+    // A Space's <space-build> (SpaceView.swift) and old <space-patch> blocks are hidden too.
     static func extractState(_ text: String) -> (reply: String, state: String?) {
         guard let open = text.range(of: "<chat-state>", options: .backwards) else {
             // A tag still arriving at the end of a streamed reply ("<chat-st…") is not shown either.
             if let partial = text.range(of: "<chat", options: .backwards), "<chat-state>".hasPrefix(String(text[partial.lowerBound...])) {
-                return (SpacePatch.split(String(text[..<partial.lowerBound])).reply.trimmingCharacters(in: .whitespacesAndNewlines), nil)
+                return (SpaceBuilder.split(String(text[..<partial.lowerBound])).reply.trimmingCharacters(in: .whitespacesAndNewlines), nil)
             }
-            return (SpacePatch.split(text).reply, nil)
+            return (SpaceBuilder.split(text).reply, nil)
         }
-        let reply = SpacePatch.split(String(text[..<open.lowerBound])).reply.trimmingCharacters(in: .whitespacesAndNewlines)
+        let reply = SpaceBuilder.split(String(text[..<open.lowerBound])).reply.trimmingCharacters(in: .whitespacesAndNewlines)
         var body = String(text[open.upperBound...])
         if let close = body.range(of: "</chat-state>") { body = String(body[..<close.lowerBound]) } else { return (reply, nil) }
         let state = body.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -489,7 +501,7 @@ extension Discussion {
             var done: Set<String> = []
             for (k, account) in called.enumerated() {
                 let speaker = label(account)
-                var instruction = soloInstruction(account, binding: binding, helper: helper, chat: id)
+                var instruction = soloInstruction(account, binding: binding, helper: helper, chat: id, spaceRule: k == 0)
                 if !extra.isEmpty { instruction += "\n" + extra }
                 if called.count > 1 {
                     instruction += "\nSeveral AIs answer this message at the same time and do not see each other's replies: give your own view."
@@ -534,7 +546,7 @@ extension Discussion {
                         if let mood, binding.face == true { FaceLink.shared.show(mood) }
                         let (text, newState) = Self.extractState(tagless)
                         if let newState, k == 0 { self.saveState(newState, room: id, index: index) }
-                        Self.deliverSpace(tagless, room: id, turn: index, by: speaker)
+                        if k == 0 { self.deliverSpaceBuild(tagless, room: id, turn: index) }
                         let harvest = self.collectPictures(text, account: account, since: started, id: id, index: index, cancellation: cancellation)
                         entry = .init(round: 1, speaker: speaker, text: harvest.text, failed: false)
                         entry.images = harvest.images.isEmpty ? nil : harvest.images
@@ -640,7 +652,7 @@ extension Discussion {
                 if let mood, binding.face == true { FaceLink.shared.show(mood) }
                 let (text, newState) = Self.extractState(tagless)
                 if let newState { self.saveState(newState, room: id, index: index) }
-                Self.deliverSpace(tagless, room: id, turn: index, by: speaker)
+                deliverSpaceBuild(tagless, room: id, turn: index)
                 let harvest = collectPictures(text, account: account, since: started, id: id, index: index, cancellation: cancellation)
                 var changes = Self.changes(own, since: before)
                 if var made = backup, (try? made.finish()) != nil { changes += made.changes.filter { $0.kind != "directory" } }
@@ -691,7 +703,9 @@ extension Discussion {
 
     // One instruction for every plain chat. A linked Git project only adds its own part and drops the lines that
     // contradict it, so whatever is added here (folders, web, Drive, pictures, face) reaches project work too.
-    func soloInstruction(_ account: Account, binding: WorkspaceBinding, helper: String, project: ProjectPart? = nil, chat id: UUID? = nil) -> String {
+    // spaceRule: this answer may make a Space when the message asks for one (only one AI per message does).
+    func soloInstruction(_ account: Account, binding: WorkspaceBinding, helper: String, project: ProjectPart? = nil, chat id: UUID? = nil,
+                         spaceRule: Bool = true) -> String {
         activePeerSession?.asker = account   // ask_peer asks the other kind of AI than the one answering now
         return Self.composeInstruction(name: label(account), provider: account.provider,
                                 folders: Self.soloFolders(binding, shared: model.activeSharedFolders, project: project?.root),
@@ -699,9 +713,16 @@ extension Discussion {
                                 fullAccess: binding.fullAccess == true, picture: pictureRule(account, chat: id), helper: helper,
                                 face: Self.projectFaceRule(face: binding.face == true), project: project,
                                 notes: id.map { ChatNotes.rule(ChatNotes.current($0)) } ?? "",
-                                space: id.map(SpaceStore.rule(for:)) ?? "",
+                                space: spaceRule && account.provider != .ollama && Route.asksSpace(lastQuestion(id)) ? SpaceBuilder.rule : "",
                                 peer: project == nil ? "" : peerInstruction(account),
                                 memory: memoryRule(account, chat: id))
+    }
+
+    // The newest message of chat `id` (any thread).
+    func lastQuestion(_ id: UUID?) -> String {
+        guard let id else { return "" }
+        let read = { ((self.host ?? self).conversations.first { $0.id == id } ?? self.conversations.first { $0.id == id })?.turns.last?.question ?? "" }
+        return Thread.isMainThread ? read() : DispatchQueue.main.sync(execute: read)
     }
 
     // Long-term memory (Memory.swift) for every AI, and when it may save to it (not Gemma, which has no tools).

@@ -37,7 +37,7 @@ struct ChatView: View {
         let notesInline = inline ? layout.notesFit : layout.notesFitAlone
         // Notes belong to a chat: a project folder (board or info) or another Mac's chat hides them, and they come
         // back when a chat of this Mac is open again.
-        let notesShown = discussion.notesShown && !discussion.viewingBoard && discussion.viewingRemote == nil
+        let notesShown = discussion.notesShown && !discussion.viewingBoard && discussion.viewingRemote == nil && discussion.viewingSpace == nil
         Group {
             ZStack(alignment: .leading) {
                 findKey
@@ -51,13 +51,13 @@ struct ChatView: View {
                         .frame(minWidth: 0, maxWidth: .infinity).clipped()
                     if notesShown && notesInline {
                         Divider().opacity(0.5)
-                        NotesPanel(discussion: discussion, room: discussion.currentID) { discussion.notesShown = false }
+                        NotesPanel(room: discussion.currentID) { discussion.notesShown = false }
                     }
                 }
                 if notesShown && !notesInline {
                     HStack(spacing: 0) {
                         Spacer(minLength: 0)
-                        NotesPanel(discussion: discussion, room: discussion.currentID) { discussion.notesShown = false }
+                        NotesPanel(room: discussion.currentID) { discussion.notesShown = false }
                             .background(Color(nsColor: .windowBackgroundColor))
                             .shadow(color: .black.opacity(0.25), radius: 12)
                     }
@@ -455,7 +455,7 @@ struct ChatView: View {
 
     // A meeting held for the chat above: its topic and when (its chat is read only).
     private func meetingRow(_ meeting: Conversation, depth: Int = 0) -> some View {
-        let selected = meeting.id == discussion.currentID && discussion.viewingRemote == nil
+        let selected = meeting.id == discussion.currentID && discussion.viewingRemote == nil && discussion.viewingSpace == nil
         let key = "meeting." + meeting.id.uuidString
         let hovered = discussion.hoverKey == key
         return HStack(spacing: 5) {
@@ -480,7 +480,7 @@ struct ChatView: View {
     }
 
     private func chatRow(_ conversation: Conversation, meetings: Int = 0, shown: Bool = false, depth: Int = 0, todo: TodoItem.State? = nil) -> some View {
-        let selected = conversation.id == discussion.currentID && discussion.viewingRemote == nil && !discussion.viewingBoard
+        let selected = conversation.id == discussion.currentID && discussion.viewingRemote == nil && !discussion.viewingBoard && discussion.viewingSpace == nil
         let hovered = discussion.hoverKey == conversation.id.uuidString
         let todoPrefix = "TODO · "
         return HStack(spacing: 4) {
@@ -631,6 +631,8 @@ struct ChatView: View {
                 } else if discussion.viewingBoard {
                     Text(L("할 일 보드", "TODO board")).font(.system(size: 13, weight: .medium)).lineLimit(1)
                     WindowDragRegion().frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if let space = discussion.viewingSpace {
+                    SpaceHeader(discussion: discussion, id: space)
                 } else if let remote = discussion.viewingRemote {
                     Text(remote.snapshot?.title ?? remote.chat.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
                     Text(L("\(remote.chat.deviceName) · 읽기 전용", "\(remote.chat.deviceName) · read only"))
@@ -643,13 +645,15 @@ struct ChatView: View {
             .padding(.leading, 12).padding(.trailing, 18).frame(height: 40)
             // Another chat waits for approval: say so here, whichever chat is open.
             ApprovalBanner(discussion: discussion)
-            if discussion.findOpen && discussion.viewingRemote == nil && !discussion.viewingBoard && !discussion.current.turns.isEmpty {
+            if discussion.findOpen && discussion.viewingRemote == nil && !discussion.viewingBoard && discussion.viewingSpace == nil && !discussion.current.turns.isEmpty {
                 ChatFindBar(discussion: discussion).padding(.horizontal, 28).padding(.bottom, 4)
             }
             if discussion.viewingBoard, let project = discussion.boardProject, discussion.boardTab == .info {
                 ProjectInfoView(discussion: discussion, project: project)
             } else if discussion.viewingBoard {
                 TodoBoardView(discussion: discussion)
+            } else if let space = discussion.viewingSpace {
+                SpaceMainView(discussion: discussion, id: space)
             } else if let remote = discussion.viewingRemote {
                 RemoteChatView(viewing: remote, discussion: discussion, sync: sync)
             } else if discussion.current.turns.isEmpty {
@@ -1085,6 +1089,17 @@ struct ChatView: View {
                 }
                 HStack(spacing: 10) {
                     plusMenu
+                    if discussion.configuration.mode == 0 && discussion.current.meetingOf == nil {
+                        // A Space (a small app) made from what is typed: the words say so, and the AI hears the Space rules.
+                        Button(action: { discussion.askForSpace() }) {
+                            Image(systemName: "square.grid.2x2").font(.system(size: 13)).frame(width: 28, height: 28)
+                                .background(Circle().strokeBorder(Color.primary.opacity(0.15)))
+                        }
+                        .buttonStyle(.plainHit).foregroundColor(.secondary)
+                        .disabled(discussion.running || discussion.importingMaterials)
+                        .help(L("Space 만들기: 적은 내용으로 작은 앱(트래커·보드·게임)을 만들어요", "Make a Space: a small app (tracker, board, game) from what you type"))
+                        .accessibilityLabel("Space")
+                    }
                     if discussion.importingMaterials {
                         ProgressView().controlSize(.small)
                         Text(L("자료를 가져오는 중…", "Importing materials…")).font(.system(size: 12)).foregroundColor(.secondary)
@@ -1542,7 +1557,7 @@ struct ChatView: View {
             }
             .buttonStyle(.plainHit)
             .foregroundColor(discussion.notesShown ? .accentColor : .secondary)
-            .help(discussion.notesShown ? L("메모·Space 접기", "Hide notes and Space") : L("메모·Space 펼치기", "Show notes and Space"))
+            .help(discussion.notesShown ? L("메모 접기", "Hide notes") : L("메모 펼치기 (AI는 읽기만 해요)", "Show notes (the AI only reads them)"))
             .accessibilityLabel(L("메모", "Notes"))
         }
     }
@@ -2127,7 +2142,7 @@ private struct TurnView: View, Equatable {
                             if turn.final != nil {
                                 Button(L("Space로 만들기", "Make a Space")) { discussion.makeSpace(from: turn, in: discussion.currentID) }
                                     .buttonStyle(.link).font(.system(size: 11))
-                                    .help(L("회의 결론·합의·이견·결정할 것을 이 대화 Space의 결정 로그로 넣어요", "Puts the meeting's conclusion, agreements, disagreements and open decisions into this chat's Space as a decision log"))
+                                    .help(L("회의 결론·합의·이견·결정할 것으로 새 결정 로그 Space를 만들어요", "Makes a new decision log Space from the meeting's conclusion, agreements, disagreements and open decisions"))
                             }
                         } else {
                             Text(L("회의 기록은 다른 Mac에 있어요", "The meeting record is on another Mac")).font(.system(size: 11)).foregroundColor(.secondary)
@@ -2204,6 +2219,7 @@ private struct TurnView: View, Equatable {
                 .cornerRadius(10)
             }
             if turn.mode == 0 { RememberedLine(turnID: turn.id) }
+            if let note = turn.spaceDraft { SpaceDraftCard(note: note, turn: turn, discussion: discussion, busy: busy) }
             ForEach(turn.mode == 0 && (turn.answerOrder?.count ?? 0) < 2 ? (turn.moreAnswers ?? []) : []) { answer in
                 // A second (third…) AI called with @, which answered at the same time without seeing the others.
                 VStack(alignment: .leading, spacing: 8) {
@@ -2564,9 +2580,7 @@ private struct CopyButton: View {
 }
 
 // The chat's notes on the right: only the user edits them; each answer reads them (see ChatNotes).
-// Beside them, the chat's Space (SpaceView.swift).
 private struct NotesPanel: View {
-    @ObservedObject var discussion: Discussion
     let room: UUID
     let close: () -> Void
     @ObservedObject var notes = ChatNotes.shared
@@ -2574,32 +2588,13 @@ private struct NotesPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
-                Picker("", selection: $discussion.panelTab) {
-                    Text(L("메모", "Notes")).tag("notes")
-                    Text("Space").tag("space")
-                }
-                .pickerStyle(.segmented).labelsHidden().fixedSize()
+                Text(L("메모", "Notes")).font(.system(size: 13, weight: .medium))
                 WindowDragRegion().frame(maxWidth: .infinity, maxHeight: .infinity)
                 Button(action: close) { Image(systemName: "xmark").font(.system(size: 11)).frame(width: 22, height: 22) }
                     .buttonStyle(.plainHit).foregroundColor(.secondary)
                     .help(L("메모 접기", "Hide notes"))
             }
             .padding(.horizontal, 14).frame(height: 40)
-            if discussion.panelTab == "space" {
-                SpacePanel(discussion: discussion, room: room)
-            } else {
-                notesBody
-            }
-        }
-        .frame(width: ChatView.notesWidth)
-        .frame(maxHeight: .infinity)
-        .background(Color.primary.opacity(0.035))
-        .onAppear { notes.open(room) }
-        .onChange(of: room) { notes.open($0) }
-        .onDisappear { notes.flush() }
-    }
-
-    @ViewBuilder private var notesBody: some View {
             ZStack(alignment: .topLeading) {
                 TextEditor(text: $notes.text)
                     .font(.system(size: 13))
@@ -2617,6 +2612,13 @@ private struct NotesPanel: View {
             Text(L("AI는 읽기만 해요", "The AI only reads these"))
                 .font(.system(size: 11)).foregroundColor(.secondary)
                 .padding(.horizontal, 14).padding(.bottom, 12)
+        }
+        .frame(width: ChatView.notesWidth)
+        .frame(maxHeight: .infinity)
+        .background(Color.primary.opacity(0.035))
+        .onAppear { notes.open(room) }
+        .onChange(of: room) { notes.open($0) }
+        .onDisappear { notes.flush() }
     }
 }
 

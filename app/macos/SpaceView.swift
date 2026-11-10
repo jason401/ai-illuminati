@@ -1,39 +1,89 @@
+import AppKit
 import SwiftUI
 
-// The Space of a chat (Space.swift) in the right panel, its "Space로 만들기" on a meeting's result and the
-// sidebar's Spaces. The buttons only move around (open a TODO or a chat); nothing here runs work or approves it.
+// Spaces on screen (Space.swift): a Space in place of the chat with its change box below, the preview card an
+// answer's <space-build> leaves in the chat, the sidebar's Spaces and "Make a Space" on a meeting's result.
+// Nothing here runs commands or approves work: a page may only move the user somewhere (a link asks first).
+
+// The talk that changes a Space: who is answering, the new version waiting to be applied, the last notice.
+final class SpaceRefiner: ObservableObject {
+    static let shared = SpaceRefiner()
+    struct Pending: Equatable { var build: SpaceBuild; var migrated: Data?; var by: String; var request: String }
+    @Published var busy: [String: String] = [:]        // Space → who is answering
+    @Published var pending: [String: Pending] = [:]
+    @Published var notes: [String: String] = [:]       // Space → the last refusal, failure or page notice
+    @Published var drafts: [String: String] = [:]      // the change box's text per Space
+    var cancels: [String: DebateCancellation] = [:]
+}
 
 extension Discussion {
-    // A meeting's result becomes a decision log (and its next steps) in chat `room`'s Space, made if it has none.
+    func openSpace(_ id: String) {
+        guard SpaceStore.shared.manifest(id) != nil else { return }
+        viewingRemote = nil; viewingBoard = false; sidebarOverlay = false
+        viewingSpace = id
+    }
+
+    // The Space button in the message box: with words, they are sent as a Space request; without, it starts one.
+    func askForSpace() {
+        let prefix = L("Space 만들어 줘: ", "Make a Space: ")
+        let typed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        if typed.isEmpty { draft = prefix; return }
+        if !Route.asksSpace(typed) { draft = prefix + typed }
+        send()
+    }
+
+    private func changeSpaceNote(_ turnID: UUID, in room: UUID, _ body: @escaping (inout SpaceDraftNote) -> Void) {
+        change(room, save: true) { c in
+            guard let i = c.turns.firstIndex(where: { $0.id == turnID }), var note = c.turns[i].spaceDraft else { return }
+            body(&note); c.turns[i].spaceDraft = note
+        }
+    }
+
+    func addDraftSpace(_ turn: ChatTurn, in room: UUID) {
+        guard let draft = turn.spaceDraft?.draft else { return }
+        do {
+            let made = try SpaceStore.shared.adopt(draft: draft, origin: room)
+            changeSpaceNote(turn.id, in: room) { $0.space = made.id; $0.draft = nil }
+            if folds.isFolded("spaces") { folds.toggle("spaces") }
+        } catch {
+            changeSpaceNote(turn.id, in: room) { $0.reason = (error as? SpaceBad)?.reason ?? error.localizedDescription }
+        }
+    }
+
+    func discardDraftSpace(_ turn: ChatTurn, in room: UUID) {
+        if let draft = turn.spaceDraft?.draft { SpaceStore.discardDraft(draft) }
+        changeSpaceNote(turn.id, in: room) { $0.discarded = true; $0.draft = nil }
+    }
+
+    // The same request again; a refused build sends its reason along, so the AI can fix it.
+    func rebuildSpace(_ turn: ChatTurn, in room: UUID) {
+        let reason = turn.spaceDraft?.reason
+        if let draft = turn.spaceDraft?.draft { SpaceStore.discardDraft(draft) }
+        changeSpaceNote(turn.id, in: room) { $0.discarded = true; $0.draft = nil }
+        var question = L("Space 다시 만들어 줘: ", "Make the Space again: ") + turn.question
+        if let reason { question += L("\n(앞의 Space는 검사에서 거부됐어요: ", "\n(The last one was refused by the checks: ") + reason + ")" }
+        if let problem = startTurn(room: room, question: question) { attachmentError = problem }
+    }
+
+    private var folds: SidebarFold { SidebarFold.shared }
+
+    // A meeting's result becomes a new decision log Space.
     func makeSpace(from turn: ChatTurn, in room: UUID) {
         guard let result = turn.final else { return }
         let chat = conversations.first { $0.id == room }
         let number = (chat?.turns.firstIndex { $0.id == turn.id } ?? 0) + 1
         let day = DateFormatter.localizedString(from: turn.answeredAt ?? Date(), dateStyle: .short, timeStyle: .short)
         let source = L("회의 · \(day) · \(number)번째 메시지", "Meeting · \(day) · message \(number)")
-        let blocks = SpacePatch.meetingBlocks(result, title: L("회의 결정 · ", "Meeting decisions · ") + day, source: source, chat: turn.meetingRoom)
-        SpaceStore.shared.change(room) { doc in
-            var d = doc ?? SpaceDoc.new(title: chat?.title ?? "Space", goal: String(turn.question.prefix(200)))
-            var next = d.content
-            let free = max(0, SpacePatch.blockLimit - next.blocks.count)
-            next.blocks += d.withIDs(Array(blocks.prefix(free)))
-            if blocks.count > free { d.notice(L("블록이 \(SpacePatch.blockLimit)개를 넘어 회의 결과 일부를 넣지 못했어요", "The Space has \(SpacePatch.blockLimit) blocks; part of the meeting result was left out")) }
-            d.commit(next, note: L("회의에서 가져옴", "From a meeting"))
-            doc = d
+        let title = L("회의 결정 · ", "Meeting decisions · ") + day
+        var state = SpacePatch.meetingState(result, title: title, source: source, chat: turn.meetingRoom)
+        state["goal"] = String(turn.question.prefix(200))
+        do {
+            let data = try JSONSerialization.data(withJSONObject: state, options: [.sortedKeys])
+            let made = try SpaceStore.shared.makeFromTemplate(.decisions, state: data, name: String((chat?.title ?? title).prefix(SpaceLimits.name)), origin: room)
+            openSpace(made.id)
+        } catch {
+            attachmentError = L("Space를 만들지 못했어요: ", "Could not make the Space: ") + error.localizedDescription
         }
-        openSpace(room)
-    }
-
-    func openSpace(_ room: UUID) {
-        if room != currentID || viewingBoard || viewingRemote != nil { open(room) }
-        panelTab = "space"; notesShown = true
-    }
-
-    // The only way a Space is refreshed: the user asks, and the answer's patch updates it.
-    func refreshSpace() {
-        guard !running else { return }
-        draft = L("지금까지의 대화에 맞게 Space를 갱신해 줘.", "Update the Space to match the chat so far.")
-        send()
     }
 
     func openSpaceTodo(_ id: String) {
@@ -41,368 +91,472 @@ extension Discussion {
         guard let item = todo.items.first(where: { $0.id.uuidString == id }) else { openBoard(project: nil); return }
         openBoard(project: todo.lists.first { $0.id == item.listID }?.project.map(SidebarProjects.key), tab: .todo)
     }
+
+    // What a page may ask: go to a chat or a TODO of this Mac, show a file of the chat that made it in Finder, or open
+    // a web link after the user agrees.
+    func spaceActions(_ id: String, origin: String?) -> SpaceActions {
+        SpaceActions(open: { [weak self] target in
+            guard let self else { return }
+            if let chat = target["chat"].flatMap(UUID.init(uuidString:)), self.conversations.contains(where: { $0.id == chat }) {
+                self.viewingSpace = nil; self.open(chat)
+            } else if let todo = target["todo"] {
+                self.viewingSpace = nil; self.openSpaceTodo(todo)
+            } else if let name = target["file"], let origin = origin.flatMap(UUID.init(uuidString:)) {
+                let folder = Self.chatFolder(origin).resolvingSymlinksInPath().standardizedFileURL
+                let file = folder.appendingPathComponent(name).resolvingSymlinksInPath().standardizedFileURL
+                guard file.pathComponents.starts(with: folder.pathComponents), file.pathComponents.count > folder.pathComponents.count,
+                      FileManager.default.fileExists(atPath: file.path) else { SpaceRefiner.shared.notes[id] = L("파일을 찾지 못했어요: ", "File not found: ") + name; return }
+                NSWorkspace.shared.activateFileViewerSelecting([file])
+            } else if let text = target["url"], let url = URL(string: text), ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.host != nil {
+                let alert = NSAlert()
+                alert.messageText = L("이 Space가 링크를 열려고 해요", "This Space wants to open a link")
+                alert.informativeText = url.absoluteString
+                alert.addButton(withTitle: L("브라우저에서 열기", "Open in browser"))
+                alert.addButton(withTitle: L("취소", "Cancel"))
+                if alert.runModal() == .alertFirstButtonReturn { NSWorkspace.shared.open(url) }
+            }
+        }, notify: { text in SpaceRefiner.shared.notes[id] = text })
+    }
+
+    // Who changes a Space: whoever answered last in the chat that made it, else the account with most usage left.
+    func refineAccount(_ manifest: SpaceManifest) -> Account? {
+        if let origin = manifest.originChat.flatMap(UUID.init(uuidString:)), conversations.contains(where: { $0.id == origin }),
+           let account = soloNext(room: origin), account.provider != .ollama { return account }
+        return AutoPick.choose(model.accounts.filter { [.claude, .codex].contains($0.provider) }, usage: model.latestUsage, lock: nil, current: nil)
+    }
+
+    // A change asked in a Space's box: the AI sees the code and the data's shape (never its values) and sends a new
+    // page; a refused one is sent back once with the reason. The result waits as a preview (migrate run first).
+    func refineSpace(_ id: String, request: String) {
+        let refiner = SpaceRefiner.shared
+        let request = request.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !request.isEmpty, refiner.busy[id] == nil, let manifest = SpaceStore.shared.manifest(id) else { return }
+        guard let account = refineAccount(manifest) else { refiner.notes[id] = L("답할 계정이 없어요", "No account can answer"); return }
+        let folder = SpaceStore.folder(id)
+        let html = SpaceStore.html(folder), state = SpaceStore.state(folder), history = SpaceStore.refineLog(id)
+        SpaceStore.addRefine(id, SpaceRefineEntry(role: "user", text: request))
+        let speaker = label(account)
+        let cancel = DebateCancellation()
+        refiner.busy[id] = speaker; refiner.cancels[id] = cancel; refiner.notes[id] = nil; refiner.pending[id] = nil
+        DispatchQueue.global(qos: .userInitiated).async {
+            var prompt = SpaceBuilder.refinePrompt(manifest: manifest, html: html, state: state, history: history, request: request)
+            var outcome: Result<(SpaceBuild, String), SpaceBad> = .failure(SpaceBad(reason: ""))
+            for attempt in 0..<2 {
+                switch Answerer.ask(account, prompt: prompt, timeout: 600, cancellation: cancel) {
+                case .failure(let failure): outcome = .failure(SpaceBad(reason: Self.describe(failure)))
+                case .success(let raw):
+                    let split = SpaceBuilder.split(FaceLink.extract(raw).text)
+                    let said = Self.extractState(split.reply).reply
+                    guard split.found else { outcome = .failure(SpaceBad(reason: said.isEmpty ? L("새 판이 오지 않았어요", "No new version came") : said)); break }
+                    switch SpaceBuilder.parse(split.body, new: false) {
+                    case .success(let build): outcome = .success((build, said))
+                    case .failure(let bad):
+                        outcome = .failure(bad)
+                        if attempt == 0 { prompt += "\n[The app refused your block: \(bad.reason). Send the whole fixed block again.]"; continue }
+                    }
+                }
+                break
+            }
+            DispatchQueue.main.async {
+                guard refiner.cancels[id] === cancel else { return }
+                refiner.cancels[id] = nil
+                if cancel.isCancelled { refiner.busy[id] = nil; return }
+                switch outcome {
+                case .failure(let bad):
+                    refiner.busy[id] = nil
+                    refiner.notes[id] = bad.reason
+                    SpaceStore.addRefine(id, SpaceRefineEntry(role: "ai", text: bad.reason))
+                case .success(let (build, said)):
+                    SpaceStore.addRefine(id, SpaceRefineEntry(role: "ai", text: said.isEmpty ? L("새 판을 보냈어요", "Sent a new version") : said))
+                    guard let migrate = build.migrate else {
+                        refiner.busy[id] = nil
+                        refiner.pending[id] = .init(build: build, migrated: nil, by: speaker, request: request)
+                        return
+                    }
+                    SpaceMigrator.run(migrate, state: SpaceStore.state(folder)) { result in
+                        refiner.busy[id] = nil
+                        switch result {
+                        case .success(let data): refiner.pending[id] = .init(build: build, migrated: data, by: speaker, request: request)
+                        case .failure(let bad): refiner.notes[id] = L("데이터 옮기기(migrate)가 실패해 적용하지 않았어요: ", "Moving the data (migrate) failed, so nothing changed: ") + bad.reason
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    func stopRefining(_ id: String) {
+        SpaceRefiner.shared.cancels[id]?.cancel()
+        SpaceRefiner.shared.cancels[id] = nil
+        SpaceRefiner.shared.busy[id] = nil
+    }
+
+    // The previewed version applied. With migrate, it runs again on the data as it is now (the user may have checked
+    // something since the preview), and that result is saved.
+    func applySpaceChange(_ id: String) {
+        let refiner = SpaceRefiner.shared
+        guard let pending = refiner.pending[id] else { return }
+        func save(_ state: Data?) {
+            do {
+                try SpaceStore.shared.apply(id, html: pending.build.html, state: state, note: String(pending.request.prefix(80)),
+                                            name: pending.build.name, icon: pending.build.icon, color: pending.build.color)
+                refiner.pending[id] = nil
+            } catch {
+                refiner.notes[id] = (error as? SpaceBad)?.reason ?? error.localizedDescription
+            }
+        }
+        guard let migrate = pending.build.migrate else { return save(nil) }
+        refiner.busy[id] = L("데이터 옮기는 중", "Moving the data")
+        SpaceMigrator.run(migrate, state: SpaceStore.state(SpaceStore.folder(id))) { result in
+            refiner.busy[id] = nil
+            switch result {
+            case .success(let data): save(data)
+            case .failure(let bad): refiner.notes[id] = bad.reason
+            }
+        }
+    }
 }
 
-struct SpacePanel: View {
+enum SpaceStyle {
+    static func color(_ name: String) -> Color {
+        switch name {
+        case "purple": return .purple
+        case "pink": return .pink
+        case "red": return .red
+        case "orange": return .orange
+        case "yellow": return .yellow
+        case "green": return .green
+        case "teal": return .teal
+        case "gray": return .gray
+        default: return .blue
+        }
+    }
+    static func icon(_ name: String) -> String { NSImage(systemSymbolName: name, accessibilityDescription: nil) != nil ? name : "square.grid.2x2" }
+
+    // A one-line question (rename, icon, schedule). nil: cancelled.
+    static func ask(_ title: String, _ info: String, value: String) -> String? {
+        let alert = NSAlert()
+        alert.messageText = title; alert.informativeText = info
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
+        field.stringValue = value
+        alert.accessoryView = field
+        alert.addButton(withTitle: L("확인", "OK")); alert.addButton(withTitle: L("취소", "Cancel"))
+        alert.window.initialFirstResponder = field
+        return alert.runModal() == .alertFirstButtonReturn ? field.stringValue : nil
+    }
+}
+
+// The header row above an open Space (beside the sidebar button): its name, Undo and its versions.
+struct SpaceHeader: View {
     @ObservedObject var discussion: Discussion
-    let room: UUID
+    let id: String
     @ObservedObject private var store = SpaceStore.shared
+    @ObservedObject private var refiner = SpaceRefiner.shared
 
     var body: some View {
-        Group {
-            if store.room == room, store.broken {
-                note(L("space.json을 읽을 수 없어 고치지 않았어요. 파일: ", "space.json could not be read, so nothing changes it. File: ") + SpaceStore.file(room).path)
-            } else if store.room == room, let doc = store.doc {
-                filled(doc)
-            } else {
-                VStack(alignment: .leading, spacing: 10) {
-                    note(L("이 대화엔 아직 Space가 없어요. 회의 결과의 \"Space로 만들기\"로 만들거나 빈 Space로 시작해요.",
-                           "This chat has no Space yet. Make one with \"Make a Space\" on a meeting's result, or start an empty one."))
-                    Button(L("빈 Space 만들기", "Start an empty Space")) {
-                        store.change(room) { doc in
-                            var d = SpaceDoc.new(title: discussion.conversations.first { $0.id == room }?.title ?? "Space", goal: "")
-                            d.userAddBlock(.checklist, title: L("할 일", "Checklist"))
-                            doc = d
-                        }
-                    }
-                    .padding(.horizontal, 14)
-                    Spacer()
-                }
-            }
-        }
-        .onAppear { store.open(room) }
-        .onChange(of: room) { store.open($0) }
-    }
-
-    private func note(_ text: String) -> some View {
-        Text(text).font(.system(size: 12)).foregroundColor(.secondary).padding(.horizontal, 14).padding(.top, 4)
-            .frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
-    }
-
-    private func edit(_ body: (inout SpaceDoc) -> Void) {
-        store.change(room) { doc in
-            guard var d = doc else { return }
-            body(&d); doc = d
-        }
-    }
-
-    private func filled(_ doc: SpaceDoc) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        SpaceField(key: "\(room).title", value: doc.title, placeholder: L("제목", "Title"), size: 15, weight: .semibold) { text in
-                            edit { d in var c = d.content; c.title = text; c.userLocked = true; d.commit(c, note: L("제목 수정", "Renamed")) }
-                        }
-                        SpaceField(key: "\(room).goal", value: doc.goal, placeholder: L("목표 (하나)", "Goal (one)"), size: 12) { text in
-                            edit { d in var c = d.content; c.goal = text; c.userLocked = true; d.commit(c, note: L("목표 수정", "Goal edited")) }
-                        }
-                        .foregroundColor(.secondary)
-                    }
-                    ForEach(doc.proposals) { proposalCard($0, doc) }
-                    if !doc.notices.isEmpty {
-                        VStack(alignment: .leading, spacing: 3) {
-                            ForEach(Array(doc.notices.enumerated()), id: \.offset) { Text("• " + $0.element).font(.system(size: 11)) }
-                            Button(L("지우기", "Clear")) { edit { $0.notices = [] } }.buttonStyle(.link).font(.system(size: 11))
-                        }
-                        .foregroundColor(.orange)
-                    }
-                    ForEach(doc.blocks) { block($0) }
-                }
-                .padding(.horizontal, 14).padding(.vertical, 6)
-            }
-            Divider().opacity(0.5)
-            HStack(spacing: 10) {
-                Button(action: { discussion.refreshSpace() }) { Label(L("갱신", "Refresh"), systemImage: "arrow.clockwise") }
-                    .disabled(discussion.running || discussion.currentID != room)
-                    .help(L("AI에게 지금까지의 대화로 Space를 고치게 해요 (자동 갱신은 없어요)", "Asks the AI to update the Space from the chat (it never updates on its own)"))
-                Button(action: { edit { $0.undo() } }) { Label(L("되돌리기", "Undo"), systemImage: "arrow.uturn.backward") }
-                    .disabled(doc.history.isEmpty)
-                    .help(doc.history.last.map { L("되돌리기: ", "Undo: ") + $0.note } ?? L("되돌릴 변경이 없어요", "Nothing to undo"))
-                Spacer()
-                Menu {
-                    ForEach(SpaceKind.allCases, id: \.self) { kind in
-                        Button(Self.name(kind)) { edit { _ = $0.userAddBlock(kind, title: Self.name(kind)) } }
-                    }
-                } label: { Image(systemName: "plus").frame(width: 22, height: 22) }
-                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                    .disabled(doc.blocks.count >= SpacePatch.blockLimit)
-                    .help(L("블록 추가", "Add a block"))
-            }
-            .font(.system(size: 12)).buttonStyle(.plainHit).foregroundColor(.secondary)
-            .padding(.horizontal, 14).padding(.vertical, 8)
-            Text(L("버전 \(doc.version) · AI는 변경 블록으로만 바꿔요", "Version \(doc.version) · the AI changes it only through patches"))
-                .font(.system(size: 11)).foregroundColor(.secondary)
-                .padding(.horizontal, 14).padding(.bottom, 12)
-        }
-    }
-
-    static func name(_ kind: SpaceKind) -> String {
-        switch kind {
-        case .checklist: return L("체크리스트", "Checklist")
-        case .table: return L("표", "Table")
-        case .kanban: return L("칸반", "Kanban")
-        case .decisionLog: return L("결정 로그", "Decision log")
-        }
-    }
-
-    private func proposalCard(_ proposal: SpaceProposal, _ doc: SpaceDoc) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text(L("변경안 · ", "Proposal · ") + proposal.by).font(.system(size: 12, weight: .semibold))
-            Text(proposal.reason).font(.system(size: 11)).foregroundColor(.secondary)
-            // Accepting applies every change, so every one is listed (at most SpacePatch.opLimit).
-            ForEach(Array(proposal.ops.enumerated()), id: \.offset) { Text("• " + SpacePatch.describe($0.element, in: doc)).font(.system(size: 11)).textSelection(.enabled) }
-            HStack {
-                Button(L("수락", "Accept")) { edit { _ = SpacePatch.accept(proposal.id, in: &$0) } }
-                Button(L("거절", "Reject")) { edit { d in d.proposals.removeAll { $0.id == proposal.id } } }
-            }
-            .controlSize(.small)
-        }
-        .padding(10).frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
-    }
-
-    private func block(_ block: SpaceBlock) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Image(systemName: Self.symbol(block.kind)).font(.system(size: 11)).foregroundColor(.secondary)
-                SpaceField(key: "\(room).\(block.id)", value: block.title, placeholder: Self.name(block.kind), size: 13, weight: .medium) { text in
-                    edit { d in
-                        guard let at = d.find(block.id) else { return }
-                        var c = d.content; c.blocks[at.block].title = text; c.blocks[at.block].userLocked = true; d.commit(c, note: L("블록 이름", "Block renamed"))
-                    }
-                }
-                Menu {
-                    Button(L("블록 삭제", "Delete block"), role: .destructive) {
-                        edit { d in var c = d.content; c.blocks.removeAll { $0.id == block.id }; d.commit(c, note: L("블록 삭제", "Block deleted")) }
-                    }
-                } label: { Image(systemName: "ellipsis").frame(width: 22, height: 22) }
-                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().foregroundColor(.secondary)
-            }
-            switch block.kind {
-            case .checklist: ForEach(block.items) { checkRow($0) }
-            case .table: table(block)
-            case .kanban:
-                ForEach(block.columns ?? [], id: \.self) { lane in
-                    Text(lane).font(.system(size: 11, weight: .medium)).foregroundColor(.secondary).padding(.top, 2)
-                    ForEach(block.items.filter { $0.lane == lane }) { kanbanRow($0, block) }
-                }
-            case .decisionLog: ForEach(block.items) { decisionRow($0) }
-            }
-            SpaceAddRow(key: "\(room).add.\(block.id)", placeholder: block.kind == .table ? L("줄 추가 (칸은 | 로)", "Add a row (cells split by |)") : L("항목 추가", "Add an item")) { text in
-                edit { $0.userAdd(text, to: block.id) }
-            }
-        }
-        .padding(10)
-        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
-    }
-
-    static func symbol(_ kind: SpaceKind) -> String {
-        switch kind {
-        case .checklist: return "checklist"
-        case .table: return "tablecells"
-        case .kanban: return "rectangle.split.3x1"
-        case .decisionLog: return "list.bullet.rectangle"
-        }
-    }
-
-    private func change(_ item: SpaceItem, _ note: String = L("직접 수정", "Edited"), _ body: (inout SpaceItem) -> Void) {
-        edit { $0.userChange(item.id, note: note) { item, _ in body(&item) } }
-    }
-
-    private func checkRow(_ item: SpaceItem) -> some View {
-        HStack(alignment: .top, spacing: 6) {
-            Button(action: { change(item, L("체크", "Checked")) { $0.done = !($0.done ?? false) } }) {
-                Image(systemName: item.done == true ? "checkmark.square.fill" : "square").frame(width: 22, height: 22)
-            }
-            .buttonStyle(.plainHit).foregroundColor(item.done == true ? .accentColor : .secondary)
-            SpaceField(key: "\(room).\(item.id)", value: item.text, placeholder: "", size: 12) { text in change(item) { $0.text = text } }
-                .strikethrough(item.done == true)
-            accessories(item)
-        }
-    }
-
-    private func table(_ block: SpaceBlock) -> some View {
-        let columns = block.columns ?? []
-        return VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 4) {
-                ForEach(Array(columns.enumerated()), id: \.offset) { Text($0.element).font(.system(size: 11, weight: .medium)).foregroundColor(.secondary).frame(maxWidth: .infinity, alignment: .leading) }
-                Color.clear.frame(width: 22, height: 1)
-            }
-            ForEach(block.items) { item in
-                HStack(alignment: .top, spacing: 4) {
-                    ForEach(Array(columns.indices), id: \.self) { column in
-                        SpaceField(key: "\(room).\(item.id).\(column)", value: (item.cells ?? []).indices.contains(column) ? item.cells![column] : "", placeholder: "", size: 12) { text in
-                            change(item) { row in
-                                var cells = row.cells ?? []
-                                while cells.count < columns.count { cells.append("") }
-                                cells[column] = text; row.cells = cells
-                            }
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    accessories(item)
-                }
-            }
-        }
-    }
-
-    private func kanbanRow(_ item: SpaceItem, _ block: SpaceBlock) -> some View {
-        HStack(alignment: .top, spacing: 6) {
-            SpaceField(key: "\(room).\(item.id)", value: item.text, placeholder: "", size: 12) { text in change(item) { $0.text = text } }
+        let manifest = store.manifest(id)
+        let versions = manifest.map { _ in SpaceStore.versions(id) } ?? []
+        HStack(spacing: 8) {
+            Image(systemName: SpaceStyle.icon(manifest?.icon ?? "")).foregroundColor(SpaceStyle.color(manifest?.color ?? ""))
+            Text(manifest?.name ?? "Space").font(.system(size: 13, weight: .medium)).lineLimit(1)
+            Text(L("\(manifest?.version ?? 1)판", "v\(manifest?.version ?? 1)")).font(.system(size: 11)).foregroundColor(.secondary)
+            WindowDragRegion().frame(maxWidth: .infinity, maxHeight: .infinity)
+            Button(action: {
+                do { try store.undo(id) } catch { refiner.notes[id] = error.localizedDescription }
+            }) { Label(L("되돌리기", "Undo"), systemImage: "arrow.uturn.backward").frame(height: 24) }
+                .buttonStyle(.plainHit).foregroundColor(.secondary).font(.system(size: 12))
+                .disabled(versions.isEmpty || refiner.pending[id] != nil)
+                .help(versions.last.map { L("되돌리기: ", "Undo: ") + $0.note + ($0.migrated ? L(" (데이터도 그때로)", " (data too)") : "") } ?? L("되돌릴 변경이 없어요", "Nothing to undo"))
             Menu {
-                ForEach((block.columns ?? []).filter { $0 != item.lane }, id: \.self) { lane in
-                    Button(lane) { change(item, L("옮김", "Moved")) { $0.lane = lane } }
+                if versions.isEmpty { Text(L("이전 판이 없어요", "No earlier versions")) }
+                ForEach(versions.reversed()) { version in
+                    Button(L("\(version.version)판 · ", "v\(version.version) · ") + DateFormatter.localizedString(from: version.at, dateStyle: .short, timeStyle: .short) + " · " + version.note) {
+                        do { try store.restore(id, to: version.version) } catch { refiner.notes[id] = (error as? SpaceBad)?.reason ?? error.localizedDescription }
+                    }
                 }
-            } label: { Image(systemName: "arrow.left.arrow.right").frame(width: 22, height: 22) }
-                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().foregroundColor(.secondary)
-                .help(L("다른 열로 옮기기", "Move to another lane"))
-            accessories(item)
+            } label: { Image(systemName: "clock.arrow.circlepath").frame(width: 24, height: 24) }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                .help(L("판 목록: 고르면 그 판의 화면으로 돌아가요 (데이터는 그대로)", "Versions: pick one to bring its page back (the data stays)"))
+                .disabled(refiner.pending[id] != nil)
         }
-        .padding(.leading, 8)
+    }
+}
+
+// An open Space in place of the chat: the page, a preview of a new version when one waits, and the change box.
+struct SpaceMainView: View {
+    @ObservedObject var discussion: Discussion
+    let id: String
+    @ObservedObject private var store = SpaceStore.shared
+    @ObservedObject private var refiner = SpaceRefiner.shared
+
+    var body: some View {
+        if let manifest = store.manifest(id) {
+            VStack(spacing: 0) {
+                if let pending = refiner.pending[id] {
+                    previewBar(pending)
+                    let state = pending.migrated ?? SpaceStore.state(SpaceStore.folder(id))
+                    SpaceWebView(html: pending.build.html, color: pending.build.color ?? manifest.color, reload: "preview-\(id)-\(pending.build.html.count)",
+                                 host: { SpaceMemoryHost(state) }, actions: SpaceActions(), onProblem: { refiner.notes[id] = $0 })
+                        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.accentColor.opacity(0.6), lineWidth: 2))
+                        .padding(.horizontal, 12)
+                } else {
+                    SpaceWebView(html: SpaceStore.html(SpaceStore.folder(id)), color: manifest.color,
+                                 reload: "\(id)-\(manifest.version)-\(store.stateVersion[id] ?? 0)",
+                                 host: { SpaceFolderHost(SpaceStore.folder(id)) }, actions: discussion.spaceActions(id, origin: manifest.originChat),
+                                 onProblem: { refiner.notes[id] = $0 })
+                }
+                if let note = refiner.notes[id] {
+                    HStack(alignment: .top, spacing: 6) {
+                        Image(systemName: "info.circle")
+                        Text(note).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                        Button(action: { refiner.notes[id] = nil }) { Image(systemName: "xmark").frame(width: 22, height: 22) }.buttonStyle(.plainHit)
+                    }
+                    .font(.system(size: 12)).foregroundColor(.orange)
+                    .padding(.horizontal, 28).padding(.top, 6)
+                }
+                changeBox(manifest)
+            }
+        } else {
+            VStack { Spacer(); Text(L("이 Space는 없어졌어요", "This Space is gone")).foregroundColor(.secondary); Spacer() }.frame(maxWidth: .infinity)
+        }
     }
 
-    private func decisionRow(_ item: SpaceItem) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .top, spacing: 6) {
-                SpaceField(key: "\(room).\(item.id)", value: item.text, placeholder: "", size: 12) { text in change(item) { $0.text = text } }
-                accessories(item)
-            }
-            HStack(spacing: 6) {
-                Button(item.open == true ? L("미해결", "Open") : L("결정", "Decided")) {
-                    change(item, L("결정 상태", "Decision state")) { $0.open = !($0.open ?? false) }
-                }
-                .help(L("미해결 ↔ 결정", "Open ↔ decided"))
-                Button(item.confirmed ? L("내가 확정함", "Confirmed by me") : L("AI 제안 · 확정하기", "AI proposal · confirm")) {
-                    change(item, L("확정", "Confirmed")) { $0.status = $0.confirmed ? "proposed" : "confirmed" }
-                }
-                .foregroundColor(item.confirmed ? .green : .secondary)
-            }
-            .buttonStyle(.link).font(.system(size: 11))
-            let pro = (item.pro ?? []).joined(separator: ", "), con = (item.con ?? []).joined(separator: ", ")
-            if !pro.isEmpty || !con.isEmpty {
-                Text([pro.isEmpty ? nil : L("찬성: ", "For: ") + pro, con.isEmpty ? nil : L("반대: ", "Against: ") + con].compactMap { $0 }.joined(separator: " · "))
+    private func previewBar(_ pending: SpaceRefiner.Pending) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "eye")
+            VStack(alignment: .leading, spacing: 1) {
+                Text(L("새 판 미리보기 · ", "Preview of the new version · ") + pending.by).font(.system(size: 12, weight: .medium))
+                Text(pending.migrated != nil
+                     ? L("데이터 이름이 바뀌어 옮긴 결과로 보여요. 적용 전엔 저장되지 않아요.", "Its data was moved to new keys; nothing is saved until you apply.")
+                     : L("데이터는 그대로예요. 미리보기에서 바꾼 건 저장되지 않아요.", "The data stays as it is; changes made in the preview are not saved."))
                     .font(.system(size: 11)).foregroundColor(.secondary)
             }
-            if let source = item.source, !source.isEmpty { Text(source).font(.system(size: 10)).foregroundColor(.secondary) }
+            Spacer()
+            Button(L("버리기", "Discard")) { refiner.pending[id] = nil }
+            Button(L("적용", "Apply")) { discussion.applySpaceChange(id) }.buttonStyle(.borderedProminent)
         }
-        .padding(.vertical, 3)
+        .padding(.horizontal, 20).padding(.vertical, 8)
     }
 
-    // A lock (the user changed it; click to let the AI change it again), the links, and delete.
-    @ViewBuilder private func accessories(_ item: SpaceItem) -> some View {
-        if let todo = item.todo {
-            Button(action: { discussion.openSpaceTodo(todo) }) { Image(systemName: "checklist").frame(width: 22, height: 22) }
-                .buttonStyle(.plainHit).foregroundColor(.accentColor).help(L("TODO 열기", "Open the TODO"))
-        }
-        if let chat = item.chat.flatMap(UUID.init(uuidString:)), discussion.conversations.contains(where: { $0.id == chat }) {
-            Button(action: { discussion.open(chat) }) { Image(systemName: "bubble.left").frame(width: 22, height: 22) }
-                .buttonStyle(.plainHit).foregroundColor(.accentColor).help(L("채팅으로 이동", "Go to the chat"))
-        }
-        Menu {
-            if item.locked {
-                Button(L("잠금 풀기 (AI가 다시 바꿀 수 있게)", "Unlock (let the AI change it again)")) {
-                    edit { d in
-                        guard let at = d.find(item.id), let i = at.item else { return }
-                        var c = d.content; c.blocks[at.block].items[i].userLocked = nil; d.commit(c, note: L("잠금 풀기", "Unlocked"))
-                    }
-                }
+    private func changeBox(_ manifest: SpaceManifest) -> some View {
+        let busy = refiner.busy[id]
+        return HStack(spacing: 8) {
+            TextField(L("말로 고치기: 예) 완료한 건 아래로, 색은 초록으로", "Change it by asking: e.g. move done items down, make it green"),
+                      text: Binding(get: { refiner.drafts[id] ?? "" }, set: { refiner.drafts[id] = $0 }), axis: .vertical)
+                .textFieldStyle(.plain).font(.system(size: 14)).lineLimit(1...5)
+                .onSubmit(send)
+                .disabled(busy != nil)
+            if let busy {
+                ProgressView().controlSize(.small)
+                Text(L("\(busy) 고치는 중…", "\(busy) is changing it…")).font(.system(size: 11)).foregroundColor(.secondary)
+                Button(action: { discussion.stopRefining(id) }) { Image(systemName: "stop.circle").frame(width: 24, height: 24) }
+                    .buttonStyle(.plainHit).help(L("멈추기", "Stop"))
+            } else {
+                Button(action: send) { Image(systemName: "arrow.up.circle.fill").font(.system(size: 20)).frame(width: 26, height: 26) }
+                    .buttonStyle(.plainHit).foregroundColor(.accentColor)
+                    .disabled((refiner.drafts[id] ?? "").trimmingCharacters(in: .whitespaces).isEmpty)
+                    .help(L("AI는 화면 코드와 데이터 키 구조만 봐요 (값은 안 봐요)", "The AI sees the page's code and the data's keys only (never the values)"))
             }
-            Button(L("삭제", "Delete"), role: .destructive) {
-                edit { d in
-                    guard let at = d.find(item.id), let i = at.item else { return }
-                    var c = d.content; c.blocks[at.block].items.remove(at: i); d.commit(c, note: L("항목 삭제", "Item deleted"))
-                }
-            }
-        } label: {
-            Image(systemName: item.locked ? "lock.fill" : "ellipsis").font(.system(size: 10)).frame(width: 22, height: 22)
         }
-        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().foregroundColor(.secondary)
-        .help(item.locked ? L("내가 고친 항목: AI가 바꾸려면 변경안으로 와요", "You edited this: an AI change comes as a proposal") : L("항목 메뉴", "Item menu"))
+        .padding(.horizontal, 14).padding(.vertical, 10)
+        .background(RoundedRectangle(cornerRadius: 14).fill(Color.primary.opacity(0.05)))
+        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color.primary.opacity(0.1)))
+        .frame(maxWidth: 760)
+        .padding(.horizontal, 28).padding(.top, 8).padding(.bottom, 18)
+        .frame(maxWidth: .infinity)
+    }
+
+    private func send() {
+        let text = refiner.drafts[id] ?? ""
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        refiner.drafts[id] = nil
+        discussion.refineSpace(id, request: text)
     }
 }
 
-// What is being typed in the Space panel, by field (an ObservableObject: this Mac's Command Line Tools cannot build
-// SwiftUI's @State macro). A field saves when the user presses Return or leaves it, not on every key (one Undo step).
-final class SpaceDrafts: ObservableObject {
-    static let shared = SpaceDrafts()
-    @Published var texts: [String: String] = [:]
-}
-
-private struct SpaceField: View {
-    let key: String
-    let value: String
-    let placeholder: String
-    var size: CGFloat = 12
-    var weight: Font.Weight = .regular
-    let commit: (String) -> Void
-    @ObservedObject private var drafts = SpaceDrafts.shared
-    @FocusState private var focused: Bool
+// The card an answer's <space-build> leaves under it: a working preview with [Add to sidebar] [Rebuild] [Discard].
+struct SpaceDraftCard: View {
+    let note: SpaceDraftNote
+    let turn: ChatTurn
+    let discussion: Discussion
+    let busy: Bool
 
     var body: some View {
-        TextField(placeholder, text: Binding(get: { drafts.texts[key] ?? value }, set: { drafts.texts[key] = $0 }), axis: .vertical)
-            .textFieldStyle(.plain).font(.system(size: size, weight: weight))
-            .focused($focused)
-            .onChange(of: focused) { if !$0 { save() } }
-            .onSubmit(save)
-    }
-
-    private func save() {
-        guard let draft = drafts.texts.removeValue(forKey: key) else { return }
-        let text = String(draft.trimmingCharacters(in: .whitespacesAndNewlines).prefix(SpacePatch.textLimit))
-        if text != value { commit(text) }
+        let room = discussion.currentID
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                let manifest = note.draft.flatMap { SpaceStore.manifest(at: SpaceStore.draftFolder($0)) }
+                Image(systemName: SpaceStyle.icon(manifest?.icon ?? "square.grid.2x2")).foregroundColor(SpaceStyle.color(manifest?.color ?? ""))
+                Text(note.name).font(.system(size: 13, weight: .semibold))
+                Text("Space").font(.system(size: 11)).foregroundColor(.secondary)
+                Spacer()
+            }
+            if let space = note.space {
+                HStack {
+                    Text(L("사이드바에 추가했어요", "Added to the sidebar")).font(.system(size: 12)).foregroundColor(.secondary)
+                    Button(L("열기", "Open")) { discussion.openSpace(space) }.buttonStyle(.link).font(.system(size: 12))
+                        .disabled(SpaceStore.shared.manifest(space) == nil)
+                }
+            } else if note.discarded == true {
+                Text(L("버린 미리보기예요", "This preview was discarded")).font(.system(size: 12)).foregroundColor(.secondary)
+            } else if let reason = note.reason {
+                Text(L("검사에서 거부했어요: ", "Refused by the checks: ") + reason).font(.system(size: 12)).foregroundColor(.orange).textSelection(.enabled)
+                Button(L("다시 만들기 (이유를 AI에게 알려요)", "Rebuild (tells the AI why)")) { discussion.rebuildSpace(turn, in: room) }.disabled(busy)
+            } else if let draft = note.draft {
+                let folder = SpaceStore.draftFolder(draft)
+                SpaceWebView(html: SpaceStore.html(folder), color: SpaceStore.manifest(at: folder)?.color ?? "blue", reload: draft,
+                             host: { SpaceFolderHost(folder) }, actions: SpaceActions())
+                    .frame(height: 380)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.primary.opacity(0.1)))
+                HStack(spacing: 8) {
+                    Button(L("사이드바에 추가", "Add to sidebar")) { discussion.addDraftSpace(turn, in: room) }.buttonStyle(.borderedProminent)
+                    Button(L("다시 만들기", "Rebuild")) { discussion.rebuildSpace(turn, in: room) }.disabled(busy)
+                    Button(L("버리기", "Discard")) { discussion.discardDraftSpace(turn, in: room) }
+                    Spacer()
+                    Text(L("미리보기에서 바꾼 데이터는 추가할 때 함께 가요", "What you change in the preview comes along when you add it"))
+                        .font(.system(size: 11)).foregroundColor(.secondary)
+                }
+                .controlSize(.small)
+            }
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 12).fill(Color.primary.opacity(0.04)))
     }
 }
 
-private struct SpaceAddRow: View {
-    let key: String
-    let placeholder: String
-    let add: (String) -> Void
-    @ObservedObject private var drafts = SpaceDrafts.shared
-    var body: some View {
-        TextField(placeholder, text: Binding(get: { drafts.texts[key] ?? "" }, set: { drafts.texts[key] = $0 }))
-            .textFieldStyle(.plain).font(.system(size: 12)).foregroundColor(.secondary)
-            .onSubmit { add(drafts.texts.removeValue(forKey: key) ?? "") }
-    }
+// The minute, for the sidebar's schedules (an ObservableObject: this Mac's Command Line Tools cannot build @State).
+final class SpaceClock: ObservableObject {
+    static let shared = SpaceClock()
+    @Published private(set) var now = Date()
+    private var timer: Timer?
+    init() { timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in self?.now = Date() } }
 }
 
-// The sidebar's Spaces: every chat of this Mac with a Space; a click opens the chat on its Space.
+// The sidebar's Spaces: pinned first, then in the user's order. Hidden ones and those outside their schedule fold
+// into "Hidden" and "Later". The + makes one from a built-in template.
 struct SpaceSidebarSection: View {
     @ObservedObject var discussion: Discussion
     @ObservedObject private var store = SpaceStore.shared
     @ObservedObject private var folds = SidebarFold.shared
+    @ObservedObject private var clock = SpaceClock.shared
 
     var body: some View {
-        let known = Set(discussion.conversations.map(\.id))
-        let spaces = store.titles.filter { known.contains($0.key) }
-            .sorted { $0.value.localizedStandardCompare($1.value) == .orderedAscending }
+        let tick = clock.now
+        let all = store.spaces.sorted { ($0.pinned == true ? 0 : 1, $0.order) < ($1.pinned == true ? 0 : 1, $1.order) }
+        let shown = all.filter { $0.shown(at: tick) }
+        let later = all.filter { $0.hidden != true && !$0.shown(at: tick) }
+        let hidden = all.filter { $0.hidden == true }
         Group {
-            if !spaces.isEmpty {
-                SidebarHeader(title: L("Spaces", "Spaces"), fold: "spaces")
-                if !folds.isFolded("spaces") {
-                    ForEach(spaces, id: \.key) { entry in
-                        let room = entry.key, title = entry.value
-                        let key = "space." + room.uuidString
-                        let selected = discussion.currentID == room && discussion.notesShown && discussion.panelTab == "space"
-                            && !discussion.viewingBoard && discussion.viewingRemote == nil
-                        Button(action: { discussion.openSpace(room) }) {
-                            HStack(spacing: 8) {
-                                Image(systemName: "square.grid.2x2").frame(width: 18)
-                                Text(title.isEmpty ? "Space" : title).lineLimit(1)
-                                Spacer()
-                            }
-                            .font(.system(size: 13))
-                            .padding(.horizontal, 10).frame(height: 30)
-                            .background(selected ? Color.primary.opacity(0.1) : discussion.hoverKey == key ? Color.primary.opacity(0.06) : .clear,
-                                        in: RoundedRectangle(cornerRadius: 8))
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plainHit)
-                        .onHover { discussion.hover(key, $0) }
-                    }
+            SidebarHeader(title: L("Spaces", "Spaces"), fold: "spaces") { addMenu }
+            if !folds.isFolded("spaces") {
+                if all.isEmpty {
+                    Text(L("채팅에서 \"…트래커 만들어 줘\"라고 해 보세요", "Ask a chat to \"make a … tracker\""))
+                        .font(.system(size: 12)).foregroundColor(.secondary).padding(.horizontal, 10).frame(height: 28, alignment: .leading)
                 }
+                ForEach(shown) { row($0, listed: shown.map(\.id)) }
+                group(L("나중에", "Later"), key: "spaces.later.open", spaces: later)
+                group(L("숨김", "Hidden"), key: "spaces.hidden.open", spaces: hidden)
             }
         }
-        .onAppear { store.scanOnce() }
+    }
+
+    @ViewBuilder private func group(_ title: String, key: String, spaces: [SpaceManifest]) -> some View {
+        if !spaces.isEmpty {
+            // Folded unless the user opened it ("open" kept in the fold list).
+            let open = folds.isFolded(key)
+            Button(action: { folds.toggle(key) }) {
+                HStack(spacing: 6) {
+                    Image(systemName: open ? "chevron.down" : "chevron.right").font(.system(size: 9, weight: .semibold)).frame(width: 18)
+                    Text("\(title) (\(spaces.count))")
+                    Spacer()
+                }
+                .font(.system(size: 12)).foregroundColor(.secondary)
+                .padding(.horizontal, 10).frame(height: 26).contentShape(Rectangle())
+            }
+            .buttonStyle(.plainHit)
+            if open { ForEach(spaces) { row($0, listed: spaces.map(\.id)) } }
+        }
+    }
+
+    private var addMenu: some View {
+        Menu {
+            ForEach(SpaceTemplate.allCases, id: \.self) { template in
+                Button(template.name) {
+                    if let made = try? store.makeFromTemplate(template) { discussion.openSpace(made.id) }
+                }
+            }
+            Divider()
+            Button(L("채팅에서 말로 만들기…", "Make one by asking in a chat…")) {
+                discussion.newConversation()
+                discussion.draft = L("Space 만들어 줘: ", "Make a Space: ")
+            }
+        } label: { Image(systemName: "plus").font(.system(size: 11)).frame(width: 22, height: 22) }
+            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().foregroundColor(.secondary)
+            .help(L("새 Space", "New Space"))
+    }
+
+    private func row(_ space: SpaceManifest, listed: [String]) -> some View {
+        let key = "space." + space.id
+        let selected = discussion.viewingSpace == space.id
+        return Button(action: { discussion.openSpace(space.id) }) {
+            HStack(spacing: 8) {
+                Image(systemName: SpaceStyle.icon(space.icon)).foregroundColor(SpaceStyle.color(space.color)).frame(width: 18)
+                Text(space.name).lineLimit(1)
+                Spacer()
+                if space.pinned == true { Image(systemName: "pin.fill").font(.system(size: 9)).foregroundColor(.secondary) }
+            }
+            .font(.system(size: 13))
+            .padding(.horizontal, 10).frame(height: 30)
+            .background(selected ? Color.primary.opacity(0.1) : discussion.hoverKey == key ? Color.primary.opacity(0.06) : .clear,
+                        in: RoundedRectangle(cornerRadius: 8))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plainHit)
+        .onHover { discussion.hover(key, $0) }
+        .contextMenu { menu(space, listed: listed) }
+    }
+
+    @ViewBuilder private func menu(_ space: SpaceManifest, listed: [String]) -> some View {
+        let id = space.id
+        Button(space.pinned == true ? L("고정 해제", "Unpin") : L("고정", "Pin")) { store.update(id) { $0.pinned = $0.pinned == true ? nil : true } }
+        Button(space.hidden == true ? L("다시 보이기", "Show again") : L("숨기기", "Hide")) { store.update(id) { $0.hidden = $0.hidden == true ? nil : true } }
+        Button(L("위로", "Move up")) { store.move(id, by: -1, among: listed) }.disabled(listed.first == id)
+        Button(L("아래로", "Move down")) { store.move(id, by: 1, among: listed) }.disabled(listed.last == id)
+        Divider()
+        Button(L("이름 바꾸기…", "Rename…")) {
+            if let name = SpaceStyle.ask(L("Space 이름", "Space name"), "", value: space.name) { store.update(id) { $0.name = name } }
+        }
+        Button(L("아이콘 바꾸기…", "Change icon…")) {
+            if let icon = SpaceStyle.ask(L("SF Symbol 이름", "SF Symbol name"), L("예: checklist, drop, chart.bar, flask", "e.g. checklist, drop, chart.bar, flask"), value: space.icon)?
+                .trimmingCharacters(in: .whitespaces), NSImage(systemSymbolName: icon, accessibilityDescription: nil) != nil {
+                store.update(id) { $0.icon = icon }
+            }
+        }
+        Menu(L("색", "Color")) {
+            ForEach(SpaceManifest.colors, id: \.self) { color in
+                Button((space.color == color ? "✓ " : "") + color) { store.update(id) { $0.color = color } }
+            }
+        }
+        Button(L("표시 일정…", "Schedule…")) {
+            let info = L("요일(1=월 … 7=일)과 시간. 예: 1-5 09:00-18:00 · 6,7 · 22:00-02:00. 비우면 늘 보여요.",
+                         "Days (1 = Mon … 7 = Sun) and hours, e.g. 1-5 09:00-18:00 · 6,7 · 22:00-02:00. Empty: always shown.")
+            let current = [space.schedule?.days.map { $0.map(String.init).joined(separator: ",") }, space.schedule?.from.map { $0 + "-" + (space.schedule?.to ?? "") }]
+                .compactMap { $0 }.joined(separator: " ")
+            guard let text = SpaceStyle.ask(L("표시 일정", "Schedule"), info, value: current) else { return }
+            if text.trimmingCharacters(in: .whitespaces).isEmpty { store.update(id) { $0.schedule = nil } }
+            else if let schedule = SpaceSchedule.parse(text) { store.update(id) { $0.schedule = schedule } }
+            else { NSSound.beep() }
+        }
+        Divider()
+        Button(L("삭제…", "Delete…"), role: .destructive) {
+            let alert = NSAlert()
+            alert.messageText = L("\"\(space.name)\" Space를 지울까요?", "Delete the Space \"\(space.name)\"?")
+            alert.informativeText = L("화면·데이터·이전 판을 휴지통으로 옮겨요.", "Its page, data and versions go to the Trash.")
+            alert.addButton(withTitle: L("휴지통으로", "Move to Trash")); alert.addButton(withTitle: L("취소", "Cancel"))
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+            if discussion.viewingSpace == id { discussion.viewingSpace = nil }
+            try? store.delete(id)
+        }
     }
 }

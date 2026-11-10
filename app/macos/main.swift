@@ -64,6 +64,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func applicationDidFinishLaunching(_ note: Notification) {
+        // The old per-chat Spaces (<room>.work/space.json) become Spaces of their own, once (Space.swift).
+        SpaceStore.migrateLegacy()
+        SpaceStore.pruneDrafts()
+        SpaceStore.shared.reload()
         // TODO work (Todo.swift): running TODOs from before a quit are ready again, then the board is checked.
         let todos = TodoScheduler(discussion: discussion, store: .shared)
         TodoScheduler.shared = todos

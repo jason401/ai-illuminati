@@ -513,6 +513,7 @@ struct ChatTurn: Identifiable, Codable, Equatable {
     var planNote: String?
     var lastActivityAt: Date?
     var waitingApproval: Bool?
+    var spaceDraft: SpaceDraftNote?   // the Space this answer made: a preview card under it (SpaceView.swift)
 }
 
 // Times under the messages and the day lines between them, like the desktop apps.
@@ -707,6 +708,7 @@ final class Discussion: ObservableObject {
     @Published var importingMaterials = false
     @Published var viewingRemote: RemoteViewing?   // a chat from another Mac, shown read only
     @Published var viewingBoard = false            // the TODO board in place of the chat (Todo.swift)
+    @Published var viewingSpace: String?           // a Space in place of the chat (SpaceView.swift)
     @Published var boardProject: String?           // the board shows only this project (SidebarProjects.key); nil = all
     @Published var boardTab: BoardTab = .todo       // a project's board: its Project info or its TODOs (ProjectInfoView.swift)
     // Several chats can work at once. Each sent message runs on its own worker (a Discussion with `host`
@@ -874,10 +876,6 @@ final class Discussion: ObservableObject {
     @Published var notesShown = UserDefaults.standard.bool(forKey: "notesShown") {
         didSet { UserDefaults.standard.set(notesShown, forKey: "notesShown") }
     }
-    // Which tab the right panel shows: the user's notes or the chat's Space (Space.swift).
-    @Published var panelTab = UserDefaults.standard.string(forKey: "panelTab") ?? "notes" {
-        didSet { UserDefaults.standard.set(panelTab, forKey: "panelTab") }
-    }
     @Published var teamSettingsOpen = false   // the team mode settings popover in the message box
     // @ in the message box: the accounts picked so far, and the list while it is open.
     @Published var draftMentions: [String] = []
@@ -1019,6 +1017,7 @@ final class Discussion: ObservableObject {
     func newConversation() {
         guard !importingMaterials else { return }
         viewingBoard = false
+        viewingSpace = nil
         if viewingRemote != nil && current.turns.isEmpty { viewingRemote = nil; return }
         if current.turns.isEmpty && (current.documents ?? []).isEmpty && current.workspace == nil { return }
         discardPendingImages()
@@ -1034,6 +1033,7 @@ final class Discussion: ObservableObject {
         if currentID != id { discardPendingImages() }
         viewingRemote = nil
         viewingBoard = false
+        viewingSpace = nil
         dropBlanks(except: id)
         currentID = id
         sessionNote = ""

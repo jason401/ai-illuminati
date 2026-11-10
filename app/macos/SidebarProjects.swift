@@ -207,7 +207,7 @@ extension Discussion {
     // The TODO board in place of the chat: one project's (a click on its folder) or every project's. A project's
     // opens on the tab the user last chose for it (Project info the first time); `tab` asks for one.
     func openBoard(project: String?, tab: BoardTab? = nil) {
-        viewingRemote = nil; boardProject = project; viewingBoard = true; sidebarOverlay = false
+        viewingRemote = nil; viewingSpace = nil; boardProject = project; viewingBoard = true; sidebarOverlay = false
         if let project { showBoardTab(tab ?? BoardTab.saved(project) ?? .info) } else { boardTab = .todo }
     }
     func showBoardTab(_ tab: BoardTab) {

@@ -367,7 +367,7 @@ extension Discussion {
                 if let mood { FaceLink.shared.show(mood) }
                 let (reply, newState) = Self.extractState(tagless)
                 if let newState { self.saveState(newState, room: id, index: index) }
-                Self.deliverSpace(tagless, room: id, turn: index, by: speaker)
+                deliverSpaceBuild(tagless, room: id, turn: index)
                 let harvest = collectPictures(reply, account: account, since: started, id: id, index: index, cancellation: cancellation)
                 let text = harvest.text
                 changeTurn(id, index, save: true) {
@@ -408,7 +408,6 @@ extension Discussion {
                                 if let mood { FaceLink.shared.show(mood) }
                                 let (reply, newState) = Self.extractState(tagless)
                                 if let newState { self.saveState(newState, room: id, index: index) }
-                                Self.deliverSpace(tagless, room: id, turn: index, by: speaker + " · review")
                                 run.setAppStep(1, L("검토 반영", "Apply the review"), .done)
                                 let combined = text + "\n\n---\n\n**" + L("검수 반영", "After the review") + "**\n\n" + reply
                                 changeTurn(id, index, save: true) { $0.final = combined; $0.partial = nil; $0.activity = nil; $0.status = "" }

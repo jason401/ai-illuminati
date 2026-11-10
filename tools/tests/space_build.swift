@@ -1,0 +1,208 @@
+import Foundation
+
+// Spaces (Space.swift): the hidden <space-build> block, the checks before saving, manifest and schedule, drafts,
+// the 1 MB data limit, versions and Undo, the old per-chat space.json moved to templates, and the Space request rule.
+// Everything lives in the test home (AI_ILLUMINATI_TEST_HOME).
+func testSpace() {
+    let page = "<!doctype html><html><body><div id=a></div><script>document.getElementById('a').textContent=space.state.get('n')||0</script></body></html>"
+    func block(_ html: String, manifest: String = #"{"name":"실험 트래커","icon":"flask","color":"green"}"#, state: String = #"{"n":1}"#, migrate: String? = nil) -> String {
+        "답이에요.\n<space-build>\n<space-manifest>\(manifest)</space-manifest>\n<space-html>\n\(html)\n</space-html>\n<space-state>\(state)</space-state>"
+            + (migrate.map { "<space-migrate>\($0)</space-migrate>" } ?? "") + "\n</space-build>"
+    }
+
+    // Extraction: hidden from the shown reply, also while it is still being written; old patches stay hidden.
+    let split = SpaceBuilder.split(block(page))
+    expect(split.reply == "답이에요." && split.found && split.body?.contains("<space-html>") == true, "the build block is taken out of the reply")
+    expect(SpaceBuilder.split("답 <space-bu").reply == "답", "a tag still arriving is not shown")
+    expect(SpaceBuilder.split("답 <space-build><space-html><b>").reply == "답" && SpaceBuilder.split("답 <space-build><space-html>").body == nil, "an unclosed block is hidden and has no body")
+    expect(SpaceBuilder.split("a < b").reply == "a < b" && !SpaceBuilder.split("plain").found, "other text stays as it is")
+    expect(SpaceBuilder.split("예전 답\n<space-patch base=1>{\"ops\":[]}</space-patch>").reply == "예전 답", "old <space-patch> blocks stay hidden")
+    expect(Discussion.extractState(block(page) + "\n<chat-state>s</chat-state>").reply == "답이에요.", "the chat state cut also hides the build")
+    expect(Discussion.extractState("답 <space-build><space-html><div>").reply == "답", "streamed replies hide a build being written")
+
+    // Parsing: manifest, first data; refused with a reason otherwise.
+    func parse(_ reply: String, new: Bool = true) -> Result<SpaceBuild, SpaceBad> { SpaceBuilder.parse(SpaceBuilder.split(reply).body, new: new) }
+    func reason(_ reply: String, new: Bool = true) -> String? { if case .failure(let bad) = parse(reply, new: new) { return bad.reason }; return nil }
+    guard case .success(let built) = parse(block(page)) else { fatalError("a good build parses") }
+    expect(built.name == "실험 트래커" && built.icon == "flask" && built.color == "green" && built.state != nil && built.migrate == nil, "manifest and first data are read")
+    guard case .success(let odd) = parse(block(page, manifest: #"{"name":"x","icon":"../etc","color":"chartreuse"}"#)) else { fatalError("odd manifest values are dropped, not fatal") }
+    expect(odd.icon == nil && odd.color == nil, "unknown icons and colors are left out")
+    expect(reason("<space-build><space-manifest>{}</space-manifest></space-build>") != nil, "a build without a page is refused")
+    expect(reason("<space-build><space-html>") != nil, "an unclosed build is refused")
+    expect(reason(block(page, state: "[1,2]")) != nil, "first data must be a JSON object")
+    expect(reason(block(page, migrate: "function migrate(o){return o}"), new: false) == nil, "a change may carry migrate")
+    if case .success(let change) = parse(block(page, migrate: "function migrate(o){return {count:o.n}}"), new: false) {
+        expect(change.state == nil && change.migrate != nil, "a change never carries data, only migrate")
+    } else { fatalError("a change parses") }
+    expect(reason(block(page, migrate: "return 1"), new: false) != nil, "migrate must be a migrate function")
+
+    // The checks: external addresses, eval, iframes, form actions, the network and size are refused.
+    let refused = [
+        "<img src=\"https://example.com/a.png\">", "<script src=//cdn.example.com/x.js></script>", "<link href='http://x.y/s.css'>",
+        "<style>body{background:url(//x.y/a.png)}</style>", "<script>eval('1')</script>", "<script>new Function('return 1')()</script>",
+        "<script>const f=Function('x')</script>", "<iframe srcdoc='x'></iframe>", "<object data=x></object>", "<embed src=x>",
+        "<form action=\"/go\"><button>go</button></form>", "<script>fetch('/a')</script>", "<script>new WebSocket('ws://x')</script>",
+        "<script>setTimeout('alert(1)', 10)</script>", "<meta http-equiv=\"refresh\" content=\"0;url=x\">", "<a href=\"file:///etc/passwd\">x</a>",
+        "<base href=\"x\">",
+    ]
+    for html in refused { expect(SpaceCheck.problem(html) != nil, "refused: " + html) }
+    expect(SpaceCheck.problem(String(repeating: "a", count: SpaceLimits.html + 1)) != nil, "over 300 KB is refused")
+    expect(SpaceCheck.problem("<svg xmlns=\"http://www.w3.org/2000/svg\"></svg><script>document.createElementNS('http://www.w3.org/2000/svg','circle');setTimeout(()=>1,5)</script>") == nil,
+           "SVG namespaces and function timers are fine")
+    expect(SpaceCheck.problem("<script>const fetched=1; prefetchList=[]</script><img src=\"data:image/png;base64,AAAA\">") == nil, "words that only contain fetch, and data: images, are fine")
+    expect(reason(block("<script>eval(1)</script>"))?.contains("eval") == true, "the reason names what was refused")
+    for template in SpaceTemplate.allCases { expect(SpaceCheck.problem(template.html) == nil, "the \(template.rawValue) template passes the checks") }
+    let doc = SpaceCheck.document("\n<!DOCTYPE html><html><head><script>1</script>")
+    expect(doc.hasPrefix("<!doctype html><meta charset=\"utf-8\"><meta http-equiv=\"Content-Security-Policy\"") && doc.contains("default-src 'none'")
+           && doc.components(separatedBy: "<!DOCTYPE").count == 1, "the CSP comes first, before the page's own markup")
+
+    // Manifest: missing keys keep their defaults.
+    let minimal = try! JSONDecoder().decode(SpaceManifest.self, from: Data(#"{"id":"a","name":"b"}"#.utf8))
+    expect(minimal.icon == "square.grid.2x2" && minimal.color == "blue" && minimal.version == 1 && minimal.schedule == nil, "a minimal manifest opens")
+
+    // Schedule: weekdays, hours, overnight, and what the sidebar menu reads.
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(identifier: "America/Los_Angeles")!
+    func at(_ day: Int, _ hour: Int, _ minute: Int = 0) -> Date { calendar.date(from: DateComponents(year: 2026, month: 11, day: day, hour: hour, minute: minute))! }
+    // 2026-11-09 is a Monday, 11-14 a Saturday, 11-15 a Sunday.
+    let work = SpaceSchedule(days: [1, 2, 3, 4, 5], from: "09:00", to: "18:00")
+    expect(work.shows(at: at(9, 10), calendar: calendar) && !work.shows(at: at(9, 8, 59), calendar: calendar) && !work.shows(at: at(9, 18), calendar: calendar), "hours on a weekday")
+    expect(!work.shows(at: at(14, 10), calendar: calendar), "not on the weekend")
+    let night = SpaceSchedule(days: [5], from: "22:00", to: "02:00")
+    expect(night.shows(at: at(13, 23), calendar: calendar) && night.shows(at: at(14, 1), calendar: calendar) && !night.shows(at: at(14, 23), calendar: calendar),
+           "overnight hours belong to the day they start")
+    expect(SpaceSchedule(days: [7]).shows(at: at(15, 3), calendar: calendar) && !SpaceSchedule(days: [7]).shows(at: at(14, 3), calendar: calendar), "days only")
+    expect(SpaceSchedule.parse("1-5 09:00-18:00") == work && SpaceSchedule.parse("6,7")?.days == [6, 7] && SpaceSchedule.parse("9-10") == nil
+           && SpaceSchedule.parse("25:00-26:00") == nil, "the schedule the user types")
+    var later = SpaceManifest(id: "x", name: "x")
+    later.schedule = work
+    expect(later.shown(at: at(9, 10)) == work.shows(at: at(9, 10)) && { var h = later; h.hidden = true; return !h.shown(at: at(9, 10)) }(), "hidden Spaces never show")
+
+    // Drafts: saved by an answer, played with in the preview, added to the sidebar with that data.
+    let store = SpaceStore.shared
+    store.reload()
+    expect(SpaceStore.root.path.hasPrefix(AccountStore.supportDir) && !store.spaces.contains { !$0.id.hasPrefix("legacy-") && $0.originChat == "test" }, "Spaces live in the test home")
+    let draft = try! SpaceStore.saveDraft(built)
+    let draftFolder = SpaceStore.draftFolder(draft)
+    if case .failure = SpaceStore.setState(draftFolder, key: "n", json: "5") { fatalError("the preview saves its data") }
+    let stale = try! SpaceStore.saveDraft(built)
+    SpaceStore.pruneDrafts(olderThan: 30, now: Date().addingTimeInterval(31 * 86400))
+    expect(!FileManager.default.fileExists(atPath: SpaceStore.draftFolder(stale).path) && !FileManager.default.fileExists(atPath: draftFolder.path),
+           "old previews are cleaned up")
+    let draftAgain = try! SpaceStore.saveDraft(built)
+    _ = SpaceStore.setState(SpaceStore.draftFolder(draftAgain), key: "n", json: "5")
+    let origin = UUID()
+    let made = try! store.adopt(draft: draftAgain, origin: origin)
+    let folder = SpaceStore.folder(made.id)
+    expect(!FileManager.default.fileExists(atPath: SpaceStore.draftFolder(draftAgain).path) && draft != draftAgain && store.manifest(made.id)?.name == "실험 트래커" && made.originChat == origin.uuidString,
+           "adding moves the draft into the sidebar's Spaces")
+    expect((try? JSONSerialization.jsonObject(with: SpaceStore.state(folder)) as? [String: Any])?["n"] as? Int == 5, "what was checked in the preview comes along")
+
+    // Data: only JSON, at most 1 MB; a refused write changes nothing.
+    if case .failure = SpaceStore.setState(folder, key: "done", json: #"{"a":true}"#) { fatalError("a JSON value is saved") }
+    let before = SpaceStore.state(folder)
+    if case .success = SpaceStore.setState(folder, key: "big", json: "\"" + String(repeating: "x", count: SpaceLimits.state) + "\"") { fatalError("over 1 MB is refused") }
+    if case .success = SpaceStore.setState(folder, key: "", json: "1") { fatalError("an empty key is refused") }
+    if case .success = SpaceStore.setState(folder, key: "x", json: "not json") { fatalError("non-JSON is refused") }
+    expect(SpaceStore.state(folder) == before, "a refused write leaves the data as it was")
+    if case .failure = SpaceStore.setState(folder, key: "done", json: nil) { fatalError("nil removes a key") }
+    expect((try? JSONSerialization.jsonObject(with: SpaceStore.state(folder)) as? [String: Any])?["done"] == nil, "the key is gone")
+
+    // The AI sees the data's shape, never its values.
+    _ = SpaceStore.setState(folder, key: "items", json: #"[{"id":"i1","text":"비밀 실험 A","done":true}]"#)
+    let shape = SpaceStore.shape(SpaceStore.state(folder))
+    expect(shape.contains("items: [{done: bool, id: string, text: string}] (1)") && shape.contains("n: number") && !shape.contains("비밀"), "only keys and types: " + shape)
+    let prompt = SpaceBuilder.refinePrompt(manifest: store.manifest(made.id)!, html: SpaceStore.html(folder), state: SpaceStore.state(folder), history: [], request: "색 바꿔 줘")
+    expect(!prompt.contains("비밀 실험") && prompt.contains("색 바꿔 줘") && prompt.contains("[Current app.html]"), "the change prompt has the code and the shape only")
+
+    // Versions: a change keeps the code before; Undo brings it back and keeps what was checked since.
+    try! store.apply(made.id, html: page.replacingOccurrences(of: "<body>", with: "<body style=\"color:green\">"), note: "색 바꿔 줘", color: "teal")
+    expect(store.manifest(made.id)?.version == 2 && store.manifest(made.id)?.color == "teal" && SpaceStore.versions(made.id).map(\.version) == [1], "the old version is kept")
+    _ = SpaceStore.setState(folder, key: "n", json: "9")
+    try! store.undo(made.id)
+    expect(SpaceStore.html(folder) == page && store.manifest(made.id)?.version == 1 && SpaceStore.versions(made.id).isEmpty, "Undo brings the old page back")
+    expect((try? JSONSerialization.jsonObject(with: SpaceStore.state(folder)) as? [String: Any])?["n"] as? Int == 9, "Undo after a code change keeps the data")
+    // A change that moved the data: Undo brings the data from before it back too.
+    try! store.apply(made.id, html: page, state: Data(#"{"count":9}"#.utf8), note: "키 바꿈")
+    expect(SpaceStore.versions(made.id).last?.migrated == true && (try? JSONSerialization.jsonObject(with: SpaceStore.state(folder)) as? [String: Any])?["count"] as? Int == 9, "the migrated data is saved")
+    try! store.undo(made.id)
+    expect((try? JSONSerialization.jsonObject(with: SpaceStore.state(folder)) as? [String: Any])?["n"] as? Int == 9, "Undo of a migration restores the data")
+    expect((try? store.apply(made.id, html: "<script>eval(1)</script>", note: "x")) == nil && SpaceStore.html(folder) == page, "a refused page is never saved")
+    for n in 0..<(SpaceLimits.versions + 3) { try! store.apply(made.id, html: page + "<!-- \(n) -->", note: "\(n)") }
+    expect(SpaceStore.versions(made.id).count == SpaceLimits.versions, "only the newest versions stay")
+    let oldest = SpaceStore.versions(made.id).first!.version
+    let oldPage = SpaceStore.html(folder.appendingPathComponent("versions/\(oldest)"))
+    try! store.restore(made.id, to: oldest)
+    expect(!oldPage.isEmpty && SpaceStore.html(folder) == oldPage, "an old version comes back as a new change")
+
+    // Refine log, bounded.
+    for n in 0..<(SpaceLimits.refine + 5) { SpaceStore.addRefine(made.id, SpaceRefineEntry(role: "user", text: "\(n)")) }
+    expect(SpaceStore.refineLog(made.id).count == SpaceLimits.refine && SpaceStore.refineLog(made.id).last?.text == "\(SpaceLimits.refine + 4)", "the change talk keeps its newest entries")
+
+    // Sidebar: rename, pin, order.
+    store.update(made.id) { $0.name = "  새 이름  "; $0.pinned = true }
+    expect(store.manifest(made.id)?.name == "새 이름" && store.manifest(made.id)?.pinned == true, "rename and pin")
+    let second = try! store.makeFromTemplate(.checklist)
+    let listed = store.spaces.map(\.id)
+    store.move(second.id, by: -1, among: listed)
+    expect(store.spaces.map(\.id).firstIndex(of: second.id)! < store.spaces.map(\.id).firstIndex(of: made.id)!, "moving up changes the order")
+
+    // Old per-chat Spaces: every block kind into a template, the original kept as space.json.migrated.
+    let room = UUID()
+    let work2 = URL(fileURLWithPath: ChatStore.dir).appendingPathComponent("\(room.uuidString).work")
+    try! FileManager.default.createDirectory(at: work2, withIntermediateDirectories: true)
+    let legacy: [String: Any] = ["version": 3, "title": "논문", "goal": "11월 제출", "updatedAt": 0, "blocks": [
+        ["id": "b1", "kind": "decisionLog", "title": "결정", "items": [
+            ["id": "i1", "text": "저널 A", "open": false, "pro": ["Claude"], "con": ["Gemini"], "status": "confirmed", "source": "회의 · 1"],
+            ["id": "i2", "text": "그림 수", "open": true, "status": "proposed"]]],
+        ["id": "b2", "kind": "checklist", "title": "할 일", "items": [["id": "i3", "text": "초록", "done": true]]],
+        ["id": "b3", "kind": "table", "title": "후보", "columns": ["저널", "IF"], "items": [["id": "i4", "cells": ["A", "5.1"]]]],
+        ["id": "b4", "kind": "kanban", "title": "진행", "columns": ["할 일", "하는 중", "끝"], "items": [["id": "i5", "text": "그림 3", "lane": "끝"], ["id": "i6", "text": "표 2", "lane": "하는 중"]]]]]
+    try! JSONSerialization.data(withJSONObject: legacy).write(to: work2.appendingPathComponent("space.json"))
+    let broken = UUID()
+    let brokenWork = URL(fileURLWithPath: ChatStore.dir).appendingPathComponent("\(broken.uuidString).work")
+    try! FileManager.default.createDirectory(at: brokenWork, withIntermediateDirectories: true)
+    try! Data("{not json".utf8).write(to: brokenWork.appendingPathComponent("space.json"))
+    let moved = SpaceStore.migrateLegacy()
+    store.reload()
+    func data(_ id: String) -> [String: Any] { (try? JSONSerialization.jsonObject(with: SpaceStore.state(SpaceStore.folder(id)))) as? [String: Any] ?? [:] }
+    let prefix = "legacy-" + room.uuidString
+    expect(moved.filter { $0.hasPrefix(prefix) }.count == 3, "a decision log (with the checklist), a table and a kanban: \(moved)")
+    let log = data(prefix + "-0"), decisions = log["decisions"] as? [[String: Any]] ?? []
+    expect(store.manifest(prefix + "-0")?.template == "decisions" && decisions.count == 2 && decisions[0]["confirmed"] as? Bool == true
+           && decisions[0]["pro"] as? [String] == ["Claude"] && decisions[1]["open"] as? Bool == true, "decisions keep open, confirmed and who was for and against")
+    expect((log["next"] as? [[String: Any]])?.first?["done"] as? Bool == true, "the checklist becomes next steps, checks kept")
+    let table = data(prefix + "-3")
+    expect(store.manifest(prefix + "-3")?.template == "compare" && table["columns"] as? [String] == ["저널", "IF"]
+           && (table["rows"] as? [[String: Any]])?.first?["cells"] as? [String] == ["A", "5.1"], "the table becomes a comparison")
+    let board = data(prefix + "-4"), cards = board["items"] as? [[String: Any]] ?? []
+    expect(cards.count == 2 && cards[0]["done"] as? Bool == true && cards[1]["done"] as? Bool == false && cards[1]["lane"] as? String == "하는 중", "kanban lanes are kept, the last one is done")
+    expect(store.manifest(prefix + "-0")?.originChat == room.uuidString, "the Space remembers its chat")
+    expect(!FileManager.default.fileExists(atPath: work2.appendingPathComponent("space.json").path)
+           && FileManager.default.fileExists(atPath: work2.appendingPathComponent("space.json.migrated").path), "the original is renamed, not deleted")
+    expect(FileManager.default.fileExists(atPath: brokenWork.appendingPathComponent("space.json").path) && !moved.contains { $0.contains(broken.uuidString) },
+           "a file that cannot be read stays as it is")
+    // A run cut short before the rename makes no copies.
+    try! FileManager.default.moveItem(at: work2.appendingPathComponent("space.json.migrated"), to: work2.appendingPathComponent("space.json"))
+    let count = store.spaces.count
+    SpaceStore.migrateLegacy(); store.reload()
+    expect(store.spaces.count == count, "running again makes no duplicates")
+
+    // A meeting's result as the decision log's data.
+    let meeting = SpacePatch.meetingState("## 결론\n- 저널 A로 낸다\n## 이견\n- 그림 수\n## 네 결정이 필요한 것\n- 마감일\n## 다음 행동\n1. 초록 쓰기", title: "회의", source: "회의 · 1", chat: room)
+    let items = meeting["decisions"] as? [[String: Any]] ?? []
+    expect(items.count == 3 && items[0]["open"] as? Bool == false && items[1]["open"] as? Bool == true && items[2]["text"] as? String == "마감일"
+           && items.allSatisfy { $0["confirmed"] as? Bool == false && $0["chat"] as? String == room.uuidString }, "meeting decisions are AI proposals linked to the meeting")
+    expect((meeting["next"] as? [[String: Any]])?.first?["text"] as? String == "초록 쓰기", "next steps")
+
+    // Who asks for a Space.
+    for ask in ["이번 주 실험 트래커 만들어 줘", "단어 퀴즈 게임 만들자", "진행률 대시보드 하나 만들어줘", "Space 만들어 줘: 물 마시기", "make me a habit tracker", "Build a kanban board"] {
+        expect(Route.asksSpace(ask), "asks for a Space: " + ask)
+    }
+    for not in ["앱 만들어 줘", "이 게임은 누가 만들어진 거야?", "트래커 만들지 마", "> 트래커 만들어 줘\n이거 무슨 뜻이야?", "보드게임 추천해 줘", "make it faster"] {
+        expect(!Route.asksSpace(not), "not a Space request: " + not)
+    }
+    expect(Route.rule(question: "이번 주 실험 트래커 만들어 줘", previous: nil) == .one, "a Space request in a project chat is answered by one AI, not work")
+
+    print("PASS: Spaces — build block, checks, schedule, drafts, data limit, versions and Undo, migration")
+}

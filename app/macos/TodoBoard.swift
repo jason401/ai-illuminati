@@ -525,17 +525,20 @@ struct TodoCrewRow: View {
 
 // Details fields work like the chat box: Return adds or saves (onSubmit), Shift+Return (or Option+Return)
 // starts a new line. Only while this field has focus; Korean text still being composed just finishes on Return.
+// (The monitor is kept in an ObservableObject: this Mac's Command Line Tools cannot build SwiftUI's @State macro.)
+private final class KeyMonitorBox: ObservableObject { var monitor: Any? }
+
 private struct ShiftReturnNewline: ViewModifier {
     @FocusState private var focused: Bool
-    @State private var monitor: Any?
+    @StateObject private var box = KeyMonitorBox()
     func body(content: Content) -> some View {
         content.focused($focused)
             .onChange(of: focused) { on in if on { start() } else { stop() } }
             .onDisappear { stop() }
     }
     private func start() {
-        guard monitor == nil else { return }
-        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+        guard box.monitor == nil else { return }
+        box.monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             guard event.keyCode == 36 || event.keyCode == 76,
                   !event.modifierFlags.intersection([.shift, .option]).isEmpty,
                   event.modifierFlags.intersection([.command, .control]).isEmpty,
@@ -544,7 +547,7 @@ private struct ShiftReturnNewline: ViewModifier {
             return nil
         }
     }
-    private func stop() { if let monitor { NSEvent.removeMonitor(monitor) }; monitor = nil }
+    private func stop() { if let monitor = box.monitor { NSEvent.removeMonitor(monitor) }; box.monitor = nil }
 }
 
 // Photos and files dragged onto the add bar or a TODO row: from Finder, the Photos app or a screenshot

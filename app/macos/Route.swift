@@ -120,6 +120,15 @@ enum Route {
         found(meetingAsk, question.components(separatedBy: "\n").filter { !$0.hasPrefix(">") }.joined(separator: "\n"))
     }
 
+    // Asks for a Space, a small app (Space.swift): "이번 주 실험 트래커 만들어 줘", "단어 퀴즈 게임 만들자", "make a habit
+    // tracker". Not "앱 만들어 줘" (in a project that is the project), "만들어진", "만들지 마", or quoted lines.
+    static let spaceAsk = try! NSRegularExpression(pattern:
+        #"(트래커|보드|대시보드|게임|체크리스트|퀴즈|타이머|계산기|위젯|칸반|미니\s*앱|스페이스|space)[^\n]{0,12}?만들(어(?!진|져|지|서|도)|자|래|어\s*줘|어\s*주)|\b(make|build|create)\b[^\n]{0,40}?\b(tracker|dashboard|board|game|checklist|quiz|timer|widget|kanban|mini[- ]?app|space)\b"#,
+        options: [.caseInsensitive])
+    static func asksSpace(_ question: String) -> Bool {
+        found(spaceAsk, question.components(separatedBy: "\n").filter { !$0.hasPrefix(">") }.joined(separator: "\n"))
+    }
+
     static func found(_ pattern: NSRegularExpression, _ text: String) -> Bool {
         pattern.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil
     }
@@ -132,7 +141,7 @@ enum Route {
     // Decided without a judge: plain agreement, or a bare "가자" right after an answer that offered a change.
     static func rule(question: String, previous: ChatTurn?) -> RouteChoice? {
         let key = key(question)
-        if found(agreement, key) { return .one }
+        if found(agreement, key) || asksSpace(question) { return .one }
         if !forbidsChanges(question), go.contains(key), let answer = previous?.final, found(offer, String(answer.suffix(400))) { return .work }
         return nil
     }

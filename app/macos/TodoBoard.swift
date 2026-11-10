@@ -344,7 +344,7 @@ struct TodoBoardView: View {
         if discussion.boardProject == nil || options.count > 1 {
             Picker(L("프로젝트", "Project"), selection: Binding(get: { root }, set: { draft.projectRoot = $0 })) {
                 ForEach(options, id: \.binding.root) { option in
-                    Text(discussion.boardProject == nil ? option.name : (option.binding.root as NSString).lastPathComponent).tag(option.binding.root)
+                    Text(SidebarProjects.pickerName(option, among: options, board: discussion.boardProject)).tag(option.binding.root)
                 }
             }
             .fixedSize()

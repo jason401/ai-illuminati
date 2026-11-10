@@ -30,6 +30,15 @@ enum SidebarProjects {
         return (project.root as NSString).lastPathComponent
     }
 
+    // How a root is named in the project picker: on one project's board by its folder; on the whole board by the
+    // project's name, with the folder after it when worktrees of one repository share that name.
+    static func pickerName(_ option: (name: String, binding: ProjectBinding), among options: [(name: String, binding: ProjectBinding)], board: String?) -> String {
+        let folder = (option.binding.root as NSString).lastPathComponent
+        guard board == nil else { return folder }
+        let shared = options.filter { $0.name == option.name && $0.binding.root != option.binding.root }
+        return shared.isEmpty || folder == option.name ? option.name : option.name + " · " + folder
+    }
+
     // Chats with a Git project go under their repository; the rest stay in Pinned and Recents. A project with
     // TODO lists but no chat yet still gets its folder (withLists), so its board is one click away. A name the user
     // gave the folder (names, ProjectInfoStore.names) comes before its TODO list's title and the folder's own name.

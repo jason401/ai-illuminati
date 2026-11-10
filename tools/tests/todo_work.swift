@@ -331,6 +331,10 @@ func testSidebarProjects() {
            && renamed.first { $0.id == "/tmp/side-other/.git" }?.name == grouped.projects.first { $0.id == "/tmp/side-other/.git" }?.name
            && renamed.map(\.id) == grouped.projects.map(\.id),
            "a name the user gave comes before the TODO list title and the folder name; others and the order stay: \(renamed.map(\.name))")
+    let options = [(name: "My app", binding: main), (name: "My app", binding: tree), (name: "Other", binding: other)]
+    expect(options.map { SidebarProjects.pickerName($0, among: options, board: nil) } == ["My app · side-repo", "My app · side-repo-wt", "Other"]
+           && SidebarProjects.pickerName(options[1], among: options, board: common) == "side-repo-wt",
+           "worktrees sharing a project name are told apart by their folder in the TODO project picker")
     expect(SidebarProjects.folderName(tree) == "side-repo" && SidebarProjects.key(ProjectBinding(root: "/x", common: "", remote: "", remoteURL: "")) == "/x",
            "a folder is named after its repository; no common dir falls back to the root")
 

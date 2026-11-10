@@ -410,7 +410,10 @@ extension Discussion {
         let project = try ProjectCreator.folderlessBinding()
         let new = SidebarProjects.key(project)
         let kept = keepReadOnly ? roots.filter { FileManager.default.fileExists(atPath: $0) }.map { ProjectFolder(path: $0, directory: true) } : []
-        try ProjectInfoStore.shared.copy(from: key, to: new, name: name, folders: kept)
+        do { try ProjectInfoStore.shared.copy(from: key, to: new, name: name, folders: kept) } catch {
+            try? FileManager.default.removeItem(atPath: project.root)
+            throw error
+        }
         let lists = Set(TodoStore.shared.current.lists.filter { $0.project.map(SidebarProjects.key) == key }.map(\.id))
         do { try TodoStore.shared.relink(lists, to: project) } catch {
             try? ProjectInfoStore.shared.forget(new)

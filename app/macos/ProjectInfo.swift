@@ -51,10 +51,11 @@ struct ProjectInfoData: Codable, Equatable {
 }
 
 enum ProjectInfoError: LocalizedError, Equatable {
-    case badLink, locked(String), save(String)
+    case badLink, tooManyFolders, locked(String), save(String)
     var errorDescription: String? {
         switch self {
         case .badLink: return L("http:// 또는 https:// 로 시작하는 주소만 넣을 수 있어요.", "Only http:// or https:// addresses can be added.")
+        case .tooManyFolders: return L("공통 폴더가 \(ProjectInfoStore.maxFolders)개를 넘어서 작업 폴더를 남길 수 없어요. 공통 폴더를 줄이거나 남기지 않고 끊어 주세요.", "The shared folders would go over \(ProjectInfoStore.maxFolders), so the work folder cannot be kept. Remove some or disconnect without keeping it.")
         case .locked(let why): return why
         case .save(let why): return L("프로젝트 정보를 저장하지 못했어요: ", "Could not save the project info: ") + why
         }
@@ -121,7 +122,9 @@ final class ProjectInfoStore: ObservableObject {
     func copy(from old: String, to new: String, name: String?, folders extra: [ProjectFolder] = []) throws {
         var moved = info(old)
         if moved.name == nil { moved.name = name.flatMap(Self.cleanName) }
-        for folder in extra where !moved.folders.contains(where: { $0.path == folder.path }) && moved.folders.count < Self.maxFolders { moved.folders.append(folder) }
+        let added = extra.filter { folder in !moved.folders.contains { $0.path == folder.path } }
+        guard moved.folders.count + added.count <= Self.maxFolders else { throw ProjectInfoError.tooManyFolders }   // all or none, before anything moves
+        moved.folders += added
         try update(new) { $0 = moved }
     }
 

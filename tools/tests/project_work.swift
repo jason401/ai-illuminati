@@ -1284,9 +1284,16 @@ func testDisconnectProjectFolder() {
     expect(FileManager.default.fileExists(atPath: main.appendingPathComponent("a.txt").path), "the folder on disk stays")
     expect(chat.disconnectRefusal(new) != nil, "a folderless project has nothing to disconnect")
 
-    // Keeping the old folder as a read-only shared folder (opt-in).
+    // Keeping the old folder as a read-only shared folder (opt-in); refused, with nothing moved, when it would not fit.
     let third = ProjectBinding(root: tree.path, common: tree.path, remote: "", remoteURL: "", kind: ProjectBinding.documentsKind)
-    _ = chat.addProjectChat(third, title: "C", open: false)
+    let thirdRoom = chat.addProjectChat(third, title: "C", open: false)
+    let many = (0..<ProjectInfoStore.maxFolders).map { base.appendingPathComponent("f\($0)") }
+    for url in many { try! FileManager.default.createDirectory(at: url, withIntermediateDirectories: true) }
+    try! ProjectInfoStore.shared.addFolders(many, to: SidebarProjects.key(third))
+    expect((try? chat.disconnectFolder(SidebarProjects.key(third), name: "tree", keepReadOnly: true)) == nil
+           && chat.conversation(thirdRoom).workspace?.project == third && ProjectInfoStore.shared.info(SidebarProjects.key(third)).folders.count == ProjectInfoStore.maxFolders,
+           "keeping the folder over the shared-folder limit is refused and nothing moves")
+    for url in many { try! ProjectInfoStore.shared.removeFolder(url.resolvingSymlinksInPath().path, from: SidebarProjects.key(third)) }
     let kept = try! chat.disconnectFolder(SidebarProjects.key(third), name: "tree", keepReadOnly: true)
     expect(ProjectInfoStore.shared.info(SidebarProjects.key(kept)).folders.map(\.path) == [tree.path], "the old folder can stay as a read-only shared folder")
     SidebarFold.shared.togglePin(new)

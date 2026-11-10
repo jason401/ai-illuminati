@@ -794,3 +794,54 @@ func testTodoAddTool() {
     expect(link.call("todo_add", ["title": "옛 세션", "project": "AI Face"], context: earlier)["isError"] as? Bool == true, "an earlier answer's session adds nothing")
     print("PASS: todo_add (any chat, by name or path, drafts only, no repeats, Enterprise apart, only for the newest answer)")
 }
+
+// todo_drafts / todo_edit: the AI reads and rewrites drafts only, within the projects its chat may write.
+func testTodoEditTool() {
+    let store = TodoStore(url: todoStoreFile("edit-tool"))
+    let link = TodoAddLink.shared
+    let savedChats = ChatLink.shared.conversations, savedStore = link.store, savedNames = link.names
+    defer { ChatLink.shared.conversations = savedChats; link.store = savedStore; link.names = savedNames }
+    link.store = { store }; link.names = { [:] }
+    let app = ProjectBinding(root: "/tmp/todo-edit-app", common: "", remote: "", remoteURL: "")
+    let school = ProjectBinding(root: "/tmp/todo-edit-school", common: "", remote: "", remoteURL: "")
+    let lock = EnterpriseLock(organization: "학교", name: "학교", lockedAt: Date())
+    func chat(_ title: String, _ project: ProjectBinding?, _ lock: EnterpriseLock? = nil) -> Conversation {
+        var c = Conversation(); c.title = title; var t = ChatTurn(question: title); t.askedAt = Date(); c.turns = [t]
+        if let project { c.workspace = WorkspaceBinding(roots: project.linkedRoots, project: project) }
+        c.enterpriseLock = lock; return c
+    }
+    let work = chat("앱 작업", app), locked = chat("학교 일", school, lock)
+    let chats = [work, locked]
+    ChatLink.shared.conversations = { chats }
+    let claude = Account(id: "todo-edit-claude", provider: .claude, name: "Claude", dir: nil, school: false)
+    func session(_ c: Conversation) -> ToolContext { ToolContext(room: c.id, roots: [], asker: claude, turn: c.turns.last?.id) }
+    func run(_ c: Conversation, _ tool: String, _ args: [String: Any]) -> (ok: Bool, text: String) {
+        let r = link.call(tool, args, context: session(c))
+        return (r["isError"] as? Bool == false, ((r["content"] as? [[String: Any]])?.first?["text"] as? String) ?? "")
+    }
+
+    let draft = try! store.add(title: "초안", detail: "처음 설명", project: app, projectName: "App")
+    let ready = try! store.add(title: "준비됨", project: app, projectName: "App")
+    try! store.change(ready.id) { $0.state = .ready }
+    let schoolDraft = try! store.add(title: "학교 초안", project: school, projectName: "School", lock: lock)
+    let names = Set(link.tools(context: session(work)).compactMap { $0["name"] as? String })
+    expect(names.isSuperset(of: ["todo_add", "todo_drafts", "todo_edit"]), "the edit tools are offered with todo_add: \(names)")
+    let listed = run(work, "todo_drafts", [:])
+    expect(listed.ok && listed.text.contains(draft.id.uuidString) && listed.text.contains("처음 설명") && !listed.text.contains(ready.id.uuidString)
+           && !listed.text.contains(schoolDraft.id.uuidString), "drafts of this chat's project only, with id and detail: \(listed.text)")
+    let edited = run(work, "todo_edit", ["id": draft.id.uuidString, "detail": "고친 설명", "ask_first": true])
+    let after = store.current.item(draft.id)
+    expect(edited.ok && after?.title == "초안" && after?.detail == "고친 설명" && after?.askFirst == true && after?.state == .draft,
+           "only the given fields change, and it stays a draft")
+    expect(run(work, "todo_edit", ["id": draft.id.uuidString, "title": "새 제목\n둘째 줄"]).ok && store.current.item(draft.id)?.title == "새 제목", "a title is one line")
+    expect(!run(work, "todo_edit", ["id": draft.id.uuidString, "title": "  "]).ok && store.current.item(draft.id)?.title == "새 제목", "an empty title is refused")
+    expect(!run(work, "todo_edit", ["id": draft.id.uuidString]).ok, "nothing to change is refused")
+    let notDraft = run(work, "todo_edit", ["id": ready.id.uuidString, "title": "바꿈"])
+    expect(!notDraft.ok && notDraft.text.contains("not a draft") && store.current.item(ready.id)?.title == "준비됨", "a ready TODO cannot be changed")
+    expect(!run(work, "todo_edit", ["id": schoolDraft.id.uuidString, "title": "바꿈"]).ok && store.current.item(schoolDraft.id)?.title == "학교 초안",
+           "a personal chat cannot change an Enterprise project's draft")
+    expect(run(locked, "todo_edit", ["id": schoolDraft.id.uuidString, "title": "학교 수정"]).ok && store.current.item(schoolDraft.id)?.title == "학교 수정",
+           "its organization's chat can")
+    expect((try? store.editDraft(schoolDraft.id, title: "x", detail: nil, askFirst: nil, organization: nil)) == nil, "the store checks the lock too")
+    print("PASS: todo_drafts/todo_edit (drafts only, given fields only, Enterprise apart)")
+}

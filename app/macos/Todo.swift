@@ -465,6 +465,21 @@ final class TodoStore: ObservableObject {
             item.title = title; item.detail = detail.trimmingCharacters(in: .whitespacesAndNewlines); item.askFirst = askFirst
         }
     }
+    // The todo_edit tool: only a draft (a ready one may be taken any moment), and only in a list the asking chat's
+    // organization may write (nil: personal; a list without a lock is the tool's to judge). Leaving a field out keeps it.
+    @discardableResult
+    func editDraft(_ id: UUID, title: String?, detail: String?, askFirst: Bool?, organization: String?) throws -> TodoItem {
+        let title = title?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return try update { data in
+            guard let i = data.items.firstIndex(where: { $0.id == id }), let list = data.list(data.items[i].listID) else { throw TodoError.notFound }
+            if let held = list.lock, held.organization != organization { throw TodoError.notFound }
+            guard data.items[i].state == .draft else { throw TodoError.notEditable }
+            if let title, !title.isEmpty { data.items[i].title = title }
+            if let detail { data.items[i].detail = detail.trimmingCharacters(in: .whitespacesAndNewlines) }
+            if let askFirst { data.items[i].askFirst = askFirst }
+            return data.items[i]
+        }
+    }
     func cancel(_ id: UUID) throws { try change(id) { guard $0.state != .running else { throw TodoError.busy }; $0.state = .cancelled; $0.unreported = false } }
     func delete(_ id: UUID) throws {
         try update { data in
@@ -697,6 +712,7 @@ struct TodoProject {
 
 // todo_add: from any chat (a project's or not, a TODO's own one too), the AI writes a TODO on a project's board
 // when the user asks, e.g. an idea from another talk. Always a draft: nothing runs until the user presses Start.
+// todo_drafts / todo_edit: the same chats read and rewrite drafts (not ready ones: those may be taken any moment).
 // An Enterprise chat sees and writes only its organization's projects; any other chat only projects without a lock.
 final class TodoAddLink: ToolProvider {
     static let shared = TodoAddLink()
@@ -727,7 +743,22 @@ final class TodoAddLink: ToolProvider {
         return [["name": "todo_add",
                  "description": "Add a TODO to the user's TODO board for a project, from any chat, when the user asks to add or note one (or clearly agrees to your suggestion). Never on your own. It is added as a draft: it runs only when the user presses Start on the board. title: one short line in the user's language; detail: what to do, the context from this chat and what done looks like (the AI that takes it sees only this). project: a name or folder from the list\(here.map { "; leave it out for this chat's project \($0.name)" } ?? ""). One TODO per call. Projects: " + Self.describe(projects),
                  "inputSchema": ["type": "object", "properties": ["title": string, "detail": string, "project": string, "ask_first": ["type": "boolean"]],
-                                 "required": ["title"], "additionalProperties": false]]]
+                                 "required": ["title"], "additionalProperties": false]],
+                ["name": "todo_drafts",
+                 "description": "List the draft TODOs (not started yet) on a project's board with their id, title, ask_first and full detail, before todo_edit. project: as for todo_add\(here.map { "; leave it out for this chat's project \($0.name)" } ?? "; leave it out for every project")).",
+                 "inputSchema": ["type": "object", "properties": ["project": string], "additionalProperties": false]],
+                ["name": "todo_edit",
+                 "description": "Change a draft TODO (from todo_drafts) when the user asks: only drafts, ready or running ones cannot be changed. id: its id from todo_drafts. Give only what changes: title (one short line), detail (replaces the whole detail: keep what still holds), ask_first. It stays a draft.",
+                 "inputSchema": ["type": "object", "properties": ["id": string, "title": string, "detail": string, "ask_first": ["type": "boolean"]],
+                                 "required": ["id"], "additionalProperties": false]]]
+    }
+
+    // The drafts this chat may see: in lists of its projects (one project when given).
+    private func drafts(_ projects: [TodoProject], in data: TodoData) -> [(TodoProject, TodoItem)] {
+        data.lists.flatMap { list -> [(TodoProject, TodoItem)] in
+            guard let root = list.project?.root, let p = projects.first(where: { $0.binding.root == root }) else { return [] }
+            return data.ordered(list.id).filter { $0.state == .draft }.map { (p, $0) }
+        }
     }
 
     // A name (any case), a folder path, or a folder name; nil with the reason when none or several fit.
@@ -746,11 +777,47 @@ final class TodoAddLink: ToolProvider {
         return (nil, "No project \"\(w)\". Projects: " + describe(projects) + ".")
     }
 
+    private static func reply(_ text: String) -> [String: Any] { ["content": [["type": "text", "text": text]], "isError": false] }
+
     func call(_ name: String, _ arguments: [String: Any], context: ToolContext) -> [String: Any] {
-        guard name == "todo_add" else { return ToolHub.failure("Unknown tool: " + name) }
-        guard let (chat, projects) = scope(context), !projects.isEmpty else { return ToolHub.failure("Adding TODOs is not available for this answer.") }
+        guard ["todo_add", "todo_drafts", "todo_edit"].contains(name) else { return ToolHub.failure("Unknown tool: " + name) }
+        guard let (chat, projects) = scope(context), !projects.isEmpty else { return ToolHub.failure("TODO tools are not available for this answer.") }
         func text(_ key: String) -> String { (arguments[key] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
-        let title = String(text("title").split(whereSeparator: \.isNewline).first.map(String.init)?.prefix(200) ?? "")
+        func oneLine(_ value: String) -> String { String(value.split(whereSeparator: \.isNewline).first.map(String.init)?.prefix(200) ?? "") }
+        let store = store()
+        if name == "todo_drafts" {
+            var shown = projects
+            if !text("project").isEmpty {
+                let (found, why) = Self.pick(text("project"), in: projects)
+                guard let found else { return ToolHub.failure(why ?? "No such project.") }
+                shown = [found]
+            } else if let p = chat.workspace?.project, let found = projects.first(where: { $0.binding.root == p.root }) { shown = [found] }
+            let list = drafts(shown, in: store.current)
+            guard !list.isEmpty else { return Self.reply("No draft TODOs on " + shown.map(\.name).joined(separator: ", ") + ".") }
+            let lines = list.prefix(30).map { p, item in
+                "id: \(item.id.uuidString)\nproject: \(p.name)\ntitle: \(item.title)\nask_first: \(item.askFirst)\ndetail:\n\(item.detail.isEmpty ? "(none)" : item.detail)"
+            }
+            return Self.reply(lines.joined(separator: "\n\n---\n\n") + (list.count > 30 ? "\n\n(\(list.count - 30) more not shown: name the project.)" : ""))
+        }
+        if name == "todo_edit" {
+            guard let id = UUID(uuidString: text("id")) else { return ToolHub.failure("id is required: take it from todo_drafts.") }
+            guard drafts(projects, in: store.current).contains(where: { $0.1.id == id }) else {
+                if let item = store.current.item(id), projects.contains(where: { $0.binding.root == store.current.list(item.listID)?.project?.root }) {
+                    return ToolHub.failure("That TODO is \(item.state.rawValue), not a draft: only drafts can be changed. Tell the user.")
+                }
+                return ToolHub.failure("No draft TODO with that id: call todo_drafts.")
+            }
+            let title = arguments["title"] == nil ? nil : oneLine(text("title"))
+            if title?.isEmpty == true { return ToolHub.failure("title cannot be empty.") }
+            let detail = arguments["detail"] == nil ? nil : String(text("detail").prefix(8000))
+            let askFirst = arguments["ask_first"] as? Bool
+            guard title != nil || detail != nil || askFirst != nil else { return ToolHub.failure("Nothing to change: give title, detail or ask_first.") }
+            do {
+                let item = try store.editDraft(id, title: title, detail: detail, askFirst: askFirst, organization: chat.enterpriseLock?.organization)
+                return Self.reply("Changed the draft \"\(item.title)\". It is still a draft: it runs only when the user presses Start. Tell the user briefly.")
+            } catch { return ToolHub.failure(error.localizedDescription) }
+        }
+        let title = oneLine(text("title"))
         guard !title.isEmpty else { return ToolHub.failure("title is required.") }
         let target: TodoProject
         if !text("project").isEmpty {
@@ -763,7 +830,6 @@ final class TodoAddLink: ToolProvider {
             return ToolHub.failure("This chat is not linked to a project: ask the user which one, then give project. Projects: " + Self.describe(projects) + ".")
         }
         // The report card shows in the chat it came from, unless that is a TODO's own chat (it has its own card).
-        let store = store()
         let origin = store.current.items.contains { $0.room == chat.id } ? nil : chat.id
         let before = Set(store.current.items.map(\.id))
         do {

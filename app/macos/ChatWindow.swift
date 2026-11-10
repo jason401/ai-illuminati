@@ -290,14 +290,15 @@ struct ChatView: View {
     }
 
     // A project folder: click to open its TODO board, double-click or the chevron to fold or unfold, + for a new chat in it,
-    // right-click to pin. Inside: its chats (each with its meetings) and the chats its TODOs work in.
+    // right-click to pin. Inside: the chats its TODOs still work in, then its chats (each with its meetings), then finished TODOs.
     @ViewBuilder private func projectGroup(_ group: ProjectGroup) -> some View {
         let open = !folds.isFolded("project." + group.id)
         projectRow(group, open: open)
         if open {
-            ForEach(group.chats) { chatGroup($0, depth: 1) }
+            // TODO chats still going come first, so the work running now is in sight right away.
             let rooms = SidebarProjects.todoRooms(group.todoRooms, todo: todos.snapshot)
             ForEach(rooms.going) { todoRoom($0) }
+            ForEach(group.chats) { chatGroup($0, depth: 1) }
             if !rooms.finished.isEmpty {
                 // Searching lists every match; folded, only the chat open now (or the one whose meeting is open) stays.
                 let unfolded = folds.openFinished.contains(group.id) || discussion.sidebarSearching

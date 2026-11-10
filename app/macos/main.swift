@@ -68,6 +68,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let todos = TodoScheduler(discussion: discussion, store: .shared)
         TodoScheduler.shared = todos
         todos.start()
+        // Old workspace backups go by age and count: now, after each answer and once a day.
+        WorkspaceBackup.startAutomaticCleanUp()
         model.updater.onAvailableChange = { [weak self] in self?.rebuildMenu() }
         model.updater.isBusy = { [weak self] in
             guard let self else { return false }

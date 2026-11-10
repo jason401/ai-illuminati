@@ -687,10 +687,147 @@ do {
     let keepAfter = try WorkspaceBackup.entry(root.appendingPathComponent("keep.txt")).0
     expect(keepAfter == keepBefore, "untouched files are left alone (not replaced)")
     expect(!fm.fileExists(atPath: root.appendingPathComponent("cloud.txt").path) && backup.restored, "the cloud-only file is not invented; Undo still succeeds")
-    for _ in 0..<(WorkspaceBackup.keepPerChat + 2) { _ = try WorkspaceBackup.begin(binding, room: room, runID: UUID()) }
+    for _ in 0..<(WorkspaceBackup.keepPerChat + 2) { var made = try WorkspaceBackup.begin(binding, room: room, runID: UUID()); try made.finish() }
     let kept = try fm.contentsOfDirectory(atPath: WorkspaceBackup.base.appendingPathComponent(room.uuidString).path)
     expect(kept.count == WorkspaceBackup.keepPerChat, "each chat keeps its newest \(WorkspaceBackup.keepPerChat) backups")
     print("PASS: backup by size and time, cloud-only files skipped and marked, Undo per entry, old backups pruned")
+}
+
+// Backup cleanup: finished backups keep only what changed; multi-step Undo works across the app's own refs;
+// old backups go by age and count, but not one in use, not the newest of its folders, and a deleted chat's go.
+do {
+    let fm = FileManager.default
+    func git(_ repo: URL, _ args: [String]) throws { try WorkspaceBackup.run("/usr/bin/git", ["-C", repo.path, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid"] + args) }
+    func text(_ url: URL) -> String? { try? String(contentsOf: url, encoding: .utf8) }
+    func makeRepo(_ name: String) throws -> URL {
+        let repo = URL(fileURLWithPath: AccountStore.home).appendingPathComponent(name).resolvingSymlinksInPath()
+        try? fm.removeItem(at: repo)
+        try fm.createDirectory(at: repo.appendingPathComponent("big"), withIntermediateDirectories: true)
+        for (file, body) in [("a.txt", "A0"), ("b.txt", "B0"), ("big/untouched.bin", String(repeating: "x", count: 200_000))] {
+            try body.write(to: repo.appendingPathComponent(file), atomically: true, encoding: .utf8)
+        }
+        try WorkspaceBackup.run("/usr/bin/git", ["init", repo.path])
+        try git(repo, ["add", "."]); try git(repo, ["commit", "-m", "fixture"])
+        return repo
+    }
+    func chat(_ room: UUID) throws {   // the chat must exist, or its backups count as a deleted chat's
+        try fm.createDirectory(atPath: ChatStore.dir, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: URL(fileURLWithPath: ChatStore.dir).appendingPathComponent(room.uuidString + ".json"))
+    }
+    func copied(_ backup: WorkspaceBackup) -> [String] {
+        let top = URL(fileURLWithPath: backup.directory).appendingPathComponent("0")
+        // .git/index may change too (git stash create refreshes it); that is Git's own state, put back with the rest.
+        return ((fm.enumerator(atPath: top.path)?.allObjects as? [String]) ?? [])
+            .filter { !$0.hasPrefix(".git/") && (try? WorkspaceBackup.entry(top.appendingPathComponent($0)).0.kind) != "directory" }.sorted()
+    }
+    func ref(_ repo: URL, _ backup: WorkspaceBackup) -> Bool {
+        (try? WorkspaceBackup.run("/usr/bin/git", ["-C", repo.path, "rev-parse", "--verify", "-q", "refs/ai-illuminati/" + URL(fileURLWithPath: backup.directory).lastPathComponent])) != nil
+    }
+    let binding = { (repo: URL) in WorkspaceBinding(roots: [WorkspaceRoot(path: repo.path, directory: true)], level: .write) }
+
+    // Two answers in a row, undone newest first: each backup holds only its changed file, and the
+    // second answer's ref (a change inside .git) does not block undoing the first.
+    let repo = try makeRepo("cleanup-chain")
+    let room = UUID(); try chat(room)
+    var first = try WorkspaceBackup.begin(binding(repo), room: room, runID: UUID())
+    try "A1".write(to: repo.appendingPathComponent("a.txt"), atomically: true, encoding: .utf8)
+    try first.finish()
+    var second = try WorkspaceBackup.begin(binding(repo), room: room, runID: UUID())
+    try "B1".write(to: repo.appendingPathComponent("b.txt"), atomically: true, encoding: .utf8)
+    try second.finish()
+    expect(first.trimmed == true && copied(first) == ["a.txt"] && copied(second) == ["b.txt"], "a finished backup keeps only the changed file: \(copied(first)) \(copied(second))")
+    try second.restore(); try first.restore()
+    expect(text(repo.appendingPathComponent("a.txt")) == "A0" && text(repo.appendingPathComponent("b.txt")) == "B0", "multi-step Undo puts both files back")
+
+    // Age: the older backup goes with its ref; the newest of the folder stays and its Undo still works.
+    let repo2 = try makeRepo("cleanup-age")
+    let room2 = UUID(); try chat(room2)
+    var old = try WorkspaceBackup.begin(binding(repo2), room: room2, runID: UUID())
+    try "A1".write(to: repo2.appendingPathComponent("a.txt"), atomically: true, encoding: .utf8)
+    try old.finish()
+    var newest = try WorkspaceBackup.begin(binding(repo2), room: room2, runID: UUID())
+    try "A2".write(to: repo2.appendingPathComponent("a.txt"), atomically: true, encoding: .utf8)
+    try newest.finish()
+    // An answer still writing (another folder: a new backup's git stash create refreshes .git/index, which ends Undo of the one before).
+    var running = try WorkspaceBackup.begin(binding(try makeRepo("cleanup-running")), room: room2, runID: UUID())
+    let later = Date().addingTimeInterval(30 * 86_400)
+    let result = WorkspaceBackup.cleanUp(.init(days: 14, perChat: 5), now: later)
+    expect(!fm.fileExists(atPath: old.directory) && !ref(repo2, old), "an old backup and its ref are deleted")
+    expect(fm.fileExists(atPath: newest.directory) && ref(repo2, newest), "the newest finished backup of a folder stays at any age")
+    expect(fm.fileExists(atPath: running.directory), "a backup in use is never deleted")
+    expect(result.removed >= 1, "cleanup reports what it removed")
+    try newest.restore()
+    expect(text(repo2.appendingPathComponent("a.txt")) == "A1", "deleting another backup's ref keeps the newest one's Undo")
+    try running.finish()
+
+    // Count: a chat keeps its newest backups only; a restored backup goes (its Undo is used).
+    let room3 = UUID(); try chat(room3)
+    var made: [WorkspaceBackup] = []
+    for i in 0..<4 {
+        try "C\(i)".write(to: repo2.appendingPathComponent("b.txt"), atomically: true, encoding: .utf8)
+        var backup = try WorkspaceBackup.begin(binding(repo2), room: room3, runID: UUID())
+        try "D\(i)".write(to: repo2.appendingPathComponent("b.txt"), atomically: true, encoding: .utf8)
+        try backup.finish(); made.append(backup)
+    }
+    WorkspaceBackup.cleanUp(.init(days: 14, perChat: 2))
+    expect(made.map { fm.fileExists(atPath: $0.directory) } == [false, false, true, true], "a chat keeps its newest 2")
+    try made[3].restore()
+    WorkspaceBackup.cleanUp(.init(days: 14, perChat: 2))
+    expect(!fm.fileExists(atPath: made[3].directory) && fm.fileExists(atPath: made[2].directory), "a restored backup is deleted")
+    expect(fm.fileExists(atPath: newest.directory) || newest.restored, "another chat's backups are left alone")
+
+    // A deleted chat: its backups go (after a day), refs too; an unreadable chat list deletes nothing.
+    let gone = UUID()
+    var orphan = try WorkspaceBackup.begin(binding(repo2), room: gone, runID: UUID())
+    try orphan.finish()
+    WorkspaceBackup.cleanUp(.init(days: 14, perChat: 5))
+    expect(fm.fileExists(atPath: orphan.directory), "a chat's backups are kept on the day it was made")
+    WorkspaceBackup.cleanUp(.init(days: 14, perChat: 5), now: Date().addingTimeInterval(2 * 86_400))
+    expect(!fm.fileExists(atPath: WorkspaceBackup.base.appendingPathComponent(gone.uuidString).path) && !ref(repo2, orphan), "a deleted chat's backups and refs go")
+
+    // A backup made before trimming existed: cleanup trims it to what changed.
+    let room4 = UUID(); try chat(room4)
+    var legacy = try WorkspaceBackup.begin(binding(repo2), room: room4, runID: UUID())
+    try "E".write(to: repo2.appendingPathComponent("a.txt"), atomically: true, encoding: .utf8)
+    try legacy.finish()
+    let legacyCopy = URL(fileURLWithPath: legacy.directory).appendingPathComponent("0")
+    try fm.removeItem(at: legacyCopy)
+    try WorkspaceBackup.copyTree(repo2, legacyCopy, key: "0/", skip: [])   // the whole folder, as backups were before
+    legacy.trimmed = nil; try legacy.save()
+    expect(copied(legacy).count > 1, "the legacy fixture holds the whole folder")
+    let trimmedResult = WorkspaceBackup.cleanUp(.init(days: 14, perChat: 5))
+    expect(trimmedResult.trimmed >= 1 && copied(legacy) == ["a.txt"], "cleanup trims an old full backup: \(copied(legacy))")
+    print("PASS: backups keep changed files only, multi-step Undo across app refs, cleanup by age/count/restored/deleted chat, in-use and newest kept")
+}
+
+// Storage by chat: the paths a chat uses are measured (meetings with their chat), deleted chats' data apart,
+// and deleting the chat leaves none of the measured paths.
+do {
+    let fm = FileManager.default
+    var chat = Conversation(); chat.id = UUID(); chat.title = "Storage fixture"
+    var meeting = Conversation(); meeting.id = UUID(); meeting.meetingOf = MeetingLink(room: chat.id, turn: UUID())
+    let dir = URL(fileURLWithPath: ChatStore.dir)
+    try fm.createDirectory(at: dir.appendingPathComponent(chat.id.uuidString + ".work/files"), withIntermediateDirectories: true)
+    try Data(count: 100_000).write(to: dir.appendingPathComponent(chat.id.uuidString + ".work/files/data.bin"))
+    try fm.linkItem(at: dir.appendingPathComponent(chat.id.uuidString + ".work/files/data.bin"), to: dir.appendingPathComponent(chat.id.uuidString + ".work/files/link.bin"))
+    try fm.createSymbolicLink(at: dir.appendingPathComponent(chat.id.uuidString + ".work/files/outside"), withDestinationURL: URL(fileURLWithPath: "/usr"))
+    try Data(count: 50_000).write(to: dir.appendingPathComponent(meeting.id.uuidString + ".json"))
+    try Data("{}".utf8).write(to: dir.appendingPathComponent(chat.id.uuidString + ".json"))
+    let lost = UUID()
+    try fm.createDirectory(at: dir.appendingPathComponent(lost.uuidString + ".assets"), withIntermediateDirectories: true)
+    try Data(count: 10_000).write(to: dir.appendingPathComponent(lost.uuidString + ".assets/x.png"))
+    let list = [(id: chat.id, title: chat.title, meetingOf: Optional<UUID>.none), (id: meeting.id, title: "", meetingOf: Optional(chat.id))]
+    let report = ChatStorage.report(list)
+    guard let room = report.rooms.first(where: { $0.id == chat.id }) else { fatalError("the chat is measured") }
+    expect(!report.rooms.contains { $0.id == meeting.id } && room.meetings == 1, "a meeting counts with its chat")
+    expect(room.parts[.work]?.logical == 100_000 && room.parts[.chat].map { $0.logical >= 50_000 } == true, "hard links count once, symlinks are not followed: \(room.parts)")
+    expect(report.orphans.contains { $0.url.lastPathComponent == lost.uuidString + ".assets" }, "a deleted chat's data is listed apart")
+    let mine = StorageLink.shared.call("chat_storage", [:], context: ToolContext(room: chat.id, roots: []))
+    expect(((mine["content"] as? [[String: Any]])?.first?["text"] as? String)?.contains("[This chat]") == true, "chat_storage answers for this chat")
+    try ChatStore.delete(chat)
+    expect(ChatStorage.items(chat.id).allSatisfy { !fm.fileExists(atPath: $0.1.path) }, "deleting the chat removes every measured path")
+    try ChatStore.delete(meeting)
+    print("PASS: storage by chat, meetings with their chat, hard links once, deleted chats apart, delete covers the measured paths")
 }
 
 // GPT's file requests: a wrong path comes back to it with same-name files and the other files still arrive;

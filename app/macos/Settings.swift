@@ -1493,6 +1493,136 @@ private struct AccountRow: View {
     }
 }
 
+// Storage: how much each chat takes, largest first, and the automatic cleanup of old backups.
+// Measuring reads metadata only and runs in the background; nothing here deletes chats.
+final class StorageModel: ObservableObject {
+    static let shared = StorageModel()
+    @Published var report: ChatStorage.Report?
+    @Published var measuring = false
+    @Published var cleaning = false
+    @Published var note = ""
+    @Published var policy = WorkspaceBackup.Policy.current {
+        didSet { if policy != oldValue { WorkspaceBackup.Policy.current = policy } }
+    }
+
+    func measure() {
+        guard !measuring else { return }
+        measuring = true
+        let chats = ChatLink.shared.conversations().map { (id: $0.id, title: $0.title, meetingOf: $0.meetingOf?.room) }
+        DispatchQueue.global(qos: .utility).async {
+            let report = ChatStorage.report(chats)
+            DispatchQueue.main.async { self.report = report; self.measuring = false }
+        }
+    }
+
+    func cleanNow() {
+        guard !cleaning else { return }
+        cleaning = true
+        let policy = policy
+        DispatchQueue.global(qos: .utility).async {
+            let result = WorkspaceBackup.cleanUp(policy)
+            DispatchQueue.main.async {
+                self.cleaning = false
+                self.note = result.removed + result.trimmed == 0 ? L("정리할 백업이 없어요.", "No backups to clean up.")
+                    : L("백업 \(result.removed)개 삭제, \(result.trimmed)개 축소, 최대 \(ChatStorage.format(result.bytes)) 확보",
+                        "Deleted \(result.removed) backups, trimmed \(result.trimmed), up to \(ChatStorage.format(result.bytes)) freed")
+                self.measure()
+            }
+        }
+    }
+}
+
+struct StorageSettingsTab: View {
+    @ObservedObject var storage = StorageModel.shared
+    static let shown = 30
+
+    var body: some View {
+        SettingsPage {
+            VStack(alignment: .leading, spacing: 6) {
+                SettingsCard(title: L("백업 자동 정리", "Backup cleanup")) {
+                    SettingsRow(title: L("보관 기간", "Keep for")) {
+                        Text(L("\(storage.policy.days)일", "\(storage.policy.days) days")).monospacedDigit()
+                        Spacer()
+                        Stepper("", value: $storage.policy.days, in: 1...90).labelsHidden()
+                    }
+                    Divider()
+                    SettingsRow(title: L("채팅방당 개수", "Per chat")) {
+                        Text("\(storage.policy.perChat)").monospacedDigit()
+                        Spacer()
+                        Stepper("", value: $storage.policy.perChat, in: 1...20).labelsHidden()
+                    }
+                    Divider()
+                    SettingsRow(title: L("지금", "Now")) {
+                        SettingsAction(title: storage.cleaning ? L("정리 중…", "Cleaning…") : L("지금 정리", "Clean Up Now")) { storage.cleanNow() }
+                            .disabled(storage.cleaning)
+                    }
+                }
+                hint((storage.note.isEmpty ? "" : storage.note + "\n")
+                     + L("AI가 연결 폴더에 쓰기 전에 만드는 Undo용 백업이에요. 기간이 지나거나 개수를 넘으면 지워져요(답변이 끝날 때, 앱 시작 때, 하루 한 번). 연결 폴더마다 가장 최근 백업 하나는 남겨요. 끝난 답변의 백업은 바뀐 파일만 남겨요.",
+                         "Undo backups made before AIs write to linked folders. They go once older or more than the limit (after each answer, at launch and daily). The newest backup of each linked folder stays. Finished answers keep only the files they changed."))
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                SettingsCard(title: L("채팅방별 용량", "Storage by chat")) {
+                    SettingsRow(title: storage.report.map { ChatStorage.format($0.total.allocated) } ?? "–") {
+                        Spacer()
+                        SettingsAction(title: storage.measuring ? L("계산 중…", "Measuring…") : L("다시 계산", "Measure")) { storage.measure() }
+                            .disabled(storage.measuring).frame(width: 90)
+                    }
+                    if let report = storage.report {
+                        ForEach(report.rooms.prefix(Self.shown)) { room in
+                            Divider()
+                            row(room.title.isEmpty ? L("(제목 없음)", "(Untitled)") : room.title, room.total, detail(room)) {
+                                if let first = ChatStorage.items(room.id).first(where: { FileManager.default.fileExists(atPath: $0.1.path) }) { DataFolders.reveal(first.1) }
+                            }
+                        }
+                        if !report.orphans.isEmpty {
+                            Divider()
+                            row(L("지워진 채팅의 데이터", "Data of deleted chats"), report.orphans.map(\.size).reduce(ChatStorage.Size(), +),
+                                L("\(report.orphans.count)개 항목", "\(report.orphans.count) items")) { DataFolders.reveal(report.orphans[0].url) }
+                        }
+                    }
+                }
+                hint((storage.report.map { L("계산: ", "Measured: ") + DateFormatter.localizedString(from: $0.date, dateStyle: .none, timeStyle: .short) + (report(unreadable: $0)) + "\n" } ?? "")
+                     + L("디스크에 실제로 쓰는 크기예요. 백업은 원본과 블록을 나눠 쓰는 복제라 지워도 이만큼 다 비지 않을 수 있어요. 연결한 프로젝트 폴더와 CLI 계정 폴더의 대화 원본은 빠져 있어요.",
+                         "Space on disk. Backups are clones that share blocks with the originals, so deleting them may free less. Linked project folders and the CLIs' own transcripts are not counted."))
+            }
+        }
+        .onAppear { if storage.report == nil { storage.measure() } }
+    }
+
+    private func report(unreadable report: ChatStorage.Report) -> String {
+        report.total.unreadable > 0 ? L(" · 읽지 못한 항목 \(report.total.unreadable)개", " · \(report.total.unreadable) unreadable") : ""
+    }
+
+    private func detail(_ room: ChatStorage.Room) -> String {
+        var parts = ChatStorage.Kind.allCases.compactMap { kind -> (Int64, String)? in
+            guard let size = room.parts[kind], size.allocated > 0 else { return nil }
+            return (size.allocated, kind.title + " " + ChatStorage.format(size.allocated))
+        }.sorted { $0.0 > $1.0 }.prefix(3).map(\.1)
+        if room.meetings > 0 { parts.append(L("회의 \(room.meetings)개 포함", "incl. \(room.meetings) meetings")) }
+        return parts.joined(separator: " · ")
+    }
+
+    private func row(_ title: String, _ size: ChatStorage.Size, _ detail: String, reveal: @escaping () -> Void) -> some View {
+        HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title).lineLimit(1).truncationMode(.tail)
+                if !detail.isEmpty { Text(detail).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1) }
+            }
+            Spacer(minLength: 4)
+            Text(ChatStorage.format(size.allocated)).monospacedDigit().foregroundStyle(.secondary)
+            Button(action: reveal) { Image(systemName: "magnifyingglass") }.buttonStyle(.borderless)
+                .help(L("Finder에서 보기", "Show in Finder"))
+        }
+        .padding(.horizontal, 10).padding(.vertical, 5)
+    }
+
+    private func hint(_ text: String) -> some View {
+        Text(text).font(.system(size: 11)).foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true).padding(.horizontal, 2)
+    }
+}
+
 // One Settings window with toolbar tabs, reused.
 final class SettingsWindow {
     private var window: NSWindow?
@@ -1511,8 +1641,8 @@ final class SettingsWindow {
     }
 
     func updateLanguage() {
-        guard let items = tabs?.tabViewItems, items.count == 5 else { return }
-        for (item, title) in zip(items, [L("일반", "General"), L("모양", "Appearance"), L("계정", "Accounts"), L("채팅", "Chat"), L("기억", "Memory")]) {
+        guard let items = tabs?.tabViewItems, items.count == 6 else { return }
+        for (item, title) in zip(items, [L("일반", "General"), L("모양", "Appearance"), L("계정", "Accounts"), L("채팅", "Chat"), L("기억", "Memory"), L("저장 공간", "Storage")]) {
             item.label = title
             item.viewController?.title = title
         }
@@ -1528,6 +1658,7 @@ final class SettingsWindow {
             t.addTabViewItem(tab(AccountsSettingsTab(model: model), symbol: "person.2"))
             t.addTabViewItem(tab(ChatSettingsTab(model: model), symbol: "bubble.left.and.bubble.right"))
             t.addTabViewItem(tab(MemorySettingsTab(), symbol: "brain.head.profile"))
+            t.addTabViewItem(tab(StorageSettingsTab(), symbol: "internaldrive"))
             tabs = t
             let w = NSWindow(contentViewController: t)
             w.styleMask = [.titled, .closable, .miniaturizable]

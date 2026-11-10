@@ -388,7 +388,8 @@ final class TodoStore: ObservableObject {
     // A new TODO is a draft: the scheduler does not take it until the user presses Start. Added to a list that is
     // already going (a TODO of it running or ready), it joins the queue as ready, so the work goes on to it by itself.
     // files: the photos and files attached to it (copied in; the originals are left as they are).
-    // fromAI (the todo_add tool): always a draft, the list's lock must be `lock` exactly (none for a personal chat),
+    // fromAI (the todo_add tool): always a draft, a list already locked must have `lock`'s organization (the tool passes
+    // the project's lock, a locked chat's when the list has none, and offers personal chats only projects without one),
     // and an open TODO of the same title in that list is returned instead of a new one (all checked in the one save).
     @discardableResult
     func add(title: String, detail: String = "", files: [URL] = [], project: ProjectBinding, projectName: String, after: [UUID] = [], askFirst: Bool = false, originRoom: UUID? = nil, lock: EnterpriseLock? = nil, fromAI: Bool = false) throws -> TodoItem {
@@ -398,7 +399,7 @@ final class TodoStore: ObservableObject {
             let listID: UUID
             if let l = data.lists.firstIndex(where: { $0.project?.root == project.root }) {
                 listID = data.lists[l].id
-                if fromAI, data.lists[l].lock?.organization != lock?.organization { throw TodoError.locked(L("이 채팅에서는 그 프로젝트에 TODO를 적을 수 없어요 (Enterprise).", "This chat cannot add TODOs to that project (Enterprise).")) }
+                if fromAI, let held = data.lists[l].lock, held.organization != lock?.organization { throw TodoError.locked(L("이 채팅에서는 그 프로젝트에 TODO를 적을 수 없어요 (Enterprise).", "This chat cannot add TODOs to that project (Enterprise).")) }
                 if fromAI, let same = data.ordered(listID).first(where: { ![.done, .cancelled].contains($0.state) && Self.sameTitle($0.title, title) }) { return same }
                 if data.lists[l].lock == nil { data.lists[l].lock = lock }   // like a chat's lock, never removed
             } else { let list = TodoList(title: projectName, project: project, lock: lock); data.lists.append(list); listID = list.id }

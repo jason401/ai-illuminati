@@ -779,7 +779,13 @@ func testTodoAddTool() {
     let lockedMenu = offered(locked) ?? ""
     expect(lockedMenu.contains("todo-add-school") && !lockedMenu.contains("AI Face"), "an Enterprise chat sees only its organization's projects")
     expect(!add(locked, ["title": "개인 쪽", "project": "AI Face"]).ok, "an Enterprise chat cannot write to a personal project")
-    expect(add(locked, ["title": "학교 과제"]).ok && store.current.lists.first { $0.project?.root == school.root }?.lock?.organization == "학교", "the Enterprise project's list keeps the lock")
+    // The list was made without a lock (from the board) and only the chat on the project is locked: shown, so it can be written.
+    let schoolList = try! store.add(title: "보드에서", project: school, projectName: "School")
+    expect(store.current.list(schoolList.listID)?.lock == nil, "fixture: the school list starts without a lock")
+    expect(add(locked, ["title": "학교 과제"]).ok && store.current.lists.first { $0.project?.root == school.root }?.lock?.organization == "학교", "the Enterprise project's list takes the chat's lock")
+    expect(!add(plain, ["title": "개인에서", "project": "/tmp/todo-add-school"]).ok, "once locked, a personal chat still cannot write to it")
+    let otherOrg = chat("다른 회사", school, EnterpriseLock(organization: "회사", name: "회사", lockedAt: Date())); chats.append(otherOrg)
+    expect(!add(otherOrg, ["title": "다른 조직"]).ok, "another organization's chat cannot write to a list locked for this one")
     // Only while the newest message is being answered.
     let earlier = session(plain)
     if let i = chats.firstIndex(where: { $0.id == plain.id }) { chats[i].turns[0].answeredAt = Date() }

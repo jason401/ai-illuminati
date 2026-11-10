@@ -919,6 +919,7 @@ struct ChatSettingsTab: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 10).padding(.vertical, 6)
             }
+            MemorySettingsCard()
             SettingsCard(title: L("메시지 판정", "Message sorting"),
                          help: L("프로젝트 채팅에서 메시지마다 한 명이 답할지, 모두 답할지, 작업할지 정해요. 고른 모델을 받아 두지 않았거나 Ollama를 껐으면 참여한 AI가 판정해요.",
                                  "Decides for each project-chat message: one answer, everyone, or work. Model not downloaded or Ollama off: a member AI judges.")) {

@@ -51,13 +51,13 @@ struct ChatView: View {
                         .frame(minWidth: 0, maxWidth: .infinity).clipped()
                     if notesShown && notesInline {
                         Divider().opacity(0.5)
-                        NotesPanel(room: discussion.currentID) { discussion.notesShown = false }
+                        NotesPanel(discussion: discussion, room: discussion.currentID) { discussion.notesShown = false }
                     }
                 }
                 if notesShown && !notesInline {
                     HStack(spacing: 0) {
                         Spacer(minLength: 0)
-                        NotesPanel(room: discussion.currentID) { discussion.notesShown = false }
+                        NotesPanel(discussion: discussion, room: discussion.currentID) { discussion.notesShown = false }
                             .background(Color(nsColor: .windowBackgroundColor))
                             .shadow(color: .black.opacity(0.25), radius: 12)
                     }
@@ -171,6 +171,7 @@ struct ChatView: View {
                         } else {
                             ForEach(grouped.projects) { projectGroup($0) }
                         }
+                        if !discussion.sidebarSearching { SpaceSidebarSection(discussion: discussion) }
                         let pinned = grouped.loose.filter { $0.pinned == true }
                         if !pinned.isEmpty {
                             SidebarHeader(title: L("고정됨", "Pinned"), fold: "pinned")
@@ -1535,7 +1536,7 @@ struct ChatView: View {
             }
             .buttonStyle(.plainHit)
             .foregroundColor(discussion.notesShown ? .accentColor : .secondary)
-            .help(discussion.notesShown ? L("메모 접기", "Hide notes") : L("메모 펼치기 (AI는 읽기만 해요)", "Show notes (the AI only reads them)"))
+            .help(discussion.notesShown ? L("메모·Space 접기", "Hide notes and Space") : L("메모·Space 펼치기", "Show notes and Space"))
             .accessibilityLabel(L("메모", "Notes"))
         }
     }
@@ -2117,6 +2118,11 @@ private struct TurnView: View, Equatable {
                         if discussion.conversations.contains(where: { $0.id == meeting }) {
                             Button(L("회의 과정 보기", "Show the meeting")) { discussion.open(meeting) }
                                 .buttonStyle(.link).font(.system(size: 11))
+                            if turn.final != nil {
+                                Button(L("Space로 만들기", "Make a Space")) { discussion.makeSpace(from: turn, in: discussion.currentID) }
+                                    .buttonStyle(.link).font(.system(size: 11))
+                                    .help(L("회의 결론·합의·이견·결정할 것을 이 대화 Space의 결정 로그로 넣어요", "Puts the meeting's conclusion, agreements, disagreements and open decisions into this chat's Space as a decision log"))
+                            }
                         } else {
                             Text(L("회의 기록은 다른 Mac에 있어요", "The meeting record is on another Mac")).font(.system(size: 11)).foregroundColor(.secondary)
                         }
@@ -2552,7 +2558,9 @@ private struct CopyButton: View {
 }
 
 // The chat's notes on the right: only the user edits them; each answer reads them (see ChatNotes).
+// Beside them, the chat's Space (SpaceView.swift).
 private struct NotesPanel: View {
+    @ObservedObject var discussion: Discussion
     let room: UUID
     let close: () -> Void
     @ObservedObject var notes = ChatNotes.shared
@@ -2560,13 +2568,32 @@ private struct NotesPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
-                Text(L("메모", "Notes")).font(.system(size: 13, weight: .medium))
+                Picker("", selection: $discussion.panelTab) {
+                    Text(L("메모", "Notes")).tag("notes")
+                    Text("Space").tag("space")
+                }
+                .pickerStyle(.segmented).labelsHidden().fixedSize()
                 WindowDragRegion().frame(maxWidth: .infinity, maxHeight: .infinity)
                 Button(action: close) { Image(systemName: "xmark").font(.system(size: 11)).frame(width: 22, height: 22) }
                     .buttonStyle(.plainHit).foregroundColor(.secondary)
                     .help(L("메모 접기", "Hide notes"))
             }
             .padding(.horizontal, 14).frame(height: 40)
+            if discussion.panelTab == "space" {
+                SpacePanel(discussion: discussion, room: room)
+            } else {
+                notesBody
+            }
+        }
+        .frame(width: ChatView.notesWidth)
+        .frame(maxHeight: .infinity)
+        .background(Color.primary.opacity(0.035))
+        .onAppear { notes.open(room) }
+        .onChange(of: room) { notes.open($0) }
+        .onDisappear { notes.flush() }
+    }
+
+    @ViewBuilder private var notesBody: some View {
             ZStack(alignment: .topLeading) {
                 TextEditor(text: $notes.text)
                     .font(.system(size: 13))
@@ -2584,13 +2611,6 @@ private struct NotesPanel: View {
             Text(L("AI는 읽기만 해요", "The AI only reads these"))
                 .font(.system(size: 11)).foregroundColor(.secondary)
                 .padding(.horizontal, 14).padding(.bottom, 12)
-        }
-        .frame(width: ChatView.notesWidth)
-        .frame(maxHeight: .infinity)
-        .background(Color.primary.opacity(0.035))
-        .onAppear { notes.open(room) }
-        .onChange(of: room) { notes.open($0) }
-        .onDisappear { notes.flush() }
     }
 }
 

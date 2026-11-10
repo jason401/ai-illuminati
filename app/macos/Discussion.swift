@@ -874,6 +874,10 @@ final class Discussion: ObservableObject {
     @Published var notesShown = UserDefaults.standard.bool(forKey: "notesShown") {
         didSet { UserDefaults.standard.set(notesShown, forKey: "notesShown") }
     }
+    // Which tab the right panel shows: the user's notes or the chat's Space (Space.swift).
+    @Published var panelTab = UserDefaults.standard.string(forKey: "panelTab") ?? "notes" {
+        didSet { UserDefaults.standard.set(panelTab, forKey: "panelTab") }
+    }
     @Published var teamSettingsOpen = false   // the team mode settings popover in the message box
     // @ in the message box: the accounts picked so far, and the list while it is open.
     @Published var draftMentions: [String] = []

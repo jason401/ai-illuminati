@@ -2663,6 +2663,7 @@ func testChatNotes() {
     print("PASS: chat notes are the user's, saved per chat, read by the AI")
 }
 testChatNotes()
+testSpace()
 
 func testChatTime() {
     // macOS puts a narrow no-break space before AM/PM.

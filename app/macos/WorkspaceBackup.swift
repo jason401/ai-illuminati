@@ -202,7 +202,25 @@ struct WorkspaceBackup: Codable {
     private static let protectLock = NSLock()
     private static var protected: [String: Int] = [:]
     private static func runName(_ directory: String) -> String { URL(fileURLWithPath: directory).lastPathComponent }
-    static func protect(_ directory: String) { protectLock.lock(); protected[runName(directory), default: 0] += 1; protectLock.unlock() }
+    private static var claimed: Set<String> = []   // being deleted or trimmed by cleanup
+    // false while cleanup has the backup: Undo must not start on a copy that is going away.
+    @discardableResult static func protect(_ directory: String) -> Bool {
+        protectLock.lock(); defer { protectLock.unlock() }
+        let name = runName(directory)
+        guard !claimed.contains(name) else { return false }
+        protected[name, default: 0] += 1
+        return true
+    }
+    // Cleanup takes a backup only when nothing uses it, in the same lock that protect() takes,
+    // so a check and an Undo starting cannot cross.
+    private static func claim(_ directory: String) -> Bool {
+        protectLock.lock(); defer { protectLock.unlock() }
+        let name = runName(directory)
+        guard protected[name] == nil, !claimed.contains(name) else { return false }
+        claimed.insert(name)
+        return true
+    }
+    private static func unclaim(_ directory: String) { protectLock.lock(); claimed.remove(runName(directory)); protectLock.unlock() }
     static func release(_ directory: String) {
         protectLock.lock(); defer { protectLock.unlock() }
         let name = runName(directory)
@@ -225,12 +243,53 @@ struct WorkspaceBackup: Codable {
     }
     // Removes one backup and its refs/ai-illuminati/<run> markers; never one in use.
     private static func remove(_ run: Run, into result: inout CleanUpResult) {
-        guard !isProtected(run.url.path) else { return }
-        for root in run.backup?.roots ?? [] where root.directory {
-            _ = try? WorkspaceBackup.run("/usr/bin/git", ["-C", root.path, "update-ref", "-d", "refs/ai-illuminati/" + run.url.lastPathComponent])
-        }
+        guard claim(run.url.path) else { return }
+        defer { unclaim(run.url.path) }
+        for root in run.backup?.roots ?? [] where root.directory { deleteRef(root.path, run.url.lastPathComponent) }
         let size = ChatStorage.size(of: run.url).allocated
         if (try? FileManager.default.removeItem(at: run.url)) != nil { result.removed += 1; result.bytes += size }
+    }
+    // A loose ref is a file under .git/refs/ai-illuminati, which stamps leave out. Once Git has packed it,
+    // deleting it rewrites .git/packed-refs, a change that would block Undo of the folder's other backups:
+    // such a ref waits (pending-refs.json) until the folder has no backups left (sweepRefs).
+    static var pendingRefs: URL { base.appendingPathComponent("pending-refs.json") }
+    private static func deleteRef(_ root: String, _ run: String) {
+        let git = URL(fileURLWithPath: root).appendingPathComponent(".git")
+        let loose = git.appendingPathComponent("refs/ai-illuminati/" + run)
+        var isDirectory: ObjCBool = false
+        let inside = FileManager.default.fileExists(atPath: git.path, isDirectory: &isDirectory) && isDirectory.boolValue
+        if inside, !FileManager.default.fileExists(atPath: loose.path),
+           (try? WorkspaceBackup.run("/usr/bin/git", ["-C", root, "rev-parse", "--verify", "-q", "refs/ai-illuminati/" + run])) == nil { return }   // none was made (clean folder)
+        if !inside || FileManager.default.fileExists(atPath: loose.path) {
+            _ = try? WorkspaceBackup.run("/usr/bin/git", ["-C", root, "update-ref", "-d", "refs/ai-illuminati/" + run])
+        } else {
+            var pending = (try? JSONDecoder().decode(Set<String>.self, from: Data(contentsOf: pendingRefs))) ?? []
+            if pending.insert(root).inserted { try? JSONEncoder().encode(pending).write(to: pendingRefs, options: .atomic) }
+        }
+    }
+    // Folders with packed refs waiting: once none of their backups is left, their refs of gone backups go.
+    private static func sweepRefs(_ remaining: [Run]) {
+        guard var pending = try? JSONDecoder().decode(Set<String>.self, from: Data(contentsOf: pendingRefs)) else { return }
+        let used = Set(remaining.flatMap { $0.backup?.roots.map(\.path) ?? [] })
+        let kept = Set(remaining.map { $0.url.lastPathComponent })
+        for root in pending where !used.contains(root) {
+            let names = (try? WorkspaceBackup.run("/usr/bin/git", ["-C", root, "for-each-ref", "--format=%(refname)", "refs/ai-illuminati/"])) ?? ""
+            for ref in names.split(separator: "\n").map(String.init) where !kept.contains(String(ref.dropFirst("refs/ai-illuminati/".count))) && !isProtected(String(ref.dropFirst("refs/ai-illuminati/".count))) {
+                _ = try? WorkspaceBackup.run("/usr/bin/git", ["-C", root, "update-ref", "-d", ref])
+            }
+            pending.remove(root)
+        }
+        if pending.isEmpty { try? FileManager.default.removeItem(at: pendingRefs) }
+        else { try? JSONEncoder().encode(pending).write(to: pendingRefs, options: .atomic) }
+    }
+    // The newest finished backup of each set of linked folders: kept at any age (its Undo may still work).
+    private static func newestPerFolders(_ runs: [Run]) -> Set<String> {
+        var newest: Set<String> = [], seen: Set<[String]> = []
+        for run in runs.sorted(by: { $0.created > $1.created }) {
+            guard let backup = run.backup, backup.after != nil, !backup.restored else { continue }
+            if seen.insert(backup.roots.map(\.path)).inserted { newest.insert(run.url.path) }
+        }
+        return newest
     }
     private static let cleanLock = NSLock()
 
@@ -238,7 +297,9 @@ struct WorkspaceBackup: Codable {
     static func prune(room: UUID, keep: Int) {
         cleanLock.lock(); defer { cleanLock.unlock() }
         var result = CleanUpResult()
-        for run in runs(in: base.appendingPathComponent(room.uuidString)).dropFirst(keep) { remove(run, into: &result) }
+        // Only this chat's backups are read, so the newest per set of folders is this chat's: it keeps more, never less.
+        let list = runs(in: base.appendingPathComponent(room.uuidString)), newest = newestPerFolders(list)
+        for run in list.dropFirst(keep) where !newest.contains(run.url.path) { remove(run, into: &result) }
     }
 
     @discardableResult static func cleanUp(_ policy: Policy = .current, now: Date = Date()) -> CleanUpResult {
@@ -248,38 +309,42 @@ struct WorkspaceBackup: Codable {
         let rooms = ((try? fm.contentsOfDirectory(at: base, includingPropertiesForKeys: nil)) ?? []).filter { UUID(uuidString: $0.lastPathComponent) != nil }
         // A chat folder that cannot be read says nothing about which chats are gone.
         let chats = (try? fm.contentsOfDirectory(atPath: ChatStore.dir)).map(Set.init)
-        var all: [Run] = []
+        var all: [Run] = [], remaining: [Run] = []
         for room in rooms {
             let list = runs(in: room)
             let age = (try? room.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? now
             if let chats, !chats.contains(room.lastPathComponent + ".json"), now.timeIntervalSince(age) > 86_400 {
-                for run in list { remove(run, into: &result) }
+                for run in list {
+                    remove(run, into: &result)
+                    if fm.fileExists(atPath: run.url.path) { remaining.append(run) }
+                }
                 if (try? fm.contentsOfDirectory(atPath: room.path))?.isEmpty == true { try? fm.removeItem(at: room) }
                 continue
             }
             all += list
         }
-        var newest: Set<String> = []
-        var seen: Set<[String]> = []
-        for run in all.sorted(by: { $0.created > $1.created }) {
-            guard let backup = run.backup, backup.after != nil, !backup.restored else { continue }
-            if seen.insert(backup.roots.map(\.path)).inserted { newest.insert(run.url.path) }
-        }
+        let newest = newestPerFolders(all)
         let limit = TimeInterval(policy.days) * 86_400
         for (_, list) in Dictionary(grouping: all, by: \.room) {
             for (i, run) in list.sorted(by: { $0.created > $1.created }).enumerated() {
-                guard !isProtected(run.url.path) else { continue }
+                guard !isProtected(run.url.path) else { remaining.append(run); continue }
                 let old = now.timeIntervalSince(run.created) > limit
                 let broken = run.backup == nil && now.timeIntervalSince(run.created) > 86_400   // a backup that failed while being made
                 if !newest.contains(run.url.path), i >= policy.perChat || old || broken || run.backup?.restored == true {
                     remove(run, into: &result)
-                } else if var backup = run.backup, backup.after != nil, backup.trimmed != true {
+                    if FileManager.default.fileExists(atPath: run.url.path) { remaining.append(run) }
+                    continue
+                }
+                remaining.append(run)
+                if var backup = run.backup, backup.after != nil, backup.trimmed != true, claim(run.url.path) {
                     // Backups from before trim() existed: keep only what their answer changed.
+                    defer { unclaim(run.url.path) }
                     let size = ChatStorage.size(of: run.url).allocated
                     if (try? backup.trim()) != nil { result.trimmed += 1; result.bytes += max(0, size - ChatStorage.size(of: run.url).allocated) }
                 }
             }
         }
+        sweepRefs(remaining)
         return result
     }
 
@@ -368,7 +433,8 @@ struct WorkspaceBackup: Codable {
         for (root, head) in gitHeads ?? [:] {
             guard (try? Self.run("/usr/bin/git", ["-C", root, "rev-parse", "HEAD"])) == head else { throw MaterialReader.error("Git HEAD changed after this backup. Use a new correction commit instead of file Undo.") }
         }
-        Self.protect(directory); defer { Self.release(directory) }
+        guard Self.protect(directory) else { throw MaterialReader.error("이 백업은 지금 정리 중이라 되돌릴 수 없습니다.") }
+        defer { Self.release(directory) }
         let before = Self.comparable(self.before)
         guard !restored, let after = after.map(Self.comparable), Self.comparable(try Self.stamps(roots)) == after else { throw MaterialReader.error("작업 후 다른 변경이 있어 자동으로 덮어쓰지 않았습니다. 백업과 현재 파일을 먼저 비교하세요.") }
         let manager = FileManager.default

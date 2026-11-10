@@ -797,7 +797,36 @@ do {
     expect(copied(legacy).count > 1, "the legacy fixture holds the whole folder")
     let trimmedResult = WorkspaceBackup.cleanUp(.init(days: 14, perChat: 5))
     expect(trimmedResult.trimmed >= 1 && copied(legacy) == ["a.txt"], "cleanup trims an old full backup: \(copied(legacy))")
-    print("PASS: backups keep changed files only, multi-step Undo across app refs, cleanup by age/count/restored/deleted chat, in-use and newest kept")
+
+    // A packed app ref is not deleted while the folder has other backups (that rewrites .git/packed-refs
+    // and would block their Undo); it goes once the folder has none.
+    let repo5 = try makeRepo("cleanup-packed")
+    let room5 = UUID(); try chat(room5)
+    try "dirty".write(to: repo5.appendingPathComponent("b.txt"), atomically: true, encoding: .utf8)   // git stash create makes a commit (and ref) only then
+    var packed = try WorkspaceBackup.begin(binding(repo5), room: room5, runID: UUID())
+    try "P1".write(to: repo5.appendingPathComponent("a.txt"), atomically: true, encoding: .utf8)
+    try packed.finish()
+    try git(repo5, ["pack-refs", "--all"])
+    var loose = try WorkspaceBackup.begin(binding(repo5), room: room5, runID: UUID())
+    try "P2".write(to: repo5.appendingPathComponent("a.txt"), atomically: true, encoding: .utf8)
+    try loose.finish()
+    expect(ref(repo5, packed) && ref(repo5, loose), "both answers have their refs")
+    WorkspaceBackup.cleanUp(.init(days: 14, perChat: 1))
+    expect(!fm.fileExists(atPath: packed.directory) && ref(repo5, packed), "a packed ref waits while the folder has backups")
+    try loose.restore()
+    expect(text(repo5.appendingPathComponent("a.txt")) == "P1", "the kept backup's Undo still works")
+    WorkspaceBackup.cleanUp(.init(days: 14, perChat: 1))
+    expect(!fm.fileExists(atPath: loose.directory) && !ref(repo5, loose) && !ref(repo5, packed)
+           && !((try? JSONDecoder().decode(Set<String>.self, from: Data(contentsOf: WorkspaceBackup.pendingRefs))) ?? []).contains(repo5.path),
+           "the waiting ref goes once the folder has no backups")
+
+    // A new backup's own count cleanup keeps the newest backup of another linked folder of the chat.
+    let room6 = UUID(); try chat(room6)
+    var other = try WorkspaceBackup.begin(binding(try makeRepo("cleanup-other")), room: room6, runID: UUID())
+    try other.finish()
+    for _ in 0..<(WorkspaceBackup.keepPerChat + 1) { var made = try WorkspaceBackup.begin(binding(repo5), room: room6, runID: UUID()); try made.finish() }
+    expect(fm.fileExists(atPath: other.directory), "the newest backup of each linked folder survives the count limit")
+    print("PASS: backups keep changed files only, multi-step Undo across app refs, cleanup by age/count/restored/deleted chat, in-use and newest kept, packed refs wait")
 }
 
 // Storage by chat: the paths a chat uses are measured (meetings with their chat), deleted chats' data apart,

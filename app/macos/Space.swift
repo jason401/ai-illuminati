@@ -509,6 +509,7 @@ final class SpaceStore: ObservableObject {
         try Self.write(Data(Self.html(folder).utf8), to: saved.appendingPathComponent("app.html"))
         try Self.write(Self.state(folder), to: saved.appendingPathComponent("state.json"))
         try Self.write(Self.encode(SpaceVersion(version: manifest.version, at: Date(), note: note, migrated: state != nil)), to: saved.appendingPathComponent("info.json"))
+        try Self.write(Self.encode(manifest), to: saved.appendingPathComponent("manifest.json"))   // its name, icon and color
         try Self.write(Data(html.utf8), to: folder.appendingPathComponent("app.html"))
         if let state { try Self.write(state, to: folder.appendingPathComponent("state.json")); stateVersion[id, default: 0] += 1 }
         manifest.version += 1; manifest.updatedAt = Date()
@@ -523,7 +524,7 @@ final class SpaceStore: ObservableObject {
         reload()
     }
 
-    // Back to the code before the last change; its data too when that change migrated the data.
+    // Back to the code (and name, icon, color) before the last change; its data too when that change migrated the data.
     @discardableResult
     func undo(_ id: String) throws -> Bool {
         dispatchPrecondition(condition: .onQueue(.main))
@@ -533,6 +534,7 @@ final class SpaceStore: ObservableObject {
         guard var manifest = Self.manifest(at: folder) else { return false }
         try Self.write(Data(Self.html(saved).utf8), to: folder.appendingPathComponent("app.html"))
         if last.migrated { try Self.write(Self.state(saved), to: folder.appendingPathComponent("state.json")); stateVersion[id, default: 0] += 1 }
+        if let before = Self.manifest(at: saved) { manifest.name = before.name; manifest.icon = before.icon; manifest.color = before.color }
         manifest.version = last.version; manifest.updatedAt = Date()
         try Self.write(Self.encode(manifest), to: folder.appendingPathComponent("manifest.json"))
         try? FileManager.default.removeItem(at: saved)
@@ -540,12 +542,16 @@ final class SpaceStore: ObservableObject {
         return true
     }
 
-    // An older version's code back as a new change (so it can be undone too); the data stays as it is.
+    // An older version's code and look back as a new change (so it can be undone too). The data stays as it is,
+    // unless a later change moved it to other keys: then that version's data comes back with its code.
     func restore(_ id: String, to version: Int) throws {
         let saved = Self.folder(id).appendingPathComponent("versions").appendingPathComponent(String(version))
         let html = Self.html(saved)
         guard !html.isEmpty else { throw SpaceBad(reason: L("그 판을 찾지 못했어요", "That version is gone")) }
-        try apply(id, html: html, note: L("\(version)판으로 되돌림", "Back to version \(version)"))
+        let reshaped = Self.versions(id).contains { $0.version >= version && $0.migrated }
+        let look = Self.manifest(at: saved)
+        try apply(id, html: html, state: reshaped ? Self.state(saved) : nil, note: L("\(version)판으로 되돌림", "Back to version \(version)"),
+                  name: look?.name, icon: look?.icon, color: look?.color)
     }
 
     // MARK: The sidebar's changes

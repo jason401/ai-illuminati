@@ -276,7 +276,8 @@ struct SpaceHeader: View {
                 }
             } label: { Image(systemName: "clock.arrow.circlepath").frame(width: 24, height: 24) }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                .help(L("판 목록: 고르면 그 판의 화면으로 돌아가요 (데이터는 그대로)", "Versions: pick one to bring its page back (the data stays)"))
+                .help(L("판 목록: 고르면 그 판의 화면으로 돌아가요. 데이터는 그대로지만, 그 뒤에 데이터 키가 바뀌었으면 그때 데이터로 돌아가요 (되돌리기 가능)",
+                        "Versions: pick one to bring its page back. The data stays, unless its keys changed since; then that version's data comes back too (can be undone)"))
                 .disabled(refiner.pending[id] != nil)
         }
     }

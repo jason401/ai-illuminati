@@ -121,6 +121,7 @@ func testSpace() {
     _ = SpaceStore.setState(folder, key: "n", json: "9")
     try! store.undo(made.id)
     expect(SpaceStore.html(folder) == page && store.manifest(made.id)?.version == 1 && SpaceStore.versions(made.id).isEmpty, "Undo brings the old page back")
+    expect(store.manifest(made.id)?.color == "green", "Undo brings the old color back too")
     expect((try? JSONSerialization.jsonObject(with: SpaceStore.state(folder)) as? [String: Any])?["n"] as? Int == 9, "Undo after a code change keeps the data")
     // A change that moved the data: Undo brings the data from before it back too.
     try! store.apply(made.id, html: page, state: Data(#"{"count":9}"#.utf8), note: "키 바꿈")
@@ -134,6 +135,17 @@ func testSpace() {
     let oldPage = SpaceStore.html(folder.appendingPathComponent("versions/\(oldest)"))
     try! store.restore(made.id, to: oldest)
     expect(!oldPage.isEmpty && SpaceStore.html(folder) == oldPage, "an old version comes back as a new change")
+    expect((try? JSONSerialization.jsonObject(with: SpaceStore.state(folder)) as? [String: Any])?["n"] as? Int == 9, "a version with the same data shape keeps the data")
+    // Back across a data move: that version's data comes back with its code, and Undo puts the newer data back.
+    try! store.apply(made.id, html: "<p>tasks</p>", state: Data(#"{"tasks":[1]}"#.utf8), note: "items → tasks", color: "red")
+    let beforeMove = store.manifest(made.id)!.version - 1
+    _ = SpaceStore.setState(folder, key: "tasks", json: "[1,2]")
+    try! store.restore(made.id, to: beforeMove)
+    let back = (try? JSONSerialization.jsonObject(with: SpaceStore.state(folder)) as? [String: Any]) ?? [:]
+    expect(back["tasks"] == nil && back["n"] as? Int == 9 && store.manifest(made.id)?.color != "red", "restoring across a data move brings that version's data and look")
+    try! store.undo(made.id)
+    expect(((try? JSONSerialization.jsonObject(with: SpaceStore.state(folder)) as? [String: Any])?["tasks"] as? [Int]) == [1, 2] && store.manifest(made.id)?.color == "red",
+           "Undo of that restore brings the newer data back")
 
     // Refine log, bounded.
     for n in 0..<(SpaceLimits.refine + 5) { SpaceStore.addRefine(made.id, SpaceRefineEntry(role: "user", text: "\(n)")) }

@@ -276,10 +276,13 @@ final class ExternalMCP: ObservableObject, ToolProvider {
 
     static func isOn(_ name: String) -> Bool { !(UserDefaults.app.stringArray(forKey: "mcpOff") ?? []).contains(name) }
     func setOn(_ name: String, _ on: Bool) {
-        var off = Set(UserDefaults.app.stringArray(forKey: "mcpOff") ?? [])
-        if on { off.remove(name) } else { off.insert(name) }
-        UserDefaults.app.set(off.sorted(), forKey: "mcpOff")
+        setOff(name, !on)
         refresh(force: on ? [name] : [])
+    }
+    private func setOff(_ name: String, _ off: Bool) {
+        var list = Set(UserDefaults.app.stringArray(forKey: "mcpOff") ?? [])
+        if off { list.insert(name) } else { list.remove(name) }
+        UserDefaults.app.set(list.sorted(), forKey: "mcpOff")
     }
 
     /// The saved servers; a file that cannot be read is an error and is never rewritten.
@@ -303,7 +306,11 @@ final class ExternalMCP: ObservableObject, ToolProvider {
     func save(_ entry: MCPServerEntry, replacing old: String? = nil, on: Bool = true) throws {
         guard MCPServerEntry.validName(entry.name) else { throw MCPSession.Failure(message: L("이름은 영어 소문자·숫자·-만, 16자까지예요.", "Names use lower-case letters, digits and -, up to 16.")) }
         guard !entry.command.trimmingCharacters(in: .whitespaces).isEmpty else { throw MCPSession.Failure(message: L("실행할 명령을 적어 주세요.", "Enter the command to run.")) }
-        try lock.locked {
+        // An entry saved switched off is marked off before it is written, so no refresh in between starts it.
+        let wasOn = old.map(Self.isOn) ?? on
+        let markedOff = !wasOn && Self.isOn(entry.name)
+        if markedOff { setOff(entry.name, true) }
+        do { try lock.locked {
             let current = Self.read()
             if let error = current.error { throw MCPSession.Failure(message: error) }
             var object = current.object, raw = object["mcpServers"] as? [String: Any] ?? [:]
@@ -314,8 +321,7 @@ final class ExternalMCP: ObservableObject, ToolProvider {
             raw[entry.name] = json
             object["mcpServers"] = raw
             try Self.write(object)
-        }
-        let wasOn = old.map(Self.isOn) ?? on
+        } } catch { if markedOff { setOff(entry.name, false) }; throw error }
         if let old, old != entry.name { setOn(old, true) }   // no stale "off" left for a name that is gone
         setOn(entry.name, wasOn)
         refresh(force: [entry.name])

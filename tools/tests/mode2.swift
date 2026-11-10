@@ -2564,6 +2564,19 @@ func testExternalMCP() {
     expect(mcp.importClaudeDesktop() == 1 && !ExternalMCP.isOn("memory"), "imported switched off")
     settle()
     expect(ExternalMCP.claudeDesktopServers(existing: mcp.servers).isEmpty, "and not offered twice")
+    expect(mcp.status["memory"]?.state == .off, "an imported server is not started")
+
+    // A program path with spaces stays one program, from JSON or when a saved server is edited.
+    let draft = MCPServerDraft()
+    draft.pasted = #"{"mcpServers": {"spaced": {"command": "/Users/me/My Tools/server", "args": ["--x"]}}}"#
+    draft.fill()
+    let spaced = try? draft.entry().get()
+    expect(spaced?.command == "/Users/me/My Tools/server" && spaced?.args == ["--x"], "a pasted path with spaces is kept whole")
+    draft.open(MCPServerEntry(name: "spaced", command: "/Users/me/My Tools/server", args: ["--x"]))
+    expect((try? draft.entry().get())?.command == "/Users/me/My Tools/server", "and so is a saved one on Edit → Save")
+    draft.command = "npx -y some-server"
+    let typed = try? draft.entry().get()
+    expect(typed?.command == "npx" && typed?.args == ["-y", "some-server", "--x"], "a typed command line is still split")
 
     // A damaged file is shown and never rewritten.
     mcp.stopAll()

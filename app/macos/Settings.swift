@@ -1503,10 +1503,12 @@ final class MCPServerDraft: ObservableObject {
     @Published var pasted = ""
     @Published var error: String?
     var original: MCPServerEntry?
+    /// The command as saved or pasted in JSON: one program, kept whole even with spaces in its path.
+    private var exactCommand: String?
 
     func open(_ entry: MCPServerEntry?) {
         original = entry
-        name = entry?.name ?? ""; command = entry?.command ?? ""
+        name = entry?.name ?? ""; command = entry?.command ?? ""; exactCommand = entry?.command
         args = entry?.args.joined(separator: "\n") ?? ""
         env = entry.map(Self.lines) ?? ""
         pasted = ""; error = nil; showing = true
@@ -1519,7 +1521,7 @@ final class MCPServerDraft: ObservableObject {
             return
         }
         if !entry.name.isEmpty { name = entry.name }
-        command = entry.command
+        command = entry.command; exactCommand = entry.command
         args = entry.args.joined(separator: "\n")
         env = Self.lines(entry)
         error = nil
@@ -1527,7 +1529,8 @@ final class MCPServerDraft: ObservableObject {
 
     /// The entry the fields describe, or why they do not describe one.
     func entry() -> Result<MCPServerEntry, MCPSession.Failure> {
-        var words = MCPServerEntry.words(command)
+        let whole = command == exactCommand || FileManager.default.isExecutableFile(atPath: command.trimmingCharacters(in: .whitespaces))
+        var words = whole ? [command.trimmingCharacters(in: .whitespaces)] : MCPServerEntry.words(command)
         var list = args.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         // "npx -y some-server" typed into the command field: the first word runs, the rest are arguments.
         if words.count > 1 { list = Array(words.dropFirst()) + list; words = [words[0]] }

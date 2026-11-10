@@ -1321,6 +1321,9 @@ final class Discussion: ObservableObject {
         stoppingRooms.remove(id)
         let usage = model.latestUsage
         let rules = model.chatRules.trimmingCharacters(in: .whitespacesAndNewlines)
+        // One member in a project chat, no way or AI picked, not a TODO's own run: while another chat or TODO is changing the
+        // project, that member answers read only instead of failing as busy.
+        let rerouteBusy = project && mentioned.isEmpty && forced == nil && !TodoStore.shared.current.items.contains { $0.room == id && $0.state == .running }
         let debateLeader = Self.modernModes && !team.contains(where: { $0.provider == config.leader }) ? team[0].provider : config.leader
         worker.work.async {
             // Only work that may write takes the repository lock, once its route is known: meetings, opinions and
@@ -1385,7 +1388,19 @@ final class Discussion: ObservableObject {
                     worker.endPeer(peer)
                 }
             } else if solo {
-                guard lock() else { return }
+                do { projectLocks = try ProjectWork.acquire(worker.activeWorkspace) }
+                catch let error where rerouteBusy && ProjectWork.isBusy(error.localizedDescription) {
+                    let name = { (accountID: String) in worker.model.accounts.first { $0.id == accountID }.map(worker.label) ?? accountID }
+                    let answering = Array((called.isEmpty ? team.map(\.id) : called).prefix(1))
+                    let note = Self.routeNote(.one, by: L("앱", "the app"), names: answering.map(name), busy: true)
+                    worker.changeTurn(id, index, save: true) { $0.route = RouteChoice.one.route; $0.routeOne = true; $0.routeNote = note }
+                    let binding = worker.activeWorkspace ?? worker.soloBinding(id)
+                    worker.activeWorkspace = Route.opinionView(binding, chatFolder: Self.chatFolder(id).path)
+                    return worker.runSolo(question: question, history: history, rules: rules, config: config, mentions: answering,
+                                          cancellation: cancellation, id: id, index: index,
+                                          extra: Route.opinionNote(project: binding.project?.root ?? "", alone: true, busy: true))
+                }
+                catch { return worker.finish(id, index, error: error.localizedDescription) }
                 // Reviewers (a project chat with two or more members, Peer.swift): ask_peer during the work, then
                 // a review of what changed, and the lead fixes what is right.
                 let binding = worker.activeWorkspace ?? worker.soloBinding(id)

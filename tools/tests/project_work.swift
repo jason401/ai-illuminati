@@ -560,6 +560,14 @@ func testPeerReview() {
     let alone = chat.current.turns.last
     expect(alone?.routeChoice == .one && alone?.error == nil && alone?.final == "Claude's view: keep it short." && opinionViews.count == aloneViews + 1
            && git(["rev-parse", "HEAD"]) == aloneHead && peerPrompts.count == before, "opinions again with one member left: it answers alone, read only")
+    // One member, another writer holds the project: that member answers read only instead of failing as busy.
+    let aloneHeld = try! ProjectWork.acquire(chat.soloBinding(chat.currentID)), aloneBusyViews = opinionViews.count
+    send("Change README to seven.")
+    let aloneBusy = chat.current.turns.last
+    expect(aloneBusy?.routeChoice == .one && aloneBusy?.error == nil && aloneBusy?.routeNote?.contains(L("작업 중", "is working")) == true
+           && opinionViews.count == aloneBusyViews + 1 && opinionViews.last?.project == nil && git(["rev-parse", "HEAD"]) == aloneHead,
+           "one member, busy project: it answers read only with a note")
+    ProjectWork.release(aloneHeld)
     testRoute()
     print("PASS: review (members: lead works, the other opines and reviews read only, two asks per answer, only changes reviewed, one fix in the same turn, older review chats migrate)")
 }

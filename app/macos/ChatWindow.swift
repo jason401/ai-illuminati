@@ -180,9 +180,9 @@ struct ChatView: View {
                         if !recents.isEmpty {
                             SidebarHeader(title: L("최근", "Recents"), fold: "recents")
                             if !folds.isFolded("recents") {
-                                // The newest page (and the open chat); every match while searching or filtering.
+                                // The newest page (and the open chat, or the chat of the open meeting); every match while searching or filtering.
                                 let page = SidebarFold.recentsPage
-                                let open = discussion.viewingRemote == nil && !discussion.viewingBoard ? discussion.currentID : nil
+                                let open = discussion.viewingRemote == nil && !discussion.viewingBoard ? discussion.current.meetingOf?.room ?? discussion.currentID : nil
                                 let listed = discussion.sidebarSearching ? recents : SidebarFold.listed(recents, limit: folds.limit("recents", page: page), open: open)
                                 ForEach(listed) { chatGroup($0) }
                                 if !discussion.sidebarSearching { moreRow("recents", page: page, total: recents.count, listed: listed.count) }

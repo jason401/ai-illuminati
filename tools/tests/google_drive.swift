@@ -476,6 +476,21 @@ func testGoogleDrive() {
         expect(writer.call("drive_download", args, context: chatContext)["isError"] as? Bool == true, "download refused: " + label)
     }
     expect(writer.call("drive_download", ["file": "slides"], context: context)["isError"] as? Bool == true, "no chat folder, no download")
+    // A folder swapped for a symlink while the export is in flight: the file still lands in the pinned folder.
+    let swap = chatFolder.appendingPathComponent("Swap"), outsideFolder = root.appendingPathComponent("outside-target")
+    try? FileManager.default.removeItem(at: outsideFolder)
+    try! FileManager.default.createDirectory(at: swap, withIntermediateDirectories: true)
+    try! FileManager.default.createDirectory(at: outsideFolder, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: outsideFolder) }
+    var swapped: [String: Any] = [:]
+    let swapDone = DispatchSemaphore(value: 0)
+    Thread.detachNewThread { swapped = writer.call("drive_download", ["file": "slow", "folder": "Swap"], context: chatContext); swapDone.signal() }
+    Thread.sleep(forTimeInterval: 0.4)
+    try! FileManager.default.moveItem(at: swap, to: chatFolder.appendingPathComponent("Swap-old"))
+    try! FileManager.default.createSymbolicLink(at: swap, withDestinationURL: outsideFolder)
+    expect(swapDone.wait(timeout: .now() + 10) == .success && swapped["isError"] as? Bool == false, "download finishes after the folder swap")
+    expect((try! FileManager.default.contentsOfDirectory(atPath: outsideFolder.path)).isEmpty
+           && FileManager.default.fileExists(atPath: chatFolder.appendingPathComponent("Swap-old/Fixture slow.docx").path), "swapped symlink cannot redirect the download")
     let exportRecords = (try! JSONSerialization.jsonObject(with: GoogleHTTP.send(base.appendingPathComponent("records")).data) as! [[String: Any]])
         .filter { $0["path"] as? String == "/drive/files/slides/export" }.compactMap { ($0["query"] as? [String: [String]])?["mimeType"]?.first }
     expect(exportRecords.filter { $0.contains("presentationml") }.count == 2, "pptx export requested from Google")

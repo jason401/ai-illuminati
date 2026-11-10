@@ -176,10 +176,10 @@ validated together with the user; automated tests use fake endpoints and memory 
   Drive's Manage versions only while Google keeps them (normally 30 days or 100 versions); not a guaranteed Undo.
 - `drive_download(file, format?, name?, folder?)` (read; local write): offered only when the answer has a
   chat-owned root (`WorkspaceRoot.writable == true`), and saves only there (`folder` = existing relative
-  subfolder; resolved path, symlinks included, must stay inside). Docs → docx/pdf/txt/md, Slides →
+  subfolder, opened step by step with `O_DIRECTORY|O_NOFOLLOW` before the network request and kept as a descriptor, so no symlink — even one swapped in during the download — can redirect the file). Docs → docx/pdf/txt/md, Slides →
   pptx/pdf/txt, Sheets → xlsx/pdf/csv (defaults docx/pptx/xlsx, 10 MB export limit); other files as they are
   (50 MB). Names lose separators/control characters and leading dots; files are created with
-  `O_CREAT|O_EXCL|O_NOFOLLOW`, mode 0600, and a taken name gets ` (n)` — never overwritten.
+  `openat(O_CREAT|O_EXCL|O_NOFOLLOW)`, mode 0600, and a taken name gets ` (n)` — never overwritten.
 
 Not implemented: uploads as background jobs (an upload still has to finish within the 50-second tool budget),
 sharing/permission changes, inserting images into Slides through public URLs, permanent deletion.

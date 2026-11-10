@@ -150,8 +150,8 @@ struct SpacePanel: View {
         VStack(alignment: .leading, spacing: 5) {
             Text(L("변경안 · ", "Proposal · ") + proposal.by).font(.system(size: 12, weight: .semibold))
             Text(proposal.reason).font(.system(size: 11)).foregroundColor(.secondary)
-            ForEach(Array(proposal.ops.prefix(8).enumerated()), id: \.offset) { Text("• " + SpacePatch.describe($0.element, in: doc)).font(.system(size: 11)) }
-            if proposal.ops.count > 8 { Text(L("… \(proposal.ops.count - 8)개 더", "… \(proposal.ops.count - 8) more")).font(.system(size: 11)).foregroundColor(.secondary) }
+            // Accepting applies every change, so every one is listed (at most SpacePatch.opLimit).
+            ForEach(Array(proposal.ops.enumerated()), id: \.offset) { Text("• " + SpacePatch.describe($0.element, in: doc)).font(.system(size: 11)).textSelection(.enabled) }
             HStack {
                 Button(L("수락", "Accept")) { edit { _ = SpacePatch.accept(proposal.id, in: &$0) } }
                 Button(L("거절", "Reject")) { edit { d in d.proposals.removeAll { $0.id == proposal.id } } }

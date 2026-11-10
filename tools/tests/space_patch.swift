@@ -63,6 +63,10 @@ func testSpace() {
     expect(SpacePatch.receive(patch(doc.version, "{\"op\":\"update\",\"id\":\"\(decision)\",\"set\":{\"text\":\"저널 B\"}}"), by: "Claude", key: "t6", into: &doc) == .proposed, "a confirmed decision is the user's")
     let accepted = doc.proposals.first { $0.by == "Gemini" && $0.ops.count == 2 }!
     expect(SpacePatch.accept(accepted.id, in: &doc) && doc.blocks[0].items[0].text == "AI 초록" && doc.blocks[0].items[0].locked, "an accepted proposal changes locked items and keeps them locked")
+    let reworded = doc.proposals.first { $0.ops.first?.target == decision }!
+    expect(SpacePatch.describe(reworded.ops[0], in: doc).contains("text: 저널 B"), "the proposal card shows the fields a change sets")
+    expect(SpacePatch.accept(reworded.id, in: &doc) && doc.blocks[2].items[0].status == "proposed" && doc.blocks[2].items[0].text == "저널 B",
+           "a confirmed decision changed by an AI is a proposal again, not shown as the user's")
 
     // Bad targets drop the patch; the reason is kept.
     let notices = doc.notices.count

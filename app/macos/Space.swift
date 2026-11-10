@@ -435,7 +435,10 @@ enum SpacePatch {
                     if let source = set.source { item.source = source }
                     if let todo = set.todo { item.todo = todo }
                     if let chat = set.chat { item.chat = chat }
-                    d.blocks[at.block].items[i] = try fitted(item, in: block, id: item.id)
+                    var fresh = try fitted(item, in: block, id: item.id)
+                    // A decision whose words change is no longer the one the user confirmed.
+                    if block.kind == .decisionLog, fresh != block.items[i] { fresh.status = "proposed" }
+                    d.blocks[at.block].items[i] = fresh
                 } else {
                     guard set == SpaceFields(title: set.title, columns: set.columns) else { throw Bad(reason: L("블록에는 title, columns만 바꿀 수 있어요", "blocks only take title and columns")) }
                     if let title = set.title { d.blocks[at.block].title = String(title.prefix(120)) }
@@ -465,7 +468,9 @@ enum SpacePatch {
                 let block = d.blocks[at.block]
                 switch (block.kind, status) {
                 case (.checklist, "done"), (.checklist, "todo"): d.blocks[at.block].items[i].done = status == "done"
-                case (.decisionLog, "open"), (.decisionLog, "decided"): d.blocks[at.block].items[i].open = status == "open"
+                case (.decisionLog, "open"), (.decisionLog, "decided"):
+                    if d.blocks[at.block].items[i].open != (status == "open") { d.blocks[at.block].items[i].status = "proposed" }
+                    d.blocks[at.block].items[i].open = status == "open"
                 case (.kanban, _) where block.columns?.contains(status) == true: d.blocks[at.block].items[i].lane = status
                 default: throw Bad(reason: L("\(block.kind.rawValue)에 맞지 않는 status ", "status not valid for \(block.kind.rawValue): ") + status)
                 }
@@ -543,8 +548,12 @@ enum SpacePatch {
             return L("추가 → ", "Add → ") + name(op.target) + ": " + String((op.item?.text ?? op.item?.cells?.joined(separator: " | ") ?? "").prefix(60))
         case .update:
             let set = op.set
-            let value = [set?.title, set?.goal, set?.text, set?.cells?.joined(separator: " | "), set?.columns?.joined(separator: " | ")].compactMap { $0 }.first ?? ""
-            return L("수정: ", "Edit: ") + name(op.target) + (value.isEmpty ? "" : " → " + String(value.prefix(60)))
+            // Every field the change sets, so the card shows all of it.
+            let fields: [(String, String?)] = [("title", set?.title), ("goal", set?.goal), ("text", set?.text), ("source", set?.source),
+                                               ("todo", set?.todo), ("chat", set?.chat), ("columns", set?.columns?.joined(separator: " | ")),
+                                               ("cells", set?.cells?.joined(separator: " | ")), ("pro", set?.pro?.joined(separator: ", ")), ("con", set?.con?.joined(separator: ", "))]
+            let value = fields.compactMap { key, value in value.map { key + ": " + String($0.prefix(120)) } }.joined(separator: " · ")
+            return L("수정: ", "Edit: ") + name(op.target) + (value.isEmpty ? "" : " → " + value)
         case .remove: return L("삭제: ", "Remove: ") + name(op.target)
         case .setStatus: return L("상태: ", "Status: ") + name(op.target) + " → " + (op.status ?? "")
         }

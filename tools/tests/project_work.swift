@@ -1104,7 +1104,44 @@ func testAutoMeeting() {
     expect(turn?.meetingRoom != nil && turn?.final == "결론: 둘 다 괜찮아." && Set(asked) == [c1.id, x1.id, g.id, c2.id]
            && speeches.count == 5 && speeches.last?.speaker == chat.label(c2),
            "auto members: asked in words, four AIs meet (two Claude accounts apart) and the second Claude speaks when named: \(speeches.map(\.speaker))")
-    print("PASS: automatic meeting members (two to four, two of a kind, asked in words)")
+    func hold(_ chat: Discussion, _ text: String) -> ChatTurn? {
+        chat.draft = text; chat.send()
+        let deadline = Date().addingTimeInterval(30)
+        while Date() < deadline && (chat.anyRunning || (chat.current.turns.last?.final == nil && chat.current.turns.last?.error == nil)) {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.03))
+        }
+        return chat.current.turns.last
+    }
+    // One member checked by hand: that one meets, no AI the user did not pick.
+    let one = Discussion(model: model)
+    one.configure { $0.mode = 0 }
+    one.toggleMember(x1.id)
+    var oneAsked: Set<String> = []
+    one.workspaceAnswer = { account, prompt, _, _, _ in
+        oneAsked.insert(account.id)
+        if prompt.contains("[MEETING RESULT]") { return .success("결론: 혼자.") }
+        if prompt.contains("[MODE3 MODERATION]") { return .success(#"{"action":"finish","reason":"enough"}"#) }
+        return .success("TL;DR: ok\n\nok")
+    }
+    let alone = hold(one, "/meet 정리해줘")
+    expect(alone?.meetingRoom != nil && oneAsked == [x1.id], "one member checked: only that member meets: \(oneAsked)")
+
+    // Only Gemini accounts can come (they never answer a plain chat alone): the meeting still starts.
+    let g2 = Account(id: "auto-g2", provider: .gemini, name: "G2")
+    let geminiModel = AppModel()
+    geminiModel.accounts = [g, g2]
+    let geminis = Discussion(model: geminiModel)
+    geminis.configure { $0.mode = 0 }
+    var geminiAsked: Set<String> = []
+    geminis.workspaceAnswer = { account, prompt, _, _, _ in
+        geminiAsked.insert(account.id)
+        if prompt.contains("[MEETING RESULT]") { return .success("결론: 제미나이 둘.") }
+        if prompt.contains("[MODE3 MODERATION]") { return .success(#"{"action":"finish","reason":"enough"}"#) }
+        return .success("TL;DR: ok\n\nok")
+    }
+    let pair = hold(geminis, "/meet 정리해줘")
+    expect(pair?.final == "결론: 제미나이 둘." && geminiAsked == [g.id, g2.id], "Gemini only: two Gemini accounts meet: \(String(describing: pair?.error))")
+    print("PASS: automatic meeting members (two to four, two of a kind, asked in words, one checked member kept, Gemini only)")
 }
 
 // A documents project: a plain folder (no Git) of papers, slides and figures, worked on like a project with a backup.

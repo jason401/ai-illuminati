@@ -1342,7 +1342,8 @@ final class Discussion: ObservableObject {
         if (Self.modernModes && (1...2).contains(config.mode)) || (!Self.modernModes && config.mode == 3) {
             turn.turnsPerAI = perAI; turn.maxTurns = perAI * team.count
         }
-        guard team.count > 0 else {
+        // A meeting needs only its own team (it may be Gemini alone, which does not answer this chat by itself).
+        guard team.count > 0 || !meetingTeam.isEmpty else {
             turn.error = L("답할 수 있는 AI가 없어요. 참여 AI를 켜고, 설정에서 로그인됐는지 확인해 주세요.", "No AI is available. Enable a participant and check its sign-in in Settings.")
             return turn.error
         }
@@ -1418,7 +1419,7 @@ final class Discussion: ObservableObject {
         // One member in a project chat, no way or AI picked, not a TODO's own run: while another chat or TODO is changing the
         // project, that member answers read only instead of failing as busy.
         let rerouteBusy = project && mentioned.isEmpty && forced == nil && !TodoStore.shared.current.items.contains { $0.room == id && $0.state == .running }
-        let debateLeader = Self.modernModes && !team.contains(where: { $0.provider == config.leader }) ? team[0].provider : config.leader
+        let debateLeader = Self.modernModes && !team.isEmpty && !team.contains(where: { $0.provider == config.leader }) ? team[0].provider : config.leader
         worker.work.async {
             // Only work that may write takes the repository lock, once its route is known: meetings, opinions and
             // one-member answers read the project, so other chats can talk while a TODO or chat is changing it.

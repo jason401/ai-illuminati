@@ -16,8 +16,8 @@ extension Discussion {
     static let meetingTurnsPerAI = 2
     static let meetingSource = "meeting-source.md"
 
-    // Who meets: the AIs picked with @, else the chat's members taking part (two or more checked), all of them;
-    // else, with the members automatic (or fewer than two ready), the app picks: up to `meetingMost` cloud AIs that
+    // Who meets: the AIs picked with @, else the chat's members (the ones taking part when two or more are ready);
+    // with the members automatic (none checked), the app picks: up to `meetingMost` cloud AIs that
     // may meet here (the chat's lock), signed in and with usage left, one of each kind first, then the other accounts
     // (meetingTeam). Two accounts of one kind may meet: the discussion keys speakers by account.
     static let meetingMost = 4
@@ -25,7 +25,7 @@ extension Discussion {
     func meetingMembers(room: UUID, mentioned: [String], fallback: [Account]) -> [Account] {
         let standing = standingMembers(room: room)
         let ids = !mentioned.isEmpty ? mentioned : standing
-        if ids.isEmpty {
+        if mentioned.isEmpty && memberIDs(room: room).isEmpty {
             let picked = Self.meetingTeam(model.accounts, usage: model.latestUsage) { self.permits($0, room: room) }
             if !picked.isEmpty { return picked }
         }

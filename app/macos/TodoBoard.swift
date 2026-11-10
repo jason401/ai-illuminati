@@ -2,21 +2,15 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 
-// The TODO board (Todo.swift): sidebar entry with the count waiting for the user, the board shown in place of the
+// The TODO board (Todo.swift): sidebar entry (first row under Projects) with the count waiting for the user, the board shown in place of the
 // chat, and the report cards above the message box of a TODO's own chat and of the chat it was written from.
 
-struct TodoSidebarSection: View {
+struct TodoBoardRow: View {
     @ObservedObject var discussion: Discussion
     @ObservedObject private var store = TodoStore.shared
-    @ObservedObject private var folds = SidebarFold.shared
-    var body: some View {
-        VStack(alignment: .leading, spacing: 1) {
-            SidebarHeader(title: "TODO", fold: "todo", badge: store.waitingForUser)
-            if !folds.isFolded("todo") { boardRow }
-        }
-    }
+    var body: some View { boardRow }
 
-    // Every project's TODOs (the folders below have one project's each).
+    // Every project's TODOs (the project folders below it have one project's each).
     private var boardRow: some View {
         VStack(alignment: .leading, spacing: 1) {
             let selected = discussion.viewingBoard && discussion.boardProject == nil

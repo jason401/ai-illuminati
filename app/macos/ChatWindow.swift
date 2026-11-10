@@ -133,7 +133,6 @@ struct ChatView: View {
                 VStack(alignment: .leading, spacing: 1) {
                     sharedFolders
                     DriveSidebarSection().disabled(discussion.importingMaterials)
-                    TodoSidebarSection(discussion: discussion)
                     // A new chat with nothing in it yet is not listed (like the desktop apps); it appears once it has a message.
                     // Searching: the filters apply, and words find chats by their messages and answers too.
                     let chats = discussion.listedConversations.filter {
@@ -160,10 +159,11 @@ struct ChatView: View {
                         let grouped = SidebarProjects.group(chats, todo: todos.snapshot, pinned: folds.pinnedProjects, withLists: !discussion.sidebarSearching,
                                                              names: projectInfo.names)
                         SidebarHeader(title: L("프로젝트", "Projects"), fold: "projects", badge: todos.waitingForUser) { addProjectMenu }
+                        if !folds.isFolded("projects") { TodoBoardRow(discussion: discussion) }
                         if folds.isFolded("projects") {
                         } else if grouped.projects.isEmpty {
                             Button(action: { discussion.linkProjectFromSidebar() }) {
-                                Label(L("프로젝트 추가 · 할 일 보드", "Add a project · TODO board"), systemImage: "folder.badge.plus")
+                                Label(L("프로젝트 추가", "Add a project"), systemImage: "folder.badge.plus")
                                     .font(.system(size: 12)).foregroundColor(.secondary)
                                     .padding(.horizontal, 10).frame(height: 28, alignment: .leading)
                             }

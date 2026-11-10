@@ -1227,3 +1227,68 @@ func testDocumentsProject() {
     expect(!FileManager.default.fileExists(atPath: artifact.path), "Undo removes a new folderless artifact")
     print("PASS: documents project (plain folder, not Git, one writer per folder, no git tools, documents instruction, review against the backup, Undo, TODO text, create, empty project)")
 }
+
+// Disconnecting a project's work folder: a folderless project with a new key keeps the chats, TODO lists, name,
+// shared folders, links, pin and tab; every worktree root leaves the chats; the folder on disk stays.
+func testDisconnectProjectFolder() {
+    let base = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("disconnect-fixture-" + UUID().uuidString)
+    let main = base.appendingPathComponent("repo"), tree = base.appendingPathComponent("repo-wt"), shared = base.appendingPathComponent("refs"), other = base.appendingPathComponent("other")
+    for url in [main, tree, shared, other] { try! FileManager.default.createDirectory(at: url, withIntermediateDirectories: true) }
+    try! "keep".write(to: main.appendingPathComponent("a.txt"), atomically: true, encoding: .utf8)
+    let common = main.path + "/.git"
+    let first = ProjectBinding(root: main.path, common: common, remote: "origin", remoteURL: "https://github.com/x/repo.git")
+    let second = ProjectBinding(root: tree.path, common: common, remote: "origin", remoteURL: "https://github.com/x/repo.git")
+    let key = SidebarProjects.key(first)
+    let savedTodos = TodoStore.shared
+    let todos = TodoStore(url: URL(fileURLWithPath: AccountStore.home).appendingPathComponent("disconnect-todos-\(UUID().uuidString).json"))
+    TodoStore.shared = todos
+    defer { TodoStore.shared = savedTodos }
+    let item = try! todos.add(title: "later", project: first, projectName: "repo")
+    try! ProjectInfoStore.shared.addFolders([shared], to: key)
+    try! ProjectInfoStore.shared.addLink(title: "Docs", url: "https://example.com", to: key)
+    if !SidebarFold.shared.isPinned(key) { SidebarFold.shared.togglePin(key) }
+    BoardTab.save(.todo, for: key)
+
+    let chat = Discussion(model: AppModel())
+    let a = chat.addProjectChat(first, title: "A", open: false), b = chat.addProjectChat(second, title: "B", open: false)
+    chat.change(a) { $0.workspace?.roots.append(WorkspaceRoot(path: other.path, directory: true)); $0.workspace?.projectRunID = UUID() }
+    let loose = chat.addProjectChat(ProjectBinding(root: other.path, common: other.path, remote: "", remoteURL: "", kind: ProjectBinding.documentsKind), title: "Other", open: false)
+    expect(Set(chat.projectRoots(key)) == [main.path, tree.path] && chat.disconnectRefusal(key) == nil, "a linked project can be disconnected")
+
+    // Refused while a chat of it answers or a TODO of it runs.
+    chat.runningRooms.insert(b)
+    expect(chat.disconnectRefusal(key) != nil && (try? chat.disconnectFolder(key, name: "repo")) == nil, "refused while a chat of the project answers")
+    chat.runningRooms.remove(b)
+    try! todos.change(item.id) { $0.state = .running }
+    expect(chat.disconnectRefusal(key) != nil, "refused while a TODO of the project runs")
+    try! todos.change(item.id) { $0.state = .ready }
+
+    chat.boardProject = key
+    let project = try! chat.disconnectFolder(key, name: "repo", keepReadOnly: false)
+    let new = SidebarProjects.key(project)
+    let chatA = chat.conversation(a), chatB = chat.conversation(b)
+    expect(project.isFolderless && new != key && (try? ProjectProcess.current(project)) == project, "the project becomes a valid folderless one with a new key")
+    expect(chatA.workspace?.project == project && chatB.workspace?.project == project
+           && chatA.workspace?.roots.map(\.path) == [other.path] && chatB.workspace?.roots.isEmpty == true && chatA.workspace?.projectRunID == nil,
+           "every worktree root leaves the chats; other linked folders stay")
+    expect(chat.conversation(loose).workspace?.project?.root == other.path, "another project's chat is untouched")
+    expect(todos.current.lists.first { $0.id == item.listID }?.project == project, "the TODO list moves to the folderless project")
+    let info = ProjectInfoStore.shared.info(new)
+    expect(info.name == "repo" && info.folders.map(\.path) == [shared.resolvingSymlinksInPath().path] && info.links.map(\.title) == ["Docs"]
+           && ProjectInfoStore.shared.info(key).isEmpty, "name, shared folders and links move to the new key")
+    expect(SidebarFold.shared.isPinned(new) && !SidebarFold.shared.isPinned(key) && BoardTab.saved(new) == .todo && chat.boardProject == new,
+           "pin, tab and open board follow the project")
+    let grouped = SidebarProjects.group(chat.listedConversations, todo: todos.current, pinned: [], names: ProjectInfoStore.shared.names).projects
+    expect(grouped.filter { $0.id == new }.count == 1 && !grouped.contains { $0.id == key } && grouped.first { $0.id == new }?.name == "repo",
+           "the sidebar shows one folderless project under its old name")
+    expect(FileManager.default.fileExists(atPath: main.appendingPathComponent("a.txt").path), "the folder on disk stays")
+    expect(chat.disconnectRefusal(new) != nil, "a folderless project has nothing to disconnect")
+
+    // Keeping the old folder as a read-only shared folder (opt-in).
+    let third = ProjectBinding(root: tree.path, common: tree.path, remote: "", remoteURL: "", kind: ProjectBinding.documentsKind)
+    _ = chat.addProjectChat(third, title: "C", open: false)
+    let kept = try! chat.disconnectFolder(SidebarProjects.key(third), name: "tree", keepReadOnly: true)
+    expect(ProjectInfoStore.shared.info(SidebarProjects.key(kept)).folders.map(\.path) == [tree.path], "the old folder can stay as a read-only shared folder")
+    SidebarFold.shared.togglePin(new)
+    print("PASS: disconnect work folder (folderless with a new key, chats, TODO lists, info, pin and tab kept, worktree roots removed, refusals, keep read only)")
+}

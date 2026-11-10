@@ -400,10 +400,13 @@ struct ChatView: View {
             Button(L("할 일 보드", "TODO board")) { discussion.openBoard(project: group.id, tab: .todo) }
             Button(L("이름 바꾸기…", "Rename…")) { ProjectInfoView.rename(group.id, current: group.name) }
             Button(group.pinned ? L("프로젝트 고정 해제", "Unpin project") : L("프로젝트 맨 위에 고정", "Pin project to top")) { folds.togglePin(group.id) }
-            if let binding = group.bindings.first {
+            if let binding = group.bindings.first, !binding.isFolderless {
                 Button(L("Finder에서 열기", "Open in Finder")) { NSWorkspace.shared.open(URL(fileURLWithPath: binding.root)) }
             }
             Divider()
+            if !group.bindings.isEmpty, !group.bindings.contains(where: \.isFolderless) {
+                Button(L("작업 폴더 연결 끊기…", "Disconnect Work Folder…")) { discussion.disconnectProjectFolder(group.id, name: group.name) }
+            }
             Button(L("프로젝트 삭제…", "Delete Project…")) { discussion.deleteProject(group.id, name: group.name) }
         }
         .disabled(discussion.importingMaterials)

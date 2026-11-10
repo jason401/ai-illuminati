@@ -492,6 +492,14 @@ final class TodoStore: ObservableObject {
         for id in gone { try? FileManager.default.removeItem(at: folder(id)) }   // only once they are gone from the saved file
         return gone.count
     }
+    // Lists of a project whose work folder was disconnected now belong to its folderless binding, in one save.
+    func relink(_ ids: Set<UUID>, to project: ProjectBinding) throws {
+        guard !ids.isEmpty else { return }
+        try update { data in
+            guard !data.items.contains(where: { ids.contains($0.listID) && $0.state == .running }) else { throw TodoError.busy }
+            for l in data.lists.indices where ids.contains(data.lists[l].id) { data.lists[l].project = project }
+        }
+    }
     // Up (-1) or down (+1) in its list.
     func move(_ id: UUID, by step: Int) throws {
         try update { data in

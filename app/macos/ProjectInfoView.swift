@@ -123,6 +123,11 @@ struct ProjectInfoView: View {
                     }
                 }
             }
+            HStack(spacing: 8) {
+                Button(L("작업 폴더 연결 끊기…", "Disconnect work folder…")) { discussion.disconnectProjectFolder(group.id, name: group.name) }
+                Text(L("채팅·TODO는 남기고 폴더 없는 프로젝트로 바꿔요 (파일은 그대로)", "Keeps the chats and TODOs as a folderless project (the files stay)"))
+                    .font(.system(size: 11)).foregroundColor(.secondary)
+            }
         }
     }
 

@@ -2248,6 +2248,7 @@ testDeviceSync()
 
 testProjectHandoff()
 testDocumentsProject()
+testDisconnectProjectFolder()
 testStartTurn()
 testTodoStore()
 testTodoScheduler()

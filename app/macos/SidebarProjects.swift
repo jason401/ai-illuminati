@@ -155,6 +155,18 @@ final class SidebarFold: ObservableObject {
         if tabs.removeValue(forKey: project) != nil { defaults.set(tabs, forKey: BoardTab.key) }
     }
 
+    // A project that got a new key (its work folder disconnected) keeps its pin, fold and tab.
+    func rekey(_ old: String, to new: String) {
+        if pinnedProjects.remove(old) != nil { pinnedProjects.insert(new) }
+        if folded.remove("project." + old) != nil { folded.insert("project." + new) }
+        if openFinished.remove(old) != nil { openFinished.insert(new) }
+        defaults.set(pinnedProjects.sorted(), forKey: Self.pinnedKey)
+        defaults.set(folded.sorted(), forKey: Self.foldedKey)
+        defaults.set(openFinished.sorted(), forKey: Self.openFinishedKey)
+        var tabs = defaults.dictionary(forKey: BoardTab.key) ?? [:]
+        if let tab = tabs.removeValue(forKey: old) { tabs[new] = tab; defaults.set(tabs, forKey: BoardTab.key) }
+    }
+
     // Once, when the sidebar first groups by project: a pinned project chat pins its project's folder (the chat
     // stays pinned too, at the top inside its folder).
     func adoptPins(_ chats: [Conversation]) {

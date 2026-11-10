@@ -116,6 +116,15 @@ final class ProjectInfoStore: ObservableObject {
         try update(project) { $0 = ProjectInfo() }
     }
 
+    // A project that moves to a new key (its work folder disconnected): name, folders and links go along, one save.
+    // The old entry stays until forget(old), so a failure on the way loses nothing. name: kept when there is none.
+    func copy(from old: String, to new: String, name: String?, folders extra: [ProjectFolder] = []) throws {
+        var moved = info(old)
+        if moved.name == nil { moved.name = name.flatMap(Self.cleanName) }
+        for folder in extra where !moved.folders.contains(where: { $0.path == folder.path }) && moved.folders.count < Self.maxFolders { moved.folders.append(folder) }
+        try update(new) { $0 = moved }
+    }
+
     // Folders for an AI call: the ones still there (a folder that went away stays listed on the tab only).
     func activeFolders(_ project: String) -> [ProjectFolder] {
         info(project).folders.filter { folder in

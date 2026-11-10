@@ -250,4 +250,23 @@ enum ProjectRules {
             return (real.hasPrefix(base + "/") || real.hasPrefix(root + "/")) && FileManager.default.fileExists(atPath: real, isDirectory: &directory) && !directory.boolValue
         }
     }
+
+    // What of each file the AIs get: all files share one budget of `limit` characters, headers included.
+    // sent nil: not UTF-8 text, or no room was left for it.
+    struct Part { let file: URL; let sent: String?; let cut: Bool }
+    static let limit = 30_000
+    static func read(root: String) -> (prompt: String, parts: [Part]) {
+        var prompt = "", parts: [Part] = [], full = false
+        for file in files(root: root) {
+            guard !full, let data = try? Data(contentsOf: file), let text = String(data: data, encoding: .utf8) else {
+                parts.append(Part(file: file, sent: nil, cut: false)); continue
+            }
+            prompt += "\n[Project rules: \(file.lastPathComponent)]\n"
+            let sent = String(text.prefix(max(0, limit - prompt.count)))
+            prompt += sent
+            parts.append(Part(file: file, sent: sent, cut: sent.count < text.count))
+            if prompt.count >= limit { prompt += "\n[Project rules truncated]"; full = true }
+        }
+        return (prompt, parts)
+    }
 }

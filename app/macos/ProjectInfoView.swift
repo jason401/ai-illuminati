@@ -143,16 +143,16 @@ struct ProjectInfoView: View {
 
     // AGENTS.md / CLAUDE.md at the project's root, the rules every answer of this project gets.
     private func rules(_ group: ProjectGroup) -> some View {
-        let files = group.bindings.first.map { ProjectRules.files(root: $0.root) } ?? []
+        let parts = group.bindings.first.map { ProjectRules.read(root: $0.root).parts } ?? []
         return section(L("AI 작업 규칙", "Rules for the AIs"), systemImage: "list.bullet.rectangle") {
-            Text(files.isEmpty
+            Text(parts.isEmpty
                  ? L("프로젝트 폴더에 AGENTS.md나 CLAUDE.md를 두면 AI가 답할 때마다 읽어요.", "Put an AGENTS.md or CLAUDE.md in the project folder and the AIs read it with every answer.")
                  : L("AI가 이 프로젝트에서 답할 때마다 읽는 파일이에요.", "The AIs read these with every answer in this project."))
                 .font(.system(size: 12)).foregroundColor(.secondary)
-            ForEach(files, id: \.path) { file in
-                let shown = draft.shownRules.contains(file.path)
+            ForEach(parts, id: \.file.path) { part in
+                let file = part.file, shown = draft.shownRules.contains(file.path)
                 VStack(alignment: .leading, spacing: 6) {
-                    pathRow(file.path, directory: false, note: nil) {
+                    pathRow(file.path, directory: false, note: Self.ruleNote(part)) {
                         Button(shown ? L("접기", "Hide") : L("보기", "Show")) {
                             if shown { draft.shownRules.remove(file.path) } else { draft.shownRules.insert(file.path) }
                         }.controlSize(.small)
@@ -161,7 +161,7 @@ struct ProjectInfoView: View {
                     }
                     if shown {
                         ScrollView {
-                            Text(Self.preview(file)).font(.system(size: 12, design: .monospaced)).textSelection(.enabled)
+                            Text(Self.preview(part)).font(.system(size: 12, design: .monospaced)).textSelection(.enabled)
                                 .frame(maxWidth: .infinity, alignment: .leading).padding(10)
                         }
                         .frame(maxHeight: 320)
@@ -172,12 +172,18 @@ struct ProjectInfoView: View {
         }
     }
 
-    // The file as the AIs get it: at most 30 000 characters.
-    static func preview(_ file: URL) -> String {
-        guard let data = try? Data(contentsOf: file), let text = String(data: data, encoding: .utf8) else {
+    // The file as the AIs get it (ProjectRules.read), with what they do not get marked.
+    static func ruleNote(_ part: ProjectRules.Part) -> String? {
+        part.sent == nil ? L("AI에 안 감", "Not sent to the AIs") : part.cut ? L("앞부분만 AI에 감", "Only the start is sent") : nil
+    }
+    static func preview(_ part: ProjectRules.Part) -> String {
+        if let sent = part.sent {
+            return part.cut ? sent + "\n\n" + L("… (여기까지 AI에 가요. 규칙 파일은 합쳐서 \(ProjectRules.limit)자까지)", "… (the AIs get up to here; rules files share \(ProjectRules.limit) characters)") : sent
+        }
+        guard let data = try? Data(contentsOf: part.file), String(data: data, encoding: .utf8) != nil else {
             return L("읽을 수 없는 파일이에요 (UTF-8 텍스트가 아님).", "This file cannot be read (not UTF-8 text).")
         }
-        return text.count > 30_000 ? String(text.prefix(30_000)) + "\n…" : text
+        return L("앞의 규칙 파일이 \(ProjectRules.limit)자 한도를 다 써서 이 파일은 AI에 가지 않아요.", "The rules file before it uses the whole \(ProjectRules.limit)-character limit, so the AIs do not get this one.")
     }
 
     // MARK: The project's folders and files

@@ -299,13 +299,7 @@ extension Discussion {
             backup = saved; activeWorkspaceBackupPath = saved.directory
             changeTurn(id, index, save: true) { $0.backupPath = saved.directory }
         } catch { finish(id, index, error: error.localizedDescription); return }
-        var projectRules = ""
-        for file in ProjectRules.files(root: selected.root) {
-            if let data = try? Data(contentsOf: file), let text = String(data: data, encoding: .utf8) {
-                projectRules += "\n[Project rules: \(file.lastPathComponent)]\n" + String(text.prefix(max(0, 30_000 - projectRules.count)))
-                if projectRules.count >= 30_000 { projectRules += "\n[Project rules truncated]"; break }
-            }
-        }
+        let projectRules = ProjectRules.read(root: selected.root).prompt
         let transcript = Self.transcript(history) + "\n[User]\n" + question
         let chatLock = self.lock(of: id)
         var excluded = Set<String>(), checkpoint = run.checkpoint("Project turn started")

@@ -118,6 +118,7 @@ as a selected folder to override it to read only or writable. Permission changes
 Google Cloud must include the Drive write scope in consent data access and have Google Docs API enabled.
 
 Tools: `drive_create` creates a folder, UTF-8 plain text file or native Google Doc (240 KB text maximum).
+`drive_upload` sends a local file from the chat's linked folders (symlinks resolved, folders refused, 100 MB maximum) with a resumable upload; the session URL must stay on the upload host. `convert: true` imports .pptx/.ppt, .docx/.doc and .xlsx/.xls/.csv as native Slides, Docs or Sheets, keeping images and layout.
 `drive_edit_doc` replaces all exact, case-sensitive matches in a native Google Doc using a mandatory
 `requiredRevisionId` from `drive_read`. Stale revisions fail. Sheets edits, binary-file overwrites, renaming, moving, folder/permanent deletion and automatic Undo
 are not implemented. Slides edits and file trash are described below.

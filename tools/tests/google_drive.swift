@@ -352,6 +352,24 @@ func testGoogleDrive() {
         let content = (result["content"] as! [[String: Any]])[0]["text"] as! String
         return try! JSONSerialization.jsonObject(with: Data(content.utf8)) as! [String: Any]
     }
+    // Uploads: linked local file only, resumable session pinned to the upload host, Office import on request.
+    let deck = root.appendingPathComponent("Weekly deck.pptx")
+    let deckBytes = Data((0..<300_000).map { UInt8(truncatingIfNeeded: $0 &* 31) })
+    try! deckBytes.write(to: deck)
+    defer { try? FileManager.default.removeItem(at: deck) }
+    let uploaded = slideCall("drive_upload", ["folder": "allowed", "path": deck.path, "convert": true])
+    expect(uploaded["id"] as? String == "uploaded-fixture" && uploaded["bytes"] as? Int == deckBytes.count, "upload returns created file")
+    expect(writer.call("drive_upload", ["folder": "child", "path": deck.path], context: context)["isError"] as? Bool == true, "read-only folder rejects upload")
+    expect(writer.call("drive_upload", ["folder": "allowed", "path": "/etc/hosts"], context: context)["isError"] as? Bool == true, "upload outside linked roots refused")
+    expect(writer.call("drive_upload", ["folder": "allowed", "path": root.path], context: context)["isError"] as? Bool == true, "folders are not uploaded")
+    expect(writer.call("drive_upload", ["folder": "allowed", "path": deck.path, "name": "Evil"], context: context)["isError"] as? Bool == true, "upload session on another host is refused")
+    let uploadRecords = (try! JSONSerialization.jsonObject(with: GoogleHTTP.send(base.appendingPathComponent("records")).data) as! [[String: Any]])
+    let sessions = uploadRecords.filter { $0["path"] as? String == "/upload/files" && ($0["query"] as? String)?.contains("resumable") == true }
+    let meta = sessions.first?["body"] as? [String: Any]
+    expect(sessions.count == 2 && meta?["mimeType"] as? String == "application/vnd.google-apps.presentation" && meta?["name"] as? String == "Weekly deck"
+           && meta?["parents"] as? [String] == ["allowed"] && sessions.first?["length"] as? String == String(deckBytes.count), "conversion metadata names the deck and target folder")
+    let puts = uploadRecords.filter { $0["method"] as? String == "PUT" }
+    expect(puts.count == 1 && puts[0]["length"] as? Int == deckBytes.count && (puts[0]["type"] as? String)?.contains("presentationml") == true, "bytes sent once, only to the pinned session")
     let structured = slideCall("drive_slides_get", ["file": "slides", "start": 1, "limit": 1])
     expect(structured["revision"] as? String == "slides-revision-1" && structured["slideCount"] as? Int == 2 && (structured["slides"] as? [[String: Any]])?.first?["objectId"] as? String == "page-two", "Slides structure paginates with revision and stable IDs")
     expect(writer.call("drive_slides_get", ["file": "outside"], context: context)["isError"] as? Bool == true, "Slides structure cannot bypass folder gate")

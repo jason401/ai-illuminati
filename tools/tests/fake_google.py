@@ -51,6 +51,11 @@ class H(BaseHTTPRequestHandler):
             H.records.append({'path': path, 'body': body})
             if body['writeControl']['requiredRevisionId'] != 'revision-1': return self.reply({}, 400)
             return self.reply({'replies': [{'replaceAllText': {'occurrencesChanged': 1}}]})
+        if path == '/upload/files' and 'uploadType=resumable' in urlsplit(self.path).query:
+            meta = json.loads(raw)
+            H.records.append({'path': path, 'query': urlsplit(self.path).query, 'body': meta, 'type': self.headers.get('X-Upload-Content-Type'), 'length': self.headers.get('X-Upload-Content-Length')})
+            target = 'http://127.0.0.1:1/steal' if meta.get('name') == 'Evil' else 'http://' + self.headers['Host'] + '/upload/session/fixture'
+            return self.reply({}, 200, {'Location': target})
         if path in ['/drive/files', '/upload/files']:
             H.records.append({'path': path, 'body': raw})
             return self.reply({'id': 'created-fixture', 'name': 'Created fixture'})
@@ -66,6 +71,12 @@ class H(BaseHTTPRequestHandler):
                   'scope': 'https://www.googleapis.com/auth/drive' if fields.get('code') == ['write-code'] or fields.get('refresh_token') == ['write-refresh'] else 'https://www.googleapis.com/auth/drive.readonly'}
         if fields.get('grant_type') == ['authorization_code']: result['refresh_token'] = 'write-refresh' if fields.get('code') == ['write-code'] else 'fixture-refresh'
         self.reply(result)
+    def do_PUT(self):
+        raw = self.rfile.read(int(self.headers['Content-Length']))
+        path = urlsplit(self.path).path
+        H.records.append({'path': path, 'method': 'PUT', 'length': len(raw), 'type': self.headers.get('Content-Type'), 'authorization': self.headers.get('Authorization')})
+        if path != '/upload/session/fixture': return self.reply({}, 404)
+        self.reply({'id': 'uploaded-fixture', 'name': 'Uploaded', 'mimeType': 'application/vnd.google-apps.presentation'})
     def do_PATCH(self):
         body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
         path = urlsplit(self.path).path

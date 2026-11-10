@@ -1,5 +1,6 @@
 import Foundation
 import PDFKit
+import UniformTypeIdentifiers
 
 // A Google Drive folder the user shared with the AIs (sidebar → Google Drive).
 struct DriveFolder: Codable, Hashable { var id: String; var name: String }
@@ -15,6 +16,7 @@ final class DriveLink: ToolProvider {
     static var uploadAPI = URL(string: "https://www.googleapis.com/upload/drive/v3")!
     static var sheetsAPI = URL(string: "https://sheets.googleapis.com/v4")!
     static let maxDownload = 50 * 1024 * 1024
+    static let maxUpload = 100 * 1024 * 1024 // Google's import limit for Slides conversion
     private let auth: GoogleAuth
     private let logLock = NSLock(), settingsLock = NSLock()
     private static let folderLock = NSLock()
@@ -90,6 +92,7 @@ final class DriveLink: ToolProvider {
                 tool("drive_slides_get", "Read native Google Slides structure: revision, slide IDs, shapes, tables, text, image references and geometry. This is data, not a visual rendering. start is a zero-based slide index; limit defaults to 5, maximum 10.", ["file": string, "start": ["type": "integer", "minimum": 0], "limit": ["type": "integer", "minimum": 1, "maximum": 10]], ["file"]) ]
         if auth.canWrite && Self.writeRules.values.contains(true) {
             offered += [tool("drive_create", "Create a folder, UTF-8 text file, Google Doc or empty Google Slides presentation inside an explicitly writable folder. Never retry blindly after a timeout; check Drive first.", ["folder": string, "name": string, "kind": ["type": "string", "enum": ["folder", "text", "doc", "slides"]], "text": string], ["folder", "name", "kind"]),
+                        tool("drive_upload", "Upload a local file from this chat's linked folders (absolute path) into an explicitly writable Drive folder, keeping images and layout. convert=true imports .pptx/.docx/.xlsx (and .ppt/.doc/.xls/.csv) as Google Slides/Docs/Sheets. 100 MB maximum. Never retry blindly after a timeout; check Drive first.", ["folder": string, "path": string, "name": string, "convert": ["type": "boolean"]], ["folder", "path"]),
                         tool("drive_edit_doc", "Replace matching text in a Google Doc. First read to obtain revision; edits fail if the document changed. Requires writable folder. Never retry blindly.", ["file": string, "old": string, "new": string, "revision": string], ["file", "old", "new", "revision"]),
                         tool("drive_edit_slides", "Edit native Google Slides using revision from drive_slides_get. replace_text replaces exact case-sensitive matches (optional slide ID limits to one slide). add_slide adds a title/body page. delete_slide removes a specified page, not the presentation file. Check the result before retrying after errors.", ["file": string, "revision": string, "action": ["type": "string", "enum": ["replace_text", "add_slide", "delete_slide"]], "slide": string, "old": string, "new": string, "title": string, "text": string, "index": ["type": "integer", "minimum": 0]], ["file", "revision", "action"]),
                         tool("drive_trash", "Move a Google Doc or Google Slides file to Drive trash. No permanent deletion and no folders. Use only when the user requests removal. Requires the exact name from a fresh read/list as confirmation. Google may automatically purge trash later; check Drive before retrying.", ["file": string, "confirm_name": string], ["file", "confirm_name"])]
@@ -106,9 +109,9 @@ final class DriveLink: ToolProvider {
         do {
             let result: [String: Any]
             switch name {
-            case "drive_create", "drive_edit_doc", "drive_edit_slides", "drive_trash":
-                identifier = try fileID(required(arguments, name == "drive_create" ? "folder" : "file"), roots: [])
-                result = try write(name, arguments, connection: connection, epoch: epoch)
+            case "drive_create", "drive_upload", "drive_edit_doc", "drive_edit_slides", "drive_trash":
+                identifier = try fileID(required(arguments, ["drive_create", "drive_upload"].contains(name) ? "folder" : "file"), roots: [])
+                result = try write(name, arguments, roots: context.roots, connection: connection, epoch: epoch)
             case "drive_slides_get":
                 identifier = try fileID(required(arguments, "file"), roots: context.roots)
                 try requireAllowed(identifier)
@@ -145,8 +148,8 @@ final class DriveLink: ToolProvider {
         }
         return (try? JSONSerialization.jsonObject(with: response.data) as? [String: Any]) ?? [:]
     }
-    private func write(_ tool: String, _ args: [String: Any], connection: Int, epoch: Int) throws -> [String: Any] {
-        let id = try fileID(required(args, tool == "drive_create" ? "folder" : "file"), roots: [])
+    private func write(_ tool: String, _ args: [String: Any], roots: [WorkspaceRoot], connection: Int, epoch: Int) throws -> [String: Any] {
+        let id = try fileID(required(args, ["drive_create", "drive_upload"].contains(tool) ? "folder" : "file"), roots: [])
         func validate() throws {
             guard connection == auth.connectionVersion, epoch == settingsEpoch, try isWritable(id) else {
                 throw GoogleFailure(message: "This Drive folder is read only or its permissions changed.")
@@ -226,6 +229,7 @@ final class DriveLink: ToolProvider {
         }
         let folder = try json(Self.api, ["files", id], ["fields": "mimeType", "supportsAllDrives": "true"])
         guard folder["mimeType"] as? String == types["folder"] else { throw GoogleFailure(message: "Choose a destination folder.") }
+        if tool == "drive_upload" { return try upload(args, folder: id, roots: roots, validate: validate) }
         let name = try required(args, "name"), kind = try required(args, "kind")
         guard ["folder", "text", "doc", "slides"].contains(kind), name.utf8.count <= 255 else { throw GoogleFailure(message: "Invalid name or file kind.") }
         let text = args["text"] as? String ?? ""
@@ -241,6 +245,55 @@ final class DriveLink: ToolProvider {
         body += data
         body += Data(("\r\n--" + boundary + "\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n" + text + "\r\n--" + boundary + "--\r\n").utf8)
         return try mutation(url(Self.uploadAPI, ["files"], ["uploadType": "multipart", "supportsAllDrives": "true", "fields": "id,name,webViewLink"]), method: "POST", body: body, contentType: "multipart/related; boundary=" + boundary, validate: validate)
+    }
+
+    // Resumable upload (any size up to the cap, one code path): metadata first, then the bytes to Google's session URL.
+    private func upload(_ args: [String: Any], folder id: String, roots: [WorkspaceRoot], validate: () throws -> Void) throws -> [String: Any] {
+        let path = try required(args, "path")
+        guard path.hasPrefix("/") else { throw GoogleFailure(message: "Give the absolute path of a file in this chat's linked folders.") }
+        let file = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath()
+        guard roots.contains(where: { root in
+            let base = URL(fileURLWithPath: root.path).standardizedFileURL.resolvingSymlinksInPath().path
+            return file.path == base || (root.directory && file.path.hasPrefix(base + "/"))
+        }) else { throw GoogleFailure(message: "This file is outside this chat's linked folders.") }
+        let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+        guard values?.isRegularFile == true, let bytes = values?.fileSize else { throw GoogleFailure(message: "Not a readable file. Folders cannot be uploaded.") }
+        guard bytes <= Self.maxUpload else { throw GoogleFailure(message: "File exceeds the 100 MB upload limit.") }
+        let ext = file.pathExtension.lowercased()
+        let source = UTType(filenameExtension: ext)?.preferredMIMEType ?? "application/octet-stream"
+        let imports = ["pptx": "slides", "ppt": "slides", "docx": "doc", "doc": "doc", "xlsx": "sheet", "xls": "sheet", "csv": "sheet"]
+        var name = (args["name"] as? String).flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 } ?? file.lastPathComponent
+        var metadata: [String: Any] = ["parents": [id]]
+        if args["convert"] as? Bool == true {
+            guard let target = imports[ext] else { throw GoogleFailure(message: "Only .pptx/.ppt/.docx/.doc/.xlsx/.xls/.csv can be converted. Upload without convert.") }
+            metadata["mimeType"] = types[target]!
+            if args["name"] as? String == nil { name = file.deletingPathExtension().lastPathComponent }
+        }
+        guard name.utf8.count <= 255 else { throw GoogleFailure(message: "Invalid name.") }
+        metadata["name"] = name
+        let data = try Data(contentsOf: file, options: .mappedIfSafe)
+        guard data.count == bytes else { throw GoogleFailure(message: "File changed while reading. Try again.") }
+        let token = try auth.accessToken()
+        try validate()
+        let start = try GoogleHTTP.send(url(Self.uploadAPI, ["files"], ["uploadType": "resumable", "supportsAllDrives": "true", "fields": "id,name,mimeType,webViewLink"]), method: "POST",
+            headers: ["Authorization": "Bearer " + token, "Content-Type": "application/json; charset=UTF-8", "X-Upload-Content-Type": source, "X-Upload-Content-Length": String(bytes)],
+            body: JSONSerialization.data(withJSONObject: metadata))
+        guard (200..<300).contains(start.status) else {
+            throw GoogleFailure(message: "Google Drive upload failed (HTTP \(start.status)). Check permissions and enabled APIs.", status: start.status)
+        }
+        // The session URL must stay on the upload host; never send the token anywhere else.
+        let location = start.headers.first { String(describing: $0.key).lowercased() == "location" }?.value as? String
+        guard let session = location.flatMap(URL.init(string:)), session.scheme == Self.uploadAPI.scheme, session.host == Self.uploadAPI.host, session.port == Self.uploadAPI.port else {
+            throw GoogleFailure(message: "Google returned an invalid upload session.")
+        }
+        try validate()
+        let sent = try GoogleHTTP.send(session, method: "PUT", headers: ["Authorization": "Bearer " + token, "Content-Type": source], body: data)
+        guard (200..<300).contains(sent.status) else {
+            throw GoogleFailure(message: "Google Drive upload failed (HTTP \(sent.status)). The file may be partly uploaded; check Drive before retrying.", status: sent.status)
+        }
+        var result = (try? JSONSerialization.jsonObject(with: sent.data) as? [String: Any]) ?? [:]
+        result["bytes"] = bytes; result["operation"] = "upload"
+        return result
     }
 
     private func slideStructure(_ id: String, _ args: [String: Any]) throws -> [String: Any] {

@@ -281,7 +281,7 @@ struct ChatView: View {
         return true
     }
 
-    // A project folder: click to open its TODO board (and unfold), the chevron to fold, + for a new chat in it,
+    // A project folder: click to open its TODO board, double-click or the chevron to fold or unfold, + for a new chat in it,
     // right-click to pin. Inside: its chats (each with its meetings) and the chats its TODOs work in.
     @ViewBuilder private func projectGroup(_ group: ProjectGroup) -> some View {
         let open = !folds.isFolded("project." + group.id)
@@ -385,13 +385,12 @@ struct ChatView: View {
         .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.accentColor, lineWidth: 2).opacity(folds.dropProject == group.id ? 1 : 0))
         .contentShape(Rectangle())
         .onDrop(of: [UTType.text], isTargeted: dropTargeted(group.id)) { providers in dropChat(providers, into: group) }
-        .onTapGesture {
-            // Clicking the folder already showing its board folds or unfolds it; otherwise it opens the board, unfolded.
-            if selected { folds.toggle(key) } else {
-                discussion.openBoard(project: group.id)
-                if !open { folds.toggle(key) }
-            }
+        // A click opens its board and leaves the fold alone; a double click (or the chevron) folds or unfolds it.
+        .onTapGesture(count: 2) {
+            if !selected { discussion.openBoard(project: group.id) }
+            folds.toggle(key)
         }
+        .onTapGesture { if !selected { discussion.openBoard(project: group.id) } }
         .onHover { inside in discussion.hover(key, inside) }
         .help((group.bindings.map(\.root) + [todoCount > 0 ? L("눌러서 프로젝트 정보·할 일 보드 (할 일 \(todoCount))", "Click for the project info and TODO board (\(todoCount) TODOs)")
                                                              : L("눌러서 프로젝트 정보·할 일 보드", "Click for the project info and TODO board")]).joined(separator: "\n"))

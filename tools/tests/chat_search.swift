@@ -239,6 +239,36 @@ func testChatTools() {
     let latest = ChatLink.reading(long, query: "", state: "")
     expect(latest.contains("[Turn 200]") && !latest.contains("[Turn 1]") && latest.count <= ChatLink.readLimit + 200, "no words: the latest turns that fit")
 
+    // A project chat may search only its own project's chats; elsewhere project_only is not offered.
+    let project = ProjectBinding(root: "/tmp/p", common: "", remote: "", remoteURL: "")
+    var inProject = Conversation(); inProject.title = "프로젝트 새 채팅"; inProject.turns = [ChatTurn(question: "청룡영화제 화면?")]
+    inProject.workspace = WorkspaceBinding(roots: [], project: project)
+    var sibling = Conversation(); sibling.title = "청룡영화제 TODO 방"; sibling.turns = [ChatTurn(question: "청룡영화제 버튼")]
+    sibling.workspace = WorkspaceBinding(roots: [], project: ProjectBinding(root: "/tmp/p", common: "", remote: "", remoteURL: ""))
+    var other = Conversation(); other.title = "다른 프로젝트 청룡영화제"; other.turns = [ChatTurn(question: "청룡영화제")]
+    other.workspace = WorkspaceBinding(roots: [], project: ProjectBinding(root: "/tmp/q", common: "", remote: "", remoteURL: ""))
+    host.conversations = chats + [inProject, sibling, other]
+    func inRoom(_ args: [String: Any]) -> (String, Bool) {
+        let r = link.call("search_chats", args, context: ToolContext(room: inProject.id, roots: [], asker: personal))
+        return (((r["content"] as? [[String: Any]])?.first?["text"] as? String) ?? "", r["isError"] as? Bool ?? false)
+    }
+    func schema(_ room: UUID) -> [String: Any] {
+        let search = link.tools(context: ToolContext(room: room, roots: [], asker: personal)).first { $0["name"] as? String == "search_chats" }
+        return (search?["inputSchema"] as? [String: Any])?["properties"] as? [String: Any] ?? [:]
+    }
+    expect(schema(inProject.id)["project_only"] != nil && schema(here.id)["project_only"] == nil, "project_only is offered only in a project chat")
+    let (onlyProject, _) = inRoom(["query": "청룡영화제", "project_only": true])
+    expect(onlyProject.contains("AI Illuminati 작업") && onlyProject.contains("TODO 방") && !onlyProject.contains("영화 이야기")
+           && !onlyProject.contains("다른 프로젝트") && !onlyProject.contains(inProject.id.uuidString), "project_only: only that project's other chats")
+    let (everywhere, _) = inRoom(["query": "청룡영화제"])
+    expect(everywhere.contains("영화 이야기") && everywhere.contains("다른 프로젝트"), "without it every open chat as before")
+    let marked = everywhere.split(separator: "\n").filter { $0.contains("· this project") }
+    expect(marked.count == 2 && marked.allSatisfy { $0.contains("AI Illuminati 작업") || $0.contains("TODO 방") }, "the same project's chats are marked")
+    let (none, _) = inRoom(["query": "날씨", "project_only": true])
+    expect(none.contains("No other chat of project"), "nothing in the project says so")
+    expect(reply("search_chats", ["query": "청룡영화제", "project_only": true], personal).1, "project_only outside a project is an error")
+    host.conversations = chats
+
     // The answering account reaches the tools through the invocation.
     var invocation = WorkspaceInvocation(binding: WorkspaceBinding(roots: [], face: true), room: here.id)
     invocation.account = school
@@ -251,7 +281,7 @@ func testChatTools() {
     let viaHub = ToolHub.shared.handle(["op": "call", "session": session, "name": "read_chat", "arguments": ["id": chats[0].id.uuidString]])
     let lockedViaHub = ToolHub.shared.handle(["op": "call", "session": session, "name": "read_chat", "arguments": ["id": research.id.uuidString]])
     expect(viaHub["isError"] as? Bool == false && lockedViaHub["isError"] as? Bool == true, "and the same rules hold there")
-    print("PASS: chat tools (offered with a known account, open chats for all, Enterprise chats for none, direct ids checked, this chat out, Enterprise chats read open ones, summary first, whole or matching turns within the limit)")
+    print("PASS: chat tools (offered with a known account, open chats for all, Enterprise chats for none, direct ids checked, this chat out, Enterprise chats read open ones, project_only, summary first, whole or matching turns within the limit)")
 }
 
 // Long-term memory (Memory.swift): the profile and facts go to every AI; the remember tool only with "AI saves on

@@ -17,6 +17,7 @@ struct ChatView: View {
     // The notes sit beside a chat that keeps at least this much.
     static let wide: CGFloat = 700
     static let notesWidth: CGFloat = 280
+    static let photoWidth: CGFloat = 400
 
     // Which side panels fit. Kept apart from the window size so resizing rebuilds the views only when one
     // of these changes, not on every frame of the drag.
@@ -26,6 +27,7 @@ struct ChatView: View {
     @ObservedObject private var folds = SidebarFold.shared
     @ObservedObject private var todos = TodoStore.shared
     @ObservedObject private var projectInfo = ProjectInfoStore.shared
+    @ObservedObject private var photo = PhotoViewer.shared
 
     var body: some View {
         let wide = layout.wide
@@ -38,6 +40,9 @@ struct ChatView: View {
         // Notes belong to a chat: a project folder (board or info) or another Mac's chat hides them, and they come
         // back when a chat of this Mac is open again.
         let notesShown = discussion.notesShown && !discussion.viewingBoard && discussion.viewingRemote == nil && discussion.viewingSpace == nil
+        // A clicked photo takes the notes' place on the right until it is closed.
+        let photoShown = photo.image != nil && !discussion.viewingBoard && discussion.viewingSpace == nil
+        let photoInline = inline ? layout.photoFit : layout.photoFitAlone
         Group {
             ZStack(alignment: .leading) {
                 findKey
@@ -49,12 +54,22 @@ struct ChatView: View {
                     // Never wider than what is left: something too wide is cut on the right, the sidebar stays whole.
                     chat(sidebarShown: inline, wide: wide)
                         .frame(minWidth: 0, maxWidth: .infinity).clipped()
-                    if notesShown && notesInline {
+                    if photoShown, photoInline, let image = photo.image {
+                        Divider().opacity(0.5)
+                        PhotoPanel(item: image) { photo.image = nil }
+                    } else if !photoShown && notesShown && notesInline {
                         Divider().opacity(0.5)
                         NotesPanel(room: discussion.currentID) { discussion.notesShown = false }
                     }
                 }
-                if notesShown && !notesInline {
+                if photoShown, !photoInline, let image = photo.image {
+                    HStack(spacing: 0) {
+                        Spacer(minLength: 0)
+                        PhotoPanel(item: image) { photo.image = nil }
+                            .background(Color(nsColor: .windowBackgroundColor))
+                            .shadow(color: .black.opacity(0.25), radius: 12)
+                    }
+                } else if !photoShown && notesShown && !notesInline {
                     HStack(spacing: 0) {
                         Spacer(minLength: 0)
                         NotesPanel(room: discussion.currentID) { discussion.notesShown = false }
@@ -78,7 +93,8 @@ struct ChatView: View {
                 .onAppear { layout.measure(geometry.size.width) }
                 .onChange(of: geometry.size.width) { layout.measure($0) }
         })
-        .onChange(of: discussion.currentID) { _ in discussion.sidebarOverlay = false }
+        .onChange(of: discussion.currentID) { _ in discussion.sidebarOverlay = false; photo.image = nil }
+        .onChange(of: discussion.viewingRemote == nil) { _ in photo.image = nil }
         .frame(minWidth: Self.minSize.width, minHeight: Self.minSize.height)
         .background(Color(nsColor: .textBackgroundColor))
         // A photo dropped anywhere in the window is attached, not only on the message box.
@@ -2309,11 +2325,12 @@ private struct TurnView: View, Equatable {
     private func attachedImages(_ images: [ChatImage]) -> some View {
         HStack(spacing: 8) {
             ForEach(images) { item in
-                Button(action: { NSWorkspace.shared.open(item.url) }) {
+                Button(action: { PhotoViewer.shared.show(item) }) {
                     AttachmentThumbnail(item: item, size: 120)
                 }
                 .buttonStyle(.plainHit)
                 .help(item.name)
+                .contextMenu { PhotoViewer.menu(item) }
                 .accessibilityLabel(L("첨부 이미지 열기: ", "Open attached image: ") + item.name)
             }
         }
@@ -2536,14 +2553,20 @@ private final class ChatLayout: ObservableObject {
     @Published private(set) var wide = true
     @Published private(set) var notesFit = true
     @Published private(set) var notesFitAlone = true
+    @Published private(set) var photoFit = true
+    @Published private(set) var photoFitAlone = true
 
     func measure(_ width: CGFloat) {
         let isWide = width >= ChatView.sidebarFits
         let fit = width - ChatView.sidebarWidth - 1 - ChatView.notesWidth >= ChatView.wide
         let fitAlone = width - ChatView.notesWidth >= ChatView.wide
+        let photo = width - ChatView.sidebarWidth - 1 - ChatView.photoWidth >= ChatView.wide
+        let photoAlone = width - ChatView.photoWidth >= ChatView.wide
         if isWide != wide { wide = isWide }
         if fit != notesFit { notesFit = fit }
         if fitAlone != notesFitAlone { notesFitAlone = fitAlone }
+        if photo != photoFit { photoFit = photo }
+        if photoAlone != photoFitAlone { photoFitAlone = photoAlone }
     }
 }
 
@@ -2622,7 +2645,7 @@ private struct NotesPanel: View {
     }
 }
 
-// Pictures an AI made: a row of thumbnails, each opening full size in Preview.
+// Pictures an AI made: a row of thumbnails, each opening full size on the right (PhotoPanel).
 private struct PictureStrip: View {
     let images: [ChatImage]
     let size: CGFloat
@@ -2630,15 +2653,71 @@ private struct PictureStrip: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 ForEach(images) { item in
-                    Button(action: { NSWorkspace.shared.open(item.url) }) {
+                    Button(action: { PhotoViewer.shared.show(item) }) {
                         AttachmentThumbnail(item: item, size: size)
                     }
                     .buttonStyle(.plainHit)
                     .help(item.name)
+                    .contextMenu { PhotoViewer.menu(item) }
                     .accessibilityLabel(L("그림 열기: ", "Open picture: ") + item.name)
                 }
             }
         }
+    }
+}
+
+// The photo clicked in the chat, shown on the right (no @State: see DriveUI.swift). Clicking it again closes it.
+private final class PhotoViewer: ObservableObject {
+    static let shared = PhotoViewer()
+    @Published var image: ChatImage?
+
+    func show(_ item: ChatImage) { image = image?.id == item.id ? nil : item }
+
+    // Preview and Finder stay one right-click away.
+    @ViewBuilder static func menu(_ item: ChatImage) -> some View {
+        Button(L("미리보기에서 열기", "Open in Preview")) { NSWorkspace.shared.open(item.url) }
+        Button(L("Finder에서 보기", "Show in Finder")) { NSWorkspace.shared.activateFileViewerSelecting([item.url]) }
+    }
+}
+
+// One photo at full panel width beside the chat; double-click opens it in Preview.
+private struct PhotoPanel: View {
+    let item: ChatImage
+    let close: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 6) {
+                Text(item.name).font(.system(size: 13, weight: .medium)).lineLimit(1).truncationMode(.middle)
+                WindowDragRegion().frame(maxWidth: .infinity, maxHeight: .infinity)
+                Button(action: { NSWorkspace.shared.open(item.url) }) {
+                    Image(systemName: "arrow.up.forward.square").font(.system(size: 12)).frame(width: 22, height: 22)
+                }
+                .buttonStyle(.plainHit).foregroundColor(.secondary)
+                .help(L("미리보기에서 열기", "Open in Preview"))
+                Button(action: close) { Image(systemName: "xmark").font(.system(size: 11)).frame(width: 22, height: 22) }
+                    .buttonStyle(.plainHit).foregroundColor(.secondary)
+                    .help(L("사진 닫기", "Close photo"))
+            }
+            .padding(.horizontal, 14).frame(height: 40)
+            Group {
+                // Chat pictures are stored at most 1600 px on a side (ImageStore), so reading the whole file is fine.
+                if let image = NSImage(contentsOf: item.url) {
+                    Image(nsImage: image).resizable().scaledToFit()
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                        .onTapGesture(count: 2) { NSWorkspace.shared.open(item.url) }
+                        .contextMenu { PhotoViewer.menu(item) }
+                        .accessibilityLabel(item.name)
+                } else {
+                    Text(L("사진을 열 수 없어요", "Could not open the photo")).font(.callout).foregroundColor(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(.horizontal, 12).padding(.bottom, 12)
+        }
+        .frame(width: ChatView.photoWidth)
+        .frame(maxHeight: .infinity)
+        .background(Color.primary.opacity(0.035))
     }
 }
 

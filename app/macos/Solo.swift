@@ -268,7 +268,7 @@ extension Discussion {
     }
 
     // An answer's <space-build>: checked, saved as a draft and shown as a card under the answer (the first one only).
-    // for="id": a change to that Space; from="id": a new one made from it. Either way its pictures go back in.
+    // for="id": a change to that Space; from="id": a new one made from it, its picture files copied to the draft.
     // Its <space-picture> requests are drawn first (drawSpacePictures), so this waits for them.
     func deliverSpaceBuild(_ reply: String, room: UUID, turn index: Int, cancellation: DebateCancellation? = nil) {
         let split = SpaceBuilder.split(reply)
@@ -276,14 +276,14 @@ extension Discussion {
         let target = split.target.flatMap { SpaceStore.manifest(at: SpaceStore.folder($0)) }
         let source = target ?? split.base.flatMap { SpaceStore.manifest(at: SpaceStore.folder($0)) }
         let sourceFolder = source.map { SpaceStore.folder($0.id) }
-        let kept = sourceFolder.map { SpacePictures.hide(SpaceStore.page($0)).kept } ?? []
+        let kept = sourceFolder.map { SpacePictures.hide(SpaceStore.html($0)).kept } ?? []
         var note: SpaceDraftNote
         if split.target != nil && target == nil {
             note = SpaceDraftNote(name: "Space", reason: L("고칠 Space를 찾지 못했어요", "The Space to change is gone"))
         } else {
             switch SpaceBuilder.parse(split.body, new: target == nil).flatMap({ build in
                 SpacePictures.requests(in: split.body ?? "").flatMap { found -> Result<String, SpaceBad> in
-                    // The Space's assets/ pictures go in as data: URLs (the preview reads no files); a redraw of one
+                    // The page keeps its assets/ references (the preview loads them from the files); a redraw of one
                     // named by file (from="assets/…") works from that picture.
                     var kept = kept, requests = found
                     for k in requests.indices {
@@ -293,7 +293,7 @@ extension Discussion {
                         }
                         if let at = kept.firstIndex(of: url) { requests[k].from = at + 1 } else { kept.append(url); requests[k].from = kept.count }
                     }
-                    let page = sourceFolder.map { SpaceAssets.inline(build.html, folder: $0) } ?? build.html
+                    let page = build.html
                     return drawSpacePictures(requests, page: page, kept: kept, room: room, turn: index, cancellation: cancellation)
                         .flatMap { made in SpacePictures.embed(page, made: made, kept: kept) }
                 }
@@ -301,7 +301,7 @@ extension Discussion {
             }) {
             case .failure(let bad): note = SpaceDraftNote(name: target?.name ?? "Space", reason: bad.reason)
             case .success(let build):
-                do { note = SpaceDraftNote(draft: try SpaceStore.saveDraft(build, over: target), name: target?.name ?? build.name ?? "Space") }
+                do { note = SpaceDraftNote(draft: try SpaceStore.saveDraft(build, over: target, assets: target == nil ? sourceFolder : nil), name: target?.name ?? build.name ?? "Space") }
                 catch { note = SpaceDraftNote(name: build.name ?? "Space", reason: error.localizedDescription) }
             }
             note.target = target?.id; note.baseVersion = target?.version
@@ -989,7 +989,7 @@ extension SpaceStore {
     func syncLibrary() -> [SpaceSyncNote] {
         dispatchPrecondition(condition: .onQueue(.main))
         let result = SpaceLibrary.sync { file in
-            Pictures.spaceDataURL(file, side: 1200).flatMap { url in url.firstIndex(of: ",").flatMap { Data(base64Encoded: String(url[url.index(after: $0)...])) } }
+            Pictures.spaceDataURL(file, side: 3072).flatMap { url in url.firstIndex(of: ",").flatMap { Data(base64Encoded: String(url[url.index(after: $0)...])) } }
         }
         result.reshaped.forEach(dataChanged)
         reload()

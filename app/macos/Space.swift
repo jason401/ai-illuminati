@@ -4,7 +4,7 @@ import Foundation
 // HTML page; it runs in an isolated web view (SpaceWeb.swift) with no network, no files and one bridge
 // (window.space: its own state, opening a chat/TODO/file/link, a notice, the theme). A Space belongs to the app,
 // not to a chat: spaces/<id>/ holds manifest.json, app.html (the code, written only after the checks here),
-// state.json (the user's data, written only through the bridge, at most 1 MB), versions/<n>/ (the code and the
+// state.json (the user's data, written only through the bridge, at most 10 MB), versions/<n>/ (the code and the
 // data before each change: Undo) and refine.json (the talk that changed it). An AI changes the code only, never the
 // data; when a change renames data keys it sends migrate(oldState), run in the web view and previewed first.
 
@@ -142,8 +142,11 @@ struct SpaceBuild: Equatable {
 
 struct SpaceBad: Error, Equatable { let reason: String }
 
+// total: the page with its assets/ files. They load from disk (SpaceAssetServer), so only the code (read by AIs) and
+// the data (sent whole into the page, written whole on every set) stay small.
 enum SpaceLimits {
-    static let html = 300_000, state = 1_000_000, migrate = 20_000, key = 100, name = 40, versions = 30, refine = 40
+    static let html = 300_000, state = 10_000_000, migrate = 20_000, key = 100, name = 40, versions = 30, refine = 40
+    static let total = 1_000_000_000
 }
 
 enum SpaceBuilder {
@@ -227,7 +230,7 @@ enum SpaceBuilder {
                    let schedule = try? JSONDecoder().decode(SpaceSchedule.self, from: data), schedule.valid { build.schedule = schedule }
             }
             if new, let state = section("space-state", in: body), !state.isEmpty {
-                guard state.utf8.count <= SpaceLimits.state else { throw SpaceBad(reason: L("처음 데이터가 1MB를 넘어요", "The first data is over 1 MB")) }
+                guard state.utf8.count <= SpaceLimits.state else { throw SpaceBad(reason: L("처음 데이터가 10MB를 넘어요", "The first data is over 10 MB")) }
                 guard let data = state.data(using: .utf8), (try? JSONSerialization.jsonObject(with: data)) is [String: Any] else {
                     throw SpaceBad(reason: L("<space-state>가 JSON 객체가 아니에요", "<space-state> is not a JSON object"))
                 }
@@ -256,7 +259,7 @@ enum SpaceBuilder {
         form action; meta refresh. Images only as data: URLs, inline SVG or a Space's own picture files written as assets/name.png.
         Keep every piece of user data in the state, never in the HTML. Bridge (window.space, ready before your script runs):
         space.state.get(key) → the saved value (a copy) or undefined; space.state.set(key, value) → Promise<bool>, saves at once,
-        JSON values, all data at most 1 MB; space.state.keys(); space.state.subscribe(fn(key, value)) → unsubscribe function;
+        JSON values, all data at most 10 MB; space.state.keys(); space.state.subscribe(fn(key, value)) → unsubscribe function;
         space.open({chat:"<chat id>"} | {todo:"<TODO id>"} | {file:"name in the chat's files folder"} | {url:"https://…"}) moves the
         user there (a link asks first); space.notify(text) shows a notice; space.theme = {dark: bool, accent: "#rrggbb", color}.
         Follow light and dark mode (prefers-color-scheme or space.theme.dark), use system-ui fonts, fit a narrow or wide window,
@@ -289,12 +292,12 @@ enum SpaceBuilder {
         guard !spaces.isEmpty else { return "" }
         let pages = spaces.map { manifest -> String in
             let folder = SpaceStore.folder(manifest.id)
-            let html = SpacePictures.hide(SpaceStore.page(folder))
+            let html = SpacePictures.hide(SpaceStore.html(folder))
             return """
                 [Space "\(manifest.name)" · id \(manifest.id) · icon \(manifest.icon) · color \(manifest.color) · version \(manifest.version)]
                 [Data shape — keys and types only]
                 \(SpaceStore.shape(SpaceStore.state(folder)))
-                \(html.kept.isEmpty ? "" : "space-kept:1 … space-kept:\(html.kept.count) stand for its pictures (the app keeps their bytes).\n")[Current app.html]
+                \(html.kept.isEmpty ? "" : "space-kept:1 … space-kept:\(html.kept.count) stand for its pictures (the app keeps their bytes).\n")assets/name are its picture files: keep those references.\n[Current app.html]
                 \(html.text)
                 [End of app.html]
                 """
@@ -366,8 +369,8 @@ enum SpaceCheck {
 
     // Why `html` is refused, or nil.
     static func problem(_ source: String) -> String? {
-        // Pictures put in by the app do not count toward the code's 300 KB, only toward the page's whole limit.
-        if source.utf8.count > SpacePictures.limit { return L("그림까지 합쳐 3MB를 넘어요", "It is over 3 MB with its pictures") }
+        // Pictures put in by the app do not count toward the code's 300 KB, only toward the Space's whole limit.
+        if source.utf8.count > SpaceLimits.total { return L("그림까지 합쳐 1GB를 넘어요", "It is over 1 GB with its pictures") }
         let code = SpacePictures.hide(source).text.utf8.count
         if code > SpaceLimits.html { return L("300KB를 넘어요 (\(code / 1000)KB)", "It is over 300 KB (\(code / 1000) KB)") }
         let html = namespaces.stringByReplacingMatches(in: source, range: NSRange(source.startIndex..., in: source), withTemplate: "ns:")
@@ -380,7 +383,7 @@ enum SpaceCheck {
         return nil
     }
 
-    static let csp = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:; media-src data:; form-action 'none'; base-uri 'none'; frame-src 'none'; worker-src 'none'; connect-src 'none'"
+    static let csp = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: space-asset:; font-src data: space-asset:; media-src data: space-asset:; form-action 'none'; base-uri 'none'; frame-src 'none'; worker-src 'none'; connect-src 'none'"
 
     // The page as loaded: our CSP first, before any of the AI's markup (its own <html>/<head> tags merge into these).
     static func document(_ html: String) -> String {
@@ -397,7 +400,7 @@ enum SpaceCheck {
 // in the page as a data: URL. Pictures already in the page reach the AI as space-kept:N, not as their bytes, and
 // are put back the same way, so any AI can change a page another one drew for.
 enum SpacePictures {
-    static let limit = 3_000_000, perAnswer = 4
+    static let perAnswer = 4
     static let dataURL = try! NSRegularExpression(pattern: #"data:image/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]{1000,}"#)
     private static let marker = try! NSRegularExpression(pattern: #"space-(image|kept):(\d+)"#)
 
@@ -426,13 +429,14 @@ enum SpacePictures {
             last = range.upperBound
         }
         text += String(html[last...])
-        guard text.utf8.count <= limit else { return .failure(SpaceBad(reason: L("그림까지 합쳐 3MB를 넘어요: 그림을 줄여 주세요", "Over 3 MB with its pictures: use fewer pictures"))) }
+        guard text.utf8.count <= SpaceLimits.total else { return .failure(SpaceBad(reason: L("그림까지 합쳐 1GB를 넘어요: 그림을 줄여 주세요", "Over 1 GB with its pictures: use fewer pictures"))) }
         return .success(text)
     }
 
     static func rule(draws: Bool, kept: Int) -> String {
-        let old = kept > 0 ? "space-kept:1 … space-kept:\(kept) in the page stand for pictures already in it (the app keeps their bytes): "
-            + "leave each marker where its picture should stay, move it or drop it as asked.\n" : ""
+        let old = "assets/name in the page are the Space's own picture files: keep each reference where its picture should stay.\n"
+            + (kept > 0 ? "space-kept:1 … space-kept:\(kept) in the page stand for pictures already in it (the app keeps their bytes): "
+            + "leave each marker where its picture should stay, move it or drop it as asked.\n" : "")
         return old + (draws
             ? "You can make pictures: when the request needs one (illustration, character, background, art), make it with your image "
               + "generation tool (no other commands), then write space-image:1 for the first picture you made in this answer, "
@@ -488,7 +492,7 @@ enum SpacePictures {
               + "ratio</space-picture> and write space-image:1 in the page (an <img> src or CSS url()); n=\"2\" for space-image:2 … "
               + "At most \(perAnswer). To change a picture already in the page, add <space-picture n=\"1\" from=\"K\">how to change it"
               + "</space-picture> and put space-image:1 where space-kept:K was: the drawer gets that picture to work from, and "
-              + "describe in words what stays. A ChatGPT account draws each one; the app shrinks it to at most 768 px and puts it in."
+              + "describe in words what stays (from=\"assets/name.png\" redraws a picture file of the Space). A ChatGPT account draws each one; the app shrinks it to at most 768 px and puts it in."
             : "[Space pictures] No ChatGPT account can draw here: draw with inline SVG or CSS, and say so if the user wants a painted picture."
     }
 }
@@ -551,7 +555,7 @@ final class SpaceStore: ObservableObject {
     // MARK: Data, only through the bridge (or Undo / migrate)
 
     // `state` with `value` (JSON text; nil removes the key) under `key`. Fails when the key is odd, the value is not
-    // JSON or the data would go over 1 MB.
+    // JSON or the data would go over 10 MB.
     static func setting(_ state: Data, key: String, json: String?) -> Result<Data, SpaceBad> {
         guard !key.isEmpty, key.count <= SpaceLimits.key else { return .failure(SpaceBad(reason: L("키 이름이 이상해요", "Bad key"))) }
         guard var object = (try? JSONSerialization.jsonObject(with: state)) as? [String: Any] else { return .failure(SpaceBad(reason: "state.json")) }
@@ -565,7 +569,7 @@ final class SpaceStore: ObservableObject {
             object.removeValue(forKey: key)
         }
         guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]) else { return .failure(SpaceBad(reason: "JSON")) }
-        guard data.count <= SpaceLimits.state else { return .failure(SpaceBad(reason: L("데이터가 1MB를 넘어 저장하지 않았어요", "The data would be over 1 MB, so nothing was saved"))) }
+        guard data.count <= SpaceLimits.state else { return .failure(SpaceBad(reason: L("데이터가 10MB를 넘어 저장하지 않았어요", "The data would be over 10 MB, so nothing was saved"))) }
         return .success(data)
     }
 
@@ -600,13 +604,16 @@ final class SpaceStore: ObservableObject {
     // MARK: Making Spaces
 
     // A checked build saved as a draft (an answer's preview card plays with it): spaces/.drafts/<id>/. A change to an
-    // existing Space keeps that Space's look unless it sends its own, and its migrate.
-    static func saveDraft(_ build: SpaceBuild, over target: SpaceManifest? = nil) throws -> String {
+    // existing Space keeps that Space's look unless it sends its own, and its migrate. A new Space made from another
+    // gets the picture files its page names from that one's folder (`assets`).
+    static func saveDraft(_ build: SpaceBuild, over target: SpaceManifest? = nil, assets: URL? = nil) throws -> String {
         let id = UUID().uuidString
         let folder = draftFolder(id)
         var manifest = SpaceManifest(id: id, name: build.name ?? target?.name ?? "Space")
         manifest.icon = build.icon ?? target?.icon ?? manifest.icon; manifest.color = build.color ?? target?.color ?? manifest.color
         manifest.schedule = build.schedule
+        if let assets { try SpaceAssets.copy(for: build.html, from: assets, to: folder) }
+        if let over = SpaceAssets.overLimit(build.html, folder: folder) { try? FileManager.default.removeItem(at: folder); throw SpaceBad(reason: over) }
         try write(Data(build.html.utf8), to: folder.appendingPathComponent("app.html"))
         try write(build.state ?? Data("{}".utf8), to: folder.appendingPathComponent("state.json"))
         if let migrate = build.migrate { try write(Data(migrate.utf8), to: folder.appendingPathComponent("migrate.js")) }
@@ -649,8 +656,9 @@ final class SpaceStore: ObservableObject {
 
     // A new Space from code and first data. `id` given: made once (migration), nil when it is already there.
     @discardableResult
+    // `assets`: a folder whose picture files the page names (a draft).
     static func make(name: String, icon: String, color: String, html: String, state: Data, origin: String?, template: String? = nil,
-                     schedule: SpaceSchedule? = nil, id: String = UUID().uuidString, order: Int = 0) throws -> SpaceManifest {
+                     schedule: SpaceSchedule? = nil, id: String = UUID().uuidString, order: Int = 0, assets: URL? = nil) throws -> SpaceManifest {
         let folder = folder(id)
         var manifest = SpaceManifest(id: id, name: String(name.prefix(SpaceLimits.name)))
         manifest.icon = icon; manifest.color = color; manifest.originChat = origin; manifest.template = template
@@ -658,6 +666,7 @@ final class SpaceStore: ObservableObject {
         // Written into a hidden folder and moved whole, so a half-made Space never shows.
         let temp = root.appendingPathComponent(".new-" + id)
         try? FileManager.default.removeItem(at: temp)
+        if let assets { try SpaceAssets.copy(for: html, from: assets, to: temp) }
         try write(Data(SpaceAssets.extract(html, into: temp).utf8), to: temp.appendingPathComponent("app.html"))
         try write(state, to: temp.appendingPathComponent("state.json"))
         try write(encode(manifest), to: temp.appendingPathComponent("manifest.json"))
@@ -674,7 +683,7 @@ final class SpaceStore: ObservableObject {
         let folder = Self.draftFolder(draft)
         guard Self.validID(draft), let found = Self.manifest(at: folder) else { throw SpaceBad(reason: L("미리보기를 찾지 못했어요", "The preview is gone")) }
         let made = try Self.make(name: found.name, icon: found.icon, color: found.color, html: Self.html(folder), state: Self.state(folder),
-                                 origin: origin?.uuidString, schedule: found.schedule, order: nextOrder())
+                                 origin: origin?.uuidString, schedule: found.schedule, order: nextOrder(), assets: folder)
         try? FileManager.default.removeItem(at: folder)
         reload()
         return made
@@ -715,8 +724,8 @@ final class SpaceStore: ObservableObject {
     // New code (and, after a migrate, new data): the code and data before go to versions/<version> first.
     func apply(_ id: String, html: String, state: Data? = nil, note: String, name: String? = nil, icon: String? = nil, color: String? = nil) throws {
         dispatchPrecondition(condition: .onQueue(.main))
-        if let problem = SpaceCheck.problem(html) { throw SpaceBad(reason: problem) }
-        if let state { guard state.count <= SpaceLimits.state, (try? JSONSerialization.jsonObject(with: state)) is [String: Any] else { throw SpaceBad(reason: L("새 데이터가 JSON 객체가 아니거나 1MB를 넘어요", "The new data is not a JSON object or is over 1 MB")) } }
+        if let problem = SpaceCheck.problem(html) ?? SpaceAssets.overLimit(html, folder: Self.folder(id)) { throw SpaceBad(reason: problem) }
+        if let state { guard state.count <= SpaceLimits.state, (try? JSONSerialization.jsonObject(with: state)) is [String: Any] else { throw SpaceBad(reason: L("새 데이터가 JSON 객체가 아니거나 10MB를 넘어요", "The new data is not a JSON object or is over 10 MB")) } }
         let folder = Self.folder(id)
         guard var manifest = Self.manifest(at: folder) else { throw SpaceBad(reason: L("Space를 찾지 못했어요", "Space not found")) }
         let saved = folder.appendingPathComponent("versions").appendingPathComponent(String(manifest.version))

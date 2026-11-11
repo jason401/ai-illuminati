@@ -15,12 +15,13 @@ struct SpaceSyncNote: Codable, Equatable {
     var version: Int?
 }
 
-// Pictures as files: spaces/<id>/assets/<name>, written in the page as assets/<name>. The web view reads no files, so
-// they go in as data: URLs when the page loads (inline); pictures the app gets as data: URLs (a ChatGPT drawing,
-// an older page) are moved out to files when the page is saved (extract). app.html stays small enough to edit.
+// Pictures as files: spaces/<id>/assets/<name>, written in the page as assets/<name>. The web view reads no files: they
+// load through space-asset:// (served, SpaceAssetServer), and go in as data: URLs only for a one-file export (inline).
+// Pictures the app gets as data: URLs (a ChatGPT drawing, an older page) are moved out to files when the page is saved
+// (extract). app.html stays small enough to edit, and a Space may hold up to SpaceLimits.total of files.
 enum SpaceAssets {
-    static let folder = "assets"
-    static let shrinkFrom = 600_000
+    static let folder = "assets", scheme = "space-asset"
+    static let shrinkFrom = 20_000_000
     // assets/name after a quote, "(", "=" or a space, and before a quote, ")", a space or ">".
     private static let reference = try! NSRegularExpression(pattern: #"(?<=["'(=\s])(?:\./)?assets/([A-Za-z0-9_-][A-Za-z0-9._-]{0,99})(?=["')\s>])"#)
 
@@ -40,7 +41,7 @@ enum SpaceAssets {
     }
 
     static func dataURL(_ name: String, folder: URL) -> String? {
-        guard !name.hasPrefix("."), !name.contains("/"), let data = try? Data(contentsOf: folder.appendingPathComponent(Self.folder).appendingPathComponent(name)),
+        guard let url = file(name, folder: folder), let data = try? Data(contentsOf: url, options: .mappedIfSafe),
               let type = mime(data) else { return nil }
         return "data:\(type);base64," + data.base64EncodedString()
     }
@@ -56,6 +57,45 @@ enum SpaceAssets {
             last = range.upperBound
         }
         return text + String(html[last...])
+    }
+
+    // The page as the web view loads it: each assets/name as space-asset://local/name.
+    static func served(_ html: String) -> String {
+        reference.stringByReplacingMatches(in: html, range: NSRange(html.startIndex..., in: html), withTemplate: scheme + "://local/$1")
+    }
+
+    // A picture file's name as the page may name it (no hidden files, no folders).
+    static func file(_ name: String, folder: URL) -> URL? {
+        guard !name.isEmpty, !name.hasPrefix("."), !name.contains("/"), name.utf8.count <= 100 else { return nil }
+        return folder.appendingPathComponent(Self.folder).appendingPathComponent(name)
+    }
+
+    // What a Space's files take: its assets/ folder (versions share them; they hold only code and data).
+    static func bytes(_ folder: URL) -> Int {
+        let dir = folder.appendingPathComponent(Self.folder)
+        let files = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey])) ?? []
+        return files.reduce(0) { sum, url in
+            let values = try? url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+            return sum + (values?.isRegularFile == true ? values?.fileSize ?? 0 : 0)
+        }
+    }
+
+    // Why `html` with `folder`'s files is over the whole limit, or nil.
+    static func overLimit(_ html: String, folder: URL) -> String? {
+        let total = html.utf8.count + bytes(folder)
+        guard total > SpaceLimits.total else { return nil }
+        return L("그림 파일까지 합쳐 1GB를 넘어요 (\(total / 1_000_000)MB)", "It is over 1 GB with its picture files (\(total / 1_000_000) MB)")
+    }
+
+    // The picture files `html` names, copied from one Space's folder to another (a new Space made from it). On APFS a
+    // copy is a clone, so big files cost nothing until one changes.
+    static func copy(for html: String, from source: URL, to target: URL) throws {
+        let fm = FileManager.default
+        for name in names(in: html) {
+            guard let from = file(name, folder: source), let to = file(name, folder: target), fm.fileExists(atPath: from.path), !fm.fileExists(atPath: to.path) else { continue }
+            try fm.createDirectory(at: to.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            try fm.copyItem(at: from, to: to)
+        }
     }
 
     static func extract(_ html: String, into folder: URL) -> String {
@@ -211,7 +251,7 @@ enum SpaceLibrary {
             manifest.version = 1; manifest.createdAt = Date(); manifest.originChat = nil; manifest.template = nil; manifest.order = order
         }
 
-        // Big picture files are made smaller before the page is checked against its 3 MB.
+        // Very big picture files are made smaller before the Space is checked against its 1 GB.
         let html = SpaceAssets.extract(SpaceStore.html(folder), into: folder)
         for name in SpaceAssets.names(in: html) {
             let file = folder.appendingPathComponent(SpaceAssets.folder).appendingPathComponent(name)
@@ -221,16 +261,16 @@ enum SpaceLibrary {
             try? SpaceStore.write(small, to: file)
         }
         let problem = html.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? L("app.html이 비어 있어요", "app.html is empty")
-            : SpaceCheck.problem(SpaceAssets.inline(html, folder: folder))
+            : SpaceCheck.problem(html) ?? (html != known ? SpaceAssets.overLimit(html, folder: folder) : nil)
 
-        // The data: one JSON object within 1 MB, else what was there before comes back.
+        // The data: one JSON object within 10 MB, else what was there before comes back.
         let stateFile = folder.appendingPathComponent("state.json")
         let moved = known == nil || stateMoved(id)
         var stateProblem: String?
         if moved, fm.fileExists(atPath: stateFile.path) || known != nil {
             let data = try? Data(contentsOf: stateFile)
             if data == nil || data!.count > SpaceLimits.state || !((try? JSONSerialization.jsonObject(with: data!)) is [String: Any]) {
-                stateProblem = L("state.json이 1MB 안의 JSON 객체가 아니어서 전의 데이터로 되돌렸어요", "state.json was not a JSON object within 1 MB, so the data before came back")
+                stateProblem = L("state.json이 10MB 안의 JSON 객체가 아니어서 전의 데이터로 되돌렸어요", "state.json was not a JSON object within 10 MB, so the data before came back")
                 if let data { try? SpaceStore.write(data, to: folder.appendingPathComponent("state.broken.json")) }
                 try? SpaceStore.write(known == nil ? Data("{}".utf8) : SpaceStore.state(kept), to: stateFile)
             }
@@ -301,12 +341,12 @@ enum SpaceLibrary {
         new one by editing these files directly; the user does not need to open the Space or apply anything.
         - One folder per Space, named by its id (letters, digits, hyphens): app.html (the page; rules below), manifest.json
           ({"name", "icon": SF Symbol name, "color": blue|purple|pink|red|orange|yellow|green|teal|gray}; leave its other keys),
-          state.json (the user's data: one JSON object, at most 1 MB) and assets/ (picture files).
+          state.json (the user's data: one JSON object, at most 10 MB) and assets/ (picture files).
         - Change: edit app.html, and manifest.json for its name, icon or color. Keep the data keys the page reads. Edit state.json
           only when the user asks to change their data or the page needs the data in another shape, and keep every value.
         - New: make a new folder (an English id such as coffee-tracker) with app.html and manifest.json, and state.json for first data.
         - Pictures: put files in the Space's assets/ and write assets/name.png in the page (src, CSS url() or a JS string); file
-          names of letters, digits, . _ -. The app puts them in when the page loads (at most 3 MB with the page).
+          names of letters, digits, . _ -. The app loads them from the files (at most 1 GB for a Space with its files).
         - Never touch versions/, refine.json or hidden files; delete a Space only when asked.
         - After your answer the app checks each changed page. A page that breaks the rules is put back (a new Space is set aside
           in .rejected/), the user sees why; a good change becomes a new version the user can undo. Say in a line what you changed.
@@ -321,8 +361,29 @@ enum SpaceLibrary {
 }
 
 // A Space as one HTML file that runs in any browser, apart from this app: its pictures inside, and a stand-in for
-// window.space that keeps the data in that browser (localStorage), starting from the data it has now.
+// window.space that keeps the data in that browser (localStorage), starting from the data it has now. A Space with
+// more files than `oneFile` goes out as a folder instead (index.html beside a copy of assets/): a browser chokes on a
+// page of hundreds of MB of data: URLs.
 enum SpaceExport {
+    static let oneFile = 50_000_000
+
+    static func fitsOneFile(_ id: String) -> Bool {
+        let folder = SpaceStore.folder(id)
+        return SpaceStore.html(folder).utf8.count + SpaceAssets.bytes(folder) * 4 / 3 <= oneFile
+    }
+
+    // `target`: a new folder (it must not be there yet).
+    static func folder(_ id: String, to target: URL) throws {
+        let fm = FileManager.default, folder = SpaceStore.folder(id)
+        guard let manifest = SpaceStore.manifest(at: folder) else { throw SpaceBad(reason: L("Space를 찾지 못했어요", "Space not found")) }
+        let html = SpaceStore.html(folder)
+        guard !html.isEmpty else { throw SpaceBad(reason: L("app.html이 비어 있어요", "app.html is empty")) }
+        try fm.createDirectory(at: target, withIntermediateDirectories: false)
+        let assets = folder.appendingPathComponent(SpaceAssets.folder)
+        if fm.fileExists(atPath: assets.path) { try fm.copyItem(at: assets, to: target.appendingPathComponent(SpaceAssets.folder)) }
+        try Data(document(page: html, manifest: manifest, state: SpaceStore.state(folder)).utf8).write(to: target.appendingPathComponent("index.html"), options: .atomic)
+    }
+
     static func document(_ id: String) -> String? {
         let folder = SpaceStore.folder(id)
         guard let manifest = SpaceStore.manifest(at: folder) else { return nil }

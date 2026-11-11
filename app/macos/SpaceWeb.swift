@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 import WebKit
 
 // A Space's page runs here, cut off from everything: a data store that keeps nothing, no base URL (so no file://),
@@ -175,6 +176,29 @@ enum SpaceBridge {
     }
 }
 
+// A page's assets/ files, read only, as space-asset://local/<name> (SpaceAssets.served): the one thing a page may
+// load besides data: URLs. Only that Space's folder; no hidden files, no subfolders. Files are mapped, not read, so a
+// big one costs memory only for what the web view takes.
+final class SpaceAssetServer: NSObject, WKURLSchemeHandler {
+    let folder: URL?
+    init(_ folder: URL?) { self.folder = folder }
+
+    func webView(_ webView: WKWebView, start task: WKURLSchemeTask) {
+        guard let url = task.request.url, url.host == "local", let folder,
+              let file = SpaceAssets.file(url.lastPathComponent, folder: folder), url.pathComponents.count == 2,
+              let data = try? Data(contentsOf: file, options: .alwaysMapped) else {
+            return task.didFailWithError(URLError(.fileDoesNotExist))
+        }
+        let type = SpaceAssets.mime(data) ?? UTType(filenameExtension: file.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
+        task.didReceive(HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1",
+                                        headerFields: ["Content-Type": type, "Content-Length": String(data.count), "Cache-Control": "no-store"])!)
+        task.didReceive(data)
+        task.didFinish()
+    }
+
+    func webView(_ webView: WKWebView, stop task: WKURLSchemeTask) {}
+}
+
 // The message handler without a strong reference back (WKUserContentController keeps its handlers).
 private final class SpaceWeakHandler: NSObject, WKScriptMessageHandlerWithReply {
     weak var target: SpacePage?
@@ -196,12 +220,14 @@ final class SpacePage: NSObject, WKNavigationDelegate, WKUIDelegate {
 
     init(host: SpaceStateHost, actions: SpaceActions) { self.host = host; self.actions = actions }
 
-    // Loads `html` once the rules are compiled; without them nothing loads and `done` gets the reason.
-    func load(_ html: String, color: String, in container: NSView?, done: @escaping (WKWebView?, String?) -> Void) {
+    // Loads `html` once the rules are compiled; without them nothing loads and `done` gets the reason. Its assets/
+    // pictures come from `assets` (a Space's or a draft's folder).
+    func load(_ html: String, assets: URL?, color: String, in container: NSView?, done: @escaping (WKWebView?, String?) -> Void) {
         SpaceRules.get { [weak self] rules, error in
             guard let self else { return }
             guard let rules else { return done(nil, L("격리 규칙을 준비하지 못해 Space를 열지 않았어요: ", "The isolation rules could not be prepared, so the Space was not opened: ") + (error ?? "")) }
             let config = SpaceRules.configuration(rules)
+            config.setURLSchemeHandler(SpaceAssetServer(assets), forURLScheme: SpaceAssets.scheme)
             config.userContentController.addUserScript(WKUserScript(source: SpaceBridge.guardScript, injectionTime: .atDocumentStart, forMainFrameOnly: false))
             config.userContentController.addUserScript(WKUserScript(source: SpaceBridge.script(state: self.host.stateData, theme: SpaceBridge.theme(color: color)),
                                                                      injectionTime: .atDocumentStart, forMainFrameOnly: true))
@@ -213,7 +239,7 @@ final class SpacePage: NSObject, WKNavigationDelegate, WKUIDelegate {
             view.allowsMagnification = false
             view.setValue(false, forKey: "drawsBackground")
             self.webView = view
-            view.loadHTMLString(SpaceCheck.document(html), baseURL: nil)
+            view.loadHTMLString(SpaceCheck.document(SpaceAssets.served(html)), baseURL: nil)
             done(view, nil)
         }
     }
@@ -281,6 +307,7 @@ final class SpacePage: NSObject, WKNavigationDelegate, WKUIDelegate {
 // A Space page in SwiftUI. A new `reload` value (another version, data put back) loads it again.
 struct SpaceWebView: NSViewRepresentable {
     let html: String
+    let assets: URL?
     let color: String
     let reload: String
     let host: () -> SpaceStateHost
@@ -313,7 +340,7 @@ struct SpaceWebView: NSViewRepresentable {
         let page = SpacePage(host: host(), actions: actions)
         page.onProblem = onProblem
         coordinator.page = page
-        page.load(html, color: color, in: container) { view, error in
+        page.load(html, assets: assets, color: color, in: container) { view, error in
             guard coordinator.page === page else { return }
             if let view {
                 view.frame = container.bounds
@@ -382,7 +409,7 @@ final class SpaceMigrator: NSObject, WKNavigationDelegate {
             let object = try? JSONSerialization.jsonObject(with: data)
             if let failed = (object as? [String: Any])?["__spaceError"] as? String { return self.finish(.failure(SpaceBad(reason: "migrate: " + failed))) }
             guard object is [String: Any], data.count <= SpaceLimits.state else {
-                return self.finish(.failure(SpaceBad(reason: L("migrate 결과가 1MB 이하 JSON 객체가 아니에요", "migrate did not return a JSON object within 1 MB"))))
+                return self.finish(.failure(SpaceBad(reason: L("migrate 결과가 10MB 이하 JSON 객체가 아니에요", "migrate did not return a JSON object within 10 MB"))))
             }
             self.finish(.success(data))
         }

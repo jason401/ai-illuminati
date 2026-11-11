@@ -178,7 +178,7 @@ extension Discussion {
         guard !request.isEmpty, refiner.busy[id] == nil, let manifest = SpaceStore.shared.manifest(id) else { return }
         guard let account = refineAccount(manifest) else { refiner.notes[id] = L("답할 계정이 없어요", "No account can answer"); return }
         let folder = SpaceStore.folder(id)
-        let html = SpacePictures.hide(SpaceStore.page(folder)), state = SpaceStore.state(folder), history = SpaceStore.refineLog(id)
+        let html = SpacePictures.hide(SpaceStore.html(folder)), state = SpaceStore.state(folder), history = SpaceStore.refineLog(id)
         let draws = account.provider == .codex
         SpaceStore.addRefine(id, SpaceRefineEntry(role: "user", text: request))
         let speaker = label(account)
@@ -291,9 +291,11 @@ enum SpaceStyle {
     }
 
     // One HTML file with its pictures and a stand-in for the bridge (SpaceExport): it runs in any browser, apart from
-    // this app, its data kept in that browser from the data the Space has now.
+    // this app, its data kept in that browser from the data the Space has now. A big one goes out as a folder.
     static func export(_ id: String) {
-        guard let manifest = SpaceStore.shared.manifest(id), let html = SpaceExport.document(id) else { NSSound.beep(); return }
+        guard let manifest = SpaceStore.shared.manifest(id) else { NSSound.beep(); return }
+        guard SpaceExport.fitsOneFile(id) else { return exportFolder(id, manifest) }
+        guard let html = SpaceExport.document(id) else { NSSound.beep(); return }
         let panel = NSSavePanel()
         panel.nameFieldStringValue = manifest.name.replacingOccurrences(of: "/", with: "-") + ".html"
         panel.allowedContentTypes = [.html]
@@ -305,6 +307,21 @@ enum SpaceStyle {
             NSWorkspace.shared.activateFileViewerSelecting([url])
         } catch {
             let alert = NSAlert(); alert.messageText = L("내보내지 못했어요", "Could not export"); alert.informativeText = error.localizedDescription; alert.runModal()
+        }
+    }
+
+    private static func exportFolder(_ id: String, _ manifest: SpaceManifest) {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = manifest.name.replacingOccurrences(of: "/", with: "-")
+        panel.message = L("그림 파일이 커서 폴더로 저장해요: 안의 index.html을 브라우저로 열면 돼요. 이 앱과 분리되고, 데이터는 지금 데이터에서 시작해 그 브라우저에 따로 저장돼요.",
+                          "Its picture files are big, so it is saved as a folder: open index.html in it with a browser. It is apart from this app; its data starts from the data now and is kept in that browser.")
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.trashItem(at: url, resultingItemURL: nil) }
+            try SpaceExport.folder(id, to: url)
+            NSWorkspace.shared.activateFileViewerSelecting([url.appendingPathComponent("index.html")])
+        } catch {
+            let alert = NSAlert(); alert.messageText = L("내보내지 못했어요", "Could not export"); alert.informativeText = (error as? SpaceBad)?.reason ?? error.localizedDescription; alert.runModal()
         }
     }
 
@@ -374,12 +391,12 @@ struct SpaceMainView: View {
                 if let pending = refiner.pending[id] {
                     previewBar(pending)
                     let state = pending.migrated ?? SpaceStore.state(SpaceStore.folder(id))
-                    SpaceWebView(html: pending.build.html, color: pending.build.color ?? manifest.color, reload: "preview-\(id)-\(pending.build.html.count)",
+                    SpaceWebView(html: pending.build.html, assets: SpaceStore.folder(id), color: pending.build.color ?? manifest.color, reload: "preview-\(id)-\(pending.build.html.count)",
                                  host: { SpaceMemoryHost(state) }, actions: SpaceActions(), onProblem: { refiner.notes[id] = $0 })
                         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.accentColor.opacity(0.6), lineWidth: 2))
                         .padding(.horizontal, 12)
                 } else {
-                    SpaceWebView(html: SpaceStore.page(SpaceStore.folder(id)), color: manifest.color,
+                    SpaceWebView(html: SpaceStore.html(SpaceStore.folder(id)), assets: SpaceStore.folder(id), color: manifest.color,
                                  reload: "\(id)-\(manifest.version)-\(store.stateVersion[id] ?? 0)",
                                  host: { SpaceFolderHost(SpaceStore.folder(id)) }, actions: discussion.spaceActions(id, origin: manifest.originChat),
                                  onProblem: { refiner.notes[id] = $0 })
@@ -530,7 +547,7 @@ struct SpaceDraftCard: View {
                 .controlSize(.small)
             } else if let draft = note.draft {
                 let folder = SpaceStore.draftFolder(draft)
-                SpaceWebView(html: SpaceStore.html(folder), color: SpaceStore.manifest(at: folder)?.color ?? "blue", reload: draft,
+                SpaceWebView(html: SpaceStore.html(folder), assets: folder, color: SpaceStore.manifest(at: folder)?.color ?? "blue", reload: draft,
                              host: { SpaceFolderHost(folder) }, actions: SpaceActions())
                     .frame(height: 380)
                     .clipShape(RoundedRectangle(cornerRadius: 10))

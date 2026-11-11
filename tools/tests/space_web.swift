@@ -74,7 +74,7 @@ let page = """
     out.initial = space.state.get('n');
     try { localStorage.setItem('k', 'v'); out.storage = 'open'; } catch (e) { out.storage = 'blocked'; }
     Promise.all(tries).then(async () => {
-      out.bigSet = await space.state.set('big', 'x'.repeat(1100000));
+      out.bigSet = await space.state.set('big', 'x'.repeat(10100000));
       out.bigGone = space.state.get('big') === undefined;
       out.setOK = await space.state.set('n', 42);
       out.direct = await window.webkit.messageHandlers.space.postMessage({op: 'run', cmd: 'ls'});
@@ -92,7 +92,7 @@ let spacePage = SpacePage(host: host, actions: SpaceActions(open: { opened.appen
 var problems: [String] = []
 spacePage.onProblem = { problems.append($0) }
 let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 300), styleMask: [.borderless], backing: .buffered, defer: true)
-spacePage.load(page, color: "blue", in: window.contentView) { view, error in
+spacePage.load(page, assets: nil, color: "blue", in: window.contentView) { view, error in
     guard let view else { fail("the page did not load: " + (error ?? "")) }
     window.contentView?.addSubview(view)
 }
@@ -120,11 +120,44 @@ for key in ["fetch", "fetchFile", "xhrFile", "socket", "worker", "evalCode", "po
 if connections != 0 { fail("\(connections) connection(s) reached the local server: \(requests)") }
 if out["initial"] as? Int != 1 { fail("state.get did not read the first data") }
 if out["setOK"] as? Bool != true || (try? JSONSerialization.jsonObject(with: host.stateData) as? [String: Any])?["n"] as? Int != 42 { fail("state.set did not save") }
-if out["bigSet"] as? Bool != false || out["bigGone"] as? Bool != true { fail("a write over 1 MB was not refused and undone") }
+if out["bigSet"] as? Bool != false || out["bigGone"] as? Bool != true { fail("a write over 10 MB was not refused and undone") }
 if out["direct"] as? Bool != false { fail("an unknown bridge call was not refused") }
 if spacePage.webView?.url?.absoluteString != "about:blank" { fail("the page navigated away: \(spacePage.webView?.url?.absoluteString ?? "nil")") }
 if !opened.isEmpty { fail("something was opened") }
 spacePage.close()
+
+// A Space's picture files load from its assets/ folder (SpaceAssetServer); nothing else there or elsewhere does, and
+// the page cannot read them as data.
+let assetFolder = FileManager.default.temporaryDirectory.appendingPathComponent("space-web-assets-\(UUID().uuidString)")
+let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 3, pixelsHigh: 2, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+                              isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 12, bitsPerPixel: 32)!
+try! FileManager.default.createDirectory(at: assetFolder.appendingPathComponent("assets"), withIntermediateDirectories: true)
+try! bitmap.representation(using: .png, properties: [:])!.write(to: assetFolder.appendingPathComponent("assets/cat.png"))
+try! bitmap.representation(using: .png, properties: [:])!.write(to: assetFolder.appendingPathComponent(".hidden.png"))
+let assetHost = SpaceMemoryHost(Data("{}".utf8))
+let assetPage = SpacePage(host: assetHost, actions: SpaceActions())
+let pictures = """
+    <img id=a src="assets/cat.png"><img id=b src='./assets/none.png'><img id=c src="space-asset://local/..%2F.hidden.png"><img id=d src="space-asset://other/cat.png">
+    <script>
+    const seen = id => new Promise(ok => { const i = document.getElementById(id); if (i.complete && i.naturalWidth) ok(i.naturalWidth); i.onload = () => ok(i.naturalWidth); i.onerror = () => ok(-1); });
+    Promise.all(['a', 'b', 'c', 'd'].map(seen)).then(async sizes => {
+      let read = 'blocked'; try { await fetch(document.getElementById('a').src); read = 'open'; } catch (e) {}
+      space.state.set('result', {sizes, read});
+    });
+    </script>
+    """
+assetPage.load(pictures, assets: assetFolder, color: "blue", in: window.contentView) { view, error in
+    guard let view else { fail("the picture page did not load: " + (error ?? "")) }
+    window.contentView?.addSubview(view)
+}
+func assetResult() -> [String: Any]? { (try? JSONSerialization.jsonObject(with: assetHost.stateData) as? [String: Any])?["result"] as? [String: Any] }
+let assetDeadline = Date().addingTimeInterval(10)
+while assetResult() == nil && Date() < assetDeadline { RunLoop.main.run(until: Date().addingTimeInterval(0.1)) }
+guard let assetOut = assetResult() else { fail("the picture page never reported") }
+if (assetOut["sizes"] as? [Int]) != [3, -1, -1, -1] { fail("only assets/cat.png should load: \(assetOut)") }
+if assetOut["read"] as? String != "blocked" { fail("the page read a picture file as data") }
+assetPage.close()
+try? FileManager.default.removeItem(at: assetFolder)
 
 // The built-in templates run under the same guard: they draw, and a check is saved through the bridge.
 func run(_ script: String, in page: SpacePage) -> Any? {
@@ -139,7 +172,7 @@ for template in SpaceTemplate.allCases {
     let data = SpaceMemoryHost(template.firstState())
     let shown = SpacePage(host: data, actions: SpaceActions())
     var loaded = false
-    shown.load(template.html, color: template.color, in: window.contentView) { view, _ in if let view { window.contentView?.addSubview(view); loaded = true } }
+    shown.load(template.html, assets: nil, color: template.color, in: window.contentView) { view, _ in if let view { window.contentView?.addSubview(view); loaded = true } }
     settle(1.5)
     guard loaded, (run("document.querySelector('h1') ? document.querySelector('h1').textContent : 'none'", in: shown) as? String) == template.name else {
         fail("the \(template.rawValue) template did not draw: \(String(describing: run("document.body.innerHTML.slice(0,200)", in: shown)))")

@@ -78,7 +78,7 @@ func testSpace() {
     if case .success = SpacePictures.embed("<img src=space-kept:1>", made: [], kept: []) { fatalError("a kept marker without its picture is refused") }
     let big = "data:image/png;base64," + String(repeating: "A", count: 200_000)
     expect(SpaceCheck.problem("<p>x</p>" + String(repeating: "<img src=\"\(big)\">", count: 3)) == nil, "pictures do not count toward the code's 300 KB")
-    expect(SpaceCheck.problem(String(repeating: "<img src=\"\(big)\">", count: 16)) != nil, "over 3 MB with pictures is refused")
+    expect(SpaceCheck.problem(String(repeating: "<img src=\"\(big)\">", count: 16)) == nil, "a few MB of pictures in the page are fine")
     expect(SpaceBuilder.rule.contains("data: URLs") && SpacePictures.rule(draws: true, kept: 0).contains("space-image:1")
            && !SpacePictures.rule(draws: false, kept: 0).contains("space-image") && SpacePictures.rule(draws: false, kept: 2).contains("space-kept:2"),
            "only an AI that can draw is told about space-image")
@@ -149,10 +149,10 @@ func testSpace() {
            "adding moves the draft into the sidebar's Spaces")
     expect((try? JSONSerialization.jsonObject(with: SpaceStore.state(folder)) as? [String: Any])?["n"] as? Int == 5, "what was checked in the preview comes along")
 
-    // Data: only JSON, at most 1 MB; a refused write changes nothing.
+    // Data: only JSON, at most 10 MB; a refused write changes nothing.
     if case .failure = SpaceStore.setState(folder, key: "done", json: #"{"a":true}"#) { fatalError("a JSON value is saved") }
     let before = SpaceStore.state(folder)
-    if case .success = SpaceStore.setState(folder, key: "big", json: "\"" + String(repeating: "x", count: SpaceLimits.state) + "\"") { fatalError("over 1 MB is refused") }
+    if case .success = SpaceStore.setState(folder, key: "big", json: "\"" + String(repeating: "x", count: SpaceLimits.state) + "\"") { fatalError("over 10 MB is refused") }
     if case .success = SpaceStore.setState(folder, key: "", json: "1") { fatalError("an empty key is refused") }
     if case .success = SpaceStore.setState(folder, key: "x", json: "not json") { fatalError("non-JSON is refused") }
     expect(SpaceStore.state(folder) == before, "a refused write leaves the data as it was")
@@ -307,7 +307,11 @@ func testSpaceLibrary() {
     let folder = SpaceStore.folder(made.id), stored = SpaceStore.html(folder)
     let file = "picture-\(SpaceAssets.hash(bytes)).png"
     expect(!stored.contains("base64") && stored.contains("assets/\(file)") && fm.fileExists(atPath: folder.appendingPathComponent("assets/\(file)").path), "pictures are kept as files")
-    expect(SpaceStore.page(folder) == page && SpacePictures.hide(SpaceStore.page(folder)).kept == [picture], "and go back in when the page loads")
+    expect(SpaceStore.page(folder) == page && SpacePictures.hide(stored).kept.isEmpty, "they go back in only for a one-file export, and AIs see their names")
+    expect(SpaceAssets.served(stored) == stored.replacingOccurrences(of: "assets/\(file)", with: "space-asset://local/\(file)")
+           && SpaceAssets.served("<img src='./assets/a.png'> url(assets/b.jpg)") == "<img src='space-asset://local/a.png'> url(space-asset://local/b.jpg)",
+           "the web view loads them from the files")
+    expect(SpaceAssets.bytes(folder) == bytes.count && SpaceAssets.overLimit(stored, folder: folder) == nil, "a Space's size counts its files")
     expect(store.syncLibrary().isEmpty, "nothing changed, nothing to say")
 
     // A good edit becomes a version (Undo works); a bad one is put back.
@@ -349,6 +353,36 @@ func testSpaceLibrary() {
     try! Data((stored + "<img src='assets/cat.png'>").utf8).write(to: folder.appendingPathComponent("app.html"))
     notes = store.syncLibrary()
     expect(notes.first?.kind == "changed" && SpaceStore.page(folder).hasSuffix("<img src='\(picture)'>"), "assets/cat.png is put in")
+
+    // Big files: a Space may hold up to 1 GB (a sparse file, so the test writes nothing real); over it a change is refused.
+    let huge = folder.appendingPathComponent("assets/huge.bin")
+    fm.createFile(atPath: huge.path, contents: nil)
+    let handle = try! FileHandle(forWritingTo: huge); try! handle.truncate(atOffset: UInt64(SpaceLimits.total - 100_000)); try! handle.close()
+    expect(SpaceAssets.overLimit(SpaceStore.html(folder), folder: folder) == nil, "under 1 GB with its files is fine")
+    do { try store.apply(made.id, html: SpaceStore.html(folder) + String(repeating: "<!-- x -->", count: 20_000), note: "big"); fatalError("over 1 GB is refused") } catch {}
+    try! Data((SpaceStore.html(folder) + String(repeating: "<!-- y -->", count: 20_000)).utf8).write(to: folder.appendingPathComponent("app.html"))
+    notes = store.syncLibrary()
+    expect(notes.first?.kind == "refused" && SpaceStore.html(folder).hasSuffix("<img src='assets/cat.png'>"), "an edit over 1 GB with its files is put back: \(notes)")
+    expect(!SpaceExport.fitsOneFile(made.id), "a big Space exports as a folder")
+    let out = fm.temporaryDirectory.appendingPathComponent("space-export-\(UUID().uuidString)")
+    try! fm.removeItem(at: huge)
+    try! SpaceStore.write(bytes, to: folder.appendingPathComponent("assets/other.png"))
+    try! SpaceExport.folder(made.id, to: out)
+    let index = (try? String(contentsOf: out.appendingPathComponent("index.html"), encoding: .utf8)) ?? ""
+    expect(index.contains("Object.defineProperty(window, 'space'") && index.contains("assets/cat.png") && !index.contains("base64")
+           && fm.fileExists(atPath: out.appendingPathComponent("assets/cat.png").path) && fm.fileExists(atPath: out.appendingPathComponent("assets/other.png").path),
+           "the folder export keeps the files beside its page")
+    try? fm.removeItem(at: out)
+    expect(SpaceExport.fitsOneFile(made.id), "a small one is one file")
+
+    // A new Space made from this one gets the picture files its page names.
+    let draft = try! SpaceStore.saveDraft(SpaceBuild(name: "복사본", html: "<img src='assets/cat.png'>"), assets: folder)
+    expect(fm.fileExists(atPath: SpaceStore.draftFolder(draft).appendingPathComponent("assets/cat.png").path)
+           && !fm.fileExists(atPath: SpaceStore.draftFolder(draft).appendingPathComponent("assets/other.png").path), "a draft from a Space copies the pictures it names")
+    let copied = try! store.adopt(draft: draft, origin: nil)
+    expect(try! Data(contentsOf: SpaceStore.folder(copied.id).appendingPathComponent("assets/cat.png")) == bytes, "and the new Space keeps them")
+    try! store.delete(copied.id)
+    _ = store.syncLibrary()
     expect(fm.fileExists(atPath: folder.appendingPathComponent("assets/\(file)").path), "pictures a kept version uses stay")
 
     // New folders: one named in words is added with that name; one with a bad page is set aside.

@@ -94,7 +94,10 @@ struct ChatView: View {
                 .onChange(of: geometry.size.width) { layout.measure($0) }
         })
         .onChange(of: discussion.currentID) { _ in discussion.sidebarOverlay = false; photo.image = nil }
+        // Leaving the chat (another Mac's chat, the board or a Space) closes the photo, so it does not come back later.
         .onChange(of: discussion.viewingRemote == nil) { _ in photo.image = nil }
+        .onChange(of: discussion.viewingBoard) { _ in photo.image = nil }
+        .onChange(of: discussion.viewingSpace == nil) { _ in photo.image = nil }
         .frame(minWidth: Self.minSize.width, minHeight: Self.minSize.height)
         .background(Color(nsColor: .textBackgroundColor))
         // A photo dropped anywhere in the window is attached, not only on the message box.

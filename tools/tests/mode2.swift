@@ -121,6 +121,11 @@ do {
     ]
     """, "an edit in the app saves accounts.json in the shared format")
     expect(AppModel().accounts.map(\.id) == ["codex-7"], "the next start reads the edit back")
+    // A list from a newer version (an unknown kind of AI) still starts with every account this version knows.
+    let newer = Data(#"[{"id":"codex-7","provider":"codex","name":"C"},{"id":"n","provider":"newer-ai","name":"N"},{"id":"gemini-main","provider":"gemini","name":"G"}]"#.utf8)
+    try! newer.write(to: URL(fileURLWithPath: path))
+    expect(AppModel().accounts.map(\.id) == ["codex-7", "gemini-main"], "an app start keeps the accounts next to an unknown entry")
+    expect(AccountStore.save(model.accounts), "save")
     let before = fm.contents(atPath: path)
     try? fm.removeItem(at: AccountStore.backupDir)
     try! Data().write(to: AccountStore.backupDir)

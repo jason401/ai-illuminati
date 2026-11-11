@@ -16,7 +16,8 @@ Feature and design notes live in `docs/`; read them only when the task needs the
   it `import <Name>` and see only its `public` names. Every `swiftc` that compiles app files runs
   `zsh tools/build_modules.sh <out>` first and adds `-I <out> <out>/lib<Name>.a`. A module's own test
   (`tools/tests/accounts_contract.swift`) is not enough when its behavior changes (save format, errors, folders):
-  run the full test, since unchanged `public` names do not mean unchanged behavior for its users.
+  run the tests its promise row in `docs/MODULES.md` names, or the full test when unsure: unchanged `public`
+  names do not mean unchanged behavior for its users.
 - Previews: `zsh tools/tests/render_chat.sh`, `zsh tools/tests/render_drive_tree.sh`.
 
 ## Never break: tests and previews are isolated from the real app

@@ -27,7 +27,8 @@ enum CollabMode: String, CaseIterable {
 }
 
 struct CollabEvent: Codable, Equatable {
-    enum Kind: String, Codable { case ask, meeting, review, outcome, request }
+    // review: a review of project changes (points found); reviewed: what the lead then took / left.
+    enum Kind: String, Codable { case ask, meeting, review, reviewed, outcome, request }
     var at = Date()
     var kind: Kind
     var chat: UUID
@@ -91,7 +92,7 @@ enum CollabLog {
     struct Summary: Equatable {
         var asks = 0, meetings = 0, failedAsks = 0, smallTalk = 0
         var yes = 0, partly = 0, no = 0, unknown = 0
-        var points = 0, taken = 0, left = 0
+        var reviews = 0, points = 0, taken = 0, left = 0
         var requests = 0, requestsAfterNone = 0
     }
 
@@ -109,7 +110,9 @@ enum CollabLog {
             case .outcome:
                 switch e.outcome { case "yes": s.yes += 1; case "partly": s.partly += 1; case "no": s.no += 1; default: s.unknown += 1 }
             case .review:
-                s.points += e.points ?? 0; s.taken += e.taken ?? 0; s.left += e.left ?? 0
+                s.reviews += 1; s.points += e.points ?? 0
+            case .reviewed:
+                s.taken += e.taken ?? 0; s.left += e.left ?? 0
             case .request:
                 s.requests += 1
                 if (e.priorCalls ?? 0) == 0 { s.requestsAfterNone += 1 }
@@ -119,8 +122,8 @@ enum CollabLog {
     }
 
     static func line(_ s: Summary) -> String {
-        guard s.asks + s.meetings + s.requests + s.points > 0 else { return L("아직 기록이 없어요.", "Nothing recorded yet.") }
-        return L("묻기 \(s.asks)번 · 회의 \(s.meetings)번 · 반영 \(s.yes) / 일부 \(s.partly) / 안 씀 \(s.no) · 검토 지적 \(s.points)개 중 반영 \(s.taken)개 · 인사에 부름 \(s.smallTalk)번 · 사용자가 직접 부탁 \(s.requests)번",
-                 "\(s.asks) asks · \(s.meetings) meetings · taken \(s.yes) / partly \(s.partly) / left \(s.no) · review \(s.taken) of \(s.points) points taken · \(s.smallTalk) on small talk · \(s.requests) asked by the user")
+        guard s.asks + s.meetings + s.requests + s.reviews > 0 else { return L("아직 기록이 없어요.", "Nothing recorded yet.") }
+        return L("묻기 \(s.asks)번 · 회의 \(s.meetings)번 · 반영 \(s.yes) / 일부 \(s.partly) / 안 씀 \(s.no) · 검토 \(s.reviews)번 · 지적 \(s.points)개 중 반영 \(s.taken)개 · 인사에 부름 \(s.smallTalk)번 · 사용자가 직접 부탁 \(s.requests)번",
+                 "\(s.asks) asks · \(s.meetings) meetings · taken \(s.yes) / partly \(s.partly) / left \(s.no) · \(s.reviews) reviews · \(s.taken) of \(s.points) points taken · \(s.smallTalk) on small talk · \(s.requests) asked by the user")
     }
 }

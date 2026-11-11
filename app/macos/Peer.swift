@@ -346,6 +346,11 @@ final class PeerLink: ToolProvider {
     }
     func held(_ id: UUID, in session: Session) -> HeldMeeting? { lock.lock(); defer { lock.unlock() }; return session.held[id] }
     func session(_ room: UUID) -> Session? { lock.lock(); defer { lock.unlock() }; return sessions[room] }
+    // Every asker's calls whose outcome is not logged yet; they count as logged from now.
+    func unreported(_ session: Session) -> [(String, ClosedRange<Int>)] {
+        lock.lock(); let askers = Array(session.asked.keys); lock.unlock()
+        return askers.compactMap { asker in unreported(session, asker: asker).map { (asker, $0) } }
+    }
     // The calls `asker` made in this answer whose outcome is not logged yet; they count as logged from now.
     func unreported(_ session: Session, asker: String) -> ClosedRange<Int>? {
         lock.lock(); defer { lock.unlock() }
@@ -441,7 +446,9 @@ extension Discussion {
     func beginPeer(id: UUID, index: Int, question: String, reviewers: [String] = [], binding: WorkspaceBinding,
                    cancellation: DebateCancellation) -> PeerLink.Session? {
         let mode = model.collaboration
-        let saved = savedConversation(id)
+        // A worker's own copy (made when the message was sent) already has this turn and the ones before it;
+        // savedConversation would wait for the main thread, which a test or an alert may be holding.
+        let saved = conversations.first { $0.id == id }
         let turnID = saved?.turns.indices.contains(index) == true ? saved?.turns[index].id : saved?.turns.last?.id
         if CollabLog.asksOthers(question) {
             let prior = saved.flatMap { $0.turns.indices.contains(index - 1) ? $0.turns[index - 1].peerNotes?.count : nil } ?? 0
@@ -458,10 +465,11 @@ extension Discussion {
             return !Peer.available(asker: asker, accounts: self.model.accounts, usage: self.model.latestUsage, lock: self.lock(of: id)).isEmpty
         }) { [weak self] asker, request in
             guard let self else { return "The other AI is unavailable. Continue on your own." }
-            // ask_peer (collaboration off) asks the reviewer of this work, as before ask_ai.
-            let to = mode == .off ? self.peerAccount(for: asker, reviewers: members.filter { $0 != asker?.id }, room: id).map(self.label) : request.to
-            let picked = Peer.pick(asker: asker, to: to, count: request.count, members: members, accounts: self.model.accounts,
-                                   usage: self.model.latestUsage, lock: self.lock(of: id), label: self.label)
+            // ask_peer (collaboration off) asks only the reviewer of this work, as before ask_ai; nobody else instead.
+            let picked = mode == .off
+                ? (accounts: self.peerAccount(for: asker, reviewers: members.filter { $0 != asker?.id }, room: id).map { [$0] } ?? [], note: nil)
+                : Peer.pick(asker: asker, to: request.to, count: request.count, members: members, accounts: self.model.accounts,
+                            usage: self.model.latestUsage, lock: self.lock(of: id), label: self.label)
             let note = picked.note.map { "[\($0)]\n" } ?? ""
             guard !picked.accounts.isEmpty, !cancellation.isCancelled else { return note + "No other AI is available. Continue on your own." }
             let askerName = asker.map(self.label) ?? "The AI"
@@ -538,8 +546,18 @@ extension Discussion {
         }
     }
 
+    // The answer ended (also failed or stopped): calls whose outcome nobody reported are logged as unknown.
     func endPeer(_ session: PeerLink.Session?) {
-        if let session { PeerLink.shared.close(session) }
+        if let session {
+            PeerLink.shared.close(session)
+            for (asker, calls) in PeerLink.shared.unreported(session) where !session.legacy {
+                let kind = model.accounts.first { $0.id == asker }?.provider.rawValue
+                for n in calls {
+                    CollabLog.add(CollabEvent(kind: .outcome, chat: session.room, turn: session.turn, mode: session.mode.rawValue, from: asker.isEmpty ? nil : asker,
+                                              fromKind: kind, call: n, outcome: "unknown"))
+                }
+            }
+        }
         activePeerSession = nil
     }
 
@@ -605,6 +623,9 @@ extension Discussion {
             turn.status = ""
         }
         reviewed(!finished.failed && !token.isCancelled)   // false: the review failed, timed out or was stopped
+        CollabLog.add(CollabEvent(kind: .review, chat: id, turn: activePeerSession?.turn, mode: (activePeerSession?.mode ?? model.collaboration).rawValue,
+                                  from: worker.id, fromKind: worker.provider.rawValue, to: [peer.id], toKinds: [peer.provider.rawValue], purpose: "changes",
+                                  failed: finished.failed ? 1 : 0, points: findings?.points ?? 0))
         return token.isCancelled ? nil : findings
     }
 
@@ -612,7 +633,7 @@ extension Discussion {
     func markReview(id: UUID, index: Int, _ findings: ReviewFindings, counts: (taken: Int, left: Int)?) {
         let line = Peer.tallyLine(points: findings.points, counts: counts)
         let session = activePeerSession
-        CollabLog.add(CollabEvent(kind: .review, chat: id, turn: session?.turn, mode: (session?.mode ?? model.collaboration).rawValue,
+        CollabLog.add(CollabEvent(kind: .reviewed, chat: id, turn: session?.turn, mode: (session?.mode ?? model.collaboration).rawValue,
                                   points: findings.points, taken: counts?.taken, left: counts?.left))
         changeTurn(id, index, save: true) { turn in
             guard let i = turn.peerNotes?.firstIndex(where: { $0.id == findings.entry }) else { return }

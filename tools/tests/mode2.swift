@@ -4,8 +4,35 @@ import UniformTypeIdentifiers
 
 GoogleAuth.shared = GoogleAuth(store: MemoryGoogleStore())
 
+// A stuck test used to hang the whole run with only the last PASS line on screen: every check and test marks
+// progress, and after `stuckAfter` seconds without any the run names where it stopped and exits.
+let progressLock = NSLock()
+var progressAt = Date(), progressTest = "start", progressCheck = ""
+let stuckAfter: TimeInterval = 120
+func markProgress(test: String? = nil, check: String? = nil) {
+    progressLock.lock(); progressAt = Date(); if let test { progressTest = test }; if let check { progressCheck = check }; progressLock.unlock()
+}
+Thread.detachNewThread {
+    while true {
+        Thread.sleep(forTimeInterval: 5)
+        progressLock.lock(); let idle = Date().timeIntervalSince(progressAt), test = progressTest, check = progressCheck; progressLock.unlock()
+        if idle > stuckAfter {
+            FileHandle.standardError.write(Data("FAIL: no progress for \(Int(idle)) s in \(test) (last passed check: \(check))\n".utf8))
+            exit(3)
+        }
+    }
+}
 func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
     if !condition() { fatalError(message) }
+    markProgress(check: message)
+}
+// One test function: its name before, its time after (slow ones stand out).
+func runTest(_ name: String, _ test: () -> Void) {
+    markProgress(test: name)
+    print("▶ \(name)"); fflush(stdout)
+    let start = Date()
+    test()
+    print("  \(name): \(String(format: "%.1f", Date().timeIntervalSince(start))) s"); fflush(stdout)
 }
 func waitFor(_ discussion: Discussion) {
     let deadline = Date().addingTimeInterval(5)
@@ -2474,47 +2501,47 @@ do {
 }
 
 
-testGoogleDrive()
+runTest("testGoogleDrive", testGoogleDrive)
 
-testWindowDrag()
+runTest("testWindowDrag", testWindowDrag)
 
-testProjectWork()
-testAskAI()
-testCollabLog()
-testMeetingTool()
-testProjectCreate()
-testUpdateChannels()
-testDeviceSync()
+runTest("testProjectWork", testProjectWork)
+runTest("testAskAI", testAskAI)
+runTest("testCollabLog", testCollabLog)
+runTest("testMeetingTool", testMeetingTool)
+runTest("testProjectCreate", testProjectCreate)
+runTest("testUpdateChannels", testUpdateChannels)
+runTest("testDeviceSync", testDeviceSync)
 
-testProjectHandoff()
-testDocumentsProject()
-testDisconnectProjectFolder()
-testStartTurn()
-testTodoStore()
-testTodoScheduler()
-testSidebarProjects()
-testFinishedTodoCleanup()
-testMoveChatToProject()
-testProjectInfo()
-testTodoAttachments()
-testTodoPause()
-testTodoEdit()
-testTodoAddTool()
-testTodoEditTool()
-testTodoCrew()
-testTodoTime()
-testProjectSnapshot()
-testFullAuto()
-testWorkTiming()
-testPeerReview()
-testPickedRoute()
-testAutoMeeting()
-testEnterpriseMarks()
-testMeetingFold()
-testChatFind()
-testChatSearch()
-testChatTools()
-testMemory()
+runTest("testProjectHandoff", testProjectHandoff)
+runTest("testDocumentsProject", testDocumentsProject)
+runTest("testDisconnectProjectFolder", testDisconnectProjectFolder)
+runTest("testStartTurn", testStartTurn)
+runTest("testTodoStore", testTodoStore)
+runTest("testTodoScheduler", testTodoScheduler)
+runTest("testSidebarProjects", testSidebarProjects)
+runTest("testFinishedTodoCleanup", testFinishedTodoCleanup)
+runTest("testMoveChatToProject", testMoveChatToProject)
+runTest("testProjectInfo", testProjectInfo)
+runTest("testTodoAttachments", testTodoAttachments)
+runTest("testTodoPause", testTodoPause)
+runTest("testTodoEdit", testTodoEdit)
+runTest("testTodoAddTool", testTodoAddTool)
+runTest("testTodoEditTool", testTodoEditTool)
+runTest("testTodoCrew", testTodoCrew)
+runTest("testTodoTime", testTodoTime)
+runTest("testProjectSnapshot", testProjectSnapshot)
+runTest("testFullAuto", testFullAuto)
+runTest("testWorkTiming", testWorkTiming)
+runTest("testPeerReview", testPeerReview)
+runTest("testPickedRoute", testPickedRoute)
+runTest("testAutoMeeting", testAutoMeeting)
+runTest("testEnterpriseMarks", testEnterpriseMarks)
+runTest("testMeetingFold", testMeetingFold)
+runTest("testChatFind", testChatFind)
+runTest("testChatSearch", testChatSearch)
+runTest("testChatTools", testChatTools)
+runTest("testMemory", testMemory)
 
 // Outside MCP servers (Settings → MCP): saved in their own file, run by the app, offered as "<server>__<tool>".
 func testExternalMCP() {
@@ -2664,7 +2691,7 @@ func testExternalMCP() {
     expect(mcp.loadError == nil && mcp.servers.isEmpty, "no file: no servers")
     print("PASS: outside MCP servers (own file, renamed tools, slow calls, Enterprise, switch, import, damaged file)")
 }
-testExternalMCP()
+runTest("testExternalMCP", testExternalMCP)
 
 // Remote MCP servers (RemoteMCP.swift) against a loopback fixture: modern and older Streamable HTTP, an API key,
 // OAuth with DCR and refresh, x-mcp-header, tool rules and approval, secrets kept out of mcp-servers.json.
@@ -2796,7 +2823,7 @@ func testRemoteMCP() {
     try? FileManager.default.removeItem(at: ExternalMCP.file)
     print("PASS: remote MCP servers (paste, modern/older HTTP, key, OAuth, header params, tool rules, secrets)")
 }
-testRemoteMCP()
+runTest("testRemoteMCP", testRemoteMCP)
 
 // Chat Markdown: one ~ is a range, not strikethrough; headings and tables are drawn.
 func testChatMarkdown() {
@@ -2818,7 +2845,7 @@ func testChatMarkdown() {
     expect(ChatMarkdown.blocks("#hashtag\na | b\nno separator") == [.text("#hashtag\na | b\nno separator")], "lookalikes stay text")
     print("PASS: chat Markdown (single ~ ranges, ~~ strikethrough, code kept, headings, tables, rules, fences)")
 }
-testChatMarkdown()
+runTest("testChatMarkdown", testChatMarkdown)
 
 // Long chats: the chat window draws the latest turns; switching or closing starts again from them.
 func testShownTurns() {
@@ -2839,7 +2866,7 @@ func testShownTurns() {
     expect(chat.shownTurns == Discussion.turnPage, "closing the window shows the latest turns next time")
     print("PASS: long chats show the latest turns after switching or reopening")
 }
-testShownTurns()
+runTest("testShownTurns", testShownTurns)
 
 func testChatNotes() {
     let room = UUID()
@@ -2869,9 +2896,9 @@ func testChatNotes() {
     expect(!FileManager.default.fileExists(atPath: file.path), "clearing the notes removes the file")
     print("PASS: chat notes are the user's, saved per chat, read by the AI")
 }
-testChatNotes()
-testSpace()
-testSpaceLibrary()
+runTest("testChatNotes", testChatNotes)
+runTest("testSpace", testSpace)
+runTest("testSpaceLibrary", testSpaceLibrary)
 
 func testChatTime() {
     // macOS puts a narrow no-break space before AM/PM.
@@ -2904,7 +2931,7 @@ func testChatTime() {
     expect(back.askedAt == today && back.answeredAt == now, "times are saved with the turn")
     print("PASS: chat times (today, yesterday, earlier, day lines, older chats without times)")
 }
-testChatTime()
+runTest("testChatTime", testChatTime)
 
 func testCloudModels() {
     let defaults = UserDefaults(suiteName: "cloud-models-" + UUID().uuidString)!
@@ -2951,4 +2978,4 @@ func testCloudModels() {
            && CloudModels.seenTitle("claude-fable-5-1", picked: "fable") == "Fable 5.1", "a typed [1m] stays in the title")
     print("PASS: cloud models (Auto, per account, CLI options, invalid names, Codex and agy lists, Claude versions)")
 }
-testCloudModels()
+runTest("testCloudModels", testCloudModels)

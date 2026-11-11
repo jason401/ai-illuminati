@@ -39,8 +39,9 @@ func testCollabLog() {
     let summary = CollabLog.summary([
         CollabEvent(kind: .ask, chat: chatID, failed: 1, smallTalk: true), CollabEvent(kind: .ask, chat: chatID), CollabEvent(kind: .meeting, chat: chatID),
         CollabEvent(kind: .outcome, chat: chatID, outcome: "yes"), CollabEvent(kind: .outcome, chat: chatID, outcome: "unknown"),
-        CollabEvent(kind: .review, chat: chatID, points: 3, taken: 2, left: 1), CollabEvent(kind: .request, chat: chatID, priorCalls: 0)])
-    expect(summary == CollabLog.Summary(asks: 2, meetings: 1, failedAsks: 1, smallTalk: 1, yes: 1, partly: 0, no: 0, unknown: 1, points: 3, taken: 2, left: 1,
+        CollabEvent(kind: .review, chat: chatID, failed: 0, points: 3), CollabEvent(kind: .review, chat: chatID, failed: 0, points: 0),
+        CollabEvent(kind: .reviewed, chat: chatID, points: 3, taken: 2, left: 1), CollabEvent(kind: .request, chat: chatID, priorCalls: 0)])
+    expect(summary == CollabLog.Summary(asks: 2, meetings: 1, failedAsks: 1, smallTalk: 1, yes: 1, partly: 0, no: 0, unknown: 1, reviews: 2, points: 3, taken: 2, left: 1,
                                         requests: 1, requestsAfterNone: 1), "the summary counts calls, outcomes, review points, small talk and the user's requests")
     expect(CollabLog.line(CollabLog.Summary()) == L("아직 기록이 없어요.", "Nothing recorded yet."), "empty log line")
 
@@ -67,6 +68,44 @@ func testCollabLog() {
     expect(Peer.rule(peers: ["G"]).contains("<ai-taken>") && !Peer.legacyRule(peer: "G").contains("ask_ai") && Peer.legacyRule(peer: "G").contains("ask_peer"),
            "the rule asks for the tag; the old rule names only ask_peer")
 
+    // Off: ask_peer asks only this work's reviewer; a reviewer that cannot answer means nobody, not another AI.
+    let claude2 = Account(id: "collab-claude-2", provider: .claude, name: "C2")
+    let offModel = AppModel(persist: false)
+    offModel.accounts = [claude, codex, claude2]; offModel.collaboration = .off
+    let offChat = Discussion(model: offModel)
+    offChat.configure { $0.mode = 0 }
+    var offAsked: [String] = []
+    offChat.workspaceAnswer = { account, _, _, _, _ in offAsked.append(account.id); return .success("ok") }
+    var work = WorkspaceBinding(roots: [])
+    work.project = ProjectBinding(root: "/tmp/collab-none", common: "", remote: "", remoteURL: "")
+    expect(offChat.beginPeer(id: offChat.currentID, index: 0, question: "q", binding: work, cancellation: DebateCancellation()) == nil, "off without reviewers: no session")
+    let offSession = offChat.beginPeer(id: offChat.currentID, index: 0, question: "q", reviewers: [codex.id], binding: work, cancellation: DebateCancellation())
+    let offContext = ToolContext(room: offChat.currentID, roots: [], asker: claude, turn: offSession?.turn)
+    // Tools run on the tool server's thread in the app; the answers check the chat on the main thread, so it must stay free.
+    func call(_ tool: String, _ message: String, _ context: ToolContext) -> String {
+        var reply: String?
+        DispatchQueue.global().async { let r = text(PeerLink.shared.call(tool, ["message": message], context: context)); DispatchQueue.main.async { reply = r } }
+        let deadline = Date().addingTimeInterval(10)
+        while reply == nil && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+        expect(reply != nil, "\(tool) answered in time")
+        return reply ?? ""
+    }
+    _ = call("ask_peer", "plan", offContext)
+    expect(offAsked == [codex.id], "off: ask_peer asks the reviewer")
+    var signedOut = AIUsage(name: "u"); signedOut.needsLogin = true
+    offModel.latestUsage[codex.id] = signedOut
+    let none = call("ask_peer", "again", offContext)
+    expect(none.contains("No other AI") && offAsked == [codex.id], "off: the reviewer signed out, nobody else is asked")
+    offChat.endPeer(offSession)
+    // An answer that ends without saying what it took (failed or stopped): its calls are logged as unknown.
+    offModel.collaboration = .notify; offModel.latestUsage = [:]
+    let open = offChat.beginPeer(id: offChat.currentID, index: 0, question: "q", binding: WorkspaceBinding(roots: []), cancellation: DebateCancellation())
+    _ = call("ask_ai", "x", ToolContext(room: offChat.currentID, roots: [], asker: claude, turn: open?.turn))
+    offChat.endPeer(open)
+    let ended = CollabLog.events().filter { $0.chat == offChat.currentID }
+    expect(ended.filter { $0.kind == .outcome }.map(\.outcome) == ["unknown"] && ended.first { $0.kind == .outcome }?.from == claude.id
+           && ended.first { $0.kind == .ask && $0.purpose == "ask_peer" }?.to == [codex.id], "unreported calls end as unknown; ask_peer is logged")
+
     // Through a real send.
     func run(_ mode: CollabMode, _ message: String, ask: Bool) -> (chat: Discussion, tools: [String], instruction: String) {
         let model = AppModel(persist: false)
@@ -85,7 +124,7 @@ func testCollabLog() {
             return .success("Checked: " + text(reply) + "\n<ai-taken>1=partly</ai-taken>")
         }
         chat.draft = message; chat.send()
-        let deadline = Date().addingTimeInterval(30)
+        let deadline = Date().addingTimeInterval(10)
         while Date() < deadline && (chat.anyRunning || chat.current.turns.last?.final == nil) { RunLoop.main.run(until: Date().addingTimeInterval(0.03)) }
         let closing = Date().addingTimeInterval(5)
         while Date() < closing && PeerLink.shared.session(chat.currentID) != nil { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
@@ -102,8 +141,10 @@ func testCollabLog() {
     expect(last?.final?.contains("Checked:") == true && last?.final?.contains("ai-taken") == false, "the tag is not shown")
     let logged = CollabLog.events().filter { $0.chat == auto.chat.currentID }
     let ask = logged.first { $0.kind == .ask }, outcome = logged.first { $0.kind == .outcome }
-    expect(ask?.mode == "auto" && ask?.purpose == "fact_check" && ask?.call == 1 && ask?.to?.count == 1 && ask?.from != nil && ask?.to?.first != ask?.from
-           && ask?.failed == 0 && ask?.smallTalk == false && ask?.turn == last?.id, "the ask is logged: who asked whom, why, how it went")
+    // Short checks: one long chain of optionals takes the type checker a long time.
+    expect(ask?.mode == "auto" && ask?.purpose == "fact_check" && ask?.call == 1, "the ask is logged: mode, why, which call")
+    expect(ask?.to?.count == 1 && ask?.from != nil && ask?.to?.first != ask?.from, "the ask is logged: who asked whom")
+    expect(ask?.failed == 0 && ask?.smallTalk == false && ask?.turn == last?.id, "the ask is logged: how it went, for which turn")
     expect(outcome?.outcome == "partly" && outcome?.call == 1 && outcome?.from == ask?.from, "and what the asking AI says it took")
     let raw = (try? String(contentsOf: CollabLog.file, encoding: .utf8)) ?? ""
     expect(!raw.contains("SECRET-QUESTION-TEXT") && !raw.contains("Looks right") && !raw.contains("이 숫자"), "no message, reply or question text in the log")

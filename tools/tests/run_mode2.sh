@@ -9,6 +9,14 @@ real_accounts() { [[ -f "$REAL_ACCOUNTS" ]] && shasum -a 256 "$REAL_ACCOUNTS" ||
 REAL_BEFORE=$(real_accounts)
 mkdir -p "$TEST_DIR/data"
 cp tools/tests/mode2.swift "$TEST_DIR/main.swift"
+# Each stage has a time limit, so a stuck one names itself instead of hanging the run (the alarm outlives exec).
+limit() {
+  local secs=$1; shift
+  perl -e 'alarm shift; exec @ARGV or die "exec: $!\n"' "$secs" "$@" && return 0
+  local rc=$?
+  (( rc == 142 )) && echo "FAIL: stopped after $secs s: ${1:t}" >&2
+  return $rc
+}
 # "[n/m] name" before each stage: the app shows it under the current step (project_run).
 echo "[1/10] Check the data folder rule"
 # Only the app picks the real data folder, before it makes anything that reads it.
@@ -24,34 +32,35 @@ assert sorted(users) == ['app/macos/Accounts.swift', 'app/macos/main.swift', 'to
 PY
 echo "[2/10] Real data folder check"
 mkdir -p "$TEST_DIR/real-home-src" && cp tools/tests/real_home.swift "$TEST_DIR/real-home-src/main.swift"
-xcrun swiftc -swift-version 5 -module-cache-path "$TEST_DIR/cache" -o "$TEST_DIR/real-home" app/macos/Accounts.swift "$TEST_DIR/real-home-src/main.swift"
-"$TEST_DIR/real-home"
+limit 300 xcrun swiftc -swift-version 5 -module-cache-path "$TEST_DIR/cache" -o "$TEST_DIR/real-home" app/macos/Accounts.swift "$TEST_DIR/real-home-src/main.swift"
+limit 60 "$TEST_DIR/real-home"
 echo "[3/10] Build WorkspaceDocument"
 mkdir -p "$TEST_DIR/resources"
 cp app/resources/workspace_mcp.py app/resources/project_process.py app/resources/local_models.json "$TEST_DIR/resources/"
-xcrun swiftc -swift-version 5 -module-cache-path "$TEST_DIR/cache" -o "$TEST_DIR/resources/WorkspaceDocument" tools/workspace_document.swift
+limit 300 xcrun swiftc -swift-version 5 -module-cache-path "$TEST_DIR/cache" -o "$TEST_DIR/resources/WorkspaceDocument" tools/workspace_document.swift
 echo "[4/10] Installer tests"
-PYTHONDONTWRITEBYTECODE=1 python3 tools/tests/test_install_app.py
+PYTHONDONTWRITEBYTECODE=1 limit 600 python3 tools/tests/test_install_app.py
 echo "[5/10] Workspace MCP tests"
-PYTHONDONTWRITEBYTECODE=1 python3 tools/tests/test_workspace_mcp.py
+PYTHONDONTWRITEBYTECODE=1 limit 600 python3 tools/tests/test_workspace_mcp.py
 echo "[6/10] Material fixtures"
-PYTHONDONTWRITEBYTECODE=1 python3 tools/tests/material_fixtures.py "$TEST_DIR/data/material-fixtures"
+PYTHONDONTWRITEBYTECODE=1 limit 300 python3 tools/tests/material_fixtures.py "$TEST_DIR/data/material-fixtures"
 echo "[7/10] Compile app tests"
-xcrun swiftc -swift-version 5 -module-cache-path "$TEST_DIR/cache" -o "$TEST_DIR/run" \
+limit 900 xcrun swiftc -swift-version 5 -module-cache-path "$TEST_DIR/cache" -o "$TEST_DIR/run" \
     app/macos/ProjectWork.swift app/macos/ProjectChat.swift app/macos/ProjectCreate.swift app/macos/WindowDrag.swift app/macos/Language.swift app/macos/Usage.swift app/macos/Accounts.swift app/macos/Login.swift \
     app/macos/Settings.swift app/macos/CloudModels.swift app/macos/Discussion.swift app/macos/ChatNotes.swift app/macos/Debate.swift app/macos/Attachments.swift app/macos/NativeSessions.swift app/macos/RoomDocuments.swift app/macos/MaterialReader.swift app/macos/Collaboration.swift app/macos/Vote.swift app/macos/Solo.swift app/macos/Local.swift app/macos/LocalModels.swift app/macos/FaceLink.swift app/macos/ExternalMCP.swift app/macos/RemoteMCP.swift app/macos/Markdown.swift app/macos/DriveUI.swift app/macos/ToolHub.swift app/macos/Peer.swift app/macos/CollabLog.swift app/macos/Route.swift app/macos/Meeting.swift app/macos/GoogleAuth.swift app/macos/DriveLink.swift app/macos/Workspace.swift app/macos/WorkspaceBackup.swift app/macos/ChatStorage.swift app/macos/Updater.swift app/macos/Pictures.swift app/macos/Poker.swift app/macos/DeviceSync.swift app/macos/Enterprise.swift app/macos/ChatFind.swift app/macos/ChatSearch.swift app/macos/ChatTools.swift app/macos/Memory.swift app/macos/Todo.swift app/macos/SidebarProjects.swift app/macos/ProjectInfo.swift app/macos/Space.swift app/macos/SpaceLibrary.swift app/macos/SpaceTemplates.swift tools/tests/space_build.swift tools/tests/google_drive.swift tools/tests/device_sync.swift tools/tests/window_drag.swift tools/tests/project_work.swift tools/tests/ask_ai.swift tools/tests/collab_log.swift tools/tests/meeting_tool.swift tools/tests/todo_work.swift tools/tests/project_info.swift tools/tests/update_channel.swift tools/tests/chat_search.swift tools/tests/search_fixtures.swift "$TEST_DIR/main.swift"
 echo "[8/10] Run app tests"
-AI_ILLUMINATI_TEST_HOME="$TEST_DIR/data" AI_ILLUMINATI_TEST_RESOURCES="$TEST_DIR/resources" "$TEST_DIR/run"
+# The tests also stop themselves after 120 s without progress (mode2.swift) and name the test.
+limit 1500 env AI_ILLUMINATI_TEST_HOME="$TEST_DIR/data" AI_ILLUMINATI_TEST_RESOURCES="$TEST_DIR/resources" "$TEST_DIR/run"
 echo "[9/10] Space web view isolation"
 mkdir -p "$TEST_DIR/space-web-src" "$TEST_DIR/space-web-home"
 cp tools/tests/space_web.swift "$TEST_DIR/space-web-src/main.swift"
-xcrun swiftc -swift-version 5 -module-cache-path "$TEST_DIR/cache" -framework WebKit -o "$TEST_DIR/space-web" \
+limit 600 xcrun swiftc -swift-version 5 -module-cache-path "$TEST_DIR/cache" -framework WebKit -o "$TEST_DIR/space-web" \
     app/macos/Accounts.swift app/macos/Language.swift app/macos/Space.swift app/macos/SpaceLibrary.swift app/macos/SpaceTemplates.swift app/macos/SpaceWeb.swift "$TEST_DIR/space-web-src/main.swift"
-AI_ILLUMINATI_TEST_HOME="$TEST_DIR/space-web-home" "$TEST_DIR/space-web"
+limit 300 env AI_ILLUMINATI_TEST_HOME="$TEST_DIR/space-web-home" "$TEST_DIR/space-web"
 echo "[10/10] Icon check"
-xcrun swiftc -swift-version 5 -module-cache-path "$TEST_DIR/cache" -o "$TEST_DIR/icon-check" \
+limit 300 xcrun swiftc -swift-version 5 -module-cache-path "$TEST_DIR/cache" -o "$TEST_DIR/icon-check" \
     app/macos/Icon.swift tools/tests/icon_animation.swift
-"$TEST_DIR/icon-check"
+limit 60 "$TEST_DIR/icon-check"
 if [[ "$(real_accounts)" != "$REAL_BEFORE" ]]; then
   echo "FAIL: the real accounts.json changed during the tests" >&2
   exit 1

@@ -20,6 +20,7 @@ struct WorkspaceBinding: Codable {
     var fullAccess: Bool? = nil
     var fullAccessActive: Bool { (isFullAuto && projectRunID != nil) || fullAccess == true }
     var face: Bool? = nil   // plain chat: the bridge also offers AI Face's tools through the app (FaceLink)
+    var origin: ToolOrigin? = nil   // runtime only: whose tool session this is (ToolHub.swift); nil = member
     func inventory() -> [String] {
         var result: [String] = []
         for (index, root) in roots.enumerated() {
@@ -72,9 +73,10 @@ struct WorkspaceInvocation {
                                       "cache": NativeSessions.directory(room).appendingPathComponent("document-cache").path,
                                       "extractor": Self.resources.appendingPathComponent("WorkspaceDocument").path]
         object["project"] = binding.projectRunID != nil
-        if (binding.face == true || binding.projectRunID != nil) && ToolHub.shared.active {
+        if (binding.face == true || binding.projectRunID != nil || binding.origin == .side) && ToolHub.shared.active {
             object["tools"] = ToolHub.socketPath
-            object["toolSession"] = ToolHub.shared.register(room: room, roots: binding.roots, projectRun: binding.projectRunID, generation: binding.projectGeneration, asker: account)
+            object["toolSession"] = ToolHub.shared.register(room: room, roots: binding.roots, projectRun: binding.projectRunID, generation: binding.projectGeneration,
+                                                            asker: account, origin: binding.origin ?? .member)
             if FaceLink.active() != nil { object["face"] = FaceLink.socketPath } // legacy manifests
         }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
@@ -132,7 +134,7 @@ struct WorkspaceInvocation {
             // confines file tools and ignores project/user settings while allowing this bridge.
             result.removeAll { $0 == "--safe-mode" }
             var server: [String: Any] = ["command": command, "args": args]
-            server["timeout"] = 3_610_000   // approval cards and ask_peer may take a while; each tool has its own limit in the bridge
+            server["timeout"] = 3_610_000   // approval cards and ask_ai may take a while; each tool has its own limit in the bridge
             let mcp = ["mcpServers": ["illuminati": server]]
             let config = String(data: try JSONSerialization.data(withJSONObject: mcp), encoding: .utf8)!
             if let i = result.firstIndex(of: "--mcp-config") { result[i + 1] = config }

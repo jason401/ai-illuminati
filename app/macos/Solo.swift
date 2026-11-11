@@ -644,7 +644,7 @@ extension Discussion {
                     let result = self.requestDebate(account, Self.soloContext(rules: rules, transcript: asked) + "\n[SOLO TURN]\n" + instruction,
                                                     binding.fullAccess == true ? 8 * 3600 : 900, cancellation, web: true,
                                                     fresh: freshTranscript.map { Self.soloContext(rules: rules, transcript: $0) + "\n[SOLO TURN]\n" + instruction },
-                                                    workspace: k > 0 && called.count > 1 ? Self.peerView(binding) : nil, progress: progress)
+                                                    workspace: k > 0 && called.count > 1 ? Self.sideView(binding) : nil, progress: progress)
                     doneLock.lock(); done.insert(accountID); doneLock.unlock()
                     if cancellation.isCancelled { return }
                     var entry: ChatTurn.Entry
@@ -814,8 +814,7 @@ extension Discussion {
     // spaceRule: this answer may make a Space when the message asks for one (only one AI per message does).
     func soloInstruction(_ account: Account, binding: WorkspaceBinding, helper: String, project: ProjectPart? = nil, chat id: UUID? = nil,
                          spaceRule: Bool = true) -> String {
-        activePeerSession?.asker = account   // ask_peer asks the other kind of AI than the one answering now
-        return Self.composeInstruction(name: label(account), provider: account.provider,
+        Self.composeInstruction(name: label(account), provider: account.provider,
                                 folders: Self.soloFolders(binding, shared: model.activeSharedFolders, project: project?.root),
                                 drive: binding.face == true && [.claude, .codex].contains(account.provider) && DriveLink.shared.active ? DriveLink.shared.rule() : "",
                                 fullAccess: binding.fullAccess == true, picture: pictureRule(account, chat: id), helper: helper,
@@ -825,7 +824,7 @@ extension Discussion {
                                     ? Self.spaceRule(lastQuestion(id), draws: !spaceDrawers(chat: id ?? currentID).isEmpty,
                                                      folder: [.claude, .codex].contains(account.provider) && project == nil
                                                          && binding.roots.contains { $0.path == SpaceStore.root.path && $0.writable == true }) : "",
-                                peer: project == nil ? "" : peerInstruction(account),
+                                peer: peerInstruction(account, room: id),
                                 memory: memoryRule(account, chat: id))
     }
 

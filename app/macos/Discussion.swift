@@ -756,7 +756,7 @@ final class Discussion: ObservableObject {
     var activeDocumentText = ""
     var activeMaterials: [RoomDocument] = []
     var activeWorkspace: WorkspaceBinding?
-    var activePeerSession: PeerLink.Session?   // a project chat with reviewers: this answer's ask_peer (Peer.swift)
+    var activePeerSession: PeerLink.Session?   // mode 0: this message's ask_ai (Peer.swift)
     var activeWorkspaceBackupPath: String?
     var activeAdversarial = false
     var activeMeeting = false   // this answer is a meeting (Meeting.swift): the AIs may read the folders
@@ -1459,9 +1459,11 @@ final class Discussion: ObservableObject {
                 worker.changeTurn(id, index, save: true) { $0.route = RouteChoice.all.route; $0.routeNote = note }
                 let binding = worker.activeWorkspace ?? worker.soloBinding(id)
                 worker.activeWorkspace = Route.opinionView(binding, chatFolder: Self.chatFolder(id).path)
+                let peer = worker.beginPeer(id: id, index: index, question: question, binding: worker.activeWorkspace ?? binding, cancellation: cancellation)
                 worker.runSolo(question: question, history: history, rules: rules, config: config, mentions: mentioned,
                                cancellation: cancellation, id: id, index: index,
                                extra: Route.opinionNote(project: binding.project?.root ?? "", alone: false))
+                worker.endPeer(peer)
             } else if solo && sorting {
                 var route = forced ?? (autoViews ? .all : .work), by: String? = autoViews ? L("규칙", "rule") : nil, busy = false
                 if forced == nil && !autoViews {
@@ -1503,9 +1505,11 @@ final class Discussion: ObservableObject {
                 let binding = worker.activeWorkspace ?? worker.soloBinding(id)
                 if route != .work {
                     worker.activeWorkspace = Route.opinionView(binding, chatFolder: Self.chatFolder(id).path)
+                    let peer = worker.beginPeer(id: id, index: index, question: question, binding: worker.activeWorkspace ?? binding, cancellation: cancellation)
                     worker.runSolo(question: question, history: history, rules: rules, config: config, mentions: answering,
                                    cancellation: cancellation, id: id, index: index,
                                    extra: Route.opinionNote(project: binding.project?.root ?? "", alone: answering.count == 1, busy: busy))
+                    worker.endPeer(peer)
                 } else {
                     let peer = worker.beginPeer(id: id, index: index, question: question, reviewers: checkers, binding: binding, cancellation: cancellation)
                     worker.runSolo(question: question, history: history, rules: rules, config: config, mentions: doers,
@@ -1521,12 +1525,14 @@ final class Discussion: ObservableObject {
                     worker.changeTurn(id, index, save: true) { $0.route = RouteChoice.one.route; $0.routeOne = true; $0.routeNote = note }
                     let binding = worker.activeWorkspace ?? worker.soloBinding(id)
                     worker.activeWorkspace = Route.opinionView(binding, chatFolder: Self.chatFolder(id).path)
+                    let peer = worker.beginPeer(id: id, index: index, question: question, binding: worker.activeWorkspace ?? binding, cancellation: cancellation)
+                    defer { worker.endPeer(peer) }
                     return worker.runSolo(question: question, history: history, rules: rules, config: config, mentions: answering,
                                           cancellation: cancellation, id: id, index: index,
                                           extra: Route.opinionNote(project: binding.project?.root ?? "", alone: true, busy: true))
                 }
                 catch { return worker.finish(id, index, error: error.localizedDescription) }
-                // Reviewers (a project chat with two or more members, Peer.swift): ask_peer during the work, then
+                // ask_ai during the answer (Peer.swift); with reviewers (a project chat with two or more members) also
                 // a review of what changed, and the lead fixes what is right.
                 let binding = worker.activeWorkspace ?? worker.soloBinding(id)
                 let peer = worker.beginPeer(id: id, index: index, question: question, reviewers: reviewers, binding: binding, cancellation: cancellation)

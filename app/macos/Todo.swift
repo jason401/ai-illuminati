@@ -1108,7 +1108,7 @@ final class TodoScheduler: ObservableObject {
                 try? store.change(item.id) { t in t.state = .needsYou; t.question = question; t.report = nil; t.unreported = true }
             } else if let report, let summary = report.summary {
                 // The review could not be done: the result still waits for the check, with that said on its card.
-                let unreviewed = turn?.peerNotes?.contains { $0.failed } == true
+                let unreviewed = turn?.peerNotes?.contains { $0.failed && $0.headline == nil } == true   // ask_ai cards always have a headline
                 try? store.change(item.id) { t in
                     t.state = .review; t.result = summary; t.assumptions = report.assumptions; t.files = report.files; t.report = nil
                     t.question = nil; t.unreported = true

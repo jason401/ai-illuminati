@@ -1,6 +1,10 @@
 import Foundation
 import Darwin
 
+// Who a tool session belongs to. member: an AI answering the user (every tool); side: another AI answering the same
+// message at the same time, read only (only ask_ai); consulted: an AI another AI asked (no ask_ai, so depth stays 1).
+enum ToolOrigin: String, Codable { case member, side, consulted }
+
 struct ToolContext {
     var room: UUID
     var roots: [WorkspaceRoot]
@@ -8,6 +12,7 @@ struct ToolContext {
     var projectGeneration: Int? = nil
     var asker: Account? = nil   // the account answering (search_chats / read_chat decide by it)
     var turn: UUID? = nil       // the message being answered when the session was made (remember saves only to it)
+    var origin: ToolOrigin = .member
 }
 
 protocol ToolProvider: AnyObject {
@@ -37,13 +42,14 @@ final class ToolHub {
     private var sockets: Set<String> = []
     private var sessions: [String: (ToolContext, Date)] = [:]
 
-    func register(room: UUID, roots: [WorkspaceRoot], projectRun: UUID? = nil, generation: Int? = nil, asker: Account? = nil) -> String {
+    func register(room: UUID, roots: [WorkspaceRoot], projectRun: UUID? = nil, generation: Int? = nil, asker: Account? = nil,
+                  origin: ToolOrigin = .member) -> String {
         start()
         let turn = asker == nil ? nil : MemoryLink.shared.newestTurn(room)   // read before taking the lock (it may wait for the main thread)
         lock.lock(); defer { lock.unlock() }
         sessions = sessions.filter { $0.value.1 > Date() }
         let key = UUID().uuidString
-        sessions[key] = (ToolContext(room: room, roots: roots, projectRun: projectRun, projectGeneration: generation, asker: asker, turn: turn), Date().addingTimeInterval(7200))
+        sessions[key] = (ToolContext(room: room, roots: roots, projectRun: projectRun, projectGeneration: generation, asker: asker, turn: turn, origin: origin), Date().addingTimeInterval(7200))
         return key
     }
 
@@ -68,7 +74,9 @@ final class ToolHub {
             guard let session, session.1 > Date() else { return Self.failure("This tool session has expired or is unavailable.") }
             context = session.0
         }
-        let available: [ToolProvider] = legacy ? [FaceLink.shared] : providers
+        let available: [ToolProvider] = legacy ? [FaceLink.shared]
+            : context.origin == .side ? [PeerLink.shared]
+            : context.origin == .consulted ? providers.filter { $0 !== PeerLink.shared } : providers
         switch message["op"] as? String {
         case "tools":
             let tools = available.filter { $0.active }.flatMap { $0.tools(context: context) }

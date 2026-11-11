@@ -378,7 +378,7 @@ func testPeerReview() {
     var turn = ChatTurn(question: "q"); turn.peerNotes = [.init(round: 1, speaker: "G", text: "ok", failed: false)]
     let again = try? JSONDecoder().decode(ChatTurn.self, from: JSONEncoder().encode(turn))
     expect(again?.peerNotes?.first?.text == "ok", "review notes are saved with the turn")
-    expect(PeerLink.shared.tools(context: ToolContext(room: UUID(), roots: [])).isEmpty && PeerLink.shared.tools().isEmpty, "ask_peer only in a chat with reviewers")
+    expect(PeerLink.shared.tools(context: ToolContext(room: UUID(), roots: [])).isEmpty && PeerLink.shared.tools().isEmpty, "ask_ai only while a message is answered")
 
     // A project chat with Claude and ChatGPT as members: Claude leads; ChatGPT gives opinions and reviews changes, read only.
     let root = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("peer-project-" + UUID().uuidString)
@@ -409,16 +409,16 @@ func testPeerReview() {
             return .success(prompt.hasPrefix("[REVIEW]") ? verdict : "Plan is fine, but add a test.")
         }
         prompts.append(prompt)
-        let context = ToolContext(room: room, roots: binding.roots)
+        let context = ToolContext(room: room, roots: binding.roots, asker: account)
         if prompt.contains("[Review of the changes you just made") {
             try! "Third\n".write(to: root.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
             _ = try! ProjectProcess.git(["commit", "-am", "Third"], root: root.path)
             return .success("Took point 1: README now says Third.")
         }
         if step == 0 {
-            expect(PeerLink.shared.tools(context: context).contains { $0["name"] as? String == "ask_peer" }, "the lead has ask_peer")
-            for _ in 0..<3 {
-                let reply = PeerLink.shared.call("ask_peer", ["message": "My plan: edit README.md"], context: context)
+            expect(PeerLink.shared.tools(context: context).contains { $0["name"] as? String == "ask_ai" }, "the lead has ask_ai")
+            for _ in 0...Peer.maxAsks {
+                let reply = PeerLink.shared.call("ask_ai", ["message": "My plan: edit README.md"], context: context)
                 replies.append(((reply["content"] as? [[String: Any]])?.first?["text"] as? String) ?? "")
             }
         } else {
@@ -433,11 +433,11 @@ func testPeerReview() {
         while Date() < deadline && (chat.anyRunning || chat.current.turns.last?.final == nil) { RunLoop.main.run(until: Date().addingTimeInterval(0.03)) }
     }
     send("What does the README say?")
-    expect(prompts.first?.contains("[Review is on]") == true && prompts.first?.contains("ask_peer") == true && prompts.first?.contains(chat.label(codex)) == true,
+    expect(prompts.first?.contains("[Review is on]") == true && prompts.first?.contains("ask_ai") == true && prompts.first?.contains(chat.label(codex)) == true,
            "the instruction names the reviewer and when to ask")
-    expect(replies.count == 3 && replies[0].contains("Plan is fine") && replies[1].contains("Plan is fine") && replies[2].contains("already asked") && peerPrompts.count == 2,
-           "ask_peer answers twice per answer, then says to continue alone")
-    expect(chat.current.turns.last?.peerNotes?.count == 2 && chat.current.turns.last?.peerNotes?.first?.text.contains("Plan is fine") == true, "each opinion shows under the answer")
+    expect(replies.count == Peer.maxAsks + 1 && replies.prefix(Peer.maxAsks).allSatisfy { $0.contains("Plan is fine") } && replies.last?.contains("already asked") == true
+           && peerPrompts.count == Peer.maxAsks, "ask_ai answers four times per answer, then says to continue alone")
+    expect(chat.current.turns.last?.peerNotes?.count == Peer.maxAsks && chat.current.turns.last?.peerNotes?.first?.text.contains("Plan is fine") == true, "each opinion shows under the answer")
     expect(peerPrompts.allSatisfy { !$0.hasPrefix("[REVIEW]") } && prompts.count == 1, "a question that changes nothing is not reviewed")
     expect(chat.configuration.lastSoloAccountID == claude.id, "the lead is kept")
 
@@ -469,7 +469,7 @@ func testPeerReview() {
            && prompts.last?.contains("[Work mode]") == true,
            "every message is sorted first, with the one before it; work is shown with who judged and told it may be wrong")
 
-    // Opinion: both members answer at the same time, the project read only, no ask_peer and no review.
+    // Opinion: both members answer at the same time, the project read only, no review.
     nextRoute = .all
     let opinionBefore = peerPrompts.filter { $0.hasPrefix("[REVIEW]") }.count, head = git(["rev-parse", "HEAD"])
     send("Is splitting the README a good idea? What do you both think?")
@@ -479,7 +479,7 @@ func testPeerReview() {
     expect(opinionViews.count == 1 && opinionViews[0].project == nil && opinionViews[0].roots.first { $0.path == root.path }?.writable != true
            && peerViews.last?.roots.allSatisfy { $0.writable != true } == true, "opinion: the project is read only for everyone")
     expect(peerPrompts.filter { $0.hasPrefix("[REVIEW]") }.count == opinionBefore && opinion?.peerNotes == nil && git(["rev-parse", "HEAD"]) == head,
-           "opinion: no ask_peer, no review, nothing changed")
+           "opinion: no review, nothing changed")
 
     // "가자" after the opinions: work, and the lead reads both opinions.
     nextRoute = .work; step = 4
@@ -556,14 +556,17 @@ func testPeerReview() {
     expect(judged.count == pickedJudged && chat.current.turns.last?.route == nil && chat.current.turns.last?.final == "Done 5."
            && git(["log", "-1", "--format=%s"]) == "Second", "@ one: that AI works, not judged")
 
-    // One member left: no ask_peer, no review.
+    // One member left: no review.
     let judgedAlone = judged.count
     chat.toggleMember(codex.id)
     step = 3
     let before = peerPrompts.count
     send("Change README once more.")
-    expect(prompts.last?.contains("[Review is on]") == false && peerPrompts.count == before && PeerLink.shared.tools(context: ToolContext(room: room, roots: [])).isEmpty,
-           "one member: no ask_peer and no reviews")
+    let closing = Date().addingTimeInterval(5)   // the worker closes ask_ai just after the answer is shown
+    while Date() < closing && PeerLink.shared.session(room) != nil { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
+    expect(prompts.last?.contains("[Review is on]") == false && prompts.last?.contains("ask_ai") == true && peerPrompts.count == before
+           && PeerLink.shared.tools(context: ToolContext(room: room, roots: [])).isEmpty,
+           "one member: no reviews, but ask_ai still reaches the other AI on this Mac")
     expect(judged.count == judgedAlone && chat.current.turns.last?.route == nil, "one member: nothing to sort")
     // Ask for opinions again with one member left: that member answers alone, read only, instead of failing.
     let aloneHead = git(["rev-parse", "HEAD"]), aloneViews = opinionViews.count
@@ -582,7 +585,7 @@ func testPeerReview() {
            "one member, busy project: it answers read only with a note")
     ProjectWork.release(aloneHeld)
     testRoute()
-    print("PASS: review (members: lead works, the other opines and reviews read only, two asks per answer, only changes reviewed, one fix in the same turn, older review chats migrate)")
+    print("PASS: review (members: lead works, the other opines and reviews read only, four asks per answer, only changes reviewed, one fix in the same turn, older review chats migrate)")
 }
 
 func testRoute() {

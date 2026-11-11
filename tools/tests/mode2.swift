@@ -2479,6 +2479,7 @@ testGoogleDrive()
 testWindowDrag()
 
 testProjectWork()
+testAskAI()
 testProjectCreate()
 testUpdateChannels()
 testDeviceSync()

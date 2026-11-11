@@ -914,7 +914,7 @@ func testPickedRoute() {
            && Route.slash("/Users/me/file 봐줘", offered: offered) == nil && Route.slash("이거 /work 해줘", offered: offered) == nil
            && Route.slash("/work", offered: offered) == nil && Route.slash("/work 고쳐", offered: RouteChoice.offered(project: false)) == nil,
            "slash: only a known word at the start, before a space; only the ways the chat offers")
-    expect(RouteChoice.offered(project: false) == [.meeting], "a plain chat offers only a meeting")
+    expect(RouteChoice.offered(project: false) == [.all, .meeting], "a plain chat offers everyone's views and a meeting")
     expect(Route.slash("/w 고쳐줘", offered: offered)! == (.work, "고쳐줘") && Route.slash("/M 주제", offered: offered)! == (.meeting, "주제")
            && Route.slash("/a 어때?", offered: offered)! == (.all, "어때?") && Route.slash("/opinion 어때?", offered: offered)! == (.all, "어때?")
            && Route.slash("/1 짧게", offered: offered)! == (.one, "짧게") && Route.slash("/x 뭐", offered: offered) == nil,
@@ -926,7 +926,7 @@ func testPickedRoute() {
            && Route.slashMenu("/Users", cursor: 6, offered: offered) == nil && Route.slashMenu("/work 고쳐", cursor: 8, offered: offered) == nil
            && Route.slashMenu("이거 /w", cursor: 5, offered: offered) == nil && Route.slashMenu("/", cursor: 1, offered: []) == nil
            && Route.slashMenu("/w", cursor: 2, offered: RouteChoice.offered(project: false)) == nil
-           && Route.slashMenu("/", cursor: 1, offered: RouteChoice.offered(project: false))!.choices == [.meeting],
+           && Route.slashMenu("/", cursor: 1, offered: RouteChoice.offered(project: false))!.choices == [.all, .meeting],
            "slash list: only while the first word after / is typed, only the ways the chat offers")
     expect(Set(Route.commands.map(\.choice)) == Set(RouteChoice.allCases) && Route.slashes.count == Route.commands.flatMap(\.words).count,
            "every way has slash words, none shared")
@@ -1047,7 +1047,7 @@ func testPickedRoute() {
         if prompt.contains("[MODE3 MODERATION]") { return .success(#"{"action":"finish","reason":"enough","board":""}"#) }
         return .success("TL;DR: ok\n\nok")
     }
-    expect(locked.routeChoices == [.meeting], "a plain chat's chip offers a meeting only")
+    expect(locked.routeChoices == [.all, .meeting], "a plain chat's chip offers everyone's views and a meeting")
     locked.draft = "/meet 정리해줘"; locked.send()
     let deadline = Date().addingTimeInterval(30)
     while Date() < deadline && (locked.anyRunning || locked.current.turns.last?.final == nil) { RunLoop.main.run(until: Date().addingTimeInterval(0.03)) }
@@ -1112,6 +1112,33 @@ func testAutoMeeting() {
         }
         return chat.current.turns.last
     }
+    // Several views asked for in words, in a plain chat: as many as asked, read only; a bare opinion question is one answer.
+    expect(Route.askedViewers("2명 의견 들려줘") == 2 && Route.askedViewers("셋이 각자 생각 말해봐") == 3 && Route.askedViewers("2~3명 의견 줘") == 3
+           && Route.askedViewers("다들 의견 줘") == Discussion.meetingMost && Route.askedViewers("What do two of you think?") == 2
+           && Route.askedViewers("너희 생각은 어때?") == Discussion.meetingMost && Route.askedViewers("네 명이 얘기해봐") == 4,
+           "asking several AIs for views: the number asked, or as many as can come")
+    expect(Route.askedViewers("이거 어떻게 생각해?") == nil && Route.askedViewers("다들 이렇게 측정하던데 맞아?") == nil
+           && Route.askedViewers("네 생각은 어때?") == nil && Route.askedViewers("저자 두 명이 쓴 논문 요약해줘") == nil
+           && Route.askedViewers("> 2명 의견 줘\n이건 인용이야") == nil, "not several AIs: one AI asked, people, numbers of other things, quotes")
+    var viewAsked: [(String, String)] = []
+    let views = Discussion(model: model)
+    views.configure { $0.mode = 0 }
+    views.workspaceAnswer = { account, prompt, _, _, _ in
+        viewAsked.append((account.id, prompt))
+        return .success("\(account.name) view.")
+    }
+    let two = hold(views, "2명 의견 들려줘: A냐 B냐")
+    expect(two?.routeChoice == .all && two?.meetingRoom == nil && Set(viewAsked.map(\.0)).count == 2
+           && viewAsked.allSatisfy { $0.1.contains("[Opinion mode]") && !$0.1.contains("linked to the project") },
+           "plain chat, 2명 의견: two AIs give views: \(viewAsked.map(\.0)) \(String(describing: two?.error))")
+    viewAsked = []
+    let single = hold(views, "이거 어떻게 생각해?")
+    expect(single?.routeChoice != .all && viewAsked.count == 1, "plain chat, a bare opinion question: one answer: \(viewAsked.map(\.0))")
+    viewAsked = []
+    let everyone = hold(views, "/all 어때?")
+    expect(everyone?.routeChoice == .all && Set(viewAsked.map(\.0)) == [c1.id, x1.id, g.id, c2.id],
+           "plain chat, /all: up to four AIs, no local model: \(viewAsked.map(\.0))")
+
     // One member checked by hand: that one meets, no AI the user did not pick.
     let one = Discussion(model: model)
     one.configure { $0.mode = 0 }

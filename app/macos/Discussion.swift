@@ -1316,16 +1316,18 @@ final class Discussion: ObservableObject {
         let standing = plain && project && mentioned.isEmpty ? standingMembers(room: id) : []
         // A way picked by the user (the chip, "/work", "Run as work") is not sorted. With @ the picked AIs answer that way:
         // @A @B + work, A works and B reviews; @A + work, A works and the other members review.
-        // Members left automatic (none checked): a message that asks for a meeting holds one, and in a project chat one that
-        // asks for views gets everyone's (Route.asksMeeting, Route.asksViews), each with AIs the app picks (meetingTeam:
-        // two to four when that many can come). Not in a TODO's own run: its text is a task, not a way.
+        // Members left automatic (none checked): a message that asks for a meeting holds one, one that asks several AIs
+        // for views (or in a project chat any that asks for views) gets theirs (Route.asksMeeting, Route.askedViewers,
+        // Route.asksViews), each with AIs the app picks (meetingTeam: two to four when that many can come). Not in a TODO's own run: its text is a task, not a way.
         let todoRun = TodoStore.shared.current.items.contains { $0.room == id && $0.state == .running }
         let autoMembers = plain && mentioned.isEmpty && memberIDs(room: id).isEmpty
         let meeting = plain && (forced == .meeting || (forced == nil && !todoRun && Route.asksMeeting(question)))
-        let autoViews = !meeting && autoMembers && project && forced == nil && !todoRun && Route.found(Route.asksViews, question)
-        let autoTeam = autoMembers && project && !meeting && (forced == .all || autoViews)
-            ? Self.meetingTeam(model.accounts, usage: model.latestUsage) { self.permits($0, room: id) }.map(\.id) : []
-        let sorting = !meeting && (standing.count >= 2 || (forced != nil && project && plain) || autoViews)
+        // Asking several AIs in so many words ("2명 의견 줘") works in a plain chat too, with as many as asked for.
+        let asked = !meeting && autoMembers && forced == nil && !todoRun ? Route.askedViewers(question) : nil
+        let autoViews = !meeting && autoMembers && forced == nil && !todoRun && (asked != nil || (project && Route.found(Route.asksViews, question)))
+        let autoTeam = autoMembers && !meeting && (forced == .all || autoViews)
+            ? Self.meetingTeam(model.accounts, usage: model.latestUsage, most: asked ?? Self.meetingMost) { self.permits($0, room: id) }.map(\.id) : []
+        let sorting = !meeting && (standing.count >= 2 || (forced != nil && project && plain) || (forced == .all && autoMembers) || autoViews)
         // Two or more picked with @ in a project chat and no way picked: their opinions, read only, never work.
         let pickedOpinion = plain && project && mentioned.count >= 2 && forced == nil
         let opinionLead = crew?.lead ?? standing.first { id in model.accounts.contains { $0.id == id && [.claude, .codex].contains($0.provider) } } ?? standing.first

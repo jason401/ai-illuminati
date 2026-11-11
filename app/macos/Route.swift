@@ -35,7 +35,7 @@ enum RouteChoice: Hashable, CaseIterable {
         }
     }
     // The ways a chat offers: a project chat all of them; a plain chat answers with all its members anyway and has no project to work on.
-    static func offered(project: Bool) -> [RouteChoice] { project ? [.one, .all, .work, .meeting] : [.meeting] }
+    static func offered(project: Bool) -> [RouteChoice] { project ? [.one, .all, .work, .meeting] : [.all, .meeting] }
 }
 
 extension ChatTurn {
@@ -118,6 +118,23 @@ enum Route {
         options: [.caseInsensitive])
     static func asksMeeting(_ question: String) -> Bool {
         found(meetingAsk, question.components(separatedBy: "\n").filter { !$0.hasPrefix(">") }.joined(separator: "\n"))
+    }
+
+    // Asks several AIs for their views in so many words: "2명 의견 들려줘", "셋이 각자 생각 말해봐", "다들 의견 줘",
+    // "what do two of you think". Unlike asksViews this works in a plain chat too, so a bare "어떻게 생각해?" or
+    // "다들 이렇게 하던데" (people, not the AIs) is not enough. Quoted lines are not orders.
+    static let viewersAsk = try! NSRegularExpression(pattern:
+        #"((두|세|네|[234])\s*(명|분)|(둘|셋|넷)(이서|이|\s)|여러\s*(명|분|AI)|다들|너희|각자|다\s*같이|모두\s*(의|들)?|\b(two|three|four|several|all|each)\s+(of\s+you|AIs?|models?))[^\n]{0,12}?(의견|생각|견해|답해|얘기해|말해|opinion|view|take|think)"#,
+        options: [.caseInsensitive])
+    // How many should answer: the number asked for, or as many as can come.
+    static func askedViewers(_ question: String) -> Int? {
+        let text = question.components(separatedBy: "\n").filter { !$0.hasPrefix(">") }.joined(separator: "\n")
+        guard let match = viewersAsk.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+              let range = Range(match.range(at: 1), in: text) else { return nil }
+        let who = text[range].lowercased()
+        for (n, words) in [(2, ["두", "2", "둘", "two"]), (3, ["세", "3", "셋", "three"]), (4, ["네", "4", "넷", "four"])]
+            where words.contains(where: who.hasPrefix) { return n }
+        return Discussion.meetingMost
     }
 
     // Asks for a Space, a small app (Space.swift): "이번 주 실험 트래커 만들어 줘", "단어 퀴즈 게임 만들자", "make a habit
@@ -240,6 +257,12 @@ enum Route {
     static func opinionNote(project: String, alone: Bool = false, busy: Bool = false) -> String {
         let who = alone ? "one answer is enough: you answer it alone, other members stay quiet unless the user asks them,"
             : "every member answers it at the same time,"
+        if project.isEmpty {
+            return """
+            [Opinion mode] The user asked for several views on this message: \(who) so give your own view and do not wait
+            for the others. Your folders are read only for this answer, except the chat folder.
+            """
+        }
         return """
         [Opinion mode] This chat is linked to the project at \(project), and the app judged that this message asks
         for views, not changes: \(who) and the project is read only for this answer.

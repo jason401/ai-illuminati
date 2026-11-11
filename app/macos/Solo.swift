@@ -376,6 +376,7 @@ extension Discussion {
     // The reply without its trailing <chat-state> block (also while it is still being written), and the block.
     // A Space's <space-build> (SpaceView.swift) and old <space-patch> blocks are hidden too.
     static func extractState(_ text: String) -> (reply: String, state: String?) {
+        let text = Peer.taken(text).text   // the <ai-taken> tag after an answer that asked other AIs (Peer.swift)
         guard let open = text.range(of: "<chat-state>", options: .backwards) else {
             // A tag still arriving at the end of a streamed reply ("<chat-st…") is not shown either.
             if let partial = text.range(of: "<chat", options: .backwards), "<chat-state>".hasPrefix(String(text[partial.lowerBound...])) {
@@ -653,6 +654,7 @@ extension Discussion {
                         let (tagless, mood) = FaceLink.extract(raw)
                         if let mood, binding.face == true { FaceLink.shared.show(mood) }
                         let (text, newState) = Self.extractState(tagless)
+                        self.notePeerOutcome(account, reply: tagless)
                         if let newState, k == 0 { self.saveState(newState, room: id, index: index) }
                         if k == 0 { self.deliverSpaceBuild(tagless, room: id, turn: index, cancellation: cancellation) }
                         let harvest = self.collectPictures(text, account: account, since: started, id: id, index: index, cancellation: cancellation)
@@ -759,6 +761,7 @@ extension Discussion {
                 let (tagless, mood) = FaceLink.extract(raw)
                 if let mood, binding.face == true { FaceLink.shared.show(mood) }
                 let (text, newState) = Self.extractState(tagless)
+                notePeerOutcome(account, reply: tagless)
                 if let newState { self.saveState(newState, room: id, index: index) }
                 deliverSpaceBuild(tagless, room: id, turn: index, cancellation: cancellation)
                 let harvest = collectPictures(text, account: account, since: started, id: id, index: index, cancellation: cancellation)

@@ -6,6 +6,7 @@ import Foundation
 // changes; the lead then weighs the findings and fixes what is right in the same turn (once).
 enum Peer {
     static let maxAsks = 4                       // ask_ai calls per answer (one AI's reply)
+    static let legacyAsks = 2                    // ask_peer calls per answer when collaboration is off (CollabLog.swift)
     static let maxAtOnce = 3                     // AIs one call may ask at the same time
     static let maxMeetings = 1                   // convene_meeting calls per answer (Meeting.swift)
     static let askTimeout: TimeInterval = 600
@@ -90,6 +91,8 @@ enum Peer {
         the question or your draft or plan, the files involved and what you are unsure about; `count` asks up to \(maxAtOnce)
         AIs at the same time. At most \(maxAsks) calls per answer. Weigh the replies yourself: take what is right, leave what
         is not, and say in one line of your reply what you took. If nobody answers, continue on your own.
+        Each ask_ai result starts with its call number. When you asked, add after your reply, on its own line, a tag the
+        user does not see that says for each call whether you used it: <ai-taken>1=yes, 2=partly, 3=no</ai-taken>
         """
         if meeting.count >= 2 {
             text += """
@@ -109,6 +112,47 @@ enum Peer {
                 + " It does not review again on its own; after fixing you may send only the fixed parts back with ask_ai (purpose \"review\", to \"\(reviewer)\")."
         }
         return text
+    }
+
+    // What the lead of project work is told when collaboration is off (Settings → Chat): the ask_peer tool as it was
+    // before ask_ai, for a second opinion from its reviewer.
+    static func legacyRule(peer: String) -> String {
+        """
+        [Review is on] You have the ask_peer tool. It asks \(peer), a different kind of AI, for a second opinion; it can
+        read the same folders but changes nothing. Call it with your plan, before you start the work, when any of these hold:
+        - you will change 3 or more files, or about 100 lines or more
+        - it touches saved data formats, sync, updates/publishing or anything hard to undo
+        - it involves concurrency, threads or timing that tests catch poorly
+        - there are two or more reasonable designs and you are not sure which is better
+        - the user asks for its opinion
+        Do not call it for questions, one-line changes or wording fixes. Send a self-contained message: the goal, your plan,
+        the files or parts involved and what you are unsure about. Weigh the reply yourself: take what is right, leave what
+        is not, and say in one or two lines of your reply what you took. At most \(legacyAsks) calls per answer. If it does not
+        answer, continue on your own. When this answer changes the project, \(peer) reviews the changes afterwards and
+        you get its findings to fix in the same turn.
+        """
+    }
+
+    // The <ai-taken> tag after an answer that asked other AIs: taken out of the shown text (a tag still arriving at
+    // the end of a streamed reply too), with what the AI says it did with each call (yes, partly, no).
+    static func taken(_ text: String) -> (text: String, calls: [Int: String]) {
+        var calls: [Int: String] = [:], out = text
+        while let open = out.range(of: "<ai-taken>") {
+            guard let close = out.range(of: "</ai-taken>", range: open.upperBound..<out.endIndex) else {
+                out = String(out[..<open.lowerBound]); break
+            }
+            let body = out[open.upperBound..<close.lowerBound].lowercased()
+            if let regex = try? NSRegularExpression(pattern: #"(\d+)\s*[=:]\s*(yes|partly|no)"#) {
+                for m in regex.matches(in: body, range: NSRange(body.startIndex..., in: body)) {
+                    if let n = Range(m.range(at: 1), in: body).flatMap({ Int(body[$0]) }), let v = Range(m.range(at: 2), in: body) { calls[n] = String(body[v]) }
+                }
+            }
+            out.removeSubrange(open.lowerBound..<close.upperBound)
+        }
+        if let tail = out.range(of: "<", options: .backwards), "<ai-taken>".hasPrefix(String(out[tail.lowerBound...])), out.distance(from: tail.lowerBound, to: out.endIndex) >= 2 {
+            out = String(out[..<tail.lowerBound])
+        }
+        return (out == text ? text : out.trimmingCharacters(in: .whitespacesAndNewlines), calls)
     }
 
     // The review's findings, handed back to the lead for one more pass in the same turn. No second review runs by
@@ -246,13 +290,16 @@ enum Peer {
 // were asked get no session (ToolOrigin.consulted), so they cannot ask on in turn.
 final class PeerLink: ToolProvider {
     static let shared = PeerLink()
-    struct Request { var message: String; var to: String?; var count: Int; var purpose: Peer.Purpose }
+    struct Request { var message: String; var to: String?; var count: Int; var purpose: Peer.Purpose; var call = 0 }
     final class Session {
         let room: UUID
         let turn: UUID?              // the message this session belongs to: tool sessions made for an older one cannot use it
         let members: [String]        // the chat's members, asked first
         let review: Bool             // project work with reviewers: its changes are reviewed afterwards
         var asked: [String: Int] = [:]   // calls per asking account (each AI's reply has its own budget)
+        var reported: [String: Int] = [:]   // calls whose outcome is logged, per asking account
+        var mode: CollabMode = .notify      // the setting when the message was sent (CollabLog.swift)
+        var legacy: Bool { mode == .off }   // only ask_peer, to the reviewer of project work
         let reachable: (Account?) -> Bool    // someone else on this Mac may be asked by this AI now
         let ask: (Account?, Request) -> String
         // Meetings (convene_meeting, Meeting.swift): who may meet for an AI, and how one is convened. All of the
@@ -299,6 +346,13 @@ final class PeerLink: ToolProvider {
     }
     func held(_ id: UUID, in session: Session) -> HeldMeeting? { lock.lock(); defer { lock.unlock() }; return session.held[id] }
     func session(_ room: UUID) -> Session? { lock.lock(); defer { lock.unlock() }; return sessions[room] }
+    // The calls `asker` made in this answer whose outcome is not logged yet; they count as logged from now.
+    func unreported(_ session: Session, asker: String) -> ClosedRange<Int>? {
+        lock.lock(); defer { lock.unlock() }
+        let from = session.reported[asker, default: 0] + 1, to = session.asked[asker, default: 0]
+        session.reported[asker] = to
+        return from <= to ? from...to : nil
+    }
     // The session this tool call may use: none for an AI that was asked, or for a tool session of an earlier message.
     func session(for context: ToolContext) -> Session? {
         guard context.origin != .consulted, let session = session(context.room) else { return nil }
@@ -309,7 +363,12 @@ final class PeerLink: ToolProvider {
     var active: Bool { lock.lock(); defer { lock.unlock() }; return !sessions.isEmpty }
     func tools() -> [[String: Any]] { [] }   // only while a message is being answered
     func tools(context: ToolContext) -> [[String: Any]] {
-        guard session(for: context) != nil else { return [] }
+        guard let session = session(for: context) else { return [] }
+        if session.legacy {
+            return [["name": "ask_peer",
+                     "description": "Ask a different kind of AI for a second opinion on your plan or a hard question. It reads the same folders but changes nothing. Self-contained message; at most \(Peer.legacyAsks) calls per answer.",
+                     "inputSchema": ["type": "object", "properties": ["message": ["type": "string"]], "required": ["message"], "additionalProperties": false]]]
+        }
         return [["name": "ask_ai",
                  "description": "Ask other AIs on this Mac (a different kind of AI by default) for an opinion, a fact check, an alternative or a review. They read the same folders but change nothing. Self-contained message; up to \(Peer.maxAtOnce) AIs at once, at most \(Peer.maxAsks) calls per answer.",
                  "inputSchema": ["type": "object", "properties": [
@@ -321,20 +380,23 @@ final class PeerLink: ToolProvider {
     }
 
     func call(_ name: String, _ arguments: [String: Any], context: ToolContext) -> [String: Any] {
-        guard name == "ask_ai", let session = session(for: context) else { return ToolHub.failure("Other AIs cannot be asked here.") }
+        guard let session = session(for: context), name == (session.legacy ? "ask_peer" : "ask_ai") else { return ToolHub.failure("Other AIs cannot be asked here.") }
+        let limit = session.legacy ? Peer.legacyAsks : Peer.maxAsks
         let message = (arguments["message"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         func text(_ value: String) -> [String: Any] { ["content": [["type": "text", "text": value]], "isError": false] }
         guard !message.isEmpty else { return ToolHub.failure("Write the message for the other AI.") }
         let key = context.asker?.id ?? ""
         lock.lock()
-        let allowed = session.asked[key, default: 0] < Peer.maxAsks
+        let allowed = session.asked[key, default: 0] < limit
         if allowed { session.asked[key, default: 0] += 1 }
+        let call = session.asked[key, default: 0]
         lock.unlock()
-        guard allowed else { return text("You already asked other AIs \(Peer.maxAsks) times in this answer (the limit). Continue on your own.") }
+        guard allowed else { return text("You already asked other AIs \(limit) times in this answer (the limit). Continue on your own.") }
+        if session.legacy { return text(session.ask(context.asker, Request(message: String(message.prefix(40_000)), to: nil, count: 1, purpose: .opinion, call: call))) }
         let request = Request(message: String(message.prefix(40_000)), to: arguments["to"] as? String,
                               count: (arguments["count"] as? NSNumber)?.intValue ?? 1,
-                              purpose: Peer.Purpose(rawValue: arguments["purpose"] as? String ?? "") ?? .opinion)
-        return text(session.ask(context.asker, request))
+                              purpose: Peer.Purpose(rawValue: arguments["purpose"] as? String ?? "") ?? .opinion, call: call)
+        return text("[ask_ai call \(call)]\n" + session.ask(context.asker, request))
     }
 }
 
@@ -375,17 +437,30 @@ extension Discussion {
 
     // Starts ask_ai for one message in a mode-0 chat (every route: one, all, work, plain chat). Call `endPeer` when it is done.
     // `reviewers`: project work whose changes the other members review afterwards.
+    // Collaboration off (Settings → Chat): only project work with reviewers gets a session, with ask_peer alone.
     func beginPeer(id: UUID, index: Int, question: String, reviewers: [String] = [], binding: WorkspaceBinding,
                    cancellation: DebateCancellation) -> PeerLink.Session? {
+        let mode = model.collaboration
+        let saved = savedConversation(id)
+        let turnID = saved?.turns.indices.contains(index) == true ? saved?.turns[index].id : saved?.turns.last?.id
+        if CollabLog.asksOthers(question) {
+            let prior = saved.flatMap { $0.turns.indices.contains(index - 1) ? $0.turns[index - 1].peerNotes?.count : nil } ?? 0
+            CollabLog.add(CollabEvent(kind: .request, chat: id, turn: turnID, mode: mode.rawValue, priorCalls: prior))
+        }
+        guard mode != .off || (!reviewers.isEmpty && binding.project != nil) else { return nil }
+        if mode == .auto { changeTurn(id, index) { $0.peerFolded = true } }
         let view = Self.peerView(binding)
         let members = reviewers.isEmpty ? memberIDs(room: id) : reviewers
-        let session = PeerLink.Session(room: id, turn: savedConversation(id)?.turns.last?.id, members: members,
+        let small = CollabLog.smallTalk(question)
+        let session = PeerLink.Session(room: id, turn: turnID, members: members,
                                        review: !reviewers.isEmpty && binding.project != nil, reachable: { [weak self] asker in
             guard let self else { return false }
             return !Peer.available(asker: asker, accounts: self.model.accounts, usage: self.model.latestUsage, lock: self.lock(of: id)).isEmpty
         }) { [weak self] asker, request in
             guard let self else { return "The other AI is unavailable. Continue on your own." }
-            let picked = Peer.pick(asker: asker, to: request.to, count: request.count, members: members, accounts: self.model.accounts,
+            // ask_peer (collaboration off) asks the reviewer of this work, as before ask_ai.
+            let to = mode == .off ? self.peerAccount(for: asker, reviewers: members.filter { $0 != asker?.id }, room: id).map(self.label) : request.to
+            let picked = Peer.pick(asker: asker, to: to, count: request.count, members: members, accounts: self.model.accounts,
                                    usage: self.model.latestUsage, lock: self.lock(of: id), label: self.label)
             let note = picked.note.map { "[\($0)]\n" } ?? ""
             guard !picked.accounts.isEmpty, !cancellation.isCancelled else { return note + "No other AI is available. Continue on your own." }
@@ -426,17 +501,41 @@ extension Discussion {
             }
             let shown = entries
             self.changeTurn(id, index, save: true) { $0.peerNotes = ($0.peerNotes ?? []) + shown; $0.activity = nil }
+            CollabLog.add(CollabEvent(kind: .ask, chat: id, turn: turnID, mode: mode.rawValue, from: asker?.id, fromKind: asker?.provider.rawValue,
+                                      to: picked.accounts.map(\.id), toKinds: picked.accounts.map(\.provider.rawValue),
+                                      purpose: mode == .off ? "ask_peer" : request.purpose.rawValue, call: request.call,
+                                      failed: entries.filter(\.failed).count, smallTalk: small))
             let failed = entries.allSatisfy(\.failed)
             return note + replies.joined(separator: "\n\n") + (failed ? "\nContinue on your own." : "")
         }
-        session.meetable = { [weak self] asker in self?.heldTeam(asker: asker, members: [], join: false, room: id).team ?? [] }
-        session.convene = { [weak self] asker, request in
-            guard let self else { return (nil, "Meetings are unavailable. Continue on your own.") }
-            return self.holdMeeting(request, asker: asker, id: id, index: index, question: question, binding: binding, cancellation: cancellation)
+        session.mode = mode
+        if mode != .off {
+            session.meetable = { [weak self] asker in self?.heldTeam(asker: asker, members: [], join: false, room: id).team ?? [] }
+            session.convene = { [weak self] asker, request in
+                guard let self else { return (nil, "Meetings are unavailable. Continue on your own.") }
+                let held = self.holdMeeting(request, asker: asker, id: id, index: index, question: question, binding: binding, cancellation: cancellation)
+                if let meeting = held.0 {
+                    let team = self.model.accounts.filter { meeting.names.contains(self.label($0)) }
+                    CollabLog.add(CollabEvent(kind: .meeting, chat: id, turn: turnID, mode: mode.rawValue, from: asker?.id, fromKind: asker?.provider.rawValue,
+                                              to: team.map(\.id), toKinds: team.map(\.provider.rawValue), smallTalk: small))
+                }
+                return held
+            }
         }
         PeerLink.shared.open(session)
         activePeerSession = session
         return session
+    }
+
+    // After an answer is finished: what `account` says it took from each of its ask_ai calls (<ai-taken>), logged
+    // once per call; a call it says nothing about is "unknown".
+    func notePeerOutcome(_ account: Account, reply: String) {
+        guard let session = activePeerSession, !session.legacy, let calls = PeerLink.shared.unreported(session, asker: account.id) else { return }
+        let said = Peer.taken(reply).calls
+        for n in calls {
+            CollabLog.add(CollabEvent(kind: .outcome, chat: session.room, turn: session.turn, mode: session.mode.rawValue, from: account.id,
+                                      fromKind: account.provider.rawValue, call: n, outcome: said[n] ?? "unknown"))
+        }
     }
 
     func endPeer(_ session: PeerLink.Session?) {
@@ -454,6 +553,9 @@ extension Discussion {
     // Gemini and Gemma, which get no tools), and who reviews its project changes.
     func peerInstruction(_ account: Account, room: UUID? = nil) -> String {
         guard let session = activePeerSession, [.claude, .codex].contains(account.provider) else { return "" }
+        if session.legacy {
+            return peerAccount(for: account, reviewers: session.members.filter { $0 != account.id }, room: session.room).map { Peer.legacyRule(peer: label($0)) } ?? ""
+        }
         let peers = Peer.pick(asker: account, to: nil, count: Peer.maxAtOnce, members: session.members, accounts: model.accounts,
                               usage: model.latestUsage, lock: lock(of: room ?? session.room), label: label).accounts
         guard !peers.isEmpty else { return "" }
@@ -509,6 +611,9 @@ extension Discussion {
     // After the lead's fix pass: the review card counts the points and what the lead says it took or left.
     func markReview(id: UUID, index: Int, _ findings: ReviewFindings, counts: (taken: Int, left: Int)?) {
         let line = Peer.tallyLine(points: findings.points, counts: counts)
+        let session = activePeerSession
+        CollabLog.add(CollabEvent(kind: .review, chat: id, turn: session?.turn, mode: (session?.mode ?? model.collaboration).rawValue,
+                                  points: findings.points, taken: counts?.taken, left: counts?.left))
         changeTurn(id, index, save: true) { turn in
             guard let i = turn.peerNotes?.firstIndex(where: { $0.id == findings.entry }) else { return }
             turn.peerNotes?[i].headline = L("변경 검수 · ", "Review of the changes · ") + line + " · " + findings.headline

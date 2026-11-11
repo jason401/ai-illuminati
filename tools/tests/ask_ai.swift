@@ -57,13 +57,13 @@ func testAskAI() {
     var stale = member; stale.turn = UUID()
     expect(PeerLink.shared.tools(context: stale).isEmpty, "a tool session from an earlier message cannot ask")
     let first = PeerLink.shared.call("ask_ai", ["message": "Is 2+2 4?", "to": "G", "count": 2, "purpose": "fact_check"], context: member)
-    expect(text(first) == "reply 1" && calls.last?.1.purpose == .fact_check && calls.last?.1.count == 2 && calls.last?.1.to == "G" && calls.last?.0?.id == claude.id,
+    expect(text(first) == "[ask_ai call 1]\nreply 1" && calls.last?.1.purpose == .fact_check && calls.last?.1.count == 2 && calls.last?.1.to == "G" && calls.last?.0?.id == claude.id,
            "the call carries purpose, count, to and the asker")
     for _ in 1..<Peer.maxAsks { _ = PeerLink.shared.call("ask_ai", ["message": "again"], context: member) }
     let over = PeerLink.shared.call("ask_ai", ["message": "once more"], context: member)
     expect(text(over).contains("already asked") && calls.count == Peer.maxAsks, "over budget: refused with a note, nobody asked")
     var other = member; other.asker = codex
-    expect(text(PeerLink.shared.call("ask_ai", ["message": "mine"], context: other)) == "reply \(Peer.maxAsks + 1)", "another AI's answer has its own budget")
+    expect(text(PeerLink.shared.call("ask_ai", ["message": "mine"], context: other)) == "[ask_ai call 1]\nreply \(Peer.maxAsks + 1)", "another AI's answer has its own budget")
     var third = member; third.asker = gemini
     for _ in 0..<Peer.maxAsks { _ = PeerLink.shared.call("ask_ai", ["message": "mine too"], context: third) }
     for _ in 1..<Peer.maxAsks { _ = PeerLink.shared.call("ask_ai", ["message": "mine"], context: other) }

@@ -183,6 +183,10 @@ final class AppModel: ObservableObject {
     @Published var autoTeamPicks: [String: Bool] {
         didSet { defaults.set(autoTeamPicks, forKey: "autoTeamPicks") }
     }
+    // AI-to-AI collaboration (CollabLog.swift): off, show cards and go (default), or on its own with folded cards.
+    @Published var collaboration: CollabMode {
+        didSet { defaults.set(collaboration.rawValue, forKey: "aiCollaboration") }
+    }
     var pictureMakers: [Account] { accounts.filter { $0.provider == .codex && !pictureMakersOff.contains($0.id) } }
     var onAccountsChange: (() -> Void)?
     var onDisplayChange: (() -> Void)?
@@ -217,6 +221,7 @@ final class AppModel: ObservableObject {
         writableSharedFolders = Set(defaults.stringArray(forKey: "writableSharedFolders") ?? [])
         pictureMakersOff = Set(defaults.stringArray(forKey: "pictureMakersOff") ?? [])
         autoTeamPicks = defaults.dictionary(forKey: "autoTeamPicks") as? [String: Bool] ?? [:]
+        collaboration = defaults.string(forKey: "aiCollaboration").flatMap(CollabMode.init(rawValue:)) ?? .notify
         localEnabled = persist ? LocalModel.enabled : true
         localKeepAlive = persist ? LocalModel.keepAlive : 5
         routeSorter = persist ? RouteSorter.current : .off
@@ -1042,6 +1047,7 @@ struct ChatSettingsTab: View {
                     SortModelStatus(model: model, store: .shared)
                 }
             }
+            CollabSettingsCard(model: model)
             AutoTeamSettingsCard(model: model)
             let makers = model.accounts.filter { $0.provider == .codex }
             if !makers.isEmpty {
@@ -1147,6 +1153,33 @@ struct SortModelStatus: View {
 
 // In the Chat tab: long-term memory (Memory.swift). Only the switch until it is on; then whether the AI saves
 // on its own, and the saved profile and facts in their own window.
+// AI-to-AI collaboration: off / show and go / on its own, and what the log counted in the last 30 days.
+private struct CollabSettingsCard: View {
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        SettingsCard(title: L("AI끼리 협업", "AIs working together"),
+                     help: L("답하는 AI가 필요할 때 다른 AI에게 묻고(ask_ai), 검토를 받고, 회의를 열어요. 불려 온 AI는 읽기만 하고 다시 부르지 않아요. 기록에는 누가 누구에게 왜 불렀는지만 남고 내용은 남지 않아요.",
+                             "An answering AI asks other AIs (ask_ai), gets reviews and holds meetings when needed. AIs it calls only read and call nobody. The log keeps who called whom and why, never the text.")) {
+            SettingsRow(title: L("AI끼리 협업", "AIs working together")) {
+                SettingsMenu(options: CollabMode.allCases.map { ($0.title, $0) }, selection: $model.collaboration)
+            }
+            .help(model.collaboration.summary)
+            Divider()
+            Text(model.collaboration.summary)
+                .font(.system(size: 11)).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 10).padding(.vertical, 4)
+            Text(L("최근 30일: ", "Last 30 days: ") + CollabLog.line(CollabLog.summary(CollabLog.events(since: Date().addingTimeInterval(-30 * 86400)))))
+                .font(.system(size: 11)).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 10).padding(.bottom, 6)
+        }
+    }
+}
+
 // Which AIs the app may call by itself when a chat's members are automatic: a meeting, or several views asked for.
 private struct AutoTeamSettingsCard: View {
     @ObservedObject var model: AppModel

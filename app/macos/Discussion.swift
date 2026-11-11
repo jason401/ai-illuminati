@@ -512,6 +512,7 @@ struct ChatTurn: Identifiable, Codable, Equatable {
     var askedAt: Date?          // when the message was sent (missing in older chats)
     var answeredAt: Date?       // when the answer finished
     var peerNotes: [Entry]?     // mode 0: opinions the AI asked for and reviews of the work (Peer.swift)
+    var peerFolded: Bool?       // collaboration "on its own" (CollabLog.swift): those cards folded into one line
     var route: ChatRoute?       // project chat with members: how this message was answered (Route.swift)
     var routeNote: String?      // "Opinion · 3 AIs · judged by Gemma 4 E4B", shown above the answer
     var routeOne: Bool?         // with route opinion: only the lead answered (nil: everyone did)

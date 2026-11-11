@@ -2266,23 +2266,14 @@ private struct TurnView: View, Equatable {
                 }
             }
             if turn.mode == 0, let notes = turn.peerNotes, !notes.isEmpty {
-                // Opinions the AI asked for and reviews of the work, one line each (click for the full text).
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(notes) { entry in
-                        EntryRow(entry: entry,
-                                 isOpen: Binding(get: { openEntries.contains(entry.id) },
-                                                 set: { if $0 { discussion.openEntries.insert(entry.id) } else { discussion.openEntries.remove(entry.id) } }),
-                                 label: entry.speaker)
-                        // A meeting the AI convened (convene_meeting): its result went to that AI; the speeches are in its own chat.
-                        if let meeting = entry.meeting, discussion.conversations.contains(where: { $0.id == meeting }) {
-                            Button(L("회의 과정 보기", "Show the meeting")) { discussion.open(meeting) }
-                                .buttonStyle(.link).font(.system(size: 11))
-                        }
-                    }
+                // Opinions the AI asked for and reviews of the work, one line each (click for the full text); with
+                // collaboration "on its own" (Settings → Chat) folded into one line.
+                if turn.peerFolded == true {
+                    DisclosureGroup(L("AI끼리 협업 \(notes.count)건", "AIs worked together: \(notes.count)")) { peerCards(notes) }
+                        .font(.callout)
+                } else {
+                    peerCards(notes)
                 }
-                .padding(10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
             }
             if turn.mode == 0, turn.status.isEmpty, let log = turn.projectLog, !log.isEmpty {
                 DisclosureGroup(L("작업 기록 \(log.count)개", "\(log.count) project steps")) {
@@ -2354,6 +2345,25 @@ private struct TurnView: View, Equatable {
                 }
             }
         }
+    }
+
+    private func peerCards(_ notes: [ChatTurn.Entry]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(notes) { entry in
+                EntryRow(entry: entry,
+                         isOpen: Binding(get: { openEntries.contains(entry.id) },
+                                         set: { if $0 { discussion.openEntries.insert(entry.id) } else { discussion.openEntries.remove(entry.id) } }),
+                         label: entry.speaker)
+                // A meeting the AI convened (convene_meeting): its result went to that AI; the speeches are in its own chat.
+                if let meeting = entry.meeting, discussion.conversations.contains(where: { $0.id == meeting }) {
+                    Button(L("회의 과정 보기", "Show the meeting")) { discussion.open(meeting) }
+                        .buttonStyle(.link).font(.system(size: 11))
+                }
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
     }
 
     // Entries are appended as each AI finishes; preserve that arrival order on screen.

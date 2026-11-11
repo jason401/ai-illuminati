@@ -369,6 +369,7 @@ extension Discussion {
                 let (tagless, mood) = FaceLink.extract(raw)
                 if let mood { FaceLink.shared.show(mood) }
                 let (reply, newState) = Self.extractState(tagless)
+                notePeerOutcome(account, reply: tagless)
                 if let newState { self.saveState(newState, room: id, index: index) }
                 deliverSpaceBuild(tagless, room: id, turn: index, cancellation: cancellation)
                 let harvest = collectPictures(reply, account: account, since: started, id: id, index: index, cancellation: cancellation)
@@ -410,6 +411,7 @@ extension Discussion {
                                 let (tagless, mood) = FaceLink.extract(raw)
                                 if let mood { FaceLink.shared.show(mood) }
                                 let (reply, newState) = Self.extractState(tagless)
+                                notePeerOutcome(account, reply: tagless)
                                 if let newState { self.saveState(newState, room: id, index: index) }
                                 run.setAppStep(1, L("검토 반영", "Apply the review"), .done)
                                 let (shown, counts) = Peer.tally(reply, points: findings.points)

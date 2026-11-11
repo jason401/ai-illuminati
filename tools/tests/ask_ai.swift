@@ -95,6 +95,28 @@ func testAskAI() {
     expect(Peer.askPrompt(peer: "G", asker: "C", project: nil, roots: [], question: "q", message: "m").contains("cannot ask other AIs"), "and is told so")
     let check = Peer.askPrompt(peer: "G", asker: "C", project: nil, roots: [], question: "q", message: "m", purpose: .review)
     expect(check.contains("**Checked**") && check.contains("**Could not check**") && check.contains("**Disagree**"), "fact checks and reviews: evidence / not checked / disagree")
+    expect(check.contains(Peer.answerReview) && Peer.answerReview.contains("invented") && Peer.answerReview.contains("counterexamples")
+           && Peer.answerReview.contains("different question") && !Peer.askPrompt(peer: "G", asker: "C", project: nil, roots: [], question: "q", message: "m").contains(Peer.answerReview),
+           "a review of a written answer looks for invented quotes and numbers, missing counterexamples and answers to another question")
+    let rule = Peer.rule(peers: ["G"])
+    expect(rule.contains("before you") && rule.contains("purpose \"review\" with your draft"), "answers built on numbers, quotes or advice: consider a review before sending")
+    expect(Peer.rule(peers: ["G"], reviewer: "G").contains("to \"G\")") && !rule.contains("[Review is on]"), "with review on: fixes may be sent back to the reviewer")
+
+    // Review findings and the lead's count of what it took.
+    let numbered = "Two problems:\n1. a.swift:3 crashes\n   - nested detail\n2) b.swift:9 typo\n\nThat's all."
+    expect(Peer.points(numbered) == 2 && Peer.points("- x\n* y\n• z") == 3 && Peer.points("Prose only, one concern.") == 1 && Peer.points("  ") == 0,
+           "points: top-level items only; prose counts as one")
+    let note = Peer.fixNote("1. x", by: "G", points: 2)
+    expect(note.contains("Review: taken N, left M") && note.contains("2 points") && note.contains("to \"G\"") && note.contains("does not review again on its own"),
+           "the fix note asks for the count and allows a re-check by the reviewer")
+    let counted = Peer.tally("Fixed 1, left 2 (wrong).\n\n**Review: taken 1, left 1**\n", points: 2)
+    expect(counted.reply == "Fixed 1, left 2 (wrong)." && counted.counts?.taken == 1 && counted.counts?.left == 1, "the count line is read and taken out of the reply")
+    expect(Peer.tally("Fixed.\nreview: Taken 3, left 0.", points: 2).counts == nil && Peer.tally("Fixed.\nreview: Taken 3, left 0.", points: 2).reply == "Fixed.",
+           "a count that does not add up is dropped")
+    expect(Peer.tally("Fixed all.", points: 2).counts == nil && Peer.tally("Fixed all.", points: 2).reply == "Fixed all."
+           && Peer.tally("Review: taken 1, left 0\nthen more text", points: 1).counts == nil, "no count line at the end: the reply stays as it is")
+    expect(Peer.tallyLine(points: 3, counts: (2, 1)) == L("지적 3개 → 반영 2개 / 안 반영 1개", "3 points → 2 taken / 1 left")
+           && Peer.tallyLine(points: 3, counts: nil) == L("지적 3개", "3 points"), "the card line")
 
     // A plain chat (no project), everyone at once: both ask, each is answered by the other kind, askers never mixed.
     let model = AppModel()

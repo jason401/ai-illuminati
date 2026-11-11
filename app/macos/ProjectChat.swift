@@ -402,7 +402,7 @@ extension Discussion {
                         checkpoint = run.checkpoint("Work done by " + speaker + "; review findings received. Fix what is right; do not redo finished steps.")
                         changeTurn(id, index) { $0.status = speaker + L(" · 검수 반영 중", " · fixing review findings") }
                         let after = transcript + "\n[" + speaker + "]\n" + text
-                        let fixed = attempt("\n" + findings, transcript: after, fresh: fresh.map { $0 + "\n[" + speaker + "]\n" + text })
+                        let fixed = attempt("\n" + findings.note, transcript: after, fresh: fresh.map { $0 + "\n[" + speaker + "]\n" + text })
                         run.attempt.cancel(); ToolHub.shared.revoke(project: run.id)
                         if !cancellation.isCancelled {
                             switch fixed {
@@ -412,10 +412,13 @@ extension Discussion {
                                 let (reply, newState) = Self.extractState(tagless)
                                 if let newState { self.saveState(newState, room: id, index: index) }
                                 run.setAppStep(1, L("검토 반영", "Apply the review"), .done)
-                                let combined = text + "\n\n---\n\n**" + L("검수 반영", "After the review") + "**\n\n" + reply
+                                let (shown, counts) = Peer.tally(reply, points: findings.points)
+                                markReview(id: id, index: index, findings, counts: counts)
+                                let combined = text + "\n\n---\n\n**" + L("검수 반영", "After the review") + "**\n\n" + shown
                                 changeTurn(id, index, save: true) { $0.final = combined; $0.partial = nil; $0.activity = nil; $0.status = "" }
                             case .failure(let failure):
                                 problem = L("검토 반영에 실패했어요.", "Could not apply the review."); run.setAppStep(1, L("검토 반영", "Apply the review"), .blocked)
+                                markReview(id: id, index: index, findings, counts: nil)
                                 let entry = ChatTurn.Entry(round: 1, speaker: speaker, text: L("검수 반영 실패: ", "Could not apply the review: ") + Self.describe(failure), failed: true)
                                 changeTurn(id, index, save: true) { $0.moreAnswers = ($0.moreAnswers ?? []) + [entry]; $0.partial = nil; $0.activity = nil }
                             }

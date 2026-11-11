@@ -413,7 +413,10 @@ func testPeerReview() {
         if prompt.contains("[Review of the changes you just made") {
             try! "Third\n".write(to: root.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
             _ = try! ProjectProcess.git(["commit", "-am", "Third"], root: root.path)
-            return .success("Took point 1: README now says Third.")
+            // A re-check of only the fix, by the reviewer, if the lead wants one (nothing runs by itself).
+            let recheck = PeerLink.shared.call("ask_ai", ["message": "Fixed: README.md:1 now says Third. Is point 1 solved?", "purpose": "review", "to": chat.label(codex)], context: context)
+            replies.append(((recheck["content"] as? [[String: Any]])?.first?["text"] as? String) ?? "")
+            return .success("Took point 1: README now says Third.\nReview: taken 1, left 0")
         }
         if step == 0 {
             expect(PeerLink.shared.tools(context: context).contains { $0["name"] as? String == "ask_ai" }, "the lead has ask_ai")
@@ -444,17 +447,23 @@ func testPeerReview() {
     // A change: ChatGPT reviews this answer's commit (not the user's file); Claude fixes what is right, once.
     step = 1
     send("Change README to Second.")
-    let review = peerPrompts.last ?? ""
+    let review = peerPrompts.last { $0.hasPrefix("[REVIEW]") } ?? ""
     expect(review.hasPrefix("[REVIEW]") && review.contains("+Second 1") && review.contains("Change README to Second.") && !review.contains("user-notes.txt"),
            "the review reads only what this answer changed")
     expect(peerViews.allSatisfy { $0.project == nil && $0.face == false && $0.roots.allSatisfy { $0.writable != true } }, "the reviewer only reads, with no tools of its own")
     let fix = prompts.last ?? ""
     expect(fix.contains("[Review of the changes you just made") && fix.contains("README.md:1 says Second") && fix.contains("Done 1."), "the lead gets the findings and its own reply")
     let last = chat.current.turns.last
-    expect(last?.final?.contains("Done 1.") == true && last?.final?.contains("README now says Third") == true && git(["log", "-1", "--format=%s"]) == "Third",
-           "the fix is made in the same turn and shown after the first reply")
-    expect(last?.peerNotes?.count == 1 && last?.peerNotes?.first?.headline?.contains("README.md:1") == true && peerPrompts.filter { $0.hasPrefix("[REVIEW]") }.count == 1,
-           "one review card, and no second review after the fix")
+    expect(last?.final?.contains("Done 1.") == true && last?.final?.contains("README now says Third") == true && git(["log", "-1", "--format=%s"]) == "Third"
+           && last?.final?.contains("Review: taken") == false, "the fix is made in the same turn and shown after the first reply, without the count line")
+    expect(fix.contains("ask_ai") && fix.contains("to \"\(chat.label(codex))\"") && !fix.contains("does not review again, so"), "the lead may send its fixes back to the reviewer")
+    let card = last?.peerNotes?.first
+    expect(card?.headline?.contains(L("지적 1개 → 반영 1개 / 안 반영 0개", "1 point → 1 taken / 0 left")) == true && card?.headline?.contains("README.md:1") == true
+           && card?.text.contains(L("지적 1개", "1 point")) == true, "the review card counts the points taken and left")
+    let recheck = peerPrompts.last ?? ""
+    expect(last?.peerNotes?.count == 2 && peerPrompts.filter { $0.hasPrefix("[REVIEW]") }.count == 1 && recheck.hasPrefix("[SECOND OPINION]")
+           && recheck.contains("Fixed: README.md:1") && recheck.contains("check only those fixes") && replies.last?.contains("Plan is fine") == true,
+           "no second review by itself; the lead's re-check goes to the reviewer as ask_ai and shows as its own card")
     expect(last?.plan?.map(\.status) == [.done, .done] && last?.plan?.first?.text.contains(chat.label(codex)) == true, "the app's review and fix steps end done")
 
     // A clean review: no fix pass.

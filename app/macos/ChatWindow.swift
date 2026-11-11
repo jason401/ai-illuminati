@@ -2973,6 +2973,7 @@ private struct WorkPlanView: View {
     let steps: [WorkStep]
     let note: String?
     let running: Bool
+    @State private var expanded = false
 
     var body: some View {
         // Times count up only while the work runs; a saved or interrupted turn shows no live time.
@@ -2982,7 +2983,7 @@ private struct WorkPlanView: View {
     private func content(_ now: Date) -> some View {
         let done = steps.filter { $0.status == .done }.count
         let current = steps.first { $0.status == .doing } ?? steps.first { $0.status == .blocked }
-        return DisclosureGroup {
+        return DisclosureGroup(isExpanded: $expanded) {
             VStack(alignment: .leading, spacing: 4) {
                 ForEach(Array(steps.enumerated()), id: \.offset) { _, step in
                     HStack(alignment: .top, spacing: 6) {
@@ -3009,6 +3010,9 @@ private struct WorkPlanView: View {
             Text(L("작업 \(done)/\(steps.count)", "Steps \(done)/\(steps.count)")
                  + (running ? current.map { " · " + $0.text + ($0.status == .doing ? $0.sub.map { " · " + $0 } ?? "" : "") } ?? "" : ""))
                 .lineLimit(1)
+                // The arrow alone is too small to hit: the whole line folds and unfolds.
+                .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+                .onTapGesture { withAnimation(.easeInOut(duration: 0.15)) { expanded.toggle() } }
         }
         .font(.system(size: 12))
         .padding(.horizontal, 10).padding(.vertical, 6)

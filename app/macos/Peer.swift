@@ -7,7 +7,6 @@ import Foundation
 enum Peer {
     static let maxAsks = 4                       // ask_ai calls per answer (one AI's reply)
     static let maxAtOnce = 3                     // AIs one call may ask at the same time
-    static let maxPerMessage = 8                 // all replies to one message together (several AIs answering at once)
     static let askTimeout: TimeInterval = 600
     static let reviewTimeout: TimeInterval = 900
     static let diffLimit = 80_000                // characters of diff the reviewer gets in the prompt
@@ -188,11 +187,12 @@ final class PeerLink: ToolProvider {
         let turn: UUID?              // the message this session belongs to: tool sessions made for an older one cannot use it
         let members: [String]        // the chat's members, asked first
         let review: Bool             // project work with reviewers: its changes are reviewed afterwards
-        var asked: [String: Int] = [:]   // calls per asking account in this message
-        var total = 0
+        var asked: [String: Int] = [:]   // calls per asking account (each AI's reply has its own budget)
+        let reachable: (Account?) -> Bool    // someone else on this Mac may be asked by this AI now
         let ask: (Account?, Request) -> String
-        init(room: UUID, turn: UUID? = nil, members: [String] = [], review: Bool = false, ask: @escaping (Account?, Request) -> String) {
-            self.room = room; self.turn = turn; self.members = members; self.review = review; self.ask = ask
+        init(room: UUID, turn: UUID? = nil, members: [String] = [], review: Bool = false, reachable: @escaping (Account?) -> Bool = { _ in true },
+             ask: @escaping (Account?, Request) -> String) {
+            self.room = room; self.turn = turn; self.members = members; self.review = review; self.reachable = reachable; self.ask = ask
         }
     }
     private let lock = NSLock()
@@ -207,7 +207,7 @@ final class PeerLink: ToolProvider {
     func session(for context: ToolContext) -> Session? {
         guard context.origin != .consulted, let session = session(context.room) else { return nil }
         if let turn = context.turn, let own = session.turn, turn != own { return nil }
-        return session
+        return session.reachable(context.asker) ? session : nil
     }
 
     var active: Bool { lock.lock(); defer { lock.unlock() }; return !sessions.isEmpty }
@@ -231,8 +231,8 @@ final class PeerLink: ToolProvider {
         guard !message.isEmpty else { return ToolHub.failure("Write the message for the other AI.") }
         let key = context.asker?.id ?? ""
         lock.lock()
-        let allowed = session.asked[key, default: 0] < Peer.maxAsks && session.total < Peer.maxPerMessage
-        if allowed { session.asked[key, default: 0] += 1; session.total += 1 }
+        let allowed = session.asked[key, default: 0] < Peer.maxAsks
+        if allowed { session.asked[key, default: 0] += 1 }
         lock.unlock()
         guard allowed else { return text("You already asked other AIs \(Peer.maxAsks) times in this answer (the limit). Continue on your own.") }
         let request = Request(message: String(message.prefix(40_000)), to: arguments["to"] as? String,
@@ -284,7 +284,10 @@ extension Discussion {
         let view = Self.peerView(binding)
         let members = reviewers.isEmpty ? memberIDs(room: id) : reviewers
         let session = PeerLink.Session(room: id, turn: savedConversation(id)?.turns.last?.id, members: members,
-                                       review: !reviewers.isEmpty && binding.project != nil) { [weak self] asker, request in
+                                       review: !reviewers.isEmpty && binding.project != nil, reachable: { [weak self] asker in
+            guard let self else { return false }
+            return !Peer.available(asker: asker, accounts: self.model.accounts, usage: self.model.latestUsage, lock: self.lock(of: id)).isEmpty
+        }) { [weak self] asker, request in
             guard let self else { return "The other AI is unavailable. Continue on your own." }
             let picked = Peer.pick(asker: asker, to: request.to, count: request.count, members: members, accounts: self.model.accounts,
                                    usage: self.model.latestUsage, lock: self.lock(of: id), label: self.label)

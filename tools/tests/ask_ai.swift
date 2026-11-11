@@ -64,7 +64,17 @@ func testAskAI() {
     expect(text(over).contains("already asked") && calls.count == Peer.maxAsks, "over budget: refused with a note, nobody asked")
     var other = member; other.asker = codex
     expect(text(PeerLink.shared.call("ask_ai", ["message": "mine"], context: other)) == "reply \(Peer.maxAsks + 1)", "another AI's answer has its own budget")
+    var third = member; third.asker = gemini
+    for _ in 0..<Peer.maxAsks { _ = PeerLink.shared.call("ask_ai", ["message": "mine too"], context: third) }
+    for _ in 1..<Peer.maxAsks { _ = PeerLink.shared.call("ask_ai", ["message": "mine"], context: other) }
+    expect(calls.count == 3 * Peer.maxAsks, "three AIs answering one message each get all four asks")
     PeerLink.shared.close(session)
+    // Nobody this AI may ask (signed out, low on usage, outside the lock): no tool listed and no call.
+    let nobody = PeerLink.Session(room: room, turn: turn, reachable: { $0?.id != claude.id }) { _, _ in "asked" }
+    PeerLink.shared.open(nobody)
+    expect(PeerLink.shared.tools(context: member).isEmpty && PeerLink.shared.call("ask_ai", ["message": "x"], context: member)["isError"] as? Bool == true
+           && !PeerLink.shared.tools(context: other).isEmpty, "no one to ask: no ask_ai for that AI")
+    PeerLink.shared.close(nobody)
 
     // Through the app's tool gateway: consulted sessions list no ask_ai; side sessions (another AI answering at once) only ask_ai.
     PeerLink.shared.open(session)
@@ -132,10 +142,15 @@ func testAskAI() {
     let alone = Discussion(model: lonely)
     alone.configure { $0.mode = 0 }
     var aloneInstruction = ""
-    alone.workspaceAnswer = { _, prompt, _, _, _ in aloneInstruction = prompt; return .success("ok") }
+    var aloneTools = -1
+    alone.workspaceAnswer = { account, prompt, binding, _, _ in
+        aloneInstruction = prompt
+        aloneTools = PeerLink.shared.tools(context: ToolContext(room: alone.currentID, roots: binding.roots, asker: account)).count
+        return .success("ok")
+    }
     alone.draft = "안녕"; alone.send()
     let aloneDeadline = Date().addingTimeInterval(30)
     while Date() < aloneDeadline && (alone.anyRunning || alone.current.turns.last?.final == nil) { RunLoop.main.run(until: Date().addingTimeInterval(0.03)) }
-    expect(!aloneInstruction.isEmpty && !aloneInstruction.contains("ask_ai"), "no other AI: no ask_ai")
+    expect(!aloneInstruction.isEmpty && !aloneInstruction.contains("ask_ai") && aloneTools == 0, "no other AI: no ask_ai rule and no tool")
     print("PASS: ask_ai (whom, budget, depth 1, Enterprise, side answers, plain chat, askers kept apart, cards)")
 }

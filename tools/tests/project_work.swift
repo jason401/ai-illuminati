@@ -1164,6 +1164,17 @@ func testAutoMeeting() {
     let everyone = hold(views, "/all 어때?")
     expect(everyone?.routeChoice == .all && Set(viewAsked.map(\.0)) == [c1.id, x1.id, g.id, c2.id],
            "plain chat, /all: up to four AIs, no local model: \(viewAsked.map(\.0))")
+    // Picked in Settings → Chat: only a local model, so it answers alone; nobody picked, no answer.
+    model.autoTeamPicks = Dictionary(uniqueKeysWithValues: all.map { ($0.id, $0.id == local.id) })
+    viewAsked = []
+    let localOnly = hold(views, "2명 의견 들려줘: A냐 B냐")
+    expect(localOnly?.error == nil && viewAsked.map(\.0) == [local.id], "views: the one AI picked answers alone: \(viewAsked.map(\.0))")
+    model.autoTeamPicks = Dictionary(uniqueKeysWithValues: all.map { ($0.id, false) })
+    viewAsked = []
+    let nobody = hold(views, "2명 의견 들려줘: A냐 B냐")
+    expect(nobody?.error?.contains("자동으로 부를 AI") == true || nobody?.error?.contains("AIs picked automatically") == true, "views: nobody picked, a note")
+    expect(viewAsked.isEmpty, "views: nobody picked, no AI called: \(viewAsked.map(\.0))")
+    model.autoTeamPicks = [:]
 
     // One member checked by hand: that one meets, no AI the user did not pick.
     let one = Discussion(model: model)

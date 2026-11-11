@@ -1326,7 +1326,8 @@ final class Discussion: ObservableObject {
         // Asking several AIs in so many words ("2명 의견 줘") works in a plain chat too, with as many as asked for.
         let asked = !meeting && autoMembers && forced == nil && !todoRun ? Route.askedViewers(question) : nil
         let autoViews = !meeting && autoMembers && forced == nil && !todoRun && (asked != nil || (project && Route.found(Route.asksViews, question)))
-        let autoTeam = autoMembers && !meeting && (forced == .all || autoViews)
+        let autoAsked = autoMembers && !meeting && (forced == .all || autoViews)
+        let autoTeam = autoAsked
             ? Self.meetingTeam(model.accounts, usage: model.latestUsage, most: asked ?? Self.meetingMost,
                                  picks: model.autoTeamPicks) { self.autoAllowed($0, room: id) }.map(\.id) : []
         let sorting = !meeting && (standing.count >= 2 || (forced != nil && project && plain) || (forced == .all && autoMembers) || autoViews)
@@ -1478,10 +1479,19 @@ final class Discussion: ObservableObject {
                 }
                 let name = { (accountID: String) in worker.model.accounts.first { $0.id == accountID }.map(worker.label) ?? accountID }
                 // Opinions never fall back to work: with fewer than two members ready (or picked by the app), the lead answers alone.
-                let viewers = route == .all && opinionMembers.count < 2 && autoTeam.count >= 2 ? autoTeam : opinionMembers
+                // Views the app picks for (autoTeamPicks in Settings → Chat): only those AIs, one answers alone, none: no answer.
+                let picked = route == .all && opinionMembers.count < 2 && autoAsked
+                if picked && autoTeam.isEmpty {
+                    worker.changeTurn(id, index, save: true) {
+                        $0.error = L("의견을 줄 AI가 없어요. 설정 → 채팅 → \"자동으로 부를 AI\"에서 로그인된 AI를 켜 주세요.",
+                                     "No AI can give a view. Turn on a signed-in AI in Settings → Chat → \"AIs picked automatically\".")
+                    }
+                    return worker.endSolo(id, index, stopped: false)
+                }
+                let viewers = picked ? autoTeam : opinionMembers
                 if route == .all && viewers.count < 2 { route = .one }
                 // Run again after members dropped out (none of them standing): whoever answers this chat now.
-                let answering = route == .one ? Array((opinionMembers.isEmpty ? team.map(\.id) : opinionMembers).prefix(1)) : viewers
+                let answering = route == .one ? Array((picked ? autoTeam : opinionMembers.isEmpty ? team.map(\.id) : opinionMembers).prefix(1)) : viewers
                 guard route == .work || !answering.isEmpty else {
                     worker.changeTurn(id, index, save: true) { $0.error = L("답할 수 있는 AI가 없어요.", "No AI is available.") }
                     return worker.endSolo(id, index, stopped: false)

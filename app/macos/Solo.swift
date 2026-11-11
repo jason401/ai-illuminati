@@ -821,7 +821,7 @@ extension Discussion {
                                 fullAccess: binding.fullAccess == true, picture: pictureRule(account, chat: id), helper: helper,
                                 face: Self.projectFaceRule(face: binding.face == true), project: project,
                                 notes: id.map { ChatNotes.rule(ChatNotes.current($0)) } ?? "",
-                                space: spaceRule && account.provider != .ollama
+                                space: spaceRule
                                     ? Self.spaceRule(lastQuestion(id), draws: !spaceDrawers(chat: id ?? currentID).isEmpty,
                                                      folder: [.claude, .codex].contains(account.provider) && project == nil
                                                          && binding.roots.contains { $0.path == SpaceStore.root.path && $0.writable == true }) : "",

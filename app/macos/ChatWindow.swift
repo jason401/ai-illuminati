@@ -1442,8 +1442,7 @@ struct ChatView: View {
     private var collaborationControls: some View {
         ScrollView(.horizontal, showsIndicators: true) {
             HStack {
-                // Gemma on this Mac has no tools for the task work, so it does not join collaboration.
-                ForEach(discussion.model.accounts.filter { $0.provider != .ollama }, id: \.id) { account in
+                ForEach(discussion.model.accounts.filter { $0.provider != .ollama || discussion.model.localEnabled }, id: \.id) { account in
                     HStack(spacing: 3) {
                         Toggle(discussion.label(account), isOn: Binding(
                             get: { discussion.configuration.accountIDs?.contains(account.id) ?? false },

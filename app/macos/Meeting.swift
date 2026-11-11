@@ -32,7 +32,8 @@ extension Discussion {
         let chosen = !ids.isEmpty ? ids : memberIDs(room: room).isEmpty ? fallback.map(\.id) : memberIDs(room: room)
         var seen = Set<String>(), team: [Account] = []
         for id in chosen {
-            guard let account = model.accounts.first(where: { $0.id == id }), Self.meets(account),
+            // Called by hand (@ or checked), a model on this Mac meets too; the Settings switch only rules automatic picks.
+            guard let account = model.accounts.first(where: { $0.id == id }), Self.meets(account) || (account.provider == .ollama && model.localEnabled),
                   permits(account, room: room), model.latestUsage[id]?.needsLogin != true, seen.insert(id).inserted else { continue }
             team.append(account)
         }

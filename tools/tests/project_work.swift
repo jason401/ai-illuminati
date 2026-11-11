@@ -1190,6 +1190,42 @@ func testAutoMeeting() {
     let alone = hold(one, "/meet 정리해줘")
     expect(alone?.meetingRoom != nil && oneAsked == [x1.id], "one member checked: only that member meets: \(oneAsked)")
 
+    // A model on this Mac checked by hand (or called with @) meets like any AI, though Settings leaves it out of
+    // automatic picks; it is told it has no web search. With Ollama off it is left out.
+    let wasLocal = model.localEnabled
+    model.localEnabled = true
+    model.autoTeamPicks = [local.id: false]
+    var localAsked: [String: String] = [:]
+    func localChat() -> Discussion {
+        let chat = Discussion(model: model)
+        chat.configure { $0.mode = 0 }
+        chat.workspaceAnswer = { account, prompt, _, _, _ in
+            if prompt.contains("[MEETING RESULT]") { return .success("결론: 같이.") }
+            if prompt.contains("[MODE3 MODERATION]") { return .success(#"{"action":"finish","reason":"enough"}"#) }
+            localAsked[account.id] = prompt
+            return .success("TL;DR: ok\n\nok")
+        }
+        return chat
+    }
+    let checked = localChat()
+    checked.toggleMember(c1.id); checked.toggleMember(local.id)
+    let localMeeting = hold(checked, "/meet 정리해줘")
+    expect(localMeeting?.meetingRoom != nil && Set(localAsked.keys) == [c1.id, local.id],
+           "a local model checked by hand meets though switched off for automatic picks: \(localAsked.keys)")
+    expect(localAsked[local.id]?.contains("You cannot search the web") == true && localAsked[local.id]?.contains("and search the web") == false
+           && localAsked[c1.id]?.contains("You can search the web") == true, "a local model is told it has no web search, the others keep it")
+    localAsked = [:]
+    let called = localChat()
+    _ = hold(called, "@젬마 @클로드 회의해줘")
+    expect(localAsked.keys.contains(local.id), "a local model called with @ meets: \(localAsked.keys)")
+    expect(checked.meetingMembers(room: checked.currentID, mentioned: [local.id], fallback: []).map(\.id) == [local.id],
+           "a local model named for a meeting is a member")
+    model.localEnabled = false
+    expect(checked.meetingMembers(room: checked.currentID, mentioned: [local.id, c1.id], fallback: []).map(\.id) == [c1.id],
+           "Ollama off: the local model is left out of a meeting")
+    model.localEnabled = wasLocal
+    model.autoTeamPicks = [:]
+
     // Only Gemini accounts can come (they never answer a plain chat alone): the meeting still starts.
     let g2 = Account(id: "auto-g2", provider: .gemini, name: "G2")
     let geminiModel = AppModel()

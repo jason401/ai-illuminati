@@ -147,6 +147,19 @@ extension Discussion {
         """
     }
 
+    static let searchRule = """
+        You can search the web and read pages. For any fact, number, name or link that matters, search first and cite
+        what you found as [source: URL]. Use [from memory] or [estimate] only when a search found nothing. Never invent a source.
+        Before calling another AI's claim unverified or wrong, check it yourself with a search. If your search confirms it, say so.
+        If it does not, say what you searched and what you found instead. Never dispute a sourced claim without a source of your own.
+        """
+    // A model on this Mac (Ollama) has no web search: it must say so instead of making up links.
+    static let localSearchRule = """
+        You cannot search the web or open pages. Mark facts as [from memory] or [estimate], never write a [source: URL] you did not
+        get from the transcript or a file, and say plainly when a point needs a web search you cannot do.
+        Do not call another AI's sourced claim wrong without your own evidence.
+        """
+
     private func debateSpeech(_ account: Account, rules: String, focus: String, transcript: String, opening: Bool) -> String {
         """
         \(Self.debateContext(rules: rules, transcript: transcript))
@@ -156,10 +169,7 @@ extension Discussion {
         Speak only as yourself. Never write, imagine, or quote a statement on another AI's behalf.
         \(SpeechLength.rule(activeSpeechLength)) (this overrides other length rules), in the language of the
         latest user message unless they request another language.
-        You can search the web and read pages. For any fact, number, name or link that matters, search first and cite
-        what you found as [source: URL]. Use [from memory] or [estimate] only when a search found nothing. Never invent a source.
-        Before calling another AI's claim unverified or wrong, check it yourself with a search. If your search confirms it, say so.
-        If it does not, say what you searched and what you found instead. Never dispute a sourced claim without a source of your own.
+        \(account.provider == .ollama ? Self.localSearchRule : Self.searchRule)
         \(activeAdversarial ? "This is a critical debate: identify the strongest opposing interpretation, concrete failure cases and missing controls in other claims. Defend claims with evidence, rebut ideas rigorously, never attack people or invent disagreement. Do not agree merely to end the discussion." : "")
         \(opening
             ? "This is the opening round: every AI answers at the same time without seeing the others. Give your best answer to the question with its main reason."
@@ -170,7 +180,9 @@ extension Discussion {
               When another AI is right, say so briefly and build on it. Change your own view freely if the discussion shows a better one.
               No attacks, no repeating, no separate summary.
               """)
-        \(activeMeeting ? "This is a meeting: you may read the folders listed above (read only) and search the web. Do not change files or run commands."
+        \(account.provider == .ollama
+            ? (activeMeeting ? "This is a meeting: you may read the folders listed above (read only). Do not change files or run commands." : "Do not change files or run commands.")
+            : activeMeeting ? "This is a meeting: you may read the folders listed above (read only) and search the web. Do not change files or run commands."
             : "Use only web search and reading web pages. Do not change files or run commands.")
         \(pictureRule(account))
         \(Self.headlineRule)

@@ -158,15 +158,15 @@ extension Discussion {
         }, notify: { text in SpaceRefiner.shared.notes[id] = text })
     }
 
-    // Who may be picked to change a Space (beside its change box). Gemma on this Mac is too small to write a whole page.
-    var spaceWorkers: [Account] { model.accounts.filter { $0.provider != .ollama } }
+    // Who may be picked to change a Space (beside its change box). A model on this Mac only while Ollama is on.
+    var spaceWorkers: [Account] { model.accounts.filter { $0.provider != .ollama || model.localEnabled } }
 
     // Who changes a Space: the account picked for it, else whoever answered last in the chat that made it, else the
     // account with most usage left.
     func refineAccount(_ manifest: SpaceManifest) -> Account? {
         if let id = manifest.worker, let chosen = spaceWorkers.first(where: { $0.id == id }) { return chosen }
         if let origin = manifest.originChat.flatMap(UUID.init(uuidString:)), conversations.contains(where: { $0.id == origin }),
-           let account = soloNext(room: origin), account.provider != .ollama { return account }
+           let account = soloNext(room: origin), spaceWorkers.contains(where: { $0.id == account.id }) { return account }
         return AutoPick.choose(model.accounts.filter { [.claude, .codex].contains($0.provider) }, usage: model.latestUsage, lock: nil, current: nil)
     }
 

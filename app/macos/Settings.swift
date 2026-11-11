@@ -850,12 +850,11 @@ struct AccountsSettingsTab: View {
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(0.07)))
             .onDisappear { model.draggingAccount = nil }
-            Text(L("이름을 눌러 수정 · 끌어서 순서 변경 · ⋯에서 로그인과 폴더 열기", "Edit names directly · Drag to reorder · ⋯ for sign-in and folders"))
+            Text(L("이름을 눌러 수정 · 오른쪽에서 모델 선택 · 끌어서 순서 변경 · ⋯에서 로그인과 폴더 열기", "Edit names directly · Pick each model on the right · Drag to reorder · ⋯ for sign-in and folders"))
                 .font(.system(size: 11)).foregroundStyle(.secondary)
             Text(L("계정을 추가하면 브라우저 로그인을 위해 터미널이 열려요. 같은 ChatGPT 계정을 중복 추가하지 마세요.",
                    "Adding opens Terminal for browser sign-in. Add each ChatGPT account only once."))
                 .font(.system(size: 11)).foregroundStyle(.secondary)
-            CloudModelSettingsCard(model: model)
             if model.hasLocal {
                 // Ollama models on this Mac: off leaves them out of @, votes and the last resort, and unloads them.
                 SettingsCard(title: L("Ollama (내 Mac)", "Ollama (this Mac)")) {
@@ -876,37 +875,34 @@ struct AccountsSettingsTab: View {
     }
 }
 
-// Which model each cloud account answers with: Auto (the CLI's default, as before) or one picked here.
-private final class CloudModelPicks: ObservableObject {
-    @Published var picked: [String: String] = [:]   // account id → model; missing = Auto
+// Which model a cloud account answers with, picked in its row: Auto (the CLI's default, as before) or a model.
+private final class CloudModelPick: ObservableObject {
+    @Published var picked: String?   // nil = Auto
     @Published var gemini: [CloudModels.Choice] = []
 }
 
-private struct CloudModelSettingsCard: View {
-    @ObservedObject var model: AppModel
-    @StateObject private var state = CloudModelPicks()
-    private var picked: [String: String] { state.picked }
+private struct CloudModelMenu: View {
+    let account: Account
+    @StateObject private var state = CloudModelPick()
     private var gemini: [CloudModels.Choice] { state.gemini }
     private static let custom = "\u{0}custom"
 
-    private var accounts: [Account] { model.accounts.filter { $0.provider != .ollama } }
-
     var body: some View {
-        if !accounts.isEmpty {
-            SettingsCard(title: L("AI 모델", "AI models"),
-                         help: L("계정마다 답할 모델을 골라요. 자동이면 지금처럼 각 프로그램(Claude Code·Codex·agy)의 기본 모델을 써요. 그 계정에서 못 쓰는 모델을 고르면 답이 오류로 끝나요.",
-                                 "The model each account answers with. Auto keeps each CLI's (Claude Code, Codex, agy) default, as before. A model the account cannot use ends its answers with an error.")) {
-                ForEach(accounts, id: \.id) { account in
-                    if account.id != accounts.first?.id { Divider() }
-                    SettingsRow(title: account.name) {
-                        SettingsMenu(options: options(account), selection: Binding(
-                            get: { picked[account.id] ?? "" },
-                            set: { choose($0, for: account) }))
-                    }
-                }
+        let options = options(account)
+        Menu {
+            Picker(L("모델", "Model"), selection: Binding(get: { state.picked ?? "" }, set: { choose($0, for: account) })) {
+                ForEach(options, id: \.1) { Text($0.0).tag($0.1) }
             }
-            .onAppear(perform: load)
+            .pickerStyle(.inline).labelsHidden()
+            Divider()
+            Button(L("직접 입력…", "Other…")) { choose(Self.custom, for: account) }
+        } label: {
+            Text(options.first { $0.1 == (state.picked ?? "") }?.0 ?? state.picked ?? "").lineLimit(1)
         }
+        .menuStyle(.borderlessButton).fixedSize().controlSize(.small)
+        .help(L("이 계정이 답할 모델. 자동이면 지금처럼 각 프로그램(Claude Code·Codex·agy)의 기본 모델을 써요. 그 계정에서 못 쓰는 모델을 고르면 답이 오류로 끝나요.",
+                "The model this account answers with. Auto keeps each CLI's (Claude Code, Codex, agy) default, as before. A model the account cannot use ends its answers with an error."))
+        .onAppear(perform: load)
     }
 
     private func options(_ account: Account) -> [(String, String)] {
@@ -917,10 +913,9 @@ private struct CloudModelSettingsCard: View {
         case .gemini: choices = gemini
         case .ollama: choices = []
         }
-        var list = [(L("자동 (기본 모델)", "Auto (default model)"), "")] + choices.map { ($0.title, $0.id) }
+        var list = [(L("자동", "Auto"), "")] + choices.map { ($0.title, $0.id) }
         // A typed name, or one the list no longer has, still shows as picked.
-        if let current = picked[account.id], !choices.contains(where: { $0.id == current }) { list.append((current, current)) }
-        list.append((L("직접 입력…", "Other…"), Self.custom))
+        if let current = state.picked, !choices.contains(where: { $0.id == current }) { list.append((current, current)) }
         return list
     }
 
@@ -931,7 +926,7 @@ private struct CloudModelSettingsCard: View {
             name = typed.isEmpty ? nil : typed
         }
         CloudModels.set(name, for: account)
-        state.picked[account.id] = CloudModels.model(account)
+        state.picked = CloudModels.model(account)
     }
 
     private func ask(_ account: Account) -> String? {
@@ -940,7 +935,7 @@ private struct CloudModelSettingsCard: View {
         alert.informativeText = L("CLI에 그대로 넘길 모델 이름이에요(예: opus, gpt-6.1-sol). 비우면 자동이에요.",
                                   "Passed to the CLI as is (e.g. opus, gpt-6.1-sol). Empty: Auto.")
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
-        field.stringValue = picked[account.id] ?? ""
+        field.stringValue = state.picked ?? ""
         alert.accessoryView = field
         alert.window.initialFirstResponder = field
         alert.addButton(withTitle: L("저장", "Save"))
@@ -958,8 +953,8 @@ private struct CloudModelSettingsCard: View {
     }
 
     private func load() {
-        state.picked = Dictionary(uniqueKeysWithValues: accounts.compactMap { a in CloudModels.model(a).map { (a.id, $0) } })
-        if let account = accounts.first(where: { $0.provider == .gemini }), gemini.isEmpty {
+        state.picked = CloudModels.model(account)
+        if account.provider == .gemini, gemini.isEmpty {
             CloudModels.loadGemini(account) { [state] in state.gemini = $0 }
         }
     }
@@ -1725,6 +1720,7 @@ private struct AccountRow: View {
                 }.font(.system(size: 10)).lineLimit(1)
             }
             Spacer(minLength: 4)
+            if account.provider != .ollama { CloudModelMenu(account: account) }
             Image(systemName: "line.3.horizontal")
                 .foregroundStyle(.secondary)
                 .frame(width: 22, height: 24)

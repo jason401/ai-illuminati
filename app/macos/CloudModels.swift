@@ -1,6 +1,6 @@
 import Foundation
 
-// Which model a cloud account answers with (Settings → Accounts → AI models). Nothing saved is "Auto": no model
+// Which model a cloud account answers with (Settings → Accounts, each row's model menu). Nothing saved is "Auto": no model
 // option, so the CLI picks its own default as before. Per account, since plans differ in what they offer
 // (a school Claude may lack a model a personal one has). A model the account cannot use fails the answer with
 // the CLI's own error; there is no silent fallback.

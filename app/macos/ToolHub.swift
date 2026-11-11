@@ -2,7 +2,8 @@ import Foundation
 import Darwin
 
 // Who a tool session belongs to. member: an AI answering the user (every tool); side: another AI answering the same
-// message at the same time, read only (only ask_ai); consulted: an AI another AI asked (no ask_ai, so depth stays 1).
+// message at the same time, read only (only ask_ai); consulted: an AI another AI asked or called to a meeting (no ask_ai
+// or convene_meeting, so depth stays 1).
 enum ToolOrigin: String, Codable { case member, side, consulted }
 
 struct ToolContext {
@@ -36,7 +37,7 @@ extension FaceLink: ToolProvider {
 final class ToolHub {
     static let shared = ToolHub()
     static var socketPath = AccountStore.supportDir + "/tools.sock"
-    private var providers: [ToolProvider] { [FaceLink.shared, DriveLink.shared, GitLink.shared, PlanLink.shared, PeerLink.shared, ChatLink.shared, MemoryLink.shared, ProjectMakerLink.shared, TaskLink.shared, TodoAddLink.shared, StorageLink.shared, ExternalMCP.shared] }
+    private var providers: [ToolProvider] { [FaceLink.shared, DriveLink.shared, GitLink.shared, PlanLink.shared, PeerLink.shared, ConveneLink.shared, ChatLink.shared, MemoryLink.shared, ProjectMakerLink.shared, TaskLink.shared, TodoAddLink.shared, StorageLink.shared, ExternalMCP.shared] }
     var active: Bool { providers.contains { $0.active } }
     private let lock = NSLock()
     private var sockets: Set<String> = []
@@ -76,7 +77,7 @@ final class ToolHub {
         }
         let available: [ToolProvider] = legacy ? [FaceLink.shared]
             : context.origin == .side ? [PeerLink.shared]
-            : context.origin == .consulted ? providers.filter { $0 !== PeerLink.shared } : providers
+            : context.origin == .consulted ? providers.filter { $0 !== PeerLink.shared && $0 !== ConveneLink.shared } : providers
         switch message["op"] as? String {
         case "tools":
             let tools = available.filter { $0.active }.flatMap { $0.tools(context: context) }

@@ -7,15 +7,24 @@ final class DebateCancellation {
     private let lock = NSLock()
     private var cancelled = false
     private var processes: [Process] = []
+    private var children: [DebateCancellation] = []
 
     var isCancelled: Bool { lock.lock(); defer { lock.unlock() }; return cancelled }
+    // A token that stops with this one (a meeting an answer convened stops with that answer), or on its own.
+    func child() -> DebateCancellation {
+        let token = DebateCancellation()
+        lock.lock(); let stop = cancelled; if !stop { children.append(token) }; lock.unlock()
+        if stop { token.cancel() }
+        return token
+    }
     func attach(_ process: Process) {
         lock.lock(); processes.append(process); let stop = cancelled; lock.unlock()
         if stop { Self.end(process) }
     }
     func detach(_ process: Process) { lock.lock(); processes.removeAll { $0 === process }; lock.unlock() }
     func cancel() {
-        lock.lock(); cancelled = true; let active = processes; lock.unlock()
+        lock.lock(); cancelled = true; let active = processes, followers = children; children = []; lock.unlock()
+        followers.forEach { $0.cancel() }
         active.forEach(Self.end)
     }
     static func end(_ process: Process) {
@@ -287,6 +296,7 @@ extension Discussion {
             You are the neutral moderator. The goal is the best possible answer to the latest user question.
             Do not favor your own earlier statements.
             \(activeAdversarial ? "Critical debate: actively assign unresolved opposing hypotheses, rebuttals, stress tests and missing controls; resolve material disagreements with evidence. No personal attacks or fabricated objections." : "")
+            \(activeHeld ? "Quick meeting: if the opening views agree, finish now. Give a turn only to settle a real disagreement that changes the decision; then finish." : "")
             1. Update the board: what is agreed, what needs checking, and what is still open. A claim backed by a URL that no one has
                contradicted with another source counts as verified. Saying "unverified" without searching does not make it unverified.
             2. Find the most important thing the answer still lacks: missing evidence or data, an unchecked number, an unanswered part of
@@ -370,7 +380,7 @@ extension Discussion {
             let finalStarted = Date()
             let missing = team.filter { !successful.contains($0.id) }.map(label)
             let result = meeting != nil ? requestDebate(moderator, Self.debateContext(rules: rules, transcript: transcript) + "\n"
-                + (board.isEmpty ? "" : "Moderator board:\n" + board + "\n") + "End reason: \(ending)\n" + Self.meetingFinal(missing: missing)
+                + (board.isEmpty ? "" : "Moderator board:\n" + board + "\n") + "End reason: \(ending)\n" + Self.meetingFinal(missing: missing, caller: activeHeldBy)
                 + "\n\(pictureRule(moderator))\nDo not change files or execute commands.", 180, cancellation) : requestDebate(moderator, """
                 \(Self.debateContext(rules: rules, transcript: transcript))
                 [MODE3 FINAL]

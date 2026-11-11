@@ -2273,6 +2273,11 @@ private struct TurnView: View, Equatable {
                                  isOpen: Binding(get: { openEntries.contains(entry.id) },
                                                  set: { if $0 { discussion.openEntries.insert(entry.id) } else { discussion.openEntries.remove(entry.id) } }),
                                  label: entry.speaker)
+                        // A meeting the AI convened (convene_meeting): its result went to that AI; the speeches are in its own chat.
+                        if let meeting = entry.meeting, discussion.conversations.contains(where: { $0.id == meeting }) {
+                            Button(L("회의 과정 보기", "Show the meeting")) { discussion.open(meeting) }
+                                .buttonStyle(.link).font(.system(size: 11))
+                        }
                     }
                 }
                 .padding(10)

@@ -469,6 +469,7 @@ struct ChatTurn: Identifiable, Codable, Equatable {
         var headline: String?  // one short line the chat shows; `text` opens on click
         var images: [ChatImage]?  // pictures this AI made in this reply (Pictures.swift)
         var accountID: String?    // mode 0, several AIs at once: whose reply this is (labels can repeat)
+        var meeting: UUID?        // a meeting an AI convened (convene_meeting): its hidden chat, shown as "Show the meeting"
     }
     var id = UUID()
     var question: String
@@ -760,6 +761,8 @@ final class Discussion: ObservableObject {
     var activeWorkspaceBackupPath: String?
     var activeAdversarial = false
     var activeMeeting = false   // this answer is a meeting (Meeting.swift): the AIs may read the folders
+    var activeHeldBy: String?   // a meeting an answering AI convened (convene_meeting): its name; quick format, result for it
+    var activeHeld: Bool { activeHeldBy != nil }
     var activeSpeechLength = SpeechLength.unlimited
     var activeImages: [URL] = []
     // Tests only: answers requests that have folders attached (mode 0 always does) without calling the real tools.
@@ -984,7 +987,7 @@ final class Discussion: ObservableObject {
     }
 
     // A worker for one message in one chat: same accounts, sessions and test hooks, only that chat.
-    private init(workerFor host: Discussion, room: UUID) {
+    init(workerFor host: Discussion, room: UUID) {
         model = host.model
         nativeSessions = host.nativeSessions
         conversations = host.conversations.filter { $0.id == room }

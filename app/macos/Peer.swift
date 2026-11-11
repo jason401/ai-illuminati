@@ -7,6 +7,7 @@ import Foundation
 enum Peer {
     static let maxAsks = 4                       // ask_ai calls per answer (one AI's reply)
     static let maxAtOnce = 3                     // AIs one call may ask at the same time
+    static let maxMeetings = 1                   // convene_meeting calls per answer (Meeting.swift)
     static let askTimeout: TimeInterval = 600
     static let reviewTimeout: TimeInterval = 900
     static let diffLimit = 80_000                // characters of diff the reviewer gets in the prompt
@@ -73,7 +74,7 @@ enum Peer {
     }
 
     // What an answering AI is told when it may ask other AIs. `reviewer`: who reviews its project changes afterwards.
-    static func rule(peers: [String], reviewer: String? = nil) -> String {
+    static func rule(peers: [String], reviewer: String? = nil, meeting: [String] = []) -> String {
         var text = """
         [Asking other AIs] You have the ask_ai tool. It asks other AIs on this Mac (\(peers.joined(separator: ", ")); a different
         kind of AI unless you name one with `to`) and returns their replies to you; they can read your folders but change
@@ -90,6 +91,19 @@ enum Peer {
         AIs at the same time. At most \(maxAsks) calls per answer. Weigh the replies yourself: take what is right, leave what
         is not, and say in one line of your reply what you took. If nobody answers, continue on your own.
         """
+        if meeting.count >= 2 {
+            text += """
+
+            [Meetings] If you have the convene_meeting tool, you may hand a question to a short meeting of other AIs (by default
+            \(meeting.joined(separator: ", "))): they give first views, discuss once more only where they disagree, and write a
+            result (conclusion, reasons, agreed, disagreements, what the user must decide). Use it only for a decision that needs
+            several views weighed against each other (a design choice, a plan, a disputed fact); for one quick view use ask_ai.
+            Give a self-contained `brief` (what you know, your draft or options, files) and the `decision_needed`. It returns a
+            meeting id at once: keep working, then call meeting_result with that id (wait_seconds up to 300; call again while it
+            is still running). At most \(maxMeetings) meeting per answer. Weigh the result yourself and continue your answer; tell
+            the user in one line what the meeting decided.
+            """
+        }
         if let reviewer {
             text += "\n[Review is on] When this answer changes the project, \(reviewer) reviews the changes afterwards and you get its findings to fix in the same turn."
                 + " It does not review again on its own; after fixing you may send only the fixed parts back with ask_ai (purpose \"review\", to \"\(reviewer)\")."
@@ -241,6 +255,13 @@ final class PeerLink: ToolProvider {
         var asked: [String: Int] = [:]   // calls per asking account (each AI's reply has its own budget)
         let reachable: (Account?) -> Bool    // someone else on this Mac may be asked by this AI now
         let ask: (Account?, Request) -> String
+        // Meetings (convene_meeting, Meeting.swift): who may meet for an AI, and how one is convened. All of the
+        // fields below change only under PeerLink's lock.
+        var meetable: (Account?) -> [Account] = { _ in [] }
+        var convene: ((Account?, HeldMeeting.Request) -> (HeldMeeting?, String))?
+        var convened: [String: Int] = [:]   // meetings per asking account
+        var held: [UUID: HeldMeeting] = [:]
+        var closed = false                  // the answer ended: no new meeting, the running ones stop
         init(room: UUID, turn: UUID? = nil, members: [String] = [], review: Bool = false, reachable: @escaping (Account?) -> Bool = { _ in true },
              ask: @escaping (Account?, Request) -> String) {
             self.room = room; self.turn = turn; self.members = members; self.review = review; self.reachable = reachable; self.ask = ask
@@ -250,9 +271,33 @@ final class PeerLink: ToolProvider {
     private var sessions: [UUID: Session] = [:]
 
     func open(_ session: Session) { lock.lock(); sessions[session.room] = session; lock.unlock() }
+    // The answer ended: its meetings stop too (nobody would read their results), and none can be convened after this.
     func close(_ session: Session) {
-        lock.lock(); if sessions[session.room] === session { sessions.removeValue(forKey: session.room) }; lock.unlock()
+        lock.lock()
+        if sessions[session.room] === session { sessions.removeValue(forKey: session.room) }
+        session.closed = true
+        let running = Array(session.held.values)
+        lock.unlock()
+        running.forEach { $0.token.cancel() }
     }
+    // One meeting per AI per answer: taken before it is convened, given back when none could be held.
+    func reserveMeeting(_ session: Session, asker: String) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard !session.closed, session.convened[asker, default: 0] < Peer.maxMeetings else { return false }
+        session.convened[asker, default: 0] += 1
+        return true
+    }
+    func releaseMeeting(_ session: Session, asker: String) {
+        lock.lock(); session.convened[asker] = max(0, session.convened[asker, default: 0] - 1); lock.unlock()
+    }
+    // Registers a convened meeting; false when the answer ended meanwhile (the caller stops it).
+    func attach(_ meeting: HeldMeeting, to session: Session) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard !session.closed else { return false }
+        session.held[meeting.id] = meeting
+        return true
+    }
+    func held(_ id: UUID, in session: Session) -> HeldMeeting? { lock.lock(); defer { lock.unlock() }; return session.held[id] }
     func session(_ room: UUID) -> Session? { lock.lock(); defer { lock.unlock() }; return sessions[room] }
     // The session this tool call may use: none for an AI that was asked, or for a tool session of an earlier message.
     func session(for context: ToolContext) -> Session? {
@@ -384,6 +429,11 @@ extension Discussion {
             let failed = entries.allSatisfy(\.failed)
             return note + replies.joined(separator: "\n\n") + (failed ? "\nContinue on your own." : "")
         }
+        session.meetable = { [weak self] asker in self?.heldTeam(asker: asker, members: [], join: false, room: id).team ?? [] }
+        session.convene = { [weak self] asker, request in
+            guard let self else { return (nil, "Meetings are unavailable. Continue on your own.") }
+            return self.holdMeeting(request, asker: asker, id: id, index: index, question: question, binding: binding, cancellation: cancellation)
+        }
         PeerLink.shared.open(session)
         activePeerSession = session
         return session
@@ -408,7 +458,7 @@ extension Discussion {
                               usage: model.latestUsage, lock: lock(of: room ?? session.room), label: label).accounts
         guard !peers.isEmpty else { return "" }
         let reviewer = session.review ? peerAccount(for: account, reviewers: session.members.filter { $0 != account.id }, room: session.room).map(label) : nil
-        return Peer.rule(peers: peers.map(label), reviewer: reviewer)
+        return Peer.rule(peers: peers.map(label), reviewer: reviewer, meeting: session.convene == nil ? [] : session.meetable(account).map(label))
     }
 
     // After the lead's answer in a project chat with reviewers: when it changed the project, a reviewer (another

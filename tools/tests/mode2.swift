@@ -2480,6 +2480,7 @@ testWindowDrag()
 
 testProjectWork()
 testAskAI()
+testMeetingTool()
 testProjectCreate()
 testUpdateChannels()
 testDeviceSync()

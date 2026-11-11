@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import AIAccounts
 
 // Spaces (Space.swift): the hidden <space-build> block, the checks before saving, manifest and schedule, drafts,
 // the 1 MB data limit, versions and Undo, the old per-chat space.json moved to templates, and the Space request rule.

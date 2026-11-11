@@ -1,4 +1,5 @@
 import Cocoa
+import AIAccounts
 
 enum WorkspaceLevel: String, Codable, CaseIterable {
     case view, write, execute

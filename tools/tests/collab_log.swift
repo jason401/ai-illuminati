@@ -1,4 +1,5 @@
 import Foundation
+import AIAccounts
 
 // The collaboration setting (off / show and go / on its own) and the collaboration log (CollabLog.swift).
 func testCollabLog() {

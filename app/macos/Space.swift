@@ -1,4 +1,5 @@
 import Foundation
+import AIAccounts
 
 // Spaces: small personal apps the user makes and changes by talking (like Meta Muse Spaces). An AI writes one
 // HTML page; it runs in an isolated web view (SpaceWeb.swift) with no network, no files and one bridge

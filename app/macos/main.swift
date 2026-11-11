@@ -1,5 +1,6 @@
 import Cocoa
 import Combine
+import AIAccounts
 
 // AI Illuminati: a menu bar gauge that shows how much of each AI subscription is left
 // (5-hour and weekly limits) and when each one resets, for any number of Claude and ChatGPT

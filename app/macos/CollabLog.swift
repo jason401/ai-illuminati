@@ -1,4 +1,5 @@
 import Foundation
+import AIAccounts
 
 // AI-to-AI collaboration: the setting (Settings → Chat) and a local log of calls for tuning the budgets and rules
 // later. The log keeps who asked whom, why (the purpose, never the message), how it went and what the asking AI says

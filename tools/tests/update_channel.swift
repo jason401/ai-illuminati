@@ -1,4 +1,5 @@
 import Foundation
+import AIAccounts
 
 /// Stable and Beta (main) in a throwaway pair of repositories: switching, going back, never downgrading.
 /// The fixture "GitHub" commits directly instead of receiving a push, so this also runs where git push is blocked.

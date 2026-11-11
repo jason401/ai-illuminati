@@ -1,5 +1,6 @@
 import Foundation
 import Darwin
+import AIAccounts
 
 // AI Face (a separate menu bar app) shows a face for each AI reply. AI Illuminati connects to it the way
 // Claude desktop and ChatGPT desktop do: the app itself is AI Face's MCP client and keeps one connection

@@ -1,6 +1,7 @@
 import Cocoa
 import ImageIO
 import UniformTypeIdentifiers
+import AIAccounts
 
 struct ChatImage: Identifiable, Codable, Equatable {
     var id = UUID()

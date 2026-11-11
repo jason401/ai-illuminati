@@ -1,4 +1,5 @@
 import Foundation
+import AIAccounts
 
 // Long-term memory (note 8): what every AI should know about the user, kept on this Mac and put into every
 // plain-chat and project request (soloInstruction). Two parts: a short profile the user writes, and saved facts,

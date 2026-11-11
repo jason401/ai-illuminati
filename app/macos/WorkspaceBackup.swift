@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import AIAccounts
 
 struct WorkspaceChange: Codable, Identifiable, Equatable {
     var id: String { path }

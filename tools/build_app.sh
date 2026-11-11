@@ -45,13 +45,18 @@ echo "[1/5] Prepare a candidate (the running app is unchanged)"
 echo "[2/5] Compile the app"
 mkdir -p "$OUT/Contents/MacOS"
 ARCH="$(uname -m)"
-if ! xcrun swiftc -swift-version 5 -O -target "$ARCH-apple-macos13.0" \
+# Modules (app/modules) first, each on its own; the app links them in, so nothing extra goes into the bundle.
+MODULES="$(mktemp -d)"
+if ! zsh tools/build_modules.sh "$MODULES" -O -target "$ARCH-apple-macos13.0" >"$LOG" 2>&1 \
+   || ! xcrun swiftc -swift-version 5 -O -target "$ARCH-apple-macos13.0" \
       -framework Cocoa -framework SwiftUI -framework ServiceManagement -framework Security -framework UserNotifications -framework WebKit \
-      -o "$OUT/Contents/MacOS/AIIlluminati.new" app/macos/*.swift >"$LOG" 2>&1; then
+      -I "$MODULES" -o "$OUT/Contents/MacOS/AIIlluminati.new" app/macos/*.swift "$MODULES"/lib*.a >>"$LOG" 2>&1; then
+  rm -rf "$MODULES"
   echo "Build failed (app-build.log):"
   cat "$LOG"
   exit 1
 fi
+rm -rf "$MODULES"
 mkdir -p "$OUT/Contents/Resources"
 # One folder per supported language, so macOS lists the app under Language & Region → Applications.
 for lang in en ko; do

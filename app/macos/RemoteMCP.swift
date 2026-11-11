@@ -2,6 +2,7 @@ import Foundation
 import AppKit
 import CryptoKit
 import Security
+import AIAccounts
 
 // Remote (URL) MCP servers, like Claude's custom connectors: the app is the MCP client over Streamable HTTP, so the
 // CLIs still see only the illuminati server and no token ever reaches them. Header values and OAuth tokens live in
@@ -86,7 +87,7 @@ final class MCPFileSecrets: MCPSecretStore {
 }
 
 enum MCPSecrets {
-    static var store: MCPSecretStore = AccountStore.place.defaults === UserDefaults.standard ? MCPKeychain() : MCPFileSecrets()
+    static var store: MCPSecretStore = UserDefaults.app === UserDefaults.standard ? MCPKeychain() : MCPFileSecrets()
     static func header(_ server: String, _ name: String) -> String { "header.\(server).\(name)" }
     static func oauth(_ server: String) -> String { "oauth.\(server)" }
     static func clientSecret(_ server: String) -> String { "client-secret.\(server)" }

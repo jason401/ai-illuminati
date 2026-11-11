@@ -1,6 +1,7 @@
 import Cocoa
 import Darwin
 import ServiceManagement
+import AIAccounts
 
 // stable is a deployment channel; main is the beta channel, where changes arrive first.
 // Only the app-owned checkout is ever changed.

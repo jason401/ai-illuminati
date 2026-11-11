@@ -1,6 +1,7 @@
 import Foundation
 import PDFKit
 import UniformTypeIdentifiers
+import AIAccounts
 
 // A Google Drive folder the user shared with the AIs (sidebar → Google Drive).
 struct DriveFolder: Codable, Hashable { var id: String; var name: String }

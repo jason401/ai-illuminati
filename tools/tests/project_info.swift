@@ -1,4 +1,5 @@
 import Foundation
+import AIAccounts
 
 // Project info (ProjectInfo.swift): the folders, files and links kept for a whole project, the file that is never
 // overwritten when it cannot be read, and every chat of the project reading them read only.

@@ -1,4 +1,5 @@
 import Foundation
+import AIAccounts
 
 // Which model a cloud account answers with (Settings → Accounts, each row's model menu). Nothing saved is "Auto": no model
 // option, so the CLI picks its own default as before. Per account, since plans differ in what they offer

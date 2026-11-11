@@ -1,4 +1,5 @@
 import Foundation
+import AIAccounts
 
 // What belongs to a whole project, not to one chat: folders, files and links the user keeps for it. They show
 // on the project folder's "Project info" tab (ProjectInfoView.swift), and every chat and TODO of the project reads

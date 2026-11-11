@@ -1,4 +1,5 @@
 import Foundation
+import AIAccounts
 
 // Mode 4 · Vote: the user asks a question with choices. Every AI votes at the same time without seeing
 // the others (so no one follows the crowd) and gives its reason; the app counts the votes itself.

@@ -1,4 +1,5 @@
 import Foundation
+import AIAccounts
 
 // The app itself must use the real home folder and settings; this only reads the chosen paths.
 AccountStore.useRealHome()

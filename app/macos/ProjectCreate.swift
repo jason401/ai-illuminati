@@ -1,4 +1,5 @@
 import Cocoa
+import AIAccounts
 
 // A new project from any chat (the create_project tool, after the user's card) or the + menu (the user's own dialog):
 // a folder, Git with a first commit, a GitHub repository, then a new chat linked to it like "Link folder".

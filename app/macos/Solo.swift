@@ -1,4 +1,5 @@
 import Cocoa
+import AIAccounts
 
 // Mode 0 · Chat: one AI at a time, like the Claude or ChatGPT desktop apps. The app picks the account
 // with usage left and, when that account runs low or hits its limit, another account continues from

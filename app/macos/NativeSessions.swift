@@ -1,4 +1,5 @@
 import Foundation
+import AIAccounts
 
 // Session ownership and provider history are distinct from the app's canonical chat.
 // Only app-owned account directories qualify; personal default histories stay untouched.

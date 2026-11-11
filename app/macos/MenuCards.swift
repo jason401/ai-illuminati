@@ -1,5 +1,6 @@
 import Cocoa
 import SwiftUI
+import AIAccounts
 
 // The menu's account cards (ideas from CodexBar: usage bars, reset countdowns and an even-use guide).
 // Each card: the account name and plan, then one line per limit:

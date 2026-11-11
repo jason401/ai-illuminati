@@ -1,6 +1,7 @@
 import Foundation
 import Cocoa
 import UniformTypeIdentifiers
+import AIAccounts
 
 GoogleAuth.shared = GoogleAuth(store: MemoryGoogleStore())
 
@@ -98,6 +99,42 @@ do {
     try! fm.removeItem(at: AccountStore.backupDir)
     expect(AccountStore.save(saved) && AccountStore.load().map(\.id) == saved.map(\.id), "restore")
     print("PASS: test home and settings kept apart, preview model writes nothing, account backups (shrink, limits, failure stops the save)")
+}
+
+// What the app relies on from AIAccounts, seen through AppModel (the account list's user): edits land in
+// accounts.json in the shared format, a failed backup keeps the list, an unreadable list survives a start.
+do {
+    let fm = FileManager.default
+    let path = AccountStore.supportDir + "/accounts.json"
+    let saved = AccountStore.load()
+    let model = AppModel()
+    expect(model.accounts == saved, "the app starts with the saved list")
+    model.accounts = [Account(id: "codex-7", provider: .codex, name: "ChatGPT 7", dir: "/x/codex-7")]
+    expect(fm.contents(atPath: path).flatMap { String(data: $0, encoding: .utf8) } == """
+    [
+      {
+        "dir" : "\\/x\\/codex-7",
+        "id" : "codex-7",
+        "name" : "ChatGPT 7",
+        "provider" : "codex"
+      }
+    ]
+    """, "an edit in the app saves accounts.json in the shared format")
+    expect(AppModel().accounts.map(\.id) == ["codex-7"], "the next start reads the edit back")
+    let before = fm.contents(atPath: path)
+    try? fm.removeItem(at: AccountStore.backupDir)
+    try! Data().write(to: AccountStore.backupDir)
+    model.accounts = []
+    expect(fm.contents(atPath: path) == before, "an app edit whose backup fails leaves accounts.json as it was")
+    try! fm.removeItem(at: AccountStore.backupDir)
+    let broken = Data("[{ half".utf8)
+    try! broken.write(to: URL(fileURLWithPath: path))
+    _ = AppModel()
+    let copies = ((try? fm.contentsOfDirectory(atPath: AccountStore.supportDir)) ?? []).filter { $0.hasPrefix("accounts.unreadable-") }
+    expect(copies.contains { fm.contents(atPath: AccountStore.supportDir + "/" + $0) == broken }, "an app start keeps a copy of an unreadable list")
+    for name in copies { try? fm.removeItem(atPath: AccountStore.supportDir + "/" + name) }
+    expect(AccountStore.save(saved), "restore")
+    print("PASS: the app's account edits keep the shared format, a failed backup and an unreadable list lose nothing")
 }
 
 // Only plain chat is offered; a chat saved in a team mode opens as plain chat. Legacy engines are checked separately.

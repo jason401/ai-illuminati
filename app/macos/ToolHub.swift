@@ -1,5 +1,6 @@
 import Foundation
 import Darwin
+import AIAccounts
 
 // Who a tool session belongs to. member: an AI answering the user (every tool); side: another AI answering the same
 // message at the same time, read only (only ask_ai); consulted: an AI another AI asked or called to a meeting (no ask_ai

@@ -1,4 +1,5 @@
 import Cocoa
+import AIAccounts
 
 // Pictures the AIs make during a chat.
 // - ChatGPT (Codex) has an image generation tool; Codex saves each image in its account folder under

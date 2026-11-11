@@ -1,6 +1,7 @@
 import Cocoa
 import CryptoKit
 import Darwin
+import AIAccounts
 
 struct ProjectBinding: Codable, Equatable {
     var root: String

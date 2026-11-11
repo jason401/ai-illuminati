@@ -8,11 +8,12 @@ import CryptoKit
 //   Gemini: agy's own folder only (~/.gemini), so there is at most one Gemini entry.
 // dir == nil means the tool's normal folder (~/.claude for Claude, ~/.codex for Codex).
 // The order of the list is the order shown in the menu (changed in Settings).
-struct Account: Codable, Equatable {
-    enum Provider: String, Codable, CaseIterable {
+// Module AIAccounts: the app sees only what is `public` here.
+public struct Account: Codable, Equatable {
+    public enum Provider: String, Codable, CaseIterable {
         case claude, codex, gemini
         case ollama   // a model on this Mac through Ollama (Local.swift)
-        var title: String {
+        public var title: String {
             switch self {
             case .claude: return "Claude"
             case .codex: return "ChatGPT"
@@ -21,25 +22,29 @@ struct Account: Codable, Equatable {
             }
         }
     }
-    var id: String
-    var provider: Provider
-    var name: String
-    var dir: String?
-    var school: Bool?   // an Enterprise (school or work) account, set in Settings; nil = guessed from the name
-    var model: String?   // Ollama's name for the model ("qwen3:8b"); nil for the first two Gemma entries (their ids say)
+    public var id: String
+    public var provider: Provider
+    public var name: String
+    public var dir: String?
+    public var school: Bool?   // an Enterprise (school or work) account, set in Settings; nil = guessed from the name
+    public var model: String?   // Ollama's name for the model ("qwen3:8b"); nil for the first two Gemma entries (their ids say)
+
+    public init(id: String, provider: Provider, name: String, dir: String? = nil, school: Bool? = nil, model: String? = nil) {
+        self.id = id; self.provider = provider; self.name = name; self.dir = dir; self.school = school; self.model = model
+    }
 
     // Enterprise accounts hand work only to other Enterprise accounts (Settings can turn that off).
-    var isSchool: Bool {
+    public var isSchool: Bool {
         school ?? ["학교", "school", "univ", "edu", "enterprise", "엔터프라이즈", "회사"].contains { name.lowercased().contains($0) }
     }
 
-    var codexHome: String {
+    public var codexHome: String {
         dir ?? FileManager.default.homeDirectoryForCurrentUser.path + "/.codex"
     }
 
     // Same rule as Claude Code itself: no CLAUDE_CONFIG_DIR -> "Claude Code-credentials",
     // otherwise a suffix of the first 8 hex digits of sha256(folder path).
-    var claudeKeychainService: String {
+    public var claudeKeychainService: String {
         guard let dir else { return "Claude Code-credentials" }
         let digest = SHA256.hash(data: Data(dir.precomposedStringWithCanonicalMapping.utf8))
         let hex = digest.map { String(format: "%02x", $0) }.joined()
@@ -48,7 +53,7 @@ struct Account: Codable, Equatable {
 
     // Environment for running this account's tool: API keys removed (so the subscription is used,
     // never API billing) and the account folder set.
-    var environment: [String: String] {
+    public var environment: [String: String] {
         var env = ProcessInfo.processInfo.environment
         for key in ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY", "GEMINI_API_KEY",
                     "GOOGLE_API_KEY", "ANTHROPIC_BASE_URL", "CLAUDECODE", "CLAUDE_CONFIG_DIR", "CODEX_HOME"] {
@@ -63,12 +68,12 @@ struct Account: Codable, Equatable {
 
 // The app's settings. Same place rule as AccountStore.home: the real ones only in the app itself.
 extension UserDefaults {
-    static var app: UserDefaults { AccountStore.place.defaults }
+    public static var app: UserDefaults { AccountStore.place.defaults }
 }
 
 // The account list, saved in ~/Library/Application Support/AI Illuminati/accounts.json.
 // Account folders live in ~/.ai-illuminati/accounts/<id>.
-enum AccountStore {
+public enum AccountStore {
     // Only the app itself (main.swift) chooses the real home folder and settings, before anything reads
     // them. Every other program built from these files (tests, previews) gets a throwaway folder and
     // settings file, or AI_ILLUMINATI_TEST_HOME when a test names one, so a forgotten step can never
@@ -86,18 +91,18 @@ enum AccountStore {
         try? FileManager.default.createDirectory(atPath: home, withIntermediateDirectories: true)
         return (home, UserDefaults(suiteName: home + "/settings")!)
     }()
-    static func useRealHome() {
+    public static func useRealHome() {
         precondition(!placeChosen, "AccountStore.useRealHome() must run before anything reads the data folder")
         realHomeChosen = true
     }
-    static var home: String { place.home }
-    static var supportDir: String { home + "/Library/Application Support/AI Illuminati" }
-    static var accountsDir: String { home + "/.ai-illuminati/accounts" }
+    public static var home: String { place.home }
+    public static var supportDir: String { home + "/Library/Application Support/AI Illuminati" }
+    public static var accountsDir: String { home + "/.ai-illuminati/accounts" }
     private static var file: URL { URL(fileURLWithPath: supportDir + "/accounts.json") }
-    static var backupDir: URL { URL(fileURLWithPath: supportDir + "/backups") }
-    static let keptBackups = 20, keptDays = 7, keptShrinkBackups = 30
+    public static var backupDir: URL { URL(fileURLWithPath: supportDir + "/backups") }
+    public static let keptBackups = 20, keptDays = 7, keptShrinkBackups = 30
 
-    static let gemini = Account(id: "gemini-main", provider: .gemini, name: "Gemini", dir: nil)
+    public static let gemini = Account(id: "gemini-main", provider: .gemini, name: "Gemini", dir: nil)
 
     // One entry that cannot be read (for example a kind of AI from a newer version) is skipped, not the list.
     private struct Entry: Decodable {
@@ -105,11 +110,11 @@ enum AccountStore {
         init(from decoder: Decoder) throws { account = try? Account(from: decoder) }
     }
 
-    static func decode(_ data: Data) -> [Account]? {
+    public static func decode(_ data: Data) -> [Account]? {
         (try? JSONDecoder().decode([Entry].self, from: data)).map { $0.compactMap(\.account) }
     }
 
-    static func load() -> [Account] {
+    public static func load() -> [Account] {
         let saved = try? Data(contentsOf: file)
         if let saved, decode(saved) == nil {
             // Never write over a list that could not be read: keep a copy next to it first.
@@ -139,7 +144,7 @@ enum AccountStore {
     // The list on disk is copied to backups/ before it changes; if that copy fails, the list is not
     // replaced. A save that drops accounts gets a "-shrink" copy, kept apart from everyday saves.
     @discardableResult
-    static func save(_ list: [Account]) -> Bool {
+    public static func save(_ list: [Account]) -> Bool {
         let fm = FileManager.default
         try? fm.createDirectory(atPath: supportDir, withIntermediateDirectories: true)
         let encoder = JSONEncoder()
@@ -179,7 +184,7 @@ enum AccountStore {
 
     // Keeps the newest everyday copies, plus the newest copy of each of the last days, and the newest
     // shrink copies. Names sort by time, so the newest come last.
-    static func pruneBackups() {
+    public static func pruneBackups() {
         let fm = FileManager.default
         let names = ((try? fm.contentsOfDirectory(atPath: backupDir.path)) ?? [])
             .filter { $0.hasPrefix("accounts-") && $0.hasSuffix(".json") }.sorted()
@@ -196,7 +201,7 @@ enum AccountStore {
 
     // Makes a new, empty account folder. Codex is told to keep its login in a file there
     // (not the shared Keychain entry) so each account stays separate.
-    static func newAccount(provider: Account.Provider, name: String) -> Account {
+    public static func newAccount(provider: Account.Provider, name: String) -> Account {
         if provider == .gemini { return Account(id: gemini.id, provider: .gemini, name: name, dir: nil) }
         let id = "\(provider.rawValue)-\(Int(Date().timeIntervalSince1970))"
         let dir = accountsDir + "/" + id

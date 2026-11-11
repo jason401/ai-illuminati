@@ -1,7 +1,8 @@
 # AI Illuminati — rules for AI agents
 
 macOS menu-bar app (Swift, no Xcode project) that runs Claude Code / Codex / Gemini CLIs under the user's own
-accounts. Sources: `app/macos/*.swift`, bundled helpers in `app/resources/`, scripts in `tools/`.
+accounts. Sources: `app/macos/*.swift`, modules in `app/modules/<Name>/`, bundled helpers in `app/resources/`,
+scripts in `tools/`.
 Feature and design notes live in `docs/`; read them only when the task needs them.
 
 ## Commands (registered in `.ai-illuminati.json`; run them with `project_run`)
@@ -11,6 +12,11 @@ Feature and design notes live in `docs/`; read them only when the task needs the
   touches the installed app. Needs the "AI Illuminati Local Signing" Keychain identity, so it fails in a sandbox.
 - The build compiles `app/macos/*.swift`, but the test script has its own `swiftc` file list: add a new
   app file there too if the tested files use it.
+- Modules: each `app/modules/<Name>/` is its own Swift module (now `AIAccounts`: `Accounts.swift`). Files that use
+  it `import <Name>` and see only its `public` names. Every `swiftc` that compiles app files runs
+  `zsh tools/build_modules.sh <out>` first and adds `-I <out> <out>/lib<Name>.a`. A module's own test
+  (`tools/tests/accounts_contract.swift`) is not enough when its behavior changes (save format, errors, folders):
+  run the full test, since unchanged `public` names do not mean unchanged behavior for its users.
 - Previews: `zsh tools/tests/render_chat.sh`, `zsh tools/tests/render_drive_tree.sh`.
 
 ## Never break: tests and previews are isolated from the real app

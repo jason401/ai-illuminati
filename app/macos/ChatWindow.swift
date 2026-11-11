@@ -2,6 +2,7 @@ import Cocoa
 import SwiftUI
 import UniformTypeIdentifiers
 import ImageIO
+import AIAccounts
 
 // The chat window: pick which AIs take part, ask, and get one final answer. What the AIs said to
 // each other (own answers, then reviews) is folded under the answer.
@@ -2969,11 +2970,13 @@ private struct ParallelAnswers: View {
 // What an AI saved to memory in this answer (Memory.swift), with Undo.
 // The project AI's steps: folded, one line ("3/5 · 테스트 실행 · test [7/9] Compile app tests"); unfolded, every step
 // with its state and how long it took (the current one counts up), and under it the test/build stage it is in.
+// (Folded state in an ObservableObject: this Mac's Command Line Tools cannot build SwiftUI's @State macro.)
+private final class WorkPlanFold: ObservableObject { @Published var expanded = false }
 private struct WorkPlanView: View {
     let steps: [WorkStep]
     let note: String?
     let running: Bool
-    @State private var expanded = false
+    @StateObject private var fold = WorkPlanFold()
 
     var body: some View {
         // Times count up only while the work runs; a saved or interrupted turn shows no live time.
@@ -2983,7 +2986,7 @@ private struct WorkPlanView: View {
     private func content(_ now: Date) -> some View {
         let done = steps.filter { $0.status == .done }.count
         let current = steps.first { $0.status == .doing } ?? steps.first { $0.status == .blocked }
-        return DisclosureGroup(isExpanded: $expanded) {
+        return DisclosureGroup(isExpanded: $fold.expanded) {
             VStack(alignment: .leading, spacing: 4) {
                 ForEach(Array(steps.enumerated()), id: \.offset) { _, step in
                     HStack(alignment: .top, spacing: 6) {
@@ -3012,7 +3015,7 @@ private struct WorkPlanView: View {
                 .lineLimit(1)
                 // The arrow alone is too small to hit: the whole line folds and unfolds.
                 .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
-                .onTapGesture { withAnimation(.easeInOut(duration: 0.15)) { expanded.toggle() } }
+                .onTapGesture { withAnimation(.easeInOut(duration: 0.15)) { fold.expanded.toggle() } }
         }
         .font(.system(size: 12))
         .padding(.horizontal, 10).padding(.vertical, 6)

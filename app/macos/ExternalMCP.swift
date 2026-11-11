@@ -1,5 +1,6 @@
 import Foundation
 import Darwin
+import AIAccounts
 
 // MCP servers the user adds in Settings → MCP: stdio commands like Claude desktop's config, or remote URLs
 // (Streamable HTTP, RemoteMCP.swift). They are kept in

@@ -1,4 +1,5 @@
 import Foundation
+import AIAccounts
 
 // The Spaces folder as the user's shelf of small apps: a plain chat's AI gets spaces/ as a folder it may change
 // (Discussion.soloBinding) and edits a Space's app.html, manifest.json and state.json directly, or adds a new folder.

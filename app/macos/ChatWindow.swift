@@ -2230,6 +2230,7 @@ private struct TurnView: View, Equatable {
             }
             if turn.mode == 0 { RememberedLine(turnID: turn.id) }
             if let note = turn.spaceDraft { SpaceDraftCard(note: note, turn: turn, discussion: discussion, busy: busy) }
+            if let edits = turn.spaceEdits, !edits.isEmpty { SpaceEditsView(notes: edits, discussion: discussion) }
             ForEach(turn.mode == 0 && (turn.answerOrder?.count ?? 0) < 2 ? (turn.moreAnswers ?? []) : []) { answer in
                 // A second (third…) AI called with @, which answered at the same time without seeing the others.
                 VStack(alignment: .leading, spacing: 8) {

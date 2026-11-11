@@ -190,13 +190,18 @@ extension Discussion {
         let own = Self.chatFolder(room)
         try? FileManager.default.createDirectory(at: own, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         var roots = [WorkspaceRoot(path: own.path, directory: true, writable: true)]
+        let linked = conversations.first(where: { $0.id == room })?.workspace
+        // The Spaces folder: the AI changes and adds Spaces there directly; the app checks and versions what it wrote
+        // afterwards (SpaceLibrary.sync), so it needs no backup. Not in project work, which has its own folders.
+        if linked?.project == nil, (try? FileManager.default.createDirectory(at: SpaceStore.root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])) != nil {
+            roots.append(WorkspaceRoot(path: SpaceStore.root.path, directory: true, writable: true))
+        }
         for path in model.activeSharedFolders where FileManager.default.fileExists(atPath: path) {
             roots.append(WorkspaceRoot(path: path, directory: true, writable: model.writableSharedFolders.contains(path) ? true : nil))
         }
         for root in conversations.first(where: { $0.id == room })?.workspace?.roots ?? [] where !roots.contains(where: { $0.path == root.path }) {
             roots.append(WorkspaceRoot(path: root.path, directory: root.directory, writable: root.directory ? true : nil))
         }
-        let linked = conversations.first(where: { $0.id == room })?.workspace
         // The project's own folders and files (Project info tab), read at every answer and read only. A path the
         // chat already has keeps the chat's access.
         if let project = linked?.project {
@@ -215,7 +220,8 @@ extension Discussion {
         let info = binding.project.map { ProjectInfoStore.shared.info(SidebarProjects.key($0)) } ?? ProjectInfo()
         let projectPaths = Set(info.folders.map(\.path))
         for root in binding.roots {
-            let kind = root.path == project ? (binding.project?.isDocuments == true ? "linked documents project (no Git) — edit files here; backed up before this answer"
+            let kind = root.path == SpaceStore.root.path && root.writable == true ? "Spaces folder — the user's Spaces (small apps of this app): change or add them here when asked"
+                : root.path == project ? (binding.project?.isDocuments == true ? "linked documents project (no Git) — edit files here; backed up before this answer"
                                                                                     : "linked Git project — edit files here; use the git_* tools for Git")
                 : projectPaths.contains(root.path) && root.writable != true ? (root.directory ? "project folder, shared by every chat of this project — read only" : "project file — read only")
                 : shared.contains(root.path)
@@ -225,7 +231,16 @@ extension Discussion {
                 : "folder linked to this chat — you may read, edit, create and delete files here (backed up before this answer)"
             lines.append("- \(root.path) (\(kind))")
         }
-        let files = binding.inventory()
+        // The Spaces folder's files (versions, pictures) are not listed: its Spaces are, by name.
+        let spaces = SpaceStore.root.path + "/", resolved = SpaceStore.root.resolvingSymlinksInPath().path + "/"
+        let files = binding.inventory().filter { line in
+            let path = line.replacingOccurrences(of: #"^root \d+: "#, with: "", options: .regularExpression)
+            return !path.hasPrefix(spaces) && !URL(fileURLWithPath: path).resolvingSymlinksInPath().path.hasPrefix(resolved)
+        }
+        if binding.roots.contains(where: { $0.path == SpaceStore.root.path && $0.writable == true }) {
+            let all = SpaceLibrary.all()
+            if !all.isEmpty { lines.append("[Spaces: name — folder]"); lines += all.prefix(40).map { "- \($0.name) — \(spaces)\($0.id)" } }
+        }
         lines.append("[Some files, contents not read]")
         lines += files.prefix(150).map { $0.replacingOccurrences(of: #"^root \d+: "#, with: "", options: .regularExpression) }
         if files.count > 150 { lines.append("… \(files.count - 150) more: list or search the folders for the rest.") }
@@ -260,15 +275,29 @@ extension Discussion {
         guard split.found else { return }
         let target = split.target.flatMap { SpaceStore.manifest(at: SpaceStore.folder($0)) }
         let source = target ?? split.base.flatMap { SpaceStore.manifest(at: SpaceStore.folder($0)) }
-        let kept = source.map { SpacePictures.hide(SpaceStore.html(SpaceStore.folder($0.id))).kept } ?? []
+        let sourceFolder = source.map { SpaceStore.folder($0.id) }
+        let kept = sourceFolder.map { SpacePictures.hide(SpaceStore.page($0)).kept } ?? []
         var note: SpaceDraftNote
         if split.target != nil && target == nil {
             note = SpaceDraftNote(name: "Space", reason: L("고칠 Space를 찾지 못했어요", "The Space to change is gone"))
         } else {
             switch SpaceBuilder.parse(split.body, new: target == nil).flatMap({ build in
-                SpacePictures.requests(in: split.body ?? "").flatMap { drawSpacePictures($0, page: build.html, kept: kept, room: room, turn: index, cancellation: cancellation) }
-                    .flatMap { made in SpacePictures.embed(build.html, made: made, kept: kept) }
-                    .map { page in var build = build; build.html = page; return build }
+                SpacePictures.requests(in: split.body ?? "").flatMap { found -> Result<String, SpaceBad> in
+                    // The Space's assets/ pictures go in as data: URLs (the preview reads no files); a redraw of one
+                    // named by file (from="assets/…") works from that picture.
+                    var kept = kept, requests = found
+                    for k in requests.indices {
+                        guard let file = requests[k].file else { continue }
+                        guard let folder = sourceFolder, let url = SpaceAssets.dataURL(file, folder: folder) else {
+                            return .failure(SpaceBad(reason: L("고칠 그림 assets/\(file)이 없어요", "No picture assets/\(file) to change")))
+                        }
+                        if let at = kept.firstIndex(of: url) { requests[k].from = at + 1 } else { kept.append(url); requests[k].from = kept.count }
+                    }
+                    let page = sourceFolder.map { SpaceAssets.inline(build.html, folder: $0) } ?? build.html
+                    return drawSpacePictures(requests, page: page, kept: kept, room: room, turn: index, cancellation: cancellation)
+                        .flatMap { made in SpacePictures.embed(page, made: made, kept: kept) }
+                }
+                .map { page in var build = build; build.html = page; return build }
             }) {
             case .failure(let bad): note = SpaceDraftNote(name: target?.name ?? "Space", reason: bad.reason)
             case .success(let build):
@@ -281,6 +310,17 @@ extension Discussion {
         changeTurn(room, index, save: true) { turn in
             if turn.spaceDraft == nil { turn.spaceDraft = made } else if let draft = made.draft { SpaceStore.discardDraft(draft) }
         }
+    }
+
+    // The Spaces folder checked after an answer that could write in it (SpaceLibrary.sync); what changed shows under it.
+    func syncSpaces(room: UUID, turn index: Int) {
+        let run = { () -> [SpaceSyncNote] in
+            guard !SpaceLibrary.busy else { return [] }   // another answer is still writing there: the last one to end checks
+            return SpaceStore.shared.syncLibrary()
+        }
+        let notes = Thread.isMainThread ? run() : DispatchQueue.main.sync(execute: run)
+        guard !notes.isEmpty else { return }
+        changeTurn(room, index, save: true) { $0.spaceEdits = ($0.spaceEdits ?? []) + notes }
     }
 
     // The ChatGPT accounts that draw a chat's Space pictures, best first: the picture makers (Settings → Chat), else any
@@ -500,7 +540,7 @@ extension Discussion {
         // If the backup fails, this answer reads them only.
         var backup: WorkspaceBackup?
         var notes: [String] = []
-        let linked = binding.roots.filter { $0.writable == true && $0.path != own.path }
+        let linked = binding.roots.filter { $0.writable == true && $0.path != own.path && $0.path != SpaceStore.root.path }
         if !linked.isEmpty {
             changeTurn(id, index) { $0.status = L("연결 폴더를 백업하는 중…", "Backing up linked folders…") }
             do {
@@ -524,6 +564,10 @@ extension Discussion {
                              + error.localizedDescription)
             }
         }
+        // Spaces the AI changed in the Spaces folder are checked and versioned when the answer ends.
+        let editsSpaces = binding.roots.contains { $0.path == SpaceStore.root.path && $0.writable == true }
+        if editsSpaces { SpaceLibrary.beginAnswer() }
+        defer { if editsSpaces { SpaceLibrary.endAnswer(); syncSpaces(room: id, turn: index) } }
 
         var helper = ""
         if Self.asksAboutYouTube(question), let gemini = model.accounts.first(where: { $0.provider == .gemini }), !mentions.contains(gemini.id),
@@ -778,16 +822,24 @@ extension Discussion {
                                 face: Self.projectFaceRule(face: binding.face == true), project: project,
                                 notes: id.map { ChatNotes.rule(ChatNotes.current($0)) } ?? "",
                                 space: spaceRule && account.provider != .ollama
-                                    ? Self.spaceRule(lastQuestion(id), draws: !spaceDrawers(chat: id ?? currentID).isEmpty) : "",
+                                    ? Self.spaceRule(lastQuestion(id), draws: !spaceDrawers(chat: id ?? currentID).isEmpty,
+                                                     folder: [.claude, .codex].contains(account.provider) && project == nil
+                                                         && binding.roots.contains { $0.path == SpaceStore.root.path && $0.writable == true }) : "",
                                 peer: project == nil ? "" : peerInstruction(account),
                                 memory: memoryRule(account, chat: id))
     }
 
     // A message asking for a Space, or naming existing ones to change or reuse, gets the Space rule (and those Spaces).
     // `draws`: a ChatGPT account can draw the page's pictures (SpacePictures.chatRule).
-    static func spaceRule(_ question: String, draws: Bool = false) -> String {
+    // `folder`: the AI may write in the Spaces folder, so it edits the files there (SpaceLibrary.rule); a block is left
+    // only for painted pictures a ChatGPT account draws.
+    static func spaceRule(_ question: String, draws: Bool = false, folder: Bool = false) -> String {
         let named = SpaceStore.named(in: question)
         guard Route.asksSpace(question) || !named.isEmpty else { return "" }
+        if folder {
+            return SpaceLibrary.rule(root: SpaceStore.root.path, spaces: SpaceLibrary.all(), draws: draws)
+                + (draws ? "\n" + SpaceLibrary.pictureBlockRule : "")
+        }
         return SpaceBuilder.rule + (named.isEmpty ? "" : "\n" + SpaceBuilder.chatRule(named)) + "\n" + SpacePictures.chatRule(draws: draws)
     }
 
@@ -929,5 +981,18 @@ extension Discussion {
         }
         for path in before.keys.sorted() where after[path] == nil { list.append(WorkspaceChange(path: path, kind: "deleted")) }
         return list
+    }
+}
+
+extension SpaceStore {
+    // The Spaces folder checked now (main thread): big picture files made smaller, the list and open pages refreshed.
+    func syncLibrary() -> [SpaceSyncNote] {
+        dispatchPrecondition(condition: .onQueue(.main))
+        let result = SpaceLibrary.sync { file in
+            Pictures.spaceDataURL(file, side: 1200).flatMap { url in url.firstIndex(of: ",").flatMap { Data(base64Encoded: String(url[url.index(after: $0)...])) } }
+        }
+        result.reshaped.forEach(dataChanged)
+        reload()
+        return result.notes
     }
 }

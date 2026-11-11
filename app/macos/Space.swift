@@ -96,20 +96,22 @@ struct SpaceManifest: Codable, Equatable, Identifiable {
     // Missing keys keep their defaults, so a file written by an older or newer build still opens.
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        id = try c.decode(String.self, forKey: .id)
-        name = try c.decodeIfPresent(String.self, forKey: .name) ?? "Space"
-        icon = try c.decodeIfPresent(String.self, forKey: .icon) ?? icon
-        color = try c.decodeIfPresent(String.self, forKey: .color) ?? color
-        pinned = try c.decodeIfPresent(Bool.self, forKey: .pinned)
-        hidden = try c.decodeIfPresent(Bool.self, forKey: .hidden)
-        order = try c.decodeIfPresent(Int.self, forKey: .order) ?? 0
+        // A manifest an AI wrote by hand in the Spaces folder may lack the app's keys or give them odd values: the
+        // id always comes from the folder (SpaceStore.manifest(at:)), the rest falls back to its default.
+        id = (try? c.decodeIfPresent(String.self, forKey: .id)) ?? ""
+        name = (try? c.decodeIfPresent(String.self, forKey: .name)) ?? "Space"
+        icon = (try? c.decodeIfPresent(String.self, forKey: .icon)) ?? icon
+        color = (try? c.decodeIfPresent(String.self, forKey: .color)) ?? color
+        pinned = try? c.decodeIfPresent(Bool.self, forKey: .pinned)
+        hidden = try? c.decodeIfPresent(Bool.self, forKey: .hidden)
+        order = (try? c.decodeIfPresent(Int.self, forKey: .order)) ?? 0
         schedule = try? c.decodeIfPresent(SpaceSchedule.self, forKey: .schedule)
-        version = try c.decodeIfPresent(Int.self, forKey: .version) ?? 1
-        originChat = try c.decodeIfPresent(String.self, forKey: .originChat)
-        template = try c.decodeIfPresent(String.self, forKey: .template)
-        worker = try c.decodeIfPresent(String.self, forKey: .worker)
-        createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
-        updatedAt = try c.decodeIfPresent(Date.self, forKey: .updatedAt) ?? createdAt
+        version = (try? c.decodeIfPresent(Int.self, forKey: .version)) ?? 1
+        originChat = try? c.decodeIfPresent(String.self, forKey: .originChat)
+        template = try? c.decodeIfPresent(String.self, forKey: .template)
+        worker = try? c.decodeIfPresent(String.self, forKey: .worker)
+        createdAt = (try? c.decodeIfPresent(Date.self, forKey: .createdAt)) ?? Date()
+        updatedAt = (try? c.decodeIfPresent(Date.self, forKey: .updatedAt)) ?? createdAt
     }
 
     // In the sidebar now (not hidden, inside its schedule)?
@@ -247,6 +249,20 @@ enum SpaceBuilder {
         }
     }
 
+    // What a Space page may do: refused code, the limits and the bridge (also for an AI editing app.html in the Spaces folder).
+    static let pageRule = """
+        The page has no network and no files. Refused: over 300 KB; any URL (http, https, ws, //host,
+        file); fetch, XMLHttpRequest, WebSocket, EventSource; eval, new Function, string timers; iframe, object, embed, frame, base;
+        form action; meta refresh. Images only as data: URLs, inline SVG or a Space's own picture files written as assets/name.png.
+        Keep every piece of user data in the state, never in the HTML. Bridge (window.space, ready before your script runs):
+        space.state.get(key) → the saved value (a copy) or undefined; space.state.set(key, value) → Promise<bool>, saves at once,
+        JSON values, all data at most 1 MB; space.state.keys(); space.state.subscribe(fn(key, value)) → unsubscribe function;
+        space.open({chat:"<chat id>"} | {todo:"<TODO id>"} | {file:"name in the chat's files folder"} | {url:"https://…"}) moves the
+        user there (a link asks first); space.notify(text) shows a notice; space.theme = {dark: bool, accent: "#rrggbb", color}.
+        Follow light and dark mode (prefers-color-scheme or space.theme.dark), use system-ui fonts, fit a narrow or wide window,
+        write the page's words in the user's language. No commands, files, Git or approvals exist here.
+        """
+
     // The instruction a Space-making (or Space-changing) answer gets: the bridge, what is refused, the limits, one example.
     static let rule = """
         [Space]
@@ -258,16 +274,7 @@ enum SpaceBuilder {
         <space-html>one complete HTML page: inline <style> and <script> only</space-html>
         <space-state>{"first data as one JSON object"}</space-state>
         </space-build>
-        The page has no network and no files. Refused (the whole block is dropped): over 300 KB; any URL (http, https, ws, //host,
-        file); fetch, XMLHttpRequest, WebSocket, EventSource; eval, new Function, string timers; iframe, object, embed, frame, base;
-        form action; meta refresh. Images only as data: URLs or inline SVG.
-        Keep every piece of user data in the state, never in the HTML. Bridge (window.space, ready before your script runs):
-        space.state.get(key) → the saved value (a copy) or undefined; space.state.set(key, value) → Promise<bool>, saves at once,
-        JSON values, all data at most 1 MB; space.state.keys(); space.state.subscribe(fn(key, value)) → unsubscribe function;
-        space.open({chat:"<chat id>"} | {todo:"<TODO id>"} | {file:"name in the chat's files folder"} | {url:"https://…"}) moves the
-        user there (a link asks first); space.notify(text) shows a notice; space.theme = {dark: bool, accent: "#rrggbb", color}.
-        Follow light and dark mode (prefers-color-scheme or space.theme.dark), use system-ui fonts, fit a narrow or wide window,
-        write the page's words in the user's language. No commands, files, Git or approvals exist here.
+        \(pageRule)
         Example (a counter):
         <space-build><space-manifest>{"name":"물 마시기","icon":"drop","color":"teal"}</space-manifest>
         <space-html><!doctype html><style>body{font:15px system-ui;margin:24px}</style><button id=b>+1</button> <span id=n></span>
@@ -282,7 +289,7 @@ enum SpaceBuilder {
         guard !spaces.isEmpty else { return "" }
         let pages = spaces.map { manifest -> String in
             let folder = SpaceStore.folder(manifest.id)
-            let html = SpacePictures.hide(SpaceStore.html(folder))
+            let html = SpacePictures.hide(SpaceStore.page(folder))
             return """
                 [Space "\(manifest.name)" · id \(manifest.id) · icon \(manifest.icon) · color \(manifest.color) · version \(manifest.version)]
                 [Data shape — keys and types only]
@@ -391,7 +398,7 @@ enum SpaceCheck {
 // are put back the same way, so any AI can change a page another one drew for.
 enum SpacePictures {
     static let limit = 3_000_000, perAnswer = 4
-    private static let dataURL = try! NSRegularExpression(pattern: #"data:image/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]{1000,}"#)
+    static let dataURL = try! NSRegularExpression(pattern: #"data:image/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]{1000,}"#)
     private static let marker = try! NSRegularExpression(pattern: #"space-(image|kept):(\d+)"#)
 
     static func hide(_ html: String) -> (text: String, kept: [String]) {
@@ -438,7 +445,8 @@ enum SpacePictures {
     // A chat's picture requests in its <space-build> (any AI may write them; a ChatGPT account draws them,
     // Discussion.drawSpacePictures): <space-picture n="1">what to draw</space-picture> for space-image:1, or
     // <space-picture n="1" from="2">how to change it</space-picture> to redraw space-kept:2 with that picture attached.
-    struct Request: Equatable { var n: Int; var from: Int?; var text: String }
+    // file: from="assets/name.png", a picture file of the Space (an AI that read app.html from the Spaces folder).
+    struct Request: Equatable { var n: Int; var from: Int?; var text: String; var file: String? = nil }
     private static let requestTag = try! NSRegularExpression(pattern: #"<space-picture\b([^>]*)>([\s\S]*?)</space-picture>"#)
 
     static func requests(in body: String) -> Result<[Request], SpaceBad> {
@@ -449,7 +457,10 @@ enum SpacePictures {
             let n = number("n", in: String(body[tag])) ?? found.count + 1
             guard n == found.count + 1 else { return .failure(SpaceBad(reason: L("그림 요청은 n=\"1\"부터 차례로 번호를 매겨야 해요", "Number picture requests n=\"1\", \"2\", … in order"))) }
             guard !text.isEmpty else { return .failure(SpaceBad(reason: L("그림 \(n) 요청이 비어 있어요", "Picture request \(n) is empty"))) }
-            found.append(Request(n: n, from: number("from", in: String(body[tag])), text: text))
+            let attributes = String(body[tag])
+            let file = attributes.range(of: #"\bfrom\s*=\s*["']?(\./)?assets/[A-Za-z0-9_-][A-Za-z0-9._-]{0,99}"#, options: .regularExpression)
+                .map { String(attributes[$0].split(separator: "/").last ?? "") }
+            found.append(Request(n: n, from: file == nil ? number("from", in: attributes) : nil, text: text, file: file))
         }
         guard found.count <= perAnswer else { return .failure(SpaceBad(reason: L("새 그림은 한 번에 \(perAnswer)장까지예요", "At most \(perAnswer) new pictures at a time"))) }
         return .success(found)
@@ -518,9 +529,13 @@ final class SpaceStore: ObservableObject {
     }
 
     static func manifest(at folder: URL) -> SpaceManifest? {
-        (try? Data(contentsOf: folder.appendingPathComponent("manifest.json"))).flatMap { try? JSONDecoder().decode(SpaceManifest.self, from: $0) }
+        guard var found = (try? Data(contentsOf: folder.appendingPathComponent("manifest.json"))).flatMap({ try? JSONDecoder().decode(SpaceManifest.self, from: $0) }) else { return nil }
+        found.id = folder.lastPathComponent   // a manifest copied from another Space keeps no other id
+        return found
     }
     static func html(_ folder: URL) -> String { (try? String(contentsOf: folder.appendingPathComponent("app.html"), encoding: .utf8)) ?? "" }
+    // The page as it runs: its assets/ pictures put in (SpaceAssets).
+    static func page(_ folder: URL) -> String { SpaceAssets.inline(html(folder), folder: folder) }
     static func state(_ folder: URL) -> Data {
         (try? Data(contentsOf: folder.appendingPathComponent("state.json"))).flatMap { (try? JSONSerialization.jsonObject(with: $0)) is [String: Any] ? $0 : nil } ?? Data("{}".utf8)
     }
@@ -560,6 +575,7 @@ final class SpaceStore: ObservableObject {
         case .failure(let bad): return .failure(bad)
         case .success(let data):
             do { try write(data, to: folder.appendingPathComponent("state.json")) } catch { return .failure(SpaceBad(reason: error.localizedDescription)) }
+            SpaceLibrary.noteStateWritten(folder)
             return .success(())
         }
     }
@@ -642,10 +658,11 @@ final class SpaceStore: ObservableObject {
         // Written into a hidden folder and moved whole, so a half-made Space never shows.
         let temp = root.appendingPathComponent(".new-" + id)
         try? FileManager.default.removeItem(at: temp)
-        try write(Data(html.utf8), to: temp.appendingPathComponent("app.html"))
+        try write(Data(SpaceAssets.extract(html, into: temp).utf8), to: temp.appendingPathComponent("app.html"))
         try write(state, to: temp.appendingPathComponent("state.json"))
         try write(encode(manifest), to: temp.appendingPathComponent("manifest.json"))
         try FileManager.default.moveItem(at: temp, to: folder)
+        SpaceLibrary.settle(id)
         return manifest
     }
 
@@ -708,17 +725,15 @@ final class SpaceStore: ObservableObject {
         try Self.write(Self.state(folder), to: saved.appendingPathComponent("state.json"))
         try Self.write(Self.encode(SpaceVersion(version: manifest.version, at: Date(), note: note, migrated: state != nil)), to: saved.appendingPathComponent("info.json"))
         try Self.write(Self.encode(manifest), to: saved.appendingPathComponent("manifest.json"))   // its name, icon and color
-        try Self.write(Data(html.utf8), to: folder.appendingPathComponent("app.html"))
+        try Self.write(Data(SpaceAssets.extract(html, into: folder).utf8), to: folder.appendingPathComponent("app.html"))
         if let state { try Self.write(state, to: folder.appendingPathComponent("state.json")); stateVersion[id, default: 0] += 1 }
         manifest.version += 1; manifest.updatedAt = Date()
         if let name, !name.isEmpty { manifest.name = String(name.prefix(SpaceLimits.name)) }
         if let icon { manifest.icon = icon }
         if let color { manifest.color = color }
         try Self.write(Self.encode(manifest), to: folder.appendingPathComponent("manifest.json"))
-        // Only the newest versions stay.
-        for old in Self.versions(id).dropLast(SpaceLimits.versions) {
-            try? FileManager.default.removeItem(at: folder.appendingPathComponent("versions").appendingPathComponent(String(old.version)))
-        }
+        Self.trimVersions(id)
+        SpaceLibrary.settle(id)
         reload()
     }
 
@@ -730,12 +745,13 @@ final class SpaceStore: ObservableObject {
         let folder = Self.folder(id)
         let saved = folder.appendingPathComponent("versions").appendingPathComponent(String(last.version))
         guard var manifest = Self.manifest(at: folder) else { return false }
-        try Self.write(Data(Self.html(saved).utf8), to: folder.appendingPathComponent("app.html"))
+        try Self.write(Data(SpaceAssets.extract(Self.html(saved), into: folder).utf8), to: folder.appendingPathComponent("app.html"))
         if last.migrated { try Self.write(Self.state(saved), to: folder.appendingPathComponent("state.json")); stateVersion[id, default: 0] += 1 }
         if let before = Self.manifest(at: saved) { manifest.name = before.name; manifest.icon = before.icon; manifest.color = before.color }
         manifest.version = last.version; manifest.updatedAt = Date()
         try Self.write(Self.encode(manifest), to: folder.appendingPathComponent("manifest.json"))
         try? FileManager.default.removeItem(at: saved)
+        SpaceLibrary.settle(id)
         reload()
         return true
     }
@@ -762,6 +778,7 @@ final class SpaceStore: ObservableObject {
         manifest.name = String(manifest.name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(SpaceLimits.name))
         if manifest.name.isEmpty { manifest.name = "Space" }
         guard let data = try? Self.encode(manifest), (try? Self.write(data, to: folder.appendingPathComponent("manifest.json"))) != nil else { return }
+        SpaceLibrary.settle(id)
         reload()
     }
 
@@ -780,8 +797,19 @@ final class SpaceStore: ObservableObject {
         dispatchPrecondition(condition: .onQueue(.main))
         guard Self.validID(id) else { return }
         try FileManager.default.trashItem(at: Self.folder(id), resultingItemURL: nil)
+        SpaceLibrary.forget(id)
         reload()
     }
+
+    // Only the newest versions stay.
+    static func trimVersions(_ id: String) {
+        for old in versions(id).dropLast(SpaceLimits.versions) {
+            try? FileManager.default.removeItem(at: folder(id).appendingPathComponent("versions").appendingPathComponent(String(old.version)))
+        }
+    }
+
+    // Data put back or reshaped outside the bridge (a chat's AI edited state.json): open pages load it again.
+    func dataChanged(_ id: String) { stateVersion[id, default: 0] += 1 }
 
     static func refineLog(_ id: String) -> [SpaceRefineEntry] {
         (try? Data(contentsOf: folder(id).appendingPathComponent("refine.json"))).flatMap { try? JSONDecoder().decode([SpaceRefineEntry].self, from: $0) } ?? []

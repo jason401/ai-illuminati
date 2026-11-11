@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 // Spaces on screen (Space.swift): a Space in place of the chat with its change box below, the preview card an
 // answer's <space-build> leaves in the chat, the sidebar's Spaces and "Make a Space" on a meeting's result.
@@ -14,10 +15,25 @@ final class SpaceRefiner: ObservableObject {
     @Published var notes: [String: String] = [:]       // Space → the last refusal, failure or page notice
     @Published var drafts: [String: String] = [:]      // the change box's text per Space
     var cancels: [String: DebateCancellation] = [:]
+
+    // The Spaces folder checked when the app comes to the front (an editor or another tool may have changed it), unless
+    // an answer is still writing there. A refusal shows in that Space.
+    private static var watcher: NSObjectProtocol?
+    static func watchLibrary() {
+        check()
+        watcher = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in check() }
+    }
+    static func check() {
+        guard !SpaceLibrary.busy else { return }
+        for note in SpaceStore.shared.syncLibrary() where note.kind == "refused" || note.kind == "set-aside" {
+            shared.notes[note.space] = SpaceEditsView.text(note)
+        }
+    }
 }
 
 extension Discussion {
     func openSpace(_ id: String) {
+        SpaceRefiner.check()
         guard SpaceStore.shared.manifest(id) != nil else { return }
         viewingRemote = nil; viewingBoard = false; sidebarOverlay = false
         viewingSpace = id
@@ -162,7 +178,7 @@ extension Discussion {
         guard !request.isEmpty, refiner.busy[id] == nil, let manifest = SpaceStore.shared.manifest(id) else { return }
         guard let account = refineAccount(manifest) else { refiner.notes[id] = L("답할 계정이 없어요", "No account can answer"); return }
         let folder = SpaceStore.folder(id)
-        let html = SpacePictures.hide(SpaceStore.html(folder)), state = SpaceStore.state(folder), history = SpaceStore.refineLog(id)
+        let html = SpacePictures.hide(SpaceStore.page(folder)), state = SpaceStore.state(folder), history = SpaceStore.refineLog(id)
         let draws = account.provider == .codex
         SpaceStore.addRefine(id, SpaceRefineEntry(role: "user", text: request))
         let speaker = label(account)
@@ -269,6 +285,29 @@ enum SpaceStyle {
     }
     static func icon(_ name: String) -> String { NSImage(systemSymbolName: name, accessibilityDescription: nil) != nil ? name : "square.grid.2x2" }
 
+    static func reveal(_ folder: URL) {
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        NSWorkspace.shared.activateFileViewerSelecting([folder])
+    }
+
+    // One HTML file with its pictures and a stand-in for the bridge (SpaceExport): it runs in any browser, apart from
+    // this app, its data kept in that browser from the data the Space has now.
+    static func export(_ id: String) {
+        guard let manifest = SpaceStore.shared.manifest(id), let html = SpaceExport.document(id) else { NSSound.beep(); return }
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = manifest.name.replacingOccurrences(of: "/", with: "-") + ".html"
+        panel.allowedContentTypes = [.html]
+        panel.message = L("브라우저에서 바로 열리는 HTML 파일 하나로 저장해요. 이 앱과 분리되고, 데이터는 지금 데이터에서 시작해 그 브라우저에 따로 저장돼요.",
+                          "Saves one HTML file that opens in a browser. It is apart from this app; its data starts from the data now and is kept in that browser.")
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try Data(html.utf8).write(to: url, options: .atomic)
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        } catch {
+            let alert = NSAlert(); alert.messageText = L("내보내지 못했어요", "Could not export"); alert.informativeText = error.localizedDescription; alert.runModal()
+        }
+    }
+
     // A one-line question (rename, icon, schedule). nil: cancelled.
     static func ask(_ title: String, _ info: String, value: String) -> String? {
         let alert = NSAlert()
@@ -303,6 +342,9 @@ struct SpaceHeader: View {
                 .buttonStyle(.plainHit).foregroundColor(.secondary).font(.system(size: 12))
                 .disabled(versions.isEmpty || refiner.pending[id] != nil)
                 .help(versions.last.map { L("되돌리기: ", "Undo: ") + $0.note + ($0.migrated ? L(" (데이터도 그때로)", " (data too)") : "") } ?? L("되돌릴 변경이 없어요", "Nothing to undo"))
+            Button(action: { SpaceStyle.export(id) }) { Image(systemName: "square.and.arrow.up").frame(width: 24, height: 24) }
+                .buttonStyle(.plainHit).foregroundColor(.secondary)
+                .help(L("내보내기: 브라우저에서 열리는 HTML 파일 하나로, 이 앱과 따로 돌아가요", "Export: one HTML file that runs in a browser, apart from this app"))
             Menu {
                 if versions.isEmpty { Text(L("이전 판이 없어요", "No earlier versions")) }
                 ForEach(versions.reversed()) { version in
@@ -337,7 +379,7 @@ struct SpaceMainView: View {
                         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.accentColor.opacity(0.6), lineWidth: 2))
                         .padding(.horizontal, 12)
                 } else {
-                    SpaceWebView(html: SpaceStore.html(SpaceStore.folder(id)), color: manifest.color,
+                    SpaceWebView(html: SpaceStore.page(SpaceStore.folder(id)), color: manifest.color,
                                  reload: "\(id)-\(manifest.version)-\(store.stateVersion[id] ?? 0)",
                                  host: { SpaceFolderHost(SpaceStore.folder(id)) }, actions: discussion.spaceActions(id, origin: manifest.originChat),
                                  onProblem: { refiner.notes[id] = $0 })
@@ -509,6 +551,42 @@ struct SpaceDraftCard: View {
     }
 }
 
+// What an answer changed in the Spaces folder, as checked after it (SpaceLibrary.sync): each Space with [Open].
+struct SpaceEditsView: View {
+    let notes: [SpaceSyncNote]
+    let discussion: Discussion
+
+    static func text(_ note: SpaceSyncNote) -> String {
+        switch note.kind {
+        case "added": return L("새 Space를 사이드바에 넣었어요", "Added to the sidebar")
+        case "changed": return note.version.map { L("\($0)판으로 고쳤어요 (되돌리기 가능)", "Changed to v\($0) (can be undone)") } ?? L("고쳤어요", "Changed")
+        case "removed": return L("휴지통으로 옮겼어요", "Moved to the Trash")
+        case "set-aside": return L("새 Space를 넣지 않고 따로 두었어요: ", "Set aside, not added: ") + (note.reason ?? "")
+        default: return L("검사에서 거부해 전 판으로 되돌렸어요: ", "Refused by the checks and put back: ") + (note.reason ?? "")
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(Array(notes.enumerated()), id: \.offset) { _, note in
+                let bad = note.kind == "refused" || note.kind == "set-aside"
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Image(systemName: bad ? "exclamationmark.triangle" : "square.grid.2x2").foregroundColor(bad ? .orange : .secondary)
+                    Text(note.name).font(.system(size: 12, weight: .semibold))
+                    Text(Self.text(note)).font(.system(size: 12)).foregroundColor(bad ? .orange : .secondary).textSelection(.enabled)
+                    Spacer(minLength: 4)
+                    if note.kind != "removed" && note.kind != "set-aside" {
+                        Button(L("열기", "Open")) { discussion.openSpace(note.space) }.buttonStyle(.link).font(.system(size: 12))
+                            .disabled(SpaceStore.shared.manifest(note.space) == nil)
+                    }
+                }
+            }
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.04)))
+    }
+}
+
 // The minute, for the sidebar's schedules (an ObservableObject: this Mac's Command Line Tools cannot build @State).
 final class SpaceClock: ObservableObject {
     static let shared = SpaceClock()
@@ -575,6 +653,7 @@ struct SpaceSidebarSection: View {
                 discussion.newConversation()
                 discussion.draft = L("Space 만들어 줘: ", "Make a Space: ")
             }
+            Button(L("Spaces 폴더 열기", "Open the Spaces folder")) { SpaceStyle.reveal(SpaceStore.root) }
         } label: { Image(systemName: "plus").font(.system(size: 11)).frame(width: 22, height: 22) }
             .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().foregroundColor(.secondary)
             .help(L("새 Space", "New Space"))
@@ -632,6 +711,9 @@ struct SpaceSidebarSection: View {
             else if let schedule = SpaceSchedule.parse(text) { store.update(id) { $0.schedule = schedule } }
             else { NSSound.beep() }
         }
+        Divider()
+        Button(L("Finder에서 보기", "Show in Finder")) { SpaceStyle.reveal(SpaceStore.folder(id)) }
+        Button(L("내보내기 (HTML 파일)…", "Export (HTML file)…")) { SpaceStyle.export(id) }
         Divider()
         Button(L("삭제…", "Delete…"), role: .destructive) {
             let alert = NSAlert()

@@ -292,3 +292,97 @@ func testSpace() {
 
     print("PASS: Spaces — build block, checks, schedule, drafts, data limit, versions and Undo, migration")
 }
+
+// The Spaces folder as a chat's AI edits it (SpaceLibrary.swift): pictures as files, direct changes checked and
+// versioned, a bad page put back, new folders added or set aside, the data guarded, the rule and the export.
+func testSpaceLibrary() {
+    let store = SpaceStore.shared, fm = FileManager.default
+    _ = store.syncLibrary()   // the first run accepts every Space as it is
+    func json(_ folder: URL) -> [String: Any] { (try? JSONSerialization.jsonObject(with: SpaceStore.state(folder))) as? [String: Any] ?? [:] }
+    let bytes = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) + Data(repeating: 7, count: 1500)
+    let picture = "data:image/png;base64," + bytes.base64EncodedString()
+    let page = "<!doctype html><body><img src=\"\(picture)\"><p id=t>hi</p><script>document.getElementById('t').textContent=space.state.get('n')</script></body>"
+    let made = try! SpaceStore.make(name: "그림 노트", icon: "photo", color: "pink", html: page, state: Data(#"{"n":1}"#.utf8), origin: nil, order: store.nextOrder())
+    store.reload()
+    let folder = SpaceStore.folder(made.id), stored = SpaceStore.html(folder)
+    let file = "picture-\(SpaceAssets.hash(bytes)).png"
+    expect(!stored.contains("base64") && stored.contains("assets/\(file)") && fm.fileExists(atPath: folder.appendingPathComponent("assets/\(file)").path), "pictures are kept as files")
+    expect(SpaceStore.page(folder) == page && SpacePictures.hide(SpaceStore.page(folder)).kept == [picture], "and go back in when the page loads")
+    expect(store.syncLibrary().isEmpty, "nothing changed, nothing to say")
+
+    // A good edit becomes a version (Undo works); a bad one is put back.
+    try! Data(stored.replacingOccurrences(of: "hi", with: "안녕").utf8).write(to: folder.appendingPathComponent("app.html"))
+    var notes = store.syncLibrary()
+    expect(notes == [SpaceSyncNote(space: made.id, name: "그림 노트", kind: "changed", version: 2)] && store.manifest(made.id)?.version == 2
+           && SpaceStore.versions(made.id).map(\.version) == [1] && SpaceStore.versions(made.id).first?.migrated == false, "a direct edit becomes version 2: \(notes)")
+    try! store.undo(made.id)
+    expect(SpaceStore.html(folder) == stored && store.manifest(made.id)?.version == 1 && store.syncLibrary().isEmpty, "Undo of a direct edit")
+    try! Data("<script>fetch('x')</script>".utf8).write(to: folder.appendingPathComponent("app.html"))
+    notes = store.syncLibrary()
+    expect(notes.first?.kind == "refused" && notes.first?.reason?.isEmpty == false && SpaceStore.html(folder) == stored && store.manifest(made.id)?.version == 1, "a page that fails is put back")
+
+    // A manifest written by hand: no id or version, an odd color.
+    try! Data(#"{"name":"새 노트","icon":"star","color":"chartreuse","version":99}"#.utf8).write(to: folder.appendingPathComponent("manifest.json"))
+    notes = store.syncLibrary()
+    let look = store.manifest(made.id)
+    expect(look?.name == "새 노트" && look?.icon == "star" && look?.color == "pink" && look?.version == 1 && abs((look?.createdAt ?? .distantPast).timeIntervalSince(made.createdAt)) < 0.01 && notes.first?.kind == "changed",
+           "name and icon change, the app's own keys stay")
+
+    // The data: changed during an answer it becomes a version Undo can take back; broken it is put back.
+    SpaceLibrary.beginAnswer()
+    try! Data(#"{"n":5}"#.utf8).write(to: folder.appendingPathComponent("state.json"))
+    SpaceLibrary.endAnswer()
+    notes = store.syncLibrary()
+    expect(json(folder)["n"] as? Int == 5 && SpaceStore.versions(made.id).last?.migrated == true && notes.first?.kind == "changed", "a data edit is a version")
+    try! store.undo(made.id)
+    expect(json(folder)["n"] as? Int == 1, "Undo brings the data back")
+    SpaceLibrary.beginAnswer()
+    try! Data("{oops".utf8).write(to: folder.appendingPathComponent("state.json"))
+    SpaceLibrary.endAnswer()
+    notes = store.syncLibrary()
+    expect(notes.first?.kind == "refused" && json(folder)["n"] as? Int == 1 && fm.fileExists(atPath: folder.appendingPathComponent("state.broken.json").path), "broken data is put back, kept aside")
+    if case .failure = SpaceStore.setState(folder, key: "n", json: "2") { fatalError("the bridge still saves") }
+    expect(store.syncLibrary().isEmpty, "the bridge's own writes are not edits")
+
+    // Pictures an AI puts in assets/ go in when the page loads.
+    try! SpaceStore.write(bytes, to: folder.appendingPathComponent("assets/cat.png"))
+    try! Data((stored + "<img src='assets/cat.png'>").utf8).write(to: folder.appendingPathComponent("app.html"))
+    notes = store.syncLibrary()
+    expect(notes.first?.kind == "changed" && SpaceStore.page(folder).hasSuffix("<img src='\(picture)'>"), "assets/cat.png is put in")
+    expect(fm.fileExists(atPath: folder.appendingPathComponent("assets/\(file)").path), "pictures a kept version uses stay")
+
+    // New folders: one named in words is added with that name; one with a bad page is set aside.
+    let words = SpaceStore.root.appendingPathComponent("커피 트래커")
+    try! SpaceStore.write(Data("<p>coffee</p>".utf8), to: words.appendingPathComponent("app.html"))
+    let bad = SpaceStore.root.appendingPathComponent("bad-one")
+    try! SpaceStore.write(Data("<script>eval('1')</script>".utf8), to: bad.appendingPathComponent("app.html"))
+    try! SpaceStore.write(Data(#"{"name":"나쁜 것"}"#.utf8), to: bad.appendingPathComponent("manifest.json"))
+    notes = store.syncLibrary()
+    let coffee = store.spaces.first { $0.name == "커피 트래커" }
+    expect(notes.contains { $0.kind == "added" && $0.name == "커피 트래커" } && coffee != nil && SpaceStore.validID(coffee!.id) && !fm.fileExists(atPath: words.path)
+           && json(SpaceStore.folder(coffee!.id)).isEmpty, "a new folder becomes a Space: \(notes)")
+    expect(notes.contains { $0.kind == "set-aside" && $0.name == "나쁜 것" } && !fm.fileExists(atPath: bad.path)
+           && fm.fileExists(atPath: SpaceLibrary.rejected.appendingPathComponent("bad-one/app.html").path) && !store.spaces.contains { $0.id == "bad-one" }, "a bad new one is set aside")
+    try! fm.removeItem(at: SpaceStore.folder(coffee!.id))
+    notes = store.syncLibrary()
+    expect(notes == [SpaceSyncNote(space: coffee!.id, name: "커피 트래커", kind: "removed")] && store.manifest(coffee!.id) == nil, "a Space taken out of the folder is gone")
+
+    // What a chat's AI is told: the folder, its Spaces by name, no code pasted; a redraw may name a file.
+    let rule = Discussion.spaceRule("새 노트 Space에 버튼 추가해 줘", draws: true, folder: true)
+    expect(rule.contains("[Spaces folder] " + SpaceStore.root.path) && rule.contains("새 노트 — \(made.id)") && !rule.contains("[Current app.html]")
+           && rule.contains("from=\"assets/name.png\""), "the folder rule")
+    let binding = WorkspaceBinding(roots: [WorkspaceRoot(path: "/chat", directory: true, writable: true), WorkspaceRoot(path: SpaceStore.root.path, directory: true, writable: true)])
+    let folders = Discussion.soloFolders(binding, shared: [])
+    expect(folders.contains(SpaceStore.root.path + " (Spaces folder") && folders.contains("- 새 노트 — " + folder.path) && !folders.contains("/versions/"), "the folder list names Spaces, not their files")
+    if case .success(let asked) = SpacePictures.requests(in: "<space-picture n=\"1\" from=\"assets/cat.png\">밤으로</space-picture>") {
+        expect(asked.first?.file == "cat.png" && asked.first?.from == nil, "a redraw named by file")
+    } else { fatalError("a redraw by file parses") }
+
+    // Export: one file, pictures inside, the bridge stood in for, the data it has now.
+    let exported = SpaceExport.document(made.id) ?? ""
+    expect(exported.hasPrefix("<!doctype html>") && exported.contains("Object.defineProperty(window, 'space'") && exported.contains(picture)
+           && !exported.contains("assets/") && exported.contains(#""n":2"#) && exported.contains("<title>새 노트</title>"), "the export stands alone")
+    try! store.delete(made.id)
+    expect(store.syncLibrary().isEmpty, "the app's own Delete says nothing more")
+    print("PASS: Spaces folder — pictures as files, direct edits versioned or put back, new folders, data guarded, rule, export")
+}

@@ -522,6 +522,7 @@ struct ChatTurn: Identifiable, Codable, Equatable {
     var lastActivityAt: Date?
     var waitingApproval: Bool?
     var spaceDraft: SpaceDraftNote?   // the Space this answer made: a preview card under it (SpaceView.swift)
+    var spaceEdits: [SpaceSyncNote]?  // Spaces this answer changed in the Spaces folder, as checked after it (SpaceLibrary.sync)
 }
 
 // Times under the messages and the day lines between them, like the desktop apps.

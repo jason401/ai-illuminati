@@ -1781,7 +1781,7 @@ do {
     expect(allowed.contains("Edit(/" + linkedDir.path + "/**)") && !allowed.contains("Edit(/" + shared.path), "Claude may edit the linked folder, not the shared one")
     let codexArgs = try! invocation.arguments(provider: .codex, original: ["exec", "-C", "/tmp", "x"], directory: dir, web: false)
     expect(codexArgs.contains("mcp_servers.illuminati.default_tools_approval_mode=\"approve\"") && codexArgs.contains("sandbox_mode=\"workspace-write\"")
-           && codexArgs.contains("sandbox_workspace_write.writable_roots=[\"" + own + "\",\"" + linkedDir.path + "\"]"), "Codex may write the chat folder and the linked folder only")
+           && codexArgs.contains("sandbox_workspace_write.writable_roots=[\"" + own + "\",\"" + SpaceStore.root.path + "\",\"" + linkedDir.path + "\"]"), "Codex may write the chat folder, the Spaces folder and the linked folder only")
     print("PASS: plain chat (auto pick 15% / weekly, Gemini out, Enterprise sides, limit handoff, YouTube via Gemini, chat and linked folders writable with backup and undo, shared read only)")
 
     // AI Face: the app is its one MCP client ("illuminati"); a model reaches it only through the bridge.
@@ -2868,6 +2868,7 @@ func testChatNotes() {
 }
 testChatNotes()
 testSpace()
+testSpaceLibrary()
 
 func testChatTime() {
     // macOS puts a narrow no-break space before AM/PM.

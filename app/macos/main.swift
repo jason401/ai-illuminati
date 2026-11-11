@@ -68,6 +68,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         SpaceStore.migrateLegacy()
         SpaceStore.pruneDrafts()
         SpaceStore.shared.reload()
+        SpaceRefiner.watchLibrary()   // the Spaces folder, as chats and editors left it (SpaceLibrary.sync)
         // TODO work (Todo.swift): running TODOs from before a quit are ready again, then the board is checked.
         let todos = TodoScheduler(discussion: discussion, store: .shared)
         TodoScheduler.shared = todos

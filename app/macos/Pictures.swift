@@ -195,3 +195,12 @@ enum Pictures {
         return rep.representation(using: .png, properties: [:])
     }
 }
+
+extension SpacePictures {
+    // What the ChatGPT account drawing one request is asked; a redraw has the picture now in the page attached.
+    static func drawPrompt(_ request: Request) -> String {
+        Pictures.makerPrompt(request.text) + "\n[Use] It goes into a small app page, shown at most 768 px wide."
+            + (request.from == nil ? "" : "\n[Attached image] The picture now in that page. Redraw it as the request asks and keep "
+               + "everything the request does not change (characters, style, layout, colors) as it is.")
+    }
+}

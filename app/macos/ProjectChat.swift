@@ -370,7 +370,7 @@ extension Discussion {
                 if let mood { FaceLink.shared.show(mood) }
                 let (reply, newState) = Self.extractState(tagless)
                 if let newState { self.saveState(newState, room: id, index: index) }
-                deliverSpaceBuild(tagless, room: id, turn: index)
+                deliverSpaceBuild(tagless, room: id, turn: index, cancellation: cancellation)
                 let harvest = collectPictures(reply, account: account, since: started, id: id, index: index, cancellation: cancellation)
                 let text = harvest.text
                 changeTurn(id, index, save: true) {

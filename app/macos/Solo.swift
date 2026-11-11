@@ -254,7 +254,8 @@ extension Discussion {
 
     // An answer's <space-build>: checked, saved as a draft and shown as a card under the answer (the first one only).
     // for="id": a change to that Space; from="id": a new one made from it. Either way its pictures go back in.
-    func deliverSpaceBuild(_ reply: String, room: UUID, turn index: Int) {
+    // Its <space-picture> requests are drawn first (drawSpacePictures), so this waits for them.
+    func deliverSpaceBuild(_ reply: String, room: UUID, turn index: Int, cancellation: DebateCancellation? = nil) {
         let split = SpaceBuilder.split(reply)
         guard split.found else { return }
         let target = split.target.flatMap { SpaceStore.manifest(at: SpaceStore.folder($0)) }
@@ -265,7 +266,9 @@ extension Discussion {
             note = SpaceDraftNote(name: "Space", reason: L("고칠 Space를 찾지 못했어요", "The Space to change is gone"))
         } else {
             switch SpaceBuilder.parse(split.body, new: target == nil).flatMap({ build in
-                SpacePictures.embed(build.html, made: [], kept: kept).map { page in var build = build; build.html = page; return build }
+                SpacePictures.requests(in: split.body ?? "").flatMap { drawSpacePictures($0, page: build.html, kept: kept, room: room, turn: index, cancellation: cancellation) }
+                    .flatMap { made in SpacePictures.embed(build.html, made: made, kept: kept) }
+                    .map { page in var build = build; build.html = page; return build }
             }) {
             case .failure(let bad): note = SpaceDraftNote(name: target?.name ?? "Space", reason: bad.reason)
             case .success(let build):
@@ -278,6 +281,56 @@ extension Discussion {
         changeTurn(room, index, save: true) { turn in
             if turn.spaceDraft == nil { turn.spaceDraft = made } else if let draft = made.draft { SpaceStore.discardDraft(draft) }
         }
+    }
+
+    // The ChatGPT accounts that draw a chat's Space pictures, best first: the picture makers (Settings → Chat), else any
+    // ChatGPT account; those whose usage is not known yet last. In an Enterprise chat only those of its organization.
+    func spaceDrawers(chat id: UUID, excluded: Set<String> = []) -> [Account] {
+        let makers = model.pictureMakers.isEmpty ? model.accounts.filter { $0.provider == .codex } : model.pictureMakers
+        let chatLock = lock(of: id)
+        var left = makers.filter { !excluded.contains($0.id) && Enterprise.permits($0, lock: chatLock) }, ordered: [Account] = []
+        while let best = AutoPick.choose(left, usage: model.latestUsage, lock: nil, current: nil) {
+            ordered.append(best); left.removeAll { $0.id == best.id }
+        }
+        return ordered + left.filter { model.latestUsage[$0.id] == nil }
+    }
+
+    // A chat's Space picture requests drawn in order: the data: URLs for space-image:1, 2, … A redraw (from=K) gets
+    // space-kept:K attached. A drawer that fails hands the picture to the next; one the page does not use is skipped.
+    func drawSpacePictures(_ requests: [SpacePictures.Request], page: String, kept: [String], room id: UUID, turn index: Int,
+                           cancellation: DebateCancellation?) -> Result<[String], SpaceBad> {
+        let token = cancellation ?? DebateCancellation()
+        var made: [String] = []
+        for request in requests {
+            guard page.range(of: #"space-image:\#(request.n)(?!\d)"#, options: .regularExpression) != nil else { made.append(""); continue }
+            var reference: URL?
+            if let from = request.from {
+                guard from >= 1 && from <= kept.count, let file = SpacePictures.referenceFile(kept[from - 1]) else {
+                    return .failure(SpaceBad(reason: L("고칠 그림 space-kept:\(from)이 없어요", "No picture space-kept:\(from) to change")))
+                }
+                reference = file
+            }
+            defer { if let reference { try? FileManager.default.removeItem(at: reference) } }
+            let prompt = SpacePictures.drawPrompt(request)
+            var excluded: Set<String> = [], picture: String?
+            while picture == nil, !token.isCancelled, let drawer = spaceDrawers(chat: id, excluded: excluded).first {
+                excluded.insert(drawer.id)
+                guard permits(drawer, room: id) else { continue }
+                changeTurn(id, index) { $0.status = L("\(self.label(drawer))가 Space 그림 \(request.n) 그리는 중…", "\(self.label(drawer)) is drawing Space picture \(request.n)…") }
+                let started = Date()
+                let answer = reference.map { file in
+                    pictureAnswer?(drawer, prompt, [file], 600, token, false) ?? Answerer.ask(drawer, prompt: prompt, timeout: 600, cancellation: token, images: [file])
+                } ?? debateAnswer(drawer, prompt, 600, token, false)
+                if case .success = answer { picture = Pictures.newCodexImages(drawer, since: started).first.flatMap { Pictures.spaceDataURL($0) } }
+            }
+            guard let picture else {
+                return .failure(SpaceBad(reason: token.isCancelled ? L("취소했어요", "Cancelled")
+                    : L("Space 그림 \(request.n)을 그리지 못했어요 (그릴 수 있는 ChatGPT 계정이 없거나 실패했어요)",
+                        "Could not draw Space picture \(request.n) (no ChatGPT account could draw it)")))
+            }
+            made.append(picture)
+        }
+        return .success(made)
     }
 
     // The reply without its trailing <chat-state> block (also while it is still being written), and the block.
@@ -557,7 +610,7 @@ extension Discussion {
                         if let mood, binding.face == true { FaceLink.shared.show(mood) }
                         let (text, newState) = Self.extractState(tagless)
                         if let newState, k == 0 { self.saveState(newState, room: id, index: index) }
-                        if k == 0 { self.deliverSpaceBuild(tagless, room: id, turn: index) }
+                        if k == 0 { self.deliverSpaceBuild(tagless, room: id, turn: index, cancellation: cancellation) }
                         let harvest = self.collectPictures(text, account: account, since: started, id: id, index: index, cancellation: cancellation)
                         entry = .init(round: 1, speaker: speaker, text: harvest.text, failed: false)
                         entry.images = harvest.images.isEmpty ? nil : harvest.images
@@ -663,7 +716,7 @@ extension Discussion {
                 if let mood, binding.face == true { FaceLink.shared.show(mood) }
                 let (text, newState) = Self.extractState(tagless)
                 if let newState { self.saveState(newState, room: id, index: index) }
-                deliverSpaceBuild(tagless, room: id, turn: index)
+                deliverSpaceBuild(tagless, room: id, turn: index, cancellation: cancellation)
                 let harvest = collectPictures(text, account: account, since: started, id: id, index: index, cancellation: cancellation)
                 var changes = Self.changes(own, since: before)
                 if var made = backup, (try? made.finish()) != nil { changes += made.changes.filter { $0.kind != "directory" } }
@@ -724,16 +777,18 @@ extension Discussion {
                                 fullAccess: binding.fullAccess == true, picture: pictureRule(account, chat: id), helper: helper,
                                 face: Self.projectFaceRule(face: binding.face == true), project: project,
                                 notes: id.map { ChatNotes.rule(ChatNotes.current($0)) } ?? "",
-                                space: spaceRule && account.provider != .ollama ? Self.spaceRule(lastQuestion(id)) : "",
+                                space: spaceRule && account.provider != .ollama
+                                    ? Self.spaceRule(lastQuestion(id), draws: !spaceDrawers(chat: id ?? currentID).isEmpty) : "",
                                 peer: project == nil ? "" : peerInstruction(account),
                                 memory: memoryRule(account, chat: id))
     }
 
     // A message asking for a Space, or naming existing ones to change or reuse, gets the Space rule (and those Spaces).
-    static func spaceRule(_ question: String) -> String {
+    // `draws`: a ChatGPT account can draw the page's pictures (SpacePictures.chatRule).
+    static func spaceRule(_ question: String, draws: Bool = false) -> String {
         let named = SpaceStore.named(in: question)
         guard Route.asksSpace(question) || !named.isEmpty else { return "" }
-        return SpaceBuilder.rule + (named.isEmpty ? "" : "\n" + SpaceBuilder.chatRule(named))
+        return SpaceBuilder.rule + (named.isEmpty ? "" : "\n" + SpaceBuilder.chatRule(named)) + "\n" + SpacePictures.chatRule(draws: draws)
     }
 
     // The newest message of chat `id` (any thread).

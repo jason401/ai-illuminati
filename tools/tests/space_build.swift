@@ -82,6 +82,17 @@ func testSpace() {
     expect(SpaceBuilder.rule.contains("data: URLs") && SpacePictures.rule(draws: true, kept: 0).contains("space-image:1")
            && !SpacePictures.rule(draws: false, kept: 0).contains("space-image") && SpacePictures.rule(draws: false, kept: 2).contains("space-kept:2"),
            "only an AI that can draw is told about space-image")
+    // A chat's picture requests: numbered in order, a redraw names the kept picture, at most four.
+    let asks = try! SpacePictures.requests(in: "<space-html>x</space-html><space-picture n=\"1\">고양이</space-picture>\n<space-picture n='2' from='3'>\n밤으로\n</space-picture>").get()
+    expect(asks == [.init(n: 1, from: nil, text: "고양이"), .init(n: 2, from: 3, text: "밤으로")], "picture requests are read in order")
+    expect((try? SpacePictures.requests(in: "<space-picture>a</space-picture><space-picture>b</space-picture>").get())?.map(\.n) == [1, 2], "unnumbered requests count in order")
+    if case .success = SpacePictures.requests(in: "<space-picture n=\"2\">a</space-picture>") { fatalError("requests out of order are refused") }
+    if case .success = SpacePictures.requests(in: String(repeating: "<space-picture>a</space-picture>", count: 5)) { fatalError("over four pictures is refused") }
+    expect(SpacePictures.drawPrompt(asks[1]).contains("[Attached image]") && !SpacePictures.drawPrompt(asks[0]).contains("[Attached image]"), "only a redraw mentions its picture")
+    let reference = SpacePictures.referenceFile("data:image/jpeg;base64," + Data("JPEG".utf8).base64EncodedString())!
+    expect(reference.pathExtension == "jpg" && (try? Data(contentsOf: reference)) == Data("JPEG".utf8), "a kept picture becomes a file to attach")
+    try? FileManager.default.removeItem(at: reference)
+    expect(SpacePictures.chatRule(draws: true).contains("from=\"K\"") && !SpacePictures.chatRule(draws: false).contains("<space-picture"), "only a chat with a drawer is told about picture requests")
     let imageDir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("space-pic-" + UUID().uuidString)
     try! FileManager.default.createDirectory(at: imageDir, withIntermediateDirectories: true)
     func picture(_ name: String, opaque: Bool) -> URL {
@@ -204,9 +215,10 @@ func testSpace() {
     expect(SpaceStore.named(in: asked).map(\.id) == [made.id] && SpaceStore.named(in: "새 이름 뭐였지?").isEmpty
            && SpaceStore.named(in: "> 새 이름 고쳐 줘\n이게 뭐야?").isEmpty, "a Space is named with a change word, outside quotes")
     expect(Route.rule(question: asked, previous: nil) == .one, "a change to a named Space is answered by one AI, not project work")
-    let context = Discussion.spaceRule(asked)
+    let context = Discussion.spaceRule(asked, draws: true)
     expect(context.contains("for=\"its id\"") && context.contains("id \(made.id)") && context.contains("[Current app.html]") && !context.contains("비밀 실험"),
            "the chat gets the code and the shape, never the values")
+    expect(context.contains("<space-picture n=\"1\">") && !Discussion.spaceRule(asked).contains("<space-picture"), "a chat with a drawer may ask for Space pictures")
     expect(Discussion.spaceRule("오늘 날씨 어때?").isEmpty, "other messages get no Space rule")
     let change = "고쳤어요.\n<space-build for=\"\(made.id)\"><space-html><p>new</p></space-html><space-migrate>function migrate(o){return o}</space-migrate></space-build>"
     let changeSplit = SpaceBuilder.split(change)

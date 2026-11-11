@@ -301,7 +301,7 @@ enum SpaceBuilder {
             The user previews the change in that Space and applies it. Keep every key the page does not need to change.
             To make a new Space from one (a copy, a variant, the same style), add <space-build from="its id"> with a new manifest,
             the page and first data, as for any new Space. space-kept:N markers stay pictures of the Space in for/from; leave each
-            where its picture should stay, move it or drop it. You cannot make painted pictures here: draw with inline SVG or CSS.
+            where its picture should stay, move it or drop it.
             If the message only asks about a Space, answer and add no block.
             \(pages.joined(separator: "\n"))
             """
@@ -433,6 +433,52 @@ enum SpacePictures {
               + "the page. At most \(perAnswer) new pictures."
             : "You cannot make painted pictures here: draw with inline SVG or CSS. If the user wants a painted picture, say that a "
               + "ChatGPT account chosen as this Space's worker (beside the change box) can draw it.")
+    }
+
+    // A chat's picture requests in its <space-build> (any AI may write them; a ChatGPT account draws them,
+    // Discussion.drawSpacePictures): <space-picture n="1">what to draw</space-picture> for space-image:1, or
+    // <space-picture n="1" from="2">how to change it</space-picture> to redraw space-kept:2 with that picture attached.
+    struct Request: Equatable { var n: Int; var from: Int?; var text: String }
+    private static let requestTag = try! NSRegularExpression(pattern: #"<space-picture\b([^>]*)>([\s\S]*?)</space-picture>"#)
+
+    static func requests(in body: String) -> Result<[Request], SpaceBad> {
+        var found: [Request] = []
+        for match in requestTag.matches(in: body, range: NSRange(body.startIndex..., in: body)) {
+            guard let tag = Range(match.range(at: 1), in: body), let inner = Range(match.range(at: 2), in: body) else { continue }
+            let text = String(body[inner].trimmingCharacters(in: .whitespacesAndNewlines).prefix(2000))
+            let n = number("n", in: String(body[tag])) ?? found.count + 1
+            guard n == found.count + 1 else { return .failure(SpaceBad(reason: L("그림 요청은 n=\"1\"부터 차례로 번호를 매겨야 해요", "Number picture requests n=\"1\", \"2\", … in order"))) }
+            guard !text.isEmpty else { return .failure(SpaceBad(reason: L("그림 \(n) 요청이 비어 있어요", "Picture request \(n) is empty"))) }
+            found.append(Request(n: n, from: number("from", in: String(body[tag])), text: text))
+        }
+        guard found.count <= perAnswer else { return .failure(SpaceBad(reason: L("새 그림은 한 번에 \(perAnswer)장까지예요", "At most \(perAnswer) new pictures at a time"))) }
+        return .success(found)
+    }
+
+    private static func number(_ name: String, in tag: String) -> Int? {
+        guard let match = tag.range(of: #"\b"# + name + #"\s*=\s*["']?\d{1,3}"#, options: .regularExpression) else { return nil }
+        return Int(tag[match].filter(\.isNumber))
+    }
+
+    // A kept picture (data: URL) as a file to attach for a redraw; the caller removes it.
+    static func referenceFile(_ dataURL: String) -> URL? {
+        guard let comma = dataURL.firstIndex(of: ","), let data = Data(base64Encoded: String(dataURL[dataURL.index(after: comma)...])) else { return nil }
+        let type = dataURL[..<comma].dropFirst("data:image/".count).prefix { $0 != ";" }
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("AI Illuminati space picture \(UUID().uuidString).\(type == "jpeg" ? "jpg" : type)")
+        guard FileManager.default.createFile(atPath: file.path, contents: data, attributes: [.posixPermissions: 0o600]) else { return nil }
+        return file
+    }
+
+    // How a chat's AI puts painted pictures in a Space page (`draws`: a ChatGPT account can draw for it).
+    static func chatRule(draws: Bool) -> String {
+        draws
+            ? "[Space pictures] For a painted picture in the page (illustration, character, background, art), do not draw it "
+              + "yourself: inside the <space-build> block add <space-picture n=\"1\">what to draw: subject, style, colors, aspect "
+              + "ratio</space-picture> and write space-image:1 in the page (an <img> src or CSS url()); n=\"2\" for space-image:2 … "
+              + "At most \(perAnswer). To change a picture already in the page, add <space-picture n=\"1\" from=\"K\">how to change it"
+              + "</space-picture> and put space-image:1 where space-kept:K was: the drawer gets that picture to work from, and "
+              + "describe in words what stays. A ChatGPT account draws each one; the app shrinks it to at most 768 px and puts it in."
+            : "[Space pictures] No ChatGPT account can draw here: draw with inline SVG or CSS, and say so if the user wants a painted picture."
     }
 }
 

@@ -1234,6 +1234,49 @@ do {
     print("PASS: picture makers draw requested pictures, only of the organization in an Enterprise chat")
 }
 
+// Space pictures from a chat: a ChatGPT account draws each <space-picture> request, a redraw gets the kept picture
+// attached, one the page does not use is skipped, and a failed drawer hands it to the next.
+do {
+    let m = AppModel()
+    m.accounts = [Account(id: "sp-claude", provider: .claude, name: "Claude", dir: nil, school: false),
+                  Account(id: "sp-codex", provider: .codex, name: "ChatGPT", dir: AccountStore.home + "/sp-codex", school: false),
+                  Account(id: "sp-codex2", provider: .codex, name: "ChatGPT 2", dir: AccountStore.home + "/sp-codex2", school: false)]
+    m.pictureMakersOff = []
+    let chat = Discussion(model: m)
+    chat.newConversation()
+    let room = chat.currentID
+    let png = Pictures.render(svg: "<svg viewBox='0 0 10 10'><rect width='10' height='10' fill='red'/></svg>")!
+    var drawers: [String] = [], attached: [[URL]] = [], prompts: [String] = [], failing: Set<String> = []
+    func draw(_ account: Account) -> Result<String, Answerer.Failure> {
+        drawers.append(account.id)
+        if failing.contains(account.id) { return .failure(.failed("You've hit your usage limit (429)")) }
+        let folder = account.codexHome + "/generated_images/t"
+        try? FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+        try? png.write(to: URL(fileURLWithPath: folder + "/\(UUID().uuidString).png"))
+        return .success("Made it.")
+    }
+    chat.debateAnswer = { account, prompt, _, _, _ in prompts.append(prompt); return draw(account) }
+    chat.pictureAnswer = { account, prompt, files, _, _, _ in
+        prompts.append(prompt); attached.append(files)
+        expect(files.allSatisfy { FileManager.default.fileExists(atPath: $0.path) }, "the kept picture is attached as a file")
+        return draw(account)
+    }
+    expect(chat.spaceDrawers(chat: room).map(\.id).sorted() == ["sp-codex", "sp-codex2"], "ChatGPT accounts draw Space pictures")
+    let kept = "data:image/png;base64," + png.base64EncodedString()
+    let requests = try! SpacePictures.requests(in: "<space-picture n=\"1\">a cat</space-picture><space-picture n=\"2\" from=\"1\">the cat at night</space-picture><space-picture n=\"3\">unused</space-picture>").get()
+    let made = try! chat.drawSpacePictures(requests, page: "<img src=space-image:1><img src=space-image:2>", kept: [kept], room: room, turn: 0, cancellation: nil).get()
+    expect(made.count == 3 && made[0].hasPrefix("data:image/") && made[1].hasPrefix("data:image/") && made[2].isEmpty, "each used request is drawn, an unused one skipped")
+    expect(attached.count == 1 && attached[0].count == 1 && !FileManager.default.fileExists(atPath: attached[0][0].path), "only the redraw gets a picture, removed afterwards")
+    expect(prompts.count == 2 && prompts[0].contains("a cat") && !prompts[0].contains("[Attached image]") && prompts[1].contains("[Attached image]"), "a redraw is told to keep what it does not change")
+    failing = [drawers[0]]; drawers.removeAll()
+    let again = try! chat.drawSpacePictures([requests[0]], page: "space-image:1", kept: [], room: room, turn: 0, cancellation: nil).get()
+    expect(drawers.count == 2 && again[0].hasPrefix("data:image/"), "a drawer out of usage hands the picture to the next")
+    failing = ["sp-codex", "sp-codex2"]
+    if case .success = chat.drawSpacePictures([requests[0]], page: "space-image:1", kept: [], room: room, turn: 0, cancellation: nil) { fatalError("no drawer: refused") }
+    if case .success = chat.drawSpacePictures([requests[1]], page: "space-image:2", kept: [], room: room, turn: 0, cancellation: nil) { fatalError("a redraw of a missing picture is refused") }
+    print("PASS: a chat's Space pictures are drawn by ChatGPT, redraws get the old picture")
+}
+
 // Pin to top and delete all.
 do {
     let m = AppModel()

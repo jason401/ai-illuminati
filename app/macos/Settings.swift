@@ -1455,6 +1455,7 @@ private struct MCPSettings: View {
     @ObservedObject var drive = DriveCenter.shared
     @ObservedObject var external = ExternalMCP.shared
     @ObservedObject var draft = MCPServerDraft.shared
+    @ObservedObject var tools = MCPToolsChoice.shared
 
     private var importable: [MCPServerEntry] { ExternalMCP.claudeDesktopServers(existing: external.servers) }
 
@@ -1503,14 +1504,15 @@ private struct MCPSettings: View {
             }
         }
         SettingsCard(title: L("직접 추가한 서버", "Added by you"),
-                     help: L("추가한 서버는 이 Mac에서 내 권한으로 실행돼요. 켜 둔 서버의 도구는 일반 채팅과 프로젝트 작업의 AI가 모두 쓸 수 있어요(엔터프라이즈 채팅은 빼고).",
-                             "Servers added here run on this Mac as you. The AI in plain chat and project work may use every tool of a server that is on (not in Enterprise chats).")) {
+                     help: L("명령 서버는 이 Mac에서 내 권한으로 실행되고, URL 서버는 앱이 이 Mac에서 직접 연결해요(VPN·학교 내부 서버도 돼요). 켜 둔 서버의 도구는 일반 채팅과 프로젝트 작업의 AI가 쓸 수 있어요(엔터프라이즈 채팅은 빼고). URL 서버의 쓰기 도구는 기본으로 쓸 때마다 물어봐요.",
+                             "Command servers run on this Mac as you; URL servers are reached by the app from this Mac (VPN and campus servers work too). The AI in plain chat and project work may use the tools of a server that is on (not in Enterprise chats). Write tools of URL servers ask each time by default.")) {
             if let error = external.loadError {
                 SettingsRow(title: "mcp-servers.json") { Text(error).foregroundStyle(.orange).lineLimit(3) }
                 Divider()
             }
             ForEach(external.servers) { server in
-                MCPServerRow(server: server, status: external.status[server.name], edit: { draft.open(server) })
+                MCPServerRow(server: server, status: external.status[server.name], edit: { draft.open(server) },
+                             enterKey: { draft.open(server, askKey: true) }, showTools: { tools.server = server.name })
                 Divider()
             }
             HStack(spacing: 8) {
@@ -1528,6 +1530,9 @@ private struct MCPSettings: View {
             .padding(.horizontal, 10).padding(.vertical, 6)
         }
         .sheet(isPresented: $draft.showing) { MCPServerEditor(draft: draft) }
+        .sheet(isPresented: Binding(get: { tools.server != nil }, set: { if !$0 { tools.server = nil } })) {
+            MCPToolsSheet(server: tools.server ?? "", external: external, done: { tools.server = nil })
+        }
         .onAppear { link.refresh(); drive.refresh(); external.refresh() }
     }
 
@@ -1544,13 +1549,18 @@ private struct MCPServerRow: View {
     let server: MCPServerEntry
     let status: ExternalMCP.Status?
     let edit: () -> Void
+    let enterKey: () -> Void
+    let showTools: () -> Void
 
     private var label: (String, Color) {
+        if status?.signingIn == true { return (L("브라우저에서 로그인 중…", "Signing in in the browser…"), .secondary) }
         switch status?.state {
         case .off: return (L("꺼짐", "Off"), .secondary)
         case .connected:
-            let count = status?.tools.count ?? 0
-            return (L("연결됨 · 도구 \(count)개", "Connected · \(count) tools"), .green)
+            let count = status?.tools.count ?? 0, changed = status?.changed.count ?? 0
+            return (L("연결됨 · 도구 \(count)개", "Connected · \(count) tools") + (changed > 0 ? L(" · 바뀐 도구 \(changed)개", " · \(changed) changed") : ""),
+                    changed > 0 ? .orange : .green)
+        case .needsLogin: return (status?.oauth == true ? L("로그인 필요", "Sign-in needed") : L("API 키 필요", "API key needed"), .orange)
         case .failed: return (L("연결 안 됨", "Not connected"), .orange)
         default: return (L("연결 중…", "Connecting…"), .secondary)
         }
@@ -1560,13 +1570,22 @@ private struct MCPServerRow: View {
         SettingsRow(title: server.name) {
             Text(label.0).foregroundStyle(label.1).lineLimit(1)
             Spacer()
+            if status?.state == .needsLogin, status?.signingIn != true {
+                if status?.oauth == true { Button(L("로그인", "Sign In")) { ExternalMCP.shared.signIn(server.name) } }
+                else { Button(L("키 입력…", "Enter Key…"), action: enterKey) }
+            }
             Toggle(server.name, isOn: Binding(get: { ExternalMCP.isOn(server.name) && status?.state != .off },
                                               set: { ExternalMCP.shared.setOn(server.name, $0) }))
                 .labelsHidden().toggleStyle(.switch)
             Menu {
                 Button(L("편집…", "Edit…"), action: edit)
+                Button(L("도구…", "Tools…"), action: showTools).disabled(status?.state != .connected)
                 Button(L("다시 연결", "Reconnect")) { ExternalMCP.shared.reconnect(server.name) }
                     .disabled(status?.state == .off)
+                if server.isRemote {
+                    if status?.signedIn == true { Button(L("로그아웃", "Sign Out")) { ExternalMCP.shared.signOut(server.name) } }
+                    else { Button(L("브라우저로 로그인", "Sign In in Browser")) { ExternalMCP.shared.signIn(server.name) }.disabled(status?.signingIn == true) }
+                }
                 Divider()
                 Button(L("삭제…", "Delete…")) { delete() }
             } label: { Image(systemName: "ellipsis.circle") }
@@ -1577,7 +1596,7 @@ private struct MCPServerRow: View {
 
     // On hover: what runs, why it failed, the tools it gives.
     private var details: String {
-        var lines = [([server.command] + server.args).joined(separator: " ")]
+        var lines = [server.isRemote ? server.url : ([server.command] + server.args).joined(separator: " ")]
         if let message = status?.message { lines.append(message) }
         if let tools = status?.tools, !tools.isEmpty { lines.append(L("도구: ", "Tools: ") + tools.joined(separator: ", ")) }
         if let skipped = status?.skipped, !skipped.isEmpty { lines.append(L("이름이 길거나 겹쳐서 뺀 도구: ", "Left out (name too long or taken): ") + skipped.joined(separator: ", ")) }
@@ -1587,7 +1606,8 @@ private struct MCPServerRow: View {
     private func delete() {
         let alert = NSAlert()
         alert.messageText = L("‘\(server.name)’ 서버를 삭제할까요?", "Delete the server “\(server.name)”?")
-        alert.informativeText = L("앱 목록에서만 빠져요. 서버 프로그램은 그대로예요.", "It is only removed from the app's list. The server program stays.")
+        alert.informativeText = server.isRemote ? L("이 Mac에 저장된 키와 로그인 정보도 지워요.", "Its key and sign-in saved on this Mac are removed too.")
+            : L("앱 목록에서만 빠져요. 서버 프로그램은 그대로예요.", "It is only removed from the app's list. The server program stays.")
         alert.addButton(withTitle: L("삭제", "Delete"))
         alert.addButton(withTitle: L("취소", "Cancel"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
@@ -1600,6 +1620,12 @@ final class MCPServerDraft: ObservableObject {
     static let shared = MCPServerDraft()
     @Published var showing = false
     @Published var name = ""
+    @Published var remote = false
+    @Published var url = ""
+    @Published var headers = ""          // remote: "Name: value" lines
+    @Published var clientID = ""
+    @Published var clientSecret = ""
+    @Published var advanced = false
     @Published var command = ""
     @Published var args = ""
     @Published var env = ""
@@ -1608,86 +1634,150 @@ final class MCPServerDraft: ObservableObject {
     var original: MCPServerEntry?
     /// The command as saved or pasted in JSON: one program, kept whole even with spaces in its path.
     private var exactCommand: String?
+    private var savedSecret = ""
 
-    func open(_ entry: MCPServerEntry?) {
+    /// askKey: the server wants an API key, so the header is ready to fill.
+    func open(_ entry: MCPServerEntry?, askKey: Bool = false) {
         original = entry
         name = entry?.name ?? ""; command = entry?.command ?? ""; exactCommand = entry?.command
         args = entry?.args.joined(separator: "\n") ?? ""
         env = entry.map(Self.lines) ?? ""
+        remote = entry?.isRemote ?? false; url = entry?.url ?? ""
+        clientID = entry?.oauthClientID ?? ""
+        headers = entry.map { Self.headerText($0.headers, server: $0.name) } ?? ""
+        savedSecret = entry.flatMap { $0.isRemote ? MCPSecrets.store.get(MCPSecrets.clientSecret($0.name)) : nil } ?? ""
+        clientSecret = savedSecret
+        if askKey, !headers.lowercased().contains("authorization:") { headers = "Authorization: Bearer " + (headers.isEmpty ? "" : "\n" + headers) }
+        advanced = askKey || !clientID.isEmpty
         pasted = ""; error = nil; showing = true
     }
     static func lines(_ entry: MCPServerEntry) -> String { entry.env.keys.sorted().map { "\($0)=\(entry.env[$0] ?? "")" }.joined(separator: "\n") }
+    /// Saved header values come from the Keychain only here, when the user opens the editor.
+    static func headerText(_ headers: [String: String], server: String) -> String {
+        headers.keys.sorted().map { key in
+            let value = headers[key].flatMap { $0.isEmpty ? nil : $0 } ?? (server.isEmpty ? nil : MCPSecrets.store.get(MCPSecrets.header(server, key))) ?? ""
+            return "\(key): \(value)"
+        }.joined(separator: "\n")
+    }
 
-    func fill() {
+    /// Fills the fields from a pasted URL, command line or JSON. quiet: while typing, no error for a half-pasted text.
+    func fill(quiet: Bool = false) {
         guard let entry = MCPServerEntry.parse(pasted).first else {
-            error = L("서버 설정을 찾지 못했어요. command가 있는 JSON을 붙여 주세요.", "No server found. Paste JSON with a command.")
+            if !quiet { error = L("서버 설정을 찾지 못했어요. URL, 설치 명령(claude/codex mcp add …) 또는 JSON을 붙여 주세요.", "No server found. Paste a URL, an install command (claude/codex mcp add …) or JSON.") }
             return
         }
         if !entry.name.isEmpty { name = entry.name }
-        command = entry.command; exactCommand = entry.command
-        args = entry.args.joined(separator: "\n")
-        env = Self.lines(entry)
+        remote = entry.isRemote
+        if entry.isRemote {
+            url = entry.url; clientID = entry.oauthClientID
+            headers = Self.headerText(entry.headers, server: "")
+            advanced = !entry.headers.isEmpty || !clientID.isEmpty
+        } else {
+            command = entry.command; exactCommand = entry.command
+            args = entry.args.joined(separator: "\n")
+            env = Self.lines(entry)
+        }
         error = nil
     }
 
     /// The entry the fields describe, or why they do not describe one.
     func entry() -> Result<MCPServerEntry, MCPSession.Failure> {
-        let whole = command == exactCommand || FileManager.default.isExecutableFile(atPath: command.trimmingCharacters(in: .whitespaces))
-        var words = whole ? [command.trimmingCharacters(in: .whitespaces)] : MCPServerEntry.words(command)
-        var list = args.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-        // "npx -y some-server" typed into the command field: the first word runs, the rest are arguments.
-        if words.count > 1 { list = Array(words.dropFirst()) + list; words = [words[0]] }
-        var variables: [String: String] = [:]
-        for line in env.split(separator: "\n") {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            guard !trimmed.isEmpty else { continue }
-            guard let equal = trimmed.firstIndex(of: "="), equal != trimmed.startIndex else {
-                return .failure(.init(message: L("환경 변수는 이름=값 모양으로 적어 주세요: ", "Write variables as NAME=value: ") + trimmed))
+        let entry: MCPServerEntry
+        if remote {
+            let address = url.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let problem = MCPServerEntry.urlProblem(address) { return .failure(.init(message: problem)) }
+            var parsed: [String: String]
+            switch MCPServerEntry.headerLines(headers) { case .success(let h): parsed = h; case .failure(let e): return .failure(e) }
+            // "Authorization: Bearer " left empty is no header.
+            parsed = parsed.filter { !$0.value.isEmpty && $0.value.lowercased() != "bearer" }
+            entry = MCPServerEntry(name: MCPServerEntry.normalized(name.isEmpty ? MCPServerEntry.name(fromURL: address) : name), url: address,
+                                   headers: parsed, oauthClientID: clientID.trimmingCharacters(in: .whitespaces))
+        } else {
+            let whole = command == exactCommand || FileManager.default.isExecutableFile(atPath: command.trimmingCharacters(in: .whitespaces))
+            var words = whole ? [command.trimmingCharacters(in: .whitespaces)] : MCPServerEntry.words(command)
+            var list = args.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+            // "npx -y some-server" typed into the command field: the first word runs, the rest are arguments.
+            if words.count > 1 { list = Array(words.dropFirst()) + list; words = [words[0]] }
+            var variables: [String: String] = [:]
+            for line in env.split(separator: "\n") {
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                guard !trimmed.isEmpty else { continue }
+                guard let equal = trimmed.firstIndex(of: "="), equal != trimmed.startIndex else {
+                    return .failure(.init(message: L("환경 변수는 이름=값 모양으로 적어 주세요: ", "Write variables as NAME=value: ") + trimmed))
+                }
+                variables[String(trimmed[..<equal])] = String(trimmed[trimmed.index(after: equal)...])
             }
-            variables[String(trimmed[..<equal])] = String(trimmed[trimmed.index(after: equal)...])
+            entry = MCPServerEntry(name: MCPServerEntry.normalized(name), command: words.first ?? command, args: list, env: variables)
         }
-        let entry = MCPServerEntry(name: MCPServerEntry.normalized(name), command: words.first ?? command, args: list, env: variables)
         if MCPServerEntry.reserved.contains(entry.name) { return .failure(.init(message: L("이 이름은 앱이 써요. 다른 이름을 골라 주세요.", "The app uses this name. Pick another."))) }
         return .success(entry)
     }
 
+    var canSave: Bool { remote ? !url.trimmingCharacters(in: .whitespaces).isEmpty : !name.isEmpty && !command.trimmingCharacters(in: .whitespaces).isEmpty }
+
     func save() {
-        do { try ExternalMCP.shared.save(entry().get(), replacing: original?.name); showing = false }
-        catch { self.error = (error as? MCPSession.Failure)?.message ?? error.localizedDescription }
+        do {
+            let entry = try entry().get()
+            // A new URL server, or a new address: try it at once and open the browser if it wants a sign-in.
+            let fresh = entry.isRemote && (original?.url != entry.url)
+            try ExternalMCP.shared.save(entry, replacing: original?.name, clientSecret: remote && clientSecret != savedSecret ? clientSecret : nil, signIn: fresh)
+            showing = false
+        } catch { self.error = (error as? MCPSession.Failure)?.message ?? error.localizedDescription }
     }
 }
 
-// Add or edit one stdio server: a name, the command and its arguments (one per line), environment variables,
-// or a pasted Claude-desktop-style JSON snippet that fills the fields.
+// Add or edit one server. New: one box takes a URL, an install command from a README (claude/codex mcp add …) or
+// JSON, and fills the rest. A URL server shows its address and, folded, headers and an OAuth client; a command
+// server its command, arguments and environment.
 private struct MCPServerEditor: View {
     @ObservedObject var draft: MCPServerDraft
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(draft.original == nil ? L("MCP 서버 추가", "Add MCP Server") : L("MCP 서버 편집", "Edit MCP Server")).font(.headline)
-            field(L("이름", "Name"), TextField("filesystem", text: $draft.name))
-            field(L("명령", "Command"), TextField("npx", text: $draft.command))
-            label(L("인자 (한 줄에 하나)", "Arguments (one per line)"))
-            editor($draft.args, height: 64)
-            label(L("환경 변수 (이름=값, 한 줄에 하나)", "Environment (NAME=value, one per line)"))
-            editor($draft.env, height: 40)
-            DisclosureGroup(L("JSON 붙여넣기", "Paste JSON")) {
-                editor($draft.pasted, height: 60)
-                Button(L("JSON으로 채우기", "Fill from JSON")) { draft.fill() }.disabled(draft.pasted.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            if draft.original == nil {
+                label(L("URL, 설치 명령 또는 JSON을 붙여 넣으세요", "Paste a URL, an install command or JSON"))
+                editor($draft.pasted, height: 46)
+                    .onChange(of: draft.pasted) { _ in draft.fill(quiet: true) }
+                Divider()
             }
-            Text(L("이 서버는 이 Mac에서 내 권한으로 실행돼요. 믿을 수 있는 서버만 추가하세요. 원격(URL) 서버는 아직 안 돼요.",
-                   "The server runs on this Mac as you. Add only servers you trust. Remote (URL) servers are not supported yet."))
-                .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Picker("", selection: $draft.remote) {
+                Text(L("URL (원격)", "URL (remote)")).tag(true)
+                Text(L("명령 (이 Mac)", "Command (this Mac)")).tag(false)
+            }.pickerStyle(.segmented).labelsHidden()
+            field(L("이름", "Name"), TextField(draft.remote ? "notion" : "filesystem", text: $draft.name))
+            if draft.remote {
+                field("URL", TextField("https://mcp.example.com/mcp", text: $draft.url))
+                DisclosureGroup(L("고급", "Advanced"), isExpanded: $draft.advanced) {
+                    label(L("요청 헤더 (이름: 값, 한 줄에 하나 · 값은 키체인에 저장)", "Request headers (Name: value, one per line · values go to the Keychain)"))
+                    editor($draft.headers, height: 40)
+                    label(L("OAuth client (서버가 자동 등록을 지원하지 않을 때만)", "OAuth client (only when the server has no automatic registration)"))
+                    field("ID", TextField("client-id", text: $draft.clientID))
+                    field("Secret", SecureField(L("없으면 비워 두세요", "Leave empty if none"), text: $draft.clientSecret))
+                }
+                Text(L("저장하면 바로 연결해 보고, 로그인이 필요하면 브라우저가 열려요. 이 Mac에서 직접 연결하니 VPN·학교 내부 서버도 돼요. 믿을 수 있는 서버만 추가하세요.",
+                       "Saving connects at once and opens the browser if the server wants a sign-in. The app connects from this Mac, so VPN and campus servers work. Add only servers you trust."))
+                    .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            } else {
+                field(L("명령", "Command"), TextField("npx", text: $draft.command))
+                label(L("인자 (한 줄에 하나)", "Arguments (one per line)"))
+                editor($draft.args, height: 64)
+                label(L("환경 변수 (이름=값, 한 줄에 하나)", "Environment (NAME=value, one per line)"))
+                editor($draft.env, height: 40)
+                Text(L("이 서버는 이 Mac에서 내 권한으로 실행돼요. 믿을 수 있는 서버만 추가하세요.",
+                       "The server runs on this Mac as you. Add only servers you trust."))
+                    .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
             if let error = draft.error { Text(error).font(.system(size: 11)).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true) }
             HStack {
                 Spacer()
                 Button(L("취소", "Cancel")) { draft.showing = false }.keyboardShortcut(.cancelAction)
-                Button(L("저장", "Save")) { draft.save() }.keyboardShortcut(.defaultAction)
-                    .disabled(draft.name.isEmpty || draft.command.trimmingCharacters(in: .whitespaces).isEmpty)
+                Button(draft.original == nil ? L("추가", "Add") : L("저장", "Save")) { draft.save() }.keyboardShortcut(.defaultAction)
+                    .disabled(!draft.canSave)
             }
         }
         .font(.system(size: 12)).controlSize(.small)
-        .padding(14).frame(width: 340)
+        .padding(14).frame(width: 380)
     }
 
     private func label(_ text: String) -> some View { Text(text).font(.system(size: 11)).foregroundStyle(.secondary) }
@@ -1697,6 +1787,49 @@ private struct MCPServerEditor: View {
     private func editor(_ text: Binding<String>, height: CGFloat) -> some View {
         TextEditor(text: text).font(.system(size: 11, design: .monospaced)).frame(height: height)
             .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Color.primary.opacity(0.15)))
+    }
+}
+
+final class MCPToolsChoice: ObservableObject {
+    static let shared = MCPToolsChoice()
+    @Published var server: String?
+}
+
+// One server's tools, each always allowed, asked each time, or blocked (like Claude's connector settings).
+private struct MCPToolsSheet: View {
+    let server: String
+    @ObservedObject var external: ExternalMCP
+    let done: () -> Void
+
+    var body: some View {
+        let status = external.status[server]
+        VStack(alignment: .leading, spacing: 8) {
+            Text(L("\(server) 도구", "\(server) tools")).font(.headline)
+            Text(L("‘승인 필요’ 도구는 쓸 때마다 채팅에 승인 카드가 떠요. 서버가 도구를 바꾸면 기본값으로 돌아가요.",
+                   "Tools set to Ask show an approval card in the chat each time. A tool the server changes goes back to its default."))
+                .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(status?.tools ?? [], id: \.self) { tool in
+                        HStack {
+                            Text(tool).lineLimit(1)
+                            if status?.readOnly.contains(tool) == true { Text(L("읽기", "read")).font(.system(size: 10)).foregroundStyle(.secondary) }
+                            if status?.changed.contains(tool) == true { Text(L("바뀜", "changed")).font(.system(size: 10)).foregroundStyle(.orange) }
+                            Spacer()
+                            Picker("", selection: Binding(get: { status?.rules[tool] ?? .allow }, set: { external.setRule(server, tool, $0) })) {
+                                Text(L("항상 허용", "Always allow")).tag(MCPToolRule.allow)
+                                Text(L("승인 필요", "Ask")).tag(MCPToolRule.ask)
+                                Text(L("차단", "Block")).tag(MCPToolRule.block)
+                            }.labelsHidden().frame(width: 120)
+                        }
+                    }
+                }
+            }.frame(height: 260)
+            // Seen: the "changed" marks go once the sheet is closed.
+            HStack { Spacer(); Button(L("닫기", "Done")) { external.acknowledgeChanges(server); done() }.keyboardShortcut(.defaultAction) }
+        }
+        .font(.system(size: 12)).controlSize(.small)
+        .padding(14).frame(width: 420)
     }
 }
 

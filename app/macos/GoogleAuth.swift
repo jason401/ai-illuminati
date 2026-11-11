@@ -81,7 +81,7 @@ struct GoogleKeychainStore: GoogleTokenStore {
     private let run: Runner
     init(run: Runner? = nil) { self.run = run ?? Self.execute }
 
-    private static func execute(_ arguments: [String], _ input: Data?) throws -> (Int32, Data) {
+    static func execute(_ arguments: [String], _ input: Data?) throws -> (Int32, Data) {
         let process = Process(), out = Pipe()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
         process.arguments = arguments
@@ -392,20 +392,26 @@ final class GoogleAuth {
     }
 }
 
-// A one-shot loopback receiver. Binds only IPv4 localhost on a random OS-assigned port.
-private final class GoogleLoopback {
+// A one-shot loopback receiver. Binds only IPv4 localhost, on a random OS-assigned port unless one is asked for
+// (remote MCP sign-in reuses the port its client was registered with). `label` names the service in messages.
+final class GoogleLoopback {
     private let fd: Int32
     private let lock = NSLock()
     private var cancelled = false
+    private let label: String
     let redirect: String
-    init() throws {
+    init(port: UInt16 = 0, label: String = "Google") throws {
         signal(SIGPIPE, SIG_IGN)
+        self.label = label
         let descriptor = socket(AF_INET, SOCK_STREAM, 0)
         fd = descriptor
-        guard descriptor >= 0 else { throw GoogleFailure(message: "Could not open the Google sign-in callback.") }
+        guard descriptor >= 0 else { throw GoogleFailure(message: "Could not open the \(label) sign-in callback.") }
         var address = sockaddr_in()
         address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = port.bigEndian
         address.sin_addr.s_addr = inet_addr("127.0.0.1")
+        var reuse: Int32 = 1   // a fixed port may still be in TIME_WAIT from the last sign-in
+        if port != 0 { _ = setsockopt(descriptor, SOL_SOCKET, SO_REUSEADDR, &reuse, socklen_t(MemoryLayout<Int32>.size)) }
         let bound = withUnsafePointer(to: &address) {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
         }
@@ -413,7 +419,7 @@ private final class GoogleLoopback {
         let named = withUnsafeMutablePointer(to: &address) {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(descriptor, $0, &length) }
         }
-        guard bound == 0, named == 0, Darwin.listen(fd, 4) == 0 else { close(fd); throw GoogleFailure(message: "Could not listen for Google sign-in.") }
+        guard bound == 0, named == 0, Darwin.listen(fd, 4) == 0 else { close(fd); throw GoogleFailure(message: "Could not listen for \(label) sign-in.") }
         redirect = "http://127.0.0.1:\(UInt16(bigEndian: address.sin_port))/"
     }
     func cancel() { lock.lock(); cancelled = true; lock.unlock() }
@@ -425,15 +431,15 @@ private final class GoogleLoopback {
             var ready = false
             while Date() < deadline {
                 self.lock.lock(); let cancelled = self.cancelled; self.lock.unlock()
-                if cancelled { completion(.failure(GoogleFailure(message: "Google sign-in was cancelled."))); return }
+                if cancelled { completion(.failure(GoogleFailure(message: "\(self.label) sign-in was cancelled."))); return }
                 var descriptor = pollfd(fd: self.fd, events: Int16(POLLIN), revents: 0)
                 let result = poll(&descriptor, 1, 100)
                 if result > 0 { ready = true; break }
                 if result < 0 { break }
             }
-            guard ready else { completion(.failure(GoogleFailure(message: "Google sign-in timed out."))); return }
+            guard ready else { completion(.failure(GoogleFailure(message: "\(self.label) sign-in timed out."))); return }
             let client = accept(self.fd, nil, nil)
-            guard client >= 0 else { completion(.failure(GoogleFailure(message: "Google sign-in was cancelled."))); return }
+            guard client >= 0 else { completion(.failure(GoogleFailure(message: "\(self.label) sign-in was cancelled."))); return }
             defer { close(client) }
             var timeout = timeval(tv_sec: 5, tv_usec: 0)
             _ = setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
@@ -442,14 +448,14 @@ private final class GoogleLoopback {
             guard count > 0, let line = String(decoding: bytes.prefix(count), as: UTF8.self).components(separatedBy: "\r\n").first,
                   line.hasPrefix("GET "), let target = line.split(separator: " ").dropFirst().first,
                   let components = URLComponents(string: "http://127.0.0.1" + target) else {
-                completion(.failure(GoogleFailure(message: "Invalid Google sign-in callback."))); return
+                completion(.failure(GoogleFailure(message: "Invalid \(self.label) sign-in callback."))); return
             }
             var fields: [String: String] = [:]
             for item in components.queryItems ?? [] {
-                guard fields[item.name] == nil else { completion(.failure(GoogleFailure(message: "Invalid Google sign-in callback."))); return }
+                guard fields[item.name] == nil else { completion(.failure(GoogleFailure(message: "Invalid \(self.label) sign-in callback."))); return }
                 fields[item.name] = item.value ?? ""
             }
-            let body = "Google sign-in response received. You may close this window. / Google 로그인 응답을 받았습니다. 이 창을 닫아도 됩니다."
+            let body = "\(self.label) sign-in response received. You may close this window. / \(self.label) 로그인 응답을 받았습니다. 이 창을 닫아도 됩니다."
             let data = Data(body.utf8)
             let response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: \(data.count)\r\nConnection: close\r\n\r\n"
             (Data(response.utf8) + data).withUnsafeBytes { raw in _ = write(client, raw.baseAddress, raw.count) }

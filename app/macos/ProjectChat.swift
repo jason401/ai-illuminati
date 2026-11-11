@@ -14,6 +14,9 @@ struct ProjectApprovalView: View {
                     HStack {
                         Button(L("거절", "Deny")) { center.decide(request.id, allow: false) }
                         Spacer()
+                        if let always = request.alwaysAllow {
+                            Button(L("항상 허용", "Always Allow")) { always(); center.decide(request.id, allow: true) }
+                        }
                         Button(L("허용", "Allow")) { center.decide(request.id, allow: true) }.buttonStyle(.borderedProminent)
                     }
                 }.padding(12).background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))

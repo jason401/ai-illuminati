@@ -145,6 +145,7 @@ struct ProjectApproval: Identifiable {
     var detail: String
     var created = Date()
     var deadline: Date?
+    var alwaysAllow: (() -> Void)? = nil   // an outside MCP tool: the card also offers "Always allow"
 }
 // One list for every place that shows approvals: the chat card, the banner, the menu bar, the approval
 // window and the macOS notification all follow `requests`, so deciding in one place clears them all.

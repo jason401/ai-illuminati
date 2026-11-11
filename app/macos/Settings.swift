@@ -897,7 +897,9 @@ private struct CloudModelMenu: View {
             Divider()
             Button(L("직접 입력…", "Other…")) { choose(Self.custom, for: account) }
         } label: {
-            Text(options.first { $0.1 == (state.picked ?? "") }?.0 ?? state.picked ?? "").lineLimit(1)
+            // Cut by hand: fixedSize gives the label its full width, and a typed name may be 80 characters.
+            let title = options.first { $0.1 == (state.picked ?? "") }?.0 ?? state.picked ?? ""
+            Text(title.count > 18 ? String(title.prefix(17)) + "…" : title).lineLimit(1)
         }
         .menuStyle(.borderlessButton).fixedSize().controlSize(.small)
         .help(L("이 계정이 답할 모델. 자동이면 지금처럼 각 프로그램(Claude Code·Codex·agy)의 기본 모델을 써요. 그 계정에서 못 쓰는 모델을 고르면 답이 오류로 끝나요.",

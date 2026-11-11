@@ -77,7 +77,9 @@ enum Answerer {
     static func ask(_ account: Account, prompt: String, timeout: TimeInterval = 240, cancellation: DebateCancellation? = nil,
                     images: [URL] = [], web: Bool = false, session: NativeSessionCall? = nil, workspace: WorkspaceInvocation? = nil,
                     progress: ((AnswerProgress) -> Void)? = nil) -> Result<String, Failure> {
-        guard let workspace else { return askOnce(account, prompt: prompt, timeout: timeout, cancellation: cancellation, images: images, web: web, session: session, progress: progress) }
+        // Read once, so a change in Settings never switches models in the middle of one answer.
+        let model = CloudModels.model(account)
+        guard let workspace else { return askOnce(account, prompt: prompt, timeout: timeout, cancellation: cancellation, images: images, web: web, session: session, model: model, progress: progress) }
         let instruction = """
         If native workspace read tools are unavailable because of managed policy, request data from the host instead of guessing.
         Return ONLY JSON {"workspace_reads":[{"path":"absolute linked file path","start":1,"end":5,"images":false}]} and wait.
@@ -109,7 +111,7 @@ enum Answerer {
                 if case .text(let text) = update, text.contains("\"workspace_reads\"") { return }
                 report(update)
             } }
-            let result = replyForTests?(current) ?? askOnce(account, prompt: current, timeout: timeout, cancellation: cancellation, images: currentImages, web: web, session: call, workspace: workspace, progress: shown)
+            let result = replyForTests?(current) ?? askOnce(account, prompt: current, timeout: timeout, cancellation: cancellation, images: currentImages, web: web, session: call, workspace: workspace, model: model, progress: shown)
             if let session, let call { session.nativeID = call.nativeID; session.completed = call.completed; session.compacted = session.compacted || call.compacted }
             guard case .success(let text) = result,
                   let start = text.firstIndex(of: "{"), let end = text.lastIndex(of: "}"), start < end,
@@ -159,7 +161,7 @@ enum Answerer {
 
     private static func askOnce(_ account: Account, prompt: String, timeout: TimeInterval = 240, cancellation: DebateCancellation? = nil,
                     images: [URL] = [], web: Bool = false, session: NativeSessionCall? = nil, workspace: WorkspaceInvocation? = nil,
-                    progress: ((AnswerProgress) -> Void)? = nil) -> Result<String, Failure> {
+                    model: String? = nil, progress: ((AnswerProgress) -> Void)? = nil) -> Result<String, Failure> {
         if cancellation?.isCancelled == true { return .failure(.failed("Cancelled")) }
         let outFile = chatDir + "/answer-\(UUID().uuidString).txt"
         defer { try? FileManager.default.removeItem(atPath: outFile) }
@@ -262,6 +264,7 @@ enum Answerer {
             else { arguments[arguments.count - 1] = "-" }
             inputData = Data(prompt.utf8)
         }
+        arguments = CloudModels.apply(arguments, provider: account.provider, model: model)
         guard let binary else { return .failure(.missingTool) }
 
         let process = Process()
@@ -342,6 +345,8 @@ enum Answerer {
                 try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
             }
         }
+        // A picked model the account cannot use fails here: say which one, so Settings is the obvious fix.
+        let modelNote = model.map { L("모델 \($0) · ", "Model \($0) · ") } ?? ""
         var text = String(data: stdout, encoding: .utf8) ?? ""
         if let session { session.observe(text) }
         if account.provider == .codex, let file = try? String(contentsOfFile: outFile, encoding: .utf8) { text = file }
@@ -353,14 +358,14 @@ enum Answerer {
             }.last
             guard let result, result["is_error"] as? Bool != true, let answer = result["result"] as? String else {
                 let message = (result?["result"] as? String) ?? String(data: stderr, encoding: .utf8) ?? "Session response failed."
-                return .failure(.failed(String(message.suffix(300))))
+                return .failure(.failed(modelNote + String(message.suffix(300))))
             }
             text = answer
         }
         text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard process.terminationStatus == 0, !text.isEmpty else {
             let why = (String(data: stderr, encoding: .utf8) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            return .failure(.failed(String(why.suffix(300))))
+            return .failure(.failed(modelNote + String(why.suffix(300))))
         }
         return .success(text)
     }

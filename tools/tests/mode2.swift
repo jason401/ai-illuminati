@@ -2725,3 +2725,36 @@ func testChatTime() {
     print("PASS: chat times (today, yesterday, earlier, day lines, older chats without times)")
 }
 testChatTime()
+
+func testCloudModels() {
+    let defaults = UserDefaults(suiteName: "cloud-models-" + UUID().uuidString)!
+    let folder = FileManager.default.temporaryDirectory.appendingPathComponent("cloud-models-" + UUID().uuidString)
+    try! FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: folder) }
+    let claude = Account(id: "m-claude", provider: .claude, name: "C", dir: nil)
+    let codex = Account(id: "m-codex", provider: .codex, name: "X", dir: folder.path)
+    expect(CloudModels.model(claude, defaults: defaults) == nil, "nothing saved is Auto")
+    let args = ["-p", "--tools", ""]
+    expect(CloudModels.apply(args, provider: .claude, model: nil) == args, "Auto adds no model option")
+    CloudModels.set("opus", for: claude, defaults: defaults)
+    CloudModels.set("gpt-6.1-sol", for: codex, defaults: defaults)
+    expect(CloudModels.model(claude, defaults: defaults) == "opus" && CloudModels.model(codex, defaults: defaults) == "gpt-6.1-sol", "saved per account")
+    expect(CloudModels.apply(args, provider: .claude, model: "opus") == args + ["--model", "opus"], "Claude: --model at the end")
+    expect(CloudModels.apply(["-p", "q"], provider: .gemini, model: "gemini-3.8-flash-high") == ["-p", "q", "--model", "gemini-3.8-flash-high"], "Gemini: --model")
+    expect(CloudModels.apply(["exec", "-"], provider: .codex, model: "gpt-6.1-sol") == ["-c", "model=\"gpt-6.1-sol\"", "exec", "-"], "Codex: top-level -c model")
+    for bad in ["--dangerously-skip-permissions", "-m", "a b", "x\"y", "", String(repeating: "a", count: 81)] {
+        expect(!CloudModels.valid(bad), "not a model name: \(bad)")
+        expect(CloudModels.apply(args, provider: .claude, model: bad) == args, "an invalid name is never passed: \(bad)")
+    }
+    expect(CloudModels.valid("opus[1m]") && CloudModels.valid("claude-sonnet-4-6"), "real names are allowed")
+    CloudModels.set("  ", for: claude, defaults: defaults)
+    expect(CloudModels.model(claude, defaults: defaults) == nil && CloudModels.model(codex, defaults: defaults) == "gpt-6.1-sol", "empty goes back to Auto, others stay")
+    let cache = #"{"models":[{"slug":"gpt-6.1-sol","display_name":"GPT-6.1-Sol","visibility":"list"},{"slug":"gpt-reserve","visibility":"hide"},{"slug":"gpt-6-luna"}]}"#
+    try! Data(cache.utf8).write(to: folder.appendingPathComponent("models_cache.json"))
+    expect(CloudModels.codexChoices(codex) == [.init(id: "gpt-6.1-sol", title: "GPT-6.1-Sol"), .init(id: "gpt-6-luna", title: "gpt-6-luna")], "Codex list: listed models only \(CloudModels.codexChoices(codex))")
+    expect(CloudModels.codexChoices(Account(id: "none", provider: .codex, name: "N", dir: folder.appendingPathComponent("missing").path)).isEmpty, "no cache: no list")
+    let agy = "Fetching available models...\ngemini-3.8-flash-high\tGemini 3.8 Flash (High)\nclaude-sonnet-4-6\tClaude Sonnet 4.6 (Thinking)\n"
+    expect(CloudModels.parseGemini(agy).map(\.id) == ["gemini-3.8-flash-high", "claude-sonnet-4-6"], "agy models list")
+    print("PASS: cloud models (Auto, per account, CLI options, invalid names, Codex and agy lists)")
+}
+testCloudModels()

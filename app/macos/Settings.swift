@@ -855,6 +855,7 @@ struct AccountsSettingsTab: View {
             Text(L("계정을 추가하면 브라우저 로그인을 위해 터미널이 열려요. 같은 ChatGPT 계정을 중복 추가하지 마세요.",
                    "Adding opens Terminal for browser sign-in. Add each ChatGPT account only once."))
                 .font(.system(size: 11)).foregroundStyle(.secondary)
+            CloudModelSettingsCard(model: model)
             if model.hasLocal {
                 // Ollama models on this Mac: off leaves them out of @, votes and the last resort, and unloads them.
                 SettingsCard(title: L("Ollama (내 Mac)", "Ollama (this Mac)")) {
@@ -871,6 +872,95 @@ struct AccountsSettingsTab: View {
                     }
                 }
             }
+        }
+    }
+}
+
+// Which model each cloud account answers with: Auto (the CLI's default, as before) or one picked here.
+private final class CloudModelPicks: ObservableObject {
+    @Published var picked: [String: String] = [:]   // account id → model; missing = Auto
+    @Published var gemini: [CloudModels.Choice] = []
+}
+
+private struct CloudModelSettingsCard: View {
+    @ObservedObject var model: AppModel
+    @StateObject private var state = CloudModelPicks()
+    private var picked: [String: String] { state.picked }
+    private var gemini: [CloudModels.Choice] { state.gemini }
+    private static let custom = "\u{0}custom"
+
+    private var accounts: [Account] { model.accounts.filter { $0.provider != .ollama } }
+
+    var body: some View {
+        if !accounts.isEmpty {
+            SettingsCard(title: L("AI 모델", "AI models"),
+                         help: L("계정마다 답할 모델을 골라요. 자동이면 지금처럼 각 프로그램(Claude Code·Codex·agy)의 기본 모델을 써요. 그 계정에서 못 쓰는 모델을 고르면 답이 오류로 끝나요.",
+                                 "The model each account answers with. Auto keeps each CLI's (Claude Code, Codex, agy) default, as before. A model the account cannot use ends its answers with an error.")) {
+                ForEach(accounts, id: \.id) { account in
+                    if account.id != accounts.first?.id { Divider() }
+                    SettingsRow(title: account.name) {
+                        SettingsMenu(options: options(account), selection: Binding(
+                            get: { picked[account.id] ?? "" },
+                            set: { choose($0, for: account) }))
+                    }
+                }
+            }
+            .onAppear(perform: load)
+        }
+    }
+
+    private func options(_ account: Account) -> [(String, String)] {
+        let choices: [CloudModels.Choice]
+        switch account.provider {
+        case .claude: choices = CloudModels.claudeChoices
+        case .codex: choices = CloudModels.codexChoices(account)
+        case .gemini: choices = gemini
+        case .ollama: choices = []
+        }
+        var list = [(L("자동 (기본 모델)", "Auto (default model)"), "")] + choices.map { ($0.title, $0.id) }
+        // A typed name, or one the list no longer has, still shows as picked.
+        if let current = picked[account.id], !choices.contains(where: { $0.id == current }) { list.append((current, current)) }
+        list.append((L("직접 입력…", "Other…"), Self.custom))
+        return list
+    }
+
+    private func choose(_ value: String, for account: Account) {
+        var name: String? = value.isEmpty ? nil : value
+        if value == Self.custom {
+            guard let typed = ask(account) else { return }
+            name = typed.isEmpty ? nil : typed
+        }
+        CloudModels.set(name, for: account)
+        state.picked[account.id] = CloudModels.model(account)
+    }
+
+    private func ask(_ account: Account) -> String? {
+        let alert = NSAlert()
+        alert.messageText = L("\(account.name) 모델 이름", "Model name for \(account.name)")
+        alert.informativeText = L("CLI에 그대로 넘길 모델 이름이에요(예: opus, gpt-6.1-sol). 비우면 자동이에요.",
+                                  "Passed to the CLI as is (e.g. opus, gpt-6.1-sol). Empty: Auto.")
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        field.stringValue = picked[account.id] ?? ""
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        alert.addButton(withTitle: L("저장", "Save"))
+        alert.addButton(withTitle: L("취소", "Cancel"))
+        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        let typed = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !typed.isEmpty && !CloudModels.valid(typed) {
+            let bad = NSAlert()
+            bad.messageText = L("쓸 수 없는 이름이에요", "Not a model name")
+            bad.informativeText = L("영문·숫자로 시작하고 영문·숫자·. _ - : / [ ]만 써 주세요.", "Start with a letter or digit; use only letters, digits and . _ - : / [ ].")
+            bad.runModal()
+            return nil
+        }
+        return typed
+    }
+
+    private func load() {
+        state.picked = Dictionary(uniqueKeysWithValues: accounts.compactMap { a in CloudModels.model(a).map { (a.id, $0) } })
+        if let account = accounts.first(where: { $0.provider == .gemini }), gemini.isEmpty {
+            CloudModels.loadGemini(account) { [state] in state.gemini = $0 }
         }
     }
 }

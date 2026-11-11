@@ -65,6 +65,30 @@ extension Discussion {
         if let problem = startTurn(room: room, question: question) { attachmentError = problem }
     }
 
+    // A chat's change to an existing Space: shown as that Space's preview (migrate run first), applied there.
+    func reviewSpaceChange(_ turn: ChatTurn) {
+        let refiner = SpaceRefiner.shared
+        guard let note = turn.spaceDraft, let id = note.target, let draft = note.draft, SpaceStore.shared.manifest(id) != nil,
+              refiner.busy[id] == nil, let build = SpaceStore.draftBuild(draft) else { return }
+        let by = L("채팅의 변경안", "A chat's change")
+        func show(_ migrated: Data?) {
+            refiner.notes[id] = nil
+            refiner.pending[id] = .init(build: build, migrated: migrated, by: by, request: turn.question)
+            openSpace(id)
+        }
+        guard let migrate = build.migrate else { return show(nil) }
+        refiner.busy[id] = L("데이터 옮기는 중", "Moving the data")
+        SpaceMigrator.run(migrate, state: SpaceStore.state(SpaceStore.folder(id))) { result in
+            refiner.busy[id] = nil
+            switch result {
+            case .success(let data): show(data)
+            case .failure(let bad):
+                refiner.notes[id] = L("데이터 옮기기(migrate)가 실패해 적용하지 않았어요: ", "Moving the data (migrate) failed, so nothing changed: ") + bad.reason
+                self.openSpace(id)
+            }
+        }
+    }
+
     private var folds: SidebarFold { SidebarFold.shared }
 
     // A meeting's result becomes a new decision log Space.
@@ -426,10 +450,10 @@ struct SpaceDraftCard: View {
         let room = discussion.currentID
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
-                let manifest = note.draft.flatMap { SpaceStore.manifest(at: SpaceStore.draftFolder($0)) }
+                let manifest = note.draft.flatMap { SpaceStore.manifest(at: SpaceStore.draftFolder($0)) } ?? note.target.flatMap { SpaceStore.shared.manifest($0) }
                 Image(systemName: SpaceStyle.icon(manifest?.icon ?? "square.grid.2x2")).foregroundColor(SpaceStyle.color(manifest?.color ?? ""))
                 Text(note.name).font(.system(size: 13, weight: .semibold))
-                Text("Space").font(.system(size: 11)).foregroundColor(.secondary)
+                Text(note.target == nil ? "Space" : L("Space 변경안", "Space change")).font(.system(size: 11)).foregroundColor(.secondary)
                 Spacer()
             }
             if let space = note.space {
@@ -443,6 +467,25 @@ struct SpaceDraftCard: View {
             } else if let reason = note.reason {
                 Text(L("검사에서 거부했어요: ", "Refused by the checks: ") + reason).font(.system(size: 12)).foregroundColor(.orange).textSelection(.enabled)
                 Button(L("다시 만들기 (이유를 AI에게 알려요)", "Rebuild (tells the AI why)")) { discussion.rebuildSpace(turn, in: room) }.disabled(busy)
+            } else if let target = note.target, note.draft != nil {
+                let current = SpaceStore.shared.manifest(target)
+                Text(L("이 Space를 고친 변경안이에요. Space에서 미리 보고 적용하면 되고, 데이터는 그대로예요.",
+                       "A change to this Space. Preview it in the Space and apply it there; the data stays."))
+                    .font(.system(size: 12)).foregroundColor(.secondary)
+                if let current, let base = note.baseVersion, current.version != base {
+                    Text(L("이 변경안은 \(base)판 기준인데 지금은 \(current.version)판이에요. 적용하면 그 사이 변경을 덮어써요 (되돌리기 가능).",
+                           "Written for v\(base), the Space is now v\(current.version). Applying replaces the changes since (can be undone)."))
+                        .font(.system(size: 12)).foregroundColor(.orange)
+                }
+                HStack(spacing: 8) {
+                    Button(L("Space에서 미리보기", "Preview in the Space")) { discussion.reviewSpaceChange(turn) }.buttonStyle(.borderedProminent)
+                        .disabled(current == nil)
+                    Button(L("다시 만들기", "Rebuild")) { discussion.rebuildSpace(turn, in: room) }.disabled(busy)
+                    Button(L("버리기", "Discard")) { discussion.discardDraftSpace(turn, in: room) }
+                    Spacer()
+                    if current == nil { Text(L("이 Space는 없어졌어요", "This Space is gone")).font(.system(size: 11)).foregroundColor(.secondary) }
+                }
+                .controlSize(.small)
             } else if let draft = note.draft {
                 let folder = SpaceStore.draftFolder(draft)
                 SpaceWebView(html: SpaceStore.html(folder), color: SpaceStore.manifest(at: folder)?.color ?? "blue", reload: draft,

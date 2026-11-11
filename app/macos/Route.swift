@@ -158,7 +158,7 @@ enum Route {
     // Decided without a judge: plain agreement, or a bare "가자" right after an answer that offered a change.
     static func rule(question: String, previous: ChatTurn?) -> RouteChoice? {
         let key = key(question)
-        if found(agreement, key) || asksSpace(question) { return .one }
+        if found(agreement, key) || asksSpace(question) || !SpaceStore.named(in: question).isEmpty { return .one }
         if !forbidsChanges(question), go.contains(key), let answer = previous?.final, found(offer, String(answer.suffix(400))) { return .work }
         return nil
     }

@@ -253,15 +253,26 @@ extension Discussion {
     }
 
     // An answer's <space-build>: checked, saved as a draft and shown as a card under the answer (the first one only).
+    // for="id": a change to that Space; from="id": a new one made from it. Either way its pictures go back in.
     func deliverSpaceBuild(_ reply: String, room: UUID, turn index: Int) {
         let split = SpaceBuilder.split(reply)
         guard split.found else { return }
+        let target = split.target.flatMap { SpaceStore.manifest(at: SpaceStore.folder($0)) }
+        let source = target ?? split.base.flatMap { SpaceStore.manifest(at: SpaceStore.folder($0)) }
+        let kept = source.map { SpacePictures.hide(SpaceStore.html(SpaceStore.folder($0.id))).kept } ?? []
         var note: SpaceDraftNote
-        switch SpaceBuilder.parse(split.body, new: true) {
-        case .failure(let bad): note = SpaceDraftNote(name: "Space", reason: bad.reason)
-        case .success(let build):
-            do { note = SpaceDraftNote(draft: try SpaceStore.saveDraft(build), name: build.name ?? "Space") }
-            catch { note = SpaceDraftNote(name: build.name ?? "Space", reason: error.localizedDescription) }
+        if split.target != nil && target == nil {
+            note = SpaceDraftNote(name: "Space", reason: L("고칠 Space를 찾지 못했어요", "The Space to change is gone"))
+        } else {
+            switch SpaceBuilder.parse(split.body, new: target == nil).flatMap({ build in
+                SpacePictures.embed(build.html, made: [], kept: kept).map { page in var build = build; build.html = page; return build }
+            }) {
+            case .failure(let bad): note = SpaceDraftNote(name: target?.name ?? "Space", reason: bad.reason)
+            case .success(let build):
+                do { note = SpaceDraftNote(draft: try SpaceStore.saveDraft(build, over: target), name: target?.name ?? build.name ?? "Space") }
+                catch { note = SpaceDraftNote(name: build.name ?? "Space", reason: error.localizedDescription) }
+            }
+            note.target = target?.id; note.baseVersion = target?.version
         }
         let made = note
         changeTurn(room, index, save: true) { turn in
@@ -713,9 +724,16 @@ extension Discussion {
                                 fullAccess: binding.fullAccess == true, picture: pictureRule(account, chat: id), helper: helper,
                                 face: Self.projectFaceRule(face: binding.face == true), project: project,
                                 notes: id.map { ChatNotes.rule(ChatNotes.current($0)) } ?? "",
-                                space: spaceRule && account.provider != .ollama && Route.asksSpace(lastQuestion(id)) ? SpaceBuilder.rule : "",
+                                space: spaceRule && account.provider != .ollama ? Self.spaceRule(lastQuestion(id)) : "",
                                 peer: project == nil ? "" : peerInstruction(account),
                                 memory: memoryRule(account, chat: id))
+    }
+
+    // A message asking for a Space, or naming existing ones to change or reuse, gets the Space rule (and those Spaces).
+    static func spaceRule(_ question: String) -> String {
+        let named = SpaceStore.named(in: question)
+        guard Route.asksSpace(question) || !named.isEmpty else { return "" }
+        return SpaceBuilder.rule + (named.isEmpty ? "" : "\n" + SpaceBuilder.chatRule(named))
     }
 
     // The newest message of chat `id` (any thread).

@@ -123,6 +123,8 @@ struct SpaceDraftNote: Codable, Equatable {
     var reason: String?         // refused by the checks: the AI hears it on "Rebuild"
     var space: String?          // added to the sidebar as this Space
     var discarded: Bool?
+    var target: String?         // a change to this existing Space (its preview and Apply are in the Space)
+    var baseVersion: Int?       // the target's version the change was written for
 }
 
 // One <space-build> block, checked: the code, and for a new Space its manifest and first data.
@@ -146,14 +148,16 @@ enum SpaceBuilder {
     static let openTag = "<space-build>", closeTag = "</space-build>"
 
     // The reply without <space-build> blocks and old <space-patch> ones (also one still being written), and the
-    // first build block's body (nil body: it was not closed).
-    static func split(_ text: String) -> (reply: String, found: Bool, body: String?) {
-        var rest = Substring(text), kept = "", found = false, body: String?
-        while let start = rest.range(of: openTag) {
+    // first build block's body (nil body: it was not closed). A chat's block may name an existing Space:
+    // <space-build for="id"> changes it, <space-build from="id"> makes a new one from it.
+    static func split(_ text: String) -> (reply: String, found: Bool, body: String?, target: String?, base: String?) {
+        var rest = Substring(text), kept = "", found = false, body: String?, attributes = ""
+        while let (start, tag, closed) = opening(rest) {
             kept += rest[..<start.lowerBound]
+            if !closed { if !found { found = true; body = nil; attributes = tag }; rest = ""; break }
             let after = rest[start.upperBound...]
-            guard let end = after.range(of: closeTag) else { if !found { found = true; body = nil }; rest = ""; break }
-            if !found { found = true; body = String(after[..<end.lowerBound]) }
+            guard let end = after.range(of: closeTag) else { if !found { found = true; body = nil; attributes = tag }; rest = ""; break }
+            if !found { found = true; body = String(after[..<end.lowerBound]); attributes = tag }
             rest = after[end.upperBound...]
         }
         kept += rest
@@ -163,7 +167,29 @@ enum SpaceBuilder {
             let tail = reply[lt.lowerBound...]
             if tail.count >= 2 && openTag.hasPrefix(tail) { reply = String(reply[..<lt.lowerBound]) }
         }
-        return (found || reply != text ? reply.trimmingCharacters(in: .whitespacesAndNewlines) : text, found, body)
+        return (found || reply != text ? reply.trimmingCharacters(in: .whitespacesAndNewlines) : text, found, body,
+                attribute("for", in: attributes), attribute("from", in: attributes))
+    }
+
+    // The next "<space-build …>": its range, what is between the name and ">", and whether the tag is complete yet.
+    private static func opening(_ text: Substring) -> (Range<Substring.Index>, String, Bool)? {
+        var from = text.startIndex
+        while let start = text.range(of: "<space-build", range: from..<text.endIndex) {
+            let after = text[start.upperBound...]
+            if after.first == ">" { return (start.lowerBound..<text.index(after: start.upperBound), "", true) }
+            if after.first?.isWhitespace == true {
+                guard let end = after.firstIndex(where: { $0 == ">" || $0 == "<" }) else { return (start.lowerBound..<text.endIndex, String(after), false) }
+                if after[end] == ">" { return (start.lowerBound..<text.index(after: end), String(after[..<end]), true) }
+            }
+            from = start.upperBound
+        }
+        return nil
+    }
+
+    private static func attribute(_ name: String, in tag: String) -> String? {
+        guard let match = tag.range(of: #"\b"# + name + #"\s*=\s*["']?[A-Za-z0-9-]{1,80}"#, options: .regularExpression) else { return nil }
+        let id = tag[match].drop { $0 != "=" }.dropFirst().trimmingCharacters(in: CharacterSet(charactersIn: " \"'"))
+        return SpaceStore.validID(id) ? id : nil
     }
 
     static func section(_ name: String, in body: String) -> String? {
@@ -249,6 +275,37 @@ enum SpaceBuilder {
         document.getElementById('b').onclick=()=>space.state.set('count',(space.state.get('count')||0)+1).then(show);show();</script></space-html>
         <space-state>{"count":0}</space-state></space-build>
         """
+
+    // A chat that names existing Spaces (SpaceStore.named) gets their code (pictures hidden) and the shape of their data,
+    // so it can change one or make a new one from it. A change waits in the chat for the user to preview and apply.
+    static func chatRule(_ spaces: [SpaceManifest]) -> String {
+        guard !spaces.isEmpty else { return "" }
+        let pages = spaces.map { manifest -> String in
+            let folder = SpaceStore.folder(manifest.id)
+            let html = SpacePictures.hide(SpaceStore.html(folder))
+            return """
+                [Space "\(manifest.name)" · id \(manifest.id) · icon \(manifest.icon) · color \(manifest.color) · version \(manifest.version)]
+                [Data shape — keys and types only]
+                \(SpaceStore.shape(SpaceStore.state(folder)))
+                \(html.kept.isEmpty ? "" : "space-kept:1 … space-kept:\(html.kept.count) stand for its pictures (the app keeps their bytes).\n")[Current app.html]
+                \(html.text)
+                [End of app.html]
+                """
+        }
+        return """
+            [Existing Spaces the user named]
+            The message names these Spaces of the user. You see their code and the shape of their data, never the data itself.
+            To change one, add <space-build for="its id"> … </space-build>: the whole new page in <space-html>, <space-manifest> only
+            to change its name, icon or color, never <space-state> (the data stays); if the page reads its data under other keys
+            or in another shape, also send <space-migrate>function migrate(oldState) { …; return newState }</space-migrate>.
+            The user previews the change in that Space and applies it. Keep every key the page does not need to change.
+            To make a new Space from one (a copy, a variant, the same style), add <space-build from="its id"> with a new manifest,
+            the page and first data, as for any new Space. space-kept:N markers stay pictures of the Space in for/from; leave each
+            where its picture should stay, move it or drop it. You cannot make painted pictures here: draw with inline SVG or CSS.
+            If the message only asks about a Space, answer and add no block.
+            \(pages.joined(separator: "\n"))
+            """
+    }
 
     // Changing a Space: its code, the shape of its data (keys and types, never values) and the talk so far.
     // `html` comes with its pictures hidden (SpacePictures.hide); `draws`: the AI can make pictures (ChatGPT).
@@ -480,16 +537,52 @@ final class SpaceStore: ObservableObject {
 
     // MARK: Making Spaces
 
-    // A checked build saved as a draft (an answer's preview card plays with it): spaces/.drafts/<id>/.
-    static func saveDraft(_ build: SpaceBuild) throws -> String {
+    // A checked build saved as a draft (an answer's preview card plays with it): spaces/.drafts/<id>/. A change to an
+    // existing Space keeps that Space's look unless it sends its own, and its migrate.
+    static func saveDraft(_ build: SpaceBuild, over target: SpaceManifest? = nil) throws -> String {
         let id = UUID().uuidString
         let folder = draftFolder(id)
-        var manifest = SpaceManifest(id: id, name: build.name ?? "Space")
-        manifest.icon = build.icon ?? manifest.icon; manifest.color = build.color ?? manifest.color; manifest.schedule = build.schedule
+        var manifest = SpaceManifest(id: id, name: build.name ?? target?.name ?? "Space")
+        manifest.icon = build.icon ?? target?.icon ?? manifest.icon; manifest.color = build.color ?? target?.color ?? manifest.color
+        manifest.schedule = build.schedule
         try write(Data(build.html.utf8), to: folder.appendingPathComponent("app.html"))
         try write(build.state ?? Data("{}".utf8), to: folder.appendingPathComponent("state.json"))
+        if let migrate = build.migrate { try write(Data(migrate.utf8), to: folder.appendingPathComponent("migrate.js")) }
         try write(encode(manifest), to: folder.appendingPathComponent("manifest.json"))
         return id
+    }
+
+    // A draft back as a change: its page, look and migrate.
+    static func draftBuild(_ draft: String) -> SpaceBuild? {
+        let folder = draftFolder(draft)
+        guard validID(draft), let manifest = manifest(at: folder) else { return nil }
+        let html = html(folder)
+        guard !html.isEmpty else { return nil }
+        let migrate = try? String(contentsOf: folder.appendingPathComponent("migrate.js"), encoding: .utf8)
+        return SpaceBuild(name: manifest.name, icon: manifest.icon, color: manifest.color, html: html, migrate: migrate)
+    }
+
+    // Words that ask to change or reuse something: with a Space's name, the chat gets that Space.
+    static let changeWords = try! NSRegularExpression(pattern:
+        #"고치|고쳐|수정|바꿔|바꾸|바뀌게|업데이트|추가|넣어|넣고|빼줘|빼고|지워|없애|만들|참고|복사|기반|베이스|처럼|비슷하게|개선|업그레이드|다듬|\b(update|change|edit|fix|add|remove|make|build|improve|copy|based\s+on|like)\b"#,
+        options: [.caseInsensitive])
+    // The Spaces a message names (by name, spaces ignored) while asking to change, fix or reuse something; at most two,
+    // longest name first. Read from disk, so any thread may ask.
+    static func named(in question: String) -> [SpaceManifest] {
+        let text = question.components(separatedBy: "\n").filter { !$0.hasPrefix(">") }.joined(separator: "\n")
+        guard changeWords.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil else { return [] }
+        let squeezed = text.lowercased().filter { !$0.isWhitespace }
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: root.path)) ?? []
+        let all = names.filter { !$0.hasPrefix(".") }.compactMap { manifest(at: folder($0)) }
+        func key(_ m: SpaceManifest) -> String { m.name.lowercased().filter { !$0.isWhitespace } }
+        var picked: [SpaceManifest] = []
+        for space in all.sorted(by: { key($0).count > key($1).count }) {
+            let name = key(space)
+            guard name.count >= 2, name != "space", squeezed.contains(name), !picked.contains(where: { key($0).contains(name) }) else { continue }
+            picked.append(space)
+            if picked.count == 2 { break }
+        }
+        return picked
     }
 
     // A new Space from code and first data. `id` given: made once (migration), nil when it is already there.

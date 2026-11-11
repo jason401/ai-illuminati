@@ -199,6 +199,28 @@ func testSpace() {
     store.move(second.id, by: -1, among: listed)
     expect(store.spaces.map(\.id).firstIndex(of: second.id)! < store.spaces.map(\.id).firstIndex(of: made.id)!, "moving up changes the order")
 
+    // A chat that names a Space: it gets that Space's code and data shape, and its block changes it or makes one from it.
+    let asked = "새이름 Space에 완료 버튼 추가해 줘"
+    expect(SpaceStore.named(in: asked).map(\.id) == [made.id] && SpaceStore.named(in: "새 이름 뭐였지?").isEmpty
+           && SpaceStore.named(in: "> 새 이름 고쳐 줘\n이게 뭐야?").isEmpty, "a Space is named with a change word, outside quotes")
+    expect(Route.rule(question: asked, previous: nil) == .one, "a change to a named Space is answered by one AI, not project work")
+    let context = Discussion.spaceRule(asked)
+    expect(context.contains("for=\"its id\"") && context.contains("id \(made.id)") && context.contains("[Current app.html]") && !context.contains("비밀 실험"),
+           "the chat gets the code and the shape, never the values")
+    expect(Discussion.spaceRule("오늘 날씨 어때?").isEmpty, "other messages get no Space rule")
+    let change = "고쳤어요.\n<space-build for=\"\(made.id)\"><space-html><p>new</p></space-html><space-migrate>function migrate(o){return o}</space-migrate></space-build>"
+    let changeSplit = SpaceBuilder.split(change)
+    expect(changeSplit.reply == "고쳤어요." && changeSplit.target == made.id && changeSplit.base == nil && changeSplit.body?.contains("<p>new</p>") == true, "for= names the Space to change")
+    expect(SpaceBuilder.split("x <space-build from='\(made.id)'><space-html>a</space-html></space-build>").base == made.id, "from= names the Space to start from")
+    expect(SpaceBuilder.split("답 <space-build for=\"ab").reply == "답" && SpaceBuilder.split("답 <space-build for=\"ab").found, "an opening tag still arriving is hidden")
+    expect(SpaceBuilder.split("x <space-build for=\"../etc\"><space-html>a</space-html></space-build>").target == nil, "an odd id is dropped")
+    guard case .success(let changed) = SpaceBuilder.parse(changeSplit.body, new: false) else { fatalError("a chat's change parses") }
+    let changeDraft = try! SpaceStore.saveDraft(changed, over: store.manifest(made.id))
+    let back2 = SpaceStore.draftBuild(changeDraft)
+    expect(back2?.html == "<p>new</p>" && back2?.migrate?.contains("migrate") == true && back2?.name == "새 이름" && back2?.color == store.manifest(made.id)?.color,
+           "a change draft keeps its migrate and the Space's look")
+    SpaceStore.discardDraft(changeDraft)
+
     // Old per-chat Spaces: every block kind into a template, the original kept as space.json.migrated.
     let room = UUID()
     let work2 = URL(fileURLWithPath: ChatStore.dir).appendingPathComponent("\(room.uuidString).work")

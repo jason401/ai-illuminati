@@ -177,9 +177,10 @@ func testGitBranches() {
     expect(GitBranches.summary(report)?.contains("2") == true && GitBranches.differences(main, stable: report.stableName).count == 2, "summary and row text")
 
     // From the worktree, its own branch is the current one; up to date once stable catches up.
-    sh(["push", "-q", "origin", "origin/main:refs/heads/stable"], in: repo); sh(["fetch", "-q", "origin"], in: repo)
+    sh(["push", "-q", "origin", "origin/main:refs/heads/stable"], in: repo); sh(["fetch", "-q", "origin"], in: tree)
     let fromTree = GitBranches.read(root: tree) { args in sh(args, in: tree) }
     expect(fromTree.rows.first { $0.branch == "fix/y" }!.current && fromTree.rows.first { $0.ref == "refs/heads/main" }!.worktree == "repo", "worktree view")
+    expect(fromTree.fetched != nil && fromTree.fetched != report.fetched, "a worktree's last fetch is its own FETCH_HEAD")
     expect(fromTree.pending == GitCounts(ahead: 0, behind: 0) && GitBranches.summary(fromTree) == L("배포 최신 상태", "Release is up to date"), "up to date")
     // Not a repository: an error, no rows; no stable: said so.
     let none = GitBranches.read(root: base.path) { _ in throw MaterialReader.error("no git") }

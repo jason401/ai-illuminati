@@ -370,14 +370,21 @@ struct GitBranchesView: View {
                 .help(L("origin에서 새로 가져오기 (git fetch)", "Fetch from origin (git fetch)"))
             }
             if let why = report?.error { Text(why).font(.system(size: 11)).foregroundColor(.orange) }
-            ForEach(report?.rows ?? []) { row in branchRow(row, stable: report?.stableName) }
+            let rows = report?.rows ?? [], all = store.expanded.contains(binding.root)
+            ForEach(all ? rows : Array(rows.prefix(GitBranches.shown))) { row in branchRow(row, stable: report?.stableName) }
+            if rows.count > GitBranches.shown {
+                Button(all ? L("접기", "Show fewer") : L("브랜치 \(rows.count - GitBranches.shown)개 더 보기", "Show \(rows.count - GitBranches.shown) more branches")) {
+                    if all { store.expanded.remove(binding.root) } else { store.expanded.insert(binding.root) }
+                }.buttonStyle(.link).font(.system(size: 11))
+            }
             if let hidden = report?.hidden, hidden > 0 {
-                Text(L("브랜치 \(hidden)개 더 있음", "\(hidden) more branches")).font(.system(size: 11)).foregroundColor(.secondary)
+                Text(L("브랜치가 너무 많아 \(hidden)개는 읽지 않았어요", "\(hidden) more branches not read (too many)")).font(.system(size: 11)).foregroundColor(.secondary)
             }
         }
         .padding(.horizontal, 8).padding(.vertical, 6)
         .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
-        .onAppear { if store.reports[binding.root] == nil { DispatchQueue.main.async { store.load(binding) } } }
+        // Local values are read again every time it is shown (commits or checkouts since); the old ones stay meanwhile.
+        .onAppear { DispatchQueue.main.async { store.load(binding) } }
     }
 
     private func branchRow(_ row: GitBranchRow, stable: String?) -> some View {

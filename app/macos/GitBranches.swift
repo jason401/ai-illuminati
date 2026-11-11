@@ -25,7 +25,7 @@ struct GitBranchRow: Equatable, Identifiable {
 
 struct GitBranchReport: Equatable {
     var rows: [GitBranchRow] = []
-    var hidden = 0                // branches past the shown limit
+    var hidden = 0                // branches past the read limit (not read at all)
     var stableName: String?       // the deployed stable compared against (origin/stable, else stable)
     var mainName: String?
     var pending: GitCounts?       // main (ahead) against stable (behind = commits only stable has)
@@ -34,7 +34,7 @@ struct GitBranchReport: Equatable {
 }
 
 enum GitBranches {
-    static let remote = "origin", limit = 40
+    static let remote = "origin", limit = 200, shown = 40   // read up to limit; the view shows `shown` until "Show all"
 
     static func role(_ branch: String) -> GitBranchRow.Role {
         if branch == "stable" { return .deploy }
@@ -74,7 +74,7 @@ enum GitBranches {
     static func canonical(_ path: String) -> String { URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path }
 
     // Reads the branches of the repository at `root` with `git` (arguments → output, throws on failure).
-    static func read(root: String, common: String? = nil, git: ([String]) throws -> String) -> GitBranchReport {
+    static func read(root: String, git: ([String]) throws -> String) -> GitBranchReport {
         var report = GitBranchReport()
         let listing: String
         do {
@@ -132,8 +132,11 @@ enum GitBranches {
             if rows[i].branch == "main", let stable { rows[i].stable = (try? git(["rev-list", "--left-right", "--count", "\(ref)...\(stable)"])).flatMap(counts) }
         }
         report.rows = rows
-        let fetchHead = URL(fileURLWithPath: common ?? (here + "/.git")).appendingPathComponent("FETCH_HEAD").path
-        report.fetched = (try? FileManager.default.attributesOfItem(atPath: fetchHead))?[.modificationDate] as? Date
+        // Each worktree has its own FETCH_HEAD (in its own Git folder, not the shared one).
+        if let path = try? git(["rev-parse", "--git-path", "FETCH_HEAD"]), !path.isEmpty {
+            let fetchHead = path.hasPrefix("/") ? path : here + "/" + path
+            report.fetched = (try? FileManager.default.attributesOfItem(atPath: fetchHead))?[.modificationDate] as? Date
+        }
         return report
     }
 
@@ -174,6 +177,7 @@ final class GitBranchStore: ObservableObject {
     static let shared = GitBranchStore()
     @Published private(set) var reports: [String: GitBranchReport] = [:]
     @Published private(set) var busy: Set<String> = []
+    @Published var expanded: Set<String> = []   // folders whose whole branch list is shown
     private let queue = DispatchQueue(label: "ai-illuminati.git-branches", qos: .userInitiated)
 
     // Local values only, unless `fetch`: then `git fetch origin` first; when that fails the local values still show.
@@ -187,7 +191,7 @@ final class GitBranchStore: ObservableObject {
                 do { _ = try ProjectProcess.git(["fetch", "-q", GitBranches.remote], root: root, timeout: 30) }
                 catch { failed = L("새로 가져오지 못했어요. 마지막으로 가져온 값이에요.", "Could not fetch; showing the last fetched values.") }
             }
-            var report = GitBranches.read(root: root, common: binding.common.isEmpty ? nil : binding.common) {
+            var report = GitBranches.read(root: root) {
                 try ProjectProcess.git($0, root: root, timeout: 10)
             }
             if let failed { report.error = report.error ?? failed }

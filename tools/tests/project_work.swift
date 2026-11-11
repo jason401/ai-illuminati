@@ -1083,6 +1083,19 @@ func testAutoMeeting() {
            "auto team: one of each kind first, then a second account, four at most, no local model")
     expect(Discussion.meetingTeam([c1, local], usage: [:]) { _ in true }.map(\.id) == [c1.id], "auto team: whoever can come")
     expect(Discussion.meetingTeam(all, usage: [:]) { $0.id != x1.id && $0.id != c2.id }.map(\.id) == [c1.id, g.id, x2.id], "auto team: only AIs allowed in the chat")
+    expect(Discussion.meetingTeam(all, usage: [:], picks: [x1.id: false, g.id: false, c2.id: false]) { _ in true }.map(\.id) == [c1.id, x2.id],
+           "auto team: AIs switched off in Settings are left out, the others keep the default")
+    expect(Discussion.meetingTeam(all, usage: [:], picks: [local.id: true, x1.id: false, x2.id: false]) { _ in true }.map(\.id) == [c1.id, g.id, local.id, c2.id],
+           "auto team: a model on this Mac when switched on")
+    expect(Discussion.meetingTeam(all, usage: [:], picks: [local.id: true]) { $0.provider != .ollama }.map(\.id) == [c1.id, x1.id, g.id, c2.id],
+           "auto team: a local model only while it is allowed (Ollama on)")
+    expect(Discussion.meetingTeam(all, usage: [:], picks: Dictionary(uniqueKeysWithValues: all.map { ($0.id, $0.id == local.id) })) { _ in true }.map(\.id) == [local.id],
+           "auto team: only a local model")
+    expect(Discussion.meetingTeam(all, usage: [:], picks: Dictionary(uniqueKeysWithValues: all.map { ($0.id, false) })) { _ in true }.isEmpty,
+           "auto team: everyone switched off, nobody")
+    var signedOut = AIUsage(name: "X1"); signedOut.needsLogin = true
+    expect(Discussion.meetingTeam([c1, x1], usage: [x1.id: signedOut], picks: [c1.id: false]) { _ in true }.isEmpty,
+           "auto team: the picked AI signed out, nobody else is called")
     let keys = Discussion.speakerKeys([c1, x1, c2])
     expect(keys == [c1.id: "claude1", x1.id: "codex", c2.id: "claude2"], "speaker keys: numbered when two of a kind meet: \(keys)")
     expect(DebateDecision.parse(#"{"action":"speak","speaker":"Claude2","focus":"x"}"#, team: [c1, x1, c2])?.speaker == "claude2"

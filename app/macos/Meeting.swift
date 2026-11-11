@@ -17,17 +17,17 @@ extension Discussion {
     static let meetingSource = "meeting-source.md"
 
     // Who meets: the AIs picked with @, else the chat's members (the ones taking part when two or more are ready);
-    // with the members automatic (none checked), the app picks: up to `meetingMost` cloud AIs that
-    // may meet here (the chat's lock), signed in and with usage left, one of each kind first, then the other accounts
-    // (meetingTeam). Two accounts of one kind may meet: the discussion keys speakers by account.
+    // with the members automatic (none checked), the app picks: up to `meetingMost` of the AIs chosen for automatic
+    // teams in Settings → Chat (autoTeamPicks; by default the cloud AIs), that may meet here (the chat's lock), signed in
+    // and with usage left, one of each kind first, then the other accounts (meetingTeam). None of them can come: no
+    // meeting, rather than calling AIs the user left out. Two accounts of one kind may meet: the discussion keys speakers by account.
     static let meetingMost = 4
 
     func meetingMembers(room: UUID, mentioned: [String], fallback: [Account]) -> [Account] {
         let standing = standingMembers(room: room)
         let ids = !mentioned.isEmpty ? mentioned : standing
         if mentioned.isEmpty && memberIDs(room: room).isEmpty {
-            let picked = Self.meetingTeam(model.accounts, usage: model.latestUsage) { self.permits($0, room: room) }
-            if !picked.isEmpty { return picked }
+            return Self.meetingTeam(model.accounts, usage: model.latestUsage, picks: model.autoTeamPicks) { self.autoAllowed($0, room: room) }
         }
         let chosen = !ids.isEmpty ? ids : memberIDs(room: room).isEmpty ? fallback.map(\.id) : memberIDs(room: room)
         var seen = Set<String>(), team: [Account] = []
@@ -41,12 +41,25 @@ extension Discussion {
 
     static func meets(_ account: Account) -> Bool { [.claude, .codex, .gemini].contains(account.provider) }
 
-    // The app's own pick for a meeting (or for everyone's views) when the members are automatic: cloud AIs allowed here,
-    // signed in and not out of usage (unknown usage counts as half left), the most left first; one of each kind before
+    // Whether the app may pick this account for an automatic team: as set in Settings → Chat (`picks` holds only the
+    // switches the user changed), else the default: cloud AIs yes, models on this Mac no.
+    static func autoPicked(_ account: Account, picks: [String: Bool]) -> Bool {
+        guard meets(account) || account.provider == .ollama else { return false }
+        return picks[account.id] ?? meets(account)
+    }
+
+    // Allowed in chat `room` for an automatic team: the chat's lock, and Ollama only while it is on.
+    func autoAllowed(_ account: Account, room: UUID) -> Bool {
+        (account.provider != .ollama || model.localEnabled) && permits(account, room: room)
+    }
+
+    // The app's own pick for a meeting (or for everyone's views) when the members are automatic: AIs picked for automatic
+    // teams (autoPicked) and allowed here, signed in and not out of usage (unknown usage counts as half left), the most left first; one of each kind before
     // a second account of a kind, so different kinds of AI meet; at most `most`.
-    static func meetingTeam(_ accounts: [Account], usage: [String: AIUsage], most: Int = meetingMost, allowed: (Account) -> Bool) -> [Account] {
+    static func meetingTeam(_ accounts: [Account], usage: [String: AIUsage], most: Int = meetingMost, picks: [String: Bool] = [:],
+                            allowed: (Account) -> Bool) -> [Account] {
         func left(_ account: Account) -> Double { min(AutoPick.fiveHour(usage[account.id]), AutoPick.weekly(usage[account.id])) }
-        let ready = accounts.filter { meets($0) && allowed($0) && usage[$0.id]?.needsLogin != true && left($0) > 0 }
+        let ready = accounts.filter { autoPicked($0, picks: picks) && allowed($0) && usage[$0.id]?.needsLogin != true && left($0) > 0 }
             .enumerated().sorted { a, b in
                 let x = left(a.element) + (a.element.isSchool ? AutoPick.enterpriseBonus : 0), y = left(b.element) + (b.element.isSchool ? AutoPick.enterpriseBonus : 0)
                 return x != y ? x > y : a.offset < b.offset

@@ -178,6 +178,11 @@ final class AppModel: ObservableObject {
     @Published var pictureMakersOff: Set<String> {
         didSet { defaults.set(pictureMakersOff.sorted(), forKey: "pictureMakersOff") }
     }
+    // Which AIs the app may pick when a chat's members are automatic (meetings, several views; Meeting.swift autoPicked):
+    // only the switches changed in Settings → Chat; the others follow the default (cloud AIs on, models on this Mac off).
+    @Published var autoTeamPicks: [String: Bool] {
+        didSet { defaults.set(autoTeamPicks, forKey: "autoTeamPicks") }
+    }
     var pictureMakers: [Account] { accounts.filter { $0.provider == .codex && !pictureMakersOff.contains($0.id) } }
     var onAccountsChange: (() -> Void)?
     var onDisplayChange: (() -> Void)?
@@ -211,6 +216,7 @@ final class AppModel: ObservableObject {
         pausedSharedFolders = Set(defaults.stringArray(forKey: "pausedSharedFolders") ?? [])
         writableSharedFolders = Set(defaults.stringArray(forKey: "writableSharedFolders") ?? [])
         pictureMakersOff = Set(defaults.stringArray(forKey: "pictureMakersOff") ?? [])
+        autoTeamPicks = defaults.dictionary(forKey: "autoTeamPicks") as? [String: Bool] ?? [:]
         localEnabled = persist ? LocalModel.enabled : true
         localKeepAlive = persist ? LocalModel.keepAlive : 5
         routeSorter = persist ? RouteSorter.current : .off
@@ -1036,6 +1042,7 @@ struct ChatSettingsTab: View {
                     SortModelStatus(model: model, store: .shared)
                 }
             }
+            AutoTeamSettingsCard(model: model)
             let makers = model.accounts.filter { $0.provider == .codex }
             if !makers.isEmpty {
                 SettingsCard(title: L("그림 담당", "Picture makers"),
@@ -1140,6 +1147,39 @@ struct SortModelStatus: View {
 
 // In the Chat tab: long-term memory (Memory.swift). Only the switch until it is on; then whether the AI saves
 // on its own, and the saved profile and facts in their own window.
+// Which AIs the app may call by itself when a chat's members are automatic: a meeting, or several views asked for.
+private struct AutoTeamSettingsCard: View {
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        let accounts = model.accounts.filter { Discussion.meets($0) || $0.provider == .ollama }
+        if !accounts.isEmpty {
+            SettingsCard(title: L("자동으로 부를 AI", "AIs picked automatically"),
+                         help: L("참여 AI를 고르지 않은 채팅에서 회의나 여러 의견을 부탁하면, 켜 둔 AI 중에서 사용량이 많이 남은 AI를 종류별로 먼저 최대 4명 불러요. 기본은 Claude·ChatGPT·Gemini예요.",
+                                 "In a chat without picked members, a meeting or several views call up to four of the AIs switched on here, one of each kind first, most usage left first. Default: Claude, ChatGPT and Gemini.")) {
+                ForEach(accounts, id: \.id) { account in
+                    let off = account.provider == .ollama && !model.localEnabled
+                    SettingsRow(title: account.name) {
+                        Text(off ? L("Ollama 꺼짐", "Ollama off") : account.provider == .ollama ? L("내 Mac", "This Mac") : account.provider.title)
+                            .font(.system(size: 11)).foregroundStyle(.secondary)
+                        Spacer()
+                        Toggle(account.name, isOn: Binding(
+                            get: { Discussion.autoPicked(account, picks: model.autoTeamPicks) },
+                            set: { model.autoTeamPicks[account.id] = $0 }))
+                            .labelsHidden().toggleStyle(.switch).disabled(off)
+                    }
+                }
+                if !model.autoTeamPicks.isEmpty {
+                    Divider()
+                    SettingsRow(title: L("직접 고침", "Custom")) {
+                        SettingsAction(title: L("기본값으로", "Use default")) { model.autoTeamPicks = [:] }
+                    }
+                }
+            }
+        }
+    }
+}
+
 private struct MemorySettingsCard: View {
     @ObservedObject var memory = MemoryStore.shared
 

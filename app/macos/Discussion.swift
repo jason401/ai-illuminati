@@ -1327,7 +1327,8 @@ final class Discussion: ObservableObject {
         let asked = !meeting && autoMembers && forced == nil && !todoRun ? Route.askedViewers(question) : nil
         let autoViews = !meeting && autoMembers && forced == nil && !todoRun && (asked != nil || (project && Route.found(Route.asksViews, question)))
         let autoTeam = autoMembers && !meeting && (forced == .all || autoViews)
-            ? Self.meetingTeam(model.accounts, usage: model.latestUsage, most: asked ?? Self.meetingMost) { self.permits($0, room: id) }.map(\.id) : []
+            ? Self.meetingTeam(model.accounts, usage: model.latestUsage, most: asked ?? Self.meetingMost,
+                                 picks: model.autoTeamPicks) { self.autoAllowed($0, room: id) }.map(\.id) : []
         let sorting = !meeting && (standing.count >= 2 || (forced != nil && project && plain) || (forced == .all && autoMembers) || autoViews)
         // Two or more picked with @ in a project chat and no way picked: their opinions, read only, never work.
         let pickedOpinion = plain && project && mentioned.count >= 2 && forced == nil
@@ -1344,7 +1345,10 @@ final class Discussion: ObservableObject {
         // A meeting (Meeting.swift): who meets, in a hidden chat of its own.
         let meetingTeam = meeting ? meetingMembers(room: id, mentioned: mentioned, fallback: team) : []
         if meeting && meetingTeam.isEmpty {
-            return L("회의할 수 있는 AI가 없어요. Claude·ChatGPT·Gemini 중 로그인된 AI를 참여시켜 주세요.", "No AI can meet. Add a signed-in Claude, ChatGPT or Gemini.")
+            return autoMembers && mentioned.isEmpty
+                ? L("회의할 수 있는 AI가 없어요. 설정 → 채팅 → \"자동으로 부를 AI\"에서 로그인된 AI를 켜 주세요.",
+                    "No AI can meet. Turn on a signed-in AI in Settings → Chat → \"AIs picked automatically\".")
+                : L("회의할 수 있는 AI가 없어요. Claude·ChatGPT·Gemini 중 로그인된 AI를 참여시켜 주세요.", "No AI can meet. Add a signed-in Claude, ChatGPT or Gemini.")
         }
         var turn = ChatTurn(question: question)
         turn.askedAt = Date()

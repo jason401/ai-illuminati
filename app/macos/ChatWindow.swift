@@ -2400,7 +2400,7 @@ final class ChatWindow {
             // Opaque title bar on purpose (see WindowDrag.swift): a transparent one jumps between displays.
             w.titlebarSeparatorStyle = .none
             w.titleVisibility = .hidden
-            w.contentMinSize = ChatView.minSize
+            w.minimumContentSize = ChatView.minSize
             w.setContentSize(NSSize(width: 1040, height: 720))
             w.isReleasedWhenClosed = false
             w.center()

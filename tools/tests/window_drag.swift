@@ -1,4 +1,5 @@
 import Cocoa
+import SwiftUI
 
 private final class DragProbeWindow: ChatDragWindow {
     var zooms = 0, minimizes = 0
@@ -41,5 +42,16 @@ func testWindowDrag() {
     }
     expect(!frame.subviews.contains { $0 is WindowDragView }, "no drag view of ours inside the title bar")
     expect(window.styleMask.contains(.resizable) && window.isMovable && !window.titlebarAppearsTransparent, "native movement and resize stay enabled; title bar is opaque")
+    // The chat's hosting view (sizingOptions = []) writes a zero minimum on layout; the floor must survive it.
+    let host = NSHostingController(rootView: Color.clear.frame(minWidth: 10, minHeight: 10))
+    host.sizingOptions = []
+    let chat = ChatDragWindow(contentViewController: host)
+    chat.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
+    chat.minimumContentSize = NSSize(width: 560, height: 480)
+    chat.setContentSize(NSSize(width: 1040, height: 720))
+    chat.contentView?.needsUpdateConstraints = true
+    chat.contentView?.layoutSubtreeIfNeeded()
+    chat.contentMinSize = .zero
+    expect(chat.contentMinSize == NSSize(width: 560, height: 480), "the chat window keeps its minimum size after the hosting view resets it")
     print("PASS: native window drag from empty header areas (performDrag, double-click preferences, traffic lights and resize edges)")
 }

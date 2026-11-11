@@ -26,6 +26,14 @@ enum WindowDoubleClickAction {
 
 class ChatDragWindow: NSWindow {
     private var beforeFill: NSRect?
+    // NSHostingView with sizingOptions = [] writes its (zero) minimum here on every constraint pass,
+    // which let the chat shrink without limit. Never go below this floor.
+    var minimumContentSize = NSSize.zero { didSet { contentMinSize = super.contentMinSize } }
+    override var contentMinSize: NSSize {
+        get { super.contentMinSize }
+        set { super.contentMinSize = NSSize(width: max(newValue.width, minimumContentSize.width),
+                                            height: max(newValue.height, minimumContentSize.height)) }
+    }
     func performTitlebarAction(_ action: WindowDoubleClickAction) {
         switch action {
         case .none: break

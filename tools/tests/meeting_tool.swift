@@ -24,6 +24,9 @@ func testMeetingTool() {
     let once = HeldMeeting(id: UUID(), asker: "a", names: [], token: DebateCancellation())
     once.end(.stopped); once.end(.done("late"))
     expect(once.state == .stopped && once.wait(0) == .stopped, "the first end stays")
+    let raced = HeldMeeting(id: UUID(), asker: "a", names: [], token: DebateCancellation())
+    raced.token.cancel(); raced.end(.done("too late"))
+    expect(raced.state == .stopped && raced.wait(0) == .stopped, "a result that ends after the stop is not handed out")
     let waiting = HeldMeeting(id: UUID(), asker: "a", names: [], token: DebateCancellation())
     DispatchQueue.global().asyncAfter(deadline: .now() + 0.2) { waiting.token.cancel() }
     let began = Date()
@@ -95,6 +98,14 @@ func testMeetingTool() {
     expect(unknown.team.isEmpty && unknown.note?.contains("Nobody") == true
            && direct.holdMeeting(HeldMeeting.Request(agenda: "x", brief: "", decision: "", members: ["Nobody"], join: false), asker: claude, id: room, index: 0,
                                  question: "q", binding: own, cancellation: token).0 == nil, "fewer than two can meet: no meeting")
+    // Convened, but the answer ended before it was registered: never started, its chat and card end as stopped.
+    let (never, _) = direct.holdMeeting(request, asker: claude, id: room, index: 0, question: "q", binding: own, cancellation: DebateCancellation())
+    never?.abandon()
+    spin(10) { direct.current.turns.first?.peerNotes?.first { $0.meeting == never?.id }?.headline?.hasPrefix(L("회의 멈춤", "Meeting stopped")) == true }
+    expect(never?.state == .stopped && never?.token.isCancelled == true
+           && direct.conversations.first { $0.id == never?.id }?.turns.first?.answeredAt != nil
+           && direct.current.turns.first?.peerNotes?.first { $0.meeting == never?.id }?.headline?.hasPrefix(L("회의 멈춤", "Meeting stopped")) == true,
+           "an abandoned meeting ends as stopped in its chat and on its card")
 
     // Through a sent message: the AI convenes, keeps answering, reads the result and continues with it.
     let chat = Discussion(model: model)

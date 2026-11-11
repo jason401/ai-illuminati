@@ -234,6 +234,7 @@ final class HeldMeeting {
     let names: [String]
     let token: DebateCancellation
     var start: () -> Void = {}
+    var abandon: () -> Void = {}   // never started (the answer ended first): its chat and card end as stopped
     private let condition = NSCondition()
     private var current = State.running
 
@@ -242,9 +243,10 @@ final class HeldMeeting {
     }
 
     var state: State { condition.lock(); defer { condition.unlock() }; return current }
+    // Checked under the same lock as the waiters: a stop before the end wins over a result that came just before it.
     func end(_ state: State) {
         condition.lock()
-        if current == .running { current = state }
+        if current == .running { current = token.isCancelled ? .stopped : state }
         condition.broadcast()
         condition.unlock()
     }
@@ -326,23 +328,26 @@ extension Discussion {
         changeTurn(id, index, save: true) { $0.peerNotes = ($0.peerNotes ?? []) + [card] }
         let rules = model.chatRules.trimmingCharacters(in: .whitespacesAndNewlines)
         let leader = team.first { [.claude, .codex].contains($0.provider) }?.provider ?? team[0].provider
-        meeting.start = { [weak meeting] in
+        // The one way a convened meeting ends: its state, the hidden chat answered, the card's headline.
+        let close = { [weak meeting] (state: HeldMeeting.State) in
+            meeting?.end(state)
+            worker.changeTurn(room, 0, save: true) { $0.answeredAt = Date() }
+            let end: String
+            switch meeting?.state ?? state {
+            case .done: end = L("회의 끝남 · ", "Meeting done · ")
+            case .stopped: end = L("회의 멈춤 · ", "Meeting stopped · ")
+            default: end = L("회의 정리 실패 · ", "Meeting result failed · ")
+            }
+            self.changeTurn(id, index, save: true) { turn in
+                if let i = turn.peerNotes?.firstIndex(where: { $0.id == cardID }) { turn.peerNotes?[i].headline = end + headline }
+            }
+        }
+        meeting.abandon = { token.cancel(); close(.stopped) }
+        meeting.start = {
             DispatchQueue.global(qos: .userInitiated).async {
                 let result = worker.runDebate(question: topic, history: [], rules: rules, team: team, leader: leader, perAI: Self.meetingTurnsPerAI,
                                               cancellation: token, id: room, index: 0, meeting: brief)
-                worker.changeTurn(room, 0, save: true) { $0.answeredAt = Date() }
-                let state: HeldMeeting.State = token.isCancelled ? .stopped : result.map { .done($0.text) }
-                    ?? .failed("The meeting's result could not be written. What was said is in the meeting chat.")
-                meeting?.end(state)
-                let end: String
-                switch meeting?.state ?? state {
-                case .done: end = L("회의 끝남 · ", "Meeting done · ")
-                case .stopped: end = L("회의 멈춤 · ", "Meeting stopped · ")
-                default: end = L("회의 정리 실패 · ", "Meeting result failed · ")
-                }
-                self.changeTurn(id, index, save: true) { turn in
-                    if let i = turn.peerNotes?.firstIndex(where: { $0.id == cardID }) { turn.peerNotes?[i].headline = end + headline }
-                }
+                close(result.map { .done($0.text) } ?? .failed("The meeting's result could not be written. What was said is in the meeting chat."))
             }
         }
         return (meeting, note + "Meeting \(room.uuidString) started with \(names.joined(separator: ", ")). It takes a few minutes. Keep working on other parts"
@@ -401,7 +406,7 @@ final class ConveneLink: ToolProvider {
             let (meeting, reply) = convene(asker, request)
             guard let meeting else { PeerLink.shared.releaseMeeting(session, asker: asker.id); return text(reply) }
             guard PeerLink.shared.attach(meeting, to: session) else {
-                meeting.token.cancel(); meeting.end(.stopped)
+                meeting.abandon()
                 return text("The answer ended before the meeting could start.")
             }
             meeting.start()

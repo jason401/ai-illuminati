@@ -936,10 +936,10 @@ private struct CloudModelMenu: View {
         case .ollama: choices = []
         }
         // Claude: the version each alias ran on last time ("Fable 5.1"), once this account has answered with it.
+        // Auto stays just "Auto": it is the CLI's choice, not one model.
         func title(_ base: String, _ pick: String?) -> String {
-            guard account.provider == .claude, let id = state.seen[pick ?? ""] else { return base }
-            let version = CloudModels.seenTitle(id, picked: pick)
-            return pick == nil ? base + " · " + version : version
+            guard account.provider == .claude, let pick, let id = state.seen[pick] else { return base }
+            return CloudModels.seenTitle(id, picked: pick)
         }
         var list = [(title(L("자동", "Auto"), nil), "")] + choices.map { (title($0.title, $0.id), $0.id) }
         // A typed name, or one the list no longer has, still shows as picked.

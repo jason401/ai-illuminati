@@ -41,9 +41,10 @@ enum CloudModels {
         let title: String
     }
 
-    // Claude Code's aliases always point at the latest model of each kind.
-    static let claudeChoices = [Choice(id: "fable", title: "Fable"), Choice(id: "opus", title: "Opus"),
-                                Choice(id: "sonnet", title: "Sonnet"), Choice(id: "haiku", title: "Haiku")]
+    // Claude Code's aliases always point at the latest model of each kind. The titles name the versions they point
+    // at now, until an answer from this account shows what an alias really ran on.
+    static let claudeChoices = [Choice(id: "fable", title: "Fable 5.1"), Choice(id: "opus", title: "Opus 5.5"),
+                                Choice(id: "sonnet", title: "Sonnet 5.5"), Choice(id: "haiku", title: "Haiku 5.5")]
 
     // Claude's aliases do not say which version they are now: each Claude answer's stream names the model it ran on
     // ("claude-fable-5-1"), kept per account and pick ("" = Auto), so the menu can show "Fable 5.1".

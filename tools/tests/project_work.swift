@@ -276,6 +276,19 @@ func testFullAuto() {
     try! "x".write(to: scratch, atomically: true, encoding: .utf8)
     expect(shell("rm -f '\(scratch.path)'").status == 0 && !FileManager.default.fileExists(atPath: scratch.path), "rm deletes temporary files normally")
     expect(shell("rm '\(scratch.path)'").status != 0 && shell("rm -f '\(scratch.path)'").status == 0, "rm keeps missing-file and -f semantics")
+    // security: the app's own logins stay out of reach; Claude Code's own item still passes (a made-up one, never found).
+    for blocked in ["security find-generic-password -s 'AI Illuminati Google' -w", "security dump-keychain",
+                    "security find-generic-password -a oauth -w", "security find-generic-password -ws 'Claude Code-credentials'",
+                    "printf 'find-generic-password -s \"AI Illuminati MCP\" -w\\n' | security -i",
+                    "printf 'find-generic-password -a \"z -s \"Claude Code-credentials\"\" -s \"AI Illuminati Google\" -w\\n' | security -i"] {
+        let r = shell(blocked)
+        expect(r.status != 0 && r.output.contains("AI Illuminati full auto"), "security shim blocks: \(blocked)")
+    }
+    for passed in ["security find-generic-password -s 'Claude Code-credentials-00000000' -a nobody -w",
+                   "printf 'find-generic-password -a \"nobody\" -s \"Claude Code-credentials-00000000\"\\n' | security -i"] {
+        expect(!shell(passed).output.contains("AI Illuminati full auto"), "security shim passes Claude Code's own item: \(passed)")
+    }
+    expect(AutoGuard.claudeDenied.contains("Bash(/usr/bin/security:*)"), "Claude Bash cannot call /usr/bin/security directly")
 
     // CLI options: no prompts, no sandbox, Git push denied.
     expect(binding.isFullAuto && !binding.fullAccessActive && !WorkspaceBinding(roots: []).isFullAuto, "linked folders are full auto by default; access opens only during a run")

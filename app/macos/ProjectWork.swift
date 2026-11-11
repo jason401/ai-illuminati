@@ -681,10 +681,12 @@ enum RunTimings {
 // - No Git or GitHub credentials in its environment: pushes go through git_push (main/feature, never force)
 //   and git_publish_stable (always an approval card). A `git` shim refuses push and history rewrites.
 // - An `rm` shim moves files to the Trash instead of deleting them (temporary folders are deleted normally).
-// Limits: a deliberate script could still call /bin/rm or read Keychain items; this guards mistakes, not malice.
+// - A `security` shim keeps the app's own Keychain logins (Google, remote MCP) out of reach.
+// Limits: a deliberate script could still call /bin/rm or /usr/bin/security directly; this guards mistakes and
+// injected one-liners, not malice.
 enum AutoGuard {
     static let claudeDenied = ["Bash(git push:*)", "Bash(git filter-branch:*)", "Bash(git filter-repo:*)", "Bash(/usr/bin/git push:*)",
-                               "Bash(gh repo delete:*)", "Bash(/bin/rm:*)", "Bash(git clean:*)"]
+                               "Bash(gh repo delete:*)", "Bash(/bin/rm:*)", "Bash(git clean:*)", "Bash(/usr/bin/security:*)"]
     static var folder: URL { URL(fileURLWithPath: AccountStore.supportDir).appendingPathComponent("auto-guard", isDirectory: true) }
 
     static let gitShim = """
@@ -732,6 +734,56 @@ enum AutoGuard {
     exit $status
     """
 
+    // The Google and remote MCP logins trust /usr/bin/security (no password prompt after rebuilds), so a plain
+    // `security find-generic-password` would hand them to the AI. Only Claude Code's own login items (it calls
+    // `security` by name, also with `-i` and commands on stdin) and certificate lookups pass.
+    static let securityShim = """
+    #!/bin/bash
+    # AI Illuminati full auto: Keychain access only for Claude Code's own login and certificate lookups.
+    deny() { echo "AI Illuminati full auto: this Keychain access is blocked here (other app logins live in the Keychain)." >&2; exit 1; }
+    re='^Claude Code(-credentials)?(-[0-9a-f]+)?$'
+    item() {  # one generic-password command with exactly one -s naming a Claude Code item
+      case "$1" in find-generic-password|add-generic-password|delete-generic-password) ;; *) return 1;; esac
+      shift; local n=0 s="" take=0 a
+      for a in "$@"; do
+        if [ $take -eq 1 ]; then s="$a"; take=0; continue; fi
+        case "$a" in -s) take=1; n=$((n+1));; -*s*) return 1;; esac
+      done
+      [ $n -eq 1 ] && [[ "$s" =~ $re ]]
+    }
+    top=()
+    while [ $# -gt 0 ]; do
+      case "$1" in -i|-q|-v) top+=("$1"); shift;; -*) deny;; *) break;; esac
+    done
+    if [ $# -eq 0 ]; then
+      [ -t 0 ] && deny
+      input="$(head -c 65537)"; [ ${#input} -le 65536 ] || deny
+      while IFS= read -r line; do
+        line="${line%$'\\r'}"
+        case "$line" in *\\\\*|*\\'*) deny;; esac
+        tokens=(); cur=""; inq=0; have=0
+        for ((k = 0; k < ${#line}; k++)); do
+          c="${line:k:1}"
+          if [ "$c" = '"' ]; then inq=$((1 - inq)); have=1
+          elif [ $inq -eq 0 ] && { [ "$c" = " " ] || [ "$c" = $'\\t' ]; }; then [ $have -eq 1 ] && tokens+=("$cur"); cur=""; have=0
+          else cur+="$c"; have=1; fi
+        done
+        [ $inq -eq 0 ] || deny
+        [ $have -eq 1 ] && tokens+=("$cur")
+        [ ${#tokens[@]} -eq 0 ] && continue
+        case "${tokens[0]}" in exit|quit) continue;; esac
+        item "${tokens[@]}" || deny
+      done <<< "$input"
+      printf '%s\\n' "$input" | /usr/bin/security ${top[@]+"${top[@]}"}
+      exit $?
+    fi
+    case "$1" in
+      find-identity|find-certificate|verify-cert|show-keychain-info) exec /usr/bin/security ${top[@]+"${top[@]}"} "$@";;
+    esac
+    item "$@" || deny
+    exec /usr/bin/security ${top[@]+"${top[@]}"} "$@"
+    """
+
     static func environment(_ base: [String: String]) -> [String: String] {
         var env = base
         let bin = folder.appendingPathComponent("bin", isDirectory: true)
@@ -739,7 +791,7 @@ enum AutoGuard {
         let fm = FileManager.default
         try? fm.createDirectory(at: bin, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         try? fm.createDirectory(at: gh, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        for (name, text) in [("git", gitShim), ("rm", rmShim)] {
+        for (name, text) in [("git", gitShim), ("rm", rmShim), ("security", securityShim)] {
             let url = bin.appendingPathComponent(name)
             if (try? String(contentsOf: url, encoding: .utf8)) != text {
                 try? text.write(to: url, atomically: true, encoding: .utf8)

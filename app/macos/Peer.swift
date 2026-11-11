@@ -113,15 +113,16 @@ enum Peer {
         """
     }
 
-    // Findings of a review: numbered or bulleted top-level items (nested ones and an intro line not counted);
-    // one when the review is prose.
+    // Findings of a review: numbered or bulleted top-level items, the least indented ones (the whole list may be
+    // indented; nested items and an intro line are not counted); one when the review is prose.
     static func points(_ review: String) -> Int {
-        let items = review.split(whereSeparator: \.isNewline).filter { line in
-            guard !line.hasPrefix("  "), !line.hasPrefix("\t") else { return false }
+        let indents: [Int] = review.split(whereSeparator: \.isNewline).compactMap { line in
             let text = line.trimmingCharacters(in: .whitespaces)
-            return text.range(of: #"^(\d{1,2}[.)]|[-*•])\s+\S"#, options: .regularExpression) != nil
-        }.count
-        return max(items, review.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0 : 1)
+            guard text.range(of: #"^(\d{1,2}[.)]|[-*•])\s+\S"#, options: .regularExpression) != nil else { return nil }
+            return line.prefix { $0 == " " || $0 == "\t" }.reduce(0) { $0 + ($1 == "\t" ? 4 : 1) }
+        }
+        let top = indents.min() ?? 0
+        return max(indents.filter { $0 <= top + 1 }.count, review.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0 : 1)
     }
 
     // The lead's own count at the end of its fix reply, taken out of the reply: (taken, left) when it adds up to `points`.

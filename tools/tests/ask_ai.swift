@@ -104,7 +104,8 @@ func testAskAI() {
 
     // Review findings and the lead's count of what it took.
     let numbered = "Two problems:\n1. a.swift:3 crashes\n   - nested detail\n2) b.swift:9 typo\n\nThat's all."
-    expect(Peer.points(numbered) == 2 && Peer.points("- x\n* y\n• z") == 3 && Peer.points("Prose only, one concern.") == 1 && Peer.points("  ") == 0,
+    expect(Peer.points(numbered) == 2 && Peer.points("- x\n* y\n• z") == 3 && Peer.points("Prose only, one concern.") == 1
+           && Peer.points("  1. first\n  2. second\n     - detail") == 2 && Peer.points("Intro:\n   - a\n   - b\n      - nested") == 2 && Peer.points("  ") == 0,
            "points: top-level items only; prose counts as one")
     let note = Peer.fixNote("1. x", by: "G", points: 2)
     expect(note.contains("Review: taken N, left M") && note.contains("2 points") && note.contains("to \"G\"") && note.contains("does not review again on its own"),

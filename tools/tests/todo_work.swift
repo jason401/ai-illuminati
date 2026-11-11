@@ -370,6 +370,17 @@ func testSidebarProjects() {
     expect(split.going.map(\.title) == ["t1", "t2", "t4", "t5"] && split.finished.map(\.title) == ["t0", "t3"],
            "finished TODO chats apart, review/needsYou and a chat with an unfinished TODO stay: \(split.going.map(\.title)) \(split.finished.map(\.title))")
 
+    // Chats answering now go to the top of their folder (a TODO chat, a finished one, a plain chat), the rest keep their order.
+    let own = [chat("p0", main, minutes: 1), chat("p1", main, minutes: 2)]
+    let liftGroup = ProjectGroup(id: common, name: "x", bindings: [main], lists: [], chats: own, todoRooms: rooms, pinned: false, updatedAt: Date())
+    let lifted = SidebarProjects.runningFirst(liftGroup, todo: data, running: [own[1].id, rooms[3].id, rooms[4].id])
+    expect(lifted.running.map(\.title) == ["t4", "p1", "t3"] && lifted.going.map(\.title) == ["t1", "t2", "t5"]
+           && lifted.chats.map(\.title) == ["p0"] && lifted.finished.map(\.title) == ["t0"],
+           "answering chats first, each shown once: \(lifted.running.map(\.title)) \(lifted.going.map(\.title)) \(lifted.chats.map(\.title)) \(lifted.finished.map(\.title))")
+    let idle = SidebarProjects.runningFirst(liftGroup, todo: data, running: [])
+    expect(idle.running.isEmpty && idle.going.map(\.title) == split.going.map(\.title) && idle.chats.map(\.title) == ["p0", "p1"],
+           "nothing answering: the folder looks as before")
+
     // Folds and pins are kept, in the test's own defaults; old pinned project chats pin their project once.
     let suite = "ai-illuminati-sidebar-test-\(UUID().uuidString)"
     let defaults = UserDefaults(suiteName: suite)!

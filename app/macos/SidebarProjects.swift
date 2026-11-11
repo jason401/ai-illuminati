@@ -95,6 +95,16 @@ enum SidebarProjects {
         return (going, finished)
     }
 
+    // A folder's rows with the chats answering now (its own or its TODOs') lifted to the top, in the folder's order;
+    // the rest keep their places (going TODO chats, its chats, finished TODO chats).
+    static func runningFirst(_ group: ProjectGroup, todo: TodoData, running: Set<UUID>)
+        -> (running: [Conversation], going: [Conversation], chats: [Conversation], finished: [Conversation]) {
+        let rooms = todoRooms(group.todoRooms, todo: todo)
+        let lifted = (rooms.going + group.chats + rooms.finished).filter { running.contains($0.id) }
+        let rest = { (rows: [Conversation]) in rows.filter { !running.contains($0.id) } }
+        return (lifted, rest(rooms.going), rest(group.chats), rest(rooms.finished))
+    }
+
     // Finished TODO chats that may be deleted: every TODO of the chat done or cancelled, not pinned, not protected
     // (running, open, or the parent of the open meeting), and, with a cutoff, nothing in it (the chat, its TODOs'
     // finishing, its meetings) newer than the cutoff. The TODOs stay on the board as the record.

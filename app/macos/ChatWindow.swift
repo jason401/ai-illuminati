@@ -300,18 +300,22 @@ struct ChatView: View {
     }
 
     // A project folder: click to open its TODO board, double-click or the chevron to fold or unfold, + for a new chat in it,
-    // right-click to pin. Inside: the chats its TODOs still work in, then its chats (each with its meetings), then finished TODOs.
+    // right-click to pin. Inside: the chats answering now, the chats its TODOs still work in, then its chats (each with its meetings), then finished TODOs.
     @ViewBuilder private func projectGroup(_ group: ProjectGroup) -> some View {
         let open = !folds.isFolded("project." + group.id)
         projectRow(group, open: open)
         if open {
-            // TODO chats still going come first, so the work running now is in sight right away.
-            let rooms = SidebarProjects.todoRooms(group.todoRooms, todo: todos.snapshot)
+            // Chats answering now come first, then TODO chats still going, so the work running now is in sight right away.
+            let rooms = SidebarProjects.runningFirst(group, todo: todos.snapshot, running: discussion.runningRooms)
+            let todoIDs = Set(group.todoRooms.map(\.id))
+            ForEach(rooms.running) { room in
+                if todoIDs.contains(room.id) { todoRoom(room) } else { chatGroup(room, depth: 1) }
+            }
             ForEach(rooms.going) { todoRoom($0) }
             // Its own chats: pinned ones and the newest page (and the open chat); every match while searching.
             let key = "project-chats." + group.id, page = SidebarFold.projectPage
             let current = discussion.viewingRemote == nil && !discussion.viewingBoard ? discussion.current.meetingOf?.room ?? discussion.currentID : nil
-            let chats = SidebarFold.listedChats(group.chats, limit: discussion.sidebarSearching ? .max : folds.limit(key, page: page), open: current)
+            let chats = SidebarFold.listedChats(rooms.chats, limit: discussion.sidebarSearching ? .max : folds.limit(key, page: page), open: current)
             ForEach(chats.rows) { chatGroup($0, depth: 1) }
             if !discussion.sidebarSearching { moreRow(key, page: page, total: chats.unpinned, listed: chats.listed, indent: 22) }
             if !rooms.finished.isEmpty {
@@ -394,8 +398,9 @@ struct ChatView: View {
                 if approvals.requests.contains(where: { rooms.contains($0.room) }) {
                     Circle().fill(Color.orange).frame(width: 7, height: 7).help(L("허가를 기다려요", "Waiting for approval"))
                 }
-                if !discussion.runningRooms.isDisjoint(with: rooms) { ProgressView().controlSize(.mini).help(L("답하는 중", "Answering")) }
             }
+            // Open or folded: a chat of it answering shows a spinner by the folder.
+            if !discussion.runningRooms.isDisjoint(with: rooms) { ProgressView().controlSize(.mini).help(L("이 프로젝트의 채팅이 답하는 중", "A chat of this project is answering")) }
             if hovered, let binding = group.bindings.first {
                 Button(action: { newChat(in: group, binding) }) { Image(systemName: "square.and.pencil").font(.system(size: 11)).frame(width: 20, height: 20) }
                     .buttonStyle(.plainHit).foregroundColor(.secondary)

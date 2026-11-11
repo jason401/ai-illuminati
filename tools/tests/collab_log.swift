@@ -39,10 +39,10 @@ func testCollabLog() {
     let summary = CollabLog.summary([
         CollabEvent(kind: .ask, chat: chatID, failed: 1, smallTalk: true), CollabEvent(kind: .ask, chat: chatID), CollabEvent(kind: .meeting, chat: chatID),
         CollabEvent(kind: .outcome, chat: chatID, outcome: "yes"), CollabEvent(kind: .outcome, chat: chatID, outcome: "unknown"),
-        CollabEvent(kind: .review, chat: chatID, failed: 0, points: 3), CollabEvent(kind: .review, chat: chatID, failed: 0, points: 0),
+        CollabEvent(kind: .review, chat: chatID, failed: 0, points: 3), CollabEvent(kind: .review, chat: chatID, failed: 0, points: 0), CollabEvent(kind: .review, chat: chatID, points: 2, taken: 1, left: 1),
         CollabEvent(kind: .reviewed, chat: chatID, points: 3, taken: 2, left: 1), CollabEvent(kind: .request, chat: chatID, priorCalls: 0)])
-    expect(summary == CollabLog.Summary(asks: 2, meetings: 1, failedAsks: 1, smallTalk: 1, yes: 1, partly: 0, no: 0, unknown: 1, reviews: 2, points: 3, taken: 2, left: 1,
-                                        requests: 1, requestsAfterNone: 1), "the summary counts calls, outcomes, review points, small talk and the user's requests")
+    expect(summary == CollabLog.Summary(asks: 2, meetings: 1, failedAsks: 1, smallTalk: 1, yes: 1, partly: 0, no: 0, unknown: 1, reviews: 3, points: 5, taken: 3, left: 2,
+                                        requests: 1, requestsAfterNone: 1), "the summary counts calls, outcomes, review points (also older review lines), small talk and the user's requests")
     expect(CollabLog.line(CollabLog.Summary()) == L("아직 기록이 없어요.", "Nothing recorded yet."), "empty log line")
 
     // The tool by mode: off keeps only ask_peer (two calls, to the reviewer); otherwise ask_ai with call numbers.

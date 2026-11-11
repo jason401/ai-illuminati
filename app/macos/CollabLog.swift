@@ -110,7 +110,8 @@ enum CollabLog {
             case .outcome:
                 switch e.outcome { case "yes": s.yes += 1; case "partly": s.partly += 1; case "no": s.no += 1; default: s.unknown += 1 }
             case .review:
-                s.reviews += 1; s.points += e.points ?? 0
+                // Logs from before "reviewed" kept what was taken in the review line itself.
+                s.reviews += 1; s.points += e.points ?? 0; s.taken += e.taken ?? 0; s.left += e.left ?? 0
             case .reviewed:
                 s.taken += e.taken ?? 0; s.left += e.left ?? 0
             case .request:

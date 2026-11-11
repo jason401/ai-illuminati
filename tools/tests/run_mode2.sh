@@ -9,10 +9,21 @@ real_accounts() { [[ -f "$REAL_ACCOUNTS" ]] && shasum -a 256 "$REAL_ACCOUNTS" ||
 REAL_BEFORE=$(real_accounts)
 mkdir -p "$TEST_DIR/data"
 cp tools/tests/mode2.swift "$TEST_DIR/main.swift"
-# Each stage has a time limit, so a stuck one names itself instead of hanging the run (the alarm outlives exec).
+# Each stage has a time limit, so a stuck one names itself instead of hanging the run. The stage runs in its own
+# process group: on time out (or Ctrl-C) the whole group stops, compiler jobs and test servers included, and
+# whatever it left running is stopped when it ends.
 limit() {
   local secs=$1; shift
-  perl -e 'alarm shift; exec @ARGV or die "exec: $!\n"' "$secs" "$@" && return 0
+  perl -e '
+    my $secs = shift; my $pid = fork // die "fork: $!\n";
+    if (!$pid) { setpgrp(0, 0); exec @ARGV or die "exec: $!\n" }
+    setpgrp($pid, $pid);
+    sub stop { kill "TERM", -$pid; sleep 1; kill "KILL", -$pid; waitpid($pid, 0); exit shift }
+    $SIG{ALRM} = sub { stop(142) }; $SIG{INT} = sub { stop(130) }; $SIG{TERM} = sub { stop(143) };
+    alarm $secs; waitpid($pid, 0); my $status = $?; alarm 0;
+    kill "KILL", -$pid;
+    exit($status & 127 ? 128 + ($status & 127) : $status >> 8);
+  ' "$secs" "$@" && return 0
   local rc=$?
   (( rc == 142 )) && echo "FAIL: stopped after $secs s: ${1:t}" >&2
   return $rc

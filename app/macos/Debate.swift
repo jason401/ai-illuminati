@@ -160,6 +160,12 @@ extension Discussion {
         Do not call another AI's sourced claim wrong without your own evidence.
         """
 
+    // Who can search, for the moderator: a model on this Mac cannot, so it gets no search tasks.
+    static func searchNote(_ offline: [String]) -> String {
+        offline.isEmpty ? "The AIs can search the web, so a task can be \"search for…\"."
+            : "The AIs can search the web, except \(offline.joined(separator: ", ")) (no web search): give search or source checks only to the others."
+    }
+
     private func debateSpeech(_ account: Account, rules: String, focus: String, transcript: String, opening: Bool) -> String {
         """
         \(Self.debateContext(rules: rules, transcript: transcript))
@@ -285,7 +291,7 @@ extension Discussion {
                contradicted with another source counts as verified. Saying "unverified" without searching does not make it unverified.
             2. Find the most important thing the answer still lacks: missing evidence or data, an unchecked number, an unanswered part of
                the question, a perspective nobody covered, or a real disagreement that changes the answer.
-            3. Give that as a task to the AI best placed to do it. The AIs can search the web, so a task can be "search for…".
+            3. Give that as a task to the AI best placed to do it. \(Self.searchNote(team.filter { $0.provider == .ollama }.map(key)))
                The focus is a task ("search…", "find…", "calculate…", "propose…", "check…"),
                never "rebut X". One or two sentences, under 250 characters.
             If the latest user message asks for a particular AI to speak, give that AI the turn.

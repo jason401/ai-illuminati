@@ -1214,6 +1214,8 @@ func testAutoMeeting() {
            "a local model checked by hand meets though switched off for automatic picks: \(localAsked.keys)")
     expect(localAsked[local.id]?.contains("You cannot search the web") == true && localAsked[local.id]?.contains("and search the web") == false
            && localAsked[c1.id]?.contains("You can search the web") == true, "a local model is told it has no web search, the others keep it")
+    expect(Discussion.searchNote([]).contains("can search the web, so") && Discussion.searchNote(["gemma"]).contains("except gemma (no web search)"),
+           "the moderator knows which AI cannot search")
     localAsked = [:]
     let called = localChat()
     _ = hold(called, "@젬마 @클로드 회의해줘")

@@ -2767,6 +2767,8 @@ func testCloudModels() {
     for (id, title) in [("claude-fable-5-1", "Fable 5.1"), ("claude-haiku-4-5-20251001", "Haiku 4.5"), ("claude-opus-5-5[1m]", "Opus 5.5 [1m]"), ("odd", "odd")] {
         expect(CloudModels.versionTitle(id) == title, "version title \(id) → \(CloudModels.versionTitle(id))")
     }
+    expect(CloudModels.seenTitle("claude-opus-5-5", picked: "opus[1m]") == "Opus 5.5 [1m]" && CloudModels.seenTitle("claude-opus-5-5[1m]", picked: "opus[1m]") == "Opus 5.5 [1m]"
+           && CloudModels.seenTitle("claude-fable-5-1", picked: "fable") == "Fable 5.1", "a typed [1m] stays in the title")
     print("PASS: cloud models (Auto, per account, CLI options, invalid names, Codex and agy lists, Claude versions)")
 }
 testCloudModels()

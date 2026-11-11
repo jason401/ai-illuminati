@@ -879,6 +879,7 @@ struct AccountsSettingsTab: View {
 private final class CloudModelPick: ObservableObject {
     @Published var picked: String?   // nil = Auto
     @Published var gemini: [CloudModels.Choice] = []
+    @Published var seen: [String: String] = [:]   // pick ("" = Auto): model id it last ran on
 }
 
 private struct CloudModelMenu: View {
@@ -905,6 +906,14 @@ private struct CloudModelMenu: View {
         .help(L("이 계정이 답할 모델. 자동이면 지금처럼 각 프로그램(Claude Code·Codex·agy)의 기본 모델을 써요. 그 계정에서 못 쓰는 모델을 고르면 답이 오류로 끝나요.",
                 "The model this account answers with. Auto keeps each CLI's (Claude Code, Codex, agy) default, as before. A model the account cannot use ends its answers with an error."))
         .onAppear(perform: load)
+        // An answer that ends while Settings is open saves a new version (on its own thread): show it.
+        .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification).receive(on: RunLoop.main)) { _ in readSeen() }
+    }
+
+    private func readSeen() {
+        guard account.provider == .claude else { return }
+        let seen = (UserDefaults.app.dictionary(forKey: CloudModels.seenKey) as? [String: [String: String]])?[account.id] ?? [:]
+        if seen != state.seen { state.seen = seen }
     }
 
     private func options(_ account: Account) -> [(String, String)] {
@@ -917,8 +926,8 @@ private struct CloudModelMenu: View {
         }
         // Claude: the version each alias ran on last time ("Fable 5.1"), once this account has answered with it.
         func title(_ base: String, _ pick: String?) -> String {
-            guard account.provider == .claude, let id = CloudModels.seen(account, picked: pick) else { return base }
-            let version = CloudModels.versionTitle(id)
+            guard account.provider == .claude, let id = state.seen[pick ?? ""] else { return base }
+            let version = CloudModels.seenTitle(id, picked: pick)
             return pick == nil ? base + " · " + version : version
         }
         var list = [(title(L("자동", "Auto"), nil), "")] + choices.map { (title($0.title, $0.id), $0.id) }
@@ -962,6 +971,7 @@ private struct CloudModelMenu: View {
 
     private func load() {
         state.picked = CloudModels.model(account)
+        readSeen()
         if account.provider == .gemini, gemini.isEmpty {
             CloudModels.loadGemini(account) { [state] in state.gemini = $0 }
         }

@@ -82,6 +82,14 @@ enum CloudModels {
         return words.map(\.capitalized).joined(separator: " ") + " " + numbers.joined(separator: ".") + tail
     }
 
+    // What the menu shows for a pick that ran on `id`: a typed option such as "[1m]" stays visible even when the
+    // stream names only the base model.
+    static func seenTitle(_ id: String, picked: String?) -> String {
+        let title = versionTitle(id)
+        guard let picked, let bracket = picked.firstIndex(of: "["), !title.hasSuffix(String(picked[bracket...])) else { return title }
+        return title + " " + picked[bracket...]
+    }
+
     // The models Codex lists for this account, from the cache it keeps in its folder (missing or old: none).
     static func codexChoices(_ account: Account) -> [Choice] {
         guard let data = FileManager.default.contents(atPath: account.codexHome + "/models_cache.json"),

@@ -126,3 +126,64 @@ func testProjectInfo() {
     expect(ProjectRules.files(root: rulesRoot.path).isEmpty, "a rules symlink out of the project is not read")
     print("PASS: project info (folders, files, links, unreadable file kept, read only in every chat of the project, rules files)")
 }
+
+// Project info's branch view (GitBranches.swift): roles, nearest tag, origin and stable distances, the summary line,
+// worktrees, and the app's backup refs hidden. Read from a throwaway repository with its own bare "origin".
+func testGitBranches() {
+    expect(GitBranches.version("v0.2.0-5-gabc1234") == "v0.2.0+5" && GitBranches.version("v0.2.0-0-gabc1234") == "v0.2.0"
+           && GitBranches.version("release-1-2-3-g1a2b") == "release-1-2+3" && GitBranches.version("") == nil, "describe → version")
+    expect(GitBranches.counts("3\t0") == GitCounts(ahead: 3, behind: 0) && GitBranches.counts("x") == nil, "left/right counts")
+    expect(GitBranches.role("stable") == .deploy && GitBranches.role("main") == .beta && GitBranches.role("codex/a") == .work
+           && GitBranches.role("fix/b") == .work && GitBranches.role("feature/c") == .work && GitBranches.role("dev") == .other, "roles")
+
+    let base = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("git-branch-tests")
+    try? FileManager.default.removeItem(at: base)
+    try! FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+    let bare = base.appendingPathComponent("origin.git").path, repo = base.appendingPathComponent("repo").path, tree = base.appendingPathComponent("tree").path
+    @discardableResult func sh(_ args: [String], in dir: String) -> String {
+        let p = Process(), out = Pipe()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        p.arguments = ["-c", "user.name=T", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false", "-c", "init.defaultBranch=main"] + args
+        p.currentDirectoryURL = URL(fileURLWithPath: dir); p.standardOutput = out; p.standardError = FileHandle.nullDevice
+        p.environment = ["HOME": base.path, "GIT_CONFIG_NOSYSTEM": "1", "PATH": "/usr/bin:/bin"]
+        try! p.run(); let data = out.fileHandleForReading.readDataToEndOfFile(); p.waitUntilExit()
+        expect(p.terminationStatus == 0, "git \(args.joined(separator: " "))")
+        return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    sh(["init", "-q", "--bare", bare], in: base.path)
+    sh(["init", "-q", repo], in: base.path)
+    sh(["remote", "add", "origin", bare], in: repo)
+    func commit(_ message: String) { sh(["commit", "-q", "--allow-empty", "-m", message], in: repo) }
+    commit("first"); sh(["tag", "v0.1.0"], in: repo)
+    commit("second"); sh(["push", "-q", "origin", "main:stable"], in: repo)
+    commit("third"); commit("fourth"); sh(["push", "-q", "origin", "main"], in: repo)
+    commit("local only")                                            // main is 1 ahead of origin/main
+    sh(["branch", "feature/x"], in: repo)                           // not on origin
+    sh(["worktree", "add", "-q", "-b", "fix/y", tree], in: repo)
+    sh(["update-ref", "refs/ai-illuminati/backup", "HEAD"], in: repo)
+    sh(["fetch", "-q", "origin"], in: repo)
+
+    let report = GitBranches.read(root: repo) { args in sh(args, in: repo) }
+    let names = report.rows.map(\.name)
+    expect(names.first == "origin/stable" && names.dropFirst().prefix(2) == ["main", "origin/main"], "stable, main first, local before origin: \(names)")
+    expect(Set(names) == ["origin/stable", "main", "origin/main", "feature/x", "fix/y"], "local + origin branches, no backup ref, no origin/HEAD: \(names)")
+    let main = report.rows.first { $0.ref == "refs/heads/main" }!, originMain = report.rows.first { $0.ref == "refs/remotes/origin/main" }!
+    expect(main.current && !originMain.current && main.subject == "local only" && main.sha.count >= 7 && main.date != nil, "current main and its commit: \(main)")
+    expect(main.version == "v0.1.0+4" && report.rows.first { $0.name == "origin/stable" }!.version == "v0.1.0+1", "nearest tag +N: \(String(describing: main.version))")
+    expect(main.origin == GitCounts(ahead: 1, behind: 0) && main.stable == GitCounts(ahead: 3, behind: 0) && originMain.stable == GitCounts(ahead: 2, behind: 0), "distances")
+    expect(report.rows.first { $0.branch == "feature/x" }!.onOrigin == false, "a branch origin does not have")
+    expect(report.rows.first { $0.branch == "fix/y" }!.worktree == "tree", "checked out in another worktree")
+    expect(report.stableName == "origin/stable" && report.mainName == "origin/main" && report.pending == GitCounts(ahead: 2, behind: 0) && report.fetched != nil, "summary uses origin")
+    expect(GitBranches.summary(report)?.contains("2") == true && GitBranches.differences(main, stable: report.stableName).count == 2, "summary and row text")
+
+    // From the worktree, its own branch is the current one; up to date once stable catches up.
+    sh(["push", "-q", "origin", "origin/main:refs/heads/stable"], in: repo); sh(["fetch", "-q", "origin"], in: repo)
+    let fromTree = GitBranches.read(root: tree) { args in sh(args, in: tree) }
+    expect(fromTree.rows.first { $0.branch == "fix/y" }!.current && fromTree.rows.first { $0.ref == "refs/heads/main" }!.worktree == "repo", "worktree view")
+    expect(fromTree.pending == GitCounts(ahead: 0, behind: 0) && GitBranches.summary(fromTree) == L("배포 최신 상태", "Release is up to date"), "up to date")
+    // Not a repository: an error, no rows; no stable: said so.
+    let none = GitBranches.read(root: base.path) { _ in throw MaterialReader.error("no git") }
+    expect(none.rows.isEmpty && none.error != nil && GitBranches.summary(none) == nil, "no repository")
+    try? FileManager.default.removeItem(at: base)
+    print("PASS: Git branches (roles, nearest tag +N, origin and stable distances, summary, worktrees, backup refs hidden, no repository)")
+}

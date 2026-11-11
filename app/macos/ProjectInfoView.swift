@@ -124,6 +124,7 @@ struct ProjectInfoView: View {
                     }
                 }
             }
+            if !documents, let binding = group.bindings.first { GitBranchesView(binding: binding) }
             HStack(spacing: 8) {
                 Button(L("작업 폴더 연결 끊기…", "Disconnect work folder…")) { discussion.disconnectProjectFolder(group.id, name: group.name) }
                 Text(L("채팅·TODO는 남기고 폴더 없는 프로젝트로 바꿔요 (파일은 그대로)", "Keeps the chats and TODOs as a folderless project (the files stay)"))
@@ -340,5 +341,79 @@ struct ProjectInfoView: View {
 
     private func act(_ change: () throws -> Void) {
         do { draft.error = nil; try change() } catch { draft.error = error.localizedDescription }
+    }
+}
+
+// The repository's branches, read only (GitBranches.swift): local values when shown, origin only after the refresh button.
+struct GitBranchesView: View {
+    let binding: ProjectBinding
+    @ObservedObject private var store = GitBranchStore.shared
+
+    var body: some View {
+        let report = store.reports[binding.root], busy = store.busy.contains(binding.root)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                if let report, let line = GitBranches.summary(report) {
+                    Image(systemName: report.pending.map { $0.ahead > 0 } == true ? "clock" : "checkmark.circle")
+                        .font(.system(size: 12)).foregroundColor(report.pending.map { $0.ahead > 0 } == true ? .orange : .green)
+                    Text(line).font(.system(size: 12, weight: .medium))
+                } else {
+                    Text(report == nil ? L("브랜치 읽는 중…", "Reading branches…") : L("브랜치", "Branches")).font(.system(size: 12, weight: .medium))
+                }
+                Spacer(minLength: 6)
+                if busy { ProgressView().controlSize(.small).frame(width: 22, height: 22) }
+                Text(Self.checked(report?.fetched)).font(.system(size: 11)).foregroundColor(.secondary)
+                Button(action: { store.load(binding, fetch: true) }) {
+                    Image(systemName: "arrow.clockwise").font(.system(size: 11)).frame(width: 22, height: 22)
+                }
+                .buttonStyle(.plainHit).foregroundColor(.secondary).disabled(busy)
+                .help(L("origin에서 새로 가져오기 (git fetch)", "Fetch from origin (git fetch)"))
+            }
+            if let why = report?.error { Text(why).font(.system(size: 11)).foregroundColor(.orange) }
+            ForEach(report?.rows ?? []) { row in branchRow(row, stable: report?.stableName) }
+            if let hidden = report?.hidden, hidden > 0 {
+                Text(L("브랜치 \(hidden)개 더 있음", "\(hidden) more branches")).font(.system(size: 11)).foregroundColor(.secondary)
+            }
+        }
+        .padding(.horizontal, 8).padding(.vertical, 6)
+        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
+        .onAppear { if store.reports[binding.root] == nil { DispatchQueue.main.async { store.load(binding) } } }
+    }
+
+    private func branchRow(_ row: GitBranchRow, stable: String?) -> some View {
+        let differences = GitBranches.differences(row, stable: stable)
+        return VStack(alignment: .leading, spacing: 1) {
+            HStack(spacing: 6) {
+                Image(systemName: row.remote ? "cloud" : "arrow.triangle.branch").font(.system(size: 10)).foregroundColor(.secondary).frame(width: 16)
+                Text(row.name).font(.system(size: 12, weight: row.current ? .semibold : .regular)).lineLimit(1)
+                if let label = GitBranches.label(row.role) {
+                    Text(label).font(.system(size: 10, weight: .medium)).padding(.horizontal, 5).padding(.vertical, 1)
+                        .background(Self.tint(row.role).opacity(0.18), in: Capsule()).foregroundColor(Self.tint(row.role))
+                }
+                if row.current { Text(L("(현재)", "(current)")).font(.system(size: 11)).foregroundColor(.accentColor) }
+                if let tree = row.worktree { Text(L("(워크트리 \(tree))", "(worktree \(tree))")).font(.system(size: 11)).foregroundColor(.secondary) }
+                if let version = row.version { Text(version).font(.system(size: 11, design: .monospaced)).foregroundColor(.secondary) }
+                Spacer(minLength: 6)
+                if !differences.isEmpty { Text(differences.joined(separator: " · ")).font(.system(size: 11)).foregroundColor(.secondary).lineLimit(1) }
+            }
+            HStack(spacing: 6) {
+                Text(row.sha).font(.system(size: 11, design: .monospaced)).foregroundColor(.secondary)
+                Text(row.subject).font(.system(size: 11)).foregroundColor(.secondary).lineLimit(1).truncationMode(.tail)
+                Spacer(minLength: 6)
+                if let date = row.date { Text(Self.day(date)).font(.system(size: 11)).foregroundColor(.secondary) }
+            }
+            .padding(.leading, 22).textSelection(.enabled)
+        }
+        .padding(.vertical, 2)
+    }
+
+    static func tint(_ role: GitBranchRow.Role) -> Color { role == .deploy ? .green : role == .beta ? .blue : .orange }
+    static func day(_ date: Date) -> String {
+        let f = DateFormatter(); f.locale = AppLanguage.current.locale; f.dateStyle = .medium; f.timeStyle = .short
+        return f.string(from: date)
+    }
+    static func checked(_ date: Date?) -> String {
+        guard let date else { return L("가져온 적 없음", "Never fetched") }
+        return L("마지막 확인 ", "Last checked ") + day(date)
     }
 }

@@ -118,8 +118,13 @@ extension Discussion {
         }, notify: { text in SpaceRefiner.shared.notes[id] = text })
     }
 
-    // Who changes a Space: whoever answered last in the chat that made it, else the account with most usage left.
+    // Who may be picked to change a Space (beside its change box). Gemma on this Mac is too small to write a whole page.
+    var spaceWorkers: [Account] { model.accounts.filter { $0.provider != .ollama } }
+
+    // Who changes a Space: the account picked for it, else whoever answered last in the chat that made it, else the
+    // account with most usage left.
     func refineAccount(_ manifest: SpaceManifest) -> Account? {
+        if let id = manifest.worker, let chosen = spaceWorkers.first(where: { $0.id == id }) { return chosen }
         if let origin = manifest.originChat.flatMap(UUID.init(uuidString:)), conversations.contains(where: { $0.id == origin }),
            let account = soloNext(room: origin), account.provider != .ollama { return account }
         return AutoPick.choose(model.accounts.filter { [.claude, .codex].contains($0.provider) }, usage: model.latestUsage, lock: nil, current: nil)
@@ -133,22 +138,29 @@ extension Discussion {
         guard !request.isEmpty, refiner.busy[id] == nil, let manifest = SpaceStore.shared.manifest(id) else { return }
         guard let account = refineAccount(manifest) else { refiner.notes[id] = L("답할 계정이 없어요", "No account can answer"); return }
         let folder = SpaceStore.folder(id)
-        let html = SpaceStore.html(folder), state = SpaceStore.state(folder), history = SpaceStore.refineLog(id)
+        let html = SpacePictures.hide(SpaceStore.html(folder)), state = SpaceStore.state(folder), history = SpaceStore.refineLog(id)
+        let draws = account.provider == .codex
         SpaceStore.addRefine(id, SpaceRefineEntry(role: "user", text: request))
         let speaker = label(account)
         let cancel = DebateCancellation()
         refiner.busy[id] = speaker; refiner.cancels[id] = cancel; refiner.notes[id] = nil; refiner.pending[id] = nil
         DispatchQueue.global(qos: .userInitiated).async {
-            var prompt = SpaceBuilder.refinePrompt(manifest: manifest, html: html, state: state, history: history, request: request)
+            var prompt = SpaceBuilder.refinePrompt(manifest: manifest, html: html.text, state: state, history: history, request: request,
+                                                   draws: draws, kept: html.kept.count)
             var outcome: Result<(SpaceBuild, String), SpaceBad> = .failure(SpaceBad(reason: ""))
             for attempt in 0..<2 {
+                let started = Date()
                 switch Answerer.ask(account, prompt: prompt, timeout: 600, cancellation: cancel) {
                 case .failure(let failure): outcome = .failure(SpaceBad(reason: Self.describe(failure)))
                 case .success(let raw):
                     let split = SpaceBuilder.split(FaceLink.extract(raw).text)
                     let said = Self.extractState(split.reply).reply
                     guard split.found else { outcome = .failure(SpaceBad(reason: said.isEmpty ? L("새 판이 오지 않았어요", "No new version came") : said)); break }
-                    switch SpaceBuilder.parse(split.body, new: false) {
+                    // Pictures ChatGPT made in this answer and those already in the page go in for their markers.
+                    let made = draws ? Pictures.newCodexImages(account, since: started).prefix(SpacePictures.perAnswer).compactMap { Pictures.spaceDataURL($0) } : []
+                    switch SpaceBuilder.parse(split.body, new: false).flatMap({ build in
+                        SpacePictures.embed(build.html, made: made, kept: html.kept).map { page in var build = build; build.html = page; return build }
+                    }) {
                     case .success(let build): outcome = .success((build, said))
                     case .failure(let bad):
                         outcome = .failure(bad)
@@ -339,9 +351,37 @@ struct SpaceMainView: View {
         .padding(.horizontal, 20).padding(.vertical, 8)
     }
 
+    // Who changes this Space: automatic, or one account the user picked (ChatGPT can also draw pictures).
+    private func workerMenu(_ manifest: SpaceManifest) -> some View {
+        let workers = discussion.spaceWorkers
+        let picked = manifest.worker.flatMap { id in workers.first { $0.id == id } }
+        let next = discussion.refineAccount(manifest)
+        return Menu {
+            Button((picked == nil ? "✓ " : "") + L("자동", "Automatic") + (picked == nil ? next.map { " · " + discussion.label($0) } ?? "" : "")) {
+                store.update(id) { $0.worker = nil }
+            }
+            Divider()
+            ForEach(workers, id: \.id) { account in
+                Button((picked?.id == account.id ? "✓ " : "") + discussion.label(account) + (account.provider == .codex ? L(" · 그림 그리기 가능", " · can draw pictures") : "")) {
+                    store.update(id) { $0.worker = account.id }
+                }
+            }
+        } label: {
+            HStack(spacing: 3) {
+                Image(systemName: picked == nil ? "wand.and.stars" : "person.crop.circle")
+                Text(picked.map { discussion.label($0) } ?? L("자동", "Auto")).lineLimit(1)
+            }
+            .font(.system(size: 11)).foregroundColor(.secondary)
+        }
+        .menuStyle(.borderlessButton).menuIndicator(.visible).fixedSize()
+        .help(L("이 Space를 고칠 AI. 자동이면 만든 채팅의 AI, 없으면 사용량이 가장 많이 남은 계정. ChatGPT는 그림도 그려 넣어요.",
+                "Who changes this Space. Automatic: the AI of the chat that made it, else the account with most usage left. ChatGPT can also draw pictures into it."))
+    }
+
     private func changeBox(_ manifest: SpaceManifest) -> some View {
         let busy = refiner.busy[id]
         return HStack(spacing: 8) {
+            workerMenu(manifest).disabled(busy != nil)
             TextField(L("말로 고치기: 예) 완료한 건 아래로, 색은 초록으로", "Change it by asking: e.g. move done items down, make it green"),
                       text: Binding(get: { refiner.drafts[id] ?? "" }, set: { refiner.drafts[id] = $0 }), axis: .vertical)
                 .textFieldStyle(.plain).font(.system(size: 14)).lineLimit(1...5)

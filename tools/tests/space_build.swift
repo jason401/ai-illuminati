@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 
 // Spaces (Space.swift): the hidden <space-build> block, the checks before saving, manifest and schedule, drafts,
 // the 1 MB data limit, versions and Undo, the old per-chat space.json moved to templates, and the Space request rule.
@@ -59,6 +60,45 @@ func testSpace() {
     // Manifest: missing keys keep their defaults.
     let minimal = try! JSONDecoder().decode(SpaceManifest.self, from: Data(#"{"id":"a","name":"b"}"#.utf8))
     expect(minimal.icon == "square.grid.2x2" && minimal.color == "blue" && minimal.version == 1 && minimal.schedule == nil, "a minimal manifest opens")
+    expect(minimal.worker == nil, "no worker picked: automatic")
+    var picked = minimal; picked.worker = "codex-1"
+    expect((try? JSONDecoder().decode(SpaceManifest.self, from: JSONEncoder().encode(picked)))?.worker == "codex-1", "the picked worker is saved")
+
+    // Pictures: those in the page reach the AI as markers, new ones from ChatGPT go in for space-image:N.
+    let pixel = "data:image/png;base64," + String(repeating: "QUJD", count: 400)
+    let drawn = "<img src=\"\(pixel)\"><p>x</p><div style=\"background:url(\(pixel))\"></div>"
+    let hidden = SpacePictures.hide(drawn)
+    expect(hidden.kept.count == 2 && hidden.text == "<img src=\"space-kept:1\"><p>x</p><div style=\"background:url(space-kept:2)\"></div>", "pictures are hidden: " + hidden.text)
+    expect(SpacePictures.hide("<img src=\"data:image/png;base64,AAAA\">").kept.isEmpty, "a tiny data: URL stays in the code")
+    expect(try! SpacePictures.embed(hidden.text, made: [], kept: hidden.kept).get() == drawn, "kept pictures come back as they were")
+    let fresh = "data:image/jpeg;base64,BBBB"
+    expect(try! SpacePictures.embed("<img src=space-image:1><img src='space-kept:2'>", made: [fresh], kept: hidden.kept).get() == "<img src=\(fresh)><img src='\(pixel)'>",
+           "new and kept pictures go in for their markers")
+    if case .success = SpacePictures.embed("<img src=space-image:2>", made: [fresh], kept: []) { fatalError("a marker without its picture is refused") }
+    if case .success = SpacePictures.embed("<img src=space-kept:1>", made: [], kept: []) { fatalError("a kept marker without its picture is refused") }
+    let big = "data:image/png;base64," + String(repeating: "A", count: 200_000)
+    expect(SpaceCheck.problem("<p>x</p>" + String(repeating: "<img src=\"\(big)\">", count: 3)) == nil, "pictures do not count toward the code's 300 KB")
+    expect(SpaceCheck.problem(String(repeating: "<img src=\"\(big)\">", count: 16)) != nil, "over 3 MB with pictures is refused")
+    expect(SpaceBuilder.rule.contains("data: URLs") && SpacePictures.rule(draws: true, kept: 0).contains("space-image:1")
+           && !SpacePictures.rule(draws: false, kept: 0).contains("space-image") && SpacePictures.rule(draws: false, kept: 2).contains("space-kept:2"),
+           "only an AI that can draw is told about space-image")
+    let imageDir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("space-pic-" + UUID().uuidString)
+    try! FileManager.default.createDirectory(at: imageDir, withIntermediateDirectories: true)
+    func picture(_ name: String, opaque: Bool) -> URL {
+        let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 1600, pixelsHigh: 800, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+                                   isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+        NSGraphicsContext.saveGraphicsState(); NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        if opaque { NSColor.orange.setFill(); NSRect(x: 0, y: 0, width: 1600, height: 800).fill() } else { NSColor.orange.setFill(); NSRect(x: 0, y: 0, width: 400, height: 400).fill() }
+        NSGraphicsContext.restoreGraphicsState()
+        let url = imageDir.appendingPathComponent(name)
+        try! rep.representation(using: .png, properties: [:])!.write(to: url)
+        return url
+    }
+    let photo = Pictures.spaceDataURL(picture("a.png", opaque: true)), cutout = Pictures.spaceDataURL(picture("b.png", opaque: false))
+    let photoSize = photo.flatMap { Data(base64Encoded: String($0.split(separator: ",")[1])) }.flatMap { NSBitmapImageRep(data: $0) }
+    expect(photo?.hasPrefix("data:image/jpeg;base64,") == true && photoSize?.pixelsWide == 768 && photoSize?.pixelsHigh == 384, "an opaque picture becomes a 768 px JPEG")
+    expect(cutout?.hasPrefix("data:image/png;base64,") == true, "a picture with transparency stays PNG")
+    try? FileManager.default.removeItem(at: imageDir)
 
     // Schedule: weekdays, hours, overnight, and what the sidebar menu reads.
     var calendar = Calendar(identifier: .gregorian)

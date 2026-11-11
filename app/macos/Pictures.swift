@@ -124,6 +124,22 @@ enum Pictures {
         return result
     }
 
+    // A picture for a Space page (SpacePictures): at most `side` px, JPEG unless it has transparent pixels.
+    static func spaceDataURL(_ url: URL, side: CGFloat = 768) -> String? {
+        guard let image = NSImage(contentsOf: url), let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
+        let scale = min(1, side / CGFloat(max(cg.width, cg.height, 1)))
+        let w = max(1, Int(CGFloat(cg.width) * scale)), h = max(1, Int(CGFloat(cg.height) * scale))
+        guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: w, pixelsHigh: h, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+                                         isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: w * 4, bitsPerPixel: 32),
+              let context = NSGraphicsContext(bitmapImageRep: rep), let pixels = rep.bitmapData else { return nil }
+        context.cgContext.interpolationQuality = .high
+        context.cgContext.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+        context.flushGraphics()
+        let clear = stride(from: 3, to: w * h * 4, by: 4).contains { pixels[$0] < 255 }
+        let data = clear ? rep.representation(using: .png, properties: [:]) : rep.representation(using: .jpeg, properties: [.compressionFactor: 0.8])
+        return data.map { "data:image/\(clear ? "png" : "jpeg");base64," + $0.base64EncodedString() }
+    }
+
     static func newCodexImages(_ account: Account, since: Date) -> [URL] {
         let folder = URL(fileURLWithPath: account.codexHome).appendingPathComponent("generated_images")
         let keys: [URLResourceKey] = [.contentModificationDateKey, .isRegularFileKey]

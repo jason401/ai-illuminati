@@ -82,6 +82,7 @@ struct SpaceManifest: Codable, Equatable, Identifiable {
     var version = 1
     var originChat: String?
     var template: String?
+    var worker: String?       // the account that changes it (nil: picked automatically)
     var createdAt = Date()
     var updatedAt = Date()
 
@@ -106,6 +107,7 @@ struct SpaceManifest: Codable, Equatable, Identifiable {
         version = try c.decodeIfPresent(Int.self, forKey: .version) ?? 1
         originChat = try c.decodeIfPresent(String.self, forKey: .originChat)
         template = try c.decodeIfPresent(String.self, forKey: .template)
+        worker = try c.decodeIfPresent(String.self, forKey: .worker)
         createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         updatedAt = try c.decodeIfPresent(Date.self, forKey: .updatedAt) ?? createdAt
     }
@@ -249,7 +251,9 @@ enum SpaceBuilder {
         """
 
     // Changing a Space: its code, the shape of its data (keys and types, never values) and the talk so far.
-    static func refinePrompt(manifest: SpaceManifest, html: String, state: Data, history: [SpaceRefineEntry], request: String) -> String {
+    // `html` comes with its pictures hidden (SpacePictures.hide); `draws`: the AI can make pictures (ChatGPT).
+    static func refinePrompt(manifest: SpaceManifest, html: String, state: Data, history: [SpaceRefineEntry], request: String,
+                             draws: Bool = false, kept: Int = 0) -> String {
         let talk = history.suffix(10).map { ($0.role == "user" ? "[User] " : "[AI] ") + String($0.text.prefix(600)) }.joined(separator: "\n")
         return """
             You change a Space, a small app the user made in this app. The rules below are for its code.
@@ -258,6 +262,7 @@ enum SpaceBuilder {
             Never send <space-state>: the user's data stays. If the new page reads its data under other keys or in another shape,
             also send <space-migrate>function migrate(oldState) { …; return newState }</space-migrate> (plain JavaScript, no
             bridge calls); the user previews the result before it is applied. Keep every key the page does not need to change.
+            \(SpacePictures.rule(draws: draws, kept: kept))
             [Space] name: \(manifest.name) · icon: \(manifest.icon) · color: \(manifest.color) · version \(manifest.version)
             [Data shape — keys and types only]
             \(SpaceStore.shape(state))
@@ -297,7 +302,10 @@ enum SpaceCheck {
 
     // Why `html` is refused, or nil.
     static func problem(_ source: String) -> String? {
-        if source.utf8.count > SpaceLimits.html { return L("300KB를 넘어요 (\(source.utf8.count / 1000)KB)", "It is over 300 KB (\(source.utf8.count / 1000) KB)") }
+        // Pictures put in by the app do not count toward the code's 300 KB, only toward the page's whole limit.
+        if source.utf8.count > SpacePictures.limit { return L("그림까지 합쳐 3MB를 넘어요", "It is over 3 MB with its pictures") }
+        let code = SpacePictures.hide(source).text.utf8.count
+        if code > SpaceLimits.html { return L("300KB를 넘어요 (\(code / 1000)KB)", "It is over 300 KB (\(code / 1000) KB)") }
         let html = namespaces.stringByReplacingMatches(in: source, range: NSRange(source.startIndex..., in: source), withTemplate: "ns:")
         let range = NSRange(html.startIndex..., in: html)
         for (regex, ko, en) in compiled {
@@ -317,6 +325,57 @@ enum SpaceCheck {
         if body.lowercased().hasPrefix("<!doctype"), let end = body.firstIndex(of: ">") { body = body[body.index(after: end)...] }
         return "<!doctype html><meta charset=\"utf-8\"><meta http-equiv=\"Content-Security-Policy\" content=\"\(csp)\">"
             + "<meta name=\"color-scheme\" content=\"light dark\"><meta name=\"viewport\" content=\"width=device-width\">" + body
+    }
+}
+
+// Pictures in a page. A ChatGPT (Codex) account changing a Space may draw with its image tool and write
+// space-image:1 for the first picture it made in that answer; the app shrinks each (Pictures.spaceDataURL) and puts it
+// in the page as a data: URL. Pictures already in the page reach the AI as space-kept:N, not as their bytes, and
+// are put back the same way, so any AI can change a page another one drew for.
+enum SpacePictures {
+    static let limit = 3_000_000, perAnswer = 4
+    private static let dataURL = try! NSRegularExpression(pattern: #"data:image/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]{1000,}"#)
+    private static let marker = try! NSRegularExpression(pattern: #"space-(image|kept):(\d+)"#)
+
+    static func hide(_ html: String) -> (text: String, kept: [String]) {
+        var kept: [String] = [], text = "", last = html.startIndex
+        for match in dataURL.matches(in: html, range: NSRange(html.startIndex..., in: html)) {
+            guard let range = Range(match.range, in: html) else { continue }
+            kept.append(String(html[range]))
+            text += String(html[last..<range.lowerBound]) + "space-kept:\(kept.count)"
+            last = range.upperBound
+        }
+        return (text + String(html[last...]), kept)
+    }
+
+    // The markers replaced by the pictures: `made` in this answer, `kept` from the page before.
+    static func embed(_ html: String, made: [String], kept: [String]) -> Result<String, SpaceBad> {
+        var text = "", last = html.startIndex
+        for match in marker.matches(in: html, range: NSRange(html.startIndex..., in: html)) {
+            guard let range = Range(match.range, in: html), let kind = Range(match.range(at: 1), in: html),
+                  let digits = Range(match.range(at: 2), in: html), let n = Int(html[digits]) else { continue }
+            let list = html[kind] == "image" ? made : kept
+            guard n >= 1 && n <= list.count else {
+                return .failure(SpaceBad(reason: L("\(html[range])에 해당하는 그림이 없어요", "No picture for \(html[range])")))
+            }
+            text += String(html[last..<range.lowerBound]) + list[n - 1]
+            last = range.upperBound
+        }
+        text += String(html[last...])
+        guard text.utf8.count <= limit else { return .failure(SpaceBad(reason: L("그림까지 합쳐 3MB를 넘어요: 그림을 줄여 주세요", "Over 3 MB with its pictures: use fewer pictures"))) }
+        return .success(text)
+    }
+
+    static func rule(draws: Bool, kept: Int) -> String {
+        let old = kept > 0 ? "space-kept:1 … space-kept:\(kept) in the page stand for pictures already in it (the app keeps their bytes): "
+            + "leave each marker where its picture should stay, move it or drop it as asked.\n" : ""
+        return old + (draws
+            ? "You can make pictures: when the request needs one (illustration, character, background, art), make it with your image "
+              + "generation tool (no other commands), then write space-image:1 for the first picture you made in this answer, "
+              + "space-image:2 for the second … as an <img> src or CSS url(). The app shrinks each to at most 768 px and puts it in "
+              + "the page. At most \(perAnswer) new pictures."
+            : "You cannot make painted pictures here: draw with inline SVG or CSS. If the user wants a painted picture, say that a "
+              + "ChatGPT account chosen as this Space's worker (beside the change box) can draw it.")
     }
 }
 

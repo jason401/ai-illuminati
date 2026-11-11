@@ -349,6 +349,7 @@ enum Answerer {
         let modelNote = model.map { L("모델 \($0) · ", "Model \($0) · ") } ?? ""
         var text = String(data: stdout, encoding: .utf8) ?? ""
         if let session { session.observe(text) }
+        CloudModels.noteSeen(text, account: account, picked: model)
         if account.provider == .codex, let file = try? String(contentsOfFile: outFile, encoding: .utf8) { text = file }
         if account.provider == .claude && (!images.isEmpty || session != nil || streamed) {
             let result = text.split(separator: "\n").compactMap { line -> [String: Any]? in

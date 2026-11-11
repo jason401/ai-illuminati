@@ -45,6 +45,43 @@ enum CloudModels {
     static let claudeChoices = [Choice(id: "fable", title: "Fable"), Choice(id: "opus", title: "Opus"),
                                 Choice(id: "sonnet", title: "Sonnet"), Choice(id: "haiku", title: "Haiku")]
 
+    // Claude's aliases do not say which version they are now: each Claude answer's stream names the model it ran on
+    // ("claude-fable-5-1"), kept per account and pick ("" = Auto), so the menu can show "Fable 5.1".
+    static let seenKey = "cloudModelsSeen"   // [account id: [pick: model id]]
+
+    static func noteSeen(_ output: String, account: Account, picked: String?, defaults: UserDefaults = .app) {
+        guard account.provider == .claude, let id = resolved(output) else { return }
+        var all = defaults.dictionary(forKey: seenKey) as? [String: [String: String]] ?? [:]
+        guard all[account.id]?[picked ?? ""] != id else { return }
+        all[account.id, default: [:]][picked ?? ""] = id
+        defaults.set(all, forKey: seenKey)
+    }
+
+    static func seen(_ account: Account, picked: String?, defaults: UserDefaults = .app) -> String? {
+        (defaults.dictionary(forKey: seenKey) as? [String: [String: String]])?[account.id]?[picked ?? ""]
+    }
+
+    // The model of the first assistant message or the init line in Claude's stream-json output.
+    static func resolved(_ output: String) -> String? {
+        for line in output.split(separator: "\n") where line.contains("\"model\"") {
+            guard let json = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] else { continue }
+            let name = (json["type"] as? String == "system" ? json["model"] : (json["message"] as? [String: Any])?["model"]) as? String
+            if let name, valid(name), name.hasPrefix("claude-") { return name }
+        }
+        return nil
+    }
+
+    // "claude-fable-5-1" → "Fable 5.1", "claude-haiku-4-5-20251001" → "Haiku 4.5", "claude-opus-5-5[1m]" → "Opus 5.5 [1m]".
+    static func versionTitle(_ id: String) -> String {
+        var name = id.hasPrefix("claude-") ? String(id.dropFirst(7)) : id
+        var tail = ""
+        if let bracket = name.firstIndex(of: "[") { tail = " " + name[bracket...]; name = String(name[..<bracket]) }
+        let parts = name.split(separator: "-").map(String.init)
+        let words = parts.filter { Int($0) == nil }, numbers = parts.filter { Int($0) != nil && $0.count < 8 }
+        guard !words.isEmpty, !numbers.isEmpty else { return id }
+        return words.map(\.capitalized).joined(separator: " ") + " " + numbers.joined(separator: ".") + tail
+    }
+
     // The models Codex lists for this account, from the cache it keeps in its folder (missing or old: none).
     static func codexChoices(_ account: Account) -> [Choice] {
         guard let data = FileManager.default.contents(atPath: account.codexHome + "/models_cache.json"),

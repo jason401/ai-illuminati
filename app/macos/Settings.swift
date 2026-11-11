@@ -915,9 +915,15 @@ private struct CloudModelMenu: View {
         case .gemini: choices = gemini
         case .ollama: choices = []
         }
-        var list = [(L("자동", "Auto"), "")] + choices.map { ($0.title, $0.id) }
+        // Claude: the version each alias ran on last time ("Fable 5.1"), once this account has answered with it.
+        func title(_ base: String, _ pick: String?) -> String {
+            guard account.provider == .claude, let id = CloudModels.seen(account, picked: pick) else { return base }
+            let version = CloudModels.versionTitle(id)
+            return pick == nil ? base + " · " + version : version
+        }
+        var list = [(title(L("자동", "Auto"), nil), "")] + choices.map { (title($0.title, $0.id), $0.id) }
         // A typed name, or one the list no longer has, still shows as picked.
-        if let current = state.picked, !choices.contains(where: { $0.id == current }) { list.append((current, current)) }
+        if let current = state.picked, !choices.contains(where: { $0.id == current }) { list.append((title(current, current), current)) }
         return list
     }
 

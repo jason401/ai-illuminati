@@ -2755,6 +2755,18 @@ func testCloudModels() {
     expect(CloudModels.codexChoices(Account(id: "none", provider: .codex, name: "N", dir: folder.appendingPathComponent("missing").path)).isEmpty, "no cache: no list")
     let agy = "Fetching available models...\ngemini-3.8-flash-high\tGemini 3.8 Flash (High)\nclaude-sonnet-4-6\tClaude Sonnet 4.6 (Thinking)\n"
     expect(CloudModels.parseGemini(agy).map(\.id) == ["gemini-3.8-flash-high", "claude-sonnet-4-6"], "agy models list")
-    print("PASS: cloud models (Auto, per account, CLI options, invalid names, Codex and agy lists)")
+    let stream = #"{"type":"system","subtype":"init","model":"claude-fable-5-1","tools":[]}"# + "\n" + #"{"type":"result","result":"hi"}"#
+    expect(CloudModels.resolved(stream) == "claude-fable-5-1", "Claude stream names its model")
+    expect(CloudModels.resolved(#"{"type":"assistant","message":{"model":"claude-opus-5-5","content":[]}}"#) == "claude-opus-5-5", "or in an assistant message")
+    expect(CloudModels.resolved("plain answer text") == nil, "plain text: unknown")
+    CloudModels.noteSeen(stream, account: claude, picked: "fable", defaults: defaults)
+    CloudModels.noteSeen(#"{"type":"system","model":"claude-opus-5-5"}"#, account: claude, picked: nil, defaults: defaults)
+    CloudModels.noteSeen(stream, account: codex, picked: nil, defaults: defaults)
+    expect(CloudModels.seen(claude, picked: "fable", defaults: defaults) == "claude-fable-5-1" && CloudModels.seen(claude, picked: nil, defaults: defaults) == "claude-opus-5-5"
+           && CloudModels.seen(claude, picked: "opus", defaults: defaults) == nil && CloudModels.seen(codex, picked: nil, defaults: defaults) == nil, "seen per account and pick, Claude only")
+    for (id, title) in [("claude-fable-5-1", "Fable 5.1"), ("claude-haiku-4-5-20251001", "Haiku 4.5"), ("claude-opus-5-5[1m]", "Opus 5.5 [1m]"), ("odd", "odd")] {
+        expect(CloudModels.versionTitle(id) == title, "version title \(id) → \(CloudModels.versionTitle(id))")
+    }
+    print("PASS: cloud models (Auto, per account, CLI options, invalid names, Codex and agy lists, Claude versions)")
 }
 testCloudModels()

@@ -30,7 +30,9 @@ out=""; prev=""; sid=""; for a in "$@"; do
   prev="$a"
 done
 case "$FAKE_MODE" in
-  sleep) echo $$ > "$FAKE_DIR/pid"; sh -c 'echo $$ > "$FAKE_DIR/child"; exec sleep 30' & wait ;;
+  sleep) echo $$ > "$FAKE_DIR/pid"; sh -c 'echo $$ > "$FAKE_DIR/child"; exec sleep 30' &
+         /usr/bin/perl -e 'setpgrp(0, 0); exec @ARGV' sh -c 'echo $$ > "$FAKE_DIR/stray"; exec sleep 30' &
+         wait ;;
   group) echo $$ > "$FAKE_DIR/pid"; sh -c 'echo $$ > "$FAKE_DIR/child"; exec sleep 30' </dev/null >/dev/null 2>&1 &
          echo 'left one' ;;
   fail) echo "boom from the tool" >&2; exit 3 ;;
@@ -46,9 +48,15 @@ Answerer.toolForTests = script.path
 
 let claude = Account(id: "claude-rt", provider: .claude, name: "Claude", dir: AccountStore.accountsDir + "/claude-rt")
 let codex = Account(id: "codex-rt", provider: .codex, name: "Codex", dir: AccountStore.accountsDir + "/codex-rt")
-func run(_ mode: String, sid: String = "", turn: String = "", group: Bool = false) -> RunConditions {
+// The project marker is taken off unless asked for: this test may itself run inside project work, and with the
+// marker Stop ends the tool's whole group first (checked on its own below).
+func run(_ mode: String, sid: String = "", turn: String = "", group: Bool = false, marker: Bool = false) -> RunConditions {
     var run = RunConditions()
-    run.environment = { env in var env = env; env["FAKE_MODE"] = mode; env["FAKE_DIR"] = fake.path; env["FAKE_SID"] = sid; env["FAKE_TURN"] = turn; return env }
+    run.environment = { env in
+        var env = env; env["FAKE_MODE"] = mode; env["FAKE_DIR"] = fake.path; env["FAKE_SID"] = sid; env["FAKE_TURN"] = turn
+        env["AI_ILLUMINATI_PROJECT_PROCESS"] = marker ? "1" : nil
+        return env
+    }
     if group {   // a wrapper that makes the tool lead its own process group (as project_process.py does)
         run.wrapper = ["/usr/bin/perl", "-e", "setpgrp(0, 0); exec @ARGV or die"]
         run.processGroup = true
@@ -59,11 +67,12 @@ func read(_ name: String) -> String { (try? String(contentsOf: fake.appendingPat
 func pid(_ name: String) -> pid_t? { pid_t(read(name).trimmingCharacters(in: .whitespacesAndNewlines)) }
 func alive(_ pid: pid_t?) -> Bool { pid.map { kill($0, 0) == 0 } ?? false }
 func gone(_ name: String, within seconds: Double = 3) -> Bool {
+    guard pid(name) != nil else { return false }   // never started: nothing was checked
     let end = Date().addingTimeInterval(seconds)
     while Date() < end { if !alive(pid(name)) { return true }; Thread.sleep(forTimeInterval: 0.05) }
     return false
 }
-func clear() { for name in ["args", "stdin", "pid", "child", "cwd"] { try? fm.removeItem(at: fake.appendingPathComponent(name)) } }
+func clear() { for name in ["args", "stdin", "pid", "child", "stray", "cwd"] { try? fm.removeItem(at: fake.appendingPathComponent(name)) } }
 func failure(_ result: Result<String, Answerer.Failure>) -> Answerer.Failure? { if case .failure(let f) = result { return f }; return nil }
 
 // Errors: the tool's own message (its last 300 letters) on a failed exit; a tool that cannot start is "missing".
@@ -87,7 +96,20 @@ var started = Date()
 // happen: callers look at the token, not at the message).
 expect(failure(Answerer.ask(claude, prompt: "hi", timeout: 60, cancellation: token, run: run("sleep"))) != nil, "Stop fails the answer")
 expect(Date().timeIntervalSince(started) < 5, "Stop ends the answer at once")
+// Two layers: the tool's own group ends with it (Foundation starts it as a group leader); a program that left
+// that group is found by parent and ended on its own. Each is checked apart.
 expect(gone("pid") && gone("child"), "Stop ends the tool and the programs it started")
+expect(gone("stray"), "Stop also ends a program the tool started in a group of its own")
+
+// The project marker (AI_ILLUMINATI_PROJECT_PROCESS=1, project work's own process group): Stop ends that whole group
+// at once, before anything else.
+clear()
+let marked = DebateCancellation()
+DispatchQueue.global().asyncAfter(deadline: .now() + 0.8) { marked.cancel() }
+started = Date()
+expect(failure(Answerer.ask(claude, prompt: "hi", timeout: 60, cancellation: marked, run: run("sleep", marker: true))) != nil, "Stop fails a marked answer")
+expect(Date().timeIntervalSince(started) < 5 && gone("pid") && gone("child"), "Stop ends a marked tool's whole group")
+if let stray = pid("stray") { kill(stray, SIGKILL) }   // outside the group: the marker's group kill comes first (as before)
 
 // Time out: the tool and its children are ended, the answer is timedOut.
 clear()
@@ -95,6 +117,7 @@ started = Date()
 if case .timedOut? = failure(Answerer.ask(claude, prompt: "hi", timeout: 1.5, run: run("sleep"))) {} else { expect(false, "a slow tool times out") }
 expect(Date().timeIntervalSince(started) < 6, "the time limit is kept")
 expect(gone("pid") && gone("child"), "a timed-out tool and its children are ended")
+expect(gone("stray"), "a timed-out tool's program in a group of its own is ended too")
 
 // Process group: when the conditions say so, everything left in the tool's group is stopped after a good answer;
 // without it, a program the tool left behind is not the runtime's to stop.

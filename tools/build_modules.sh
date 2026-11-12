@@ -8,7 +8,7 @@ set -eu
 cd "${0:A:h}/.."
 OUT=$1; shift
 OPTIONS=("$@")
-mkdir -p "$OUT"
+mkdir -p "$OUT"; OUT=${OUT:A}   # absolute: the dependency links below must not depend on where they sit
 typeset -A STATE
 build() {
   local NAME=$1 DIR=app/modules/$1 DEP SEE=$OUT/.see/$1

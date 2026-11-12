@@ -43,8 +43,9 @@ public struct Account: Codable, Equatable {
     }
 
     // Enterprise accounts hand work only to other Enterprise accounts (Settings can turn that off).
+    // An unmarked Gemini is personal: it could not be marked before, so its name never made it Enterprise.
     public var isSchool: Bool {
-        school ?? ["학교", "school", "univ", "edu", "enterprise", "엔터프라이즈", "회사"].contains { name.lowercased().contains($0) }
+        school ?? (provider != .gemini && ["학교", "school", "univ", "edu", "enterprise", "엔터프라이즈", "회사"].contains { name.lowercased().contains($0) })
     }
 
     public var codexHome: String {

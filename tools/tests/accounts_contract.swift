@@ -98,7 +98,9 @@ expect(claude.claudeKeychainService == "Claude Code-credentials-886ef913"
 // Enterprise: the setting wins, otherwise the name says.
 expect(Account(id: "s", provider: .claude, name: "Claude (학교)", dir: nil).isSchool
        && !Account(id: "p", provider: .claude, name: "Claude (학교)", dir: nil, school: false).isSchool
-       && Account(id: "q", provider: .codex, name: "Mine", dir: nil, school: true).isSchool, "Enterprise accounts")
+       && Account(id: "q", provider: .codex, name: "Mine", dir: nil, school: true).isSchool
+       && !Account(id: "g", provider: .gemini, name: "Gemini (학교)", dir: nil).isSchool
+       && Account(id: "g", provider: .gemini, name: "Gemini (학교)", dir: nil, school: true).isSchool, "Enterprise accounts (an unmarked Gemini is personal)")
 
 // New accounts: a private folder each; Codex keeps its login in a file there.
 let made = AccountStore.newAccount(provider: .codex, name: "ChatGPT 2")

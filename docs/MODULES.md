@@ -155,4 +155,14 @@ Public names and why (everything else stays internal: `SpaceCheck`, `SpaceRules`
 
   The isolation has layers (CSP, content rules, navigation policy, guard script): with one layer weakened the others
   still stopped every load the test tried, so a behavior test alone cannot see it. Each layer now has its own check.
+- Parallel work: two AIs in two worktrees from one written contract (`SpaceStore.duplicate(_:)` in the module,
+  `Discussion.duplicateSpace(_:)` and a sidebar "Duplicate" item in `SpaceView.swift`), each checked alone (the app
+  side against a stub it did not commit). The merge had no conflicts and the full test passed, after one line the
+  contract had missed: the test build's file list did not have `SpaceView.swift`, where the contract put the user
+  code. The app-side AI found it and left it to the merge. Trial branch: `trial/spaces-parallel` (local, not merged).
+- For the next step (Runtime, RunConditions): the contract names the files each side may touch and also every
+  build or test list those files must be in; find the public names by compiling the app against an all-internal
+  module, never by hand; for every promise write one user check that goes through the app's own way in (as
+  `SpaceWebView` here), and for a guard with several layers check each layer, since behavior alone hides a weak one;
+  run the falsification before calling a row done.
 

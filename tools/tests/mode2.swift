@@ -2944,6 +2944,7 @@ func testChatNotes() {
 runTest("testChatNotes", testChatNotes)
 runTest("testSpace", testSpace)
 runTest("testSpaceLibrary", testSpaceLibrary)
+runTest("testSpaceEnterpriseLock", testSpaceEnterpriseLock)
 
 func testChatTime() {
     // macOS puts a narrow no-break space before AM/PM.

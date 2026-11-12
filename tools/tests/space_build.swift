@@ -441,3 +441,86 @@ func testSpaceLibrary() {
     expect(store.syncLibrary().isEmpty, "the app's own Delete says nothing more")
     print("PASS: Spaces folder — pictures as files, direct edits versioned or put back, new folders, data guarded, rule, export")
 }
+
+// An Enterprise Space (made in a locked chat): only its organization's accounts change it, also after the chat is
+// deleted, when the account was picked by hand, and when AutoPick chooses.
+func testSpaceEnterpriseLock() {
+    let m = AppModel()
+    let saved = m.localEnabled
+    defer { m.localEnabled = saved }
+    m.localEnabled = false
+    m.accounts = [Account(id: "sl-p-claude", provider: .claude, name: "Claude (개인)", dir: AccountStore.home + "/sl-p", school: false),
+                  Account(id: "sl-s-codex", provider: .codex, name: "ChatGPT (학교)", dir: AccountStore.home + "/sl-s", school: true),
+                  Account(id: "sl-w-codex", provider: .codex, name: "ChatGPT (회사)", dir: AccountStore.home + "/sl-w", school: true)]
+    var full = AIUsage(name: "u"), low = AIUsage(name: "u")
+    full.fiveHour = UsageWindow(usedPercent: 0, resetsAt: nil); full.weekly = UsageWindow(usedPercent: 0, resetsAt: nil)
+    low.fiveHour = UsageWindow(usedPercent: 60, resetsAt: nil); low.weekly = UsageWindow(usedPercent: 60, resetsAt: nil)
+    // The personal account has the most left, so an unlocked AutoPick would choose it.
+    m.latestUsage = ["sl-p-claude": full, "sl-s-codex": low, "sl-w-codex": full]
+    let chat = Discussion(model: m)
+    chat.newConversation()
+    let room = chat.currentID
+    let school = Enterprise.organizations(m.accounts).first { $0.name == "학교" }!
+    chat.lockEnterprise(room, organization: school)
+    chat.configure { $0.soloAccountID = "sl-s-codex" }
+    let store = SpaceStore.shared
+
+    // Made from the locked chat: the lock is saved with the Space.
+    let made = try! store.makeFromTemplate(.checklist, origin: room, lock: chat.lock(of: room))
+    expect(store.manifest(made.id)?.lock?.organization == school.organization, "a Space made in an Enterprise chat keeps its lock")
+    let workers = { chat.spaceWorkers(for: store.manifest(made.id)!).map(\.id) }
+    expect(workers() == ["sl-s-codex"], "the account menu of an Enterprise Space shows only its organization")
+    store.update(made.id) { $0.worker = "sl-p-claude" }
+    expect(chat.refineAccount(store.manifest(made.id)!)?.id == "sl-s-codex", "a personal account picked by hand is not used")
+    store.update(made.id) { $0.worker = nil }
+    chat.configure { $0.soloAccountID = nil }
+    expect(chat.refineAccount(store.manifest(made.id)!)?.id == "sl-s-codex", "automatic: the chat's own pick stays in the organization")
+
+    // The chat is deleted: the Space's own lock still holds, also for AutoPick (personal has more left).
+    chat.conversations.removeAll { $0.id == room }   // as a deleted chat (delete(_:) asks first)
+    expect(!chat.conversations.contains { $0.id == room }, "the chat that made it is gone")
+    expect(workers() == ["sl-s-codex"] && chat.refineAccount(store.manifest(made.id)!)?.id == "sl-s-codex",
+           "after the chat is deleted only the organization's accounts change it (AutoPick too)")
+    m.latestUsage["sl-s-codex"] = { var u = AIUsage(name: "u"); u.needsLogin = true; return u }()
+    expect(chat.refineAccount(store.manifest(made.id)!) == nil, "no account of the organization left: nobody, not a personal one")
+    m.latestUsage["sl-s-codex"] = low
+    m.localEnabled = true
+    m.accounts.append(Account(id: "sl-ollama", provider: .ollama, name: "Gemma", model: "gemma"))
+    expect(workers() == ["sl-s-codex", "sl-ollama"], "a model on this Mac may change it too")
+    m.accounts.removeLast(); m.localEnabled = false
+
+    // A direct edit of the files cannot take the lock off.
+    let file = SpaceStore.folder(made.id).appendingPathComponent("manifest.json")
+    var raw = try! JSONSerialization.jsonObject(with: Data(contentsOf: file)) as! [String: Any]
+    raw["lock"] = nil; raw["name"] = "고친 이름"
+    try! JSONSerialization.data(withJSONObject: raw).write(to: file)
+    _ = store.syncLibrary()
+    expect(store.manifest(made.id)?.name == "고친 이름" && store.manifest(made.id)?.lock?.organization == school.organization, "an edit by hand keeps the lock")
+
+    // A Space from before the lock was saved: its chat's lock fills it in while the chat is here.
+    let olderChat = Conversation()   // newConversation keeps an empty open chat
+    chat.conversations.insert(olderChat, at: 0)
+    let older = olderChat.id
+    chat.lockEnterprise(older, organization: school)
+    let old = try! store.makeFromTemplate(.checklist, origin: older)
+    expect(store.manifest(old.id)?.lock == nil && chat.spaceWorkers(for: store.manifest(old.id)!).map(\.id) == ["sl-s-codex"],
+           "an older Space follows its chat's lock")
+    chat.fillSpaceLocks()
+    chat.conversations.removeAll { $0.id == older }
+    expect(store.manifest(old.id)?.lock?.organization == school.organization && chat.refineAccount(store.manifest(old.id)!)?.id == "sl-s-codex",
+           "the filled lock stays after the chat is deleted")
+
+    // An open Space: every account; a chat naming an Enterprise Space does not get its code unless it may.
+    let open = try! store.makeFromTemplate(.checklist, name: "열린 목록")
+    expect(chat.spaceWorkers(for: store.manifest(open.id)!).count == 3, "an open Space may be changed by every account")
+    store.update(made.id) { $0.name = "학교목록" }
+    let personal = m.accounts[0], schoolCodex = m.accounts[1]
+    let asked = "학교목록 Space 고쳐 줘"
+    let lockOf = { (s: SpaceManifest) in chat.spaceLock(s) }
+    expect(!Discussion.spaceRule(asked, allowed: { Enterprise.permits(personal, lock: lockOf($0)) }).contains("id \(made.id)")
+           && Discussion.spaceRule(asked, allowed: { Enterprise.permits(schoolCodex, lock: lockOf($0)) }).contains("id \(made.id)"),
+           "an Enterprise Space's code goes only to its organization")
+    for id in [made.id, old.id, open.id] { try? FileManager.default.removeItem(at: SpaceStore.folder(id)) }
+    store.reload()
+    print("PASS: an Enterprise Space is changed only by its organization")
+}

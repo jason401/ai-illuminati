@@ -46,6 +46,7 @@ run the full test (`zsh tools/tests/run_mode2.sh`). A new promise gets a row, a 
 | `codexHome` | Usage, Pictures, CloudModels | contract | pictures, cloud models |
 | `isSchool`: the setting wins, else the name | Solo, Meeting, Todo, Peer, Enterprise, Settings UI | contract | "school accounts", plain chat (Enterprise), Enterprise lock |
 | New account: private (0700) folder, Codex login in a file there, one Gemini entry | Settings `AppModel.add` | contract: new accounts | none |
+| `EnterpriseLock` (a stored value only; the rules stay in Enterprise.swift): here so `SpaceManifest` can keep it | Enterprise, Discussion, Solo, Todo, SpaceView, AISpaces | none | "an Enterprise Space is changed only by its organization", Enterprise lock |
 
 ### AILocalization (`app/modules/AILocalization/Language.swift`)
 Only `L()` and `AppLanguage`: every part uses them, so they depend on nothing (no shared "Core" module).
@@ -88,6 +89,8 @@ Public names and why (everything else stays internal: `SpaceCheck`, `SpaceRules`
   for the contract test's old-date check; `colors`; `shown(at:)`; `init(from:)` because Decodable asks for it),
   `SpaceSchedule` (`days`, `from`, `to`, `parse`), `SpaceDraftNote` and `SpaceSyncNote` (fields and init: `ChatTurn`
   saves them), `SpaceVersion` (history menu), `SpaceRefineEntry` (refine log).
+- `SpaceManifest.lock` (an `EnterpriseLock` from `AIAccounts`, 2026-11-11): the Enterprise lock of the chat that made
+  the Space, kept after that chat is deleted; SpaceView picks only accounts it permits. An edit of the files keeps it.
 - Results the chat side handles: `SpaceBuild` (name, icon, color, html, migrate), `SpaceBad` (`reason`, init: Solo
   makes one for a missing picture), `SpaceLimits` (SpaceView cuts names; one declaration, so all its numbers).
 - `SpaceStore`: `shared`, `spaces`, `stateVersion` (SwiftUI watches them), `root`/`folder`/`draftFolder`

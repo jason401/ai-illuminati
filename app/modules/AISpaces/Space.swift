@@ -85,6 +85,7 @@ public struct SpaceManifest: Codable, Equatable, Identifiable {
     public var originChat: String?
     var template: String?
     public var worker: String?       // the account that changes it (nil: picked automatically)
+    public var lock: EnterpriseLock? // made in an Enterprise chat: only that organization's accounts change it (kept after the chat goes)
     public var createdAt = Date()
     var updatedAt = Date()
 
@@ -112,6 +113,7 @@ public struct SpaceManifest: Codable, Equatable, Identifiable {
         originChat = try? c.decodeIfPresent(String.self, forKey: .originChat)
         template = try? c.decodeIfPresent(String.self, forKey: .template)
         worker = try? c.decodeIfPresent(String.self, forKey: .worker)
+        lock = try? c.decodeIfPresent(EnterpriseLock.self, forKey: .lock)
         createdAt = (try? c.decodeIfPresent(Date.self, forKey: .createdAt)) ?? Date()
         updatedAt = (try? c.decodeIfPresent(Date.self, forKey: .updatedAt)) ?? createdAt
     }
@@ -669,11 +671,12 @@ public final class SpaceStore: ObservableObject {
     // A new Space from code and first data. `id` given: made once (migration), nil when it is already there.
     @discardableResult
     // `assets`: a folder whose picture files the page names (a draft).
-    static func make(name: String, icon: String, color: String, html: String, state: Data, origin: String?, template: String? = nil,
+    static func make(name: String, icon: String, color: String, html: String, state: Data, origin: String?, lock: EnterpriseLock? = nil, template: String? = nil,
                      schedule: SpaceSchedule? = nil, id: String = UUID().uuidString, order: Int = 0, assets: URL? = nil) throws -> SpaceManifest {
         let folder = folder(id)
         var manifest = SpaceManifest(id: id, name: String(name.prefix(SpaceLimits.name)))
         manifest.icon = icon; manifest.color = color; manifest.originChat = origin; manifest.template = template
+        manifest.lock = lock
         manifest.schedule = schedule; manifest.order = order
         // Written into a hidden folder and moved whole, so a half-made Space never shows.
         let temp = root.appendingPathComponent(".new-" + id)
@@ -690,12 +693,13 @@ public final class SpaceStore: ObservableObject {
     func nextOrder() -> Int { (spaces.map(\.order).max() ?? -1) + 1 }
 
     // A draft (its code and the data played with in the preview) becomes a Space in the sidebar.
-    public func adopt(draft: String, origin: UUID?) throws -> SpaceManifest {
+    // `lock`: the Enterprise lock of the chat it came from (nil: an open chat).
+    public func adopt(draft: String, origin: UUID?, lock: EnterpriseLock? = nil) throws -> SpaceManifest {
         dispatchPrecondition(condition: .onQueue(.main))
         let folder = Self.draftFolder(draft)
         guard Self.validID(draft), let found = Self.manifest(at: folder) else { throw SpaceBad(reason: L("미리보기를 찾지 못했어요", "The preview is gone")) }
         let made = try Self.make(name: found.name, icon: found.icon, color: found.color, html: Self.html(folder), state: Self.state(folder),
-                                 origin: origin?.uuidString, schedule: found.schedule, order: nextOrder(), assets: folder)
+                                 origin: origin?.uuidString, lock: lock, schedule: found.schedule, order: nextOrder(), assets: folder)
         try? FileManager.default.removeItem(at: folder)
         reload()
         return made
@@ -716,9 +720,10 @@ public final class SpaceStore: ObservableObject {
         try? FileManager.default.removeItem(at: draftFolder(draft))
     }
 
-    public func makeFromTemplate(_ template: SpaceTemplate, state: Data? = nil, name: String? = nil, origin: UUID? = nil) throws -> SpaceManifest {
+    public func makeFromTemplate(_ template: SpaceTemplate, state: Data? = nil, name: String? = nil, origin: UUID? = nil,
+                                 lock: EnterpriseLock? = nil) throws -> SpaceManifest {
         let made = try Self.make(name: name ?? template.name, icon: template.icon, color: template.color, html: template.html,
-                                 state: state ?? template.firstState(), origin: origin?.uuidString, template: template.rawValue, order: nextOrder())
+                                 state: state ?? template.firstState(), origin: origin?.uuidString, lock: lock, template: template.rawValue, order: nextOrder())
         reload()
         return made
     }

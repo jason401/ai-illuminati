@@ -8,11 +8,7 @@ import AILocalization
 // and models on this Mac, are sent its content; AI chat search (ChatTools.swift) never shows it. Every other chat,
 // older ones included, is open to every account. The account's name without its AI's name stands for its
 // organization, so "Claude (학교)" and "ChatGPT (학교)" are one organization.
-struct EnterpriseLock: Codable, Equatable {
-    var organization: String   // Enterprise.organization(account name)
-    var name: String           // the name as shown
-    var lockedAt: Date
-}
+// The lock itself (EnterpriseLock) is in AIAccounts, so a Space can keep it.
 
 extension Conversation {
     var isEnterprise: Bool { enterpriseLock != nil }

@@ -61,7 +61,7 @@ extension Discussion {
     func addDraftSpace(_ turn: ChatTurn, in room: UUID) {
         guard let draft = turn.spaceDraft?.draft else { return }
         do {
-            let made = try SpaceStore.shared.adopt(draft: draft, origin: room)
+            let made = try SpaceStore.shared.adopt(draft: draft, origin: room, lock: lock(of: room))
             changeSpaceNote(turn.id, in: room) { $0.space = made.id; $0.draft = nil }
             if folds.isFolded("spaces") { folds.toggle("spaces") }
         } catch {
@@ -122,7 +122,8 @@ extension Discussion {
         state["goal"] = String(turn.question.prefix(200))
         do {
             let data = try JSONSerialization.data(withJSONObject: state, options: [.sortedKeys])
-            let made = try SpaceStore.shared.makeFromTemplate(.decisions, state: data, name: String((chat?.title ?? title).prefix(SpaceLimits.name)), origin: room)
+            let made = try SpaceStore.shared.makeFromTemplate(.decisions, state: data, name: String((chat?.title ?? title).prefix(SpaceLimits.name)),
+                                                             origin: room, lock: lock(of: room))
             openSpace(made.id)
         } catch {
             attachmentError = L("Space를 만들지 못했어요: ", "Could not make the Space: ") + error.localizedDescription
@@ -161,17 +162,7 @@ extension Discussion {
         }, notify: { text in SpaceRefiner.shared.notes[id] = text })
     }
 
-    // Who may be picked to change a Space (beside its change box). A model on this Mac only while Ollama is on.
-    var spaceWorkers: [Account] { model.accounts.filter { $0.provider != .ollama || model.localEnabled } }
-
-    // Who changes a Space: the account picked for it, else whoever answered last in the chat that made it, else the
-    // account with most usage left.
-    func refineAccount(_ manifest: SpaceManifest) -> Account? {
-        if let id = manifest.worker, let chosen = spaceWorkers.first(where: { $0.id == id }) { return chosen }
-        if let origin = manifest.originChat.flatMap(UUID.init(uuidString:)), conversations.contains(where: { $0.id == origin }),
-           let account = soloNext(room: origin), spaceWorkers.contains(where: { $0.id == account.id }) { return account }
-        return AutoPick.choose(model.accounts.filter { [.claude, .codex].contains($0.provider) }, usage: model.latestUsage, lock: nil, current: nil)
-    }
+    // spaceLock, spaceWorkers, refineAccount: Solo.swift (the tests reach them there).
 
     // A change asked in a Space's box: the AI sees the code and the data's shape (never its values) and sends a new
     // page; a refused one is sent back once with the reason. The result waits as a preview (migrate run first).
@@ -180,6 +171,8 @@ extension Discussion {
         let request = request.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !request.isEmpty, refiner.busy[id] == nil, let manifest = SpaceStore.shared.manifest(id) else { return }
         guard let account = refineAccount(manifest) else { refiner.notes[id] = L("답할 계정이 없어요", "No account can answer"); return }
+        // Checked again right before the Space's code is sent, as a chat checks before each request (Attachments.swift).
+        guard Enterprise.permits(account, lock: spaceLock(manifest)) else { refiner.notes[id] = Self.describe(Enterprise.blocked(account)); return }
         let folder = SpaceStore.folder(id)
         let html = SpacePictures.hide(SpaceStore.html(folder)), state = SpaceStore.state(folder), history = SpaceStore.refineLog(id)
         let draws = account.provider == .codex
@@ -439,7 +432,7 @@ struct SpaceMainView: View {
 
     // Who changes this Space: automatic, or one account the user picked (ChatGPT can also draw pictures).
     private func workerMenu(_ manifest: SpaceManifest) -> some View {
-        let workers = discussion.spaceWorkers
+        let workers = discussion.spaceWorkers(for: manifest)
         let picked = manifest.worker.flatMap { id in workers.first { $0.id == id } }
         let next = discussion.refineAccount(manifest)
         return Menu {

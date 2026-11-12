@@ -249,6 +249,7 @@ public enum SpaceLibrary {
         if let old {
             manifest.version = old.version; manifest.createdAt = old.createdAt; manifest.originChat = old.originChat
             manifest.template = old.template; manifest.order = old.order; manifest.worker = old.worker
+            manifest.lock = old.lock ?? manifest.lock   // a lock is never taken off by an edit (adding one only narrows)
         } else {
             manifest.version = 1; manifest.createdAt = Date(); manifest.originChat = nil; manifest.template = nil; manifest.order = order
         }

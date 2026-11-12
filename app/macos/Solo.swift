@@ -283,6 +283,9 @@ extension Discussion {
         var note: SpaceDraftNote
         if split.target != nil && target == nil {
             note = SpaceDraftNote(name: "Space", reason: L("고칠 Space를 찾지 못했어요", "The Space to change is gone"))
+        } else if let locked = source.flatMap(spaceLock), locked.organization != lock(of: room)?.organization {
+            note = SpaceDraftNote(name: source?.name ?? "Space", reason: L("Enterprise Space라 이 채팅에서는 고치거나 복사할 수 없어요",
+                                                                         "This is an Enterprise Space, so this chat cannot change or copy it"))
         } else {
             switch SpaceBuilder.parse(split.body, new: target == nil).flatMap({ build in
                 SpacePictures.requests(in: split.body ?? "").flatMap { found -> Result<String, SpaceBad> in
@@ -829,7 +832,8 @@ extension Discussion {
                                 space: spaceRule
                                     ? Self.spaceRule(lastQuestion(id), draws: !spaceDrawers(chat: id ?? currentID).isEmpty,
                                                      folder: [.claude, .codex].contains(account.provider) && project == nil
-                                                         && binding.roots.contains { $0.path == SpaceStore.root.path && $0.writable == true }) : "",
+                                                         && binding.roots.contains { $0.path == SpaceStore.root.path && $0.writable == true },
+                                                     allowed: { Enterprise.permits(account, lock: self.spaceLock($0)) }) : "",
                                 peer: peerInstruction(account, room: id),
                                 memory: memoryRule(account, chat: id))
     }
@@ -838,11 +842,12 @@ extension Discussion {
     // `draws`: a ChatGPT account can draw the page's pictures (SpacePictures.chatRule).
     // `folder`: the AI may write in the Spaces folder, so it edits the files there (SpaceLibrary.rule); a block is left
     // only for painted pictures a ChatGPT account draws.
-    static func spaceRule(_ question: String, draws: Bool = false, folder: Bool = false) -> String {
-        let named = SpaceStore.named(in: question)
+    // `allowed`: the Spaces this account may see (an Enterprise Space's code goes only to its organization).
+    static func spaceRule(_ question: String, draws: Bool = false, folder: Bool = false, allowed: (SpaceManifest) -> Bool = { _ in true }) -> String {
+        let named = SpaceStore.named(in: question).filter(allowed)
         guard Route.asksSpace(question) || !named.isEmpty else { return "" }
         if folder {
-            return SpaceLibrary.rule(root: SpaceStore.root.path, spaces: SpaceLibrary.all(), draws: draws)
+            return SpaceLibrary.rule(root: SpaceStore.root.path, spaces: SpaceLibrary.all().filter(allowed), draws: draws)
                 + (draws ? "\n" + SpaceLibrary.pictureBlockRule : "")
         }
         return SpaceBuilder.rule + (named.isEmpty ? "" : "\n" + SpaceBuilder.chatRule(named)) + "\n" + SpacePictures.chatRule(draws: draws)
@@ -999,5 +1004,43 @@ extension SpaceStore {
         result.reshaped.forEach(dataChanged)
         reload()
         return result.notes
+    }
+}
+
+// An Enterprise Space: who may change it (the Space window's menu and refineSpace in SpaceView.swift).
+extension Discussion {
+    // The Enterprise lock a Space keeps: its own (saved when it was made), else the lock of the chat that made it
+    // while that chat is still here (Spaces from before the lock was saved; fillSpaceLocks writes it down).
+    // Any thread (chat answers ask from the background).
+    func spaceLock(_ manifest: SpaceManifest) -> EnterpriseLock? {
+        if let lock = manifest.lock { return lock }
+        guard let origin = manifest.originChat.flatMap(UUID.init(uuidString:)) else { return nil }
+        let read = { ((self.host ?? self).conversations.first { $0.id == origin } ?? self.conversations.first { $0.id == origin })?.enterpriseLock }
+        return Thread.isMainThread ? read() : DispatchQueue.main.sync(execute: read)
+    }
+
+    // Spaces made before the lock was saved get their chat's lock, while that chat is still here (launch).
+    func fillSpaceLocks() {
+        for manifest in SpaceStore.shared.spaces where manifest.lock == nil {
+            guard let lock = spaceLock(manifest) else { continue }
+            SpaceStore.shared.update(manifest.id) { $0.lock = lock }
+        }
+    }
+
+    // Who may be picked to change a Space (beside its change box): accounts its lock lets in, a model on this Mac
+    // only while Ollama is on.
+    func spaceWorkers(for manifest: SpaceManifest) -> [Account] {
+        let lock = spaceLock(manifest)
+        return model.accounts.filter { ($0.provider != .ollama || model.localEnabled) && Enterprise.permits($0, lock: lock) }
+    }
+
+    // Who changes a Space: the account picked for it, else whoever answered last in the chat that made it, else the
+    // account with most usage left. Every way picks only among spaceWorkers.
+    func refineAccount(_ manifest: SpaceManifest) -> Account? {
+        let workers = spaceWorkers(for: manifest)
+        if let id = manifest.worker, let chosen = workers.first(where: { $0.id == id }) { return chosen }
+        if let origin = manifest.originChat.flatMap(UUID.init(uuidString:)), conversations.contains(where: { $0.id == origin }),
+           let account = soloNext(room: origin), workers.contains(where: { $0.id == account.id }) { return account }
+        return AutoPick.choose(workers.filter { [.claude, .codex].contains($0.provider) }, usage: model.latestUsage, lock: spaceLock(manifest), current: nil)
     }
 }

@@ -1,6 +1,15 @@
 import Foundation
 import CryptoKit
 
+// The lock of an Enterprise chat (Enterprise.swift has the rules). Here so a Space made in that chat can keep it
+// (AISpaces' SpaceManifest.lock) after the chat is gone.
+public struct EnterpriseLock: Codable, Equatable {
+    public var organization: String   // Enterprise.organization(account name)
+    public var name: String           // the name as shown
+    public var lockedAt: Date
+    public init(organization: String, name: String, lockedAt: Date) { self.organization = organization; self.name = name; self.lockedAt = lockedAt }
+}
+
 // One logged-in subscription. Each account has its own folder, so several Claude or ChatGPT
 // accounts can be logged in at the same time:
 //   Claude: CLAUDE_CONFIG_DIR=<dir>  (login kept in Keychain "Claude Code-credentials-<hash>")

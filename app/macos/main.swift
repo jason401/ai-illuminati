@@ -71,6 +71,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         SpaceStore.migrateLegacy()
         SpaceStore.pruneDrafts()
         SpaceStore.shared.reload()
+        discussion.fillSpaceLocks()   // Spaces from before their chat's Enterprise lock was saved with them
         SpaceRefiner.watchLibrary()   // the Spaces folder, as chats and editors left it (SpaceLibrary.sync)
         // TODO work (Todo.swift): running TODOs from before a quit are ready again, then the board is checked.
         let todos = TodoScheduler(discussion: discussion, store: .shared)

@@ -130,6 +130,12 @@ func testRunConditions() {
         try! captured.write(toFile: path, atomically: true, encoding: .utf8)
         print("wrote \(path)")
     }
+    // agy's web rule is the app's own step (it writes agy's real settings, so it is only looked at, never run here):
+    // plain Gemini chat gets it, linked folders and the other tools do not.
+    let plainGemini = Account(id: "rc-gemini", provider: .gemini, name: "Gemini")
+    expect(RunConditions.app(plainGemini).beforeStart != nil, "plain Gemini chat adds agy's web rule before it starts")
+    expect(RunConditions.app(Account(id: "rc-claude", provider: .claude, name: "Claude")).beforeStart == nil
+           && RunConditions.app(Account(id: "rc-codex", provider: .codex, name: "Codex")).beforeStart == nil, "only Gemini gets the web rule")
     // Each guard on its own, so a lost layer cannot hide behind another one.
     let blocks = captured.components(separatedBy: "== ").filter { !$0.isEmpty }
     func block(_ name: String) -> String { blocks.first { $0.hasPrefix(name + "\n") } ?? "" }

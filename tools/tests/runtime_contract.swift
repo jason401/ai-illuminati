@@ -75,6 +75,12 @@ func gone(_ name: String, within seconds: Double = 3) -> Bool {
 func clear() { for name in ["args", "stdin", "pid", "child", "stray", "cwd"] { try? fm.removeItem(at: fake.appendingPathComponent(name)) } }
 func failure(_ result: Result<String, Answerer.Failure>) -> Answerer.Failure? { if case .failure(let f) = result { return f }; return nil }
 
+// The caller's preparation runs once per start, before the tool; not at all for a stopped token.
+var prepared = 0
+var prepare = run("fail"); prepare.beforeStart = { prepared += 1 }
+_ = Answerer.ask(claude, prompt: "hi", run: prepare)
+expect(prepared == 1, "beforeStart runs once before the tool starts")
+
 // Errors: the tool's own message (its last 300 letters) on a failed exit; a tool that cannot start is "missing".
 clear()
 if case .failed(let why)? = failure(Answerer.ask(claude, prompt: "hi", run: run("fail"))) { expect(why.contains("boom from the tool"), "a failed tool's message is passed on") }
@@ -88,6 +94,9 @@ clear()
 let stopped = DebateCancellation(); stopped.cancel()
 if case .failed("Cancelled")? = failure(Answerer.ask(claude, prompt: "hi", cancellation: stopped, run: run("sleep"))) {} else { expect(false, "a stopped token gives Cancelled") }
 expect(!fm.fileExists(atPath: fake.appendingPathComponent("args").path), "a stopped token starts no tool")
+var stoppedPrepare = run("sleep"); stoppedPrepare.beforeStart = { prepared += 1 }
+_ = Answerer.ask(claude, prompt: "hi", cancellation: stopped, run: stoppedPrepare)
+expect(prepared == 1, "a stopped token runs no preparation")
 clear()
 let token = DebateCancellation()
 DispatchQueue.global().asyncAfter(deadline: .now() + 0.8) { token.cancel() }

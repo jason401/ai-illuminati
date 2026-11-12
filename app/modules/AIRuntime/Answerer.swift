@@ -11,14 +11,9 @@ public enum ToolHome {
 // Asks one AI one prompt through its own command line tool, logged in with the subscription
 // (no API keys). Answers only: every tool is started with file editing and commands turned off,
 // in an empty folder (~/.ai-illuminati/chat).
-// Gemini (agy) can open YouTube links: in one-shot mode it cannot ask for permission, so agy needs
-// an allow rule in ~/.gemini/antigravity-cli/settings.json. agy reads the page (title, channel,
-// description), it does not watch the video. Rules are only added, never removed; the file is
-// backed up once, and left alone if it cannot be read.
+// Gemini (agy) reads web pages only with an allow rule in its own settings; the app adds it (Workspace.swift:
+// `GeminiLinks.allowWeb`, through `RunConditions.beforeStart`). Here only what the AI is told.
 public enum GeminiLinks {
-    // agy cannot ask for permission in print mode, so reading web pages must be allowed in its settings.
-    // "read_url(*)" lets it open any page it finds with its web search (read only; commands stay blocked).
-    static let rules = ["read_url(*)", "read_url(youtube.com)", "read_url(www.youtube.com)", "read_url(m.youtube.com)", "read_url(youtu.be)"]
     public static let toolNote = """
     [도구 안내] 웹 검색(search_web)과 웹 페이지 읽기(read_url)를 쓸 수 있어요. 터미널 명령과 파일 수정은 \
     막혀 있으니 시도하지 마세요. 유튜브는 영상 페이지(제목, 채널, 설명란)만 읽을 수 있고 영상 자체는 \
@@ -27,31 +22,6 @@ public enum GeminiLinks {
 
     """
 
-    static func allowWeb() {
-        let path = ToolHome.path + "/.gemini/antigravity-cli/settings.json"
-        var settings: [String: Any] = [:]
-        if FileManager.default.fileExists(atPath: path) {
-            guard let data = FileManager.default.contents(atPath: path),
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
-            settings = json
-        }
-        var permissions = settings["permissions"] as? [String: Any] ?? [:]
-        var allow = permissions["allow"] as? [String] ?? []
-        let missing = rules.filter { !allow.contains($0) }
-        guard !missing.isEmpty else { return }
-        let backup = path + ".backup-before-ai-illuminati"
-        if FileManager.default.fileExists(atPath: path), !FileManager.default.fileExists(atPath: backup) {
-            try? FileManager.default.copyItem(atPath: path, toPath: backup)
-        }
-        allow += missing
-        permissions["allow"] = allow
-        settings["permissions"] = permissions
-        if let data = try? JSONSerialization.data(withJSONObject: settings, options: [.prettyPrinted, .sortedKeys]) {
-            try? FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
-            try? data.write(to: URL(fileURLWithPath: path), options: .atomic)
-            NSLog("AI Illuminati: added to agy settings: \(missing.joined(separator: ", "))")
-        }
-    }
 }
 
 // How one call is started, decided by the caller (chat, project work) and only applied here: what goes before the
@@ -63,6 +33,7 @@ public struct RunConditions {
     public var environment: ([String: String]) -> [String: String] = { $0 }   // the account's environment → the tool's
     public var processGroup = false                // the wrapper made a group: stop all of it when the call ends
     public var folders: Folders? = nil
+    public var beforeStart: (() -> Void)? = nil   // the caller's own preparation (agy's web rule), just before the arguments
     public struct Folders {
         var directory: URL                  // the room's folder: runs without a session and read results go below it
         var arguments: ([String], URL, Bool) throws -> [String]   // (the tool's arguments, run folder, web) → with the folders
@@ -210,6 +181,7 @@ public enum Answerer {
                 pictureNote = "[Attached images] Open and look at these image files, in order (Image 1, Image 2, …): " + paths.joined(separator: ", ") + "\n\n"
             } catch { return .failure(.failed("Could not prepare images for Gemini.")) }
         }
+        run.beforeStart?()
         switch account.provider {
         case .claude:
             binary = ClaudeUsage.binary
@@ -236,7 +208,6 @@ public enum Answerer {
             }
         case .gemini:
             binary = ToolHome.agyInstalled ? ToolHome.path + "/.local/bin/agy" : nil
-            if run.folders == nil { GeminiLinks.allowWeb() }
             arguments = ["-p", pictureNote + (run.folders == nil ? GeminiLinks.toolNote : "") + prompt, "--sandbox", "--disable-slash-commands",
                          "--print-timeout", "\(Int(timeout) - 10)s"]
             if let geminiPictures { arguments += ["--add-dir", geminiPictures.path] }

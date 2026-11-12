@@ -143,7 +143,7 @@ Public names and why (everything else stays internal: `Answerer.chatDir`/`askOnc
 `StreamParser`, `NativeSessions.split`/`load`/`save`, `CloudModels.apply`/`noteSeen`, `ClaudeUsage.binary`, the HTTP
 streams `LocalStream`/`PullStream`, `LocalModel.ask` and the Ollama requests):
 - `Answerer.ask`, `Answerer.Failure`, `AnswerProgress`: the one way in, its result and its progress (every caller).
-- `RunConditions` (all five fields, `init()`) and `RunConditions.Folders` (an explicit `init`): `Workspace.swift` builds
+- `RunConditions` (all six fields, `init()`) and `RunConditions.Folders` (an explicit `init`): `Workspace.swift` builds
   them; the fields are what the caller decides.
 - `Answerer.toolForTests`: the only public test hook, so `runtime_contract.swift` can run a fake CLI from outside; the
   app never sets it (run_mode2 stage 1 checks that no app file names it).
@@ -154,7 +154,9 @@ streams `LocalStream`/`PullStream`, `LocalModel.ask` and the Ollama requests):
   (`init`, `ask`, `directory`, `eligible`, `pinnedAccount`, `reset`, `purgeRoom`).
 - `ReplyHeadline.split`: the chat's headline and the session's own block must cut a reply the same way.
 - `ToolHome` (`path`, `agyInstalled`): where the tools live (the user's home, not the test home); `Login` and Settings.
-- `GeminiLinks` and `toolNote`: `Workspace.swift` adds the workspace note to the same type.
+- `GeminiLinks` and `toolNote` (what agy is told in plain chat): `Workspace.swift` adds the workspace note and agy's web
+  rule (`allowWeb`, it writes agy's settings) to the same type; `RunConditions.beforeStart` is how the app runs that
+  rule just before the tool starts, so the runtime changes no permission itself (review, 2026-11-11).
 - `CloudModels` (`model`, `set`, `valid`, `Choice`, `claudeChoices`, `codexChoices`, `loadGemini`, `seenKey`, `seenTitle`):
   the Settings model menus.
 - `LocalModel` (63 names: variants, the catalog and its entries, fit by memory, Ollama's library, installed/loaded

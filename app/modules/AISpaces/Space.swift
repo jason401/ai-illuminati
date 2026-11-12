@@ -8,7 +8,8 @@ import AILocalization
 // not to a chat: spaces/<id>/ holds manifest.json, app.html (the code, written only after the checks here),
 // state.json (the user's data, written only through the bridge, at most 10 MB), versions/<n>/ (the code and the
 // data before each change: Undo) and refine.json (the talk that changed it). An AI changes the code only, never the
-// data; when a change renames data keys it sends migrate(oldState), run in the web view and previewed first.
+// data; when a change renames data keys it sends migrate(oldState), run in the web view and previewed first. A change or
+// Undo in progress leaves .apply-pending until its manifest.json is written (finishPending).
 
 // When a Space shows in the sidebar: days 1 (Monday) … 7 (Sunday), from–to "HH:mm" (to before from: overnight).
 // Outside it, the Space folds into "Later".
@@ -560,6 +561,7 @@ public final class SpaceStore: ObservableObject {
 
     public func reload() {
         let names = (try? FileManager.default.contentsOfDirectory(atPath: Self.root.path)) ?? []
+        for name in names where Self.validID(name) { finishPending(name) }
         spaces = names.filter { !$0.hasPrefix(".") }.compactMap { Self.manifest(at: Self.folder($0)) }
             .sorted { ($0.order, $0.createdAt) < ($1.order, $1.createdAt) }
     }
@@ -738,45 +740,116 @@ public final class SpaceStore: ObservableObject {
         }.sorted { $0.version < $1.version }
     }
 
+    // A change under way: written once the version before is saved, removed after manifest.json (the commit). Left
+    // behind (the app quit or a write failed), the next load finishes it one way, so the page never meets the other
+    // version's data: a change goes back to versions/<from>, an Undo goes on to versions/<to> (its page is only there).
+    struct Pending: Codable { var undo: Bool; var from: Int; var to: Int; var state: Bool }
+    static let pendingName = ".apply-pending"
+    // Tests: called after each write of a change; throwing `Stopped` acts as the app quitting there.
+    static var interrupt: ((String) throws -> Void)?
+    struct Stopped: Error {}
+    static func step(_ name: String) throws { try interrupt?(name) }
+
+    // A change left half done finished as above. true: the files changed (open pages load again).
+    @discardableResult
+    static func finishPending(_ id: String) -> Bool {
+        let folder = folder(id), file = folder.appendingPathComponent(pendingName)
+        guard let data = try? Data(contentsOf: file) else { return false }
+        guard let pending = try? JSONDecoder().decode(Pending.self, from: data), let found = manifest(at: folder) else {
+            try? FileManager.default.removeItem(at: file); return false
+        }
+        let saved = folder.appendingPathComponent("versions").appendingPathComponent(String(pending.undo ? pending.to : pending.from))
+        do {
+            if found.version == pending.from, FileManager.default.fileExists(atPath: saved.appendingPathComponent("app.html").path) {
+                if pending.undo { try undoFiles(folder, saved: saved, pending: pending) }
+                else {
+                    try write(Data(html(saved).utf8), to: folder.appendingPathComponent("app.html"))
+                    if pending.state { try write(state(saved), to: folder.appendingPathComponent("state.json")) }
+                    try FileManager.default.removeItem(at: file)
+                }
+            } else {
+                // Committed (manifest.json written): only the clean-up was left.
+                if pending.undo, found.version == pending.to { try? FileManager.default.removeItem(at: saved) }
+                try FileManager.default.removeItem(at: file)
+            }
+        } catch { return false }   // the marker stays: tried again on the next load
+        SpaceLibrary.settle(id)
+        return true
+    }
+
+    func finishPending(_ id: String) { if Self.finishPending(id) { stateVersion[id, default: 0] += 1 } }
+
     // New code (and, after a migrate, new data): the code and data before go to versions/<version> first.
     public func apply(_ id: String, html: String, state: Data? = nil, note: String, name: String? = nil, icon: String? = nil, color: String? = nil) throws {
         dispatchPrecondition(condition: .onQueue(.main))
         if let problem = SpaceCheck.problem(html) ?? SpaceAssets.overLimit(html, folder: Self.folder(id)) { throw SpaceBad(reason: problem) }
         if let state { guard state.count <= SpaceLimits.state, (try? JSONSerialization.jsonObject(with: state)) is [String: Any] else { throw SpaceBad(reason: L("새 데이터가 JSON 객체가 아니거나 10MB를 넘어요", "The new data is not a JSON object or is over 10 MB")) } }
+        finishPending(id)
         let folder = Self.folder(id)
         guard var manifest = Self.manifest(at: folder) else { throw SpaceBad(reason: L("Space를 찾지 못했어요", "Space not found")) }
         let saved = folder.appendingPathComponent("versions").appendingPathComponent(String(manifest.version))
         try? FileManager.default.removeItem(at: saved)
         try Self.write(Data(Self.html(folder).utf8), to: saved.appendingPathComponent("app.html"))
         try Self.write(Self.state(folder), to: saved.appendingPathComponent("state.json"))
-        try Self.write(Self.encode(SpaceVersion(version: manifest.version, at: Date(), note: note, migrated: state != nil)), to: saved.appendingPathComponent("info.json"))
         try Self.write(Self.encode(manifest), to: saved.appendingPathComponent("manifest.json"))   // its name, icon and color
-        try Self.write(Data(SpaceAssets.extract(html, into: folder).utf8), to: folder.appendingPathComponent("app.html"))
-        if let state { try Self.write(state, to: folder.appendingPathComponent("state.json")); stateVersion[id, default: 0] += 1 }
-        manifest.version += 1; manifest.updatedAt = Date()
-        if let name, !name.isEmpty { manifest.name = String(name.prefix(SpaceLimits.name)) }
-        if let icon { manifest.icon = icon }
-        if let color { manifest.color = color }
-        try Self.write(Self.encode(manifest), to: folder.appendingPathComponent("manifest.json"))
+        try Self.write(Self.encode(SpaceVersion(version: manifest.version, at: Date(), note: note, migrated: state != nil)), to: saved.appendingPathComponent("info.json"))
+        let pending = folder.appendingPathComponent(Self.pendingName)
+        try Self.write(Self.encode(Pending(undo: false, from: manifest.version, to: manifest.version + 1, state: state != nil)), to: pending)
+        do {
+            try Self.step("pending")
+            try Self.write(Data(SpaceAssets.extract(html, into: folder).utf8), to: folder.appendingPathComponent("app.html"))
+            try Self.step("app.html")
+            if let state { try Self.write(state, to: folder.appendingPathComponent("state.json")); try Self.step("state.json") }
+            manifest.version += 1; manifest.updatedAt = Date()
+            if let name, !name.isEmpty { manifest.name = String(name.prefix(SpaceLimits.name)) }
+            if let icon { manifest.icon = icon }
+            if let color { manifest.color = color }
+            try Self.write(Self.encode(manifest), to: folder.appendingPathComponent("manifest.json"))
+            try Self.step("manifest.json")
+            try FileManager.default.removeItem(at: pending)
+        } catch {
+            if !(error is Stopped) { finishPending(id); reload() }
+            throw error
+        }
+        if state != nil { stateVersion[id, default: 0] += 1 }
         Self.trimVersions(id)
         SpaceLibrary.settle(id)
         reload()
+    }
+
+    // Undo's writes: the page (and data) from `saved`, then manifest.json, then `saved` and the marker go.
+    static func undoFiles(_ folder: URL, saved: URL, pending: Pending) throws {
+        guard var current = manifest(at: folder) else { throw SpaceBad(reason: L("Space를 찾지 못했어요", "Space not found")) }
+        try write(Data(SpaceAssets.extract(html(saved), into: folder).utf8), to: folder.appendingPathComponent("app.html"))
+        try step("app.html")
+        if pending.state { try write(state(saved), to: folder.appendingPathComponent("state.json")); try step("state.json") }
+        if let before = manifest(at: saved) { current.name = before.name; current.icon = before.icon; current.color = before.color }
+        current.version = pending.to; current.updatedAt = Date()
+        try write(encode(current), to: folder.appendingPathComponent("manifest.json"))
+        try step("manifest.json")
+        try? FileManager.default.removeItem(at: saved)
+        try FileManager.default.removeItem(at: folder.appendingPathComponent(pendingName))
     }
 
     // Back to the code (and name, icon, color) before the last change; its data too when that change migrated the data.
     @discardableResult
     public func undo(_ id: String) throws -> Bool {
         dispatchPrecondition(condition: .onQueue(.main))
+        finishPending(id)
         guard let last = Self.versions(id).last else { return false }
         let folder = Self.folder(id)
         let saved = folder.appendingPathComponent("versions").appendingPathComponent(String(last.version))
-        guard var manifest = Self.manifest(at: folder) else { return false }
-        try Self.write(Data(SpaceAssets.extract(Self.html(saved), into: folder).utf8), to: folder.appendingPathComponent("app.html"))
-        if last.migrated { try Self.write(Self.state(saved), to: folder.appendingPathComponent("state.json")); stateVersion[id, default: 0] += 1 }
-        if let before = Self.manifest(at: saved) { manifest.name = before.name; manifest.icon = before.icon; manifest.color = before.color }
-        manifest.version = last.version; manifest.updatedAt = Date()
-        try Self.write(Self.encode(manifest), to: folder.appendingPathComponent("manifest.json"))
-        try? FileManager.default.removeItem(at: saved)
+        guard let manifest = Self.manifest(at: folder) else { return false }
+        let pending = Pending(undo: true, from: manifest.version, to: last.version, state: last.migrated)
+        try Self.write(Self.encode(pending), to: folder.appendingPathComponent(Self.pendingName))
+        do {
+            try Self.step("pending")
+            try Self.undoFiles(folder, saved: saved, pending: pending)
+        } catch {
+            if !(error is Stopped) { finishPending(id); reload() }
+            throw error
+        }
+        if last.migrated { stateVersion[id, default: 0] += 1 }
         SpaceLibrary.settle(id)
         reload()
         return true

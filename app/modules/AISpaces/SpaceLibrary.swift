@@ -220,6 +220,7 @@ public enum SpaceLibrary {
                 guard (try? fm.moveItem(at: root.appendingPathComponent(name), to: SpaceStore.folder(id))) != nil else { continue }
                 title = name
             }
+            if SpaceStore.finishPending(id) { reshaped.append(id) }   // a change cut short is not an edit from a chat
             if let note = syncOne(id, title: title, order: &order, shrink: shrink, reshaped: &reshaped) { notes.append(note) }
         }
         // Spaces gone from the folder (an AI moved one to the Trash); the app's own Delete forgets them first.

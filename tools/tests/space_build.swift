@@ -200,6 +200,43 @@ func testSpace() {
     expect(((try? JSONSerialization.jsonObject(with: SpaceStore.state(folder)) as? [String: Any])?["tasks"] as? [Int]) == [1, 2] && store.manifest(made.id)?.color == "red",
            "Undo of that restore brings the newer data back")
 
+    // Cut short after any write (the app quits there, or the write fails): the next load shows one version whole,
+    // never a new page on the data before. A change goes back; an Undo goes on.
+    let pending = folder.appendingPathComponent(SpaceStore.pendingName)
+    func keys() -> [String] { ((try? JSONSerialization.jsonObject(with: SpaceStore.state(folder)) as? [String: Any]) ?? [:]).keys.sorted() }
+    try! store.apply(made.id, html: "<p>A</p>", state: Data(#"{"a":1}"#.utf8), note: "A")
+    let versionA = store.manifest(made.id)!.version
+    func isA() -> Bool { SpaceStore.html(folder) == "<p>A</p>" && keys() == ["a"] && store.manifest(made.id)?.version == versionA }
+    func isB() -> Bool { SpaceStore.html(folder) == "<p>B</p>" && keys() == ["b"] && store.manifest(made.id)?.version == versionA + 1 }
+    for point in ["pending", "app.html", "state.json", "manifest.json"] {
+        for quits in [true, false] {
+            let label = "\(point) \(quits ? "quit" : "failed")"
+            SpaceStore.interrupt = { if $0 == point { throw quits ? SpaceStore.Stopped() as Error : SpaceBad(reason: "disk full") } }
+            expect((try? store.apply(made.id, html: "<p>B</p>", state: Data(#"{"b":2}"#.utf8), note: "B")) == nil, "apply stops at \(label)")
+            SpaceStore.interrupt = nil
+            store.reload()
+            expect((isA() || isB()) && !FileManager.default.fileExists(atPath: pending.path), "apply cut short at \(label): one version whole")
+            expect(point == "manifest.json" ? isB() : isA(), "apply cut short at \(label): back unless manifest.json was written")
+            if isB() { try! store.undo(made.id) }
+
+            try! store.apply(made.id, html: "<p>B</p>", state: Data(#"{"b":2}"#.utf8), note: "B")
+            SpaceStore.interrupt = { if $0 == point { throw quits ? SpaceStore.Stopped() as Error : SpaceBad(reason: "disk full") } }
+            expect((try? store.undo(made.id)) == nil, "undo stops at \(label)")
+            SpaceStore.interrupt = nil
+            store.reload()
+            expect(isA() && !FileManager.default.fileExists(atPath: pending.path) && SpaceStore.versions(made.id).last?.version != versionA,
+                   "undo cut short at \(label): finished on the next load")
+        }
+    }
+    // Restore goes through apply: cut short, it goes back too.
+    try! store.apply(made.id, html: "<p>B</p>", state: Data(#"{"b":2}"#.utf8), note: "B")
+    let stateBefore = SpaceStore.state(folder)
+    SpaceStore.interrupt = { if $0 == "state.json" { throw SpaceStore.Stopped() } }
+    expect((try? store.restore(made.id, to: versionA)) == nil, "restore stops")
+    SpaceStore.interrupt = nil
+    store.reload()
+    expect(isB() && SpaceStore.state(folder) == stateBefore && !FileManager.default.fileExists(atPath: pending.path), "restore cut short: the version before, whole")
+
     // Refine log, bounded.
     for n in 0..<(SpaceLimits.refine + 5) { SpaceStore.addRefine(made.id, SpaceRefineEntry(role: "user", text: "\(n)")) }
     expect(SpaceStore.refineLog(made.id).count == SpaceLimits.refine && SpaceStore.refineLog(made.id).last?.text == "\(SpaceLimits.refine + 4)", "the change talk keeps its newest entries")

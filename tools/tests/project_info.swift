@@ -183,6 +183,10 @@ func testGitBranches() {
     let mainLine = lines.first { $0.branch == "main" }!
     expect(mainLine.place == .both && mainLine.current && mainLine.sync == GitCounts(ahead: 1, behind: 0) && mainLine.version == "v0.1.0+4"
            && GitBranches.sync(mainLine) != nil, "main merged from local and origin: \(mainLine)")
+    var behind = report                                             // a local stable behind origin: the line shows origin's
+    behind.rows.append(GitBranchRow(ref: "refs/heads/stable", branch: "stable", remote: false, date: .distantPast, version: "v0.0.1"))
+    let stableLine = GitBranches.lines(behind).first { $0.branch == "stable" }!
+    expect(stableLine.place == .both && stableLine.version == "v0.1.0+1" && stableLine.date != .distantPast, "release line from origin: \(stableLine)")
     expect(lines.first!.place == .originOnly && lines.first { $0.branch == "feature/x" }!.place == .localOnly, "where each lives")
     expect(GitBranches.main(lines).map(\.branch) == ["stable", "main"] && GitBranches.flow(report) != nil, "main lines and flow")
     let side = GitBranches.groups(lines + ["worktree-agent-a1", "worktree-agent-b2", "trial/z", "dev"].map {

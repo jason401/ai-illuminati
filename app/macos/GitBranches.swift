@@ -179,23 +179,21 @@ struct GitBranchGroup: Equatable, Identifiable {
 }
 
 extension GitBranches {
+    // Version and date come from one ref: origin for the release branch (what installed apps get), else the local one.
     static func lines(_ report: GitBranchReport) -> [GitBranchLine] {
-        var order: [String] = [], byName: [String: GitBranchLine] = [:]
+        var order: [String] = [], local: [String: GitBranchRow] = [:], remote: [String: GitBranchRow] = [:]
         for row in report.rows {
-            if var line = byName[row.branch] {
-                line.place = .both
-                if line.date == nil || (row.date ?? .distantPast) > line.date! { line.date = row.date }
-                line.version = line.version ?? row.version
-                if !row.remote { line.sync = row.origin; line.version = row.version ?? line.version }
-                line.current = line.current || row.current; line.worktree = line.worktree ?? row.worktree
-                byName[row.branch] = line
-            } else {
-                order.append(row.branch)
-                byName[row.branch] = GitBranchLine(branch: row.branch, role: row.role, place: row.remote ? .originOnly : row.onOrigin ? .both : .localOnly,
-                                                   sync: row.origin, version: row.version, date: row.date, current: row.current, worktree: row.worktree)
-            }
+            if local[row.branch] == nil && remote[row.branch] == nil { order.append(row.branch) }
+            if row.remote { remote[row.branch] = row } else { local[row.branch] = row }
         }
-        return order.compactMap { byName[$0] }
+        return order.map { branch in
+            let l = local[branch], r = remote[branch]
+            let source = (GitBranches.role(branch) == .deploy ? r ?? l : l ?? r)!
+            return GitBranchLine(branch: branch, role: source.role,
+                                 place: l == nil ? .originOnly : r != nil || l!.onOrigin ? .both : .localOnly,
+                                 sync: l?.origin, version: source.version, date: source.date,
+                                 current: l?.current == true || r?.current == true, worktree: l?.worktree ?? r?.worktree)
+        }
     }
     // The branches shown on their own line: stable, main and the checked-out one.
     static func main(_ lines: [GitBranchLine]) -> [GitBranchLine] { lines.filter { $0.role == .deploy || $0.role == .beta || $0.current } }

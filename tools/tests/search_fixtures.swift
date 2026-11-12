@@ -1,6 +1,7 @@
 import Foundation
 import AIAccounts
 import AIWorkspace
+import AIChat
 
 // Chats for the search tests and the sidebar preview.
 func searchFixtures() -> [Conversation] {

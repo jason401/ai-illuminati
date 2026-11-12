@@ -5,6 +5,7 @@ import AILocalization
 @testable import AIRuntime
 @testable import AIWorkspace
 @testable import AIProjects
+import AIChat
 
 func testProjectWork() {
     let base = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("project-fixture-" + UUID().uuidString)

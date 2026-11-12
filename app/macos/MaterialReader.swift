@@ -3,13 +3,7 @@ import PDFKit
 import ImageIO
 import UniformTypeIdentifiers
 import AIRuntime
-
-struct MaterialUnit: Codable, Identifiable {
-    var id: String
-    var locator: String
-    var text: String
-    var images: [String] = []
-}
+import AIChat
 
 private final class OfficeXML: NSObject, XMLParserDelegate {
     var text = "", capture = false

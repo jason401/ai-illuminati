@@ -2,6 +2,7 @@ import Foundation
 import AIAccounts
 import AIRuntime
 import AIWorkspace
+import AIChat
 
 // The app connects the chat store to what else keeps a chat's data or hears of its changes (C0: the chat side names
 // none of them). Called once, before the first chat loads: main.swift and the tests (mode2.swift).

@@ -3,6 +3,7 @@ import CryptoKit
 import IOKit
 import AIAccounts
 import AILocalization
+import AIChat
 
 // Chats from your other Macs, read only, through a folder both Macs see (iCloud Drive by default):
 //   <folder>/devices/<deviceID>/device.json         this Mac's name, app version, last write
@@ -12,55 +13,12 @@ import AILocalization
 // from the copy (Discussion.continueFromDevice): a new session that starts from the copied turns and state.
 // Copies leave out this Mac's paths (folders, backups, results, sessions) and pictures.
 
-// Where a chat continued on this Mac came from.
-struct SyncOrigin: Codable, Equatable {
-    var device: String        // the other Mac's device ID
-    var deviceName: String
-    var chat: UUID            // the chat's ID on that Mac
-    var lastTurn: UUID?       // its newest turn when it was copied
-    var contentAt: Date       // when that chat last changed
-    var importedAt: Date
-}
-
-// One chat as another Mac sees it. Unknown newer versions are listed as unreadable, never guessed at.
-struct SyncSnapshot: Codable, Equatable {
-    static let version = 1
-    var schemaVersion = SyncSnapshot.version
-    var id: UUID
-    var title: String
-    var createdAt: Date
-    var updatedAt: Date
-    var school: Bool
-    var mode: Int
-    var summary: String
-    var state: String?        // the chat state (.illuminati/state.md), the context a new session starts from
-    var stateTurn: UUID?      // the newest turn that state covers; later turns go word for word
-    var turns: [ChatTurn]
-    var pictures: Int         // pictures left out of the copy
-    var origin: SyncOrigin?   // set when this chat was itself continued from another Mac
-    var enterpriseLock: EnterpriseLock?   // an Enterprise chat (`school` is true then too, for older apps)
-}
-
 struct SyncDeviceInfo: Codable {
     var schemaVersion = SyncSnapshot.version
     var id: String
     var name: String
     var app: String
     var writtenAt: Date
-}
-
-// A chat in another Mac's folder, listed without reading all of it.
-struct RemoteChat: Identifiable, Equatable {
-    enum Status: Equatable { case ready, downloading, unreadable, newerVersion }
-    var device: String
-    var deviceName: String
-    var chat: UUID
-    var title: String
-    var updatedAt: Date?
-    var school: Bool
-    var status: Status
-    var file: URL
-    var id: String { device + "/" + chat.uuidString }
 }
 
 struct RemoteDevice: Identifiable, Equatable {

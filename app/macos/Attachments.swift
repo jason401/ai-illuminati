@@ -5,45 +5,7 @@ import AIAccounts
 import AILocalization
 import AIRuntime
 import AIWorkspace
-
-struct ChatImage: Identifiable, Codable, Equatable {
-    var id = UUID()
-    var conversationID: UUID
-    var name: String
-    var url: URL {
-        URL(fileURLWithPath: ChatStore.dir).appendingPathComponent(conversationID.uuidString + ".assets")
-            .appendingPathComponent(id.uuidString + ".png")
-    }
-}
-
-enum ImageStore {
-    static func importImage(_ data: Data, name: String, conversationID: UUID, id: UUID = UUID(), maxEdge: Int = 1600) throws -> ChatImage {
-        guard data.count <= 25 * 1024 * 1024,
-              let source = CGImageSourceCreateWithData(data as CFData, nil),
-              let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
-                kCGImageSourceCreateThumbnailFromImageAlways: true,
-                kCGImageSourceCreateThumbnailWithTransform: true,
-                kCGImageSourceThumbnailMaxPixelSize: maxEdge
-              ] as CFDictionary) else { throw Failure.invalid }
-        let item = ChatImage(id: id, conversationID: conversationID, name: name)
-        try FileManager.default.createDirectory(at: item.url.deletingLastPathComponent(), withIntermediateDirectories: true,
-                                                attributes: [.posixPermissions: 0o700])
-        let encoded = NSMutableData()
-        guard let target = CGImageDestinationCreateWithData(encoded, UTType.png.identifier as CFString, 1, nil) else { throw Failure.invalid }
-        CGImageDestinationAddImage(target, image, nil)
-        guard CGImageDestinationFinalize(target) else { throw Failure.invalid }
-        if encoded.length > 4_500_000 {
-            guard maxEdge > 1024 else { throw Failure.invalid }
-            return try importImage(data, name: name, conversationID: conversationID, id: id, maxEdge: 1024)
-        }
-        try (encoded as Data).write(to: item.url, options: .atomic)
-        return item
-    }
-    enum Failure: Error { case invalid }
-    static func remove(_ item: ChatImage) throws {
-        if FileManager.default.fileExists(atPath: item.url.path) { try FileManager.default.removeItem(at: item.url) }
-    }
-}
+import AIChat
 
 extension Discussion {
     var hasImages: Bool { !pendingImages.isEmpty || current.turns.contains { !($0.images ?? []).isEmpty } || (current.documents ?? []).contains { ($0.units ?? []).contains { !$0.images.isEmpty } } }

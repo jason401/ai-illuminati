@@ -3,14 +3,7 @@ import PDFKit
 import AILocalization
 import AIWorkspace
 import AIProjects
-
-struct RoomDocument: Codable, Identifiable {
-    var id = UUID()
-    var name: String
-    var text: String
-    var units: [MaterialUnit]?
-    var notice: String?
-}
+import AIChat
 
 enum RoomDocuments {
     static func directory(_ id: UUID) -> URL {

@@ -3,6 +3,7 @@ import AIAccounts
 import AILocalization
 import AIRuntime
 import AIWorkspace
+import AIChat
 
 // A meeting: the user picks "회의" (or "/meet ") for one message, and the AIs of the chat hold a short discussion
 // about it in a hidden chat of their own, then bring the result back as the answer.
@@ -11,11 +12,6 @@ import AIWorkspace
 // - They know the chat: its state, its last turns and the whole chat up to then in meeting-source.md, read only.
 // - It runs as the chat's own answer (one of the running slots); the chat's stop button stops it.
 // Each AI speaks twice at most: everyone gives a first view without seeing the others, then reviews once.
-struct MeetingLink: Codable, Equatable {
-    var room: UUID   // the chat the meeting was held for
-    var turn: UUID   // its message
-}
-
 extension Discussion {
     static let meetingTurnsPerAI = 2
     static let meetingSource = "meeting-source.md"

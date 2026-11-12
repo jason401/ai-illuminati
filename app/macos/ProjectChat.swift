@@ -5,6 +5,7 @@ import AILocalization
 import AIRuntime
 import AIWorkspace
 import AIProjects
+import AIChat
 
 struct ProjectApprovalView: View {
     let room: UUID

@@ -7,6 +7,7 @@ import AISpaces
 @testable import AIRuntime
 @testable import AIWorkspace
 import AIProjects
+import AIChat
 
 GoogleAuth.shared = GoogleAuth(store: MemoryGoogleStore())
 

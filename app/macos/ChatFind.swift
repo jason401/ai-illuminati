@@ -1,5 +1,6 @@
 import SwiftUI
 import AILocalization
+import AIChat
 
 // ⌘F in a chat: the turns whose message or answer contain the words, in order, and the words highlighted.
 // Moves go from turn to turn; the chat draws earlier turns first when the one to show is not drawn yet.

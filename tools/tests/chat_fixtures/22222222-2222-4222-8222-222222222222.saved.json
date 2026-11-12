@@ -1,0 +1,249 @@
+{
+  "configuration": {
+    "lastReviewAt": "2026-10-21T09:00:00Z",
+    "lastReviewSHA": "abc123",
+    "leadID": "acct-a",
+    "leader": "codex",
+    "memberIDs": [
+      "acct-a",
+      "acct-b"
+    ],
+    "mode": 0,
+    "modeVersion": 2,
+    "order": [
+      "claude",
+      "codex",
+      "gemini"
+    ],
+    "participants": [
+      "claude",
+      "codex"
+    ],
+    "peerAccountID": "acct-b",
+    "peerReview": true,
+    "pendingReview": "def456",
+    "soloAccountID": "acct-a",
+    "speechLength": 800,
+    "turnsPerAI": 4,
+    "voteSkippedIDs": [
+      "acct-c"
+    ]
+  },
+  "createdAt": "2026-10-20T08:00:00Z",
+  "documents": [
+    {
+      "id": "22222222-0000-4000-8000-0000000000D1",
+      "name": "notes.pdf",
+      "notice": "1 page",
+      "text": "[p.1]\nHello",
+      "units": [
+        {
+          "id": "p1",
+          "images": [
+            "p1.png"
+          ],
+          "locator": "p.1",
+          "text": "Hello"
+        }
+      ]
+    }
+  ],
+  "enterpriseLock": {
+    "lockedAt": "2026-10-20T08:05:00Z",
+    "name": "Claude (학교)",
+    "organization": "학교"
+  },
+  "id": "22222222-2222-4222-8222-222222222222",
+  "origin": {
+    "chat": "99999999-9999-4999-8999-999999999999",
+    "contentAt": "2026-10-19T08:00:00Z",
+    "device": "DEV-1",
+    "deviceName": "Other Mac",
+    "importedAt": "2026-10-20T08:00:00Z"
+  },
+  "pinned": true,
+  "shareToDevices": true,
+  "summary": "",
+  "title": "Project chat",
+  "turns": [
+    {
+      "answeredAt": "2026-10-21T09:10:00Z",
+      "askedAt": "2026-10-21T09:00:00Z",
+      "backupPath": "/tmp/backup",
+      "entries": [],
+      "final": "Fixed.",
+      "finalAccountID": "acct-a",
+      "finalBy": "Claude (학교)",
+      "id": "22222222-0000-4000-8000-000000000001",
+      "images": [
+        {
+          "conversationID": "22222222-2222-4222-8222-222222222222",
+          "id": "22222222-0000-4000-8000-0000000000E1",
+          "name": "shot.png"
+        }
+      ],
+      "lastActivityAt": "2026-10-21T09:09:00Z",
+      "mode": 0,
+      "modeVersion": 2,
+      "peerFolded": true,
+      "peerNotes": [
+        {
+          "accountID": "acct-b",
+          "failed": false,
+          "headline": "Looks right",
+          "id": "22222222-0000-4000-8000-0000000000B1",
+          "round": 3,
+          "speaker": "ChatGPT (학교)",
+          "text": "Looks right."
+        }
+      ],
+      "plan": [
+        {
+          "ended": "2026-10-21T09:05:00Z",
+          "started": "2026-10-21T09:01:00Z",
+          "status": "done",
+          "text": "Build"
+        },
+        {
+          "status": "doing",
+          "sub": "[2/11] Modules",
+          "subStarted": "2026-10-21T09:06:00Z",
+          "text": "Test"
+        }
+      ],
+      "planNote": "tests started",
+      "projectCommitted": true,
+      "projectLog": [
+        "git_commit → ok"
+      ],
+      "projectPushed": false,
+      "question": "Fix the build",
+      "route": "work",
+      "routeNote": "Work · judged by rules",
+      "spaceDraft": {
+        "draft": "d1",
+        "name": "Clock",
+        "reason": "no network"
+      },
+      "spaceEdits": [
+        {
+          "kind": "changed",
+          "name": "Clock",
+          "space": "s1",
+          "version": 3
+        }
+      ],
+      "status": "",
+      "undone": false,
+      "waitingApproval": false,
+      "workspaceChanges": [
+        {
+          "kind": "modified",
+          "path": "a.swift"
+        }
+      ]
+    },
+    {
+      "answerNames": [
+        "Claude (학교)",
+        "ChatGPT (학교)"
+      ],
+      "answerOrder": [
+        "acct-a",
+        "acct-b"
+      ],
+      "entries": [],
+      "final": "We agree.",
+      "id": "22222222-0000-4000-8000-000000000002",
+      "meetingRoom": "33333333-3333-4333-8333-333333333333",
+      "mentions": [
+        "acct-b"
+      ],
+      "mode": 0,
+      "moreAnswers": [
+        {
+          "failed": false,
+          "id": "22222222-0000-4000-8000-0000000000C1",
+          "images": [],
+          "meeting": "33333333-3333-4333-8333-333333333333",
+          "round": 1,
+          "speaker": "ChatGPT (학교)",
+          "text": "Agree."
+        }
+      ],
+      "question": "What do you all think?",
+      "route": "opinion",
+      "routeOne": false,
+      "status": ""
+    },
+    {
+      "activity": "reading",
+      "artifact": "result.md",
+      "debateFocus": "cost",
+      "endReason": "agreed",
+      "entries": [],
+      "error": "one AI failed",
+      "finalImages": [],
+      "id": "22222222-0000-4000-8000-000000000003",
+      "mode": 4,
+      "orderNote": "Claude first",
+      "partial": "",
+      "partialBy": "",
+      "partials": {
+        "acct-a": "…"
+      },
+      "question": "Pick one: A or B",
+      "sessionTranscript": "t.md",
+      "status": "",
+      "tasks": [
+        {
+          "accountID": "acct-a",
+          "dependsOn": [],
+          "expectedFiles": [
+            "a.md"
+          ],
+          "id": "22222222-0000-4000-8000-0000000000F1",
+          "output": "ok",
+          "outputDigest": "00ff",
+          "planID": "t1",
+          "state": "done",
+          "title": "Draft"
+        }
+      ],
+      "turnsPerAI": 2,
+      "voteOptions": [
+        "A",
+        "B"
+      ],
+      "votes": [
+        {
+          "choice": 1,
+          "reason": "simpler",
+          "speaker": "Claude"
+        },
+        {
+          "reason": "no vote",
+          "speaker": "Gemini"
+        }
+      ]
+    }
+  ],
+  "updatedAt": "2026-10-21T10:00:00Z",
+  "workspace": {
+    "fullAuto": true,
+    "level": "execute",
+    "project": {
+      "common": "/tmp/project/.git",
+      "remote": "origin",
+      "remoteURL": "https://example.invalid/p.git",
+      "root": "/tmp/project"
+    },
+    "roots": [
+      {
+        "directory": true,
+        "path": "/tmp/project",
+        "writable": true
+      }
+    ]
+  }
+}

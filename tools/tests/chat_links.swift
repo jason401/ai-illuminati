@@ -2,6 +2,7 @@ import Foundation
 import AIAccounts
 import AIRuntime
 import AIWorkspace
+import AIChat
 
 /// C0: the chat store names no sessions, backups, documents or DeviceSync; the app connects them (`ChatLinksApp`).
 /// Through Discussion's own delete (`removeChats`), with what main.swift connects: the same paths go in the same order,

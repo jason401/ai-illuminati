@@ -1,0 +1,68 @@
+{
+  "id" : "22222222-2222-4222-8222-222222222222",
+  "title" : "Project chat",
+  "createdAt" : "2026-10-20T08:00:00Z",
+  "updatedAt" : "2026-10-21T10:00:00Z",
+  "summary" : "",
+  "pinned" : true,
+  "shareToDevices" : true,
+  "enterpriseLock" : { "organization" : "학교", "name" : "Claude (학교)", "lockedAt" : "2026-10-20T08:05:00Z" },
+  "origin" : { "device" : "DEV-1", "deviceName" : "Other Mac", "chat" : "99999999-9999-4999-8999-999999999999", "contentAt" : "2026-10-19T08:00:00Z", "importedAt" : "2026-10-20T08:00:00Z" },
+  "workspace" : {
+    "roots" : [ { "path" : "/tmp/project", "directory" : true, "writable" : true } ],
+    "level" : "execute",
+    "project" : { "root" : "/tmp/project", "common" : "/tmp/project/.git", "remote" : "origin", "remoteURL" : "https://example.invalid/p.git" },
+    "fullAuto" : true
+  },
+  "documents" : [
+    { "id" : "22222222-0000-4000-8000-0000000000d1", "name" : "notes.pdf", "text" : "[p.1]\nHello",
+      "units" : [ { "id" : "p1", "locator" : "p.1", "text" : "Hello", "images" : ["p1.png"] } ], "notice" : "1 page" }
+  ],
+  "configuration" : {
+    "mode" : 0, "order" : ["claude", "codex", "gemini"], "participants" : ["claude", "codex"], "leader" : "codex",
+    "modeVersion" : 2, "memberIDs" : ["acct-a", "acct-b"], "leadID" : "acct-a", "soloAccountID" : "acct-a",
+    "peerReview" : true, "peerAccountID" : "acct-b", "lastReviewSHA" : "abc123", "lastReviewAt" : "2026-10-21T09:00:00Z",
+    "pendingReview" : "def456", "speechLength" : 800, "turnsPerAI" : 4, "voteSkippedIDs" : ["acct-c"]
+  },
+  "turns" : [
+    {
+      "id" : "22222222-0000-4000-8000-000000000001",
+      "question" : "Fix the build", "status" : "", "mode" : 0, "modeVersion" : 2,
+      "askedAt" : "2026-10-21T09:00:00Z", "answeredAt" : "2026-10-21T09:10:00Z",
+      "images" : [ { "id" : "22222222-0000-4000-8000-0000000000e1", "conversationID" : "22222222-2222-4222-8222-222222222222", "name" : "shot.png" } ],
+      "entries" : [],
+      "final" : "Fixed.", "finalBy" : "Claude (학교)", "finalAccountID" : "acct-a",
+      "route" : "work", "routeNote" : "Work · judged by rules",
+      "plan" : [ { "text" : "Build", "status" : "done", "started" : "2026-10-21T09:01:00Z", "ended" : "2026-10-21T09:05:00Z" },
+                 { "text" : "Test", "status" : "doing", "sub" : "[2/11] Modules", "subStarted" : "2026-10-21T09:06:00Z" } ],
+      "planNote" : "tests started", "lastActivityAt" : "2026-10-21T09:09:00Z", "waitingApproval" : false,
+      "projectCommitted" : true, "projectPushed" : false, "projectLog" : ["git_commit → ok"],
+      "backupPath" : "/tmp/backup", "workspaceChanges" : [ { "path" : "a.swift", "kind" : "modified" } ], "undone" : false,
+      "peerNotes" : [ { "id" : "22222222-0000-4000-8000-0000000000b1", "round" : 3, "speaker" : "ChatGPT (학교)", "text" : "Looks right.", "failed" : false, "headline" : "Looks right", "accountID" : "acct-b" } ],
+      "peerFolded" : true,
+      "spaceDraft" : { "draft" : "d1", "name" : "Clock", "reason" : "no network" },
+      "spaceEdits" : [ { "space" : "s1", "name" : "Clock", "kind" : "changed", "version" : 3 } ]
+    },
+    {
+      "id" : "22222222-0000-4000-8000-000000000002",
+      "question" : "What do you all think?", "status" : "", "mode" : 0,
+      "entries" : [], "final" : "We agree.", "route" : "opinion", "routeOne" : false,
+      "meetingRoom" : "33333333-3333-4333-8333-333333333333",
+      "answerOrder" : ["acct-a", "acct-b"], "answerNames" : ["Claude (학교)", "ChatGPT (학교)"],
+      "moreAnswers" : [ { "id" : "22222222-0000-4000-8000-0000000000c1", "round" : 1, "speaker" : "ChatGPT (학교)", "text" : "Agree.", "failed" : false,
+                          "meeting" : "33333333-3333-4333-8333-333333333333", "images" : [] } ],
+      "mentions" : ["acct-b"]
+    },
+    {
+      "id" : "22222222-0000-4000-8000-000000000003",
+      "question" : "Pick one: A or B", "status" : "", "mode" : 4,
+      "entries" : [], "voteOptions" : ["A", "B"],
+      "votes" : [ { "speaker" : "Claude", "choice" : 1, "reason" : "simpler" }, { "speaker" : "Gemini", "reason" : "no vote" } ],
+      "tasks" : [ { "id" : "22222222-0000-4000-8000-0000000000f1", "title" : "Draft", "accountID" : "acct-a", "state" : "done",
+                    "output" : "ok", "planID" : "t1", "dependsOn" : [], "expectedFiles" : ["a.md"], "outputDigest" : "00ff" } ],
+      "artifact" : "result.md", "debateFocus" : "cost", "turnsPerAI" : 2, "orderNote" : "Claude first", "endReason" : "agreed",
+      "error" : "one AI failed", "sessionTranscript" : "t.md", "partial" : "", "partialBy" : "", "partials" : { "acct-a" : "…" },
+      "activity" : "reading", "finalImages" : []
+    }
+  ]
+}

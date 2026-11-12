@@ -4,6 +4,7 @@ import AILocalization
 import AISpaces
 import AIRuntime
 import AIWorkspace
+import AIChat
 
 // A project chat with two or more members decides per message how to answer, before anyone starts:
 // one — the lead answers alone, the project read only (facts, checks, explanations, short follow-ups);
@@ -18,8 +19,6 @@ import AIWorkspace
 // Saved on the turn as `route` (opinion or work, as older builds read it) plus `routeOne` for one and `meetingRoom`
 // for a meeting (Meeting.swift). The user can also pick the way before sending (the chip in the message box, or
 // "/work " at the start of the message): that one message skips the sorter.
-enum ChatRoute: String, Codable { case opinion, work }
-
 enum RouteChoice: Hashable, CaseIterable {
     case work, one, all, meeting
     var route: ChatRoute { self == .work ? .work : .opinion }

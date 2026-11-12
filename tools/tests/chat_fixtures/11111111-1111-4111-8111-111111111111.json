@@ -1,0 +1,30 @@
+{
+  "id" : "11111111-1111-4111-8111-111111111111",
+  "title" : "Oldest discussion",
+  "createdAt" : "2026-09-01T09:00:00Z",
+  "updatedAt" : "2026-09-01T09:30:00Z",
+  "summary" : "Two AIs compared notes.",
+  "configuration" : {
+    "mode" : 1,
+    "order" : ["claude", "codex", "gemini"],
+    "participants" : ["claude", "codex"],
+    "leader" : "claude",
+    "maxTurns" : 6,
+    "keepSessions" : false,
+    "school" : true
+  },
+  "turns" : [
+    {
+      "id" : "11111111-0000-4000-8000-000000000001",
+      "question" : "What is a module?",
+      "status" : "",
+      "entries" : [
+        { "id" : "11111111-0000-4000-8000-0000000000a1", "round" : 1, "speaker" : "Claude", "text" : "A unit of code.", "failed" : false },
+        { "id" : "11111111-0000-4000-8000-0000000000a2", "round" : 2, "speaker" : "ChatGPT", "text" : "It hides its insides.", "failed" : false, "focus" : "access" }
+      ],
+      "final" : "A module is a unit with its own public surface.",
+      "finalBy" : "Claude",
+      "maxTurns" : 6
+    }
+  ]
+}

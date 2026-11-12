@@ -4,6 +4,7 @@ import AIAccounts
 import AILocalization
 import AIRuntime
 import AIProjects
+import AIChat
 
 // An Enterprise chat: one the user locked (the chat menu, or "New Enterprise chat"). Only the user locks a chat,
 // and a lock is never removed. In a locked chat only Enterprise accounts of the organization it was locked for,

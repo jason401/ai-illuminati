@@ -4,18 +4,7 @@ import AIAccounts
 import AILocalization
 import AIRuntime
 import AIWorkspace
-
-struct CollaborationTask: Codable, Identifiable, Equatable {
-    var id = UUID()
-    var title: String
-    var accountID: String
-    var state = "queued"
-    var output: String?
-    var planID: String?
-    var dependsOn: [String]?
-    var expectedFiles: [String]?
-    var outputDigest: String?
-}
+import AIChat
 
 struct CollaborationAssignment {
     var id: String

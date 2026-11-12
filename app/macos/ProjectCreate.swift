@@ -4,6 +4,7 @@ import AILocalization
 import AIRuntime
 import AIWorkspace
 import AIProjects
+import AIChat
 
 extension Discussion {
     func linkProjectMaker() {

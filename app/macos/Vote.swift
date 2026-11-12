@@ -2,16 +2,11 @@ import Foundation
 import AIAccounts
 import AILocalization
 import AIRuntime
+import AIChat
 
 // Mode 4 · Vote: the user asks a question with choices. Every AI votes at the same time without seeing
 // the others (so no one follows the crowd) and gives its reason; the app counts the votes itself.
 // Choices the user listed are used as written; otherwise the moderator turns the question into choices.
-struct VoteBallot: Codable, Equatable {
-    var speaker: String
-    var choice: Int?   // 1-based; nil = no valid vote
-    var reason: String
-}
-
 enum VoteCount {
     static let maxOptions = 10
 

@@ -87,6 +87,11 @@ mkdir -p "$TEST_DIR/projects-src" "$TEST_DIR/projects-home"
 cp tools/tests/projects_contract.swift "$TEST_DIR/projects-src/main.swift"
 limit 300 xcrun swiftc -swift-version 5 -module-cache-path "$TEST_DIR/cache" -I "$MODULES" -o "$TEST_DIR/projects-contract" "$TEST_DIR/projects-src/main.swift" "$MODULES"/lib*.a
 limit 120 env AI_ILLUMINATI_TEST_HOME="$TEST_DIR/projects-home" AI_ILLUMINATI_TEST_RESOURCES="$PWD/app/resources" "$TEST_DIR/projects-contract"
+# Chat reads older chats (tools/tests/chat_fixtures) and saves them as the app did before the module.
+mkdir -p "$TEST_DIR/chat-src" "$TEST_DIR/chat-home"
+cp tools/tests/chat_contract.swift "$TEST_DIR/chat-src/main.swift"
+limit 300 xcrun swiftc -swift-version 5 -module-cache-path "$TEST_DIR/cache" -I "$MODULES" -o "$TEST_DIR/chat-contract" "$TEST_DIR/chat-src/main.swift" "$MODULES"/lib*.a
+limit 120 env AI_ILLUMINATI_TEST_HOME="$TEST_DIR/chat-home" CHAT_FIXTURES="$PWD/tools/tests/chat_fixtures" "$TEST_DIR/chat-contract"
 boundary() {   # module, code that reaches one of its internal names, that name
   mkdir -p "$TEST_DIR/boundary-$1"
   printf 'import %s\n%s\n' "$1" "$2" > "$TEST_DIR/boundary-$1/main.swift"
@@ -109,6 +114,7 @@ boundary AIWorkspace '_ = WorkspaceBackup.keepPerChat' keepPerChat
 boundary AIProjects '_ = TodoScheduler.retryDelay' retryDelay
 boundary AIProjects '_ = ProjectWork.leasePrefix' leasePrefix
 boundary AIProjects '_ = TodoStore.encoder' encoder
+boundary AIChat '_ = ChatTime.calendar' calendar
 # AutoGuard is internal and whole (the app's one way in is FullAutoGuard.environment): its shims and denied list stay inside.
 printf 'import AIWorkspace\n_ = AutoGuard.claudeDenied\n' > "$TEST_DIR/boundary-AutoGuard.swift"
 if limit 300 xcrun swiftc -swift-version 5 -typecheck -module-cache-path "$TEST_DIR/cache" -I "$MODULES" "$TEST_DIR/boundary-AutoGuard.swift" 2>"$TEST_DIR/boundary-AutoGuard.log" \

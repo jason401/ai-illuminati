@@ -6,7 +6,8 @@ it builds alone, and the app sees only its `public` names. Now: `AILocalization`
 (account list and folders), `AISpaces` (Spaces: saving, checks, the isolated web view) and `AIRuntime` (running each
 AI's command line tool, sessions, the local model, usage readings), all 2026-11-11; `AIWorkspace` (the folder rules each
 AI gets, the backup before writes and its Undo, AutoGuard, the tool gateway's types) and `AIProjects` (linked projects, Git
-work, the repository lock, approvals, the TODO board and its scheduler, five tool providers), 2026-11-12.
+work, the repository lock, approvals, the TODO board and its scheduler, five tool providers), 2026-11-12; `AIChat` (a chat's
+record and where it is kept: C1a), 2026-11-12.
 
 ## How a module is built and used
 - `zsh tools/build_modules.sh <out> [swiftc options]` builds every `app/modules/<Name>/` alone into
@@ -14,7 +15,8 @@ work, the repository lock, approvals, the TODO board and its scheduler, five too
 - A module may use only the modules named in its `dependencies` file (one per line; none: no file). They are built
   first, and the compiler sees only theirs, so an import of any other module fails the build. Now
   `AISpaces` → `AIAccounts`, `AILocalization`; `AIRuntime` → `AIAccounts`, `AILocalization`; `AIWorkspace` → `AIAccounts`,
-  `AILocalization`, `AIRuntime`; `AIProjects` → `AIAccounts`, `AILocalization`, `AIRuntime`, `AIWorkspace`; the other two use none. No circles (the script refuses them).
+  `AILocalization`, `AIRuntime`; `AIProjects` → `AIAccounts`, `AILocalization`, `AIRuntime`, `AIWorkspace`; `AIChat` → those five and `AISpaces` (Chat uses
+  Projects, never the other way: Projects names no chat type since P0); the other two use none. No circles (the script refuses them).
 - Every `swiftc` that compiles app files runs it first and adds `-I <out> <out>/lib*.a`:
   `tools/build_app.sh` (compile step), `tools/tests/run_mode2.sh`, the preview scripts.
 - Each file that uses a module says `import <Name>`. Not the hidden compiler option (`-Xfrontend -import-module`):
@@ -25,7 +27,7 @@ work, the repository lock, approvals, the TODO board and its scheduler, five too
   (`tools/tests/<part>_contract.swift`, public names only), and checks that internal names
   (`AccountStore.place`, `SpaceStore.setting`, `SpaceAssets.served`, `Answerer.chatDir`, `Answerer.launchForTests`,
   `NativeSessions.split`, `CloudModels.apply`, `WorkspaceBackup.chats`/`keepPerChat`, the whole `AutoGuard` type,
-  `TodoScheduler.retryDelay`, `ProjectWork.leasePrefix`, `TodoStore.encoder`) do not compile outside.
+  `TodoScheduler.retryDelay`, `ProjectWork.leasePrefix`, `TodoStore.encoder`, `ChatTime.calendar`) do not compile outside.
 - Tests build the modules with `-enable-testing` only so tests can say `@testable import`: `space_build.swift` for
   `AISpaces` (module insides such as `SpaceCheck`), and for `AIRuntime` the app tests that make their own usage
   readings (`AIUsage`, `UsageWindow` inits) or use its test hooks (`Answerer.launchForTests`/`replyForTests`,
@@ -287,6 +289,40 @@ Public names and why (everything else stays internal: `ProjectError`, `ProjectTo
   chat no longer names `PlanLink`), `TodoStore.lockProject` (a locked project's TODO lists).
 - The five providers (`shared`, `ToolProvider`'s members; `ProjectMakerLink.cancellation`/`addChat`, `TodoAddLink.store`/
   `names` as before): ToolHub lists them in its order.
+
+### AIChat (`app/modules/AIChat/`: ChatRecords, ChatValues), step C1a
+A chat's record and where it is kept: `Conversation` (chats/<id>.json), `ChatTurn` and `ChatTurn.Entry`, `ChatConfiguration`,
+`ChatStore` (`dir`, `loadAll`, `save`, `delete`, `links`), the values a record holds (`ChatImage` and `ImageStore` for
+<id>.assets, `RoomDocument`, `MaterialUnit`, `CollaborationTask`, `VoteBallot`, `ChatRoute`, `MeetingLink`, `SyncOrigin`,
+and a synced copy's `SyncSnapshot`/`RemoteChat`, which hold turns and are what `ChatStore.links.remote` returns) and the
+record's helpers (`ChatTurn.Entry.reply`/`shortLine`, `ChatTime`, `SpeechLength`). Moved as they were: the declarations are
+the same lines with `public` and an explicit init; the old files lost them (Discussion.swift, Attachments, RoomDocuments,
+MaterialReader, Collaboration, Vote, Route, Meeting, DeviceSync). Depends on `AIAccounts`, `AILocalization`, `AIRuntime`
+(`ReplyHeadline`), `AIWorkspace` (`WorkspaceBinding`, `WorkspaceChange`), `AISpaces` (`SpaceDraftNote`, `SpaceSyncNote`) and
+`AIProjects` (`WorkStep`). The direction is Chat → Projects: Projects keeps deciding commits and TODO state changes and
+names no chat type; Chat calls its public functions.
+
+| Promise | Users | Module test (`chat_contract.swift`) | User tests |
+|---|---|---|---|
+| Older chats are read as they were (old keys `keepSessions`, `school`, `maxTurns`, `peerReview`/`peerAccountID`, turns without `mode` or times) and saved again with the same content as before the module: the fixtures' `*.saved.json` were written by the app's own ChatStore at f05fd72 (compared as JSON: JSONEncoder's key order differs run to run, before and after alike) | Discussion, DeviceSync, ChatSearch, ChatTools, Memory, ChatStorage, every test | "old keys are read", "… saved as before" (three fixtures in `tools/tests/chat_fixtures`: the oldest discussion, a locked synced project chat with most fields, a meeting's chat) | mode2 "legacy decoding", testDeviceSync, testChatSearch |
+| Newest first; an unreadable file skipped; a blank chat not written; files 0600 | Discussion | "all readable chats, newest first", "a blank chat is not kept", "a chat file is 0600" | mode2 (persistence), testAutoMeeting (order, indirectly) |
+| Delete: the links' purges in order, `<id>.work`, documents, `<id>.assets`, `<id>.json`, then `deleted`; the first failure throws and keeps it and what follows | Discussion (`removeChats`), Meeting | "a failure stops at once", "a failure keeps every place after it", "sessions, backups, then the documents' folder, deleted last" | `testChatLinks`, mode2 storage |
+| Pictures at <id>.assets/<picture id>.png, a bad picture refused | Attachments, Pictures, TodoChatsApp | "a picture lives in the chat's .assets folder", "a bad picture is refused" | mode2 attachments ("deleting chat must remove copied images") |
+
+Public names and why: the record types' stored fields and their inits are the save format (every reader and writer of a
+chat uses them; Swift's memberwise inits are internal, so each type got one public init with the same order and defaults);
+`ChatStore` and `Links` (C0's seam, set by `ChatLinksApp.connect`); `ImageStore` (pictures pasted, drawn or brought by a
+TODO); `SyncSnapshot.version`, `RemoteChat.Status` (DeviceSync lists and reads copies); `ChatTime.stamp`/`day`/`when`,
+`SpeechLength` (the chat window and the discussion modes); `Entry.reply`/`shortLine`. Internal: `ChatTime.calendar` (the
+boundary check), `ChatTime.format`.
+
+C1a falsification (one change in a copy of the tree, "app" = the mode2 app tests):
+| Change | Module contract | App tests |
+|---|---|---|
+| F1 `delete` tells `deleted` before the purges | caught ("a failure stops at once, nothing told") | caught (testChatLinks "deleted is told per chat …") |
+| F2 a picture's folder `.asset` | caught ("a picture lives in the chat's .assets folder") | caught (mode2 "deleting chat must remove copied images") |
+| F3 `loadAll` oldest first | caught ("newest first") | caught, indirectly (testAutoMeeting picks by the first chats) |
+| F4 a chat file saved 0644 | caught ("a chat file is 0600") | **missed**: only the module test checks the mode |
 
 ## What the first module showed (2026-11-11)
 - Change size: the module file got `public` on 26 names and one `public init` (Swift's own memberwise init is

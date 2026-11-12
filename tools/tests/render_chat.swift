@@ -4,6 +4,7 @@ import AILocalization
 import AIAccounts
 import AIWorkspace
 import AIProjects
+import AIChat
 
 private struct EmptyPreviewLogin: GoogleTokenStore {
     func load() throws -> Data? { nil }

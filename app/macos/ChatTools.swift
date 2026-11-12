@@ -2,6 +2,7 @@ import Foundation
 import AIAccounts
 import AIWorkspace
 import AIProjects
+import AIChat
 
 // search_chats and read_chat (note 3): the AI answering one chat finds and reads the user's other chats.
 // Every open chat may be found and read by any account; an Enterprise chat (Enterprise.swift) never, not even from

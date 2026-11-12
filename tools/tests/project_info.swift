@@ -176,7 +176,19 @@ func testGitBranches() {
     expect(report.rows.first { $0.branch == "feature/x" }!.onOrigin == false, "a branch origin does not have")
     expect(report.rows.first { $0.branch == "fix/y" }!.worktree == "tree", "checked out in another worktree")
     expect(report.stableName == "origin/stable" && report.mainName == "origin/main" && report.pending == GitCounts(ahead: 2, behind: 0) && report.fetched != nil, "summary uses origin")
-    expect(GitBranches.summary(report)?.contains("2") == true && GitBranches.differences(main, stable: report.stableName).count == 2, "summary and row text")
+    expect(GitBranches.summary(report)?.contains("2") == true, "summary text")
+    // The overview: one line per name, stable/main/current on their own, the rest grouped by kind.
+    let lines = GitBranches.lines(report)
+    expect(lines.map(\.branch) == ["stable", "main", "feature/x", "fix/y"], "one line per name: \(lines.map(\.branch))")
+    let mainLine = lines.first { $0.branch == "main" }!
+    expect(mainLine.place == .both && mainLine.current && mainLine.sync == GitCounts(ahead: 1, behind: 0) && mainLine.version == "v0.1.0+4"
+           && GitBranches.sync(mainLine) != nil, "main merged from local and origin: \(mainLine)")
+    expect(lines.first!.place == .originOnly && lines.first { $0.branch == "feature/x" }!.place == .localOnly, "where each lives")
+    expect(GitBranches.main(lines).map(\.branch) == ["stable", "main"] && GitBranches.flow(report) != nil, "main lines and flow")
+    let side = GitBranches.groups(lines + ["worktree-agent-a1", "worktree-agent-b2", "trial/z", "dev"].map {
+        GitBranchLine(branch: $0, role: GitBranches.role($0), place: .localOnly, date: Date(timeIntervalSince1970: 100)) })
+    expect(side.map(\.key) == ["feature/", "fix/", "worktree-agent-", "trial/", ""] && side[2].lines.count == 2
+           && GitBranches.place(side[2]) == GitBranches.place(.localOnly) && side[2].latest != nil, "side branches grouped, others last: \(side.map(\.key))")
 
     // From the worktree, its own branch is the current one; up to date once stable catches up.
     sh(["push", "-q", "origin", "origin/main:refs/heads/stable"], in: repo); sh(["fetch", "-q", "origin"], in: tree)
@@ -197,5 +209,5 @@ func testGitBranches() {
     let none = GitBranches.read(root: base.path) { _ in throw MaterialReader.error("no git") }
     expect(none.rows.isEmpty && none.error != nil && GitBranches.summary(none) == nil, "no repository")
     try? FileManager.default.removeItem(at: base)
-    print("PASS: Git branches (roles, nearest tag +N, origin and stable distances, summary, worktrees, backup refs hidden, deleted origin branches pruned, no repository)")
+    print("PASS: Git branches (overview lines and groups, roles, nearest tag +N, origin and stable distances, summary, worktrees, backup refs hidden, deleted origin branches pruned, no repository)")
 }

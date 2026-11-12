@@ -371,13 +371,10 @@ struct GitBranchesView: View {
                 .help(L("origin에서 새로 가져오기 (git fetch)", "Fetch from origin (git fetch)"))
             }
             if let why = report?.error { Text(why).font(.system(size: 11)).foregroundColor(.orange) }
-            let rows = report?.rows ?? [], all = store.expanded.contains(binding.root)
-            ForEach(all ? rows : Array(rows.prefix(GitBranches.shown))) { row in branchRow(row, stable: report?.stableName) }
-            if rows.count > GitBranches.shown {
-                Button(all ? L("접기", "Show fewer") : L("브랜치 \(rows.count - GitBranches.shown)개 더 보기", "Show \(rows.count - GitBranches.shown) more branches")) {
-                    if all { store.expanded.remove(binding.root) } else { store.expanded.insert(binding.root) }
-                }.buttonStyle(.link).font(.system(size: 11))
-            }
+            if let report, let flow = GitBranches.flow(report) { Text(flow).font(.system(size: 11)).foregroundColor(.secondary) }
+            let lines = report.map(GitBranches.lines) ?? []
+            ForEach(GitBranches.main(lines)) { line in mainLine(line) }
+            ForEach(GitBranches.groups(lines)) { group in groupLine(group) }
             if let hidden = report?.hidden, hidden > 0 {
                 Text(L("브랜치가 너무 많아 \(hidden)개는 읽지 않았어요", "\(hidden) more branches not read (too many)")).font(.system(size: 11)).foregroundColor(.secondary)
             }
@@ -388,31 +385,55 @@ struct GitBranchesView: View {
         .onAppear { DispatchQueue.main.async { store.load(binding) } }
     }
 
-    private func branchRow(_ row: GitBranchRow, stable: String?) -> some View {
-        let differences = GitBranches.differences(row, stable: stable)
-        return VStack(alignment: .leading, spacing: 1) {
-            HStack(spacing: 6) {
-                Image(systemName: row.remote ? "cloud" : "arrow.triangle.branch").font(.system(size: 10)).foregroundColor(.secondary).frame(width: 16)
-                Text(row.name).font(.system(size: 12, weight: row.current ? .semibold : .regular)).lineLimit(1)
-                if let label = GitBranches.label(row.role) {
-                    Text(label).font(.system(size: 10, weight: .medium)).padding(.horizontal, 5).padding(.vertical, 1)
-                        .background(Self.tint(row.role).opacity(0.18), in: Capsule()).foregroundColor(Self.tint(row.role))
-                }
-                if row.current { Text(L("(현재)", "(current)")).font(.system(size: 11)).foregroundColor(.accentColor) }
-                if let tree = row.worktree { Text(L("(워크트리 \(tree))", "(worktree \(tree))")).font(.system(size: 11)).foregroundColor(.secondary) }
-                if let version = row.version { Text(version).font(.system(size: 11, design: .monospaced)).foregroundColor(.secondary) }
-                Spacer(minLength: 6)
-                if !differences.isEmpty { Text(differences.joined(separator: " · ")).font(.system(size: 11)).foregroundColor(.secondary).lineLimit(1) }
+    // stable, main and the checked-out branch: name, what it is for, where it lives, version and last commit date.
+    private func mainLine(_ line: GitBranchLine) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "arrow.triangle.branch").font(.system(size: 10)).foregroundColor(.secondary).frame(width: 16)
+            Text(line.branch).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+            if let label = GitBranches.label(line.role) {
+                Text(label).font(.system(size: 10, weight: .medium)).padding(.horizontal, 5).padding(.vertical, 1)
+                    .background(Self.tint(line.role).opacity(0.18), in: Capsule()).foregroundColor(Self.tint(line.role))
             }
-            HStack(spacing: 6) {
-                Text(row.sha).font(.system(size: 11, design: .monospaced)).foregroundColor(.secondary)
-                Text(row.subject).font(.system(size: 11)).foregroundColor(.secondary).lineLimit(1).truncationMode(.tail)
-                Spacer(minLength: 6)
-                if let date = row.date { Text(Self.day(date)).font(.system(size: 11)).foregroundColor(.secondary) }
-            }
-            .padding(.leading, 22).textSelection(.enabled)
+            if line.current { Text(L("(현재)", "(current)")).font(.system(size: 11)).foregroundColor(.accentColor) }
+            Text(GitBranches.purpose(line)).font(.system(size: 11)).foregroundColor(.secondary).lineLimit(1)
+            Spacer(minLength: 6)
+            Text(details(line)).font(.system(size: 11)).foregroundColor(.secondary).lineLimit(1)
         }
         .padding(.vertical, 2)
+    }
+
+    // Side branches of one kind on one line; the names open below it.
+    private func groupLine(_ group: GitBranchGroup) -> some View {
+        let key = binding.root + "\u{0}" + group.key, open = store.expanded.contains(key)
+        return VStack(alignment: .leading, spacing: 2) {
+            Button(action: { if open { store.expanded.remove(key) } else { store.expanded.insert(key) } }) {
+                HStack(spacing: 6) {
+                    Image(systemName: open ? "chevron.down" : "chevron.right").font(.system(size: 9, weight: .semibold)).foregroundColor(.secondary).frame(width: 16)
+                    Text(GitBranches.purpose(group)).font(.system(size: 12)).foregroundColor(.primary)
+                    Text(L("\(group.lines.count)개", "\(group.lines.count)")).font(.system(size: 11)).foregroundColor(.secondary)
+                    Spacer(minLength: 6)
+                    Text(([GitBranches.place(group)] + [group.latest.map { L("최근 ", "latest ") + Self.day($0) }].compactMap { $0 }).joined(separator: " · "))
+                        .font(.system(size: 11)).foregroundColor(.secondary).lineLimit(1)
+                }.contentShape(Rectangle())
+            }
+            .buttonStyle(.plainHit)
+            if open {
+                ForEach(group.lines) { line in
+                    HStack(spacing: 6) {
+                        Text(line.branch).font(.system(size: 11, design: .monospaced)).lineLimit(1).truncationMode(.middle)
+                        if let tree = line.worktree { Text(L("(워크트리에서 사용 중)", "(in a worktree)")).font(.system(size: 11)).foregroundColor(.secondary).help(tree) }
+                        Spacer(minLength: 6)
+                        Text(details(line)).font(.system(size: 11)).foregroundColor(.secondary).lineLimit(1)
+                    }
+                    .padding(.leading, 22).textSelection(.enabled)
+                }
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func details(_ line: GitBranchLine) -> String {
+        ([GitBranches.sync(line) ?? GitBranches.place(line.place), line.version, line.date.map(Self.day)].compactMap { $0 }).joined(separator: " · ")
     }
 
     static func tint(_ role: GitBranchRow.Role) -> Color { role == .deploy ? .green : role == .beta ? .blue : .orange }

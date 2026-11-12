@@ -35,7 +35,7 @@ struct GitBranchReport: Equatable {
 }
 
 enum GitBranches {
-    static let remote = "origin", limit = 200, shown = 40   // read up to limit; the view shows `shown` until "Show all"
+    static let remote = "origin", limit = 200   // read up to limit
     // --prune drops origin/* refs whose branch was deleted on the remote, even without fetch.prune; local branches stay.
     static let fetchArgs = ["fetch", "-q", "--prune", remote]
 
@@ -154,24 +154,102 @@ enum GitBranches {
         if c.behind > 0 { text += L(" (\(stable)에만 있는 커밋 \(c.behind)개)", " (\(c.behind) commits only on \(stable))") }
         return text
     }
+}
 
-    // What the row's branch is ahead of or behind.
-    static func differences(_ row: GitBranchRow, stable: String?) -> [String] {
-        var out: [String] = []
-        if let s = row.stable, let stable {
-            if s.ahead > 0 { out.append(L("\(stable)보다 \(s.ahead)커밋 앞섬", "\(s.ahead) ahead of \(stable)")) }
-            if s.behind > 0 { out.append(L("\(stable)보다 \(s.behind)커밋 뒤처짐", "\(s.behind) behind \(stable)")) }
-            if s.ahead == 0 && s.behind == 0 { out.append(L("\(stable)와 같음", "same as \(stable)")) }
-        }
-        if !row.remote {
-            if !row.onOrigin { out.append(L("\(remote)에 없음", "not on \(remote)")) }
-            else if let o = row.origin {
-                if o.ahead > 0 { out.append(L("로컬이 \(remote)보다 \(o.ahead)커밋 앞섬", "local \(o.ahead) ahead of \(remote)")) }
-                if o.behind > 0 { out.append(L("로컬이 \(remote)보다 \(o.behind)커밋 뒤처짐", "local \(o.behind) behind \(remote)")) }
-                if o.ahead == 0 && o.behind == 0 { out.append(L("\(remote)와 같음", "same as \(remote)")) }
+// The simple overview: one line per branch name (local and origin together), the main ones first with what they are
+// for, and the rest grouped by kind (AI worktrees, trial/, …) so a long list of side branches reads as a few lines.
+struct GitBranchLine: Equatable, Identifiable {
+    enum Place: Equatable { case both, localOnly, originOnly }
+    var branch: String
+    var role: GitBranchRow.Role
+    var place: Place
+    var sync: GitCounts?      // local against origin when both have it
+    var version: String?
+    var date: Date?
+    var current = false
+    var worktree: String?
+    var id: String { branch }
+}
+
+struct GitBranchGroup: Equatable, Identifiable {
+    var key: String           // "worktree-agent-", "trial/", "" (others)
+    var lines: [GitBranchLine]
+    var id: String { key }
+    var latest: Date? { lines.compactMap(\.date).max() }
+}
+
+extension GitBranches {
+    static func lines(_ report: GitBranchReport) -> [GitBranchLine] {
+        var order: [String] = [], byName: [String: GitBranchLine] = [:]
+        for row in report.rows {
+            if var line = byName[row.branch] {
+                line.place = .both
+                if line.date == nil || (row.date ?? .distantPast) > line.date! { line.date = row.date }
+                line.version = line.version ?? row.version
+                if !row.remote { line.sync = row.origin; line.version = row.version ?? line.version }
+                line.current = line.current || row.current; line.worktree = line.worktree ?? row.worktree
+                byName[row.branch] = line
+            } else {
+                order.append(row.branch)
+                byName[row.branch] = GitBranchLine(branch: row.branch, role: row.role, place: row.remote ? .originOnly : row.onOrigin ? .both : .localOnly,
+                                                   sync: row.origin, version: row.version, date: row.date, current: row.current, worktree: row.worktree)
             }
         }
-        return out
+        return order.compactMap { byName[$0] }
+    }
+    // The branches shown on their own line: stable, main and the checked-out one.
+    static func main(_ lines: [GitBranchLine]) -> [GitBranchLine] { lines.filter { $0.role == .deploy || $0.role == .beta || $0.current } }
+    static func groups(_ lines: [GitBranchLine]) -> [GitBranchGroup] {
+        var order: [String] = [], found: [String: [GitBranchLine]] = [:]
+        for line in lines where !(line.role == .deploy || line.role == .beta || line.current) {
+            let key = line.branch.hasPrefix("worktree-agent-") ? "worktree-agent-"
+                : line.branch.firstIndex(of: "/").map { String(line.branch[...$0]) } ?? ""
+            if found[key] == nil { order.append(key) }
+            found[key, default: []].append(line)
+        }
+        // Named kinds first, the leftovers last.
+        return (order.filter { !$0.isEmpty } + order.filter(\.isEmpty)).map { GitBranchGroup(key: $0, lines: found[$0]!) }
+    }
+
+    // What a branch (or a group of them) is used for.
+    static func purpose(_ line: GitBranchLine) -> String {
+        switch line.role {
+        case .deploy: return L("설치된 앱이 받아 가는 배포본", "What installed apps update to")
+        case .beta: return L("개발한 것이 모이는 곳", "Where finished work lands")
+        default: return line.current ? L("지금 이 폴더에서 작업 중", "Checked out in this folder") : L("작업용 브랜치", "Work branch")
+        }
+    }
+    static func purpose(_ group: GitBranchGroup) -> String {
+        switch group.key {
+        case "worktree-agent-": return L("AI 병렬 작업용 임시 브랜치", "Temporary branches for parallel AI work")
+        case "trial/": return L("시험 작업", "Trials")
+        case "feature/", "fix/", "codex/": return L("작업 중", "In progress")
+        case "": return L("기타 브랜치", "Other branches")
+        default: return L("\(group.key) 브랜치", "\(group.key) branches")
+        }
+    }
+    static func place(_ place: GitBranchLine.Place) -> String {
+        switch place {
+        case .both: return L("이 Mac과 \(remote)", "this Mac and \(remote)")
+        case .localOnly: return L("이 Mac에만", "this Mac only")
+        case .originOnly: return L("\(remote)에만", "\(remote) only")
+        }
+    }
+    static func place(_ group: GitBranchGroup) -> String {
+        let places = Set(group.lines.map(\.place))
+        return places.count == 1 ? place(places.first!) : L("이 Mac·\(remote) 섞임", "mixed: this Mac and \(remote)")
+    }
+    static func sync(_ line: GitBranchLine) -> String? {
+        guard line.place == .both, let c = line.sync, c.ahead > 0 || c.behind > 0 else { return nil }
+        var parts: [String] = []
+        if c.ahead > 0 { parts.append(L("올리지 않은 커밋 \(c.ahead)개", "\(c.ahead) not pushed")) }
+        if c.behind > 0 { parts.append(L("받지 않은 커밋 \(c.behind)개", "\(c.behind) not pulled")) }
+        return parts.joined(separator: " · ")
+    }
+    // How the branches are used, when the project releases from stable.
+    static func flow(_ report: GitBranchReport) -> String? {
+        guard report.stableName != nil, report.mainName != nil else { return nil }
+        return L("작업 브랜치 → main에 합침(베타) → stable로 올림(배포)", "work branches → merged into main (beta) → pushed to stable (release)")
     }
 }
 

@@ -390,6 +390,7 @@ struct ChatView: View {
             .help(open ? L("접기", "Fold") : L("펼치기", "Unfold"))
             Image(systemName: open ? "folder" : "folder.fill").font(.system(size: 12)).foregroundColor(.secondary).frame(width: 16)
             Text(group.name).lineLimit(1).truncationMode(.tail).frame(maxWidth: .infinity, alignment: .leading)
+            LockBadge(lock: SidebarProjects.lock(of: group, todo: todos.snapshot))
             if group.pinned { Image(systemName: "pin.fill").font(.system(size: 8)).foregroundColor(.secondary).help(L("고정된 프로젝트", "Pinned project")) }
             if waiting > 0 {
                 Text("\(waiting)").font(.system(size: 10, weight: .semibold)).foregroundColor(.white)
@@ -432,6 +433,12 @@ struct ChatView: View {
             Button(L("할 일 보드", "TODO board")) { discussion.openBoard(project: group.id, tab: .todo) }
             Button(L("이름 바꾸기…", "Rename…")) { ProjectInfoView.rename(group.id, current: group.name) }
             Button(group.pinned ? L("프로젝트 고정 해제", "Unpin project") : L("프로젝트 맨 위에 고정", "Pin project to top")) { folds.togglePin(group.id) }
+            if let lock = SidebarProjects.lock(of: group, todo: todos.snapshot) {
+                Text(lock.isPersonal ? L("🔒 개인 프로젝트 (해제할 수 없어요)", "🔒 Personal project (cannot be undone)")
+                                     : L("🔒 \(lock.name) Enterprise 프로젝트 (해제할 수 없어요)", "🔒 \(lock.name) Enterprise project (cannot be undone)"))
+            } else {
+                EnterpriseLockButtons(discussion: discussion, room: nil, project: group)
+            }
             if let binding = group.bindings.first, !binding.isFolderless {
                 Button(L("Finder에서 열기", "Open in Finder")) { NSWorkspace.shared.open(URL(fileURLWithPath: binding.root)) }
             }
@@ -444,11 +451,10 @@ struct ChatView: View {
         .disabled(discussion.importingMaterials)
     }
 
-    // A new chat linked to the project's newest root, locked like its chats or its TODO list when they are Enterprise
+    // A new chat linked to the project's newest root, locked like its chats or its TODO lists when they are locked
     // (a project may have only a locked list left).
     private func newChat(in group: ProjectGroup, _ binding: ProjectBinding) {
-        let lock = (group.chats + group.todoRooms).first { $0.enterpriseLock != nil && $0.workspace?.project?.root == binding.root }?.enterpriseLock
-            ?? todos.snapshot.lists.first { $0.lock != nil && $0.project?.root == binding.root }?.lock
+        let lock = SidebarProjects.lock(of: group, todo: todos.snapshot)
         discussion.addProjectChat(binding, title: L("새 대화", "New chat"), open: true, lock: lock)
         if folds.isFolded("project." + group.id) { folds.toggle("project." + group.id) }
     }
@@ -514,7 +520,7 @@ struct ChatView: View {
                 Text(conversation.turns.isEmpty && todo == nil ? L("새 대화", "New chat")
                      : todo != nil && conversation.title.hasPrefix(todoPrefix) ? String(conversation.title.dropFirst(todoPrefix.count)) : conversation.title)
                     .lineLimit(1).truncationMode(.tail)
-                if conversation.isEnterprise { EnterpriseBadge() }
+                LockBadge(lock: conversation.enterpriseLock)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             if approvals.requests.contains(where: { $0.room == conversation.id }) {
@@ -1647,7 +1653,8 @@ struct ChatView: View {
             }
             Divider()
             if let lock {
-                Text(L("🔒 \(lock.name) Enterprise 방 (해제할 수 없어요)", "🔒 \(lock.name) Enterprise chat (cannot be undone)"))
+                Text(lock.isPersonal ? L("🔒 개인 방 (해제할 수 없어요)", "🔒 Personal chat (cannot be undone)")
+                                     : L("🔒 \(lock.name) Enterprise 방 (해제할 수 없어요)", "🔒 \(lock.name) Enterprise chat (cannot be undone)"))
             } else {
                 EnterpriseLockButtons(discussion: discussion, room: discussion.currentID)
             }
@@ -1664,7 +1671,7 @@ struct ChatView: View {
                 (Text(Image(systemName: "person.2")) + Text(" " + members.map(name).joined(separator: " + ")).foregroundColor(.secondary))
                     .font(.system(size: 12))
             } else {
-                let name = (lock != nil ? "Enterprise · " : "")
+                let name = (lock.map { $0.isPersonal ? L("개인 · ", "Personal · ") : "Enterprise · " } ?? "")
                     + (next.map { discussion.label($0) } ?? L("쓸 수 있는 계정 없음", "No account available"))
                 (Text(members.isEmpty ? Image(systemName: "sparkles") : Image(systemName: "person.crop.circle"))
                  + Text(" " + name).foregroundColor(.primary)

@@ -97,7 +97,55 @@ func testEnterpriseMarks() {
     // Work chats: a Git project is linked; folders alone are a plain chat.
     var folders = Conversation(); folders.workspace = WorkspaceBinding(roots: [])
     expect(!folders.isProjectChat, "linked folders alone are a plain chat")
-    print("PASS: Enterprise lock (older chats open, the gate, picking, only the user locks, never unlocked, saved, work chats)")
+
+    // A personal lock: personal accounts, Gemini and models on this Mac; no Enterprise account. Otherwise an open chat.
+    let personalLock = Enterprise.personalLock
+    expect(Enterprise.permits(personal, lock: personalLock) && Enterprise.permits(gemini, lock: personalLock) && Enterprise.permits(local, lock: personalLock)
+           && !Enterprise.permits(school, lock: personalLock) && !Enterprise.permits(work, lock: personalLock), "a personal lock lets in only personal accounts")
+    expect(AutoPick.choose([school, schoolCodex, work], usage: m.latestUsage, lock: personalLock, current: nil) == nil
+           && AutoPick.choose(m.accounts, usage: m.latestUsage, lock: personalLock, current: nil)?.id == personal.id, "a personal chat picks only personal accounts")
+    chat.newConversation()
+    chat.configure { $0.soloAccountID = school.id; $0.memberIDs = [school.id, personal.id] }
+    chat.lockEnterprise(chat.currentID, organization: personalLock)
+    let personalID = chat.currentID
+    expect(chat.current.isPersonalLocked && !chat.current.isEnterprise && chat.configuration.memberIDs == [personal.id] && chat.configuration.soloAccountID == nil,
+           "locking as personal drops Enterprise members, and the chat is not an Enterprise one")
+    lock.lock(); asked = []; lock.unlock()
+    chat.draft = "개인 방 질문"
+    chat.send(); waitFor(chat)
+    lock.lock(); let personalAnswered = asked; lock.unlock()
+    expect(personalAnswered == [personal.id], "a personal chat is answered by a personal account: \(personalAnswered)")
+    expect(!chat.permits(school, room: personalID) && chat.permits(personal, room: personalID), "the gate keeps Enterprise accounts out of a personal chat")
+    let personalChat = chat.conversations.first { $0.id == personalID }!
+    expect(ChatLink.allowed(personalChat, asker: personal, room: UUID()) && !ChatLink.allowed(personalChat, asker: school, room: UUID()),
+           "AI chat search shows a personal chat only to personal accounts")
+
+    // A whole project locked: every chat of it (and its meetings), its TODO list, and the chats and TODOs made after.
+    let savedTodos = TodoStore.shared
+    let todos = TodoStore(url: URL(fileURLWithPath: AccountStore.home).appendingPathComponent("lock-todos-\(UUID().uuidString).json"))
+    TodoStore.shared = todos
+    defer { TodoStore.shared = savedTodos }
+    let repo = ProjectBinding(root: "/tmp/lock-repo", common: "/tmp/lock-repo/.git", remote: "", remoteURL: "")
+    let worktree = ProjectBinding(root: "/tmp/lock-repo-wt", common: "/tmp/lock-repo/.git", remote: "", remoteURL: "")
+    let first = chat.addProjectChat(repo, title: "one", open: false)
+    let second = chat.addProjectChat(worktree, title: "two", open: false)
+    let outside = chat.addProjectChat(ProjectBinding(root: "/tmp/other-repo", common: "/tmp/other-repo/.git", remote: "", remoteURL: ""), title: "other", open: false)
+    let key = SidebarProjects.key(repo)
+    expect(chat.lockProject(key, name: "lock-repo", organization: schoolLock, todos: todos) == nil, "a project locks")
+    let locked = { (id: UUID) in chat.conversations.first { $0.id == id }?.enterpriseLock?.organization }
+    expect(locked(first) == "학교" && locked(second) == "학교" && locked(outside) == nil, "every chat of the project (each worktree) is locked, no other")
+    expect(todos.current.lists.filter { $0.project.map(SidebarProjects.key) == key }.map { $0.lock?.organization } == ["학교"], "a project without a list gets a locked one")
+    let item = try! todos.add(title: "new worktree todo", project: worktree, projectName: "lock-repo")
+    expect(todos.current.list(item.listID)?.lock?.organization == "학교", "a TODO on another worktree of a locked project keeps the lock")
+    let projects = TodoProject.all(todos.current, chats: chat.conversations, names: [:])
+    expect(projects.filter { SidebarProjects.key($0.binding) == key }.allSatisfy { $0.lock?.organization == "학교" }, "the project's TODO targets carry its lock")
+    expect(chat.lockProject(key, name: "lock-repo", organization: personalLock, todos: todos) != nil
+           && locked(first) == "학교", "a locked project is never locked another way")
+    let personalProject = chat.addProjectChat(ProjectBinding(root: "/tmp/personal-repo", common: "/tmp/personal-repo/.git", remote: "", remoteURL: ""), title: "p", open: false)
+    expect(chat.lockProject(SidebarProjects.key(ProjectBinding(root: "/tmp/personal-repo", common: "/tmp/personal-repo/.git", remote: "", remoteURL: "")),
+                            name: "personal-repo", organization: personalLock, todos: todos) == nil && locked(personalProject) == Enterprise.personal,
+           "a project locks as personal too")
+    print("PASS: Enterprise lock (older chats open, the gate, picking, only the user locks, never unlocked, saved, work chats, personal lock, project lock)")
 }
 
 // ⌘F in a chat: turns with the words, moves between them, earlier turns drawn first, highlights.

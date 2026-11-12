@@ -39,7 +39,8 @@ final class ChatLink: ToolProvider {
     }
 
     static func allowed(_ conversation: Conversation, asker: Account?, room: UUID) -> Bool {
-        asker != nil && conversation.id != room && !conversation.turns.isEmpty && !conversation.isEnterprise && conversation.meetingOf == nil
+        asker.map { Enterprise.permits($0, lock: conversation.enterpriseLock) } == true && conversation.id != room && !conversation.turns.isEmpty
+            && !conversation.isEnterprise && conversation.meetingOf == nil
     }
 
     // The project of the chat being answered: its sidebar key and the name the sidebar shows.

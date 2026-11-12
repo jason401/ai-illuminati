@@ -285,8 +285,9 @@ extension Discussion {
         if split.target != nil && target == nil {
             note = SpaceDraftNote(name: "Space", reason: L("고칠 Space를 찾지 못했어요", "The Space to change is gone"))
         } else if let locked = source.flatMap(spaceLock), locked.organization != lock(of: room)?.organization {
-            note = SpaceDraftNote(name: source?.name ?? "Space", reason: L("Enterprise Space라 이 채팅에서는 고치거나 복사할 수 없어요",
-                                                                         "This is an Enterprise Space, so this chat cannot change or copy it"))
+            note = SpaceDraftNote(name: source?.name ?? "Space", reason: locked.isPersonal
+                                  ? L("개인 잠금 Space라 이 채팅에서는 고치거나 복사할 수 없어요", "This is a personal-locked Space, so this chat cannot change or copy it")
+                                  : L("Enterprise Space라 이 채팅에서는 고치거나 복사할 수 없어요", "This is an Enterprise Space, so this chat cannot change or copy it"))
         } else {
             switch SpaceBuilder.parse(split.body, new: target == nil).flatMap({ build in
                 SpacePictures.requests(in: split.body ?? "").flatMap { found -> Result<String, SpaceBad> in

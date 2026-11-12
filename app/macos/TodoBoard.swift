@@ -434,9 +434,9 @@ struct TodoBoardView: View {
         guard !text.isEmpty, let project = options.first(where: { $0.binding.root == root }) else { return }
         // The chat open before the board, when it works on the same project, gets the report card too.
         let origin = discussion.current.workspace?.project?.root == root && !store.snapshot.items.contains { $0.room == discussion.currentID } ? discussion.currentID : nil
-        // Written for a project worked on in an Enterprise chat: its TODOs keep that lock.
+        // Written for a locked project (or one worked on in a locked chat): its TODOs keep that lock.
         let lock = (discussion.current.workspace?.project?.root == root ? discussion.current.enterpriseLock : nil)
-            ?? discussion.conversations.first { $0.workspace?.project?.root == root && $0.enterpriseLock != nil }?.enterpriseLock
+            ?? discussion.conversations.first { $0.workspace?.project.map(SidebarProjects.key) == SidebarProjects.key(project.binding) && $0.enterpriseLock != nil }?.enterpriseLock
         act {
             try store.add(title: text, detail: draft.detail.trimmingCharacters(in: .whitespacesAndNewlines), files: draft.files.map(\.url), project: project.binding, projectName: project.name,
                           after: Array(draft.after), askFirst: draft.askFirst, originRoom: origin, lock: lock)
@@ -486,7 +486,7 @@ struct TodoCrewRow: View {
                 ForEach(workers, id: \.id) { account in
                     let picked = list.accounts.contains(account.id)
                     let allowed = Enterprise.permits(account, lock: lock)
-                    Button((picked ? "✓ " : "") + discussion.label(account) + (allowed ? left(account) : L(" · 회사·학교 잠금 밖", " · outside the Enterprise lock"))) { toggle(account.id) }
+                    Button((picked ? "✓ " : "") + discussion.label(account) + (allowed ? left(account) : L(" · 잠금 밖", " · outside the lock"))) { toggle(account.id) }
                         .disabled(!allowed && !picked || picked && list.accounts.count == 1)
                 }
                 if !gone.isEmpty {

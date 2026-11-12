@@ -327,6 +327,8 @@ extension Discussion {
             guard let account else {
                 finish(id, index, error: workers != nil
                        ? L("이 TODO에 고른 AI 중 이어서 작업할 계정이 없어요. 파일 변경은 보존했어요.", "None of the AIs picked for this TODO can continue. Changes are preserved.")
+                       : chatLock?.isPersonal == true
+                       ? L("이 개인 방에서 작업할 개인 Claude/Codex 계정이 필요해요. 파일 변경은 보존했어요.", "This personal chat needs a personal Claude/Codex account to continue. Changes are preserved.")
                        : chatLock != nil
                        ? L("이 Enterprise 방에서 작업할 \(chatLock?.name ?? "") Claude/Codex 계정이 필요해요. 파일 변경은 보존했어요.", "This Enterprise chat needs a \(chatLock?.name ?? "") Claude/Codex account to continue. Changes are preserved.")
                        : L("이어서 작업할 Claude/Codex 계정이 필요해요. 파일 변경은 보존했어요.", "No Claude/Codex account is available to continue. Changes are preserved.")); return

@@ -404,7 +404,12 @@ final class TodoStore: ObservableObject {
                 if fromAI, let held = data.lists[l].lock, held.organization != lock?.organization { throw TodoError.locked(L("이 채팅에서는 그 프로젝트에 TODO를 적을 수 없어요 (Enterprise).", "This chat cannot add TODOs to that project (Enterprise).")) }
                 if fromAI, let same = data.ordered(listID).first(where: { ![.done, .cancelled].contains($0.state) && Self.sameTitle($0.title, title) }) { return same }
                 if data.lists[l].lock == nil { data.lists[l].lock = lock }   // like a chat's lock, never removed
-            } else { let list = TodoList(title: projectName, project: project, lock: lock); data.lists.append(list); listID = list.id }
+            } else {
+                // A new worktree of a locked project: its list keeps the project's lock.
+                let held = data.lists.first { $0.project.map(SidebarProjects.key) == SidebarProjects.key(project) && $0.lock != nil }?.lock
+                if fromAI, let held, held.organization != lock?.organization { throw TodoError.locked(L("이 채팅에서는 그 프로젝트에 TODO를 적을 수 없어요 (Enterprise).", "This chat cannot add TODOs to that project (Enterprise).")) }
+                let list = TodoList(title: projectName, project: project, lock: held ?? lock); data.lists.append(list); listID = list.id
+            }
             var item = TodoItem(listID: listID, title: title, detail: detail, askFirst: askFirst, after: after, originRoom: originRoom)
             item.id = id; item.attachments = attachments
             if !fromAI, data.list(listID)?.paused != true, data.items.contains(where: { $0.listID == listID && ($0.state == .running || $0.state == .ready) }) { item.state = .ready }
@@ -702,7 +707,10 @@ struct TodoProject {
     static func all(_ data: TodoData, chats: [Conversation], names: [String: String]) -> [TodoProject] {
         var seen = Set<String>(), result: [TodoProject] = []
         func lock(_ p: ProjectBinding) -> EnterpriseLock? {
-            data.lists.first { $0.project?.root == p.root }?.lock ?? chats.first { $0.workspace?.project?.root == p.root && $0.enterpriseLock != nil }?.enterpriseLock
+            // The whole project's (every worktree of the repository), as the sidebar shows it.
+            let key = SidebarProjects.key(p)
+            return data.lists.first { $0.project.map(SidebarProjects.key) == key && $0.lock != nil }?.lock
+                ?? chats.first { $0.workspace?.project.map(SidebarProjects.key) == key && $0.enterpriseLock != nil }?.enterpriseLock
         }
         for list in data.lists { if let p = list.project, seen.insert(p.root).inserted { result.append(TodoProject(name: names[SidebarProjects.key(p)] ?? list.title, binding: p, lock: lock(p))) } }
         for chat in chats.sorted(by: { $0.updatedAt > $1.updatedAt }) {
@@ -980,7 +988,9 @@ final class TodoScheduler: ObservableObject {
         if let lock = list.lock { return lock }
         let chats = discussion.conversations
         for id in [item.originRoom, item.room].compactMap({ $0 }) { if let lock = chats.first(where: { $0.id == id })?.enterpriseLock { return lock } }
-        return chats.first { $0.workspace?.project?.root == project.root && $0.enterpriseLock != nil }?.enterpriseLock
+        let key = SidebarProjects.key(project)
+        return store.current.lists.first { $0.project.map(SidebarProjects.key) == key && $0.lock != nil }?.lock
+            ?? chats.first { $0.workspace?.project.map(SidebarProjects.key) == key && $0.enterpriseLock != nil }?.enterpriseLock
     }
 
     // Who works and who reviews: Claude/Codex accounts with 30% of both limits left (and allowed by the lock), the
@@ -1015,7 +1025,7 @@ final class TodoScheduler: ObservableObject {
         let picked = accounts.filter { allowed.contains($0.id) && [.claude, .codex].contains($0.provider) }
         if picked.isEmpty { return L("고른 AI 계정이 모두 없어졌어요. 보드에서 일할 AI를 다시 골라 주세요.", "The picked AI accounts are gone. Pick the AIs again on the board.") }
         if !picked.contains(where: { Enterprise.permits($0, lock: lock) }) {
-            return L("고른 AI가 이 프로젝트의 회사·학교 잠금에 맞지 않아요. 일할 AI를 다시 골라 주세요.", "The picked AIs are not allowed by this project's Enterprise lock. Pick them again.")
+            return L("고른 AI가 이 프로젝트의 잠금(Enterprise·개인)에 맞지 않아요. 일할 AI를 다시 골라 주세요.", "The picked AIs are not allowed by this project's lock (Enterprise or personal). Pick them again.")
         }
         return L("고른 AI의 남은 사용량이 30% 넘을 때까지 기다려요.", "Waiting until a picked AI has 30% usage left.")
     }

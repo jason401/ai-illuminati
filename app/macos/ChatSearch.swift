@@ -197,7 +197,7 @@ struct ChatSearchRow: View {
                     Image(systemName: "chevron.left.forwardslash.chevron.right").font(.system(size: 9, weight: .semibold)).foregroundColor(.secondary)
                 }
                 Text(result.title).font(.system(size: 13)).lineLimit(1).truncationMode(.tail)
-                if conversation?.isEnterprise == true { EnterpriseBadge() }
+                LockBadge(lock: conversation?.enterpriseLock)
             }
             if !result.snippet.isEmpty {
                 Text(FindHighlight(words: result.words).apply(AttributedString(result.snippet)))

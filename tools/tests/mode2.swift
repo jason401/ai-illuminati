@@ -979,19 +979,19 @@ do {
     let invocation = WorkspaceInvocation(binding: binding, room: room, readOnly: false, backupPath: backup.directory)
     let dir = NativeSessions.directory(room).appendingPathComponent("test")
     let original = ["-c", "sandbox_mode=\"read-only\"", "exec", "resume", "fake-session", "question"]
-    let resume = try invocation.arguments(provider: .codex, original: original, directory: dir, web: true)
+    let resume = try invocation.arguments(provider: .codex, original: original, directory: dir, web: true, tools: ToolHub.workspaceLink)
     expect(resume.contains("sandbox_mode=\"workspace-write\"") && resume.contains("features.shell_tool=true"), "resume lost execution sandbox")
     expect(resume.contains("sandbox_workspace_write.exclude_slash_tmp=true") && resume.contains("sandbox_workspace_write.exclude_tmpdir_env_var=true"), "unexpected writable tmp roots")
-    let claude = try invocation.arguments(provider: .claude, original: ["--tools", "", "--mcp-config", "{}"], directory: dir, web: true)
+    let claude = try invocation.arguments(provider: .claude, original: ["--tools", "", "--mcp-config", "{}"], directory: dir, web: true, tools: ToolHub.workspaceLink)
     expect(claude.contains(where: { $0.contains("Bash") }) && claude.contains("--settings") && !claude.contains("--dangerously-skip-permissions"), "execution must stay sandboxed")
     let viewing = WorkspaceInvocation(binding: binding, room: room, readOnly: true)
-    let read = try viewing.arguments(provider: .codex, original: original, directory: dir, web: true)
+    let read = try viewing.arguments(provider: .codex, original: original, directory: dir, web: true, tools: ToolHub.workspaceLink)
     expect(read.contains("sandbox_mode=\"read-only\"") && read.contains("features.shell_tool=false"), "review must remain read-only even in execution room")
-    let agy = try viewing.arguments(provider: .gemini, original: ["-p","test","--sandbox","--disable-slash-commands"], directory: dir, web: true)
+    let agy = try viewing.arguments(provider: .gemini, original: ["-p","test","--sandbox","--disable-slash-commands"], directory: dir, web: true, tools: ToolHub.workspaceLink)
     expect(!agy.contains("--disable-slash-commands") && agy.contains("plan"), "agy mode disabled by conflicting slash flag")
     expect(agy[1].hasPrefix("[도구 안내]") && agy[1].contains("run_command") && agy[1].contains("만들거나 고칠 수 없어요") && agy[1].hasSuffix("test"),
            "agy in a linked folder must be told commands are blocked, before the prompt")
-    let edits = try invocation.arguments(provider: .gemini, original: ["-p","test","--sandbox"], directory: dir, web: true)
+    let edits = try invocation.arguments(provider: .gemini, original: ["-p","test","--sandbox"], directory: dir, web: true, tools: ToolHub.workspaceLink)
     expect(edits.contains("accept-edits") && edits[1].contains("허락된 명령만") && !edits[1].contains("만들거나 고칠 수 없어요"), "agy note must follow the level")
     let denied = Discussion.describe(.failed(#"jetski: no output produced — a tool required the "command" permission that headless mode cannot prompt for, so it was auto-denied."#))
     expect(denied.contains(L("터미널 명령", "terminal command")) && !denied.contains("dangerously"), "a denied tool must be named, without the CLI's bypass advice")
@@ -1766,7 +1766,7 @@ do {
     let writableBinding = chat.soloBinding(chat.currentID)
     expect(writableBinding.roots.contains { $0.path == shared.path && $0.writable == true }, "a writable shared folder is given as writable")
     expect(Discussion.soloFolders(writableBinding, shared: m.activeSharedFolders).contains(shared.path + " (shared folder — you may read, edit"), "the AI is told it may change it")
-    let writableArgs = try! WorkspaceInvocation(binding: writableBinding, room: chat.currentID).arguments(provider: .claude, original: ["-p", "--tools", "", "--allowedTools", "x"], directory: URL(fileURLWithPath: AccountStore.home).appendingPathComponent("shared-args"), web: false)
+    let writableArgs = try! WorkspaceInvocation(binding: writableBinding, room: chat.currentID).arguments(provider: .claude, original: ["-p", "--tools", "", "--allowedTools", "x"], directory: URL(fileURLWithPath: AccountStore.home).appendingPathComponent("shared-args"), web: false, tools: ToolHub.workspaceLink)
     expect(writableArgs[writableArgs.lastIndex(of: "--allowedTools")! + 1].contains("Edit(/" + shared.path + "/**)"), "Claude may edit it")
     m.sharedFolders = []
     expect(m.writableSharedFolders.isEmpty, "removing the folder also drops its write access")
@@ -1839,19 +1839,19 @@ do {
     // A linked folder gets full access by default (any command, network, no sandbox, Git push blocked).
     let dir = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("solo-args")
     let fullBinding = chat.soloBinding(chat.currentID)
-    let fullArgs = try! WorkspaceInvocation(binding: fullBinding, room: chat.currentID).arguments(provider: .claude, original: ["-p", "--tools", "", "--allowedTools", "x", "--safe-mode", "--mcp-config", "{}"], directory: dir, web: true)
+    let fullArgs = try! WorkspaceInvocation(binding: fullBinding, room: chat.currentID).arguments(provider: .claude, original: ["-p", "--tools", "", "--allowedTools", "x", "--safe-mode", "--mcp-config", "{}"], directory: dir, web: true, tools: ToolHub.workspaceLink)
     expect(fullBinding.fullAccess == true && fullArgs.contains("bypassPermissions") && fullArgs.contains { $0.contains("Bash(git push:*)") }, "linked folder: full access by default")
     chat.change(chat.currentID) { $0.workspace?.fullAuto = false }
     // Turned off: tool settings as before, only the chat folder and the linked folder may change.
     let own = Discussion.chatFolder(chat.currentID).path
     let invocation = WorkspaceInvocation(binding: chat.soloBinding(chat.currentID), room: chat.currentID)
     expect(invocation.binding.fullAccess == nil, "full access off restores the limited mode")
-    let claudeArgs = try! invocation.arguments(provider: .claude, original: ["-p", "--tools", "", "--allowedTools", "x", "--safe-mode", "--mcp-config", "{}"], directory: dir, web: true)
+    let claudeArgs = try! invocation.arguments(provider: .claude, original: ["-p", "--tools", "", "--allowedTools", "x", "--safe-mode", "--mcp-config", "{}"], directory: dir, web: true, tools: ToolHub.workspaceLink)
     let allowed = claudeArgs[claudeArgs.lastIndex(of: "--allowedTools")! + 1]
     expect(allowed.contains("Edit(/" + own + "/**)") && !allowed.contains(",Edit,") && !allowed.hasSuffix(",Edit"), "Claude may edit only the chat folder")
     expect(claudeArgs.contains(shared.path), "Claude can read the shared folder")
     expect(allowed.contains("Edit(/" + linkedDir.path + "/**)") && !allowed.contains("Edit(/" + shared.path), "Claude may edit the linked folder, not the shared one")
-    let codexArgs = try! invocation.arguments(provider: .codex, original: ["exec", "-C", "/tmp", "x"], directory: dir, web: false)
+    let codexArgs = try! invocation.arguments(provider: .codex, original: ["exec", "-C", "/tmp", "x"], directory: dir, web: false, tools: ToolHub.workspaceLink)
     expect(codexArgs.contains("mcp_servers.illuminati.default_tools_approval_mode=\"approve\"") && codexArgs.contains("sandbox_mode=\"workspace-write\"")
            && codexArgs.contains("sandbox_workspace_write.writable_roots=[\"" + own + "\",\"" + SpaceStore.root.path + "\",\"" + linkedDir.path + "\"]"), "Codex may write the chat folder, the Spaces folder and the linked folder only")
     print("PASS: plain chat (auto pick 15% / weekly, Gemini out, Enterprise sides, limit handoff, YouTube via Gemini, chat and linked folders writable with backup and undo, shared read only)")
@@ -1884,7 +1884,7 @@ do {
         try! JSONSerialization.data(withJSONObject: entry).write(to: FaceLink.file)
     }
     func manifest(_ binding: WorkspaceBinding) -> [String: Any] {
-        let (_, args) = try! WorkspaceInvocation(binding: binding, room: chat.currentID).prepare(in: dir)
+        let (_, args) = try! WorkspaceInvocation(binding: binding, room: chat.currentID).prepare(in: dir, tools: ToolHub.workspaceLink)
         return try! JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: args[1]))) as! [String: Any]
     }
     let plain = chat.soloBinding(chat.currentID)
@@ -1895,7 +1895,7 @@ do {
     expect(FaceLink.server()?.command == "/usr/bin/python3", "AI Face's own server is used")
     var debate = plain; debate.face = nil
     expect(manifest(plain)["face"] as? String == FaceLink.socketPath && manifest(debate)["face"] == nil, "plain chat only")
-    expect(!(try! invocation.arguments(provider: .claude, original: ["-p", "--mcp-config", "{}"], directory: dir, web: false)).joined().contains("ai-face"),
+    expect(!(try! invocation.arguments(provider: .claude, original: ["-p", "--mcp-config", "{}"], directory: dir, web: false, tools: ToolHub.workspaceLink)).joined().contains("ai-face"),
            "models are not given AI Face directly")
     FaceLink.shared.start()
     expect(FaceLink.shared.tools().map { $0["name"] as? String } == ["set_expression", "calendar_events"], "every AI Face tool is offered (AI Face decides)")
@@ -1903,7 +1903,7 @@ do {
     // A model's call: bridge → app socket → the app's AI Face connection.
     let bridge = Process(), toBridge = Pipe(), fromBridge = Pipe()
     bridge.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
-    bridge.arguments = try! WorkspaceInvocation(binding: plain, room: chat.currentID).prepare(in: dir).1
+    bridge.arguments = try! WorkspaceInvocation(binding: plain, room: chat.currentID).prepare(in: dir, tools: ToolHub.workspaceLink).1
     bridge.standardInput = toBridge; bridge.standardOutput = fromBridge; bridge.standardError = FileHandle.nullDevice
     try! bridge.run()
     for (n, line) in [#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#,
@@ -2569,6 +2569,7 @@ runTest("testGoogleDrive", testGoogleDrive)
 runTest("testWindowDrag", testWindowDrag)
 
 runTest("testRunConditions", testRunConditions)
+runTest("testRuntimeThroughApp", testRuntimeThroughApp)
 runTest("testProjectWork", testProjectWork)
 runTest("testAskAI", testAskAI)
 runTest("testCollabLog", testCollabLog)

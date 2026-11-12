@@ -5,22 +5,6 @@ import AIAccounts
 import AILocalization
 import AIRuntime
 
-struct ProjectBinding: Codable, Equatable {
-    var root: String
-    var common: String
-    var remote: String
-    var remoteURL: String
-    // nil: a Git project (code). "documents": a plain folder of papers, slides, figures and data, without Git:
-    // every answer backs it up first (Undo), and the review compares with that backup.
-    var kind: String? = nil
-    var isFolderless: Bool { kind == "folderless" }
-    var isDocuments: Bool { kind == Self.documentsKind || isFolderless }
-    var linkedRoots: [WorkspaceRoot] { isFolderless ? [] : [WorkspaceRoot(path: root, directory: true, writable: true)] }
-    static let documentsKind = "documents"
-    // What the AI's sandbox never writes: the Git data (a documents project's common is its own folder).
-    var protectedPaths: [String] { isDocuments ? [root + "/.git"] : [common, root + "/.git"] }
-}
-
 // All privileged commands use fixed argv, closed stdin, bounded output and a cancellable process group.
 enum ProjectProcess {
     struct Reply { var status: Int32; var output: String }

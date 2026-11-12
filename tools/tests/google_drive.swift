@@ -258,7 +258,7 @@ func testGoogleDrive() {
     // Real MCP stdio bridge -> capability-bound app socket -> fake Google API, without CLI networking.
     let manifestDir = root.appendingPathComponent("drive-manifests")
     let binding = WorkspaceBinding(roots: context.roots, level: .view, face: true)
-    let prepared = try! WorkspaceInvocation(binding: binding, room: context.room).prepare(in: manifestDir)
+    let prepared = try! WorkspaceInvocation(binding: binding, room: context.room).prepare(in: manifestDir, tools: ToolHub.workspaceLink)
     let manifest = try! String(contentsOfFile: prepared.1[1], encoding: .utf8)
     expect(manifest.contains("toolSession") && !manifest.contains("fixture-secret") && !manifest.contains("fixture-refresh") && !manifest.contains("fixture-access"), "manifest has only local capability, never Google credentials")
     let bridge = Process(), input = Pipe(), output = Pipe()
@@ -271,7 +271,7 @@ func testGoogleDrive() {
     bridge.waitUntilExit()
     expect(result.contains("drive_read") && result.contains("Fixture") && !result.contains("fixture-access"), "real bridge forwards Drive tool without credentials")
     var debate = binding; debate.face = nil
-    let debateManifest = try! WorkspaceInvocation(binding: debate, room: context.room).prepare(in: manifestDir)
+    let debateManifest = try! WorkspaceInvocation(binding: debate, room: context.room).prepare(in: manifestDir, tools: ToolHub.workspaceLink)
     expect(!(try! String(contentsOfFile: debateManifest.1[1], encoding: .utf8)).contains("toolSession"), "other modes have no Drive capability")
     expect(ToolHub.shared.handle(["op": "call", "name": "drive_read", "arguments": ["file": "doc"]])["isError"] as? Bool == true, "missing capability refused")
     drive.enabled = false

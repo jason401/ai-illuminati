@@ -91,7 +91,7 @@ func testAskAI() {
     let base = WorkspaceBinding(roots: [WorkspaceRoot(path: dir.path, directory: true, writable: true)], face: true)
     let view = Discussion.peerView(base)
     PeerLink.shared.open(session)
-    let manifest = try! WorkspaceInvocation(binding: view, room: room, account: codex).prepare(in: dir)
+    let manifest = try! WorkspaceInvocation(binding: view, room: room, account: codex).prepare(in: dir, tools: ToolHub.workspaceLink)
     let object = try! JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: manifest.1.last!))) as! [String: Any]
     PeerLink.shared.close(session)
     expect(view.origin == .consulted && object["toolSession"] == nil && view.roots.allSatisfy { $0.writable != true }, "the AI asked gets the folders read only and no tool session")

@@ -307,10 +307,10 @@ func testFullAuto() {
     let backup = try! WorkspaceBackup.begin(WorkspaceBinding(roots: binding.roots, level: .write), room: room, runID: binding.projectRunID!)
     let invocation = WorkspaceInvocation(binding: binding, room: room, readOnly: false, backupPath: backup.directory)
     let dir = base.appendingPathComponent("session"); try! FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-    let claude = try! invocation.arguments(provider: .claude, original: ["-p", "x", "--tools", "", "--mcp-config", "{}"], directory: dir, web: false)
+    let claude = try! invocation.arguments(provider: .claude, original: ["-p", "x", "--tools", "", "--mcp-config", "{}"], directory: dir, web: false, tools: ToolHub.workspaceLink)
     expect(claude.contains("bypassPermissions") && claude.contains("default") && !claude.contains("--restricted") && !claude.contains("--settings")
            && claude.contains { $0.contains("Bash(git push:*)") }, "Claude full auto: all tools, no prompts, no sandbox, push denied")
-    let codex = try! invocation.arguments(provider: .codex, original: ["exec", "-C", dir.path, "x"], directory: dir, web: false)
+    let codex = try! invocation.arguments(provider: .codex, original: ["exec", "-C", dir.path, "x"], directory: dir, web: false, tools: ToolHub.workspaceLink)
     expect(codex.contains("sandbox_mode=\"danger-full-access\"") && codex.contains("web_search=\"live\"") && !codex.contains { $0.contains("network_access=false") },
            "Codex full auto: full access with network")
 

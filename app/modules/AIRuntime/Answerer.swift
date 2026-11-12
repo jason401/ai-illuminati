@@ -11,7 +11,7 @@ public enum ToolHome {
 // Asks one AI one prompt through its own command line tool, logged in with the subscription
 // (no API keys). Answers only: every tool is started with file editing and commands turned off,
 // in an empty folder (~/.ai-illuminati/chat).
-// Gemini (agy) reads web pages only with an allow rule in its own settings; the app adds it (Workspace.swift:
+// Gemini (agy) reads web pages only with an allow rule in its own settings; the app adds it (RunConditionsApp.swift:
 // `GeminiLinks.allowWeb`, through `RunConditions.beforeStart`). Here only what the AI is told.
 public enum GeminiLinks {
     public static let toolNote = """
@@ -26,7 +26,7 @@ public enum GeminiLinks {
 
 // How one call is started, decided by the caller (chat, project work) and only applied here: what goes before the
 // tool's arguments, a wrapper program, the environment, the process group, and the linked folders. No permission
-// rules live here; whoever builds it (Workspace.swift: `RunConditions.app`) keeps them.
+// rules live here; whoever builds it (the app: `RunConditions.app` in RunConditionsApp.swift) keeps them.
 public struct RunConditions {
     public var prefix: [String] = []               // before the tool's own arguments
     public var wrapper: [String]? = nil            // a program (and its arguments) started instead, with the tool after them

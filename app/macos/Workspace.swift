@@ -10,6 +10,31 @@ enum WorkspaceLevel: String, Codable, CaseIterable {
 }
 // writable: the chat's own folder, which its AI may change without a backup (every other root follows the level).
 struct WorkspaceRoot: Codable, Equatable { var path: String; var directory: Bool; var writable: Bool? = nil }
+// A chat's project as the folder rules see it (protected Git data, linked roots). Project work makes and checks it;
+// the value lives here so the folder rules need nothing above them. Saved as before (same keys).
+struct ProjectBinding: Codable, Equatable {
+    var root: String
+    var common: String
+    var remote: String
+    var remoteURL: String
+    // nil: a Git project (code). "documents": a plain folder of papers, slides, figures and data, without Git:
+    // every answer backs it up first (Undo), and the review compares with that backup.
+    var kind: String? = nil
+    var isFolderless: Bool { kind == "folderless" }
+    var isDocuments: Bool { kind == Self.documentsKind || isFolderless }
+    var linkedRoots: [WorkspaceRoot] { isFolderless ? [] : [WorkspaceRoot(path: root, directory: true, writable: true)] }
+    static let documentsKind = "documents"
+    // What the AI's sandbox never writes: the Git data (a documents project's common is its own folder).
+    var protectedPaths: [String] { isDocuments ? [root + "/.git"] : [common, root + "/.git"] }
+}
+// Who a tool session belongs to. member: an AI answering the user (every tool); side: another AI answering the same
+// message at the same time, read only (only ask_ai); consulted: an AI another AI asked or called to a meeting (no ask_ai
+// or convene_meeting, so depth stays 1).
+enum ToolOrigin: String, Codable { case member, side, consulted }
+// The app's tool gateway as the bridge sees it: the app passes it to each call, so the rules here name neither the
+// gateway nor AI Face. It is asked only when this chat offers tools; nil = none running.
+struct WorkspaceToolLink { var socket: String; var session: String; var face: String? }
+typealias WorkspaceTools = (WorkspaceInvocation) -> WorkspaceToolLink?
 struct WorkspaceBinding: Codable {
     var roots: [WorkspaceRoot]
     var level: WorkspaceLevel = .view
@@ -22,8 +47,8 @@ struct WorkspaceBinding: Codable {
     // Runtime only (plain chat with a linked non-Git folder): full access like project work, with the Undo backup.
     var fullAccess: Bool? = nil
     var fullAccessActive: Bool { (isFullAuto && projectRunID != nil) || fullAccess == true }
-    var face: Bool? = nil   // plain chat: the bridge also offers AI Face's tools through the app (FaceLink)
-    var origin: ToolOrigin? = nil   // runtime only: whose tool session this is (ToolHub.swift); nil = member
+    var face: Bool? = nil   // plain chat: the bridge also offers AI Face's tools through the app
+    var origin: ToolOrigin? = nil   // runtime only: whose tool session this is; nil = member
     func inventory() -> [String] {
         var result: [String] = []
         for (index, root) in roots.enumerated() {
@@ -62,7 +87,7 @@ struct WorkspaceInvocation {
            Bundle.main.bundleIdentifier != "local.aiilluminati" { return URL(fileURLWithPath: path) }
         return Bundle.main.resourceURL ?? Bundle.main.bundleURL.appendingPathComponent("Contents/Resources")
     }
-    func prepare(in directory: URL) throws -> (String, [String]) {
+    func prepare(in directory: URL, tools: WorkspaceTools) throws -> (String, [String]) {
         if level != .view {
             guard let backupPath, let backup = try? WorkspaceBackup.load(backupPath), backup.roots == (binding.projectRunID == nil ? binding.roots : binding.roots.filter { $0.writable == true }), !backup.restored else { throw MaterialReader.error("자동 백업 완료 전에는 쓰기를 시작할 수 없습니다.") }
         }
@@ -76,19 +101,18 @@ struct WorkspaceInvocation {
                                       "cache": NativeSessions.directory(room).appendingPathComponent("document-cache").path,
                                       "extractor": Self.resources.appendingPathComponent("WorkspaceDocument").path]
         object["project"] = binding.projectRunID != nil
-        if (binding.face == true || binding.projectRunID != nil || binding.origin == .side) && ToolHub.shared.active {
-            object["tools"] = ToolHub.socketPath
-            object["toolSession"] = ToolHub.shared.register(room: room, roots: binding.roots, projectRun: binding.projectRunID, generation: binding.projectGeneration,
-                                                            asker: account, origin: binding.origin ?? .member)
-            if FaceLink.active() != nil { object["face"] = FaceLink.socketPath } // legacy manifests
+        if binding.face == true || binding.projectRunID != nil || binding.origin == .side, let link = tools(self) {
+            object["tools"] = link.socket
+            object["toolSession"] = link.session
+            if let face = link.face { object["face"] = face } // legacy manifests
         }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         try JSONSerialization.data(withJSONObject: object).write(to: manifest, options: .atomic)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: manifest.path)
         return ("/usr/bin/python3", [Self.resources.appendingPathComponent("workspace_mcp.py").path, manifest.path])
     }
-    func readRequests(_ requests: [[String: Any]], directory: URL, token: DebateCancellation?) throws -> (String, [URL]) {
-        let (command, arguments) = try prepare(in: directory)
+    func readRequests(_ requests: [[String: Any]], directory: URL, token: DebateCancellation?, tools: WorkspaceTools) throws -> (String, [URL]) {
+        let (command, arguments) = try prepare(in: directory, tools: tools)
         let input = directory.appendingPathComponent("read-request-\(UUID().uuidString).json")
         try JSONSerialization.data(withJSONObject: requests).write(to: input)
         defer { try? FileManager.default.removeItem(at: input) }
@@ -124,8 +148,8 @@ struct WorkspaceInvocation {
     var executionFolders: [String] { binding.projectRunID == nil ? binding.roots.filter(\.directory).map(\.path) : ownFolders }
     var ownFolders: [String] { binding.roots.filter { $0.directory && $0.writable == true }.map(\.path) }
 
-    func arguments(provider: Account.Provider, original: [String], directory: URL, web: Bool) throws -> [String] {
-        let (command, args) = try prepare(in: directory)
+    func arguments(provider: Account.Provider, original: [String], directory: URL, web: Bool, tools: WorkspaceTools) throws -> [String] {
+        let (command, args) = try prepare(in: directory, tools: tools)
         func json(_ object: Any) -> String {
             let data = try! JSONSerialization.data(withJSONObject: [object], options: [.fragmentsAllowed, .sortedKeys, .withoutEscapingSlashes])
             return String(data: data, encoding: .utf8)!.dropFirst().dropLast().description
@@ -231,104 +255,7 @@ struct WorkspaceInvocation {
     }
 }
 
-// What Answerer starts each tool with (RunConditions): worked out here, where the rules are, so Answerer knows
-// nothing about folders, project work, AI Face or AutoGuard.
-extension RunConditions {
-    static func app(_ account: Account, _ workspace: WorkspaceInvocation? = nil) -> RunConditions {
-        var run = RunConditions()
-        // The face goes through the app as "illuminati", never through Codex's own AI Face server ("gpt").
-        if account.provider == .codex { run.prefix = FaceLink.codexOff(account) }
-        guard let workspace else {
-            if account.provider == .gemini { run.beforeStart = GeminiLinks.allowWeb }
-            return run
-        }
-        let project = workspace.binding.projectRunID != nil, guarded = workspace.binding.fullAccessActive
-        // Project work: one cancellable process group (project_process.py), stopped as a whole at the end.
-        if project {
-            run.wrapper = ["/usr/bin/python3", WorkspaceInvocation.resources.appendingPathComponent("project_process.py").path]
-            run.processGroup = true
-        }
-        run.environment = { base in
-            var environment = base
-            if project { environment["AI_ILLUMINATI_PROJECT_PROCESS"] = "1" }
-            if guarded { environment = AutoGuard.environment(environment) }
-            return environment
-        }
-        // The arguments know who answers (the chat tools ask for it); file requests are read as before, without it.
-        var answering = workspace
-        answering.account = account
-        run.folders = RunConditions.Folders(directory: NativeSessions.directory(workspace.room),
-            arguments: { try answering.arguments(provider: account.provider, original: $0, directory: $1, web: $2) },
-            read: { try workspace.readRequests($0, directory: $1, token: $2) })
-        return run
-    }
-}
-
-extension Discussion {
-    func setWorkspaceLevel(_ level: WorkspaceLevel) {
-        guard !running, WorkspaceLevel.offered.contains(level) else { return }
-        do {
-            try nativeSessions.reset(currentID)
-            change(currentID, save: true) { $0.workspace?.level = level }
-        } catch { attachmentError = error.localizedDescription }
-    }
-}
-
-extension Discussion {
-    func undoWorkspace(_ turn: ChatTurn) {
-        guard !running, !importingMaterials, turn.projectCommitted != true, turn.projectPushed != true, let path = turn.backupPath else { return }
-        let room = currentID
-        runningRooms.insert(room)
-        DispatchQueue.global(qos: .userInitiated).async {
-            do {
-                var backup = try WorkspaceBackup.load(path)
-                try backup.restore()
-                DispatchQueue.main.async {
-                    self.change(room, save: true) { conversation in
-                        if let i = conversation.turns.firstIndex(where: { $0.id == turn.id }) { conversation.turns[i].undone = true }
-                    }
-                    self.runningRooms.remove(room)
-                    self.sessionNote = L("백업 시점으로 복구하고 해시 일치를 확인했습니다.", "Restored the backup; original hashes match.")
-                }
-            } catch { DispatchQueue.main.async { self.runningRooms.remove(room); self.attachmentError = error.localizedDescription } }
-        }
-    }
-}
-
 extension GeminiLinks {
-    // Gemini (agy) can open YouTube links: in one-shot mode it cannot ask for permission, so agy needs
-    // an allow rule in ~/.gemini/antigravity-cli/settings.json. agy reads the page (title, channel,
-    // description), it does not watch the video. Rules are only added, never removed; the file is
-    // backed up once, and left alone if it cannot be read. Only for plain chat (no linked folders).
-    // "read_url(*)" lets it open any page it finds with its web search (read only; commands stay blocked).
-    static let rules = ["read_url(*)", "read_url(youtube.com)", "read_url(www.youtube.com)", "read_url(m.youtube.com)", "read_url(youtu.be)"]
-
-    static func allowWeb() {
-        let path = Login.home + "/.gemini/antigravity-cli/settings.json"
-        var settings: [String: Any] = [:]
-        if FileManager.default.fileExists(atPath: path) {
-            guard let data = FileManager.default.contents(atPath: path),
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
-            settings = json
-        }
-        var permissions = settings["permissions"] as? [String: Any] ?? [:]
-        var allow = permissions["allow"] as? [String] ?? []
-        let missing = rules.filter { !allow.contains($0) }
-        guard !missing.isEmpty else { return }
-        let backup = path + ".backup-before-ai-illuminati"
-        if FileManager.default.fileExists(atPath: path), !FileManager.default.fileExists(atPath: backup) {
-            try? FileManager.default.copyItem(atPath: path, toPath: backup)
-        }
-        allow += missing
-        permissions["allow"] = allow
-        settings["permissions"] = permissions
-        if let data = try? JSONSerialization.data(withJSONObject: settings, options: [.prettyPrinted, .sortedKeys]) {
-            try? FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
-            try? data.write(to: URL(fileURLWithPath: path), options: .atomic)
-            NSLog("AI Illuminati: added to agy settings: \(missing.joined(separator: ", "))")
-        }
-    }
-
     // Linked folders: personal agy permissions are not broadened, so only describe what this mode allows.
     static func workspaceNote(level: WorkspaceLevel, readsPages: Bool) -> String {
         let commands = level == .execute

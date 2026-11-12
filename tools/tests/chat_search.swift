@@ -342,7 +342,7 @@ func testChatTools() {
     var invocation = WorkspaceInvocation(binding: WorkspaceBinding(roots: [], face: true), room: here.id)
     invocation.account = school
     let dir = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("chat-tools-manifest")
-    let (_, args) = try! invocation.prepare(in: dir)
+    let (_, args) = try! invocation.prepare(in: dir, tools: ToolHub.workspaceLink)
     let manifest = try! JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: args[1]))) as! [String: Any]
     let session = manifest["toolSession"] as? String ?? ""
     let listed = ToolHub.shared.handle(["op": "tools", "session": session])["tools"] as? [[String: Any]] ?? []

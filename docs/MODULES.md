@@ -119,7 +119,7 @@ Runs one AI's command line tool for one prompt and hands back its answer; keeps 
 (Ollama); reads usage. Depends on `AIAccounts` (accounts, their environment and folders, `AccountStore.home`) and
 `AILocalization`; it cannot import Workspace, Projects, Chat, Face or ToolHub (they are app files, not modules), and it
 decides no permission: what to start with comes in a `RunConditions` the caller built (`RunConditions.app` in
-`Workspace.swift`). Stays in the app: `extension Discussion` (`requestDebate` …, later the Chat module),
+`RunConditionsApp.swift`, since W0). Stays in the app: `extension Discussion` (`requestDebate` …, later the Chat module),
 `GeminiLinks.workspaceNote` (names `WorkspaceLevel`, an `extension GeminiLinks` in `Workspace.swift`),
 `LocalModel.install` (opens Terminal: an `extension LocalModel` in `Login.swift`), `LocalModelStore`/the Ollama window
 (`LocalModels.swift`), `Login` (its `home`/`agyInstalled` now read `ToolHome`), `ChatTurn.Entry.reply` (uses
@@ -127,14 +127,14 @@ decides no permission: what to start with comes in a `RunConditions` the caller 
 
 | Promise | Users (files) | Module test (`runtime_contract.swift`) | User tests |
 |---|---|---|---|
-| Starts exactly what `RunConditions` says (prefix, wrapper first, environment, folders) | every `Answerer.ask` caller through `RunConditions.app` | fake CLI: arguments and folder seen by the tool | `run_conditions.swift` (golden file, each guard alone) |
-| Errors: a tool that cannot start → `missingTool`; a failed exit → `failed(<model note> + last 300 letters of stderr)`; no answer in time → `timedOut`; a picked model the account lacks names the model | Solo, Meeting, Debate, Vote, Peer, ProjectChat, Enterprise (`Answerer.Failure`) | "a failed tool's message is passed on", "missingTool", "a slow tool times out" | mode2 error and fallback checks (debate, plain chat limit handoff) |
-| Stop: a stopped token starts nothing; Stop while it runs fails the answer at once (`Cancelled`, or the tool's own exit when the tool ends first: callers look at the token) and ends the tool, its group and every descendant found by parent; with `AI_ILLUMINATI_PROJECT_PROCESS=1` the whole group is killed first | Debate, Solo, ProjectChat, Meeting, Todo (tokens); project work (marker) | "a stopped token starts no tool", "Stop ends … at once", "… the programs it started", "… in a group of its own", "Stop ends a marked tool's whole group" | mode2 "actual process cancellation", testProjectWork "Stop kills foreground and background project writers" |
-| Time limit: at `timeout` the tool and its descendants are ended | same | "a slow tool times out", "a timed-out tool and its children are ended" | none |
-| Left processes: with `processGroup` the tool's whole group is killed when the call ends, even after a good answer; without it nothing else is stopped | `RunConditions.app` (project work) | "the process group is stopped when the call ends", "without a process group nothing else is stopped" | `run_conditions.swift` (group flag per kind) |
+| Starts exactly what `RunConditions` says (prefix, wrapper first, environment, folders) | every `Answerer.ask` caller through `RunConditions.app` | fake CLI: arguments and folder seen by the tool | `run_conditions.swift` (golden file, each guard alone), `runtime_app.swift` (the same through the app with a fake CLI) |
+| Errors: a tool that cannot start → `missingTool`; a failed exit → `failed(<model note> + last 300 letters of stderr)`; no answer in time → `timedOut`; a picked model the account lacks names the model | Solo, Meeting, Debate, Vote, Peer, ProjectChat, Enterprise (`Answerer.Failure`) | "a failed tool's message is passed on", "missingTool", "a slow tool times out" | mode2 error and fallback checks (debate, plain chat limit handoff), `runtime_app.swift` ("a failed tool's message reaches the app", "a slow tool times out", Claude and Codex) |
+| Stop: a stopped token starts nothing; Stop while it runs fails the answer at once (`Cancelled`, or the tool's own exit when the tool ends first: callers look at the token) and ends the tool, its group and every descendant found by parent; with `AI_ILLUMINATI_PROJECT_PROCESS=1` the whole group is killed first | Debate, Solo, ProjectChat, Meeting, Todo (tokens); project work (marker) | "a stopped token starts no tool", "Stop ends … at once", "… the programs it started", "… in a group of its own", "Stop ends a marked tool's whole group" | mode2 "actual process cancellation", testProjectWork "Stop kills foreground and background project writers", `runtime_app.swift` ("Stop ends the answer at once", "… what it started", "… in a group of its own", through `requestDebate`) |
+| Time limit: at `timeout` the tool and its descendants are ended | same | "a slow tool times out", "a timed-out tool and its children are ended" | `runtime_app.swift` ("the time limit is kept", "a timed-out tool and its programs are ended") |
+| Left processes: with `processGroup` the tool's whole group is killed when the call ends, even after a good answer; without it nothing else is stopped | `RunConditions.app` (project work) | "the process group is stopped when the call ends", "without a process group nothing else is stopped" | `run_conditions.swift` (group flag per kind), `runtime_app.swift` (project work: the watchdog is there, and with it gone the group is still stopped) |
 | Threads: `ask` blocks its caller (never call it on the main thread from UI); progress comes on a background thread; `DebateCancellation` and `NativeSessions` are locked, any thread | all callers (they hop to the main thread themselves) | "progress comes on a background thread" | none (a main-thread call freezes the app) |
 | Stream events in order: Claude text within one message (a new message starts over; at most ~12 a second, the last text of each message always sent), each tool start as `activity`, each TodoWrite list as it came (`todos(Any?)`, not filtered), where it came; Codex: command/tool/search starts, each finished message | Solo (text, activity), ProjectChat (all three) | Claude and Codex orders | mode2 StreamParser block, `testProjectHandoff` |
-| Sessions: a new session starts with its own id (`--session-id` / Codex `thread.started`); the next call resumes it (`--resume <id>`, `exec resume <id>`) with only what is new; a stopped or failed answer marks it for a rebuild and is not retried (only "session not found" is, once, with the full context); compaction rebuilds | Attachments, Collaboration, ProjectChat (`nativeSessions.ask`) | session block (new, resumed, stopped, Codex resume) | mode2 "session delta, image reuse, role separation, compaction bootstrap …" |
+| Sessions: a new session starts with its own id (`--session-id` / Codex `thread.started`); the next call resumes it (`--resume <id>`, `exec resume <id>`) with only what is new; a stopped or failed answer marks it for a rebuild and is not retried (only "session not found" is, once, with the full context); compaction rebuilds | Attachments, Collaboration, ProjectChat (`nativeSessions.ask`) | session block (new, resumed, stopped, Codex resume) | mode2 "session delta, image reuse, role separation, compaction bootstrap …", `runtime_app.swift` ("after a stopped answer the next message starts a new session") |
 | Session save format: `rooms/<room>/ownership.json`, 0600, a JSON array of records `id`, `accountID`, `provider`, `role`, `nativeID`, `context`, `ownBlock` (`[<speaker>]\n<reply without its TL;DR line>` for speakers), `images`, `valid`; older files are read as they are; archive and purge keep or remove only what a room recorded | Attachments, Collaboration, ProjectChat, Discussion (delete, archive) | "ownership.json keeps its fields", "an older ownership.json is read", "is private" | mode2 "chat delete removes only its sessions …" |
 | Local model: no command line tool, one answer at a time (`gate`), keep-alive and unload | Local chat, Route sorter, Settings, LocalModels window, main (menu) | none (needs Ollama: a fake server in mode2) | mode2 "Ollama on this Mac", "Gemma on this Mac", `run_conditions.swift` ("the local model starts no command line tool") |
 | Usage readings and cloud model picks (stored per account in `UserDefaults.app`) | main, MenuCards, Settings, Solo, Meeting, Peer (auto pick by usage) | none | mode2 "menu bar …", "plain chat (auto pick 15% …)", testCloudModels |
@@ -143,8 +143,8 @@ Public names and why (everything else stays internal: `Answerer.chatDir`/`askOnc
 `StreamParser`, `NativeSessions.split`/`load`/`save`, `CloudModels.apply`/`noteSeen`, `ClaudeUsage.binary`, the HTTP
 streams `LocalStream`/`PullStream`, `LocalModel.ask` and the Ollama requests):
 - `Answerer.ask`, `Answerer.Failure`, `AnswerProgress`: the one way in, its result and its progress (every caller).
-- `RunConditions` (all six fields, `init()`) and `RunConditions.Folders` (an explicit `init`): `Workspace.swift` builds
-  them; the fields are what the caller decides.
+- `RunConditions` (all six fields, `init()`) and `RunConditions.Folders` (an explicit `init`): the app builds them
+  (`RunConditionsApp.swift`); the fields are what the caller decides.
 - `Answerer.toolForTests`: the only public test hook, so `runtime_contract.swift` can run a fake CLI from outside; the
   app never sets it (run_mode2 stage 1 checks that no app file names it).
 - `DebateCancellation` (`init`, `isCancelled`, `child`, `attach`, `detach`, `cancel`, `end`): the app makes the tokens
@@ -154,8 +154,8 @@ streams `LocalStream`/`PullStream`, `LocalModel.ask` and the Ollama requests):
   (`init`, `ask`, `directory`, `eligible`, `pinnedAccount`, `reset`, `purgeRoom`).
 - `ReplyHeadline.split`: the chat's headline and the session's own block must cut a reply the same way.
 - `ToolHome` (`path`, `agyInstalled`): where the tools live (the user's home, not the test home); `Login` and Settings.
-- `GeminiLinks` and `toolNote` (what agy is told in plain chat): `Workspace.swift` adds the workspace note and agy's web
-  rule (`allowWeb`, it writes agy's settings) to the same type; `RunConditions.beforeStart` is how the app runs that
+- `GeminiLinks` and `toolNote` (what agy is told in plain chat): `Workspace.swift` adds the workspace note and
+  `RunConditionsApp.swift` agy's web rule (`allowWeb`, it writes agy's settings) to the same type; `RunConditions.beforeStart` is how the app runs that
   rule just before the tool starts, so the runtime changes no permission itself (review, 2026-11-11).
 - `CloudModels` (`model`, `set`, `valid`, `Choice`, `claudeChoices`, `codexChoices`, `loadGemini`, `seenKey`, `seenTitle`):
   the Settings model menus.
@@ -257,7 +257,7 @@ yet (R1); nothing changed in what the tools are started with (below).
 | Promise | Users (files) | Runtime test | User tests (through the app) |
 |---|---|---|---|
 | The tool starts with exactly what `RunConditions` says: prefix before its arguments, the wrapper's program first and the tool after its arguments, the changed environment, the group stopped at the end | every `Answerer.ask` caller (`RunConditions.app`) | none yet (R1: a contract test with a hand-made `RunConditions`) | `run_conditions.swift`: launches through `Discussion.requestDebate` for Claude, Codex, Gemini, local × plain, folder, folder with full access, project off, project on (a read-only view), and through ProjectChat's own run (`send()`: write and execute, backup, session) for Claude and Codex × the chat's full auto off and on; compared byte for byte with `run_conditions.golden` |
-| Full access → AutoGuard's environment (shims on PATH, no Git/GitHub credentials, no SSH agent); off → none | `RunConditions.app` (Workspace.swift) | — | `run_conditions.swift` layer checks: project-on and folder-full have it, project-off and folder do not; `testFullAuto` (the shims themselves) |
+| Full access → AutoGuard's environment (shims on PATH, no Git/GitHub credentials, no SSH agent); off → none | `RunConditions.app` (RunConditionsApp.swift) | — | `run_conditions.swift` layer checks: project-on and folder-full have it, project-off and folder do not; `testFullAuto` (the shims themselves) |
 | Project work runs in `project_process.py` (its own process group, `AI_ILLUMINATI_PROJECT_PROCESS=1`) and the whole group is stopped | `RunConditions.app`, ProjectChat | — | `run_conditions.swift` (wrapper, marker, group: three separate checks in one), `testProjectWork` ("Stop kills foreground and background project writers") |
 | Codex: the account's own AI Face servers are off on every call | `RunConditions.app`, every Codex call | — | `run_conditions.swift` ("AI Face's own server is turned off"), AI Face link test in mode2 |
 | Linked folders: arguments from the folder rules, runs in `rooms/<id>/stateless-…`, file requests read and answered (limits, repeats) | Workspace.swift, Attachments, Collaboration, Peer, ProjectChat | — | `run_conditions.swift`, mode2 "file requests keep good files …" |
@@ -358,3 +358,57 @@ settings in the real home.
   not build until the module side is in). The app side checked itself against a stub it did not commit; one of its
   two full runs crashed in `testAutoMeeting` (exit 139), outside the change, and passed when run again. Trial branch:
   `trial/runtime-parallel` (local, not merged; the contract is `docs/RUNTIME_PARALLEL_TRIAL.md` there).
+
+## Workspace, step W0: the folder rules name nothing above them, before they become a module (2026-11-12)
+No module yet (W1); nothing changed in what the tools are started with. `Workspace.swift` now names no ToolHub,
+FaceLink, Projects or Chat code (grep for `ToolHub|FaceLink|ProjectProcess|ProjectWork|ProjectChat|GitLink|PlanLink|
+Discussion|RunConditions` in it: 0). What moved, and where:
+- The tool gateway is given, not called: `prepare(in:tools:)`, `arguments(…, tools:)` and `readRequests(…, tools:)` take
+  a `WorkspaceTools` (`(WorkspaceInvocation) -> WorkspaceToolLink?`: socket, session key, the legacy face socket).
+  Workspace still decides when a chat offers tools (`face`, project work, `origin == .side`) and asks only then; the
+  app's answer is `ToolHub.workspaceLink` (ToolHub.swift: `active`, `register`, `FaceLink.active`, in the old order).
+  The parameter has no default, like R0's `run`, so no call can forget it; the tests pass `ToolHub.workspaceLink` too.
+- `RunConditions.app` moved whole to `RunConditionsApp.swift` (an app file, in run_mode2's list): Codex's face servers
+  off (`FaceLink.codexOff`), agy's web rule (`GeminiLinks.rules`/`allowWeb`, moved with it), the `project_process.py`
+  wrapper, the marker, the group and `AutoGuard.environment`. Workspace gives only what that needs: `arguments`,
+  `readRequests`, `binding.projectRunID`, `binding.fullAccessActive`, `WorkspaceInvocation.resources`.
+- Value types moved down into `Workspace.swift`, unchanged: `ProjectBinding` (from ProjectWork.swift; the same fields,
+  so `workspace.project` and TODO lists save and read the same JSON) and `ToolOrigin` (from ToolHub.swift; the same raw
+  values). Project work still makes them (`ProjectProcess.inspect`, `documents`); ToolHub still reads them.
+- `Discussion.setWorkspaceLevel` and `undoWorkspace` moved to Attachments.swift (Chat side), unchanged.
+- Stays in Workspace on purpose: `AutoGuard.claudeDenied` in Claude's full access arguments. AutoGuard is Workspace's
+  by the plan and is not split; it still lives in ProjectWork.swift and moves whole in W1. `GeminiLinks.workspaceNote`
+  (the folder rules' text for agy) and `MaterialReader`, `WorkspaceBackup` (Workspace's own) stay too.
+- New names (internal; no `public` name was added, nothing is a module yet): `WorkspaceToolLink`, `WorkspaceTools`
+  (how Workspace asks for the gateway without naming it; they become public with W1, the app gives the gateway),
+  `ToolHub.workspaceLink` (the app's one answer, so every caller passes the same thing).
+- Same start, byte for byte: `run_conditions.swift` passes with its golden file unchanged (Claude, Codex, Gemini, local ×
+  plain, folder, folder with full access, project off/on, and ProjectChat's own run with full auto off/on), and the full
+  test passes.
+
+### Runtime through the app (`tools/tests/runtime_app.swift`, after `testRunConditions` in mode2)
+R1 left six promises caught only by `runtime_contract.swift`. The new test goes through `Discussion.requestDebate`
+(the app's `RunConditions.app` and folder rules) with a fake CLI as the AI's own tool (`Answerer.toolForTests`; it
+reads what to do from a file, since the app makes its environment), for Claude and Codex in a linked folder: Stop
+(at once; the tool, its child and a program in a group of its own are gone), the time limit (`timedOut`, all ended),
+the tool's error text, and project work (`project_process.py`: its watchdog is there; the fake stops it, so the app's
+group stop is the layer left, and the program left in the group must be gone). Sessions: a chat with its session room,
+a stopped answer, then the next message must start a new session (`--session-id`, not `--resume`). The project marker
+is taken off for the test (inherited inside project work, it would make Stop end the group first). About 7 s;
+three runs in a row passed.
+
+Falsification (one change at a time in a copy of the tree, the new test alone):
+
+| Change | New test |
+|---|---|
+| F1 Stop ignored while the tool runs (no `attach`, no check in the wait loops) | caught ("Stop ends the answer at once") |
+| F2 process group not killed at the end | caught ("project work's process group is stopped when the answer ends") |
+| F3 time limit not applied | caught ("a slow tool times out") |
+| F6 a stopped session answer stays valid | caught (the next message resumed the stopped session) |
+| F7 Stop leaves a program that left the tool's group | caught ("… in a group of its own") |
+| F8 the tool's error message dropped | caught ("a failed tool's message reaches the app") |
+
+Found on the way: through the app, F2 hides behind a second layer. `project_process.py` forks a watchdog that kills the
+group as soon as the tool exits, so with the runtime's own group kill gone the left program still died; a test that
+does not take the watchdog away cannot see F2 (checked: F2 with the watchdog left in place passes the test). A session room the app does not know reads as an Enterprise-locked chat
+(`lock(of:)`), so a test must use the chat's own room.

@@ -2,11 +2,6 @@ import Foundation
 import Darwin
 import AIAccounts
 
-// Who a tool session belongs to. member: an AI answering the user (every tool); side: another AI answering the same
-// message at the same time, read only (only ask_ai); consulted: an AI another AI asked or called to a meeting (no ask_ai
-// or convene_meeting, so depth stays 1).
-enum ToolOrigin: String, Codable { case member, side, consulted }
-
 struct ToolContext {
     var room: UUID
     var roots: [WorkspaceRoot]
@@ -53,6 +48,15 @@ final class ToolHub {
         let key = UUID().uuidString
         sessions[key] = (ToolContext(room: room, roots: roots, projectRun: projectRun, projectGeneration: generation, asker: asker, turn: turn, origin: origin), Date().addingTimeInterval(7200))
         return key
+    }
+
+    // What the workspace bridge gets for one call (Workspace.swift asks only when its chat offers tools).
+    static let workspaceLink: WorkspaceTools = { invocation in
+        guard shared.active else { return nil }
+        let binding = invocation.binding
+        let session = shared.register(room: invocation.room, roots: binding.roots, projectRun: binding.projectRunID, generation: binding.projectGeneration,
+                                      asker: invocation.account, origin: binding.origin ?? .member)
+        return WorkspaceToolLink(socket: socketPath, session: session, face: FaceLink.active() != nil ? FaceLink.socketPath : nil)
     }
 
     func revoke(project: UUID) { lock.lock(); sessions = sessions.filter { $0.value.0.projectRun != project }; lock.unlock() }

@@ -204,3 +204,34 @@ enum PictureDrop {
         DispatchQueue.main.asyncAfter(deadline: .now() + 60, execute: finish)
     }
 }
+
+extension Discussion {
+    func setWorkspaceLevel(_ level: WorkspaceLevel) {
+        guard !running, WorkspaceLevel.offered.contains(level) else { return }
+        do {
+            try nativeSessions.reset(currentID)
+            change(currentID, save: true) { $0.workspace?.level = level }
+        } catch { attachmentError = error.localizedDescription }
+    }
+}
+
+extension Discussion {
+    func undoWorkspace(_ turn: ChatTurn) {
+        guard !running, !importingMaterials, turn.projectCommitted != true, turn.projectPushed != true, let path = turn.backupPath else { return }
+        let room = currentID
+        runningRooms.insert(room)
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                var backup = try WorkspaceBackup.load(path)
+                try backup.restore()
+                DispatchQueue.main.async {
+                    self.change(room, save: true) { conversation in
+                        if let i = conversation.turns.firstIndex(where: { $0.id == turn.id }) { conversation.turns[i].undone = true }
+                    }
+                    self.runningRooms.remove(room)
+                    self.sessionNote = L("백업 시점으로 복구하고 해시 일치를 확인했습니다.", "Restored the backup; original hashes match.")
+                }
+            } catch { DispatchQueue.main.async { self.runningRooms.remove(room); self.attachmentError = error.localizedDescription } }
+        }
+    }
+}

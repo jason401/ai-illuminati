@@ -1,6 +1,7 @@
 import Foundation
 import AIAccounts
 import AILocalization
+import AIRuntime
 
 // Asking other AIs (ask_ai) and review (note 3). Any AI answering in a mode-0 chat may ask other AIs on this Mac for
 // an opinion, a fact check, an alternative or a review; they only read and cannot ask on. In a project chat with two or

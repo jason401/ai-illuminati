@@ -4,7 +4,7 @@ import AILocalization
 
 // Session ownership and provider history are distinct from the app's canonical chat.
 // Only app-owned account directories qualify; personal default histories stay untouched.
-final class NativeSessionCall {
+public final class NativeSessionCall {
     let id: String
     let resume: Bool
     let directory: URL
@@ -32,7 +32,26 @@ final class NativeSessionCall {
     }
 }
 
-final class NativeSessions {
+// AIs begin each reply with "TL;DR: …": that line is the headline, the rest the reply. Without one: no headline and
+// the text as it came. The chat shows it (ChatTurn.Entry.reply); a session's own block is the reply without it.
+public enum ReplyHeadline {
+    public static func split(_ text: String) -> (headline: String?, text: String) {
+        var lines = text.trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: "\n")
+        guard let first = lines.first else { return (nil, text) }
+        let plain = first.replacingOccurrences(of: "*", with: "").replacingOccurrences(of: "`", with: "")
+            .trimmingCharacters(in: .whitespaces)
+        for prefix in ["TL;DR:", "TLDR:", "TL;DR :", "요약:"] where plain.uppercased().hasPrefix(prefix) {
+            let line = plain.dropFirst(prefix.count).trimmingCharacters(in: .whitespaces)
+            guard !line.isEmpty else { break }
+            lines.removeFirst()
+            let rest = lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            return (line, rest.isEmpty ? line : rest)
+        }
+        return (nil, text)
+    }
+}
+
+public final class NativeSessions {
     struct Record: Codable {
         var id = UUID()
         var accountID: String
@@ -45,10 +64,11 @@ final class NativeSessions {
         var valid = true
     }
     private let lock = NSLock()
-    static func directory(_ room: UUID) -> URL {
+    public init() {}
+    public static func directory(_ room: UUID) -> URL {
         URL(fileURLWithPath: AccountStore.home).appendingPathComponent(".ai-illuminati/rooms/\(room.uuidString)")
     }
-    static func eligible(_ account: Account) -> Bool {
+    public static func eligible(_ account: Account) -> Bool {
         guard account.provider != .gemini, let path = account.dir else { return false }
         let root = URL(fileURLWithPath: AccountStore.accountsDir).resolvingSymlinksInPath().path + "/"
         return URL(fileURLWithPath: path).resolvingSymlinksInPath().path.hasPrefix(root)
@@ -64,11 +84,11 @@ final class NativeSessions {
         try JSONEncoder().encode(records).write(to: file, options: .atomic)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
     }
-    func pinnedAccount(_ provider: Account.Provider, room: UUID) -> String? {
+    public func pinnedAccount(_ provider: Account.Provider, room: UUID) -> String? {
         lock.lock(); defer { lock.unlock() }
         return load(room).last { $0.provider == provider && $0.role == "speaker" && $0.valid }?.accountID
     }
-    func reset(_ room: UUID) throws {
+    public func reset(_ room: UUID) throws {
         lock.lock(); defer { lock.unlock() }
         var records = load(room)
         for i in records.indices { records[i].valid = false }
@@ -78,7 +98,7 @@ final class NativeSessions {
     // app-owned account folder, only the transcript files whose names carry a session ID this room
     // recorded (Claude: projects/*/<id>.jsonl and its <id>/ folder; Codex: sessions/**/*<id>*).
     // Account folders, logins, shared indexes and other sessions are never touched.
-    static func purgeRoom(_ room: UUID, accounts: [Account]) throws {
+    public static func purgeRoom(_ room: UUID, accounts: [Account]) throws {
         let fm = FileManager.default
         let base = directory(room).deletingLastPathComponent()
         var folders = [directory(room)]
@@ -143,7 +163,7 @@ final class NativeSessions {
         return (String(prompt[..<range.lowerBound]).trimmingCharacters(in: .newlines), String(prompt[range.lowerBound...]), role)
     }
 
-    func ask(_ account: Account, room: UUID, prompt: String, images: [URL], timeout: TimeInterval,
+    public func ask(_ account: Account, room: UUID, prompt: String, images: [URL], timeout: TimeInterval,
              token: DebateCancellation, web: Bool, speaker: String, appendContext: Bool = false, fresh: String? = nil,
              invoke: (String, [URL], NativeSessionCall?) -> Result<String, Answerer.Failure>,
              note: (String) -> Void) -> Result<String, Answerer.Failure> {
@@ -189,7 +209,7 @@ final class NativeSessions {
         if case .success(let text) = result, call.completed, let sid = record.nativeID, UUID(uuidString: sid) != nil {
             record.context = context
             record.images = appendContext && resumed ? Array(Set(record.images + images.map(\.path))).sorted() : images.map(\.path)
-            let body = ChatTurn.Entry.reply(round: 1, speaker: speaker, text: text).text
+            let body = ReplyHeadline.split(text).text
             record.ownBlock = role == "speaker" ? "[\(speaker)]\n" + body : ""
             record.valid = !call.compacted
         } else { record.valid = false }

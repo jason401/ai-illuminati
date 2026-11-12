@@ -1,5 +1,6 @@
 import Foundation
 import AIAccounts
+@testable import AIRuntime
 
 // What each AI's command line tool is started with (program, arguments, environment, folder, process group),
 // captured through the app's own way in (Discussion.requestDebate) and compared with run_conditions.golden.

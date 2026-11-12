@@ -1,5 +1,6 @@
 import Foundation
 import AILocalization
+import AIRuntime
 
 // How much disk each chat takes (Settings > Chat > Storage, and the AIs' chat_storage tool). Read only.
 // A chat's data is everything under paths carrying its id (the same ones ChatStore.delete removes):

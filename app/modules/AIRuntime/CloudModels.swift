@@ -5,16 +5,16 @@ import AIAccounts
 // option, so the CLI picks its own default as before. Per account, since plans differ in what they offer
 // (a school Claude may lack a model a personal one has). A model the account cannot use fails the answer with
 // the CLI's own error; there is no silent fallback.
-enum CloudModels {
+public enum CloudModels {
     static let key = "cloudModels"   // [account id: model name]
 
-    static func model(_ account: Account, defaults: UserDefaults = .app) -> String? {
+    public static func model(_ account: Account, defaults: UserDefaults = .app) -> String? {
         guard account.provider != .ollama, let name = (defaults.dictionary(forKey: key) as? [String: String])?[account.id],
               valid(name) else { return nil }
         return name
     }
 
-    static func set(_ name: String?, for account: Account, defaults: UserDefaults = .app) {
+    public static func set(_ name: String?, for account: Account, defaults: UserDefaults = .app) {
         var all = defaults.dictionary(forKey: key) as? [String: String] ?? [:]
         let name = name?.trimmingCharacters(in: .whitespacesAndNewlines)
         if let name, valid(name) { all[account.id] = name } else { all[account.id] = nil }
@@ -22,7 +22,7 @@ enum CloudModels {
     }
 
     // A model name, never an option: letters first, then only name characters ("opus[1m]", "gpt-6.1-sol").
-    static func valid(_ name: String) -> Bool {
+    public static func valid(_ name: String) -> Bool {
         name.range(of: #"^[A-Za-z0-9][A-Za-z0-9._:/\[\]-]{0,79}$"#, options: .regularExpression) != nil
     }
 
@@ -37,19 +37,19 @@ enum CloudModels {
         }
     }
 
-    struct Choice: Equatable {
-        let id: String
-        let title: String
+    public struct Choice: Equatable {
+        public let id: String
+        public let title: String
     }
 
     // Claude Code's aliases always point at the latest model of each kind. The titles name the versions they point
     // at now, until an answer from this account shows what an alias really ran on.
-    static let claudeChoices = [Choice(id: "fable", title: "Fable 5.1"), Choice(id: "opus", title: "Opus 5.5"),
+    public static let claudeChoices = [Choice(id: "fable", title: "Fable 5.1"), Choice(id: "opus", title: "Opus 5.5"),
                                 Choice(id: "sonnet", title: "Sonnet 5.5"), Choice(id: "haiku", title: "Haiku 5.5")]
 
     // Claude's aliases do not say which version they are now: each Claude answer's stream names the model it ran on
     // ("claude-fable-5-1"), kept per account and pick ("" = Auto), so the menu can show "Fable 5.1".
-    static let seenKey = "cloudModelsSeen"   // [account id: [pick: model id]]
+    public static let seenKey = "cloudModelsSeen"   // [account id: [pick: model id]]
 
     static func noteSeen(_ output: String, account: Account, picked: String?, defaults: UserDefaults = .app) {
         guard account.provider == .claude, let id = resolved(output) else { return }
@@ -86,14 +86,14 @@ enum CloudModels {
 
     // What the menu shows for a pick that ran on `id`: a typed option such as "[1m]" stays visible even when the
     // stream names only the base model.
-    static func seenTitle(_ id: String, picked: String?) -> String {
+    public static func seenTitle(_ id: String, picked: String?) -> String {
         let title = versionTitle(id)
         guard let picked, let bracket = picked.firstIndex(of: "["), !title.hasSuffix(String(picked[bracket...])) else { return title }
         return title + " " + picked[bracket...]
     }
 
     // The models Codex lists for this account, from the cache it keeps in its folder (missing or old: none).
-    static func codexChoices(_ account: Account) -> [Choice] {
+    public static func codexChoices(_ account: Account) -> [Choice] {
         guard let data = FileManager.default.contents(atPath: account.codexHome + "/models_cache.json"),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let models = object["models"] as? [[String: Any]] else { return [] }
@@ -113,11 +113,11 @@ enum CloudModels {
     }
 
     // Asks agy for its list in the background (it needs the network); empty when agy is missing, slow or fails.
-    static func loadGemini(_ account: Account, done: @escaping ([Choice]) -> Void) {
-        guard Login.agyInstalled else { return done([]) }
+    public static func loadGemini(_ account: Account, done: @escaping ([Choice]) -> Void) {
+        guard ToolHome.agyInstalled else { return done([]) }
         DispatchQueue.global(qos: .utility).async {
             let process = Process()
-            process.executableURL = URL(fileURLWithPath: Login.home + "/.local/bin/agy")
+            process.executableURL = URL(fileURLWithPath: ToolHome.path + "/.local/bin/agy")
             process.arguments = ["models"]
             process.environment = account.environment
             let out = Pipe()

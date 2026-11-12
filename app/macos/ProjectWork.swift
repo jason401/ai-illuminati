@@ -3,6 +3,7 @@ import CryptoKit
 import Darwin
 import AIAccounts
 import AILocalization
+import AIRuntime
 
 struct ProjectBinding: Codable, Equatable {
     var root: String

@@ -4,28 +4,28 @@ import AIAccounts
 import AILocalization
 
 // One usage window (5 hours or 7 days) as the AI's own service reports it.
-struct UsageWindow {
+public struct UsageWindow {
     var usedPercent: Double
-    var resetsAt: Date?
+    public var resetsAt: Date?
 
     // If the reset time has already passed, the window started over: nothing is used.
     func used(now: Date = Date()) -> Double {
         if let r = resetsAt, r <= now { return 0 }
         return min(max(usedPercent, 0), 100)
     }
-    func left(now: Date = Date()) -> Double { 100 - used(now: now) }
+    public func left(now: Date = Date()) -> Double { 100 - used(now: now) }
 }
 
-struct AIUsage {
-    let name: String
-    var account: Account?
-    var fiveHour: UsageWindow?
-    var weekly: UsageWindow?
+public struct AIUsage {
+    public let name: String
+    public var account: Account?
+    public var fiveHour: UsageWindow?
+    public var weekly: UsageWindow?
     var checkedAt: Date?      // when the numbers were measured
-    var detail: String?       // e.g. "me@example.com · plus"
-    var note: String?         // why there are no numbers, shown in the menu
-    var extras: [String] = [] // more limits, already worded for the menu
-    var needsLogin = false
+    public var detail: String?       // e.g. "me@example.com · plus"
+    public var note: String?         // why there are no numbers, shown in the menu
+    public var extras: [String] = [] // more limits, already worded for the menu
+    public var needsLogin = false
 
     init(name: String, account: Account? = nil) {
         self.name = name
@@ -33,7 +33,7 @@ struct AIUsage {
     }
 
     // What actually limits you right now: the smaller of the two "left" values.
-    var leftNow: Double? {
+    public var leftNow: Double? {
         let values = [fiveHour, weekly].compactMap { $0?.left() }
         return values.min()
     }
@@ -44,19 +44,19 @@ struct AIUsage {
 // Asks Codex itself: `codex app-server` (the same local protocol the ChatGPT app uses) answers
 // account/rateLimits/read (5 hours = primary, 7 days = secondary) and account/read (email, plan).
 // Runs once per account with CODEX_HOME set to that account's folder.
-enum CodexUsage {
+public enum CodexUsage {
     private static var cache: [String: (AIUsage, Date)] = [:]
 
-    static var binary: String? {
+    public static var binary: String? {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         return [home + "/.local/bin/codex", "/opt/homebrew/bin/codex", "/usr/local/bin/codex",
                 "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex"]
             .first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
-    static func forget(_ account: Account) { cache[account.id] = nil }
+    public static func forget(_ account: Account) { cache[account.id] = nil }
 
-    static func read(_ account: Account) -> AIUsage {
+    public static func read(_ account: Account) -> AIUsage {
         if let (cached, at) = cache[account.id], Date().timeIntervalSince(at) < 120 { return cached }
         var result = AIUsage(name: account.name, account: account)
         guard FileManager.default.fileExists(atPath: account.codexHome + "/auth.json") else {
@@ -155,7 +155,7 @@ enum CodexUsage {
 // We read it (read only, never change it) and ask Anthropic's usage page. That page is not
 // documented and may change; on failure the last good reading is shown with its time. When the saved login has expired we let
 // Claude Code renew it itself (one tiny request; `claude auth status` only reports and does not renew) instead of touching it.
-enum ClaudeUsage {
+public enum ClaudeUsage {
     private static var cache: [String: (AIUsage, Date)] = [:]
     private static var waitUntil: [String: Date] = [:]
     private static var backoff: [String: TimeInterval] = [:]
@@ -166,7 +166,7 @@ enum ClaudeUsage {
         return FileManager.default.isExecutableFile(atPath: path) ? path : nil
     }
 
-    static func forget(_ account: Account) { cache[account.id] = nil }
+    public static func forget(_ account: Account) { cache[account.id] = nil }
 
     private static func savedReply(_ account: Account) -> URL {
         URL(fileURLWithPath: AccountStore.supportDir + "/last-usage-\(account.id).json")
@@ -174,7 +174,7 @@ enum ClaudeUsage {
 
     // Asks at most every 5 minutes. When Anthropic says "too many requests" (429), waits as long as
     // it asks (or 10 minutes, doubling up to an hour) and meanwhile shows the last good reading.
-    static func read(_ account: Account) -> AIUsage {
+    public static func read(_ account: Account) -> AIUsage {
         var result = AIUsage(name: account.name, account: account)
         if let (cached, at) = cache[account.id], Date().timeIntervalSince(at) < 300 { return cached }
         if let wait = waitUntil[account.id], wait > Date() {
@@ -374,14 +374,14 @@ enum ClaudeUsage {
 //   Gemini Models <TAB> Weekly Limit Remaining <TAB> 97% <TAB> 2026-10-22T04:05:05Z
 // The "Gemini Models" lines are this row's gauge; other model groups are listed underneath.
 // The login email comes from agy's logs ("applyAuthResult: email=..." each start).
-enum GeminiUsage {
+public enum GeminiUsage {
     static func forget() { cache = nil }
     private static var cache: (AIUsage, Date)?
 
-    static func read(_ account: Account) -> AIUsage {
+    public static func read(_ account: Account) -> AIUsage {
         if let (cached, at) = cache, Date().timeIntervalSince(at) < 300 { return cached }
         var result = AIUsage(name: account.name, account: account)
-        guard Login.agyInstalled else {
+        guard ToolHome.agyInstalled else {
             result.needsLogin = true
             result.note = L("Antigravity CLI(agy)가 설치돼 있지 않아요", "Antigravity CLI (agy) is not installed")
             return result
@@ -421,7 +421,7 @@ enum GeminiUsage {
     // Runs `agy -p /usage` (answered by agy itself, not by a model) with a 40 s limit.
     private static func runUsage() -> String? {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: Login.home + "/.local/bin/agy")
+        process.executableURL = URL(fileURLWithPath: ToolHome.path + "/.local/bin/agy")
         process.arguments = ["-p", "/usage", "--print-timeout", "40s"]
         var env = ProcessInfo.processInfo.environment
         env.removeValue(forKey: "GEMINI_API_KEY")

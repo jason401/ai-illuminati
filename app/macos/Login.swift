@@ -1,6 +1,7 @@
 import Foundation
 import AIAccounts
 import AILocalization
+import AIRuntime
 
 // Login buttons. The app never sees a password: it opens Terminal with a small script that runs
 // each AI tool's own login (which opens the browser). Installing asks y/n first.
@@ -8,8 +9,8 @@ import AILocalization
 //   Claude Code: https://code.claude.com/docs/en/setup  (installs ~/.local/bin/claude)
 //   Antigravity CLI: https://codelabs.developers.google.com/antigravity-cli-hands-on  (~/.local/bin/agy)
 enum Login {
-    static var home: String { FileManager.default.homeDirectoryForCurrentUser.path }
-    static var agyInstalled: Bool { FileManager.default.isExecutableFile(atPath: home + "/.local/bin/agy") }
+    static var home: String { ToolHome.path }
+    static var agyInstalled: Bool { ToolHome.agyInstalled }
 
     static func login(_ account: Account) {
         switch account.provider {
@@ -128,5 +129,45 @@ enum Login {
         open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
         open.arguments = ["-a", "Terminal", file.path]
         try? open.run()
+    }
+}
+
+extension LocalModel {
+    // Terminal shows each step: install Ollama with Homebrew (asks y/n first) or open its download page,
+    // start it, then download the model with Ollama's own progress bar.
+    // Used when Ollama itself is missing; with Ollama installed the app downloads models itself (pull).
+    static func install(_ variant: Variant) {
+        let terms = variant.model.hasPrefix("gemma") ? L(" (Gemma 이용 약관: https://ai.google.dev/gemma/terms)", " (Gemma terms: https://ai.google.dev/gemma/terms)") : ""
+        Login.openInTerminal(name: L("\(variant.title) 설치", "Install \(variant.title)"), exports: "", script: """
+        echo "\(L("\(variant.title)를 이 Mac에 설치해요 (Ollama 사용).", "Installs \(variant.title) on this Mac (with Ollama)."))"
+        echo
+        OLLAMA=""
+        for p in /opt/homebrew/bin/ollama /usr/local/bin/ollama /Applications/Ollama.app/Contents/Resources/ollama; do
+          [ -x "$p" ] && OLLAMA="$p" && break
+        done
+        if [ -z "$OLLAMA" ]; then
+          if [ -x /opt/homebrew/bin/brew ]; then
+            echo "\(L("Ollama가 없어요. Homebrew로 설치합니다: brew install ollama", "Ollama is not installed. Install it with Homebrew: brew install ollama"))"
+            read "?\(L("설치할까요? (y/n) ", "Install? (y/n) "))" a
+            [ "$a" = y ] || exit 0
+            /opt/homebrew/bin/brew install ollama || { echo "\(L("설치 실패", "Installation failed"))"; read; exit 1; }
+            OLLAMA=/opt/homebrew/bin/ollama
+          else
+            echo "\(L("Ollama가 없어요. 공식 다운로드 페이지를 열게요. 설치한 뒤 이 버튼을 다시 눌러 주세요.", "Ollama is not installed. Opening its download page; install it, then press this button again."))"
+            open "https://ollama.com/download"
+            read "?\(L("엔터를 누르면 창이 닫혀요.", "Press Enter to close this window."))"
+            exit 0
+          fi
+        fi
+        if ! curl -s http://127.0.0.1:11434/api/version >/dev/null; then
+          echo "\(L("Ollama를 켜는 중…", "Starting Ollama…"))"
+          (OLLAMA_MAX_LOADED_MODELS=1 "$OLLAMA" serve >/dev/null 2>&1 &)
+          for i in {1..30}; do curl -s http://127.0.0.1:11434/api/version >/dev/null && break; sleep 0.5; done
+        fi
+        echo "\(L("모델 받는 중", "Downloading the model") + terms)"
+        "$OLLAMA" pull \(variant.model) || { echo "\(L("받기 실패", "Download failed"))"; read; exit 1; }
+        echo
+        read "?\(sortOnly(variant.model) ? L("끝났어요. 이제 메시지 판정에 써요. 엔터를 누르면 창이 닫혀요.", "Done. It now sorts messages. Press Enter to close this window.") : L("끝났어요. AI Illuminati에서 @\(variant.title)로 불러 보세요. 엔터를 누르면 창이 닫혀요.", "Done. Call it with @\(variant.title) in AI Illuminati. Press Enter to close this window."))"
+        """)
     }
 }

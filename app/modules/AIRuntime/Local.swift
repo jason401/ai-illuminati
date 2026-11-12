@@ -10,41 +10,42 @@ import AILocalization
 // the app talks to Ollama on 127.0.0.1:11434 and nothing leaves the Mac. In plain chat it answers when called with
 // @, and when every cloud account is out of usage; it also votes. It reads linked files through the app (the
 // workspace_reads requests) and cannot change files or search the web.
-enum LocalModel {
-    struct Variant: Equatable {
-        let id: String       // the account's id
-        let model: String    // Ollama's name
-        let title: String
+public enum LocalModel {
+    public struct Variant: Equatable {
+        public let id: String       // the account's id
+        public let model: String    // Ollama's name
+        public let title: String
+        public init(id: String, model: String, title: String) { self.id = id; self.model = model; self.title = title }
     }
     // Entries made before any Ollama model could be picked: their ids say which model they are.
-    static let legacy = [
+    public static let legacy = [
         Variant(id: "ollama-local", model: "gemma4:e4b", title: "Gemma 4 E4B"),
         Variant(id: "ollama-12b", model: "gemma4:12b", title: "Gemma 4 12B"),
     ]
-    static func variant(_ account: Account) -> Variant {
+    public static func variant(_ account: Account) -> Variant {
         if let model = account.model { return Variant(id: account.id, model: model, title: title(for: model)) }
         return legacy.first { $0.id == account.id } ?? legacy[0]
     }
     static func id(for model: String) -> String {
         legacy.first { same($0.model, model) }?.id ?? "ollama:" + normalized(model)
     }
-    static func account(for model: String) -> Account {
+    public static func account(for model: String) -> Account {
         let title = title(for: model)
         return Account(id: id(for: model), provider: .ollama, name: L("\(title) (내 Mac)", "\(title) (this Mac)"), dir: nil, model: normalized(model))
     }
 
     // "qwen3" means "qwen3:latest"; Ollama may list a model with a longer tag ("gemma4:e4b-it-q4").
-    static func normalized(_ name: String) -> String {
+    public static func normalized(_ name: String) -> String {
         let lower = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return lower.contains(":") ? lower : lower + ":latest"
     }
-    static func same(_ a: String, _ b: String) -> Bool { normalized(a) == normalized(b) }
-    static func matches(_ listed: String, _ model: String) -> Bool {
+    public static func same(_ a: String, _ b: String) -> Bool { normalized(a) == normalized(b) }
+    public static func matches(_ listed: String, _ model: String) -> Bool {
         same(listed, model) || listed.lowercased().hasPrefix(normalized(model) + "-")
     }
 
     // The recommended list's name, else "qwen3:8b" → "Qwen3 8B".
-    static func title(for model: String) -> String {
+    public static func title(for model: String) -> String {
         if let entry = catalog.first(where: { same($0.name, model) }) { return entry.title }
         let parts = model.split(separator: ":", maxSplits: 1).map(String.init)
         var base = parts[0].split(separator: "/").last.map(String.init) ?? parts[0]
@@ -53,34 +54,34 @@ enum LocalModel {
         return base + " " + parts[1].uppercased()
     }
 
-    static var server = URL(string: "http://127.0.0.1:11434")!   // tests point this at a fake server
+    public static var server = URL(string: "http://127.0.0.1:11434")!   // tests point this at a fake server
     static var registry = URL(string: "https://registry.ollama.ai")!
     static var library = URL(string: "https://ollama.com/library")!
     static var catalogURL = URL(string: "https://raw.githubusercontent.com/jason401/ai-illuminati/stable/app/resources/local_models.json")!
     static let context = 32768   // Ollama's default (4K) is too short for a chat with files
 
     // Set from the menu bar (on/off) and Settings → Accounts (how long it stays in memory after a reply).
-    static var enabled: Bool { UserDefaults.app.object(forKey: "localEnabled") as? Bool ?? true }
-    static let keepAliveChoices = [0, 2, 5, 10]   // minutes; 0 = unload right after the reply
-    static var keepAlive: Int {
+    public static var enabled: Bool { UserDefaults.app.object(forKey: "localEnabled") as? Bool ?? true }
+    public static let keepAliveChoices = [0, 2, 5, 10]   // minutes; 0 = unload right after the reply
+    public static var keepAlive: Int {
         guard let value = UserDefaults.app.object(forKey: "localKeepAlive") as? Int, keepAliveChoices.contains(value) else { return 5 }
         return value
     }
-    static func keepAliveName(_ minutes: Int) -> String {
+    public static func keepAliveName(_ minutes: Int) -> String {
         minutes == 0 ? L("답 끝나면 바로", "Right after each reply") : L("\(minutes)분", "\(minutes) min")
     }
 
     // MARK: Which models, and which fit this Mac
 
     // One model of the recommended list.
-    struct Entry: Codable, Equatable {
-        let name: String
-        let title: String
-        let sizeGB: Double   // download
-        var vision: Bool?
+    public struct Entry: Codable, Equatable {
+        public let name: String
+        public let title: String
+        public let sizeGB: Double   // download
+        public var vision: Bool?
         var note: String?
         var noteKo: String?
-        var summary: String { (L(noteKo ?? note ?? "", note ?? "")) }
+        public var summary: String { (L(noteKo ?? note ?? "", note ?? "")) }
     }
     private struct CatalogFile: Codable { let version: Int; let models: [Entry] }
 
@@ -94,7 +95,7 @@ enum LocalModel {
         return base?.appendingPathComponent("local_models.json")
     }
     // The last list fetched from GitHub, else the one the app was built with.
-    static var catalog: [Entry] = {
+    public static var catalog: [Entry] = {
         for url in [cachedCatalog, bundledCatalog].compactMap({ $0 }) {
             if let data = try? Data(contentsOf: url), let list = decodeCatalog(data) { return list }
         }
@@ -102,7 +103,7 @@ enum LocalModel {
     }()
 
     // Fetches the latest recommended list (new models need no new app). Keeps the current one when offline.
-    static func refreshCatalog(timeout: TimeInterval = 8) -> Bool {
+    public static func refreshCatalog(timeout: TimeInterval = 8) -> Bool {
         guard let data = fetch(URLRequest(url: catalogURL), timeout: timeout), let list = decodeCatalog(data) else { return false }
         try? FileManager.default.createDirectory(atPath: AccountStore.supportDir, withIntermediateDirectories: true)
         try? data.write(to: cachedCatalog, options: .atomic)
@@ -110,10 +111,10 @@ enum LocalModel {
         return true
     }
 
-    enum Fit: Int, Comparable {
+    public enum Fit: Int, Comparable {
         case good, tight, tooBig
-        static func < (a: Fit, b: Fit) -> Bool { a.rawValue < b.rawValue }
-        var title: String {
+        public static func < (a: Fit, b: Fit) -> Bool { a.rawValue < b.rawValue }
+        public var title: String {
             switch self {
             case .good: return L("잘 돌아가요", "Runs well")
             case .tight: return L("빠듯해요 (다른 앱을 닫아야 할 수 있음)", "Tight (may need other apps closed)")
@@ -121,18 +122,18 @@ enum LocalModel {
             }
         }
     }
-    static var memoryGB: Double { Double(ProcessInfo.processInfo.physicalMemory) / 1_073_741_824 }
+    public static var memoryGB: Double { Double(ProcessInfo.processInfo.physicalMemory) / 1_073_741_824 }
     // Memory while answering: the weights plus room for a 32K conversation (rough, but right in size).
-    static func memoryNeed(downloadGB: Double) -> Double { downloadGB * 1.1 + 1.5 }
+    public static func memoryNeed(downloadGB: Double) -> Double { downloadGB * 1.1 + 1.5 }
     // macOS lets the GPU use roughly two thirds to three quarters of memory, and the Mac needs the rest.
-    static func fit(downloadGB: Double, memoryGB: Double = memoryGB) -> Fit {
+    public static func fit(downloadGB: Double, memoryGB: Double = memoryGB) -> Fit {
         let need = memoryNeed(downloadGB: downloadGB)
         if need <= memoryGB * 0.55 { return .good }
         return need <= memoryGB * 0.75 ? .tight : .tooBig
     }
 
     // A size as ollama.com shows it ("8b", "0.6b", "270m", "e4b", "16x17b") → about how many GB to download.
-    static func estimatedGB(_ tag: String) -> Double? {
+    public static func estimatedGB(_ tag: String) -> Double? {
         var text = tag.lowercased()
         if text.hasPrefix("e") { text.removeFirst() }
         var factor = 1.0
@@ -144,11 +145,11 @@ enum LocalModel {
     }
 
     // One model family on ollama.com/library, with its sizes.
-    struct LibraryModel: Equatable {
-        let name: String
-        let summary: String
-        let capabilities: [String]
-        let sizes: [String]
+    public struct LibraryModel: Equatable {
+        public let name: String
+        public let summary: String
+        public let capabilities: [String]
+        public let sizes: [String]
     }
     // Reads the model cards of ollama.com/library. Ollama has no API for the list, so a page that changes shape
     // just yields nothing (the recommended list and typed names still work). Cloud-only and embedding models are
@@ -176,13 +177,13 @@ enum LocalModel {
     private static func decodeEntities(_ text: String) -> String {
         [("&amp;", "&"), ("&#39;", "'"), ("&quot;", "\""), ("&lt;", "<"), ("&gt;", ">")].reduce(text) { $0.replacingOccurrences(of: $1.0, with: $1.1) }
     }
-    static func fetchLibrary(timeout: TimeInterval = 10) -> [LibraryModel] {
+    public static func fetchLibrary(timeout: TimeInterval = 10) -> [LibraryModel] {
         guard let data = fetch(URLRequest(url: library), timeout: timeout), let html = String(data: data, encoding: .utf8) else { return [] }
         return parseLibrary(html)
     }
 
     // The exact download size, from the registry `ollama pull` itself uses. nil when the model does not exist.
-    static func downloadGB(_ model: String, timeout: TimeInterval = 8) -> Double? {
+    public static func downloadGB(_ model: String, timeout: TimeInterval = 8) -> Double? {
         let parts = normalized(model).split(separator: ":", maxSplits: 1).map(String.init)
         let path = parts[0].contains("/") ? parts[0] : "library/" + parts[0]
         var request = URLRequest(url: registry.appendingPathComponent("v2/\(path)/manifests/\(parts[1])"))
@@ -210,13 +211,13 @@ enum LocalModel {
 
     // MARK: Memory
 
-    struct Loaded { var name: String; var title: String; var bytes: Int64; var until: Date? }
+    public struct Loaded { public var name: String; public var title: String; public var bytes: Int64; public var until: Date? }
 
     // The model in memory now (one at most), how big, and until when. nil when none or Ollama is off.
-    static func loaded(timeout: TimeInterval = 0.7) -> Loaded? { loadedModels(timeout: timeout).first }
+    public static func loaded(timeout: TimeInterval = 0.7) -> Loaded? { loadedModels(timeout: timeout).first }
 
     // Every model Ollama has in memory (GET /api/ps).
-    static func loadedModels(timeout: TimeInterval = 0.7) -> [Loaded] {
+    public static func loadedModels(timeout: TimeInterval = 0.7) -> [Loaded] {
         var request = URLRequest(url: server.appendingPathComponent("api/ps"))
         request.timeoutInterval = timeout
         let done = DispatchSemaphore(value: 0)
@@ -239,7 +240,7 @@ enum LocalModel {
 
     // Takes models out of memory now (Ollama keeps running, about 50 MB), every model but `keep`, and waits up to
     // 10 s until Ollama has let them go. Nothing happens when none is loaded.
-    static func unload(except keep: String? = nil) {
+    public static func unload(except keep: String? = nil) {
         func other(_ name: String) -> Bool { keep.map { !matches(name, $0) } ?? true }
         let others = loadedModels().filter { other($0.name) }
         guard !others.isEmpty else { return }
@@ -261,7 +262,7 @@ enum LocalModel {
 
     // The chat window closed: unload once no chat is answering any more (an answer under way finishes first),
     // unless the window was opened again in the meantime.
-    static func unloadWhenIdle(busy: @escaping () -> Bool, reopened: @escaping () -> Bool) {
+    public static func unloadWhenIdle(busy: @escaping () -> Bool, reopened: @escaping () -> Bool) {
         if reopened() { return }
         if busy() {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) { unloadWhenIdle(busy: busy, reopened: reopened) }
@@ -270,19 +271,19 @@ enum LocalModel {
         DispatchQueue.global(qos: .utility).async { unload() }
     }
 
-    static var binary: String? {
+    public static var binary: String? {
         ["/opt/homebrew/bin/ollama", "/usr/local/bin/ollama", "/Applications/Ollama.app/Contents/Resources/ollama"]
             .first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
     // Ollama's version (GET /api/version), or nil when it is not running.
-    static func version(timeout: TimeInterval = 2) -> String? {
+    public static func version(timeout: TimeInterval = 2) -> String? {
         guard let data = fetch(URLRequest(url: server.appendingPathComponent("api/version")), timeout: timeout) else { return nil }
         return (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["version"] as? String
     }
 
     // "0.40.14" against "0.40.0", number by number; a suffix such as "-rc1" is ignored.
-    static func atLeast(_ version: String, _ minimum: String) -> Bool {
+    public static func atLeast(_ version: String, _ minimum: String) -> Bool {
         func parts(_ text: String) -> [Int] {
             text.split(separator: "-").first.map { $0.split(separator: ".").map { Int($0) ?? 0 } } ?? []
         }
@@ -294,12 +295,12 @@ enum LocalModel {
     }
 
     // A model that only sorts messages (Settings → Chat): it never becomes a chat account.
-    static func sortOnly(_ model: String) -> Bool {
+    public static func sortOnly(_ model: String) -> Bool {
         normalized(model).split(separator: ":").first == "strands-decider"
     }
 
     // Why this Mac should not get a model of this size, or nil when it can (how well it fits is shown apart).
-    static func unsuitable(downloadGB: Double = 0) -> String? {
+    public static func unsuitable(downloadGB: Double = 0) -> String? {
         #if !arch(arm64)
         return L("Apple 칩 Mac에서만 쓸 수 있어요.", "Needs a Mac with Apple silicon.")
         #else
@@ -314,14 +315,14 @@ enum LocalModel {
     }
 
     // A model Ollama has: its name, size on disk and what it can do (newer Ollama lists capabilities here).
-    struct Installed: Equatable {
-        let name: String
-        let bytes: Int64
-        let capabilities: [String]?
+    public struct Installed: Equatable {
+        public let name: String
+        public let bytes: Int64
+        public let capabilities: [String]?
     }
 
     // The models Ollama has (GET /api/tags), or nil when Ollama is not running.
-    static func installed(timeout: TimeInterval = 3) -> [Installed]? {
+    public static func installed(timeout: TimeInterval = 3) -> [Installed]? {
         var request = URLRequest(url: server.appendingPathComponent("api/tags"))
         request.timeoutInterval = timeout
         let done = DispatchSemaphore(value: 0)
@@ -339,9 +340,9 @@ enum LocalModel {
         _ = done.wait(timeout: .now() + timeout + 1)
         return list
     }
-    static func installedModels(timeout: TimeInterval = 3) -> [String]? { installed(timeout: timeout)?.map(\.name) }
+    public static func installedModels(timeout: TimeInterval = 3) -> [String]? { installed(timeout: timeout)?.map(\.name) }
 
-    static func hasModel(_ names: [String], _ variant: Variant) -> Bool { names.contains { matches($0, variant.model) } }
+    public static func hasModel(_ names: [String], _ variant: Variant) -> Bool { names.contains { matches($0, variant.model) } }
 
     // What a model can do, read once from Ollama (POST /api/show): whether it reads pictures and how long a
     // conversation it takes. Unknown (older Ollama, model missing) counts as pictures yes, 32K.
@@ -367,7 +368,7 @@ enum LocalModel {
     }
     // Downloads a model inside the app (POST /api/pull, streamed), reporting the step and how far it is
     // (0…1, nil while there is no total). Returns nil when done, else why it failed.
-    static func pull(_ model: String, cancellation: DebateCancellation?, progress: @escaping (String, Double?) -> Void) -> String? {
+    public static func pull(_ model: String, cancellation: DebateCancellation?, progress: @escaping (String, Double?) -> Void) -> String? {
         guard ensureServer() else { return binary == nil ? L("Ollama가 설치돼 있지 않아요.", "Ollama is not installed.") : L("Ollama를 켜지 못했어요.", "Could not start Ollama.") }
         var request = URLRequest(url: server.appendingPathComponent("api/pull"))
         request.httpMethod = "POST"
@@ -391,7 +392,7 @@ enum LocalModel {
     }
 
     // Deletes a model's files from this Mac (DELETE /api/delete). True when Ollama removed it.
-    static func delete(_ model: String) -> Bool {
+    public static func delete(_ model: String) -> Bool {
         var request = URLRequest(url: server.appendingPathComponent("api/delete"))
         request.httpMethod = "DELETE"
         request.timeoutInterval = 20
@@ -408,7 +409,7 @@ enum LocalModel {
     }
 
     // Starts Ollama when it is installed but not running, and waits up to 15 s for it.
-    static func ensureServer() -> Bool {
+    public static func ensureServer() -> Bool {
         if installedModels() != nil { return true }
         guard let binary else { return false }
         let process = Process()
@@ -427,46 +428,8 @@ enum LocalModel {
         return false
     }
 
-    // Terminal shows each step: install Ollama with Homebrew (asks y/n first) or open its download page,
-    // start it, then download the model with Ollama's own progress bar.
-    // Used when Ollama itself is missing; with Ollama installed the app downloads models itself (pull).
-    static func install(_ variant: Variant) {
-        let terms = variant.model.hasPrefix("gemma") ? L(" (Gemma 이용 약관: https://ai.google.dev/gemma/terms)", " (Gemma terms: https://ai.google.dev/gemma/terms)") : ""
-        Login.openInTerminal(name: L("\(variant.title) 설치", "Install \(variant.title)"), exports: "", script: """
-        echo "\(L("\(variant.title)를 이 Mac에 설치해요 (Ollama 사용).", "Installs \(variant.title) on this Mac (with Ollama)."))"
-        echo
-        OLLAMA=""
-        for p in /opt/homebrew/bin/ollama /usr/local/bin/ollama /Applications/Ollama.app/Contents/Resources/ollama; do
-          [ -x "$p" ] && OLLAMA="$p" && break
-        done
-        if [ -z "$OLLAMA" ]; then
-          if [ -x /opt/homebrew/bin/brew ]; then
-            echo "\(L("Ollama가 없어요. Homebrew로 설치합니다: brew install ollama", "Ollama is not installed. Install it with Homebrew: brew install ollama"))"
-            read "?\(L("설치할까요? (y/n) ", "Install? (y/n) "))" a
-            [ "$a" = y ] || exit 0
-            /opt/homebrew/bin/brew install ollama || { echo "\(L("설치 실패", "Installation failed"))"; read; exit 1; }
-            OLLAMA=/opt/homebrew/bin/ollama
-          else
-            echo "\(L("Ollama가 없어요. 공식 다운로드 페이지를 열게요. 설치한 뒤 이 버튼을 다시 눌러 주세요.", "Ollama is not installed. Opening its download page; install it, then press this button again."))"
-            open "https://ollama.com/download"
-            read "?\(L("엔터를 누르면 창이 닫혀요.", "Press Enter to close this window."))"
-            exit 0
-          fi
-        fi
-        if ! curl -s http://127.0.0.1:11434/api/version >/dev/null; then
-          echo "\(L("Ollama를 켜는 중…", "Starting Ollama…"))"
-          (OLLAMA_MAX_LOADED_MODELS=1 "$OLLAMA" serve >/dev/null 2>&1 &)
-          for i in {1..30}; do curl -s http://127.0.0.1:11434/api/version >/dev/null && break; sleep 0.5; done
-        fi
-        echo "\(L("모델 받는 중", "Downloading the model") + terms)"
-        "$OLLAMA" pull \(variant.model) || { echo "\(L("받기 실패", "Download failed"))"; read; exit 1; }
-        echo
-        read "?\(sortOnly(variant.model) ? L("끝났어요. 이제 메시지 판정에 써요. 엔터를 누르면 창이 닫혀요.", "Done. It now sorts messages. Press Enter to close this window.") : L("끝났어요. AI Illuminati에서 @\(variant.title)로 불러 보세요. 엔터를 누르면 창이 닫혀요.", "Done. Call it with @\(variant.title) in AI Illuminati. Press Enter to close this window."))"
-        """)
-    }
-
     // One answer at a time across every chat, so two models never sit in memory together.
-    static let gate = DispatchSemaphore(value: 1)
+    public static let gate = DispatchSemaphore(value: 1)
 
     // One reply from POST /api/chat, streamed: each line carries the next piece of text.
     static func ask(_ variant: Variant = legacy[0], prompt: String, images: [URL], timeout: TimeInterval, cancellation: DebateCancellation?,
@@ -600,8 +563,8 @@ final class PullStream: NSObject, URLSessionDataDelegate {
 }
 
 // Usage for the menu: no limit. Not installed, not downloaded or not running is said in the note.
-enum LocalUsage {
-    static func read(_ account: Account) -> AIUsage {
+public enum LocalUsage {
+    public static func read(_ account: Account) -> AIUsage {
         var result = AIUsage(name: account.name, account: account)
         let variant = LocalModel.variant(account)
         result.detail = L("내 Mac · ", "This Mac · ") + variant.model

@@ -2,6 +2,7 @@ import Cocoa
 import PDFKit
 import ImageIO
 import UniformTypeIdentifiers
+import AIRuntime
 
 struct MaterialUnit: Codable, Identifiable {
     var id: String

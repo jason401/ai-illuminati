@@ -1,6 +1,7 @@
 import Cocoa
 import AIAccounts
 import AILocalization
+import AIRuntime
 
 enum WorkspaceLevel: String, Codable, CaseIterable {
     case view, write, execute
@@ -288,5 +289,20 @@ extension Discussion {
                 }
             } catch { DispatchQueue.main.async { self.runningRooms.remove(room); self.attachmentError = error.localizedDescription } }
         }
+    }
+}
+
+extension GeminiLinks {
+    // Linked folders: personal agy permissions are not broadened, so only describe what this mode allows.
+    static func workspaceNote(level: WorkspaceLevel, readsPages: Bool) -> String {
+        let commands = level == .execute
+            ? "터미널 명령(run_command)은 개인 설정에서 허락된 명령만 실행되고, 허락되지 않은 명령을 시도하면 답 전체가 실패해요. 꼭 필요할 때만 쓰세요."
+            : "터미널 명령(run_command)은 이 실행에서 막혀 있고, 한 번이라도 시도하면 답 전체가 실패해요. ls, cat, find 같은 명령도 쓰지 마세요."
+        let files = level == .view
+            ? "폴더와 파일은 터미널 없이 파일 읽기 도구로 보세요. 파일은 만들거나 고칠 수 없어요."
+            : "폴더와 파일은 터미널 없이 파일 읽기·수정 도구로 다루세요."
+        let pages = readsPages ? "웹 검색(search_web)과 웹 페이지 읽기(read_url_content)를 쓸 수 있어요."
+            : "웹 검색(search_web)은 쓸 수 있지만 웹 페이지 열기(read_url_content)는 막혀 있어요."
+        return "[도구 안내] \(commands) \(files) \(pages) 질문에 폴더나 파일이 필요 없으면 도구 없이 바로 답하세요.\n\n"
     }
 }

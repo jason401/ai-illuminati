@@ -3,6 +3,7 @@ import ImageIO
 import UniformTypeIdentifiers
 import AIAccounts
 import AILocalization
+import AIRuntime
 
 struct ChatImage: Identifiable, Codable, Equatable {
     var id = UUID()

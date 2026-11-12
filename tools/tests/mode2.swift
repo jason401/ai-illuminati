@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 import AIAccounts
 import AILocalization
 import AISpaces
+@testable import AIRuntime
 
 GoogleAuth.shared = GoogleAuth(store: MemoryGoogleStore())
 

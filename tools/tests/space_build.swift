@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import AIAccounts
+@testable import AIRuntime
 @testable import AISpaces
 
 // Spaces (Space.swift): the hidden <space-build> block, the checks before saving, manifest and schedule, drafts,

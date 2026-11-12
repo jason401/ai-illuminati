@@ -1,5 +1,6 @@
 import Foundation
 import AIAccounts
+import AILocalization
 
 // The chat sidebar by project: the chats and TODO chats of one Git repository under one folder (like the
 // projects of the desktop apps), and which sections and folders the user folded or pinned.

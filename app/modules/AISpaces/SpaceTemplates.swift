@@ -1,12 +1,13 @@
 import Foundation
+import AILocalization
 
 // The built-in Spaces: a checklist with progress, a comparison table (with source and checked-on columns) and a
 // meeting's decision log. Plain pages on the same bridge an AI's Space uses (Space.swift), so they can be changed by
 // talking like any other. Their words are written in the app's language when the Space is made.
-enum SpaceTemplate: String, CaseIterable {
+public enum SpaceTemplate: String, CaseIterable {
     case checklist, compare, decisions
 
-    var name: String {
+    public var name: String {
         switch self {
         case .checklist: return L("체크리스트", "Checklist")
         case .compare: return L("비교표", "Comparison")

@@ -1,5 +1,6 @@
 import Foundation
 import AIAccounts
+import AILocalization
 
 // The Spaces folder as the user's shelf of small apps: a plain chat's AI gets spaces/ as a folder it may change
 // (Discussion.soloBinding) and edits a Space's app.html, manifest.json and state.json directly, or adds a new folder.
@@ -8,19 +9,19 @@ import AIAccounts
 // What was last accepted is kept out of the AIs' folder, in spaces-sync/<id>/.
 
 // What sync() did to one Space, shown under the answer that made the change.
-struct SpaceSyncNote: Codable, Equatable {
-    var space: String
-    var name: String
-    var kind: String          // "added", "changed", "refused", "set-aside", "removed"
-    var reason: String?
-    var version: Int?
+public struct SpaceSyncNote: Codable, Equatable {
+    public var space: String
+    public var name: String
+    public var kind: String          // "added", "changed", "refused", "set-aside", "removed"
+    public var reason: String?
+    public var version: Int?
 }
 
 // Pictures as files: spaces/<id>/assets/<name>, written in the page as assets/<name>. The web view reads no files: they
 // load through space-asset:// (served, SpaceAssetServer), and go in as data: URLs only for a one-file export (inline).
 // Pictures the app gets as data: URLs (a ChatGPT drawing, an older page) are moved out to files when the page is saved
 // (extract). app.html stays small enough to edit, and a Space may hold up to SpaceLimits.total of files.
-enum SpaceAssets {
+public enum SpaceAssets {
     static let folder = "assets", scheme = "space-asset"
     static let shrinkFrom = 20_000_000
     // assets/name after a quote, "(", "=" or a space, and before a quote, ")", a space or ">".
@@ -41,7 +42,7 @@ enum SpaceAssets {
         return nil
     }
 
-    static func dataURL(_ name: String, folder: URL) -> String? {
+    public static func dataURL(_ name: String, folder: URL) -> String? {
         guard let url = file(name, folder: folder), let data = try? Data(contentsOf: url, options: .mappedIfSafe),
               let type = mime(data) else { return nil }
         return "data:\(type);base64," + data.base64EncodedString()
@@ -135,7 +136,7 @@ enum SpaceAssets {
     }
 }
 
-enum SpaceLibrary {
+public enum SpaceLibrary {
     static var syncRoot: URL { URL(fileURLWithPath: AccountStore.supportDir).appendingPathComponent("spaces-sync") }
     static func kept(_ id: String) -> URL { syncRoot.appendingPathComponent(id) }
     static var rejected: URL { SpaceStore.root.appendingPathComponent(".rejected") }
@@ -159,7 +160,7 @@ enum SpaceLibrary {
 
     // An answer that may write in the Spaces folder is running: the sync on coming to the front waits for it, so a
     // page still being written is not put back. Its data as it was before is kept, for Undo after the answer.
-    static func beginAnswer() {
+    public static func beginAnswer() {
         lock.lock(); answering += 1; lock.unlock()
         for manifest in all() {
             let state = SpaceStore.folder(manifest.id).appendingPathComponent("state.json")
@@ -169,10 +170,10 @@ enum SpaceLibrary {
             _ = stateMoved(manifest.id)
         }
     }
-    static func endAnswer() { lock.lock(); answering = max(0, answering - 1); lock.unlock() }
-    static var busy: Bool { lock.lock(); defer { lock.unlock() }; return answering > 0 }
+    public static func endAnswer() { lock.lock(); answering = max(0, answering - 1); lock.unlock() }
+    public static var busy: Bool { lock.lock(); defer { lock.unlock() }; return answering > 0 }
 
-    static func all() -> [SpaceManifest] {
+    public static func all() -> [SpaceManifest] {
         ((try? FileManager.default.contentsOfDirectory(atPath: SpaceStore.root.path)) ?? []).filter { !$0.hasPrefix(".") && SpaceStore.validID($0) }
             .compactMap { SpaceStore.manifest(at: SpaceStore.folder($0)) }
     }
@@ -196,7 +197,7 @@ enum SpaceLibrary {
 
     // `shrink`: a picture file over SpaceAssets.shrinkFrom made smaller (nil keeps it). Returns what changed and the
     // Spaces whose data changed outside the bridge (open pages load again). Main thread (the caller reloads the list).
-    static func sync(shrink: ((URL) -> Data?)? = nil) -> (notes: [SpaceSyncNote], reshaped: [String]) {
+    public static func sync(shrink: ((URL) -> Data?)? = nil) -> (notes: [SpaceSyncNote], reshaped: [String]) {
         let fm = FileManager.default, root = SpaceStore.root
         let names = ((try? fm.contentsOfDirectory(atPath: root.path)) ?? []).filter { !$0.hasPrefix(".") }.sorted()
         let ready = syncRoot.appendingPathComponent(".ready")
@@ -324,7 +325,7 @@ enum SpaceLibrary {
     }
 
     // Painted pictures through a block (a ChatGPT account draws them; the user previews and applies the result).
-    static let pictureBlockRule = """
+    public static let pictureBlockRule = """
         [Space pictures through a block] Only for painted pictures (illustration, character, background, art), add to your reply,
         hidden from the user: <space-build for="its id"> to change a Space (or <space-build> with <space-manifest>{"name","icon","color"}
         </space-manifest> for a new one) holding <space-html> with the whole page, where space-image:1, space-image:2 … stand for the
@@ -335,7 +336,7 @@ enum SpaceLibrary {
         """
 
     // The rule a chat's AI gets with the Spaces folder (`spaces`: every Space now, for its folder name).
-    static func rule(root: String, spaces: [SpaceManifest], draws: Bool) -> String {
+    public static func rule(root: String, spaces: [SpaceManifest], draws: Bool) -> String {
         """
         [Spaces folder] \(root)
         The user's Spaces live here: small apps this app runs (sidebar → Spaces). When the user asks, change a Space or add a
@@ -365,16 +366,16 @@ enum SpaceLibrary {
 // window.space that keeps the data in that browser (localStorage), starting from the data it has now. A Space with
 // more files than `oneFile` goes out as a folder instead (index.html beside a copy of assets/): a browser chokes on a
 // page of hundreds of MB of data: URLs.
-enum SpaceExport {
+public enum SpaceExport {
     static let oneFile = 50_000_000
 
-    static func fitsOneFile(_ id: String) -> Bool {
+    public static func fitsOneFile(_ id: String) -> Bool {
         let folder = SpaceStore.folder(id)
         return SpaceStore.html(folder).utf8.count + SpaceAssets.bytes(folder) * 4 / 3 <= oneFile
     }
 
     // `target`: a new folder (it must not be there yet).
-    static func folder(_ id: String, to target: URL) throws {
+    public static func folder(_ id: String, to target: URL) throws {
         let fm = FileManager.default, folder = SpaceStore.folder(id)
         guard let manifest = SpaceStore.manifest(at: folder) else { throw SpaceBad(reason: L("Space를 찾지 못했어요", "Space not found")) }
         let html = SpaceStore.html(folder)
@@ -385,7 +386,7 @@ enum SpaceExport {
         try Data(document(page: html, manifest: manifest, state: SpaceStore.state(folder)).utf8).write(to: target.appendingPathComponent("index.html"), options: .atomic)
     }
 
-    static func document(_ id: String) -> String? {
+    public static func document(_ id: String) -> String? {
         let folder = SpaceStore.folder(id)
         guard let manifest = SpaceStore.manifest(at: folder) else { return nil }
         let page = SpaceStore.page(folder)

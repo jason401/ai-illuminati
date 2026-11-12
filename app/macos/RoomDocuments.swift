@@ -1,5 +1,6 @@
 import Cocoa
 import PDFKit
+import AILocalization
 
 struct RoomDocument: Codable, Identifiable {
     var id = UUID()

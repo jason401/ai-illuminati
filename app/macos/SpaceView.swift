@@ -2,6 +2,8 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 import AIAccounts
+import AILocalization
+import AISpaces
 
 // Spaces on screen (Space.swift): a Space in place of the chat with its change box below, the preview card an
 // answer's <space-build> leaves in the chat, the sidebar's Spaces and "Make a Space" on a meeting's result.

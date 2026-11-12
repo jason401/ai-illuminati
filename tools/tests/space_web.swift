@@ -1,9 +1,11 @@
 import AppKit
 import Foundation
+import SwiftUI
 import WebKit
+import AISpaces
 
-// The Space web view's isolation (SpaceWeb.swift), checked in a real WKWebView: a page that skips the checks
-// (loaded straight into SpacePage) tries every way out to a local server and to files. Nothing may reach the
+// The Space web view's isolation (SpaceWeb.swift), checked in a real WKWebView opened the way the app opens it
+// (SpaceView: a SpaceWebView, public names only): a page that skips the checks tries every way out to a local server and to files. Nothing may reach the
 // server, file:// must fail, navigation and pop-ups stay put, and only the bridge works. Runs in the test home.
 
 func fail(_ message: String) -> Never { print("FAIL: " + message); exit(1) }
@@ -78,7 +80,9 @@ let page = """
       out.bigGone = space.state.get('big') === undefined;
       out.setOK = await space.state.set('n', 42);
       out.direct = await window.webkit.messageHandlers.space.postMessage({op: 'run', cmd: 'ls'});
+      // One address the content rules block, one they do not: the navigation policy alone keeps the page.
       setTimeout(() => { location.href = '\(base)/nav'; }, 10);
+      setTimeout(() => { location.href = 'about:blank?moved'; }, 30);
       await space.state.set('result', out);
     });
     </script></body></html>
@@ -86,16 +90,24 @@ let page = """
 
 let app = NSApplication.shared
 app.setActivationPolicy(.prohibited)
+let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 300), styleMask: [.borderless], backing: .buffered, defer: true)
+func webView(in view: NSView) -> WKWebView? { view as? WKWebView ?? view.subviews.lazy.compactMap(webView(in:)).first }
+// A page as SpaceView shows one; its web view once the isolation rules are ready (nil: it did not load).
+func show(_ html: String, host: SpaceStateHost, actions: SpaceActions = SpaceActions(), assets: URL? = nil, color: String = "blue",
+          onProblem: @escaping (String) -> Void = { _ in }) -> (NSView, WKWebView?) {
+    let hosting = NSHostingView(rootView: SpaceWebView(html: html, assets: assets, color: color, reload: UUID().uuidString, host: { host },
+                                                       actions: actions, onProblem: onProblem))
+    hosting.frame = window.contentView!.bounds
+    window.contentView!.addSubview(hosting)
+    let wait = Date().addingTimeInterval(10)
+    while webView(in: hosting) == nil && Date() < wait { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
+    return (hosting, webView(in: hosting))
+}
 let host = SpaceMemoryHost(Data(#"{"n":1}"#.utf8))
 var opened: [[String: String]] = []
-let spacePage = SpacePage(host: host, actions: SpaceActions(open: { opened.append($0) }))
 var problems: [String] = []
-spacePage.onProblem = { problems.append($0) }
-let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 300), styleMask: [.borderless], backing: .buffered, defer: true)
-spacePage.load(page, assets: nil, color: "blue", in: window.contentView) { view, error in
-    guard let view else { fail("the page did not load: " + (error ?? "")) }
-    window.contentView?.addSubview(view)
-}
+let (firstView, firstPage) = show(page, host: host, actions: SpaceActions(open: { opened.append($0) }), onProblem: { problems.append($0) })
+guard let firstPage else { fail("the page did not load") }
 
 func result() -> [String: Any]? {
     (try? JSONSerialization.jsonObject(with: host.stateData) as? [String: Any])?["result"] as? [String: Any]
@@ -104,7 +116,7 @@ let deadline = Date().addingTimeInterval(20)
 while result() == nil && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.1)) }
 guard let out = result() else {
     var seen: Any?
-    spacePage.webView?.evaluateJavaScript("JSON.stringify(typeof out === 'undefined' ? 'no script' : out) + ' ' + location.href") { value, _ in seen = value ?? "nil" }
+    firstPage.evaluateJavaScript("JSON.stringify(typeof out === 'undefined' ? 'no script' : out) + ' ' + location.href") { value, _ in seen = value ?? "nil" }
     let wait = Date().addingTimeInterval(3)
     while seen == nil && Date() < wait { RunLoop.main.run(until: Date().addingTimeInterval(0.1)) }
     fail("the page never reported; it shows: \(seen ?? "nothing")")
@@ -122,9 +134,19 @@ if out["initial"] as? Int != 1 { fail("state.get did not read the first data") }
 if out["setOK"] as? Bool != true || (try? JSONSerialization.jsonObject(with: host.stateData) as? [String: Any])?["n"] as? Int != 42 { fail("state.set did not save") }
 if out["bigSet"] as? Bool != false || out["bigGone"] as? Bool != true { fail("a write over 10 MB was not refused and undone") }
 if out["direct"] as? Bool != false { fail("an unknown bridge call was not refused") }
-if spacePage.webView?.url?.absoluteString != "about:blank" { fail("the page navigated away: \(spacePage.webView?.url?.absoluteString ?? "nil")") }
+// What the page cannot show by itself: the view keeps nothing on disk (cookies, storage, cache).
+if firstPage.configuration.websiteDataStore.isPersistent { fail("the Space web view keeps its data on disk") }
+// Nor which layer stopped a load: the page's own policy must still refuse every kind of load (the content rules
+// alone would hide a weaker one).
+var policy: Any?
+firstPage.evaluateJavaScript("document.querySelector('meta[http-equiv=Content-Security-Policy]').content") { value, _ in policy = value ?? "none" }
+let policyWait = Date().addingTimeInterval(3)
+while policy == nil && Date() < policyWait { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
+for part in ["default-src 'none'", "connect-src 'none'", "frame-src 'none'", "worker-src 'none'", "form-action 'none'", "base-uri 'none'", "script-src 'unsafe-inline';"]
+    where !((policy as? String) ?? "").contains(part) { fail("the page's policy lacks \(part): \(policy ?? "none")") }
+if firstPage.url?.absoluteString != "about:blank" { fail("the page navigated away: \(firstPage.url?.absoluteString ?? "nil")") }
 if !opened.isEmpty { fail("something was opened") }
-spacePage.close()
+firstView.removeFromSuperview()
 
 // A Space's picture files load from its assets/ folder (SpaceAssetServer); nothing else there or elsewhere does, and
 // the page cannot read them as data.
@@ -134,47 +156,45 @@ let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 3, pixelsHigh: 
 try! FileManager.default.createDirectory(at: assetFolder.appendingPathComponent("assets"), withIntermediateDirectories: true)
 try! bitmap.representation(using: .png, properties: [:])!.write(to: assetFolder.appendingPathComponent("assets/cat.png"))
 try! bitmap.representation(using: .png, properties: [:])!.write(to: assetFolder.appendingPathComponent(".hidden.png"))
+try! bitmap.representation(using: .png, properties: [:])!.write(to: assetFolder.appendingPathComponent("assets/.kept.png"))
 let assetHost = SpaceMemoryHost(Data("{}".utf8))
-let assetPage = SpacePage(host: assetHost, actions: SpaceActions())
 let pictures = """
-    <img id=a src="assets/cat.png"><img id=b src='./assets/none.png'><img id=c src="space-asset://local/..%2F.hidden.png"><img id=d src="space-asset://other/cat.png">
+    <img id=a src="assets/cat.png"><img id=b src='./assets/none.png'><img id=c src="space-asset://local/..%2F.hidden.png"><img id=d src="space-asset://other/cat.png"><img id=e src="space-asset://local/.kept.png">
     <script>
     const seen = id => new Promise(ok => { const i = document.getElementById(id); if (i.complete && i.naturalWidth) ok(i.naturalWidth); i.onload = () => ok(i.naturalWidth); i.onerror = () => ok(-1); });
-    Promise.all(['a', 'b', 'c', 'd'].map(seen)).then(async sizes => {
+    Promise.all(['a', 'b', 'c', 'd', 'e'].map(seen)).then(async sizes => {
       let read = 'blocked'; try { await fetch(document.getElementById('a').src); read = 'open'; } catch (e) {}
       space.state.set('result', {sizes, read});
     });
     </script>
     """
-assetPage.load(pictures, assets: assetFolder, color: "blue", in: window.contentView) { view, error in
-    guard let view else { fail("the picture page did not load: " + (error ?? "")) }
-    window.contentView?.addSubview(view)
-}
+let (assetView, assetPage) = show(pictures, host: assetHost, assets: assetFolder)
+if assetPage == nil { fail("the picture page did not load") }
 func assetResult() -> [String: Any]? { (try? JSONSerialization.jsonObject(with: assetHost.stateData) as? [String: Any])?["result"] as? [String: Any] }
 let assetDeadline = Date().addingTimeInterval(10)
 while assetResult() == nil && Date() < assetDeadline { RunLoop.main.run(until: Date().addingTimeInterval(0.1)) }
 guard let assetOut = assetResult() else { fail("the picture page never reported") }
-if (assetOut["sizes"] as? [Int]) != [3, -1, -1, -1] { fail("only assets/cat.png should load: \(assetOut)") }
+if (assetOut["sizes"] as? [Int]) != [3, -1, -1, -1, -1] { fail("only assets/cat.png should load: \(assetOut)") }
 if assetOut["read"] as? String != "blocked" { fail("the page read a picture file as data") }
-assetPage.close()
+assetView.removeFromSuperview()
 try? FileManager.default.removeItem(at: assetFolder)
 
 // The built-in templates run under the same guard: they draw, and a check is saved through the bridge.
-func run(_ script: String, in page: SpacePage) -> Any? {
+func run(_ script: String, in page: WKWebView?) -> Any? {
     var value: Any?, done = false
-    page.webView?.evaluateJavaScript(script) { result, error in value = result ?? error.map { "error: \($0)" }; done = true }
+    page?.evaluateJavaScript(script) { result, error in value = result ?? error.map { "error: \($0)" }; done = true }
     let wait = Date().addingTimeInterval(5)
     while !done && Date() < wait { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
     return value
 }
 func settle(_ seconds: Double) { let until = Date().addingTimeInterval(seconds); while Date() < until { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) } }
+// Each is made as the sidebar makes it and shown from its folder, as SpaceView shows a Space.
 for template in SpaceTemplate.allCases {
-    let data = SpaceMemoryHost(template.firstState())
-    let shown = SpacePage(host: data, actions: SpaceActions())
-    var loaded = false
-    shown.load(template.html, assets: nil, color: template.color, in: window.contentView) { view, _ in if let view { window.contentView?.addSubview(view); loaded = true } }
+    guard let made = try? SpaceStore.shared.makeFromTemplate(template) else { fail("the \(template.rawValue) template was not made") }
+    let folder = SpaceStore.folder(made.id), data = SpaceFolderHost(folder)
+    let (shownView, shown) = show(SpaceStore.html(folder), host: data, assets: folder, color: made.color)
     settle(1.5)
-    guard loaded, (run("document.querySelector('h1') ? document.querySelector('h1').textContent : 'none'", in: shown) as? String) == template.name else {
+    guard shown != nil, (run("document.querySelector('h1') ? document.querySelector('h1').textContent : 'none'", in: shown) as? String) == template.name else {
         fail("the \(template.rawValue) template did not draw: \(String(describing: run("document.body.innerHTML.slice(0,200)", in: shown)))")
     }
     if template == .checklist {
@@ -185,8 +205,19 @@ for template in SpaceTemplate.allCases {
         let items = (try? JSONSerialization.jsonObject(with: data.stateData) as? [String: Any])?["items"] as? [[String: Any]] ?? []
         if items.count != 1 || items[0]["done"] as? Bool != true || items[0]["text"] as? String != "실험 1" { fail("the checklist did not save an item and its check: \(items)") }
     }
-    shown.close()
+    shownView.removeFromSuperview()
 }
+
+// A Space whose state.json is not one object (an AI wrote a list) opens with empty data, and the bridge still saves.
+let oddFolder = SpaceStore.folder("odd-data")
+try! FileManager.default.createDirectory(at: oddFolder, withIntermediateDirectories: true)
+try! Data("[1,2]".utf8).write(to: oddFolder.appendingPathComponent("state.json"))
+let (oddView, oddPage) = show("<script>space.state.set('keys', space.state.keys().length)</script>", host: SpaceFolderHost(oddFolder), assets: oddFolder)
+settle(1.5)
+if oddPage == nil || (try? JSONSerialization.jsonObject(with: SpaceFolderHost(oddFolder).stateData) as? [String: Any])?["keys"] as? Int != 0 {
+    fail("a Space with odd data did not open with {}: \(String(data: SpaceFolderHost(oddFolder).stateData, encoding: .utf8) ?? "")")
+}
+oddView.removeFromSuperview()
 
 // migrate runs in a page of its own: the result comes back; an error, a non-object or an endless loop is refused.
 func migrate(_ code: String) -> Result<Data, SpaceBad>? {

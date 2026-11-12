@@ -2,6 +2,8 @@ import Foundation
 import Cocoa
 import UniformTypeIdentifiers
 import AIAccounts
+import AILocalization
+import AISpaces
 
 GoogleAuth.shared = GoogleAuth(store: MemoryGoogleStore())
 

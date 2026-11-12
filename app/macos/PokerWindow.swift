@@ -1,5 +1,6 @@
 import Cocoa
 import SwiftUI
+import AILocalization
 
 // The game window: pick players, then a poker table with the hand log on the right.
 final class PokerWindow {

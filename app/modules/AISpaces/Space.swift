@@ -1,5 +1,6 @@
 import Foundation
 import AIAccounts
+import AILocalization
 
 // Spaces: small personal apps the user makes and changes by talking (like Meta Muse Spaces). An AI writes one
 // HTML page; it runs in an isolated web view (SpaceWeb.swift) with no network, no files and one bridge
@@ -11,10 +12,10 @@ import AIAccounts
 
 // When a Space shows in the sidebar: days 1 (Monday) … 7 (Sunday), from–to "HH:mm" (to before from: overnight).
 // Outside it, the Space folds into "Later".
-struct SpaceSchedule: Codable, Equatable {
-    var days: [Int]?
-    var from: String?
-    var to: String?
+public struct SpaceSchedule: Codable, Equatable {
+    public var days: [Int]?
+    public var from: String?
+    public var to: String?
 
     static func minutes(_ text: String?) -> Int? {
         guard let text, let match = text.range(of: #"^\s*(\d{1,2}):(\d{2})\s*$"#, options: .regularExpression) else { return nil }
@@ -43,7 +44,7 @@ struct SpaceSchedule: Codable, Equatable {
     }
 
     // "1-5 09:00-18:00", "6,7", "09:00-12:00": what the user types in the sidebar menu. nil: not understood.
-    static func parse(_ text: String) -> SpaceSchedule? {
+    public static func parse(_ text: String) -> SpaceSchedule? {
         var schedule = SpaceSchedule()
         for word in text.split(whereSeparator: \.isWhitespace).map(String.init) {
             if word.contains(":") {
@@ -71,23 +72,23 @@ struct SpaceSchedule: Codable, Equatable {
     }
 }
 
-struct SpaceManifest: Codable, Equatable, Identifiable {
-    var id: String
-    var name: String
-    var icon = "square.grid.2x2"
-    var color = "blue"
-    var pinned: Bool?
-    var hidden: Bool?
-    var order = 0
-    var schedule: SpaceSchedule?
-    var version = 1
-    var originChat: String?
+public struct SpaceManifest: Codable, Equatable, Identifiable {
+    public var id: String
+    public var name: String
+    public var icon = "square.grid.2x2"
+    public var color = "blue"
+    public var pinned: Bool?
+    public var hidden: Bool?
+    public var order = 0
+    public var schedule: SpaceSchedule?
+    public var version = 1
+    public var originChat: String?
     var template: String?
-    var worker: String?       // the account that changes it (nil: picked automatically)
-    var createdAt = Date()
+    public var worker: String?       // the account that changes it (nil: picked automatically)
+    public var createdAt = Date()
     var updatedAt = Date()
 
-    static let colors = ["blue", "purple", "pink", "red", "orange", "yellow", "green", "teal", "gray"]
+    public static let colors = ["blue", "purple", "pink", "red", "orange", "yellow", "green", "teal", "gray"]
     static let hexes = ["blue": "#0a84ff", "purple": "#bf5af2", "pink": "#ff375f", "red": "#ff453a", "orange": "#ff9f0a",
                         "yellow": "#e0b000", "green": "#30b158", "teal": "#30b0c7", "gray": "#8e8e93"]
     var hex: String { Self.hexes[color] ?? "#0a84ff" }
@@ -95,7 +96,7 @@ struct SpaceManifest: Codable, Equatable, Identifiable {
     init(id: String, name: String) { self.id = id; self.name = name }
 
     // Missing keys keep their defaults, so a file written by an older or newer build still opens.
-    init(from decoder: Decoder) throws {
+    public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         // A manifest an AI wrote by hand in the Spaces folder may lack the app's keys or give them odd values: the
         // id always comes from the folder (SpaceStore.manifest(at:)), the rest falls back to its default.
@@ -116,47 +117,53 @@ struct SpaceManifest: Codable, Equatable, Identifiable {
     }
 
     // In the sidebar now (not hidden, inside its schedule)?
-    func shown(at date: Date = Date()) -> Bool { hidden != true && (schedule?.shows(at: date) ?? true) }
+    public func shown(at date: Date = Date()) -> Bool { hidden != true && (schedule?.shows(at: date) ?? true) }
 }
 
 // What a chat turn keeps about the Space its answer made: a draft to preview, why it was refused, or what became of it.
-struct SpaceDraftNote: Codable, Equatable {
-    var draft: String?          // spaces/.drafts/<draft>
-    var name: String
-    var reason: String?         // refused by the checks: the AI hears it on "Rebuild"
-    var space: String?          // added to the sidebar as this Space
-    var discarded: Bool?
-    var target: String?         // a change to this existing Space (its preview and Apply are in the Space)
-    var baseVersion: Int?       // the target's version the change was written for
+public struct SpaceDraftNote: Codable, Equatable {
+    public var draft: String?          // spaces/.drafts/<draft>
+    public var name: String
+    public var reason: String?         // refused by the checks: the AI hears it on "Rebuild"
+    public var space: String?          // added to the sidebar as this Space
+    public var discarded: Bool?
+    public var target: String?         // a change to this existing Space (its preview and Apply are in the Space)
+    public var baseVersion: Int?       // the target's version the change was written for
+    public init(draft: String? = nil, name: String, reason: String? = nil, space: String? = nil, discarded: Bool? = nil, target: String? = nil, baseVersion: Int? = nil) {
+        self.draft = draft; self.name = name; self.reason = reason; self.space = space; self.discarded = discarded; self.target = target; self.baseVersion = baseVersion
+    }
 }
 
 // One <space-build> block, checked: the code, and for a new Space its manifest and first data.
-struct SpaceBuild: Equatable {
-    var name: String?
-    var icon: String?
-    var color: String?
+public struct SpaceBuild: Equatable {
+    public var name: String?
+    public var icon: String?
+    public var color: String?
     var schedule: SpaceSchedule?
-    var html: String
+    public var html: String
     var state: Data?          // a JSON object
-    var migrate: String?      // function migrate(oldState) { … return newState }
+    public var migrate: String?      // function migrate(oldState) { … return newState }
 }
 
-struct SpaceBad: Error, Equatable { let reason: String }
+public struct SpaceBad: Error, Equatable {
+    public let reason: String
+    public init(reason: String) { self.reason = reason }
+}
 
 // total: the page with its assets/ files. They load from disk (SpaceAssetServer), so only the code (read by AIs) and
 // the data (sent whole into the page, written whole on every set) stay small.
-enum SpaceLimits {
-    static let html = 300_000, state = 10_000_000, migrate = 20_000, key = 100, name = 40, versions = 30, refine = 40
+public enum SpaceLimits {
+    public static let html = 300_000, state = 10_000_000, migrate = 20_000, key = 100, name = 40, versions = 30, refine = 40
     static let total = 1_000_000_000
 }
 
-enum SpaceBuilder {
+public enum SpaceBuilder {
     static let openTag = "<space-build>", closeTag = "</space-build>"
 
     // The reply without <space-build> blocks and old <space-patch> ones (also one still being written), and the
     // first build block's body (nil body: it was not closed). A chat's block may name an existing Space:
     // <space-build for="id"> changes it, <space-build from="id"> makes a new one from it.
-    static func split(_ text: String) -> (reply: String, found: Bool, body: String?, target: String?, base: String?) {
+    public static func split(_ text: String) -> (reply: String, found: Bool, body: String?, target: String?, base: String?) {
         var rest = Substring(text), kept = "", found = false, body: String?, attributes = ""
         while let (start, tag, closed) = opening(rest) {
             kept += rest[..<start.lowerBound]
@@ -211,7 +218,7 @@ enum SpaceBuilder {
     }
 
     // A block's body checked: the page, its manifest (new Spaces), first data (new only) and migrate (changes only).
-    static func parse(_ body: String?, new: Bool) -> Result<SpaceBuild, SpaceBad> {
+    public static func parse(_ body: String?, new: Bool) -> Result<SpaceBuild, SpaceBad> {
         do {
             guard let body else { throw SpaceBad(reason: L("<space-build> 블록이 닫히지 않았어요 (답이 잘렸을 수 있어요)", "The <space-build> block is not closed (the reply may have been cut)")) }
             guard let html = section("space-html", in: body), !html.isEmpty else { throw SpaceBad(reason: L("<space-html>이 없어요", "No <space-html>")) }
@@ -268,7 +275,7 @@ enum SpaceBuilder {
         """
 
     // The instruction a Space-making (or Space-changing) answer gets: the bridge, what is refused, the limits, one example.
-    static let rule = """
+    public static let rule = """
         [Space]
         The user asks for a Space: a small personal app (tracker, board, dashboard, checklist, quiz, game) that runs in an
         isolated web view of this app. If the message does not really ask for such an app, answer normally and add no block.
@@ -289,7 +296,7 @@ enum SpaceBuilder {
 
     // A chat that names existing Spaces (SpaceStore.named) gets their code (pictures hidden) and the shape of their data,
     // so it can change one or make a new one from it. A change waits in the chat for the user to preview and apply.
-    static func chatRule(_ spaces: [SpaceManifest]) -> String {
+    public static func chatRule(_ spaces: [SpaceManifest]) -> String {
         guard !spaces.isEmpty else { return "" }
         let pages = spaces.map { manifest -> String in
             let folder = SpaceStore.folder(manifest.id)
@@ -320,7 +327,7 @@ enum SpaceBuilder {
 
     // Changing a Space: its code, the shape of its data (keys and types, never values) and the talk so far.
     // `html` comes with its pictures hidden (SpacePictures.hide); `draws`: the AI can make pictures (ChatGPT).
-    static func refinePrompt(manifest: SpaceManifest, html: String, state: Data, history: [SpaceRefineEntry], request: String,
+    public static func refinePrompt(manifest: SpaceManifest, html: String, state: Data, history: [SpaceRefineEntry], request: String,
                              draws: Bool = false, kept: Int = 0) -> String {
         let talk = history.suffix(10).map { ($0.role == "user" ? "[User] " : "[AI] ") + String($0.text.prefix(600)) }.joined(separator: "\n")
         return """
@@ -400,12 +407,12 @@ enum SpaceCheck {
 // space-image:1 for the first picture it made in that answer; the app shrinks each (Pictures.spaceDataURL) and puts it
 // in the page as a data: URL. Pictures already in the page reach the AI as space-kept:N, not as their bytes, and
 // are put back the same way, so any AI can change a page another one drew for.
-enum SpacePictures {
-    static let perAnswer = 4
+public enum SpacePictures {
+    public static let perAnswer = 4
     static let dataURL = try! NSRegularExpression(pattern: #"data:image/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]{1000,}"#)
     private static let marker = try! NSRegularExpression(pattern: #"space-(image|kept):(\d+)"#)
 
-    static func hide(_ html: String) -> (text: String, kept: [String]) {
+    public static func hide(_ html: String) -> (text: String, kept: [String]) {
         var kept: [String] = [], text = "", last = html.startIndex
         for match in dataURL.matches(in: html, range: NSRange(html.startIndex..., in: html)) {
             guard let range = Range(match.range, in: html) else { continue }
@@ -417,7 +424,7 @@ enum SpacePictures {
     }
 
     // The markers replaced by the pictures: `made` in this answer, `kept` from the page before.
-    static func embed(_ html: String, made: [String], kept: [String]) -> Result<String, SpaceBad> {
+    public static func embed(_ html: String, made: [String], kept: [String]) -> Result<String, SpaceBad> {
         var text = "", last = html.startIndex
         for match in marker.matches(in: html, range: NSRange(html.startIndex..., in: html)) {
             guard let range = Range(match.range, in: html), let kind = Range(match.range(at: 1), in: html),
@@ -451,10 +458,13 @@ enum SpacePictures {
     // Discussion.drawSpacePictures): <space-picture n="1">what to draw</space-picture> for space-image:1, or
     // <space-picture n="1" from="2">how to change it</space-picture> to redraw space-kept:2 with that picture attached.
     // file: from="assets/name.png", a picture file of the Space (an AI that read app.html from the Spaces folder).
-    struct Request: Equatable { var n: Int; var from: Int?; var text: String; var file: String? = nil }
+    public struct Request: Equatable {
+        public var n: Int, from: Int?, text: String, file: String? = nil
+        public init(n: Int, from: Int?, text: String, file: String? = nil) { self.n = n; self.from = from; self.text = text; self.file = file }
+    }
     private static let requestTag = try! NSRegularExpression(pattern: #"<space-picture\b([^>]*)>([\s\S]*?)</space-picture>"#)
 
-    static func requests(in body: String) -> Result<[Request], SpaceBad> {
+    public static func requests(in body: String) -> Result<[Request], SpaceBad> {
         var found: [Request] = []
         for match in requestTag.matches(in: body, range: NSRange(body.startIndex..., in: body)) {
             guard let tag = Range(match.range(at: 1), in: body), let inner = Range(match.range(at: 2), in: body) else { continue }
@@ -477,7 +487,7 @@ enum SpacePictures {
     }
 
     // A kept picture (data: URL) as a file to attach for a redraw; the caller removes it.
-    static func referenceFile(_ dataURL: String) -> URL? {
+    public static func referenceFile(_ dataURL: String) -> URL? {
         guard let comma = dataURL.firstIndex(of: ","), let data = Data(base64Encoded: String(dataURL[dataURL.index(after: comma)...])) else { return nil }
         let type = dataURL[..<comma].dropFirst("data:image/".count).prefix { $0 != ";" }
         let file = FileManager.default.temporaryDirectory.appendingPathComponent("AI Illuminati space picture \(UUID().uuidString).\(type == "jpeg" ? "jpg" : type)")
@@ -486,7 +496,7 @@ enum SpacePictures {
     }
 
     // How a chat's AI puts painted pictures in a Space page (`draws`: a ChatGPT account can draw for it).
-    static func chatRule(draws: Bool) -> String {
+    public static func chatRule(draws: Bool) -> String {
         draws
             ? "[Space pictures] For a painted picture in the page (illustration, character, background, art), do not draw it "
               + "yourself: inside the <space-build> block add <space-picture n=\"1\">what to draw: subject, style, colors, aspect "
@@ -498,29 +508,30 @@ enum SpacePictures {
     }
 }
 
-struct SpaceVersion: Codable, Equatable, Identifiable {
-    var version: Int
-    var at: Date
-    var note: String
-    var migrated: Bool     // the data changed with it: Undo also brings the data back
-    var id: Int { version }
+public struct SpaceVersion: Codable, Equatable, Identifiable {
+    public var version: Int
+    public var at: Date
+    public var note: String
+    public var migrated: Bool     // the data changed with it: Undo also brings the data back
+    public var id: Int { version }
 }
 
-struct SpaceRefineEntry: Codable, Equatable {
+public struct SpaceRefineEntry: Codable, Equatable {
     var role: String       // "user" or "ai"
     var text: String
     var at = Date()
+    public init(role: String, text: String, at: Date = Date()) { self.role = role; self.text = text; self.at = at }
 }
 
 // The Spaces on disk. The list and every change run on the main thread; the file helpers are static and may run anywhere.
-final class SpaceStore: ObservableObject {
-    static let shared = SpaceStore()
-    @Published private(set) var spaces: [SpaceManifest] = []
-    @Published private(set) var stateVersion: [String: Int] = [:]   // bumps when the data is replaced (Undo, migrate)
+public final class SpaceStore: ObservableObject {
+    public static let shared = SpaceStore()
+    @Published public private(set) var spaces: [SpaceManifest] = []
+    @Published public private(set) var stateVersion: [String: Int] = [:]   // bumps when the data is replaced (Undo, migrate)
 
-    static var root: URL { URL(fileURLWithPath: AccountStore.supportDir).appendingPathComponent("spaces") }
-    static func folder(_ id: String) -> URL { root.appendingPathComponent(id) }
-    static func draftFolder(_ id: String) -> URL { root.appendingPathComponent(".drafts").appendingPathComponent(id) }
+    public static var root: URL { URL(fileURLWithPath: AccountStore.supportDir).appendingPathComponent("spaces") }
+    public static func folder(_ id: String) -> URL { root.appendingPathComponent(id) }
+    public static func draftFolder(_ id: String) -> URL { root.appendingPathComponent(".drafts").appendingPathComponent(id) }
     static func validID(_ id: String) -> Bool { id.range(of: #"^[A-Za-z0-9-]{1,80}$"#, options: .regularExpression) != nil }
 
     static func write(_ data: Data, to url: URL) throws {
@@ -533,25 +544,25 @@ final class SpaceStore: ObservableObject {
         return try encoder.encode(value)
     }
 
-    static func manifest(at folder: URL) -> SpaceManifest? {
+    public static func manifest(at folder: URL) -> SpaceManifest? {
         guard var found = (try? Data(contentsOf: folder.appendingPathComponent("manifest.json"))).flatMap({ try? JSONDecoder().decode(SpaceManifest.self, from: $0) }) else { return nil }
         found.id = folder.lastPathComponent   // a manifest copied from another Space keeps no other id
         return found
     }
-    static func html(_ folder: URL) -> String { (try? String(contentsOf: folder.appendingPathComponent("app.html"), encoding: .utf8)) ?? "" }
+    public static func html(_ folder: URL) -> String { (try? String(contentsOf: folder.appendingPathComponent("app.html"), encoding: .utf8)) ?? "" }
     // The page as it runs: its assets/ pictures put in (SpaceAssets).
     static func page(_ folder: URL) -> String { SpaceAssets.inline(html(folder), folder: folder) }
-    static func state(_ folder: URL) -> Data {
+    public static func state(_ folder: URL) -> Data {
         (try? Data(contentsOf: folder.appendingPathComponent("state.json"))).flatMap { (try? JSONSerialization.jsonObject(with: $0)) is [String: Any] ? $0 : nil } ?? Data("{}".utf8)
     }
 
-    func reload() {
+    public func reload() {
         let names = (try? FileManager.default.contentsOfDirectory(atPath: Self.root.path)) ?? []
         spaces = names.filter { !$0.hasPrefix(".") }.compactMap { Self.manifest(at: Self.folder($0)) }
             .sorted { ($0.order, $0.createdAt) < ($1.order, $1.createdAt) }
     }
 
-    func manifest(_ id: String) -> SpaceManifest? { spaces.first { $0.id == id } }
+    public func manifest(_ id: String) -> SpaceManifest? { spaces.first { $0.id == id } }
 
     // MARK: Data, only through the bridge (or Undo / migrate)
 
@@ -607,7 +618,7 @@ final class SpaceStore: ObservableObject {
     // A checked build saved as a draft (an answer's preview card plays with it): spaces/.drafts/<id>/. A change to an
     // existing Space keeps that Space's look unless it sends its own, and its migrate. A new Space made from another
     // gets the picture files its page names from that one's folder (`assets`).
-    static func saveDraft(_ build: SpaceBuild, over target: SpaceManifest? = nil, assets: URL? = nil) throws -> String {
+    public static func saveDraft(_ build: SpaceBuild, over target: SpaceManifest? = nil, assets: URL? = nil) throws -> String {
         let id = UUID().uuidString
         let folder = draftFolder(id)
         var manifest = SpaceManifest(id: id, name: build.name ?? target?.name ?? "Space")
@@ -623,7 +634,7 @@ final class SpaceStore: ObservableObject {
     }
 
     // A draft back as a change: its page, look and migrate.
-    static func draftBuild(_ draft: String) -> SpaceBuild? {
+    public static func draftBuild(_ draft: String) -> SpaceBuild? {
         let folder = draftFolder(draft)
         guard validID(draft), let manifest = manifest(at: folder) else { return nil }
         let html = html(folder)
@@ -638,7 +649,7 @@ final class SpaceStore: ObservableObject {
         options: [.caseInsensitive])
     // The Spaces a message names (by name, spaces ignored) while asking to change, fix or reuse something; at most two,
     // longest name first. Read from disk, so any thread may ask.
-    static func named(in question: String) -> [SpaceManifest] {
+    public static func named(in question: String) -> [SpaceManifest] {
         let text = question.components(separatedBy: "\n").filter { !$0.hasPrefix(">") }.joined(separator: "\n")
         guard changeWords.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil else { return [] }
         let squeezed = text.lowercased().filter { !$0.isWhitespace }
@@ -679,7 +690,7 @@ final class SpaceStore: ObservableObject {
     func nextOrder() -> Int { (spaces.map(\.order).max() ?? -1) + 1 }
 
     // A draft (its code and the data played with in the preview) becomes a Space in the sidebar.
-    func adopt(draft: String, origin: UUID?) throws -> SpaceManifest {
+    public func adopt(draft: String, origin: UUID?) throws -> SpaceManifest {
         dispatchPrecondition(condition: .onQueue(.main))
         let folder = Self.draftFolder(draft)
         guard Self.validID(draft), let found = Self.manifest(at: folder) else { throw SpaceBad(reason: L("미리보기를 찾지 못했어요", "The preview is gone")) }
@@ -691,7 +702,7 @@ final class SpaceStore: ObservableObject {
     }
 
     // Previews nobody added or discarded (their chat was deleted, say) go after `days`.
-    static func pruneDrafts(olderThan days: Double = 30, now: Date = Date()) {
+    public static func pruneDrafts(olderThan days: Double = 30, now: Date = Date()) {
         let dir = root.appendingPathComponent(".drafts")
         for name in (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? [] {
             let folder = dir.appendingPathComponent(name)
@@ -700,12 +711,12 @@ final class SpaceStore: ObservableObject {
         }
     }
 
-    static func discardDraft(_ draft: String) {
+    public static func discardDraft(_ draft: String) {
         guard validID(draft) else { return }
         try? FileManager.default.removeItem(at: draftFolder(draft))
     }
 
-    func makeFromTemplate(_ template: SpaceTemplate, state: Data? = nil, name: String? = nil, origin: UUID? = nil) throws -> SpaceManifest {
+    public func makeFromTemplate(_ template: SpaceTemplate, state: Data? = nil, name: String? = nil, origin: UUID? = nil) throws -> SpaceManifest {
         let made = try Self.make(name: name ?? template.name, icon: template.icon, color: template.color, html: template.html,
                                  state: state ?? template.firstState(), origin: origin?.uuidString, template: template.rawValue, order: nextOrder())
         reload()
@@ -714,7 +725,7 @@ final class SpaceStore: ObservableObject {
 
     // MARK: Changing the code, keeping the versions before
 
-    static func versions(_ id: String) -> [SpaceVersion] {
+    public static func versions(_ id: String) -> [SpaceVersion] {
         let dir = folder(id).appendingPathComponent("versions")
         let names = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
         return names.compactMap { name in
@@ -723,7 +734,7 @@ final class SpaceStore: ObservableObject {
     }
 
     // New code (and, after a migrate, new data): the code and data before go to versions/<version> first.
-    func apply(_ id: String, html: String, state: Data? = nil, note: String, name: String? = nil, icon: String? = nil, color: String? = nil) throws {
+    public func apply(_ id: String, html: String, state: Data? = nil, note: String, name: String? = nil, icon: String? = nil, color: String? = nil) throws {
         dispatchPrecondition(condition: .onQueue(.main))
         if let problem = SpaceCheck.problem(html) ?? SpaceAssets.overLimit(html, folder: Self.folder(id)) { throw SpaceBad(reason: problem) }
         if let state { guard state.count <= SpaceLimits.state, (try? JSONSerialization.jsonObject(with: state)) is [String: Any] else { throw SpaceBad(reason: L("새 데이터가 JSON 객체가 아니거나 10MB를 넘어요", "The new data is not a JSON object or is over 10 MB")) } }
@@ -749,7 +760,7 @@ final class SpaceStore: ObservableObject {
 
     // Back to the code (and name, icon, color) before the last change; its data too when that change migrated the data.
     @discardableResult
-    func undo(_ id: String) throws -> Bool {
+    public func undo(_ id: String) throws -> Bool {
         dispatchPrecondition(condition: .onQueue(.main))
         guard let last = Self.versions(id).last else { return false }
         let folder = Self.folder(id)
@@ -768,7 +779,7 @@ final class SpaceStore: ObservableObject {
 
     // An older version's code and look back as a new change (so it can be undone too). The data stays as it is,
     // unless a later change moved it to other keys: then that version's data comes back with its code.
-    func restore(_ id: String, to version: Int) throws {
+    public func restore(_ id: String, to version: Int) throws {
         let saved = Self.folder(id).appendingPathComponent("versions").appendingPathComponent(String(version))
         let html = Self.html(saved)
         guard !html.isEmpty else { throw SpaceBad(reason: L("그 판을 찾지 못했어요", "That version is gone")) }
@@ -780,7 +791,7 @@ final class SpaceStore: ObservableObject {
 
     // MARK: The sidebar's changes
 
-    func update(_ id: String, _ body: (inout SpaceManifest) -> Void) {
+    public func update(_ id: String, _ body: (inout SpaceManifest) -> Void) {
         dispatchPrecondition(condition: .onQueue(.main))
         let folder = Self.folder(id)
         guard var manifest = Self.manifest(at: folder) else { return }
@@ -793,7 +804,7 @@ final class SpaceStore: ObservableObject {
     }
 
     // One step up or down among the Spaces listed with it (orders are renumbered, so they stay distinct).
-    func move(_ id: String, by step: Int, among listed: [String]) {
+    public func move(_ id: String, by step: Int, among listed: [String]) {
         guard let at = listed.firstIndex(of: id), listed.indices.contains(at + step) else { return }
         var ids = spaces.map(\.id)
         let other = listed[at + step]
@@ -803,7 +814,7 @@ final class SpaceStore: ObservableObject {
     }
 
     // To the Trash (the user confirms first).
-    func delete(_ id: String) throws {
+    public func delete(_ id: String) throws {
         dispatchPrecondition(condition: .onQueue(.main))
         guard Self.validID(id) else { return }
         try FileManager.default.trashItem(at: Self.folder(id), resultingItemURL: nil)
@@ -819,12 +830,12 @@ final class SpaceStore: ObservableObject {
     }
 
     // Data put back or reshaped outside the bridge (a chat's AI edited state.json): open pages load it again.
-    func dataChanged(_ id: String) { stateVersion[id, default: 0] += 1 }
+    public func dataChanged(_ id: String) { stateVersion[id, default: 0] += 1 }
 
-    static func refineLog(_ id: String) -> [SpaceRefineEntry] {
+    public static func refineLog(_ id: String) -> [SpaceRefineEntry] {
         (try? Data(contentsOf: folder(id).appendingPathComponent("refine.json"))).flatMap { try? JSONDecoder().decode([SpaceRefineEntry].self, from: $0) } ?? []
     }
-    static func addRefine(_ id: String, _ entry: SpaceRefineEntry) {
+    public static func addRefine(_ id: String, _ entry: SpaceRefineEntry) {
         let log = Array((refineLog(id) + [entry]).suffix(SpaceLimits.refine))
         if let data = try? encode(log) { try? write(data, to: folder(id).appendingPathComponent("refine.json")) }
     }
@@ -835,7 +846,7 @@ final class SpaceStore: ObservableObject {
     // in one, every other block in its own. Ids come from the chat and the block, so a run cut short makes no copies.
     // The old file is renamed space.json.migrated only when all of its Spaces are saved; a file that fails stays.
     @discardableResult
-    static func migrateLegacy(chats: String = AccountStore.supportDir + "/chats") -> [String] {
+    public static func migrateLegacy(chats: String = AccountStore.supportDir + "/chats") -> [String] {
         var made: [String] = []
         let names = (try? FileManager.default.contentsOfDirectory(atPath: chats)) ?? []
         for name in names.sorted() where name.hasSuffix(".work") {
@@ -925,7 +936,7 @@ final class SpaceStore: ObservableObject {
 }
 
 // What is left of the old Space patch: older answers still carry <space-patch> blocks, and they stay hidden.
-enum SpacePatch {
+public enum SpacePatch {
     static let openTag = "<space-patch", closeTag = "</space-patch>"
 
     static func split(_ text: String) -> (reply: String, raw: String?) {
@@ -946,7 +957,7 @@ enum SpacePatch {
     }
 
     // A meeting's result (Discussion.meetingFinal headings) as the decision log template's data.
-    static func meetingState(_ result: String, title: String, source: String, chat: UUID?) -> [String: Any] {
+    public static func meetingState(_ result: String, title: String, source: String, chat: UUID?) -> [String: Any] {
         enum Part { case conclusion, reasons, agreed, disputed, decide, next }
         let heads: [(Part, [String])] = [
             (.decide, ["네 결정이 필요한 것", "결정이 필요한 것", "결정 필요", "needs your decision"]), (.conclusion, ["결론", "conclusion"]),

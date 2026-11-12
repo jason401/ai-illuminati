@@ -1,5 +1,6 @@
 import Cocoa
 import SwiftUI
+import AILocalization
 
 // The Ollama models window (Settings → Accounts → Add account → Ollama models): the recommended list grouped by how
 // well each model fits this Mac's memory, every model on ollama.com on request, a name typed in, and the models

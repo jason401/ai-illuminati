@@ -1,6 +1,7 @@
 import Foundation
 import CryptoKit
 import AIAccounts
+import AILocalization
 
 func testProjectWork() {
     let base = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("project-fixture-" + UUID().uuidString)

@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 import WebKit
+import AILocalization
 
 // A Space's page runs here, cut off from everything: a data store that keeps nothing, no base URL (so no file://),
 // our CSP before the page's own markup (SpaceCheck.document), content rules that block every http(s), ws, file, ftp
@@ -9,22 +10,22 @@ import WebKit
 // is window.space, one message handler that knows which Space it serves (the page never names one).
 
 // Where a page's data lives: a Space's or a draft's folder, or memory (a migrate preview).
-protocol SpaceStateHost: AnyObject {
+public protocol SpaceStateHost: AnyObject {
     var stateData: Data { get }
     func set(key: String, json: String?) -> Result<Void, SpaceBad>
 }
 
-final class SpaceFolderHost: SpaceStateHost {
+public final class SpaceFolderHost: SpaceStateHost {
     let folder: URL
-    init(_ folder: URL) { self.folder = folder }
-    var stateData: Data { SpaceStore.state(folder) }
-    func set(key: String, json: String?) -> Result<Void, SpaceBad> { SpaceStore.setState(folder, key: key, json: json) }
+    public init(_ folder: URL) { self.folder = folder }
+    public var stateData: Data { SpaceStore.state(folder) }
+    public func set(key: String, json: String?) -> Result<Void, SpaceBad> { SpaceStore.setState(folder, key: key, json: json) }
 }
 
-final class SpaceMemoryHost: SpaceStateHost {
-    private(set) var stateData: Data
-    init(_ data: Data) { stateData = data }
-    func set(key: String, json: String?) -> Result<Void, SpaceBad> {
+public final class SpaceMemoryHost: SpaceStateHost {
+    public private(set) var stateData: Data
+    public init(_ data: Data) { stateData = data }
+    public func set(key: String, json: String?) -> Result<Void, SpaceBad> {
         switch SpaceStore.setting(stateData, key: key, json: json) {
         case .success(let data): stateData = data; return .success(())
         case .failure(let bad): return .failure(bad)
@@ -33,9 +34,10 @@ final class SpaceMemoryHost: SpaceStateHost {
 }
 
 // What a page may ask of the app; the view that shows it decides (SpaceView.swift).
-struct SpaceActions {
-    var open: (_ target: [String: String]) -> Void = { _ in }
-    var notify: (_ text: String) -> Void = { _ in }
+public struct SpaceActions {
+    var open: (_ target: [String: String]) -> Void
+    var notify: (_ text: String) -> Void
+    public init(open: @escaping (_ target: [String: String]) -> Void = { _ in }, notify: @escaping (_ text: String) -> Void = { _ in }) { self.open = open; self.notify = notify }
 }
 
 enum SpaceRules {
@@ -305,7 +307,7 @@ final class SpacePage: NSObject, WKNavigationDelegate, WKUIDelegate {
 }
 
 // A Space page in SwiftUI. A new `reload` value (another version, data put back) loads it again.
-struct SpaceWebView: NSViewRepresentable {
+public struct SpaceWebView: NSViewRepresentable {
     let html: String
     let assets: URL?
     let color: String
@@ -314,22 +316,27 @@ struct SpaceWebView: NSViewRepresentable {
     let actions: SpaceActions
     var onProblem: (String) -> Void = { _ in }
 
-    final class Coordinator { var page: SpacePage?; var loaded: String? }
-    func makeCoordinator() -> Coordinator { Coordinator() }
+    public init(html: String, assets: URL?, color: String, reload: String, host: @escaping () -> SpaceStateHost, actions: SpaceActions,
+                onProblem: @escaping (String) -> Void = { _ in }) {
+        self.html = html; self.assets = assets; self.color = color; self.reload = reload; self.host = host; self.actions = actions; self.onProblem = onProblem
+    }
 
-    func makeNSView(context: Context) -> NSView {
+    public final class Coordinator { var page: SpacePage?; var loaded: String? }
+    public func makeCoordinator() -> Coordinator { Coordinator() }
+
+    public func makeNSView(context: Context) -> NSView {
         let container = NSView()
         container.autoresizesSubviews = true
         load(container, context.coordinator)
         return container
     }
 
-    func updateNSView(_ container: NSView, context: Context) {
+    public func updateNSView(_ container: NSView, context: Context) {
         context.coordinator.page?.actions = actions
         if context.coordinator.loaded != key { load(container, context.coordinator) }
     }
 
-    static func dismantleNSView(_ container: NSView, coordinator: Coordinator) { coordinator.page?.close(); coordinator.page = nil }
+    public static func dismantleNSView(_ container: NSView, coordinator: Coordinator) { coordinator.page?.close(); coordinator.page = nil }
 
     private var key: String { reload + "|" + color + "|" + String(html.hashValue) }
 
@@ -359,15 +366,22 @@ struct SpaceWebView: NSViewRepresentable {
 
 // migrate(oldState) in a page of its own: no bridge, no network, nothing kept. Only its JSON result comes back
 // (an object within the data limit), or why not. A page that does not finish in 5 seconds is closed.
-final class SpaceMigrator: NSObject, WKNavigationDelegate {
+public enum SpaceMigrator {
+    public static func run(_ migrate: String, state: Data, done: @escaping (Result<Data, SpaceBad>) -> Void) {
+        SpaceMigrationPage.run(migrate, state: state, done: done)
+    }
+}
+
+// The page itself stays inside the module: its WebKit delegate methods are no one else's to call.
+private final class SpaceMigrationPage: NSObject, WKNavigationDelegate {
     private var webView: WKWebView?
     private var done: ((Result<Data, SpaceBad>) -> Void)?
     private var started = false
-    private static var running: [SpaceMigrator] = []
+    private static var running: [SpaceMigrationPage] = []
 
     static func run(_ migrate: String, state: Data, done: @escaping (Result<Data, SpaceBad>) -> Void) {
         dispatchPrecondition(condition: .onQueue(.main))
-        let runner = SpaceMigrator()
+        let runner = SpaceMigrationPage()
         runner.done = done
         running.append(runner)
         SpaceRules.get { rules, error in

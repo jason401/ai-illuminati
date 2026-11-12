@@ -1,6 +1,7 @@
 import Cocoa
 import CryptoKit
 import AIAccounts
+import AILocalization
 
 struct CollaborationTask: Codable, Identifiable, Equatable {
     var id = UUID()

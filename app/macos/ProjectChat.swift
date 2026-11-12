@@ -1,6 +1,7 @@
 import Cocoa
 import SwiftUI
 import AIAccounts
+import AILocalization
 
 struct ProjectApprovalView: View {
     let room: UUID

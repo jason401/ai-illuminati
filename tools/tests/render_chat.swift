@@ -1,5 +1,6 @@
 import Cocoa
 import SwiftUI
+import AILocalization
 
 private struct EmptyPreviewLogin: GoogleTokenStore {
     func load() throws -> Data? { nil }

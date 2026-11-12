@@ -1,6 +1,7 @@
 import Foundation
 import Security
 import AIAccounts
+import AILocalization
 
 // One usage window (5 hours or 7 days) as the AI's own service reports it.
 struct UsageWindow {

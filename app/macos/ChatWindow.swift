@@ -3,6 +3,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 import ImageIO
 import AIAccounts
+import AILocalization
 
 // The chat window: pick which AIs take part, ask, and get one final answer. What the AIs said to
 // each other (own answers, then reviews) is folded under the answer.
@@ -3072,4 +3073,17 @@ private struct RememberedLine: View {
             }
         }
     }
+}
+
+// These are app-generated notices saved with a chat, never user or AI messages.
+func localizedNotice(_ text: String) -> String {
+    for prefix in ["다음 순서: ", "Next order: "] where text.hasPrefix(prefix) {
+        return L("다음 순서: ", "Next order: ") + text.dropFirst(prefix.count)
+    }
+    let notices = [
+        ("대표의 순서 지정에 실패해 기존 순서를 유지합니다.", "Scheduling failed. Keeping the current order."),
+        ("대표가 발언하지 못해 기존 순서를 유지합니다.", "The moderator was unavailable. Keeping the current order.")
+    ]
+    for (ko, en) in notices where text == ko || text == en { return L(ko, en) }
+    return text
 }

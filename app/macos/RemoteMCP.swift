@@ -3,6 +3,7 @@ import AppKit
 import CryptoKit
 import Security
 import AIAccounts
+import AILocalization
 
 // Remote (URL) MCP servers, like Claude's custom connectors: the app is the MCP client over Streamable HTTP, so the
 // CLIs still see only the illuminati server and no token ever reaches them. Header values and OAuth tokens live in

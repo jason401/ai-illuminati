@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import AIAccounts
+import AILocalization
 
 // Texas Hold'em (no limit) with virtual chips. The app is the dealer: it shuffles, deals, checks
 // every bet, splits pots and ranks hands. Each AI only answers "fold / check / call / raise N" from

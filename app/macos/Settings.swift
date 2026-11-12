@@ -3,6 +3,7 @@ import ServiceManagement
 import SwiftUI
 import UniformTypeIdentifiers
 import AIAccounts
+import AILocalization
 
 // What the menu and the Settings window share: the account list (saved on every change) and
 // the display options. The menu listens through the two callbacks.

@@ -1,6 +1,7 @@
 import Cocoa
 import SwiftUI
 import AIAccounts
+import AILocalization
 
 // An Enterprise chat: one the user locked (the chat menu, or "New Enterprise chat"). Only the user locks a chat,
 // and a lock is never removed. In a locked chat only Enterprise accounts of the organization it was locked for,

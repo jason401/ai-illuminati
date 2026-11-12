@@ -1,6 +1,8 @@
 import Foundation
 import Cocoa
 import AIAccounts
+import AILocalization
+import AISpaces
 
 // Asks one AI one prompt through its own command line tool, logged in with the subscription
 // (no API keys). Answers only: every tool is started with file editing and commands turned off,

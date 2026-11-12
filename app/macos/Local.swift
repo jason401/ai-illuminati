@@ -1,5 +1,6 @@
 import Foundation
 import AIAccounts
+import AILocalization
 
 // Models on this Mac, through Ollama (https://ollama.com). Any Ollama model can be an entry in Accounts: picked in
 // the Ollama models window (a recommended list kept in app/resources/local_models.json and refreshed from GitHub,

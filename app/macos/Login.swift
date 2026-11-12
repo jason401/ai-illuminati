@@ -1,5 +1,6 @@
 import Foundation
 import AIAccounts
+import AILocalization
 
 // Login buttons. The app never sees a password: it opens Terminal with a small script that runs
 // each AI tool's own login (which opens the browser). Installing asks y/n first.

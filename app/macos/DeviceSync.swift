@@ -2,6 +2,7 @@ import Cocoa
 import CryptoKit
 import IOKit
 import AIAccounts
+import AILocalization
 
 // Chats from your other Macs, read only, through a folder both Macs see (iCloud Drive by default):
 //   <folder>/devices/<deviceID>/device.json         this Mac's name, app version, last write

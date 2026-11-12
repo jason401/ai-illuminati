@@ -2,6 +2,7 @@ import Foundation
 import Combine
 import UniformTypeIdentifiers
 import AIAccounts
+import AILocalization
 
 // TODO work (TODO_PLAN.md): the user writes TODOs on the board, presses Start, and the app gives the next one
 // that may start to a Claude/Codex account in a chat of its own (the project work path, with a review by another

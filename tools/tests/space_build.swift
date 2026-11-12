@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import AIAccounts
+@testable import AISpaces
 
 // Spaces (Space.swift): the hidden <space-build> block, the checks before saving, manifest and schedule, drafts,
 // the 1 MB data limit, versions and Undo, the old per-chat space.json moved to templates, and the Space request rule.
@@ -398,6 +399,25 @@ func testSpaceLibrary() {
            && json(SpaceStore.folder(coffee!.id)).isEmpty, "a new folder becomes a Space: \(notes)")
     expect(notes.contains { $0.kind == "set-aside" && $0.name == "나쁜 것" } && !fm.fileExists(atPath: bad.path)
            && fm.fileExists(atPath: SpaceLibrary.rejected.appendingPathComponent("bad-one/app.html").path) && !store.spaces.contains { $0.id == "bad-one" }, "a bad new one is set aside")
+    // What the app wrote for it is in the shared format: pretty, sorted keys, private files.
+    let coffeeFolder = SpaceStore.folder(coffee!.id)
+    let written = (try? String(contentsOf: coffeeFolder.appendingPathComponent("manifest.json"), encoding: .utf8)) ?? ""
+    let keys = written.components(separatedBy: "\n").compactMap { line in line.range(of: #"^  "\w+" :"#, options: .regularExpression).map { String(line[$0].dropFirst(3).prefix { $0 != "\"" }) } }
+    expect(keys.count > 5 && keys == keys.sorted(), "a Space added from the folder is saved in the shared manifest format: \(keys)")
+    let modes = ["manifest.json", "state.json", "app.html"].map { (try? fm.attributesOfItem(atPath: coffeeFolder.appendingPathComponent($0).path))?[.posixPermissions] as? Int }
+    expect(modes == [0o600, 0o600, 0o600], "its files are private: \(modes)")
+    // An AI copies the folder whole and renames the copy (its manifest still has the other id): before the app looks,
+    // the chat already knows the copy by its own folder.
+    let copy = SpaceStore.folder("coffee-copy")
+    try! fm.copyItem(at: coffeeFolder, to: copy)
+    var copyLook = try! JSONSerialization.jsonObject(with: Data(contentsOf: copy.appendingPathComponent("manifest.json"))) as! [String: Any]
+    copyLook["name"] = "라떼 트래커"
+    try! JSONSerialization.data(withJSONObject: copyLook).write(to: copy.appendingPathComponent("manifest.json"))
+    let copyRule = Discussion.spaceRule("라떼 트래커 고쳐 줘", draws: false, folder: true)
+    expect(copyRule.contains("라떼 트래커 — coffee-copy") && copyRule.contains("커피 트래커 — \(coffee!.id)"), "a copied folder is its own Space")
+    expect(store.syncLibrary().contains { $0.kind == "added" && $0.space == "coffee-copy" }, "the copy is added")
+    try! fm.removeItem(at: copy)
+    _ = store.syncLibrary()
     try! fm.removeItem(at: SpaceStore.folder(coffee!.id))
     notes = store.syncLibrary()
     expect(notes == [SpaceSyncNote(space: coffee!.id, name: "커피 트래커", kind: "removed")] && store.manifest(coffee!.id) == nil, "a Space taken out of the folder is gone")

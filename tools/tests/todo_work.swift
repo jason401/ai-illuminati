@@ -3,6 +3,7 @@ import Cocoa
 import AIAccounts
 import AILocalization
 @testable import AIRuntime
+import AIWorkspace
 
 // TODO work (Todo.swift): the store and its order rules, task_done / task_ask, and the scheduler running TODOs
 // in their own chats with fake AI answers. Every store is a file in the test folder, never the real todos.json.

@@ -3,6 +3,7 @@ import SwiftUI
 import AIAccounts
 import AILocalization
 import AIRuntime
+import AIWorkspace
 
 struct ProjectApprovalView: View {
     let room: UUID

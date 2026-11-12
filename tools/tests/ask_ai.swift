@@ -2,6 +2,7 @@ import Foundation
 import AIAccounts
 import AILocalization
 @testable import AIRuntime
+@testable import AIWorkspace
 
 // ask_ai (Peer.swift): an answering AI asks other AIs on this Mac; those it asks cannot ask on (depth 1).
 func testAskAI() {

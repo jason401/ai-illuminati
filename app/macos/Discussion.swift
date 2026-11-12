@@ -4,6 +4,7 @@ import AIAccounts
 import AILocalization
 import AISpaces
 import AIRuntime
+import AIWorkspace
 
 // One question and how the AIs worked it out.
 struct ChatTurn: Identifiable, Codable, Equatable {

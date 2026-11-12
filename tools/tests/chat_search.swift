@@ -1,6 +1,7 @@
 import Foundation
 import AIAccounts
 @testable import AIRuntime
+@testable import AIWorkspace
 
 // An Enterprise chat: locked by the user, never unlocked. In it only accounts of its organization and models on
 // this Mac are sent anything; every other chat (older ones too) is open to every account.

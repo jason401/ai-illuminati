@@ -5,6 +5,7 @@ import AIAccounts
 import AILocalization
 import AISpaces
 @testable import AIRuntime
+@testable import AIWorkspace
 
 GoogleAuth.shared = GoogleAuth(store: MemoryGoogleStore())
 
@@ -782,6 +783,8 @@ do {
         try git(repo, ["add", "."]); try git(repo, ["commit", "-m", "fixture"])
         return repo
     }
+    // Workspace (AIWorkspace) tells a deleted chat by the chats folder: the same as the chat's own.
+    expect(WorkspaceBackup.chats == ChatStore.dir, "backup clean-up looks for chats where the chats are saved")
     func chat(_ room: UUID) throws {   // the chat must exist, or its backups count as a deleted chat's
         try fm.createDirectory(atPath: ChatStore.dir, withIntermediateDirectories: true)
         try Data("{}".utf8).write(to: URL(fileURLWithPath: ChatStore.dir).appendingPathComponent(room.uuidString + ".json"))

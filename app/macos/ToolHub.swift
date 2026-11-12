@@ -1,27 +1,7 @@
 import Foundation
 import Darwin
 import AIAccounts
-
-struct ToolContext {
-    var room: UUID
-    var roots: [WorkspaceRoot]
-    var projectRun: UUID? = nil
-    var projectGeneration: Int? = nil
-    var asker: Account? = nil   // the account answering (search_chats / read_chat decide by it)
-    var turn: UUID? = nil       // the message being answered when the session was made (remember saves only to it)
-    var origin: ToolOrigin = .member
-}
-
-protocol ToolProvider: AnyObject {
-    var active: Bool { get }
-    func tools() -> [[String: Any]]
-    func tools(context: ToolContext) -> [[String: Any]]
-    func call(_ name: String, _ arguments: [String: Any], context: ToolContext) -> [String: Any]
-}
-
-extension ToolProvider {
-    func tools(context: ToolContext) -> [[String: Any]] { tools() }
-}
+import AIWorkspace
 
 extension FaceLink: ToolProvider {
     var active: Bool { Self.active() != nil }

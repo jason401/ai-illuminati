@@ -16,7 +16,9 @@ Feature and design notes live in `docs/`; read them only when the task needs the
   `AIAccounts` (`Accounts.swift`), `AISpaces` (`Space*.swift`: saving, checks, the isolated web view; its UI stays in
   `app/macos/SpaceView.swift`), `AIRuntime` (`Answerer`, `RunConditions`, `StreamParser`, `NativeSessions`, Stop
   tokens, the local model, usage readings, cloud model picks; it decides no permission: callers pass
-  `RunConditions.app` from `RunConditionsApp.swift`). Files that use one `import <Name>` and see only its `public` names; a
+  `RunConditions.app` from `RunConditionsApp.swift`), `AIWorkspace` (`Workspace.swift` folder rules, `WorkspaceBackup`
+  backups and Undo, `AutoGuard.swift` moved whole, `ToolProvider`/`ToolContext`, `DiskUsage`; the app reaches AutoGuard only
+  through `FullAutoGuard.environment`). Files that use one `import <Name>` and see only its `public` names; a
   module may import only the modules in its `dependencies` file. Tests that need a module's insides say
   `@testable import` (the test build adds `-enable-testing`); app files never do. Every `swiftc` that compiles app files runs
   `zsh tools/build_modules.sh <out>` first and adds `-I <out> <out>/lib*.a`. A new `public` name gets its reason

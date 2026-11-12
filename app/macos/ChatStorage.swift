@@ -1,6 +1,7 @@
 import Foundation
 import AILocalization
 import AIRuntime
+import AIWorkspace
 
 // How much disk each chat takes (Settings > Chat > Storage, and the AIs' chat_storage tool). Read only.
 // A chat's data is everything under paths carrying its id (the same ones ChatStore.delete removes):
@@ -11,16 +12,7 @@ import AIRuntime
 // links are not followed, and a file with several hard links counts once. Backups are APFS clones that
 // share blocks with the originals, so their size is an upper bound of what deleting them frees.
 enum ChatStorage {
-    struct Size: Equatable {
-        var allocated: Int64 = 0   // disk blocks used
-        var logical: Int64 = 0     // bytes in the files
-        var files = 0
-        var unreadable = 0         // entries that could not be read (the sum may be low)
-        static func + (a: Size, b: Size) -> Size {
-            Size(allocated: a.allocated + b.allocated, logical: a.logical + b.logical, files: a.files + b.files, unreadable: a.unreadable + b.unreadable)
-        }
-        static func += (a: inout Size, b: Size) { a = a + b }
-    }
+    typealias Size = DiskUsage.Size
     enum Kind: String, CaseIterable {
         case chat, work, documents, pictures, backups, sessions
         var title: String {
@@ -63,27 +55,9 @@ enum ChatStorage {
                 (.sessions, sessions)] + archived
     }
 
-    struct FileID: Hashable { var device: Int32; var inode: UInt64 }
-    // The size of a file or folder. `seen` keeps hard links counted once across calls.
-    static func size(of url: URL, seen: inout Set<FileID>) -> Size {
-        var result = Size()
-        func add(_ path: String) -> Bool {   // true: a directory to go into
-            var info = stat()
-            guard lstat(path, &info) == 0 else { result.unreadable += 1; return false }
-            let type = info.st_mode & S_IFMT
-            if info.st_nlink > 1, type != S_IFDIR, !seen.insert(FileID(device: info.st_dev, inode: UInt64(info.st_ino))).inserted { return false }
-            result.allocated += Int64(info.st_blocks) * 512
-            if type == S_IFREG { result.logical += Int64(info.st_size); result.files += 1 }
-            return type == S_IFDIR
-        }
-        guard add(url.path) else { return result }
-        guard let walker = FileManager.default.enumerator(at: url, includingPropertiesForKeys: nil, options: [], errorHandler: { _, _ in result.unreadable += 1; return true }) else { return result }
-        for case let file as URL in walker {
-            if !add(file.path), (try? FileManager.default.destinationOfSymbolicLink(atPath: file.path)) != nil { walker.skipDescendants() }
-        }
-        return result
-    }
-    static func size(of url: URL) -> Size { var seen = Set<FileID>(); return size(of: url, seen: &seen) }
+    typealias FileID = DiskUsage.FileID
+    static func size(of url: URL, seen: inout Set<FileID>) -> Size { DiskUsage.of(url, seen: &seen) }
+    static func size(of url: URL) -> Size { DiskUsage.of(url) }
 
     // `chats`: id, title and the chat a meeting belongs to, for every chat the app has.
     static func report(_ chats: [(id: UUID, title: String, meetingOf: UUID?)], only: Set<UUID>? = nil) -> Report {

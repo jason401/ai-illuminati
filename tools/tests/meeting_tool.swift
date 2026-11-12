@@ -2,6 +2,7 @@ import Foundation
 import AIAccounts
 import AILocalization
 import AIRuntime
+import AIWorkspace
 
 // convene_meeting / meeting_result (Meeting.swift): an answering AI hands a decision to a meeting in a hidden chat on a
 // worker of its own and continues its answer with the result. The answer's own state is never overwritten, a stop

@@ -5,6 +5,7 @@ import ImageIO
 import AIAccounts
 import AILocalization
 import AIRuntime
+import AIWorkspace
 
 // The chat window: pick which AIs take part, ask, and get one final answer. What the AIs said to
 // each other (own answers, then reviews) is folded under the answer.

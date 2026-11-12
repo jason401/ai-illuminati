@@ -3,6 +3,7 @@ import CryptoKit
 import AIAccounts
 import AILocalization
 @testable import AIRuntime
+@testable import AIWorkspace
 
 func testProjectWork() {
     let base = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("project-fixture-" + UUID().uuidString)

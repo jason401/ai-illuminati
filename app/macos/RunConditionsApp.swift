@@ -1,6 +1,7 @@
 import Foundation
 import AIAccounts
 import AIRuntime
+import AIWorkspace
 
 // What Answerer starts each tool with (RunConditions), put together by the app: Answerer knows nothing about
 // folders, project work, AI Face or AutoGuard, and Workspace (Workspace.swift) gives only what this needs: the
@@ -24,7 +25,7 @@ extension RunConditions {
         run.environment = { base in
             var environment = base
             if project { environment["AI_ILLUMINATI_PROJECT_PROCESS"] = "1" }
-            if guarded { environment = AutoGuard.environment(environment) }
+            if guarded { environment = FullAutoGuard.environment(environment) }
             return environment
         }
         // The arguments know who answers (the chat tools ask for it); file requests are read as before, without it.

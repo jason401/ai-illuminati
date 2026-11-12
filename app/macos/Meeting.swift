@@ -2,6 +2,7 @@ import Foundation
 import AIAccounts
 import AILocalization
 import AIRuntime
+import AIWorkspace
 
 // A meeting: the user picks "회의" (or "/meet ") for one message, and the AIs of the chat hold a short discussion
 // about it in a hidden chat of their own, then bring the result back as the answer.

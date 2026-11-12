@@ -3,6 +3,7 @@ import AIAccounts
 import AILocalization
 import AISpaces
 import AIRuntime
+import AIWorkspace
 
 // A project chat with two or more members decides per message how to answer, before anyone starts:
 // one — the lead answers alone, the project read only (facts, checks, explanations, short follow-ups);

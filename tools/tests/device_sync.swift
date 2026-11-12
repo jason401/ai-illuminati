@@ -1,5 +1,6 @@
 import Foundation
 import AIAccounts
+import AIWorkspace
 
 /// Chats from other Macs: two DeviceSync instances share a throwaway folder as two Macs would share iCloud Drive.
 func testDeviceSync() {

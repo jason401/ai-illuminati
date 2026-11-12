@@ -2,32 +2,37 @@ import Foundation
 import CryptoKit
 import AIAccounts
 
-struct WorkspaceChange: Codable, Identifiable, Equatable {
-    var id: String { path }
-    var path: String
-    var kind: String
+public struct WorkspaceChange: Codable, Identifiable, Equatable {
+    public var id: String { path }
+    public var path: String
+    public var kind: String
+    public init(path: String, kind: String) {
+        self.path = path; self.kind = kind
+    }
 }
-struct WorkspaceBackup: Codable {
-    struct Stamp: Codable, Equatable { var kind: String; var digest: String }
-    var directory: String
-    var roots: [WorkspaceRoot]
-    var before: [String: Stamp]
+public struct WorkspaceBackup: Codable {
+    public struct Stamp: Codable, Equatable { public var kind: String; var digest: String }
+    public var directory: String
+    public var roots: [WorkspaceRoot]
+    public var before: [String: Stamp]
     var after: [String: Stamp]?
-    var changes: [WorkspaceChange] = []
+    public var changes: [WorkspaceChange] = []
     var gitStates: [String] = []
     var gitHeads: [String: String]? = nil
     var restored = false
     // Files only in the cloud when the backup was made: not copied, so Undo cannot bring them back
     // (the cloud's own version history and trash can).
-    var cloud: [String]?
+    public var cloud: [String]?
     var created: Date? = nil        // when the backup was made (older backups: the folder's date)
     var trimmed: Bool? = nil        // the copy keeps only what the answer changed (trim())
-    static var base: URL { URL(fileURLWithPath: AccountStore.supportDir).appendingPathComponent("workspace-backups") }
+    public static var base: URL { URL(fileURLWithPath: AccountStore.supportDir).appendingPathComponent("workspace-backups") }
+    // Where the chats are saved (the app's ChatStore.dir; a test checks both are the same): a backup whose chat is gone goes.
+    static var chats: String { AccountStore.supportDir + "/chats" }
 
     // Deleting a chat removes its backups: the copies under workspace-backups/<room> and the
     // refs/ai-illuminati/<run> markers this app added to linked git folders. Linked folders themselves
     // and any other git refs are left alone.
-    static func purgeRoom(_ room: UUID) throws {
+    public static func purgeRoom(_ room: UUID) throws {
         let fm = FileManager.default
         let folder = base.appendingPathComponent(room.uuidString)
         guard fm.fileExists(atPath: folder.path) else { return }
@@ -41,7 +46,7 @@ struct WorkspaceBackup: Codable {
         }
         try fm.removeItem(at: folder)
     }
-    static func digest(_ url: URL) throws -> String {
+    public static func digest(_ url: URL) throws -> String {
         let handle = try FileHandle(forReadingFrom: url); defer { try? handle.close() }
         var hash = SHA256()
         while let data = try handle.read(upToCount: 1024 * 1024), !data.isEmpty { hash.update(data: data) }
@@ -53,17 +58,17 @@ struct WorkspaceBackup: Codable {
     static var treatAsCloud: Set<String> = []        // tests only: paths to handle as cloud-only
     static func entry(_ file: URL) throws -> (Stamp, cloud: Bool) {
         var info = stat()
-        guard lstat(file.path, &info) == 0 else { throw MaterialReader.error("파일 정보를 읽지 못했습니다: " + file.path) }
+        guard lstat(file.path, &info) == 0 else { throw WorkspaceError.make("파일 정보를 읽지 못했습니다: " + file.path) }
         switch info.st_mode & S_IFMT {
         case S_IFLNK: return (Stamp(kind: "link", digest: try FileManager.default.destinationOfSymbolicLink(atPath: file.path)), false)
         case S_IFDIR: return (Stamp(kind: "directory", digest: ""), false)
         case S_IFREG:
             let modified = Int64(info.st_mtimespec.tv_sec) * 1_000_000_000 + Int64(info.st_mtimespec.tv_nsec)
             return (Stamp(kind: "file", digest: "\(info.st_size):\(modified)"), info.st_flags & datalessFlag != 0 || treatAsCloud.contains(file.standardizedFileURL.path))
-        default: throw MaterialReader.error("백업할 수 없는 특수 파일: " + file.path)
+        default: throw WorkspaceError.make("백업할 수 없는 특수 파일: " + file.path)
         }
     }
-    static func stamps(_ roots: [WorkspaceRoot]) throws -> [String: Stamp] { try survey(roots).stamps }
+    public static func stamps(_ roots: [WorkspaceRoot]) throws -> [String: Stamp] { try survey(roots).stamps }
     // The refs/ai-illuminati/<run> markers are the app's own: making or deleting one (a new backup, pruning)
     // must not count as a change to the folder, or it would block Undo of the backups that are kept.
     static func isAppRef(_ key: String) -> Bool {
@@ -107,7 +112,7 @@ struct WorkspaceBackup: Codable {
                 try FileManager.default.createDirectory(at: to.deletingLastPathComponent(), withIntermediateDirectories: true)
                 if clonefile(from.path, to.path, UInt32(CLONE_NOFOLLOW)) != 0 {
                     guard copyfile(from.path, to.path, nil, copyfile_flags_t(COPYFILE_ALL | COPYFILE_NOFOLLOW)) == 0 else {
-                        throw MaterialReader.error("백업 복사 실패: " + from.path)
+                        throw WorkspaceError.make("백업 복사 실패: " + from.path)
                     }
                 }
             }
@@ -128,16 +133,16 @@ struct WorkspaceBackup: Codable {
         process.executableURL = URL(fileURLWithPath: executable); process.arguments = arguments
         process.standardOutput = out; process.standardError = FileHandle.nullDevice
         try process.run(); let data = out.fileHandleForReading.readDataToEndOfFile(); process.waitUntilExit()
-        guard process.terminationStatus == 0 else { throw MaterialReader.error("작업 실패: " + URL(fileURLWithPath: executable).lastPathComponent) }
+        guard process.terminationStatus == 0 else { throw WorkspaceError.make("작업 실패: " + URL(fileURLWithPath: executable).lastPathComponent) }
         return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
     }
-    static func begin(_ binding: WorkspaceBinding, room: UUID, runID: UUID) throws -> WorkspaceBackup {
+    public static func begin(_ binding: WorkspaceBinding, room: UUID, runID: UUID) throws -> WorkspaceBackup {
         // A backup must not be placed inside its own source, and roots may not overlap.
         let paths = binding.roots.map { URL(fileURLWithPath: $0.path).resolvingSymlinksInPath().path }
         for (i, path) in paths.enumerated() {
-            guard path != "/", !base.path.hasPrefix(path + "/"), path != base.path else { throw MaterialReader.error("백업 위치를 포함하는 상위 폴더 대신 실제 작업 폴더를 연결하세요.") }
+            guard path != "/", !base.path.hasPrefix(path + "/"), path != base.path else { throw WorkspaceError.make("백업 위치를 포함하는 상위 폴더 대신 실제 작업 폴더를 연결하세요.") }
             for (j, other) in paths.enumerated() where i != j {
-                guard path != other && !path.hasPrefix(other + "/") else { throw MaterialReader.error("중복·중첩된 연결 폴더를 정리하세요.") }
+                guard path != other && !path.hasPrefix(other + "/") else { throw WorkspaceError.make("중복·중첩된 연결 폴더를 정리하세요.") }
             }
         }
         let folder = base.appendingPathComponent(room.uuidString).appendingPathComponent(runID.uuidString)
@@ -154,7 +159,7 @@ struct WorkspaceBackup: Codable {
         let expected = before.filter { !cloud.contains($0.key) }
         guard copied == expected, current == before else {
             let difference = Set(expected.keys).union(copied.keys).filter { expected[$0] != copied[$0] }.sorted().prefix(5).joined(separator: ", ")
-            throw MaterialReader.error("백업 검증 실패로 쓰기를 시작하지 않았습니다: " + difference)
+            throw WorkspaceError.make("백업 검증 실패로 쓰기를 시작하지 않았습니다: " + difference)
         }
         var backup = WorkspaceBackup(directory: folder.path, roots: binding.roots, before: before)
         backup.created = Date()
@@ -182,12 +187,15 @@ struct WorkspaceBackup: Codable {
     // folders the newest finished backup at any age (its Undo may still work), unless its chat is gone.
     // A backup that never finished (stopped answer) may hold the only copy of what was there, so only age and
     // count take it.
-    struct Policy: Equatable {
-        var days: Int
-        var perChat: Int
+    public struct Policy: Equatable {
+        public var days: Int
+        public var perChat: Int
+        public init(days: Int, perChat: Int) {
+            self.days = days; self.perChat = perChat
+        }
         static let daysKey = "backupKeepDays", perChatKey = "backupKeepPerChat"
-        static let standard = Policy(days: 14, perChat: 5)
-        static var current: Policy {
+        public static let standard = Policy(days: 14, perChat: 5)
+        public static var current: Policy {
             get {
                 let d = UserDefaults.app
                 return Policy(days: max(1, d.object(forKey: daysKey) as? Int ?? standard.days),
@@ -197,7 +205,7 @@ struct WorkspaceBackup: Codable {
         }
     }
     static var keepPerChat: Int { Policy.current.perChat }
-    struct CleanUpResult: Equatable { var removed = 0; var trimmed = 0; var bytes: Int64 = 0 }
+    public struct CleanUpResult: Equatable { public var removed = 0; public var trimmed = 0; public var bytes: Int64 = 0 }
 
     // Kept by the run's folder name (a UUID): the same folder may be reached by paths spelled differently (/tmp, /private/tmp).
     private static let protectLock = NSLock()
@@ -247,7 +255,7 @@ struct WorkspaceBackup: Codable {
         guard claim(run.url.path) else { return }
         defer { unclaim(run.url.path) }
         for root in run.backup?.roots ?? [] where root.directory { deleteRef(root.path, run.url.lastPathComponent) }
-        let size = ChatStorage.size(of: run.url).allocated
+        let size = DiskUsage.of(run.url).allocated
         if (try? FileManager.default.removeItem(at: run.url)) != nil { result.removed += 1; result.bytes += size }
     }
     // A loose ref is a file under .git/refs/ai-illuminati, which stamps leave out. Once Git has packed it,
@@ -303,13 +311,13 @@ struct WorkspaceBackup: Codable {
         for run in list.dropFirst(keep) where !newest.contains(run.url.path) { remove(run, into: &result) }
     }
 
-    @discardableResult static func cleanUp(_ policy: Policy = .current, now: Date = Date()) -> CleanUpResult {
+    @discardableResult public static func cleanUp(_ policy: Policy = .current, now: Date = Date()) -> CleanUpResult {
         cleanLock.lock(); defer { cleanLock.unlock() }
         let fm = FileManager.default
         var result = CleanUpResult()
         let rooms = ((try? fm.contentsOfDirectory(at: base, includingPropertiesForKeys: nil)) ?? []).filter { UUID(uuidString: $0.lastPathComponent) != nil }
         // A chat folder that cannot be read says nothing about which chats are gone.
-        let chats = (try? fm.contentsOfDirectory(atPath: ChatStore.dir)).map(Set.init)
+        let chats = (try? fm.contentsOfDirectory(atPath: chats)).map(Set.init)
         var all: [Run] = [], remaining: [Run] = []
         for room in rooms {
             let list = runs(in: room)
@@ -340,8 +348,8 @@ struct WorkspaceBackup: Codable {
                 if var backup = run.backup, backup.after != nil, backup.trimmed != true, claim(run.url.path) {
                     // Backups from before trim() existed: keep only what their answer changed.
                     defer { unclaim(run.url.path) }
-                    let size = ChatStorage.size(of: run.url).allocated
-                    if (try? backup.trim()) != nil { result.trimmed += 1; result.bytes += max(0, size - ChatStorage.size(of: run.url).allocated) }
+                    let size = DiskUsage.of(run.url).allocated
+                    if (try? backup.trim()) != nil { result.trimmed += 1; result.bytes += max(0, size - DiskUsage.of(run.url).allocated) }
                 }
             }
         }
@@ -363,7 +371,7 @@ struct WorkspaceBackup: Codable {
         }
     }
     private static var daily: Timer?
-    static func startAutomaticCleanUp() {
+    public static func startAutomaticCleanUp() {
         automatic = true
         cleanUpSoon()
         daily = Timer.scheduledTimer(withTimeInterval: 86_400, repeats: true) { _ in cleanUpSoon() }
@@ -408,7 +416,7 @@ struct WorkspaceBackup: Codable {
         try JSONEncoder().encode(self).write(to: url, options: .atomic)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
-    mutating func finish() throws {
+    public mutating func finish() throws {
         defer { Self.release(directory) }
         after = try Self.stamps(roots)
         changes = Set(before.keys).union(after!.keys).sorted().compactMap { key in
@@ -423,21 +431,21 @@ struct WorkspaceBackup: Codable {
         try? trim()
         Self.cleanUpSoon()
     }
-    static func load(_ path: String) throws -> WorkspaceBackup {
+    public static func load(_ path: String) throws -> WorkspaceBackup {
         let url = URL(fileURLWithPath: path).resolvingSymlinksInPath()
-        guard url.path.hasPrefix(base.resolvingSymlinksInPath().path + "/") else { throw MaterialReader.error("앱 소유 백업이 아닙니다.") }
+        guard url.path.hasPrefix(base.resolvingSymlinksInPath().path + "/") else { throw WorkspaceError.make("앱 소유 백업이 아닙니다.") }
         return try JSONDecoder().decode(Self.self, from: Data(contentsOf: url.appendingPathComponent("complete.json")))
     }
     // Puts back only what the answer changed, entry by entry (the rest of the folder, including files
     // only in the cloud, is left alone). Refuses when anything changed after the answer.
-    mutating func restore() throws {
+    public mutating func restore() throws {
         for (root, head) in gitHeads ?? [:] {
-            guard (try? Self.run("/usr/bin/git", ["-C", root, "rev-parse", "HEAD"])) == head else { throw MaterialReader.error("Git HEAD changed after this backup. Use a new correction commit instead of file Undo.") }
+            guard (try? Self.run("/usr/bin/git", ["-C", root, "rev-parse", "HEAD"])) == head else { throw WorkspaceError.make("Git HEAD changed after this backup. Use a new correction commit instead of file Undo.") }
         }
-        guard Self.protect(directory) else { throw MaterialReader.error("이 백업은 지금 정리 중이라 되돌릴 수 없습니다.") }
+        guard Self.protect(directory) else { throw WorkspaceError.make("이 백업은 지금 정리 중이라 되돌릴 수 없습니다.") }
         defer { Self.release(directory) }
         let before = Self.comparable(self.before)
-        guard !restored, let after = after.map(Self.comparable), Self.comparable(try Self.stamps(roots)) == after else { throw MaterialReader.error("작업 후 다른 변경이 있어 자동으로 덮어쓰지 않았습니다. 백업과 현재 파일을 먼저 비교하세요.") }
+        guard !restored, let after = after.map(Self.comparable), Self.comparable(try Self.stamps(roots)) == after else { throw WorkspaceError.make("작업 후 다른 변경이 있어 자동으로 덮어쓰지 않았습니다. 백업과 현재 파일을 먼저 비교하세요.") }
         let manager = FileManager.default
         let cloudKeys = Set(cloud ?? [])
         let changed = Set(before.keys).union(after.keys).filter { before[$0] != after[$0] && !cloudKeys.contains($0) }
@@ -468,7 +476,7 @@ struct WorkspaceBackup: Codable {
         let now = Self.comparable(try Self.stamps(roots))
         let lost = Set(before.keys).union(after.keys).filter { cloudKeys.contains($0) && before[$0] != after[$0] }
         guard Set(now.keys).union(before.keys).subtracting(lost).allSatisfy({ now[$0] == before[$0] }) else {
-            throw MaterialReader.error("복원 결과가 백업과 일치하지 않습니다.")
+            throw WorkspaceError.make("복원 결과가 백업과 일치하지 않습니다.")
         }
         restored = true; try save()
     }

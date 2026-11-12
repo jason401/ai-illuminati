@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 import AIAccounts
 import AILocalization
 import AIRuntime
+import AIWorkspace
 
 // What the menu and the Settings window share: the account list (saved on every change) and
 // the display options. The menu listens through the two callbacks.

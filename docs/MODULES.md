@@ -4,14 +4,16 @@ The app is one Swift program built from `app/macos/*.swift`: in it, every file c
 `internal` names, so a folder alone draws no line. A part in `app/modules/<Name>/` is its own Swift module:
 it builds alone, and the app sees only its `public` names. Now: `AILocalization` (L(), AppLanguage), `AIAccounts`
 (account list and folders), `AISpaces` (Spaces: saving, checks, the isolated web view) and `AIRuntime` (running each
-AI's command line tool, sessions, the local model, usage readings), all 2026-11-11.
+AI's command line tool, sessions, the local model, usage readings), all 2026-11-11; `AIWorkspace` (the folder rules each
+AI gets, the backup before writes and its Undo, AutoGuard, the tool gateway's types), 2026-11-12.
 
 ## How a module is built and used
 - `zsh tools/build_modules.sh <out> [swiftc options]` builds every `app/modules/<Name>/` alone into
   `<out>/<Name>.swiftmodule` + `<out>/lib<Name>.a` (static: nothing new in the app bundle, signing unchanged).
 - A module may use only the modules named in its `dependencies` file (one per line; none: no file). They are built
   first, and the compiler sees only theirs, so an import of any other module fails the build. Now
-  `AISpaces` → `AIAccounts`, `AILocalization`; `AIRuntime` → `AIAccounts`, `AILocalization`; the other two use none. No circles (the script refuses them).
+  `AISpaces` → `AIAccounts`, `AILocalization`; `AIRuntime` → `AIAccounts`, `AILocalization`; `AIWorkspace` → `AIAccounts`,
+  `AILocalization`, `AIRuntime`; the other two use none. No circles (the script refuses them).
 - Every `swiftc` that compiles app files runs it first and adds `-I <out> <out>/lib*.a`:
   `tools/build_app.sh` (compile step), `tools/tests/run_mode2.sh`, the preview scripts.
 - Each file that uses a module says `import <Name>`. Not the hidden compiler option (`-Xfrontend -import-module`):
@@ -21,12 +23,15 @@ AI's command line tool, sessions, the local model, usage readings), all 2026-11-
 - `run_mode2.sh` stage "Modules on their own": builds the modules alone, runs each contract test from outside
   (`tools/tests/<part>_contract.swift`, public names only), and checks that internal names
   (`AccountStore.place`, `SpaceStore.setting`, `SpaceAssets.served`, `Answerer.chatDir`, `Answerer.launchForTests`,
-  `NativeSessions.split`, `CloudModels.apply`) do not compile outside.
+  `NativeSessions.split`, `CloudModels.apply`, `WorkspaceBackup.chats`/`keepPerChat`, and the whole `AutoGuard` type) do
+  not compile outside.
 - Tests build the modules with `-enable-testing` only so tests can say `@testable import`: `space_build.swift` for
   `AISpaces` (module insides such as `SpaceCheck`), and for `AIRuntime` the app tests that make their own usage
   readings (`AIUsage`, `UsageWindow` inits) or use its test hooks (`Answerer.launchForTests`/`replyForTests`,
   `StreamParser`): `mode2`, `run_conditions`, `project_work`, `ask_ai`, `collab_log`, `todo_work`, `chat_search`,
   `space_build`, and the settings preview (`render_settings.sh` builds the modules with `-enable-testing` for it).
+  For `AIWorkspace` the app tests that reach its insides (`prepare`, `WorkspaceBackup.run`/`treatAsCloud`/`keepPerChat`,
+  `AutoGuard.folder`/`claudeDenied`): `mode2`, `project_work`, `google_drive`, `ask_ai`, `chat_search`.
   Every app file and every contract test keeps a plain import and sees public names only; the app build
   (`build_app.sh`) has no `-enable-testing`.
 - A `public` name in a module gets its reason in this file (the tables below). A new public name is a promise:
@@ -165,6 +170,53 @@ streams `LocalStream`/`PullStream`, `LocalModel.ask` and the Ollama requests):
   model management came with the file (`Local.swift`); splitting it from running is a later step.
 - `AIUsage`, `UsageWindow` (fields, `left`, `leftNow`; no public inits: only the module makes readings),
   `CodexUsage`/`ClaudeUsage`/`GeminiUsage` (`read`, `forget`; `CodexUsage.binary` for the Codex login): the menu.
+
+### AIWorkspace (`app/modules/AIWorkspace/`: Workspace, WorkspaceBackup, AutoGuard, Tools, DiskUsage)
+What an AI may do in a chat's linked folders and how its writes can be undone. Depends on `AIAccounts` (where the data
+lives, `Account`), `AILocalization` (level titles) and `AIRuntime` (`DebateCancellation` for reads, `NativeSessions.directory`
+for the document cache, `GeminiLinks` for agy's note). It names nothing above it: the app hands it the tool gateway
+(`WorkspaceTools`, W0) and runs the tools itself (`RunConditions.app` in `RunConditionsApp.swift`).
+Stays in the app: `MaterialReader` (it turns an attached file into the chat's `RoomDocument` under `ChatStore.dir`: chat
+data, so it goes with Chat, C0/C1), `ToolHub` and every tool provider, `ProjectProcess` and project work, the Settings
+backup UI, `Discussion.setWorkspaceLevel`/`undoWorkspace` (Attachments.swift).
+
+| Promise | Users (files) | Module test (`workspace_contract.swift`) | User tests |
+|---|---|---|---|
+| Folder rules per CLI and level: view reads only (Claude `Read,Grep,Glob`, `dontAsk`, `--restricted`; Codex `read-only`, no shell, no web), only the chat's own folder editable in view, write/execute after a backup, execute in the sandbox writing only in the linked folders, a project's Git data denied | RunConditionsApp (`arguments`), every caller of `Answerer.ask` with a workspace | "view: Claude reads only", "Codex read only", "only the chat's own folder", "writing without a backup is refused", "execute: …", "the project's Git data is denied" | `run_conditions.swift` (golden file, every kind), mode2 "explicit resume sandbox, linked write roots …", testProjectWork |
+| Full access (project work full auto, or `fullAccess`): every tool, no prompts, no sandbox, and AutoGuard's denied Claude commands, the whole list in order | RunConditionsApp | "full access denies exactly AutoGuard's commands" (the list written out), "Codex full access" | `run_conditions.swift` (golden file: `--disallowedTools`), testFullAuto (`claudeDenied` has `/usr/bin/security`) |
+| AutoGuard's environment: its `git`/`rm`/`security` shims first on PATH (0700), no credential helper, prompt, SSH key, SSH agent or GitHub token, an empty GitHub CLI login | RunConditionsApp (full access), ProjectWork `ProjectProcess.run(guarded:)` (`FullAutoGuard.environment`) | environment checks, "the git shim refuses …", "the security shim refuses …", rm keeps temporary-file and `-f` semantics | testFullAuto (shims through bash, Keychain items), `run_conditions.swift` (layer check: full access has it, others not) |
+| The bridge's manifest: 0600, folders and level, the backup; the app's gateway is asked only when the chat offers tools (AI Face, project work, a side AI) and named only when it answers | RunConditionsApp, ToolHub `workspaceLink` | "the manifest is private", "the gateway is not asked …", "a chat with tools gets the gateway", "a side AI …", "no gateway running …" | `run_conditions.swift` (manifests in the golden file), mode2 AI Face link, testAskAI |
+| Backup before writes: refuses overlapping folders or one holding the backups; lists what the answer added, changed, deleted; Undo puts back exactly that, once, and refuses (writing nothing) after a later change; a deleted chat's backups go | Solo, ProjectChat, Collaboration (`begin`, `finish`), Attachments (`restore`), Discussion (`purgeRoom`), Peer, ProjectWork (`stamps`) | "the backup lists what changed", "Undo puts back …", "an Undo runs once", "a refused Undo writes nothing", "nested folders …", "a deleted chat's backups go" | mode2 "backup, actual add/edit/delete list, conflict refusal and exact hash undo", "backup by size and time, cloud-only …", "chat delete removes only its sessions, … backups and git marker" |
+| Clean-up of old backups (age, count, restored, a deleted chat's after a day, in use and newest kept); it tells a deleted chat by `supportDir/chats`, the app's `ChatStore.dir` | Settings (`cleanUp`, `Policy`), main (`startAutomaticCleanUp`), every `finish` | none (needs aged folders) | mode2 "backups keep changed files only, … cleanup by age/count/restored/deleted chat …" (and `WorkspaceBackup.chats == ChatStore.dir`) |
+| Save format: a chat's `workspace` (`WorkspaceBinding`, `WorkspaceRoot`, `ProjectBinding`, levels, `ToolOrigin`) and a backup's `complete.json` keep their keys; absent fields left out; older ones read | Discussion (chats/*.json), Todo (lists), ProjectWork, every `load` | "a chat's workspace keeps its saved keys" (golden), "an older workspace reads", "an older backup reads", "complete.json is private" | mode2 "legacy decoding", testTodoStore (saved and read back) |
+| Errors: an NSError (domain `Materials`, code 1, the same texts) the callers show as they are | Solo, ProjectChat, Attachments (notes) | "the refusal names the backup" | mode2 conflict refusal |
+| Disk sizes: lstat blocks, links not followed, a hard link once across calls with one `seen` | ChatStorage (`report`), clean-up (`bytes`) | "a hard link counts once", "… not counted again across calls", "a missing path counts as unreadable" | mode2 "storage by chat, …, hard links once" |
+| Tool gateway's types: `ToolProvider.tools(context:)` defaults to `tools()`; `ToolContext` carries the room, roots, run, asker, turn, origin | ToolHub and the 13 providers (app files) | none (types) | mode2 tool tests (ask_ai, meetings, chat tools, memory, Drive, outside MCP) |
+
+Public names and why (everything else stays internal: `AutoGuard` whole, `WorkspaceError`, `WorkspaceInvocation.prepare`/
+`readOnly`/`backupPath`/`executionFolders`, `WorkspaceBackup.run`/`survey`/`copyTree`/`trim`/`protect`/`chats`/`keepPerChat`/
+`prune`/`cleanUpSoon`, `Stamp.digest`):
+- Stored values the chat and project work keep (save format above): `WorkspaceBinding` (its fields, `isFullAuto`,
+  `fullAccessActive`, `inventory`, `description`: the folder list the AI is told), `WorkspaceRoot`, `ProjectBinding` (fields,
+  `isFolderless`, `isDocuments`, `linkedRoots`, `documentsKind`, `protectedPaths`), `WorkspaceLevel` (`offered`, `title`: the
+  level menu), `ToolOrigin`, `WorkspaceChange` (shown under an answer). Explicit public inits where Swift's memberwise ones
+  are internal (all of these, `WorkspaceInvocation`, `ToolContext`, `WorkspaceToolLink`, `Policy`, `DiskUsage.Size`).
+- `WorkspaceInvocation` (`binding`, `room`, `account`, `resources`, `arguments`, `readRequests`; `readOnly`, `backupPath` and
+  `level` only through the init): the
+  app builds one per answer and turns it into the tool's start (`RunConditions.app`).
+- `WorkspaceTools`, `WorkspaceToolLink` (init only): how the app gives its gateway (W0).
+- `WorkspaceBackup` (`begin`, `finish`, `restore`, `load`, `purgeRoom`, `stamps`, `digest`, `base`, `directory`, `roots`,
+  `before`, `changes`, `cloud`, `Stamp.kind`, `cleanUp`, `Policy` (`days`, `perChat`, `standard`, `current`),
+  `CleanUpResult` (`removed`, `trimmed`, `bytes`), `startAutomaticCleanUp`; `after`, `restored`, `trimmed` stay inside): the answer's
+  backup and Undo (Solo, ProjectChat, Collaboration, Attachments), project review (`stamps`), the Settings backup section.
+- `FullAutoGuard.environment`: the app's one way to AutoGuard. AutoGuard moves as it was (not one line changed, so not even
+  `public`), and is not split: its shims, the credential removal and `claudeDenied` stay together inside, and
+  `claudeDenied` is used only by `arguments` here.
+- `ToolProvider`, `ToolContext`: the gateway's types, here so later modules (Projects, Chat) can offer tools without
+  naming the app; `ToolHub` itself (the socket, the provider list and its order) stays in the app.
+- `DiskUsage` (`of`, `Size` and its fields and `+`, `FileID`): clean-up counts what it frees and ChatStorage each chat's
+  parts; it was `ChatStorage.size`, a chat file, which Workspace may not name (`ChatStorage.Size`/`FileID`/`size(of:)` now
+  forward to it).
 
 ## What the first module showed (2026-11-11)
 - Change size: the module file got `public` on 26 names and one `public init` (Swift's own memberwise init is
@@ -412,3 +464,54 @@ Found on the way: through the app, F2 hides behind a second layer. `project_proc
 group as soon as the tool exits, so with the runtime's own group kill gone the left program still died; a test that
 does not take the watchdog away cannot see F2 (checked: F2 with the watchdog left in place passes the test). A session room the app does not know reads as an Enterprise-locked chat
 (`lock(of:)`), so a test must use the chat's own room.
+
+## What the fourth step showed (2026-11-12: AIWorkspace, W1)
+- Before the move: W0 was on main (186f895) and its conditions held. The plan matched the code except in three places,
+  changed within the rules (reviewed by ChatGPT before the change):
+  - `MaterialReader` stays in the app. The plan counted "reading documents" as Workspace's, but `MaterialReader.read`
+    makes the chat's `RoomDocument` in `ChatStore.dir` (attached files): chat data, so it goes with Chat (C0/C1).
+    Workspace's own document reading is `readRequests` (the bridge and `WorkspaceDocument`), which moved. Workspace and
+    its backups used `MaterialReader.error`; they now make the same NSError themselves (`WorkspaceError.make`: domain
+    `Materials`, code 1, the same texts; nothing checks the domain).
+  - Backup clean-up named two chat things: `ChatStore.dir` (is the chat gone?) and `ChatStorage.size` (bytes freed). The
+    folder is now `WorkspaceBackup.chats` (`supportDir/chats`, the same path; mode2 checks it equals `ChatStore.dir`). A
+    required parameter, as W0 did with `tools:`, was weighed and left: `finish()` starts the clean-up itself
+    (`cleanUpSoon`), so every caller of `finish` would have needed it. The size walker moved down as `DiskUsage`
+    (lines unchanged, `public` added), and `ChatStorage.Size`/`FileID`/`size(of:)` forward to it.
+  - AutoGuard: the app calls `AutoGuard.environment` (RunConditionsApp, `ProjectProcess.run(guarded:)`), and `public`
+    would be a changed line. The app now calls `FullAutoGuard.environment`, a one-line pass-through next to the folder
+    rules; AutoGuard stays internal and whole.
+- AutoGuard, file move only: `app/modules/AIWorkspace/AutoGuard.swift` is ProjectWork.swift's lines 667–798 at 186f895,
+  byte for byte (sha1 `9108477d…` both), after two import lines (`Foundation`, `AIAccounts`: a file of its own needs
+  them). `git diff -M --color-moved=plain` shows every other line of it as moved; the only non-moved lines in
+  ProjectWork.swift are its import and the call `FullAutoGuard.environment`.
+- Change size: `Workspace.swift`, `WorkspaceBackup.swift` moved (git sees renames, 77% and 87%), `AutoGuard.swift` and
+  `Tools.swift` (`ToolContext`, `ToolProvider` from ToolHub.swift) cut out as they were, `DiskUsage.swift` new from
+  ChatStorage. 98 `public` declarations (list above). 26 app files and 18 test files got `import AIWorkspace`; tests that
+  need insides say `@testable` (mode2, project_work, google_drive, ask_ai, chat_search). Scripts: `run_mode2.sh` lost two
+  files from its list, runs the workspace contract and three boundary checks (AutoGuard as a whole type); `build_app.sh`,
+  `build_modules.sh` and the preview scripts needed nothing (they take `app/macos/*.swift` and every module).
+- Finding the public names: everything internal, then a script compiled the app against the module and made public
+  what the compiler named, as in R1, plus the module's own "must be declared public" and "type declared here" notes.
+  Hand work: explicit public inits (memberwise ones are internal), `ProjectBinding`'s fields (a timed-out type check hid
+  them), the protocol extension's default `tools(context:)`, `Policy.current` (a public default argument).
+- Same start, byte for byte: `run_conditions.swift` passes with its golden file unchanged. One full test run stopped in
+  `testRuntimeThroughApp` ("Stop ends the tool and what it started"): Stop comes 0.8 s after the start, and when the fake
+  tool has not yet written its pids the check fails; the run right after passed whole, and so did the unchanged copy in
+  the falsification below. Not caused by the move (nothing in the runtime or the start changed); a later fix could wait
+  for the fake's pid file before pressing Stop.
+- Falsification (one change at a time in a copy of the tree; only function bodies changed, so the public interface
+  stayed the same). "App tests" = `run_mode2.sh` without `workspace_contract.swift`; an unchanged copy passed both:
+
+  | Change | Contract | App tests |
+  |---|---|---|
+  | G1 `claudeDenied` without `Bash(gh repo delete:*)` | caught (the whole list) | caught (`run_conditions.golden`, `--disallowedTools`) |
+  | G2 AutoGuard keeps `SSH_AUTH_SOCK` | caught | caught (`run_conditions` layer check) |
+  | G3 the git shim lets `push` through | caught | caught (testFullAuto) |
+  | W1 view gives Claude Bash | caught | caught (golden file) |
+  | W2 the gateway asked for every chat | caught | caught (AI Face link: "plain chat only") |
+  | B1 Undo leaves added files | caught (restore's own after-check refuses) | caught (backup tests) |
+  | B2 clean-up looks for chats in `supportDir/chat` | missed (by design: the row says none) | caught ("backup clean-up looks for chats where the chats are saved") |
+  | D1 a hard link counted each time | caught | caught (storage by chat) |
+
+  The step's own criterion: G1 (one entry less in `claudeDenied`) fails both the module's test and the app's.

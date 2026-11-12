@@ -198,7 +198,7 @@ yet (R1); nothing changed in what the tools are started with (below).
 ### Runtime promises (draft)
 | Promise | Users (files) | Runtime test | User tests (through the app) |
 |---|---|---|---|
-| The tool starts with exactly what `RunConditions` says: prefix before its arguments, the wrapper's program first and the tool after its arguments, the changed environment, the group stopped at the end | every `Answerer.ask` caller (`RunConditions.app`) | none yet (R1: a contract test with a hand-made `RunConditions`) | `run_conditions.swift`: launches through `Discussion.requestDebate` for Claude, Codex, Gemini, local × plain, folder, folder with full access, project off, project on, compared byte for byte with `run_conditions.golden` |
+| The tool starts with exactly what `RunConditions` says: prefix before its arguments, the wrapper's program first and the tool after its arguments, the changed environment, the group stopped at the end | every `Answerer.ask` caller (`RunConditions.app`) | none yet (R1: a contract test with a hand-made `RunConditions`) | `run_conditions.swift`: launches through `Discussion.requestDebate` for Claude, Codex, Gemini, local × plain, folder, folder with full access, project off, project on (a read-only view), and through ProjectChat's own run (`send()`: write and execute, backup, session) for Claude and Codex × the chat's full auto off and on; compared byte for byte with `run_conditions.golden` |
 | Full access → AutoGuard's environment (shims on PATH, no Git/GitHub credentials, no SSH agent); off → none | `RunConditions.app` (Workspace.swift) | — | `run_conditions.swift` layer checks: project-on and folder-full have it, project-off and folder do not; `testFullAuto` (the shims themselves) |
 | Project work runs in `project_process.py` (its own process group, `AI_ILLUMINATI_PROJECT_PROCESS=1`) and the whole group is stopped | `RunConditions.app`, ProjectChat | — | `run_conditions.swift` (wrapper, marker, group: three separate checks in one), `testProjectWork` ("Stop kills foreground and background project writers") |
 | Codex: the account's own AI Face servers are off on every call | `RunConditions.app`, every Codex call | — | `run_conditions.swift` ("AI Face's own server is turned off"), AI Face link test in mode2 |
@@ -226,7 +226,12 @@ yet (R1); nothing changed in what the tools are started with (below).
 | P5 parser filters lists itself (old behavior) | caught (order check) | — | — |
 
 The capture was made from the code before the change (with only `Answerer.launchForTests` added), three runs
-identical, and is byte-identical after it (sha1 `1ca3b747…`). It needs no CLI: a missing tool counts as `<cli>`;
+identical, and is byte-identical after it (sha1 `1ca3b747…` for the first 449 lines). After review: the
+`requestDebate` project kinds are a read-only view, so ProjectChat's own run was added (198 lines). Its baseline was
+taken from 9b6af86 plus the hook alone, in a separate worktree; it is byte-identical with the code after the change.
+That capture showed one thing that was already there before R0: `Discussion.soloBinding` rebuilds a project chat's
+binding without `fullAuto`, so turning full auto off for a project chat still runs the work full auto
+(`bypassPermissions`, AutoGuard). R0 keeps that as it is (the golden file records it); fixing it is a separate change. It needs no CLI: a missing tool counts as `<cli>`;
 the environment is compared with the account's own after a fixed start (plain PATH, a GitHub token and an SSH agent
 to take away), Claude's `--mcp-config` with sorted keys. Gemini has no "plain" kind: it would add web rules to agy's
 settings in the real home.

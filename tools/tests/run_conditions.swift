@@ -64,6 +64,20 @@ func runConditionsCapture() -> String {
         return String(data: data, encoding: .utf8)!
     }
     var out = ""
+    func describe(_ launch: Answerer.Launch, _ account: Account) -> String {
+        // The environment as a change of the account's own (that one is AIAccounts' promise).
+        let base = account.environment
+        var out = "exec: " + clean(launch.executable, cli: launch.cli) + "\n"
+        for argument in launch.arguments { out += "arg: " + line(clean(sorted(argument), cli: launch.cli)) + "\n" }
+        out += "dir: " + clean(launch.directory.path, cli: launch.cli) + "\n"
+        out += "group: \(launch.processGroup)\n"
+        for key in Set(base.keys).union(launch.environment.keys).sorted() where base[key] != launch.environment[key] {
+            guard var value = launch.environment[key] else { out += "env-: \(key)\n"; continue }
+            if let old = base[key], !old.isEmpty { value = value.replacingOccurrences(of: old, with: "${\(key)}") }
+            out += "env+: \(key)=" + line(clean(value, cli: launch.cli)) + "\n"
+        }
+        return out
+    }
     for account in accounts {
         for (kind, binding) in kinds where !(account.provider == .gemini && binding == nil) {
             var launches: [Answerer.Launch] = []
@@ -74,19 +88,36 @@ func runConditionsCapture() -> String {
             case .success(let text): out += "result: \(text)\n"
             case .failure: out += "result: failure\n"   // its text follows the app language
             }
-            for launch in launches {
-                // The environment as a change of the account's own (that one is AIAccounts' promise).
-                let base = account.environment
-                out += "exec: " + clean(launch.executable, cli: launch.cli) + "\n"
-                for argument in launch.arguments { out += "arg: " + line(clean(sorted(argument), cli: launch.cli)) + "\n" }
-                out += "dir: " + clean(launch.directory.path, cli: launch.cli) + "\n"
-                out += "group: \(launch.processGroup)\n"
-                for key in Set(base.keys).union(launch.environment.keys).sorted() where base[key] != launch.environment[key] {
-                    guard var value = launch.environment[key] else { out += "env-: \(key)\n"; continue }
-                    if let old = base[key], !old.isEmpty { value = value.replacingOccurrences(of: old, with: "${\(key)}") }
-                    out += "env+: \(key)=" + line(clean(value, cli: launch.cli)) + "\n"
-                }
-            }
+            for launch in launches { out += describe(launch, account) }
+        }
+    }
+    // Project work the way ProjectChat starts it (write and execute, its own backup, a session), Claude and Codex
+    // (the only project workers), the chat's full auto off and on. The tool answers at once; nothing else runs.
+    // Found 2026-11-11, before R0 too: soloBinding rebuilds the binding without `fullAuto`, so "off" still runs full
+    // auto here. The golden file keeps what the app does; changing it is a separate decision.
+    for account in accounts where account.provider == .claude || account.provider == .codex {
+        for fullAuto in [false, true] {
+            let root = URL(fileURLWithPath: home).appendingPathComponent("run-conditions-project-\(account.provider.rawValue)-\(fullAuto)")
+            try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            func git(_ args: [String]) { _ = try! ProjectProcess.git(args, root: root.path) }
+            git(["init", "-b", "main"]); git(["config", "user.name", "Fixture"]); git(["config", "user.email", "fixture@example.invalid"])
+            git(["remote", "add", "origin", root.path + "/unused-origin"])
+            try! "Baseline".write(to: root.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
+            git(["add", "README.md"]); git(["commit", "-m", "Initial"])
+            let projectModel = AppModel()
+            projectModel.accounts = [account]
+            let work = Discussion(model: projectModel)
+            work.configure { $0.mode = 0; $0.soloAccountID = account.id }
+            var binding = WorkspaceBinding(roots: [WorkspaceRoot(path: root.path, directory: true)], project: try! ProjectProcess.inspect(root.path))
+            binding.fullAuto = fullAuto
+            work.change(work.currentID) { $0.workspace = binding }
+            var launches: [Answerer.Launch] = []
+            Answerer.launchForTests = { launch in launches.append(launch); return .success("captured") }
+            work.draft = "Say hi."; work.send()
+            let deadline = Date().addingTimeInterval(30)
+            while Date() < deadline && (work.anyRunning || work.current.turns.last?.projectCommitted == nil) { RunLoop.main.run(until: Date().addingTimeInterval(0.03)) }
+            out += "== \(account.provider.rawValue) project-chat-\(fullAuto ? "on" : "off")\nresult: \(work.current.turns.last?.final ?? "none")\n"
+            for launch in launches { out += describe(launch, account) }
         }
     }
     return out
@@ -114,6 +145,15 @@ func testRunConditions() {
         }
         for plain in [folder, folderFull] {
             expect(plain.contains("exec: <cli>") && plain.contains("group: false") && !plain.contains("AI_ILLUMINATI_PROJECT_PROCESS"), "\(provider): a chat folder runs the tool itself")
+        }
+    }
+    for provider in ["claude", "codex"] {
+        for kind in ["project-chat-off", "project-chat-on"] {
+            let work = block(provider + " " + kind)
+            expect(work.contains("exec: /usr/bin/python3\narg: \"$RESOURCES/project_process.py\"\narg: \"<cli>\"") && work.contains("group: true")
+                   && work.contains("env+: AI_ILLUMINATI_PROJECT_PROCESS=\"1\"") && work.contains("env-: GH_TOKEN")
+                   && (provider == "codex" || work.contains("arg: \"$TEST_HOME/run-conditions-project-claude-\(kind.hasSuffix("on"))\"")),
+                   "\(provider) \(kind): ProjectChat's run is wrapped, guarded and gets its project (Codex full access names no folder)")
         }
     }
     for kind in ["plain", "folder", "project-on"] {

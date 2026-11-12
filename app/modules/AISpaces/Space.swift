@@ -561,8 +561,8 @@ public final class SpaceStore: ObservableObject {
 
     public func reload() {
         let names = (try? FileManager.default.contentsOfDirectory(atPath: Self.root.path)) ?? []
-        for name in names where Self.validID(name) { finishPending(name) }
-        spaces = names.filter { !$0.hasPrefix(".") }.compactMap { Self.manifest(at: Self.folder($0)) }
+        let stuck = Set(names.filter { Self.validID($0) && !finishPending($0) })
+        spaces = names.filter { !$0.hasPrefix(".") && !stuck.contains($0) }.compactMap { Self.manifest(at: Self.folder($0)) }
             .sorted { ($0.order, $0.createdAt) < ($1.order, $1.createdAt) }
     }
 
@@ -750,20 +750,21 @@ public final class SpaceStore: ObservableObject {
     struct Stopped: Error {}
     static func step(_ name: String) throws { try interrupt?(name) }
 
-    // A change left half done finished as above. true: the files changed (open pages load again).
-    @discardableResult
-    static func finishPending(_ id: String) -> Bool {
+    // A change left half done finished as above. `stuck`: it could not be (a write failed): the Space may hold one
+    // version's page with the other's data, so it is not listed, changed or synced until a later try finishes it.
+    enum Finish { case clean, finished, stuck }
+    static func finishPending(_ id: String) -> Finish {
         let folder = folder(id), file = folder.appendingPathComponent(pendingName)
-        guard let data = try? Data(contentsOf: file) else { return false }
-        guard let pending = try? JSONDecoder().decode(Pending.self, from: data), let found = manifest(at: folder) else {
-            try? FileManager.default.removeItem(at: file); return false
-        }
+        guard let data = try? Data(contentsOf: file) else { return .clean }
+        guard let pending = try? JSONDecoder().decode(Pending.self, from: data) else { try? FileManager.default.removeItem(at: file); return .clean }
+        guard let found = manifest(at: folder) else { return .stuck }
         let saved = folder.appendingPathComponent("versions").appendingPathComponent(String(pending.undo ? pending.to : pending.from))
         do {
             if found.version == pending.from, FileManager.default.fileExists(atPath: saved.appendingPathComponent("app.html").path) {
                 if pending.undo { try undoFiles(folder, saved: saved, pending: pending) }
                 else {
                     try write(Data(html(saved).utf8), to: folder.appendingPathComponent("app.html"))
+                    try step("back app.html")
                     if pending.state { try write(state(saved), to: folder.appendingPathComponent("state.json")) }
                     try FileManager.default.removeItem(at: file)
                 }
@@ -772,19 +773,26 @@ public final class SpaceStore: ObservableObject {
                 if pending.undo, found.version == pending.to { try? FileManager.default.removeItem(at: saved) }
                 try FileManager.default.removeItem(at: file)
             }
-        } catch { return false }   // the marker stays: tried again on the next load
+        } catch { return .stuck }   // the marker and the backup stay: tried again on the next load
         SpaceLibrary.settle(id)
-        return true
+        return .finished
     }
 
-    func finishPending(_ id: String) { if Self.finishPending(id) { stateVersion[id, default: 0] += 1 } }
+    // false: stuck (see above). Finished: open pages load the files again.
+    @discardableResult
+    func finishPending(_ id: String) -> Bool {
+        let result = Self.finishPending(id)
+        if result == .finished { stateVersion[id, default: 0] += 1 }
+        return result != .stuck
+    }
+    static var stuckReason: String { L("지난 변경을 마무리하지 못해 이번 변경은 하지 않았어요", "The last change could not be finished, so this one was not made") }
 
     // New code (and, after a migrate, new data): the code and data before go to versions/<version> first.
     public func apply(_ id: String, html: String, state: Data? = nil, note: String, name: String? = nil, icon: String? = nil, color: String? = nil) throws {
         dispatchPrecondition(condition: .onQueue(.main))
         if let problem = SpaceCheck.problem(html) ?? SpaceAssets.overLimit(html, folder: Self.folder(id)) { throw SpaceBad(reason: problem) }
         if let state { guard state.count <= SpaceLimits.state, (try? JSONSerialization.jsonObject(with: state)) is [String: Any] else { throw SpaceBad(reason: L("새 데이터가 JSON 객체가 아니거나 10MB를 넘어요", "The new data is not a JSON object or is over 10 MB")) } }
-        finishPending(id)
+        guard finishPending(id) else { throw SpaceBad(reason: Self.stuckReason) }
         let folder = Self.folder(id)
         guard var manifest = Self.manifest(at: folder) else { throw SpaceBad(reason: L("Space를 찾지 못했어요", "Space not found")) }
         let saved = folder.appendingPathComponent("versions").appendingPathComponent(String(manifest.version))
@@ -835,7 +843,7 @@ public final class SpaceStore: ObservableObject {
     @discardableResult
     public func undo(_ id: String) throws -> Bool {
         dispatchPrecondition(condition: .onQueue(.main))
-        finishPending(id)
+        guard finishPending(id) else { throw SpaceBad(reason: Self.stuckReason) }
         guard let last = Self.versions(id).last else { return false }
         let folder = Self.folder(id)
         let saved = folder.appendingPathComponent("versions").appendingPathComponent(String(last.version))

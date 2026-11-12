@@ -203,7 +203,7 @@ func testSpace() {
     // Cut short after any write (the app quits there, or the write fails): the next load shows one version whole,
     // never a new page on the data before. A change goes back; an Undo goes on.
     let pending = folder.appendingPathComponent(SpaceStore.pendingName)
-    func keys() -> [String] { ((try? JSONSerialization.jsonObject(with: SpaceStore.state(folder)) as? [String: Any]) ?? [:]).keys.sorted() }
+    func keys(in at: URL? = nil) -> [String] { ((try? JSONSerialization.jsonObject(with: SpaceStore.state(at ?? folder)) as? [String: Any]) ?? [:]).keys.sorted() }
     try! store.apply(made.id, html: "<p>A</p>", state: Data(#"{"a":1}"#.utf8), note: "A")
     let versionA = store.manifest(made.id)!.version
     func isA() -> Bool { SpaceStore.html(folder) == "<p>A</p>" && keys() == ["a"] && store.manifest(made.id)?.version == versionA }
@@ -228,6 +228,21 @@ func testSpace() {
                    "undo cut short at \(label): finished on the next load")
         }
     }
+    // Finishing fails too (a write of the way back fails): the Space waits, unlisted, and no change, Undo or sync
+    // touches it or its backup until a later load finishes it.
+    SpaceStore.interrupt = { if $0 == "state.json" { throw SpaceStore.Stopped() } }
+    _ = try? store.apply(made.id, html: "<p>B</p>", state: Data(#"{"b":2}"#.utf8), note: "B")
+    SpaceStore.interrupt = { if $0 == "back app.html" { throw SpaceBad(reason: "disk full") } }
+    store.reload()
+    expect(store.manifest(made.id) == nil, "a Space that cannot be finished is not listed")
+    expect((try? store.apply(made.id, html: "<p>C</p>", note: "C")) == nil && (try? store.undo(made.id)) == nil, "no change or Undo over it")
+    _ = SpaceLibrary.sync()
+    expect(FileManager.default.fileExists(atPath: pending.path) && SpaceStore.versions(made.id).last?.version == versionA
+           && keys(in: folder.appendingPathComponent("versions/\(versionA)")) == ["a"],
+           "its marker and backup stay")
+    SpaceStore.interrupt = nil
+    store.reload()
+    expect(isA() && !FileManager.default.fileExists(atPath: pending.path), "a later load finishes it")
     // Restore goes through apply: cut short, it goes back too.
     try! store.apply(made.id, html: "<p>B</p>", state: Data(#"{"b":2}"#.utf8), note: "B")
     let stateBefore = SpaceStore.state(folder)

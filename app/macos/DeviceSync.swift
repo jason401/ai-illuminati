@@ -506,7 +506,7 @@ extension Discussion {
         viewingSpace = nil
         viewingRemote = RemoteViewing(chat: chat, snapshot: shown, loading: true)
         DispatchQueue.global(qos: .userInitiated).async {
-            let snapshot = DeviceSync.load(chat)
+            let snapshot = ChatStore.links.remote(chat)
             DispatchQueue.main.async {
                 guard self.viewingRemote?.chat.id == chat.id else { return }
                 self.viewingRemote = RemoteViewing(chat: chat, snapshot: snapshot)

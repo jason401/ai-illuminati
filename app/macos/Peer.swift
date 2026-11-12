@@ -422,20 +422,9 @@ extension Discussion {
         Peer.choose(asker: asker, picked: nil, accounts: model.accounts.filter { reviewers.contains($0.id) }, usage: model.latestUsage, lock: lock(of: room ?? currentID))
     }
 
-    // What the other AI may see: every folder of this answer, read only, with no tools of its own (so it cannot ask on).
-    static func peerView(_ binding: WorkspaceBinding) -> WorkspaceBinding {
-        var view = WorkspaceBinding(roots: binding.roots.map { WorkspaceRoot(path: $0.path, directory: $0.directory) })
-        view.face = false
-        view.origin = .consulted
-        return view
-    }
-
-    // Another AI answering the same message at the same time: the folders read only, and of the tools only ask_ai.
-    static func sideView(_ binding: WorkspaceBinding) -> WorkspaceBinding {
-        var view = peerView(binding)
-        view.origin = .side
-        return view
-    }
+    // What the other AI may see (`WorkspaceBinding.consulted`), and another AI answering at the same time (`.side`).
+    static func peerView(_ binding: WorkspaceBinding) -> WorkspaceBinding { binding.consulted }
+    static func sideView(_ binding: WorkspaceBinding) -> WorkspaceBinding { binding.side }
 
     func peerAnswer(_ peer: Account, prompt: String, view: WorkspaceBinding, room: UUID, timeout: TimeInterval,
                     token: DebateCancellation) -> Result<String, Answerer.Failure> {

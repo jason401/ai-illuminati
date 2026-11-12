@@ -87,5 +87,32 @@ expect(SpaceStore.html(SpaceStore.folder("old-1")) == "<p>v1</p>" && store.manif
        && store.manifest("old-1")?.color == "blue" && SpaceStore.versions("old-1").isEmpty, "Undo brings the old version back")
 expect(SpaceStore.state(SpaceStore.folder("old-1")).count > 12, "Undo of a code change keeps the data")
 
+// A change asked in a Space's box (C0, moved down from the chat): a refused block goes back once with its reason, a
+// second refusal is the outcome; no block is a failure with what the AI said; pictures are asked only once a block came.
+do {
+    let page = "<!doctype html><html><body><p>v2</p></body></html>"
+    let good = "새 판이에요.\n<space-build>\n<space-html>\n\(page)\n</space-html>\n</space-build>"
+    let bad = "<space-build><space-manifest>{}</space-manifest></space-build>"
+    var prompts: [String] = [], madeAsked = 0
+    func refine(_ answers: [String]) -> Result<(build: SpaceBuild, said: String), SpaceBad> {
+        var left = answers
+        prompts = []; madeAsked = 0
+        return SpaceBuilder.refine(prompt: "P", kept: [], ask: { prompts.append($0); return .success(left.removeFirst()) },
+                                   made: { madeAsked += 1; return [] }, said: { $0.uppercased() })
+    }
+    if case .success(let done) = refine([good]) {
+        expect(done.build.html.contains("v2") && done.said == "새 판이에요." && prompts == ["P"] && madeAsked == 1, "a good block is the new version: \(prompts)")
+    } else { expect(false, "a good block is the new version") }
+    if case .success = refine([bad, good]) {
+        expect(prompts.count == 2 && prompts[1].hasPrefix("P\n[The app refused your block: ") && prompts[1].hasSuffix("Send the whole fixed block again.]"), "a refused block goes back once with the reason")
+    } else { expect(false, "the fixed block after a refusal is taken") }
+    if case .failure = refine([bad, bad]) { expect(prompts.count == 2, "a second refusal is not sent back again") } else { expect(false, "two refusals fail") }
+    if case .failure(let none) = refine(["just words"]) {
+        expect(none.reason == "JUST WORDS" && prompts.count == 1 && madeAsked == 0, "no block: what the AI said, no retry, no pictures asked")
+    } else { expect(false, "no block fails") }
+    let failed = SpaceBuilder.refine(prompt: "P", kept: [], ask: { _ in .failure(SpaceBad(reason: "usage")) }, made: { [] }, said: { $0 })
+    if case .failure(let why) = failed { expect(why.reason == "usage", "a failed request is the outcome, not retried") } else { expect(false, "a failed request fails") }
+}
+
 extension Result { var isSuccess: Bool { if case .success = self { return true }; return false } }
 print("PASS: AISpaces module promises (old spaces folder, save format) from outside")

@@ -210,4 +210,23 @@ _ = DiskUsage.of(sized.appendingPathComponent("one"), seen: &seen)
 expect(DiskUsage.of(sized.appendingPathComponent("two"), seen: &seen).files == 0, "the same file is not counted again across calls")
 expect(DiskUsage.of(base.appendingPathComponent("missing")).unreadable == 1, "a missing path counts as unreadable")
 
+// What another AI of the chat sees (C0, moved down from the chat): consulted and side read only without face or project;
+// an opinion writes only in the chat's folder; a meeting's folder comes first and writable.
+do {
+    let project = ProjectBinding(root: "/tmp/p", common: "/tmp/p/.git", remote: "origin", remoteURL: "", kind: nil)
+    let full = WorkspaceBinding(roots: [WorkspaceRoot(path: "/tmp/p", directory: true, writable: true), WorkspaceRoot(path: "/tmp/chat", directory: true, writable: true),
+                                        WorkspaceRoot(path: "/tmp/f.txt", directory: false, writable: true)],
+                                level: .execute, project: project, projectRunID: UUID(), projectGeneration: 2, fullAccess: true, face: true)
+    let asked = full.consulted, side = full.side
+    expect(asked.roots.map(\.path) == full.roots.map(\.path) && asked.roots.allSatisfy { $0.writable == nil } && asked.roots.map(\.directory) == [true, true, false]
+           && asked.project == nil && asked.projectRunID == nil && asked.level == .view && asked.face == false && asked.origin == .consulted, "consulted: every folder read only, no tools")
+    expect(side.roots.map(\.writable) == asked.roots.map(\.writable) && side.face == false && side.origin == .side, "side: the same view, as a side answer")
+    let opinion = full.opinion(chatFolder: "/tmp/chat")
+    expect(opinion.roots.map(\.writable) == [nil, true, nil] && opinion.project == nil && opinion.projectRunID == nil && opinion.projectGeneration == nil
+           && opinion.level == .view && opinion.fullAccess == nil && opinion.face == true, "opinion: only the chat's folder writable")
+    let meeting = full.meeting(folder: "/tmp/chat")
+    expect(meeting.roots.map(\.path) == ["/tmp/chat", "/tmp/p", "/tmp/f.txt"] && meeting.roots.map(\.writable) == [true, nil, nil]
+           && meeting.face == nil && meeting.origin == .consulted && meeting.project == nil, "meeting: its folder first and writable, the rest read only")
+}
+
 print("PASS: workspace contract")

@@ -28,6 +28,38 @@ final class SpaceRefiner: ObservableObject {
         check()
         watcher = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in check() }
     }
+    // The stop button of a Space's change box: only this Space's talk stops.
+    func stop(_ id: String) {
+        cancels[id]?.cancel()
+        cancels[id] = nil
+        busy[id] = nil
+    }
+
+    // The previewed version applied. With migrate, it runs again on the data as it is now (the user may have checked
+    // something since the preview), and that result is saved.
+    func apply(_ id: String) {
+        let refiner = self
+        guard let pending = refiner.pending[id] else { return }
+        func save(_ state: Data?) {
+            do {
+                try SpaceStore.shared.apply(id, html: pending.build.html, state: state, note: String(pending.request.prefix(80)),
+                                            name: pending.build.name, icon: pending.build.icon, color: pending.build.color)
+                refiner.pending[id] = nil
+            } catch {
+                refiner.notes[id] = (error as? SpaceBad)?.reason ?? error.localizedDescription
+            }
+        }
+        guard let migrate = pending.build.migrate else { return save(nil) }
+        refiner.busy[id] = L("데이터 옮기는 중", "Moving the data")
+        SpaceMigrator.run(migrate, state: SpaceStore.state(SpaceStore.folder(id))) { result in
+            refiner.busy[id] = nil
+            switch result {
+            case .success(let data): save(data)
+            case .failure(let bad): refiner.notes[id] = bad.reason
+            }
+        }
+    }
+
     static func check() {
         guard !SpaceLibrary.busy else { return }
         for note in SpaceStore.shared.syncLibrary() where note.kind == "refused" || note.kind == "set-aside" {
@@ -135,7 +167,7 @@ extension Discussion {
     func openSpaceTodo(_ id: String) {
         let todo = TodoStore.shared.snapshot
         guard let item = todo.items.first(where: { $0.id.uuidString == id }) else { openBoard(project: nil); return }
-        openBoard(project: todo.lists.first { $0.id == item.listID }?.project.map(SidebarProjects.key), tab: .todo)
+        openBoard(project: todo.lists.first { $0.id == item.listID }?.project?.groupKey, tab: .todo)
     }
 
     // What a page may ask: go to a chat or a TODO of this Mac, show a file of the chat that made it in Finder, or open
@@ -183,30 +215,17 @@ extension Discussion {
         let cancel = DebateCancellation()
         refiner.busy[id] = speaker; refiner.cancels[id] = cancel; refiner.notes[id] = nil; refiner.pending[id] = nil
         DispatchQueue.global(qos: .userInitiated).async {
-            var prompt = SpaceBuilder.refinePrompt(manifest: manifest, html: html.text, state: state, history: history, request: request,
+            let prompt = SpaceBuilder.refinePrompt(manifest: manifest, html: html.text, state: state, history: history, request: request,
                                                    draws: draws, kept: html.kept.count)
-            var outcome: Result<(SpaceBuild, String), SpaceBad> = .failure(SpaceBad(reason: ""))
-            for attempt in 0..<2 {
-                let started = Date()
-                switch Answerer.ask(account, prompt: prompt, timeout: 600, cancellation: cancel, run: .app(account)) {
-                case .failure(let failure): outcome = .failure(SpaceBad(reason: Self.describe(failure)))
-                case .success(let raw):
-                    let split = SpaceBuilder.split(FaceLink.extract(raw).text)
-                    let said = Self.extractState(split.reply).reply
-                    guard split.found else { outcome = .failure(SpaceBad(reason: said.isEmpty ? L("새 판이 오지 않았어요", "No new version came") : said)); break }
-                    // Pictures ChatGPT made in this answer and those already in the page go in for their markers.
-                    let made = draws ? Pictures.newCodexImages(account, since: started).prefix(SpacePictures.perAnswer).compactMap { Pictures.spaceDataURL($0) } : []
-                    switch SpaceBuilder.parse(split.body, new: false).flatMap({ build in
-                        SpacePictures.embed(build.html, made: made, kept: html.kept).map { page in var build = build; build.html = page; return build }
-                    }) {
-                    case .success(let build): outcome = .success((build, said))
-                    case .failure(let bad):
-                        outcome = .failure(bad)
-                        if attempt == 0 { prompt += "\n[The app refused your block: \(bad.reason). Send the whole fixed block again.]"; continue }
-                    }
-                }
-                break
-            }
+            var started = Date()
+            let outcome = SpaceBuilder.refine(prompt: prompt, kept: html.kept, ask: { prompt in
+                started = Date()
+                return Answerer.ask(account, prompt: prompt, timeout: 600, cancellation: cancel, run: .app(account))
+                    .map { FaceLink.extract($0).text }.mapError { SpaceBad(reason: Self.describe($0)) }
+            }, made: {
+                // Pictures ChatGPT made in this answer and those already in the page go in for their markers.
+                draws ? Pictures.newCodexImages(account, since: started).prefix(SpacePictures.perAnswer).compactMap { Pictures.spaceDataURL($0) } : []
+            }, said: { Self.extractState($0).reply })
             DispatchQueue.main.async {
                 guard refiner.cancels[id] === cancel else { return }
                 refiner.cancels[id] = nil
@@ -231,37 +250,6 @@ extension Discussion {
                         }
                     }
                 }
-            }
-        }
-    }
-
-    func stopRefining(_ id: String) {
-        SpaceRefiner.shared.cancels[id]?.cancel()
-        SpaceRefiner.shared.cancels[id] = nil
-        SpaceRefiner.shared.busy[id] = nil
-    }
-
-    // The previewed version applied. With migrate, it runs again on the data as it is now (the user may have checked
-    // something since the preview), and that result is saved.
-    func applySpaceChange(_ id: String) {
-        let refiner = SpaceRefiner.shared
-        guard let pending = refiner.pending[id] else { return }
-        func save(_ state: Data?) {
-            do {
-                try SpaceStore.shared.apply(id, html: pending.build.html, state: state, note: String(pending.request.prefix(80)),
-                                            name: pending.build.name, icon: pending.build.icon, color: pending.build.color)
-                refiner.pending[id] = nil
-            } catch {
-                refiner.notes[id] = (error as? SpaceBad)?.reason ?? error.localizedDescription
-            }
-        }
-        guard let migrate = pending.build.migrate else { return save(nil) }
-        refiner.busy[id] = L("데이터 옮기는 중", "Moving the data")
-        SpaceMigrator.run(migrate, state: SpaceStore.state(SpaceStore.folder(id))) { result in
-            refiner.busy[id] = nil
-            switch result {
-            case .success(let data): save(data)
-            case .failure(let bad): refiner.notes[id] = bad.reason
             }
         }
     }
@@ -427,7 +415,7 @@ struct SpaceMainView: View {
             }
             Spacer()
             Button(L("버리기", "Discard")) { refiner.pending[id] = nil }
-            Button(L("적용", "Apply")) { discussion.applySpaceChange(id) }.buttonStyle(.borderedProminent)
+            Button(L("적용", "Apply")) { SpaceRefiner.shared.apply(id) }.buttonStyle(.borderedProminent)
         }
         .padding(.horizontal, 20).padding(.vertical, 8)
     }
@@ -471,7 +459,7 @@ struct SpaceMainView: View {
             if let busy {
                 ProgressView().controlSize(.small)
                 Text(L("\(busy) 고치는 중…", "\(busy) is changing it…")).font(.system(size: 11)).foregroundColor(.secondary)
-                Button(action: { discussion.stopRefining(id) }) { Image(systemName: "stop.circle").frame(width: 24, height: 24) }
+                Button(action: { SpaceRefiner.shared.stop(id) }) { Image(systemName: "stop.circle").frame(width: 24, height: 24) }
                     .buttonStyle(.plainHit).help(L("멈추기", "Stop"))
             } else {
                 Button(action: send) { Image(systemName: "arrow.up.circle.fill").font(.system(size: 20)).frame(width: 26, height: 26) }

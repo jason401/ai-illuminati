@@ -112,7 +112,9 @@ Public names and why (everything else stays internal: `SpaceCheck`, `SpaceRules`
   the UI makes (`adopt`, `makeFromTemplate`, `apply`, `undo`, `restore`, `update`, `move`, `delete`, `dataChanged`),
   drafts (`saveDraft`, `draftBuild`, `discardDraft`, `pruneDrafts`), `versions`, `refineLog`, `addRefine`, `named`,
   `migrateLegacy`.
-- Chat side: `SpaceBuilder` (`split`, `parse`, `rule`, `chatRule`, `refinePrompt`), `SpacePictures` (`perAnswer`,
+- Chat side: `SpaceBuilder` (`split`, `parse`, `rule`, `chatRule`, `refinePrompt`, `refine`: the change loop of a Space's
+  box, a refused block back once with its reason; C0 moved it down from SpaceView's `extension Discussion`, which now picks
+  the account and sends), `SpacePictures` (`perAnswer`,
   `hide`, `embed`, `Request`, `requests`, `referenceFile`, `chatRule`), `SpaceLibrary` (`beginAnswer`, `endAnswer`,
   `busy`, `all`, `sync`, `rule`, `pictureBlockRule`), `SpaceAssets.dataURL` (a redraw's source picture),
   `SpacePatch.meetingState` (a meeting into a decision log), `SpaceExport` (`fitsOneFile`, `folder`, `document`),
@@ -217,6 +219,9 @@ Public names and why (everything else stays internal: `AutoGuard` whole, `Worksp
   `claudeDenied` is used only by `arguments` here.
 - `ToolProvider`, `ToolContext`: the gateway's types, here so later modules (Projects, Chat) can offer tools without
   naming the app; `ToolHub` itself (the socket, the provider list and its order) stays in the app.
+- `WorkspaceBinding.consulted`, `.side`, `opinion(chatFolder:)`, `meeting(folder:)` (C0): what another AI of a chat may
+  see of an answer's folders (ask_ai and the review, a side answer, an opinion, a meeting's members). Folder rules, so they
+  live here; they were `Discussion.peerView`/`sideView`, `Route.opinionView` and part of `prepareMeeting` (those forward).
 - `DiskUsage` (`of`, `Size` and its fields and `+`, `FileID`): clean-up counts what it frees and ChatStorage each chat's
   parts; it was `ChatStorage.size`, a chat file, which Workspace may not name (`ChatStorage.Size`/`FileID`/`size(of:)` now
   forward to it).
@@ -276,6 +281,10 @@ Public names and why (everything else stays internal: `ProjectError`, `ProjectTo
   `ProjectInfoStore`, `ProjectCreator` (`prepare`, `create`, `createFolderless`, `folderlessBinding`, `summary`,
   `defaultLocation`, `Plan`): `runProjectSolo`, the menus, Project info, the review (`ProjectSnapshot`).
 - `ProjectBinding.groupKey`: one project across its worktrees (`SidebarProjects.key` forwards to it).
+- C0, logic moved down from the chat's `extension Discussion` blocks: `ProjectWork.linking` (a chat links a project: the
+  root writable, after the linked folders or first for documents), `ProjectWork.moving` (a chat moved into a project;
+  `SidebarProjects.moved` forwards), `ProjectRun.setPlan(todos:generation:)` (the stream's TodoWrite list read here, so the
+  chat no longer names `PlanLink`), `TodoStore.lockProject` (a locked project's TODO lists).
 - The five providers (`shared`, `ToolProvider`'s members; `ProjectMakerLink.cancellation`/`addChat`, `TodoAddLink.store`/
   `names` as before): ToolHub lists them in its order.
 
@@ -632,3 +641,89 @@ does not take the watchdog away cannot see F2 (checked: F2 with the watchdog lef
 - Seen once: a full run stopped with exit 139 in `testAutoMeeting` (a crash, not a failed check); the run right after passed
   whole. R1 saw the same crash in the same test; nothing here touches meetings. The staged build (`build_app.sh --stage`)
   links and signs.
+
+## Chat, step C0: the chat side names no other part's insides, before it becomes a module (2026-11-12)
+No module yet (C1 makes `AIChat`). Before: P was on main (a9d353e). The plan held, with one count changed: the roadmap's
+"19 files, 22 places" is now **20 files, 24 blocks** (P0/P1 added `TodoChatsApp.swift`, and `ProjectCreate.swift` is all
+`extension Discussion` since `ProjectCreator.swift` moved).
+
+### The `extension Discussion` table
+(a) Chat takes the block whole (chat state, sending, the chat's own rules). (b) a shell: the logic that belongs to another
+module is that module's public function now; the block keeps only the chat's part (its state, the dialog, which account).
+`run_mode2.sh` stage 1 holds this table (file → kinds): a new block fails the test until it gets a row here.
+
+| File:line | Kind | What it is | C0 change / note for C1 |
+|---|---|---|---|
+| Attachments:48 | a | pictures in the message box, `canSend`, `request`/`requestDebate` (the Enterprise gate before each send) | — |
+| Attachments:209 | a | `setWorkspaceLevel` (session reset + the chat's binding) | — |
+| Attachments:219 | a | `undoWorkspace`: the turn's Undo state; the restore itself is already `WorkspaceBackup` (AIWorkspace) | — |
+| ChatFind:58 | a | find in a chat (jump, step, close) | `ChatFindBar` (a view) shares the file: C1 decides views |
+| ChatSearch:150 | a | open a search result | — |
+| ChatTools:154 | a | `linkChatTools`: sets `ProjectChats.list` (P0 injection) | — |
+| Collaboration:65 | a | the collaboration run | — |
+| Debate:45 | a | the debate run, speakers, search notes | — |
+| DeviceSync:472 | a | chat state turn, `continueFromDevice`, `openRemote`, share toggle | reads another Mac's copy through `ChatStore.links.remote`; C1: the block leaves DeviceSync.swift, and `SyncSnapshot`/`RemoteChat` (they hold `ChatTurn`) need an owner |
+| Enterprise:72 | a | a chat's lock, `permits` (the gate), `lockEnterprise` | DeviceSync hears through `ChatStore.links.locked`; the `Enterprise` rules enum and badges stay app-side for C1 to place |
+| Enterprise:114 | b | locking a whole project | its TODO lists: `TodoStore.lockProject` (AIProjects); `SidebarProjects.key` → `groupKey` |
+| Meeting:19 | b | meetings: members, brief, hidden chats | `prepareMeeting`'s folder view: `WorkspaceBinding.meeting(folder:)` (AIWorkspace) |
+| Meeting:268 | a | `convene_meeting` (held meetings) | — |
+| Peer:413 | b | ask_ai sessions, the review of changes | `peerView`/`sideView` → `WorkspaceBinding.consulted`/`.side` (they forward); `ProjectSnapshot` is Peer.swift's own |
+| ProjectChat:132 | b | linking a project, moving a chat, `runProjectSolo`, full auto | stream plan → `ProjectRun.setPlan(todos:)` (no `PlanLink`); links → `ProjectWork.linking`/`moving`; the approval views share the file (app) |
+| ProjectCreate:8 | b | the menus of new projects, disconnecting a folder | P1 moved the logic (`ProjectCreator`); C1: still uses `SidebarProjects.key` (forward of `groupKey`) |
+| RoomDocuments:50 | a | attaching materials, restarting sessions | `RoomDocuments`/`MaterialReader` (reading documents) are not named by `ChatStore` any more (`links.documents`); C1 decides whether they join Chat or Workspace |
+| Route:393 | a | route choice, rerun | `Route.opinionView` forwards to `WorkspaceBinding.opinion` |
+| SidebarProjects:220 | a | `openBoard`/`showBoardTab`: the chat window's navigation state | C1: `BoardTab` is an app type |
+| Solo:96 | a | plain chat (members, instruction, state, Spaces in answers) | C1: still names app types (`Pictures`, `FaceLink`, `SidebarProjects.key`, …) |
+| Solo:1015 | a | a Space's lock and who may change it | — |
+| SpaceView:39 | b | Space actions from a chat | the refine loop → `SpaceBuilder.refine` (AISpaces); stop and apply were Space-only, now `SpaceRefiner.stop`/`apply` (not Discussion); C1: `SpaceRefiner`, `SidebarFold`, `openBoard` are app names the shell still uses |
+| TodoChatsApp:10 | a | `Discussion: TodoChats` (P0's seam: crew, start, end) | — |
+| Vote:91 | a | the vote run | — |
+
+So no block is left that would have to go to another module: 18 (a), 6 (b) shells. The app names the (a)/(b) blocks
+still use (views' state types, `SidebarProjects`, `Pictures`, `FaceLink`, `SpaceRefiner`, `BoardTab`, `Enterprise`) are C1's
+list: each becomes Chat's, moves down, or comes in by injection.
+
+### Calls cut (Discussion and ChatStore name none of them; `run_mode2.sh` stage 1 searches every block and Discussion.swift)
+- StreamParser → PlanLink: the chat hands `.todos` to `ProjectRun.setPlan(todos:generation:)`; Projects reads the shape.
+- `ChatStore.save` → DeviceSync, `delete` → NativeSessions, WorkspaceBackup, RoomDocuments, DeviceSync; also
+  `runFinished` → DeviceSync, `lockEnterprise` → DeviceSync, `openRemote` → `DeviceSync.load`: all through
+  `ChatStore.links` (`purge` in order, `documents`, `saved`, `deleted`, `finished`, `locked`, `remote`), set once by the
+  app in `ChatLinksApp.connect()` (main.swift, after `useRealHome()` and before `AppDelegate()`; stage 1 checks the place;
+  mode2 calls it before its first Discussion). Unset, a program writes and removes only the chat's own files.
+- Delete keeps its order and failures: sessions, backups, `<id>.work`, documents, `<id>.assets`, `<id>.json`, then
+  `deleted`; the first failure throws and keeps that place and all after it (the chat stays listed, nothing is told);
+  a chat's meetings go first and one that cannot keeps its chat.
+
+| Promise | Users | Test |
+|---|---|---|
+| A deleted chat leaves none of its places, in the order above; a failure at any of the first four keeps it and what follows, the chat stays, no `deleted`; a second delete removes the rest; meetings first | Discussion (`removeChats`, delete menu, blank chats), Meeting (`removeMeetings`) | `chat_links.swift` `testChatLinks` (through `removeChats` with what main.swift connects; failures made by a read-only folder at each place), mode2 "storage by chat … delete covers the measured paths", "chat delete removes only its sessions …" |
+| DeviceSync hears saves and deletes through the app's link | ChatStore | `testChatLinks` (a shared chat's copy appears, its delete takes it down) |
+| The moved-down functions behave as the blocks did | the shells above | contracts: workspace ("consulted", "side", "opinion", "meeting"), projects ("linking", "moved", "the stream's task list", "a project with no list gets a locked one"), spaces ("a refused block goes back once", "no block", …); app: testPeerReview, testMoveChatToProject, testDocumentsProject, testEnterpriseMarks, testProjectHandoff |
+
+### Falsification (one change at a time in a copy of the tree, only function bodies; "app tests" = run_mode2 without the module contracts)
+| Change | Module contract | App tests (first failing check) |
+|---|---|---|
+| F1 `connect` purges backups before sessions | — (app wiring) | caught: testChatLinks "a failure at sessions keeps it and what comes after" (backups were already gone); mode2's storage test passed (it checks only that all go) |
+| F2 `connect` gives no documents folder | — | caught: testChatLinks "the app connects … the documents' folder" (the fixture would also have left documents); mode2's storage test passed (its fixture has no documents) |
+| F3 `delete` tells `deleted` also when it fails (`defer`) | — | caught: testChatLinks "deleted is told per chat, meeting first, once nothing is left" |
+| F4 `connect` drops `saved` | — | caught: testChatLinks "a saved shared chat reaches DeviceSync" |
+| F5 `consulted` keeps each folder's `writable` | caught ("consulted: every folder read only") | caught: mode2 chat members "the others get the folders read only, not just told so" |
+| F6 `ProjectRun.setPlan(todos:)` reads nothing | (contract skipped for this run; its "the stream's task list becomes the plan" covers it) | caught: testProjectHandoff "TodoWrite shows as the project plan" |
+| F7 `SpaceBuilder.refine` does not send a refused block back | caught ("the fixed block after a refusal is taken") | **missed** (all pass): no app test reaches a Space's change box; `SpaceView.swift` is not in the test build. C1 should add an app-path check when the shell moves |
+
+### Results
+- Full test passes, staged build (`build_app.sh --stage`) links and signs. Storage format unchanged (no key, no file moved).
+- New: `ChatLinksApp.swift` (app; in the test list), `tools/tests/chat_links.swift` (`testChatLinks`, after
+  testRuntimeThroughApp), contract checks for the moved-down functions, stage-1 checks (the table, no direct calls, where
+  `connect` is called).
+- For C1:
+  - The shells still name app types (table above, right column). Each needs a decision before `AIChat` builds alone:
+    becomes Chat's, moves down, or is injected like `ChatStore.links`. `SidebarProjects`' chat functions
+    (`group`, `deletable`, `moveRefusal`, `runningFirst`) take `Conversation`: likely Chat's.
+  - Views: `ChatWindow`, `ChatFindBar`, the approval views, Space views use Discussion's state. Opening that state wholesale is
+    what the roadmap forbids; decide whether the chat views go with Chat or the app gets a narrow surface.
+  - `ChatStore.links` must be set before the first `Discussion` (its init deletes old blank chats). Keep `connect` in main.swift
+    and in mode2; a new program that deletes chats must connect too, or sessions and backups stay behind.
+  - F7: Space refine is covered by the contract only; add an app-path check when SpaceView's shell moves.
+  - `ChatStorage` (the storage tool) still names `NativeSessions.directory`, `RoomDocuments.directory`, `WorkspaceBackup.base` to
+    measure; C0 left it (not Discussion or ChatStore). It goes with the Storage tool.

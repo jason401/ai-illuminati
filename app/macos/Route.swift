@@ -251,13 +251,7 @@ enum Route {
     }
 
     // What the members see in opinion mode: every folder read only except the chat's own, no project tools.
-    static func opinionView(_ binding: WorkspaceBinding, chatFolder: String) -> WorkspaceBinding {
-        var view = binding
-        view.project = nil; view.projectRunID = nil; view.projectGeneration = nil
-        view.level = .view; view.fullAccess = nil
-        view.roots = binding.roots.map { WorkspaceRoot(path: $0.path, directory: $0.directory, writable: $0.path == chatFolder ? true : nil) }
-        return view
-    }
+    static func opinionView(_ binding: WorkspaceBinding, chatFolder: String) -> WorkspaceBinding { binding.opinion(chatFolder: chatFolder) }
 
     static func opinionNote(project: String, alone: Bool = false, busy: Bool = false) -> String {
         let who = alone ? "one answer is enough: you answer it alone, other members stay quiet unless the user asks them,"

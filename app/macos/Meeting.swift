@@ -157,12 +157,7 @@ extension Discussion {
     @discardableResult
     func prepareMeeting(room: UUID, binding: WorkspaceBinding) -> URL {
         let folder = Self.chatFolder(room)
-        var binding = binding
-        binding.roots.removeAll { $0.path == folder.path }
-        binding.roots.insert(WorkspaceRoot(path: folder.path, directory: true, writable: true), at: 0)
-        var view = Route.opinionView(binding, chatFolder: folder.path)
-        view.face = nil
-        view.origin = .consulted
+        let view = binding.meeting(folder: folder.path)
         activeSessionRoom = room
         activeWorkspace = view
         activeMeeting = true

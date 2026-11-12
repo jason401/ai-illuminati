@@ -413,6 +413,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
 // Only the app itself uses the real accounts and settings; tests and previews never call this.
 AccountStore.useRealHome()
+ChatLinksApp.connect()
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate

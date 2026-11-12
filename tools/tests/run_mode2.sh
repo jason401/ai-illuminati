@@ -43,6 +43,32 @@ assert sorted(users) == ['app/macos/main.swift', 'app/modules/AIAccounts/Account
 # The runtime's one public test hook (a fake CLI for runtime_contract.swift) is never set by the app.
 hooked = subprocess.run(['grep', '-rl', '--include=*.swift', 'toolForTests', 'app/macos'], capture_output=True, text=True).stdout.split()
 assert hooked == [], hooked
+# C0: every `extension Discussion` is classified in docs/MODULES.md ("Chat, step C0"): a = Chat takes it whole, b = a shell
+# whose logic is another module's public function. A new block fails here until it gets its row (and the table).
+import glob, re
+expected = {'Attachments': 'aaa', 'ChatFind': 'a', 'ChatSearch': 'a', 'ChatTools': 'a', 'Collaboration': 'a', 'Debate': 'a',
+            'DeviceSync': 'a', 'Enterprise': 'ab', 'Meeting': 'ba', 'Peer': 'b', 'ProjectChat': 'b', 'ProjectCreate': 'b',
+            'RoomDocuments': 'a', 'Route': 'a', 'SidebarProjects': 'a', 'Solo': 'aa', 'SpaceView': 'b', 'TodoChatsApp': 'a', 'Vote': 'a'}
+def blocks(text):
+    lines, out, i = text.split('\n'), [], 0
+    while i < len(lines):
+        if lines[i].startswith('extension Discussion'):
+            j = i
+            while lines[j] != '}': j += 1
+            out.append('\n'.join(lines[i:j + 1])); i = j
+        i += 1
+    return out
+found = {Path(f).stem: blocks(Path(f).read_text()) for f in sorted(glob.glob('app/macos/*.swift'))}
+found = {k: v for k, v in found.items() if v}
+assert {k: len(v) for k, v in found.items()} == {k: len(v) for k, v in expected.items()}, ({k: len(v) for k, v in found.items()}, 'classify new extension Discussion blocks in docs/MODULES.md')
+assert sum(len(v) for v in found.values()) == 24, 'the C0 table has 24 rows'
+# The chat side calls none of these by name: the app connects them (ChatLinksApp.swift) or the module reads them.
+direct = re.compile(r'PlanLink|DeviceSync\b(?!\.swift)|NativeSessions\.purgeRoom|WorkspaceBackup\.purgeRoom|RoomDocuments\.directory')
+chat = Path('app/macos/Discussion.swift').read_text()
+hits = [m.group() for m in direct.finditer(chat)] + [(k, m.group()) for k, v in found.items() for b in v for m in direct.finditer(b)]
+assert hits == [], hits
+call, start = s.find('ChatLinksApp.connect()'), s.find('AppDelegate()')
+assert 0 <= s.find('useRealHome()') < call < start and s.count('ChatLinksApp.connect()') == 1, 'main.swift connects the chat store once, before AppDelegate()'
 PY
 echo "[2/11] Modules on their own"
 # Each built alone (seeing only the modules it names), checked from outside with only its public API; reaching an
@@ -107,7 +133,7 @@ PYTHONDONTWRITEBYTECODE=1 limit 300 python3 tools/tests/material_fixtures.py "$T
 echo "[8/11] Compile app tests"
 limit 900 xcrun swiftc -swift-version 5 -module-cache-path "$TEST_DIR/cache" -I "$MODULES" -o "$TEST_DIR/run" "$MODULES"/lib*.a \
     app/macos/ProjectChat.swift app/macos/ProjectCreate.swift app/macos/WindowDrag.swift app/macos/Login.swift \
-    app/macos/Settings.swift app/macos/Discussion.swift app/macos/ChatNotes.swift app/macos/Debate.swift app/macos/Attachments.swift app/macos/RoomDocuments.swift app/macos/MaterialReader.swift app/macos/Collaboration.swift app/macos/Vote.swift app/macos/Solo.swift app/macos/LocalModels.swift app/macos/FaceLink.swift app/macos/ExternalMCP.swift app/macos/RemoteMCP.swift app/macos/Markdown.swift app/macos/DriveUI.swift app/macos/ToolHub.swift app/macos/Peer.swift app/macos/CollabLog.swift app/macos/Route.swift app/macos/Meeting.swift app/macos/GoogleAuth.swift app/macos/DriveLink.swift app/macos/RunConditionsApp.swift app/macos/ChatStorage.swift app/macos/Updater.swift app/macos/Pictures.swift app/macos/Poker.swift app/macos/DeviceSync.swift app/macos/Enterprise.swift app/macos/ChatFind.swift app/macos/ChatSearch.swift app/macos/ChatTools.swift app/macos/Memory.swift app/macos/TodoChatsApp.swift app/macos/SidebarProjects.swift app/macos/GitBranches.swift tools/tests/space_build.swift tools/tests/google_drive.swift tools/tests/device_sync.swift tools/tests/window_drag.swift tools/tests/project_work.swift tools/tests/ask_ai.swift tools/tests/collab_log.swift tools/tests/meeting_tool.swift tools/tests/todo_work.swift tools/tests/project_info.swift tools/tests/update_channel.swift tools/tests/chat_search.swift tools/tests/search_fixtures.swift tools/tests/run_conditions.swift tools/tests/runtime_app.swift "$TEST_DIR/main.swift"
+    app/macos/Settings.swift app/macos/Discussion.swift app/macos/ChatNotes.swift app/macos/Debate.swift app/macos/Attachments.swift app/macos/RoomDocuments.swift app/macos/MaterialReader.swift app/macos/Collaboration.swift app/macos/Vote.swift app/macos/Solo.swift app/macos/LocalModels.swift app/macos/FaceLink.swift app/macos/ExternalMCP.swift app/macos/RemoteMCP.swift app/macos/Markdown.swift app/macos/DriveUI.swift app/macos/ToolHub.swift app/macos/Peer.swift app/macos/CollabLog.swift app/macos/Route.swift app/macos/Meeting.swift app/macos/GoogleAuth.swift app/macos/DriveLink.swift app/macos/RunConditionsApp.swift app/macos/ChatStorage.swift app/macos/Updater.swift app/macos/Pictures.swift app/macos/Poker.swift app/macos/DeviceSync.swift app/macos/Enterprise.swift app/macos/ChatFind.swift app/macos/ChatSearch.swift app/macos/ChatTools.swift app/macos/Memory.swift app/macos/TodoChatsApp.swift app/macos/ChatLinksApp.swift app/macos/SidebarProjects.swift app/macos/GitBranches.swift tools/tests/space_build.swift tools/tests/google_drive.swift tools/tests/device_sync.swift tools/tests/window_drag.swift tools/tests/project_work.swift tools/tests/ask_ai.swift tools/tests/collab_log.swift tools/tests/meeting_tool.swift tools/tests/todo_work.swift tools/tests/project_info.swift tools/tests/update_channel.swift tools/tests/chat_search.swift tools/tests/search_fixtures.swift tools/tests/run_conditions.swift tools/tests/runtime_app.swift tools/tests/chat_links.swift "$TEST_DIR/main.swift"
 echo "[9/11] Run app tests"
 # The tests also stop themselves after 120 s without progress (mode2.swift) and name the test.
 limit 1500 env AI_ILLUMINATI_TEST_HOME="$TEST_DIR/data" AI_ILLUMINATI_TEST_RESOURCES="$TEST_DIR/resources" "$TEST_DIR/run"

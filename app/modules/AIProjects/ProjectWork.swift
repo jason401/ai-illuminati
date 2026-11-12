@@ -231,6 +231,13 @@ public final class ProjectRun {
     public var onPlan: (([WorkStep], String?) -> Void)?
     private var aiSteps: [WorkStep] = [], appSteps: [WorkStep] = [], planNote: String?, planByTool = false
     var plan: [WorkStep] { clock.lock(); defer { clock.unlock() }; return aiSteps + appSteps }
+    // The AI's own task list as its stream sent it (StreamParser's `.todos`, Claude's TodoWrite): read here, so the chat
+    // hands it on without knowing its shape (C0). Nothing readable: no change.
+    @discardableResult
+    public func setPlan(todos: Any?, generation: Int) -> Bool {
+        guard let steps = PlanLink.todos(todos) else { return false }
+        return setPlan(steps, note: nil, generation: generation, tool: false)
+    }
     // From an old attempt (another generation) or TodoWrite once work_plan was used: ignored.
     @discardableResult
     public func setPlan(_ steps: [WorkStep], note: String?, generation: Int, tool: Bool) -> Bool {
@@ -332,6 +339,31 @@ public enum ProjectWork {
         workspace.roots = binding.roots.map { WorkspaceRoot(path: $0.path, directory: $0.directory, writable: ($0.path == project.root || $0.path == chatFolder) ? true : nil) }
         workspace.projectRunID = run.id
         return workspace
+    }
+    // A chat linking `project` (the + menu): its root writable, added after the folders linked already (a code project) or
+    // put first (`first`: a documents project, whose root then leads); the chat's other folders stay.
+    public static func linking(_ workspace: WorkspaceBinding?, to project: ProjectBinding, first: Bool) -> WorkspaceBinding {
+        var binding = workspace ?? WorkspaceBinding(roots: [])
+        let root = WorkspaceRoot(path: project.root, directory: true, writable: true)
+        if first {
+            binding.roots.removeAll { $0.path == project.root }
+            binding.roots.insert(root, at: 0)
+        } else if !binding.roots.contains(where: { $0.path == project.root }) {
+            binding.roots.append(root)
+        }
+        binding.project = project
+        return binding
+    }
+    // A chat moved into `project` (the sidebar): the old project's root goes, the new one's linked roots come first, and
+    // no earlier project run stays attached.
+    public static func moving(_ workspace: WorkspaceBinding?, to project: ProjectBinding) -> WorkspaceBinding {
+        var binding = workspace ?? WorkspaceBinding(roots: [])
+        let old = binding.project?.root
+        binding.roots.removeAll { $0.path == old || $0.path == project.root }
+        binding.roots.insert(contentsOf: project.linkedRoots, at: 0)
+        binding.project = project
+        binding.projectRunID = nil; binding.projectGeneration = nil
+        return binding
     }
     public static func register(_ run: ProjectRun) { mutex.lock(); runs[run.id] = run; mutex.unlock() }
     public static func finish(_ run: ProjectRun) { run.stop(); run.operations.lock(); defer { run.operations.unlock() }; revokeTools(run.id); mutex.lock(); runs.removeValue(forKey: run.id); mutex.unlock() }

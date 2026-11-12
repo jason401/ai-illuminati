@@ -328,6 +328,36 @@ public enum SpaceBuilder {
             """
     }
 
+    // One change asked in a Space's box, after `refinePrompt`: the answer's build block is parsed and its pictures put in;
+    // a refused block goes back once with the reason. `ask` sends a prompt (the answer without its face tag), `made` gives
+    // the pictures that answer drew (asked only once a block came), `said` the reply as the user reads it. C0: this was
+    // the chat side's loop; the chat now only picks the account and sends.
+    public static func refine(prompt: String, kept: [String], ask: (String) -> Result<String, SpaceBad>, made: () -> [String],
+                              said: (String) -> String) -> Result<(build: SpaceBuild, said: String), SpaceBad> {
+        var prompt = prompt
+        var outcome: Result<(build: SpaceBuild, said: String), SpaceBad> = .failure(SpaceBad(reason: ""))
+        for attempt in 0..<2 {
+            switch ask(prompt) {
+            case .failure(let bad): outcome = .failure(bad)
+            case .success(let text):
+                let split = split(text)
+                let reply = said(split.reply)
+                guard split.found else { outcome = .failure(SpaceBad(reason: reply.isEmpty ? L("새 판이 오지 않았어요", "No new version came") : reply)); break }
+                let pictures = made()
+                switch parse(split.body, new: false).flatMap({ build in
+                    SpacePictures.embed(build.html, made: pictures, kept: kept).map { page in var build = build; build.html = page; return build }
+                }) {
+                case .success(let build): outcome = .success((build, reply))
+                case .failure(let bad):
+                    outcome = .failure(bad)
+                    if attempt == 0 { prompt += "\n[The app refused your block: \(bad.reason). Send the whole fixed block again.]"; continue }
+                }
+            }
+            break
+        }
+        return outcome
+    }
+
     // Changing a Space: its code, the shape of its data (keys and types, never values) and the talk so far.
     // `html` comes with its pictures hidden (SpacePictures.hide); `draws`: the AI can make pictures (ChatGPT).
     public static func refinePrompt(manifest: SpaceManifest, html: String, state: Data, history: [SpaceRefineEntry], request: String,

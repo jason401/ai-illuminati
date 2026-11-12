@@ -527,6 +527,19 @@ public final class TodoStore: ObservableObject {
         return gone.count
     }
     // Lists of a project whose work folder was disconnected now belong to its folderless binding, in one save.
+    // A project locked for good (`groupKey` `key`): each of its lists without a lock gets `lock`; a project with no list gets
+    // one (`name`, `project`), so the lock stays after its chats go. Lists with a lock keep theirs (the chat side refuses a
+    // project whose locks differ before it asks).
+    public func lockProject(_ key: String, name: String, project: ProjectBinding, lock: EnterpriseLock) throws {
+        try update { data in
+            var found = false
+            for i in data.lists.indices where data.lists[i].project?.groupKey == key {
+                found = true
+                if data.lists[i].lock == nil { data.lists[i].lock = lock }
+            }
+            if !found { data.lists.append(TodoList(title: name, project: project, lock: lock)) }
+        }
+    }
     public func relink(_ ids: Set<UUID>, to project: ProjectBinding) throws {
         guard !ids.isEmpty else { return }
         try update { data in

@@ -212,6 +212,20 @@ struct Conversation: Identifiable, Codable {
 enum ChatStore {
     static let dir = AccountStore.supportDir + "/chats"
 
+    // What else keeps a chat's data or hears of its changes, set once by the app before the first chat loads
+    // (`ChatLinksApp.connect`): the chat side calls none of them by name. Unset (a program that did not connect):
+    // only the chat's own files under `dir` are written and removed.
+    struct Links {
+        var purge: [(UUID) throws -> Void] = []          // in order, before the chat's own files: its AI sessions, its backups
+        var documents: (UUID) -> URL? = { _ in nil }      // its attached documents' folder, removed after `<id>.work`
+        var saved: (Conversation) -> Void = { _ in }
+        var deleted: (UUID) -> Void = { _ in }
+        var finished: (Conversation?) -> Void = { _ in }  // a chat finished answering
+        var locked: (Conversation) -> Void = { _ in }     // a chat was locked (Enterprise or personal)
+        var remote: (RemoteChat) -> SyncSnapshot? = { _ in nil }   // another Mac's copy, read to be shown
+    }
+    static var links = Links()
+
     static func loadAll() -> [Conversation] {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
@@ -230,24 +244,24 @@ enum ChatStore {
         let file = URL(fileURLWithPath: dir + "/\(conversation.id.uuidString).json")
         try? encoder.encode(conversation).write(to: file, options: .atomic)
         try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
-        DeviceSync.shared.noteSaved(conversation)
+        links.saved(conversation)
     }
 
     static func delete(_ conversation: Conversation) throws {
-        // Remove this chat's session transcripts (exact IDs only, never an account folder) and its backups.
-        try NativeSessions.purgeRoom(conversation.id, accounts: AccountStore.load())
-        try WorkspaceBackup.purgeRoom(conversation.id)
+        // First what the chat keeps elsewhere (its session transcripts, its backups); a failure keeps every file below.
+        for purge in links.purge { try purge(conversation.id) }
         let work = URL(fileURLWithPath: dir).appendingPathComponent(conversation.id.uuidString + ".work")
         if FileManager.default.fileExists(atPath: work.path) { try FileManager.default.removeItem(at: work) }
-        let documents = RoomDocuments.directory(conversation.id)
-        if FileManager.default.fileExists(atPath: documents.path) { try FileManager.default.removeItem(at: documents) }
+        if let documents = links.documents(conversation.id), FileManager.default.fileExists(atPath: documents.path) {
+            try FileManager.default.removeItem(at: documents)
+        }
         let assets = dir + "/\(conversation.id.uuidString).assets"
         if FileManager.default.fileExists(atPath: assets) { try FileManager.default.removeItem(atPath: assets) }
         let path = dir + "/\(conversation.id.uuidString).json"
         if FileManager.default.fileExists(atPath: path) {
             try FileManager.default.removeItem(atPath: path)
         }
-        DeviceSync.shared.noteDeleted(conversation.id)
+        links.deleted(conversation.id)
     }
 }
 
@@ -559,7 +573,7 @@ final class Discussion: ObservableObject {
         stoppingRooms.remove(room)
         workers[room] = nil
         model.onAccountsChange?()   // refresh the usage numbers after the answer
-        DeviceSync.shared.noteFinished(conversations.first { $0.id == room })
+        ChatStore.links.finished(conversations.first { $0.id == room })
     }
 
     /// Stops every chat that is working (quitting the app).
@@ -1427,7 +1441,7 @@ final class Discussion: ObservableObject {
             self.runningRooms.remove(room)
             self.stoppingRooms.remove(room)
             self.model.onAccountsChange?()   // refresh the usage numbers after the discussion
-            DeviceSync.shared.noteFinished(self.conversations.first { $0.id == room })
+            ChatStore.links.finished(self.conversations.first { $0.id == room })
         }
     }
 

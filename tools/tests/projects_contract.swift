@@ -214,5 +214,35 @@ let linked = WorkspaceBinding(roots: [WorkspaceRoot(path: repo.path, directory: 
 let work = ProjectWork.workBinding(linked, project: documents, chatFolder: chatFolder, run: run)
 expect(work.level == .execute && work.roots.map(\.writable) == [true, true, nil] && work.projectRunID == run.id, "work binding: \(work.roots.map(\.writable))")
 
+// Linking and moving a chat's project, the AI's stream plan, a project's TODO lock (C0, moved down from the chat side).
+do {
+    let code = ProjectBinding(root: "/tmp/code", common: "/tmp/code/.git", remote: "origin", remoteURL: "", kind: nil)
+    let mine = WorkspaceBinding(roots: [WorkspaceRoot(path: "/tmp/notes", directory: true), WorkspaceRoot(path: "/tmp/code", directory: true)])
+    let linked = ProjectWork.linking(mine, to: code, first: false)
+    expect(linked.roots.map(\.path) == ["/tmp/notes", "/tmp/code"] && linked.roots[1].writable == nil && linked.project == code, "a code project already linked keeps its place")
+    let fresh = ProjectWork.linking(nil, to: code, first: false)
+    expect(fresh.roots.map(\.path) == ["/tmp/code"] && fresh.roots[0].writable == true, "a chat with nothing gets the root, writable")
+    let docs = ProjectWork.linking(mine, to: documents, first: true)
+    expect(docs.roots.first?.path == documents.root && docs.roots.first?.writable == true && docs.roots.filter { $0.path == documents.root }.count == 1 && docs.project == documents, "a documents project's root leads")
+    var running = linked; running.projectRunID = UUID(); running.projectGeneration = 3
+    let moved = ProjectWork.moving(running, to: documents)
+    expect(moved.roots.map(\.path) == [documents.root, "/tmp/notes"] && moved.project == documents && moved.projectRunID == nil && moved.projectGeneration == nil, "moved: the old root goes, no run stays")
+
+    let planRun = ProjectRun(room: UUID(), binding: documents, token: DebateCancellation())
+    var shown: [WorkStep] = []
+    planRun.onPlan = { steps, _ in shown = steps }
+    let todo: [[String: Any]] = [["content": "read", "status": "completed"], ["content": "write", "status": "in_progress"]]
+    expect(planRun.setPlan(todos: todo, generation: planRun.generation) && shown.map(\.text) == ["read", "write"] && shown.map(\.status) == [.done, .doing], "the stream's task list becomes the plan")
+    expect(!planRun.setPlan(todos: "nonsense", generation: planRun.generation) && shown.count == 2, "an unreadable list changes nothing")
+    expect(!planRun.setPlan(todos: todo, generation: planRun.generation + 1), "another attempt's list is ignored")
+
+    let lockStore = TodoStore(url: base.appendingPathComponent("lock-todos.json"))
+    let personal = EnterpriseLock(organization: "personal", name: "Personal", lockedAt: Date())
+    try? lockStore.lockProject(code.groupKey, name: "Code", project: code, lock: personal)
+    expect(lockStore.current.lists.count == 1 && lockStore.current.lists[0].lock?.organization == "personal" && lockStore.current.lists[0].project == code, "a project with no list gets a locked one")
+    try? lockStore.lockProject(code.groupKey, name: "Code", project: code, lock: EnterpriseLock(organization: "work", name: "W", lockedAt: Date()))
+    expect(lockStore.current.lists.count == 1 && lockStore.current.lists[0].lock?.organization == "personal", "a list keeps the lock it has")
+}
+
 print("PASS: Projects promises (TODO retry, busy repository, the user after retries, report on the check, next start after the lock's release, cancel, a free place, restart, todos.json, repository lock, scoped tools, work binding)")
 exit(0)

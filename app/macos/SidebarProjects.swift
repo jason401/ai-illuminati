@@ -270,13 +270,5 @@ extension SidebarProjects {
     }
 
     // The chat's link after the move: the project's newest root, writable, plus what else it had linked.
-    static func moved(_ workspace: WorkspaceBinding?, to project: ProjectBinding) -> WorkspaceBinding {
-        var binding = workspace ?? WorkspaceBinding(roots: [])
-        let old = binding.project?.root
-        binding.roots.removeAll { $0.path == old || $0.path == project.root }
-        binding.roots.insert(contentsOf: project.linkedRoots, at: 0)
-        binding.project = project
-        binding.projectRunID = nil; binding.projectGeneration = nil
-        return binding
-    }
+    static func moved(_ workspace: WorkspaceBinding?, to project: ProjectBinding) -> WorkspaceBinding { ProjectWork.moving(workspace, to: project) }
 }

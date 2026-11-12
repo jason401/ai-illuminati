@@ -88,7 +88,7 @@ extension Discussion {
     var currentLock: EnterpriseLock? { lock(of: currentID) }
 
     // Locks a chat for `organization`, by the user only (the chat menu). It cannot be undone. Its copy on iCloud
-    // is taken down (DeviceSync shares no Enterprise chat by default).
+    // is taken down (no Enterprise chat is shared to other Macs by default; the app hears it as `ChatStore.links.locked`).
     func lockEnterprise(_ room: UUID, organization: EnterpriseLock) {
         guard let i = conversations.firstIndex(where: { $0.id == room }), conversations[i].enterpriseLock == nil,
               !runningRooms.contains(room) else { return }
@@ -105,7 +105,7 @@ extension Discussion {
             conversations[i].configuration = config
         }
         if conversations[i].hasContent { ChatStore.save(conversations[i]) }
-        DeviceSync.shared.chatLocked(conversations[i])
+        ChatStore.links.locked(conversations[i])
         fillSpaceLocks()   // Spaces this chat made before keep the lock, also after the chat is deleted
         objectWillChange.send()
     }
@@ -117,10 +117,10 @@ extension Discussion {
     // meetings in it then keep the lock. Returns why it was not locked (nil: locked).
     @discardableResult
     func lockProject(_ key: String, name: String, organization: EnterpriseLock, todos: TodoStore = .shared) -> String? {
-        let chats = conversations.filter { $0.meetingOf == nil && $0.workspace?.project.map(SidebarProjects.key) == key }
+        let chats = conversations.filter { $0.meetingOf == nil && $0.workspace?.project?.groupKey == key }
             .sorted { $0.updatedAt > $1.updatedAt }
         let rooms = chats.flatMap { [$0] + meetings(of: $0.id) }
-        let lists = todos.current.lists.filter { $0.project.map(SidebarProjects.key) == key }
+        let lists = todos.current.lists.filter { $0.project?.groupKey == key }
         if let held = todos.locked { return held }
         if !runningRooms.isDisjoint(with: rooms.map(\.id)) {
             return L("이 프로젝트의 채팅이 답하는 중이에요. 끝난 뒤 다시 해 주세요.", "A chat of this project is answering. Try again when it is done.")
@@ -133,16 +133,7 @@ extension Discussion {
         }
         var lock = organization
         lock.lockedAt = Date()
-        do {
-            try todos.update { data in
-                var found = false
-                for i in data.lists.indices where data.lists[i].project.map(SidebarProjects.key) == key {
-                    found = true
-                    if data.lists[i].lock == nil { data.lists[i].lock = lock }
-                }
-                if !found { data.lists.append(TodoList(title: name, project: binding, lock: lock)) }
-            }
-        } catch { return error.localizedDescription }
+        do { try todos.lockProject(key, name: name, project: binding, lock: lock) } catch { return error.localizedDescription }
         for room in rooms where room.enterpriseLock == nil { lockEnterprise(room.id, organization: lock) }
         return nil
     }

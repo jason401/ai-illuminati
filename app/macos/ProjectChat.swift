@@ -165,11 +165,7 @@ extension Discussion {
         do {
             let project = try ProjectProcess.inspect(folder.path)
             guard Self.allowProjectWork(project) else { return }
-            change(currentID, save: true) { conversation in
-                var binding = conversation.workspace ?? WorkspaceBinding(roots: [])
-                if !binding.roots.contains(where: { $0.path == project.root }) { binding.roots.append(WorkspaceRoot(path: project.root, directory: true, writable: true)) }
-                binding.project = project; conversation.workspace = binding
-            }
+            change(currentID, save: true) { $0.workspace = ProjectWork.linking($0.workspace, to: project, first: false) }
         } catch { attachmentError = error.localizedDescription }
     }
 
@@ -192,12 +188,7 @@ extension Discussion {
             alert.addButton(withTitle: L("연결", "Link")); alert.addButton(withTitle: L("취소", "Cancel"))
             guard alert.runModal() == .alertFirstButtonReturn else { return }
             try nativeSessions.reset(currentID)
-            change(currentID, save: true) { conversation in
-                var binding = conversation.workspace ?? WorkspaceBinding(roots: [])
-                binding.roots.removeAll { $0.path == project.root }
-                binding.roots.insert(WorkspaceRoot(path: project.root, directory: true, writable: true), at: 0)
-                binding.project = project; conversation.workspace = binding
-            }
+            change(currentID, save: true) { $0.workspace = ProjectWork.linking($0.workspace, to: project, first: true) }
             attachmentError = nil
             sessionNote = L("문서 프로젝트 연결됨 · 완전 자동 (답할 때마다 백업, Undo 가능)", "Documents project linked · full auto (backed up before each answer, Undo available)")
         } catch { attachmentError = error.localizedDescription }
@@ -256,7 +247,7 @@ extension Discussion {
         }
         // The AI's earlier sessions knew other folders: the next question starts fresh ones from the chat.
         do { try nativeSessions.reset(id) } catch { attachmentError = error.localizedDescription; return false }
-        change(id, save: true) { $0.workspace = SidebarProjects.moved($0.workspace, to: project) }
+        change(id, save: true) { $0.workspace = ProjectWork.moving($0.workspace, to: project) }
         attachmentError = nil
         sessionNote = L("\(group.name) 프로젝트로 옮겼어요", "Moved into \(group.name)")
         return true
@@ -350,7 +341,7 @@ extension Discussion {
                     switch update {
                     case .text(let text): self.changeTurn(id, index) { $0.partial = Self.extractState(FaceLink.extract(text).text).reply; $0.partialBy = speaker; $0.lastActivityAt = Date() }
                     case .activity(let text): self.changeTurn(id, index) { $0.activity = text; $0.lastActivityAt = Date() }
-                    case .todos(let todos): if let steps = PlanLink.todos(todos) { run.setPlan(steps, note: nil, generation: generation, tool: false) }
+                    case .todos(let todos): run.setPlan(todos: todos, generation: generation)
                     }
                 }
                 guard permits(account, room: id) else { return .failure(Enterprise.blocked(account)) }

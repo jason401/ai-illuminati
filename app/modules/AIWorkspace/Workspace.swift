@@ -296,3 +296,39 @@ extension GeminiLinks {
         return "[도구 안내] \(commands) \(files) \(pages) 질문에 폴더나 파일이 필요 없으면 도구 없이 바로 답하세요.\n\n"
     }
 }
+
+// What another AI of the same chat may see of an answer's folders (C0: the folder rules, moved down from the chat side).
+extension WorkspaceBinding {
+    // An AI asked about this answer (ask_ai, the review): every folder read only, no face and no tools of its own, so it
+    // cannot ask on.
+    public var consulted: WorkspaceBinding {
+        var view = WorkspaceBinding(roots: roots.map { WorkspaceRoot(path: $0.path, directory: $0.directory) })
+        view.face = false
+        view.origin = .consulted
+        return view
+    }
+    // Another AI answering the same message at the same time: the same folders read only; of the tools only ask_ai.
+    public var side: WorkspaceBinding {
+        var view = consulted
+        view.origin = .side
+        return view
+    }
+    // An opinion (no project work): no project, view level, no full access; only the chat's own folder writable.
+    public func opinion(chatFolder: String) -> WorkspaceBinding {
+        var view = self
+        view.project = nil; view.projectRunID = nil; view.projectGeneration = nil
+        view.level = .view; view.fullAccess = nil
+        view.roots = roots.map { WorkspaceRoot(path: $0.path, directory: $0.directory, writable: $0.path == chatFolder ? true : nil) }
+        return view
+    }
+    // A meeting's members: the meeting's folder first and writable (its notes), the rest as an opinion, no face, consulted.
+    public func meeting(folder: String) -> WorkspaceBinding {
+        var binding = self
+        binding.roots.removeAll { $0.path == folder }
+        binding.roots.insert(WorkspaceRoot(path: folder, directory: true, writable: true), at: 0)
+        var view = binding.opinion(chatFolder: folder)
+        view.face = nil
+        view.origin = .consulted
+        return view
+    }
+}

@@ -147,6 +147,8 @@ do {
     print("PASS: the app's account edits keep the shared format, a failed backup and an unreadable list lose nothing")
 }
 
+// The chat store reaches sessions, backups, documents and DeviceSync only through what the app connects (C0).
+ChatLinksApp.connect()
 // Only plain chat is offered; a chat saved in a team mode opens as plain chat. Legacy engines are checked separately.
 expect(Discussion.availableModes == [0], "only plain chat should be offered")
 let hiddenDefault = Discussion(model: AppModel())
@@ -2574,6 +2576,7 @@ runTest("testWindowDrag", testWindowDrag)
 
 runTest("testRunConditions", testRunConditions)
 runTest("testRuntimeThroughApp", testRuntimeThroughApp)
+runTest("testChatLinks", testChatLinks)
 runTest("testProjectWork", testProjectWork)
 runTest("testAskAI", testAskAI)
 runTest("testCollabLog", testCollabLog)

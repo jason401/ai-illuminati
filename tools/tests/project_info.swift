@@ -186,8 +186,9 @@ func testGitBranches() {
     expect(fromTree.pending == GitCounts(ahead: 0, behind: 0) && GitBranches.summary(fromTree) == L("배포 최신 상태", "Release is up to date"), "up to date")
     // A branch deleted on origin leaves the list after a refresh; the local branch of the same name stays.
     sh(["push", "-q", "origin", "feature/x"], in: repo); sh(["fetch", "-q", "origin"], in: repo)
-    expect(GitBranches.read(root: repo) { args in sh(args, in: repo) }.rows.contains { $0.name == "origin/feature/x" }, "pushed branch is listed")
-    sh(["push", "-q", "origin", "--delete", "feature/x"], in: tree)  // deleted from elsewhere: repo still has origin/feature/x
+    let other = base.appendingPathComponent("other").path         // its own clone: a worktree would share repo's origin/* refs
+    sh(["clone", "-q", bare, other], in: base.path); sh(["push", "-q", "origin", "--delete", "feature/x"], in: other)
+    expect(GitBranches.read(root: repo) { args in sh(args, in: repo) }.rows.contains { $0.name == "origin/feature/x" }, "deleted elsewhere: still listed before the refresh")
     expect(GitBranches.fetchArgs.contains("--prune"), "refresh prunes: \(GitBranches.fetchArgs)")
     sh(GitBranches.fetchArgs, in: repo)
     let pruned = GitBranches.read(root: repo) { args in sh(args, in: repo) }.rows

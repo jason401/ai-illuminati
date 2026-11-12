@@ -62,6 +62,18 @@ func testRuntimeThroughApp() {
         while Date() < end { if kill(pid, 0) != 0 { return true }; Thread.sleep(forTimeInterval: 0.05) }
         return false
     }
+    // Stop once the fake tool has written these pid files (at most 10 s): a Stop before that would check nothing.
+    // Returns when Stop was pressed, so "at once" is measured from there.
+    func stop(_ token: DebateCancellation, after names: [String]) -> () -> Date {
+        let lock = NSLock(); var at = Date.distantFuture
+        DispatchQueue.global().async {
+            let end = Date().addingTimeInterval(10)
+            while Date() < end && names.contains(where: { pid($0) == nil }) { Thread.sleep(forTimeInterval: 0.05) }
+            lock.lock(); at = Date(); lock.unlock()
+            token.cancel()
+        }
+        return { lock.lock(); defer { lock.unlock() }; return at }
+    }
     func leftovers() { for name in ["pid", "child", "stray"] { if let pid = pid(name) { kill(pid, SIGKILL) } } }
     func failure(_ result: Result<String, Answerer.Failure>) -> Answerer.Failure? { if case .failure(let f) = result { return f }; return nil }
 
@@ -81,17 +93,16 @@ func testRuntimeThroughApp() {
         // started in a group of its own.
         mode("sleep")
         let token = DebateCancellation()
-        DispatchQueue.global().asyncAfter(deadline: .now() + 0.8) { token.cancel() }
-        var started = Date()
+        let pressed = stop(token, after: ["pid", "child", "stray"])
         expect(failure(chat.requestDebate(account, "Say hi.", 60, token, workspace: folder)) != nil, "\(name): Stop fails the answer (app)")
-        expect(Date().timeIntervalSince(started) < 5, "\(name): Stop ends the answer at once (app)")
+        expect(Date().timeIntervalSince(pressed()) < 4, "\(name): Stop ends the answer at once (app)")
         expect(gone("pid") && gone("child"), "\(name): Stop ends the tool and what it started (app)")
         expect(gone("stray"), "\(name): Stop ends a program the tool started in a group of its own (app)")
         leftovers()
 
         // F3: the time limit the app asks for is kept; the tool and its programs are ended.
         mode("sleep")
-        started = Date()
+        let started = Date()
         if case .timedOut? = failure(chat.requestDebate(account, "Say hi.", 1.5, DebateCancellation(), workspace: folder)) {}
         else { expect(false, "\(name): a slow tool times out (app)") }
         expect(Date().timeIntervalSince(started) < 6, "\(name): the time limit is kept (app)")
@@ -128,9 +139,9 @@ func testRuntimeThroughApp() {
     _ = sessions.requestDebate(claude, prompt, 30, DebateCancellation())
     expect(read("args").split(separator: "\n").contains("--resume"), "the next message resumes it (app)")
     mode("slow")
-    let stop = DebateCancellation()
-    DispatchQueue.global().asyncAfter(deadline: .now() + 0.8) { stop.cancel() }
-    expect(failure(sessions.requestDebate(claude, prompt, 60, stop)) != nil && gone("pid"), "Stop ends a session answer (app)")
+    let stopped = DebateCancellation()
+    _ = stop(stopped, after: ["pid"])
+    expect(failure(sessions.requestDebate(claude, prompt, 60, stopped)) != nil && gone("pid"), "Stop ends a session answer (app)")
     mode("session")
     _ = sessions.requestDebate(claude, prompt, 30, DebateCancellation())
     let after = read("args").split(separator: "\n").map(String.init)

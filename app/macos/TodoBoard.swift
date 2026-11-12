@@ -120,7 +120,7 @@ struct TodoBoardView: View {
     // only its roots (a repository with several worktrees has one per root).
     private var projects: [(name: String, binding: ProjectBinding)] {
         let mine = { (p: ProjectBinding) in discussion.boardProject.map { SidebarProjects.key(p) == $0 } ?? true }
-        return TodoProject.all(store.snapshot, chats: discussion.conversations, names: projectInfo.names).filter { mine($0.binding) }.map { ($0.name, $0.binding) }
+        return TodoProject.all(store.snapshot, chats: discussion.conversations.map(\.projectSummary), names: projectInfo.names).filter { mine($0.binding) }.map { ($0.name, $0.binding) }
     }
 
     private var shownLists: [TodoList] {

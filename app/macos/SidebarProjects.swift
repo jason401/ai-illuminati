@@ -24,7 +24,7 @@ struct ProjectGroup: Identifiable, Equatable {
 }
 
 enum SidebarProjects {
-    static func key(_ project: ProjectBinding) -> String { project.common.isEmpty ? project.root : project.common }
+    static func key(_ project: ProjectBinding) -> String { project.groupKey }
 
     // "AI Illuminati" for …/AI Illuminati/.git, else the root's folder name.
     static func folderName(_ project: ProjectBinding) -> String {

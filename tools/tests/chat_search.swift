@@ -139,7 +139,7 @@ func testEnterpriseMarks() {
     expect(todos.current.lists.filter { $0.project.map(SidebarProjects.key) == key }.map { $0.lock?.organization } == ["학교"], "a project without a list gets a locked one")
     let item = try! todos.add(title: "new worktree todo", project: worktree, projectName: "lock-repo")
     expect(todos.current.list(item.listID)?.lock?.organization == "학교", "a TODO on another worktree of a locked project keeps the lock")
-    let projects = TodoProject.all(todos.current, chats: chat.conversations, names: [:])
+    let projects = TodoProject.all(todos.current, chats: chat.conversations.map(\.projectSummary), names: [:])
     expect(projects.filter { SidebarProjects.key($0.binding) == key }.allSatisfy { $0.lock?.organization == "학교" }, "the project's TODO targets carry its lock")
     expect(chat.lockProject(key, name: "lock-repo", organization: personalLock, todos: todos) != nil
            && locked(first) == "학교", "a locked project is never locked another way")

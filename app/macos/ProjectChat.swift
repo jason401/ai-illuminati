@@ -294,10 +294,7 @@ extension Discussion {
                 changeTurn(id, index, save: true) { $0.workspaceChanges = changes; $0.projectCommitted = run.committed; $0.projectPushed = run.pushed; $0.projectLog = run.log.isEmpty ? nil : run.log }
             }
         }
-        var workspace = binding
-        workspace.level = .execute
-        workspace.roots = binding.roots.map { WorkspaceRoot(path: $0.path, directory: $0.directory, writable: ($0.path == selected.root || $0.path == Self.chatFolder(id).path) ? true : nil) }
-        workspace.projectRunID = run.id
+        var workspace = ProjectWork.workBinding(binding, project: selected, chatFolder: Self.chatFolder(id).path, run: run)
         do {
             try run.validate(run.generation)
             // Only back up writable directories; native/MCP write roots are limited to these same roots.
@@ -367,8 +364,7 @@ extension Discussion {
             }
             let started = Date()
             let result = attempt("", transcript: transcript, fresh: fresh)
-            run.attempt.cancel() // All app commands and CLI descendants finish before another AI can write.
-            ToolHub.shared.revoke(project: run.id)
+            run.endAttempt() // All app commands and CLI descendants finish before another AI can write.
             if cancellation.isCancelled { break }
             switch result {
             case .success(let raw):
@@ -392,7 +388,7 @@ extension Discussion {
                 // Members who review: when this answer changed the project, one of them reads the changes and the
                 // lead fixes what is right, once, in the same turn (with the same backup and project lock).
                 if let start, !cancellation.isCancelled {
-                    run.attempt.cancel(); ToolHub.shared.revoke(project: run.id)
+                    run.endAttempt()
                     run.nextAttempt()
                     var reviewer: String?, reviewOK = false
                     let findings = reviewChanges(id: id, index: index, worker: account, reviewers: reviewers, binding: workspace,
@@ -410,7 +406,7 @@ extension Discussion {
                         changeTurn(id, index) { $0.status = speaker + L(" · 검수 반영 중", " · fixing review findings") }
                         let after = transcript + "\n[" + speaker + "]\n" + text
                         let fixed = attempt("\n" + findings.note, transcript: after, fresh: fresh.map { $0 + "\n[" + speaker + "]\n" + text })
-                        run.attempt.cancel(); ToolHub.shared.revoke(project: run.id)
+                        run.endAttempt()
                         if !cancellation.isCancelled {
                             switch fixed {
                             case .success(let raw):

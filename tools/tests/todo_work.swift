@@ -569,12 +569,15 @@ func testTodoAttachments() {
     let first = try! scheduler.deliver(current, room: room)
     expect(first.paths.count == 2 && first.paths.allSatisfy { $0.hasPrefix(Discussion.chatFolder(room).path + "/") && FileManager.default.fileExists(atPath: $0) },
            "attachments go into the TODO chat's folder: \(first.paths)")
-    expect(first.images.map(\.id) == [current.attachments.first { $0.image }!.id], "the photo goes with the message, under its attachment's ID")
+    expect(first.photos.map(\.id) == [current.attachments.first { $0.image }!.id], "the photo goes with the message, under its attachment's ID")
     let question = TodoScheduler.question(current, files: first.paths)
     expect(question.contains("see the shot") && first.paths.allSatisfy(question.contains), "the question lists where the files are")
-    chat.change(room, save: false) { c in var turn = ChatTurn(question: question); turn.images = first.images; c.turns.append(turn) }
+    // The chat side sends it as a picture of that chat, under the same ID (TodoChatsApp `start`).
+    let images = first.photos.compactMap { try? ImageStore.importImage(Data(contentsOf: $0.file), name: $0.name, conversationID: room, id: $0.id) }
+    expect(images.map(\.id) == first.photos.map(\.id), "the photo becomes the chat's picture under the attachment's ID")
+    chat.change(room, save: false) { c in var turn = ChatTurn(question: question); turn.images = images; c.turns.append(turn) }
     let again = try! scheduler.deliver(current, room: room)
-    expect(again.paths == first.paths && again.images.isEmpty, "a retry in the same chat reuses the copies and does not send the photo again")
+    expect(again.paths == first.paths && again.photos.isEmpty, "a retry in the same chat reuses the copies and does not send the photo again")
     try! store.delete(item.id)
     expect(!FileManager.default.exists(store.folder(item.id)) && FileManager.default.fileExists(atPath: first.paths[0]), "deleting the TODO removes its files; the chat keeps its copies")
     print("PASS: TODO attachments (copied in, saved, safe names, limits, refused while running, removed, delivered to the chat once)")
@@ -643,7 +646,8 @@ func testTodoCrew() {
         var u = AIUsage(name: "x"); u.fiveHour = UsageWindow(usedPercent: 100 - five, resetsAt: nil); u.weekly = UsageWindow(usedPercent: 100 - week, resetsAt: nil); return u
     }
     model.latestUsage = ["c1": left(100, 100), "c2": left(60, 60), "x1": left(50, 50), "g1": left(100, 100)]
-    let scheduler = TodoScheduler(discussion: Discussion(model: model), store: store)
+    let discussion = Discussion(model: model)
+    let scheduler = TodoScheduler(discussion: discussion, store: store)
     let auto = scheduler.crew()
     expect(auto?.lead.id == "c1" && auto?.reviewer?.id == "x1", "automatic: the most left works, the other kind reviews")
     let list = store.current.list(listID)!
@@ -668,7 +672,7 @@ func testTodoCrew() {
     let school = Account(id: "s1", provider: .claude, name: "Claude (학교)")
     let other = Account(id: "o1", provider: .codex, name: "ChatGPT (회사)")
     model.accounts += [school, other]
-    let lockedChat = scheduler.discussion.addProjectChat(a, title: "locked", open: false, lock: EnterpriseLock(organization: Enterprise.organization(other.name), name: "회사", lockedAt: Date()))
+    let lockedChat = discussion.addProjectChat(a, title: "locked", open: false, lock: EnterpriseLock(organization: Enterprise.organization(other.name), name: "회사", lockedAt: Date()))
     try! store.change(item.id) { $0.state = .done }
     let next = try! store.add(title: "next", project: a, projectName: "A", originRoom: lockedChat)
     try! store.change(next.id) { $0.state = .draft }

@@ -25,7 +25,7 @@ enum ProjectCreator {
     static let markerName = "ai-illuminati-project.json"
     private static let busy = NSLock()   // one creation at a time
 
-    static func error(_ korean: String, _ english: String) -> NSError { MaterialReader.error(L(korean, english)) }
+    static func error(_ korean: String, _ english: String) -> NSError { ProjectError.make(L(korean, english)) }
     static var gh: String? { ghCandidates.first { FileManager.default.isExecutableFile(atPath: $0) } }
 
     // The folder and repository name: letters, digits, . _ - (spaces become -), as GitHub allows.
@@ -76,7 +76,7 @@ enum ProjectCreator {
     // and a cwd for project tools; it is never added to the chat's allowed roots.
     static func createFolderless(name: String) throws -> ProjectBinding {
         let project = try folderlessBinding()
-        try ProjectInfoStore.shared.rename(SidebarProjects.key(project), to: name)
+        try ProjectInfoStore.shared.rename(project.groupKey, to: name)
         return project
     }
     static func folderlessBinding() throws -> ProjectBinding {
@@ -248,8 +248,8 @@ final class ProjectMakerLink: ToolProvider {
 
     func tools(context: ToolContext) -> [[String: Any]] {
         guard context.asker != nil else { return [] }
-        let chat = main { ChatLink.shared.conversations().first { $0.id == context.room } }
-        guard let chat, !chat.isEnterprise else { return [] }
+        let chat = main { ProjectChats.list().first { $0.id == context.room } }
+        guard let chat, !chat.enterprise else { return [] }
         let string: [String: Any] = ["type": "string"]
         return [["name": "create_project",
                  "description": "When the user asks for a new project: create its folder with Git and a first commit, a GitHub repository under the user's own account (gh login), push, and add a new chat linked to it. The user approves a card first. name: letters, digits, . _ - only (turn a Korean name into a short English one). location: absolute folder path, default ~/Documents/Projects. private: default true. If it fails midway, calling it again with the same arguments continues. kind \"folderless\": create a named project without linking or creating a user folder; add shared folders later in Project info. kind \"documents\" (papers, slides, posters, figures; no code): only a folder (an existing one is linked as it is), no Git or GitHub; name may then be any folder name.",
@@ -258,7 +258,7 @@ final class ProjectMakerLink: ToolProvider {
     }
 
     func call(_ name: String, _ arguments: [String: Any], context: ToolContext) -> [String: Any] {
-        guard name == "create_project", !tools(context: context).isEmpty else { return ToolHub.failure("Unknown tool: " + name) }
+        guard name == "create_project", !tools(context: context).isEmpty else { return ProjectTools.failure("Unknown tool: " + name) }
         let token = main { cancellation(context.room) } ?? DebateCancellation()
         if arguments["kind"] as? String == "folderless" { return folderless(arguments, context: context, token: token) }
         if arguments["kind"] as? String == ProjectBinding.documentsKind { return documents(arguments, context: context, token: token) }
@@ -268,13 +268,13 @@ final class ProjectMakerLink: ToolProvider {
             let deadline = Date().addingTimeInterval(900)
             let card = ProjectApproval(room: context.room, run: UUID(), title: L("새 프로젝트 만들기", "Create a new project"), detail: ProjectCreator.summary(plan, resume: resume))
             guard ProjectCenter.shared.approve(card, token: token, deadline: deadline) else {
-                if Date() >= deadline, !token.isCancelled { return ToolHub.failure("Approval timed out after 15 minutes; treated as refused. Nothing was created. Tell the user they can ask again.") }
-                return ToolHub.failure("The user did not allow creating the project. Nothing new was created; stop and say so.")
+                if Date() >= deadline, !token.isCancelled { return ProjectTools.failure("Approval timed out after 15 minutes; treated as refused. Nothing was created. Tell the user they can ask again.") }
+                return ProjectTools.failure("The user did not allow creating the project. Nothing new was created; stop and say so.")
             }
             let project = try ProjectCreator.create(plan, token: token)
             let title = main { addChat(project, plan.repo) }
             return ["content": [["type": "text", "text": "Created \(plan.folder) and \(plan.url) (\(plan.isPrivate ? "private" : "public")); main is pushed. A new chat \"\(title)\" linked to this project is at the top of the chat list (full auto). Tell the user to open it and ask for the work there; this chat is not linked to the project."]], "isError": false]
-        } catch { return ToolHub.failure(error.localizedDescription) }
+        } catch { return ProjectTools.failure(error.localizedDescription) }
     }
 }
 
@@ -285,13 +285,13 @@ extension ProjectMakerLink {
         let card = ProjectApproval(room: context.room, run: UUID(), title: L("폴더 없는 프로젝트 만들기", "Create a folderless project"),
                                    detail: title + "\n" + L("폴더·Git·GitHub 없이 시작해요. 폴더는 나중에 프로젝트 정보에서 추가할 수 있어요.", "Starts without folders, Git or GitHub. Add folders later in Project info."))
         guard ProjectCenter.shared.approve(card, token: token, deadline: deadline) else {
-            return ToolHub.failure("Creating the folderless project was not approved or timed out. Nothing was created.")
+            return ProjectTools.failure("Creating the folderless project was not approved or timed out. Nothing was created.")
         }
         do {
             let project = try ProjectCreator.createFolderless(name: title)
             let chat = main { addChat(project, title) }
             return ["content": [["type": "text", "text": "Created folderless project \(title) and chat \(chat). No user folder, Git or GitHub repository was created or linked. Add folders later in Project info."]], "isError": false]
-        } catch { return ToolHub.failure(error.localizedDescription) }
+        } catch { return ProjectTools.failure(error.localizedDescription) }
     }
 
     func documents(_ arguments: [String: Any], context: ToolContext, token: DebateCancellation) -> [String: Any] {
@@ -305,13 +305,13 @@ extension ProjectMakerLink {
             let deadline = Date().addingTimeInterval(900)
             let card = ProjectApproval(room: context.room, run: UUID(), title: L("문서 프로젝트 만들기", "Create a documents project"), detail: detail)
             guard ProjectCenter.shared.approve(card, token: token, deadline: deadline) else {
-                if Date() >= deadline, !token.isCancelled { return ToolHub.failure("Approval timed out after 15 minutes; treated as refused. Nothing was created. Tell the user they can ask again.") }
-                return ToolHub.failure("The user did not allow creating the project. Nothing new was created; stop and say so.")
+                if Date() >= deadline, !token.isCancelled { return ProjectTools.failure("Approval timed out after 15 minutes; treated as refused. Nothing was created. Tell the user they can ask again.") }
+                return ProjectTools.failure("The user did not allow creating the project. Nothing new was created; stop and say so.")
             }
             let project = try ProjectCreator.createDocuments(folder)
             let title = main { addChat(project, (folder as NSString).lastPathComponent) }
             return ["content": [["type": "text", "text": "Linked \(project.root) as a documents project (no Git). A new chat \"\(title)\" linked to it is at the top of the chat list (full auto, backed up before each answer). Tell the user to open it, or its TODO board, and ask for the work there; this chat is not linked to the project."]], "isError": false]
-        } catch { return ToolHub.failure(error.localizedDescription) }
+        } catch { return ProjectTools.failure(error.localizedDescription) }
     }
 }
 
@@ -390,11 +390,11 @@ extension Discussion {
     }
 
     func disconnectRefusal(_ key: String) -> String? {
-        let chats = conversations.filter { $0.workspace?.project.map(SidebarProjects.key) == key }
+        let chats = conversations.filter { $0.workspace?.project?.groupKey == key }
         let rooms = chats.flatMap { [$0.id] + meetings(of: $0.id).map(\.id) }
         if !runningRooms.isDisjoint(with: rooms) { return L("이 프로젝트의 채팅이 답하는 중이에요. 끝난 뒤 다시 해 주세요.", "A chat of this project is answering. Try again when it is done.") }
         let todo = TodoStore.shared.current
-        let lists = Set(todo.lists.filter { $0.project.map(SidebarProjects.key) == key }.map(\.id))
+        let lists = Set(todo.lists.filter { $0.project?.groupKey == key }.map(\.id))
         if todo.items.contains(where: { lists.contains($0.listID) && $0.state == .running }) {
             return L("이 프로젝트의 TODO가 진행 중이에요. 끝나거나 멈춘 뒤 다시 해 주세요.", "A TODO of this project is running. Try again when it is done or stopped.")
         }
@@ -418,7 +418,7 @@ extension Discussion {
             try? FileManager.default.removeItem(atPath: project.root)
             throw error
         }
-        let lists = Set(TodoStore.shared.current.lists.filter { $0.project.map(SidebarProjects.key) == key }.map(\.id))
+        let lists = Set(TodoStore.shared.current.lists.filter { $0.project?.groupKey == key }.map(\.id))
         do { try TodoStore.shared.relink(lists, to: project) } catch {
             try? ProjectInfoStore.shared.forget(new)
             throw error

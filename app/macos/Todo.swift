@@ -407,7 +407,7 @@ final class TodoStore: ObservableObject {
                 if data.lists[l].lock == nil { data.lists[l].lock = lock }   // like a chat's lock, never removed
             } else {
                 // A new worktree of a locked project: its list keeps the project's lock.
-                let held = data.lists.first { $0.project.map(SidebarProjects.key) == SidebarProjects.key(project) && $0.lock != nil }?.lock
+                let held = data.lists.first { $0.project?.groupKey == project.groupKey && $0.lock != nil }?.lock
                 if fromAI, let held, held.organization != lock?.organization { throw TodoError.locked(L("이 채팅에서는 그 프로젝트에 TODO를 적을 수 없어요 (Enterprise).", "This chat cannot add TODOs to that project (Enterprise).")) }
                 let list = TodoList(title: projectName, project: project, lock: held ?? lock); data.lists.append(list); listID = list.id
             }
@@ -660,13 +660,13 @@ final class TaskLink: ToolProvider {
                                  "required": ["kind", "reason"], "additionalProperties": false]]]
     }
     func call(_ name: String, _ arguments: [String: Any], context: ToolContext) -> [String: Any] {
-        guard let item = live(context) else { return ToolHub.failure("No running TODO in this chat.") }
+        guard let item = live(context) else { return ProjectTools.failure("No running TODO in this chat.") }
         func text(_ key: String) -> String { (arguments[key] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
         func list(_ value: Any?) -> [String] { (value as? [String] ?? []).map { String($0.prefix(300)) }.filter { !$0.isEmpty }.prefix(30).map { $0 } }
         switch name {
         case "task_done":
             let summary = text("summary")
-            guard !summary.isEmpty else { return ToolHub.failure("summary is required.") }
+            guard !summary.isEmpty else { return ProjectTools.failure("summary is required.") }
             // Kept with the attempt: the TODO waits for the check only once the review and its fixes are over (settle).
             do {
                 try TodoStore.shared.change(item.id) { t in
@@ -674,29 +674,46 @@ final class TaskLink: ToolProvider {
                     report.summary = String(summary.prefix(4000)); report.assumptions = list(arguments["assumptions"]); report.files = list(arguments["files"])
                     t.report = report
                 }
-            } catch { return ToolHub.failure(error.localizedDescription) }
+            } catch { return ProjectTools.failure(error.localizedDescription) }
             return ["content": [["type": "text", "text": "Recorded. When this chat's work and review are over, the TODO waits for the user's check. End your reply with a short report of what you did and what to check."]], "isError": false]
         case "task_ask":
             let kind = text("kind"), reason = text("reason")
-            guard ["question", "blocked"].contains(kind), !reason.isEmpty else { return ToolHub.failure("kind (question|blocked) and reason are required.") }
+            guard ["question", "blocked"].contains(kind), !reason.isEmpty else { return ProjectTools.failure("kind (question|blocked) and reason are required.") }
             let raw = arguments["questions"] as? [[String: Any]] ?? []
-            guard raw.count <= 3 else { return ToolHub.failure("At most 3 questions.") }
+            guard raw.count <= 3 else { return ProjectTools.failure("At most 3 questions.") }
             let items = raw.compactMap { q -> TodoQuestion.Item? in
                 let t = (q["text"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
                 return t.isEmpty ? nil : TodoQuestion.Item(text: String(t.prefix(500)), options: list(q["options"]).prefix(6).map { $0 }, recommended: (q["recommended"] as? String).map { String($0.prefix(300)) })
             }
-            guard kind == "blocked" || !items.isEmpty else { return ToolHub.failure("A question needs at least one question.") }
+            guard kind == "blocked" || !items.isEmpty else { return ProjectTools.failure("A question needs at least one question.") }
             do {
                 try TodoStore.shared.change(item.id) { t in
                     var report = t.report ?? TodoReport()
                     report.question = TodoQuestion(blocked: kind == "blocked", reason: String(reason.prefix(2000)), items: items)
                     t.report = report
                 }
-            } catch { return ToolHub.failure(error.localizedDescription) }
+            } catch { return ProjectTools.failure(error.localizedDescription) }
             return ["content": [["type": "text", "text": "Recorded. Stop working now: end your reply with the reason and the questions. The user decides in the chat."]], "isError": false]
-        default: return ToolHub.failure("Unknown tool: " + name)
+        default: return ProjectTools.failure("Unknown tool: " + name)
         }
     }
+}
+
+// What project code reads of a chat; the chats themselves are the chat side's. The app gives the list (ProjectChats.list,
+// set where the chat tools are linked), read on the main thread.
+struct ProjectChatSummary: Equatable {
+    var id: UUID
+    var updatedAt: Date
+    var project: ProjectBinding?
+    var lock: EnterpriseLock?
+    var enterprise: Bool    // locked by an organization (a personal lock is not)
+    var openTurn: UUID?     // the newest message while its answer is still open
+    init(id: UUID, updatedAt: Date, project: ProjectBinding?, lock: EnterpriseLock?, enterprise: Bool, openTurn: UUID?) {
+        self.id = id; self.updatedAt = updatedAt; self.project = project; self.lock = lock; self.enterprise = enterprise; self.openTurn = openTurn
+    }
+}
+enum ProjectChats {
+    static var list: () -> [ProjectChatSummary] = { [] }
 }
 
 // The projects TODOs are written for (the board's add bar, the todo_add tool): the TODO lists' and those of the
@@ -705,17 +722,17 @@ struct TodoProject {
     var name: String
     var binding: ProjectBinding
     var lock: EnterpriseLock?
-    static func all(_ data: TodoData, chats: [Conversation], names: [String: String]) -> [TodoProject] {
+    static func all(_ data: TodoData, chats: [ProjectChatSummary], names: [String: String]) -> [TodoProject] {
         var seen = Set<String>(), result: [TodoProject] = []
         func lock(_ p: ProjectBinding) -> EnterpriseLock? {
             // The whole project's (every worktree of the repository), as the sidebar shows it.
-            let key = SidebarProjects.key(p)
-            return data.lists.first { $0.project.map(SidebarProjects.key) == key && $0.lock != nil }?.lock
-                ?? chats.first { $0.workspace?.project.map(SidebarProjects.key) == key && $0.enterpriseLock != nil }?.enterpriseLock
+            let key = p.groupKey
+            return data.lists.first { $0.project?.groupKey == key && $0.lock != nil }?.lock
+                ?? chats.first { $0.project?.groupKey == key && $0.lock != nil }?.lock
         }
-        for list in data.lists { if let p = list.project, seen.insert(p.root).inserted { result.append(TodoProject(name: names[SidebarProjects.key(p)] ?? list.title, binding: p, lock: lock(p))) } }
+        for list in data.lists { if let p = list.project, seen.insert(p.root).inserted { result.append(TodoProject(name: names[p.groupKey] ?? list.title, binding: p, lock: lock(p))) } }
         for chat in chats.sorted(by: { $0.updatedAt > $1.updatedAt }) {
-            if let p = chat.workspace?.project, seen.insert(p.root).inserted { result.append(TodoProject(name: names[SidebarProjects.key(p)] ?? (p.root as NSString).lastPathComponent, binding: p, lock: lock(p))) }
+            if let p = chat.project, seen.insert(p.root).inserted { result.append(TodoProject(name: names[p.groupKey] ?? (p.root as NSString).lastPathComponent, binding: p, lock: lock(p))) }
         }
         return result
     }
@@ -734,11 +751,11 @@ final class TodoAddLink: ToolProvider {
     private func main<T>(_ work: () -> T) -> T { Thread.isMainThread ? work() : DispatchQueue.main.sync(execute: work) }
 
     // The asking chat while its newest message is being answered (a session of an earlier answer adds nothing), and the projects it may write to.
-    private func scope(_ context: ToolContext) -> (chat: Conversation, projects: [TodoProject])? {
+    private func scope(_ context: ToolContext) -> (chat: ProjectChatSummary, projects: [TodoProject])? {
         guard context.asker != nil, let turn = context.turn else { return nil }
-        let (chats, names) = main { (ChatLink.shared.conversations(), self.names()) }
-        guard let chat = chats.first(where: { $0.id == context.room }), let last = chat.turns.last, last.id == turn, last.answeredAt == nil else { return nil }
-        let mine = chat.enterpriseLock?.organization
+        let (chats, names) = main { (ProjectChats.list(), self.names()) }
+        guard let chat = chats.first(where: { $0.id == context.room }), chat.openTurn == turn else { return nil }
+        let mine = chat.lock?.organization
         let projects = TodoProject.all(store().current, chats: chats, names: names).filter { $0.lock?.organization == mine }
         return (chat, projects)
     }
@@ -750,7 +767,7 @@ final class TodoAddLink: ToolProvider {
     func tools(context: ToolContext) -> [[String: Any]] {
         guard let (chat, projects) = scope(context), !projects.isEmpty else { return [] }
         let string: [String: Any] = ["type": "string"]
-        let here = chat.workspace?.project.flatMap { p in projects.first { $0.binding.root == p.root } }
+        let here = chat.project.flatMap { p in projects.first { $0.binding.root == p.root } }
         return [["name": "todo_add",
                  "description": "Add a TODO to the user's TODO board for a project, from any chat, when the user asks to add or note one (or clearly agrees to your suggestion). Never on your own. It is added as a draft: it runs only when the user presses Start on the board. title: one short line in the user's language; detail: what to do, the context from this chat and what done looks like (the AI that takes it sees only this). project: a name or folder from the list\(here.map { "; leave it out for this chat's project \($0.name)" } ?? ""). One TODO per call. Projects: " + Self.describe(projects),
                  "inputSchema": ["type": "object", "properties": ["title": string, "detail": string, "project": string, "ask_first": ["type": "boolean"]],
@@ -791,8 +808,8 @@ final class TodoAddLink: ToolProvider {
     private static func reply(_ text: String) -> [String: Any] { ["content": [["type": "text", "text": text]], "isError": false] }
 
     func call(_ name: String, _ arguments: [String: Any], context: ToolContext) -> [String: Any] {
-        guard ["todo_add", "todo_drafts", "todo_edit"].contains(name) else { return ToolHub.failure("Unknown tool: " + name) }
-        guard let (chat, projects) = scope(context), !projects.isEmpty else { return ToolHub.failure("TODO tools are not available for this answer.") }
+        guard ["todo_add", "todo_drafts", "todo_edit"].contains(name) else { return ProjectTools.failure("Unknown tool: " + name) }
+        guard let (chat, projects) = scope(context), !projects.isEmpty else { return ProjectTools.failure("TODO tools are not available for this answer.") }
         func text(_ key: String) -> String { (arguments[key] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
         func oneLine(_ value: String) -> String { String(value.split(whereSeparator: \.isNewline).first.map(String.init)?.prefix(200) ?? "") }
         let store = store()
@@ -800,9 +817,9 @@ final class TodoAddLink: ToolProvider {
             var shown = projects
             if !text("project").isEmpty {
                 let (found, why) = Self.pick(text("project"), in: projects)
-                guard let found else { return ToolHub.failure(why ?? "No such project.") }
+                guard let found else { return ProjectTools.failure(why ?? "No such project.") }
                 shown = [found]
-            } else if let p = chat.workspace?.project, let found = projects.first(where: { $0.binding.root == p.root }) { shown = [found] }
+            } else if let p = chat.project, let found = projects.first(where: { $0.binding.root == p.root }) { shown = [found] }
             let list = drafts(shown, in: store.current)
             guard !list.isEmpty else { return Self.reply("No draft TODOs on " + shown.map(\.name).joined(separator: ", ") + ".") }
             let skip = min(max(arguments["offset"] as? Int ?? 0, 0), list.count)
@@ -814,37 +831,37 @@ final class TodoAddLink: ToolProvider {
             return Self.reply(lines.joined(separator: "\n\n---\n\n") + (skip + page.count < list.count ? "\n\n(\(list.count - skip - page.count) more: call again with offset \(skip + page.count).)" : ""))
         }
         if name == "todo_edit" {
-            guard let id = UUID(uuidString: text("id")) else { return ToolHub.failure("id is required: take it from todo_drafts.") }
+            guard let id = UUID(uuidString: text("id")) else { return ProjectTools.failure("id is required: take it from todo_drafts.") }
             guard drafts(projects, in: store.current).contains(where: { $0.1.id == id }) else {
                 if let item = store.current.item(id), projects.contains(where: { $0.binding.root == store.current.list(item.listID)?.project?.root }) {
-                    return ToolHub.failure("That TODO is \(item.state.rawValue), not a draft: only drafts can be changed. Tell the user.")
+                    return ProjectTools.failure("That TODO is \(item.state.rawValue), not a draft: only drafts can be changed. Tell the user.")
                 }
-                return ToolHub.failure("No draft TODO with that id: call todo_drafts.")
+                return ProjectTools.failure("No draft TODO with that id: call todo_drafts.")
             }
             let title = arguments["title"] == nil ? nil : oneLine(text("title"))
-            if title?.isEmpty == true { return ToolHub.failure("title cannot be empty.") }
+            if title?.isEmpty == true { return ProjectTools.failure("title cannot be empty.") }
             // A detail longer than todo_add's limit (written on the board) may be sent back whole: nothing is cut.
             let detail = arguments["detail"] == nil ? nil : text("detail")
             let limit = max(8000, store.current.item(id)?.detail.count ?? 0)
-            if let detail, detail.count > limit { return ToolHub.failure("detail is too long (\(detail.count) characters, at most \(limit)): shorten it; nothing was changed.") }
+            if let detail, detail.count > limit { return ProjectTools.failure("detail is too long (\(detail.count) characters, at most \(limit)): shorten it; nothing was changed.") }
             let askFirst = arguments["ask_first"] as? Bool
-            guard title != nil || detail != nil || askFirst != nil else { return ToolHub.failure("Nothing to change: give title, detail or ask_first.") }
+            guard title != nil || detail != nil || askFirst != nil else { return ProjectTools.failure("Nothing to change: give title, detail or ask_first.") }
             do {
-                let item = try store.editDraft(id, title: title, detail: detail, askFirst: askFirst, organization: chat.enterpriseLock?.organization)
+                let item = try store.editDraft(id, title: title, detail: detail, askFirst: askFirst, organization: chat.lock?.organization)
                 return Self.reply("Changed the draft \"\(item.title)\". It is still a draft: it runs only when the user presses Start. Tell the user briefly.")
-            } catch { return ToolHub.failure(error.localizedDescription) }
+            } catch { return ProjectTools.failure(error.localizedDescription) }
         }
         let title = oneLine(text("title"))
-        guard !title.isEmpty else { return ToolHub.failure("title is required.") }
+        guard !title.isEmpty else { return ProjectTools.failure("title is required.") }
         let target: TodoProject
         if !text("project").isEmpty {
             let (found, why) = Self.pick(text("project"), in: projects)
-            guard let found else { return ToolHub.failure(why ?? "No such project.") }
+            guard let found else { return ProjectTools.failure(why ?? "No such project.") }
             target = found
-        } else if let p = chat.workspace?.project, let found = projects.first(where: { $0.binding.root == p.root }) {
+        } else if let p = chat.project, let found = projects.first(where: { $0.binding.root == p.root }) {
             target = found
         } else {
-            return ToolHub.failure("This chat is not linked to a project: ask the user which one, then give project. Projects: " + Self.describe(projects) + ".")
+            return ProjectTools.failure("This chat is not linked to a project: ask the user which one, then give project. Projects: " + Self.describe(projects) + ".")
         }
         // The report card shows in the chat it came from, unless that is a TODO's own chat (it has its own card).
         let origin = store.current.items.contains { $0.room == chat.id } ? nil : chat.id
@@ -856,13 +873,44 @@ final class TodoAddLink: ToolProvider {
                 return ["content": [["type": "text", "text": "Already on \(target.name)'s board as \"\(item.title)\" (\(item.state.rawValue)); nothing was added or changed. Tell the user."]], "isError": false]
             }
             return ["content": [["type": "text", "text": "Added to \(target.name)'s TODO board as a draft: \"\(item.title)\". It runs only when the user presses Start on the board. Tell the user briefly."]], "isError": false]
-        } catch { return ToolHub.failure(error.localizedDescription) }
+        } catch { return ProjectTools.failure(error.localizedDescription) }
     }
 }
 
 extension Notification.Name {
     // A TODO waits for the user (its result to check, or a decision): ApprovalAlerts shows a macOS notification.
     static let todoNeedsUser = Notification.Name("AIIlluminatiTodoNeedsUser")
+}
+
+// The chat side the scheduler works through (the app's Discussion: TodoChatsApp.swift), on the main thread.
+protocol TodoChats: AnyObject {
+    var answering: Set<UUID> { get }              // the chats answering now
+    var answeringChanged: AnyPublisher<Void, Never> { get }
+    var maxAnswering: Int { get }                 // how many chats may answer at once
+    var importing: Bool { get }                   // attached files are being read: nothing starts
+    var chats: [ProjectChatSummary] { get }
+    // Who works and who reviews (nil: nobody may now), and why nobody can.
+    func crew(lock: EnterpriseLock?, allowed: [String]) -> (lead: Account, reviewer: Account?)?
+    func noCrew(_ allowed: [String], lock: EnterpriseLock?) -> String
+    func addChat(_ project: ProjectBinding, title: String, lock: EnterpriseLock?) -> UUID
+    func setCrew(room: UUID, members: [String], lead: String)
+    func folder(_ room: UUID) -> URL              // the chat's own folder
+    func sentPhotos(_ room: UUID) -> Set<UUID>    // photos already sent in that chat (by ID)
+    // Sends the TODO's message; the photos go with it under their IDs. Returns why it did not start.
+    func start(room: UUID, question: String, photos: [TodoPhoto], review: Bool, extra: String) -> String?
+    func ended(_ room: UUID) -> TodoTurnEnd       // how the chat's last answer ended
+    func stop(_ room: UUID)
+}
+// A photo attached to a TODO, sent with its message (the chat side makes its own copy under the same ID).
+struct TodoPhoto: Equatable {
+    var file: URL
+    var name: String
+    var id: UUID
+}
+struct TodoTurnEnd: Equatable {
+    var error: String?
+    var unreviewed = false   // a review card failed without a headline: the review could not be done
+    init(error: String? = nil, unreviewed: Bool = false) { self.error = error; self.unreviewed = unreviewed }
 }
 
 // Picks and starts TODOs (main thread). Wakes on Start, every 30 minutes, when a chat finishes and when the board
@@ -874,7 +922,7 @@ final class TodoScheduler: ObservableObject {
     static let threshold = 30.0
     static let maxTodos = 2
     static let maxAttempts = 2   // retries after an error before the user is asked
-    let discussion: Discussion
+    let chats: TodoChats
     let store: TodoStore
     @Published private(set) var nextCheck: Date?
     @Published private(set) var waiting: String?   // why nothing starts although TODOs are ready
@@ -887,7 +935,7 @@ final class TodoScheduler: ObservableObject {
     // The TODO open for editing on the board: not started until the edit is saved or dropped.
     var editing: UUID? { didSet { if oldValue != editing { wake() } } }
 
-    init(discussion: Discussion, store: TodoStore) { self.discussion = discussion; self.store = store }
+    init(chats: TodoChats, store: TodoStore) { self.chats = chats; self.store = store }
 
     func start() {
         recover()
@@ -895,7 +943,7 @@ final class TodoScheduler: ObservableObject {
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
         nextCheck = Date().addingTimeInterval(Self.interval)
-        watching = [discussion.$runningRooms.receive(on: DispatchQueue.main).sink { [weak self] _ in self?.wake() },
+        watching = [chats.answeringChanged.receive(on: DispatchQueue.main).sink { [weak self] _ in self?.wake() },
                     store.$snapshot.receive(on: DispatchQueue.main).sink { [weak self] _ in self?.wake() },
                     // A chat lets go of a repository after its answer is marked finished: the next TODO need not wait 30 minutes.
                     NotificationCenter.default.publisher(for: .projectReleased).receive(on: DispatchQueue.main).sink { [weak self] _ in self?.wake() }]
@@ -959,7 +1007,7 @@ final class TodoScheduler: ObservableObject {
         for item in store.current.eligible(held: held) {
             let data = store.current
             guard data.items.filter({ $0.state == .running }).count < Self.maxTodos else { break }
-            guard discussion.runningRooms.count + 1 < Discussion.maxRunning, !discussion.importingMaterials else {
+            guard chats.answering.count + 1 < chats.maxAnswering, !chats.importing else {
                 note = L("다른 대화가 답하는 중이라 기다려요.", "Waiting for other chats to finish."); break
             }
             if let retry = retryAt[item.id], retry.at > Date() { note = retry.reason; continue }
@@ -969,8 +1017,8 @@ final class TodoScheduler: ObservableObject {
             let lock = lock(for: item, list: list, project: project)
             guard let crew = crew(lock: lock, allowed: list.accounts) else {
                 // Picked AIs: only this project waits, the others may still start.
-                if !list.accounts.isEmpty { note = Self.noCrew(list.accounts, accounts: discussion.model.accounts, lock: lock); continue }
-                note = Self.noCrew([], accounts: discussion.model.accounts, lock: lock); break
+                if !list.accounts.isEmpty { note = chats.noCrew(list.accounts, lock: lock); continue }
+                note = chats.noCrew([], lock: lock); break
             }
             if let reason = begin(item, list: list, project: project, crew: crew, lock: lock) {
                 note = reason
@@ -987,26 +1035,16 @@ final class TodoScheduler: ObservableObject {
     // written from, its own chat, any other). Its chat is locked with it, so the review and handoffs keep it too.
     func lock(for item: TodoItem, list: TodoList, project: ProjectBinding) -> EnterpriseLock? {
         if let lock = list.lock { return lock }
-        let chats = discussion.conversations
-        for id in [item.originRoom, item.room].compactMap({ $0 }) { if let lock = chats.first(where: { $0.id == id })?.enterpriseLock { return lock } }
-        let key = SidebarProjects.key(project)
-        return store.current.lists.first { $0.project.map(SidebarProjects.key) == key && $0.lock != nil }?.lock
-            ?? chats.first { $0.workspace?.project.map(SidebarProjects.key) == key && $0.enterpriseLock != nil }?.enterpriseLock
+        let chats = chats.chats
+        for id in [item.originRoom, item.room].compactMap({ $0 }) { if let lock = chats.first(where: { $0.id == id })?.lock { return lock } }
+        let key = project.groupKey
+        return store.current.lists.first { $0.project?.groupKey == key && $0.lock != nil }?.lock
+            ?? chats.first { $0.project?.groupKey == key && $0.lock != nil }?.lock
     }
 
-    // Who works and who reviews: Claude/Codex accounts with 30% of both limits left (and allowed by the lock), the
-    // most weekly usage first (Enterprise first when close, like AutoPick); the reviewer of the other kind when there is one.
-    // allowed: the accounts picked for the list (TodoList.accounts); empty: any. Never falls back to the others.
-    func crew(lock: EnterpriseLock? = nil, allowed: [String] = []) -> (lead: Account, reviewer: Account?)? {
-        let usage = discussion.model.latestUsage
-        let ready = AutoPick.candidates(discussion.model.accounts, usage: usage, lock: lock)
-            .filter { [.claude, .codex].contains($0.provider) && AutoPick.enough(usage[$0.id], threshold: Self.threshold) && (allowed.isEmpty || allowed.contains($0.id)) }
-        func score(_ a: Account) -> (Double, Double) { (AutoPick.weekly(usage[a.id]) + (a.isSchool ? AutoPick.enterpriseBonus : 0), AutoPick.fiveHour(usage[a.id])) }
-        guard let lead = ready.max(by: { score($0) < score($1) }) else { return nil }
-        let others = ready.filter { $0.id != lead.id }
-        let reviewer = others.filter { $0.provider != lead.provider }.max { score($0) < score($1) } ?? others.max { score($0) < score($1) }
-        return (lead, reviewer)
-    }
+    // Who works and who reviews (the chat side picks by usage and lock); allowed: the accounts picked for the list
+    // (TodoList.accounts); empty: any. Never falls back to the others.
+    func crew(lock: EnterpriseLock? = nil, allowed: [String] = []) -> (lead: Account, reviewer: Account?)? { chats.crew(lock: lock, allowed: allowed) }
 
     // The crew a list's next TODO would get if it started now (the board shows it).
     func crew(for list: TodoList) -> (lead: Account, reviewer: Account?)? {
@@ -1020,33 +1058,19 @@ final class TodoScheduler: ObservableObject {
         return lock(for: item, list: list, project: project)
     }
 
-    // Why nobody can take a list's TODOs: the picked accounts are gone, kept out by the Enterprise lock, or low on usage.
-    static func noCrew(_ allowed: [String], accounts: [Account], lock: EnterpriseLock?) -> String {
-        guard !allowed.isEmpty else { return L("남은 사용량이 30% 넘는 Claude/Codex 계정이 없어서 기다려요.", "Waiting for a Claude/Codex account with 30% usage left.") }
-        let picked = accounts.filter { allowed.contains($0.id) && [.claude, .codex].contains($0.provider) }
-        if picked.isEmpty { return L("고른 AI 계정이 모두 없어졌어요. 보드에서 일할 AI를 다시 골라 주세요.", "The picked AI accounts are gone. Pick the AIs again on the board.") }
-        if !picked.contains(where: { Enterprise.permits($0, lock: lock) }) {
-            return L("고른 AI가 이 프로젝트의 잠금(Enterprise·개인)에 맞지 않아요. 일할 AI를 다시 골라 주세요.", "The picked AIs are not allowed by this project's lock (Enterprise or personal). Pick them again.")
-        }
-        return L("고른 AI의 남은 사용량이 30% 넘을 때까지 기다려요.", "Waiting until a picked AI has 30% usage left.")
-    }
-
     // Starts one TODO in its own chat. Returns why it did not start (it stays ready).
     @discardableResult
     func begin(_ item: TodoItem, list: TodoList, project: ProjectBinding, crew: (lead: Account, reviewer: Account?), lock: EnterpriseLock? = nil) -> String? {
         var room = item.room
         // A new chat when there is none, or when its lock is not the TODO's (a chat made before the project was locked).
-        if room == nil || discussion.conversations.first(where: { $0.id == room }).map({ $0.enterpriseLock?.organization != lock?.organization }) ?? true {
-            room = discussion.addProjectChat(project, title: "TODO · " + item.title, open: false, lock: lock)
+        if room == nil || chats.chats.first(where: { $0.id == room }).map({ $0.lock?.organization != lock?.organization }) ?? true {
+            room = chats.addChat(project, title: "TODO · " + item.title, lock: lock)
         }
         guard let room else { return nil }
-        if discussion.runningRooms.contains(room) { return L("TODO 채팅이 아직 답하는 중이라 기다려요.", "Waiting for the TODO's chat to finish answering.") }
-        let members = [crew.lead.id] + (crew.reviewer.map { [$0.id] } ?? [])
-        discussion.configure(room: room) { c in
-            c.mode = 0; c.memberIDs = members; c.leadID = crew.lead.id; c.soloAccountID = members.count == 1 ? crew.lead.id : nil
-        }
+        if chats.answering.contains(room) { return L("TODO 채팅이 아직 답하는 중이라 기다려요.", "Waiting for the TODO's chat to finish answering.") }
+        chats.setCrew(room: room, members: [crew.lead.id] + (crew.reviewer.map { [$0.id] } ?? []), lead: crew.lead.id)
         // The attachments go into the chat's own folder (the AI reads them there); photos it has not seen yet also go with the message.
-        let delivered: (paths: [String], images: [ChatImage])
+        let delivered: (paths: [String], photos: [TodoPhoto])
         do { delivered = try deliver(item, room: room) } catch {
             try? store.change(item.id) { $0.room = room }   // the next try reuses this chat and the copies already made
             return error.localizedDescription
@@ -1054,11 +1078,9 @@ final class TodoScheduler: ObservableObject {
         let question = Self.question(item, files: delivered.paths, documents: project.isDocuments)
         // Running before the turn starts: the AI's first tool call must find it.
         do { try store.change(item.id) { $0.state = .running; $0.room = room; $0.lastError = nil; $0.report = nil; $0.workers = list.accounts.isEmpty ? nil : list.accounts } } catch {
-            for image in delivered.images { try? ImageStore.remove(image) }
             return error.localizedDescription
         }
-        if let reason = discussion.startTurn(room: room, question: question, images: delivered.images, forced: crew.reviewer == nil ? nil : .work, extra: Self.instruction(item, documents: project.isDocuments)) {
-            for image in delivered.images { try? ImageStore.remove(image) }
+        if let reason = chats.start(room: room, question: question, photos: delivered.photos, review: crew.reviewer != nil, extra: Self.instruction(item, documents: project.isDocuments)) {
             try? store.change(item.id) { $0.state = .ready; $0.lastError = reason }
             return reason
         }
@@ -1070,11 +1092,11 @@ final class TodoScheduler: ObservableObject {
     // the photos not yet sent in that chat (at most 4 per message, like the message box). A photo carries its
     // attachment's ID, so a retry in the same chat does not send it twice.
     static let attachmentFolder = "TODO attachments"
-    func deliver(_ item: TodoItem, room: UUID) throws -> (paths: [String], images: [ChatImage]) {
+    func deliver(_ item: TodoItem, room: UUID) throws -> (paths: [String], photos: [TodoPhoto]) {
         guard !item.attachments.isEmpty else { return ([], []) }
-        let target = Discussion.chatFolder(room).appendingPathComponent(Self.attachmentFolder)
-        let sent = Set(discussion.conversation(room).turns.flatMap { $0.images ?? [] }.map(\.id))
-        var paths: [String] = [], images: [ChatImage] = []
+        let target = chats.folder(room).appendingPathComponent(Self.attachmentFolder)
+        let sent = chats.sentPhotos(room)
+        var paths: [String] = [], photos: [TodoPhoto] = []
         do {
             try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
             for attachment in item.attachments {
@@ -1082,25 +1104,21 @@ final class TodoScheduler: ObservableObject {
                 let copy = target.appendingPathComponent(String(attachment.id.uuidString.prefix(8)) + "-" + attachment.name)
                 if !FileManager.default.fileExists(atPath: copy.path) { try FileManager.default.copyItem(at: source, to: copy) }
                 paths.append(copy.path)
-                if attachment.image, !sent.contains(attachment.id), images.count < 4,
-                   let image = try? ImageStore.importImage(Data(contentsOf: source), name: attachment.name, conversationID: room, id: attachment.id) {
-                    images.append(image)
-                }
+                if attachment.image, !sent.contains(attachment.id), photos.count < 4 { photos.append(TodoPhoto(file: source, name: attachment.name, id: attachment.id)) }
             }
         } catch {
-            for image in images { try? ImageStore.remove(image) }
             throw TodoError.attachment(L("첨부 파일을 TODO 채팅에 넣지 못했어요: ", "Could not put the attachments into the TODO's chat: ") + error.localizedDescription)
         }
-        return (paths, images)
+        return (paths, photos)
     }
 
     // A TODO chat stopped answering while its TODO still runs: the AI did not report.
     func settle() {
         for item in store.current.items where item.state == .running {
-            guard let room = item.room, !discussion.runningRooms.contains(room) else { continue }
-            let turn = discussion.conversation(room).turns.last
+            guard let room = item.room, !chats.answering.contains(room) else { continue }
+            let turn = chats.ended(room)
             let report = item.report
-            if let error = turn?.error {
+            if let error = turn.error {
                 // Another chat writing the repository is not the TODO's fault: try again later.
                 let busy = ProjectWork.isBusy(error)
                 try? store.change(item.id) { t in
@@ -1121,7 +1139,7 @@ final class TodoScheduler: ObservableObject {
                 try? store.change(item.id) { t in t.state = .needsYou; t.question = question; t.report = nil; t.unreported = true }
             } else if let report, let summary = report.summary {
                 // The review could not be done: the result still waits for the check, with that said on its card.
-                let unreviewed = turn?.peerNotes?.contains { $0.failed && $0.headline == nil } == true   // ask_ai cards always have a headline
+                let unreviewed = turn.unreviewed
                 try? store.change(item.id) { t in
                     t.state = .review; t.result = summary; t.assumptions = report.assumptions; t.files = report.files; t.report = nil
                     t.question = nil; t.unreported = true
@@ -1136,7 +1154,7 @@ final class TodoScheduler: ObservableObject {
         }
         // Announce results and questions once their chat has finished answering.
         for item in store.current.items where item.unreported && (item.state == .review || item.state == .needsYou) {
-            if let room = item.room, discussion.runningRooms.contains(room) { continue }
+            if let room = item.room, chats.answering.contains(room) { continue }
             guard (try? store.change(item.id) { $0.unreported = false }) != nil else { continue }   // not saved: announced later, once
             NotificationCenter.default.post(name: .todoNeedsUser, object: nil, userInfo: ["room": item.room ?? item.originRoom as Any, "title": item.title,
                                                                                          "review": item.state == .review, "body": item.state == .review ? item.result ?? "" : item.question?.reason ?? ""])
@@ -1148,7 +1166,7 @@ final class TodoScheduler: ObservableObject {
         guard let item = store.current.item(id) else { return }
         if item.state == .running {
             try? store.change(id) { $0.state = .cancelled }
-            if let room = item.room { discussion.runToken(room)?.cancel() }
+            if let room = item.room { chats.stop(room) }
         } else { try? store.cancel(id) }
     }
 

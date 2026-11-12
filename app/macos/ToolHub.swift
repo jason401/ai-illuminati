@@ -18,6 +18,8 @@ final class ToolHub {
     private let lock = NSLock()
     private var sockets: Set<String> = []
     private var sessions: [String: (ToolContext, Date)] = [:]
+    // Sessions exist only after this: project work ends a run's earlier sessions through it.
+    private init() { ProjectWork.revokeTools = { [weak self] in self?.revoke(project: $0) } }
 
     func register(room: UUID, roots: [WorkspaceRoot], projectRun: UUID? = nil, generation: Int? = nil, asker: Account? = nil,
                   origin: ToolOrigin = .member) -> String {

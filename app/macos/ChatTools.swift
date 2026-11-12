@@ -154,6 +154,15 @@ extension Discussion {
     // The app's chats for search_chats / read_chat.
     func linkChatTools() {
         ChatLink.shared.conversations = { [weak self] in self?.conversations ?? [] }
+        // Project tools (todo_add, create_project, the TODO scheduler's locks) read the same chats, through ChatLink.
+        ProjectChats.list = { ChatLink.shared.conversations().map(\.projectSummary) }
         linkProjectMaker()
+    }
+}
+
+extension Conversation {
+    var projectSummary: ProjectChatSummary {
+        ProjectChatSummary(id: id, updatedAt: updatedAt, project: workspace?.project, lock: enterpriseLock, enterprise: isEnterprise,
+                           openTurn: turns.last.flatMap { $0.answeredAt == nil ? $0.id : nil })
     }
 }

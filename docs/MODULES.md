@@ -3,14 +3,15 @@
 The app is one Swift program built from `app/macos/*.swift`: in it, every file can use every other file's
 `internal` names, so a folder alone draws no line. A part in `app/modules/<Name>/` is its own Swift module:
 it builds alone, and the app sees only its `public` names. Now: `AILocalization` (L(), AppLanguage), `AIAccounts`
-(account list and folders) and `AISpaces` (Spaces: saving, checks, the isolated web view), all 2026-11-11.
+(account list and folders), `AISpaces` (Spaces: saving, checks, the isolated web view) and `AIRuntime` (running each
+AI's command line tool, sessions, the local model, usage readings), all 2026-11-11.
 
 ## How a module is built and used
 - `zsh tools/build_modules.sh <out> [swiftc options]` builds every `app/modules/<Name>/` alone into
   `<out>/<Name>.swiftmodule` + `<out>/lib<Name>.a` (static: nothing new in the app bundle, signing unchanged).
 - A module may use only the modules named in its `dependencies` file (one per line; none: no file). They are built
   first, and the compiler sees only theirs, so an import of any other module fails the build. Now
-  `AISpaces` → `AIAccounts`, `AILocalization`; the other two use none. No circles (the script refuses them).
+  `AISpaces` → `AIAccounts`, `AILocalization`; `AIRuntime` → `AIAccounts`, `AILocalization`; the other two use none. No circles (the script refuses them).
 - Every `swiftc` that compiles app files runs it first and adds `-I <out> <out>/lib*.a`:
   `tools/build_app.sh` (compile step), `tools/tests/run_mode2.sh`, the preview scripts.
 - Each file that uses a module says `import <Name>`. Not the hidden compiler option (`-Xfrontend -import-module`):
@@ -19,10 +20,15 @@ it builds alone, and the app sees only its `public` names. Now: `AILocalization`
 - Name: `AI` + the part, never Apple's framework names (`Accounts` is one).
 - `run_mode2.sh` stage "Modules on their own": builds the modules alone, runs each contract test from outside
   (`tools/tests/<part>_contract.swift`, public names only), and checks that internal names
-  (`AccountStore.place`, `SpaceStore.setting`, `SpaceAssets.served`) do not compile outside.
-- Tests build the modules with `-enable-testing` only so `space_build.swift` can say `@testable import AISpaces`
-  (it checks module insides such as `SpaceCheck`). Every app file and every other test keeps a plain import and
-  sees public names only; the app build (`build_app.sh`) has no `-enable-testing`.
+  (`AccountStore.place`, `SpaceStore.setting`, `SpaceAssets.served`, `Answerer.chatDir`, `Answerer.launchForTests`,
+  `NativeSessions.split`, `CloudModels.apply`) do not compile outside.
+- Tests build the modules with `-enable-testing` only so tests can say `@testable import`: `space_build.swift` for
+  `AISpaces` (module insides such as `SpaceCheck`), and for `AIRuntime` the app tests that make their own usage
+  readings (`AIUsage`, `UsageWindow` inits) or use its test hooks (`Answerer.launchForTests`/`replyForTests`,
+  `StreamParser`): `mode2`, `run_conditions`, `project_work`, `ask_ai`, `collab_log`, `todo_work`, `chat_search`,
+  `space_build`, and the settings preview (`render_settings.sh` builds the modules with `-enable-testing` for it).
+  Every app file and every contract test keeps a plain import and sees public names only; the app build
+  (`build_app.sh`) has no `-enable-testing`.
 - A `public` name in a module gets its reason in this file (the tables below). A new public name is a promise:
   add it to its row, or a row.
 
@@ -108,6 +114,56 @@ Public names and why (everything else stays internal: `SpaceCheck`, `SpaceRules`
   `makeCoordinator`, `Coordinator`), `SpaceMigrator.run` (an enum: the page behind it and its WebKit delegate methods
   stay inside).
 
+### AIRuntime (`app/modules/AIRuntime/`: Answerer, Cancellation, NativeSessions, Local, Usage, CloudModels)
+Runs one AI's command line tool for one prompt and hands back its answer; keeps its sessions; runs the local model
+(Ollama); reads usage. Depends on `AIAccounts` (accounts, their environment and folders, `AccountStore.home`) and
+`AILocalization`; it cannot import Workspace, Projects, Chat, Face or ToolHub (they are app files, not modules), and it
+decides no permission: what to start with comes in a `RunConditions` the caller built (`RunConditions.app` in
+`Workspace.swift`). Stays in the app: `extension Discussion` (`requestDebate` …, later the Chat module),
+`GeminiLinks.workspaceNote` (names `WorkspaceLevel`, an `extension GeminiLinks` in `Workspace.swift`),
+`LocalModel.install` (opens Terminal: an `extension LocalModel` in `Login.swift`), `LocalModelStore`/the Ollama window
+(`LocalModels.swift`), `Login` (its `home`/`agyInstalled` now read `ToolHome`), `ChatTurn.Entry.reply` (uses
+`ReplyHeadline.split`, which a session needs too).
+
+| Promise | Users (files) | Module test (`runtime_contract.swift`) | User tests |
+|---|---|---|---|
+| Starts exactly what `RunConditions` says (prefix, wrapper first, environment, folders) | every `Answerer.ask` caller through `RunConditions.app` | fake CLI: arguments and folder seen by the tool | `run_conditions.swift` (golden file, each guard alone) |
+| Errors: a tool that cannot start → `missingTool`; a failed exit → `failed(<model note> + last 300 letters of stderr)`; no answer in time → `timedOut`; a picked model the account lacks names the model | Solo, Meeting, Debate, Vote, Peer, ProjectChat, Enterprise (`Answerer.Failure`) | "a failed tool's message is passed on", "missingTool", "a slow tool times out" | mode2 error and fallback checks (debate, plain chat limit handoff) |
+| Stop: a stopped token starts nothing; Stop while it runs fails the answer at once (`Cancelled`, or the tool's own exit when the tool ends first: callers look at the token) and ends the tool, its group and every descendant found by parent; with `AI_ILLUMINATI_PROJECT_PROCESS=1` the whole group is killed first | Debate, Solo, ProjectChat, Meeting, Todo (tokens); project work (marker) | "a stopped token starts no tool", "Stop ends … at once", "… the programs it started", "… in a group of its own", "Stop ends a marked tool's whole group" | mode2 "actual process cancellation", testProjectWork "Stop kills foreground and background project writers" |
+| Time limit: at `timeout` the tool and its descendants are ended | same | "a slow tool times out", "a timed-out tool and its children are ended" | none |
+| Left processes: with `processGroup` the tool's whole group is killed when the call ends, even after a good answer; without it nothing else is stopped | `RunConditions.app` (project work) | "the process group is stopped when the call ends", "without a process group nothing else is stopped" | `run_conditions.swift` (group flag per kind) |
+| Threads: `ask` blocks its caller (never call it on the main thread from UI); progress comes on a background thread; `DebateCancellation` and `NativeSessions` are locked, any thread | all callers (they hop to the main thread themselves) | "progress comes on a background thread" | none (a main-thread call freezes the app) |
+| Stream events in order: Claude text within one message (a new message starts over; at most ~12 a second, the last text of each message always sent), each tool start as `activity`, each TodoWrite list as it came (`todos(Any?)`, not filtered), where it came; Codex: command/tool/search starts, each finished message | Solo (text, activity), ProjectChat (all three) | Claude and Codex orders | mode2 StreamParser block, `testProjectHandoff` |
+| Sessions: a new session starts with its own id (`--session-id` / Codex `thread.started`); the next call resumes it (`--resume <id>`, `exec resume <id>`) with only what is new; a stopped or failed answer marks it for a rebuild and is not retried (only "session not found" is, once, with the full context); compaction rebuilds | Attachments, Collaboration, ProjectChat (`nativeSessions.ask`) | session block (new, resumed, stopped, Codex resume) | mode2 "session delta, image reuse, role separation, compaction bootstrap …" |
+| Session save format: `rooms/<room>/ownership.json`, 0600, a JSON array of records `id`, `accountID`, `provider`, `role`, `nativeID`, `context`, `ownBlock` (`[<speaker>]\n<reply without its TL;DR line>` for speakers), `images`, `valid`; older files are read as they are; archive and purge keep or remove only what a room recorded | Attachments, Collaboration, ProjectChat, Discussion (delete, archive) | "ownership.json keeps its fields", "an older ownership.json is read", "is private" | mode2 "chat delete removes only its sessions …" |
+| Local model: no command line tool, one answer at a time (`gate`), keep-alive and unload | Local chat, Route sorter, Settings, LocalModels window, main (menu) | none (needs Ollama: a fake server in mode2) | mode2 "Ollama on this Mac", "Gemma on this Mac", `run_conditions.swift` ("the local model starts no command line tool") |
+| Usage readings and cloud model picks (stored per account in `UserDefaults.app`) | main, MenuCards, Settings, Solo, Meeting, Peer (auto pick by usage) | none | mode2 "menu bar …", "plain chat (auto pick 15% …)", testCloudModels |
+
+Public names and why (everything else stays internal: `Answerer.chatDir`/`askOnce`/`launchForTests`/`replyForTests`,
+`StreamParser`, `NativeSessions.split`/`load`/`save`, `CloudModels.apply`/`noteSeen`, `ClaudeUsage.binary`, the HTTP
+streams `LocalStream`/`PullStream`, `LocalModel.ask` and the Ollama requests):
+- `Answerer.ask`, `Answerer.Failure`, `AnswerProgress`: the one way in, its result and its progress (every caller).
+- `RunConditions` (all five fields, `init()`) and `RunConditions.Folders` (an explicit `init`): `Workspace.swift` builds
+  them; the fields are what the caller decides.
+- `Answerer.toolForTests`: the only public test hook, so `runtime_contract.swift` can run a fake CLI from outside; the
+  app never sets it (run_mode2 stage 1 checks that no app file names it).
+- `DebateCancellation` (`init`, `isCancelled`, `child`, `attach`, `detach`, `cancel`, `end`): the app makes the tokens
+  and stops its own processes the same way (project commands in ProjectWork, document reading in MaterialReader and
+  Workspace, the updater).
+- `NativeSessionCall` (the type only: `ask` hands one to the caller's closure, which passes it back), `NativeSessions`
+  (`init`, `ask`, `directory`, `eligible`, `pinnedAccount`, `reset`, `purgeRoom`).
+- `ReplyHeadline.split`: the chat's headline and the session's own block must cut a reply the same way.
+- `ToolHome` (`path`, `agyInstalled`): where the tools live (the user's home, not the test home); `Login` and Settings.
+- `GeminiLinks` and `toolNote`: `Workspace.swift` adds the workspace note to the same type.
+- `CloudModels` (`model`, `set`, `valid`, `Choice`, `claudeChoices`, `codexChoices`, `loadGemini`, `seenKey`, `seenTitle`):
+  the Settings model menus.
+- `LocalModel` (63 names: variants, the catalog and its entries, fit by memory, Ollama's library, installed/loaded
+  models, pull, delete, keep-alive, the gate, `server` for mode2's fake server) and `LocalUsage.read`: the Settings
+  Ollama section, the Ollama window, the menu and the Route sorter use all of them. It is the largest public part:
+  model management came with the file (`Local.swift`); splitting it from running is a later step.
+- `AIUsage`, `UsageWindow` (fields, `left`, `leftNow`; no public inits: only the module makes readings),
+  `CodexUsage`/`ClaudeUsage`/`GeminiUsage` (`read`, `forget`; `CodexUsage.binary` for the Codex login): the menu.
+
 ## What the first module showed (2026-11-11)
 - Change size: the module file got `public` on 26 names and one `public init` (Swift's own memberwise init is
   internal); 44 app files and 13 test files got one `import` line; one app line changed (`RemoteMCP` asked the
@@ -170,7 +226,7 @@ Public names and why (everything else stays internal: `SpaceCheck`, `SpaceRules`
   run the falsification before calling a row done.
 
 
-## Runtime, step R0: the way in made narrow, before it becomes a module (2026-11-11, draft)
+## Runtime, step R0: the way in made narrow, before it becomes a module (2026-11-11)
 Target order: `AILocalization`, `AIAccounts` ← Runtime ← Workspace ← Projects, Chat ← App. Runtime (now `Answerer`,
 `StreamParser`, `AnswerProgress`, `RunConditions` in `Discussion.swift`) no longer names `WorkspaceInvocation`,
 `AutoGuard`, `PlanLink`, `FaceLink` or `projectRunID` (grep from `struct RunConditions` to `ChatTurn`: 0). No module
@@ -185,7 +241,7 @@ yet (R1); nothing changed in what the tools are started with (below).
   code did not change). The arguments get the answering account; file requests are read without it, as before.
 - `AnswerProgress.todos(Any?)` replaces `.plan([WorkStep])`: the parser sends every TodoWrite `todos` input as it
   came, where it came in the stream; `ProjectChat` turns it into steps (`PlanLink.todos`) and drops what is not a list.
-- Left for R1 (Runtime still uses them): `CloudModels` (model pick, `apply`, `noteSeen`), `LocalModel.ask`,
+- Left for R1 (Runtime still uses them; R1 moved them into `AIRuntime` or behind `ToolHome`, see below): `CloudModels` (model pick, `apply`, `noteSeen`), `LocalModel.ask`,
   `GeminiLinks` (agy web rules and note), `ClaudeUsage.binary`/`CodexUsage.binary`, `Login.home`/`agyInstalled`,
   `NativeSessionCall`, `DebateCancellation`, `AccountStore.home` (AIAccounts, allowed). `GeminiLinks.workspaceNote` is
   used by `Workspace.swift`. Users of Runtime: Attachments, Collaboration, Debate, Local, NativeSessions, Peer, Poker,
@@ -235,3 +291,68 @@ binding without `fullAuto`, so turning full auto off for a project chat still ru
 the environment is compared with the account's own after a fixed start (plain PATH, a GitHub token and an SSH agent
 to take away), Claude's `--mcp-config` with sorted keys. Gemini has no "plain" kind: it would add web rules to agy's
 settings in the real home.
+
+## What the third step showed (2026-11-11: AIRuntime, R1)
+- Before the move: R0's conditions still held on main (cdbec40): no `WorkspaceInvocation`, `AutoGuard`, `PlanLink`,
+  `FaceLink` or `projectRunID` between `struct RunConditions` and `ChatTurn`, and the full test passed with
+  `run_conditions.swift`'s golden file byte-identical (all eight kinds). `runtime_contract.swift` was written and run
+  against that code first (plus only the new `Answerer.toolForTests` hook): it passed, three runs; after the move the
+  same file, compiled from outside the module, passes, and so does the golden file.
+- Change size: four files moved whole (`NativeSessions`, `CloudModels`, `Usage`, `Local`), two made from parts
+  (`Answerer.swift` = Discussion.swift's `GeminiLinks` … `StreamParser`; `Cancellation.swift` = Debate.swift's
+  `DebateCancellation`). 135 `public` declarations (list above), explicit public inits where Swift's memberwise ones
+  are internal (`RunConditions`, `RunConditions.Folders`, `DebateCancellation`, `NativeSessions`, `LocalModel.Variant`).
+  Lines that left for the app: `GeminiLinks.workspaceNote` (Workspace.swift), `LocalModel.install` (Login.swift).
+  New: `ToolHome` (the user's home where the tools live; `Login.home`/`agyInstalled` read it) and `ReplyHeadline.split`
+  (NativeSessions named `ChatTurn.Entry.reply`, a chat type; both now cut the TL;DR line with one function). 26 app
+  files and 10 test files got an import line. Scripts: `run_mode2.sh` lost four files from its list, runs the runtime
+  contract, four boundary checks and a check that no app file sets `toolForTests`; `build_app.sh` and the preview
+  scripts compile `app/macos/*.swift` and every `lib*.a`, so they needed nothing (`render_settings.sh`, a local file,
+  builds the modules with `-enable-testing`).
+- Finding the public names: everything internal, then a script compiled the app against the module and turned what the
+  compiler named into `public`: its "declared here" notes (they name the module's interface, `AIRuntime.Answerer.ask`,
+  not a source line, so the script finds the declaration by name and argument labels), "cannot find … in scope" for
+  internal types, and in the module itself "… because its parameter uses an internal type", repeated until the app
+  compiled. Hand work only
+  where the compiler names nothing usable: the implicit inits above, fields of a one-line struct (`LocalModel.Loaded`),
+  `Fit`'s `<` (asked by `Comparable`). Tests were left out of the loop: they say `@testable import AIRuntime` instead.
+- Promise table: the AIRuntime section above (errors, Stop, time limit, left processes, threads, event order, session
+  storage format).
+- Two layers in Stop, found by the falsification: Foundation starts the tool as the leader of a process group of its
+  own, so ending it ends what stayed in that group; the runtime's own walk (`ps`, by parent) is what ends a program that
+  left the group. A test with only same-group children cannot see the walk; `runtime_contract.swift` starts one child
+  that leaves the group (`setpgrp`). And: an environment that already carries `AI_ILLUMINATI_PROJECT_PROCESS=1` (any
+  test run from inside project work inherits it) makes Stop kill the group first, before the walk, and a program that
+  left the group stays. That is the marker's rule since before R1 (project work's own `project_process.py` stops its
+  writers); the contract takes the marker off for its own runs and checks the marker's group kill apart.
+- Stop's result message races: `Cancelled` when the runtime sees the Stop first, the tool's own exit when the tool
+  ends first. Callers already look at the token, not the message; the contract checks "a failure", not the text.
+- Falsification (one change at a time in a copy; public interface from `-emit-module-interface`, the same hash
+  `cae823709515` in every run). "User tests" = `run_mode2.sh` without `runtime_contract.swift`:
+
+  | Change | Contract | User tests only |
+  |---|---|---|
+  | F1 Stop ignored while the tool runs (no `attach`, no check in the wait loops) | caught | missed |
+  | F2 process group not killed at the end | caught | missed (`run_conditions` sees only the flag) |
+  | F3 time limit not applied | caught | missed |
+  | F4 TodoWrite sent after the message's text | caught | caught (StreamParser block) |
+  | F5 session id not saved | caught | caught (session delta block) |
+  | F6 a stopped session answer stays valid | caught | missed |
+  | F7 Stop leaves a program that left the tool's group | caught (after the stray child was added; before: missed) | missed |
+  | F8 the tool's error message dropped | caught | missed |
+  | F9 a resumed session gets the whole context again | caught | caught (session delta block) |
+
+  Six of nine are caught only by the module's own test: the app's tests reach the runtime through stand-ins
+  (`replyForTests`, `launchForTests`, fake sessions) that skip the process. For a change in Stop, the time limit, the
+  group, errors or session validity run `runtime_contract.swift` (it is in the full test). A user check through the
+  app's own way in (e.g. `Discussion.requestDebate` with the fake CLI) for those six is the next gap to close.
+- Parallel work: two AIs in two worktrees from one written contract (`NativeSessions.kept(_:)` in the module,
+  `Discussion.keptSessions` in `Attachments.swift` with a check in `mode2.swift`). The contract named each side's files
+  and every build or test list they are in (`build_modules.sh` takes `app/modules/AIRuntime/*.swift` itself, the
+  runtime contract is in stage 2, `Attachments.swift` in stage 8, `mode2.swift` is the test's main), so nothing was
+  missing at the merge: no conflict, the full test passed on the merged branch. Both sides still reported gaps for
+  the next contract: it did not say who adds the new public name's reason here, what "unreadable" covers, which room
+  the app uses between messages, or that the preview scripts also compile every app file (the app side alone does
+  not build until the module side is in). The app side checked itself against a stub it did not commit; one of its
+  two full runs crashed in `testAutoMeeting` (exit 139), outside the change, and passed when run again. Trial branch:
+  `trial/runtime-parallel` (local, not merged; the contract is `docs/RUNTIME_PARALLEL_TRIAL.md` there).

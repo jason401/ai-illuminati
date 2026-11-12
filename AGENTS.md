@@ -14,8 +14,11 @@ Feature and design notes live in `docs/`; read them only when the task needs the
   app file there too if the tested files use it.
 - Modules: each `app/modules/<Name>/` is its own Swift module: `AILocalization` (`L()`, `AppLanguage`),
   `AIAccounts` (`Accounts.swift`), `AISpaces` (`Space*.swift`: saving, checks, the isolated web view; its UI stays in
-  `app/macos/SpaceView.swift`). Files that use one `import <Name>` and see only its `public` names; a module may
-  import only the modules in its `dependencies` file. Every `swiftc` that compiles app files runs
+  `app/macos/SpaceView.swift`), `AIRuntime` (`Answerer`, `RunConditions`, `StreamParser`, `NativeSessions`, Stop
+  tokens, the local model, usage readings, cloud model picks; it decides no permission: callers pass
+  `RunConditions.app` from `Workspace.swift`). Files that use one `import <Name>` and see only its `public` names; a
+  module may import only the modules in its `dependencies` file. Tests that need a module's insides say
+  `@testable import` (the test build adds `-enable-testing`); app files never do. Every `swiftc` that compiles app files runs
   `zsh tools/build_modules.sh <out>` first and adds `-I <out> <out>/lib*.a`. A new `public` name gets its reason
   in `docs/MODULES.md`. A module's own tests (`tools/tests/*_contract.swift`) are not enough when its behavior
   changes (save format, errors, folders, isolation): run the tests its promise row in `docs/MODULES.md` names, or

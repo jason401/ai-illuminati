@@ -230,6 +230,36 @@ struct WorkspaceInvocation {
     }
 }
 
+// What Answerer starts each tool with (RunConditions): worked out here, where the rules are, so Answerer knows
+// nothing about folders, project work, AI Face or AutoGuard.
+extension RunConditions {
+    static func app(_ account: Account, _ workspace: WorkspaceInvocation? = nil) -> RunConditions {
+        var run = RunConditions()
+        // The face goes through the app as "illuminati", never through Codex's own AI Face server ("gpt").
+        if account.provider == .codex { run.prefix = FaceLink.codexOff(account) }
+        guard let workspace else { return run }
+        let project = workspace.binding.projectRunID != nil, guarded = workspace.binding.fullAccessActive
+        // Project work: one cancellable process group (project_process.py), stopped as a whole at the end.
+        if project {
+            run.wrapper = ["/usr/bin/python3", WorkspaceInvocation.resources.appendingPathComponent("project_process.py").path]
+            run.processGroup = true
+        }
+        run.environment = { base in
+            var environment = base
+            if project { environment["AI_ILLUMINATI_PROJECT_PROCESS"] = "1" }
+            if guarded { environment = AutoGuard.environment(environment) }
+            return environment
+        }
+        // The arguments know who answers (the chat tools ask for it); file requests are read as before, without it.
+        var answering = workspace
+        answering.account = account
+        run.folders = RunConditions.Folders(directory: NativeSessions.directory(workspace.room),
+            arguments: { try answering.arguments(provider: account.provider, original: $0, directory: $1, web: $2) },
+            read: { try workspace.readRequests($0, directory: $1, token: $2) })
+        return run
+    }
+}
+
 extension Discussion {
     func setWorkspaceLevel(_ level: WorkspaceLevel) {
         guard !running, WorkspaceLevel.offered.contains(level) else { return }

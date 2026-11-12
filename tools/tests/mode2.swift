@@ -948,23 +948,23 @@ do {
         prompts.append(prompt)
         return .success(prompts.count == 1 ? reads([root.appendingPathComponent("Discussion.swift").path, root.appendingPathComponent("notes.txt").path]) : "done")
     }
-    let fixed = Answerer.ask(account, prompt: "review", workspace: invocation)
+    let fixed = Answerer.ask(account, prompt: "review", run: .app(account, invocation))
     guard case .success("done") = fixed else { fatalError("a wrong path must not end the answer: \(fixed)") }
     expect(prompts.count == 2 && prompts[1].contains("read_failed") && prompts[1].contains("notes 731"), "the wrong path's error and the other file both go back")
     expect(prompts[1].contains(root.appendingPathComponent("app/macos/Discussion.swift").path), "the same-name file is suggested")
 
     prompts = []
     Answerer.replyForTests = { prompt in prompts.append(prompt); return .success(reads([root.appendingPathComponent("notes.txt").path])) }
-    guard case .failure(.failed(let message)) = Answerer.ask(account, prompt: "review", workspace: invocation) else { fatalError("endless requests must stop") }
+    guard case .failure(.failed(let message)) = Answerer.ask(account, prompt: "review", run: .app(account, invocation)) else { fatalError("endless requests must stop") }
     expect(prompts.count == 4 && prompts[2].contains("already sent") && prompts[3].contains("No more data") && message.contains("계속 요청"), "repeat: data, already sent, answer now, then stop")
 
     prompts = []
     Answerer.replyForTests = { prompt in prompts.append(prompt); return .success(prompts.count < 4 ? reads([root.appendingPathComponent("notes.txt").path]) : "answer from notes") }
-    guard case .success("answer from notes") = Answerer.ask(account, prompt: "review", workspace: invocation) else { fatalError("answer now must let it answer") }
+    guard case .success("answer from notes") = Answerer.ask(account, prompt: "review", run: .app(account, invocation)) else { fatalError("answer now must let it answer") }
     prompts = []
     let missing = root.appendingPathComponent("missing.txt").path
     Answerer.replyForTests = { prompt in prompts.append(prompt); return .success(reads([missing])) }
-    guard case .failure = Answerer.ask(account, prompt: "review", workspace: invocation) else { fatalError("endless failing reads must stop") }
+    guard case .failure = Answerer.ask(account, prompt: "review", run: .app(account, invocation)) else { fatalError("endless failing reads must stop") }
     expect(prompts.count == 5 && !prompts[1].contains("already sent") && prompts[4].contains("read_failed") && prompts[4].contains("No more data"), "a failed read may be retried, up to the failure limit")
     print("PASS: file requests keep good files, return wrong paths with same-name files, and end repeats with an answer")
 }
@@ -1999,9 +1999,27 @@ do {
     // Claude's own TodoWrite list arrives whole in an assistant message and becomes the plan.
     claude.feed(line(["type": "assistant", "message": ["content": [["type": "tool_use", "name": "TodoWrite", "input": ["todos": [
         ["content": "Read code", "status": "completed"], ["content": "Fix bug", "status": "in_progress"], ["content": "Run tests", "status": "pending"]]]]]]]))
-    if seen.count == 1, case .plan(let steps) = seen[0] {
+    if seen.count == 1, case .todos(let todos) = seen[0], let steps = PlanLink.todos(todos) {
         expect(steps.map(\.status) == [.done, .doing, .todo] && steps[1].text == "Fix bug", "TodoWrite becomes the work plan")
-    } else { expect(false, "TodoWrite reported once as a plan: \(seen)") }
+    } else { expect(false, "TodoWrite reported once as its todos: \(seen)") }
+    seen.removeAll()
+    // The parser passes the list on as it came and in the order of the lines; turning it into steps is the user's part.
+    // A new parser, so the first text piece is sent at once (pieces within 0.08 s wait).
+    let ordered = StreamParser(provider: .claude) { seen.append($0) }
+    ordered.feed(line(["type": "stream_event", "event": ["type": "message_start"]]))
+    ordered.feed(line(["type": "stream_event", "event": ["type": "content_block_delta", "delta": ["type": "text_delta", "text": "Plan "]]]))
+    ordered.feed(line(["type": "assistant", "message": ["content": [["type": "tool_use", "name": "TodoWrite", "input": ["todos": [["content": "One", "status": "pending"]]]],
+                                                                   ["type": "tool_use", "name": "TodoWrite", "input": ["todos": "not a list"]]]]]))
+    ordered.feed(line(["type": "stream_event", "event": ["type": "content_block_start", "content_block": ["type": "tool_use", "name": "Bash"]]]))
+    ordered.feed(line(["type": "stream_event", "event": ["type": "message_stop"]]))
+    let order = seen.map { update -> String in
+        switch update {
+        case .text(let t): return "text:" + t
+        case .activity: return "activity"
+        case .todos(let todos): return "todos:" + (PlanLink.todos(todos)?.map(\.text).joined(separator: ",") ?? "none")
+        }
+    }
+    expect(order == ["text:Plan ", "todos:One", "todos:none", "activity", "text:Plan "], "TodoWrite lists come raw, each one, between the text and the tool start: \(order)")
     seen.removeAll()
     let codex = StreamParser(provider: .codex) { seen.append($0) }
     codex.feed(line(["type": "item.completed", "item": ["type": "error", "message": "config warning"]]))
@@ -2549,6 +2567,7 @@ runTest("testGoogleDrive", testGoogleDrive)
 
 runTest("testWindowDrag", testWindowDrag)
 
+runTest("testRunConditions", testRunConditions)
 runTest("testProjectWork", testProjectWork)
 runTest("testAskAI", testAskAI)
 runTest("testCollabLog", testCollabLog)

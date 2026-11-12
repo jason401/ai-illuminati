@@ -439,7 +439,7 @@ extension Discussion {
         guard permits(peer, room: room) else { return .failure(Enterprise.blocked(peer)) }
         return workspaceAnswer?(peer, prompt, view, token, nil)
             ?? Answerer.ask(peer, prompt: prompt, timeout: timeout, cancellation: token, web: true,
-                            workspace: WorkspaceInvocation(binding: view, room: room))
+                            run: .app(peer, WorkspaceInvocation(binding: view, room: room)))
     }
 
     // Starts ask_ai for one message in a mode-0 chat (every route: one, all, work, plain chat). Call `endPeer` when it is done.

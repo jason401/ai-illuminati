@@ -186,7 +186,7 @@ extension Discussion {
             var outcome: Result<(SpaceBuild, String), SpaceBad> = .failure(SpaceBad(reason: ""))
             for attempt in 0..<2 {
                 let started = Date()
-                switch Answerer.ask(account, prompt: prompt, timeout: 600, cancellation: cancel) {
+                switch Answerer.ask(account, prompt: prompt, timeout: 600, cancellation: cancel, run: .app(account)) {
                 case .failure(let failure): outcome = .failure(SpaceBad(reason: Self.describe(failure)))
                 case .success(let raw):
                     let split = SpaceBuilder.split(FaceLink.extract(raw).text)

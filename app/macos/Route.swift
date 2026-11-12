@@ -402,7 +402,7 @@ extension Discussion {
                 if cancellation.isCancelled { return nil }
                 guard self.permits(account, room: self.currentID) else { return nil }
                 // No workspace and no web: the judge has no tools at all.
-                guard case .success(let text) = Answerer.ask(account, prompt: prompt, timeout: Route.memberTimeout, cancellation: cancellation) else { return nil }
+                guard case .success(let text) = Answerer.ask(account, prompt: prompt, timeout: Route.memberTimeout, cancellation: cancellation, run: .app(account)) else { return nil }
                 return text
             }, label: label)
         }

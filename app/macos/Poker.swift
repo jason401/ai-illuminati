@@ -589,7 +589,7 @@ final class PokerGame: ObservableObject {
         cancellation = stopper
         let answer = self.answer
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let reply = answer?(account, prompt) ?? Answerer.ask(account, prompt: prompt, timeout: 120, cancellation: stopper)
+            let reply = answer?(account, prompt) ?? Answerer.ask(account, prompt: prompt, timeout: 120, cancellation: stopper, run: .app(account))
             DispatchQueue.main.async {
                 guard let self, self.generation == ticket, let hand = self.hand, hand.toAct == i else { return }
                 self.thinking = nil

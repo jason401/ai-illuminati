@@ -348,7 +348,7 @@ extension Discussion {
                     switch update {
                     case .text(let text): self.changeTurn(id, index) { $0.partial = Self.extractState(FaceLink.extract(text).text).reply; $0.partialBy = speaker; $0.lastActivityAt = Date() }
                     case .activity(let text): self.changeTurn(id, index) { $0.activity = text; $0.lastActivityAt = Date() }
-                    case .plan(let steps): run.setPlan(steps, note: nil, generation: generation, tool: false)
+                    case .todos(let todos): if let steps = PlanLink.todos(todos) { run.setPlan(steps, note: nil, generation: generation, tool: false) }
                     }
                 }
                 guard permits(account, room: id) else { return .failure(Enterprise.blocked(account)) }
@@ -358,7 +358,7 @@ extension Discussion {
                                           invoke: { text, images, session in
                     Answerer.ask(account, prompt: text, timeout: run.deadline.timeIntervalSinceNow, cancellation: run.attempt,
                                  images: images, web: true, session: session,
-                                 workspace: WorkspaceInvocation(binding: workspace, room: id, readOnly: false, backupPath: self.activeWorkspaceBackupPath), progress: progress)
+                                 run: .app(account, WorkspaceInvocation(binding: workspace, room: id, readOnly: false, backupPath: self.activeWorkspaceBackupPath)), progress: progress)
                 }, note: { text in DispatchQueue.main.async { self.sessionNote = text } })
             }
             let started = Date()
@@ -437,7 +437,7 @@ extension Discussion {
                     view.roots = workspace.roots.map { WorkspaceRoot(path: $0.path, directory: $0.directory, writable: $0.path == Self.chatFolder(id).path ? true : nil) }
                     let reviewPrompt = Self.soloContext(rules: rules, transcript: transcript + "\n[Writer result]\n" + text) + "\n[SOLO TURN]\nReview the linked project read-only. Do not edit the project or run Git writes.\n" + run.checkpoint("Read-only review")
                     let reviewResult = !permits(reviewer, room: id) ? .failure(Enterprise.blocked(reviewer))
-                        : workspaceAnswer?(reviewer, reviewPrompt, view, run.attempt, nil) ?? Answerer.ask(reviewer, prompt: reviewPrompt, timeout: min(900, run.deadline.timeIntervalSinceNow), cancellation: run.attempt, workspace: WorkspaceInvocation(binding: view, room: id))
+                        : workspaceAnswer?(reviewer, reviewPrompt, view, run.attempt, nil) ?? Answerer.ask(reviewer, prompt: reviewPrompt, timeout: min(900, run.deadline.timeIntervalSinceNow), cancellation: run.attempt, run: .app(reviewer, WorkspaceInvocation(binding: view, room: id)))
                     run.attempt.cancel()
                     let reviewText: String, failed: Bool
                     switch reviewResult {

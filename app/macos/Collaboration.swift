@@ -73,7 +73,7 @@ extension Discussion {
         let full = "[COLLABORATION]\n" + prompt + "\n" + marker + "\nRole: " + role
         let invoke: (String, [URL], NativeSessionCall?) -> Result<String, Answerer.Failure> = { text, pictures, session in
             if let fake = self.collaborationAnswer { return fake(account, text, pictures, token) }
-            return Answerer.ask(account, prompt: text, timeout: 600, cancellation: token, images: pictures, web: web, session: session, workspace: self.activeWorkspace.map { WorkspaceInvocation(binding: $0, room: room, readOnly: !mutable, backupPath: self.activeWorkspaceBackupPath) })
+            return Answerer.ask(account, prompt: text, timeout: 600, cancellation: token, images: pictures, web: web, session: session, run: .app(account, self.activeWorkspace.map { WorkspaceInvocation(binding: $0, room: room, readOnly: !mutable, backupPath: self.activeWorkspaceBackupPath) }))
         }
         if activeSessionRoom != nil {
             return nativeSessions.ask(account, room: room, prompt: full, images: images, timeout: 600, token: token, web: web,

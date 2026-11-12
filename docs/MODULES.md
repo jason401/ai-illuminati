@@ -169,3 +169,64 @@ Public names and why (everything else stays internal: `SpaceCheck`, `SpaceRules`
   `SpaceWebView` here), and for a guard with several layers check each layer, since behavior alone hides a weak one;
   run the falsification before calling a row done.
 
+
+## Runtime, step R0: the way in made narrow, before it becomes a module (2026-11-11, draft)
+Target order: `AILocalization`, `AIAccounts` ← Runtime ← Workspace ← Projects, Chat ← App. Runtime (now `Answerer`,
+`StreamParser`, `AnswerProgress`, `RunConditions` in `Discussion.swift`) no longer names `WorkspaceInvocation`,
+`AutoGuard`, `PlanLink`, `FaceLink` or `projectRunID` (grep from `struct RunConditions` to `ChatTurn`: 0). No module
+yet (R1); nothing changed in what the tools are started with (below).
+- `Answerer.ask(…, run: RunConditions, …)`: `run` is required, so no call can forget the Codex face rule. A
+  `RunConditions` holds only how to start: `prefix` (before the tool's arguments), `wrapper` (program + its
+  arguments, the tool after them), `environment` (the account's environment → the tool's), `processGroup` (stop the
+  whole group at the end), `folders` (`directory` of the room, `arguments` and `read` from the linked folders).
+  The rules stay with the caller: `RunConditions.app(account, workspace?)` in `Workspace.swift` puts Codex's AI Face
+  servers off (`FaceLink.codexOff`), wraps project work in `project_process.py` with `AI_ILLUMINATI_PROJECT_PROCESS`
+  and a process group, and calls `AutoGuard.environment` when `fullAccessActive` (the call moved; AutoGuard's own
+  code did not change). The arguments get the answering account; file requests are read without it, as before.
+- `AnswerProgress.todos(Any?)` replaces `.plan([WorkStep])`: the parser sends every TodoWrite `todos` input as it
+  came, where it came in the stream; `ProjectChat` turns it into steps (`PlanLink.todos`) and drops what is not a list.
+- Left for R1 (Runtime still uses them): `CloudModels` (model pick, `apply`, `noteSeen`), `LocalModel.ask`,
+  `GeminiLinks` (agy web rules and note), `ClaudeUsage.binary`/`CodexUsage.binary`, `Login.home`/`agyInstalled`,
+  `NativeSessionCall`, `DebateCancellation`, `AccountStore.home` (AIAccounts, allowed). `GeminiLinks.workspaceNote` is
+  used by `Workspace.swift`. Users of Runtime: Attachments, Collaboration, Debate, Local, NativeSessions, Peer, Poker,
+  ProjectChat, Route, Solo, SpaceView, Workspace, Usage, Enterprise (`Answerer.Failure`).
+- Contract for parallel work in R1: a Runtime side touches `Discussion.swift` (Answerer…StreamParser, moved to
+  `app/modules/<Runtime>/`), and must keep `tools/tests/run_mode2.sh`'s file list and `build_modules.sh` order right;
+  the app side touches `Workspace.swift` (`RunConditions.app`), `ProjectChat.swift`, `Solo.swift` and every call site
+  above; both run `run_conditions.swift` (in the run_mode2 list) and the full test.
+
+### Runtime promises (draft)
+| Promise | Users (files) | Runtime test | User tests (through the app) |
+|---|---|---|---|
+| The tool starts with exactly what `RunConditions` says: prefix before its arguments, the wrapper's program first and the tool after its arguments, the changed environment, the group stopped at the end | every `Answerer.ask` caller (`RunConditions.app`) | none yet (R1: a contract test with a hand-made `RunConditions`) | `run_conditions.swift`: launches through `Discussion.requestDebate` for Claude, Codex, Gemini, local × plain, folder, folder with full access, project off, project on, compared byte for byte with `run_conditions.golden` |
+| Full access → AutoGuard's environment (shims on PATH, no Git/GitHub credentials, no SSH agent); off → none | `RunConditions.app` (Workspace.swift) | — | `run_conditions.swift` layer checks: project-on and folder-full have it, project-off and folder do not; `testFullAuto` (the shims themselves) |
+| Project work runs in `project_process.py` (its own process group, `AI_ILLUMINATI_PROJECT_PROCESS=1`) and the whole group is stopped | `RunConditions.app`, ProjectChat | — | `run_conditions.swift` (wrapper, marker, group: three separate checks in one), `testProjectWork` ("Stop kills foreground and background project writers") |
+| Codex: the account's own AI Face servers are off on every call | `RunConditions.app`, every Codex call | — | `run_conditions.swift` ("AI Face's own server is turned off"), AI Face link test in mode2 |
+| Linked folders: arguments from the folder rules, runs in `rooms/<id>/stateless-…`, file requests read and answered (limits, repeats) | Workspace.swift, Attachments, Collaboration, Peer, ProjectChat | — | `run_conditions.swift`, mode2 "file requests keep good files …" |
+| Stream events in order: text (at most ~12 a second, all at the end of a message), tool starts, every TodoWrite list raw | Solo (text, activity), ProjectChat (all three) | mode2 StreamParser block (order, two lists, a list that is not one) | `testProjectHandoff`: a TodoWrite line through `StreamParser` and project work's own progress becomes the plan |
+| The local model starts no command line tool (RunConditions do not apply) | Local | — | `run_conditions.swift` ("the local model starts no command line tool") |
+
+### Falsification (2026-11-11): one change at a time, call sites and signatures kept
+`run_conditions.swift` checks each guard first, then the whole capture against the golden file:
+
+| Change | Layer check | Golden file | Other user test |
+|---|---|---|---|
+| M1 `AutoGuard.environment` not applied | caught (full access → AutoGuard) | differs (78 lines) | — |
+| M2 no `project_process.py` wrapper | caught (process group) | differs (24) | — |
+| M3 process group not stopped (`processGroup` false) | caught | differs (12) | — |
+| M4 full access reversed | caught | differs (146) | — |
+| M5 no `AI_ILLUMINATI_PROJECT_PROCESS` | caught | differs (6) | — |
+| M6 Codex face servers left on | caught | differs (10) | — |
+| M7 Answerer ignores `run.environment` | caught | differs (84) | — |
+| M8 Answerer ignores `run.wrapper` | caught | differs (24) | — |
+| P1 TodoWrite event dropped | caught (StreamParser block) | — | caught (`testProjectHandoff`) |
+| P2 TodoWrite sent after the message's text | caught (StreamParser block) | — | — |
+| P3 ProjectChat ignores the event | passes (parser fine) | — | caught (`testProjectHandoff`) |
+| P4 only the first list of a message | caught (order check) | — | — |
+| P5 parser filters lists itself (old behavior) | caught (order check) | — | — |
+
+The capture was made from the code before the change (with only `Answerer.launchForTests` added), three runs
+identical, and is byte-identical after it (sha1 `1ca3b747…`). It needs no CLI: a missing tool counts as `<cli>`;
+the environment is compared with the account's own after a fixed start (plain PATH, a GitHub token and an SSH agent
+to take away), Claude's `--mcp-config` with sorted keys. Gemini has no "plain" kind: it would add web rules to agy's
+settings in the real home.

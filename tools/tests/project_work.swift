@@ -176,10 +176,16 @@ func testProjectHandoff() {
     chat.change(chat.currentID) { $0.workspace = WorkspaceBinding(roots: [WorkspaceRoot(path: root.path, directory: true)], project: project) }
     let file = root.appendingPathComponent("unfinished.txt")
     var accounts: [String] = [], oldContext: ToolContext?
-    chat.workspaceAnswer = { account, prompt, binding, _, _ in
+    chat.workspaceAnswer = { account, prompt, binding, _, progress in
         accounts.append(account.id)
         if account.id == "project-claude" {
             try! "partial work".write(to: file, atomically: true, encoding: .utf8)
+            // Claude's TodoWrite, through the app's parser and project work's own progress, becomes the plan.
+            let todo: [String: Any] = ["type": "assistant", "message": ["content": [["type": "tool_use", "name": "TodoWrite", "input": ["todos": [
+                ["content": "Look around", "status": "completed"], ["content": "Change it", "status": "in_progress"]]]]]]]
+            StreamParser(provider: .claude, report: progress!).feed(try! JSONSerialization.data(withJSONObject: todo) + Data([0x0A]))
+            let todoPlan = ProjectWork.get(binding.projectRunID)!.plan
+            expect(todoPlan.prefix(2).map(\.text) == ["Look around", "Change it"] && todoPlan.prefix(2).map(\.status) == [.done, .doing], "TodoWrite shows as the project plan: \(todoPlan.map(\.text))")
             oldContext = ToolContext(room: chat.currentID, roots: binding.roots, projectRun: binding.projectRunID, projectGeneration: binding.projectGeneration)
             // The AI shows its steps; a bad list and another room are refused.
             expect(PlanLink.shared.tools(context: oldContext!).first?["name"] as? String == "work_plan" && PlanLink.shared.tools().isEmpty, "work_plan is scoped to the live project attempt")

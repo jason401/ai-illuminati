@@ -365,7 +365,7 @@ extension Discussion {
                 changeTurn(id, index) { $0.status = L("\(self.label(drawer))가 Space 그림 \(request.n) 그리는 중…", "\(self.label(drawer)) is drawing Space picture \(request.n)…") }
                 let started = Date()
                 let answer = reference.map { file in
-                    pictureAnswer?(drawer, prompt, [file], 600, token, false) ?? Answerer.ask(drawer, prompt: prompt, timeout: 600, cancellation: token, images: [file])
+                    pictureAnswer?(drawer, prompt, [file], 600, token, false) ?? Answerer.ask(drawer, prompt: prompt, timeout: 600, cancellation: token, images: [file], run: .app(drawer))
                 } ?? debateAnswer(drawer, prompt, 600, token, false)
                 if case .success = answer { picture = Pictures.newCodexImages(drawer, since: started).first.flatMap { Pictures.spaceDataURL($0) } }
             }
@@ -641,7 +641,7 @@ extension Discussion {
                             t.partial = shown; t.partialBy = speaker
                         }
                     case .activity(let what): self.changeTurn(id, index) { $0.activity = what }
-                    case .plan: break
+                    case .todos: break
                     }
                 }
                 group.enter()
@@ -756,7 +756,7 @@ extension Discussion {
                     self.changeTurn(id, index) { $0.partial = shown; $0.partialBy = speaker }
                 case .activity(let what):
                     self.changeTurn(id, index) { $0.activity = what }
-                case .plan: break
+                case .todos: break
                 }
             }
             let result = requestDebate(account, prompt, 900, cancellation, web: true,

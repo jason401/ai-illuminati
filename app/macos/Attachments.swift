@@ -112,7 +112,7 @@ extension Discussion {
     func request(_ account: Account, prompt: String, timeout: TimeInterval = 240) -> Result<String, Answerer.Failure> {
         guard permits(account, room: currentID) else { return .failure(Enterprise.blocked(account)) }
         if activeImages.isEmpty { return answer(account, activeDocumentText + "\n" + prompt, timeout) }
-        return Answerer.ask(account, prompt: activeDocumentText + "\n" + imageContext + "\n" + prompt, timeout: timeout, images: activeImages)
+        return Answerer.ask(account, prompt: activeDocumentText + "\n" + imageContext + "\n" + prompt, timeout: timeout, images: activeImages, run: .app(account))
     }
 
     // fresh: a shorter prompt (summary + recent turns) for an AI that starts without a session it can resume.
@@ -133,13 +133,13 @@ extension Discussion {
         if let room = activeSessionRoom, NativeSessions.eligible(account) {
             return nativeSessions.ask(account, room: room, prompt: full, images: pictures, timeout: timeout,
                                       token: token, web: web, speaker: label(account), fresh: fresh.map(wrap), invoke: { text, images, session in
-                Answerer.ask(account, prompt: text, timeout: timeout, cancellation: token, images: images, web: web, session: session, workspace: activeWorkspace.map { WorkspaceInvocation(binding: $0, room: room) }, progress: progress)
+                Answerer.ask(account, prompt: text, timeout: timeout, cancellation: token, images: images, web: web, session: session, run: .app(account, activeWorkspace.map { WorkspaceInvocation(binding: $0, room: room) }), progress: progress)
             }, note: { text in DispatchQueue.main.async { self.sessionNote = text } })
         }
         if let workspaceAnswer, let binding = activeWorkspace { return workspaceAnswer(account, start, binding, token, progress) }
         if pictures.isEmpty && activeWorkspace == nil { return debateAnswer(account, start, timeout, token, web) }
         if let pictureAnswer, activeWorkspace == nil { return pictureAnswer(account, start, pictures, timeout, token, web) }
-        return Answerer.ask(account, prompt: start, timeout: timeout, cancellation: token, images: pictures, web: web, workspace: activeWorkspace.map { WorkspaceInvocation(binding: $0, room: activeSessionRoom ?? currentID) }, progress: progress)
+        return Answerer.ask(account, prompt: start, timeout: timeout, cancellation: token, images: pictures, web: web, run: .app(account, activeWorkspace.map { WorkspaceInvocation(binding: $0, room: activeSessionRoom ?? currentID) }), progress: progress)
     }
 }
 

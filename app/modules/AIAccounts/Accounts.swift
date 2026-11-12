@@ -35,7 +35,7 @@ public struct Account: Codable, Equatable {
     public var provider: Provider
     public var name: String
     public var dir: String?
-    public var school: Bool?   // an Enterprise (school or work) account, set in Settings; nil = guessed from the name
+    public var school: Bool?   // an Enterprise (school or work) account, set in Settings; nil (older entries) = guessed from the name
     public var model: String?   // Ollama's name for the model ("qwen3:8b"); nil for the first two Gemma entries (their ids say)
 
     public init(id: String, provider: Provider, name: String, dir: String? = nil, school: Bool? = nil, model: String? = nil) {
@@ -211,7 +211,8 @@ public enum AccountStore {
     // Makes a new, empty account folder. Codex is told to keep its login in a file there
     // (not the shared Keychain entry) so each account stays separate.
     public static func newAccount(provider: Account.Provider, name: String) -> Account {
-        if provider == .gemini { return Account(id: gemini.id, provider: .gemini, name: name, dir: nil) }
+        // A new account is personal until the user marks it Enterprise in Settings.
+        if provider == .gemini { return Account(id: gemini.id, provider: .gemini, name: name, dir: nil, school: false) }
         let id = "\(provider.rawValue)-\(Int(Date().timeIntervalSince1970))"
         let dir = accountsDir + "/" + id
         try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true,
@@ -220,6 +221,6 @@ public enum AccountStore {
             try? "cli_auth_credentials_store = \"file\"\n"
                 .write(toFile: dir + "/config.toml", atomically: true, encoding: .utf8)
         }
-        return Account(id: id, provider: provider, name: name, dir: dir)
+        return Account(id: id, provider: provider, name: name, dir: dir, school: false)
     }
 }

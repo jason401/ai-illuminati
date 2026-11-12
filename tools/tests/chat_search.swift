@@ -17,6 +17,7 @@ func testEnterpriseMarks() {
     let work = Account(id: "ent-w-codex", provider: .codex, name: "회사", dir: nil, school: true)
     let local = Account(id: "ent-ollama", provider: .ollama, name: "Gemma", dir: nil, school: false)
     let gemini = Account(id: "ent-gemini", provider: .gemini, name: "학교", dir: nil, school: true)
+    let personalGemini = Account(id: "ent-gemini-p", provider: .gemini, name: "Gemini", dir: nil, school: false)
     let m = AppModel()
     m.accounts = [personal, school, schoolCodex, work]
     m.latestUsage = ["ent-p-claude": usage(95, 95), "ent-s-claude": usage(60, 60), "ent-s-codex": usage(50, 50), "ent-w-codex": usage(40, 40)]
@@ -34,14 +35,14 @@ func testEnterpriseMarks() {
     expect(!old.isEnterprise && !Conversation().isEnterprise, "older chats, marked or unsure, and new chats are open")
 
     // The gate.
-    let organization = Enterprise.organizations(m.accounts + [local, gemini])
-    expect(organization.map(\.name) == ["학교", "회사"], "one organization per Enterprise name (not Gemini or models on this Mac)")
+    let organization = Enterprise.organizations(m.accounts + [local, gemini, personalGemini])
+    expect(organization.map(\.name) == ["학교", "회사"], "one organization per Enterprise name (Gemini too; not models on this Mac or personal accounts)")
     let schoolLock = organization[0]
     expect([personal, school, schoolCodex, work, local, gemini].allSatisfy { Enterprise.permits($0, lock: nil) }, "an open chat: every account")
-    expect(Enterprise.permits(school, lock: schoolLock) && Enterprise.permits(schoolCodex, lock: schoolLock) && Enterprise.permits(local, lock: schoolLock),
-           "a locked chat: its organization and models on this Mac")
-    expect(!Enterprise.permits(personal, lock: schoolLock) && !Enterprise.permits(work, lock: schoolLock) && !Enterprise.permits(gemini, lock: schoolLock),
-           "but no personal account, other organization or Gemini")
+    expect(Enterprise.permits(school, lock: schoolLock) && Enterprise.permits(schoolCodex, lock: schoolLock) && Enterprise.permits(local, lock: schoolLock)
+           && Enterprise.permits(gemini, lock: schoolLock), "a locked chat: its organization (an Enterprise Gemini too) and models on this Mac")
+    expect(!Enterprise.permits(personal, lock: schoolLock) && !Enterprise.permits(work, lock: schoolLock) && !Enterprise.permits(personalGemini, lock: schoolLock),
+           "but no personal account (a personal Gemini too) or other organization")
 
     // Picking: only allowed accounts in a locked chat (the personal one has the most left).
     expect(AutoPick.choose(m.accounts, usage: m.latestUsage, lock: nil, current: nil)?.id == personal.id, "an open chat picks from everyone")
@@ -100,8 +101,8 @@ func testEnterpriseMarks() {
 
     // A personal lock: personal accounts, Gemini and models on this Mac; no Enterprise account. Otherwise an open chat.
     let personalLock = Enterprise.personalLock
-    expect(Enterprise.permits(personal, lock: personalLock) && Enterprise.permits(gemini, lock: personalLock) && Enterprise.permits(local, lock: personalLock)
-           && !Enterprise.permits(school, lock: personalLock) && !Enterprise.permits(work, lock: personalLock), "a personal lock lets in only personal accounts")
+    expect(Enterprise.permits(personal, lock: personalLock) && Enterprise.permits(personalGemini, lock: personalLock) && Enterprise.permits(local, lock: personalLock)
+           && !Enterprise.permits(school, lock: personalLock) && !Enterprise.permits(gemini, lock: personalLock) && !Enterprise.permits(work, lock: personalLock), "a personal lock lets in only personal accounts")
     expect(AutoPick.choose([school, schoolCodex, work], usage: m.latestUsage, lock: personalLock, current: nil) == nil
            && AutoPick.choose(m.accounts, usage: m.latestUsage, lock: personalLock, current: nil)?.id == personal.id, "a personal chat picks only personal accounts")
     chat.newConversation()

@@ -346,6 +346,8 @@ final class AppModel: ObservableObject {
 
     func rename(_ id: String, to name: String) {
         guard let index = accounts.firstIndex(where: { $0.id == id }), accounts[index].name != name else { return }
+        // An older entry (no mark yet) keeps what its name made it: only the Enterprise checkbox changes that.
+        if accounts[index].school == nil { accounts[index].school = accounts[index].isSchool }
         accounts[index].name = name
     }
 
@@ -1937,7 +1939,7 @@ private struct AccountRow: View {
                         .help(L("답한 뒤 모델을 메모리에 남겨 두는 시간. 다시 부를 때 기다리지 않아요. 채팅창을 닫으면 바로 내려요.",
                                 "How long the model stays in memory after a reply, so the next one starts at once. Closing the chat window unloads it."))
                     }
-                    if account.provider != .gemini && account.provider != .ollama {
+                    if account.provider != .ollama {
                         Toggle(L("엔터프라이즈", "Enterprise"), isOn: Binding(
                             get: { model.accounts.first { $0.id == account.id }?.isSchool ?? false },
                             set: { model.setSchool(account.id, $0) }))

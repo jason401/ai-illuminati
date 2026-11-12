@@ -106,4 +106,6 @@ let mode = (try? fm.attributesOfItem(atPath: made.dir ?? ""))?[.posixPermissions
 expect(made.dir == AccountStore.accountsDir + "/" + made.id && mode == 0o700
        && (try? String(contentsOfFile: made.dir! + "/config.toml", encoding: .utf8)) == "cli_auth_credentials_store = \"file\"\n", "new Codex account")
 expect(AccountStore.newAccount(provider: .gemini, name: "G").id == AccountStore.gemini.id, "Gemini is always the one entry")
+expect(made.school == false && !AccountStore.newAccount(provider: .claude, name: "Claude (학교)").isSchool
+       && AccountStore.newAccount(provider: .gemini, name: "G").school == false, "a new account is personal until marked Enterprise")
 print("PASS: AIAccounts promises (test home, save format, old lists, unreadable list, backups, environment, Keychain name, new accounts)")

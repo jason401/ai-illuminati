@@ -11,7 +11,7 @@ import AIRuntime
 // organization, so "Claude (학교)" and "ChatGPT (학교)" are one organization.
 // The lock itself (EnterpriseLock) is in AIAccounts, so a Space can keep it.
 // A personal lock is the other way round: the same lock with Enterprise.personal as its organization, so every gate,
-// meeting, review, TODO and Space that keeps a lock keeps it too. Only personal accounts (Gemini too) and models on
+// meeting, review, TODO and Space that keeps a lock keeps it too. Only personal accounts and models on
 // this Mac take part; it is otherwise an open chat (searched by personal AIs, synced, saves memory).
 // A project is locked by locking all its chats and TODO lists (lockProject); new ones in it take the same lock.
 
@@ -44,18 +44,18 @@ enum Enterprise {
     }
 
     // Whether `account` may be sent the content of a chat with `lock` (nil: an open chat, every account may).
-    // Gemini cannot be marked Enterprise in Settings, so it never joins an Enterprise chat and always a personal one.
+    // Every cloud AI (Gemini too) follows its Enterprise mark in Settings; models on this Mac join every chat.
     static func permits(_ account: Account, lock: EnterpriseLock?) -> Bool {
         guard let lock else { return true }
         if account.provider == .ollama { return true }
-        if lock.isPersonal { return account.provider == .gemini || !account.isSchool }
-        return account.provider != .gemini && account.isSchool && organization(account.name) == lock.organization
+        if lock.isPersonal { return !account.isSchool }
+        return account.isSchool && organization(account.name) == lock.organization
     }
 
     // The organizations a chat may be locked for: one per name among the Enterprise accounts.
     static func organizations(_ accounts: [Account]) -> [EnterpriseLock] {
         var seen = Set<String>()
-        return accounts.filter { $0.provider != .ollama && $0.provider != .gemini && $0.isSchool }.compactMap { account in
+        return accounts.filter { $0.provider != .ollama && $0.isSchool }.compactMap { account in
             let key = organization(account.name)
             guard !key.isEmpty, seen.insert(key).inserted else { return nil }
             return EnterpriseLock(organization: key, name: organizationName(account.name), lockedAt: Date())
@@ -152,11 +152,11 @@ extension Discussion {
         if organization.isPersonal {
             alert.messageText = L("‘\(name)’ 프로젝트를 개인으로 잠글까요?", "Lock the project “\(name)” as personal?")
             alert.informativeText = L("""
-                되돌릴 수 없어요. 이 프로젝트의 모든 대화·회의·TODO와 앞으로 생기는 것까지 개인 계정(Gemini 포함)과 내 Mac 모델만 사용하고, 회사·학교(Enterprise) 계정에는 보내지 않아요.
+                되돌릴 수 없어요. 이 프로젝트의 모든 대화·회의·TODO와 앞으로 생기는 것까지 개인 계정과 내 Mac 모델만 사용하고, 회사·학교(Enterprise) 계정에는 보내지 않아요.
 
                 잠그기 전에 Enterprise 계정에게 보낸 내용은 이미 보낸 거예요.
                 """, """
-                This cannot be undone. Every chat, meeting and TODO of this project, and every new one, uses only personal accounts (Gemini too) and models on this Mac; nothing goes to Enterprise accounts.
+                This cannot be undone. Every chat, meeting and TODO of this project, and every new one, uses only personal accounts and models on this Mac; nothing goes to Enterprise accounts.
 
                 Whatever was already sent to Enterprise accounts was sent.
                 """)
@@ -189,11 +189,11 @@ extension Discussion {
         if organization.isPersonal {
             alert.messageText = L("이 대화를 개인 방으로 잠글까요?", "Lock this chat as a personal chat?")
             alert.informativeText = L("""
-                되돌릴 수 없어요. 잠근 뒤에는 개인 계정(Gemini 포함)과 내 Mac 모델만 이 대화에 참여하고, 회사·학교(Enterprise) 계정에는 보내지 않아요. 그 계정의 AI 검색에도 나오지 않아요.
+                되돌릴 수 없어요. 잠근 뒤에는 개인 계정과 내 Mac 모델만 이 대화에 참여하고, 회사·학교(Enterprise) 계정에는 보내지 않아요. 그 계정의 AI 검색에도 나오지 않아요.
 
                 잠그기 전에 Enterprise 계정에게 보낸 내용은 이미 보낸 거예요.
                 """, """
-                This cannot be undone. Once locked, only personal accounts (Gemini too) and models on this Mac take part; nothing goes to Enterprise accounts, and their AI search never shows it.
+                This cannot be undone. Once locked, only personal accounts and models on this Mac take part; nothing goes to Enterprise accounts, and their AI search never shows it.
 
                 Whatever this chat already sent to Enterprise accounts was sent.
                 """)

@@ -3,7 +3,6 @@ import PDFKit
 import ImageIO
 import UniformTypeIdentifiers
 import AIRuntime
-import AIChat
 
 private final class OfficeXML: NSObject, XMLParserDelegate {
     var text = "", capture = false
@@ -30,7 +29,7 @@ private final class OfficeXML: NSObject, XMLParserDelegate {
     }
 }
 
-enum MaterialReader {
+public enum MaterialReader {
     static let imageExtensions: Set<String> = ["png", "jpg", "jpeg", "heic", "tif", "tiff", "bmp", "gif", "webp"]
     static let extensions = RoomDocuments.extensions.union(["docx", "pptx"]).union(imageExtensions)
     static func error(_ text: String) -> NSError { NSError(domain: "Materials", code: 1, userInfo: [NSLocalizedDescriptionKey: text]) }
@@ -70,7 +69,7 @@ enum MaterialReader {
         CGImageDestinationAddImage(target, image, nil)
         guard CGImageDestinationFinalize(target) else { throw error("이미지 저장 실패") }
     }
-    static func read(_ source: URL, room: UUID) throws -> RoomDocument {
+    public static func read(_ source: URL, room: UUID) throws -> RoomDocument {
         let info = try source.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
         guard info.isRegularFile == true, info.isSymbolicLink != true else { throw error("일반 파일만 지원합니다: " + source.lastPathComponent) }
         guard (info.fileSize ?? Int.max) <= 1024 * 1024 * 1024 else { throw error("1 GB를 넘는 단일 파일은 나누어 넣어주세요: " + source.lastPathComponent) }

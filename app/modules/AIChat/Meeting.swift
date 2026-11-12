@@ -3,7 +3,6 @@ import AIAccounts
 import AILocalization
 import AIRuntime
 import AIWorkspace
-import AIChat
 
 // A meeting: the user picks "회의" (or "/meet ") for one message, and the AIs of the chat hold a short discussion
 // about it in a hidden chat of their own, then bring the result back as the answer.
@@ -40,11 +39,11 @@ extension Discussion {
         return team
     }
 
-    static func meets(_ account: Account) -> Bool { [.claude, .codex, .gemini].contains(account.provider) }
+    public static func meets(_ account: Account) -> Bool { [.claude, .codex, .gemini].contains(account.provider) }
 
     // Whether the app may pick this account for an automatic team: as set in Settings → Chat (`picks` holds only the
     // switches the user changed), else the default: cloud AIs yes, models on this Mac no.
-    static func autoPicked(_ account: Account, picks: [String: Bool]) -> Bool {
+    public static func autoPicked(_ account: Account, picks: [String: Bool]) -> Bool {
         guard meets(account) || account.provider == .ollama else { return false }
         return picks[account.id] ?? meets(account)
     }
@@ -352,8 +351,8 @@ extension Discussion {
 
 // convene_meeting and meeting_result (the MCP tools). Only for an AI answering the user (origin member) while its message
 // is answered: never for the others answering at once, the AIs asked or the meeting's own speakers (depth 1).
-final class ConveneLink: ToolProvider {
-    static let shared = ConveneLink()
+public final class ConveneLink: ToolProvider {
+    public static let shared = ConveneLink()
     static let maxWait = 300
 
     func session(for context: ToolContext) -> PeerLink.Session? {
@@ -362,9 +361,9 @@ final class ConveneLink: ToolProvider {
         return session
     }
 
-    var active: Bool { PeerLink.shared.active }
-    func tools() -> [[String: Any]] { [] }
-    func tools(context: ToolContext) -> [[String: Any]] {
+    public var active: Bool { PeerLink.shared.active }
+    public func tools() -> [[String: Any]] { [] }
+    public func tools(context: ToolContext) -> [[String: Any]] {
         guard session(for: context) != nil else { return [] }
         return [["name": "convene_meeting",
                  "description": "Hand a decision to a short meeting of other AIs on this Mac. Returns a meeting id at once; get the result with meeting_result. At most \(Peer.maxMeetings) per answer.",
@@ -383,21 +382,21 @@ final class ConveneLink: ToolProvider {
                     "required": ["id"], "additionalProperties": false]]]
     }
 
-    func call(_ name: String, _ arguments: [String: Any], context: ToolContext) -> [String: Any] {
-        guard let session = session(for: context), let asker = context.asker else { return ToolHub.failure("Meetings cannot be convened here.") }
+    public func call(_ name: String, _ arguments: [String: Any], context: ToolContext) -> [String: Any] {
+        guard let session = session(for: context), let asker = context.asker else { return toolFailure("Meetings cannot be convened here.") }
         func text(_ value: String) -> [String: Any] { ["content": [["type": "text", "text": value]], "isError": false] }
         func string(_ key: String) -> String { (arguments[key] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
         switch name {
         case "convene_meeting":
             let agenda = string("agenda")
-            guard !agenda.isEmpty else { return ToolHub.failure("Write the agenda.") }
+            guard !agenda.isEmpty else { return toolFailure("Write the agenda.") }
             let members = (arguments["members"] as? [String]) ?? string("members").split(separator: ",").map(String.init)
             let request = HeldMeeting.Request(agenda: String(agenda.prefix(2000)), brief: string("brief"), decision: String(string("decision_needed").prefix(2000)),
                                               members: members, join: arguments["join"] as? Bool ?? false)
             guard PeerLink.shared.reserveMeeting(session, asker: asker.id) else {
                 return text("You already convened \(Peer.maxMeetings) meeting in this answer (the limit), or the answer has ended. Continue on your own.")
             }
-            guard let convene = session.convene else { return ToolHub.failure("Meetings cannot be convened here.") }
+            guard let convene = session.convene else { return toolFailure("Meetings cannot be convened here.") }
             let (meeting, reply) = convene(asker, request)
             guard let meeting else { PeerLink.shared.releaseMeeting(session, asker: asker.id); return text(reply) }
             guard PeerLink.shared.attach(meeting, to: session) else {
@@ -408,7 +407,7 @@ final class ConveneLink: ToolProvider {
             return text(reply)
         case "meeting_result":
             guard let id = UUID(uuidString: string("id")), let meeting = PeerLink.shared.held(id, in: session), meeting.asker == asker.id else {
-                return ToolHub.failure("No meeting with this id was convened by you in this answer.")
+                return toolFailure("No meeting with this id was convened by you in this answer.")
             }
             let wait = min(max((arguments["wait_seconds"] as? NSNumber)?.intValue ?? 120, 0), Self.maxWait)
             switch meeting.wait(TimeInterval(wait)) {
@@ -420,7 +419,7 @@ final class ConveneLink: ToolProvider {
             case .failed(let why): return text(why + " Continue on your own.")
             case .stopped: return text("The meeting was stopped. Continue on your own.")
             }
-        default: return ToolHub.failure("Unknown tool: " + name)
+        default: return toolFailure("Unknown tool: " + name)
         }
     }
 }

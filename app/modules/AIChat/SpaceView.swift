@@ -6,14 +6,13 @@ import AILocalization
 import AISpaces
 import AIRuntime
 import AIProjects
-import AIChat
 
 // Spaces on screen (Space.swift): a Space in place of the chat with its change box below, the preview card an
 // answer's <space-build> leaves in the chat, the sidebar's Spaces and "Make a Space" on a meeting's result.
 // Nothing here runs commands or approves work: a page may only move the user somewhere (a link asks first).
 
 // The talk that changes a Space: who is answering, the new version waiting to be applied, the last notice.
-final class SpaceRefiner: ObservableObject {
+public final class SpaceRefiner: ObservableObject {
     static let shared = SpaceRefiner()
     struct Pending: Equatable { var build: SpaceBuild; var migrated: Data?; var by: String; var request: String }
     @Published var busy: [String: String] = [:]        // Space → who is answering
@@ -25,7 +24,7 @@ final class SpaceRefiner: ObservableObject {
     // The Spaces folder checked when the app comes to the front (an editor or another tool may have changed it), unless
     // an answer is still writing there. A refusal shows in that Space.
     private static var watcher: NSObjectProtocol?
-    static func watchLibrary() {
+    public static func watchLibrary() {
         check()
         watcher = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in check() }
     }
@@ -222,7 +221,7 @@ extension Discussion {
             let outcome = SpaceBuilder.refine(prompt: prompt, kept: html.kept, ask: { prompt in
                 started = Date()
                 return Answerer.ask(account, prompt: prompt, timeout: 600, cancellation: cancel, run: .app(account))
-                    .map { FaceLink.extract($0).text }.mapError { SpaceBad(reason: Self.describe($0)) }
+                    .map { ChatApp.face.extract($0).text }.mapError { SpaceBad(reason: Self.describe($0)) }
             }, made: {
                 // Pictures ChatGPT made in this answer and those already in the page go in for their markers.
                 draws ? Pictures.newCodexImages(account, since: started).prefix(SpacePictures.perAnswer).compactMap { Pictures.spaceDataURL($0) } : []

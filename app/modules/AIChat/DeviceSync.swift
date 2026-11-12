@@ -3,7 +3,6 @@ import CryptoKit
 import IOKit
 import AIAccounts
 import AILocalization
-import AIChat
 
 // Chats from your other Macs, read only, through a folder both Macs see (iCloud Drive by default):
 //   <folder>/devices/<deviceID>/device.json         this Mac's name, app version, last write
@@ -21,34 +20,34 @@ struct SyncDeviceInfo: Codable {
     var writtenAt: Date
 }
 
-struct RemoteDevice: Identifiable, Equatable {
-    var id: String
+public struct RemoteDevice: Identifiable, Equatable {
+    public var id: String
     var name: String
     var writtenAt: Date?
     var chats: [RemoteChat]
 }
 
-struct DeviceSyncSettings: Codable, Equatable {
-    var enabled = false
-    var folder: String?          // nil: iCloud Drive/AI Illuminati Sync
-    var deviceName: String?      // nil: this Mac's name
-    var shareAll = false         // false: only chats marked "Show on other Macs"
-    var includeSchool = false    // Enterprise (school/work) chats stay off a personal iCloud unless turned on
+public struct DeviceSyncSettings: Codable, Equatable {
+    public var enabled = false
+    public var folder: String?          // nil: iCloud Drive/AI Illuminati Sync
+    public var deviceName: String?      // nil: this Mac's name
+    public var shareAll = false         // false: only chats marked "Show on other Macs"
+    public var includeSchool = false    // Enterprise (school/work) chats stay off a personal iCloud unless turned on
 }
 
-final class DeviceSync: ObservableObject {
-    static let shared = DeviceSync(deviceID: DeviceSync.hardwareID(), persist: true)
+public final class DeviceSync: ObservableObject {
+    public static let shared = DeviceSync(deviceID: DeviceSync.hardwareID(), persist: true)
 
-    @Published var settings: DeviceSyncSettings {
+    @Published public var settings: DeviceSyncSettings {
         didSet {
             guard settings != oldValue else { return }
             if persist, let data = try? JSONEncoder().encode(settings) { UserDefaults.app.set(data, forKey: Self.settingsKey) }
             if settings.enabled { reconcile(); scan() } else { devices = []; lastChecked = nil }
         }
     }
-    @Published private(set) var devices: [RemoteDevice] = []
-    @Published private(set) var lastChecked: Date?
-    @Published private(set) var problem: String?
+    @Published public private(set) var devices: [RemoteDevice] = []
+    @Published public private(set) var lastChecked: Date?
+    @Published public private(set) var problem: String?
 
     let deviceID: String
     private let persist: Bool
@@ -80,11 +79,11 @@ final class DeviceSync: ObservableObject {
 
     // MARK: Places
 
-    static var iCloudDrive: URL {
+    public static var iCloudDrive: URL {
         FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Mobile Documents/com~apple~CloudDocs")
     }
     static var defaultFolder: URL { iCloudDrive.appendingPathComponent("AI Illuminati Sync") }
-    var folder: URL { settings.folder.map { URL(fileURLWithPath: $0) } ?? Self.defaultFolder }
+    public var folder: URL { settings.folder.map { URL(fileURLWithPath: $0) } ?? Self.defaultFolder }
     var devicesFolder: URL { folder.appendingPathComponent("devices") }
     var myFolder: URL { devicesFolder.appendingPathComponent(deviceID) }
     var myChats: URL { myFolder.appendingPathComponent("chats") }
@@ -93,7 +92,7 @@ final class DeviceSync: ObservableObject {
         return name.isEmpty ? (Host.current().localizedName ?? "Mac") : String(name.prefix(60))
     }
     // The folder can be used: iCloud Drive is on (or a folder was chosen that exists).
-    var folderAvailable: Bool {
+    public var folderAvailable: Bool {
         settings.folder.map { FileManager.default.fileExists(atPath: $0) } ?? FileManager.default.fileExists(atPath: Self.iCloudDrive.path)
     }
 
@@ -110,7 +109,7 @@ final class DeviceSync: ObservableObject {
 
     // MARK: Starting (the app only; tests call the methods directly)
 
-    func start(discussion: Discussion) {
+    public func start(discussion: Discussion) {
         conversations = { [weak discussion] in discussion?.conversations.filter { $0.hasContent && $0.meetingOf == nil } ?? [] }
         isBusy = { [weak discussion] id in discussion?.runningRooms.contains(id) ?? false }
         activation = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
@@ -129,7 +128,7 @@ final class DeviceSync: ObservableObject {
     static func isSchool(_ conversation: Conversation) -> Bool { conversation.isEnterprise }
 
     // A chat was just locked: with Enterprise chats not shared, its copy is taken down now.
-    func chatLocked(_ conversation: Conversation) {
+    public func chatLocked(_ conversation: Conversation) {
         guard settings.enabled else { return }
         if shares(conversation) { noteSaved(conversation) } else { noteDeleted(conversation.id) }
     }
@@ -192,11 +191,11 @@ final class DeviceSync: ObservableObject {
     // the window.
 
     // A chat was saved (ChatStore.save) or deleted: write or remove its copy a few seconds later.
-    func noteSaved(_ conversation: Conversation) {
+    public func noteSaved(_ conversation: Conversation) {
         guard settings.enabled else { return }
         onMain { self.pending[conversation.id] = conversation; self.scheduleFlush() }
     }
-    func noteDeleted(_ id: UUID) {
+    public func noteDeleted(_ id: UUID) {
         guard settings.enabled else { return }
         onMain {
             self.pending[id] = nil
@@ -205,7 +204,7 @@ final class DeviceSync: ObservableObject {
         }
     }
     // A chat finished answering: its last turn can go out now.
-    func noteFinished(_ conversation: Conversation?) {
+    public func noteFinished(_ conversation: Conversation?) {
         guard let conversation, conversation.hasContent else { return }
         noteSaved(conversation)
     }
@@ -299,7 +298,7 @@ final class DeviceSync: ObservableObject {
     // (unshared, deleted while the app was closed, Enterprise after "include" was turned off) removed.
     // A shared chat's copy stays even when it could not be written just now: a passing write error must not
     // look to the other Macs as if the chat was taken away.
-    func reconcile() {
+    public func reconcile() {
         guard settings.enabled else { return }
         let copies = conversations().map { copy($0) }
         let folder = myChats, info = deviceInfo()
@@ -318,7 +317,7 @@ final class DeviceSync: ObservableObject {
     }
 
     // Removes every copy this Mac wrote (Settings → "Remove this Mac's copies"), after any write still queued.
-    func removeMine() {
+    public func removeMine() {
         let folder = myFolder
         io.async { try? FileManager.default.removeItem(at: folder) }
     }
@@ -328,7 +327,7 @@ final class DeviceSync: ObservableObject {
 
     // MARK: Reading the other Macs
 
-    func scan() {
+    public func scan() {
         guard settings.enabled, !scanning else { return }
         scanning = true
         io.async {
@@ -413,7 +412,7 @@ final class DeviceSync: ObservableObject {
     }
 
     // The whole copy, read when it is opened.
-    static func load(_ chat: RemoteChat) -> SyncSnapshot? {
+    public static func load(_ chat: RemoteChat) -> SyncSnapshot? {
         guard chat.status == .ready, let data = try? Data(contentsOf: chat.file),
               let snap = try? decoder().decode(SyncSnapshot.self, from: data), snap.schemaVersion <= SyncSnapshot.version else { return nil }
         return snap
@@ -421,7 +420,7 @@ final class DeviceSync: ObservableObject {
 }
 
 // A chat from another Mac shown read only in the chat window.
-struct RemoteViewing: Equatable {
+public struct RemoteViewing: Equatable {
     var chat: RemoteChat
     var snapshot: SyncSnapshot?
     var loading = false
@@ -536,7 +535,7 @@ extension Discussion {
 
 extension DeviceSync {
     // "3 hours ago", in the app's language.
-    static func ago(_ date: Date, now: Date = Date()) -> String {
+    public static func ago(_ date: Date, now: Date = Date()) -> String {
         if now.timeIntervalSince(date) < 60 { return L("방금", "just now") }
         let formatter = RelativeDateTimeFormatter()
         formatter.locale = Locale(identifier: AppLanguage.current == .korean ? "ko_KR" : "en_US")

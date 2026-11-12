@@ -2,7 +2,6 @@ import Foundation
 import AILocalization
 import AIRuntime
 import AIWorkspace
-import AIChat
 
 // How much disk each chat takes (Settings > Chat > Storage, and the AIs' chat_storage tool). Read only.
 // A chat's data is everything under paths carrying its id (the same ones ChatStore.delete removes):
@@ -12,11 +11,11 @@ import AIChat
 // Sizes are read from file metadata only (lstat), so cloud-only files are not downloaded; symbolic
 // links are not followed, and a file with several hard links counts once. Backups are APFS clones that
 // share blocks with the originals, so their size is an upper bound of what deleting them frees.
-enum ChatStorage {
-    typealias Size = DiskUsage.Size
-    enum Kind: String, CaseIterable {
+public enum ChatStorage {
+    public typealias Size = DiskUsage.Size
+    public enum Kind: String, CaseIterable {
         case chat, work, documents, pictures, backups, sessions
-        var title: String {
+        public var title: String {
             switch self {
             case .chat: return L("대화", "Messages")
             case .work: return L("채팅 폴더", "Chat folder")
@@ -27,22 +26,22 @@ enum ChatStorage {
             }
         }
     }
-    struct Room: Identifiable {
-        var id: UUID
-        var title: String
-        var parts: [Kind: Size] = [:]
-        var meetings = 0
-        var backups = 0
-        var total: Size { parts.values.reduce(Size(), +) }
+    public struct Room: Identifiable {
+        public var id: UUID
+        public var title: String
+        public var parts: [Kind: Size] = [:]
+        public var meetings = 0
+        public var backups = 0
+        public var total: Size { parts.values.reduce(Size(), +) }
     }
-    struct Report {
-        var rooms: [Room] = []            // largest first
-        var orphans: [(url: URL, size: Size)] = []   // data of chats that are gone
-        var total = Size()
-        var date = Date()
+    public struct Report {
+        public var rooms: [Room] = []            // largest first
+        public var orphans: [(url: URL, size: Size)] = []   // data of chats that are gone
+        public var total = Size()
+        public var date = Date()
     }
 
-    static func items(_ room: UUID) -> [(Kind, URL)] {
+    public static func items(_ room: UUID) -> [(Kind, URL)] {
         let chats = URL(fileURLWithPath: ChatStore.dir), id = room.uuidString
         let sessions = NativeSessions.directory(room)
         let archive = sessions.deletingLastPathComponent().appendingPathComponent("archived")
@@ -61,7 +60,7 @@ enum ChatStorage {
     static func size(of url: URL) -> Size { DiskUsage.of(url) }
 
     // `chats`: id, title and the chat a meeting belongs to, for every chat the app has.
-    static func report(_ chats: [(id: UUID, title: String, meetingOf: UUID?)], only: Set<UUID>? = nil) -> Report {
+    public static func report(_ chats: [(id: UUID, title: String, meetingOf: UUID?)], only: Set<UUID>? = nil) -> Report {
         var seen = Set<FileID>(), rooms: [UUID: Room] = [:]
         let known = Set(chats.map(\.id))
         for chat in chats where chat.meetingOf == nil || !known.contains(chat.meetingOf!) {
@@ -102,7 +101,7 @@ enum ChatStorage {
         return report
     }
 
-    static func format(_ bytes: Int64) -> String { ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file) }
+    public static func format(_ bytes: Int64) -> String { ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file) }
 
     static func describe(_ room: Room) -> String {
         var line = "\(format(room.total.allocated)) on disk (\(format(room.total.logical)) in \(room.total.files) files)"
@@ -117,19 +116,19 @@ enum ChatStorage {
 
 // chat_storage: the AI answering a chat can tell how much disk that chat (or, with scope "all", the chats it
 // may read, as search_chats) takes. Sizes and titles only; no paths of other chats.
-final class StorageLink: ToolProvider {
-    static let shared = StorageLink()
+public final class StorageLink: ToolProvider {
+    public static let shared = StorageLink()
     static let listLimit = 20
-    var active: Bool { true }
-    func tools() -> [[String: Any]] { [] }
-    func tools(context: ToolContext) -> [[String: Any]] {
+    public var active: Bool { true }
+    public func tools() -> [[String: Any]] { [] }
+    public func tools(context: ToolContext) -> [[String: Any]] {
         guard context.asker != nil else { return [] }
         return [["name": "chat_storage",
                  "description": "How much disk this chat's data takes in the app (messages, chat folder, dropped files, pictures, backups before AI writes, CLI sessions), measured now. scope \"all\": the largest of the chats you may read, too. Linked project folders are not counted.",
                  "inputSchema": ["type": "object", "properties": ["scope": ["type": "string", "enum": ["this", "all"]]], "additionalProperties": false]]]
     }
-    func call(_ name: String, _ arguments: [String: Any], context: ToolContext) -> [String: Any] {
-        guard name == "chat_storage" else { return ToolHub.failure("Unknown tool: " + name) }
+    public func call(_ name: String, _ arguments: [String: Any], context: ToolContext) -> [String: Any] {
+        guard name == "chat_storage" else { return toolFailure("Unknown tool: " + name) }
         let all = Thread.isMainThread ? ChatLink.shared.conversations() : DispatchQueue.main.sync { ChatLink.shared.conversations() }
         let chats = all.map { (id: $0.id, title: $0.title, meetingOf: $0.meetingOf?.room) }
         let wide = (arguments["scope"] as? String) == "all"

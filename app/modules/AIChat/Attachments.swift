@@ -5,7 +5,6 @@ import AIAccounts
 import AILocalization
 import AIRuntime
 import AIWorkspace
-import AIChat
 
 extension Discussion {
     var hasImages: Bool { !pendingImages.isEmpty || current.turns.contains { !($0.images ?? []).isEmpty } || (current.documents ?? []).contains { ($0.units ?? []).contains { !$0.images.isEmpty } } }
@@ -66,7 +65,7 @@ extension Discussion {
         catch { attachmentError = L("첨부 파일을 지우지 못했습니다.", "Could not remove attachment.") }
     }
 
-    func discardPendingImages() {
+    public func discardPendingImages() {
         for item in pendingImages { try? ImageStore.remove(item) }
         pendingImages = []
         attachmentError = nil
@@ -111,13 +110,13 @@ extension Discussion {
 /// screenshot thumbnails hand over promised files (written when dropped, after an iCloud download if
 /// needed) or only image data. Those are copied into a temporary folder first: `done(urls, folder)` runs on
 /// the main thread, and the caller removes `folder` once it has read the files.
-enum PictureDrop {
+public enum PictureDrop {
     // Promised files (the Photos app, screenshot thumbnails) are on the drag pasteboard, not in the item types.
-    static func hasPromises(_ pasteboard: NSPasteboard = NSPasteboard(name: .drag)) -> Bool {
+    public static func hasPromises(_ pasteboard: NSPasteboard = NSPasteboard(name: .drag)) -> Bool {
         pasteboard.canReadObject(forClasses: [NSFilePromiseReceiver.self], options: nil)
     }
 
-    static func receive(_ providers: [NSItemProvider], pasteboard: NSPasteboard = NSPasteboard(name: .drag),
+    public static func receive(_ providers: [NSItemProvider], pasteboard: NSPasteboard = NSPasteboard(name: .drag),
                         done: @escaping ([URL], URL?) -> Void) {
         let files = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
         if !files.isEmpty { done(files, nil); return }

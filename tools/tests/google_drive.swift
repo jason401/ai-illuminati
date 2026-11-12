@@ -2,6 +2,7 @@ import Foundation
 import CryptoKit
 import AIAccounts
 @testable import AIWorkspace
+@testable import AIChat
 
 final class MemoryGoogleStore: GoogleTokenStore {
     var data: Data?

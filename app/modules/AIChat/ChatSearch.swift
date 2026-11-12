@@ -1,6 +1,5 @@
 import SwiftUI
 import AILocalization
-import AIChat
 
 // Search across chats: titles, messages and final answers. Words are compared two letters at a time
 // (bigrams), so "청룡영화제" finds "청룡영화제는" and "청룡영화제에서" and a word with a different ending

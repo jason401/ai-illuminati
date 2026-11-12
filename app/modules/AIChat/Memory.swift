@@ -1,38 +1,37 @@
 import Foundation
 import AIAccounts
 import AIWorkspace
-import AIChat
 
 // Long-term memory (note 8): what every AI should know about the user, kept on this Mac and put into every
 // plain-chat and project request (soloInstruction). Two parts: a short profile the user writes, and saved facts,
 // one line each. Facts are saved with the remember tool: by the AI on its own only when the user turned that on
 // (Settings ▸ Memory); otherwise only in an answer to a message that asks for it ("기억해", "remember").
 // Enterprise chats read memory but never add to it. Not synced to other Macs.
-struct MemoryItem: Codable, Identifiable, Equatable {
-    var id = UUID()
-    var text: String
-    var createdAt = Date()
+public struct MemoryItem: Codable, Identifiable, Equatable {
+    public var id = UUID()
+    public var text: String
+    public var createdAt = Date()
     var room: UUID?        // the chat it was saved in
     var turn: UUID?        // the message it was saved in (Undo shows there)
-    var roomTitle: String?
-    var by: String?        // the AI that saved it
+    public var roomTitle: String?
+    public var by: String?        // the AI that saved it
 }
 
-struct MemoryData: Codable, Equatable {
-    var profile = ""
-    var items: [MemoryItem] = []
-    var autoSave = false   // the AI saves on its own
-    var enabled = true     // off: memory is neither given to the AIs nor added to
+public struct MemoryData: Codable, Equatable {
+    public var profile = ""
+    public var items: [MemoryItem] = []
+    public var autoSave = false   // the AI saves on its own
+    public var enabled = true     // off: memory is neither given to the AIs nor added to
 }
 
-final class MemoryStore: ObservableObject {
-    static let shared = MemoryStore()
-    static let profileLimit = 2_400    // characters (about 600 tokens), always given
+public final class MemoryStore: ObservableObject {
+    public static let shared = MemoryStore()
+    public static let profileLimit = 2_400    // characters (about 600 tokens), always given
     static let itemsLimit = 6_000      // about 1,500 tokens of facts; more: those that match the message
     static let itemLength = 300
     static let maxItems = 300
 
-    @Published private(set) var data = MemoryData()
+    @Published public private(set) var data = MemoryData()
     private let lock = NSLock()       // tool calls come from several threads: one change at a time
     private var current = MemoryData()
     var problem: String?
@@ -41,7 +40,7 @@ final class MemoryStore: ObservableObject {
 
     init() { reload() }
 
-    func reload() {
+    public func reload() {
         lock.lock()
         current = (try? Data(contentsOf: Self.file)).flatMap { try? JSONDecoder().decode(MemoryData.self, from: $0) } ?? MemoryData()
         let copy = current
@@ -54,7 +53,7 @@ final class MemoryStore: ObservableObject {
 
     // Changes and saves; true only when it is on disk.
     @discardableResult
-    func update(_ edit: (inout MemoryData) -> Void) -> Bool {
+    public func update(_ edit: (inout MemoryData) -> Void) -> Bool {
         lock.lock()
         var next = current
         edit(&next)
@@ -83,8 +82,8 @@ final class MemoryStore: ObservableObject {
     }
 
     // The user's own edits (Settings ▸ Memory).
-    func setProfile(_ text: String) { update { $0.profile = String(text.prefix(Self.profileLimit)) } }
-    func setItem(_ id: UUID, text: String) {
+    public func setProfile(_ text: String) { update { $0.profile = String(text.prefix(Self.profileLimit)) } }
+    public func setItem(_ id: UUID, text: String) {
         // As typed (spaces too, so typing works); emptied while typing: kept (the trash button removes it).
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         let line = String(text.replacingOccurrences(of: "\n", with: " ").prefix(Self.itemLength))
@@ -92,8 +91,8 @@ final class MemoryStore: ObservableObject {
             if let i = data.items.firstIndex(where: { $0.id == id }) { data.items[i].text = line }
         }
     }
-    func remove(_ id: UUID) { update { $0.items.removeAll { $0.id == id } } }
-    func removeAll() { update { $0.items = [] } }
+    public func remove(_ id: UUID) { update { $0.items.removeAll { $0.id == id } } }
+    public func removeAll() { update { $0.items = [] } }
 
     // A message that asks to remember something (and not one that asks not to).
     static func asksToRemember(_ text: String) -> Bool {
@@ -191,12 +190,12 @@ final class MemoryStore: ObservableObject {
 
 // The remember tool. Offered to the AI answering a chat's newest message while MemoryStore.mayRemember holds;
 // checked again on every call.
-final class MemoryLink: ToolProvider {
-    static let shared = MemoryLink()
+public final class MemoryLink: ToolProvider {
+    public static let shared = MemoryLink()
     var store = MemoryStore.shared
 
-    var active: Bool { true }
-    func tools() -> [[String: Any]] { [] }
+    public var active: Bool { true }
+    public func tools() -> [[String: Any]] { [] }
 
     private func chat(_ room: UUID) -> Conversation? {
         let read = { ChatLink.shared.conversations().first { $0.id == room } }
@@ -204,26 +203,26 @@ final class MemoryLink: ToolProvider {
     }
 
     // The newest message of a chat now, for a tool session made for it (ToolHub.register).
-    func newestTurn(_ room: UUID) -> UUID? { chat(room)?.turns.last?.id }
+    public func newestTurn(_ room: UUID) -> UUID? { chat(room)?.turns.last?.id }
 
-    func tools(context: ToolContext) -> [[String: Any]] {
+    public func tools(context: ToolContext) -> [[String: Any]] {
         guard context.asker != nil, let turn = context.turn, MemoryStore.mayRemember(store.snapshot, chat: chat(context.room), turn: turn) else { return [] }
         return [["name": "remember",
                  "description": "Save one short fact about the user to their long-term memory, which every AI in this app reads in later chats. One line, no secrets.",
                  "inputSchema": ["type": "object", "properties": ["text": ["type": "string"]], "required": ["text"], "additionalProperties": false]]]
     }
 
-    func call(_ name: String, _ arguments: [String: Any], context: ToolContext) -> [String: Any] {
-        guard name == "remember" else { return ToolHub.failure("Unknown tool: " + name) }
+    public func call(_ name: String, _ arguments: [String: Any], context: ToolContext) -> [String: Any] {
+        guard name == "remember" else { return toolFailure("Unknown tool: " + name) }
         let found = chat(context.room)
         guard context.asker != nil, let turn = context.turn, MemoryStore.mayRemember(store.snapshot, chat: found, turn: turn) else {
-            return ToolHub.failure("Memory saving is off for this answer.")
+            return toolFailure("Memory saving is off for this answer.")
         }
         switch store.remember(arguments["text"] as? String ?? "", room: context.room, turn: turn,
                               roomTitle: found?.title, by: context.asker?.name) {
         case .saved(let item): return ["content": [["type": "text", "text": "Saved to memory: " + item.text]], "isError": false]
         case .duplicate: return ["content": [["type": "text", "text": "Already in memory."]], "isError": false]
-        case .refused(let why): return ToolHub.failure(why)
+        case .refused(let why): return toolFailure(why)
         }
     }
 }

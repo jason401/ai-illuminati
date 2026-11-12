@@ -3,30 +3,29 @@ import AIAccounts
 import AILocalization
 import AIWorkspace
 import AIProjects
-import AIChat
 
 // The chat sidebar by project: the chats and TODO chats of one Git repository under one folder (like the
 // projects of the desktop apps), and which sections and folders the user folded or pinned.
 
 // One repository in the sidebar. Its worktrees share it (the same git common dir); each chat and TODO keeps
 // working in its own root.
-struct ProjectGroup: Identifiable, Equatable {
-    let id: String                     // the repository: ProjectBinding.common (root when unknown)
-    var name: String
-    var bindings: [ProjectBinding]     // every root of it, newest chat first
-    var lists: [UUID]                  // its TODO lists
-    var chats: [Conversation]          // its chats (pinned ones first), each with its meetings under it
-    var todoRooms: [Conversation]      // the chats its TODOs work in
+public struct ProjectGroup: Identifiable, Equatable {
+    public let id: String                     // the repository: ProjectBinding.common (root when unknown)
+    public var name: String
+    public var bindings: [ProjectBinding]     // every root of it, newest chat first
+    public var lists: [UUID]                  // its TODO lists
+    public var chats: [Conversation]          // its chats (pinned ones first), each with its meetings under it
+    public var todoRooms: [Conversation]      // the chats its TODOs work in
     var pinned: Bool
     var updatedAt: Date
-    static func == (a: ProjectGroup, b: ProjectGroup) -> Bool {
+    public static func == (a: ProjectGroup, b: ProjectGroup) -> Bool {
         a.id == b.id && a.name == b.name && a.bindings == b.bindings && a.lists == b.lists && a.pinned == b.pinned
             && a.chats.map(\.id) == b.chats.map(\.id) && a.todoRooms.map(\.id) == b.todoRooms.map(\.id)
     }
 }
 
-enum SidebarProjects {
-    static func key(_ project: ProjectBinding) -> String { project.groupKey }
+public enum SidebarProjects {
+    public static func key(_ project: ProjectBinding) -> String { project.groupKey }
 
     // "AI Illuminati" for …/AI Illuminati/.git, else the root's folder name.
     static func folderName(_ project: ProjectBinding) -> String {
@@ -38,7 +37,7 @@ enum SidebarProjects {
 
     // How a root is named in the project picker: on one project's board by its folder; on the whole board by the
     // project's name, with the folder after it when worktrees of one repository share that name.
-    static func pickerName(_ option: (name: String, binding: ProjectBinding), among options: [(name: String, binding: ProjectBinding)], board: String?) -> String {
+    public static func pickerName(_ option: (name: String, binding: ProjectBinding), among options: [(name: String, binding: ProjectBinding)], board: String?) -> String {
         if option.binding.isFolderless { return option.name }
         let folder = (option.binding.root as NSString).lastPathComponent
         guard board == nil else { return folder }
@@ -49,7 +48,7 @@ enum SidebarProjects {
     // Chats with a Git project go under their repository; the rest stay in Pinned and Recents. A project with
     // TODO lists but no chat yet still gets its folder (withLists), so its board is one click away. A name the user
     // gave the folder (names, ProjectInfoStore.names) comes before its TODO list's title and the folder's own name.
-    static func group(_ chats: [Conversation], todo: TodoData, pinned: Set<String>, withLists: Bool = true, names: [String: String] = [:]) -> (projects: [ProjectGroup], loose: [Conversation]) {
+    public static func group(_ chats: [Conversation], todo: TodoData, pinned: Set<String>, withLists: Bool = true, names: [String: String] = [:]) -> (projects: [ProjectGroup], loose: [Conversation]) {
         let todoRooms = Set(todo.items.compactMap(\.room))
         var groups: [String: ProjectGroup] = [:]
         var loose: [Conversation] = []
@@ -127,8 +126,8 @@ enum SidebarProjects {
 }
 
 // Folded sections and project folders, and pinned projects: kept on this Mac (UserDefaults.app).
-final class SidebarFold: ObservableObject {
-    static let shared = SidebarFold(defaults: .app)
+public final class SidebarFold: ObservableObject {
+    public static let shared = SidebarFold(defaults: .app)
     private let defaults: UserDefaults
     @Published private(set) var folded: Set<String>
     @Published private(set) var pinnedProjects: Set<String>
@@ -167,7 +166,7 @@ final class SidebarFold: ObservableObject {
         defaults.set(openFinished.sorted(), forKey: Self.openFinishedKey)
     }
 
-    func isFolded(_ key: String) -> Bool { folded.contains(key) }
+    public func isFolded(_ key: String) -> Bool { folded.contains(key) }
     func toggle(_ key: String) {
         if folded.contains(key) { folded.remove(key) } else { folded.insert(key) }
         defaults.set(folded.sorted(), forKey: Self.foldedKey)
@@ -221,18 +220,18 @@ extension SidebarProjects {
 extension Discussion {
     // The TODO board in place of the chat: one project's (a click on its folder) or every project's. A project's
     // opens on the tab the user last chose for it (Project info the first time); `tab` asks for one.
-    func openBoard(project: String?, tab: BoardTab? = nil) {
+    public func openBoard(project: String?, tab: BoardTab? = nil) {
         viewingRemote = nil; viewingSpace = nil; boardProject = project; viewingBoard = true; sidebarOverlay = false
         if let project { showBoardTab(tab ?? BoardTab.saved(project) ?? .info) } else { boardTab = .todo }
     }
-    func showBoardTab(_ tab: BoardTab) {
+    public func showBoardTab(_ tab: BoardTab) {
         boardTab = tab
         if let project = boardProject { BoardTab.save(tab, for: project) }
     }
 }
 
 // The two tabs of a project folder: what belongs to the project, and its TODOs.
-enum BoardTab: String {
+public enum BoardTab: String {
     case info, todo
     static let key = "sidebar.projectTabs"
     static func saved(_ project: String) -> BoardTab? {

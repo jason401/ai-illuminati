@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 import AIAccounts
 import AILocalization
 import AIWorkspace
+import AIChat
 
 // A Google Drive folder the user shared with the AIs (sidebar → Google Drive).
 struct DriveFolder: Codable, Hashable { var id: String; var name: String }

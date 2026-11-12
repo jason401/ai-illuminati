@@ -6,15 +6,14 @@ import AISpaces
 import AIRuntime
 import AIWorkspace
 import AIProjects
-import AIChat
 
 // The discussion: 1) everyone answers on their own, 2) everyone reads the others and improves
 // their answer once, 3) one AI (the one with the most usage left) writes the final answer,
 // 4) that AI updates the conversation's short summary, which is the context for the next question.
 // The chat rules from Settings go at the top of every message.
-final class Discussion: ObservableObject {
-    @Published var conversations: [Conversation]
-    @Published var currentID: UUID {
+public final class Discussion: ObservableObject {
+    @Published public var conversations: [Conversation]
+    @Published public var currentID: UUID {
         // Coming back to a chat starts again from its latest turns.
         didSet { if currentID != oldValue { closeFind(); showLatestTurns(); pickedRoute = nil } }
     }
@@ -23,18 +22,18 @@ final class Discussion: ObservableObject {
         jumpTurn = nil
         transcriptGeneration += 1
     }
-    @Published var importingMaterials = false
-    @Published var viewingRemote: RemoteViewing?   // a chat from another Mac, shown read only
-    @Published var viewingBoard = false            // the TODO board in place of the chat (Todo.swift)
+    @Published public var importingMaterials = false
+    @Published public var viewingRemote: RemoteViewing?   // a chat from another Mac, shown read only
+    @Published public var viewingBoard = false            // the TODO board in place of the chat (Todo.swift)
     @Published var viewingSpace: String?           // a Space in place of the chat (SpaceView.swift)
-    @Published var boardProject: String?           // the board shows only this project (SidebarProjects.key); nil = all
+    @Published public var boardProject: String?           // the board shows only this project (SidebarProjects.key); nil = all
     @Published var boardTab: BoardTab = .todo       // a project's board: its Project info or its TODOs (ProjectInfoView.swift)
     // Several chats can work at once. Each sent message runs on its own worker (a Discussion with `host`
     // set and only that chat), so the run state below (active…, pictures, cancellation) is per chat; the
     // worker hands every change back to the host, which the window shows.
     static let maxRunning = 3
-    @Published var runningRooms: Set<UUID> = []
-    @Published var stoppingRooms: Set<UUID> = []
+    @Published public var runningRooms: Set<UUID> = []
+    @Published public var stoppingRooms: Set<UUID> = []
     weak var host: Discussion?
     private var workers: [UUID: Discussion] = [:]
     // For the open chat (a worker: always its own chat).
@@ -46,7 +45,7 @@ final class Discussion: ObservableObject {
         get { stoppingRooms.contains(currentID) }
         set { if newValue { stoppingRooms.insert(currentID) } else { stoppingRooms.remove(currentID) } }
     }
-    var anyRunning: Bool { !runningRooms.isEmpty }
+    public var anyRunning: Bool { !runningRooms.isEmpty }
     var runCancellation: DebateCancellation?
     var debateCancellation: DebateCancellation? { host == nil ? workers[currentID]?.runCancellation : runCancellation }
     var collaborationAnswer: ((Account, String, [URL], DebateCancellation) -> Result<String, Answerer.Failure>)?
@@ -191,7 +190,7 @@ final class Discussion: ObservableObject {
     var findFresh = true
     @Published var jumpTurn: UUID?
     @Published var jumpCount = 0
-    @Published var hoverKey: String?
+    @Published public var hoverKey: String?
     // The notes panel on the right of the chat window, open or folded (the same for every chat).
     @Published var notesShown = UserDefaults.standard.bool(forKey: "notesShown") {
         didSet { UserDefaults.standard.set(notesShown, forKey: "notesShown") }
@@ -205,7 +204,7 @@ final class Discussion: ObservableObject {
     weak var mentionEditor: NSTextView?      // the message box, for picking from the list with the mouse
     @Published var slashMenu: (location: Int, query: String, choices: [RouteChoice])?   // "/" typed first: the ways to pick
     @Published var slashIndex = 0
-    func hover(_ key: String, _ inside: Bool) {
+    public func hover(_ key: String, _ inside: Bool) {
         if inside { hoverKey = key } else if hoverKey == key { hoverKey = nil }
     }
     @Published var imageDropActive = false  // a photo is being dragged over the chat window
@@ -276,10 +275,10 @@ final class Discussion: ObservableObject {
         }
     }
 
-    let model: AppModel
+    public let model: any ChatSettings
     fileprivate let work = DispatchQueue(label: "discussion")
 
-    init(model: AppModel) {
+    public init(model: any ChatSettings) {
         self.model = model
         nativeSessions = NativeSessions()
         // The newest blank chat (settings only) becomes the new chat, so its settings are kept;
@@ -320,7 +319,7 @@ final class Discussion: ObservableObject {
     }
 
     /// Stops every chat that is working (quitting the app).
-    func cancelAll() { for worker in workers.values { worker.runCancellation?.cancel() } }
+    public func cancelAll() { for worker in workers.values { worker.runCancellation?.cancel() } }
     // The stop button of the chat that is answering now (create_project waits on it).
     func runToken(_ room: UUID) -> DebateCancellation? { workers[room]?.runCancellation }
 
@@ -330,8 +329,8 @@ final class Discussion: ObservableObject {
         conversations.removeAll { !$0.hasContent && $0.id != keep }
     }
 
-    var current: Conversation { conversation(currentID) }
-    func conversation(_ room: UUID) -> Conversation { conversations.first { $0.id == room } ?? Conversation() }
+    public var current: Conversation { conversation(currentID) }
+    public func conversation(_ room: UUID) -> Conversation { conversations.first { $0.id == room } ?? Conversation() }
 
     // Starts an empty chat (reuses the open one if it is still empty).
     func newConversation() {
@@ -348,7 +347,7 @@ final class Discussion: ObservableObject {
         currentID = fresh.id
     }
 
-    func open(_ id: UUID) {
+    public func open(_ id: UUID) {
         guard !importingMaterials else { return }
         if currentID != id { discardPendingImages() }
         viewingRemote = nil
@@ -360,7 +359,7 @@ final class Discussion: ObservableObject {
     }
 
     // Pinned chats first (in their usual order), then the rest.
-    var listedConversations: [Conversation] {
+    public var listedConversations: [Conversation] {
         let listed = conversations.filter { $0.meetingOf == nil }
         return listed.filter { $0.pinned == true } + listed.filter { $0.pinned != true }
     }
@@ -921,7 +920,7 @@ final class Discussion: ObservableObject {
         }
     }
 
-    func label(_ account: Account) -> String {
+    public func label(_ account: Account) -> String {
         account.name.hasPrefix(account.provider.title) ? account.name : "\(account.provider.title) (\(account.name))"
     }
 

@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 import AILocalization
 import AIWorkspace
 import AIProjects
+import AIChat
 
 // A project folder's "Project info" tab (the other tab is its TODO board): the Git repository, the folders, files
 // and links kept for the whole project (ProjectInfo.swift; every chat and TODO of it reads them), and the folders

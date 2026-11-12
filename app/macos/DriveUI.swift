@@ -4,6 +4,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 import AIAccounts
 import AILocalization
+import AIChat
 
 // Google Drive in the chat sidebar, under Shared folders: connect (read only), the Drive folders the AIs may read
 // (each with an eye to pause it), and the folder picker. The login lives in GoogleAuth (Keychain); the gate that

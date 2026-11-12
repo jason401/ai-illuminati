@@ -6,6 +6,7 @@ import AIAccounts
 import AILocalization
 import AIRuntime
 import AIWorkspace
+import AIChat
 
 // What the menu and the Settings window share: the account list (saved on every change) and
 // the display options. The menu listens through the two callbacks.
@@ -535,24 +536,6 @@ private struct SettingsSegments<Value: Hashable>: View {
         }
         .padding(2).background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.06)))
     }
-}
-
-// Like .plain, but the whole frame of the label is clickable, not only the drawn pixels of an icon
-// (a thin pencil was almost impossible to hit). Dims while pressed or disabled.
-struct PlainHitButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View { HitArea(configuration: configuration) }
-    private struct HitArea: View {
-        let configuration: Configuration
-        @Environment(\.isEnabled) private var enabled
-        var body: some View {
-            configuration.label
-                .contentShape(Rectangle())
-                .opacity(!enabled ? 0.4 : configuration.isPressed ? 0.6 : 1)
-        }
-    }
-}
-extension ButtonStyle where Self == PlainHitButtonStyle {
-    static var plainHit: PlainHitButtonStyle { PlainHitButtonStyle() }
 }
 
 private struct SettingsAction: View {
@@ -2142,6 +2125,13 @@ struct BackupCleanupView: View {
 
 // Every chat, largest first, with its full title and every kind of data it holds.
 struct StorageListView: View {
+    // "Backups 1.2 GB · Measured: 3:12 PM · 2 unreadable" (one string: the compiler took too long on it inline).
+    static func measured(_ report: ChatStorage.Report) -> String {
+        let backups: String = L("백업 ", "Backups ") + ChatStorage.format(StorageModel.backups(report)) + " · "
+        let time: String = L("계산: ", "Measured: ") + DateFormatter.localizedString(from: report.date, dateStyle: .none, timeStyle: .short)
+        let unreadable: String = report.total.unreadable > 0 ? L(" · 읽지 못한 항목 \(report.total.unreadable)개", " · \(report.total.unreadable) unreadable") : ""
+        return backups + time + unreadable
+    }
     @ObservedObject var storage = StorageModel.shared
 
     var body: some View {
@@ -2151,9 +2141,7 @@ struct StorageListView: View {
                     Text(storage.report.map { L("전체 ", "Total ") + ChatStorage.format($0.total.allocated) } ?? "–")
                         .font(.system(size: 13, weight: .semibold)).monospacedDigit()
                     if let report = storage.report {
-                        Text(L("백업 ", "Backups ") + ChatStorage.format(StorageModel.backups(report)) + " · "
-                             + L("계산: ", "Measured: ") + DateFormatter.localizedString(from: report.date, dateStyle: .none, timeStyle: .short)
-                             + (report.total.unreadable > 0 ? L(" · 읽지 못한 항목 \(report.total.unreadable)개", " · \(report.total.unreadable) unreadable") : ""))
+                        Text(Self.measured(report))
                             .font(.system(size: 11)).foregroundStyle(.secondary)
                     }
                 }
@@ -2271,46 +2259,6 @@ final class SettingsWindow {
     }
 }
 
-// A section title in the chat sidebar, with an optional accessory (a + button) on the right. With a fold key a
-// click on it folds the section (kept in SidebarFold); the accessory's buttons still work on their own. A folded
-// section shows its badge (what waits for you inside) next to the title.
-struct SidebarHeader<Accessory: View>: View {
-    let title: String
-    let fold: String?
-    let badge: Int
-    let accessory: Accessory
-    @ObservedObject private var folds = SidebarFold.shared
-    init(title: String, fold: String? = nil, badge: Int = 0, @ViewBuilder accessory: () -> Accessory) {
-        self.title = title; self.fold = fold; self.badge = badge; self.accessory = accessory()
-    }
-
-    var body: some View {
-        let folded = fold.map(folds.isFolded) ?? false
-        HStack(spacing: 4) {
-            Text(title).font(.system(size: 11, weight: .medium)).foregroundColor(.secondary)
-            if fold != nil {
-                Image(systemName: folded ? "chevron.right" : "chevron.down").font(.system(size: 8, weight: .semibold))
-                    .foregroundColor(.secondary.opacity(0.8))
-            }
-            if folded && badge > 0 {
-                Text("\(badge)").font(.system(size: 10, weight: .semibold)).foregroundColor(.white)
-                    .padding(.horizontal, 5).frame(minWidth: 16, minHeight: 16).background(Color.orange, in: Capsule())
-            }
-            Spacer()
-            accessory
-        }
-        .padding(.horizontal, 10).padding(.top, 16).padding(.bottom, 4)
-        .contentShape(Rectangle())
-        .onTapGesture { if let fold { folds.toggle(fold) } }
-        .help(fold == nil ? "" : folded ? L("눌러서 펼치기", "Click to show") : L("눌러서 접기", "Click to fold"))
-        .accessibilityAddTraits(fold == nil ? [] : .isButton)
-    }
-}
-
-extension SidebarHeader where Accessory == EmptyView {
-    init(title: String, fold: String? = nil, badge: Int = 0) { self.init(title: title, fold: fold, badge: badge) { EmptyView() } }
-}
-
 // How a waiting approval reaches you outside its chat (ApprovalAlerts). The menu bar count, the banner and
 // the dot in the chat list always show; these only change the macOS notification.
 private struct ApprovalAlertSettingsView: View {
@@ -2339,3 +2287,6 @@ private struct ApprovalAlertSettingsView: View {
         }
     }
 }
+
+// What the chat reads of these settings (AIChat): the same properties, nothing new.
+extension AppModel: ChatSettings {}

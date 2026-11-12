@@ -1,5 +1,6 @@
 import Cocoa
 import SwiftUI
+@testable import AIChat
 
 private final class DragProbeWindow: ChatDragWindow {
     var zooms = 0, minimizes = 0

@@ -3,6 +3,7 @@ import AIAccounts
 import AILocalization
 @testable import AIRuntime
 @testable import AIWorkspace
+@testable import AIChat
 
 // ask_ai (Peer.swift): an answering AI asks other AIs on this Mac; those it asks cannot ask on (depth 1).
 func testAskAI() {
@@ -24,6 +25,9 @@ func testAskAI() {
     let low = ["ask-codex": usage(5, 80)]
     expect(Peer.pick(asker: claude, to: nil, count: 1, members: [], accounts: all, usage: [:], lock: nil, label: label).accounts.first?.provider != .claude,
            "without `to`: a different kind of AI")
+    let fuller = ["ask-claude-2": usage(95, 95), "ask-codex": usage(40, 40), "ask-gemini": usage(30, 30)]
+    expect(Peer.pick(asker: claude, to: nil, count: 1, members: [], accounts: all, usage: fuller, lock: nil, label: label).accounts.map(\.id) == [codex.id],
+           "a different kind first, even when another account of the asker's kind has more usage left")
     expect(Set(Peer.pick(asker: claude, to: nil, count: 3, members: [], accounts: all, usage: [:], lock: nil, label: label).accounts.map(\.provider)) == [.codex, .gemini, .claude],
            "three at once: one of each kind")
     expect(Peer.pick(asker: claude, to: nil, count: 9, members: [], accounts: all, usage: [:], lock: nil, label: label).accounts.count == Peer.maxAtOnce, "at most three at once")

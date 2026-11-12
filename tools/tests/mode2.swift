@@ -7,7 +7,7 @@ import AISpaces
 @testable import AIRuntime
 @testable import AIWorkspace
 import AIProjects
-import AIChat
+@testable import AIChat
 
 GoogleAuth.shared = GoogleAuth(store: MemoryGoogleStore())
 
@@ -2578,6 +2578,7 @@ runTest("testWindowDrag", testWindowDrag)
 runTest("testRunConditions", testRunConditions)
 runTest("testRuntimeThroughApp", testRuntimeThroughApp)
 runTest("testChatLinks", testChatLinks)
+runTest("testChatThroughCLI", testChatThroughCLI)
 runTest("testProjectWork", testProjectWork)
 runTest("testAskAI", testAskAI)
 runTest("testCollabLog", testCollabLog)

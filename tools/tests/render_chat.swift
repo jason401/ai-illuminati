@@ -4,7 +4,7 @@ import AILocalization
 import AIAccounts
 import AIWorkspace
 import AIProjects
-import AIChat
+@testable import AIChat
 
 private struct EmptyPreviewLogin: GoogleTokenStore {
     func load() throws -> Data? { nil }
@@ -18,6 +18,7 @@ private struct EmptyPreviewLogin: GoogleTokenStore {
         _ = NSApplication.shared
         NSApp.setActivationPolicy(.prohibited)
         GoogleAuth.shared = GoogleAuth(store: EmptyPreviewLogin())
+        ChatScreensApp.connect()   // the app's screens in the chat window, as main.swift connects them
         AppLanguage.current = .english
         UserDefaults.standard.setVolatileDomain(["mcpOff": ["ai-face", "google-drive"], "driveFolders": Data()], forName: UserDefaults.argumentDomain)
         let output = URL(fileURLWithPath: CommandLine.arguments[1])
@@ -120,7 +121,7 @@ private struct EmptyPreviewLogin: GoogleTokenStore {
             window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
             window.titlebarSeparatorStyle = .none; window.titleVisibility = .hidden
             window.appearance = NSAppearance(named: appearance)
-            window.contentMinSize = ChatView.minSize
+            window.contentMinSize = ChatViewSize.minSize
             // CHAT_WIDTH renders a narrow window; CHAT_SIDEBAR=1 opens the sliding sidebar there, 0 hides the sidebar.
             let width = Double(ProcessInfo.processInfo.environment["CHAT_WIDTH"] ?? "") ?? 1040
             chat.sidebarOverlay = ProcessInfo.processInfo.environment["CHAT_SIDEBAR"] == "1"

@@ -21,8 +21,9 @@ Feature and design notes live in `docs/`; read them only when the task needs the
   through `FullAutoGuard.environment`), `AIProjects` (`ProjectWork.swift` Git work, repository lock, approvals, project
   turns; `Todo.swift` the TODO board and scheduler; `ProjectInfo.swift`; `ProjectCreator.swift`; the Git, Plan, Task, TodoAdd
   and ProjectMaker tools; it names no chat type: Discussion plugs in as `TodoChats` in `TodoChatsApp.swift`), `AIChat`
-  (`ChatRecords.swift` Conversation, ChatTurn, ChatConfiguration, ChatStore and its `links`; `ChatValues.swift` the values a
-  record holds; uses Projects, never the other way). Files that use one `import <Name>` and see only its `public` names; a
+  (the chat: records and ChatStore, Discussion and every `extension Discussion`, routing, meetings, reviews, ask_ai, the
+  Chat/Memory/Storage/Peer/Convene tools, DeviceSync, the chat window's views; uses Projects, never the other way; it gets
+  the app's settings as `ChatSettings` and the rest through `ChatApp`, set in `ChatLinksApp.swift`/`ChatScreensApp.swift`). Files that use one `import <Name>` and see only its `public` names; a
   module may import only the modules in its `dependencies` file. Tests that need a module's insides say
   `@testable import` (the test build adds `-enable-testing`); app files never do. Every `swiftc` that compiles app files runs
   `zsh tools/build_modules.sh <out>` first and adds `-I <out> <out>/lib*.a`. A new `public` name gets its reason

@@ -15,7 +15,7 @@ for SOURCE in app/macos/*.swift; do
   [[ "$SOURCE" == app/macos/main.swift || "$SOURCE" == app/macos/PokerWindow.swift || "$SOURCE" == app/macos/DriveUI.swift ]] && continue
   SOURCES+=("$SOURCE")
 done
-zsh tools/build_modules.sh "$PREVIEW_DIR/modules" -target "$(uname -m)-apple-macos13.0" -module-cache-path "$PREVIEW_DIR/cache"
+zsh tools/build_modules.sh "$PREVIEW_DIR/modules" -enable-testing -target "$(uname -m)-apple-macos13.0" -module-cache-path "$PREVIEW_DIR/cache"
 xcrun swiftc -swift-version 5 -target "$(uname -m)-apple-macos13.0" -module-cache-path "$PREVIEW_DIR/cache" -I "$PREVIEW_DIR/modules" -o "$PREVIEW_DIR/render" \
   "$PREVIEW_DIR/modules"/lib*.a "${SOURCES[@]}" "$PREVIEW_DIR/DriveUI.swift" tools/tests/render_drive_tree.swift
 AI_ILLUMINATI_TEST_HOME="$PREVIEW_DIR/data" "$PREVIEW_DIR/render" "$OUTPUT_DIR"

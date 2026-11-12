@@ -5,7 +5,8 @@ import AIWorkspace
 import AIChat
 
 // The app connects the chat store to what else keeps a chat's data or hears of its changes (C0: the chat side names
-// none of them). Called once, before the first chat loads: main.swift and the tests (mode2.swift).
+// none of them). Called once, before the first chat loads: main.swift and the tests (mode2.swift). The app's screens
+// inside the chat window are connected apart (ChatScreensApp.swift: main.swift only, the tests build no window).
 enum ChatLinksApp {
     static func connect() {
         ChatStore.links = ChatStore.Links(
@@ -17,5 +18,15 @@ enum ChatLinksApp {
             finished: { DeviceSync.shared.noteFinished($0) },
             locked: { DeviceSync.shared.chatLocked($0) },
             remote: { DeviceSync.load($0) })
+        // C1: what the chat (AIChat) gets from the app's other parts, the same calls it made by name before.
+        ChatApp.run = { RunConditions.app($0, $1) }
+        var face = ChatApp.Face()
+        face.extract = { FaceLink.extract($0) }
+        face.show = { FaceLink.shared.show($0) }
+        face.active = { FaceLink.active() != nil }
+        face.moods = { FaceLink.shared.moods() }
+        face.rule = { FaceLink.rule($0) }
+        ChatApp.face = face
+        ChatApp.driveRule = { DriveLink.shared.active ? DriveLink.shared.rule() : nil }
     }
 }

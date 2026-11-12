@@ -58,17 +58,28 @@ def blocks(text):
             out.append('\n'.join(lines[i:j + 1])); i = j
         i += 1
     return out
-found = {Path(f).stem: blocks(Path(f).read_text()) for f in sorted(glob.glob('app/macos/*.swift'))}
+# C1: the blocks live in AIChat now (with Discussion's state); the app adds none (it sees only public names).
+assert not [f for f in glob.glob('app/macos/*.swift') if blocks(Path(f).read_text())], 'the app has no extension Discussion (C1)'
+found = {Path(f).stem: blocks(Path(f).read_text()) for f in sorted(glob.glob('app/modules/AIChat/*.swift'))}
 found = {k: v for k, v in found.items() if v}
 assert {k: len(v) for k, v in found.items()} == {k: len(v) for k, v in expected.items()}, ({k: len(v) for k, v in found.items()}, 'classify new extension Discussion blocks in docs/MODULES.md')
 assert sum(len(v) for v in found.values()) == 24, 'the C0 table has 24 rows'
 # The chat side calls none of these by name: the app connects them (ChatLinksApp.swift) or the module reads them.
 direct = re.compile(r'PlanLink|DeviceSync\b(?!\.swift)|NativeSessions\.purgeRoom|WorkspaceBackup\.purgeRoom|RoomDocuments\.directory')
-chat = Path('app/macos/Discussion.swift').read_text()
+chat = Path('app/modules/AIChat/Discussion.swift').read_text()
 hits = [m.group() for m in direct.finditer(chat)] + [(k, m.group()) for k, v in found.items() for b in v for m in direct.finditer(b)]
 assert hits == [], hits
 call, start = s.find('ChatLinksApp.connect()'), s.find('AppDelegate()')
 assert 0 <= s.find('useRealHome()') < call < start and s.count('ChatLinksApp.connect()') == 1, 'main.swift connects the chat store once, before AppDelegate()'
+screens = s.find('ChatScreensApp.connect()')
+assert call < screens < start and s.count('ChatScreensApp.connect()') == 1, 'main.swift connects the chat window to the app screens once, before AppDelegate()'
+# The 13 tool providers in their order (first(where:) picks by it): the app lists them, five are AIChat's since C1.
+hub = Path('app/macos/ToolHub.swift').read_text()
+order = re.search(r'private var providers: \[ToolProvider\] \{ \[(.*?)\] \}', hub).group(1).replace(' ', '').split(',')
+assert order == ['FaceLink.shared', 'DriveLink.shared', 'GitLink.shared', 'PlanLink.shared', 'PeerLink.shared', 'ConveneLink.shared', 'ChatLink.shared',
+                 'MemoryLink.shared', 'ProjectMakerLink.shared', 'TaskLink.shared', 'TodoAddLink.shared', 'StorageLink.shared', 'ExternalMCP.shared'], order
+# App files see a module's public names only; @testable is for tests.
+assert subprocess.run(['grep', '-rl', '@testable', 'app'], capture_output=True, text=True).stdout.split() == [], 'no @testable import in app files'
 PY
 echo "[2/11] Modules on their own"
 # Each built alone (seeing only the modules it names), checked from outside with only its public API; reaching an
@@ -115,11 +126,19 @@ boundary AIProjects '_ = TodoScheduler.retryDelay' retryDelay
 boundary AIProjects '_ = ProjectWork.leasePrefix' leasePrefix
 boundary AIProjects '_ = TodoStore.encoder' encoder
 boundary AIChat '_ = ChatTime.calendar' calendar
+boundary AIChat '_ = Discussion.maxRunning' maxRunning
+boundary AIChat '_ = Discussion(model: Optional<any ChatSettings>.none!).draft' draft
 # AutoGuard is internal and whole (the app's one way in is FullAutoGuard.environment): its shims and denied list stay inside.
 printf 'import AIWorkspace\n_ = AutoGuard.claudeDenied\n' > "$TEST_DIR/boundary-AutoGuard.swift"
 if limit 300 xcrun swiftc -swift-version 5 -typecheck -module-cache-path "$TEST_DIR/cache" -I "$MODULES" "$TEST_DIR/boundary-AutoGuard.swift" 2>"$TEST_DIR/boundary-AutoGuard.log" \
    || ! grep -q "cannot find 'AutoGuard' in scope" "$TEST_DIR/boundary-AutoGuard.log"; then
   cat "$TEST_DIR/boundary-AutoGuard.log" >&2; echo "FAIL: code outside AIWorkspace reached AutoGuard" >&2; exit 1
+fi
+# The chat's routing and ask_ai rules are internal types: the app reaches them only through the chat (C1).
+printf 'import AIChat\n_ = Peer.maxAsks\n_ = Route.self\n' > "$TEST_DIR/boundary-Peer.swift"
+if limit 300 xcrun swiftc -swift-version 5 -typecheck -module-cache-path "$TEST_DIR/cache" -I "$MODULES" "$TEST_DIR/boundary-Peer.swift" 2>"$TEST_DIR/boundary-Peer.log" \
+   || ! grep -q "cannot find 'Peer' in scope" "$TEST_DIR/boundary-Peer.log" || ! grep -q "cannot find 'Route' in scope" "$TEST_DIR/boundary-Peer.log"; then
+  cat "$TEST_DIR/boundary-Peer.log" >&2; echo "FAIL: code outside AIChat reached Peer or Route" >&2; exit 1
 fi
 echo "PASS: code outside the modules cannot reach their internal names"
 echo "[3/11] Real data folder check"
@@ -138,8 +157,8 @@ echo "[7/11] Material fixtures"
 PYTHONDONTWRITEBYTECODE=1 limit 300 python3 tools/tests/material_fixtures.py "$TEST_DIR/data/material-fixtures"
 echo "[8/11] Compile app tests"
 limit 900 xcrun swiftc -swift-version 5 -module-cache-path "$TEST_DIR/cache" -I "$MODULES" -o "$TEST_DIR/run" "$MODULES"/lib*.a \
-    app/macos/ProjectChat.swift app/macos/ProjectCreate.swift app/macos/WindowDrag.swift app/macos/Login.swift \
-    app/macos/Settings.swift app/macos/Discussion.swift app/macos/ChatNotes.swift app/macos/Debate.swift app/macos/Attachments.swift app/macos/RoomDocuments.swift app/macos/MaterialReader.swift app/macos/Collaboration.swift app/macos/Vote.swift app/macos/Solo.swift app/macos/LocalModels.swift app/macos/FaceLink.swift app/macos/ExternalMCP.swift app/macos/RemoteMCP.swift app/macos/Markdown.swift app/macos/DriveUI.swift app/macos/ToolHub.swift app/macos/Peer.swift app/macos/CollabLog.swift app/macos/Route.swift app/macos/Meeting.swift app/macos/GoogleAuth.swift app/macos/DriveLink.swift app/macos/RunConditionsApp.swift app/macos/ChatStorage.swift app/macos/Updater.swift app/macos/Pictures.swift app/macos/Poker.swift app/macos/DeviceSync.swift app/macos/Enterprise.swift app/macos/ChatFind.swift app/macos/ChatSearch.swift app/macos/ChatTools.swift app/macos/Memory.swift app/macos/TodoChatsApp.swift app/macos/ChatLinksApp.swift app/macos/SidebarProjects.swift app/macos/GitBranches.swift tools/tests/space_build.swift tools/tests/google_drive.swift tools/tests/device_sync.swift tools/tests/window_drag.swift tools/tests/project_work.swift tools/tests/ask_ai.swift tools/tests/collab_log.swift tools/tests/meeting_tool.swift tools/tests/todo_work.swift tools/tests/project_info.swift tools/tests/update_channel.swift tools/tests/chat_search.swift tools/tests/search_fixtures.swift tools/tests/run_conditions.swift tools/tests/runtime_app.swift tools/tests/chat_links.swift "$TEST_DIR/main.swift"
+    app/macos/Login.swift \
+    app/macos/Settings.swift app/macos/LocalModels.swift app/macos/FaceLink.swift app/macos/ExternalMCP.swift app/macos/RemoteMCP.swift app/macos/DriveUI.swift app/macos/ToolHub.swift app/macos/GoogleAuth.swift app/macos/DriveLink.swift app/macos/RunConditionsApp.swift app/macos/Updater.swift app/macos/Poker.swift app/macos/ChatLinksApp.swift app/macos/GitBranches.swift tools/tests/space_build.swift tools/tests/google_drive.swift tools/tests/device_sync.swift tools/tests/window_drag.swift tools/tests/project_work.swift tools/tests/ask_ai.swift tools/tests/collab_log.swift tools/tests/meeting_tool.swift tools/tests/todo_work.swift tools/tests/project_info.swift tools/tests/update_channel.swift tools/tests/chat_search.swift tools/tests/search_fixtures.swift tools/tests/run_conditions.swift tools/tests/runtime_app.swift tools/tests/chat_links.swift tools/tests/chat_cli.swift "$TEST_DIR/main.swift"
 echo "[9/11] Run app tests"
 # The tests also stop themselves after 120 s without progress (mode2.swift) and name the test.
 limit 1500 env AI_ILLUMINATI_TEST_HOME="$TEST_DIR/data" AI_ILLUMINATI_TEST_RESOURCES="$TEST_DIR/resources" "$TEST_DIR/run"

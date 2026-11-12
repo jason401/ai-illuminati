@@ -1,5 +1,6 @@
 import Cocoa
 import SwiftUI
+@testable import AIChat
 
 @main
 struct RenderDriveTree {

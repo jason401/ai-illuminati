@@ -2,7 +2,6 @@ import Foundation
 import AIAccounts
 import AIWorkspace
 import AIProjects
-import AIChat
 
 // search_chats and read_chat (note 3): the AI answering one chat finds and reads the user's other chats.
 // Every open chat may be found and read by any account; an Enterprise chat (Enterprise.swift) never, not even from
@@ -10,19 +9,19 @@ import AIChat
 // given. With no known account, the tools are not offered. An Enterprise chat may still search open chats.
 // A chat of a project (its Git repository or documents folder, SidebarProjects.key) may search only that project's
 // chats (search_chats project_only); the results mark which chats are of the same project.
-final class ChatLink: ToolProvider {
-    static let shared = ChatLink()
+public final class ChatLink: ToolProvider {
+    public static let shared = ChatLink()
     static let resultLimit = 8
     static let readLimit = 25_000      // characters read_chat gives at most
     static let wholeLimit = 20_000     // a chat up to this long is given whole
     static let stateLimit = 6_000      // the chat state's share
 
     // The chats as the app has them now (set by the app's Discussion; read on the main thread).
-    var conversations: () -> [Conversation] = { [] }
+    public var conversations: () -> [Conversation] = { [] }
 
-    var active: Bool { true }
-    func tools() -> [[String: Any]] { [] }
-    func tools(context: ToolContext) -> [[String: Any]] {
+    public var active: Bool { true }
+    public func tools() -> [[String: Any]] { [] }
+    public func tools(context: ToolContext) -> [[String: Any]] {
         guard context.asker != nil else { return [] }
         let string: [String: Any] = ["type": "string"]
         var search: [String: Any] = ["query": string]
@@ -62,7 +61,7 @@ final class ChatLink: ToolProvider {
     private func roomProject(_ room: UUID, in chats: [Conversation]) -> (key: String, name: String)? { onMain { Self.project(of: room, in: chats) } }
     private func onMain<T>(_ work: () -> T) -> T { Thread.isMainThread ? work() : DispatchQueue.main.sync(execute: work) }
 
-    func call(_ name: String, _ arguments: [String: Any], context: ToolContext) -> [String: Any] {
+    public func call(_ name: String, _ arguments: [String: Any], context: ToolContext) -> [String: Any] {
         func text(_ value: String) -> [String: Any] { ["content": [["type": "text", "text": value]], "isError": false] }
         let all = snapshot()
         let visible = all.filter { Self.allowed($0, asker: context.asker, room: context.room) }
@@ -70,23 +69,23 @@ final class ChatLink: ToolProvider {
         switch name {
         case "search_chats":
             let query = (arguments["query"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !query.isEmpty else { return ToolHub.failure("Write the words to search for.") }
+            guard !query.isEmpty else { return toolFailure("Write the words to search for.") }
             let only = arguments["project_only"] as? Bool ?? false
-            if only && project == nil { return ToolHub.failure("This chat is not in a project. Search without project_only.") }
+            if only && project == nil { return toolFailure("This chat is not in a project. Search without project_only.") }
             let pool = only ? visible.filter { Self.inProject($0, project!.key) } : visible
             let results = ChatSearch.search(query, in: pool, limit: Self.resultLimit)
             return text(Self.listing(results, pool, project: project, only: only))
         case "read_chat":
             let id = UUID(uuidString: (arguments["id"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines))
             // The same answer for a chat that does not exist and one this account may not read.
-            guard let id, let chat = visible.first(where: { $0.id == id }) else { return ToolHub.failure("No chat with that id is available to you. Use search_chats first.") }
+            guard let id, let chat = visible.first(where: { $0.id == id }) else { return toolFailure("No chat with that id is available to you. Use search_chats first.") }
             return text(Self.reading(chat, query: arguments["query"] as? String ?? "", state: Discussion.loadState(chat.id)))
         default:
-            return ToolHub.failure("Unknown tool: " + name)
+            return toolFailure("Unknown tool: " + name)
         }
     }
 
-    static func day(_ date: Date) -> String {
+    public static func day(_ date: Date) -> String {
         let format = DateFormatter(); format.dateFormat = "yyyy-MM-dd"; format.locale = Locale(identifier: "en_US_POSIX")
         return format.string(from: date)
     }
@@ -163,7 +162,7 @@ extension Discussion {
 }
 
 extension Conversation {
-    var projectSummary: ProjectChatSummary {
+    public var projectSummary: ProjectChatSummary {
         ProjectChatSummary(id: id, updatedAt: updatedAt, project: workspace?.project, lock: enterpriseLock, enterprise: isEnterprise,
                            openTurn: turns.last.flatMap { $0.answeredAt == nil ? $0.id : nil })
     }

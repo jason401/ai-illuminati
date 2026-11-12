@@ -5,18 +5,18 @@ import AILocalization
 // AI-to-AI collaboration: the setting (Settings → Chat) and a local log of calls for tuning the budgets and rules
 // later. The log keeps who asked whom, why (the purpose, never the message), how it went and what the asking AI says
 // it took; no message or reply text.
-enum CollabMode: String, CaseIterable {
+public enum CollabMode: String, CaseIterable {
     case off, notify, auto
     // off: only the work path's ask_peer (project chat with reviewers), as before ask_ai. notify: cards under the
     // answer, no confirmation. auto: the same calls, the cards folded into one line.
-    var title: String {
+    public var title: String {
         switch self {
         case .off: return L("끔", "Off")
         case .notify: return L("알리고 진행", "Show and go")
         case .auto: return L("알아서", "On its own")
         }
     }
-    var summary: String {
+    public var summary: String {
         switch self {
         case .off: return L("AI가 스스로 다른 AI에게 묻거나 회의를 열지 않아요. 프로젝트 작업의 검토 질문(ask_peer)만 남아요.",
                             "AIs do not ask other AIs or hold meetings on their own. Only the review question of project work (ask_peer) stays.")
@@ -28,9 +28,9 @@ enum CollabMode: String, CaseIterable {
     }
 }
 
-struct CollabEvent: Codable, Equatable {
+public struct CollabEvent: Codable, Equatable {
     // review: a review of project changes (points found); reviewed: what the lead then took / left.
-    enum Kind: String, Codable { case ask, meeting, review, reviewed, outcome, request }
+    public enum Kind: String, Codable { case ask, meeting, review, reviewed, outcome, request }
     var at = Date()
     var kind: Kind
     var chat: UUID
@@ -49,7 +49,7 @@ struct CollabEvent: Codable, Equatable {
     var priorCalls: Int?       // request: cards under the previous answer when the user asked for other AIs
 }
 
-enum CollabLog {
+public enum CollabLog {
     static var maxBytes = 2_000_000             // past this the older half of the lines goes
     private static let lock = NSLock()
     static var file: URL { URL(fileURLWithPath: AccountStore.supportDir).appendingPathComponent("collab-log.jsonl") }
@@ -71,7 +71,7 @@ enum CollabLog {
         }
     }
 
-    static func events(since: Date = .distantPast) -> [CollabEvent] {
+    public static func events(since: Date = .distantPast) -> [CollabEvent] {
         let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
         lock.lock(); let text = (try? String(contentsOf: file, encoding: .utf8)) ?? ""; lock.unlock()
         return text.split(separator: "\n").compactMap { try? decoder.decode(CollabEvent.self, from: Data($0.utf8)) }.filter { $0.at >= since }
@@ -91,14 +91,14 @@ enum CollabLog {
         return message.lowercased().range(of: pattern, options: .regularExpression) != nil
     }
 
-    struct Summary: Equatable {
+    public struct Summary: Equatable {
         var asks = 0, meetings = 0, failedAsks = 0, smallTalk = 0
         var yes = 0, partly = 0, no = 0, unknown = 0
         var reviews = 0, points = 0, taken = 0, left = 0
         var requests = 0, requestsAfterNone = 0
     }
 
-    static func summary(_ events: [CollabEvent]) -> Summary {
+    public static func summary(_ events: [CollabEvent]) -> Summary {
         var s = Summary()
         for e in events {
             switch e.kind {
@@ -124,7 +124,7 @@ enum CollabLog {
         return s
     }
 
-    static func line(_ s: Summary) -> String {
+    public static func line(_ s: Summary) -> String {
         guard s.asks + s.meetings + s.requests + s.reviews > 0 else { return L("아직 기록이 없어요.", "Nothing recorded yet.") }
         return L("묻기 \(s.asks)번 · 회의 \(s.meetings)번 · 반영 \(s.yes) / 일부 \(s.partly) / 안 씀 \(s.no) · 검토 \(s.reviews)번 · 지적 \(s.points)개 중 반영 \(s.taken)개 · 인사에 부름 \(s.smallTalk)번 · 사용자가 직접 부탁 \(s.requests)번",
                  "\(s.asks) asks · \(s.meetings) meetings · taken \(s.yes) / partly \(s.partly) / left \(s.no) · \(s.reviews) reviews · \(s.taken) of \(s.points) points taken · \(s.smallTalk) on small talk · \(s.requests) asked by the user")

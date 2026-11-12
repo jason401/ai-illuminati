@@ -5,6 +5,7 @@ import AIAccounts
 import AILocalization
 import AIWorkspace
 import AIProjects
+import AIChat
 
 // The TODO board (Todo.swift): sidebar entry (first row under Projects) with the count waiting for the user, the board shown in place of the
 // chat, and the report cards above the message box of a TODO's own chat and of the chat it was written from.
@@ -39,30 +40,6 @@ struct TodoBoardRow: View {
             }
             .buttonStyle(.plainHit)
             .onHover { discussion.hover("todo.board", $0) }
-        }
-    }
-}
-
-extension TodoItem.State {
-    var title: String {
-        switch self {
-        case .draft: return L("초안", "Draft")
-        case .ready: return L("대기", "Ready")
-        case .running: return L("진행 중", "Running")
-        case .review: return L("확인 대기", "Check")
-        case .done: return L("완료", "Done")
-        case .needsYou: return L("네 결정 필요", "Needs you")
-        case .cancelled: return L("취소", "Cancelled")
-        }
-    }
-    var color: Color {
-        switch self {
-        case .draft, .cancelled: return .secondary
-        case .ready: return .green
-        case .running: return .blue
-        case .review: return .yellow
-        case .done: return .purple
-        case .needsYou: return .orange
         }
     }
 }

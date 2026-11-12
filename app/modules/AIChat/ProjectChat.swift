@@ -5,7 +5,6 @@ import AILocalization
 import AIRuntime
 import AIWorkspace
 import AIProjects
-import AIChat
 
 struct ProjectApprovalView: View {
     let room: UUID
@@ -77,11 +76,12 @@ struct ApprovalBanner: View {
 }
 
 // Every waiting approval in one place (opened from the menu bar or a notification).
-struct ApprovalListView: View {
+public struct ApprovalListView: View {
     let discussion: Discussion
     var openChat: (UUID) -> Void
     @ObservedObject private var center = ProjectCenter.shared
-    var body: some View {
+    public init(discussion: Discussion, openChat: @escaping (UUID) -> Void) { self.discussion = discussion; self.openChat = openChat }
+    public var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             if center.requests.isEmpty {
                 Spacer()
@@ -131,7 +131,7 @@ struct ApprovalListView: View {
 }
 
 extension Discussion {
-    func approvalChatName(_ room: UUID) -> String {
+    public func approvalChatName(_ room: UUID) -> String {
         let title = conversations.first(where: { $0.id == room })?.title ?? ""
         return title.isEmpty ? L("새 대화", "New chat") : title
     }
@@ -340,7 +340,7 @@ extension Discussion {
                 let generation = run.generation
                 let progress: (AnswerProgress) -> Void = { update in
                     switch update {
-                    case .text(let text): self.changeTurn(id, index) { $0.partial = Self.extractState(FaceLink.extract(text).text).reply; $0.partialBy = speaker; $0.lastActivityAt = Date() }
+                    case .text(let text): self.changeTurn(id, index) { $0.partial = Self.extractState(ChatApp.face.extract(text).text).reply; $0.partialBy = speaker; $0.lastActivityAt = Date() }
                     case .activity(let text): self.changeTurn(id, index) { $0.activity = text; $0.lastActivityAt = Date() }
                     case .todos(let todos): run.setPlan(todos: todos, generation: generation)
                     }
@@ -361,8 +361,8 @@ extension Discussion {
             if cancellation.isCancelled { break }
             switch result {
             case .success(let raw):
-                let (tagless, mood) = FaceLink.extract(raw)
-                if let mood { FaceLink.shared.show(mood) }
+                let (tagless, mood) = ChatApp.face.extract(raw)
+                if let mood { ChatApp.face.show(mood) }
                 let (reply, newState) = Self.extractState(tagless)
                 notePeerOutcome(account, reply: tagless)
                 if let newState { self.saveState(newState, room: id, index: index) }
@@ -403,8 +403,8 @@ extension Discussion {
                         if !cancellation.isCancelled {
                             switch fixed {
                             case .success(let raw):
-                                let (tagless, mood) = FaceLink.extract(raw)
-                                if let mood { FaceLink.shared.show(mood) }
+                                let (tagless, mood) = ChatApp.face.extract(raw)
+                                if let mood { ChatApp.face.show(mood) }
                                 let (reply, newState) = Self.extractState(tagless)
                                 notePeerOutcome(account, reply: tagless)
                                 if let newState { self.saveState(newState, room: id, index: index) }
@@ -434,7 +434,7 @@ extension Discussion {
                     run.attempt.cancel()
                     let reviewText: String, failed: Bool
                     switch reviewResult {
-                    case .success(let raw): let parsed = FaceLink.extract(raw); reviewText = parsed.text; failed = false; if let mood = parsed.mood { FaceLink.shared.show(mood) }
+                    case .success(let raw): let parsed = ChatApp.face.extract(raw); reviewText = parsed.text; failed = false; if let mood = parsed.mood { ChatApp.face.show(mood) }
                     case .failure(let error): reviewText = Self.describe(error); failed = true
                     }
                     changeTurn(id, index, save: true) { turn in
@@ -491,9 +491,9 @@ extension Discussion {
 
     // The writing AI ends its reply with a <face> tag (plain chat and project work alike).
     // The read-only reviewer gets no rule, so the writer's face stays.
-    static func projectFaceRule(face: Bool, active: Bool = FaceLink.active() != nil,
-                                moods: @autoclosure () -> [String] = FaceLink.shared.moods()) -> String {
-        face && active ? FaceLink.rule(moods()) : ""
+    static func projectFaceRule(face: Bool, active: Bool = ChatApp.face.active(),
+                                moods: @autoclosure () -> [String] = ChatApp.face.moods()) -> String {
+        face && active ? ChatApp.face.rule(moods()) : ""
     }
 
     func toggleFullAuto() {
@@ -505,13 +505,13 @@ extension Discussion {
 
 extension Notification.Name {
     // A project turn ended (not stopped by the user): room, index, problem (nil: done). ApprovalAlerts tells the user.
-    static let projectWorkEnded = Notification.Name("AIIlluminatiProjectWorkEnded")
+    public static let projectWorkEnded = Notification.Name("AIIlluminatiProjectWorkEnded")
 }
 
 // Settings → Chat → Approval requests. Read by ApprovalAlerts; missing keys mean the defaults.
-enum ApprovalAlertSettings {
-    static let notifyKey = "approvalNotify", soundKey = "approvalSound", repeatKey = "approvalRepeat"
-    static var notify: Bool { UserDefaults.app.object(forKey: notifyKey) as? Bool ?? true }
-    static var sound: Bool { UserDefaults.app.bool(forKey: soundKey) }
-    static var repeats: Bool { UserDefaults.app.bool(forKey: repeatKey) }
+public enum ApprovalAlertSettings {
+    public static let notifyKey = "approvalNotify", soundKey = "approvalSound", repeatKey = "approvalRepeat"
+    public static var notify: Bool { UserDefaults.app.object(forKey: notifyKey) as? Bool ?? true }
+    public static var sound: Bool { UserDefaults.app.bool(forKey: soundKey) }
+    public static var repeats: Bool { UserDefaults.app.bool(forKey: repeatKey) }
 }

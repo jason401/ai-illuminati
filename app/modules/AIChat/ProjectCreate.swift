@@ -4,7 +4,6 @@ import AILocalization
 import AIRuntime
 import AIWorkspace
 import AIProjects
-import AIChat
 
 extension Discussion {
     func linkProjectMaker() {
@@ -50,7 +49,7 @@ extension Discussion {
     // Project info / sidebar → Disconnect work folder…: the project keeps its chats, TODOs, name, folders, links and
     // pin, but no longer works in its Git or documents folder (every worktree of it). The files on disk stay.
     // Refused while any of it runs; checked again after asking.
-    func disconnectProjectFolder(_ key: String, name: String) {
+    public func disconnectProjectFolder(_ key: String, name: String) {
         guard !importingMaterials else { return }
         func tell(_ title: String, _ text: String) {
             let alert = NSAlert(); alert.messageText = title; alert.informativeText = text; alert.runModal()

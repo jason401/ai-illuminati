@@ -6,6 +6,7 @@ import AISpaces
 import AIRuntime
 import AIWorkspace
 import AIProjects
+import AIChat
 
 // AI Illuminati: a menu bar gauge that shows how much of each AI subscription is left
 // (5-hour and weekly limits) and when each one resets, for any number of Claude and ChatGPT
@@ -414,6 +415,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 // Only the app itself uses the real accounts and settings; tests and previews never call this.
 AccountStore.useRealHome()
 ChatLinksApp.connect()
+ChatScreensApp.connect()
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate

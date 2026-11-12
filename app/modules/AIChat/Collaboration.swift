@@ -4,7 +4,6 @@ import AIAccounts
 import AILocalization
 import AIRuntime
 import AIWorkspace
-import AIChat
 
 struct CollaborationAssignment {
     var id: String

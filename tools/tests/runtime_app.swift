@@ -3,6 +3,7 @@ import Darwin
 import AIAccounts
 import AIRuntime
 import AIWorkspace
+@testable import AIChat
 
 // The Runtime's promises through the app's own way in: `Discussion.requestDebate` builds `RunConditions.app` and the
 // folder rules, and a fake command line tool (Answerer.toolForTests) is started as the AI's own. runtime_contract.swift

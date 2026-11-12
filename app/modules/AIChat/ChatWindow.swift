@@ -7,14 +7,11 @@ import AILocalization
 import AIRuntime
 import AIWorkspace
 import AIProjects
-import AIChat
 
 // The chat window: pick which AIs take part, ask, and get one final answer. What the AIs said to
 // each other (own answers, then reviews) is folded under the answer.
-struct ChatView: View {
-    @ObservedObject var discussion: Discussion
-    @ObservedObject var model: AppModel
-
+// The window's sizes (ChatView is generic over the app's settings, which holds no stored statics).
+enum ChatViewSize {
     // Smallest window: room for the chat or the TODO board (its rows fold onto more lines) on their own. The sidebar
     // sits beside them only while they keep that width (`sidebarFits`); narrower, it slides over them.
     static let minSize = NSSize(width: 560, height: 480)
@@ -23,6 +20,14 @@ struct ChatView: View {
     // The notes sit beside a chat that keeps at least this much.
     static let wide: CGFloat = 700
     static let notesWidth: CGFloat = 280
+    static let bottomSlack: CGFloat = 80
+    static let bottomID = "transcript-bottom"
+}
+
+struct ChatView<Model: ChatSettings>: View {
+    @ObservedObject var discussion: Discussion
+    @ObservedObject var model: Model
+
 
     // Which side panels fit. Kept apart from the window size so resizing rebuilds the views only when one
     // of these changes, not on every frame of the drag.
@@ -95,7 +100,7 @@ struct ChatView: View {
         .onChange(of: discussion.viewingRemote == nil) { _ in photo.image = nil }
         .onChange(of: discussion.viewingBoard) { _ in photo.image = nil }
         .onChange(of: discussion.viewingSpace == nil) { _ in photo.image = nil }
-        .frame(minWidth: Self.minSize.width, minHeight: Self.minSize.height)
+        .frame(minWidth: ChatViewSize.minSize.width, minHeight: ChatViewSize.minSize.height)
         .background(Color(nsColor: .textBackgroundColor))
         // A photo dropped anywhere in the window is attached, not only on the message box.
         .onDrop(of: [UTType.fileURL, UTType.image, UTType.item], delegate: ImageAttachmentDropDelegate(discussion: discussion))
@@ -148,7 +153,7 @@ struct ChatView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 1) {
                     sharedFolders
-                    DriveSidebarSection().disabled(discussion.importingMaterials)
+                    ChatApp.screens.drive().disabled(discussion.importingMaterials)
                     // A new chat with nothing in it yet is not listed (like the desktop apps); it appears once it has a message.
                     // Searching: the filters apply, and words find chats by their messages and answers too.
                     let chats = discussion.listedConversations.filter {
@@ -175,7 +180,7 @@ struct ChatView: View {
                         let grouped = SidebarProjects.group(chats, todo: todos.snapshot, pinned: folds.pinnedProjects, withLists: !discussion.sidebarSearching,
                                                              names: projectInfo.names)
                         SidebarHeader(title: L("프로젝트", "Projects"), fold: "projects", badge: todos.waitingForUser) { addProjectMenu }
-                        if !folds.isFolded("projects") { TodoBoardRow(discussion: discussion) }
+                        if !folds.isFolded("projects") { ChatApp.screens.boardRow(discussion) }
                         if folds.isFolded("projects") {
                         } else if grouped.projects.isEmpty {
                             Button(action: { discussion.linkProjectFromSidebar() }) {
@@ -225,7 +230,7 @@ struct ChatView: View {
             .padding(.horizontal, 16).padding(.vertical, 10)
             .disabled(discussion.importingMaterials)
         }
-        .frame(width: Self.sidebarWidth)
+        .frame(width: ChatViewSize.sidebarWidth)
         .background(Color.primary.opacity(0.035))
     }
 
@@ -434,7 +439,7 @@ struct ChatView: View {
             if let binding = group.bindings.first { Button(L("이 프로젝트에 새 대화", "New chat in this project")) { newChat(in: group, binding) } }
             Button(L("프로젝트 정보", "Project info")) { discussion.openBoard(project: group.id, tab: .info) }
             Button(L("할 일 보드", "TODO board")) { discussion.openBoard(project: group.id, tab: .todo) }
-            Button(L("이름 바꾸기…", "Rename…")) { ProjectInfoView.rename(group.id, current: group.name) }
+            Button(L("이름 바꾸기…", "Rename…")) { ChatApp.screens.renameProject(group.id, group.name) }
             Button(group.pinned ? L("프로젝트 고정 해제", "Unpin project") : L("프로젝트 맨 위에 고정", "Pin project to top")) { folds.togglePin(group.id) }
             if let lock = SidebarProjects.lock(of: group, todo: todos.snapshot) {
                 Text(lock.isPersonal ? L("🔒 개인 프로젝트 (해제할 수 없어요)", "🔒 Personal project (cannot be undone)")
@@ -676,9 +681,9 @@ struct ChatView: View {
                 ChatFindBar(discussion: discussion).padding(.horizontal, 28).padding(.bottom, 4)
             }
             if discussion.viewingBoard, let project = discussion.boardProject, discussion.boardTab == .info {
-                ProjectInfoView(discussion: discussion, project: project)
+                ChatApp.screens.projectInfo(discussion, project)
             } else if discussion.viewingBoard {
-                TodoBoardView(discussion: discussion)
+                ChatApp.screens.board(discussion)
             } else if let space = discussion.viewingSpace {
                 SpaceMainView(discussion: discussion, id: space)
             } else if let remote = discussion.viewingRemote {
@@ -688,7 +693,7 @@ struct ChatView: View {
                 VStack(spacing: 28) {
                     Spacer(minLength: 0)
                     HStack(spacing: 12) {
-                        Image(nsImage: illuminatiIcon(colored: true)).resizable().frame(width: 30, height: 30)
+                        Image(nsImage: ChatApp.screens.icon(true)).resizable().frame(width: 30, height: 30)
                         Text(Self.greeting(discussion.configuration.mode))
                             // Serif reads well in English; Korean serif fonts look like handwriting, so Korean stays sans.
                             .font(.system(size: 30, weight: AppLanguage.current == .korean ? .light : .regular,
@@ -707,7 +712,7 @@ struct ChatView: View {
             } else {
                 transcript
                 // TODO report cards and approval cards sit right above the message box, where the user is looking.
-                TodoCardsView(room: discussion.currentID, discussion: discussion)
+                ChatApp.screens.cards(discussion.currentID, discussion)
                     .frame(maxWidth: 760)
                     .padding(.horizontal, 28)
                     .frame(maxWidth: .infinity)
@@ -901,7 +906,7 @@ struct ChatView: View {
                     .buttonStyle(.link)
                     .frame(maxWidth: .infinity)
                     .background(GeometryReader { marker in
-                        Color.clear.preference(key: TranscriptTopKey.self, value: marker.frame(in: .named(Self.bottomID)).minY)
+                        Color.clear.preference(key: TranscriptTopKey.self, value: marker.frame(in: .named(ChatViewSize.bottomID)).minY)
                     })
                 }
                 // Lazy, so a window resize re-lays out only the turns near the screen, not every shown turn.
@@ -930,18 +935,18 @@ struct ChatView: View {
                     }
                 }
                 // Where the transcript ends, for the jump-to-bottom button (macOS 13 has no scroll position API).
-                Color.clear.frame(height: 1).id(Self.bottomID)
+                Color.clear.frame(height: 1).id(ChatViewSize.bottomID)
                     .background(GeometryReader { marker in
-                        Color.clear.preference(key: TranscriptBottomKey.self, value: marker.frame(in: .named(Self.bottomID)).maxY)
+                        Color.clear.preference(key: TranscriptBottomKey.self, value: marker.frame(in: .named(ChatViewSize.bottomID)).maxY)
                     })
             }
             .frame(maxWidth: 760, alignment: .leading)
             .padding(.horizontal, 28).padding(.vertical, 20)
             .frame(maxWidth: .infinity)
         }
-        .coordinateSpace(name: Self.bottomID)
+        .coordinateSpace(name: ChatViewSize.bottomID)
         .onPreferenceChange(TranscriptBottomKey.self) { end in
-            let away = end > viewport.size.height + Self.bottomSlack
+            let away = end > viewport.size.height + ChatViewSize.bottomSlack
             if away != discussion.awayFromBottom { withAnimation(.easeOut(duration: 0.15)) { discussion.awayFromBottom = away } }
         }
         .onPreferenceChange(TranscriptTopKey.self) { top in
@@ -954,7 +959,7 @@ struct ChatView: View {
         .onAppear { openAtLatestTurn(proxy) }
         .overlay(alignment: .bottom) {
             if discussion.awayFromBottom {
-                Button(action: { withAnimation { proxy.scrollTo(Self.bottomID, anchor: .bottom) } }) {
+                Button(action: { withAnimation { proxy.scrollTo(ChatViewSize.bottomID, anchor: .bottom) } }) {
                     Image(systemName: "arrow.down")
                         .font(.system(size: 13, weight: .semibold))
                         .frame(width: 30, height: 30)
@@ -984,7 +989,6 @@ struct ChatView: View {
     }
     }
 
-    static let bottomID = "transcript-bottom"
 
     // The day above a turn when it starts a new day (turns from before times were saved have none).
     static func dayLine(_ conversation: Conversation, _ index: Int) -> String? {
@@ -1041,7 +1045,6 @@ struct ChatView: View {
         }
     }
     // How far (pt) the end may sit below the visible area and still count as the bottom, so the button does not flicker.
-    static let bottomSlack: CGFloat = 80
 
     // The message box: text on top, then + on the left and who answers and send on the right. A meeting's own chat
     // is read only: a bar back to the chat it was held for instead.
@@ -2417,15 +2420,20 @@ private struct TurnView: View, Equatable {
 // One chat window, reused. Conversations are saved, so closing it loses nothing.
 // While it is open the app shows in the Dock and ⌘Tab like a normal app (so it can be kept in the Dock);
 // closed, it is a menu bar app again. A Dock icon kept there reopens the chat (applicationShouldHandleReopen).
-final class ChatWindow {
+public final class ChatWindow {
+    private static func host<M: ChatSettings>(_ discussion: Discussion, _ model: M) -> NSViewController {
+        let host = NSHostingController(rootView: ChatView(discussion: discussion, model: model))
+        // Keep content changes from renegotiating window size during a native drag.
+        host.sizingOptions = []
+        return host
+    }
     private var window: NSWindow?
     private var closing: NSObjectProtocol?
+    public init() {}
 
-    func show(discussion: Discussion) {
+    public func show(discussion: Discussion) {
         if window == nil {
-            let host = NSHostingController(rootView: ChatView(discussion: discussion, model: discussion.model))
-            // Keep content changes from renegotiating window size during a native drag.
-            host.sizingOptions = []
+            let host = Self.host(discussion, discussion.model)
             let w = ChatDragWindow(contentViewController: host)
             w.title = L("AI Illuminati 채팅", "AI Illuminati Chat")
             // One surface from the title bar down, like the desktop chat apps.
@@ -2433,7 +2441,7 @@ final class ChatWindow {
             // Opaque title bar on purpose (see WindowDrag.swift): a transparent one jumps between displays.
             w.titlebarSeparatorStyle = .none
             w.titleVisibility = .hidden
-            w.minimumContentSize = ChatView.minSize
+            w.minimumContentSize = ChatViewSize.minSize
             w.setContentSize(NSSize(width: 1040, height: 720))
             w.isReleasedWhenClosed = false
             w.center()
@@ -2582,9 +2590,9 @@ private final class ChatLayout: ObservableObject {
     @Published private(set) var notesFitAlone = true
 
     func measure(_ width: CGFloat) {
-        let isWide = width >= ChatView.sidebarFits
-        let fit = width - ChatView.sidebarWidth - 1 - ChatView.notesWidth >= ChatView.wide
-        let fitAlone = width - ChatView.notesWidth >= ChatView.wide
+        let isWide = width >= ChatViewSize.sidebarFits
+        let fit = width - ChatViewSize.sidebarWidth - 1 - ChatViewSize.notesWidth >= ChatViewSize.wide
+        let fitAlone = width - ChatViewSize.notesWidth >= ChatViewSize.wide
         if isWide != wide { wide = isWide }
         if fit != notesFit { notesFit = fit }
         if fitAlone != notesFitAlone { notesFitAlone = fitAlone }
@@ -2657,7 +2665,7 @@ private struct NotesPanel: View {
                 .font(.system(size: 11)).foregroundColor(.secondary)
                 .padding(.horizontal, 14).padding(.bottom, 12)
         }
-        .frame(width: ChatView.notesWidth)
+        .frame(width: ChatViewSize.notesWidth)
         .frame(maxHeight: .infinity)
         .background(Color.primary.opacity(0.035))
         .onAppear { notes.open(room) }
@@ -2869,7 +2877,7 @@ private struct EntryRow: View {
 // Each AI's own color for its name in the chat, close to its company's brand color.
 // A lighter shade in dark mode and a deeper one in light mode keep it readable on both.
 extension Account.Provider {
-    var color: Color {
+    public var color: Color {
         let (dark, light): (NSColor, NSColor)
         switch self {
         case .claude: (dark, light) = (NSColor(srgbRed: 0.88, green: 0.55, blue: 0.42, alpha: 1), NSColor(srgbRed: 0.74, green: 0.36, blue: 0.22, alpha: 1))

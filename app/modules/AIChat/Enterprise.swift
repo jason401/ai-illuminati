@@ -4,7 +4,6 @@ import AIAccounts
 import AILocalization
 import AIRuntime
 import AIProjects
-import AIChat
 
 // An Enterprise chat: one the user locked (the chat menu, or "New Enterprise chat"). Only the user locks a chat,
 // and a lock is never removed. In a locked chat only Enterprise accounts of the organization it was locked for,
@@ -22,13 +21,13 @@ extension EnterpriseLock {
 }
 
 extension Conversation {
-    var isEnterprise: Bool { enterpriseLock.map { !$0.isPersonal } ?? false }
+    public var isEnterprise: Bool { enterpriseLock.map { !$0.isPersonal } ?? false }
     var isPersonalLocked: Bool { enterpriseLock?.isPersonal == true }
     // A work chat: a Git project is linked. A chat with only folders linked is a plain chat.
     var isProjectChat: Bool { workspace?.project != nil }
 }
 
-enum Enterprise {
+public enum Enterprise {
     // The organization of a personal lock: no account name is lowercased into it.
     static let personal = "\u{1}personal"
     static var personalLock: EnterpriseLock { EnterpriseLock(organization: personal, name: L("개인", "Personal"), lockedAt: Date()) }
@@ -47,7 +46,7 @@ enum Enterprise {
 
     // Whether `account` may be sent the content of a chat with `lock` (nil: an open chat, every account may).
     // Every cloud AI (Gemini too) follows its Enterprise mark in Settings; models on this Mac join every chat.
-    static func permits(_ account: Account, lock: EnterpriseLock?) -> Bool {
+    public static func permits(_ account: Account, lock: EnterpriseLock?) -> Bool {
         guard let lock else { return true }
         if account.provider == .ollama { return true }
         if lock.isPersonal { return !account.isSchool }

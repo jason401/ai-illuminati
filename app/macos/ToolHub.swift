@@ -3,6 +3,7 @@ import Darwin
 import AIAccounts
 import AIWorkspace
 import AIProjects
+import AIChat
 
 extension FaceLink: ToolProvider {
     var active: Bool { Self.active() != nil }

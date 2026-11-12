@@ -1,5 +1,4 @@
 import Foundation
-import AIChat
 
 // The user's notes for one chat, in the panel on the right of the chat window. They are kept next to the
 // chat folder, not in it, so the AIs (which may write in the chat folder) cannot change them; each answer

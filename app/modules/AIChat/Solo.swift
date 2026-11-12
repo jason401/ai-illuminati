@@ -5,21 +5,20 @@ import AISpaces
 import AIRuntime
 import AIWorkspace
 import AIProjects
-import AIChat
 
 // Mode 0 · Chat: one AI at a time, like the Claude or ChatGPT desktop apps. The app picks the account
 // with usage left and, when that account runs low or hits its limit, another account continues from
 // the same chat history and the same folders.
-enum AutoPick {
+public enum AutoPick {
     static let threshold = 15.0   // switch when the 5-hour or weekly limit has less than this left
 
     // What is left (0–100). A plan without that limit is not held back by it (100). No reading yet: 50.
-    static func fiveHour(_ usage: AIUsage?) -> Double {
+    public static func fiveHour(_ usage: AIUsage?) -> Double {
         guard let usage else { return 50 }
         if let w = usage.fiveHour { return w.left() }
         return usage.weekly != nil ? 100 : 50
     }
-    static func weekly(_ usage: AIUsage?) -> Double {
+    public static func weekly(_ usage: AIUsage?) -> Double {
         guard let usage else { return 50 }
         if let w = usage.weekly { return w.left() }
         return usage.fiveHour != nil ? 100 : 50
@@ -637,7 +636,7 @@ extension Discussion {
                     guard !finished() else { return }
                     switch update {
                     case .text(let text):
-                        let shown = Self.extractState(FaceLink.extract(text).text).reply
+                        let shown = Self.extractState(ChatApp.face.extract(text).text).reply
                         self.changeTurn(id, index) { t in
                             // Checked again here: text that arrives after the reply is done must not bring it back.
                             guard !finished() else { return }
@@ -662,8 +661,8 @@ extension Discussion {
                     var entry: ChatTurn.Entry
                     switch result {
                     case .success(let raw):
-                        let (tagless, mood) = FaceLink.extract(raw)
-                        if let mood, binding.face == true { FaceLink.shared.show(mood) }
+                        let (tagless, mood) = ChatApp.face.extract(raw)
+                        if let mood, binding.face == true { ChatApp.face.show(mood) }
                         let (text, newState) = Self.extractState(tagless)
                         self.notePeerOutcome(account, reply: tagless)
                         if let newState, k == 0 { self.saveState(newState, room: id, index: index) }
@@ -757,7 +756,7 @@ extension Discussion {
                 switch update {
                 case .text(let text):
                     partialLock.lock(); partialText = text; partialLock.unlock()
-                    let shown = Self.extractState(FaceLink.extract(text).text).reply
+                    let shown = Self.extractState(ChatApp.face.extract(text).text).reply
                     self.changeTurn(id, index) { $0.partial = shown; $0.partialBy = speaker }
                 case .activity(let what):
                     self.changeTurn(id, index) { $0.activity = what }
@@ -769,8 +768,8 @@ extension Discussion {
             if cancellation.isCancelled { break }
             switch result {
             case .success(let raw):
-                let (tagless, mood) = FaceLink.extract(raw)
-                if let mood, binding.face == true { FaceLink.shared.show(mood) }
+                let (tagless, mood) = ChatApp.face.extract(raw)
+                if let mood, binding.face == true { ChatApp.face.show(mood) }
                 let (text, newState) = Self.extractState(tagless)
                 notePeerOutcome(account, reply: tagless)
                 if let newState { self.saveState(newState, room: id, index: index) }
@@ -793,7 +792,7 @@ extension Discussion {
                 }
                 return endSolo(id, index)
             case .failure(let failure) where Self.isOutOfUsage(failure):
-                partialLock.lock(); let cut = Self.extractState(FaceLink.extract(partialText).text).reply; partialLock.unlock()
+                partialLock.lock(); let cut = Self.extractState(ChatApp.face.extract(partialText).text).reply; partialLock.unlock()
                 if !cut.isEmpty { unfinished = (speaker, cut) }
                 changeTurn(id, index) { $0.partial = nil; $0.partialBy = nil; $0.activity = nil }
                 excluded.insert(account.id)
@@ -830,7 +829,7 @@ extension Discussion {
                          spaceRule: Bool = true) -> String {
         Self.composeInstruction(name: label(account), provider: account.provider,
                                 folders: Self.soloFolders(binding, shared: model.activeSharedFolders, project: project?.root),
-                                drive: binding.face == true && [.claude, .codex].contains(account.provider) && DriveLink.shared.active ? DriveLink.shared.rule() : "",
+                                drive: binding.face == true && [.claude, .codex].contains(account.provider) ? ChatApp.driveRule() ?? "" : "",
                                 fullAccess: binding.fullAccess == true, picture: pictureRule(account, chat: id), helper: helper,
                                 face: Self.projectFaceRule(face: binding.face == true), project: project,
                                 notes: id.map { ChatNotes.rule(ChatNotes.current($0)) } ?? "",
@@ -1025,7 +1024,7 @@ extension Discussion {
     }
 
     // Spaces made before the lock was saved get their chat's lock, while that chat is still here (launch).
-    func fillSpaceLocks() {
+    public func fillSpaceLocks() {
         for manifest in SpaceStore.shared.spaces where manifest.lock == nil {
             guard let lock = spaceLock(manifest) else { continue }
             SpaceStore.shared.update(manifest.id) { $0.lock = lock }

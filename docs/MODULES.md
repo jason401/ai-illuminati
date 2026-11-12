@@ -6,8 +6,8 @@ it builds alone, and the app sees only its `public` names. Now: `AILocalization`
 (account list and folders), `AISpaces` (Spaces: saving, checks, the isolated web view) and `AIRuntime` (running each
 AI's command line tool, sessions, the local model, usage readings), all 2026-11-11; `AIWorkspace` (the folder rules each
 AI gets, the backup before writes and its Undo, AutoGuard, the tool gateway's types) and `AIProjects` (linked projects, Git
-work, the repository lock, approvals, the TODO board and its scheduler, five tool providers), 2026-11-12; `AIChat` (a chat's
-record and where it is kept: C1a), 2026-11-12.
+work, the repository lock, approvals, the TODO board and its scheduler, five tool providers), 2026-11-12; `AIChat` (the chat: its
+records and store, Discussion with routing, meetings, reviews and ask_ai, five tool providers, the chat window; C1a/C1b), 2026-11-12.
 
 ## How a module is built and used
 - `zsh tools/build_modules.sh <out> [swiftc options]` builds every `app/modules/<Name>/` alone into
@@ -27,7 +27,7 @@ record and where it is kept: C1a), 2026-11-12.
   (`tools/tests/<part>_contract.swift`, public names only), and checks that internal names
   (`AccountStore.place`, `SpaceStore.setting`, `SpaceAssets.served`, `Answerer.chatDir`, `Answerer.launchForTests`,
   `NativeSessions.split`, `CloudModels.apply`, `WorkspaceBackup.chats`/`keepPerChat`, the whole `AutoGuard` type,
-  `TodoScheduler.retryDelay`, `ProjectWork.leasePrefix`, `TodoStore.encoder`, `ChatTime.calendar`) do not compile outside.
+  `TodoScheduler.retryDelay`, `ProjectWork.leasePrefix`, `TodoStore.encoder`, `ChatTime.calendar`, `Discussion.maxRunning`, `Discussion.draft`, the whole `Peer` and `Route` types) do not compile outside.
 - Tests build the modules with `-enable-testing` only so tests can say `@testable import`: `space_build.swift` for
   `AISpaces` (module insides such as `SpaceCheck`), and for `AIRuntime` the app tests that make their own usage
   readings (`AIUsage`, `UsageWindow` inits) or use its test hooks (`Answerer.launchForTests`/`replyForTests`,
@@ -323,6 +323,75 @@ C1a falsification (one change in a copy of the tree, "app" = the mode2 app tests
 | F2 a picture's folder `.asset` | caught ("a picture lives in the chat's .assets folder") | caught (mode2 "deleting chat must remove copied images") |
 | F3 `loadAll` oldest first | caught ("newest first") | caught, indirectly (testAutoMeeting picks by the first chats) |
 | F4 a chat file saved 0644 | caught ("a chat file is 0600") | **missed**: only the module test checks the mode |
+
+### AIChat, step C1b: Discussion and everything it runs (2026-11-12)
+Moved whole (`git mv`, bodies unchanged except the lines below) from `app/macos` into `app/modules/AIChat`: Discussion, Solo
+(plain chat, `AutoPick`), Route (the way a message is answered, `RouteSorter`), Meeting (meetings, `ConveneLink`), Debate,
+Collaboration, Vote, Peer (ask_ai, the review, `PeerLink`), Attachments, RoomDocuments, MaterialReader, ChatTools (`ChatLink`),
+Memory (`MemoryStore`, `MemoryLink`), ChatStorage (`StorageLink`), CollabLog, Pictures, Enterprise, ChatSearch, ChatFind,
+ChatNotes, TodoChatsApp (Discussion as Projects' `TodoChats`), ProjectChat, ProjectCreate, SidebarProjects, DeviceSync (chats
+from other Macs: a chat's synced copy), and the chat window's own views: ChatWindow, Markdown, SpaceView, WindowDrag; new
+ChatUI.swift (`PlainHitButtonStyle`/`.plainHit` and `SidebarHeader` out of Settings.swift, the TODO state's `title`/`color`
+out of TodoBoard.swift) and ChatApp.swift (what the chat gets from the app). Every `extension Discussion` is now inside the
+module (stage 1: none in `app/macos`), so Discussion's state stays internal.
+
+Why the chat window went with it: with the views in the app, the app would need about 117 of Discussion's members public
+(measured), which the roadmap rules out; ChatGPT (school) and Gemini, asked, said the same and advised against hiding them
+behind `@_spi`. In the module the views use the state directly, and the app reaches the chat through the names below.
+
+Direction: AIChat → AIProjects (and Workspace, Runtime, Spaces, Accounts, Localization). Projects names no chat type.
+What the chat gets from the app, set by the app (the chat side names none of these app parts; unset it runs plainly):
+- `ChatSettings` (protocol, `AppModel` conforms: `extension AppModel: ChatSettings {}`): the 14 settings the chat reads
+  (accounts, usage, chat rules, local model, picture makers, team picks, collaboration, shared folders); `Discussion(model:)`
+  takes it, `ChatView` is generic over it so the window still observes the settings.
+- `ChatApp.run` = `RunConditions.app` (RunConditionsApp.swift), `ChatApp.face` = FaceLink's extract/show/active/moods/rule,
+  `ChatApp.driveRule` = DriveLink's rule while on: set in `ChatLinksApp.connect()` (main.swift and mode2, as in C0).
+- `ChatApp.screens`: the TODO board (row, board, a chat's cards), Project info and its rename, the Drive section, the icon:
+  set in the new `ChatScreensApp.connect()` (main.swift after ChatLinksApp, stage 1 checks the place; the chat preview too).
+- `toolFailure` is the module's copy of `ToolHub.failure` (the same reply shape); `RunConditions.app` inside the module forwards
+  to `ChatApp.run`, so the chat's calls read as before.
+
+Stays in the app (what the user sees of other parts): Settings (all tabs, Memory/Rules/Storage windows), TodoBoard, ProjectInfoView,
+GitBranches, DriveUI/DriveLink/GoogleAuth, ExternalMCP/RemoteMCP, FaceLink, ToolHub (the 13 providers in their order, stage 1
+checks the list), ApprovalAlerts, MenuCards, main, Login, Updater, Icon, Poker, LocalModels, RunConditionsApp, ChatLinksApp,
+ChatScreensApp. Two app edits besides imports: `StorageListView.measured` (one string the compiler could no longer type-check
+inline once the names came from another module; same text) and the `AppModel` conformance line.
+
+Public names and why (found by the compiler, not by hand: a script opened only what an app file or a public protocol asked for;
+everything else, Discussion's state above all, stays internal):
+- Discussion (about 30 of its members): `init(model:)`; what main.swift does with the chat (`open`, `current`, `anyRunning`,
+  `cancelAll`, `discardPendingImages`, `importingMaterials`, `fillSpaceLocks`, `runningRooms`/`stoppingRooms` and their
+  publishers); what the app's screens show (TODO board: `conversations`, `conversation`, `currentID`, `label`, `openBoard`,
+  `viewingBoard`, `boardProject`, `hover`/`hoverKey`, `model`; Project info: `listedConversations`, `showBoardTab`,
+  `disconnectProjectFolder`; approvals: `approvalChatName`, `viewingRemote`); `TodoChats` (P0's seam, all its members);
+  `Discussion.meets`/`autoPicked` (Settings' team picks).
+- The five tool providers (`shared`, `active`, `tools`, `call`; `MemoryLink.newestTurn` for ToolHub.register): ToolHub lists them.
+- Settings' tabs: `MemoryStore`/`MemoryItem`/`MemoryData`, `ChatStorage` (`report`, `items`, `format`, `Report`, `Room`, `Kind`),
+  `CollabMode`/`CollabLog`, `RouteSorter`, `ApprovalAlertSettings`, `DeviceSync` (settings, start, scan, the notes the links call),
+  `ChatLink.conversations`; the board and Project info: `SidebarProjects` (`key`, `group`, `pickerName`), `ProjectGroup`,
+  `SidebarFold`, `BoardTab`, `PictureDrop`, `Enterprise.permits`, `AutoPick.fiveHour`/`weekly`, `TodoItem.State.title`/`color`;
+  DriveLink: `MaterialReader.read`, `RoomDocuments.directory`; main: `ChatWindow`, `SpaceRefiner.watchLibrary`,
+  `ApprovalListView`; everyone's views: `PlainHitButtonStyle`/`.plainHit`, `SidebarHeader`.
+- `ChatSettings`, `ChatApp` (and `Face`, `Screens`): the seams above.
+
+| Promise | Users | Test |
+|---|---|---|
+| ask_ai from an answering CLI reaches another kind of AI through the app's tool socket (ToolHub → PeerLink → Peer → Answerer), read only and unable to ask on; the reply goes back into the answer and shows as a card | ToolHub, the CLIs | `chat_cli.swift` `testChatThroughCLI` (fake claude/codex CLI, no answer hooks), testAskAI (whom: "a different kind first, even when…" added in C1) |
+| A meeting runs in its hidden chat with both members' CLIs and brings the result back as the answer | ChatWindow | `testChatThroughCLI`, testPickedRoute, testMeetingTool |
+| A work answer's change is reviewed once by the other member, read only, and fixed in the same turn | ChatWindow, TODOs | `testChatThroughCLI`, testPeerReview, testDocumentsProject |
+| The 13 tool providers keep their order | ToolHub | run_mode2 stage 1 (the exact list) |
+| The chat runs each AI with the app's run conditions and AI Face rules | Answerer | testRunConditions (golden), testRuntimeThroughApp, mode2 AI Face link |
+
+C1b falsification (one change in a copy of the tree; module contract, then the mode2 app tests):
+| Change | Module contract | App tests |
+|---|---|---|
+| G1 the app connects no AI Face tag reader (`face.extract` returns the text) | passed (not its promise) | caught: mode2 chat members "both replies are shown, the first done on top" |
+| G2 the app's run conditions drop the folders (`ChatApp.run` ignores the workspace) | passed | caught: testRunConditions "full access runs with AutoGuard's environment" |
+| G3 ask_ai asks by usage only (no "different kind first") | passed | **missed at first**; caught after C1 added testAskAI "a different kind first, even when another account of the asker's kind has more usage left" |
+| G4 a review with findings starts no fix | passed | caught: testChatThroughCLI "review: the work, its review and the fix in one turn" (and testPeerReview) |
+
+Still open from C0: F7 (Space refine) is covered by the Spaces contract only; SpaceView is now in the module and in the test build,
+but no app test drives a Space's change box yet.
 
 ## What the first module showed (2026-11-11)
 - Change size: the module file got `public` on 26 names and one `public init` (Swift's own memberwise init is

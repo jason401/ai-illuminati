@@ -3,10 +3,9 @@ import PDFKit
 import AILocalization
 import AIWorkspace
 import AIProjects
-import AIChat
 
-enum RoomDocuments {
-    static func directory(_ id: UUID) -> URL {
+public enum RoomDocuments {
+    public static func directory(_ id: UUID) -> URL {
         URL(fileURLWithPath: ChatStore.dir).appendingPathComponent("\(id.uuidString).documents")
     }
     // Dropped files that only exist in a temporary folder (promised by Mail and others) are copied into

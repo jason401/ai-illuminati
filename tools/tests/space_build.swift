@@ -510,6 +510,16 @@ func testSpaceEnterpriseLock() {
     expect(store.manifest(old.id)?.lock?.organization == school.organization && chat.refineAccount(store.manifest(old.id)!)?.id == "sl-s-codex",
            "the filled lock stays after the chat is deleted")
 
+    // A chat locked after it made a Space: the Space is locked at once, so deleting the chat leaves it locked.
+    let later = Conversation()
+    chat.conversations.insert(later, at: 0)
+    let first = try! store.makeFromTemplate(.checklist, origin: later.id)
+    chat.lockEnterprise(later.id, organization: school)
+    chat.conversations.removeAll { $0.id == later.id }
+    expect(store.manifest(first.id)?.lock?.organization == school.organization && chat.refineAccount(store.manifest(first.id)!)?.id == "sl-s-codex",
+           "locking a chat later locks the Spaces it made")
+    try? FileManager.default.removeItem(at: SpaceStore.folder(first.id))
+
     // An open Space: every account; a chat naming an Enterprise Space does not get its code unless it may.
     let open = try! store.makeFromTemplate(.checklist, name: "열린 목록")
     expect(chat.spaceWorkers(for: store.manifest(open.id)!).count == 3, "an open Space may be changed by every account")

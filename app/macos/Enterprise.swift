@@ -90,6 +90,7 @@ extension Discussion {
         }
         if conversations[i].hasContent { ChatStore.save(conversations[i]) }
         DeviceSync.shared.chatLocked(conversations[i])
+        fillSpaceLocks()   // Spaces this chat made before keep the lock, also after the chat is deleted
         objectWillChange.send()
     }
 }

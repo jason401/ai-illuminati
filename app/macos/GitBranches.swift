@@ -36,6 +36,8 @@ struct GitBranchReport: Equatable {
 
 enum GitBranches {
     static let remote = "origin", limit = 200, shown = 40   // read up to limit; the view shows `shown` until "Show all"
+    // --prune drops origin/* refs whose branch was deleted on the remote, even without fetch.prune; local branches stay.
+    static let fetchArgs = ["fetch", "-q", "--prune", remote]
 
     static func role(_ branch: String) -> GitBranchRow.Role {
         if branch == "stable" { return .deploy }
@@ -181,7 +183,7 @@ final class GitBranchStore: ObservableObject {
     @Published var expanded: Set<String> = []   // folders whose whole branch list is shown
     private let queue = DispatchQueue(label: "ai-illuminati.git-branches", qos: .userInitiated)
 
-    // Local values only, unless `fetch`: then `git fetch origin` first; when that fails the local values still show.
+    // Local values only, unless `fetch`: then `git fetch --prune origin` first; when that fails the local values still show.
     func load(_ binding: ProjectBinding, fetch: Bool = false) {
         let root = binding.root
         guard !busy.contains(root) else { return }
@@ -189,7 +191,7 @@ final class GitBranchStore: ObservableObject {
         queue.async {
             var failed: String?
             if fetch {
-                do { _ = try ProjectProcess.git(["fetch", "-q", GitBranches.remote], root: root, timeout: 30) }
+                do { _ = try ProjectProcess.git(GitBranches.fetchArgs, root: root, timeout: 30) }
                 catch { failed = L("새로 가져오지 못했어요. 마지막으로 가져온 값이에요.", "Could not fetch; showing the last fetched values.") }
             }
             var report = GitBranches.read(root: root) {

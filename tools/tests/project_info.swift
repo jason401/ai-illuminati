@@ -184,9 +184,17 @@ func testGitBranches() {
     expect(fromTree.rows.first { $0.branch == "fix/y" }!.current && fromTree.rows.first { $0.ref == "refs/heads/main" }!.worktree == "repo", "worktree view")
     expect(fromTree.fetched != nil && fromTree.fetched != report.fetched, "a worktree's last fetch is its own FETCH_HEAD")
     expect(fromTree.pending == GitCounts(ahead: 0, behind: 0) && GitBranches.summary(fromTree) == L("배포 최신 상태", "Release is up to date"), "up to date")
+    // A branch deleted on origin leaves the list after a refresh; the local branch of the same name stays.
+    sh(["push", "-q", "origin", "feature/x"], in: repo); sh(["fetch", "-q", "origin"], in: repo)
+    expect(GitBranches.read(root: repo) { args in sh(args, in: repo) }.rows.contains { $0.name == "origin/feature/x" }, "pushed branch is listed")
+    sh(["push", "-q", "origin", "--delete", "feature/x"], in: tree)  // deleted from elsewhere: repo still has origin/feature/x
+    expect(GitBranches.fetchArgs.contains("--prune"), "refresh prunes: \(GitBranches.fetchArgs)")
+    sh(GitBranches.fetchArgs, in: repo)
+    let pruned = GitBranches.read(root: repo) { args in sh(args, in: repo) }.rows
+    expect(!pruned.contains { $0.name == "origin/feature/x" } && pruned.contains { $0.branch == "feature/x" && $0.ref == "refs/heads/feature/x" }, "pruned origin ref, kept local branch: \(pruned.map(\.name))")
     // Not a repository: an error, no rows; no stable: said so.
     let none = GitBranches.read(root: base.path) { _ in throw MaterialReader.error("no git") }
     expect(none.rows.isEmpty && none.error != nil && GitBranches.summary(none) == nil, "no repository")
     try? FileManager.default.removeItem(at: base)
-    print("PASS: Git branches (roles, nearest tag +N, origin and stable distances, summary, worktrees, backup refs hidden, no repository)")
+    print("PASS: Git branches (roles, nearest tag +N, origin and stable distances, summary, worktrees, backup refs hidden, deleted origin branches pruned, no repository)")
 }

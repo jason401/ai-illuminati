@@ -6,6 +6,7 @@ import AILocalization
 import AISpaces
 @testable import AIRuntime
 @testable import AIWorkspace
+import AIProjects
 
 GoogleAuth.shared = GoogleAuth(store: MemoryGoogleStore())
 
@@ -2587,6 +2588,7 @@ runTest("testDisconnectProjectFolder", testDisconnectProjectFolder)
 runTest("testStartTurn", testStartTurn)
 runTest("testTodoStore", testTodoStore)
 runTest("testTodoScheduler", testTodoScheduler)
+runTest("testTodoOrder", testTodoOrder)
 runTest("testSidebarProjects", testSidebarProjects)
 runTest("testFinishedTodoCleanup", testFinishedTodoCleanup)
 runTest("testMoveChatToProject", testMoveChatToProject)

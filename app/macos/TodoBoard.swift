@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 import AIAccounts
 import AILocalization
 import AIWorkspace
+import AIProjects
 
 // The TODO board (Todo.swift): sidebar entry (first row under Projects) with the count waiting for the user, the board shown in place of the
 // chat, and the report cards above the message box of a TODO's own chat and of the chat it was written from.

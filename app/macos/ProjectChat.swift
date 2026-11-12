@@ -4,6 +4,7 @@ import AIAccounts
 import AILocalization
 import AIRuntime
 import AIWorkspace
+import AIProjects
 
 struct ProjectApprovalView: View {
     let room: UUID

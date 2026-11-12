@@ -3,6 +3,7 @@ import Combine
 import AIAccounts
 import AILocalization
 import AIWorkspace
+import AIProjects
 
 // What the TODO scheduler (Todo.swift) does through the chats: it decides which TODO starts, retries and what its
 // state becomes; the chat side makes the chat, picks the crew by usage and lock, sends the message and tells how it ended.

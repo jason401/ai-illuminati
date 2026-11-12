@@ -2,6 +2,7 @@ import Foundation
 import Darwin
 import AIAccounts
 import AIWorkspace
+import AIProjects
 
 extension FaceLink: ToolProvider {
     var active: Bool { Self.active() != nil }

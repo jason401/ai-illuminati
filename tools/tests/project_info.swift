@@ -2,6 +2,7 @@ import Foundation
 import AIAccounts
 import AILocalization
 import AIWorkspace
+@testable import AIProjects
 
 // Project info (ProjectInfo.swift): the folders, files and links kept for a whole project, the file that is never
 // overwritten when it cannot be read, and every chat of the project reading them read only.

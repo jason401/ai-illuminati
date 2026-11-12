@@ -3,6 +3,7 @@ import Combine
 import SwiftUI
 import UserNotifications
 import AILocalization
+import AIProjects
 
 // Reaches the user when an approval waits while they look at another chat or another app:
 // a macOS notification with Open / Deny, the Dock badge, and the approval window. Allow is only

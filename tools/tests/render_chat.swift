@@ -3,6 +3,7 @@ import SwiftUI
 import AILocalization
 import AIAccounts
 import AIWorkspace
+import AIProjects
 
 private struct EmptyPreviewLogin: GoogleTokenStore {
     func load() throws -> Data? { nil }

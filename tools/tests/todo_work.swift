@@ -4,6 +4,7 @@ import AIAccounts
 import AILocalization
 @testable import AIRuntime
 import AIWorkspace
+@testable import AIProjects
 
 // TODO work (Todo.swift): the store and its order rules, task_done / task_ask, and the scheduler running TODOs
 // in their own chats with fake AI answers. Every store is a file in the test folder, never the real todos.json.
@@ -305,6 +306,55 @@ func testTodoScheduler() {
     expect(asked == ["todo-school"] && secretRoom?.enterpriseLock?.organization == "학교" && secretRoom?.configuration?.memberIDs == ["todo-school"],
            "an Enterprise project's TODO keeps the lock: \(asked)")
     print("PASS: TODO scheduler (drafts wait, own chat, 30% rule, task_done/task_ask scoped, order gate, answer resent, no report, retries, one place free, folder lock, restart, report final at the end, busy chat waits, Enterprise lock)")
+}
+
+// The order of TODO state changes through the app (Discussion as TodoChats, the project chat's own repository lock):
+// an error is retried in the same chat before the next TODO, the next one starts only once the chat that worked on the
+// repository has let it go, and nothing here calls tick: the chats finishing and the lock's release wake the scheduler.
+// The same promises without the app: projects_contract.swift.
+func testTodoOrder() {
+    let project = todoProject("todo-order")
+    let saved = TodoStore.shared
+    let store = TodoStore(url: todoStoreFile("order"))
+    TodoStore.shared = store
+    defer { TodoStore.shared = saved }
+    let model = AppModel()
+    model.accounts = [Account(id: "order-claude", provider: .claude, name: "Order Claude")]
+    var u = AIUsage(name: "x"); u.fiveHour = UsageWindow(usedPercent: 10, resetsAt: nil); u.weekly = UsageWindow(usedPercent: 10, resetsAt: nil)
+    model.latestUsage["order-claude"] = u
+    let chat = Discussion(model: model)
+    let scheduler = TodoScheduler(discussion: chat, store: store)
+    var events: [String] = [], failures = ["Repository is busy in another app instance.", "flaky network"]
+    let watcher = NotificationCenter.default.addObserver(forName: .projectReleased, object: nil, queue: nil) { _ in events.append("released") }
+    defer { NotificationCenter.default.removeObserver(watcher) }
+    let a = try! store.add(title: "order A", project: project, projectName: "O")
+    let b = try! store.add(title: "order B", project: project, projectName: "O")
+    chat.workspaceAnswer = { _, prompt, binding, _, _ in
+        let current = prompt.components(separatedBy: "[User]\n").last ?? ""
+        let title = current.hasPrefix("TODO: order A") ? "A" : current.hasPrefix("TODO: order B") ? "B" : "?"
+        events.append(title + (ProjectWork.isHeld(project.root) ? " (held)" : " (not held)"))
+        let room = store.current.items.first { $0.state == .running }?.room ?? UUID()
+        let context = ToolContext(room: room, roots: binding.roots, projectRun: binding.projectRunID, projectGeneration: binding.projectGeneration)
+        // First another app instance holds the repository (not the TODO's fault), then a real error.
+        if title == "A" && !failures.isEmpty { return .failure(.failed(failures.removeFirst())) }
+        if title == "B" { events.append("A was " + (store.current.item(a.id)?.state.rawValue ?? "-")) }
+        _ = TaskLink.shared.call("task_done", ["summary": "did " + title], context: context)
+        return .success("Done " + title + ".")
+    }
+    scheduler.start()
+    store.startDrafts()   // the board's change wakes the scheduler too
+    let deadline = Date().addingTimeInterval(30)
+    while Date() < deadline && !(store.current.item(b.id)?.state == .review && !chat.anyRunning) { RunLoop.main.run(until: Date().addingTimeInterval(0.03)) }
+    let works = events.filter { $0 != "released" }
+    expect(works == ["A (held)", "A (held)", "A (held)", "B (held)", "A was review"], "A, its retries, then B, each while its chat holds the repository: \(events)")
+    // Every start comes after the release of the work before it.
+    let starts = events.indices.filter { events[$0].hasSuffix("(held)") }
+    expect(starts.count == 4 && zip(starts, starts.dropFirst()).allSatisfy { events[$0.0 + 1..<$0.1].contains("released") }, "each next start follows a release: \(events)")
+    let first = store.current.item(a.id)!
+    expect(first.state == .review && first.attempts == 1 && first.notes.filter { $0.kind == .retry }.count == 1 && first.result == "did A",
+           "A: the busy repository is not counted, the error is (one retry noted), then it waits for the check: \(first.attempts)")
+    expect(store.current.item(b.id)?.result == "did B" && store.current.item(b.id)?.room != first.room, "B in a chat of its own")
+    print("PASS: TODO order through the app (a busy repository not counted, retry first in the same chat, next only after the repository is let go, woken without tick)")
 }
 
 // The sidebar by project (SidebarProjects.swift): worktrees of one repository in one folder, TODO chats and meetings

@@ -16,13 +16,13 @@ enum ProjectTools {
 }
 extension ProjectBinding {
     // One project across its worktrees (the Git common folder; else the root): the sidebar folder, TODO locks, project info.
-    var groupKey: String { common.isEmpty ? root : common }
+    public var groupKey: String { common.isEmpty ? root : common }
 }
 
 // All privileged commands use fixed argv, closed stdin, bounded output and a cancellable process group.
-enum ProjectProcess {
-    struct Reply { var status: Int32; var output: String }
-    static func run(_ executable: String, _ args: [String], cwd: String, token: DebateCancellation? = nil,
+public enum ProjectProcess {
+    public struct Reply { public var status: Int32; public var output: String }
+    public static func run(_ executable: String, _ args: [String], cwd: String, token: DebateCancellation? = nil,
                     deadline: Date = Date().addingTimeInterval(60), guarded: Bool = false, extra: [String: String] = [:],
                     onLine: ((String) -> Void)? = nil) throws -> Reply {
         if token?.isCancelled == true { throw ProjectError.make("Project operation cancelled.") }
@@ -77,13 +77,13 @@ enum ProjectProcess {
         lock.lock(); let text = String(decoding: captured, as: UTF8.self); lock.unlock()
         return Reply(status: p.terminationStatus, output: String(text.prefix(60_000)))
     }
-    static func git(_ args: [String], root: String, token: DebateCancellation? = nil, timeout: TimeInterval = 60) throws -> String {
+    public static func git(_ args: [String], root: String, token: DebateCancellation? = nil, timeout: TimeInterval = 60) throws -> String {
         let reply = try run("/usr/bin/git", ["--literal-pathspecs", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "submodule.recurse=false"] + args,
                             cwd: root, token: token, deadline: Date().addingTimeInterval(timeout))
         guard reply.status == 0 else { throw ProjectError.make("git failed (\(reply.status)): \(reply.output)") }
         return reply.output.trimmingCharacters(in: .newlines)
     }
-    static func inspect(_ path: String) throws -> ProjectBinding {
+    public static func inspect(_ path: String) throws -> ProjectBinding {
         let root = try git(["rev-parse", "--show-toplevel"], root: path)
         let canonical = URL(fileURLWithPath: root).resolvingSymlinksInPath().standardizedFileURL.path
         guard canonical == URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path else { throw ProjectError.make("Link the repository's top-level folder.") }
@@ -95,7 +95,7 @@ enum ProjectProcess {
     }
     // A documents project: a folder that is not inside a Git work tree (a Git folder is linked as a code project).
     // Not the home folder, a top folder or the app's own data, so a backup before each answer stays reasonable.
-    static func documents(_ path: String) throws -> ProjectBinding {
+    public static func documents(_ path: String) throws -> ProjectBinding {
         let canonical = URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
         var folder: ObjCBool = false
         guard FileManager.default.fileExists(atPath: canonical, isDirectory: &folder), folder.boolValue else {
@@ -138,31 +138,34 @@ enum ProjectProcess {
     }
 }
 
-struct ProjectApproval: Identifiable {
-    let id = UUID()
-    var room: UUID
+public struct ProjectApproval: Identifiable {
+    public let id = UUID()
+    public var room: UUID
     var run: UUID
-    var title: String
-    var detail: String
-    var created = Date()
-    var deadline: Date?
-    var alwaysAllow: (() -> Void)? = nil   // an outside MCP tool: the card also offers "Always allow"
+    public var title: String
+    public var detail: String
+    public var created = Date()
+    public var deadline: Date?
+    public var alwaysAllow: (() -> Void)? = nil   // an outside MCP tool: the card also offers "Always allow"
+    public init(room: UUID, run: UUID, title: String, detail: String, created: Date = Date(), deadline: Date? = nil, alwaysAllow: (() -> Void)? = nil) {
+        self.room = room; self.run = run; self.title = title; self.detail = detail; self.created = created; self.deadline = deadline; self.alwaysAllow = alwaysAllow
+    }
 }
 // One list for every place that shows approvals: the chat card, the banner, the menu bar, the approval
 // window and the macOS notification all follow `requests`, so deciding in one place clears them all.
-final class ProjectCenter: ObservableObject {
-    static let shared = ProjectCenter()
-    @Published var requests: [ProjectApproval] = []
+public final class ProjectCenter: ObservableObject {
+    public static let shared = ProjectCenter()
+    @Published public var requests: [ProjectApproval] = []
     // Requests that ran out of time (counted as refused); the chat keeps a note with Ask again until dismissed.
-    @Published var expired: [ProjectApproval] = []
-    func dismiss(_ id: UUID) { expired.removeAll { $0.id == id } }
+    @Published public var expired: [ProjectApproval] = []
+    public func dismiss(_ id: UUID) { expired.removeAll { $0.id == id } }
     private let lock = NSLock()
     private var decisions: [UUID: Bool] = [:]
     private var accepting = true
     private var approvalEpoch = 0
-    func resume() { lock.lock(); accepting = true; lock.unlock() }
-    func decide(_ id: UUID, allow: Bool) { guard requests.contains(where: { $0.id == id }) else { return }; lock.lock(); decisions[id] = allow; lock.unlock(); requests.removeAll { $0.id == id } }
-    func approve(_ request: ProjectApproval, token: DebateCancellation, deadline: Date) -> Bool {
+    public func resume() { lock.lock(); accepting = true; lock.unlock() }
+    public func decide(_ id: UUID, allow: Bool) { guard requests.contains(where: { $0.id == id }) else { return }; lock.lock(); decisions[id] = allow; lock.unlock(); requests.removeAll { $0.id == id } }
+    public func approve(_ request: ProjectApproval, token: DebateCancellation, deadline: Date) -> Bool {
         lock.lock(); let enabled = accepting, epoch = approvalEpoch; lock.unlock()
         guard enabled else { return false }
         var request = request
@@ -189,7 +192,7 @@ final class ProjectCenter: ObservableObject {
         }
         return false
     }
-    func cancel(room: UUID? = nil) {
+    public func cancel(room: UUID? = nil) {
         if room == nil { lock.lock(); accepting = false; approvalEpoch += 1; lock.unlock() }
         let selected = requests.filter { room == nil || $0.room == room }
         for request in selected { decide(request.id, allow: false) }
@@ -198,39 +201,39 @@ final class ProjectCenter: ObservableObject {
 }
 
 // A turn owns the repo, not a model. New generations revoke the previous AI's capabilities at handoff.
-final class ProjectRun {
-    let id = UUID(), room: UUID, binding: ProjectBinding, outer: DebateCancellation
+public final class ProjectRun {
+    public let id = UUID(), room: UUID, binding: ProjectBinding, outer: DebateCancellation
     let started = Date()
     // Full auto runs while the user is away: up to 8 hours instead of 1 (45 minutes active).
     let fullAuto: Bool
-    let deadline: Date
+    public let deadline: Date
     var activeLimit: TimeInterval { fullAuto ? 8 * 3600 : 2700 }
     private let clock = NSLock()
     private var waitingSince: Date?
     private var waited: TimeInterval = 0
     func beginApproval() { clock.lock(); waitingSince = Date(); let report = onWaiting; clock.unlock(); report?(true) }
     func endApproval() { clock.lock(); if let date = waitingSince { waited += Date().timeIntervalSince(date) }; waitingSince = nil; let report = onWaiting; clock.unlock(); report?(false) }
-    var onWaiting: ((Bool) -> Void)?   // the chat shows "waiting for approval" while a card waits
-    var activeExpired: Bool { clock.lock(); defer { clock.unlock() }; return Date().timeIntervalSince(started) - waited - (waitingSince.map { Date().timeIntervalSince($0) } ?? 0) > activeLimit }
-    private(set) var generation = 0
-    var attempt = DebateCancellation()
+    public var onWaiting: ((Bool) -> Void)?   // the chat shows "waiting for approval" while a card waits
+    public var activeExpired: Bool { clock.lock(); defer { clock.unlock() }; return Date().timeIntervalSince(started) - waited - (waitingSince.map { Date().timeIntervalSince($0) } ?? 0) > activeLimit }
+    public private(set) var generation = 0
+    public var attempt = DebateCancellation()
     private let lifecycle = NSLock()
     private var ended = false
     func stop() { lifecycle.lock(); ended = true; lifecycle.unlock(); attempt.cancel() }
-    var committed = false, pushed = false
+    public var committed = false, pushed = false
     // Tool results for this turn's work log; the chat shows them under the reply, not above the chat.
-    var onNote: (([String]) -> Void)?
+    public var onNote: (([String]) -> Void)?
     private var notes: [String] = []
-    var log: [String] { clock.lock(); defer { clock.unlock() }; return notes }
-    func note(_ text: String) { clock.lock(); notes = Array((notes + [text]).suffix(50)); let report = onNote, all = notes; clock.unlock(); report?(all) }
+    public var log: [String] { clock.lock(); defer { clock.unlock() }; return notes }
+    public func note(_ text: String) { clock.lock(); notes = Array((notes + [text]).suffix(50)); let report = onNote, all = notes; clock.unlock(); report?(all) }
     // The work plan the chat shows: the AI's steps (work_plan, or Claude's own TodoWrite until work_plan is used),
     // then the steps the app runs itself (review, applying it). A new AI after a usage limit gets it in the checkpoint.
-    var onPlan: (([WorkStep], String?) -> Void)?
+    public var onPlan: (([WorkStep], String?) -> Void)?
     private var aiSteps: [WorkStep] = [], appSteps: [WorkStep] = [], planNote: String?, planByTool = false
     var plan: [WorkStep] { clock.lock(); defer { clock.unlock() }; return aiSteps + appSteps }
     // From an old attempt (another generation) or TodoWrite once work_plan was used: ignored.
     @discardableResult
-    func setPlan(_ steps: [WorkStep], note: String?, generation: Int, tool: Bool) -> Bool {
+    public func setPlan(_ steps: [WorkStep], note: String?, generation: Int, tool: Bool) -> Bool {
         clock.lock()
         guard generation == self.generation, tool || !planByTool else { clock.unlock(); return false }
         if tool { planByTool = true }
@@ -238,7 +241,7 @@ final class ProjectRun {
         let report = onPlan, all = aiSteps + appSteps, why = planNote
         clock.unlock(); report?(all, why); return true
     }
-    func setAppStep(_ i: Int, _ text: String, _ status: WorkStep.Status) {
+    public func setAppStep(_ i: Int, _ text: String, _ status: WorkStep.Status) {
         clock.lock()
         let step = WorkStep(text: text, status: status)
         if appSteps.indices.contains(i) { appSteps[i] = WorkStep.timed([step], after: [appSteps[i]])[0] } else { appSteps.append(WorkStep.timed([step], after: [])[0]) }
@@ -257,7 +260,7 @@ final class ProjectRun {
     }
     var initialDirty: Set<String> = []
     let operations = NSRecursiveLock()
-    init(room: UUID, binding: ProjectBinding, token: DebateCancellation, fullAuto: Bool = false) {
+    public init(room: UUID, binding: ProjectBinding, token: DebateCancellation, fullAuto: Bool = false) {
         self.room = room; self.binding = binding; self.outer = token; self.fullAuto = fullAuto
         deadline = Date().addingTimeInterval(fullAuto ? 8 * 3600 + 600 : 3600)
         let status = binding.isDocuments ? "" : (try? ProjectProcess.git(["status", "--porcelain", "-z"], root: binding.root)) ?? ""
@@ -271,15 +274,15 @@ final class ProjectRun {
             }
         }
     }
-    func nextAttempt() { attempt.cancel(); operations.lock(); defer { operations.unlock() }; ProjectWork.revokeTools(id); generation += 1; attempt = DebateCancellation(); if outer.isCancelled || Date() >= deadline || activeExpired { attempt.cancel() } }
+    public func nextAttempt() { attempt.cancel(); operations.lock(); defer { operations.unlock() }; ProjectWork.revokeTools(id); generation += 1; attempt = DebateCancellation(); if outer.isCancelled || Date() >= deadline || activeExpired { attempt.cancel() } }
     // An attempt is over: its commands and the AI's programs finish, and its tool sessions end, before another AI can write.
-    func endAttempt() { attempt.cancel(); ProjectWork.revokeTools(id) }
+    public func endAttempt() { attempt.cancel(); ProjectWork.revokeTools(id) }
     var cancelled: Bool { outer.isCancelled || attempt.isCancelled || Date() >= deadline || activeExpired }
-    func validate(_ generation: Int) throws {
+    public func validate(_ generation: Int) throws {
         guard !cancelled, generation == self.generation else { throw ProjectError.make("Project capability expired or operation cancelled.") }
         guard try ProjectProcess.current(binding) == binding else { throw ProjectError.make("Project repository or remote changed. Reconnect it first.") }
     }
-    func checkpoint(_ note: String) -> String {
+    public func checkpoint(_ note: String) -> String {
         if binding.isFolderless {
             let text = "Folderless project. No core folder or Git repository is linked. Artifacts belong in the chat folder.\n" + note + WorkStep.summary(plan)
             save(checkpoint: text)
@@ -304,34 +307,34 @@ final class ProjectRun {
     }
 }
 
-enum ProjectWork {
+public enum ProjectWork {
     private static let mutex = NSLock()
     private static var held: [String: Int32] = [:]
     private static var runs: [UUID: ProjectRun] = [:]
     // Ends the tool sessions of a run's earlier attempts (ToolHub sets it when it starts; before that there are none).
     private static var revoker: (UUID) -> Void = { _ in }
-    static var revokeTools: (UUID) -> Void {
+    public static var revokeTools: (UUID) -> Void {
         get { mutex.lock(); defer { mutex.unlock() }; return revoker }
         set { mutex.lock(); revoker = newValue; mutex.unlock() }
     }
     // Another chat holds the repository (TodoScheduler.settle retries without counting an attempt).
-    static let busyKorean = "다른 AI가 지금 이 프로젝트를 고치는 중이에요. 끝나면 다시 시켜 주세요. 회의(/m)나 의견(/a, /1)은 지금도 돼요."
-    static let busyEnglish = "Another AI is changing this project now. Ask again when it finishes; a meeting (/m) or opinions (/a, /1) work now."
-    static func isBusy(_ error: String) -> Bool {
+    public static let busyKorean = "다른 AI가 지금 이 프로젝트를 고치는 중이에요. 끝나면 다시 시켜 주세요. 회의(/m)나 의견(/a, /1)은 지금도 돼요."
+    public static let busyEnglish = "Another AI is changing this project now. Ask again when it finishes; a meeting (/m) or opinions (/a, /1) work now."
+    public static func isBusy(_ error: String) -> Bool {
         error.contains(busyKorean) || error.contains(busyEnglish) || error.contains("Another AI is writing") || error.contains("Repository is busy")
     }
-    static var active: Bool { mutex.lock(); defer { mutex.unlock() }; return !runs.isEmpty }
+    public static var active: Bool { mutex.lock(); defer { mutex.unlock() }; return !runs.isEmpty }
     static func get(_ id: UUID?) -> ProjectRun? { mutex.lock(); defer { mutex.unlock() }; return id.flatMap { runs[$0] } }
     // What the working AI gets: write and execute, writable only in the project's root and the chat's own folder.
-    static func workBinding(_ binding: WorkspaceBinding, project: ProjectBinding, chatFolder: String, run: ProjectRun) -> WorkspaceBinding {
+    public static func workBinding(_ binding: WorkspaceBinding, project: ProjectBinding, chatFolder: String, run: ProjectRun) -> WorkspaceBinding {
         var workspace = binding
         workspace.level = .execute
         workspace.roots = binding.roots.map { WorkspaceRoot(path: $0.path, directory: $0.directory, writable: ($0.path == project.root || $0.path == chatFolder) ? true : nil) }
         workspace.projectRunID = run.id
         return workspace
     }
-    static func register(_ run: ProjectRun) { mutex.lock(); runs[run.id] = run; mutex.unlock() }
-    static func finish(_ run: ProjectRun) { run.stop(); run.operations.lock(); defer { run.operations.unlock() }; revokeTools(run.id); mutex.lock(); runs.removeValue(forKey: run.id); mutex.unlock() }
+    public static func register(_ run: ProjectRun) { mutex.lock(); runs[run.id] = run; mutex.unlock() }
+    public static func finish(_ run: ProjectRun) { run.stop(); run.operations.lock(); defer { run.operations.unlock() }; revokeTools(run.id); mutex.lock(); runs.removeValue(forKey: run.id); mutex.unlock() }
     // Writers of folders without Git (a documents project's folder, or a folder linked to a plain chat) must not overlap a
     // documents project: a documents folder is taken alone, with nothing inside or around it being written. Plain linked
     // folders may still be written by several chats at once, as before. Across app instances the same rule holds through
@@ -355,7 +358,7 @@ enum ProjectWork {
         guard flock(fd, operation | LOCK_NB) == 0 else { close(fd); throw ProjectError.make("Repository is busy in another app instance.") }
         return fd
     }
-    static func acquire(_ binding: WorkspaceBinding?) throws -> [String] {
+    public static func acquire(_ binding: WorkspaceBinding?) throws -> [String] {
         guard let binding else { return [] }
         let support = URL(fileURLWithPath: AccountStore.supportDir).resolvingSymlinksInPath().standardizedFileURL.path
         var common = Set<String>(), plain = Set<String>(), above: [String: String] = [:]   // above: Git common dir → its work tree
@@ -404,7 +407,7 @@ enum ProjectWork {
     static let leasePrefix = "lease:"
     private static var workTrees: [String: String] = [:]   // held Git common dir → the work tree it was locked for
     // A chat is writing this repository now (TODO work waits instead of failing on acquire).
-    static func isHeld(_ root: String) -> Bool {
+    public static func isHeld(_ root: String) -> Bool {
         guard let path = try? ProjectProcess.git(["rev-parse", "--git-common-dir"], root: root) else {
             // No Git: a documents project's folder, or one inside or around it, or that folder being written by a plain chat.
             mutex.lock(); defer { mutex.unlock() }
@@ -415,10 +418,10 @@ enum ProjectWork {
         return held[common] != nil || documentsHeld.contains { overlaps($0, root) }
     }
     // Another writer holds what this binding would write (in this app or another instance); tries the lock and gives it back.
-    static func busy(_ binding: WorkspaceBinding?) -> Bool {
+    public static func busy(_ binding: WorkspaceBinding?) -> Bool {
         do { release(try acquire(binding), notify: false); return false } catch { return isBusy(error.localizedDescription) }
     }
-    static func release(_ paths: [String], notify: Bool = true) {
+    public static func release(_ paths: [String], notify: Bool = true) {
         mutex.lock()
         for path in paths {
             if let lease = leases.removeValue(forKey: path) {
@@ -436,20 +439,20 @@ enum ProjectWork {
 
 extension Notification.Name {
     // A chat stopped writing a repository (TodoScheduler looks for the next TODO).
-    static let projectReleased = Notification.Name("AIIlluminatiProjectReleased")
+    public static let projectReleased = Notification.Name("AIIlluminatiProjectReleased")
 }
 
-struct WorkStep: Codable, Equatable {
-    enum Status: String, Codable { case todo, doing, done, blocked }
-    var text: String
-    var status: Status
+public struct WorkStep: Codable, Equatable {
+    public enum Status: String, Codable { case todo, doing, done, blocked }
+    public var text: String
+    public var status: Status
     // Set by the app, not the AI: when the step became doing and when it ended (older chats: nil, no time shown).
-    var started: Date?
-    var ended: Date?
+    public var started: Date?
+    public var ended: Date?
     // While a project_run command runs in this step: its current "[n/m] name" line and since when.
-    var sub: String?
-    var subStarted: Date?
-    init(text: String, status: Status) { self.text = text; self.status = status }
+    public var sub: String?
+    public var subStarted: Date?
+    public init(text: String, status: Status) { self.text = text; self.status = status }
     // work_plan replaces the whole list: a step keeps its times only from the earlier step with the same text.
     static func timed(_ steps: [WorkStep], after old: [WorkStep], now: Date = Date()) -> [WorkStep] {
         var unused = old
@@ -477,15 +480,15 @@ struct WorkStep: Codable, Equatable {
 }
 
 // work_plan: the project AI's step list, shown above its reply. Only for the live attempt of a project turn.
-final class PlanLink: ToolProvider {
-    static let shared = PlanLink()
-    var active: Bool { ProjectWork.active }
-    func tools() -> [[String: Any]] { [] }
+public final class PlanLink: ToolProvider {
+    public static let shared = PlanLink()
+    public var active: Bool { ProjectWork.active }
+    public func tools() -> [[String: Any]] { [] }
     private func live(_ context: ToolContext) -> ProjectRun? {
         guard let run = ProjectWork.get(context.projectRun), run.room == context.room, context.projectGeneration == run.generation, !run.cancelled else { return nil }
         return run
     }
-    func tools(context: ToolContext) -> [[String: Any]] {
+    public func tools(context: ToolContext) -> [[String: Any]] {
         guard live(context) != nil else { return [] }
         let step: [String: Any] = ["type": "object", "properties": ["text": ["type": "string"], "status": ["type": "string", "enum": ["todo", "doing", "done", "blocked"]]],
                                    "required": ["text", "status"], "additionalProperties": false]
@@ -495,7 +498,7 @@ final class PlanLink: ToolProvider {
                                                                    "note": ["type": "string", "description": "Why the list changed, e.g. a failing test added a step"]],
                                  "required": ["steps"], "additionalProperties": false]]]
     }
-    func call(_ name: String, _ arguments: [String: Any], context: ToolContext) -> [String: Any] {
+    public func call(_ name: String, _ arguments: [String: Any], context: ToolContext) -> [String: Any] {
         guard name == "work_plan" else { return ProjectTools.failure("Unknown tool: " + name) }
         guard let run = live(context), let generation = context.projectGeneration else { return ProjectTools.failure("No live project work for this plan.") }
         guard let steps = Self.steps(arguments["steps"]) else { return ProjectTools.failure("steps must be 1-20 items of {text, status: todo|doing|done|blocked}.") }
@@ -513,7 +516,7 @@ final class PlanLink: ToolProvider {
         return steps
     }
     // Claude's own TodoWrite list (full auto): pending / in_progress / completed.
-    static func todos(_ value: Any?) -> [WorkStep]? {
+    public static func todos(_ value: Any?) -> [WorkStep]? {
         guard let items = value as? [[String: Any]], !items.isEmpty else { return nil }
         let steps = items.compactMap { item -> WorkStep? in
             guard let text = item["content"] as? String, !text.isEmpty else { return nil }
@@ -524,11 +527,11 @@ final class PlanLink: ToolProvider {
     }
 }
 
-final class GitLink: ToolProvider {
-    static let shared = GitLink()
-    var active: Bool { ProjectWork.active }
-    func tools() -> [[String: Any]] { [] } // Scoped tools must never be exposed globally.
-    func tools(context: ToolContext) -> [[String: Any]] {
+public final class GitLink: ToolProvider {
+    public static let shared = GitLink()
+    public var active: Bool { ProjectWork.active }
+    public func tools() -> [[String: Any]] { [] } // Scoped tools must never be exposed globally.
+    public func tools(context: ToolContext) -> [[String: Any]] {
         guard let run = ProjectWork.get(context.projectRun), run.room == context.room, context.projectGeneration == run.generation, !run.cancelled else { return [] }
         let string: [String: Any] = ["type": "string"]
         func tool(_ name: String, _ description: String, _ props: [String: Any] = [:], _ required: [String] = []) -> [String: Any] {
@@ -545,7 +548,7 @@ final class GitLink: ToolProvider {
                 tool("git_branch", "Create a new branch from a clean tree.", ["name": string], ["name"]), tool("git_switch", "Switch an existing branch with a clean tree.", ["name": string], ["name"]),
                 run_]
     }
-    func call(_ name: String, _ arguments: [String: Any], context: ToolContext) -> [String: Any] {
+    public func call(_ name: String, _ arguments: [String: Any], context: ToolContext) -> [String: Any] {
         guard let run = ProjectWork.get(context.projectRun), run.room == context.room, let generation = context.projectGeneration else { return ProjectTools.failure("No project capability.") }
         run.operations.lock(); defer { run.operations.unlock() }
         do {

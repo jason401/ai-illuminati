@@ -2,6 +2,7 @@ import Foundation
 import Combine
 import AILocalization
 import AIWorkspace
+import AIProjects
 
 // Project info's read-only branch view: every local and origin branch with its role, nearest tag, last commit and how
 // far it is from origin and from stable. It only reads refs; the refresh button runs one `git fetch` (never on open).

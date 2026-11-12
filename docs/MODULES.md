@@ -5,7 +5,8 @@ The app is one Swift program built from `app/macos/*.swift`: in it, every file c
 it builds alone, and the app sees only its `public` names. Now: `AILocalization` (L(), AppLanguage), `AIAccounts`
 (account list and folders), `AISpaces` (Spaces: saving, checks, the isolated web view) and `AIRuntime` (running each
 AI's command line tool, sessions, the local model, usage readings), all 2026-11-11; `AIWorkspace` (the folder rules each
-AI gets, the backup before writes and its Undo, AutoGuard, the tool gateway's types), 2026-11-12.
+AI gets, the backup before writes and its Undo, AutoGuard, the tool gateway's types) and `AIProjects` (linked projects, Git
+work, the repository lock, approvals, the TODO board and its scheduler, five tool providers), 2026-11-12.
 
 ## How a module is built and used
 - `zsh tools/build_modules.sh <out> [swiftc options]` builds every `app/modules/<Name>/` alone into
@@ -13,7 +14,7 @@ AI gets, the backup before writes and its Undo, AutoGuard, the tool gateway's ty
 - A module may use only the modules named in its `dependencies` file (one per line; none: no file). They are built
   first, and the compiler sees only theirs, so an import of any other module fails the build. Now
   `AISpaces` → `AIAccounts`, `AILocalization`; `AIRuntime` → `AIAccounts`, `AILocalization`; `AIWorkspace` → `AIAccounts`,
-  `AILocalization`, `AIRuntime`; the other two use none. No circles (the script refuses them).
+  `AILocalization`, `AIRuntime`; `AIProjects` → `AIAccounts`, `AILocalization`, `AIRuntime`, `AIWorkspace`; the other two use none. No circles (the script refuses them).
 - Every `swiftc` that compiles app files runs it first and adds `-I <out> <out>/lib*.a`:
   `tools/build_app.sh` (compile step), `tools/tests/run_mode2.sh`, the preview scripts.
 - Each file that uses a module says `import <Name>`. Not the hidden compiler option (`-Xfrontend -import-module`):
@@ -23,8 +24,8 @@ AI gets, the backup before writes and its Undo, AutoGuard, the tool gateway's ty
 - `run_mode2.sh` stage "Modules on their own": builds the modules alone, runs each contract test from outside
   (`tools/tests/<part>_contract.swift`, public names only), and checks that internal names
   (`AccountStore.place`, `SpaceStore.setting`, `SpaceAssets.served`, `Answerer.chatDir`, `Answerer.launchForTests`,
-  `NativeSessions.split`, `CloudModels.apply`, `WorkspaceBackup.chats`/`keepPerChat`, and the whole `AutoGuard` type) do
-  not compile outside.
+  `NativeSessions.split`, `CloudModels.apply`, `WorkspaceBackup.chats`/`keepPerChat`, the whole `AutoGuard` type,
+  `TodoScheduler.retryDelay`, `ProjectWork.leasePrefix`, `TodoStore.encoder`) do not compile outside.
 - Tests build the modules with `-enable-testing` only so tests can say `@testable import`: `space_build.swift` for
   `AISpaces` (module insides such as `SpaceCheck`), and for `AIRuntime` the app tests that make their own usage
   readings (`AIUsage`, `UsageWindow` inits) or use its test hooks (`Answerer.launchForTests`/`replyForTests`,
@@ -32,6 +33,8 @@ AI gets, the backup before writes and its Undo, AutoGuard, the tool gateway's ty
   `space_build`, and the settings preview (`render_settings.sh` builds the modules with `-enable-testing` for it).
   For `AIWorkspace` the app tests that reach its insides (`prepare`, `WorkspaceBackup.run`/`treatAsCloud`/`keepPerChat`,
   `AutoGuard.folder`/`claudeDenied`): `mode2`, `project_work`, `google_drive`, `ask_ai`, `chat_search`.
+  For `AIProjects`: `project_work`, `todo_work`, `project_info`, `chat_search` (`RunProgress`, `RunTimings`, `TodoData.eligible`,
+  `ProjectInfoStore` insides, `ProjectRun.plan`, …).
   Every app file and every contract test keeps a plain import and sees public names only; the app build
   (`build_app.sh`) has no `-enable-testing`.
 - A `public` name in a module gets its reason in this file (the tables below). A new public name is a promise:
@@ -217,6 +220,64 @@ Public names and why (everything else stays internal: `AutoGuard` whole, `Worksp
 - `DiskUsage` (`of`, `Size` and its fields and `+`, `FileID`): clean-up counts what it frees and ChatStorage each chat's
   parts; it was `ChatStorage.size`, a chat file, which Workspace may not name (`ChatStorage.Size`/`FileID`/`size(of:)` now
   forward to it).
+
+### AIProjects (`app/modules/AIProjects/`: ProjectWork, Todo, ProjectInfo, ProjectCreator)
+A chat's linked project and what an AI may do in it: Git commands with fixed arguments (`ProjectProcess`), the repository
+lock across chats and app instances (`ProjectWork.acquire`/`release`), the approval cards (`ProjectCenter`), a project turn's
+capabilities (`ProjectRun`: generations, deadlines, checkpoint, plan), the TODO board (`TodoStore`, todos.json) and its
+scheduler (`TodoScheduler`), project info (project-info.json, `ProjectRules`), new projects (`ProjectCreator`), and five tool
+providers: `GitLink`, `PlanLink`, `TaskLink`, `TodoAddLink`, `ProjectMakerLink`. Depends on `AIAccounts`, `AILocalization`,
+`AIRuntime` (`DebateCancellation`) and `AIWorkspace` (`ProjectBinding`, `WorkspaceBinding`, `WorkspaceBackup.stamps`,
+`FullAutoGuard`, `ToolProvider`/`ToolContext`). It names no chat type (P0): the scheduler works through `TodoChats`, the
+tools read chats as `ProjectChatSummary` values (`ProjectChats.list`), and ToolHub hands in how a run's tool sessions end
+(`ProjectWork.revokeTools`). It decides commits, pushes and every TODO state change (retry, needs the user, review, the next
+start, the lock's release); the chat side makes the chat, picks the crew by usage and lock, sends, and says how it ended.
+Stays in the app: `ProjectChat.swift` (approval views; `extension Discussion` with `runProjectSolo`, linking, moving a chat),
+`ProjectCreate.swift` (`extension Discussion`: `addProjectChat`, disconnecting a folder, the menus), `TodoChatsApp.swift`
+(Discussion as `TodoChats`, the crew by `AutoPick`/`Enterprise.permits`, `TodoScheduler.noCrew`, the photo import),
+`TodoBoard.swift`, `ProjectInfoView.swift`, `GitBranches.swift`, `SidebarProjects.swift`, `ApprovalAlerts.swift`,
+`ProjectSnapshot` (Peer.swift, the review), `ToolHub` with the 13 providers in their order.
+
+| Promise | Users (files) | Module test (`projects_contract.swift`) | User tests |
+|---|---|---|---|
+| TODO order: an error is counted and noted and the TODO is ready again, retried in the same chat before a TODO after it; a busy repository (`isBusy`) is not counted; after `maxAttempts` retries the user decides and what waits for it does not start; a report becomes the check only when the chat ended; the next TODO starts only once the repository lock is let go, woken by `.projectReleased` (no tick) | TodoChatsApp (Discussion), main (start, quit), TodoBoard | "an error is counted and noted", "nothing starts while the repository is held", "the release starts the retry first", "a busy repository does not count", "after 2 retries the user decides", "B waits while A needs the user", "the lock's release starts the next TODO" | todo_work `testTodoOrder` (through Discussion: A, its retry, then B, each start after a release, no tick), `testTodoScheduler` (retries, no report, report final at the end, busy chat waits) |
+| Scheduler limits: drafts wait for Start; one answering place stays free; a TODO's own chat; Stop cancels and stops the chat; after a quit running TODOs are ready, interrupted, one attempt counted | main, TodoBoard | "drafts wait for Start", "one of the places stays free", "Stop cancels a running TODO", "restart" | `testTodoScheduler`, `testTodoTime`, `testTodoPause` |
+| Save format: todos.json pretty with sorted keys, older files read, an unreadable or newer file held and never written over; project-info.json the same | TodoBoard, Todo tools, ProjectInfoView, Solo (rules) | "todos.json keeps its shape", "reads back", "an unreadable todos.json is held" | `testTodoStore` (held unreadable files, older files, failed save), `testProjectInfo` |
+| Repository lock: one writer per Git repository (common folder) and per documents folder, across app instances (lock files), shared locks above; refusals say `busyKorean`/`busyEnglish` | Discussion (every writing answer), TodoChatsApp | "a second writer is refused", "released" | `testProjectWork` (repo locks), `testDocumentsProject` (one writer per folder), `testTodoScheduler` (folder lock) |
+| Scoped tools: `work_plan`, `task_done`/`task_ask`, Git tools only for the live attempt of the run's own chat; a new attempt or the run's end ends the earlier tool sessions (`revokeTools`); documents projects get `project_run` only | ToolHub (13 providers, order unchanged), ProjectChat | "the live attempt gets its tools", "an earlier attempt, another chat and the global list get none", "a new attempt ends the earlier attempt's tool sessions", "a finished run is gone" | `testProjectWork` (scoped tools), `testProjectHandoff` (old-token revocation), `testTodoScheduler` ("task tools only in the TODO's own chat") |
+| Git work: fixed argv, no hooks, explicit commit paths, push only main/feature/fix/codex, stable only through the card with the exact SHA, `project_run` only registered commands, approved commands checked unchanged, AutoGuard's environment in full auto | ProjectChat (`runProjectSolo`) | none (needs a repository with a remote: app tests) | `testProjectWork`, `testFullAuto`, `testWorkTiming` |
+| The work binding: execute, writable only in the project's root and the chat's folder | ProjectChat | "work binding" | `run_conditions.swift` (ProjectChat's own run in the golden file) |
+| Approvals: one list for every place, a decision clears them all, 15 minutes unanswered is no and leaves a note | ProjectChat views, ApprovalAlerts, ExternalMCP, ProjectCreator | none | `testProjectWork` (expired, twice), render_chat |
+| New projects: card first, folder + first commit + GitHub + push, asking again continues the same plan; folderless and documents kinds | ProjectCreate (menus), ProjectMakerLink | none (needs a fake gh) | `testProjectCreate`, `testDocumentsProject` |
+
+Public names and why (everything else stays internal: `ProjectError`, `ProjectTools`, the lock tables and files, `RunProgress`,
+`RunTimings`, `TodoStore.encoder`/`decoder`/`copyIn`, `TodoData.eligible`/`hasCycle`, `TodoScheduler.begin`/`settle`/
+`deliver`/`retryDelay`/`chats`, the tools' schemas and scopes):
+- Saved values the board, the chats and the tools show (the save format above): `TodoItem` (its stored fields, `State`,
+  `timeLine`), `TodoList`, `TodoData` (`item`, `list`, `ordered`, `blockers`, `satisfied`, `stopped`, `workers`), `TodoNote`,
+  `TodoQuestion`, `TodoReport`, `TodoAttachment`, `WorkStep` (a chat turn keeps the plan), `ProjectInfo`, `ProjectInfoData`,
+  `ProjectFolder`, `ProjectLink`. Explicit public inits where Swift's memberwise ones are internal (`ProjectApproval`,
+  `TodoReport`, `ProjectFolder`, `ProjectChatSummary`, `TodoTurnEnd`).
+- `TodoStore` (the board's actions, `shared`, `snapshot`, `current`, `change`, `update`, `file`, `locked`, `url`): the board,
+  the scheduler's users and `Discussion` (`workers(room:)`, delete and disconnect).
+- `TodoScheduler` (`init(chats:store:)`, `start`, `startNow`, `wake`, `tick`, `recover`, `closeClocks`, `cancel`, `crew`, `lock`,
+  `waiting`, `nextCheck`, `editing`, `question`, `instruction`, `threshold`, `maxAttempts`) and `TodoChats`, `TodoPhoto`,
+  `TodoTurnEnd`: how the chat side plugs in (P0). `TodoScheduler.noCrew` and `init(discussion:store:)` are app extensions.
+- `ProjectChatSummary`, `ProjectChats.list`: what project code may read of a chat (id, time, project, lock, the open turn);
+  `TodoProject` (`all`, its fields): the board's and todo_add's project list.
+- `ProjectWork` (`acquire`, `release`, `busy`, `isBusy`, `isHeld`, `busyKorean`/`busyEnglish`, `register`, `finish`, `active`,
+  `workBinding`, `revokeTools`), `Notification.Name.projectReleased`/`todoNeedsUser`: the chat's writing answers, ToolHub
+  (`revokeTools`, set once when it starts), ApprovalAlerts. `isHeld`, `active`, `busyEnglish`, `projectReleased`, `tick`,
+  `recover`, `maxAttempts`, `startDrafts`, `url` and TodoItem's `attempts`/`notes`/`report`/`interrupted` are public also so the
+  contract can watch the state changes from outside (nothing else of the module was opened for a test).
+- `ProjectRun` (the turn's capability: `init`, `nextAttempt`, `endAttempt`, `validate`, `checkpoint`, `setPlan`, `setAppStep`,
+  `note`, `log`, the `on…` callbacks, `generation`, `attempt`, `deadline`, `committed`/`pushed`), `ProjectProcess` (`run`,
+  `git`, `inspect`, `documents`, `Reply`), `ProjectCenter`, `ProjectApproval`, `ProjectRules` (`read`, `Part`),
+  `ProjectInfoStore`, `ProjectCreator` (`prepare`, `create`, `createFolderless`, `folderlessBinding`, `summary`,
+  `defaultLocation`, `Plan`): `runProjectSolo`, the menus, Project info, the review (`ProjectSnapshot`).
+- `ProjectBinding.groupKey`: one project across its worktrees (`SidebarProjects.key` forwards to it).
+- The five providers (`shared`, `ToolProvider`'s members; `ProjectMakerLink.cancellation`/`addChat`, `TodoAddLink.store`/
+  `names` as before): ToolHub lists them in its order.
 
 ## What the first module showed (2026-11-11)
 - Change size: the module file got `public` on 26 names and one `public init` (Swift's own memberwise init is
@@ -515,3 +576,59 @@ does not take the watchdog away cannot see F2 (checked: F2 with the watchdog lef
   | D1 a hard link counted each time | caught | caught (storage by chat) |
 
   The step's own criterion: G1 (one entry less in `claudeDenied`) fails both the module's test and the app's.
+
+## What the fifth step showed (2026-11-12: AIProjects, P0 and P1)
+- Before the move: W1 was on main (159e511) and the plan matched the code except in four places, changed within the rules:
+  - `ProjectInfo.swift` (project-info.json, `ProjectRules`) moved too. The plan named "project link, Git, lock, approval, TODO",
+    but `ProjectCreator` and `TodoAddLink` use `ProjectInfoStore`, and the file names nothing above Workspace; leaving it in
+    the app would have needed one more injection for no boundary.
+  - The crew pick stays with the chat side (`TodoChatsApp.swift`): it is `AutoPick` (plain chat's usage rule, Solo.swift)
+    and `Enterprise.permits`; the scheduler asks `TodoChats.crew`/`noCrew`. Which TODO starts, and every state change after
+    an answer, stay in Projects.
+  - A TODO's photos: the scheduler picks them (not sent yet in that chat, at most 4) and hands `TodoPhoto` values; the chat
+    side makes its `ChatImage` under the attachment's ID when it sends (and removes it when the send is refused), since
+    `ChatImage`/`ImageStore` are chat types. Same files, same IDs, same order of refusal.
+  - `GitBranches.swift`, `ProjectInfoView.swift`, `SidebarProjects.swift`, `ApprovalAlerts.swift`, `ProjectSnapshot` stay in
+    the app (views, the sidebar, notifications, the review); they import the module.
+- P0 (c37b11e, no module): the four files named no app type afterwards. `TodoScheduler(chats:)` + `TodoChats` (Discussion's
+  conformance in `TodoChatsApp.swift`, `init(discussion:)` kept as an app extension so the tests read as before);
+  `ProjectChatSummary` for `Conversation` in todo_add, create_project and the scheduler's locks (`ProjectChats.list`, set in
+  `linkChatTools` and read through `ChatLink`, so the tests' fake chat lists still apply); `ProjectError.make` (the same NSError
+  as `MaterialReader.error`) and `ProjectTools.failure` (the same reply as `ToolHub.failure`); `ProjectWork.revokeTools`, set by
+  ToolHub's init (sessions exist only after it); `ProjectBinding.groupKey` (`SidebarProjects.key` forwards). From
+  `runProjectSolo` two pieces of project logic moved down: `ProjectRun.endAttempt` (cancel + revoke, three places) and
+  `ProjectWork.workBinding`. The full test passed with the golden file unchanged. Also fixed there: W1's flaky
+  `testRuntimeThroughApp` check now presses Stop once the fake tool has written its pid files.
+- P1: `git mv` of ProjectWork.swift, Todo.swift, ProjectInfo.swift; ProjectCreator.swift is ProjectCreate.swift's first 317
+  lines (the `extension Discussion` part stays as `ProjectCreate.swift`). Besides `public`, explicit inits and imports, no
+  line changed. 19 app files and 8 test files got `import AIProjects`; four tests say `@testable` (project_work, todo_work,
+  project_info, chat_search). ToolHub's provider list (13, same order) is untouched.
+- Finding the public names: the same loop as R1/W1, with two lessons. The driver stops after the first failing batch, so
+  without `-continue-building-after-errors` most errors stay hidden; and an internal name inside a SwiftUI builder shows only
+  as "unable to type-check this expression in reasonable time" (TodoBoard's row: `store.change`, `stop(after:)`, `setAfter`,
+  …). Proof it was access: the same file compiled with `@testable import`; the fix was the names, not the view.
+- New tests: `projects_contract.swift` (run_mode2 stage 2, with `AI_ILLUMINATI_TEST_RESOURCES` for `project_process.py`; a
+  fake `TodoChats` records starts, the lock's releases and stops) and `testTodoOrder` (todo_work, after testTodoScheduler:
+  through Discussion and the project chat's own lock; nothing calls `tick`). Three boundary checks: `TodoScheduler.retryDelay`,
+  `ProjectWork.leasePrefix`, `TodoStore.encoder`.
+- Falsification (one change at a time in a copy of the tree; only function bodies changed). "App tests" = `run_mode2.sh`
+  without `projects_contract.swift`; the first test that failed is named:
+
+  | Change | Contract | App tests |
+  |---|---|---|
+  | F1 a busy repository counts as an attempt | caught ("a busy repository does not count") | first missed (110 passes); after the busy answer was added to `testTodoOrder`: caught there |
+  | F2 the scheduler ignores the repository lock (`held`) | caught (the retry started at once) | caught (testTodoStore "a folder a chat is writing is skipped") |
+  | F3 `release` does not post `.projectReleased` | caught ("the release starts the retry first": nothing started) | caught (testTodoStore "releasing locks is announced") |
+  | F4 the user is asked one retry early (`>=`) | caught ("after 2 retries the user decides") | caught (testTodoScheduler "an error is retried 2 times") |
+  | F5 a new attempt keeps the earlier attempt's tool sessions | caught ("a new attempt ends the earlier attempt's tool sessions") | caught, indirectly (testDocumentsProject "the changes are listed with a backup"); testProjectHandoff's revocation check passed |
+
+  F5 is the one to watch: the app's own revocation check did not see it, a later test did through its effects.
+- For C0 (Chat): the `extension Discussion` blocks that call Projects and stay as shells: `ProjectChat.swift`
+  (`approvalChatName`, `askAgain`, `allowProjectWork`, `configureProject`, `linkDocumentsProject`, `linkProjectFromSidebar`,
+  `moveChat`, `runProjectSolo`, `projectFaceRule`, `toggleFullAuto`, the notes), `ProjectCreate.swift` (`linkProjectMaker`,
+  `addProjectChat`, `newEmptyProject`, `disconnectProjectFolder`, `projectRoots`, `disconnectRefusal`, `disconnectFolder`,
+  `newProjectFromMenu`), `TodoChatsApp.swift` (Discussion as `TodoChats`), `SidebarProjects.swift` (`openBoard`,
+  `showBoardTab`), `ChatTools.swift` (`linkChatTools` sets `ProjectChats.list`; `Conversation.projectSummary`).
+- Seen once: a full run stopped with exit 139 in `testAutoMeeting` (a crash, not a failed check); the run right after passed
+  whole. R1 saw the same crash in the same test; nothing here touches meetings. The staged build (`build_app.sh --stage`)
+  links and signs.

@@ -56,6 +56,11 @@ for CONTRACT in accounts spaces runtime workspace; do
   limit 300 xcrun swiftc -swift-version 5 -module-cache-path "$TEST_DIR/cache" -I "$MODULES" -o "$TEST_DIR/$CONTRACT-contract" "$TEST_DIR/$CONTRACT-src/main.swift" "$MODULES"/lib*.a
   limit 120 env AI_ILLUMINATI_TEST_HOME="$TEST_DIR/$CONTRACT-home" "$TEST_DIR/$CONTRACT-contract"
 done
+# Projects runs its commands through project_process.py (the app's resources).
+mkdir -p "$TEST_DIR/projects-src" "$TEST_DIR/projects-home"
+cp tools/tests/projects_contract.swift "$TEST_DIR/projects-src/main.swift"
+limit 300 xcrun swiftc -swift-version 5 -module-cache-path "$TEST_DIR/cache" -I "$MODULES" -o "$TEST_DIR/projects-contract" "$TEST_DIR/projects-src/main.swift" "$MODULES"/lib*.a
+limit 120 env AI_ILLUMINATI_TEST_HOME="$TEST_DIR/projects-home" AI_ILLUMINATI_TEST_RESOURCES="$PWD/app/resources" "$TEST_DIR/projects-contract"
 boundary() {   # module, code that reaches one of its internal names, that name
   mkdir -p "$TEST_DIR/boundary-$1"
   printf 'import %s\n%s\n' "$1" "$2" > "$TEST_DIR/boundary-$1/main.swift"
@@ -75,6 +80,9 @@ boundary AIRuntime '_ = NativeSessions.split' split
 boundary AIRuntime '_ = CloudModels.apply' apply
 boundary AIWorkspace '_ = WorkspaceBackup.chats' chats
 boundary AIWorkspace '_ = WorkspaceBackup.keepPerChat' keepPerChat
+boundary AIProjects '_ = TodoScheduler.retryDelay' retryDelay
+boundary AIProjects '_ = ProjectWork.leasePrefix' leasePrefix
+boundary AIProjects '_ = TodoStore.encoder' encoder
 # AutoGuard is internal and whole (the app's one way in is FullAutoGuard.environment): its shims and denied list stay inside.
 printf 'import AIWorkspace\n_ = AutoGuard.claudeDenied\n' > "$TEST_DIR/boundary-AutoGuard.swift"
 if limit 300 xcrun swiftc -swift-version 5 -typecheck -module-cache-path "$TEST_DIR/cache" -I "$MODULES" "$TEST_DIR/boundary-AutoGuard.swift" 2>"$TEST_DIR/boundary-AutoGuard.log" \
@@ -98,8 +106,8 @@ echo "[7/11] Material fixtures"
 PYTHONDONTWRITEBYTECODE=1 limit 300 python3 tools/tests/material_fixtures.py "$TEST_DIR/data/material-fixtures"
 echo "[8/11] Compile app tests"
 limit 900 xcrun swiftc -swift-version 5 -module-cache-path "$TEST_DIR/cache" -I "$MODULES" -o "$TEST_DIR/run" "$MODULES"/lib*.a \
-    app/macos/ProjectWork.swift app/macos/ProjectChat.swift app/macos/ProjectCreate.swift app/macos/WindowDrag.swift app/macos/Login.swift \
-    app/macos/Settings.swift app/macos/Discussion.swift app/macos/ChatNotes.swift app/macos/Debate.swift app/macos/Attachments.swift app/macos/RoomDocuments.swift app/macos/MaterialReader.swift app/macos/Collaboration.swift app/macos/Vote.swift app/macos/Solo.swift app/macos/LocalModels.swift app/macos/FaceLink.swift app/macos/ExternalMCP.swift app/macos/RemoteMCP.swift app/macos/Markdown.swift app/macos/DriveUI.swift app/macos/ToolHub.swift app/macos/Peer.swift app/macos/CollabLog.swift app/macos/Route.swift app/macos/Meeting.swift app/macos/GoogleAuth.swift app/macos/DriveLink.swift app/macos/RunConditionsApp.swift app/macos/ChatStorage.swift app/macos/Updater.swift app/macos/Pictures.swift app/macos/Poker.swift app/macos/DeviceSync.swift app/macos/Enterprise.swift app/macos/ChatFind.swift app/macos/ChatSearch.swift app/macos/ChatTools.swift app/macos/Memory.swift app/macos/Todo.swift app/macos/TodoChatsApp.swift app/macos/SidebarProjects.swift app/macos/ProjectInfo.swift app/macos/GitBranches.swift tools/tests/space_build.swift tools/tests/google_drive.swift tools/tests/device_sync.swift tools/tests/window_drag.swift tools/tests/project_work.swift tools/tests/ask_ai.swift tools/tests/collab_log.swift tools/tests/meeting_tool.swift tools/tests/todo_work.swift tools/tests/project_info.swift tools/tests/update_channel.swift tools/tests/chat_search.swift tools/tests/search_fixtures.swift tools/tests/run_conditions.swift tools/tests/runtime_app.swift "$TEST_DIR/main.swift"
+    app/macos/ProjectChat.swift app/macos/ProjectCreate.swift app/macos/WindowDrag.swift app/macos/Login.swift \
+    app/macos/Settings.swift app/macos/Discussion.swift app/macos/ChatNotes.swift app/macos/Debate.swift app/macos/Attachments.swift app/macos/RoomDocuments.swift app/macos/MaterialReader.swift app/macos/Collaboration.swift app/macos/Vote.swift app/macos/Solo.swift app/macos/LocalModels.swift app/macos/FaceLink.swift app/macos/ExternalMCP.swift app/macos/RemoteMCP.swift app/macos/Markdown.swift app/macos/DriveUI.swift app/macos/ToolHub.swift app/macos/Peer.swift app/macos/CollabLog.swift app/macos/Route.swift app/macos/Meeting.swift app/macos/GoogleAuth.swift app/macos/DriveLink.swift app/macos/RunConditionsApp.swift app/macos/ChatStorage.swift app/macos/Updater.swift app/macos/Pictures.swift app/macos/Poker.swift app/macos/DeviceSync.swift app/macos/Enterprise.swift app/macos/ChatFind.swift app/macos/ChatSearch.swift app/macos/ChatTools.swift app/macos/Memory.swift app/macos/TodoChatsApp.swift app/macos/SidebarProjects.swift app/macos/GitBranches.swift tools/tests/space_build.swift tools/tests/google_drive.swift tools/tests/device_sync.swift tools/tests/window_drag.swift tools/tests/project_work.swift tools/tests/ask_ai.swift tools/tests/collab_log.swift tools/tests/meeting_tool.swift tools/tests/todo_work.swift tools/tests/project_info.swift tools/tests/update_channel.swift tools/tests/chat_search.swift tools/tests/search_fixtures.swift tools/tests/run_conditions.swift tools/tests/runtime_app.swift "$TEST_DIR/main.swift"
 echo "[9/11] Run app tests"
 # The tests also stop themselves after 120 s without progress (mode2.swift) and name the test.
 limit 1500 env AI_ILLUMINATI_TEST_HOME="$TEST_DIR/data" AI_ILLUMINATI_TEST_RESOURCES="$TEST_DIR/resources" "$TEST_DIR/run"

@@ -127,6 +127,27 @@ enum Pictures {
         return result
     }
 
+    // A saved picture's file name: "<chat title>-그림N.png", with characters files cannot hold replaced.
+    static func saveName(chat title: String?, picture name: String) -> String {
+        var chat = (title ?? "").components(separatedBy: CharacterSet(charactersIn: "/\\:*?\"<>|").union(.newlines).union(.controlCharacters))
+            .joined(separator: "-").trimmingCharacters(in: .whitespaces)
+        while chat.hasPrefix(".") { chat.removeFirst() }
+        chat = String(chat.prefix(80)).trimmingCharacters(in: .whitespaces)
+        let stem = (name as NSString).deletingPathExtension
+        let number = stem.hasPrefix("picture-") ? Int(stem.dropFirst("picture-".count)) : nil
+        let picture = number.map { L("그림\($0)", "Picture\($0)") } ?? stem
+        return (chat.isEmpty ? picture : chat + "-" + picture) + ".png"
+    }
+
+    // `name`, or "name 2.png", "name 3.png"… when it is taken.
+    static func freeName(_ name: String, taken: (String) -> Bool) -> String {
+        guard taken(name) else { return name }
+        let stem = (name as NSString).deletingPathExtension, ext = (name as NSString).pathExtension
+        var n = 2
+        while taken("\(stem) \(n).\(ext)") { n += 1 }
+        return "\(stem) \(n).\(ext)"
+    }
+
     // A picture for a Space page (SpacePictures): at most `side` px, JPEG unless it has transparent pixels.
     static func spaceDataURL(_ url: URL, side: CGFloat = 768) -> String? {
         guard let image = NSImage(contentsOf: url), let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }

@@ -95,6 +95,10 @@ struct ChatView<Model: ChatSettings>: View {
                 .onAppear { layout.measure(geometry.size.width) }
                 .onChange(of: geometry.size.width) { layout.measure($0) }
         })
+        .onAppear {
+            let chats = discussion
+            PhotoViewer.shared.chatTitle = { [weak chats] id in chats?.conversations.first { $0.id == id }?.title }
+        }
         .onChange(of: discussion.currentID) { _ in discussion.sidebarOverlay = false; photo.image = nil }
         // Leaving the chat (another Mac's chat, the board or a Space) closes the photo, so it does not come back later.
         .onChange(of: discussion.viewingRemote == nil) { _ in photo.image = nil }
@@ -2222,13 +2226,13 @@ private struct TurnView: View, Equatable {
                             Text(by).font(.system(size: 12, weight: .medium)).foregroundColor(.secondary)
                         }
                     }
-                    MarkdownText(text: final, size: 15, highlight: highlight)
+                    let pictures = Self.finalPictures(turn, final: final)
+                    MarkdownText(text: final, size: 15, highlight: highlight, pictures: pictures)
                         .font(.system(size: 15))
                         .lineSpacing(5)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    let pictures = Self.finalPictures(turn, final: final)
-                    if !pictures.isEmpty { PictureStrip(images: pictures, size: 180) }
+                    if !pictures.isEmpty { PictureList(images: pictures, text: final, size: 180) }
                     HStack(spacing: 6) {
                         CopyButton(text: final, key: "final-\(turn.id)")
                         if let answeredTime { timeText(answeredTime) }
@@ -2236,11 +2240,11 @@ private struct TurnView: View, Equatable {
                 }
             } else if let final = turn.final {
                 VStack(alignment: .leading, spacing: 6) {
-                    MarkdownText(text: final, highlight: highlight)
+                    let pictures = Self.finalPictures(turn, final: final)
+                    MarkdownText(text: final, highlight: highlight, pictures: pictures)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    let pictures = Self.finalPictures(turn, final: final)
-                    if !pictures.isEmpty { PictureStrip(images: pictures, size: 180) }
+                    if !pictures.isEmpty { PictureList(images: pictures, text: final, size: 180) }
                     HStack(spacing: 6) {
                         if let by = turn.finalBy {
                             (Text(turn.mode == 0 ? L("답: ", "Answered by: ") : L("정리: ", "Final answer by: ")).foregroundColor(.secondary)
@@ -2266,13 +2270,13 @@ private struct TurnView: View, Equatable {
                         Text(answer.speaker).font(.system(size: 12, weight: .medium)).foregroundColor(.secondary)
                     }
                     Group {
-                        if answer.failed { Text(answer.text) } else { MarkdownText(text: answer.text, size: 15, highlight: highlight) }
+                        if answer.failed { Text(answer.text) } else { MarkdownText(text: answer.text, size: 15, highlight: highlight, pictures: answer.images ?? []) }
                     }
                         .font(.system(size: 15)).lineSpacing(5)
                         .foregroundColor(answer.failed ? .red : .primary)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    if let images = answer.images, !images.isEmpty { PictureStrip(images: images, size: 180) }
+                    if let images = answer.images, !images.isEmpty { PictureList(images: images, text: answer.failed ? "" : answer.text, size: 180) }
                     if !answer.failed { CopyButton(text: answer.text, key: "answer-\(answer.id)") }
                 }
                 .padding(.top, 6)
@@ -2720,17 +2724,144 @@ private struct PictureStrip: View {
     }
 }
 
+// A picture where its marker was in the reply: as wide as the chat allows, at most `maxSide` points
+// and never larger than the picture itself.
+struct InlinePicture: View {
+    let item: ChatImage
+    let maxSide: CGFloat
+    var body: some View {
+        Button(action: { PhotoViewer.shared.show(item) }) {
+            if let image = AttachmentThumbnail.thumbnail(item.url, size: maxSide) {
+                // The copy is twice maxSide in pixels, so half its pixels is the picture's own size, capped at maxSide.
+                let w = image.size.width / 2, h = image.size.height / 2
+                let fit = min(1, maxSide / max(w, h, 1))
+                Image(nsImage: image).resizable().aspectRatio(contentMode: .fit)
+                    .frame(maxWidth: max(1, w * fit))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+            } else {
+                Image(systemName: "photo").foregroundColor(.secondary)
+                    .frame(width: 120, height: 90).background(Color.secondary.opacity(0.1)).clipShape(RoundedRectangle(cornerRadius: 8))
+            }
+        }
+        .buttonStyle(.plainHit)
+        .help(item.name)
+        .contextMenu { PhotoViewer.menu(item) }
+        .accessibilityLabel(L("그림 열기: ", "Open picture: ") + item.name)
+    }
+}
+
+// Under a reply: one line "그림 3개 · 모두 저장"; opened, a small list with a save button for each picture.
+// Pictures the text has no place for (no marker line) keep their preview row here.
+private final class PictureListFold: ObservableObject { @Published var expanded = false }
+private struct PictureList: View {
+    let images: [ChatImage]
+    let text: String
+    let size: CGFloat
+    @StateObject private var fold = PictureListFold()
+
+    var body: some View {
+        let placed = ChatMarkdown.placedPictures(text)
+        let loose = images.filter { !placed.contains($0.name) }
+        VStack(alignment: .leading, spacing: 6) {
+            if !loose.isEmpty { PictureStrip(images: loose, size: size) }
+            HStack(spacing: 6) {
+                Button(action: { fold.expanded.toggle() }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "photo.on.rectangle")
+                        Text(images.count == 1 ? L("그림 1개", "1 picture") : L("그림 \(images.count)개", "\(images.count) pictures"))
+                        Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold))
+                            .rotationEffect(.degrees(fold.expanded ? 90 : 0))
+                    }
+                    .frame(minHeight: 22).contentShape(Rectangle())
+                }
+                .buttonStyle(.plainHit)
+                .help(fold.expanded ? L("목록 접기", "Hide the list") : L("그림 목록 보기", "Show the pictures"))
+                Text("·")
+                Button(L("모두 저장", "Save all")) { PhotoViewer.saveAll(images) }
+                    .buttonStyle(.link)
+                    .help(L("그림을 모두 한 폴더에 저장해요", "Saves every picture into one folder"))
+            }
+            .font(.system(size: 12)).foregroundColor(.secondary)
+            if fold.expanded {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(images) { item in
+                        HStack(spacing: 8) {
+                            Button(action: { PhotoViewer.shared.show(item) }) { AttachmentThumbnail(item: item, size: 32) }
+                                .buttonStyle(.plainHit)
+                                .help(L("크게 보기", "View large"))
+                            Text(item.name).font(.system(size: 12)).lineLimit(1).truncationMode(.middle)
+                            Button(action: { PhotoViewer.save(item) }) {
+                                Image(systemName: "square.and.arrow.down").font(.system(size: 12)).frame(width: 22, height: 22)
+                            }
+                            .buttonStyle(.plainHit).foregroundColor(.secondary)
+                            .help(L("저장…", "Save…"))
+                            .accessibilityLabel(L("저장: ", "Save: ") + item.name)
+                        }
+                        .contextMenu { PhotoViewer.menu(item) }
+                    }
+                }
+                .padding(.leading, 4)
+            }
+        }
+    }
+}
+
 // The photo clicked in the chat, shown large over the window (no @State: see DriveUI.swift). Clicking it again closes it.
-private final class PhotoViewer: ObservableObject {
+final class PhotoViewer: ObservableObject {
     static let shared = PhotoViewer()
     @Published var image: ChatImage?
+    // The chat a picture belongs to, for its saved file name (set by the chat window).
+    var chatTitle: (UUID) -> String? = { _ in nil }
 
     func show(_ item: ChatImage) { image = image?.id == item.id ? nil : item }
 
-    // Preview and Finder stay one right-click away.
+    // Preview, Finder and Save stay one right-click away.
     @ViewBuilder static func menu(_ item: ChatImage) -> some View {
         Button(L("미리보기에서 열기", "Open in Preview")) { NSWorkspace.shared.open(item.url) }
         Button(L("Finder에서 보기", "Show in Finder")) { NSWorkspace.shared.activateFileViewerSelecting([item.url]) }
+        Button(L("저장…", "Save…")) { save(item) }
+    }
+
+    private static func fileName(_ item: ChatImage) -> String {
+        Pictures.saveName(chat: shared.chatTitle(item.conversationID), picture: item.name)
+    }
+
+    // One picture, where the user picks (the panel asks before replacing a file).
+    static func save(_ item: ChatImage) {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = fileName(item)
+        panel.allowedContentTypes = [.png]
+        panel.canCreateDirectories = true
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
+            try FileManager.default.copyItem(at: item.url, to: url)
+        } catch { failed(error) }
+    }
+
+    // Every picture into one folder; a name already there gets a number ("… 2.png"), nothing is replaced.
+    static func saveAll(_ items: [ChatImage]) {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.prompt = L("저장", "Save")
+        panel.message = L("그림 \(items.count)개를 저장할 폴더를 골라 주세요.", "Choose a folder for the \(items.count) pictures.")
+        guard panel.runModal() == .OK, let folder = panel.url else { return }
+        var saved: [URL] = []
+        for item in items {
+            let name = Pictures.freeName(fileName(item)) { FileManager.default.fileExists(atPath: folder.appendingPathComponent($0).path) }
+            let url = folder.appendingPathComponent(name)
+            do { try FileManager.default.copyItem(at: item.url, to: url); saved.append(url) } catch { failed(error); break }
+        }
+        if !saved.isEmpty { NSWorkspace.shared.activateFileViewerSelecting(saved) }
+    }
+
+    private static func failed(_ error: Error) {
+        let alert = NSAlert()
+        alert.messageText = L("그림을 저장하지 못했어요", "Could not save the picture")
+        alert.informativeText = error.localizedDescription
+        alert.runModal()
     }
 }
 
@@ -2755,6 +2886,11 @@ private struct PhotoOverlay: View {
                     }
                     .buttonStyle(.plainHit).foregroundColor(.white.opacity(0.85))
                     .help(L("미리보기에서 열기", "Open in Preview"))
+                    Button(action: { PhotoViewer.save(item) }) {
+                        Image(systemName: "square.and.arrow.down").font(.system(size: 14)).frame(width: 28, height: 28)
+                    }
+                    .buttonStyle(.plainHit).foregroundColor(.white.opacity(0.85))
+                    .help(L("저장…", "Save…"))
                     Button(action: close) { Image(systemName: "xmark").font(.system(size: 13)).frame(width: 28, height: 28) }
                         .buttonStyle(.plainHit).foregroundColor(.white.opacity(0.85))
                         .keyboardShortcut(.cancelAction)
@@ -2784,7 +2920,7 @@ private struct PhotoOverlay: View {
     }
 }
 
-private struct AttachmentThumbnail: View {
+struct AttachmentThumbnail: View {
     let item: ChatImage
     let size: CGFloat
     var body: some View {
@@ -2989,15 +3125,15 @@ private struct ParallelAnswers: View {
                 if column.writing { ProgressView().controlSize(.mini) }
             }
             if let text = column.text {
+                let pictures = column.final ? TurnView.finalPictures(turn, final: text) : column.images
                 Group {
-                    if column.failed { Text(text) } else { MarkdownText(text: text, size: 15, highlight: column.writing ? FindHighlight() : highlight) }
+                    if column.failed { Text(text) } else { MarkdownText(text: text, size: 15, highlight: column.writing ? FindHighlight() : highlight, pictures: pictures) }
                 }
                 .font(.system(size: 15)).lineSpacing(5)
                 .foregroundColor(column.failed ? .red : .primary)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                let pictures = column.final ? TurnView.finalPictures(turn, final: text) : column.images
-                if !pictures.isEmpty { PictureStrip(images: pictures, size: 160) }
+                if !pictures.isEmpty { PictureList(images: pictures, text: column.failed ? "" : text, size: 160) }
                 if column.done && !column.failed {
                     HStack(spacing: 6) {
                         CopyButton(text: text, key: "answer-\(turn.id)-\(column.id)")

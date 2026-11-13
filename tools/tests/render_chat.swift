@@ -35,6 +35,15 @@ private struct EmptyPreviewLogin: GoogleTokenStore {
         if CommandLine.arguments.contains("--markdown") {
             turn.final = "Memory first.\n\n## Models\n\n| Model | Memory | Time |\n|---|---|---|\n| SD 1.5 | 2~4GB | 10~20s |\n| **SDXL** | 7~9GB | 30s~1min |\n\n---\n### Notes\nKeep ~~old~~ text and `a~b` code."
         }
+        if CommandLine.arguments.contains("--pictures") {
+            // AI pictures where their markers are: one alone, two on a line, a missing one and one with no place (listed below).
+            func picture(_ n: Int, _ color: String, _ w: Int, _ h: Int) -> ChatImage? {
+                let svg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 \(w) \(h)' width='\(w)' height='\(h)'><rect width='\(w)' height='\(h)' fill='\(color)'/><text x='20' y='60' font-size='48' fill='white'>\(n)</text></svg>"
+                return Pictures.render(svg: svg).flatMap { try? ImageStore.importImage($0, name: "picture-\(n).png", conversationID: conversation.id) }
+            }
+            turn.final = "Here is the layout:\n\n[Picture 1]\n\nAnd the two options side by side:\n\n[Picture 2] [Picture 3]\n\nA lost one: [Picture 9]\n\n[Picture 9]\n\nThat is all."
+            turn.finalImages = [picture(1, "#3b6ea5", 800, 450), picture(2, "#a5573b", 400, 400), picture(3, "#3ba56a", 400, 300), picture(4, "#7a3ba5", 300, 300)].compactMap { $0 }
+        }
         if CommandLine.arguments.contains("--parallel") {
             // Several AIs at once: one finished, one still writing, one failed (CHAT_STACKED=1: one under the other).
             turn.question = "Which plot style reads better for the paper?"
@@ -123,11 +132,12 @@ private struct EmptyPreviewLogin: GoogleTokenStore {
             window.titlebarSeparatorStyle = .none; window.titleVisibility = .hidden
             window.appearance = NSAppearance(named: appearance)
             window.contentMinSize = ChatViewSize.minSize
-            // CHAT_WIDTH renders a narrow window; CHAT_SIDEBAR=1 opens the sliding sidebar there, 0 hides the sidebar.
+            // CHAT_WIDTH renders a narrow window (CHAT_HEIGHT a taller one); CHAT_SIDEBAR=1 opens the sliding sidebar there, 0 hides the sidebar.
             let width = Double(ProcessInfo.processInfo.environment["CHAT_WIDTH"] ?? "") ?? 1040
             chat.sidebarOverlay = ProcessInfo.processInfo.environment["CHAT_SIDEBAR"] == "1"
             chat.sidebarHidden = ProcessInfo.processInfo.environment["CHAT_SIDEBAR"] == "0"
-            window.setContentSize(NSSize(width: width, height: 720))
+            let height = Double(ProcessInfo.processInfo.environment["CHAT_HEIGHT"] ?? "") ?? 720
+            window.setContentSize(NSSize(width: width, height: height))
             for _ in 0..<5 { host.view.layoutSubtreeIfNeeded(); window.displayIfNeeded(); RunLoop.main.run(until: Date().addingTimeInterval(0.04)) }
             let view = window.contentView!.superview ?? host.view
             let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds)!

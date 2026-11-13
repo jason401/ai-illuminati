@@ -1,4 +1,5 @@
 import SwiftUI
+import AILocalization
 
 // Chat replies in Markdown: headings, tables and rules become their own pieces, the rest stays
 // inline text (bold, italics, code, links) with its line breaks. Code fences are left as written.
@@ -8,6 +9,7 @@ enum ChatMarkdown {
         case heading(level: Int, text: String)
         case table(header: [String], rows: [[String]])
         case rule
+        case pictures([Int])   // a line of only [그림 N] / [Picture N] markers: the pictures are drawn there
     }
 
     static func blocks(_ source: String) -> [Block] {
@@ -33,6 +35,9 @@ enum ChatMarkdown {
             if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") {
                 fence = String(trimmed.prefix(while: { $0 == trimmed.first }))
                 text.append(line); i += 1; continue
+            }
+            if let numbers = pictureMarkers(line) {
+                flush(); blocks.append(.pictures(numbers)); i += 1; continue
             }
             if let heading = heading(line) {
                 flush(); blocks.append(heading); i += 1; continue
@@ -75,6 +80,24 @@ enum ChatMarkdown {
             body = String(body.dropLast(closing)).trimmingCharacters(in: .whitespaces)
         }
         return .heading(level: level, text: body)
+    }
+
+    // The markers Pictures.harvest leaves where a picture was, when they are all the line holds.
+    // A marker inside a sentence stays text.
+    static func pictureMarkers(_ line: String) -> [Int]? {
+        let ns = line as NSString, all = NSRange(location: 0, length: ns.length)
+        guard markerLine.firstMatch(in: line, range: all) != nil else { return nil }
+        return marker.matches(in: line, range: all).compactMap { Int(ns.substring(with: $0.range(at: 1))) }
+    }
+    private static let marker = try! NSRegularExpression(pattern: "\\[(?:그림|Picture) (\\d+)\\]")
+    private static let markerLine = try! NSRegularExpression(pattern: "^[ \\t]*(?:\\[(?:그림|Picture) \\d+\\][ \\t]*)+$")
+
+    // Picture file names the text has a place for (picture-N.png, as Pictures.harvest names them).
+    static func placedPictures(_ text: String) -> Set<String> {
+        Set(cachedBlocks(text).flatMap { block -> [String] in
+            if case .pictures(let numbers) = block { return numbers.map { "picture-\($0).png" } }
+            return []
+        })
     }
 
     private static func isRule(_ line: String) -> Bool {
@@ -207,6 +230,7 @@ struct MarkdownText: View {
     let text: String
     var size: CGFloat = 13
     var highlight = FindHighlight()   // ⌘F words
+    var pictures: [ChatImage] = []    // the reply's pictures, drawn where their markers are
 
     var body: some View {
         let blocks = ChatMarkdown.cachedBlocks(text)
@@ -224,8 +248,26 @@ struct MarkdownText: View {
                     table(header, rows)
                 case .rule:
                     Divider().padding(.vertical, 4)
+                case .pictures(let numbers):
+                    pictureRow(numbers)
                 }
             }
+        }
+    }
+
+    // Found pictures side by side; a marker whose picture is missing stays as written (it is listed under the reply).
+    @ViewBuilder private func pictureRow(_ numbers: [Int]) -> some View {
+        let found = numbers.map { n in (n, pictures.first { $0.name == "picture-\(n).png" }) }
+        let marker = { (n: Int) in L("[그림 \(n)]", "[Picture \(n)]") }
+        if found.allSatisfy({ $0.1 == nil }) {
+            Text(numbers.map(marker).joined(separator: " ")).frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            HStack(alignment: .top, spacing: 8) {
+                ForEach(Array(found.enumerated()), id: \.offset) { _, pair in
+                    if let item = pair.1 { InlinePicture(item: item, maxSide: found.count == 1 ? 480 : 300) } else { Text(marker(pair.0)) }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 

@@ -2849,7 +2849,18 @@ func testChatMarkdown() {
     let fenced = "```\n## not a heading\n| a | b |\n|---|---|\n```\n# Title #"
     expect(ChatMarkdown.blocks(fenced) == [.text("```\n## not a heading\n| a | b |\n|---|---|\n```"), .heading(level: 1, text: "Title")], "code fences are left as written")
     expect(ChatMarkdown.blocks("#hashtag\na | b\nno separator") == [.text("#hashtag\na | b\nno separator")], "lookalikes stay text")
-    print("PASS: chat Markdown (single ~ ranges, ~~ strikethrough, code kept, headings, tables, rules, fences)")
+    // AI pictures: a line of only markers is drawn as pictures; a marker in a sentence or a code fence stays text.
+    expect(ChatMarkdown.blocks("Here it is:\n\n[그림 3]\n\nDone") == [.text("Here it is:"), .pictures([3]), .text("Done")], "a marker line becomes a pictures block")
+    expect(ChatMarkdown.blocks("  [Picture 1] [그림 2]  [Picture 10]") == [.pictures([1, 2, 10])], "several markers on one line")
+    expect(ChatMarkdown.blocks("See [그림 1] above.") == [.text("See [그림 1] above.")], "a marker in a sentence stays text")
+    expect(ChatMarkdown.blocks("```\n[그림 1]\n```") == [.text("```\n[그림 1]\n```")], "a marker in a code fence stays text")
+    expect(ChatMarkdown.blocks("[그림 x]\n[Picture]") == [.text("[그림 x]\n[Picture]")], "lookalike markers stay text")
+    expect(ChatMarkdown.placedPictures("a\n[그림 2] [그림 4]\nb [그림 5]") == ["picture-2.png", "picture-4.png"], "only marker lines place pictures")
+    expect(Pictures.saveName(chat: "Plan: A/B?", picture: "picture-3.png") == "Plan- A-B-" + L("-그림3", "-Picture3") + ".png", "saved name: chat title and number, unsafe characters replaced")
+    expect(Pictures.saveName(chat: "  ", picture: "picture-1.png") == L("그림1", "Picture1") + ".png", "no title: the picture alone")
+    let taken: Set<String> = ["a.png", "a 2.png"]
+    expect(Pictures.freeName("a.png") { taken.contains($0) } == "a 3.png" && Pictures.freeName("b.png") { taken.contains($0) } == "b.png", "a taken name gets the next number")
+    print("PASS: chat Markdown (single ~ ranges, ~~ strikethrough, code kept, headings, tables, rules, fences, picture markers)")
 }
 runTest("testChatMarkdown", testChatMarkdown)
 

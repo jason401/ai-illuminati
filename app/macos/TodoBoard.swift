@@ -339,7 +339,7 @@ struct TodoBoardView: View {
         VStack(alignment: .leading, spacing: 6) {
             TextField(L("할 일", "TODO"), text: $draft.editTitle).textFieldStyle(.roundedBorder).onSubmit { draft.saveEdit() }
             TextField(L("자세한 내용 (선택)", "Details (optional)"), text: $draft.editDetail, axis: .vertical).textFieldStyle(.roundedBorder).lineLimit(1...8)
-                .modifier(ShiftReturnNewline()).onSubmit { draft.saveEdit() }
+                .modifier(ShiftReturnNewline { draft.saveEdit() })
             HStack(spacing: 8) {
                 Picker("", selection: $draft.editAskFirst) {
                     Text(L("가정하고 표시", "Assume and note")).tag(false)
@@ -404,7 +404,7 @@ struct TodoBoardView: View {
         return VStack(alignment: .leading, spacing: 8) {
             TextField(L("+ 할 일 추가…", "+ Add a TODO…"), text: $draft.title).textFieldStyle(.roundedBorder).onSubmit(add)
             TextField(L("자세한 내용 (선택)", "Details (optional)"), text: $draft.detail, axis: .vertical).textFieldStyle(.roundedBorder).lineLimit(1...5)
-                .modifier(ShiftReturnNewline()).onSubmit(add)
+                .modifier(ShiftReturnNewline(submit: add))
             if !draft.files.isEmpty {
                 TodoChips(items: draft.files.map { f in (f.id, f.url.lastPathComponent, (try? f.url.resourceValues(forKeys: [.contentTypeKey]).contentType?.conforms(to: .image)) == true) },
                           open: { id in if let f = draft.files.first(where: { $0.id == id }) { NSWorkspace.shared.open(f.url) } },
@@ -554,27 +554,30 @@ struct TodoCrewRow: View {
     }
 }
 
-// Details fields work like the chat box: Return adds or saves (onSubmit), Shift+Return (or Option+Return)
+// Details fields work like the chat box: Return adds or saves (`submit`), Shift+Return (or Option+Return)
 // starts a new line. Only while this field has focus; Korean text still being composed just finishes on Return.
+// Return is caught here, not left to onSubmit: a vertical TextField does not reliably submit on Return.
 // (The monitor is kept in an ObservableObject: this Mac's Command Line Tools cannot build SwiftUI's @State macro.)
-private final class KeyMonitorBox: ObservableObject { var monitor: Any? }
+private final class KeyMonitorBox: ObservableObject { var monitor: Any?; var submit: () -> Void = {} }
 
 private struct ShiftReturnNewline: ViewModifier {
+    let submit: () -> Void
     @FocusState private var focused: Bool
     @StateObject private var box = KeyMonitorBox()
     func body(content: Content) -> some View {
-        content.focused($focused)
+        box.submit = submit   // the newest one: the monitor outlives this view value
+        return content.focused($focused)
             .onChange(of: focused) { on in if on { start() } else { stop() } }
             .onDisappear { stop() }
     }
     private func start() {
+        let box = box
         guard box.monitor == nil else { return }
         box.monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             guard event.keyCode == 36 || event.keyCode == 76,
-                  !event.modifierFlags.intersection([.shift, .option]).isEmpty,
                   event.modifierFlags.intersection([.command, .control]).isEmpty,
                   let editor = event.window?.firstResponder as? NSTextView, !editor.hasMarkedText() else { return event }
-            editor.insertNewlineIgnoringFieldEditor(nil)
+            if event.modifierFlags.intersection([.shift, .option]).isEmpty { box.submit() } else { editor.insertNewlineIgnoringFieldEditor(nil) }
             return nil
         }
     }

@@ -271,7 +271,8 @@ G1, G4(경고 0), G5도 통과했다. 실제 `accounts.json` 해시는 그대로
    - `AIChat/ChatStorage.swift` → `AIChatRecords/ChatStorage.swift`. `StorageLink`는 `AIChat/ChatStorageTool.swift`로
      (import Foundation, AIWorkspace). `describe`를 public으로. `ChatStore.dir` → `ChatPaths.dir`.
    - `AIChat/RoomDocuments.swift`의 `enum RoomDocuments`(1–41행)는 `AIChatRecords/RoomDocumentFiles.swift`로
-     (`import AIProjects` 뺌). `keepDropped`/`extensions`를 public으로. `extension Discussion` 부분은
+     (`import AIProjects` 뺌). `directory(_:)`의 `ChatStore.dir` → `ChatPaths.dir`.
+     `keepDropped`/`extensions`를 public으로. `extension Discussion` 부분은
      `AIChat/RoomDocuments.swift`에 그대로 남긴다.
    - 새 `AIChatRecords/ChatPaths.swift`. `AIChat/ChatRecords.swift`의 `ChatStore.dir = ChatPaths.dir`.
 3. 연결: `AIChat/dependencies`에 `AIChatRecords`. `AIChat/ChatApp.swift`에 `@_exported import AIChatRecords`.

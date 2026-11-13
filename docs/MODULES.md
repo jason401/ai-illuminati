@@ -2,8 +2,9 @@
 
 The app is one Swift program built from `app/macos/*.swift`: in it, every file can use every other file's
 `internal` names, so a folder alone draws no line. A part in `app/modules/<Name>/` is its own Swift module:
-it builds alone, and the app sees only its `public` names. Eight modules (2026-11-11 to 2026-11-12): `AILocalization`,
-`AIAccounts`, `AISpaces`, `AIRuntime`, `AIWorkspace`, `AIProjects`, `AIChat`, `AIIntegrations`.
+it builds alone, and the app sees only its `public` names. Nine modules (2026-11-11 to 2026-11-13): `AILocalization`,
+`AIAccounts`, `AISpaces`, `AIRuntime`, `AIWorkspace`, `AIProjects`, `AIChatRecords` (T4), `AIChat`, `AIIntegrations`.
+Size (T5, 2026-11-13, `git ls-files 'app/*.swift'`, 82 files): 31,894 lines; AIChat 13,067 (41.0%), AIChatRecords 465, App 7,184.
 This file: **Rules** (how to keep the lines) → **Module map** (owners, graph, promises, public names and why) →
 **Records** (step M; the earlier steps are in `docs/modules-history.md`).
 
@@ -48,6 +49,16 @@ A failing check means the code changes, not the check. If a check must change, w
 | S1 API snapshots (slow) | each module's public declarations (`swift-symbolgraph-extract`, public and open, no synthesized members, sorted text) equal `docs/api/<Name>.txt`; update with `zsh tools/check_modules.sh snapshot` | bulk `public` slipping by unseen |
 | S2 boundaries (slow) | each `boundary` line (`code<TAB>name[<TAB>hidden]`) compiled outside the module must fail with exactly the "inaccessible due to 'internal'" (or, hidden, "cannot find … in scope" for a type that exists inside) error and no other | boundary checks that pass for another reason |
 | S3 App size (slow, warning) | `app/macos` lines over 10% above `# baseline-lines` in `tools/app_files.txt` | the App growing inside its files |
+
+G4 stays a warning (T5, 2026-11-13). It becomes a failure (a guard change: the user approves) only when all hold, not after
+a time or a number of commits: (1) no false hit on correct code: a full `check_modules.sh` run warns 0 times, and an
+extension of a module's own type inside it, of an Apple type, or of a type no module declares public gives no warning;
+(2) no missed case among the supported ones: a copy test of each (`extension <OtherModuleType>` in an App file and in another
+module, `extension AIChat.Discussion` with the module name, a nested `extension Type.Inner`, with `public`/`private` and a
+plain `@attribute`) warns; (3) `tools/module_extensions.txt` still has its 17 lines, none added to make it pass; (4) the
+limits are written here. Known limits (not caught, regex not a parser): an attribute with arguments before `extension`
+(`@available(...) extension X`), a constrained extension of a standard type (`extension Array where Element == X`), types
+declared public only inside an extension or a nested type, `tools/tests/` files and folders below a module's top level.
 
 Hooks: `.githooks/pre-commit` (fast) and `.githooks/pre-push` (`run_mode2.sh --modules`: stages 1-2), installed by
 `zsh tools/setup_dev.sh` (`core.hooksPath`, never overwriting another value); run_mode2 warns when they are missing.
@@ -107,12 +118,12 @@ entries per call); those branches were not changed.
 | AIChatRecords | chat record values (pictures, documents, sync origins…), the chats/ path, dropped files, collab log, disk report; no providers; knows no Discussion | AIAccounts, AILocalization, AIRuntime, AIWorkspace |
 | AIChat | chat records/state/storage, routing, meetings/reviews, ask_ai, attachments, DeviceSync, chat/Space views; Peer/Convene/Chat/Memory/Storage providers | AIAccounts, AILocalization, AIRuntime, AIWorkspace, AIProjects, AISpaces, AIChatRecords |
 | AIIntegrations | Google auth/Drive gate, external MCP connections, AI Face; no providers | AIAccounts, AILocalization, AIRuntime (interface only), AIWorkspace |
-| App (app/macos) | startup, menu/settings, screens, update/login, wiring and explicit 13-provider list; Face/Drive/ExternalMCP conformances | all eight modules (AIChatRecords through AIChat's `@_exported import`) |
+| App (app/macos) | startup, menu/settings, screens, update/login, wiring and explicit 13-provider list; Face/Drive/ExternalMCP conformances | all nine modules: eight imported directly, AIChatRecords through AIChat's `@_exported import` |
 
 Arrows mean imports, from caller to dependency (all direct edges are in the table):
 
 ```text
-App            -> all eight modules
+App            -> the eight other modules directly; AIChatRecords through AIChat's `@_exported import`
 AIChat         -> AIChatRecords, AIProjects, AISpaces, AIWorkspace, AIRuntime, AIAccounts, AILocalization
 AIChatRecords  -> AIWorkspace, AIRuntime, AIAccounts, AILocalization
 AIProjects     -> AIWorkspace, AIRuntime, AIAccounts, AILocalization
@@ -176,6 +187,9 @@ These are app-internal seams: no new module or public symbol.
 | DriveUI.swift: DriveTree rows/writable and tree request/cache bookkeeping | pure tree data in AIIntegrations; observable screen state stays App | preserve lazy expansion, cycle/depth bound, inherited write rules and login-version rejection |
 | LocalModels.swift: LocalModelStore refresh/pull/cancel/delete state | AIRuntime behind a narrow view model | remove AppModel coupling first; opening NSWorkspace and the window stay App |
 | Settings.swift: pure default-chat-rule migration and account/model choice transformations | split by AIChat/AIAccounts/AIRuntime ownership | preserve UserDefaults keys, per-instance test settings and the App's ChatSettings conformance |
+
+App cleanup (Settings.swift 2,293 lines and the rest of `app/macos`) is outside the modules follow-up (T5). Look again when
+`app/macos` grows more than 10% above the S3 baseline (7,054 → over 7,759 lines; now 7,184), i.e. when S3 warns.
 
 Startup, ToolHub, ChatLinksApp/ChatScreensApp, RunConditions.app, settings/windows/menu, notifications, login and
 updater remain App composition or platform work. Gemini allowWeb in RunConditionsApp still expresses App policy;

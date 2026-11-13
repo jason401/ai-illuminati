@@ -1,5 +1,11 @@
 # 모듈화 후속 작업 (T1–T5)
 
+> 요약(T5, 2026-11-13). T1: 이름 있는 테스트가 전체 시간의 38.8%라 T2 진행. T2: `--affected` 선택 실행(전체 대비 47–87%).
+> T3: 후보 8개 전부는 NO-GO(G4 4곳, ChatWindow.swift 수정 필요), 줄인 목록은 GO. T4: 그것을 `AIChatRecords`로 뗌
+> (AIChat 13,512 → 13,067줄). 건너뛴 단계 없음. T4는 "두 번 실패하면 멈춤"을 어기고 커밋했으나 사용자가 그대로 받음.
+> T5: main `52a2dba`에서 check_modules·전체 테스트 통과, 문서 대조와 크기 기록. 건너뜀: G4 승격(조건만 적음, 아직 검증 안 함)과
+> App 정리(Settings.swift 2,293줄 등, 범위 밖; S3 경고가 다시 볼 신호).
+
 ## T1 측정
 
 전체 테스트(`zsh tools/tests/run_mode2.sh`)가 시간을 어디에 쓰는지 재서, "바뀐 곳의 테스트만 돌리기"(T2)가
@@ -331,3 +337,23 @@ G1, G4(경고 0), G5도 통과했다. 실제 `accounts.json` 해시는 그대로
   | `AIChatRecords/dependencies`에 AIChat | G1 실패 | 실패: forbidden dependency, unused, cycle |
   | `CollabLog.maxBytes`를 public | S1 실패 | 실패: `+CollabLog.maxBytes` 차이(S2도 실패) |
   | App 파일(ChatLinksApp.swift)에서 `CollabLog.maxBytes` | 컴파일 실패 | "'maxBytes' is inaccessible due to 'internal' protection level" |
+
+## T5 마무리 점검
+2026-11-13. 시작 HEAD `52a2dba`(origin/main과 같음), 작업 트리와 index 깨끗함. 바꾼 것은 문서뿐이다(MODULES.md, 이 파일).
+
+### 점검
+- 이 파일: T1–T4 절과 결과가 모두 있다(T1 진행 판정, T2 완료, T3 판정, T4 완료·사용자 확인).
+- `zsh tools/check_modules.sh`: G1, G2–G7 통과(G4 경고 없음). 전체 `run_mode2.sh`(`project_run test`): exit 0, 계약 9개,
+  S1–S3(App 7,184줄), `▶` 57개, 실제 accounts.json 그대로. 1번에 통과해서 원인 찾기는 필요 없었다.
+- 문서 대조: `module_graph.txt`, 각 모듈 `dependencies`, MODULES.md 지도 표의 의존 열과 화살표, AGENTS.md 모듈 목록,
+  `app/modules/` 9개 폴더가 서로 맞는다(Integrations의 Runtime은 graph에서 `AIRuntime*`, 문서에서 "interface only").
+  고친 곳: MODULES.md 머리말 "Eight modules" → 9개(AIChatRecords 포함), App 줄 "all eight modules" → "eight imported directly,
+  AIChatRecords through `@_exported import`"(App 파일의 `import AI…`는 8개 이름, AIChatRecords는 없음).
+- "App code reviewed for later moves" 목록의 GitBranches, DriveUI, LocalModels, Settings.swift는 모두 있다. 지울 것 없음.
+  Records와 modules-history.md는 건드리지 않았다.
+- 크기(`git ls-files 'app/*.swift'`, 82개 파일): 전체 31,894줄, AIChat 13,067줄(41.0%), AIChatRecords 465줄, App 7,184줄.
+  T3 때 31,874줄과 셈 방법이 같다. MODULES.md 머리말에 한 줄로 적었다.
+- G4: 경고로 둔다. 승격 조건(정상 사례 오탐 0, 지원 대상 위반 누락 0, 예외 17개 유지, 검출 한계 문서화; 기간·커밋 수 아님)과
+  알려진 한계를 MODULES.md Guards 표 바로 아래에 적었다. 예외 파일은 지금 17줄이다.
+- App 정리: 이번 범위가 아니다. 다시 볼 신호는 `app/macos`가 S3 기준 7,054줄보다 10% 넘게 늘 때(7,759줄 초과, 곧 S3 경고)로
+  MODULES.md "App code reviewed for later moves"에 적었다.

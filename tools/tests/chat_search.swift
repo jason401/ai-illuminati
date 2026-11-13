@@ -149,6 +149,17 @@ func testEnterpriseMarks() {
     expect(chat.lockProject(SidebarProjects.key(ProjectBinding(root: "/tmp/personal-repo", common: "/tmp/personal-repo/.git", remote: "", remoteURL: "")),
                             name: "personal-repo", organization: personalLock, todos: todos) == nil && locked(personalProject) == Enterprise.personal,
            "a project locks as personal too")
+    // A project with one chat locked by hand (shown as locked): locking it again with that lock locks the older chats and gives it a list.
+    let partBinding = ProjectBinding(root: "/tmp/part-repo", common: "/tmp/part-repo/.git", remote: "", remoteURL: "")
+    let partKey = SidebarProjects.key(partBinding)
+    let byHand = chat.addProjectChat(partBinding, title: "locked", open: false), older = chat.addProjectChat(partBinding, title: "older", open: false)
+    chat.lockEnterprise(byHand, organization: schoolLock)
+    expect(chat.unlockedParts(partKey, todos: todos.current) == (1, 0) && locked(older) == nil, "a project with one locked chat still has open ones")
+    expect(chat.lockProject(partKey, name: "part-repo", organization: organization[1], todos: todos) != nil && locked(older) == nil, "the rest is never locked another way")
+    expect(chat.lockProject(partKey, name: "part-repo", organization: schoolLock, todos: todos) == nil && locked(older) == "학교"
+           && chat.unlockedParts(partKey, todos: todos.current) == (0, 0)
+           && todos.current.lists.filter { $0.project?.groupKey == partKey }.map { $0.lock?.organization } == ["학교"],
+           "locking a partly locked project locks its older chats and TODOs too")
     print("PASS: Enterprise lock (older chats open, the gate, picking, only the user locks, never unlocked, saved, work chats, personal lock, project lock)")
 }
 

@@ -444,6 +444,13 @@ struct ChatView<Model: ChatSettings>: View {
             if let lock = SidebarProjects.lock(of: group, todo: todos.snapshot) {
                 Text(lock.isPersonal ? L("🔒 개인 프로젝트 (해제할 수 없어요)", "🔒 Personal project (cannot be undone)")
                                      : L("🔒 \(lock.name) Enterprise 프로젝트 (해제할 수 없어요)", "🔒 \(lock.name) Enterprise project (cannot be undone)"))
+                let left = discussion.unlockedParts(group.id, todos: todos.snapshot)
+                if left.chats + left.lists > 0 {
+                    Button(L("안 잠긴 대화·TODO도 잠그기…", "Lock Its Unlocked Chats and TODOs…")) {
+                        discussion.askToLockProject(group.id, name: group.name, organization: lock)
+                    }
+                    .disabled(!discussion.runningRooms.isDisjoint(with: (group.chats + group.todoRooms).map(\.id)) || discussion.importingMaterials)
+                }
             } else {
                 EnterpriseLockButtons(discussion: discussion, room: nil, project: group)
             }

@@ -41,7 +41,7 @@ struct ProjectInfoView: View {
                 if let group, group.bindings.first?.isFolderless != true { repository(group); rules(group) }
                 folders
                 links
-                if let group { chatOnly(group) }
+                if let group { chatOnly(group); ProjectLockSection(discussion: discussion, group: group) }
             }
             .frame(maxWidth: 760, alignment: .leading)
             .padding(.horizontal, 28).padding(.vertical, 16)

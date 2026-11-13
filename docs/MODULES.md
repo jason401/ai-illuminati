@@ -542,7 +542,7 @@ everything else, Discussion's state above all, stays internal):
 - Settings' tabs: `MemoryStore`/`MemoryItem`/`MemoryData`, `ChatStorage` (`report`, `items`, `format`, `Report`, `Room`, `Kind`),
   `CollabMode`/`CollabLog`, `RouteSorter`, `ApprovalAlertSettings`, `DeviceSync` (settings, start, scan, the notes the links call),
   `ChatLink.conversations`; the board and Project info: `SidebarProjects` (`key`, `group`, `pickerName`), `ProjectGroup`,
-  `SidebarFold`, `BoardTab`, `PictureDrop`, `Enterprise.permits`, `AutoPick.fiveHour`/`weekly`, `TodoItem.State.title`/`color`;
+  `SidebarFold`, `BoardTab`, `PictureDrop`, `Enterprise.permits`, `ProjectLockSection` (Project info's lock setting; the lock stays the chat's), `AutoPick.fiveHour`/`weekly`, `TodoItem.State.title`/`color`;
   DriveLink: `MaterialReader.read`, `RoomDocuments.directory`; main: `ChatWindow`, `SpaceRefiner.watchLibrary`,
   `ApprovalListView`; everyone's views: `PlainHitButtonStyle`/`.plainHit`, `SidebarHeader`.
 - `ChatSettings`, `ChatApp` (and `Face`, `Screens`): the seams above.

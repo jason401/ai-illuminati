@@ -117,10 +117,7 @@ extension Discussion {
     // meetings in it then keep the lock. Returns why it was not locked (nil: locked).
     @discardableResult
     func lockProject(_ key: String, name: String, organization: EnterpriseLock, todos: TodoStore = .shared) -> String? {
-        let chats = conversations.filter { $0.meetingOf == nil && $0.workspace?.project?.groupKey == key }
-            .sorted { $0.updatedAt > $1.updatedAt }
-        let rooms = chats.flatMap { [$0] + meetings(of: $0.id) }
-        let lists = todos.current.lists.filter { $0.project?.groupKey == key }
+        let (chats, rooms, lists) = projectParts(key, todos: todos.current)
         if let held = todos.locked { return held }
         if !runningRooms.isDisjoint(with: rooms.map(\.id)) {
             return L("이 프로젝트의 채팅이 답하는 중이에요. 끝난 뒤 다시 해 주세요.", "A chat of this project is answering. Try again when it is done.")
@@ -136,6 +133,20 @@ extension Discussion {
         do { try todos.lockProject(key, name: name, project: binding, lock: lock) } catch { return error.localizedDescription }
         for room in rooms where room.enterpriseLock == nil { lockEnterprise(room.id, organization: lock) }
         return nil
+    }
+
+    // What a project lock covers: its chats (newest first), those with their meetings, and its TODO lists.
+    func projectParts(_ key: String, todos: TodoData) -> (chats: [Conversation], rooms: [Conversation], lists: [TodoList]) {
+        let chats = conversations.filter { $0.meetingOf == nil && $0.workspace?.project?.groupKey == key }
+            .sorted { $0.updatedAt > $1.updatedAt }
+        return (chats, chats.flatMap { [$0] + meetings(of: $0.id) }, todos.lists.filter { $0.project?.groupKey == key })
+    }
+
+    // How many of a project's chats (meetings too) and TODO lists have no lock yet: a project whose one chat was locked
+    // shows as locked, and locking it again with that lock locks the rest.
+    func unlockedParts(_ key: String, todos: TodoData) -> (chats: Int, lists: Int) {
+        let (_, rooms, lists) = projectParts(key, todos: todos)
+        return (rooms.filter { $0.enterpriseLock == nil }.count, lists.filter { $0.lock == nil }.count)
     }
 
     // Asks before locking a project (it cannot be undone), then locks it or says why not.
@@ -246,6 +257,58 @@ struct EnterpriseLockButtons: View {
                     discussion.newEnterpriseConversation(organization)
                 }
                 .disabled(discussion.importingMaterials)
+            }
+        }
+    }
+}
+
+// The project info tab's lock setting: lock the whole project (its chats, older ones too, and its TODOs) for an
+// organization or as personal; a project only partly locked (one chat locked by hand) locks the rest the same way.
+public struct ProjectLockSection: View {
+    @ObservedObject var discussion: Discussion
+    let group: ProjectGroup
+    @ObservedObject private var todos = TodoStore.shared
+    public init(discussion: Discussion, group: ProjectGroup) { self.discussion = discussion; self.group = group }
+
+    public var body: some View {
+        let lock = SidebarProjects.lock(of: group, todo: todos.snapshot)
+        let left = discussion.unlockedParts(group.id, todos: todos.snapshot)
+        let busy = !discussion.runningRooms.isDisjoint(with: (group.chats + group.todoRooms).map(\.id)) || discussion.importingMaterials
+        VStack(alignment: .leading, spacing: 8) {
+            Label(L("잠금", "Lock"), systemImage: lock == nil ? "lock.open" : "lock").font(.system(size: 15, weight: .semibold))
+            if let lock {
+                HStack(spacing: 6) {
+                    LockBadge(lock: lock)
+                    Text(lock.isPersonal ? L("개인 프로젝트예요. 개인 계정과 내 Mac 모델만 써요 (해제할 수 없어요).",
+                                             "A personal project: only personal accounts and models on this Mac (cannot be undone).")
+                                         : L("\(lock.name) Enterprise 프로젝트예요. \(lock.name) 계정과 내 Mac 모델만 써요 (해제할 수 없어요).",
+                                             "A \(lock.name) Enterprise project: only \(lock.name) accounts and models on this Mac (cannot be undone)."))
+                        .font(.system(size: 12)).foregroundColor(.secondary)
+                }
+                if left.chats + left.lists > 0 {
+                    HStack(spacing: 8) {
+                        Button(L("나머지도 잠그기…", "Lock the rest…")) {
+                            discussion.askToLockProject(group.id, name: group.name, organization: lock)
+                        }
+                        .disabled(busy)
+                        Text(L("아직 안 잠긴 대화 \(left.chats)개 · TODO 목록 \(left.lists)개", "Not locked yet: \(left.chats) chats · \(left.lists) TODO lists"))
+                            .font(.system(size: 11)).foregroundColor(.orange)
+                    }
+                }
+            } else {
+                Text(L("프로젝트를 잠그면 이 프로젝트의 모든 대화(이미 있던 것 포함)·회의·TODO와 앞으로 생기는 것까지 고른 쪽 계정만 써요. 되돌릴 수 없어요.",
+                       "Locking the project makes every chat (older ones too), meeting and TODO of it, and every new one, use only the chosen side's accounts. It cannot be undone."))
+                    .font(.system(size: 12)).foregroundColor(.secondary)
+                HStack(spacing: 8) {
+                    let organizations = Enterprise.organizations(discussion.model.accounts)
+                    ForEach(organizations + [Enterprise.personalLock], id: \.organization) { organization in
+                        let suffix = organizations.count > 1 && !organization.isPersonal ? " (\(organization.name))" : ""
+                        Button((organization.isPersonal ? L("개인으로 잠그기", "Lock as Personal") : L("Enterprise로 잠그기", "Lock as Enterprise") + suffix) + "…") {
+                            discussion.askToLockProject(group.id, name: group.name, organization: organization)
+                        }
+                        .disabled(busy)
+                    }
+                }
             }
         }
     }

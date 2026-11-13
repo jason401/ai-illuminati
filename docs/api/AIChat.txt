@@ -412,6 +412,9 @@ ProjectGroup.id | let id: String
 ProjectGroup.lists | var lists: [UUID]
 ProjectGroup.name | var name: String
 ProjectGroup.todoRooms | var todoRooms: [Conversation]
+ProjectLockSection | @MainActor struct ProjectLockSection
+ProjectLockSection.body | @MainActor var body: some View { get }
+ProjectLockSection.init(discussion:group:) | @MainActor init(discussion: Discussion, group: ProjectGroup)
 RemoteChat | struct RemoteChat
 RemoteChat.Status | enum Status
 RemoteChat.Status.downloading | case downloading

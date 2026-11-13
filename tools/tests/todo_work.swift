@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 import Cocoa
 import AIAccounts
 import AILocalization
@@ -606,6 +607,60 @@ func testTodoMixedOrder() {
     catch { expect(error as? TodoError == .cycle && order() == [a.id, b.id, c.id], "the circle is refused and the order kept: \(order())") }
     expect(TodoStore(url: store.url).current.ordered(list).map(\.id) == order(), "the new order is saved")
     print("PASS: TODO mixed order (ready ones skip drafts, setReady, stop point, circles, move before)")
+}
+
+// The chat side for testTodoStartRace: `meanwhile` runs while the scheduler is between reading a TODO and starting it
+// (where todo_edit on the tool thread or the board may change it).
+private final class RaceChats: TodoChats {
+    let changed = PassthroughSubject<Void, Never>()
+    var answering: Set<UUID> = []
+    var answeringChanged: AnyPublisher<Void, Never> { changed.eraseToAnyPublisher() }
+    var maxAnswering = 3
+    var importing = false
+    var chats: [ProjectChatSummary] = []
+    var questions: [String] = []
+    var meanwhile: (() -> Void)?
+    let base: URL
+    init(base: URL) { self.base = base }
+    func crew(lock: EnterpriseLock?, allowed: [String]) -> (lead: Account, reviewer: Account?)? { (Account(id: "race-lead", provider: .claude, name: "Lead"), nil) }
+    func noCrew(_ allowed: [String], lock: EnterpriseLock?) -> String { "nobody" }
+    func addChat(_ project: ProjectBinding, title: String, lock: EnterpriseLock?) -> UUID {
+        let id = UUID()
+        chats.append(ProjectChatSummary(id: id, updatedAt: Date(), project: project, lock: lock, enterprise: false, openTurn: nil))
+        meanwhile?(); meanwhile = nil
+        return id
+    }
+    func setCrew(room: UUID, members: [String], lead: String) {}
+    func folder(_ room: UUID) -> URL { base.appendingPathComponent(room.uuidString) }
+    func sentPhotos(_ room: UUID) -> Set<UUID> { [] }
+    func start(room: UUID, question: String, photos: [TodoPhoto], review: Bool, extra: String) -> String? { questions.append(question); answering.insert(room); return nil }
+    func ended(_ room: UUID) -> TodoTurnEnd { TodoTurnEnd() }
+    func stop(_ room: UUID) { answering.remove(room) }
+}
+
+// A TODO changed while the scheduler starts it: never started with the old text, never started as a draft; the
+// chat made for it is kept for the next try.
+func testTodoStartRace() {
+    let p = ProjectBinding(root: "/tmp/todo-race", common: "", remote: "", remoteURL: "")
+    let store = TodoStore(url: todoStoreFile("race"))
+    let chats = RaceChats(base: URL(fileURLWithPath: AccountStore.home).appendingPathComponent("todo-race-chats"))
+    let scheduler = TodoScheduler(chats: chats, store: store)
+    scheduler.held = { _ in false }
+    let item = try! store.add(title: "old title", project: p, projectName: "P")
+    try! store.setReady(item.id, true)
+    chats.meanwhile = { _ = try! store.editForAI(item.id, title: "new title", detail: nil, askFirst: nil, organization: nil) }
+    scheduler.tick()
+    let room = store.current.item(item.id)?.room
+    expect(chats.questions.isEmpty && store.current.item(item.id)?.state == .ready && room != nil, "changed meanwhile: not started with the old text")
+    scheduler.tick()
+    expect(chats.questions.count == 1 && chats.questions[0].contains("new title") && !chats.questions[0].contains("old title")
+           && store.current.item(item.id)?.state == .running && store.current.item(item.id)?.room == room, "the next try sends the new text in the same chat")
+    let second = try! store.add(title: "second", project: ProjectBinding(root: "/tmp/todo-race-2", common: "", remote: "", remoteURL: ""), projectName: "Q")
+    try! store.setReady(second.id, true)
+    chats.meanwhile = { try! store.setReady(second.id, false) }
+    scheduler.tick()
+    expect(store.current.item(second.id)?.state == .draft && chats.questions.count == 1, "made a draft meanwhile: not started")
+    print("PASS: TODO start race (changed or made a draft while starting: not started with the old state)")
 }
 
 func testTodoEdit() {

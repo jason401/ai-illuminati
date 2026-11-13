@@ -1088,6 +1088,8 @@ public final class TodoScheduler: ObservableObject {
                 note = chats.noCrew([], lock: lock); break
             }
             if let reason = begin(item, list: list, project: project, crew: crew, lock: lock) {
+                // Changed meanwhile (todo_edit, the board): its change wakes the scheduler again, no waiting.
+                if reason == Self.changed { continue }
                 note = reason
                 // Not again at once (its chat may be answering the user): the change to ready would wake the scheduler.
                 retryAt[item.id] = (Date().addingTimeInterval(Self.retryDelay), reason)
@@ -1125,9 +1127,13 @@ public final class TodoScheduler: ObservableObject {
         return lock(for: item, list: list, project: project)
     }
 
-    // Starts one TODO in its own chat. Returns why it did not start (it stays ready).
+    // Starts one TODO in its own chat. Returns why it did not start (it stays ready). The message is made from the
+    // TODO as saved now, and it becomes running only if it is still exactly that and may still start, checked in the
+    // same save: todo_edit (another thread) or the board may change it, make it a draft or move it meanwhile.
+    static let changed = "changed"
     @discardableResult
     func begin(_ item: TodoItem, list: TodoList, project: ProjectBinding, crew: (lead: Account, reviewer: Account?), lock: EnterpriseLock? = nil) -> String? {
+        guard let item = store.current.item(item.id), item.state == .ready else { return Self.changed }
         var room = item.room
         // A new chat when there is none, or when its lock is not the TODO's (a chat made before the project was locked).
         if room == nil || chats.chats.first(where: { $0.id == room }).map({ $0.lock?.organization != lock?.organization }) ?? true {
@@ -1144,7 +1150,17 @@ public final class TodoScheduler: ObservableObject {
         }
         let question = Self.question(item, files: delivered.paths, documents: project.isDocuments)
         // Running before the turn starts: the AI's first tool call must find it.
-        do { try store.change(item.id) { $0.state = .running; $0.room = room; $0.lastError = nil; $0.report = nil; $0.workers = list.accounts.isEmpty ? nil : list.accounts } } catch {
+        do {
+            try store.update { data in
+                guard let i = data.items.firstIndex(where: { $0.id == item.id }), data.items[i] == item,
+                      data.eligible(held: { _ in false }).contains(where: { $0.id == item.id }) else { throw TodoError.notEditable }
+                data.items[i].state = .running; data.items[i].room = room; data.items[i].lastError = nil; data.items[i].report = nil
+                data.items[i].workers = list.accounts.isEmpty ? nil : list.accounts
+            }
+        } catch TodoError.notEditable {
+            try? store.change(item.id) { $0.room = room }   // the chat made for it is reused next time
+            return Self.changed
+        } catch {
             return error.localizedDescription
         }
         if let reason = chats.start(room: room, question: question, photos: delivered.photos, review: crew.reviewer != nil, extra: Self.instruction(item, documents: project.isDocuments)) {

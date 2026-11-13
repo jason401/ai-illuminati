@@ -357,3 +357,19 @@ G1, G4(경고 0), G5도 통과했다. 실제 `accounts.json` 해시는 그대로
   알려진 한계를 MODULES.md Guards 표 바로 아래에 적었다. 예외 파일은 지금 17줄이다.
 - App 정리: 이번 범위가 아니다. 다시 볼 신호는 `app/macos`가 S3 기준 7,054줄보다 10% 넘게 늘 때(7,759줄 초과, 곧 S3 경고)로
   MODULES.md "App code reviewed for later moves"에 적었다.
+
+## 후속: `testRuntimeThroughApp` 간헐 실패 (RC 133)
+T1과 T4에서 한 번씩 난 실패의 원인. 2026-11-13, HEAD `7759dbb`. 고친 곳은 `tools/tests/runtime_app.swift`뿐이고 앱 코드는 그대로다.
+- RC 133은 `expect`의 `fatalError`(SIGTRAP)다. 문서에 남은 실패 위치는 "프로세스 그룹 검사"(F2,
+  "project work's process group is stopped when the answer ends")다. 출력 원문은 남아 있지 않다.
+- 원인: 가짜 CLI의 `group` 모드는 자식을 띄운 뒤 곧바로 끝난다. 앱은 끝난 직후 그룹을 지운다(Answerer.swift:297).
+  자식이 아직 pid 파일을 쓰기 전이면 `gone("child")`이 "시작한 적 없음"으로 false를 돌려준다. 앱은 맞게 동작했는데 검사만 실패한 것이다.
+- 근거: (1) 단독 실행 20여 번 중 약 절반에서 첫 Claude 호출의 가짜 CLI가 3초 동안 한 줄도 실행하지 않았다. `sample`로 보니
+  `_dyld_start`에 멈춰 있었다. 셸에서 직접 띄우면 0.03초 걸렸고, 앱 프로세스에서 띄울 때만 그랬다. macOS 쪽 원인(보안 검사 등)으로
+  보이지만 로그를 읽을 수 없어 확인하지 못했다. (2) 자식 시작을 1초 늦추자 원래 테스트가 같은 메시지로 RC 133을 냈다.
+  (3) 같은 이유로 F3(시간 제한 1.5초)도 깨질 수 있었다. 가짜 CLI 시작을 2초 늦추자 "a timed-out tool and its programs are
+  ended"에서 RC 133이 났다. CPU 부하나 프로세스 생성 부하만으로는 16번 중 한 번도 재현되지 않았다.
+- 고침: `group` 모드는 자식의 pid 파일이 생길 때까지(최대 약 10초) 기다린 뒤 답한다. F3는 프로그램 셋이 다 뜨기 전에 시간이
+  끝났으면 아무것도 확인하지 못한 것이므로 최대 3번까지 다시 한다. 검사 기준(시간 제한 6초, 사라짐 확인)은 그대로다.
+- 확인: 위 두 지연을 넣은 사본에서 고친 테스트가 통과했다. 지연 없는 단독 실행도 통과했고, 전체 `run_mode2.sh`(`project_run test`)도
+  한 번에 통과했다. `check_modules.sh`도 통과했다.

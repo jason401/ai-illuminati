@@ -34,6 +34,9 @@ func testRuntimeThroughApp() {
       group) # project_process.py's own watchdog (this tool's child) goes first, so only the app's group stop is left.
              /usr/bin/pgrep -P $$ > "$D/watchdog"; for p in $(cat "$D/watchdog"); do kill -9 "$p"; done
              sh -c 'echo $$ > "$1/child"; exec sleep 20' sh "$D" </dev/null >/dev/null 2>&1 &
+             # A new program can take seconds to start on a busy Mac: answering before the child wrote its pid let
+             # the app stop it unseen, and the check failed with nothing wrong (RC 133 in the full test).
+             n=0; while [ ! -s "$D/child" ] && [ $n -lt 1000 ]; do sleep 0.01; n=$((n+1)); done
              echo 'left one' ;;
       fail) echo "boom from the tool" >&2; exit 3 ;;
       session) printf '{"type":"result","session_id":"%s","is_error":false,"result":"session answer"}\n' "$sid" ;;
@@ -101,12 +104,17 @@ func testRuntimeThroughApp() {
         expect(gone("stray"), "\(name): Stop ends a program the tool started in a group of its own (app)")
         leftovers()
 
-        // F3: the time limit the app asks for is kept; the tool and its programs are ended.
-        mode("sleep")
-        let started = Date()
-        if case .timedOut? = failure(chat.requestDebate(account, "Say hi.", 1.5, DebateCancellation(), workspace: folder)) {}
-        else { expect(false, "\(name): a slow tool times out (app)") }
-        expect(Date().timeIntervalSince(started) < 6, "\(name): the time limit is kept (app)")
+        // F3: the time limit the app asks for is kept; the tool and its programs are ended. A late start (seen: 3 s
+        // before the tool ran a line) can use up the limit before the programs exist, which checks nothing: again,
+        // at most 3 times.
+        for _ in 0..<3 {
+            mode("sleep")
+            let started = Date()
+            if case .timedOut? = failure(chat.requestDebate(account, "Say hi.", 1.5, DebateCancellation(), workspace: folder)) {}
+            else { expect(false, "\(name): a slow tool times out (app)") }
+            expect(Date().timeIntervalSince(started) < 6, "\(name): the time limit is kept (app)")
+            if !["pid", "child", "stray"].contains(where: { pid($0) == nil }) { break }
+        }
         expect(gone("pid") && gone("child") && gone("stray"), "\(name): a timed-out tool and its programs are ended (app)")
         leftovers()
 

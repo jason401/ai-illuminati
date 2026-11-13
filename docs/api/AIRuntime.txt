@@ -1,0 +1,151 @@
+AIUsage | struct AIUsage
+AIUsage.account | var account: Account?
+AIUsage.detail | var detail: String?
+AIUsage.extras | var extras: [String]
+AIUsage.fiveHour | var fiveHour: UsageWindow?
+AIUsage.leftNow | var leftNow: Double? { get }
+AIUsage.name | let name: String
+AIUsage.needsLogin | var needsLogin: Bool
+AIUsage.note | var note: String?
+AIUsage.weekly | var weekly: UsageWindow?
+AnswerProgress | enum AnswerProgress
+AnswerProgress.activity(_:) | case activity(String)
+AnswerProgress.text(_:) | case text(String)
+AnswerProgress.todos(_:) | case todos(Any?)
+Answerer | enum Answerer
+Answerer.Failure | enum Failure
+Answerer.Failure.failed(_:) | case failed(String)
+Answerer.Failure.missingTool | case missingTool
+Answerer.Failure.timedOut | case timedOut
+Answerer.ask(_:prompt:timeout:cancellation:images:web:session:run:progress:) | static func ask(_ account: Account, prompt: String, timeout: TimeInterval = 240, cancellation: DebateCancellation? = nil, images: [URL] = [], web: Bool = false, session: NativeSessionCall? = nil, run: RunConditions, progress: ((AnswerProgress) -> Void)? = nil) -> Result<String, Answerer.Failure>
+Answerer.toolForTests | static var toolForTests: String?
+ClaudeUsage | enum ClaudeUsage
+ClaudeUsage.forget(_:) | static func forget(_ account: Account)
+ClaudeUsage.read(_:) | static func read(_ account: Account) -> AIUsage
+CloudModels | enum CloudModels
+CloudModels.Choice | struct Choice
+CloudModels.Choice.id | let id: String
+CloudModels.Choice.title | let title: String
+CloudModels.claudeChoices | static let claudeChoices: [CloudModels.Choice]
+CloudModels.codexChoices(_:) | static func codexChoices(_ account: Account) -> [CloudModels.Choice]
+CloudModels.loadGemini(_:done:) | static func loadGemini(_ account: Account, done: @escaping ([CloudModels.Choice]) -> Void)
+CloudModels.model(_:defaults:) | static func model(_ account: Account, defaults: UserDefaults = .app) -> String?
+CloudModels.seenKey | static let seenKey: String
+CloudModels.seenTitle(_:picked:) | static func seenTitle(_ id: String, picked: String?) -> String
+CloudModels.set(_:for:defaults:) | static func set(_ name: String?, for account: Account, defaults: UserDefaults = .app)
+CloudModels.valid(_:) | static func valid(_ name: String) -> Bool
+CodexUsage | enum CodexUsage
+CodexUsage.binary | static var binary: String? { get }
+CodexUsage.forget(_:) | static func forget(_ account: Account)
+CodexUsage.read(_:) | static func read(_ account: Account) -> AIUsage
+DebateCancellation | final class DebateCancellation
+DebateCancellation.attach(_:) | func attach(_ process: Process)
+DebateCancellation.cancel() | func cancel()
+DebateCancellation.child() | func child() -> DebateCancellation
+DebateCancellation.detach(_:) | func detach(_ process: Process)
+DebateCancellation.end(_:) | static func end(_ process: Process)
+DebateCancellation.init() | init()
+DebateCancellation.isCancelled | var isCancelled: Bool { get }
+GeminiLinks | enum GeminiLinks
+GeminiLinks.toolNote | static let toolNote: String
+GeminiUsage | enum GeminiUsage
+GeminiUsage.read(_:) | static func read(_ account: Account) -> AIUsage
+LocalModel | enum LocalModel
+LocalModel.Entry | struct Entry
+LocalModel.Entry.init(from:) | init(from decoder: any Decoder) throws
+LocalModel.Entry.name | let name: String
+LocalModel.Entry.sizeGB | let sizeGB: Double
+LocalModel.Entry.summary | var summary: String { get }
+LocalModel.Entry.title | let title: String
+LocalModel.Entry.vision | var vision: Bool?
+LocalModel.Fit | enum Fit
+LocalModel.Fit.<(_:_:) | static func < (a: LocalModel.Fit, b: LocalModel.Fit) -> Bool
+LocalModel.Fit.good | case good
+LocalModel.Fit.init(rawValue:) | init?(rawValue: Int)
+LocalModel.Fit.tight | case tight
+LocalModel.Fit.title | var title: String { get }
+LocalModel.Fit.tooBig | case tooBig
+LocalModel.Installed | struct Installed
+LocalModel.Installed.bytes | let bytes: Int64
+LocalModel.Installed.capabilities | let capabilities: [String]?
+LocalModel.Installed.name | let name: String
+LocalModel.LibraryModel | struct LibraryModel
+LocalModel.LibraryModel.capabilities | let capabilities: [String]
+LocalModel.LibraryModel.name | let name: String
+LocalModel.LibraryModel.sizes | let sizes: [String]
+LocalModel.LibraryModel.summary | let summary: String
+LocalModel.Loaded | struct Loaded
+LocalModel.Loaded.bytes | var bytes: Int64
+LocalModel.Loaded.name | var name: String
+LocalModel.Loaded.title | var title: String
+LocalModel.Loaded.until | var until: Date?
+LocalModel.Variant | struct Variant
+LocalModel.Variant.id | let id: String
+LocalModel.Variant.init(id:model:title:) | init(id: String, model: String, title: String)
+LocalModel.Variant.model | let model: String
+LocalModel.Variant.title | let title: String
+LocalModel.account(for:) | static func account(for model: String) -> Account
+LocalModel.atLeast(_:_:) | static func atLeast(_ version: String, _ minimum: String) -> Bool
+LocalModel.binary | static var binary: String? { get }
+LocalModel.catalog | static var catalog: [LocalModel.Entry]
+LocalModel.delete(_:) | static func delete(_ model: String) -> Bool
+LocalModel.downloadGB(_:timeout:) | static func downloadGB(_ model: String, timeout: TimeInterval = 8) -> Double?
+LocalModel.enabled | static var enabled: Bool { get }
+LocalModel.ensureServer() | static func ensureServer() -> Bool
+LocalModel.estimatedGB(_:) | static func estimatedGB(_ tag: String) -> Double?
+LocalModel.fetchLibrary(timeout:) | static func fetchLibrary(timeout: TimeInterval = 10) -> [LocalModel.LibraryModel]
+LocalModel.fit(downloadGB:memoryGB:) | static func fit(downloadGB: Double, memoryGB: Double = memoryGB) -> LocalModel.Fit
+LocalModel.gate | static let gate: DispatchSemaphore
+LocalModel.hasModel(_:_:) | static func hasModel(_ names: [String], _ variant: LocalModel.Variant) -> Bool
+LocalModel.installed(timeout:) | static func installed(timeout: TimeInterval = 3) -> [LocalModel.Installed]?
+LocalModel.installedModels(timeout:) | static func installedModels(timeout: TimeInterval = 3) -> [String]?
+LocalModel.keepAlive | static var keepAlive: Int { get }
+LocalModel.keepAliveChoices | static let keepAliveChoices: [Int]
+LocalModel.keepAliveName(_:) | static func keepAliveName(_ minutes: Int) -> String
+LocalModel.legacy | static let legacy: [LocalModel.Variant]
+LocalModel.loaded(timeout:) | static func loaded(timeout: TimeInterval = 0.7) -> LocalModel.Loaded?
+LocalModel.loadedModels(timeout:) | static func loadedModels(timeout: TimeInterval = 0.7) -> [LocalModel.Loaded]
+LocalModel.matches(_:_:) | static func matches(_ listed: String, _ model: String) -> Bool
+LocalModel.memoryGB | static var memoryGB: Double { get }
+LocalModel.memoryNeed(downloadGB:) | static func memoryNeed(downloadGB: Double) -> Double
+LocalModel.normalized(_:) | static func normalized(_ name: String) -> String
+LocalModel.pull(_:cancellation:progress:) | static func pull(_ model: String, cancellation: DebateCancellation?, progress: @escaping (String, Double?) -> Void) -> String?
+LocalModel.refreshCatalog(timeout:) | static func refreshCatalog(timeout: TimeInterval = 8) -> Bool
+LocalModel.same(_:_:) | static func same(_ a: String, _ b: String) -> Bool
+LocalModel.server | static var server: URL
+LocalModel.sortOnly(_:) | static func sortOnly(_ model: String) -> Bool
+LocalModel.title(for:) | static func title(for model: String) -> String
+LocalModel.unload(except:) | static func unload(except keep: String? = nil)
+LocalModel.unloadWhenIdle(busy:reopened:) | static func unloadWhenIdle(busy: @escaping () -> Bool, reopened: @escaping () -> Bool)
+LocalModel.unsuitable(downloadGB:) | static func unsuitable(downloadGB: Double = 0) -> String?
+LocalModel.variant(_:) | static func variant(_ account: Account) -> LocalModel.Variant
+LocalModel.version(timeout:) | static func version(timeout: TimeInterval = 2) -> String?
+LocalUsage | enum LocalUsage
+LocalUsage.read(_:) | static func read(_ account: Account) -> AIUsage
+NativeSessionCall | final class NativeSessionCall
+NativeSessions | final class NativeSessions
+NativeSessions.ask(_:room:prompt:images:timeout:token:web:speaker:appendContext:fresh:invoke:note:) | func ask(_ account: Account, room: UUID, prompt: String, images: [URL], timeout: TimeInterval, token: DebateCancellation, web: Bool, speaker: String, appendContext: Bool = false, fresh: String? = nil, invoke: (String, [URL], NativeSessionCall?) -> Result<String, Answerer.Failure>, note: (String) -> Void) -> Result<String, Answerer.Failure>
+NativeSessions.directory(_:) | static func directory(_ room: UUID) -> URL
+NativeSessions.eligible(_:) | static func eligible(_ account: Account) -> Bool
+NativeSessions.init() | init()
+NativeSessions.pinnedAccount(_:room:) | func pinnedAccount(_ provider: Account.Provider, room: UUID) -> String?
+NativeSessions.purgeRoom(_:accounts:) | static func purgeRoom(_ room: UUID, accounts: [Account]) throws
+NativeSessions.reset(_:) | func reset(_ room: UUID) throws
+ReplyHeadline | enum ReplyHeadline
+ReplyHeadline.split(_:) | static func split(_ text: String) -> (headline: String?, text: String)
+RunConditions | struct RunConditions
+RunConditions.Folders | struct Folders
+RunConditions.Folders.init(directory:arguments:read:) | init(directory: URL, arguments: @escaping ([String], URL, Bool) throws -> [String], read: @escaping ([[String : Any]], URL, DebateCancellation?) throws -> (String, [URL]))
+RunConditions.beforeStart | var beforeStart: (() -> Void)?
+RunConditions.environment | var environment: ([String : String]) -> [String : String]
+RunConditions.folders | var folders: RunConditions.Folders?
+RunConditions.init() | init()
+RunConditions.prefix | var prefix: [String]
+RunConditions.processGroup | var processGroup: Bool
+RunConditions.wrapper | var wrapper: [String]?
+ToolHome | enum ToolHome
+ToolHome.agyInstalled | static var agyInstalled: Bool { get }
+ToolHome.path | static var path: String { get }
+UsageWindow | struct UsageWindow
+UsageWindow.left(now:) | func left(now: Date = Date()) -> Double
+UsageWindow.resetsAt | var resetsAt: Date?

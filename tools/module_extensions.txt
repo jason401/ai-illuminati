@@ -1,0 +1,20 @@
+# Allowed extensions of another module's type outside it (G4), with the reason. One line: file<TAB>type<TAB>reason.
+# Everything else that extends another module's type is a warning (G4 is a warning until it has shown no false hits).
+# These were in the code when the check came (step M, 2026-11-12); a new line here is a guard change.
+app/macos/DriveTools.swift	DriveLink	the app makes Integrations types tool providers (step I: the module has no tool provider)
+app/macos/ExternalMCPTools.swift	ExternalMCP	the app makes Integrations types tool providers (step I)
+app/macos/ToolHub.swift	FaceLink	the app makes Integrations types tool providers (step I)
+app/macos/RunConditionsApp.swift	RunConditions	the app's run policy: AIRuntime decides no permission (W0)
+app/macos/RunConditionsApp.swift	GeminiLinks	agy's web allow rule is App policy (Runtime review, ade4e43)
+app/macos/Login.swift	LocalModel	installing Ollama runs a Terminal script through Login (App); later move candidate
+app/macos/MenuCards.swift	UsageWindow	display math for the menu's usage ring only
+app/modules/AIChat/ChatApp.swift	RunConditions	forwards `.app` to ChatApp.run so the chat's calls read as before (C1b)
+app/modules/AIChat/ChatUI.swift	TodoItem	a TODO state's title and color in the chat's TODO cards (display)
+app/modules/AIChat/ChatWindow.swift	Account	each AI's name color in the chat window (display)
+app/modules/AIChat/Enterprise.swift	EnterpriseLock	internal reading of one field (isPersonal)
+app/modules/AIChat/Pictures.swift	SpacePictures	the chat's picture maker writes the prompt for a Space's pictures
+app/modules/AIChat/Route.swift	LocalModel	routing asks the local model to sort a message (Route is the chat's)
+app/modules/AIChat/Solo.swift	SpaceStore	syncing the Spaces folder shrinks pictures with the chat's Pictures
+app/modules/AIChat/TodoChatsApp.swift	TodoScheduler	Discussion plugs into the scheduler as TodoChats (P0 seam)
+app/modules/AIProjects/ProjectWork.swift	ProjectBinding	one computed key (groupKey) of a Workspace value
+app/modules/AIWorkspace/Workspace.swift	GeminiLinks	the folder mode's note for agy, next to the folder rules it describes

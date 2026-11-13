@@ -1,0 +1,5 @@
+# Boundary check (S2): one line per check, `code<TAB>name`. The code, compiled outside the module with only its
+# public names, must fail with "'name' is inaccessible due to 'internal' protection level" and no other error.
+# `code<TAB>name<TAB>hidden`: the name is an internal type, so the error must be "cannot find 'name' in scope".
+_ = SpaceStore.setting	setting
+_ = SpaceAssets.served	served

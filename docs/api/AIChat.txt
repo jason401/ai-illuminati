@@ -1,0 +1,534 @@
+ApprovalAlertSettings | enum ApprovalAlertSettings
+ApprovalAlertSettings.notify | static var notify: Bool { get }
+ApprovalAlertSettings.notifyKey | static let notifyKey: String
+ApprovalAlertSettings.repeatKey | static let repeatKey: String
+ApprovalAlertSettings.repeats | static var repeats: Bool { get }
+ApprovalAlertSettings.sound | static var sound: Bool { get }
+ApprovalAlertSettings.soundKey | static let soundKey: String
+ApprovalListView | @MainActor struct ApprovalListView
+ApprovalListView.body | @MainActor var body: some View { get }
+ApprovalListView.init(discussion:openChat:) | @MainActor init(discussion: Discussion, openChat: @escaping (UUID) -> Void)
+AutoPick | enum AutoPick
+AutoPick.fiveHour(_:) | static func fiveHour(_ usage: AIUsage?) -> Double
+AutoPick.weekly(_:) | static func weekly(_ usage: AIUsage?) -> Double
+BoardTab | enum BoardTab
+BoardTab.info | case info
+BoardTab.init(rawValue:) | init?(rawValue: String)
+BoardTab.todo | case todo
+ChatApp | enum ChatApp
+ChatApp.Face | struct Face
+ChatApp.Face.active | var active: () -> Bool
+ChatApp.Face.extract | var extract: (String) -> (text: String, mood: String?)
+ChatApp.Face.init() | init()
+ChatApp.Face.moods | var moods: () -> [String]
+ChatApp.Face.rule | var rule: ([String]) -> String
+ChatApp.Face.show | var show: (String) -> Void
+ChatApp.Screens | struct Screens
+ChatApp.Screens.board | var board: (Discussion) -> AnyView
+ChatApp.Screens.boardRow | var boardRow: (Discussion) -> AnyView
+ChatApp.Screens.cards | var cards: (UUID, Discussion) -> AnyView
+ChatApp.Screens.drive | var drive: () -> AnyView
+ChatApp.Screens.icon | var icon: (Bool) -> NSImage
+ChatApp.Screens.init() | init()
+ChatApp.Screens.projectInfo | var projectInfo: (Discussion, String) -> AnyView
+ChatApp.Screens.renameProject | var renameProject: (String, String) -> Void
+ChatApp.driveRule | static var driveRule: () -> String?
+ChatApp.face | static var face: ChatApp.Face
+ChatApp.run | static var run: (Account, WorkspaceInvocation?) -> RunConditions
+ChatApp.screens | static var screens: ChatApp.Screens
+ChatConfiguration | struct ChatConfiguration
+ChatConfiguration.accountIDs | var accountIDs: [String]?
+ChatConfiguration.init(from:) | init(from decoder: any Decoder) throws
+ChatConfiguration.init(mode:order:participants:leader:maxTurns:turnsPerAI:speechLength:keepSessions:modeVersion:accountIDs:leaderAccountID:voteSkippedIDs:soloAccountID:lastSoloAccountID:memberIDs:leadID:school:peerReview:peerAccountID:lastReviewSHA:lastReviewAt:nextReviewAt:pendingReview:) | init(mode: Int = 1, order: [Account.Provider] = [.claude, .codex, .gemini], participants: [Account.Provider] = [.claude, .codex], leader: Account.Provider = .claude, maxTurns: Int? = nil, turnsPerAI: Int? = nil, speechLength: Int? = nil, keepSessions: Bool? = nil, modeVersion: Int? = nil, accountIDs: [String]? = nil, leaderAccountID: String? = nil, voteSkippedIDs: [String]? = nil, soloAccountID: String? = nil, lastSoloAccountID: String? = nil, memberIDs: [String]? = nil, leadID: String? = nil, school: Bool? = nil, peerReview: Bool? = nil, peerAccountID: String? = nil, lastReviewSHA: String? = nil, lastReviewAt: Date? = nil, nextReviewAt: Date? = nil, pendingReview: String? = nil)
+ChatConfiguration.keepSessions | var keepSessions: Bool?
+ChatConfiguration.lastReviewAt | var lastReviewAt: Date?
+ChatConfiguration.lastReviewSHA | var lastReviewSHA: String?
+ChatConfiguration.lastSoloAccountID | var lastSoloAccountID: String?
+ChatConfiguration.leadID | var leadID: String?
+ChatConfiguration.leader | var leader: Account.Provider
+ChatConfiguration.leaderAccountID | var leaderAccountID: String?
+ChatConfiguration.maxTurns | var maxTurns: Int?
+ChatConfiguration.memberIDs | var memberIDs: [String]?
+ChatConfiguration.mode | var mode: Int
+ChatConfiguration.modeVersion | var modeVersion: Int?
+ChatConfiguration.nextReviewAt | var nextReviewAt: Date?
+ChatConfiguration.order | var order: [Account.Provider]
+ChatConfiguration.participants | var participants: [Account.Provider]
+ChatConfiguration.peerAccountID | var peerAccountID: String?
+ChatConfiguration.peerReview | var peerReview: Bool?
+ChatConfiguration.pendingReview | var pendingReview: String?
+ChatConfiguration.school | var school: Bool?
+ChatConfiguration.sessionsOn | var sessionsOn: Bool { get }
+ChatConfiguration.soloAccountID | var soloAccountID: String?
+ChatConfiguration.speechLength | var speechLength: Int?
+ChatConfiguration.turnsPerAI | var turnsPerAI: Int?
+ChatConfiguration.voteSkippedIDs | var voteSkippedIDs: [String]?
+ChatImage | struct ChatImage
+ChatImage.conversationID | var conversationID: UUID
+ChatImage.id | var id: UUID
+ChatImage.init(from:) | init(from decoder: any Decoder) throws
+ChatImage.init(id:conversationID:name:) | init(id: UUID = UUID(), conversationID: UUID, name: String)
+ChatImage.name | var name: String
+ChatImage.url | var url: URL { get }
+ChatLink | final class ChatLink
+ChatLink.active | var active: Bool { get }
+ChatLink.call(_:_:context:) | func call(_ name: String, _ arguments: [String : Any], context: ToolContext) -> [String : Any]
+ChatLink.conversations | var conversations: () -> [Conversation]
+ChatLink.day(_:) | static func day(_ date: Date) -> String
+ChatLink.shared | static let shared: ChatLink
+ChatLink.tools() | func tools() -> [[String : Any]]
+ChatLink.tools(context:) | func tools(context: ToolContext) -> [[String : Any]]
+ChatRoute | enum ChatRoute
+ChatRoute.init(rawValue:) | init?(rawValue: String)
+ChatRoute.opinion | case opinion
+ChatRoute.work | case work
+ChatSettings | protocol ChatSettings : ObservableObject
+ChatSettings.accounts | var accounts: [Account] { get }
+ChatSettings.activeSharedFolders | var activeSharedFolders: [String] { get }
+ChatSettings.addSharedFolder() | func addSharedFolder()
+ChatSettings.autoTeamPicks | var autoTeamPicks: [String : Bool] { get }
+ChatSettings.chatRules | var chatRules: String { get }
+ChatSettings.collaboration | var collaboration: CollabMode { get }
+ChatSettings.hasLocal | var hasLocal: Bool { get }
+ChatSettings.latestUsage | var latestUsage: [String : AIUsage] { get }
+ChatSettings.localEnabled | var localEnabled: Bool { get }
+ChatSettings.onAccountsChange | var onAccountsChange: (() -> Void)? { get }
+ChatSettings.pausedSharedFolders | var pausedSharedFolders: Set<String> { get set }
+ChatSettings.pictureMakers | var pictureMakers: [Account] { get }
+ChatSettings.sharedFolders | var sharedFolders: [String] { get set }
+ChatSettings.writableSharedFolders | var writableSharedFolders: Set<String> { get set }
+ChatStorage | enum ChatStorage
+ChatStorage.Kind | enum Kind
+ChatStorage.Kind.backups | case backups
+ChatStorage.Kind.chat | case chat
+ChatStorage.Kind.documents | case documents
+ChatStorage.Kind.init(rawValue:) | init?(rawValue: String)
+ChatStorage.Kind.pictures | case pictures
+ChatStorage.Kind.sessions | case sessions
+ChatStorage.Kind.title | var title: String { get }
+ChatStorage.Kind.work | case work
+ChatStorage.Report | struct Report
+ChatStorage.Report.date | var date: Date
+ChatStorage.Report.orphans | var orphans: [(url: URL, size: ChatStorage.Size)]
+ChatStorage.Report.rooms | var rooms: [ChatStorage.Room]
+ChatStorage.Report.total | var total: ChatStorage.Size
+ChatStorage.Room | struct Room
+ChatStorage.Room.backups | var backups: Int
+ChatStorage.Room.id | var id: UUID
+ChatStorage.Room.meetings | var meetings: Int
+ChatStorage.Room.parts | var parts: [ChatStorage.Kind : ChatStorage.Size]
+ChatStorage.Room.title | var title: String
+ChatStorage.Room.total | var total: ChatStorage.Size { get }
+ChatStorage.Size | typealias Size = DiskUsage.Size
+ChatStorage.format(_:) | static func format(_ bytes: Int64) -> String
+ChatStorage.items(_:) | static func items(_ room: UUID) -> [(ChatStorage.Kind, URL)]
+ChatStorage.report(_:only:) | static func report(_ chats: [(id: UUID, title: String, meetingOf: UUID?)], only: Set<UUID>? = nil) -> ChatStorage.Report
+ChatStore | enum ChatStore
+ChatStore.Links | struct Links
+ChatStore.Links.deleted | var deleted: (UUID) -> Void
+ChatStore.Links.documents | var documents: (UUID) -> URL?
+ChatStore.Links.finished | var finished: (Conversation?) -> Void
+ChatStore.Links.init(purge:documents:saved:deleted:finished:locked:remote:) | init(purge: [(UUID) throws -> Void] = [], documents: @escaping (UUID) -> URL? = { _ in nil }, saved: @escaping (Conversation) -> Void = { _ in }, deleted: @escaping (UUID) -> Void = { _ in }, finished: @escaping (Conversation?) -> Void = { _ in }, locked: @escaping (Conversation) -> Void = { _ in }, remote: @escaping (RemoteChat) -> SyncSnapshot? = { _ in nil })
+ChatStore.Links.locked | var locked: (Conversation) -> Void
+ChatStore.Links.purge | var purge: [(UUID) throws -> Void]
+ChatStore.Links.remote | var remote: (RemoteChat) -> SyncSnapshot?
+ChatStore.Links.saved | var saved: (Conversation) -> Void
+ChatStore.delete(_:) | static func delete(_ conversation: Conversation) throws
+ChatStore.dir | static let dir: String
+ChatStore.links | static var links: ChatStore.Links
+ChatStore.loadAll() | static func loadAll() -> [Conversation]
+ChatStore.save(_:) | static func save(_ conversation: Conversation)
+ChatTime | enum ChatTime
+ChatTime.day(_:now:language:) | static func day(_ date: Date, now: Date = Date(), language: AppLanguage = .current) -> String
+ChatTime.stamp(_:now:language:) | static func stamp(_ date: Date, now: Date = Date(), language: AppLanguage = .current) -> String
+ChatTime.when(_:last:updatedAt:) | static func when(_ turn: ChatTurn, last: Bool, updatedAt: Date) -> Date?
+ChatTurn | struct ChatTurn
+ChatTurn.Entry | struct Entry
+ChatTurn.Entry.accountID | var accountID: String?
+ChatTurn.Entry.failed | var failed: Bool
+ChatTurn.Entry.focus | var focus: String?
+ChatTurn.Entry.headline | var headline: String?
+ChatTurn.Entry.id | var id: UUID
+ChatTurn.Entry.images | var images: [ChatImage]?
+ChatTurn.Entry.init(from:) | init(from decoder: any Decoder) throws
+ChatTurn.Entry.init(id:round:speaker:text:failed:focus:headline:images:accountID:meeting:) | init(id: UUID = UUID(), round: Int, speaker: String, text: String, failed: Bool, focus: String? = nil, headline: String? = nil, images: [ChatImage]? = nil, accountID: String? = nil, meeting: UUID? = nil)
+ChatTurn.Entry.meeting | var meeting: UUID?
+ChatTurn.Entry.reply(round:speaker:text:) | static func reply(round: Int, speaker: String, text: String) -> ChatTurn.Entry
+ChatTurn.Entry.round | var round: Int
+ChatTurn.Entry.shortLine | var shortLine: String { get }
+ChatTurn.Entry.speaker | var speaker: String
+ChatTurn.Entry.text | var text: String
+ChatTurn.activity | var activity: String?
+ChatTurn.answerNames | var answerNames: [String]?
+ChatTurn.answerOrder | var answerOrder: [String]?
+ChatTurn.answeredAt | var answeredAt: Date?
+ChatTurn.artifact | var artifact: String?
+ChatTurn.askedAt | var askedAt: Date?
+ChatTurn.backupPath | var backupPath: String?
+ChatTurn.debateFocus | var debateFocus: String?
+ChatTurn.endReason | var endReason: String?
+ChatTurn.entries | var entries: [ChatTurn.Entry]
+ChatTurn.error | var error: String?
+ChatTurn.final | var final: String?
+ChatTurn.finalAccountID | var finalAccountID: String?
+ChatTurn.finalBy | var finalBy: String?
+ChatTurn.finalImages | var finalImages: [ChatImage]?
+ChatTurn.id | var id: UUID
+ChatTurn.images | var images: [ChatImage]?
+ChatTurn.init(from:) | init(from decoder: any Decoder) throws
+ChatTurn.init(id:question:images:status:entries:final:finalImages:finalBy:error:mode:orderNote:endReason:modeVersion:tasks:artifact:projectCommitted:projectPushed:backupPath:workspaceChanges:projectLog:undone:sessionTranscript:debateFocus:maxTurns:turnsPerAI:mentions:moreAnswers:partial:partialBy:answerOrder:answerNames:partials:finalAccountID:activity:voteOptions:votes:askedAt:answeredAt:peerNotes:peerFolded:route:routeNote:routeOne:meetingRoom:plan:planNote:lastActivityAt:waitingApproval:spaceDraft:spaceEdits:) | init(id: UUID = UUID(), question: String, images: [ChatImage]? = nil, status: String = "", entries: [ChatTurn.Entry] = [], final: String? = nil, finalImages: [ChatImage]? = nil, finalBy: String? = nil, error: String? = nil, mode: Int? = nil, orderNote: String? = nil, endReason: String? = nil, modeVersion: Int? = nil, tasks: [CollaborationTask]? = nil, artifact: String? = nil, projectCommitted: Bool? = nil, projectPushed: Bool? = nil, backupPath: String? = nil, workspaceChanges: [WorkspaceChange]? = nil, projectLog: [String]? = nil, undone: Bool? = nil, sessionTranscript: String? = nil, debateFocus: String? = nil, maxTurns: Int? = nil, turnsPerAI: Int? = nil, mentions: [String]? = nil, moreAnswers: [ChatTurn.Entry]? = nil, partial: String? = nil, partialBy: String? = nil, answerOrder: [String]? = nil, answerNames: [String]? = nil, partials: [String : String]? = nil, finalAccountID: String? = nil, activity: String? = nil, voteOptions: [String]? = nil, votes: [VoteBallot]? = nil, askedAt: Date? = nil, answeredAt: Date? = nil, peerNotes: [ChatTurn.Entry]? = nil, peerFolded: Bool? = nil, route: ChatRoute? = nil, routeNote: String? = nil, routeOne: Bool? = nil, meetingRoom: UUID? = nil, plan: [WorkStep]? = nil, planNote: String? = nil, lastActivityAt: Date? = nil, waitingApproval: Bool? = nil, spaceDraft: SpaceDraftNote? = nil, spaceEdits: [SpaceSyncNote]? = nil)
+ChatTurn.lastActivityAt | var lastActivityAt: Date?
+ChatTurn.maxTurns | var maxTurns: Int?
+ChatTurn.meetingRoom | var meetingRoom: UUID?
+ChatTurn.mentions | var mentions: [String]?
+ChatTurn.mode | var mode: Int?
+ChatTurn.modeVersion | var modeVersion: Int?
+ChatTurn.moreAnswers | var moreAnswers: [ChatTurn.Entry]?
+ChatTurn.orderNote | var orderNote: String?
+ChatTurn.partial | var partial: String?
+ChatTurn.partialBy | var partialBy: String?
+ChatTurn.partials | var partials: [String : String]?
+ChatTurn.peerFolded | var peerFolded: Bool?
+ChatTurn.peerNotes | var peerNotes: [ChatTurn.Entry]?
+ChatTurn.plan | var plan: [WorkStep]?
+ChatTurn.planNote | var planNote: String?
+ChatTurn.projectCommitted | var projectCommitted: Bool?
+ChatTurn.projectLog | var projectLog: [String]?
+ChatTurn.projectPushed | var projectPushed: Bool?
+ChatTurn.question | var question: String
+ChatTurn.route | var route: ChatRoute?
+ChatTurn.routeNote | var routeNote: String?
+ChatTurn.routeOne | var routeOne: Bool?
+ChatTurn.sessionTranscript | var sessionTranscript: String?
+ChatTurn.spaceDraft | var spaceDraft: SpaceDraftNote?
+ChatTurn.spaceEdits | var spaceEdits: [SpaceSyncNote]?
+ChatTurn.status | var status: String
+ChatTurn.tasks | var tasks: [CollaborationTask]?
+ChatTurn.turnsPerAI | var turnsPerAI: Int?
+ChatTurn.undone | var undone: Bool?
+ChatTurn.voteOptions | var voteOptions: [String]?
+ChatTurn.votes | var votes: [VoteBallot]?
+ChatTurn.waitingApproval | var waitingApproval: Bool?
+ChatTurn.workspaceChanges | var workspaceChanges: [WorkspaceChange]?
+ChatWindow | final class ChatWindow
+ChatWindow.init() | init()
+ChatWindow.show(discussion:) | func show(discussion: Discussion)
+CollabEvent | struct CollabEvent
+CollabEvent.Kind | enum Kind
+CollabEvent.Kind.ask | case ask
+CollabEvent.Kind.init(rawValue:) | init?(rawValue: String)
+CollabEvent.Kind.meeting | case meeting
+CollabEvent.Kind.outcome | case outcome
+CollabEvent.Kind.request | case request
+CollabEvent.Kind.review | case review
+CollabEvent.Kind.reviewed | case reviewed
+CollabEvent.init(from:) | init(from decoder: any Decoder) throws
+CollabLog | enum CollabLog
+CollabLog.Summary | struct Summary
+CollabLog.events(since:) | static func events(since: Date = .distantPast) -> [CollabEvent]
+CollabLog.line(_:) | static func line(_ s: CollabLog.Summary) -> String
+CollabLog.summary(_:) | static func summary(_ events: [CollabEvent]) -> CollabLog.Summary
+CollabMode | enum CollabMode
+CollabMode.auto | case auto
+CollabMode.init(rawValue:) | init?(rawValue: String)
+CollabMode.notify | case notify
+CollabMode.off | case off
+CollabMode.summary | var summary: String { get }
+CollabMode.title | var title: String { get }
+CollaborationTask | struct CollaborationTask
+CollaborationTask.accountID | var accountID: String
+CollaborationTask.dependsOn | var dependsOn: [String]?
+CollaborationTask.expectedFiles | var expectedFiles: [String]?
+CollaborationTask.id | var id: UUID
+CollaborationTask.init(from:) | init(from decoder: any Decoder) throws
+CollaborationTask.init(id:title:accountID:state:output:planID:dependsOn:expectedFiles:outputDigest:) | init(id: UUID = UUID(), title: String, accountID: String, state: String = "queued", output: String? = nil, planID: String? = nil, dependsOn: [String]? = nil, expectedFiles: [String]? = nil, outputDigest: String? = nil)
+CollaborationTask.output | var output: String?
+CollaborationTask.outputDigest | var outputDigest: String?
+CollaborationTask.planID | var planID: String?
+CollaborationTask.state | var state: String
+CollaborationTask.title | var title: String
+ConveneLink | final class ConveneLink
+ConveneLink.active | var active: Bool { get }
+ConveneLink.call(_:_:context:) | func call(_ name: String, _ arguments: [String : Any], context: ToolContext) -> [String : Any]
+ConveneLink.shared | static let shared: ConveneLink
+ConveneLink.tools() | func tools() -> [[String : Any]]
+ConveneLink.tools(context:) | func tools(context: ToolContext) -> [[String : Any]]
+Conversation | struct Conversation
+Conversation.configuration | var configuration: ChatConfiguration?
+Conversation.createdAt | var createdAt: Date
+Conversation.documents | var documents: [RoomDocument]?
+Conversation.enterpriseLock | var enterpriseLock: EnterpriseLock?
+Conversation.hasContent | var hasContent: Bool { get }
+Conversation.id | var id: UUID
+Conversation.init(from:) | init(from decoder: any Decoder) throws
+Conversation.init(id:title:createdAt:updatedAt:turns:summary:configuration:documents:workspace:pinned:origin:shareToDevices:enterpriseLock:meetingOf:) | init(id: UUID = UUID(), title: String = L("새 대화", "New chat"), createdAt: Date = Date(), updatedAt: Date = Date(), turns: [ChatTurn] = [], summary: String = "", configuration: ChatConfiguration? = nil, documents: [RoomDocument]? = nil, workspace: WorkspaceBinding? = nil, pinned: Bool? = nil, origin: SyncOrigin? = nil, shareToDevices: Bool? = nil, enterpriseLock: EnterpriseLock? = nil, meetingOf: MeetingLink? = nil)
+Conversation.isEnterprise | var isEnterprise: Bool { get }
+Conversation.meetingOf | var meetingOf: MeetingLink?
+Conversation.origin | var origin: SyncOrigin?
+Conversation.pinned | var pinned: Bool?
+Conversation.projectSummary | var projectSummary: ProjectChatSummary { get }
+Conversation.shareToDevices | var shareToDevices: Bool?
+Conversation.summary | var summary: String
+Conversation.title | var title: String
+Conversation.turns | var turns: [ChatTurn]
+Conversation.updatedAt | var updatedAt: Date
+Conversation.workspace | var workspace: WorkspaceBinding?
+DeviceSync | final class DeviceSync
+DeviceSync.ago(_:now:) | static func ago(_ date: Date, now: Date = Date()) -> String
+DeviceSync.chatLocked(_:) | func chatLocked(_ conversation: Conversation)
+DeviceSync.devices | @Published var devices: [RemoteDevice] { get set }
+DeviceSync.folder | var folder: URL { get }
+DeviceSync.folderAvailable | var folderAvailable: Bool { get }
+DeviceSync.iCloudDrive | static var iCloudDrive: URL { get }
+DeviceSync.lastChecked | @Published var lastChecked: Date? { get set }
+DeviceSync.load(_:) | static func load(_ chat: RemoteChat) -> SyncSnapshot?
+DeviceSync.noteDeleted(_:) | func noteDeleted(_ id: UUID)
+DeviceSync.noteFinished(_:) | func noteFinished(_ conversation: Conversation?)
+DeviceSync.noteSaved(_:) | func noteSaved(_ conversation: Conversation)
+DeviceSync.problem | @Published var problem: String? { get set }
+DeviceSync.reconcile() | func reconcile()
+DeviceSync.removeMine() | func removeMine()
+DeviceSync.scan() | func scan()
+DeviceSync.settings | @Published var settings: DeviceSyncSettings { get set }
+DeviceSync.shared | static let shared: DeviceSync
+DeviceSync.start(discussion:) | func start(discussion: Discussion)
+DeviceSyncSettings | struct DeviceSyncSettings
+DeviceSyncSettings.deviceName | var deviceName: String?
+DeviceSyncSettings.enabled | var enabled: Bool
+DeviceSyncSettings.folder | var folder: String?
+DeviceSyncSettings.includeSchool | var includeSchool: Bool
+DeviceSyncSettings.init(from:) | init(from decoder: any Decoder) throws
+DeviceSyncSettings.shareAll | var shareAll: Bool
+Discussion | final class Discussion
+Discussion.addChat(_:title:lock:) | func addChat(_ project: ProjectBinding, title: String, lock: EnterpriseLock?) -> UUID
+Discussion.answering | var answering: Set<UUID> { get }
+Discussion.answeringChanged | var answeringChanged: AnyPublisher<Void, Never> { get }
+Discussion.anyRunning | var anyRunning: Bool { get }
+Discussion.approvalChatName(_:) | func approvalChatName(_ room: UUID) -> String
+Discussion.autoPicked(_:picks:) | static func autoPicked(_ account: Account, picks: [String : Bool]) -> Bool
+Discussion.boardProject | @Published var boardProject: String? { get set }
+Discussion.cancelAll() | func cancelAll()
+Discussion.chats | var chats: [ProjectChatSummary] { get }
+Discussion.conversation(_:) | func conversation(_ room: UUID) -> Conversation
+Discussion.conversations | @Published var conversations: [Conversation] { get set }
+Discussion.crew(lock:allowed:) | func crew(lock: EnterpriseLock?, allowed: [String]) -> (lead: Account, reviewer: Account?)?
+Discussion.current | var current: Conversation { get }
+Discussion.currentID | @Published var currentID: UUID { get set }
+Discussion.discardPendingImages() | func discardPendingImages()
+Discussion.disconnectProjectFolder(_:name:) | func disconnectProjectFolder(_ key: String, name: String)
+Discussion.ended(_:) | func ended(_ room: UUID) -> TodoTurnEnd
+Discussion.fillSpaceLocks() | func fillSpaceLocks()
+Discussion.folder(_:) | func folder(_ room: UUID) -> URL
+Discussion.hover(_:_:) | func hover(_ key: String, _ inside: Bool)
+Discussion.hoverKey | @Published var hoverKey: String? { get set }
+Discussion.importing | var importing: Bool { get }
+Discussion.importingMaterials | @Published var importingMaterials: Bool { get set }
+Discussion.init(model:) | init(model: any ChatSettings)
+Discussion.label(_:) | func label(_ account: Account) -> String
+Discussion.listedConversations | var listedConversations: [Conversation] { get }
+Discussion.maxAnswering | var maxAnswering: Int { get }
+Discussion.meets(_:) | static func meets(_ account: Account) -> Bool
+Discussion.model | let model: any ChatSettings
+Discussion.noCrew(_:lock:) | func noCrew(_ allowed: [String], lock: EnterpriseLock?) -> String
+Discussion.open(_:) | func open(_ id: UUID)
+Discussion.openBoard(project:tab:) | func openBoard(project: String?, tab: BoardTab? = nil)
+Discussion.runningRooms | @Published var runningRooms: Set<UUID> { get set }
+Discussion.sentPhotos(_:) | func sentPhotos(_ room: UUID) -> Set<UUID>
+Discussion.setCrew(room:members:lead:) | func setCrew(room: UUID, members: [String], lead: String)
+Discussion.showBoardTab(_:) | func showBoardTab(_ tab: BoardTab)
+Discussion.start(room:question:photos:review:extra:) | func start(room: UUID, question: String, photos: [TodoPhoto], review: Bool, extra: String) -> String?
+Discussion.stop(_:) | func stop(_ room: UUID)
+Discussion.stoppingRooms | @Published var stoppingRooms: Set<UUID> { get set }
+Discussion.viewingBoard | @Published var viewingBoard: Bool { get set }
+Discussion.viewingRemote | @Published var viewingRemote: RemoteViewing? { get set }
+Enterprise | enum Enterprise
+Enterprise.permits(_:lock:) | static func permits(_ account: Account, lock: EnterpriseLock?) -> Bool
+ImageStore | enum ImageStore
+ImageStore.Failure | enum Failure
+ImageStore.Failure.invalid | case invalid
+ImageStore.importImage(_:name:conversationID:id:maxEdge:) | static func importImage(_ data: Data, name: String, conversationID: UUID, id: UUID = UUID(), maxEdge: Int = 1600) throws -> ChatImage
+ImageStore.remove(_:) | static func remove(_ item: ChatImage) throws
+MaterialReader | enum MaterialReader
+MaterialReader.read(_:room:) | static func read(_ source: URL, room: UUID) throws -> RoomDocument
+MaterialUnit | struct MaterialUnit
+MaterialUnit.id | var id: String
+MaterialUnit.images | var images: [String]
+MaterialUnit.init(from:) | init(from decoder: any Decoder) throws
+MaterialUnit.init(id:locator:text:images:) | init(id: String, locator: String, text: String, images: [String] = [])
+MaterialUnit.locator | var locator: String
+MaterialUnit.text | var text: String
+MeetingLink | struct MeetingLink
+MeetingLink.init(from:) | init(from decoder: any Decoder) throws
+MeetingLink.init(room:turn:) | init(room: UUID, turn: UUID)
+MeetingLink.room | var room: UUID
+MeetingLink.turn | var turn: UUID
+MemoryData | struct MemoryData
+MemoryData.autoSave | var autoSave: Bool
+MemoryData.enabled | var enabled: Bool
+MemoryData.init(from:) | init(from decoder: any Decoder) throws
+MemoryData.items | var items: [MemoryItem]
+MemoryData.profile | var profile: String
+MemoryItem | struct MemoryItem
+MemoryItem.by | var by: String?
+MemoryItem.createdAt | var createdAt: Date
+MemoryItem.id | var id: UUID
+MemoryItem.init(from:) | init(from decoder: any Decoder) throws
+MemoryItem.roomTitle | var roomTitle: String?
+MemoryItem.text | var text: String
+MemoryLink | final class MemoryLink
+MemoryLink.active | var active: Bool { get }
+MemoryLink.call(_:_:context:) | func call(_ name: String, _ arguments: [String : Any], context: ToolContext) -> [String : Any]
+MemoryLink.newestTurn(_:) | func newestTurn(_ room: UUID) -> UUID?
+MemoryLink.shared | static let shared: MemoryLink
+MemoryLink.tools() | func tools() -> [[String : Any]]
+MemoryLink.tools(context:) | func tools(context: ToolContext) -> [[String : Any]]
+MemoryStore | final class MemoryStore
+MemoryStore.data | @Published var data: MemoryData { get set }
+MemoryStore.profileLimit | static let profileLimit: Int
+MemoryStore.reload() | func reload()
+MemoryStore.remove(_:) | func remove(_ id: UUID)
+MemoryStore.removeAll() | func removeAll()
+MemoryStore.setItem(_:text:) | func setItem(_ id: UUID, text: String)
+MemoryStore.setProfile(_:) | func setProfile(_ text: String)
+MemoryStore.shared | static let shared: MemoryStore
+MemoryStore.update(_:) | @discardableResult func update(_ edit: (inout MemoryData) -> Void) -> Bool
+PeerLink | final class PeerLink
+PeerLink.active | var active: Bool { get }
+PeerLink.call(_:_:context:) | func call(_ name: String, _ arguments: [String : Any], context: ToolContext) -> [String : Any]
+PeerLink.shared | static let shared: PeerLink
+PeerLink.tools() | func tools() -> [[String : Any]]
+PeerLink.tools(context:) | func tools(context: ToolContext) -> [[String : Any]]
+PictureDrop | enum PictureDrop
+PictureDrop.hasPromises(_:) | static func hasPromises(_ pasteboard: NSPasteboard = NSPasteboard(name: .drag)) -> Bool
+PictureDrop.receive(_:pasteboard:done:) | static func receive(_ providers: [NSItemProvider], pasteboard: NSPasteboard = NSPasteboard(name: .drag), done: @escaping ([URL], URL?) -> Void)
+PlainHitButtonStyle | @MainActor struct PlainHitButtonStyle
+PlainHitButtonStyle.init() | @MainActor init()
+PlainHitButtonStyle.makeBody(configuration:) | @MainActor func makeBody(configuration: PlainHitButtonStyle.Configuration) -> some View
+ProjectGroup | struct ProjectGroup
+ProjectGroup.==(_:_:) | static func == (a: ProjectGroup, b: ProjectGroup) -> Bool
+ProjectGroup.bindings | var bindings: [ProjectBinding]
+ProjectGroup.chats | var chats: [Conversation]
+ProjectGroup.id | let id: String
+ProjectGroup.lists | var lists: [UUID]
+ProjectGroup.name | var name: String
+ProjectGroup.todoRooms | var todoRooms: [Conversation]
+RemoteChat | struct RemoteChat
+RemoteChat.Status | enum Status
+RemoteChat.Status.downloading | case downloading
+RemoteChat.Status.newerVersion | case newerVersion
+RemoteChat.Status.ready | case ready
+RemoteChat.Status.unreadable | case unreadable
+RemoteChat.chat | var chat: UUID
+RemoteChat.device | var device: String
+RemoteChat.deviceName | var deviceName: String
+RemoteChat.file | var file: URL
+RemoteChat.id | var id: String { get }
+RemoteChat.init(device:deviceName:chat:title:updatedAt:school:status:file:) | init(device: String, deviceName: String, chat: UUID, title: String, updatedAt: Date? = nil, school: Bool, status: RemoteChat.Status, file: URL)
+RemoteChat.school | var school: Bool
+RemoteChat.status | var status: RemoteChat.Status
+RemoteChat.title | var title: String
+RemoteChat.updatedAt | var updatedAt: Date?
+RemoteDevice | struct RemoteDevice
+RemoteDevice.id | var id: String
+RemoteViewing | struct RemoteViewing
+RoomDocument | struct RoomDocument
+RoomDocument.id | var id: UUID
+RoomDocument.init(from:) | init(from decoder: any Decoder) throws
+RoomDocument.init(id:name:text:units:notice:) | init(id: UUID = UUID(), name: String, text: String, units: [MaterialUnit]? = nil, notice: String? = nil)
+RoomDocument.name | var name: String
+RoomDocument.notice | var notice: String?
+RoomDocument.text | var text: String
+RoomDocument.units | var units: [MaterialUnit]?
+RoomDocuments | enum RoomDocuments
+RoomDocuments.directory(_:) | static func directory(_ id: UUID) -> URL
+RouteSorter | enum RouteSorter
+RouteSorter.State | enum State
+RouteSorter.State.checking | case checking
+RouteSorter.State.downloading(_:_:) | case downloading(String, Double?)
+RouteSorter.State.failed(_:) | case failed(String)
+RouteSorter.State.localOff | case localOff
+RouteSorter.State.missing | case missing
+RouteSorter.State.noOllama | case noOllama
+RouteSorter.State.off | case off
+RouteSorter.State.ollamaOff | case ollamaOff
+RouteSorter.State.outdated(_:) | case outdated(String)
+RouteSorter.State.ready | case ready
+RouteSorter.current | static var current: RouteSorter { get }
+RouteSorter.decider | case decider
+RouteSorter.downloadGB | var downloadGB: Double { get }
+RouteSorter.gemma | case gemma
+RouteSorter.init(rawValue:) | init?(rawValue: String)
+RouteSorter.minimumOllama | var minimumOllama: String? { get }
+RouteSorter.off | case off
+RouteSorter.state(checked:hasBinary:enabled:installed:version:pull:failure:) | func state(checked: Bool, hasBinary: Bool, enabled: Bool, installed: [String]?, version: String?, pull: (String, Double?)?, failure: String?) -> RouteSorter.State
+RouteSorter.summary | var summary: String { get }
+RouteSorter.title | var title: String { get }
+RouteSorter.variant | var variant: LocalModel.Variant? { get }
+SidebarFold | final class SidebarFold
+SidebarFold.isFolded(_:) | func isFolded(_ key: String) -> Bool
+SidebarFold.shared | static let shared: SidebarFold
+SidebarHeader | @MainActor struct SidebarHeader<Accessory> where Accessory : View
+SidebarHeader.body | @MainActor var body: some View { get }
+SidebarHeader.init(title:fold:badge:) | @MainActor init(title: String, fold: String? = nil, badge: Int = 0)
+SidebarHeader.init(title:fold:badge:accessory:) | @MainActor init(title: String, fold: String? = nil, badge: Int = 0, @ViewBuilder accessory: () -> Accessory)
+SidebarProjects | enum SidebarProjects
+SidebarProjects.group(_:todo:pinned:withLists:names:) | static func group(_ chats: [Conversation], todo: TodoData, pinned: Set<String>, withLists: Bool = true, names: [String : String] = [:]) -> (projects: [ProjectGroup], loose: [Conversation])
+SidebarProjects.key(_:) | static func key(_ project: ProjectBinding) -> String
+SidebarProjects.pickerName(_:among:board:) | static func pickerName(_ option: (name: String, binding: ProjectBinding), among options: [(name: String, binding: ProjectBinding)], board: String?) -> String
+SpaceRefiner | final class SpaceRefiner
+SpaceRefiner.watchLibrary() | static func watchLibrary()
+SpeechLength | enum SpeechLength
+SpeechLength.all | static let all: [Int]
+SpeechLength.clamp(_:) | static func clamp(_ value: Int?) -> Int
+SpeechLength.long | static let long: Int
+SpeechLength.name(_:) | static func name(_ value: Int) -> String
+SpeechLength.rule(_:) | static func rule(_ value: Int) -> String
+SpeechLength.short | static let short: Int
+SpeechLength.standard | static let standard: Int
+SpeechLength.unlimited | static let unlimited: Int
+StorageLink | final class StorageLink
+StorageLink.active | var active: Bool { get }
+StorageLink.call(_:_:context:) | func call(_ name: String, _ arguments: [String : Any], context: ToolContext) -> [String : Any]
+StorageLink.shared | static let shared: StorageLink
+StorageLink.tools() | func tools() -> [[String : Any]]
+StorageLink.tools(context:) | func tools(context: ToolContext) -> [[String : Any]]
+SyncOrigin | struct SyncOrigin
+SyncOrigin.chat | var chat: UUID
+SyncOrigin.contentAt | var contentAt: Date
+SyncOrigin.device | var device: String
+SyncOrigin.deviceName | var deviceName: String
+SyncOrigin.importedAt | var importedAt: Date
+SyncOrigin.init(device:deviceName:chat:lastTurn:contentAt:importedAt:) | init(device: String, deviceName: String, chat: UUID, lastTurn: UUID? = nil, contentAt: Date, importedAt: Date)
+SyncOrigin.init(from:) | init(from decoder: any Decoder) throws
+SyncOrigin.lastTurn | var lastTurn: UUID?
+SyncSnapshot | struct SyncSnapshot
+SyncSnapshot.createdAt | var createdAt: Date
+SyncSnapshot.enterpriseLock | var enterpriseLock: EnterpriseLock?
+SyncSnapshot.id | var id: UUID
+SyncSnapshot.init(from:) | init(from decoder: any Decoder) throws
+SyncSnapshot.init(schemaVersion:id:title:createdAt:updatedAt:school:mode:summary:state:stateTurn:turns:pictures:origin:enterpriseLock:) | init(schemaVersion: Int = SyncSnapshot.version, id: UUID, title: String, createdAt: Date, updatedAt: Date, school: Bool, mode: Int, summary: String, state: String? = nil, stateTurn: UUID? = nil, turns: [ChatTurn], pictures: Int, origin: SyncOrigin? = nil, enterpriseLock: EnterpriseLock? = nil)
+SyncSnapshot.mode | var mode: Int
+SyncSnapshot.origin | var origin: SyncOrigin?
+SyncSnapshot.pictures | var pictures: Int
+SyncSnapshot.schemaVersion | var schemaVersion: Int
+SyncSnapshot.school | var school: Bool
+SyncSnapshot.state | var state: String?
+SyncSnapshot.stateTurn | var stateTurn: UUID?
+SyncSnapshot.summary | var summary: String
+SyncSnapshot.title | var title: String
+SyncSnapshot.turns | var turns: [ChatTurn]
+SyncSnapshot.updatedAt | var updatedAt: Date
+SyncSnapshot.version | static let version: Int
+VoteBallot | struct VoteBallot
+VoteBallot.choice | var choice: Int?
+VoteBallot.init(from:) | init(from decoder: any Decoder) throws
+VoteBallot.init(speaker:choice:reason:) | init(speaker: String, choice: Int? = nil, reason: String)
+VoteBallot.reason | var reason: String
+VoteBallot.speaker | var speaker: String
+extension AIAccounts: Account.Provider.color | var color: Color { get }
+extension AIProjects: TodoItem.State.color | var color: Color { get }
+extension AIProjects: TodoItem.State.title | var title: String { get }
+extension AIProjects: TodoScheduler.init(discussion:store:) | convenience init(discussion: Discussion, store: TodoStore)
+extension AIProjects: TodoScheduler.noCrew(_:accounts:lock:) | static func noCrew(_ allowed: [String], accounts: [Account], lock: EnterpriseLock?) -> String
+extension Foundation: NSNotification.Name.projectWorkEnded | static let projectWorkEnded: Notification.Name
+extension SwiftUI: ButtonStyle.plainHit | @MainActor static var plainHit: PlainHitButtonStyle { get }

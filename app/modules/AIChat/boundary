@@ -1,0 +1,9 @@
+# Boundary check (S2): one line per check, `code<TAB>name`. The code, compiled outside the module with only its
+# public names, must fail with "'name' is inaccessible due to 'internal' protection level" and no other error.
+# `code<TAB>name<TAB>hidden`: the name is an internal type, so the error must be "cannot find 'name' in scope".
+_ = ChatTime.calendar	calendar
+_ = Discussion.maxRunning	maxRunning
+_ = Discussion(model: Optional<any ChatSettings>.none!).draft	draft
+# The chat's routing and ask_ai rules are internal types: the app reaches them only through the chat (C1).
+_ = Peer.maxAsks	Peer	hidden
+_ = Route.self	Route	hidden

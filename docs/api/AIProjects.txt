@@ -1,0 +1,356 @@
+GitLink | final class GitLink
+GitLink.active | var active: Bool { get }
+GitLink.call(_:_:context:) | func call(_ name: String, _ arguments: [String : Any], context: ToolContext) -> [String : Any]
+GitLink.shared | static let shared: GitLink
+GitLink.tools() | func tools() -> [[String : Any]]
+GitLink.tools(context:) | func tools(context: ToolContext) -> [[String : Any]]
+PlanLink | final class PlanLink
+PlanLink.active | var active: Bool { get }
+PlanLink.call(_:_:context:) | func call(_ name: String, _ arguments: [String : Any], context: ToolContext) -> [String : Any]
+PlanLink.shared | static let shared: PlanLink
+PlanLink.todos(_:) | static func todos(_ value: Any?) -> [WorkStep]?
+PlanLink.tools() | func tools() -> [[String : Any]]
+PlanLink.tools(context:) | func tools(context: ToolContext) -> [[String : Any]]
+ProjectApproval | struct ProjectApproval
+ProjectApproval.alwaysAllow | var alwaysAllow: (() -> Void)?
+ProjectApproval.created | var created: Date
+ProjectApproval.deadline | var deadline: Date?
+ProjectApproval.detail | var detail: String
+ProjectApproval.id | let id: UUID
+ProjectApproval.init(room:run:title:detail:created:deadline:alwaysAllow:) | init(room: UUID, run: UUID, title: String, detail: String, created: Date = Date(), deadline: Date? = nil, alwaysAllow: (() -> Void)? = nil)
+ProjectApproval.room | var room: UUID
+ProjectApproval.title | var title: String
+ProjectCenter | final class ProjectCenter
+ProjectCenter.approve(_:token:deadline:) | func approve(_ request: ProjectApproval, token: DebateCancellation, deadline: Date) -> Bool
+ProjectCenter.cancel(room:) | func cancel(room: UUID? = nil)
+ProjectCenter.decide(_:allow:) | func decide(_ id: UUID, allow: Bool)
+ProjectCenter.dismiss(_:) | func dismiss(_ id: UUID)
+ProjectCenter.expired | @Published var expired: [ProjectApproval] { get set }
+ProjectCenter.requests | @Published var requests: [ProjectApproval] { get set }
+ProjectCenter.resume() | func resume()
+ProjectCenter.shared | static let shared: ProjectCenter
+ProjectChatSummary | struct ProjectChatSummary
+ProjectChatSummary.init(id:updatedAt:project:lock:enterprise:openTurn:) | init(id: UUID, updatedAt: Date, project: ProjectBinding?, lock: EnterpriseLock?, enterprise: Bool, openTurn: UUID?)
+ProjectChats | enum ProjectChats
+ProjectChats.list | static var list: () -> [ProjectChatSummary]
+ProjectCreator | enum ProjectCreator
+ProjectCreator.Plan | struct Plan
+ProjectCreator.Plan.init(from:) | init(from decoder: any Decoder) throws
+ProjectCreator.Plan.repo | var repo: String
+ProjectCreator.create(_:token:) | static func create(_ plan: ProjectCreator.Plan, token: DebateCancellation?) throws -> ProjectBinding
+ProjectCreator.createFolderless(name:) | static func createFolderless(name: String) throws -> ProjectBinding
+ProjectCreator.defaultLocation | static var defaultLocation: String { get }
+ProjectCreator.folderlessBinding() | static func folderlessBinding() throws -> ProjectBinding
+ProjectCreator.prepare(name:location:isPrivate:token:) | static func prepare(name raw: String, location raw2: String?, isPrivate: Bool, token: DebateCancellation?) throws -> (plan: ProjectCreator.Plan, resume: Bool)
+ProjectCreator.summary(_:resume:) | static func summary(_ plan: ProjectCreator.Plan, resume: Bool) -> String
+ProjectFolder | struct ProjectFolder
+ProjectFolder.directory | var directory: Bool
+ProjectFolder.id | var id: String { get }
+ProjectFolder.init(from:) | init(from decoder: any Decoder) throws
+ProjectFolder.init(path:directory:) | init(path: String, directory: Bool)
+ProjectFolder.path | var path: String
+ProjectInfo | struct ProjectInfo
+ProjectInfo.folders | var folders: [ProjectFolder]
+ProjectInfo.init() | init()
+ProjectInfo.init(from:) | init(from decoder: any Decoder) throws
+ProjectInfo.links | var links: [ProjectLink]
+ProjectInfoData | struct ProjectInfoData
+ProjectInfoData.encode(to:) | func encode(to encoder: any Encoder) throws
+ProjectInfoData.init() | init()
+ProjectInfoData.init(from:) | init(from decoder: any Decoder) throws
+ProjectInfoData.projects | var projects: [String : ProjectInfo]
+ProjectInfoStore | final class ProjectInfoStore
+ProjectInfoStore.activeFolders(_:) | func activeFolders(_ project: String) -> [ProjectFolder]
+ProjectInfoStore.addFolders(_:to:) | @discardableResult func addFolders(_ urls: [URL], to project: String) throws -> Int
+ProjectInfoStore.addLink(title:url:to:) | @discardableResult func addLink(title: String, url: String, to project: String) throws -> ProjectLink
+ProjectInfoStore.copy(from:to:name:folders:) | func copy(from old: String, to new: String, name: String?, folders extra: [ProjectFolder] = []) throws
+ProjectInfoStore.forget(_:) | func forget(_ project: String) throws
+ProjectInfoStore.info(_:) | func info(_ project: String) -> ProjectInfo
+ProjectInfoStore.init(url:) | init(url: URL)
+ProjectInfoStore.isLocked | var isLocked: Bool { get }
+ProjectInfoStore.linksRule(_:) | static func linksRule(_ info: ProjectInfo) -> String
+ProjectInfoStore.maxFolders | static let maxFolders: Int
+ProjectInfoStore.maxLinks | static let maxLinks: Int
+ProjectInfoStore.names | var names: [String : String] { get }
+ProjectInfoStore.removeFolder(_:from:) | func removeFolder(_ path: String, from project: String) throws
+ProjectInfoStore.removeLink(_:from:) | func removeLink(_ id: UUID, from project: String) throws
+ProjectInfoStore.rename(_:to:) | func rename(_ project: String, to name: String) throws
+ProjectInfoStore.saveError | @Published var saveError: String? { get set }
+ProjectInfoStore.shared | static var shared: ProjectInfoStore
+ProjectInfoStore.snapshot | @Published var snapshot: ProjectInfoData { get set }
+ProjectInfoStore.webURL(_:) | static func webURL(_ remote: String) -> URL?
+ProjectLink | struct ProjectLink
+ProjectLink.id | var id: UUID
+ProjectLink.init(from:) | init(from decoder: any Decoder) throws
+ProjectLink.title | var title: String
+ProjectLink.url | var url: String
+ProjectMakerLink | final class ProjectMakerLink
+ProjectMakerLink.active | var active: Bool { get }
+ProjectMakerLink.addChat | var addChat: (ProjectBinding, String) -> String
+ProjectMakerLink.call(_:_:context:) | func call(_ name: String, _ arguments: [String : Any], context: ToolContext) -> [String : Any]
+ProjectMakerLink.cancellation | var cancellation: (UUID) -> DebateCancellation?
+ProjectMakerLink.shared | static let shared: ProjectMakerLink
+ProjectMakerLink.tools() | func tools() -> [[String : Any]]
+ProjectMakerLink.tools(context:) | func tools(context: ToolContext) -> [[String : Any]]
+ProjectProcess | enum ProjectProcess
+ProjectProcess.Reply | struct Reply
+ProjectProcess.Reply.output | var output: String
+ProjectProcess.Reply.status | var status: Int32
+ProjectProcess.documents(_:) | static func documents(_ path: String) throws -> ProjectBinding
+ProjectProcess.git(_:root:token:timeout:) | static func git(_ args: [String], root: String, token: DebateCancellation? = nil, timeout: TimeInterval = 60) throws -> String
+ProjectProcess.inspect(_:) | static func inspect(_ path: String) throws -> ProjectBinding
+ProjectProcess.run(_:_:cwd:token:deadline:guarded:extra:onLine:) | static func run(_ executable: String, _ args: [String], cwd: String, token: DebateCancellation? = nil, deadline: Date = Date().addingTimeInterval(60), guarded: Bool = false, extra: [String : String] = [:], onLine: ((String) -> Void)? = nil) throws -> ProjectProcess.Reply
+ProjectRules | enum ProjectRules
+ProjectRules.Part | struct Part
+ProjectRules.Part.cut | let cut: Bool
+ProjectRules.Part.file | let file: URL
+ProjectRules.Part.sent | let sent: String?
+ProjectRules.limit | static let limit: Int
+ProjectRules.read(root:) | static func read(root: String) -> (prompt: String, parts: [ProjectRules.Part])
+ProjectRun | final class ProjectRun
+ProjectRun.activeExpired | var activeExpired: Bool { get }
+ProjectRun.attempt | var attempt: DebateCancellation
+ProjectRun.binding | let binding: ProjectBinding
+ProjectRun.checkpoint(_:) | func checkpoint(_ note: String) -> String
+ProjectRun.committed | var committed: Bool
+ProjectRun.deadline | let deadline: Date
+ProjectRun.endAttempt() | func endAttempt()
+ProjectRun.generation | var generation: Int { get }
+ProjectRun.id | let id: UUID
+ProjectRun.init(room:binding:token:fullAuto:) | init(room: UUID, binding: ProjectBinding, token: DebateCancellation, fullAuto: Bool = false)
+ProjectRun.log | var log: [String] { get }
+ProjectRun.nextAttempt() | func nextAttempt()
+ProjectRun.note(_:) | func note(_ text: String)
+ProjectRun.onNote | var onNote: (([String]) -> Void)?
+ProjectRun.onPlan | var onPlan: (([WorkStep], String?) -> Void)?
+ProjectRun.onWaiting | var onWaiting: ((Bool) -> Void)?
+ProjectRun.outer | let outer: DebateCancellation
+ProjectRun.pushed | var pushed: Bool
+ProjectRun.room | let room: UUID
+ProjectRun.setAppStep(_:_:_:) | func setAppStep(_ i: Int, _ text: String, _ status: WorkStep.Status)
+ProjectRun.setPlan(_:note:generation:tool:) | @discardableResult func setPlan(_ steps: [WorkStep], note: String?, generation: Int, tool: Bool) -> Bool
+ProjectRun.setPlan(todos:generation:) | @discardableResult func setPlan(todos: Any?, generation: Int) -> Bool
+ProjectRun.validate(_:) | func validate(_ generation: Int) throws
+ProjectWork | enum ProjectWork
+ProjectWork.acquire(_:) | static func acquire(_ binding: WorkspaceBinding?) throws -> [String]
+ProjectWork.active | static var active: Bool { get }
+ProjectWork.busy(_:) | static func busy(_ binding: WorkspaceBinding?) -> Bool
+ProjectWork.busyEnglish | static let busyEnglish: String
+ProjectWork.busyKorean | static let busyKorean: String
+ProjectWork.finish(_:) | static func finish(_ run: ProjectRun)
+ProjectWork.isBusy(_:) | static func isBusy(_ error: String) -> Bool
+ProjectWork.isHeld(_:) | static func isHeld(_ root: String) -> Bool
+ProjectWork.linking(_:to:first:) | static func linking(_ workspace: WorkspaceBinding?, to project: ProjectBinding, first: Bool) -> WorkspaceBinding
+ProjectWork.moving(_:to:) | static func moving(_ workspace: WorkspaceBinding?, to project: ProjectBinding) -> WorkspaceBinding
+ProjectWork.register(_:) | static func register(_ run: ProjectRun)
+ProjectWork.release(_:notify:) | static func release(_ paths: [String], notify: Bool = true)
+ProjectWork.revokeTools | static var revokeTools: (UUID) -> Void { get set }
+ProjectWork.workBinding(_:project:chatFolder:run:) | static func workBinding(_ binding: WorkspaceBinding, project: ProjectBinding, chatFolder: String, run: ProjectRun) -> WorkspaceBinding
+TaskLink | final class TaskLink
+TaskLink.active | var active: Bool { get }
+TaskLink.call(_:_:context:) | func call(_ name: String, _ arguments: [String : Any], context: ToolContext) -> [String : Any]
+TaskLink.shared | static let shared: TaskLink
+TaskLink.tools() | func tools() -> [[String : Any]]
+TaskLink.tools(context:) | func tools(context: ToolContext) -> [[String : Any]]
+TodoAddLink | final class TodoAddLink
+TodoAddLink.active | var active: Bool { get }
+TodoAddLink.call(_:_:context:) | func call(_ name: String, _ arguments: [String : Any], context: ToolContext) -> [String : Any]
+TodoAddLink.shared | static let shared: TodoAddLink
+TodoAddLink.tools() | func tools() -> [[String : Any]]
+TodoAddLink.tools(context:) | func tools(context: ToolContext) -> [[String : Any]]
+TodoAttachment | struct TodoAttachment
+TodoAttachment.id | var id: UUID
+TodoAttachment.image | var image: Bool
+TodoAttachment.init(from:) | init(from decoder: any Decoder) throws
+TodoAttachment.name | var name: String
+TodoChats | protocol TodoChats : AnyObject
+TodoChats.addChat(_:title:lock:) | func addChat(_ project: ProjectBinding, title: String, lock: EnterpriseLock?) -> UUID
+TodoChats.answering | var answering: Set<UUID> { get }
+TodoChats.answeringChanged | var answeringChanged: AnyPublisher<Void, Never> { get }
+TodoChats.chats | var chats: [ProjectChatSummary] { get }
+TodoChats.crew(lock:allowed:) | func crew(lock: EnterpriseLock?, allowed: [String]) -> (lead: Account, reviewer: Account?)?
+TodoChats.ended(_:) | func ended(_ room: UUID) -> TodoTurnEnd
+TodoChats.folder(_:) | func folder(_ room: UUID) -> URL
+TodoChats.importing | var importing: Bool { get }
+TodoChats.maxAnswering | var maxAnswering: Int { get }
+TodoChats.noCrew(_:lock:) | func noCrew(_ allowed: [String], lock: EnterpriseLock?) -> String
+TodoChats.sentPhotos(_:) | func sentPhotos(_ room: UUID) -> Set<UUID>
+TodoChats.setCrew(room:members:lead:) | func setCrew(room: UUID, members: [String], lead: String)
+TodoChats.start(room:question:photos:review:extra:) | func start(room: UUID, question: String, photos: [TodoPhoto], review: Bool, extra: String) -> String?
+TodoChats.stop(_:) | func stop(_ room: UUID)
+TodoData | struct TodoData
+TodoData.blockers(_:) | func blockers(_ item: TodoItem) -> [UUID]
+TodoData.init() | init()
+TodoData.init(from:) | init(from decoder: any Decoder) throws
+TodoData.item(_:) | func item(_ id: UUID) -> TodoItem?
+TodoData.items | var items: [TodoItem]
+TodoData.lists | var lists: [TodoList]
+TodoData.ordered(_:) | func ordered(_ listID: UUID) -> [TodoItem]
+TodoData.satisfied(_:for:) | func satisfied(_ blocker: TodoItem, for item: TodoItem) -> Bool
+TodoData.stopped(_:) | func stopped(_ item: TodoItem) -> Bool
+TodoData.workers(room:) | func workers(room: UUID) -> [String]?
+TodoItem | struct TodoItem
+TodoItem.State | enum State
+TodoItem.State.cancelled | case cancelled
+TodoItem.State.done | case done
+TodoItem.State.draft | case draft
+TodoItem.State.init(rawValue:) | init?(rawValue: String)
+TodoItem.State.needsYou | case needsYou
+TodoItem.State.ready | case ready
+TodoItem.State.review | case review
+TodoItem.State.running | case running
+TodoItem.after | var after: [UUID]
+TodoItem.askFirst | var askFirst: Bool
+TodoItem.assumptions | var assumptions: [String]
+TodoItem.attachments | var attachments: [TodoAttachment]
+TodoItem.attempts | var attempts: Int
+TodoItem.createdAt | var createdAt: Date
+TodoItem.detail | var detail: String
+TodoItem.encode(to:) | func encode(to encoder: any Encoder) throws
+TodoItem.files | var files: [String]
+TodoItem.finishedAt | var finishedAt: Date?
+TodoItem.id | var id: UUID
+TodoItem.init(from:) | init(from decoder: any Decoder) throws
+TodoItem.init(listID:title:detail:askFirst:after:originRoom:) | init(listID: UUID, title: String, detail: String = "", askFirst: Bool = false, after: [UUID] = [], originRoom: UUID? = nil)
+TodoItem.interrupted | var interrupted: Bool
+TodoItem.lastError | var lastError: String?
+TodoItem.listID | var listID: UUID
+TodoItem.notes | var notes: [TodoNote]
+TodoItem.originRoom | var originRoom: UUID?
+TodoItem.question | var question: TodoQuestion?
+TodoItem.report | var report: TodoReport?
+TodoItem.result | var result: String?
+TodoItem.room | var room: UUID?
+TodoItem.startedAt | var startedAt: Date?
+TodoItem.state | var state: TodoItem.State
+TodoItem.stateSince | var stateSince: Date?
+TodoItem.timeLine(at:) | func timeLine(at now: Date) -> String?
+TodoItem.title | var title: String
+TodoItem.unreported | var unreported: Bool
+TodoItem.updatedAt | var updatedAt: Date
+TodoItem.waitSeconds | var waitSeconds: Double
+TodoItem.workSeconds | var workSeconds: Double
+TodoItem.workers | var workers: [String]?
+TodoList | struct TodoList
+TodoList.accounts | var accounts: [String]
+TodoList.encode(to:) | func encode(to encoder: any Encoder) throws
+TodoList.id | var id: UUID
+TodoList.init(from:) | init(from decoder: any Decoder) throws
+TodoList.init(title:project:lock:) | init(title: String, project: ProjectBinding?, lock: EnterpriseLock? = nil)
+TodoList.lock | var lock: EnterpriseLock?
+TodoList.paused | var paused: Bool
+TodoList.project | var project: ProjectBinding?
+TodoList.sequential | var sequential: Bool
+TodoList.stopAfter | var stopAfter: UUID?
+TodoList.title | var title: String
+TodoList.waitForDone | var waitForDone: Bool
+TodoNote | struct TodoNote
+TodoNote.Kind | enum Kind
+TodoNote.Kind.answer | case answer
+TodoNote.Kind.feedback | case feedback
+TodoNote.Kind.init(rawValue:) | init?(rawValue: String)
+TodoNote.Kind.retry | case retry
+TodoNote.Kind.system | case system
+TodoNote.at | var at: Date
+TodoNote.init(from:) | init(from decoder: any Decoder) throws
+TodoNote.kind | var kind: TodoNote.Kind
+TodoNote.text | var text: String
+TodoPhoto | struct TodoPhoto
+TodoPhoto.file | var file: URL
+TodoPhoto.id | var id: UUID
+TodoPhoto.name | var name: String
+TodoProject | struct TodoProject
+TodoProject.all(_:chats:names:) | static func all(_ data: TodoData, chats: [ProjectChatSummary], names: [String : String]) -> [TodoProject]
+TodoProject.binding | var binding: ProjectBinding
+TodoProject.name | var name: String
+TodoQuestion | struct TodoQuestion
+TodoQuestion.Item | struct Item
+TodoQuestion.Item.init(from:) | init(from decoder: any Decoder) throws
+TodoQuestion.Item.options | var options: [String]
+TodoQuestion.Item.recommended | var recommended: String?
+TodoQuestion.Item.text | var text: String
+TodoQuestion.blocked | var blocked: Bool
+TodoQuestion.init(from:) | init(from decoder: any Decoder) throws
+TodoQuestion.items | var items: [TodoQuestion.Item]
+TodoQuestion.reason | var reason: String
+TodoReport | struct TodoReport
+TodoReport.assumptions | var assumptions: [String]
+TodoReport.files | var files: [String]
+TodoReport.init(from:) | init(from decoder: any Decoder) throws
+TodoReport.init(summary:assumptions:files:question:) | init(summary: String? = nil, assumptions: [String] = [], files: [String] = [], question: TodoQuestion? = nil)
+TodoReport.question | var question: TodoQuestion?
+TodoReport.summary | var summary: String?
+TodoScheduler | final class TodoScheduler
+TodoScheduler.cancel(_:) | func cancel(_ id: UUID)
+TodoScheduler.closeClocks() | func closeClocks()
+TodoScheduler.crew(for:) | func crew(for list: TodoList) -> (lead: Account, reviewer: Account?)?
+TodoScheduler.crew(lock:allowed:) | func crew(lock: EnterpriseLock? = nil, allowed: [String] = []) -> (lead: Account, reviewer: Account?)?
+TodoScheduler.editing | var editing: UUID? { get set }
+TodoScheduler.init(chats:store:) | init(chats: any TodoChats, store: TodoStore)
+TodoScheduler.instruction(_:documents:) | static func instruction(_ item: TodoItem, documents: Bool = false) -> String
+TodoScheduler.lock(for:) | func lock(for list: TodoList) -> EnterpriseLock?
+TodoScheduler.lock(for:list:project:) | func lock(for item: TodoItem, list: TodoList, project: ProjectBinding) -> EnterpriseLock?
+TodoScheduler.maxAttempts | static let maxAttempts: Int
+TodoScheduler.nextCheck | @Published var nextCheck: Date? { get set }
+TodoScheduler.question(_:files:documents:) | static func question(_ item: TodoItem, files: [String] = [], documents: Bool = false) -> String
+TodoScheduler.recover() | func recover()
+TodoScheduler.shared | static var shared: TodoScheduler?
+TodoScheduler.start() | func start()
+TodoScheduler.startNow(lists:) | func startNow(lists: Set<UUID>? = nil)
+TodoScheduler.threshold | static let threshold: Double
+TodoScheduler.tick() | func tick()
+TodoScheduler.waiting | @Published var waiting: String? { get set }
+TodoScheduler.wake() | func wake()
+TodoStore | final class TodoStore
+TodoStore.accept(_:) | func accept(_ id: UUID)
+TodoStore.add(title:detail:files:project:projectName:after:askFirst:originRoom:lock:fromAI:) | @discardableResult func add(title: String, detail: String = "", files: [URL] = [], project: ProjectBinding, projectName: String, after: [UUID] = [], askFirst: Bool = false, originRoom: UUID? = nil, lock: EnterpriseLock? = nil, fromAI: Bool = false) throws -> TodoItem
+TodoStore.answer(_:_:) | func answer(_ id: UUID, _ text: String)
+TodoStore.attach(_:files:) | func attach(_ id: UUID, files: [URL]) throws
+TodoStore.cancel(_:) | func cancel(_ id: UUID) throws
+TodoStore.change(_:_:) | func change(_ id: UUID, _ edit: (inout TodoItem) throws -> Void) throws
+TodoStore.current | var current: TodoData { get }
+TodoStore.delete(_:) | func delete(_ id: UUID) throws
+TodoStore.deleteLists(_:) | @discardableResult func deleteLists(_ ids: Set<UUID>) throws -> Int
+TodoStore.detach(_:_:) | func detach(_ id: UUID, _ attachment: UUID) throws
+TodoStore.edit(_:title:detail:askFirst:) | func edit(_ id: UUID, title: String, detail: String, askFirst: Bool) throws
+TodoStore.editable(_:) | static func editable(_ item: TodoItem) -> Bool
+TodoStore.file(_:_:) | func file(_ item: UUID, _ attachment: TodoAttachment) -> URL
+TodoStore.init(url:) | init(url: URL)
+TodoStore.lockProject(_:name:project:lock:) | func lockProject(_ key: String, name: String, project: ProjectBinding, lock: EnterpriseLock) throws
+TodoStore.locked | let locked: String?
+TodoStore.maxAttachments | static let maxAttachments: Int
+TodoStore.move(_:by:) | func move(_ id: UUID, by step: Int) throws
+TodoStore.pause(lists:) | func pause(lists: Set<UUID>? = nil) throws
+TodoStore.relink(_:to:) | func relink(_ ids: Set<UUID>, to project: ProjectBinding) throws
+TodoStore.requestChanges(_:_:) | func requestChanges(_ id: UUID, _ text: String)
+TodoStore.resume(lists:) | func resume(lists: Set<UUID>? = nil) throws
+TodoStore.saveError | @Published var saveError: String? { get set }
+TodoStore.setAfter(_:_:) | func setAfter(_ id: UUID, _ after: [UUID]) throws
+TodoStore.setList(_:sequential:waitForDone:accounts:) | func setList(_ listID: UUID, sequential: Bool? = nil, waitForDone: Bool? = nil, accounts: [String]? = nil) throws
+TodoStore.shared | static var shared: TodoStore
+TodoStore.snapshot | @Published var snapshot: TodoData { get set }
+TodoStore.startDrafts(lists:) | func startDrafts(lists: Set<UUID>? = nil)
+TodoStore.stop(after:) | func stop(after id: UUID) throws
+TodoStore.update(_:) | @discardableResult func update<T>(_ edit: (inout TodoData) throws -> T) throws -> T
+TodoStore.url | let url: URL
+TodoStore.waitingForUser | var waitingForUser: Int { get }
+TodoTurnEnd | struct TodoTurnEnd
+TodoTurnEnd.init(error:unreviewed:) | init(error: String? = nil, unreviewed: Bool = false)
+WorkStep | struct WorkStep
+WorkStep.Status | enum Status
+WorkStep.Status.blocked | case blocked
+WorkStep.Status.doing | case doing
+WorkStep.Status.done | case done
+WorkStep.Status.init(rawValue:) | init?(rawValue: String)
+WorkStep.Status.todo | case todo
+WorkStep.ended | var ended: Date?
+WorkStep.init(from:) | init(from decoder: any Decoder) throws
+WorkStep.init(text:status:) | init(text: String, status: WorkStep.Status)
+WorkStep.started | var started: Date?
+WorkStep.status | var status: WorkStep.Status
+WorkStep.sub | var sub: String?
+WorkStep.subStarted | var subStarted: Date?
+WorkStep.text | var text: String
+extension AIWorkspace: ProjectBinding.groupKey | var groupKey: String { get }
+extension Foundation: NSNotification.Name.projectReleased | static let projectReleased: Notification.Name
+extension Foundation: NSNotification.Name.todoNeedsUser | static let todoNeedsUser: Notification.Name

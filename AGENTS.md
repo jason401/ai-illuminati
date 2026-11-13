@@ -12,28 +12,33 @@ Feature and design notes live in `docs/`; read them only when the task needs the
   touches the installed app. Needs the "AI Illuminati Local Signing" Keychain identity, so it fails in a sandbox.
 - The build compiles `app/macos/*.swift`, but the test script has its own `swiftc` file list: add a new
   app file there too if the tested files use it.
-- Modules: each `app/modules/<Name>/` is its own Swift module: `AILocalization` (`L()`, `AppLanguage`),
-  `AIAccounts` (`Accounts.swift`), `AISpaces` (`Space*.swift`: saving, checks, the isolated web view; its UI stays in
-  `app/macos/SpaceView.swift`), `AIRuntime` (`Answerer`, `RunConditions`, `StreamParser`, `NativeSessions`, Stop
-  tokens, the local model, usage readings, cloud model picks; it decides no permission: callers pass
-  `RunConditions.app` from `RunConditionsApp.swift`), `AIWorkspace` (`Workspace.swift` folder rules, `WorkspaceBackup`
-  backups and Undo, `AutoGuard.swift` moved whole, `ToolProvider`/`ToolContext`, `DiskUsage`; the app reaches AutoGuard only
-  through `FullAutoGuard.environment`), `AIProjects` (`ProjectWork.swift` Git work, repository lock, approvals, project
-  turns; `Todo.swift` the TODO board and scheduler; `ProjectInfo.swift`; `ProjectCreator.swift`; the Git, Plan, Task, TodoAdd
-  and ProjectMaker tools; it names no chat type: Discussion plugs in as `TodoChats` in `TodoChatsApp.swift`), `AIChat`
-  (the chat: records and ChatStore, Discussion and every `extension Discussion`, routing, meetings, reviews, ask_ai, the
-  Chat/Memory/Storage/Peer/Convene tools, DeviceSync, the chat window's views; uses Projects, never the other way; it gets
-  the app's settings as `ChatSettings` and the rest through `ChatApp`, set in `ChatLinksApp.swift`/`ChatScreensApp.swift`), `AIIntegrations`
-  (`GoogleAuth` and the Drive gate `DriveLink`, outside MCP servers `ExternalMCP`/`RemoteMCP`, AI Face's `FaceLink`; no tool
-  provider: the app makes them providers in `ToolHub.swift`, `DriveTools.swift`, `ExternalMCPTools.swift`; Keychain, network,
-  sign-in callback and AI Face connection are injectable; only the app imports it). Files that use one `import <Name>` and see only its `public` names; a
-  module may import only the modules in its `dependencies` file. Tests that need a module's insides say
-  `@testable import` (the test build adds `-enable-testing`); app files never do. Every `swiftc` that compiles app files runs
-  `zsh tools/build_modules.sh <out>` first and adds `-I <out> <out>/lib*.a`. A new `public` name gets its reason
-  in `docs/MODULES.md`. A module's own tests (`tools/tests/*_contract.swift`) are not enough when its behavior
-  changes (save format, errors, folders, isolation): run the tests its promise row in `docs/MODULES.md` names, or
-  the full test when unsure: unchanged `public` names do not mean unchanged behavior for its users.
+- Modules: every `swiftc` that compiles app files runs `zsh tools/build_modules.sh <out>` first and adds
+  `-I <out> <out>/lib*.a`. Module guards alone: `zsh tools/check_modules.sh` (also the pre-commit hook; install the
+  hooks once with `zsh tools/setup_dev.sh`). A module's own contract is not enough when its behavior changes (save
+  format, errors, folders, isolation): run the tests its promise row in `docs/MODULES.md` names, or the full test.
 - Previews: `zsh tools/tests/render_chat.sh`, `zsh tools/tests/render_drive_tree.sh`.
+
+## Module rules (모듈 유지 규칙)
+Each `app/modules/<Name>/` is a Swift module; others see only its `public` names. Owners, arrows = may import:
+- `AILocalization` L(), AppLanguage · `AIAccounts` accounts, folders, Enterprise lock (both import nothing)
+- `AISpaces` Spaces saving, checks, isolated web view → Accounts, Localization
+- `AIRuntime` runs the CLIs, sessions, usage, local model; decides no permission → Accounts, Localization
+- `AIWorkspace` folder rules, backups/Undo, AutoGuard (whole), tool gateway types → + Runtime
+- `AIProjects` Git work, approvals, TODO board and scheduler, project info → + Workspace
+- `AIChat` chats, Discussion, routing, meetings, ask_ai, chat window → + Projects, Spaces
+- `AIIntegrations` Google login/Drive, outside MCP, AI Face link → Accounts, Localization, Workspace (Runtime
+  only through Workspace's interface)
+- App (`app/macos`): screens, settings, app start, connecting modules; only it imports Integrations.
+
+Where new code goes: (1) the module that owns the work; (2) App, only if it is a screen, a setting, app start or
+connecting modules; (3) neither: stop and ask the user.
+Never: a dependency outside `tools/module_graph.txt`; logic in an `extension` of another module's type; a
+"Core"/"Common" module; making internals `public` in bulk (each new public name gets its reason in
+`docs/MODULES.md`); splitting AutoGuard; `@testable import` in app files or contracts; `git commit --no-verify`.
+Only with the user's approval: changing the graph, a new module (`tools/new_module.sh`), removing or merging modules,
+changing a guard (`tools/check_modules.*`, `module_graph.txt`, `build_modules.sh`, run_mode2's module checks,
+`.githooks`; hashed in `tools/module_guard.sha256`).
+If a check fails, fix the code, not the check. Details and examples: `docs/MODULES.md` "Rules".
 
 ## Never break: tests and previews are isolated from the real app
 - Real data: `~/Library/Application Support/AI Illuminati/` (accounts.json, chats, settings) and

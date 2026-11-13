@@ -1,0 +1,178 @@
+DriveFolder | struct DriveFolder
+DriveFolder.id | var id: String
+DriveFolder.init(from:) | init(from decoder: any Decoder) throws
+DriveFolder.init(id:name:) | init(id: String, name: String)
+DriveFolder.name | var name: String
+DriveLink | final class DriveLink
+DriveLink.accountEmail() | func accountEmail() -> String?
+DriveLink.active | var active: Bool { get }
+DriveLink.canWrite | var canWrite: Bool { get }
+DriveLink.childFolders(of:) | func childFolders(of parent: String) throws -> [DriveFolder]
+DriveLink.downloadRoot(_:) | static func downloadRoot(_ roots: [WorkspaceRoot]) -> WorkspaceRoot?
+DriveLink.enabled | var enabled: Bool { get set }
+DriveLink.folder(from:) | func folder(from value: String) throws -> DriveFolder
+DriveLink.folders | static var folders: [DriveFolder] { get set }
+DriveLink.officeText | static var officeText: ((URL) throws -> String)?
+DriveLink.pausedFolders | static var pausedFolders: Set<String> { get set }
+DriveLink.perform(_:_:roots:) | func perform(_ name: String, _ arguments: [String : Any], roots: [WorkspaceRoot]) -> [String : Any]
+DriveLink.rule() | func rule() -> String
+DriveLink.shared | static var shared: DriveLink
+DriveLink.writeRules | static var writeRules: [String : Bool] { get set }
+ExternalMCP | final class ExternalMCP
+ExternalMCP.State | enum State
+ExternalMCP.State.connected | case connected
+ExternalMCP.State.connecting | case connecting
+ExternalMCP.State.failed | case failed
+ExternalMCP.State.needsLogin | case needsLogin
+ExternalMCP.State.off | case off
+ExternalMCP.Status | struct Status
+ExternalMCP.Status.changed | var changed: [String]
+ExternalMCP.Status.message | var message: String?
+ExternalMCP.Status.oauth | var oauth: Bool
+ExternalMCP.Status.readOnly | var readOnly: Set<String>
+ExternalMCP.Status.rules | var rules: [String : MCPToolRule]
+ExternalMCP.Status.signedIn | var signedIn: Bool
+ExternalMCP.Status.signingIn | var signingIn: Bool
+ExternalMCP.Status.skipped | var skipped: [String]
+ExternalMCP.Status.state | var state: ExternalMCP.State
+ExternalMCP.Status.tools | var tools: [String]
+ExternalMCP.acknowledgeChanges(_:) | func acknowledgeChanges(_ server: String)
+ExternalMCP.active | var active: Bool { get }
+ExternalMCP.approvalWait | static var approvalWait: TimeInterval
+ExternalMCP.call(_:_:approve:) | func call(_ name: String, _ arguments: [String : Any], approve: (String, String) -> Bool) -> [String : Any]
+ExternalMCP.claudeDesktopServers(existing:) | static func claudeDesktopServers(existing: [MCPServerEntry]) -> [MCPServerEntry]
+ExternalMCP.importClaudeDesktop() | func importClaudeDesktop() -> Int
+ExternalMCP.isOn(_:) | static func isOn(_ name: String) -> Bool
+ExternalMCP.loadError | @Published var loadError: String? { get set }
+ExternalMCP.reconnect(_:) | func reconnect(_ name: String)
+ExternalMCP.refresh(force:) | func refresh(force: Set<String> = [])
+ExternalMCP.remove(_:) | func remove(_ name: String) throws
+ExternalMCP.save(_:replacing:on:clientSecret:signIn:) | func save(_ entry: MCPServerEntry, replacing old: String? = nil, on: Bool = true, clientSecret: String? = nil, signIn: Bool = false) throws
+ExternalMCP.servers | @Published var servers: [MCPServerEntry] { get set }
+ExternalMCP.setOn(_:_:) | func setOn(_ name: String, _ on: Bool)
+ExternalMCP.setRule(_:_:_:) | func setRule(_ server: String, _ tool: String, _ rule: MCPToolRule?)
+ExternalMCP.shared | static let shared: ExternalMCP
+ExternalMCP.signIn(_:) | func signIn(_ name: String)
+ExternalMCP.signOut(_:) | func signOut(_ name: String)
+ExternalMCP.slowTools | var slowTools: [String] { get }
+ExternalMCP.start() | func start()
+ExternalMCP.status | @Published var status: [String : ExternalMCP.Status] { get set }
+ExternalMCP.stopAll() | func stopAll()
+ExternalMCP.tools() | func tools() -> [[String : Any]]
+FaceLink | final class FaceLink
+FaceLink.Server | struct Server
+FaceLink.Server.args | var args: [String]
+FaceLink.Server.command | var command: String
+FaceLink.active() | static func active() -> FaceLink.Server?
+FaceLink.call(_:_:) | func call(_ name: String, _ arguments: [String : Any]) -> [String : Any]
+FaceLink.codexOff(_:) | static func codexOff(_ account: Account) -> [String]
+FaceLink.configured | @Published var configured: Bool { get set }
+FaceLink.connected | @Published var connected: Bool { get set }
+FaceLink.extract(_:) | static func extract(_ text: String) -> (text: String, mood: String?)
+FaceLink.faceFolder | static var faceFolder: String
+FaceLink.file | static var file: URL
+FaceLink.init(open:) | init(open: ((FaceLink.Server) -> (any FacePipe)?)? = nil)
+FaceLink.isOn | static var isOn: Bool { get }
+FaceLink.moods() | func moods() -> [String]
+FaceLink.on | @Published var on: Bool { get set }
+FaceLink.refresh() | func refresh()
+FaceLink.rule(_:) | static func rule(_ moods: [String]) -> String
+FaceLink.shared | static let shared: FaceLink
+FaceLink.show(_:) | func show(_ mood: String)
+FaceLink.socketPath | static var socketPath: String
+FaceLink.start() | func start()
+FaceLink.tools() | func tools() -> [[String : Any]]
+FacePipe | protocol FacePipe : AnyObject
+FacePipe.close() | func close()
+FacePipe.isRunning | var isRunning: Bool { get }
+FacePipe.request(_:_:) | func request(_ method: String, _ params: [String : Any]) -> [String : Any]?
+FacePipe.send(_:) | func send(_ message: [String : Any])
+GoogleAuth | final class GoogleAuth
+GoogleAuth.accessToken(forceRefresh:) | func accessToken(forceRefresh: Bool = false) throws -> String
+GoogleAuth.beginAuthorization(clientJSON:writable:completion:) | func beginAuthorization(clientJSON: Data, writable: Bool = false, completion: @escaping (Result<Void, any Error>) -> Void) throws -> URL
+GoogleAuth.beginBuiltInAuthorization(present:clientID:writable:completion:) | func beginBuiltInAuthorization(present: any GoogleAuthPresenter, clientID: String = GoogleAuth.builtInClientID, writable: Bool = false, completion: @escaping (Result<Void, any Error>) -> Void) throws
+GoogleAuth.beginReauthorization(writable:completion:) | func beginReauthorization(writable: Bool = false, completion: @escaping (Result<Void, any Error>) -> Void) throws -> URL
+GoogleAuth.builtInClientID | static let builtInClientID: String
+GoogleAuth.canWrite | var canWrite: Bool { get }
+GoogleAuth.cancelAuthorization() | func cancelAuthorization()
+GoogleAuth.connected | var connected: Bool { get }
+GoogleAuth.connectionVersion | var connectionVersion: Int { get }
+GoogleAuth.disconnect() | func disconnect() throws
+GoogleAuth.init(store:) | init(store: any GoogleTokenStore)
+GoogleAuth.needsReconnect | var needsReconnect: Bool { get }
+GoogleAuth.publicClientID | var publicClientID: String? { get }
+GoogleAuth.shared | static var shared: GoogleAuth
+GoogleAuthPresenter | protocol GoogleAuthPresenter : AnyObject
+GoogleAuthPresenter.cancel() | func cancel()
+GoogleAuthPresenter.start(_:scheme:completion:) | func start(_ url: URL, scheme: String, completion: @escaping (Result<URL, any Error>) -> Void)
+GoogleFailure | struct GoogleFailure
+GoogleFailure.errorDescription | var errorDescription: String? { get }
+GoogleFailure.init(message:status:) | init(message: String, status: Int? = nil)
+GoogleFailure.message | let message: String
+GoogleHTTP | enum GoogleHTTP
+GoogleHTTP.Reply | struct Reply
+GoogleHTTP.Reply.data | var data: Data
+GoogleHTTP.Reply.headers | var headers: [AnyHashable : Any]
+GoogleHTTP.Reply.init(status:data:headers:) | init(status: Int, data: Data, headers: [AnyHashable : Any])
+GoogleHTTP.Reply.status | var status: Int
+GoogleHTTP.live(_:limit:timeout:) | static func live(_ request: URLRequest, limit: Int, timeout: TimeInterval) throws -> GoogleHTTP.Reply
+GoogleHTTP.transport | static var transport: (URLRequest, Int, TimeInterval) throws -> GoogleHTTP.Reply
+GoogleKeychainStore | struct GoogleKeychainStore
+GoogleKeychainStore.Runner | typealias Runner = ([String], Data?) throws -> (Int32, Data)
+GoogleKeychainStore.clear() | func clear() throws
+GoogleKeychainStore.init(run:) | init(run: GoogleKeychainStore.Runner? = nil)
+GoogleKeychainStore.load() | func load() throws -> Data?
+GoogleKeychainStore.save(_:) | func save(_ data: Data) throws
+GoogleLoopback | final class GoogleLoopback
+GoogleLoopback.cancel() | func cancel()
+GoogleLoopback.make | static var make: (UInt16, String) throws -> any OAuthCallback
+GoogleLoopback.redirect | let redirect: String
+GoogleLoopback.start(_:) | func start(_ completion: @escaping (Result<[String : String], any Error>) -> Void)
+GoogleTokenStore | protocol GoogleTokenStore
+GoogleTokenStore.clear() | func clear() throws
+GoogleTokenStore.load() | func load() throws -> Data?
+GoogleTokenStore.save(_:) | func save(_ data: Data) throws
+MCPKeychain | final class MCPKeychain
+MCPKeychain.get(_:) | func get(_ key: String) -> String?
+MCPKeychain.init(run:) | init(run: GoogleKeychainStore.Runner? = nil)
+MCPKeychain.set(_:_:) | func set(_ key: String, _ value: String?) throws
+MCPSecretStore | protocol MCPSecretStore : AnyObject
+MCPSecretStore.get(_:) | func get(_ key: String) -> String?
+MCPSecretStore.set(_:_:) | func set(_ key: String, _ value: String?) throws
+MCPSecrets | enum MCPSecrets
+MCPSecrets.clientSecret(_:) | static func clientSecret(_ server: String) -> String
+MCPSecrets.header(_:_:) | static func header(_ server: String, _ name: String) -> String
+MCPSecrets.store | static var store: any MCPSecretStore
+MCPServerEntry | struct MCPServerEntry
+MCPServerEntry.args | var args: [String]
+MCPServerEntry.command | var command: String
+MCPServerEntry.env | var env: [String : String]
+MCPServerEntry.headerLines(_:) | static func headerLines(_ text: String) -> Result<[String : String], MCPSession.Failure>
+MCPServerEntry.headers | var headers: [String : String]
+MCPServerEntry.id | var id: String { get }
+MCPServerEntry.init(name:command:args:env:) | init(name: String, command: String, args: [String] = [], env: [String : String] = [:])
+MCPServerEntry.init(name:json:) | init?(name: String, json: [String : Any])
+MCPServerEntry.init(name:url:headers:oauthClientID:) | init(name: String, url: String, headers: [String : String] = [:], oauthClientID: String = "")
+MCPServerEntry.isRemote | var isRemote: Bool { get }
+MCPServerEntry.name | var name: String
+MCPServerEntry.name(fromURL:) | static func name(fromURL text: String) -> String
+MCPServerEntry.normalized(_:) | static func normalized(_ raw: String) -> String
+MCPServerEntry.oauthClientID | var oauthClientID: String
+MCPServerEntry.parse(_:) | static func parse(_ text: String) -> [MCPServerEntry]
+MCPServerEntry.reserved | static let reserved: Set<String>
+MCPServerEntry.url | var url: String
+MCPServerEntry.urlProblem(_:) | static func urlProblem(_ text: String) -> String?
+MCPServerEntry.words(_:) | static func words(_ line: String) -> [String]
+MCPSession | final class MCPSession
+MCPSession.Failure | struct Failure
+MCPSession.Failure.init(message:) | init(message: String)
+MCPSession.Failure.message | let message: String
+MCPToolRule | enum MCPToolRule
+MCPToolRule.allow | case allow
+MCPToolRule.ask | case ask
+MCPToolRule.block | case block
+MCPToolRule.init(rawValue:) | init?(rawValue: String)
+OAuthCallback | protocol OAuthCallback : AnyObject
+OAuthCallback.cancel() | func cancel()
+OAuthCallback.redirect | var redirect: String { get }
+OAuthCallback.start(_:) | func start(_ completion: @escaping (Result<[String : String], any Error>) -> Void)

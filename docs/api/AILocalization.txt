@@ -1,0 +1,8 @@
+AppLanguage | enum AppLanguage
+AppLanguage.current | static var current: AppLanguage
+AppLanguage.english | case english
+AppLanguage.init(rawValue:) | init?(rawValue: String)
+AppLanguage.korean | case korean
+AppLanguage.locale | var locale: Locale { get }
+AppLanguage.resolve(_:) | static func resolve(_ preferred: [String]) -> AppLanguage
+L(_:_:) | func L(_ korean: String, _ english: String) -> String

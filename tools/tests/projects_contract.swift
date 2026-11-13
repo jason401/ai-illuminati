@@ -4,6 +4,7 @@ import AIAccounts
 import AIRuntime
 import AIWorkspace
 import AIProjects
+// contract needs: app resources
 
 // The promises of Projects (AIProjects), checked from outside with only its public API and a fake chat side
 // (`TodoChats`): the TODO state changes the scheduler owns (an error is retried before anything after it starts, a

@@ -1,0 +1,24 @@
+# App files (G3): every app/macos/*.swift, with why it is App work (screens, settings, app start, connecting modules).
+# A new App file needs a line here with its reason; first check whether a module owns the work (AGENTS.md "Module rules").
+# baseline-lines: 8110
+# (S3 warns when app/macos grows over 10% above the baseline; raise it only when the growth is App work.)
+main.swift app start: menu, AppDelegate, the real data folder, connects the modules
+Settings.swift AppModel and the Settings window (account list, options)
+MenuCards.swift screen: the menu's account cards
+Icon.swift screen: the menu bar icon and its animation
+Login.swift app start: Terminal login and install scripts for each CLI (later move candidate: LocalModel.install)
+LocalModels.swift screen: the Ollama models window
+Updater.swift app start: the update channel and the app-owned checkout
+ApprovalAlerts.swift screen: approval notifications, Dock badge, approval window
+ChatLinksApp.swift connects modules: the chat store to what keeps a chat's data
+ChatScreensApp.swift connects modules: the App screens the chat window shows
+RunConditionsApp.swift connects modules: the app's run policy (permissions, AI Face, AutoGuard) for AIRuntime
+ToolHub.swift connects modules: the one tool gateway and its fixed provider order
+DriveTools.swift connects modules: Drive (AIIntegrations) offered as tools
+ExternalMCPTools.swift connects modules: outside MCP servers (AIIntegrations) offered as tools
+DriveUI.swift screen: Google Drive in the chat sidebar
+GitBranches.swift screen: Project info's read-only branch view (later move candidate: ref parsing)
+ProjectInfoView.swift screen: the Project info tab
+TodoBoard.swift screen: the TODO board and its report cards
+Poker.swift game: Texas Hold'em engine and AI decisions (later move candidate: engine and save)
+PokerWindow.swift screen: the game window

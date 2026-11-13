@@ -1,0 +1,126 @@
+DiskUsage | enum DiskUsage
+DiskUsage.FileID | struct FileID
+DiskUsage.Size | struct Size
+DiskUsage.Size.+(_:_:) | static func + (a: DiskUsage.Size, b: DiskUsage.Size) -> DiskUsage.Size
+DiskUsage.Size.+=(_:_:) | static func += (a: inout DiskUsage.Size, b: DiskUsage.Size)
+DiskUsage.Size.allocated | var allocated: Int64
+DiskUsage.Size.files | var files: Int
+DiskUsage.Size.init(allocated:logical:files:unreadable:) | init(allocated: Int64 = 0, logical: Int64 = 0, files: Int = 0, unreadable: Int = 0)
+DiskUsage.Size.logical | var logical: Int64
+DiskUsage.Size.unreadable | var unreadable: Int
+DiskUsage.of(_:) | static func of(_ url: URL) -> DiskUsage.Size
+DiskUsage.of(_:seen:) | static func of(_ url: URL, seen: inout Set<DiskUsage.FileID>) -> DiskUsage.Size
+FullAutoGuard | enum FullAutoGuard
+FullAutoGuard.environment(_:) | static func environment(_ base: [String : String]) -> [String : String]
+ProjectBinding | struct ProjectBinding
+ProjectBinding.common | var common: String
+ProjectBinding.documentsKind | static let documentsKind: String
+ProjectBinding.init(from:) | init(from decoder: any Decoder) throws
+ProjectBinding.init(root:common:remote:remoteURL:kind:) | init(root: String, common: String, remote: String, remoteURL: String, kind: String? = nil)
+ProjectBinding.isDocuments | var isDocuments: Bool { get }
+ProjectBinding.isFolderless | var isFolderless: Bool { get }
+ProjectBinding.kind | var kind: String?
+ProjectBinding.linkedRoots | var linkedRoots: [WorkspaceRoot] { get }
+ProjectBinding.protectedPaths | var protectedPaths: [String] { get }
+ProjectBinding.remote | var remote: String
+ProjectBinding.remoteURL | var remoteURL: String
+ProjectBinding.root | var root: String
+ToolContext | struct ToolContext
+ToolContext.asker | var asker: Account?
+ToolContext.init(room:roots:projectRun:projectGeneration:asker:turn:origin:) | init(room: UUID, roots: [WorkspaceRoot], projectRun: UUID? = nil, projectGeneration: Int? = nil, asker: Account? = nil, turn: UUID? = nil, origin: ToolOrigin = .member)
+ToolContext.origin | var origin: ToolOrigin
+ToolContext.projectGeneration | var projectGeneration: Int?
+ToolContext.projectRun | var projectRun: UUID?
+ToolContext.room | var room: UUID
+ToolContext.roots | var roots: [WorkspaceRoot]
+ToolContext.turn | var turn: UUID?
+ToolOrigin | enum ToolOrigin
+ToolOrigin.consulted | case consulted
+ToolOrigin.init(rawValue:) | init?(rawValue: String)
+ToolOrigin.member | case member
+ToolOrigin.side | case side
+ToolProvider | protocol ToolProvider : AnyObject
+ToolProvider.active | var active: Bool { get }
+ToolProvider.call(_:_:context:) | func call(_ name: String, _ arguments: [String : Any], context: ToolContext) -> [String : Any]
+ToolProvider.tools() | func tools() -> [[String : Any]]
+ToolProvider.tools(context:) | func tools(context: ToolContext) -> [[String : Any]]
+WorkspaceBackup | struct WorkspaceBackup
+WorkspaceBackup.CleanUpResult | struct CleanUpResult
+WorkspaceBackup.CleanUpResult.bytes | var bytes: Int64
+WorkspaceBackup.CleanUpResult.removed | var removed: Int
+WorkspaceBackup.CleanUpResult.trimmed | var trimmed: Int
+WorkspaceBackup.Policy | struct Policy
+WorkspaceBackup.Policy.current | static var current: WorkspaceBackup.Policy { get set }
+WorkspaceBackup.Policy.days | var days: Int
+WorkspaceBackup.Policy.init(days:perChat:) | init(days: Int, perChat: Int)
+WorkspaceBackup.Policy.perChat | var perChat: Int
+WorkspaceBackup.Policy.standard | static let standard: WorkspaceBackup.Policy
+WorkspaceBackup.Stamp | struct Stamp
+WorkspaceBackup.Stamp.init(from:) | init(from decoder: any Decoder) throws
+WorkspaceBackup.Stamp.kind | var kind: String
+WorkspaceBackup.base | static var base: URL { get }
+WorkspaceBackup.before | var before: [String : WorkspaceBackup.Stamp]
+WorkspaceBackup.begin(_:room:runID:) | static func begin(_ binding: WorkspaceBinding, room: UUID, runID: UUID) throws -> WorkspaceBackup
+WorkspaceBackup.changes | var changes: [WorkspaceChange]
+WorkspaceBackup.cleanUp(_:now:) | @discardableResult static func cleanUp(_ policy: WorkspaceBackup.Policy = .current, now: Date = Date()) -> WorkspaceBackup.CleanUpResult
+WorkspaceBackup.cloud | var cloud: [String]?
+WorkspaceBackup.digest(_:) | static func digest(_ url: URL) throws -> String
+WorkspaceBackup.directory | var directory: String
+WorkspaceBackup.finish() | mutating func finish() throws
+WorkspaceBackup.init(from:) | init(from decoder: any Decoder) throws
+WorkspaceBackup.load(_:) | static func load(_ path: String) throws -> WorkspaceBackup
+WorkspaceBackup.purgeRoom(_:) | static func purgeRoom(_ room: UUID) throws
+WorkspaceBackup.restore() | mutating func restore() throws
+WorkspaceBackup.roots | var roots: [WorkspaceRoot]
+WorkspaceBackup.stamps(_:) | static func stamps(_ roots: [WorkspaceRoot]) throws -> [String : WorkspaceBackup.Stamp]
+WorkspaceBackup.startAutomaticCleanUp() | static func startAutomaticCleanUp()
+WorkspaceBinding | struct WorkspaceBinding
+WorkspaceBinding.consulted | var consulted: WorkspaceBinding { get }
+WorkspaceBinding.description | var description: String { get }
+WorkspaceBinding.face | var face: Bool?
+WorkspaceBinding.fullAccess | var fullAccess: Bool?
+WorkspaceBinding.fullAccessActive | var fullAccessActive: Bool { get }
+WorkspaceBinding.fullAuto | var fullAuto: Bool?
+WorkspaceBinding.init(from:) | init(from decoder: any Decoder) throws
+WorkspaceBinding.init(roots:level:project:projectRunID:projectGeneration:fullAuto:fullAccess:face:origin:) | init(roots: [WorkspaceRoot], level: WorkspaceLevel = .view, project: ProjectBinding? = nil, projectRunID: UUID? = nil, projectGeneration: Int? = nil, fullAuto: Bool? = nil, fullAccess: Bool? = nil, face: Bool? = nil, origin: ToolOrigin? = nil)
+WorkspaceBinding.inventory() | func inventory() -> [String]
+WorkspaceBinding.isFullAuto | var isFullAuto: Bool { get }
+WorkspaceBinding.level | var level: WorkspaceLevel
+WorkspaceBinding.meeting(folder:) | func meeting(folder: String) -> WorkspaceBinding
+WorkspaceBinding.opinion(chatFolder:) | func opinion(chatFolder: String) -> WorkspaceBinding
+WorkspaceBinding.origin | var origin: ToolOrigin?
+WorkspaceBinding.project | var project: ProjectBinding?
+WorkspaceBinding.projectGeneration | var projectGeneration: Int?
+WorkspaceBinding.projectRunID | var projectRunID: UUID?
+WorkspaceBinding.roots | var roots: [WorkspaceRoot]
+WorkspaceBinding.side | var side: WorkspaceBinding { get }
+WorkspaceChange | struct WorkspaceChange
+WorkspaceChange.id | var id: String { get }
+WorkspaceChange.init(from:) | init(from decoder: any Decoder) throws
+WorkspaceChange.init(path:kind:) | init(path: String, kind: String)
+WorkspaceChange.kind | var kind: String
+WorkspaceChange.path | var path: String
+WorkspaceInvocation | struct WorkspaceInvocation
+WorkspaceInvocation.account | var account: Account?
+WorkspaceInvocation.arguments(provider:original:directory:web:tools:) | func arguments(provider: Account.Provider, original: [String], directory: URL, web: Bool, tools: WorkspaceTools) throws -> [String]
+WorkspaceInvocation.binding | var binding: WorkspaceBinding
+WorkspaceInvocation.init(binding:room:readOnly:backupPath:account:) | init(binding: WorkspaceBinding, room: UUID, readOnly: Bool = true, backupPath: String? = nil, account: Account? = nil)
+WorkspaceInvocation.readRequests(_:directory:token:tools:) | func readRequests(_ requests: [[String : Any]], directory: URL, token: DebateCancellation?, tools: WorkspaceTools) throws -> (String, [URL])
+WorkspaceInvocation.resources | static var resources: URL { get }
+WorkspaceInvocation.room | var room: UUID
+WorkspaceLevel | enum WorkspaceLevel
+WorkspaceLevel.execute | case execute
+WorkspaceLevel.init(rawValue:) | init?(rawValue: String)
+WorkspaceLevel.offered | static var offered: [WorkspaceLevel]
+WorkspaceLevel.title | var title: String { get }
+WorkspaceLevel.view | case view
+WorkspaceLevel.write | case write
+WorkspaceRoot | struct WorkspaceRoot
+WorkspaceRoot.directory | var directory: Bool
+WorkspaceRoot.init(from:) | init(from decoder: any Decoder) throws
+WorkspaceRoot.init(path:directory:writable:) | init(path: String, directory: Bool, writable: Bool? = nil)
+WorkspaceRoot.path | var path: String
+WorkspaceRoot.writable | var writable: Bool?
+WorkspaceToolLink | struct WorkspaceToolLink
+WorkspaceToolLink.init(socket:session:face:) | init(socket: String, session: String, face: String? = nil)
+WorkspaceTools | typealias WorkspaceTools = (WorkspaceInvocation) -> WorkspaceToolLink?

@@ -1,0 +1,42 @@
+Account | struct Account
+Account.Provider | enum Provider
+Account.Provider.claude | case claude
+Account.Provider.codex | case codex
+Account.Provider.gemini | case gemini
+Account.Provider.init(rawValue:) | init?(rawValue: String)
+Account.Provider.ollama | case ollama
+Account.Provider.title | var title: String { get }
+Account.claudeKeychainService | var claudeKeychainService: String { get }
+Account.codexHome | var codexHome: String { get }
+Account.dir | var dir: String?
+Account.environment | var environment: [String : String] { get }
+Account.id | var id: String
+Account.init(from:) | init(from decoder: any Decoder) throws
+Account.init(id:provider:name:dir:school:model:) | init(id: String, provider: Account.Provider, name: String, dir: String? = nil, school: Bool? = nil, model: String? = nil)
+Account.isSchool | var isSchool: Bool { get }
+Account.model | var model: String?
+Account.name | var name: String
+Account.provider | var provider: Account.Provider
+Account.school | var school: Bool?
+AccountStore | enum AccountStore
+AccountStore.accountsDir | static var accountsDir: String { get }
+AccountStore.backupDir | static var backupDir: URL { get }
+AccountStore.decode(_:) | static func decode(_ data: Data) -> [Account]?
+AccountStore.gemini | static let gemini: Account
+AccountStore.home | static var home: String { get }
+AccountStore.keptBackups | static let keptBackups: Int
+AccountStore.keptDays | static let keptDays: Int
+AccountStore.keptShrinkBackups | static let keptShrinkBackups: Int
+AccountStore.load() | static func load() -> [Account]
+AccountStore.newAccount(provider:name:) | static func newAccount(provider: Account.Provider, name: String) -> Account
+AccountStore.pruneBackups() | static func pruneBackups()
+AccountStore.save(_:) | @discardableResult static func save(_ list: [Account]) -> Bool
+AccountStore.supportDir | static var supportDir: String { get }
+AccountStore.useRealHome() | static func useRealHome()
+EnterpriseLock | struct EnterpriseLock
+EnterpriseLock.init(from:) | init(from decoder: any Decoder) throws
+EnterpriseLock.init(organization:name:lockedAt:) | init(organization: String, name: String, lockedAt: Date)
+EnterpriseLock.lockedAt | var lockedAt: Date
+EnterpriseLock.name | var name: String
+EnterpriseLock.organization | var organization: String
+extension Foundation: UserDefaults.app | static var app: UserDefaults { get }

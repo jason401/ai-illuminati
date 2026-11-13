@@ -4,19 +4,25 @@ import re
 import sys
 from pathlib import Path
 
-# Allowed direction, not a registration mechanism. New edges require a boundary decision.
-ALLOWED = {
-    "AIAccounts": set(),
-    "AILocalization": set(),
-    "AISpaces": {"AIAccounts", "AILocalization"},
-    "AIRuntime": {"AIAccounts", "AILocalization"},
-    "AIWorkspace": {"AIAccounts", "AILocalization", "AIRuntime"},
-    "AIProjects": {"AIAccounts", "AILocalization", "AIRuntime", "AIWorkspace"},
-    "AIChat": {"AIAccounts", "AILocalization", "AIRuntime", "AIWorkspace", "AIProjects", "AISpaces"},
-    "AIIntegrations": {"AIAccounts", "AILocalization", "AIRuntime", "AIWorkspace"},
-}
-# Swift must also see modules named by a dependency's public interface.
-INTERFACE_ONLY = {"AIIntegrations": {"AIRuntime"}}
+# Allowed direction (tools/module_graph.txt), not a registration mechanism. New edges require a boundary decision.
+# Swift must also see modules named by a dependency's public interface: those are marked `*` there.
+def load_graph(path=Path(__file__).resolve().parent / "module_graph.txt"):
+    allowed, interface_only = {}, {}
+    for line in path.read_text().splitlines():
+        line = line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        name, _, deps = line.partition(":")
+        name, deps = name.strip(), deps.split()
+        if name in allowed:
+            raise SystemExit(f"FAIL: {path.name}: {name} listed twice")
+        allowed[name] = {d.rstrip("*") for d in deps}
+        if marked := {d.rstrip("*") for d in deps if d.endswith("*")}:
+            interface_only[name] = marked
+    return allowed, interface_only
+
+
+ALLOWED, INTERFACE_ONLY = load_graph()
 
 
 def code_only(source):
@@ -118,7 +124,7 @@ if __name__ == "__main__":
     root = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else Path(__file__).resolve().parents[1]
     failures = check(root)
     for failure in failures:
-        print("FAIL: " + failure, file=sys.stderr)
+        print("FAIL: G1 " + failure, file=sys.stderr)
     if failures:
         sys.exit(1)
-    print("PASS: module dependencies and imports follow the declared direction")
+    print("PASS: G1 module dependencies and imports follow the declared direction")

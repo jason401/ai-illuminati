@@ -1,0 +1,13 @@
+# Allowed module dependencies (G1). One line per module: `Module: allowed dependencies`.
+# A module's `dependencies` file may name only modules on its line; `name*` is needed only because a dependency's
+# public interface names it (no import of it in the module's own files).
+# Changing this file changes the module graph: the user approves it (AGENTS.md "Module rules"), and
+# tools/module_guard.sha256 must be updated in the same commit.
+AIAccounts:
+AILocalization:
+AISpaces: AIAccounts AILocalization
+AIRuntime: AIAccounts AILocalization
+AIWorkspace: AIAccounts AILocalization AIRuntime
+AIProjects: AIAccounts AILocalization AIRuntime AIWorkspace
+AIChat: AIAccounts AILocalization AIRuntime AIWorkspace AIProjects AISpaces
+AIIntegrations: AIAccounts AILocalization AIRuntime* AIWorkspace

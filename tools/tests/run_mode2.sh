@@ -29,10 +29,14 @@ limit() {
   return $rc
 }
 # "[n/m] name" before each stage: the app shows it under the current step (project_run).
-echo "[1/11] Check module dependencies and the data folder rule"
-# Only the app picks the real data folder, before it makes anything that reads it.
-limit 60 python3 tools/check_module_dependencies.py
+echo "[1/11] Module guards and the data folder rule"
+# >>> module checks (hashed in tools/module_guard.sha256: changing them needs the user's approval)
+limit 60 zsh tools/check_modules.sh fast
 PYTHONDONTWRITEBYTECODE=1 limit 60 python3 tools/tests/test_module_dependencies.py
+# <<< module checks
+# The hooks run the same checks before each commit and push; they are installed once by tools/setup_dev.sh.
+[[ "$(git config --get core.hooksPath 2>/dev/null)" == .githooks ]] || echo "WARN: git hooks are not installed: zsh tools/setup_dev.sh" >&2
+# Only the app picks the real data folder, before it makes anything that reads it.
 python3 - <<'PY'
 from pathlib import Path
 s = Path('app/macos/main.swift').read_text()
@@ -45,7 +49,7 @@ assert sorted(users) == ['app/macos/main.swift', 'app/modules/AIAccounts/Account
 # The runtime's one public test hook (a fake CLI for runtime_contract.swift) is never set by the app.
 hooked = subprocess.run(['grep', '-rl', '--include=*.swift', 'toolForTests', 'app/macos'], capture_output=True, text=True).stdout.split()
 assert hooked == [], hooked
-# C0: every `extension Discussion` is classified in docs/MODULES.md ("Chat, step C0"): a = Chat takes it whole, b = a shell
+# C0: every `extension Discussion` is classified in docs/modules-history.md ("Chat, step C0"): a = Chat takes it whole, b = a shell
 # whose logic is another module's public function. A new block fails here until it gets its row (and the table).
 import glob, re
 expected = {'Attachments': 'aaa', 'ChatFind': 'a', 'ChatSearch': 'a', 'ChatTools': 'a', 'Collaboration': 'a', 'Debate': 'a',
@@ -95,69 +99,30 @@ assert order == ['FaceLink.shared', 'DriveLink.shared', 'GitLink.shared', 'PlanL
 assert subprocess.run(['grep', '-rl', '@testable', 'app'], capture_output=True, text=True).stdout.split() == [], 'no @testable import in app files'
 PY
 echo "[2/11] Modules on their own"
+# >>> module checks (hashed in tools/module_guard.sha256: changing them needs the user's approval)
 # Each built alone (seeing only the modules it names), checked from outside with only its public API; reaching an
 # internal name must not compile. -enable-testing only lets the module tests (space_build, space_web) say @testable;
 # app files keep a plain import and see public names only.
 MODULES="$TEST_DIR/modules"
 limit 300 zsh tools/build_modules.sh "$MODULES" -enable-testing -module-cache-path "$TEST_DIR/cache"
-for CONTRACT in accounts spaces runtime workspace integrations; do
-  mkdir -p "$TEST_DIR/$CONTRACT-src" "$TEST_DIR/$CONTRACT-home"
-  cp tools/tests/${CONTRACT}_contract.swift "$TEST_DIR/$CONTRACT-src/main.swift"
-  limit 300 xcrun swiftc -swift-version 5 -module-cache-path "$TEST_DIR/cache" -I "$MODULES" -o "$TEST_DIR/$CONTRACT-contract" "$TEST_DIR/$CONTRACT-src/main.swift" "$MODULES"/lib*.a
-  limit 120 env AI_ILLUMINATI_TEST_HOME="$TEST_DIR/$CONTRACT-home" "$TEST_DIR/$CONTRACT-contract"
+# Every module folder's contract test (tools/tests/<name>_contract.swift, AIFoo -> foo): found here, not listed by hand.
+for DIR in app/modules/*(/N); do
+  NAME=${(L)${DIR:t}#AI}; SRC=tools/tests/${NAME}_contract.swift
+  [[ -f $SRC ]] || { echo "FAIL: ${DIR:t} has no contract test $SRC" >&2; exit 1 }
+  RUN_ENV=(AI_ILLUMINATI_TEST_HOME="$TEST_DIR/$NAME-home")
+  # Projects runs its commands through project_process.py (the app's resources); Chat reads older chats
+  # (tools/tests/chat_fixtures) and saves them as the app did before the module.
+  grep -q '^// contract needs: app resources' $SRC && RUN_ENV+=(AI_ILLUMINATI_TEST_RESOURCES="$PWD/app/resources")
+  grep -q '^// contract needs: chat fixtures' $SRC && RUN_ENV+=(CHAT_FIXTURES="$PWD/tools/tests/chat_fixtures")
+  mkdir -p "$TEST_DIR/$NAME-src" "$TEST_DIR/$NAME-home"
+  cp $SRC "$TEST_DIR/$NAME-src/main.swift"
+  limit 300 xcrun swiftc -swift-version 5 -module-cache-path "$TEST_DIR/cache" -I "$MODULES" -o "$TEST_DIR/$NAME-contract" "$TEST_DIR/$NAME-src/main.swift" "$MODULES"/lib*.a
+  limit 120 env $RUN_ENV "$TEST_DIR/$NAME-contract"
 done
-# Projects runs its commands through project_process.py (the app's resources).
-mkdir -p "$TEST_DIR/projects-src" "$TEST_DIR/projects-home"
-cp tools/tests/projects_contract.swift "$TEST_DIR/projects-src/main.swift"
-limit 300 xcrun swiftc -swift-version 5 -module-cache-path "$TEST_DIR/cache" -I "$MODULES" -o "$TEST_DIR/projects-contract" "$TEST_DIR/projects-src/main.swift" "$MODULES"/lib*.a
-limit 120 env AI_ILLUMINATI_TEST_HOME="$TEST_DIR/projects-home" AI_ILLUMINATI_TEST_RESOURCES="$PWD/app/resources" "$TEST_DIR/projects-contract"
-# Chat reads older chats (tools/tests/chat_fixtures) and saves them as the app did before the module.
-mkdir -p "$TEST_DIR/chat-src" "$TEST_DIR/chat-home"
-cp tools/tests/chat_contract.swift "$TEST_DIR/chat-src/main.swift"
-limit 300 xcrun swiftc -swift-version 5 -module-cache-path "$TEST_DIR/cache" -I "$MODULES" -o "$TEST_DIR/chat-contract" "$TEST_DIR/chat-src/main.swift" "$MODULES"/lib*.a
-limit 120 env AI_ILLUMINATI_TEST_HOME="$TEST_DIR/chat-home" CHAT_FIXTURES="$PWD/tools/tests/chat_fixtures" "$TEST_DIR/chat-contract"
-boundary() {   # module, code that reaches one of its internal names, that name
-  mkdir -p "$TEST_DIR/boundary-$1"
-  printf 'import %s\n%s\n' "$1" "$2" > "$TEST_DIR/boundary-$1/main.swift"
-  if limit 300 xcrun swiftc -swift-version 5 -typecheck -module-cache-path "$TEST_DIR/cache" -I "$MODULES" "$TEST_DIR/boundary-$1/main.swift" 2>"$TEST_DIR/boundary-$1.log" \
-     || ! grep -q "'$3' is inaccessible due to 'internal' protection level" "$TEST_DIR/boundary-$1.log"; then
-    cat "$TEST_DIR/boundary-$1.log" >&2
-    echo "FAIL: code outside $1 reached its internal $3" >&2
-    exit 1
-  fi
-}
-boundary AIAccounts '_ = AccountStore.place' place
-boundary AISpaces '_ = SpaceStore.setting' setting
-boundary AISpaces '_ = SpaceAssets.served' served
-boundary AIRuntime '_ = Answerer.chatDir' chatDir
-boundary AIRuntime '_ = Answerer.launchForTests' launchForTests
-boundary AIRuntime '_ = NativeSessions.split' split
-boundary AIRuntime '_ = CloudModels.apply' apply
-boundary AIWorkspace '_ = WorkspaceBackup.chats' chats
-boundary AIWorkspace '_ = WorkspaceBackup.keepPerChat' keepPerChat
-boundary AIProjects '_ = TodoScheduler.retryDelay' retryDelay
-boundary AIProjects '_ = ProjectWork.leasePrefix' leasePrefix
-boundary AIProjects '_ = TodoStore.encoder' encoder
-boundary AIIntegrations '_ = FaceLink.fallbackMoods' fallbackMoods
-boundary AIIntegrations '_ = GoogleAuth.tokenURL' tokenURL
-boundary AIIntegrations '_ = DriveLink.shared.isAllowed' isAllowed
-boundary AIIntegrations '_ = ExternalMCP.callTimeout' callTimeout
-boundary AIChat '_ = ChatTime.calendar' calendar
-boundary AIChat '_ = Discussion.maxRunning' maxRunning
-boundary AIChat '_ = Discussion(model: Optional<any ChatSettings>.none!).draft' draft
-# AutoGuard is internal and whole (the app's one way in is FullAutoGuard.environment): its shims and denied list stay inside.
-printf 'import AIWorkspace\n_ = AutoGuard.claudeDenied\n' > "$TEST_DIR/boundary-AutoGuard.swift"
-if limit 300 xcrun swiftc -swift-version 5 -typecheck -module-cache-path "$TEST_DIR/cache" -I "$MODULES" "$TEST_DIR/boundary-AutoGuard.swift" 2>"$TEST_DIR/boundary-AutoGuard.log" \
-   || ! grep -q "cannot find 'AutoGuard' in scope" "$TEST_DIR/boundary-AutoGuard.log"; then
-  cat "$TEST_DIR/boundary-AutoGuard.log" >&2; echo "FAIL: code outside AIWorkspace reached AutoGuard" >&2; exit 1
-fi
-# The chat's routing and ask_ai rules are internal types: the app reaches them only through the chat (C1).
-printf 'import AIChat\n_ = Peer.maxAsks\n_ = Route.self\n' > "$TEST_DIR/boundary-Peer.swift"
-if limit 300 xcrun swiftc -swift-version 5 -typecheck -module-cache-path "$TEST_DIR/cache" -I "$MODULES" "$TEST_DIR/boundary-Peer.swift" 2>"$TEST_DIR/boundary-Peer.log" \
-   || ! grep -q "cannot find 'Peer' in scope" "$TEST_DIR/boundary-Peer.log" || ! grep -q "cannot find 'Route' in scope" "$TEST_DIR/boundary-Peer.log"; then
-  cat "$TEST_DIR/boundary-Peer.log" >&2; echo "FAIL: code outside AIChat reached Peer or Route" >&2; exit 1
-fi
-echo "PASS: code outside the modules cannot reach their internal names"
+# S1 public API snapshots (docs/api), S2 each module's boundary file, S3 App size.
+limit 900 zsh tools/check_modules.sh slow "$MODULES" "$TEST_DIR"
+# <<< module checks
+[[ ${1-} == --modules ]] && { echo "PASS: module stages (1-2) only"; exit 0 }
 echo "[3/11] Real data folder check"
 mkdir -p "$TEST_DIR/real-home-src" && cp tools/tests/real_home.swift "$TEST_DIR/real-home-src/main.swift"
 limit 300 xcrun swiftc -swift-version 5 -module-cache-path "$TEST_DIR/cache" -I "$MODULES" -o "$TEST_DIR/real-home" "$TEST_DIR/real-home-src/main.swift" "$MODULES/libAIAccounts.a"

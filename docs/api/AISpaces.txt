@@ -1,0 +1,161 @@
+SpaceActions | struct SpaceActions
+SpaceActions.init(open:notify:) | init(open: @escaping ([String : String]) -> Void = { _ in }, notify: @escaping (String) -> Void = { _ in })
+SpaceAssets | enum SpaceAssets
+SpaceAssets.dataURL(_:folder:) | static func dataURL(_ name: String, folder: URL) -> String?
+SpaceBad | struct SpaceBad
+SpaceBad.init(reason:) | init(reason: String)
+SpaceBad.reason | let reason: String
+SpaceBuild | struct SpaceBuild
+SpaceBuild.color | var color: String?
+SpaceBuild.html | var html: String
+SpaceBuild.icon | var icon: String?
+SpaceBuild.migrate | var migrate: String?
+SpaceBuild.name | var name: String?
+SpaceBuilder | enum SpaceBuilder
+SpaceBuilder.chatRule(_:) | static func chatRule(_ spaces: [SpaceManifest]) -> String
+SpaceBuilder.parse(_:new:) | static func parse(_ body: String?, new: Bool) -> Result<SpaceBuild, SpaceBad>
+SpaceBuilder.refine(prompt:kept:ask:made:said:) | static func refine(prompt: String, kept: [String], ask: (String) -> Result<String, SpaceBad>, made: () -> [String], said: (String) -> String) -> Result<(build: SpaceBuild, said: String), SpaceBad>
+SpaceBuilder.refinePrompt(manifest:html:state:history:request:draws:kept:) | static func refinePrompt(manifest: SpaceManifest, html: String, state: Data, history: [SpaceRefineEntry], request: String, draws: Bool = false, kept: Int = 0) -> String
+SpaceBuilder.rule | static let rule: String
+SpaceBuilder.split(_:) | static func split(_ text: String) -> (reply: String, found: Bool, body: String?, target: String?, base: String?)
+SpaceDraftNote | struct SpaceDraftNote
+SpaceDraftNote.baseVersion | var baseVersion: Int?
+SpaceDraftNote.discarded | var discarded: Bool?
+SpaceDraftNote.draft | var draft: String?
+SpaceDraftNote.init(draft:name:reason:space:discarded:target:baseVersion:) | init(draft: String? = nil, name: String, reason: String? = nil, space: String? = nil, discarded: Bool? = nil, target: String? = nil, baseVersion: Int? = nil)
+SpaceDraftNote.init(from:) | init(from decoder: any Decoder) throws
+SpaceDraftNote.name | var name: String
+SpaceDraftNote.reason | var reason: String?
+SpaceDraftNote.space | var space: String?
+SpaceDraftNote.target | var target: String?
+SpaceExport | enum SpaceExport
+SpaceExport.document(_:) | static func document(_ id: String) -> String?
+SpaceExport.fitsOneFile(_:) | static func fitsOneFile(_ id: String) -> Bool
+SpaceExport.folder(_:to:) | static func folder(_ id: String, to target: URL) throws
+SpaceFolderHost | final class SpaceFolderHost
+SpaceFolderHost.init(_:) | init(_ folder: URL)
+SpaceFolderHost.set(key:json:) | func set(key: String, json: String?) -> Result<Void, SpaceBad>
+SpaceFolderHost.stateData | var stateData: Data { get }
+SpaceLibrary | enum SpaceLibrary
+SpaceLibrary.all() | static func all() -> [SpaceManifest]
+SpaceLibrary.beginAnswer() | static func beginAnswer()
+SpaceLibrary.busy | static var busy: Bool { get }
+SpaceLibrary.endAnswer() | static func endAnswer()
+SpaceLibrary.pictureBlockRule | static let pictureBlockRule: String
+SpaceLibrary.rule(root:spaces:draws:) | static func rule(root: String, spaces: [SpaceManifest], draws: Bool) -> String
+SpaceLibrary.sync(shrink:) | static func sync(shrink: ((URL) -> Data?)? = nil) -> (notes: [SpaceSyncNote], reshaped: [String])
+SpaceLimits | enum SpaceLimits
+SpaceLimits.html | static let html: Int
+SpaceLimits.key | static let key: Int
+SpaceLimits.migrate | static let migrate: Int
+SpaceLimits.name | static let name: Int
+SpaceLimits.refine | static let refine: Int
+SpaceLimits.state | static let state: Int
+SpaceLimits.versions | static let versions: Int
+SpaceManifest | struct SpaceManifest
+SpaceManifest.color | var color: String
+SpaceManifest.colors | static let colors: [String]
+SpaceManifest.createdAt | var createdAt: Date
+SpaceManifest.hidden | var hidden: Bool?
+SpaceManifest.icon | var icon: String
+SpaceManifest.id | var id: String
+SpaceManifest.init(from:) | init(from decoder: any Decoder) throws
+SpaceManifest.lock | var lock: EnterpriseLock?
+SpaceManifest.name | var name: String
+SpaceManifest.order | var order: Int
+SpaceManifest.originChat | var originChat: String?
+SpaceManifest.pinned | var pinned: Bool?
+SpaceManifest.schedule | var schedule: SpaceSchedule?
+SpaceManifest.shown(at:) | func shown(at date: Date = Date()) -> Bool
+SpaceManifest.version | var version: Int
+SpaceManifest.worker | var worker: String?
+SpaceMemoryHost | final class SpaceMemoryHost
+SpaceMemoryHost.init(_:) | init(_ data: Data)
+SpaceMemoryHost.set(key:json:) | func set(key: String, json: String?) -> Result<Void, SpaceBad>
+SpaceMemoryHost.stateData | var stateData: Data { get }
+SpaceMigrator | enum SpaceMigrator
+SpaceMigrator.run(_:state:done:) | static func run(_ migrate: String, state: Data, done: @escaping (Result<Data, SpaceBad>) -> Void)
+SpacePatch | enum SpacePatch
+SpacePatch.meetingState(_:title:source:chat:) | static func meetingState(_ result: String, title: String, source: String, chat: UUID?) -> [String : Any]
+SpacePictures | enum SpacePictures
+SpacePictures.Request | struct Request
+SpacePictures.Request.file | var file: String?
+SpacePictures.Request.from | var from: Int?
+SpacePictures.Request.init(n:from:text:file:) | init(n: Int, from: Int?, text: String, file: String? = nil)
+SpacePictures.Request.n | var n: Int
+SpacePictures.Request.text | var text: String
+SpacePictures.chatRule(draws:) | static func chatRule(draws: Bool) -> String
+SpacePictures.embed(_:made:kept:) | static func embed(_ html: String, made: [String], kept: [String]) -> Result<String, SpaceBad>
+SpacePictures.hide(_:) | static func hide(_ html: String) -> (text: String, kept: [String])
+SpacePictures.perAnswer | static let perAnswer: Int
+SpacePictures.referenceFile(_:) | static func referenceFile(_ dataURL: String) -> URL?
+SpacePictures.requests(in:) | static func requests(in body: String) -> Result<[SpacePictures.Request], SpaceBad>
+SpaceRefineEntry | struct SpaceRefineEntry
+SpaceRefineEntry.init(from:) | init(from decoder: any Decoder) throws
+SpaceRefineEntry.init(role:text:at:) | init(role: String, text: String, at: Date = Date())
+SpaceSchedule | struct SpaceSchedule
+SpaceSchedule.days | var days: [Int]?
+SpaceSchedule.from | var from: String?
+SpaceSchedule.init(from:) | init(from decoder: any Decoder) throws
+SpaceSchedule.parse(_:) | static func parse(_ text: String) -> SpaceSchedule?
+SpaceSchedule.to | var to: String?
+SpaceStateHost | protocol SpaceStateHost : AnyObject
+SpaceStateHost.set(key:json:) | func set(key: String, json: String?) -> Result<Void, SpaceBad>
+SpaceStateHost.stateData | var stateData: Data { get }
+SpaceStore | final class SpaceStore
+SpaceStore.addRefine(_:_:) | static func addRefine(_ id: String, _ entry: SpaceRefineEntry)
+SpaceStore.adopt(draft:origin:lock:) | func adopt(draft: String, origin: UUID?, lock: EnterpriseLock? = nil) throws -> SpaceManifest
+SpaceStore.apply(_:html:state:note:name:icon:color:) | func apply(_ id: String, html: String, state: Data? = nil, note: String, name: String? = nil, icon: String? = nil, color: String? = nil) throws
+SpaceStore.dataChanged(_:) | func dataChanged(_ id: String)
+SpaceStore.delete(_:) | func delete(_ id: String) throws
+SpaceStore.discardDraft(_:) | static func discardDraft(_ draft: String)
+SpaceStore.draftBuild(_:) | static func draftBuild(_ draft: String) -> SpaceBuild?
+SpaceStore.draftFolder(_:) | static func draftFolder(_ id: String) -> URL
+SpaceStore.folder(_:) | static func folder(_ id: String) -> URL
+SpaceStore.html(_:) | static func html(_ folder: URL) -> String
+SpaceStore.makeFromTemplate(_:state:name:origin:lock:) | func makeFromTemplate(_ template: SpaceTemplate, state: Data? = nil, name: String? = nil, origin: UUID? = nil, lock: EnterpriseLock? = nil) throws -> SpaceManifest
+SpaceStore.manifest(_:) | func manifest(_ id: String) -> SpaceManifest?
+SpaceStore.manifest(at:) | static func manifest(at folder: URL) -> SpaceManifest?
+SpaceStore.migrateLegacy(chats:) | @discardableResult static func migrateLegacy(chats: String = AccountStore.supportDir + "/chats") -> [String]
+SpaceStore.move(_:by:among:) | func move(_ id: String, by step: Int, among listed: [String])
+SpaceStore.named(in:) | static func named(in question: String) -> [SpaceManifest]
+SpaceStore.pruneDrafts(olderThan:now:) | static func pruneDrafts(olderThan days: Double = 30, now: Date = Date())
+SpaceStore.refineLog(_:) | static func refineLog(_ id: String) -> [SpaceRefineEntry]
+SpaceStore.reload() | func reload()
+SpaceStore.restore(_:to:) | func restore(_ id: String, to version: Int) throws
+SpaceStore.root | static var root: URL { get }
+SpaceStore.saveDraft(_:over:assets:) | static func saveDraft(_ build: SpaceBuild, over target: SpaceManifest? = nil, assets: URL? = nil) throws -> String
+SpaceStore.shared | static let shared: SpaceStore
+SpaceStore.spaces | @Published var spaces: [SpaceManifest] { get set }
+SpaceStore.state(_:) | static func state(_ folder: URL) -> Data
+SpaceStore.stateVersion | @Published var stateVersion: [String : Int] { get set }
+SpaceStore.undo(_:) | @discardableResult func undo(_ id: String) throws -> Bool
+SpaceStore.update(_:_:) | func update(_ id: String, _ body: (inout SpaceManifest) -> Void)
+SpaceStore.versions(_:) | static func versions(_ id: String) -> [SpaceVersion]
+SpaceSyncNote | struct SpaceSyncNote
+SpaceSyncNote.init(from:) | init(from decoder: any Decoder) throws
+SpaceSyncNote.kind | var kind: String
+SpaceSyncNote.name | var name: String
+SpaceSyncNote.reason | var reason: String?
+SpaceSyncNote.space | var space: String
+SpaceSyncNote.version | var version: Int?
+SpaceTemplate | enum SpaceTemplate
+SpaceTemplate.checklist | case checklist
+SpaceTemplate.compare | case compare
+SpaceTemplate.decisions | case decisions
+SpaceTemplate.init(rawValue:) | init?(rawValue: String)
+SpaceTemplate.name | var name: String { get }
+SpaceVersion | struct SpaceVersion
+SpaceVersion.at | var at: Date
+SpaceVersion.id | var id: Int { get }
+SpaceVersion.init(from:) | init(from decoder: any Decoder) throws
+SpaceVersion.migrated | var migrated: Bool
+SpaceVersion.note | var note: String
+SpaceVersion.version | var version: Int
+SpaceWebView | @MainActor struct SpaceWebView
+SpaceWebView.Coordinator | final class Coordinator
+SpaceWebView.dismantleNSView(_:coordinator:) | @MainActor static func dismantleNSView(_ container: NSView, coordinator: SpaceWebView.Coordinator)
+SpaceWebView.init(html:assets:color:reload:host:actions:onProblem:) | @MainActor init(html: String, assets: URL?, color: String, reload: String, host: @escaping () -> any SpaceStateHost, actions: SpaceActions, onProblem: @escaping (String) -> Void = { _ in })
+SpaceWebView.makeCoordinator() | @MainActor func makeCoordinator() -> SpaceWebView.Coordinator
+SpaceWebView.makeNSView(context:) | @MainActor func makeNSView(context: SpaceWebView.Context) -> NSView
+SpaceWebView.updateNSView(_:context:) | @MainActor func updateNSView(_ container: NSView, context: SpaceWebView.Context)

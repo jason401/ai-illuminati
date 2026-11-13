@@ -1,6 +1,7 @@
 import Foundation
 import AIAccounts
 import AIChat
+// contract needs: chat fixtures
 
 // The promises of Chat (AIChat), checked from outside with only its public API: chats saved by older builds
 // (tools/tests/chat_fixtures, with their old keys: keepSessions, school, maxTurns, peerReview…) are read as they were

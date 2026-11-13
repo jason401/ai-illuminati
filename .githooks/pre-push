@@ -1,0 +1,5 @@
+#!/bin/zsh
+# Module stages of the test before every push: guards, modules built alone, their contracts, API snapshots, boundaries
+# (run_mode2.sh stages 1-2, a few minutes). The full test stays the work AI's job before it pushes.
+cd "$(git rev-parse --show-toplevel)" || exit 1
+zsh tools/tests/run_mode2.sh --modules < /dev/null || { echo "pre-push: module checks failed; push refused" >&2; exit 1 }

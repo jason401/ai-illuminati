@@ -23,17 +23,20 @@ final class ToolHub {
     static var socketPath = AccountStore.supportDir + "/tools.sock"
     private let providerList: () -> [ToolProvider]
     private let now: () -> Date
+    private let listenOnRegister: Bool
     private var providers: [ToolProvider] { providerList() }
     var active: Bool { providers.contains { $0.active } }
     private let lock = NSLock()
     private var sockets: Set<String> = []
     private var sessions: [String: (ToolContext, Date)] = [:]
     // The app supplies one fixed list; no dynamic registration.
-    init(providers: @escaping () -> [ToolProvider], now: @escaping () -> Date = { Date() }) { self.providerList = providers; self.now = now }
+    init(providers: @escaping () -> [ToolProvider], now: @escaping () -> Date = { Date() }, listenOnRegister: Bool = true) {
+        self.providerList = providers; self.now = now; self.listenOnRegister = listenOnRegister
+    }
 
     func register(room: UUID, roots: [WorkspaceRoot], projectRun: UUID? = nil, generation: Int? = nil, asker: Account? = nil,
                   origin: ToolOrigin = .member) -> String {
-        start()
+        if listenOnRegister { start() }
         let turn = asker == nil ? nil : MemoryLink.shared.newestTurn(room)   // read before taking the lock (it may wait for the main thread)
         lock.lock(); defer { lock.unlock() }
         sessions = sessions.filter { $0.value.1 > now() }

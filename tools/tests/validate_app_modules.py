@@ -231,65 +231,16 @@ print("PASS: localization trial")
     return trial
 
 
-def checked_recorded_trial():
-    """Reject stale or altered recovered artifacts before copying them over a main snapshot."""
-    report = json.loads((ARTIFACTS / "result.json").read_text())
-    consumer = report.get("parallel_trial", {}).get("consumer_test", {})
-    if consumer.get("passed") is not False or "everyone must give an opening view first" not in consumer.get("evidence", ""):
-        raise RuntimeError("recorded consumer failure is missing or different")
-    changes = [
-        ("AIAccounts", "Accounts.swift", 'case .gemini: return "Gemini"', 'case .gemini: return "Google Gemini"'),
-        ("AILocalization", "Language.swift", "for id in preferred {", "for raw in preferred {\n            let id = raw.lowercased()"),
-    ]
-    for name, filename, before, after in changes:
-        original = (ROOT / "app/modules" / name / filename).read_text()
-        artifact = (ARTIFACTS / name / filename).read_text()
-        if original.count(before) != 1 or original.replace(before, after, 1) != artifact:
-            raise RuntimeError("recovered source is stale or altered: " + name)
-    report["recovered_from"] = "project_run log"
-    report["recovered_source_check"] = "passed: current main plus exactly one prescribed replacement per module"
-    report["parallel_trial"].pop("conflicts", None)
-    report["parallel_trial"]["manual_combination"] = "disjoint module directories copied; Git conflicts not checked"
-    report["parallel_trial"]["consumer_limit"] = "stopped at the first opening-speaker failure; later app assertions, space_web, icon and final account checksum did not run"
-    report["parallel_trial"]["cause"] = "Gemini title identified by code tracing; no isolated Localization-only consumer run"
-    return report
-
-
-def link_recorded_trial():
-    """Resume only linking after the first experiment exposed a consumer failure. No second parallel trial."""
-    report = checked_recorded_trial()
-    with tempfile.TemporaryDirectory(prefix="a-link-", dir="/tmp") as temp:
-        tree = Path(temp)
-        shutil.copytree(ROOT / "app", tree / "app")
-        shutil.copytree(ROOT / "tools", tree / "tools", ignore=shutil.ignore_patterns("__pycache__"))
-        for name, filename in [("AIAccounts", "Accounts.swift"), ("AILocalization", "Language.swift")]:
-            shutil.copy2(ARTIFACTS / name / filename, tree / "app/modules" / name / filename)
-        linked = tree / "modules"
-        run(["zsh", "tools/build_modules.sh", linked, "-module-cache-path", tree / "cache"], cwd=tree)
-        run(["xcrun", "swiftc", "-swift-version", "5", "-module-cache-path", tree / "cache",
-             "-I", linked, "-o", tree / "app-link", *sorted((tree / "app/macos").glob("*.swift")),
-             *sorted(linked.glob("lib*.a"))], timeout=900)
-    report["parallel_trial"]["app_link"] = "passed"
-    report["parallel_trial"]["integration"] = "module contracts and app link passed; consumer test rejected the trial title change"
-    return report
-
 
 if __name__ == "__main__":
     watched = {p: hashlib.sha256(p.read_bytes()).hexdigest()
                for p in (ROOT / "app").glob("**/*.swift")}
-    if sys.argv[1:] == ["--check-recorded-trial"]:
-        report = checked_recorded_trial()
-        if report.get("parallel_trial", {}).get("app_link") != "passed":
-            raise RuntimeError("recorded app link has not passed")
-    elif sys.argv[1:] == ["--link-recorded-trial"]:
-        report = link_recorded_trial()
-    elif sys.argv[1:]:
-        raise SystemExit("usage: validate_app_modules.py [--link-recorded-trial|--check-recorded-trial]")
-    else:
-        with tempfile.TemporaryDirectory(prefix="a-final-", dir="/tmp") as temp:
-            base = Path(temp)
-            report = {"falsifications": falsify(base)}
-            report["parallel_trial"] = parallel_trial(base / "trial", report)
+    if sys.argv[1:]:
+        raise SystemExit("usage: validate_app_modules.py")
+    with tempfile.TemporaryDirectory(prefix="a-final-", dir="/tmp") as temp:
+        base = Path(temp)
+        report = {"falsifications": falsify(base)}
+        report["parallel_trial"] = parallel_trial(base / "trial", report)
     assert all(hashlib.sha256(p.read_bytes()).hexdigest() == digest for p, digest in watched.items()), "trial changed app sources"
     report["main_sources_unchanged"] = True
     (ARTIFACTS / "result.json").write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")

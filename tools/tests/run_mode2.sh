@@ -29,7 +29,7 @@ limit() {
   return $rc
 }
 # "[n/m] name" before each stage: the app shows it under the current step (project_run).
-echo "[1/11] Check the data folder rule"
+echo "[1/11] Check module dependencies and the data folder rule"
 # Only the app picks the real data folder, before it makes anything that reads it.
 limit 60 python3 tools/check_module_dependencies.py
 PYTHONDONTWRITEBYTECODE=1 limit 60 python3 tools/tests/test_module_dependencies.py

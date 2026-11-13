@@ -17,5 +17,9 @@ Store reproducible results under ignored .ai-illuminati/a-trial; compare the ori
 Tool constraint: the connected git_* tools provide branch/switch/commit but no worktree or merge operation.
 Unlike earlier trials by two AIs in worktrees, this experiment uses two concurrent script workers in copies.
 Preserve separate accounts/localization/combined trial branch snapshots with native git_* tools.
-Combining disjoint paths manually does not establish that a Git three-way merge succeeds; report that limit explicitly.
+The initial manual composition alone did not establish Git conflict behavior. Review follow-up used a temporarily
+registered `git merge-tree --write-tree` check on the two preserved branch snapshots: exit 0, result tree
+`d384cac44f05839dba761f7e35c35b2568bbb0cb`, identical to `28beee3^{tree}`. Git objects were written; the working tree and branch refs
+were not updated and no merge commit was made. The temporary command was removed from shared configuration.
+Localization-only follow-up consumer validation also passed the full run_mode2.sh. It did not repeat the parallel trial.
 Do not delete any trial branch, force push, publish stable, or retain trial behavior on main.

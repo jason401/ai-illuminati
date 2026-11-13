@@ -90,15 +90,16 @@ DriveLink.shared in an isolated test keeps working. The list is never dynamicall
 `shared` alone connects ProjectWork.revokeTools; a fixture hub cannot overwrite that hook.
 The clock defaults to Date(); tests inject time without waiting two hours. `available(context:legacy:)` holds the
 unchanged origin selection so its identities can be checked independently of providers' own permission gates.
+Fixture hubs pass listenOnRegister: false and assert no socket file was created; the production default still listens.
 These are app-internal seams: no new module or public symbol.
 
 | Promise | Consumer | Check |
 |---|---|---|
 | The exact 13 singleton identities and order; current replaceable Drive singleton | ToolHub.shared | run_mode2 stage 1 exact source list; testToolHub identity and Drive replacement |
 | Tool listing preserves provider order and duplicate names; call uses the first active provider that lists the name in that context | CLI bridge | testToolHub duplicate fixtures, inactive/context-hidden list and call; baseline + A1/A2/A3 mutants |
-| member keeps the list; side has only Peer; consulted excludes Peer and Convene; legacy has only Face, before providers' own gates | workspace bridge, ask_ai, meetings, old Face bridge | testToolHub exact selected identities + list/call refusals, A4 mutant; testAskAI, testMeetingTool, testChatThroughCLI |
+| member keeps the list; side has only Peer; consulted excludes Peer and Convene; legacy has only Face, before providers' own gates | workspace bridge, ask_ai, meetings, old Face bridge | testToolHub exact selected identities and side/legacy call refusals, A4 mutant; testAskAI, testMeetingTool, testChatThroughCLI |
 | Unknown/expired sessions cannot list or call; project revocation removes only that project's sessions; unknown operations/names fail | all CLI calls, project turn end | testToolHub, injected-clock expiry, A5 mutant; testProjectHandoff |
-| Slow names are limited to tools actually exposed | workspace_mcp.py | testToolHub (empty intersection), testExternalMCP (real fake-server slow name) |
+| Slow names are limited to tools actually exposed | workspace_mcp.py | testExternalMCP (nonempty exposed fake-server slow names); an excluded-slow-name negative case is not covered |
 | Each module follows its declared imports and allowed direction | every module/app build in run_mode2 | check_module_dependencies.py, DependencyRules temporary-tree falsifications, build_modules.sh visibility and cycle checks |
 | No trial behavior survives in the app sources | main | validate_app_modules.py app-source SHA256 comparison, return to main after local trial snapshots |
 
@@ -133,20 +134,24 @@ body/list at a time in temporary copies. DependencyRules independently mutates d
 
 All five Swift mutants were caught after the unchanged baseline passed. No mutant touched main's source.
 The one parallel experiment overlapped both workers and both module contracts passed separately and after manual
-combination. Disjoint module directories were copied together; Git conflict detection was not performed. Consumer validation then failed with exit 133 at mode2's "everyone must give an opening view first":
-code tracing identifies the Gemini title's use in Discussion.label as the cause (no isolated consumer run was performed).
+combination. The initial integration copied disjoint module directories; review subsequently verified the Git three-way
+result using merge-tree (details below). Consumer validation then failed with exit 133 at mode2's "everyone must give an opening view first":
+Code tracing identifies the Gemini title's use in Discussion.label as the cause. The review's Localization-only full
+consumer run passed, supporting that diagnosis; Accounts-only consumers were not run separately.
 **Module-only validation was insufficient for this behavior change.**
 The original experimental consumer assertions were kept; the trial behavior is never promoted to main.
 The combined run stopped at its first failure: later app assertions, space_web, icon and the final accounts checksum
-were not run in that experimental tree. Localization-only consumers were not run separately. Main's complete suite
-(including those later stages and the account checksum) passed independently.
+were not run in that combined experimental tree. The later Localization-only consumer run and main's complete suite
+both reached and passed those stages and the final account checksum.
 
 The first harness treated this experimental consumer failure as an exception and cleaned its temporary folder before
 saving artifacts. The exact deterministic mutation sources and result were recovered from its project_run output.
 The harness now checkpoints before consumers and records this expected negative finding. A link-only resume does
 not repeat the parallel experiment. The link-only resume passed (exit 0), including an unchanged-main-source hash check. A subsequent record preflight
 verified each recovered source equals current main plus exactly its one prescribed mutation; recovery provenance and
-the original consumer failure are recorded explicitly. Final main run_mode2.sh and the
+the original consumer failure are recorded explicitly. These one-time recovery commands and helper functions were
+removed from the shared registry/script after the review; only test, build and validate-app-modules remain.
+The default validator creates its artifacts and never requires an ignored result.json input. Final main run_mode2.sh and the
 staged signed build both passed (exit 0). No trial behavior or built app is committed to main.
 
 Contract: [APP_PARALLEL_TRIAL.md](APP_PARALLEL_TRIAL.md). Two concurrent script workers change Accounts' Gemini
@@ -154,9 +159,25 @@ display title and Localization's uppercase-language handling in isolated copies,
 then combine and rerun both contracts, full run_mode2 and an all-source app link. Original app source hashes must be
 unchanged. Sources/results are preserved under ignored .ai-illuminati/a-trial for local trial branch snapshots.
 Unlike earlier trials, these are script workers in copies, not two AIs in worktrees. Connected git_* tools have no
-worktree/merge operation: the local branch snapshots use manual combination of disjoint paths. This does not prove a
-Git three-way merge succeeds; no such claim is made. Module-only success is limited to these cases, and never
+worktree/merge operation: the local branch snapshots used manual composition. The review closed the conflict-check gap
+with temporarily registered merge-tree validation; no working-tree merge or merge commit was created.
+Module-only success is limited to these cases, and never
 replaces the consumer tests in each promise row. C0's Space-refine app-path coverage gap is still open.
+
+Review follow-up (2026-11-12):
+- `git merge-tree --write-tree trial/app-a-accounts-20261112 trial/app-a-localization-20261112` exited 0:
+  no three-way conflicts. Result tree `d384cac44f05839dba761f7e35c35b2568bbb0cb` equals `28beee3^{tree}`.
+  This command writes Git objects but does not update the working tree or branch refs. Its one-time registry entry was removed.
+- A Localization-only snapshot first verified the recorded source equals current main plus the prescribed replacement,
+  then ran the entire run_mode2.sh: exit 0, through space_web, icon and the final account checksum. Main app source hashes
+  stayed unchanged. This was follow-up consumer validation, not another parallel trial.
+- The consulted-call loop named tools no fixture exposed and the empty slow-list check proved nothing, so both were deleted.
+  Central origin filtering remains checked by actual singleton identities (A4); the nonempty slow-name positive check
+  remains in testExternalMCP, with no claim that an excluded-name negative case is covered.
+- register() can skip listening for in-process fixture hubs. Production keeps its default; testToolHub asserts no hub.sock.
+- run_mode2 stage 1 is now named "Check module dependencies and the data folder rule".
+- After these fixes, main passed the complete run_mode2.sh (including the no-socket fixture assertion and final
+  account checksum) and the staged signed build, both exit 0.
 
 Local trial snapshots (not pushed or merged into main):
 - `trial/app-a-accounts-20261112`: 165633a

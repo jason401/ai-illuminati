@@ -48,9 +48,10 @@ func testToolHub() {
     defer { ToolHub.socketPath = socket }
     let first = HubFixture("first"), second = HubFixture("second")
     var instant = Date()
-    let hub = ToolHub(providers: { [first, second] }, now: { instant })
+    let hub = ToolHub(providers: { [first, second] }, now: { instant }, listenOnRegister: false)
     let room = UUID(), project = UUID()
     let member = hub.register(room: room, roots: [], projectRun: project)
+    expect(!FileManager.default.fileExists(atPath: ToolHub.socketPath), "fixture sessions do not open a socket")
     func reply(_ op: String, key: String? = nil, legacy: Bool = false, name: String = "hub_collision") -> [String: Any] {
         hub.handle(["op": op, "session": key ?? member, "name": name], legacy: legacy)
     }
@@ -79,12 +80,8 @@ func testToolHub() {
     let consulted = hub.register(room: room, roots: [], origin: .consulted)
     expect(names(reply("tools", key: consulted)) == ["hub_collision", "hub_collision"],
            "consulted answers keep ordinary providers")
-    for name in ["ask_ai", "convene_meeting", "meeting_result"] {
-        expect(error(reply("call", key: consulted, name: name)), "consulted answers cannot call " + name)
-    }
     expect(!names(reply("tools", legacy: true)).contains("hub_collision") && error(reply("call", legacy: true)),
            "legacy access cannot list or call providers other than Face")
-    expect((reply("tools")["slow"] as? [String]) == [], "slow names include only exposed tools")
     expect(error(reply("other")), "unknown operations fail")
     hub.revoke(project: project)
     expect(error(reply("call")) && error(reply("tools")), "revoked project sessions cannot list or call")

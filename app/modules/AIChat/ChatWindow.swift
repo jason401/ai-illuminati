@@ -1113,7 +1113,7 @@ struct ChatView<Model: ChatSettings>: View {
                     MultilineInput(text: $discussion.draft, height: $discussion.inputHeight,
                                    onSend: { discussion.send() }, onPasteImages: { discussion.addPastedImages($0) },
                                    onKey: { event, editor in mentionKey(event, editor) },
-                                   onTextChange: { editor in mentionChanged(editor) })
+                                   onTextChange: { editor in mentionChanged(editor) }, focusRequest: discussion.focusRequest)
                         .frame(height: discussion.inputHeight)
                         .accessibilityLabel(L("질문 입력", "Message"))
                 }
@@ -2462,6 +2462,7 @@ public final class ChatWindow {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
+        discussion.focusRequest += 1   // opened from the menu or the Dock: type right away
     }
 }
 
@@ -2470,6 +2471,17 @@ final class ChatInputTextView: NSTextView {
     var onSend: (() -> Void)?
     var onKey: ((NSEvent, NSTextView) -> Bool)?   // the @ list: numbers, arrows, Return, Esc, ⌫ on a picked name
     var onPasteImages: ((NSPasteboard) -> Bool)?
+    var wantsFocus = false   // asked for the typing before it was in a window
+
+    func takeFocus() {
+        guard let window else { wantsFocus = true; return }
+        wantsFocus = false
+        window.makeFirstResponder(self)
+    }
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if wantsFocus { takeFocus() }
+    }
 
     private func hasDraggedImage(_ sender: NSDraggingInfo) -> Bool {
         let board = sender.draggingPasteboard
@@ -2515,6 +2527,7 @@ private struct MultilineInput: NSViewRepresentable {
     var onPasteImages: (NSPasteboard) -> Bool
     var onKey: ((NSEvent, NSTextView) -> Bool)? = nil
     var onTextChange: ((NSTextView) -> Void)? = nil
+    var focusRequest = 0   // a new value (or a new box) takes the typing, so no click is needed
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -2556,10 +2569,15 @@ private struct MultilineInput: NSViewRepresentable {
         editor.setAccessibilityLabel(L("질문 입력", "Message"))
         if editor.string != text && !editor.hasMarkedText() { editor.string = text; onTextChange?(editor) }
         context.coordinator.measure(editor)
+        if context.coordinator.focused != focusRequest {
+            context.coordinator.focused = focusRequest
+            DispatchQueue.main.async { editor.takeFocus() }
+        }
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: MultilineInput
+        var focused: Int?
         init(_ parent: MultilineInput) { self.parent = parent }
         func textDidChange(_ notification: Notification) {
             guard let editor = notification.object as? NSTextView else { return }

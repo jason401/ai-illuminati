@@ -202,6 +202,7 @@ public final class Discussion: ObservableObject {
     @Published var mentionIndex = 0
     var mentionLocation = 0
     weak var mentionEditor: NSTextView?      // the message box, for picking from the list with the mouse
+    @Published var focusRequest = 0          // bumped when a new chat opens: the message box takes the typing
     @Published var slashMenu: (location: Int, query: String, choices: [RouteChoice])?   // "/" typed first: the ways to pick
     @Published var slashIndex = 0
     public func hover(_ key: String, _ inside: Bool) {
@@ -335,6 +336,7 @@ public final class Discussion: ObservableObject {
     // Starts an empty chat (reuses the open one if it is still empty).
     func newConversation() {
         guard !importingMaterials else { return }
+        defer { focusRequest += 1 }
         viewingBoard = false
         viewingSpace = nil
         if viewingRemote != nil && current.turns.isEmpty { viewingRemote = nil; return }

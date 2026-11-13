@@ -20,7 +20,7 @@ extension Discussion {
         chat.workspace = WorkspaceBinding(roots: project.linkedRoots, project: project)
         conversations.insert(chat, at: 0)
         ChatStore.save(chat)
-        if open { self.open(chat.id) }
+        if open { self.open(chat.id); focusRequest += 1 }
         return chat.id
     }
 

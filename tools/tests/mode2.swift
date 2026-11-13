@@ -2850,8 +2850,8 @@ func testChatMarkdown() {
     expect(ChatMarkdown.blocks(fenced) == [.text("```\n## not a heading\n| a | b |\n|---|---|\n```"), .heading(level: 1, text: "Title")], "code fences are left as written")
     expect(ChatMarkdown.blocks("#hashtag\na | b\nno separator") == [.text("#hashtag\na | b\nno separator")], "lookalikes stay text")
     // AI pictures: a line of only markers is drawn as pictures; a marker in a sentence or a code fence stays text.
-    expect(ChatMarkdown.blocks("Here it is:\n\n[그림 3]\n\nDone") == [.text("Here it is:"), .pictures([3]), .text("Done")], "a marker line becomes a pictures block")
-    expect(ChatMarkdown.blocks("  [Picture 1] [그림 2]  [Picture 10]") == [.pictures([1, 2, 10])], "several markers on one line")
+    expect(ChatMarkdown.blocks("Here it is:\n\n[그림 3]\n\nDone") == [.text("Here it is:"), .pictures([3], markers: ["[그림 3]"]), .text("Done")], "a marker line becomes a pictures block")
+    expect(ChatMarkdown.blocks("  [Picture 1] [그림 2]  [Picture 10]") == [.pictures([1, 2, 10], markers: ["[Picture 1]", "[그림 2]", "[Picture 10]"])], "several markers on one line, kept as written")
     expect(ChatMarkdown.blocks("See [그림 1] above.") == [.text("See [그림 1] above.")], "a marker in a sentence stays text")
     expect(ChatMarkdown.blocks("```\n[그림 1]\n```") == [.text("```\n[그림 1]\n```")], "a marker in a code fence stays text")
     expect(ChatMarkdown.blocks("[그림 x]\n[Picture]") == [.text("[그림 x]\n[Picture]")], "lookalike markers stay text")

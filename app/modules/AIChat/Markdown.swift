@@ -9,7 +9,8 @@ enum ChatMarkdown {
         case heading(level: Int, text: String)
         case table(header: [String], rows: [[String]])
         case rule
-        case pictures([Int])   // a line of only [그림 N] / [Picture N] markers: the pictures are drawn there
+        // A line of only [그림 N] / [Picture N] markers: the pictures are drawn there. `markers` as written, for a missing picture.
+        case pictures([Int], markers: [String])
     }
 
     static func blocks(_ source: String) -> [Block] {
@@ -36,8 +37,8 @@ enum ChatMarkdown {
                 fence = String(trimmed.prefix(while: { $0 == trimmed.first }))
                 text.append(line); i += 1; continue
             }
-            if let numbers = pictureMarkers(line) {
-                flush(); blocks.append(.pictures(numbers)); i += 1; continue
+            if let found = pictureMarkers(line) {
+                flush(); blocks.append(.pictures(found.map(\.0), markers: found.map(\.1))); i += 1; continue
             }
             if let heading = heading(line) {
                 flush(); blocks.append(heading); i += 1; continue
@@ -84,10 +85,12 @@ enum ChatMarkdown {
 
     // The markers Pictures.harvest leaves where a picture was, when they are all the line holds.
     // A marker inside a sentence stays text.
-    static func pictureMarkers(_ line: String) -> [Int]? {
+    static func pictureMarkers(_ line: String) -> [(Int, String)]? {
         let ns = line as NSString, all = NSRange(location: 0, length: ns.length)
         guard markerLine.firstMatch(in: line, range: all) != nil else { return nil }
-        return marker.matches(in: line, range: all).compactMap { Int(ns.substring(with: $0.range(at: 1))) }
+        return marker.matches(in: line, range: all).compactMap { match in
+            Int(ns.substring(with: match.range(at: 1))).map { ($0, ns.substring(with: match.range)) }
+        }
     }
     private static let marker = try! NSRegularExpression(pattern: "\\[(?:그림|Picture) (\\d+)\\]")
     private static let markerLine = try! NSRegularExpression(pattern: "^[ \\t]*(?:\\[(?:그림|Picture) \\d+\\][ \\t]*)+$")
@@ -95,7 +98,7 @@ enum ChatMarkdown {
     // Picture file names the text has a place for (picture-N.png, as Pictures.harvest names them).
     static func placedPictures(_ text: String) -> Set<String> {
         Set(cachedBlocks(text).flatMap { block -> [String] in
-            if case .pictures(let numbers) = block { return numbers.map { "picture-\($0).png" } }
+            if case .pictures(let numbers, _) = block { return numbers.map { "picture-\($0).png" } }
             return []
         })
     }
@@ -248,23 +251,24 @@ struct MarkdownText: View {
                     table(header, rows)
                 case .rule:
                     Divider().padding(.vertical, 4)
-                case .pictures(let numbers):
-                    pictureRow(numbers)
+                case .pictures(let numbers, let markers):
+                    pictureRow(numbers, markers)
                 }
             }
         }
     }
 
-    // Found pictures side by side; a marker whose picture is missing stays as written (it is listed under the reply).
-    @ViewBuilder private func pictureRow(_ numbers: [Int]) -> some View {
-        let found = numbers.map { n in (n, pictures.first { $0.name == "picture-\(n).png" }) }
-        let marker = { (n: Int) in L("[그림 \(n)]", "[Picture \(n)]") }
-        if found.allSatisfy({ $0.1 == nil }) {
-            Text(numbers.map(marker).joined(separator: " ")).frame(maxWidth: .infinity, alignment: .leading)
+    // Found pictures side by side; a marker whose picture is missing or cannot be read stays as written
+    // (the picture is still listed under the reply).
+    @ViewBuilder private func pictureRow(_ numbers: [Int], _ markers: [String]) -> some View {
+        let side: CGFloat = numbers.count == 1 ? 480 : 300
+        let found = numbers.map { n in pictures.first { $0.name == "picture-\(n).png" && AttachmentThumbnail.thumbnail($0.url, size: side) != nil } }
+        if found.allSatisfy({ $0 == nil }) {
+            Text(markers.joined(separator: " ")).frame(maxWidth: .infinity, alignment: .leading)
         } else {
             HStack(alignment: .top, spacing: 8) {
-                ForEach(Array(found.enumerated()), id: \.offset) { _, pair in
-                    if let item = pair.1 { InlinePicture(item: item, maxSide: found.count == 1 ? 480 : 300) } else { Text(marker(pair.0)) }
+                ForEach(Array(found.enumerated()), id: \.offset) { k, item in
+                    if let item { InlinePicture(item: item, maxSide: side) } else { Text(k < markers.count ? markers[k] : "") }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)

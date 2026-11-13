@@ -2832,11 +2832,21 @@ final class PhotoViewer: ObservableObject {
         panel.nameFieldStringValue = fileName(item)
         panel.allowedContentTypes = [.png]
         panel.canCreateDirectories = true
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard panel.runModal() == .OK, let url = panel.url,
+              url.standardizedFileURL.resolvingSymlinksInPath() != item.url.standardizedFileURL.resolvingSymlinksInPath() else { return }
+        // Copied next to the target first, then swapped in: a failed copy leaves the old file as it was.
+        let temporary = url.deletingLastPathComponent().appendingPathComponent(".\(UUID().uuidString).png")
         do {
-            if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
-            try FileManager.default.copyItem(at: item.url, to: url)
-        } catch { failed(error) }
+            try FileManager.default.copyItem(at: item.url, to: temporary)
+            if FileManager.default.fileExists(atPath: url.path) {
+                _ = try FileManager.default.replaceItemAt(url, withItemAt: temporary)
+            } else {
+                try FileManager.default.moveItem(at: temporary, to: url)
+            }
+        } catch {
+            try? FileManager.default.removeItem(at: temporary)
+            failed(error)
+        }
     }
 
     // Every picture into one folder; a name already there gets a number ("… 2.png"), nothing is replaced.

@@ -573,8 +573,10 @@ private struct ShiftReturnNewline: ViewModifier {
     private func start() {
         let box = box
         guard box.monitor == nil else { return }
+        // Only the window this field is in: its focus stays set while another window takes the typing.
+        weak var window = NSApp.keyWindow
         box.monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            guard event.keyCode == 36 || event.keyCode == 76,
+            guard event.keyCode == 36 || event.keyCode == 76, let window, event.window === window,
                   event.modifierFlags.intersection([.command, .control]).isEmpty,
                   let editor = event.window?.firstResponder as? NSTextView, !editor.hasMarkedText() else { return event }
             if event.modifierFlags.intersection([.shift, .option]).isEmpty { box.submit() } else { editor.insertNewlineIgnoringFieldEditor(nil) }

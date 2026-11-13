@@ -7,7 +7,8 @@ it builds alone, and the app sees only its `public` names. Now: `AILocalization`
 AI's command line tool, sessions, the local model, usage readings), all 2026-11-11; `AIWorkspace` (the folder rules each
 AI gets, the backup before writes and its Undo, AutoGuard, the tool gateway's types) and `AIProjects` (linked projects, Git
 work, the repository lock, approvals, the TODO board and its scheduler, five tool providers), 2026-11-12; `AIChat` (the chat: its
-records and store, Discussion with routing, meetings, reviews and ask_ai, five tool providers, the chat window; C1a/C1b), 2026-11-12.
+records and store, Discussion with routing, meetings, reviews and ask_ai, five tool providers, the chat window; C1a/C1b), 2026-11-12;
+`AIIntegrations` (the Google login and Drive gate, outside MCP servers, the AI Face link; no tool provider; step I), 2026-11-12.
 
 ## How a module is built and used
 - `zsh tools/build_modules.sh <out> [swiftc options]` builds every `app/modules/<Name>/` alone into
@@ -16,7 +17,8 @@ records and store, Discussion with routing, meetings, reviews and ask_ai, five t
   first, and the compiler sees only theirs, so an import of any other module fails the build. Now
   `AISpaces` → `AIAccounts`, `AILocalization`; `AIRuntime` → `AIAccounts`, `AILocalization`; `AIWorkspace` → `AIAccounts`,
   `AILocalization`, `AIRuntime`; `AIProjects` → `AIAccounts`, `AILocalization`, `AIRuntime`, `AIWorkspace`; `AIChat` → those five and `AISpaces` (Chat uses
-  Projects, never the other way: Projects names no chat type since P0); the other two use none. No circles (the script refuses them).
+  Projects, never the other way: Projects names no chat type since P0); `AIIntegrations` → `AIAccounts`, `AILocalization`,
+  `AIRuntime` (only because `AIWorkspace`'s interface names it), `AIWorkspace` (`WorkspaceRoot`: Drive's folders), used by the app only; the other two use none. No circles (the script refuses them).
 - Every `swiftc` that compiles app files runs it first and adds `-I <out> <out>/lib*.a`:
   `tools/build_app.sh` (compile step), `tools/tests/run_mode2.sh`, the preview scripts.
 - Each file that uses a module says `import <Name>`. Not the hidden compiler option (`-Xfrontend -import-module`):
@@ -27,7 +29,8 @@ records and store, Discussion with routing, meetings, reviews and ask_ai, five t
   (`tools/tests/<part>_contract.swift`, public names only), and checks that internal names
   (`AccountStore.place`, `SpaceStore.setting`, `SpaceAssets.served`, `Answerer.chatDir`, `Answerer.launchForTests`,
   `NativeSessions.split`, `CloudModels.apply`, `WorkspaceBackup.chats`/`keepPerChat`, the whole `AutoGuard` type,
-  `TodoScheduler.retryDelay`, `ProjectWork.leasePrefix`, `TodoStore.encoder`, `ChatTime.calendar`, `Discussion.maxRunning`, `Discussion.draft`, the whole `Peer` and `Route` types) do not compile outside.
+  `TodoScheduler.retryDelay`, `ProjectWork.leasePrefix`, `TodoStore.encoder`, `ChatTime.calendar`, `Discussion.maxRunning`, `Discussion.draft`, the whole `Peer` and `Route` types, `FaceLink.fallbackMoods`, `GoogleAuth.tokenURL`,
+  `DriveLink.isAllowed`, `ExternalMCP.callTimeout`) do not compile outside.
 - Tests build the modules with `-enable-testing` only so tests can say `@testable import`: `space_build.swift` for
   `AISpaces` (module insides such as `SpaceCheck`), and for `AIRuntime` the app tests that make their own usage
   readings (`AIUsage`, `UsageWindow` inits) or use its test hooks (`Answerer.launchForTests`/`replyForTests`,
@@ -36,7 +39,8 @@ records and store, Discussion with routing, meetings, reviews and ask_ai, five t
   For `AIWorkspace` the app tests that reach its insides (`prepare`, `WorkspaceBackup.run`/`treatAsCloud`/`keepPerChat`,
   `AutoGuard.folder`/`claudeDenied`): `mode2`, `project_work`, `google_drive`, `ask_ai`, `chat_search`.
   For `AIProjects`: `project_work`, `todo_work`, `project_info`, `chat_search` (`RunProgress`, `RunTimings`, `TodoData.eligible`,
-  `ProjectInfoStore` insides, `ProjectRun.plan`, …).
+  `ProjectInfoStore` insides, `ProjectRun.plan`, …). For `AIIntegrations`: `mode2` (`FaceLink.server`, `RemoteMCPSession`, `MCPHTTP`,
+  `MCPOAuth`, `MCPKeychain`/`MCPFileSecrets`) and `google_drive` (the Drive requests and the Keychain store's insides).
   Every app file and every contract test keeps a plain import and sees public names only; the app build
   (`build_app.sh`) has no `-enable-testing`.
 - A `public` name in a module gets its reason in this file (the tables below). A new public name is a promise:
@@ -392,6 +396,81 @@ C1b falsification (one change in a copy of the tree; module contract, then the m
 
 Still open from C0: F7 (Space refine) is covered by the Spaces contract only; SpaceView is now in the module and in the test build,
 but no app test drives a Space's change box yet.
+
+### AIIntegrations (`app/modules/AIIntegrations/`: GoogleAuth, DriveLink, ExternalMCP, RemoteMCP, FaceLink, Failure), step I (2026-11-12)
+Moved (`git mv`) from `app/macos`: GoogleAuth (the Google login, its Keychain item, the bounded HTTP client, the sign-in callback),
+DriveLink (the shared folders, the folder gate and the Drive requests), ExternalMCP and RemoteMCP (outside MCP servers: the settings file,
+local and remote connections, secrets, tool rules, OAuth) and FaceLink (the AI Face link). Depends on `AIAccounts`, `AILocalization`,
+`AIRuntime` (only because `AIWorkspace`'s interface names it) and `AIWorkspace` (`WorkspaceRoot`: which local folders Drive may read and
+download into). Not on `AIChat` or `AIProjects`; no module imports it (stage 1 checks both): the app uses it and hands the chat what it
+needs through `ChatApp` (C1, unchanged).
+
+No tool provider in the module (stage 1: no `ToolProvider`, `ToolHub` or `ToolContext` in its files). The app makes the three providers:
+- `ToolHub.swift` `extension FaceLink: ToolProvider` (as before).
+- New `DriveTools.swift` `extension DriveLink: ToolProvider`: the tool descriptions (`tools()`, `tools(context:)`, unchanged text) and the
+  hand-over `perform(name, arguments, roots:)`. The gate stays in the module because its order is the permission: only allowed folders,
+  a write validated again after the token refresh and right before sending, no result once the login or the settings changed
+  (ChatGPT (school), asked, agreed: the app must not re-implement it).
+- New `ExternalMCPTools.swift` `extension ExternalMCP: ToolProvider`: the Enterprise rule in both the list and the call (before anything
+  is passed on), the approval card (`approve`, `isEnterprise`, tests replace them as before); the module's `call(name, arguments, approve:)`
+  keeps block/ask/allow, the two-minute limit with the approval counted, the refusal text with `approvalWait`, and the remote-data note.
+
+Injected so tests need no real Keychain, network or socket (the defaults do what the app always did):
+- Keychain: `GoogleKeychainStore(run:)` (already) and `MCPKeychain(run:)` (new), both the `/usr/bin/security` runner; `GoogleAuth(store:)`.
+- Network: `GoogleHTTP.transport` and `MCPHTTP.transport` (default `live`: no redirects, nothing kept, size and time limits, SSE as it
+  comes). Every Google and remote MCP request already went through `send`; only its URLSession part moved into `live`.
+- Sockets: `GoogleLoopback.make(port, label)` returns an `OAuthCallback` (both Google's desktop sign-in and MCP's, including the
+  registered port reuse); the tool socket and AI Face's older socket stay ToolHub's (main.swift opens them right before
+  `FaceLink.shared.start()`, which no longer does; stage 1 checks the order).
+- AI Face: `FaceLink(open:)` takes the connection (`FacePipe`); the default `FaceProcess` is the old process code moved as it was
+  (AIFACE_AGENT=illuminati, 10 s per reply).
+- Office files read from Drive use the chat's material reader through `DriveLink.officeText` (set in `ChatLinksApp.connect()`), so the
+  module names no chat type; without it such a file is "not supported", as other formats are.
+
+Storage unchanged: the Google item is still service "AI Illuminati Google", account `oauth` (copy `oauth-migration`), value
+`ai-illuminati-google-v1:` + base64 of the same `Credentials` JSON; MCP secrets "AI Illuminati MCP" in numbered chunks; `mcp.json`,
+`mcp-servers.json`, `mcpOff`, `driveFolders`, `pausedDriveFolders`, `driveWriteRules`, `drive.log` the same keys and files.
+
+| Promise | Users | Module test (`integrations_contract.swift`) | User tests |
+|---|---|---|---|
+| A saved Google login (current form, an older raw item, a half-done migration) is read; refresh, rotation, expiry and revoke keep the same item and input line | DriveUI, DriveLink | "a saved login is connected…", "a raw item from older versions still loads", "a half-done migration is finished…", "saved through security's stdin…", "an expired login keeps the client…", "disconnect clears…" | google_drive "Google Keychain CLI", "Google Drive backend" |
+| Both sign-ins finish only with their own state, saved in the same form | DriveUI | "the app's client signs in…", "a callback with another state is refused", "the desktop client is saved with its secret" | google_drive (PKCE, state) |
+| Drive's gate: allowed folders, writes re-checked before sending, no result after a change | DriveTools (the app's provider) | none (needs Drive answers) | google_drive (all Drive blocks) |
+| Outside MCP: rules block/ask/allow, Enterprise never, approval, secrets in chunks | ExternalMCPTools, Settings | "an unknown outside tool is refused without asking", MCP secrets block | testExternalMCP, testRemoteMCP |
+| AI Face: one connection, its tools and moods, unknown moods dropped; missing, off or dying AI Face: error replies at once, reconnect on the next use | ToolHub, ChatLinksApp (`ChatApp.face`), RunConditionsApp (`codexOff`) | the AI Face block (fake `FacePipe`) | mode2 "AI Face link", and new there: a dead AI Face server while a plain chat answers (reply shown, tag removed, usual moods in the rule, no wait) |
+
+Public names and why (found by the compiler: a script opened what an app file asked for, the rest by hand for the contract test):
+- What the app's screens and providers use: `DriveLink` (`shared`, `enabled`, `active`, `canWrite`, `folders`, `pausedFolders`,
+  `writeRules`, `rule`, `downloadRoot`, `perform`, `childFolders`, `folder(from:)`, `accountEmail`, `officeText`), `DriveFolder`;
+  `GoogleAuth` (`shared`, `builtInClientID`, `connected`, `needsReconnect`, `canWrite`, `publicClientID`, `connectionVersion`, the three
+  sign-ins, `cancelAuthorization`, `disconnect`), `GoogleFailure`, `GoogleAuthPresenter` (DriveUI's browser session);
+  `ExternalMCP` (settings, status, sign-in, rules, `tools`, `active`, `slowTools`, `call(…approve:)`, `approvalWait`, `stopAll`, `State`,
+  `Status`), `MCPServerEntry` (Settings' editor), `MCPToolRule`, `MCPSecrets` (`store`, `header`, `clientSecret`), `MCPSession.Failure`
+  (Settings shows its message; `MCPSession` itself is public only to hold it); `FaceLink` (`shared`, `socketPath`, `isOn`, `active`,
+  `configured`/`connected`/`on`, `codexOff`, `moods`, `rule`, `extract`, `show`, `start`, `refresh`, `tools`, `call`).
+- The injection points (for the contract test, and they say what may be replaced): `GoogleHTTP` (`Reply`, `transport`, `live`),
+  `GoogleTokenStore`, `GoogleKeychainStore` (`Runner`, `init(run:)`, `load`/`save`/`clear`), `GoogleAuth.init(store:)`, `accessToken`,
+  `OAuthCallback`, `GoogleLoopback.make`, `MCPSecretStore`, `MCPKeychain(run:)`, `FaceLink.init(open:)`, `FacePipe`, `FaceLink.file`/
+  `faceFolder`, `FaceLink.Server`.
+- Internal (stage 2 checks four): `FaceLink.server`, `fallbackMoods`, `FaceProcess`, `GoogleAuth.tokenURL`/`authorizeURL`/`revokeURL`,
+  `DriveLink.isAllowed`/`isWritable`/`fileID` and every request, `ExternalMCP.callTimeout`, `MCPHTTP`, `RemoteMCPSession`, `MCPOAuth`,
+  `MCPPermissions`, `MCPFileSecrets`. mode2 and google_drive reach them with `@testable import AIIntegrations`.
+
+App edits besides imports: main.swift opens ToolHub's two sockets before `FaceLink.shared.start()`; ChatLinksApp sets `DriveLink.officeText`;
+the three provider extensions (`@retroactive`: the conformance is the app's on purpose). mode2's AI Face test opens the older socket itself,
+as main.swift does. Previews import the module.
+
+I falsification (one change in a copy of the tree; module contract, then the app tests without the module contracts):
+| Change | Module contract | App tests |
+|---|---|---|
+| H1 the Google item's prefix becomes `…-v2:` (an existing login is no longer read) | caught ("a saved login is connected, writable as saved") | **missed**: google_drive writes and reads with the same code; only the contract holds a login in the old form |
+| H2 a dead AI Face connection is kept while the setup is the same (no reconnect) | caught ("with AI Face gone the link offers nothing…") | **missed at first**; caught after I added mode2 "a restarted AI Face is connected again on the next use" (this test's server killed by its path in the test home) |
+| H3 an outside MCP tool set to "ask" runs without asking | passed (no connected server in the contract) | caught: testRemoteMCP "a write tool asks first; no answer is no" |
+| H4 Drive returns a result after a folder was paused during the call (post-request check gone) | passed (needs Drive answers) | caught: google_drive "in-flight result withheld after folder pause with another folder active" |
+| H6 the app's list offers outside MCP tools in Enterprise chats | passed (the rule is the app's) | caught: testExternalMCP "no outside servers in Enterprise chats" |
+
+The first H3 run (three copies at once) stopped earlier at testMeetingTool "the meeting stops…" (timing under load, unrelated: no
+meeting code changed); alone it reached and failed the MCP check above.
 
 ## What the first module showed (2026-11-11)
 - Change size: the module file got `public` on 26 names and one `public init` (Swift's own memberwise init is

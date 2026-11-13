@@ -73,6 +73,17 @@ call, start = s.find('ChatLinksApp.connect()'), s.find('AppDelegate()')
 assert 0 <= s.find('useRealHome()') < call < start and s.count('ChatLinksApp.connect()') == 1, 'main.swift connects the chat store once, before AppDelegate()'
 screens = s.find('ChatScreensApp.connect()')
 assert call < screens < start and s.count('ChatScreensApp.connect()') == 1, 'main.swift connects the chat window to the app screens once, before AppDelegate()'
+# I: Integrations (Drive, outside MCP, AI Face) holds no tool provider: ToolHub's providers are the app's or a feature
+# module's. Only the app imports it; it depends on lower modules only.
+import os
+integ = sorted(glob.glob('app/modules/AIIntegrations/*.swift'))
+assert integ and not [f for f in integ if re.search(r'\bToolProvider\b|\bToolHub\b|\bToolContext\b', Path(f).read_text())], 'no tool provider in AIIntegrations'
+assert Path('app/modules/AIIntegrations/dependencies').read_text().split() == ['AIAccounts', 'AILocalization', 'AIRuntime', 'AIWorkspace']
+assert [f for f in glob.glob('app/modules/*/*.swift') if re.search(r'^import AIIntegrations', Path(f).read_text(), re.M)] == [], 'feature modules do not import AIIntegrations'
+assert all(f'extension {n}: @retroactive ToolProvider' in Path('app/macos/' + f).read_text() for n, f in
+           [('FaceLink', 'ToolHub.swift'), ('DriveLink', 'DriveTools.swift'), ('ExternalMCP', 'ExternalMCPTools.swift')]), 'the app makes the three providers'
+# AI Face's link starts after the bridge's sockets (FaceLink no longer opens them itself).
+assert s.find('ToolHub.shared.start()') < s.find('ToolHub.shared.startLegacyFaceSocket(at: FaceLink.socketPath)') < s.find('FaceLink.shared.start()')
 # The 13 tool providers in their order (first(where:) picks by it): the app lists them, five are AIChat's since C1.
 hub = Path('app/macos/ToolHub.swift').read_text()
 order = re.search(r'private var providers: \[ToolProvider\] \{ \[(.*?)\] \}', hub).group(1).replace(' ', '').split(',')
@@ -87,7 +98,7 @@ echo "[2/11] Modules on their own"
 # app files keep a plain import and see public names only.
 MODULES="$TEST_DIR/modules"
 limit 300 zsh tools/build_modules.sh "$MODULES" -enable-testing -module-cache-path "$TEST_DIR/cache"
-for CONTRACT in accounts spaces runtime workspace; do
+for CONTRACT in accounts spaces runtime workspace integrations; do
   mkdir -p "$TEST_DIR/$CONTRACT-src" "$TEST_DIR/$CONTRACT-home"
   cp tools/tests/${CONTRACT}_contract.swift "$TEST_DIR/$CONTRACT-src/main.swift"
   limit 300 xcrun swiftc -swift-version 5 -module-cache-path "$TEST_DIR/cache" -I "$MODULES" -o "$TEST_DIR/$CONTRACT-contract" "$TEST_DIR/$CONTRACT-src/main.swift" "$MODULES"/lib*.a
@@ -125,6 +136,10 @@ boundary AIWorkspace '_ = WorkspaceBackup.keepPerChat' keepPerChat
 boundary AIProjects '_ = TodoScheduler.retryDelay' retryDelay
 boundary AIProjects '_ = ProjectWork.leasePrefix' leasePrefix
 boundary AIProjects '_ = TodoStore.encoder' encoder
+boundary AIIntegrations '_ = FaceLink.fallbackMoods' fallbackMoods
+boundary AIIntegrations '_ = GoogleAuth.tokenURL' tokenURL
+boundary AIIntegrations '_ = DriveLink.shared.isAllowed' isAllowed
+boundary AIIntegrations '_ = ExternalMCP.callTimeout' callTimeout
 boundary AIChat '_ = ChatTime.calendar' calendar
 boundary AIChat '_ = Discussion.maxRunning' maxRunning
 boundary AIChat '_ = Discussion(model: Optional<any ChatSettings>.none!).draft' draft
@@ -158,7 +173,7 @@ PYTHONDONTWRITEBYTECODE=1 limit 300 python3 tools/tests/material_fixtures.py "$T
 echo "[8/11] Compile app tests"
 limit 900 xcrun swiftc -swift-version 5 -module-cache-path "$TEST_DIR/cache" -I "$MODULES" -o "$TEST_DIR/run" "$MODULES"/lib*.a \
     app/macos/Login.swift \
-    app/macos/Settings.swift app/macos/LocalModels.swift app/macos/FaceLink.swift app/macos/ExternalMCP.swift app/macos/RemoteMCP.swift app/macos/DriveUI.swift app/macos/ToolHub.swift app/macos/GoogleAuth.swift app/macos/DriveLink.swift app/macos/RunConditionsApp.swift app/macos/Updater.swift app/macos/Poker.swift app/macos/ChatLinksApp.swift app/macos/GitBranches.swift tools/tests/space_build.swift tools/tests/google_drive.swift tools/tests/device_sync.swift tools/tests/window_drag.swift tools/tests/project_work.swift tools/tests/ask_ai.swift tools/tests/collab_log.swift tools/tests/meeting_tool.swift tools/tests/todo_work.swift tools/tests/project_info.swift tools/tests/update_channel.swift tools/tests/chat_search.swift tools/tests/search_fixtures.swift tools/tests/run_conditions.swift tools/tests/runtime_app.swift tools/tests/chat_links.swift tools/tests/chat_cli.swift "$TEST_DIR/main.swift"
+    app/macos/Settings.swift app/macos/LocalModels.swift app/macos/ExternalMCPTools.swift app/macos/DriveUI.swift app/macos/ToolHub.swift app/macos/DriveTools.swift app/macos/RunConditionsApp.swift app/macos/Updater.swift app/macos/Poker.swift app/macos/ChatLinksApp.swift app/macos/GitBranches.swift tools/tests/space_build.swift tools/tests/google_drive.swift tools/tests/device_sync.swift tools/tests/window_drag.swift tools/tests/project_work.swift tools/tests/ask_ai.swift tools/tests/collab_log.swift tools/tests/meeting_tool.swift tools/tests/todo_work.swift tools/tests/project_info.swift tools/tests/update_channel.swift tools/tests/chat_search.swift tools/tests/search_fixtures.swift tools/tests/run_conditions.swift tools/tests/runtime_app.swift tools/tests/chat_links.swift tools/tests/chat_cli.swift "$TEST_DIR/main.swift"
 echo "[9/11] Run app tests"
 # The tests also stop themselves after 120 s without progress (mode2.swift) and name the test.
 limit 1500 env AI_ILLUMINATI_TEST_HOME="$TEST_DIR/data" AI_ILLUMINATI_TEST_RESOURCES="$TEST_DIR/resources" "$TEST_DIR/run"

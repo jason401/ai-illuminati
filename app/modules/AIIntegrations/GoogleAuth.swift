@@ -3,15 +3,19 @@ import Security
 import CryptoKit
 import Darwin
 
-struct GoogleFailure: LocalizedError {
-    let message: String
+public struct GoogleFailure: LocalizedError {
+    public let message: String
     var status: Int? = nil
-    var errorDescription: String? { message }
+    public var errorDescription: String? { message }
+    public init(message: String, status: Int? = nil) { self.message = message; self.status = status }
 }
 
 // A bounded, non-redirecting client: a document URL or redirect can never redirect a bearer token.
-enum GoogleHTTP {
-    struct Reply { var status: Int; var data: Data; var headers: [AnyHashable: Any] }
+public enum GoogleHTTP {
+    public struct Reply {
+        public var status: Int; public var data: Data; public var headers: [AnyHashable: Any]
+        public init(status: Int, data: Data, headers: [AnyHashable: Any]) { self.status = status; self.data = data; self.headers = headers }
+    }
     private final class Reader: NSObject, URLSessionDataDelegate {
         let done = DispatchSemaphore(value: 0)
         let limit: Int
@@ -38,6 +42,8 @@ enum GoogleHTTP {
             done.signal()
         }
     }
+    /// Every Google request goes through here (tests give a fake: no network). The deadline is the caller's thread's.
+    public static var transport: (URLRequest, _ limit: Int, _ timeout: TimeInterval) throws -> Reply = live
     static func send(_ url: URL, method: String = "GET", headers: [String: String] = [:], body: Data? = nil,
                      limit: Int = 2_000_000) throws -> Reply {
         let remaining = (Thread.current.threadDictionary["illuminatiGoogleDeadline"] as? Date)?.timeIntervalSinceNow ?? 55
@@ -46,6 +52,10 @@ enum GoogleHTTP {
         var request = URLRequest(url: url)
         request.httpMethod = method; request.httpBody = body; request.timeoutInterval = min(45, timeout)
         for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
+        return try transport(request, limit, timeout)
+    }
+    /// The real one: no redirects, no cookies or stored credentials, at most `limit` bytes.
+    public static func live(_ request: URLRequest, limit: Int, timeout: TimeInterval) throws -> Reply {
         let reader = Reader(limit: limit), configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForResource = timeout
         configuration.httpCookieStorage = nil; configuration.urlCredentialStorage = nil
@@ -64,22 +74,22 @@ enum GoogleHTTP {
     }
 }
 
-protocol GoogleTokenStore {
+public protocol GoogleTokenStore {
     func load() throws -> Data?
     func save(_ data: Data) throws
     func clear() throws
 }
 
-struct GoogleKeychainStore: GoogleTokenStore {
+public struct GoogleKeychainStore: GoogleTokenStore {
     // Apple's signed security executable owns the ACL, so rebuilding this app does not change its reader.
     // All secret writes go over stdin, never argv, shell interpolation, a file or a log.
-    typealias Runner = ([String], Data?) throws -> (Int32, Data)
+    public typealias Runner = ([String], Data?) throws -> (Int32, Data)
     private static let lock = NSRecursiveLock()
     private static let prefix = "ai-illuminati-google-v1:"
     private static let service = "AI Illuminati Google"
     private static let backup = "oauth-migration"
     private let run: Runner
-    init(run: Runner? = nil) { self.run = run ?? Self.execute }
+    public init(run: Runner? = nil) { self.run = run ?? Self.execute }
 
     static func execute(_ arguments: [String], _ input: Data?) throws -> (Int32, Data) {
         let process = Process(), out = Pipe()
@@ -128,7 +138,7 @@ struct GoogleKeychainStore: GoogleTokenStore {
         let (status, _) = try run(["delete-generic-password", "-s", Self.service, "-a", account], nil)
         guard status == 0 || status == 44 else { throw GoogleFailure(message: "Could not remove Google login from Keychain.") }
     }
-    func load() throws -> Data? {
+    public func load() throws -> Data? {
         Self.lock.lock(); defer { Self.lock.unlock() }
         if let raw = try read("oauth") {
             if let data = try unpack(raw) {
@@ -154,27 +164,27 @@ struct GoogleKeychainStore: GoogleTokenStore {
         }
         return nil
     }
-    func save(_ data: Data) throws {
+    public func save(_ data: Data) throws {
         Self.lock.lock(); defer { Self.lock.unlock() }
         _ = try load() // Migrate an existing legacy ACL before updating it.
         try write(data, account: "oauth")
     }
-    func clear() throws {
+    public func clear() throws {
         Self.lock.lock(); defer { Self.lock.unlock() }
         try remove("oauth"); try remove(Self.backup)
     }
 }
 
-protocol GoogleAuthPresenter: AnyObject {
+public protocol GoogleAuthPresenter: AnyObject {
     func start(_ url: URL, scheme: String, completion: @escaping (Result<URL, Error>) -> Void)
     func cancel()
 }
 
 // Backend only: a future UI supplies the Desktop-client JSON and opens the returned URL.
 // No browser is opened and no Google login starts without an explicit caller.
-final class GoogleAuth {
-    static var shared = GoogleAuth(store: GoogleKeychainStore())
-    static let builtInClientID = "961717606753-4c5cmpcmegejgqdb39plii50ch7rq88m.apps.googleusercontent.com" // Public iOS OAuth client; no secret.
+public final class GoogleAuth {
+    public static var shared = GoogleAuth(store: GoogleKeychainStore())
+    public static let builtInClientID = "961717606753-4c5cmpcmegejgqdb39plii50ch7rq88m.apps.googleusercontent.com" // Public iOS OAuth client; no secret.
     static let writeScope = "https://www.googleapis.com/auth/drive"
     static let scope = "https://www.googleapis.com/auth/drive.readonly"
     static var authorizeURL = URL(string: "https://accounts.google.com/o/oauth2/v2/auth")!
@@ -185,22 +195,22 @@ final class GoogleAuth {
     private let lock = NSRecursiveLock()
     private var access: String?, expires = Date.distantPast
     private var presenter: GoogleAuthPresenter?
-    private var listener: GoogleLoopback?
+    private var listener: OAuthCallback?
     private var authorizationID: UUID?
     private var version = 0
-    var connectionVersion: Int { lock.lock(); defer { lock.unlock() }; return version }
-    init(store: GoogleTokenStore) { self.store = store }
-    var connected: Bool {
+    public var connectionVersion: Int { lock.lock(); defer { lock.unlock() }; return version }
+    public init(store: GoogleTokenStore) { self.store = store }
+    public var connected: Bool {
         lock.lock(); defer { lock.unlock() }
         return ((try? credentials())?.refreshToken?.isEmpty == false)
     }
     // Google refused the saved login (expired or revoked): sign in again with the saved client.
-    var needsReconnect: Bool {
+    public var needsReconnect: Bool {
         lock.lock(); defer { lock.unlock() }
         guard let saved = try? credentials() else { return false }
         return saved.refreshToken?.isEmpty != false
     }
-    func beginReauthorization(writable: Bool = false, completion: @escaping (Result<Void, Error>) -> Void) throws -> URL {
+    public func beginReauthorization(writable: Bool = false, completion: @escaping (Result<Void, Error>) -> Void) throws -> URL {
         let saved: Credentials? = { lock.lock(); defer { lock.unlock() }; return try? credentials() }()
         guard let saved else { throw GoogleFailure(message: "Choose the Google OAuth client file again.") }
         let client = try JSONSerialization.data(withJSONObject: ["installed": ["client_id": saved.clientID, "client_secret": saved.clientSecret ?? ""]])
@@ -218,7 +228,7 @@ final class GoogleAuth {
     private static func base64(_ data: Data) -> String {
         data.base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
     }
-    func beginAuthorization(clientJSON: Data, writable: Bool = false, completion: @escaping (Result<Void, Error>) -> Void) throws -> URL {
+    public func beginAuthorization(clientJSON: Data, writable: Bool = false, completion: @escaping (Result<Void, Error>) -> Void) throws -> URL {
         guard clientJSON.count <= 64_000,
               let json = try JSONSerialization.jsonObject(with: clientJSON) as? [String: Any],
               let installed = json["installed"] as? [String: Any],
@@ -230,7 +240,7 @@ final class GoogleAuth {
         presenter?.cancel(); presenter = nil
         listener?.cancel()
         let state = try Self.random(), verifier = try Self.random(), identifier = UUID()
-        let callback = try GoogleLoopback()
+        let callback = try GoogleLoopback.make(0, "Google")
         listener = callback; authorizationID = identifier
         // Do not overwrite a working account until a successful exchange.
         var components = URLComponents(url: Self.authorizeURL, resolvingAgainstBaseURL: false)!
@@ -265,17 +275,17 @@ final class GoogleAuth {
         }
         return components.url!
     }
-    var canWrite: Bool {
+    public var canWrite: Bool {
         lock.lock(); defer { lock.unlock() }
         return connected && (try? credentials())?.writable == true
     }
-    var publicClientID: String? {
+    public var publicClientID: String? {
         lock.lock(); defer { lock.unlock() }
         guard let saved = try? credentials(), saved.clientSecret == nil else { return nil }
         return saved.clientID
     }
 
-    func beginBuiltInAuthorization(present: GoogleAuthPresenter, clientID: String = GoogleAuth.builtInClientID, writable: Bool = false,
+    public func beginBuiltInAuthorization(present: GoogleAuthPresenter, clientID: String = GoogleAuth.builtInClientID, writable: Bool = false,
                                    completion: @escaping (Result<Void, Error>) -> Void) throws {
         let suffix = ".apps.googleusercontent.com"
         guard clientID.hasSuffix(suffix), !clientID.dropLast(suffix.count).isEmpty,
@@ -340,7 +350,7 @@ final class GoogleAuth {
         version += 1
         listener = nil; presenter = nil; authorizationID = nil
     }
-    func cancelAuthorization() {
+    public func cancelAuthorization() {
         lock.lock(); defer { lock.unlock() }
         let previous = presenter; presenter = nil
         listener?.cancel(); listener = nil; authorizationID = nil
@@ -366,7 +376,7 @@ final class GoogleAuth {
         access = reply["access_token"] as? String
         expires = Date().addingTimeInterval((reply["expires_in"] as? NSNumber)?.doubleValue ?? 3600)
     }
-    func accessToken(forceRefresh: Bool = false) throws -> String {
+    public func accessToken(forceRefresh: Bool = false) throws -> String {
         lock.lock(); defer { lock.unlock() }
         guard let saved = try credentials(), let refresh = saved.refreshToken else { throw GoogleFailure(message: "Google Drive is not connected. Sign in first.") }
         if !forceRefresh, let access, expires.timeIntervalSinceNow > 60 { return access }
@@ -380,7 +390,7 @@ final class GoogleAuth {
         remember(reply)
         return access!
     }
-    func disconnect() throws {
+    public func disconnect() throws {
         cancelAuthorization()
         lock.lock(); defer { lock.unlock() }
         let saved = try credentials(), token = saved?.refreshToken ?? access
@@ -392,14 +402,23 @@ final class GoogleAuth {
     }
 }
 
+/// The browser's way back after a sign-in: one request to `redirect`, its query fields to `start`'s completion.
+public protocol OAuthCallback: AnyObject {
+    var redirect: String { get }
+    func start(_ completion: @escaping (Result<[String: String], Error>) -> Void)
+    func cancel()
+}
+
 // A one-shot loopback receiver. Binds only IPv4 localhost, on a random OS-assigned port unless one is asked for
 // (remote MCP sign-in reuses the port its client was registered with). `label` names the service in messages.
-final class GoogleLoopback {
+public final class GoogleLoopback: OAuthCallback {
+    /// How a sign-in listens (port 0: any free one; label: the service in messages). Tests give a fake: no socket.
+    public static var make: (UInt16, String) throws -> OAuthCallback = { try GoogleLoopback(port: $0, label: $1) }
     private let fd: Int32
     private let lock = NSLock()
     private var cancelled = false
     private let label: String
-    let redirect: String
+    public let redirect: String
     init(port: UInt16 = 0, label: String = "Google") throws {
         signal(SIGPIPE, SIG_IGN)
         self.label = label
@@ -422,8 +441,8 @@ final class GoogleLoopback {
         guard bound == 0, named == 0, Darwin.listen(fd, 4) == 0 else { close(fd); throw GoogleFailure(message: "Could not listen for \(label) sign-in.") }
         redirect = "http://127.0.0.1:\(UInt16(bigEndian: address.sin_port))/"
     }
-    func cancel() { lock.lock(); cancelled = true; lock.unlock() }
-    func start(_ completion: @escaping (Result<[String: String], Error>) -> Void) {
+    public func cancel() { lock.lock(); cancelled = true; lock.unlock() }
+    public func start(_ completion: @escaping (Result<[String: String], Error>) -> Void) {
         Thread.detachNewThread {
             var listening = true
             defer { if listening { close(self.fd) } }

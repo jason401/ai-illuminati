@@ -8,6 +8,7 @@ import AISpaces
 @testable import AIWorkspace
 import AIProjects
 @testable import AIChat
+@testable import AIIntegrations
 
 GoogleAuth.shared = GoogleAuth(store: MemoryGoogleStore())
 
@@ -1904,6 +1905,7 @@ do {
     expect(manifest(plain)["face"] as? String == FaceLink.socketPath && manifest(debate)["face"] == nil, "plain chat only")
     expect(!(try! invocation.arguments(provider: .claude, original: ["-p", "--mcp-config", "{}"], directory: dir, web: false, tools: ToolHub.workspaceLink)).joined().contains("ai-face"),
            "models are not given AI Face directly")
+    ToolHub.shared.startLegacyFaceSocket(at: FaceLink.socketPath)   // main.swift opens it before the link starts
     FaceLink.shared.start()
     expect(FaceLink.shared.tools().map { $0["name"] as? String } == ["set_expression", "calendar_events"], "every AI Face tool is offered (AI Face decides)")
     expect(FaceLink.shared.call("no_such_tool", [:])["isError"] as? Bool == true, "a tool AI Face does not list is refused")
@@ -1929,6 +1931,14 @@ do {
     expect(FaceLink.active() == nil && FaceLink.shared.tools().isEmpty && manifest(plain)["face"] == nil, "the switch in Settings turns AI Face off")
     FaceLink.shared.on = true
     expect(FaceLink.shared.tools().count == 2, "and on again")
+    // AI Face's server quits (AI Face restarted) with the same setup: the next use starts it again (I). Only this test's server
+    // matches: its path is inside the test home.
+    let killer = Process()
+    killer.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
+    killer.arguments = ["-f", face.path + "/../AI Face/ai_face_mcp.py"]
+    try! killer.run(); killer.waitUntilExit()
+    usleep(300_000)
+    expect(killer.terminationStatus == 0 && FaceLink.shared.tools().count == 2, "a restarted AI Face is connected again on the next use")
     // Codex's own AI Face server (added as "gpt") is switched off in every Codex run.
     let codexHome = FileManager.default.temporaryDirectory.appendingPathComponent("mode2-codex-" + UUID().uuidString)
     try? FileManager.default.createDirectory(at: codexHome, withIntermediateDirectories: true)
@@ -1974,6 +1984,22 @@ do {
     _ = FaceLink.shared.tools()   // same queue: the calls above are done
     let shown = ((try? String(contentsOf: calls, encoding: .utf8)) ?? "").components(separatedBy: "\n").filter { $0.contains("\"sad\"") || $0.contains("furious") }
     expect(shown.count == 1 && shown[0].contains("\"sad\"") && shown[0].contains("\"agent\": \"illuminati\""), "the app sets the tagged mood; one AI Face does not offer is dropped")
+    // AI Face set up but its server quits at once (broken or gone): the chat goes on as before, tag removed, no wait (I).
+    let dead = face.appendingPathComponent("dead_mcp.py")
+    try! Data("import sys\nsys.exit(0)\n".utf8).write(to: dead)
+    register([dead.path])
+    expect(FaceLink.active() != nil && FaceLink.shared.tools().isEmpty && FaceLink.shared.call("set_expression", ["emotion": "happy"])["isError"] as? Bool == true,
+           "a dead AI Face server offers nothing and refuses calls")
+    var facePrompt = ""
+    chat.workspaceAnswer = { _, prompt, _, _, _ in facePrompt = prompt; return .success("Still here.\n<face>happy</face>") }
+    let faceTurns = chat.current.turns.count, faceStarted = Date()
+    chat.draft = "are you there?"
+    chat.send(); waitFor(chat)
+    expect(chat.current.turns.count == faceTurns + 1 && chat.current.turns.last?.final == "Still here.", "with AI Face down the reply is shown, its tag removed")
+    expect(facePrompt.contains("<face>MOOD</face>") && facePrompt.contains("happy, talking") && Date().timeIntervalSince(faceStarted) < 30,
+           "the face rule still goes out with the usual moods, and nothing waits on AI Face")
+    FaceLink.shared.show("happy")
+    expect(FaceLink.shared.tools().isEmpty, "showing a face on a dead AI Face is dropped quietly")
     try? FileManager.default.removeItem(at: FaceLink.file)
     FaceLink.shared.refresh()
     expect(FaceLink.shared.tools().isEmpty, "Disconnect in AI Face ends the connection")

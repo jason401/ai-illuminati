@@ -5,6 +5,7 @@ import AIAccounts
 import AIWorkspace
 import AIProjects
 @testable import AIChat
+import AIIntegrations
 
 private struct EmptyPreviewLogin: GoogleTokenStore {
     func load() throws -> Data? { nil }

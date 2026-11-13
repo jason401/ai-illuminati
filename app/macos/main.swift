@@ -7,6 +7,7 @@ import AIRuntime
 import AIWorkspace
 import AIProjects
 import AIChat
+import AIIntegrations
 
 // AI Illuminati: a menu bar gauge that shows how much of each AI subscription is left
 // (5-hour and weekly limits) and when each one resets, for any number of Claude and ChatGPT
@@ -137,6 +138,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         approvalObservation = ProjectCenter.shared.$requests.map(\.count).removeDuplicates().receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.showPending(); self?.rebuildMenu() }
         model.updater.start()
+        // The bridge's tool socket and AI Face's older socket open first, then the link to AI Face (as before I).
+        ToolHub.shared.start()
+        ToolHub.shared.startLegacyFaceSocket(at: FaceLink.socketPath)
         FaceLink.shared.start()
         ExternalMCP.shared.start()   // servers added in Settings → MCP
         // Chats from your other Macs (off until turned on in Settings → Chat).

@@ -4,10 +4,11 @@ import AIAccounts
 import AIWorkspace
 import AIProjects
 import AIChat
+import AIIntegrations
 
-extension FaceLink: ToolProvider {
-    var active: Bool { Self.active() != nil }
-    func call(_ name: String, _ arguments: [String: Any], context: ToolContext) -> [String: Any] { call(name, arguments) }
+extension FaceLink: @retroactive ToolProvider {
+    public var active: Bool { Self.active() != nil }
+    public func call(_ name: String, _ arguments: [String: Any], context: ToolContext) -> [String: Any] { call(name, arguments) }
 }
 
 // One app-side gateway. Per-answer capabilities keep other chat modes and arbitrary local

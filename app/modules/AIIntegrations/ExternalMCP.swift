@@ -2,34 +2,31 @@ import Foundation
 import Darwin
 import AIAccounts
 import AILocalization
-import AIRuntime
 import AIWorkspace
-import AIProjects
-import AIChat
 
 // MCP servers the user adds in Settings → MCP: stdio commands like Claude desktop's config, or remote URLs
 // (Streamable HTTP, RemoteMCP.swift). They are kept in
 // mcp-servers.json, not in mcp.json: AI Face writes that file, and two writers of one file lose each other's
 // changes. The app itself runs each server it is switched on for (as the user, outside the CLI sandbox, like
-// Claude desktop) and offers its tools through ToolHub to plain chat and project work, never to Enterprise
+// Claude desktop) and offers its tools through the app's gateway to plain chat and project work, never to Enterprise
 // chats. A tool is named "<server>__<tool>"; server names have no "_", so the name is unambiguous, and the app
 // keeps an explicit map from that name back to the server and its own tool name.
-struct MCPServerEntry: Equatable, Identifiable {
-    var name: String
-    var command: String
-    var args: [String] = []
-    var env: [String: String] = [:]
-    var url = ""                          // a remote server; command is then empty
-    var headers: [String: String] = [:]   // remote request headers; saved values live in the Keychain ("" here)
-    var oauthClientID = ""                // remote: a client ID from the server, for one without automatic registration
-    var id: String { name }
-    var isRemote: Bool { !url.isEmpty }
+public struct MCPServerEntry: Equatable, Identifiable {
+    public var name: String
+    public var command: String
+    public var args: [String] = []
+    public var env: [String: String] = [:]
+    public var url = ""                          // a remote server; command is then empty
+    public var headers: [String: String] = [:]   // remote request headers; saved values live in the Keychain ("" here)
+    public var oauthClientID = ""                // remote: a client ID from the server, for one without automatic registration
+    public var id: String { name }
+    public var isRemote: Bool { !url.isEmpty }
 
-    static let reserved: Set<String> = ["ai-face", "illuminati", "google-drive"]
+    public static let reserved: Set<String> = ["ai-face", "illuminati", "google-drive"]
     static let maxName = 16, maxTool = 47   // "mcp__illuminati__" + name stays within 64 characters
 
     /// A valid server name from what the user typed: lower case, letters, digits and "-".
-    static func normalized(_ raw: String) -> String {
+    public static func normalized(_ raw: String) -> String {
         let lower = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let mapped = lower.map { $0.isASCII && ($0.isLetter || $0.isNumber) ? $0 : "-" }
         var name = String(mapped)
@@ -39,15 +36,15 @@ struct MCPServerEntry: Equatable, Identifiable {
     }
     static func validName(_ name: String) -> Bool { !name.isEmpty && normalized(name) == name && !reserved.contains(name) }
 
-    init(name: String, command: String, args: [String] = [], env: [String: String] = [:]) {
+    public init(name: String, command: String, args: [String] = [], env: [String: String] = [:]) {
         self.name = name; self.command = command; self.args = args; self.env = env
     }
-    init(name: String, url: String, headers: [String: String] = [:], oauthClientID: String = "") {
+    public init(name: String, url: String, headers: [String: String] = [:], oauthClientID: String = "") {
         self.name = name; self.command = ""; self.url = url; self.headers = headers; self.oauthClientID = oauthClientID
     }
     static let urlKeys = ["url", "serverUrl", "httpUrl"]   // Claude/Cursor/VS Code, Windsurf, Gemini CLI
     /// One entry of an "mcpServers" object as Claude desktop, Cursor, VS Code or Windsurf write it.
-    init?(name: String, json: [String: Any]) {
+    public init?(name: String, json: [String: Any]) {
         self.name = name
         if let address = Self.urlKeys.lazy.compactMap({ json[$0] as? String }).first(where: { !$0.isEmpty }) {
             command = ""; url = address.trimmingCharacters(in: .whitespaces)
@@ -72,7 +69,7 @@ struct MCPServerEntry: Equatable, Identifiable {
 
     /// Servers from pasted JSON: {"mcpServers": {...}}, VS Code's {"servers": {...}}, {"name": {...}}, one
     /// {"command": ...} or {"url": ...}; or a command line or URL (see `command(_:)`).
-    static func parse(_ text: String) -> [MCPServerEntry] {
+    public static func parse(_ text: String) -> [MCPServerEntry] {
         var trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.hasPrefix("{"), !trimmed.hasPrefix("\"") { return command(trimmed).map { [$0] } ?? [] }
         if trimmed.hasPrefix("\""), !trimmed.hasPrefix("{") { trimmed = "{" + trimmed.trimmingCharacters(in: CharacterSet(charactersIn: ",")) + "}" }
@@ -87,7 +84,7 @@ struct MCPServerEntry: Equatable, Identifiable {
     }
 
     /// A typed command line split into words (quotes and backslashes like a shell, nothing run).
-    static func words(_ line: String) -> [String] {
+    public static func words(_ line: String) -> [String] {
         var words: [String] = [], current = "", quote: Character?, escaped = false, started = false
         for c in line {
             if escaped { current.append(c); escaped = false; continue }
@@ -118,8 +115,8 @@ protocol MCPConnection: AnyObject {
 // One stdio MCP session: JSON-RPC lines on stdin/stdout. Replies are matched by id, so calls may overlap; a
 // request from the server is answered "not supported" (ping is answered), notifications are read and dropped
 // except tools/list_changed. stderr keeps its last lines to show why a server failed.
-final class MCPSession: MCPConnection {
-    struct Failure: Error { let message: String }
+public final class MCPSession: MCPConnection {
+    public struct Failure: Error { public let message: String; public init(message: String) { self.message = message } }
     let loginNeeded: Bool? = nil
     let entry: MCPServerEntry
     private let process = Process()
@@ -215,7 +212,7 @@ final class MCPSession: MCPConnection {
     func call(_ tool: String, _ arguments: [String: Any], timeout: TimeInterval) -> [String: Any] {
         let reply = request("tools/call", ["name": tool, "arguments": arguments], timeout: timeout)
         if let result = reply?["result"] as? [String: Any] { return result }
-        return ToolHub.failure((failure(reply, "\(entry.name) did not answer in time")).message)
+        return mcpFailure((failure(reply, "\(entry.name) did not answer in time")).message)
     }
 
     func close() {
@@ -286,35 +283,29 @@ final class MCPSession: MCPConnection {
     }
 }
 
-final class ExternalMCP: ObservableObject, ToolProvider {
-    enum State: Equatable { case off, connecting, connected, failed, needsLogin }
-    struct Status: Equatable {
-        var state: State
-        var tools: [String] = []
-        var skipped: [String] = []
-        var message: String? = nil
-        var oauth = false                 // needsLogin: a browser sign-in (else an API key)
-        var signedIn = false              // remote: holds an OAuth token
-        var rules: [String: MCPToolRule] = [:]
-        var readOnly: Set<String> = []
-        var changed: [String] = []        // tools that changed since they were last seen
-        var signingIn = false
+public final class ExternalMCP: ObservableObject {
+    public enum State: Equatable { case off, connecting, connected, failed, needsLogin }
+    public struct Status: Equatable {
+        public var state: State
+        public var tools: [String] = []
+        public var skipped: [String] = []
+        public var message: String? = nil
+        public var oauth = false                 // needsLogin: a browser sign-in (else an API key)
+        public var signedIn = false              // remote: holds an OAuth token
+        public var rules: [String: MCPToolRule] = [:]
+        public var readOnly: Set<String> = []
+        public var changed: [String] = []        // tools that changed since they were last seen
+        public var signingIn = false
     }
 
-    static let shared = ExternalMCP()
+    public static let shared = ExternalMCP()
     static var file: URL { URL(fileURLWithPath: AccountStore.supportDir).appendingPathComponent("mcp-servers.json") }
     static var claudeDesktopFile: URL { URL(fileURLWithPath: AccountStore.home).appendingPathComponent("Library/Application Support/Claude/claude_desktop_config.json") }
     static var callTimeout: TimeInterval = 120
     static var retryAfter: TimeInterval = 30
-    // Enterprise chats get no outside servers (their data would leave through tools the user did not pick for them).
-    static var isEnterprise: (UUID) -> Bool = { room in
-        let look = { ChatLink.shared.conversations().first { $0.id == room }?.isEnterprise ?? false }
-        return Thread.isMainThread ? look() : DispatchQueue.main.sync(execute: look)
-    }
-
-    @Published private(set) var servers: [MCPServerEntry] = []
-    @Published private(set) var status: [String: Status] = [:]
-    @Published private(set) var loadError: String?
+    @Published public private(set) var servers: [MCPServerEntry] = []
+    @Published public private(set) var status: [String: Status] = [:]
+    @Published public private(set) var loadError: String?
 
     private let lock = NSLock()
     private let work = DispatchQueue(label: "external-mcp")
@@ -333,8 +324,8 @@ final class ExternalMCP: ObservableObject, ToolProvider {
 
     // MARK: Settings (mcp-servers.json; the on/off switch is the shared "mcpOff" list)
 
-    static func isOn(_ name: String) -> Bool { !(UserDefaults.app.stringArray(forKey: "mcpOff") ?? []).contains(name) }
-    func setOn(_ name: String, _ on: Bool) {
+    public static func isOn(_ name: String) -> Bool { !(UserDefaults.app.stringArray(forKey: "mcpOff") ?? []).contains(name) }
+    public func setOn(_ name: String, _ on: Bool) {
         setOff(name, !on)
         refresh(force: on ? [name] : [])
     }
@@ -362,7 +353,7 @@ final class ExternalMCP: ObservableObject, ToolProvider {
     }
 
     /// Adds or replaces one server (renaming keeps its switch). Other entries and unknown fields stay as they are.
-    func save(_ entry: MCPServerEntry, replacing old: String? = nil, on: Bool = true, clientSecret: String? = nil, signIn: Bool = false) throws {
+    public func save(_ entry: MCPServerEntry, replacing old: String? = nil, on: Bool = true, clientSecret: String? = nil, signIn: Bool = false) throws {
         guard MCPServerEntry.validName(entry.name) else { throw MCPSession.Failure(message: L("이름은 영어 소문자·숫자·-만, 16자까지예요.", "Names use lower-case letters, digits and -, up to 16.")) }
         if entry.isRemote {
             if let problem = MCPServerEntry.urlProblem(entry.url) { throw MCPSession.Failure(message: problem) }
@@ -412,7 +403,7 @@ final class ExternalMCP: ObservableObject, ToolProvider {
         if let clientSecret { try store.set(MCPSecrets.clientSecret(entry.name), clientSecret.isEmpty ? nil : clientSecret) }
     }
 
-    func remove(_ name: String) throws {
+    public func remove(_ name: String) throws {
         try lock.locked {
             let current = Self.read()
             if let error = current.error { throw MCPSession.Failure(message: error) }
@@ -427,7 +418,7 @@ final class ExternalMCP: ObservableObject, ToolProvider {
     }
 
     /// Claude desktop's servers not added here yet.
-    static func claudeDesktopServers(existing: [MCPServerEntry]) -> [MCPServerEntry] {
+    public static func claudeDesktopServers(existing: [MCPServerEntry]) -> [MCPServerEntry] {
         guard let data = try? Data(contentsOf: claudeDesktopFile) else { return [] }
         let names = Set(existing.map(\.name)).union(MCPServerEntry.reserved)
         let commands = Set(existing.map { $0.isRemote ? [$0.url] : [$0.command] + $0.args })
@@ -437,7 +428,7 @@ final class ExternalMCP: ObservableObject, ToolProvider {
     }
 
     /// Adds them switched off: the user turns on each one after looking at it.
-    func importClaudeDesktop() -> Int {
+    public func importClaudeDesktop() -> Int {
         var added = 0
         for entry in Self.claudeDesktopServers(existing: servers) where (try? save(entry, on: false)) != nil { added += 1 }
         return added
@@ -463,13 +454,13 @@ final class ExternalMCP: ObservableObject, ToolProvider {
     // MARK: Connections
 
     /// Connects the servers that are switched on, now and every 30 seconds (a server that quit comes back).
-    func start() {
+    public func start() {
         refresh()
         timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in self?.refresh() }
     }
 
     /// force: these servers try again at once instead of waiting after a failure.
-    func refresh(force: Set<String> = []) { work.async { self.update(force: force) } }
+    public func refresh(force: Set<String> = []) { work.async { self.update(force: force) } }
     /// For tests and the Settings button: waits until the current round of connecting is over.
     func refreshAndWait(force: Set<String> = [], timeout: TimeInterval = 30) {
         work.sync { update(force: force) }
@@ -478,7 +469,7 @@ final class ExternalMCP: ObservableObject, ToolProvider {
     }
 
     /// Settings → Reconnect: a fresh start of one server, also right after a failure.
-    func reconnect(_ name: String) {
+    public func reconnect(_ name: String) {
         lock.locked { sessions[name]?.close(); sessions[name] = nil; lists[name] = nil; logins[name] = nil; rebuild() }
         refresh(force: [name])
     }
@@ -551,7 +542,7 @@ final class ExternalMCP: ObservableObject, ToolProvider {
     // MARK: Sign-in (remote servers with OAuth)
 
     /// Opens the browser for the server's sign-in; when it is done the server connects.
-    func signIn(_ name: String) {
+    public func signIn(_ name: String) {
         guard let entry = lock.locked({ known.first { $0.name == name } }), entry.isRemote else { return }
         guard lock.locked({ signingIn.insert(name).inserted }) else { return }
         lock.locked { signInErrors[name] = nil }
@@ -565,19 +556,19 @@ final class ExternalMCP: ObservableObject, ToolProvider {
         }
     }
 
-    func signOut(_ name: String) {
+    public func signOut(_ name: String) {
         guard let entry = lock.locked({ known.first { $0.name == name } }) else { return }
         MCPOAuth.signOut(entry)
         reconnect(name)
     }
 
     /// Settings → Tools: one tool's rule (nil: back to its default).
-    func setRule(_ server: String, _ tool: String, _ rule: MCPToolRule?) {
+    public func setRule(_ server: String, _ tool: String, _ rule: MCPToolRule?) {
         MCPPermissions.set(server, tool, rule)
         lock.locked { rebuild() }
         publish()
     }
-    func acknowledgeChanges(_ server: String) { MCPPermissions.acknowledge(server); publish() }
+    public func acknowledgeChanges(_ server: String) { MCPPermissions.acknowledge(server); publish() }
 
     // Under `lock`. The tools as the models see them, and the map back to each server's own name.
     private var skipped: [String: [String]] = [:]
@@ -636,31 +627,30 @@ final class ExternalMCP: ObservableObject, ToolProvider {
         }
     }
 
-    // MARK: ToolProvider (reads only the snapshot: never waits on a server that is starting or busy)
+    // MARK: Tools (reads only the snapshot: never waits on a server that is starting or busy). The app offers them
+    // through its tool gateway (ExternalMCPTools.swift): it adds the Enterprise rule and the approval card; the rules here
+    // (block, ask, allow) and the time limit stay with the connection.
 
-    var active: Bool { lock.locked { !offered.isEmpty } }
-    func tools() -> [[String: Any]] { lock.locked { offered } }
-    func tools(context: ToolContext) -> [[String: Any]] {
-        let list = tools()
-        return list.isEmpty || Self.isEnterprise(context.room) ? [] : list
-    }
-    var slowTools: [String] { lock.locked { Array(routes.keys) } }
+    public var active: Bool { lock.locked { !offered.isEmpty } }
+    public func tools() -> [[String: Any]] { lock.locked { offered } }
+    public var slowTools: [String] { lock.locked { Array(routes.keys) } }
 
-    func call(_ name: String, _ arguments: [String: Any], context: ToolContext) -> [String: Any] {
-        guard !Self.isEnterprise(context.room) else { return ToolHub.failure("Outside MCP servers are not available in Enterprise chats.") }
+    /// One call by its offered name. `approve` is asked for a tool whose rule is "ask" (server, its own tool name);
+    /// it may take up to `approvalWait`, counted in the call's two minutes.
+    public func call(_ name: String, _ arguments: [String: Any], approve: (String, String) -> Bool) -> [String: Any] {
         let (route, session, tool) = lock.locked { () -> ((server: String, tool: String)?, MCPConnection?, [String: Any]?) in
             let route = routes[name]
             return (route, route.flatMap { sessions[$0.server] }, route.flatMap { r in lists[r.server]?.first { $0["name"] as? String == r.tool } })
         }
         guard let route, Self.isOn(route.server), let session, session.isRunning, let tool else {
-            return ToolHub.failure("This MCP server is switched off or not connected: " + name)
+            return mcpFailure("This MCP server is switched off or not connected: " + name)
         }
         let started = Date()
         switch MCPPermissions.rule(route.server, tool, remote: session.entry.isRemote) {
-        case .block: return ToolHub.failure("The user blocked this tool: " + name)
+        case .block: return mcpFailure("The user blocked this tool: " + name)
         case .ask:
-            guard Self.approve(route.server, route.tool, arguments, context) else {
-                return ToolHub.failure("The user did not allow \(name) this time (refused or no answer in \(Int(Self.approvalWait)) seconds). Do not retry it unless the user asks.")
+            guard approve(route.server, route.tool) else {
+                return mcpFailure("The user did not allow \(name) this time (refused or no answer in \(Int(Self.approvalWait)) seconds). Do not retry it unless the user asks.")
             }
         case .allow: break
         }
@@ -673,18 +663,10 @@ final class ExternalMCP: ObservableObject, ToolProvider {
         return result
     }
 
-    static var approvalWait: TimeInterval = 60
-    /// The chat's approval card; "Always allow" there saves the rule. Tests replace it.
-    static var approve: (String, String, [String: Any], ToolContext) -> Bool = { server, tool, arguments, context in
-        let detail = (try? JSONSerialization.data(withJSONObject: arguments, options: [.prettyPrinted, .sortedKeys])).map { String(decoding: $0, as: UTF8.self) } ?? ""
-        var request = ProjectApproval(room: context.room, run: context.projectRun ?? UUID(),
-                                      title: L("\(server) 도구 사용: \(tool)", "Use \(server) tool: \(tool)"), detail: String(detail.prefix(4000)))
-        request.alwaysAllow = { ExternalMCP.shared.setRule(server, tool, .allow) }
-        return ProjectCenter.shared.approve(request, token: DebateCancellation(), deadline: Date().addingTimeInterval(approvalWait))
-    }
+    public static var approvalWait: TimeInterval = 60
 
     /// Stops every server (tests, app exit).
-    func stopAll() {
+    public func stopAll() {
         lock.locked {
             sessions.values.forEach { $0.close() }
             sessions = [:]; lists = [:]; failures = [:]; rebuild()

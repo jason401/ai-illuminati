@@ -23,7 +23,10 @@ Feature and design notes live in `docs/`; read them only when the task needs the
   and ProjectMaker tools; it names no chat type: Discussion plugs in as `TodoChats` in `TodoChatsApp.swift`), `AIChat`
   (the chat: records and ChatStore, Discussion and every `extension Discussion`, routing, meetings, reviews, ask_ai, the
   Chat/Memory/Storage/Peer/Convene tools, DeviceSync, the chat window's views; uses Projects, never the other way; it gets
-  the app's settings as `ChatSettings` and the rest through `ChatApp`, set in `ChatLinksApp.swift`/`ChatScreensApp.swift`). Files that use one `import <Name>` and see only its `public` names; a
+  the app's settings as `ChatSettings` and the rest through `ChatApp`, set in `ChatLinksApp.swift`/`ChatScreensApp.swift`), `AIIntegrations`
+  (`GoogleAuth` and the Drive gate `DriveLink`, outside MCP servers `ExternalMCP`/`RemoteMCP`, AI Face's `FaceLink`; no tool
+  provider: the app makes them providers in `ToolHub.swift`, `DriveTools.swift`, `ExternalMCPTools.swift`; Keychain, network,
+  sign-in callback and AI Face connection are injectable; only the app imports it). Files that use one `import <Name>` and see only its `public` names; a
   module may import only the modules in its `dependencies` file. Tests that need a module's insides say
   `@testable import` (the test build adds `-enable-testing`); app files never do. Every `swiftc` that compiles app files runs
   `zsh tools/build_modules.sh <out>` first and adds `-I <out> <out>/lib*.a`. A new `public` name gets its reason

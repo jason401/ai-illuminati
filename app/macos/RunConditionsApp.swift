@@ -2,6 +2,7 @@ import Foundation
 import AIAccounts
 import AIRuntime
 import AIWorkspace
+import AIIntegrations
 
 // What Answerer starts each tool with (RunConditions), put together by the app: Answerer knows nothing about
 // folders, project work, AI Face or AutoGuard, and Workspace (Workspace.swift) gives only what this needs: the

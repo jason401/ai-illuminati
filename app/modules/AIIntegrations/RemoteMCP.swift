@@ -11,20 +11,22 @@ import AILocalization
 
 // MARK: Secrets
 
-protocol MCPSecretStore: AnyObject {
+public protocol MCPSecretStore: AnyObject {
     func get(_ key: String) -> String?
     func set(_ key: String, _ value: String?) throws
 }
 
 // Through /usr/bin/security like the Google login (its ACL survives rebuilds). Its input line is bounded, so a
 // long value (a JWT, a token blob) is split over numbered items; item 0 says how many and is written last.
-final class MCPKeychain: MCPSecretStore {
+public final class MCPKeychain: MCPSecretStore {
     private static let service = "AI Illuminati MCP", chunk = 2800
     private let lock = NSLock()
+    private let run: GoogleKeychainStore.Runner
+    public init(run: GoogleKeychainStore.Runner? = nil) { self.run = run ?? GoogleKeychainStore.execute }
     private var cache: [String: String?] = [:]
 
     private func read(_ account: String) -> String? {
-        guard let (status, output) = try? GoogleKeychainStore.execute(["find-generic-password", "-s", Self.service, "-a", account, "-w"], nil),
+        guard let (status, output) = try? run(["find-generic-password", "-s", Self.service, "-a", account, "-w"], nil),
               status == 0 else { return nil }
         var data = output
         if data.last == 10 { data.removeLast() }
@@ -32,16 +34,16 @@ final class MCPKeychain: MCPSecretStore {
     }
     private func write(_ account: String, _ value: String) throws {
         let line = "add-generic-password -U -s \"\(Self.service)\" -a \"\(account)\" -w \(value)\n"
-        let (status, _) = try GoogleKeychainStore.execute(["-i"], Data(line.utf8))
+        let (status, _) = try run(["-i"], Data(line.utf8))
         guard status == 0 else { throw MCPSession.Failure(message: L("키체인에 저장하지 못했어요.", "Could not save to the Keychain.")) }
     }
-    private func remove(_ account: String) { _ = try? GoogleKeychainStore.execute(["delete-generic-password", "-s", Self.service, "-a", account], nil) }
+    private func remove(_ account: String) { _ = try? run(["delete-generic-password", "-s", Self.service, "-a", account], nil) }
     private func count(_ key: String) -> Int? {
         guard let head = read(key + "#0"), head.hasPrefix("v1:"), let colon = head.dropFirst(3).firstIndex(of: ":") else { return nil }
         return Int(head[head.index(head.startIndex, offsetBy: 3)..<colon])
     }
 
-    func get(_ key: String) -> String? {
+    public func get(_ key: String) -> String? {
         lock.lock(); defer { lock.unlock() }
         if let cached = cache[key] { return cached }
         var value: String?
@@ -54,7 +56,7 @@ final class MCPKeychain: MCPSecretStore {
         return value
     }
 
-    func set(_ key: String, _ value: String?) throws {
+    public func set(_ key: String, _ value: String?) throws {
         lock.lock(); defer { lock.unlock() }
         let old = count(key) ?? 0
         guard let value, !value.isEmpty else {
@@ -87,11 +89,11 @@ final class MCPFileSecrets: MCPSecretStore {
     }
 }
 
-enum MCPSecrets {
-    static var store: MCPSecretStore = UserDefaults.app === UserDefaults.standard ? MCPKeychain() : MCPFileSecrets()
-    static func header(_ server: String, _ name: String) -> String { "header.\(server).\(name)" }
+public enum MCPSecrets {
+    public static var store: MCPSecretStore = UserDefaults.app === UserDefaults.standard ? MCPKeychain() : MCPFileSecrets()
+    public static func header(_ server: String, _ name: String) -> String { "header.\(server).\(name)" }
     static func oauth(_ server: String) -> String { "oauth.\(server)" }
-    static func clientSecret(_ server: String) -> String { "client-secret.\(server)" }
+    public static func clientSecret(_ server: String) -> String { "client-secret.\(server)" }
     static func keys(_ entry: MCPServerEntry) -> [String] { entry.headers.keys.map { header(entry.name, $0) } + [oauth(entry.name), clientSecret(entry.name)] }
 }
 
@@ -99,7 +101,7 @@ enum MCPSecrets {
 
 extension MCPServerEntry {
     /// https only, plus http to this Mac. Nil when fine, else why not.
-    static func urlProblem(_ text: String) -> String? {
+    public static func urlProblem(_ text: String) -> String? {
         guard let url = URL(string: text), let scheme = url.scheme?.lowercased(), let host = url.host, !host.isEmpty else {
             return L("주소가 올바르지 않아요.", "This is not a valid address.")
         }
@@ -110,7 +112,7 @@ extension MCPServerEntry {
     static func isLocal(_ host: String) -> Bool { ["localhost", "127.0.0.1", "::1", "[::1]"].contains(host.lowercased()) }
 
     /// A name from the address: mcp.notion.com → notion, api.githubcopilot.com → githubcopilot.
-    static func name(fromURL text: String) -> String {
+    public static func name(fromURL text: String) -> String {
         guard let host = URL(string: text)?.host?.lowercased() else { return "" }
         var parts = host.split(separator: ".").map(String.init)
         if parts.count > 1, Int(parts.last!) == nil { parts.removeLast() }
@@ -119,7 +121,7 @@ extension MCPServerEntry {
     }
 
     /// "Name: value" lines into headers; nil names a line that is not one.
-    static func headerLines(_ text: String) -> Result<[String: String], MCPSession.Failure> {
+    public static func headerLines(_ text: String) -> Result<[String: String], MCPSession.Failure> {
         var headers: [String: String] = [:]
         for line in text.split(separator: "\n") {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
@@ -185,7 +187,7 @@ extension MCPServerEntry {
 
 // MARK: Tool permissions (per server and tool: always allow, ask, block)
 
-enum MCPToolRule: String, CaseIterable { case allow, ask, block }
+public enum MCPToolRule: String, CaseIterable { case allow, ask, block }
 
 enum MCPPermissions {
     private static let rulesKey = "mcpToolRules", seenKey = "mcpToolSeen", changedKey = "mcpToolChanged"
@@ -313,11 +315,17 @@ enum MCPHTTP {
         }
     }
 
+    /// Every request to a remote MCP server or its sign-in goes through here (tests give a fake: no network).
+    static var transport: (URLRequest, _ wanted: Int?, _ timeout: TimeInterval, _ onMessage: @escaping ([String: Any]) -> Void) throws -> Reply = live
     static func send(_ url: URL, method: String = "POST", headers: [String: String] = [:], body: Data? = nil, wanted: Int? = nil,
                      timeout: TimeInterval = 30, onMessage: @escaping ([String: Any]) -> Void = { _ in }) throws -> Reply {
         var request = URLRequest(url: url)
         request.httpMethod = method; request.httpBody = body; request.timeoutInterval = min(timeout, 60)
         for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
+        return try transport(request, wanted, timeout, onMessage)
+    }
+    /// The real one: no redirects, nothing kept, an SSE reply read as it comes and closed once `wanted` is answered.
+    static func live(_ request: URLRequest, wanted: Int?, timeout: TimeInterval, onMessage: @escaping ([String: Any]) -> Void) throws -> Reply {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForResource = timeout
         configuration.httpCookieStorage = nil; configuration.urlCredentialStorage = nil; configuration.urlCache = nil
@@ -644,8 +652,8 @@ final class RemoteMCPSession: MCPConnection {
             extra["Mcp-Param-" + param.header] = Self.headerValue(text)
         }
         do { return try request("tools/call", ["name": tool, "arguments": arguments], name: tool, extra: extra, timeout: timeout) }
-        catch let error as LoginNeeded { return ToolHub.failure("\(entry.name): " + error.message) }
-        catch { return ToolHub.failure("\(entry.name): " + ((error as? MCPSession.Failure)?.message ?? error.localizedDescription)) }
+        catch let error as LoginNeeded { return mcpFailure("\(entry.name): " + error.message) }
+        catch { return mcpFailure("\(entry.name): " + ((error as? MCPSession.Failure)?.message ?? error.localizedDescription)) }
     }
 }
 
@@ -782,9 +790,9 @@ enum MCPOAuth {
     }
     private static func fail(_ text: String) -> MCPSession.Failure { .init(message: text) }
     // The usual port first, so a registered redirect stays the same; any free port if it is taken.
-    private static func newLoopback() throws -> GoogleLoopback {
-        if let fixed = try? GoogleLoopback(port: preferredPort, label: "MCP") { return fixed }
-        return try GoogleLoopback(label: "MCP")
+    private static func newLoopback() throws -> OAuthCallback {
+        if let fixed = try? GoogleLoopback.make(preferredPort, "MCP") { return fixed }
+        return try GoogleLoopback.make(0, "MCP")
     }
 
     /// The whole sign-in, off the main thread: find the servers, get a client, open the browser, wait for the
@@ -825,14 +833,14 @@ enum MCPOAuth {
 
         // The client: one the user typed, the one registered before with this issuer, or a new DCR registration.
         var client: (id: String, method: String, redirectPort: UInt16, registered: Bool)
-        var loopback: GoogleLoopback
+        var loopback: OAuthCallback
         if !entry.oauthClientID.isEmpty {
             loopback = try newLoopback()
             let secret = MCPSecrets.store.get(MCPSecrets.clientSecret(entry.name)) ?? ""
             let methods = meta["token_endpoint_auth_methods_supported"] as? [String] ?? []
             client = (entry.oauthClientID, secret.isEmpty ? "none" : methods.contains("client_secret_post") || methods.isEmpty ? "client_secret_post" : "client_secret_basic", 0, false)
         } else if let previous, previous.registered, previous.issuer == issuer, let port = URL(string: previous.redirect)?.port,
-                  let reused = try? GoogleLoopback(port: UInt16(port), label: "MCP") {
+                  let reused = try? GoogleLoopback.make(UInt16(port), "MCP") {
             loopback = reused
             client = (previous.clientID, previous.authMethod, UInt16(port), true)
         } else {

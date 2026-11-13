@@ -12,23 +12,23 @@ import AIAccounts
 // call to the app over a local socket. Like the ChatGPT app, AI Illuminati passes every tool on and only
 // turns the whole server on or off (Settings → Chat); AI Face decides per AI which tools work (calendar,
 // mail, folders). The agreement between the two apps is docs/AI_FACE.md.
-final class FaceLink: ObservableObject {
-    struct Server: Equatable { var command: String; var args: [String] }
+public final class FaceLink: ObservableObject {
+    public struct Server: Equatable { public var command: String; public var args: [String] }
 
-    static let shared = FaceLink()
+    public static let shared = FaceLink()
     static let name = "ai-face", agent = "illuminati"
-    static var file = URL(fileURLWithPath: AccountStore.supportDir).appendingPathComponent("mcp.json")
+    public static var file = URL(fileURLWithPath: AccountStore.supportDir).appendingPathComponent("mcp.json")
     // The server must be AI Face's own file; anything else in mcp.json is ignored.
-    static var faceFolder = AccountStore.home + "/Library/Application Support/AI Face"
-    static var socketPath = AccountStore.supportDir + "/face.sock"
+    public static var faceFolder = AccountStore.home + "/Library/Application Support/AI Face"
+    public static var socketPath = AccountStore.supportDir + "/face.sock"
 
     // The on/off switch per server (only AI Face for now). Off servers are listed in UserDefaults "mcpOff".
-    static var isOn: Bool { !(UserDefaults.app.stringArray(forKey: "mcpOff") ?? []).contains(name) }
-    static func active() -> Server? { isOn ? server() : nil }
+    public static var isOn: Bool { !(UserDefaults.app.stringArray(forKey: "mcpOff") ?? []).contains(name) }
+    public static func active() -> Server? { isOn ? server() : nil }
 
-    @Published private(set) var configured = false
-    @Published private(set) var connected = false
-    @Published var on = FaceLink.isOn {
+    @Published public private(set) var configured = false
+    @Published public private(set) var connected = false
+    @Published public var on = FaceLink.isOn {
         didSet {
             var off = Set(UserDefaults.app.stringArray(forKey: "mcpOff") ?? [])
             if on { off.remove(Self.name) } else { off.insert(Self.name) }
@@ -79,7 +79,7 @@ final class FaceLink: ObservableObject {
     }
 
     /// Codex options that switch those servers off for one run of this account.
-    static func codexOff(_ account: Account) -> [String] {
+    public static func codexOff(_ account: Account) -> [String] {
         let home = account.dir ?? AccountStore.home + "/.codex"
         return codexServers(config: home + "/config.toml").flatMap { ["-c", "mcp_servers.\($0).enabled=false"] }
     }
@@ -89,7 +89,7 @@ final class FaceLink: ObservableObject {
     static let fallbackMoods = ["happy", "talking", "thinking", "curious", "agree", "sympathy", "proud", "apologetic", "shrug"]
 
     /// The moods AI Face offers (from its set_expression tool), for the rule and to check a tag.
-    func moods() -> [String] {
+    public func moods() -> [String] {
         queue.sync {
             _ = ensure()
             let tool = faceTools.first { $0["name"] as? String == "set_expression" }
@@ -98,7 +98,7 @@ final class FaceLink: ObservableObject {
         }
     }
 
-    static func rule(_ moods: [String]) -> String {
+    public static func rule(_ moods: [String]) -> String {
         """
         [Face] AI Face shows a small face for this chat. End your reply with one more line, hidden from the user:
         <face>MOOD</face> — the mood of your reply (vary it), one of: \((moods.isEmpty ? fallbackMoods : moods).joined(separator: ", ")).
@@ -109,7 +109,7 @@ final class FaceLink: ObservableObject {
     /// The text without the <face>…</face> tag at its end (also a tag still arriving there), and the mood. Only a
     /// tag with one English word that ends the reply counts (a hidden <chat-state> block may follow it, kept for its
     /// own reader); a tag written inside the reply, e.g. explaining it, stays text and sets no face.
-    static func extract(_ text: String) -> (text: String, mood: String?) {
+    public static func extract(_ text: String) -> (text: String, mood: String?) {
         var ends = [text.endIndex]
         if let state = text.range(of: "<chat-state>", options: .backwards) { ends.append(state.lowerBound) }
         else if let partial = text.range(of: "<chat", options: .backwards), "<chat-state>".hasPrefix(String(text[partial.lowerBound...])) { ends.append(partial.lowerBound) }
@@ -146,7 +146,7 @@ final class FaceLink: ObservableObject {
     }
 
     /// Sets the face for a finished reply. A mood AI Face does not offer is dropped.
-    func show(_ mood: String) {
+    public func show(_ mood: String) {
         queue.async {
             guard self.ensure(), let tool = self.faceTools.first(where: { $0["name"] as? String == "set_expression" }) else { return }
             let properties = ((tool["inputSchema"] as? [String: Any])?["properties"] as? [String: Any]) ?? [:]
@@ -159,31 +159,29 @@ final class FaceLink: ObservableObject {
     // MARK: Connection to AI Face (one MCP session while the app runs)
 
     private let queue = DispatchQueue(label: "face-link")
-    private var process: Process?, input: FileHandle?, server: Server?
+    private var pipe: FacePipe?, server: Server?
     private var faceTools: [[String: Any]] = []
-    private var nextID = 1
-    private let lock = NSLock(), arrived = DispatchSemaphore(value: 0)
-    private var buffer = Data()
     private var timer: Timer?
+    // How AI Face's server is reached: its own process over stdin/stdout. Tests give a fake (no AI Face, no process).
+    private let open: (Server) -> FacePipe?
+    public init(open: ((Server) -> FacePipe?)? = nil) { self.open = open ?? { FaceProcess($0) } }
 
-    /// Opens the local socket for the bridge and connects to AI Face when it is set up. Checked again
+    /// Connects to AI Face when it is set up (the app opens the bridge's sockets first: main.swift). Checked again
     /// every 30 seconds (Connect or Disconnect in AI Face, AI Face restarted) and before each call.
-    func start() {
+    public func start() {
         // Writing to AI Face's server after it quit must fail quietly, not end the app.
         signal(SIGPIPE, SIG_IGN)
-        ToolHub.shared.start()
-        ToolHub.shared.startLegacyFaceSocket(at: Self.socketPath)
         refresh()
         timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in self?.refresh() }
     }
 
-    func refresh() { queue.async { _ = self.ensure() } }
+    public func refresh() { queue.async { _ = self.ensure() } }
 
     /// AI Face's tools, for the models (empty when AI Face is not connected or switched off).
-    func tools() -> [[String: Any]] { queue.sync { ensure() ? faceTools : [] } }
+    public func tools() -> [[String: Any]] { queue.sync { ensure() ? faceTools : [] } }
 
     /// One tool call, answered as an MCP tool result ({content, isError}).
-    func call(_ name: String, _ arguments: [String: Any]) -> [String: Any] {
+    public func call(_ name: String, _ arguments: [String: Any]) -> [String: Any] {
         func failure(_ text: String) -> [String: Any] { ["content": [["type": "text", "text": text]], "isError": true] }
         return queue.sync {
             guard ensure() else { return failure("AI Face is not connected") }
@@ -199,27 +197,63 @@ final class FaceLink: ObservableObject {
     private func ensure() -> Bool {
         let found = Self.server()
         let wanted = Self.isOn ? found : nil
-        if wanted != server || process?.isRunning != true {
+        if wanted != server || pipe?.isRunning != true {
             disconnect()
             if let wanted { connect(wanted) }
         }
-        let running = process?.isRunning == true
+        let running = pipe?.isRunning == true
         DispatchQueue.main.async { self.configured = found != nil; self.connected = running }
         return running
     }
 
     private func connect(_ server: Server) {
-        let child = Process(), toChild = Pipe(), fromChild = Pipe()
-        child.executableURL = URL(fileURLWithPath: server.command)
-        child.arguments = server.args
+        guard let pipe = open(server) else { return }
+        self.pipe = pipe
+        self.server = server
+        let hello: [String: Any] = ["protocolVersion": "2025-06-18", "capabilities": [:] as [String: Any],
+                                    "clientInfo": ["name": "AI Illuminati", "version": "1"]]
+        guard request("initialize", hello)?["result"] != nil else { return disconnect() }
+        pipe.send(["jsonrpc": "2.0", "method": "notifications/initialized"])
+        let listed = (request("tools/list", [:])?["result"] as? [String: Any])?["tools"] as? [[String: Any]] ?? []
+        faceTools = listed
+    }
+
+    private func disconnect() {
+        pipe?.close()
+        pipe = nil; server = nil; faceTools = []
+    }
+
+    // On `queue`.
+    private func request(_ method: String, _ params: [String: Any]) -> [String: Any]? { pipe?.request(method, params) }
+}
+
+/// One MCP connection to AI Face's server: JSON-RPC lines. `request` waits for the reply with its id (nil: none).
+public protocol FacePipe: AnyObject {
+    var isRunning: Bool { get }
+    func send(_ message: [String: Any])
+    func request(_ method: String, _ params: [String: Any]) -> [String: Any]?
+    func close()
+}
+
+/// AI Face's server as a child process (the agent name in AIFACE_AGENT), the way the app always reached it.
+final class FaceProcess: FacePipe {
+    private let process = Process(), input: FileHandle
+    private var nextID = 1
+    private let lock = NSLock(), arrived = DispatchSemaphore(value: 0)
+    private var buffer = Data()
+
+    init?(_ server: FaceLink.Server) {
+        let toChild = Pipe(), fromChild = Pipe()
+        process.executableURL = URL(fileURLWithPath: server.command)
+        process.arguments = server.args
         var environment = ProcessInfo.processInfo.environment
-        environment["AIFACE_AGENT"] = Self.agent
-        child.environment = environment
-        child.currentDirectoryURL = URL(fileURLWithPath: "/")
-        child.standardInput = toChild
-        child.standardOutput = fromChild
-        child.standardError = FileHandle.nullDevice
-        lock.lock(); buffer = Data(); lock.unlock()
+        environment["AIFACE_AGENT"] = FaceLink.agent
+        process.environment = environment
+        process.currentDirectoryURL = URL(fileURLWithPath: "/")
+        process.standardInput = toChild
+        process.standardOutput = fromChild
+        process.standardError = FileHandle.nullDevice
+        input = toChild.fileHandleForWriting
         fromChild.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
             guard let self else { return }
@@ -227,31 +261,23 @@ final class FaceLink: ObservableObject {
             self.lock.lock(); self.buffer.append(data); self.lock.unlock()
             self.arrived.signal()
         }
-        do { try child.run() } catch { return }
-        process = child
-        input = toChild.fileHandleForWriting
-        self.server = server
-        let hello: [String: Any] = ["protocolVersion": "2025-06-18", "capabilities": [:] as [String: Any],
-                                    "clientInfo": ["name": "AI Illuminati", "version": "1"]]
-        guard request("initialize", hello)?["result"] != nil else { return disconnect() }
-        send(["jsonrpc": "2.0", "method": "notifications/initialized"])
-        let listed = (request("tools/list", [:])?["result"] as? [String: Any])?["tools"] as? [[String: Any]] ?? []
-        faceTools = listed
+        do { try process.run() } catch { return nil }
     }
 
-    private func disconnect() {
-        if let process, process.isRunning { process.terminate() }
-        try? input?.close()
-        process = nil; input = nil; server = nil; faceTools = []
+    var isRunning: Bool { process.isRunning }
+
+    func close() {
+        if process.isRunning { process.terminate() }
+        try? input.close()
     }
 
-    private func send(_ message: [String: Any]) {
-        guard let input, let data = try? JSONSerialization.data(withJSONObject: message) else { return }
+    func send(_ message: [String: Any]) {
+        guard let data = try? JSONSerialization.data(withJSONObject: message) else { return }
         do { try input.write(contentsOf: data + Data([0x0A])) } catch { }
     }
 
-    // On `queue`. Waits up to 10 seconds for the answer with the same id.
-    private func request(_ method: String, _ params: [String: Any]) -> [String: Any]? {
+    // Waits up to 10 seconds for the answer with the same id.
+    func request(_ method: String, _ params: [String: Any]) -> [String: Any]? {
         let id = nextID
         nextID += 1
         send(["jsonrpc": "2.0", "id": id, "method": method, "params": params])
@@ -268,9 +294,8 @@ final class FaceLink: ObservableObject {
             }
             lock.unlock()
             let left = deadline.timeIntervalSinceNow
-            guard left > 0, process?.isRunning == true else { return nil }
+            guard left > 0, process.isRunning else { return nil }
             _ = arrived.wait(timeout: .now() + min(left, 0.5))
         }
     }
-
 }

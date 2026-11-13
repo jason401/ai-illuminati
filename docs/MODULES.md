@@ -43,7 +43,7 @@ A failing check means the code changes, not the check. If a check must change, w
 | G3 App files (fast) | every `app/macos/*.swift` is in `tools/app_files.txt` with a reason | new features piling into the App |
 | G4 outside extensions (fast, **warning**) | an `extension` of a type another module declares `public`, outside that module, unless listed in `tools/module_extensions.txt` with a reason | logic scattered over other modules' types |
 | G5 `@testable` (fast) | none in `app/macos` or `*_contract.swift` (comments and strings ignored) | app files using insides through the test build's `-enable-testing` |
-| G6 documents (fast) | the backticked `AI…` names in AGENTS.md "Module rules" and the `### AI…` sections under "Module map" here equal the module folders; that section ≤ 2,000 characters; AGENTS.md + CLAUDE.md ≤ 25,000 (the app passes 30,000, AGENTS.md first) | stale rule documents |
+| G6 documents (fast) | the backticked `AI…` names in AGENTS.md "Module rules" and the `### AI…` sections under "Module map" here equal the module folders; that section ≤ 2,000 characters; AGENTS.md + CLAUDE.md ≤ 25,000 (the app passes 30,000, AGENTS.md first); `tools/test_map.txt` has a line per module, real test names only, and every test a module's rows below name (`tools/affected_tests.py`, guarded too) | stale rule documents; a selective run that skips a named test |
 | G7 guard hashes (fast) | sha256 of the guard files and run_mode2's `# >>> module checks` blocks (exactly two) against `tools/module_guard.sha256`; update with `zsh tools/check_modules.sh guard` | quietly weakening a guard: the change shows in the same commit |
 | S1 API snapshots (slow) | each module's public declarations (`swift-symbolgraph-extract`, public and open, no synthesized members, sorted text) equal `docs/api/<Name>.txt`; update with `zsh tools/check_modules.sh snapshot` | bulk `public` slipping by unseen |
 | S2 boundaries (slow) | each `boundary` line (`code<TAB>name[<TAB>hidden]`) compiled outside the module must fail with exactly the "inaccessible due to 'internal'" (or, hidden, "cannot find … in scope" for a type that exists inside) error and no other | boundary checks that pass for another reason |
@@ -220,6 +220,18 @@ Unchanged `public` names do not mean unchanged behavior: the falsification runs 
 declaration and still broke the app. Use the table: find the promise the change touches, run the module's own
 test and the user tests in its row. When the row says "none", or it is unclear which promise a change touches,
 run the full test (`zsh tools/tests/run_mode2.sh`). A new promise gets a row, a module check and a user check.
+
+Selective run (T2, 2026-11-13): `zsh tools/tests/run_mode2.sh --affected <paths>` (paths as `git diff --name-only`
+prints them). `tools/affected_tests.sh` reads `tools/test_map.txt`: a module's line gives its app tests, and the script
+adds that module's contract and those of every module that depends on it; a test file gives its own tests (or ALL when
+another test uses what it defines). Paths not in the map, guard devices, `ToolHub.swift`/`Settings.swift`/`main.swift`,
+build scripts, resources and Accounts, Localization, Runtime, Workspace and Chat give ALL: the full run, unchanged.
+Stages 1, 3-9 and 11, the module build, S1-S3 and mode2's checks outside `runTest` always run (they set up the shared
+state and hold the data-folder rules), so only contracts, `runTest` functions and stage 10 are skipped. Without the
+option nothing changes. A new row naming a test fails G6 until the map has it.
+Guard change (approved for T2): run_mode2's module block skips unpicked contracts only when `--affected` picked; the
+build, G1-G7 and S1-S3 lines are as before. `check_modules.py` adds the map check to G6 and hashes
+`tools/affected_tests.py` (G7). Without `--affected` every contract runs exactly as before (verified: same test list).
 
 ### AIAccounts (`app/modules/AIAccounts/Accounts.swift`)
 | Promise | Users (files) | Module test | User tests (mode2.swift unless named) |

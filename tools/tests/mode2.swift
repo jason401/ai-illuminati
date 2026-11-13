@@ -34,8 +34,18 @@ func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
     if !condition() { fatalError(message) }
     markProgress(check: message)
 }
+// AI_ILLUMINATI_TEST_ONLY (run_mode2.sh --affected): only these runTest names, comma-separated, in this file's
+// order ("-": none). Unset: every test. The checks outside runTest always run: they set up what the tests share
+// (model, chat links, test home) and hold the data-folder rules, so a selection never skips them.
+let testOnly: Set<String>? = ProcessInfo.processInfo.environment["AI_ILLUMINATI_TEST_ONLY"].map { raw in
+    if raw.isEmpty { fatalError("AI_ILLUMINATI_TEST_ONLY is empty: name the tests, or - for none") }
+    return Set(raw.split(separator: ",").map(String.init)).subtracting(["-"])
+}
+var testsSeen: [String] = []
 // One test function: its name before, its time after (slow ones stand out).
 func runTest(_ name: String, _ test: () -> Void) {
+    testsSeen.append(name)
+    if let testOnly, !testOnly.contains(name) { return }
     markProgress(test: name)
     print("▶ \(name)"); fflush(stdout)
     let start = Date()
@@ -2997,3 +3007,9 @@ func testCloudModels() {
     print("PASS: cloud models (Auto, per account, CLI options, invalid names, Codex and agy lists, Claude versions)")
 }
 runTest("testCloudModels", testCloudModels)
+// A selected name that no runTest has is a typo or a renamed test: fail rather than pass having run nothing.
+if let testOnly {
+    let unknown = testOnly.subtracting(testsSeen).sorted()
+    expect(unknown.isEmpty, "AI_ILLUMINATI_TEST_ONLY names no such test: \(unknown.joined(separator: ", "))")
+    print("PASS: selected tests only (\(testsSeen.filter(testOnly.contains).count) of \(testsSeen.count))")
+}

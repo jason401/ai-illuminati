@@ -18,13 +18,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 from check_module_dependencies import code_only  # noqa: E402
+from affected_tests import check as test_map_problems  # noqa: E402
 
 MODULES = ROOT / "app/modules"
 GUARD = ROOT / "tools/module_guard.sha256"
 # The guard devices themselves (G7): changing one shows up as a hash change in the same commit.
 GUARDED = ["tools/check_modules.sh", "tools/check_modules.py", "tools/check_module_dependencies.py",
            "tools/tests/test_module_dependencies.py", "tools/module_graph.txt", "tools/module_extensions.txt",
-           "tools/build_modules.sh", "tools/setup_dev.sh", ".githooks/pre-commit", ".githooks/pre-push"]
+           "tools/build_modules.sh", "tools/setup_dev.sh", ".githooks/pre-commit", ".githooks/pre-push",
+           "tools/affected_tests.py"]
 MODE2 = "tools/tests/run_mode2.sh"
 BLOCK = re.compile(r"^# >>> module checks.*?^# <<< module checks[^\n]*$", re.M | re.S)
 MODE2_BLOCKS = 2
@@ -145,6 +147,8 @@ def g6_documents():
         named = set(re.findall(r"^### (AI[A-Z]\w*)", mapped, re.M))
         if named != found:
             failures.append(f"G6 docs/MODULES.md \"Module map\" has sections for {sorted(named)}, the folders are {sorted(found)}")
+    # tools/test_map.txt (run_mode2.sh --affected) names every test its module's rows here name, and only real tests.
+    failures.extend(f"G6 {problem}" for problem in test_map_problems())
 
 
 def guard_lines():

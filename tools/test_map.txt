@@ -1,0 +1,20 @@
+# Which tests a change needs, for tools/affected_tests.sh (docs/MODULES.md "Which tests a change needs").
+# path<TAB>tests: runTest names in tools/tests/mode2.swift's order of use, `space_web` (run_mode2 stage 10), or ALL.
+# A module line covers the module's own .swift files. Its contract test and the contract tests of every module that
+# depends on it (their `dependencies` files) are added by the script, as are the checks outside runTest (always run).
+# Each module line must name every test its rows in docs/MODULES.md name (check_modules.sh G6); ALL needs a reason.
+# Paths not listed here, guard devices and shared code always give ALL.
+app/modules/AIAccounts/	ALL every part stores data through it (test home, accounts.json); a narrower list would guess
+app/modules/AILocalization/	ALL nearly every file uses L()
+app/modules/AIRuntime/	ALL every chat and project run starts a CLI through it (cancellation, sessions, process groups)
+app/modules/AIWorkspace/	ALL folder rules and AutoGuard are under every tool call; a missed test would weaken isolation
+app/modules/AIChat/	ALL Discussion and ChatStore are under almost every app test (49 of 57)
+app/modules/AISpaces/	testAskAI testMeetingTool testSpace testSpaceLibrary testSpaceEnterpriseLock space_web
+app/modules/AIProjects/	testToolHub testRunConditions testChatThroughCLI testProjectWork testProjectCreate testProjectHandoff testDocumentsProject testDisconnectProjectFolder testStartTurn testTodoStore testTodoScheduler testTodoOrder testSidebarProjects testFinishedTodoCleanup testMoveChatToProject testProjectInfo testGitBranches testTodoAttachments testTodoPause testTodoEdit testTodoMixedOrder testTodoStartRace testTodoAddTool testTodoEditTool testTodoCrew testTodoTime testProjectSnapshot testFullAuto testWorkTiming testPeerReview testPickedRoute testAutoMeeting testEnterpriseMarks testChatMarkdown
+app/modules/AIIntegrations/	testToolHub testGoogleDrive testRunConditions testRuntimeThroughApp testChatThroughCLI testMeetingTool testExternalMCP testRemoteMCP
+app/macos/Updater.swift	testUpdateChannels
+app/macos/GitBranches.swift	testGitBranches
+app/macos/DriveUI.swift	testGoogleDrive
+app/macos/DriveTools.swift	testToolHub testGoogleDrive
+app/macos/ExternalMCPTools.swift	testToolHub testExternalMCP testRemoteMCP
+tools/tests/search_fixtures.swift	testEnterpriseMarks testMeetingFold testChatFind testChatSearch testChatTools testMemory

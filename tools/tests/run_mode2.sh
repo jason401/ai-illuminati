@@ -1,6 +1,22 @@
 #!/bin/zsh
 set -eu
 cd "${0:A:h}/../.."
+# --affected <changed paths>: only the contract tests, app tests and stage 10 that tools/affected_tests.sh picks
+# (all of them when it says ALL). Guards, builds, the checks outside runTest and the other stages always run.
+SELECT=0 CONTRACTS=() TESTS=() SPACE_WEB=0
+if [[ ${1-} == --affected ]]; then
+  shift; (( $# )) || { echo "use: zsh tools/tests/run_mode2.sh --affected <paths from the project root>" >&2; exit 2 }
+  PICKED=$(zsh tools/affected_tests.sh "$@"); shift $#
+  if [[ $PICKED == ALL* ]]; then
+    echo "Affected: every test (${PICKED#ALL })"
+  else
+    SELECT=1
+    for KIND NAME in ${=PICKED}; do
+      case $KIND in contract) CONTRACTS+=($NAME) ;; test) TESTS+=($NAME) ;; stage) SPACE_WEB=1 ;; *) echo "FAIL: $KIND $NAME" >&2; exit 1 ;; esac
+    done
+    echo "Affected: contracts ${CONTRACTS[*]:-none}; app tests ${TESTS[*]:-none}; space web $(( SPACE_WEB ? 1 : 0 ))"
+  fi
+fi
 TEST_DIR=$(mktemp -d /tmp/ai-mode2-check.XXXXXX)
 trap 'rm -rf "$TEST_DIR"' EXIT
 # The real account list must come out of the tests exactly as it went in.
@@ -108,6 +124,8 @@ limit 300 zsh tools/build_modules.sh "$MODULES" -enable-testing -module-cache-pa
 # Every module folder's contract test (tools/tests/<name>_contract.swift, AIFoo -> foo): found here, not listed by hand.
 for DIR in app/modules/*(/N); do
   NAME=${(L)${DIR:t}#AI}; SRC=tools/tests/${NAME}_contract.swift
+  # --affected: only the picked modules' contracts (the build above, the file checks and S1-S3 below stay).
+  if (( SELECT && ! ${CONTRACTS[(Ie)${DIR:t}]} )) && [[ -f $SRC ]]; then echo "skip: ${DIR:t} contract (not affected)"; continue; fi
   [[ -f $SRC ]] || { echo "FAIL: ${DIR:t} has no contract test $SRC" >&2; exit 1 }
   RUN_ENV=(AI_ILLUMINATI_TEST_HOME="$TEST_DIR/$NAME-home")
   # Projects runs its commands through project_process.py (the app's resources); Chat reads older chats
@@ -143,13 +161,20 @@ limit 900 xcrun swiftc -swift-version 5 -module-cache-path "$TEST_DIR/cache" -I 
     app/macos/Settings.swift app/macos/LocalModels.swift app/macos/ExternalMCPTools.swift app/macos/DriveUI.swift app/macos/ToolHub.swift app/macos/DriveTools.swift app/macos/RunConditionsApp.swift app/macos/Updater.swift app/macos/ChatLinksApp.swift app/macos/GitBranches.swift tools/tests/space_build.swift tools/tests/google_drive.swift tools/tests/device_sync.swift tools/tests/window_drag.swift tools/tests/project_work.swift tools/tests/ask_ai.swift tools/tests/collab_log.swift tools/tests/meeting_tool.swift tools/tests/todo_work.swift tools/tests/project_info.swift tools/tests/update_channel.swift tools/tests/chat_search.swift tools/tests/search_fixtures.swift tools/tests/run_conditions.swift tools/tests/runtime_app.swift tools/tests/chat_links.swift tools/tests/chat_cli.swift tools/tests/tool_hub.swift "$TEST_DIR/main.swift"
 echo "[9/11] Run app tests"
 # The tests also stop themselves after 120 s without progress (mode2.swift) and name the test.
-limit 1500 env AI_ILLUMINATI_TEST_HOME="$TEST_DIR/data" AI_ILLUMINATI_TEST_RESOURCES="$TEST_DIR/resources" "$TEST_DIR/run"
+APP_ENV=(AI_ILLUMINATI_TEST_HOME="$TEST_DIR/data" AI_ILLUMINATI_TEST_RESOURCES="$TEST_DIR/resources")
+# --affected: the picked runTest names, comma-separated; "-" when none (the checks outside runTest still run).
+if (( SELECT )); then ONLY=${(j:,:)TESTS}; APP_ENV+=(AI_ILLUMINATI_TEST_ONLY="${ONLY:--}"); fi
+limit 1500 env $APP_ENV "$TEST_DIR/run"
 echo "[10/11] Space web view isolation"
+if (( SELECT && ! SPACE_WEB )); then
+  echo "skip: space web view (not affected)"
+else
 mkdir -p "$TEST_DIR/space-web-src" "$TEST_DIR/space-web-home"
 cp tools/tests/space_web.swift "$TEST_DIR/space-web-src/main.swift"
 limit 600 xcrun swiftc -swift-version 5 -module-cache-path "$TEST_DIR/cache" -I "$MODULES" -o "$TEST_DIR/space-web" "$MODULES"/lib*.a \
     "$TEST_DIR/space-web-src/main.swift"
 limit 300 env AI_ILLUMINATI_TEST_HOME="$TEST_DIR/space-web-home" "$TEST_DIR/space-web"
+fi
 echo "[11/11] Icon check"
 limit 300 xcrun swiftc -swift-version 5 -module-cache-path "$TEST_DIR/cache" -o "$TEST_DIR/icon-check" \
     app/macos/Icon.swift tools/tests/icon_animation.swift
@@ -159,3 +184,4 @@ if [[ "$(real_accounts)" != "$REAL_BEFORE" ]]; then
   exit 1
 fi
 echo "PASS: the real accounts.json is unchanged"
+if (( SELECT )); then echo "PASS: affected tests only; the full test is zsh tools/tests/run_mode2.sh"; fi

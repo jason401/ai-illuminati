@@ -111,3 +111,48 @@
 ### 테스트 이름 목록
 `docs/modules-followup-t1-tests.txt`: `▶ 이름` 줄에서 시각과 `▶ `만 뺀 57줄, 출력 순서 그대로(정렬·중복 제거 없음).
 두 실행의 목록은 같았고 중복은 없었다.
+
+## T2 선택 실행
+T1 판정 "진행"(38.8%)에 따라 했다. 2026-11-13, 시작 HEAD `2d21509`, 작업 트리 깨끗한 상태에서 시작.
+
+### 바꾼 것
+- `tools/tests/mode2.swift`: `AI_ILLUMINATI_TEST_ONLY`(쉼표로 이름, `-`는 없음)가 있으면 `runTest`가 목록에 없는
+  이름을 건너뛴다. 없는 이름이 있으면 실패, 빈 값도 실패. 변수가 없으면 전과 같다(아무것도 더 출력하지 않음).
+  `runTest` 밖 맨 위 수준 검사는 **항상 실행**: 테스트들이 같이 쓰는 준비(모델, 채팅 연결, 테스트 홈)와 실제 데이터
+  폴더 규칙이 거기 있어서, 건너뛰면 남은 테스트가 다른 상태에서 돌거나 격리 검사가 빠진다. 줄일 수 있는 시간
+  (약 40 s)보다 이쪽이 안전하다.
+- `tools/test_map.txt` + `tools/affected_tests.sh`(`affected_tests.py`): 바뀐 경로 → 계약 테스트, 앱 테스트, 10단계.
+  모듈 줄에는 앱 테스트만 적고, 그 모듈과 그것에 기대는 모듈들의 계약은 `dependencies`에서 계산한다. Accounts,
+  Localization, Runtime, Workspace, Chat은 거의 모든 테스트 밑에 있어 ALL. 표에 없는 경로, 검사 장치, 공통 코드
+  (ToolHub, Settings, main, ChatLinksApp, RunConditionsApp, 빌드 스크립트, resources, docs/api, MODULES.md)는 ALL.
+  테스트 파일은 자기 테스트만, 단 다른 테스트가 그 파일의 이름을 쓰면 ALL(google_drive.swift).
+- G6에 대응표 검사 추가: 모듈마다 줄이 있고, 진짜 `runTest` 이름만 쓰고, MODULES.md의 그 모듈 절이 이름 붙인 테스트
+  (`testX`, `space_build` 같은 파일 이름 → 그 파일의 테스트, `space_web`)를 모두 포함해야 한다. 어긋나면 G6 실패,
+  선택기는 ALL.
+- `run_mode2.sh --affected <paths>`: 고른 계약, `runTest`, 10단계만 돈다. 1, 3–9, 11단계, 모듈 빌드, S1–S3는 그대로.
+- 검사 장치 변경(사전 승인 범위): run_mode2 모듈 블록에 "고른 경우만 계약 건너뜀" 한 줄, `check_modules.py` G6 추가와
+  `affected_tests.py` 해시 대상 추가. `module_guard.sha256` 갱신. 이유와 근거는 MODULES.md "Which tests a change needs".
+
+### 검증
+- 필터 없는 전체 실행: 통과, 389.4 s. `▶` 이름 57개가 `docs/modules-followup-t1-tests.txt`와 바이트까지 같다
+  (순서·중복 포함). `Affected`/`skip:`/선택 줄 없음.
+- 반증 시험(각각 `/tmp` 복사본, 확인 후 버림):
+  1. `GoogleAuth.publicClientID`를 뒤집고 `--affected app/modules/AIIntegrations/GoogleAuth.swift` → 2단계
+     integrations 계약에서 실패(RC 133, "a login without a client secret is the app's public client"), 80.8 s.
+  2. 표에 없는 경로(`docs/USER_GUIDE.md`, `app/macos/LocalModels.swift`) → `ALL`, run_mode2는 "Affected: every test".
+  3. 검사 장치 경로(check_modules.sh, module_graph.txt, build_modules.sh, run_mode2.sh, module_guard.sha256, ToolHub.swift,
+     build_app.sh, test_map.txt) → 다른 경로와 섞여도 `ALL`.
+  4. (추가) 대응표에서 AISpaces의 `testSpace`를 빼면 G6 실패, 선택기는 ALL.
+- `check_modules.sh fast` 통과.
+
+### 시간 비교 (외부 시각, 초; 같은 Mac, 순서대로 실행)
+| 경우 | 고른 것 | 시간 | 전체 대비 |
+|---|---|---:|---:|
+| 전체 (옵션 없음) | 계약 8, 앱 테스트 57, 10단계 | 389.4 | 100% |
+| `app/macos/Updater.swift` | 앱 테스트 1 | 181.6 | 47% |
+| `app/modules/AIIntegrations/FaceLink.swift` | 계약 1, 앱 테스트 8 | 200.1 | 51% |
+| `app/modules/AISpaces/Space.swift` | 계약 2, 앱 테스트 5, 10단계 | 236.4 | 61% |
+| `app/modules/AIProjects/Todo.swift` | 계약 2, 앱 테스트 34 | 339.3 | 87% |
+
+남는 약 180 s는 모듈 빌드, 앱 테스트 컴파일, 맨 위 수준 검사, S1–S3라서 선택으로 줄지 않는다(T1 예상과 같음).
+부분 실행(34개, 8개, 5개, 1개)이 모두 통과해, 고른 묶음이 앞 테스트의 상태에 기대지 않음도 확인했다.

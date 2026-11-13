@@ -8,6 +8,8 @@ Feature and design notes live in `docs/`; read them only when the task needs the
 ## Commands (registered in `.ai-illuminati.json`; run them with `project_run`)
 - Test: `zsh tools/tests/run_mode2.sh` (`test`). Compiles the app sources with `tools/tests/*.swift` into a
   temp folder, runs the Python tests (`tools/tests/test_*.py`) and checks that the real `accounts.json` is unchanged.
+  Quicker while working: `--affected <changed paths>` runs only the tests `tools/test_map.txt` picks (unclear: all);
+  see `docs/MODULES.md` "Which tests a change needs".
 - Build: `zsh tools/build_app.sh --stage` (`build`). Builds and signs `AI Illuminati.update.app` only; never
   touches the installed app. Needs the "AI Illuminati Local Signing" Keychain identity, so it fails in a sandbox.
 - The build compiles `app/macos/*.swift`, but the test script has its own `swiftc` file list: add a new

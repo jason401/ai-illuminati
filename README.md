@@ -15,7 +15,6 @@ Free and open source · **MIT License** · macOS 13 or later · English / Korean
 - **Opening the chat:** from the menu, from Spotlight (⌘Space, "AI Illuminati"), or from the Dock: while the chat window is open the app shows in the Dock, where it can be kept (Options → Keep in Dock); clicking it opens the chat.
 - **File collaboration:** linked folders, read/write/execute permissions, task assignment and review, backups, and undo.
 - **Images:** attach pictures and display or share AI-generated images. Capabilities vary by provider.
-- **Poker:** play Texas Hold'em with AIs, or watch AIs play, using virtual chips. No real-money transactions.
 - **Updates:** optional automatic checks; installation requires a user action.
 
 ## Screenshots

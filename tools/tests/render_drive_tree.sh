@@ -12,7 +12,7 @@ root = Path(sys.argv[1])
 PY
 SOURCES=()
 for SOURCE in app/macos/*.swift; do
-  [[ "$SOURCE" == app/macos/main.swift || "$SOURCE" == app/macos/PokerWindow.swift || "$SOURCE" == app/macos/DriveUI.swift ]] && continue
+  [[ "$SOURCE" == app/macos/main.swift || "$SOURCE" == app/macos/DriveUI.swift ]] && continue
   SOURCES+=("$SOURCE")
 done
 zsh tools/build_modules.sh "$PREVIEW_DIR/modules" -enable-testing -target "$(uname -m)-apple-macos13.0" -module-cache-path "$PREVIEW_DIR/cache"

@@ -72,8 +72,6 @@ Settings → Chat → **Chats from other Macs** (off by default) shows chats fro
 - **Continue on this Mac** makes a new chat here from the copy, still locked if it was an Enterprise chat, with no folders or project linked. Its first message starts a new session from the chat state and the turns after it. The original chat is unchanged; continuing again offers the chat you already continued first.
 - The bar under a copy shows when it last changed and when this Mac last checked. iCloud may take a while to bring changes over.
 
-Open Game (⌘G) starts AI poker with virtual chips. Each AI decision consumes usage for the corresponding account. There are no real-money transactions.
-
 ## Language, updates, and reports
 
 The app follows the macOS language: Korean on a Korean Mac, English otherwise. To pick one for this app only, use System Settings → General → Language & Region → Applications. The AI is instructed to follow the language of your latest message. Existing conversations, materials, and account names are not automatically translated.

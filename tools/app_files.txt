@@ -1,6 +1,6 @@
 # App files (G3): every app/macos/*.swift, with why it is App work (screens, settings, app start, connecting modules).
 # A new App file needs a line here with its reason; first check whether a module owns the work (AGENTS.md "Module rules").
-# baseline-lines: 8110
+# baseline-lines: 7054
 # (S3 warns when app/macos grows over 10% above the baseline; raise it only when the growth is App work.)
 main.swift app start: menu, AppDelegate, the real data folder, connects the modules
 Settings.swift AppModel and the Settings window (account list, options)
@@ -20,5 +20,3 @@ DriveUI.swift screen: Google Drive in the chat sidebar
 GitBranches.swift screen: Project info's read-only branch view (later move candidate: ref parsing)
 ProjectInfoView.swift screen: the Project info tab
 TodoBoard.swift screen: the TODO board and its report cards
-Poker.swift game: Texas Hold'em engine and AI decisions (later move candidate: engine and save)
-PokerWindow.swift screen: the game window

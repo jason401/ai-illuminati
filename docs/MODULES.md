@@ -167,7 +167,6 @@ These are app-internal seams: no new module or public symbol.
 
 | Candidate | Possible owner | Boundary to preserve |
 |---|---|---|
-| Poker.swift: cards, hand evaluator, betting/pot settlement, records and engine | a dedicated Poker module | keep poker.json shape, hidden cards and AI calls; PokerWindow stays a screen |
 | GitBranches.swift: parsing Git output, branch/version/distance report | AIProjects | inject Git runner; ProjectInfoView and its presentation stay App |
 | DriveUI.swift: DriveTree rows/writable and tree request/cache bookkeeping | pure tree data in AIIntegrations; observable screen state stays App | preserve lazy expansion, cycle/depth bound, inherited write rules and login-version rejection |
 | LocalModels.swift: LocalModelStore refresh/pull/cancel/delete state | AIRuntime behind a narrow view model | remove AppModel coupling first; opening NSWorkspace and the window stay App |
@@ -526,7 +525,7 @@ What the chat gets from the app, set by the app (the chat side names none of the
 
 Stays in the app (what the user sees of other parts): Settings (all tabs, Memory/Rules/Storage windows), TodoBoard, ProjectInfoView,
 GitBranches, DriveUI/DriveLink/GoogleAuth, ExternalMCP/RemoteMCP, FaceLink, ToolHub (the 13 providers in their order, stage 1
-checks the list), ApprovalAlerts, MenuCards, main, Login, Updater, Icon, Poker, LocalModels, RunConditionsApp, ChatLinksApp,
+checks the list), ApprovalAlerts, MenuCards, main, Login, Updater, Icon, LocalModels, RunConditionsApp, ChatLinksApp,
 ChatScreensApp. Two app edits besides imports: `StorageListView.measured` (one string the compiler could no longer type-check
 inline once the names came from another module; same text) and the `AppModel` conformance line.
 
@@ -678,7 +677,7 @@ Falsification (each in a copy of the tree, one change at a time, then thrown awa
 | G1 | `AIChat` added to `AISpaces/dependencies` | fail | fail: forbidden dependency, unused dependency, cycle |
 | G2 | `chat_contract.swift` renamed `chats_contract.swift` | fail | fail: AIChat has no contract; a contract with no module |
 | G3 | `app/macos/Foo.swift` added | fail | fail: not in `tools/app_files.txt` |
-| G4 | `extension Discussion { func x() {} }` in an App file | warning | warning (PokerWindow.swift:410), exit 0 |
+| G4 | `extension Discussion { func x() {} }` in an App file | warning | warning (PokerWindow.swift:410, since removed), exit 0 |
 | G5 | `@testable import AIChat` in ChatLinksApp.swift | fail | fail |
 | G6 | the `AIIntegrations` line removed from AGENTS.md | fail | fail: names differ from the folders |
 | G7 | the contract run line removed from run_mode2.sh | fail | fail: run_mode2 module checks changed |

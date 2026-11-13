@@ -19,8 +19,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let model = AppModel()
     private let settings = SettingsWindow()
     private let chat = ChatWindow()
-    private let poker = PokerWindow()
-    private lazy var pokerGame = PokerGame(model: model)
     private lazy var discussion = Discussion(model: model)
     private lazy var approvals = ApprovalAlerts(discussion: discussion) { [weak self] room in
         guard let self else { return }
@@ -87,10 +85,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         model.updater.onAvailableChange = { [weak self] in self?.rebuildMenu() }
         model.updater.isBusy = { [weak self] in
             guard let self else { return false }
-            return self.discussion.anyRunning || self.discussion.importingMaterials || self.pokerGame.running
+            return self.discussion.anyRunning || self.discussion.importingMaterials
         }
         // Published values arrive before assignment; deliver on the main queue to read the new state.
-        updateIdleObservation = Publishers.CombineLatest3(discussion.$runningRooms, discussion.$importingMaterials, pokerGame.$running)
+        updateIdleObservation = Publishers.CombineLatest(discussion.$runningRooms, discussion.$importingMaterials)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.model.updater.resumeWhenIdle() }
         // When the build script opens the app, the script's folder (inside ~/Documents) comes along
@@ -195,7 +193,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             for (name, selector, key, modifiers) in items {
                 let entry = NSMenuItem(title: name, action: selector, keyEquivalent: key)
                 entry.keyEquivalentModifierMask = modifiers
-                if selector == #selector(openSettings) || selector == #selector(openChat) || selector == #selector(openGame) { entry.target = self }
+                if selector == #selector(openSettings) || selector == #selector(openChat) { entry.target = self }
                 sub.addItem(entry)
             }
             holder.submenu = sub
@@ -203,7 +201,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         submenu("AI Illuminati", [(L("설정…", "Settings…"), #selector(openSettings), ",", .command),
                                   (L("채팅창 열기…", "Open Chat…"), #selector(openChat), "n", .command),
-                                  (L("게임 열기…", "Open Games…"), #selector(openGame), "g", .command),
                                   (L("숨기기", "Hide"), #selector(NSApplication.hide(_:)), "h", .command)])
         submenu(L("편집", "Edit"), [(L("실행 취소", "Undo"), Selector(("undo:")), "z", .command),
                        (L("실행 복귀", "Redo"), Selector(("redo:")), "z", [.command, .shift]),
@@ -356,7 +353,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         if !shown.isEmpty { menu.addItem(.separator()) }
         menu.addItem(action(L("채팅창 열기…", "Open Chat…"), #selector(openChat), key: "n"))
-        menu.addItem(action(L("게임 열기…", "Open Games…"), #selector(openGame), key: "g"))
         if model.hasLocal {
             // The Ollama model on this Mac, only while it is in memory: how much and until when, with Unload now.
             // (Its on/off switch is in Settings → Accounts.)
@@ -398,7 +394,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func installUpdate() { model.updater.install() }
     @objc private func openChat() { chat.show(discussion: discussion) }
     @objc private func openApprovals() { approvals.show() }
-    @objc private func openGame() { poker.show(game: pokerGame) }
 
     // MARK: Helpers
 

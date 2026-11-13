@@ -12,8 +12,26 @@ records and store, Discussion with routing, meetings, reviews and ask_ai, five t
 
 ## Final module map and dependency graph — App, step A (2026-11-12)
 
-Status: C1 and I completed before A (3794afc, 2ceaf41). A code verification is complete; local trial snapshots and the final summary are being recorded.
+Status: C1 and I completed before A (3794afc, 2ceaf41). A completed: implementation a98ec3e; main's full suite and staged signed build passed. Trial behavior remains on local branches only.
 The map below is the final ownership; older step reports below describe the code at that step.
+
+| Stage | Implementation / contract follow-up commits |
+|---|---|
+| 1 AIAccounts | 94d3c85; promise/user checks 2fb027b |
+| 2 AILocalization + AISpaces | 3ed052f |
+| 3 Runtime R0 | 922eb6f, cdbec40 |
+| 4 Runtime R1 | d3df383; contract follow-up 4c67045 |
+| 5 Workspace W0 | 186f895 |
+| 6 Workspace W1 | 159e511 |
+| 7 Projects P0 / P1 | c37b11e, a9d353e |
+| 8 Chat C0 | f05fd72 |
+| 9 Chat C1a / C1b | b88d0a8, 3794afc |
+| 10 Integrations I | 2ceaf41 |
+| 11 App A | a98ec3e; final documentation follows |
+
+Older hashes were confirmed read-only through the existing trial branch histories (the connected git_log returns ten
+entries per call); those branches were not changed.
+
 
 | Part | Owns | Direct module dependencies |
 |---|---|---|
@@ -136,9 +154,18 @@ display title and Localization's uppercase-language handling in isolated copies,
 then combine and rerun both contracts, full run_mode2 and an all-source app link. Original app source hashes must be
 unchanged. Sources/results are preserved under ignored .ai-illuminati/a-trial for local trial branch snapshots.
 Unlike earlier trials, these are script workers in copies, not two AIs in worktrees. Connected git_* tools have no
-worktree/merge operation: the branch snapshots will use manual combination of disjoint paths. This does not prove a
+worktree/merge operation: the local branch snapshots use manual combination of disjoint paths. This does not prove a
 Git three-way merge succeeds; no such claim is made. Module-only success is limited to these cases, and never
 replaces the consumer tests in each promise row. C0's Space-refine app-path coverage gap is still open.
+
+Local trial snapshots (not pushed or merged into main):
+- `trial/app-a-accounts-20261112`: 165633a
+- `trial/app-a-localization-20261112`: 99b50d3
+- `trial/app-a-combined-20261112`: 28beee3 (manual composition, not a merge commit)
+
+Returned to main with a clean tree, then compared Accounts.swift, Language.swift and accounts_contract.swift with
+their exact pre-trial contents: identical. No trial branch was deleted. Stable publication/release and branch cleanup
+remain the user's decisions; no force push was performed.
 
 ## How a module is built and used
 - `zsh tools/build_modules.sh <out> [swiftc options]` builds every `app/modules/<Name>/` alone into

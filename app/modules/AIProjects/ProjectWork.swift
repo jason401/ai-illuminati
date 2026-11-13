@@ -592,6 +592,19 @@ public final class GitLink: ToolProvider {
             return ["content": [["type": "text", "text": output]], "isError": false]
         } catch { _ = run.checkpoint(name + " failed: " + String(error.localizedDescription.prefix(500))); run.note(name + " failed"); return ProjectTools.failure(error.localizedDescription) }
     }
+    // The project screen uses the same approval and publish path as the scoped tool, without an AI turn.
+    // Call off the main thread: approval waits while the main thread displays the card.
+    public func publishStable(_ binding: ProjectBinding, room: UUID, onWaiting: @escaping (Bool) -> Void) throws -> String {
+        guard !binding.isDocuments, !binding.isFolderless else { throw ProjectError.make("A Git project is required.") }
+        let workspace = WorkspaceBinding(roots: [WorkspaceRoot(path: binding.root, directory: true, writable: true)], level: .execute, project: binding)
+        let held = try ProjectWork.acquire(workspace)
+        defer { ProjectWork.release(held) }
+        let run = ProjectRun(room: room, binding: binding, token: DebateCancellation())
+        run.onWaiting = onWaiting
+        defer { ProjectWork.finish(run) }
+        try run.validate(run.generation)
+        return try execute("git_publish_stable", [:], run, run.generation)
+    }
     private func execute(_ name: String, _ args: [String: Any], _ run: ProjectRun, _ generation: Int) throws -> String {
         func git(_ argv: [String], timeout: TimeInterval = 120) throws -> String { try run.validate(generation); return try ProjectProcess.git(argv, root: run.binding.root, token: run.attempt, timeout: min(timeout, run.deadline.timeIntervalSinceNow)) }
         func clean() throws { guard try git(["status", "--porcelain"]).isEmpty else { throw ProjectError.make("Working tree is not clean; preserve edits and do not pull/switch/stash.") } }
@@ -631,9 +644,19 @@ public final class GitLink: ToolProvider {
             run.pushed = true; return result + "\nPushed " + sha
         case "git_publish_stable":
             try clean()
+            _ = try git(["fetch", "--prune", run.binding.remote], timeout: 180)
             let sha = try git(["rev-parse", "refs/heads/main"])
-            let summary = try git(["log", "-8", "--oneline", sha])
-            try approve("stable 배포 / Publish stable", run.binding.root + "\n" + run.binding.remoteURL + "\nExact SHA: " + sha + "\n" + summary)
+            let stable = "refs/remotes/" + run.binding.remote + "/stable"
+            let previous = try git(["for-each-ref", "--format=%(objectname)", stable])
+            if previous == sha { return L("이미 배포된 커밋이에요.", "This commit is already published.") }
+            guard try previous.isEmpty || git(["rev-list", "--count", sha + ".." + previous]) == "0" else {
+                throw ProjectError.make(L("stable에 main에 없는 커밋이 있어 배포할 수 없어요.", "Stable has commits missing from main; cannot publish."))
+            }
+            let range = previous.isEmpty ? sha : previous + ".." + sha
+            let summary = try git(["log", "-20", "--oneline", range])
+            let changes = previous.isEmpty ? "" : try git(["diff", "--no-ext-diff", "--no-textconv", "--stat", previous, sha])
+            try approve("stable 배포 / Publish stable", run.binding.root + "\n" + run.binding.remoteURL + "\nExact SHA: " + sha + "\n" + summary + "\n" + changes)
+            try clean()
             let result = try git(["push", run.binding.remote, sha + ":refs/heads/stable"], timeout: 180)
             run.pushed = true; return result + "\nPublished " + sha
         case "git_branch", "git_switch":

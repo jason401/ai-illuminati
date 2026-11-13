@@ -1,6 +1,7 @@
 GitLink | final class GitLink
 GitLink.active | var active: Bool { get }
 GitLink.call(_:_:context:) | func call(_ name: String, _ arguments: [String : Any], context: ToolContext) -> [String : Any]
+GitLink.publishStable(_:room:onWaiting:) | func publishStable(_ binding: ProjectBinding, room: UUID, onWaiting: @escaping (Bool) -> Void) throws -> String
 GitLink.shared | static let shared: GitLink
 GitLink.tools() | func tools() -> [[String : Any]]
 GitLink.tools(context:) | func tools(context: ToolContext) -> [[String : Any]]

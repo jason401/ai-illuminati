@@ -258,6 +258,41 @@ final class GitBranchStore: ObservableObject {
     static let shared = GitBranchStore()
     @Published private(set) var reports: [String: GitBranchReport] = [:]
     @Published private(set) var busy: Set<String> = []
+    @Published private(set) var publishing: Set<String> = []
+    @Published private(set) var publishMessages: [String: String] = [:]
+    @Published private(set) var publishRooms: [String: UUID] = [:]
+
+    func publish(_ binding: ProjectBinding, room: UUID) {
+        let root = binding.root
+        guard !publishing.contains(root) else { return }
+        publishing.insert(root); publishRooms[root] = room
+        publishMessages[root] = L("배포할 변경 확인 중…", "Checking changes to publish…")
+        // Approval may wait for minutes; keep the branch-reading queue free.
+        DispatchQueue.global(qos: .userInitiated).async {
+            let message: String
+            do {
+                let result = try GitLink.shared.publishStable(binding, room: room) { waiting in
+                    DispatchQueue.main.async {
+                        self.publishMessages[root] = waiting ? L("변경을 확인하고 아래에서 승인해 주세요.", "Review the changes and approve below.")
+                            : L("stable에 배포 중…", "Publishing to stable…")
+                    }
+                }
+                if let line = result.components(separatedBy: "\n").last, line.hasPrefix("Published ") {
+                    message = L("배포 완료 · ", "Published · ") + String(line.dropFirst(10).prefix(12))
+                } else { message = result }
+            } catch {
+                message = L("배포하지 못했어요: ", "Could not publish: ") + error.localizedDescription
+            }
+            DispatchQueue.main.async {
+                self.publishMessages[root] = message; self.publishing.remove(root)
+                for request in ProjectCenter.shared.expired where request.room == room && request.title == "stable 배포 / Publish stable" && request.detail.hasPrefix(root + "\n") {
+                    ProjectCenter.shared.dismiss(request.id)
+                }
+                self.load(binding, fetch: true)
+            }
+        }
+    }
+
     @Published var expanded: Set<String> = []   // folders whose whole branch list is shown
     private let queue = DispatchQueue(label: "ai-illuminati.git-branches", qos: .userInitiated)
 

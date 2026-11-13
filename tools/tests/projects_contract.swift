@@ -245,5 +245,67 @@ do {
     expect(lockStore.current.lists.count == 1 && lockStore.current.lists[0].lock?.organization == "personal", "a list keeps the lock it has")
 }
 
+
+// The screen's publish entry point uses a real approval and only a temporary local remote.
+do {
+    let root = base.appendingPathComponent("publish")
+    let remote = base.appendingPathComponent("remote.git")
+    try fm.createDirectory(at: root, withIntermediateDirectories: true)
+    func git(_ args: [String]) throws -> String { try ProjectProcess.git(args, root: root.path) }
+    _ = try git(["init", "--bare", remote.path])
+    _ = try git(["init", "-b", "main"])
+    _ = try git(["config", "user.name", "Test"])
+    _ = try git(["config", "user.email", "test@example.invalid"])
+    _ = try git(["remote", "add", "origin", remote.path])
+    _ = try git(["commit", "--allow-empty", "-m", "first"])
+    _ = try git(["push", "-u", "origin", "main"])
+    let binding = try ProjectProcess.inspect(root.path)
+    let sha = try git(["rev-parse", "main"])
+    let room = UUID()
+    func publish(allow: Bool) -> (String?, String?) {
+        let lock = NSLock()
+        var done = false, value: String?, problem: String?
+        DispatchQueue.global().async {
+            do { let result = try GitLink.shared.publishStable(binding, room: room, onWaiting: { _ in })
+                lock.lock(); value = result; lock.unlock()
+            } catch { lock.lock(); problem = error.localizedDescription; lock.unlock() }
+            lock.lock(); done = true; lock.unlock()
+        }
+        let deadline = Date().addingTimeInterval(15)
+        var sawCard = false
+        while Date() < deadline {
+            pump(0.02)
+            if let request = ProjectCenter.shared.requests.first(where: { $0.room == room }) {
+                expect(request.detail.contains("Exact SHA: " + sha), "the card pins the exact main SHA")
+                expect(ProjectWork.isHeld(root.path), "approval keeps the repository locked")
+                expect((try? git(["ls-remote", "origin", "refs/heads/stable"])) == "", "nothing published before approval")
+                sawCard = true
+                ProjectCenter.shared.decide(request.id, allow: allow)
+            }
+            lock.lock(); let finished = done; lock.unlock()
+            if finished { break }
+        }
+        lock.lock(); let finished = done, result = value, error = problem; lock.unlock()
+        expect(finished && sawCard, "publish finishes through a visible approval")
+        expect(!ProjectWork.isHeld(root.path), "publish releases the lock on success and refusal")
+        return (result, error)
+    }
+    let denied = publish(allow: false)
+    expect(denied.0 == nil && denied.1 != nil, "refusal does not publish")
+    expect((try? git(["ls-remote", "origin", "refs/heads/stable"])) == "", "stable stays absent after refusal")
+    let allowed = publish(allow: true)
+    expect(allowed.0?.contains("Published " + sha) == true && allowed.1 == nil, "first stable publication succeeds")
+    expect((try? git(["ls-remote", "origin", "refs/heads/stable"]))?.hasPrefix(sha) == true, "remote stable is exactly the approved SHA")
+    let same = try GitLink.shared.publishStable(binding, room: room, onWaiting: { _ in })
+    expect(!same.contains("Published ") && ProjectCenter.shared.requests.isEmpty, "already published needs no approval")
+    try "dirty".write(to: root.appendingPathComponent("dirty.txt"), atomically: true, encoding: .utf8)
+    do { _ = try GitLink.shared.publishStable(binding, room: room, onWaiting: { _ in }); expect(false, "dirty tree must fail") }
+    catch { expect(!ProjectWork.isHeld(root.path), "dirty refusal releases the lock") }
+    let held = try ProjectWork.acquire(WorkspaceBinding(roots: [WorkspaceRoot(path: root.path, directory: true, writable: true)], level: .execute, project: binding))
+    do { _ = try GitLink.shared.publishStable(binding, room: room, onWaiting: { _ in }); expect(false, "second publish must fail") }
+    catch { expect(ProjectWork.isBusy(error.localizedDescription), "second publish respects repository lock") }
+    ProjectWork.release(held, notify: false)
+} catch { fatalError("publish contract: \(error)") }
+
 print("PASS: Projects promises (TODO retry, busy repository, the user after retries, report on the check, next start after the lock's release, cancel, a free place, restart, todos.json, repository lock, scoped tools, work binding)")
 exit(0)

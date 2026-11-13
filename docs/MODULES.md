@@ -692,3 +692,7 @@ Falsification (each in a copy of the tree, one change at a time, then thrown awa
 Left to the user: CI (a public-repository setting), cleaning up the trial branches, publishing stable.
 
 Earlier steps (A, I, C1, C0, P, W, R, the first modules): `docs/modules-history.md`.
+
+### Stable publish screen API
+
+`GitLink.publishStable(_:room:onWaiting:)` is public so the App project screen can publish without an AI turn. It acquires the existing repository lock and reuses the Git tool's exact-SHA approval path; its waiting callback updates the screen. The shared publish path fetches first, preserves publishing the exact local main SHA, rejects divergent stable, and supports the first stable publish. `projects_contract` checks approval, refusal, exact SHA and lock release against a temporary local remote.

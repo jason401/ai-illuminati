@@ -128,7 +128,7 @@ struct ProjectInfoView: View {
                     }
                 }
             }
-            if !documents, let binding = group.bindings.first { GitBranchesView(binding: binding) }
+            if !documents, let binding = group.bindings.first { GitBranchesView(binding: binding, room: group.chats.first?.id ?? group.todoRooms.first?.id ?? discussion.currentID) }
             HStack(spacing: 8) {
                 Button(L("작업 폴더 연결 끊기…", "Disconnect work folder…")) { discussion.disconnectProjectFolder(group.id, name: group.name) }
                 Text(L("채팅·TODO는 남기고 폴더 없는 프로젝트로 바꿔요 (파일은 그대로)", "Keeps the chats and TODOs as a folderless project (the files stay)"))
@@ -348,9 +348,11 @@ struct ProjectInfoView: View {
     }
 }
 
-// The repository's branches, read only (GitBranches.swift): local values when shown, origin only after the refresh button.
+// Branch overview and approval-backed stable publishing from the project screen.
 struct GitBranchesView: View {
     let binding: ProjectBinding
+    let room: UUID
+    @ObservedObject private var approvals = ProjectCenter.shared
     @ObservedObject private var store = GitBranchStore.shared
 
     var body: some View {
@@ -375,6 +377,31 @@ struct GitBranchesView: View {
             }
             if let why = report?.error { Text(why).font(.system(size: 11)).foregroundColor(.orange) }
             if let report, let flow = GitBranches.flow(report) { Text(flow).font(.system(size: 11)).foregroundColor(.secondary) }
+            HStack(spacing: 8) {
+                Button(L("stable 배포…", "Publish stable…")) { store.publish(binding, room: room) }
+                    .disabled(busy || store.publishing.contains(binding.root) || report == nil || report?.rows.first(where: { !$0.remote && $0.branch == "main" })?.stable == GitCounts(ahead: 0, behind: 0))
+                if store.publishing.contains(binding.root) { ProgressView().controlSize(.small) }
+                Text(L("main의 변경을 확인한 뒤 승인하면 배포해요.", "Review and approve the changes from main to publish."))
+                    .font(.system(size: 11)).foregroundColor(.secondary)
+            }
+            if let message = store.publishMessages[binding.root] {
+                Text(message).font(.system(size: 11)).textSelection(.enabled)
+            }
+            ForEach(approvals.requests.filter {
+                $0.room == store.publishRooms[binding.root] && $0.title == "stable 배포 / Publish stable" && $0.detail.hasPrefix(binding.root + "\n")
+            }) { request in
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(L("stable 배포 승인", "Approve stable publish")).font(.system(size: 12, weight: .semibold))
+                    ScrollView {
+                        Text(request.detail).font(.system(size: 11, design: .monospaced)).textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }.frame(maxHeight: 220)
+                    HStack {
+                        Button(L("승인하고 배포", "Approve and publish")) { approvals.decide(request.id, allow: true) }
+                        Button(L("취소", "Cancel")) { approvals.decide(request.id, allow: false) }
+                    }
+                }.padding(10).background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+            }
             let lines = report.map(GitBranches.lines) ?? []
             ForEach(GitBranches.main(lines)) { line in mainLine(line) }
             ForEach(GitBranches.groups(lines)) { group in groupLine(group) }

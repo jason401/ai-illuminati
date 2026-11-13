@@ -31,6 +31,8 @@ limit() {
 # "[n/m] name" before each stage: the app shows it under the current step (project_run).
 echo "[1/11] Check the data folder rule"
 # Only the app picks the real data folder, before it makes anything that reads it.
+limit 60 python3 tools/check_module_dependencies.py
+PYTHONDONTWRITEBYTECODE=1 limit 60 python3 tools/tests/test_module_dependencies.py
 python3 - <<'PY'
 from pathlib import Path
 s = Path('app/macos/main.swift').read_text()
@@ -86,7 +88,7 @@ assert all(f'extension {n}: @retroactive ToolProvider' in Path('app/macos/' + f)
 assert s.find('ToolHub.shared.start()') < s.find('ToolHub.shared.startLegacyFaceSocket(at: FaceLink.socketPath)') < s.find('FaceLink.shared.start()')
 # The 13 tool providers in their order (first(where:) picks by it): the app lists them, five are AIChat's since C1.
 hub = Path('app/macos/ToolHub.swift').read_text()
-order = re.search(r'private var providers: \[ToolProvider\] \{ \[(.*?)\] \}', hub).group(1).replace(' ', '').split(',')
+order = re.search(r'static var appProviders: \[ToolProvider\] \{ \[(.*?)\] \}', hub).group(1).replace(' ', '').split(',')
 assert order == ['FaceLink.shared', 'DriveLink.shared', 'GitLink.shared', 'PlanLink.shared', 'PeerLink.shared', 'ConveneLink.shared', 'ChatLink.shared',
                  'MemoryLink.shared', 'ProjectMakerLink.shared', 'TaskLink.shared', 'TodoAddLink.shared', 'StorageLink.shared', 'ExternalMCP.shared'], order
 # App files see a module's public names only; @testable is for tests.
@@ -173,7 +175,7 @@ PYTHONDONTWRITEBYTECODE=1 limit 300 python3 tools/tests/material_fixtures.py "$T
 echo "[8/11] Compile app tests"
 limit 900 xcrun swiftc -swift-version 5 -module-cache-path "$TEST_DIR/cache" -I "$MODULES" -o "$TEST_DIR/run" "$MODULES"/lib*.a \
     app/macos/Login.swift \
-    app/macos/Settings.swift app/macos/LocalModels.swift app/macos/ExternalMCPTools.swift app/macos/DriveUI.swift app/macos/ToolHub.swift app/macos/DriveTools.swift app/macos/RunConditionsApp.swift app/macos/Updater.swift app/macos/Poker.swift app/macos/ChatLinksApp.swift app/macos/GitBranches.swift tools/tests/space_build.swift tools/tests/google_drive.swift tools/tests/device_sync.swift tools/tests/window_drag.swift tools/tests/project_work.swift tools/tests/ask_ai.swift tools/tests/collab_log.swift tools/tests/meeting_tool.swift tools/tests/todo_work.swift tools/tests/project_info.swift tools/tests/update_channel.swift tools/tests/chat_search.swift tools/tests/search_fixtures.swift tools/tests/run_conditions.swift tools/tests/runtime_app.swift tools/tests/chat_links.swift tools/tests/chat_cli.swift "$TEST_DIR/main.swift"
+    app/macos/Settings.swift app/macos/LocalModels.swift app/macos/ExternalMCPTools.swift app/macos/DriveUI.swift app/macos/ToolHub.swift app/macos/DriveTools.swift app/macos/RunConditionsApp.swift app/macos/Updater.swift app/macos/Poker.swift app/macos/ChatLinksApp.swift app/macos/GitBranches.swift tools/tests/space_build.swift tools/tests/google_drive.swift tools/tests/device_sync.swift tools/tests/window_drag.swift tools/tests/project_work.swift tools/tests/ask_ai.swift tools/tests/collab_log.swift tools/tests/meeting_tool.swift tools/tests/todo_work.swift tools/tests/project_info.swift tools/tests/update_channel.swift tools/tests/chat_search.swift tools/tests/search_fixtures.swift tools/tests/run_conditions.swift tools/tests/runtime_app.swift tools/tests/chat_links.swift tools/tests/chat_cli.swift tools/tests/tool_hub.swift "$TEST_DIR/main.swift"
 echo "[9/11] Run app tests"
 # The tests also stop themselves after 120 s without progress (mode2.swift) and name the test.
 limit 1500 env AI_ILLUMINATI_TEST_HOME="$TEST_DIR/data" AI_ILLUMINATI_TEST_RESOURCES="$TEST_DIR/resources" "$TEST_DIR/run"

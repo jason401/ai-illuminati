@@ -14,24 +14,31 @@ extension FaceLink: @retroactive ToolProvider {
 // One app-side gateway. Per-answer capabilities keep other chat modes and arbitrary local
 // pointer paths out; these are not Google credentials and grant no network access to the CLI.
 final class ToolHub {
-    static let shared = ToolHub()
+    static var appProviders: [ToolProvider] { [FaceLink.shared, DriveLink.shared, GitLink.shared, PlanLink.shared, PeerLink.shared, ConveneLink.shared, ChatLink.shared, MemoryLink.shared, ProjectMakerLink.shared, TaskLink.shared, TodoAddLink.shared, StorageLink.shared, ExternalMCP.shared] }
+    static let shared: ToolHub = {
+        let hub = ToolHub(providers: { appProviders })
+        ProjectWork.revokeTools = { [weak hub] in hub?.revoke(project: $0) }
+        return hub
+    }()
     static var socketPath = AccountStore.supportDir + "/tools.sock"
-    private var providers: [ToolProvider] { [FaceLink.shared, DriveLink.shared, GitLink.shared, PlanLink.shared, PeerLink.shared, ConveneLink.shared, ChatLink.shared, MemoryLink.shared, ProjectMakerLink.shared, TaskLink.shared, TodoAddLink.shared, StorageLink.shared, ExternalMCP.shared] }
+    private let providerList: () -> [ToolProvider]
+    private let now: () -> Date
+    private var providers: [ToolProvider] { providerList() }
     var active: Bool { providers.contains { $0.active } }
     private let lock = NSLock()
     private var sockets: Set<String> = []
     private var sessions: [String: (ToolContext, Date)] = [:]
-    // Sessions exist only after this: project work ends a run's earlier sessions through it.
-    private init() { ProjectWork.revokeTools = { [weak self] in self?.revoke(project: $0) } }
+    // The app supplies one fixed list; no dynamic registration.
+    init(providers: @escaping () -> [ToolProvider], now: @escaping () -> Date = { Date() }) { self.providerList = providers; self.now = now }
 
     func register(room: UUID, roots: [WorkspaceRoot], projectRun: UUID? = nil, generation: Int? = nil, asker: Account? = nil,
                   origin: ToolOrigin = .member) -> String {
         start()
         let turn = asker == nil ? nil : MemoryLink.shared.newestTurn(room)   // read before taking the lock (it may wait for the main thread)
         lock.lock(); defer { lock.unlock() }
-        sessions = sessions.filter { $0.value.1 > Date() }
+        sessions = sessions.filter { $0.value.1 > now() }
         let key = UUID().uuidString
-        sessions[key] = (ToolContext(room: room, roots: roots, projectRun: projectRun, projectGeneration: generation, asker: asker, turn: turn, origin: origin), Date().addingTimeInterval(7200))
+        sessions[key] = (ToolContext(room: room, roots: roots, projectRun: projectRun, projectGeneration: generation, asker: asker, turn: turn, origin: origin), now().addingTimeInterval(7200))
         return key
     }
 
@@ -62,12 +69,10 @@ final class ToolHub {
             lock.lock()
             let session = sessions[message["session"] as? String ?? ""]
             lock.unlock()
-            guard let session, session.1 > Date() else { return Self.failure("This tool session has expired or is unavailable.") }
+            guard let session, session.1 > now() else { return Self.failure("This tool session has expired or is unavailable.") }
             context = session.0
         }
-        let available: [ToolProvider] = legacy ? [FaceLink.shared]
-            : context.origin == .side ? [PeerLink.shared]
-            : context.origin == .consulted ? providers.filter { $0 !== PeerLink.shared && $0 !== ConveneLink.shared } : providers
+        let available = available(context: context, legacy: legacy)
         switch message["op"] as? String {
         case "tools":
             let tools = available.filter { $0.active }.flatMap { $0.tools(context: context) }
@@ -82,6 +87,13 @@ final class ToolHub {
             return provider.call(name, message["arguments"] as? [String: Any] ?? [:], context: context)
         default: return Self.failure("Unknown tool request")
         }
+    }
+
+    // Keep origin filtering distinct from each provider's own context gate.
+    func available(context: ToolContext, legacy: Bool = false) -> [ToolProvider] {
+        legacy ? [FaceLink.shared]
+            : context.origin == .side ? [PeerLink.shared]
+            : context.origin == .consulted ? providers.filter { $0 !== PeerLink.shared && $0 !== ConveneLink.shared } : providers
     }
 
     private func listen(at path: String, legacy: Bool) {

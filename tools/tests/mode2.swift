@@ -2597,6 +2597,7 @@ do {
 }
 
 
+runTest("testToolHub", testToolHub)
 runTest("testGoogleDrive", testGoogleDrive)
 
 runTest("testWindowDrag", testWindowDrag)

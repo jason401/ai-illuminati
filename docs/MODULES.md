@@ -10,6 +10,136 @@ work, the repository lock, approvals, the TODO board and its scheduler, five too
 records and store, Discussion with routing, meetings, reviews and ask_ai, five tool providers, the chat window; C1a/C1b), 2026-11-12;
 `AIIntegrations` (the Google login and Drive gate, outside MCP servers, the AI Face link; no tool provider; step I), 2026-11-12.
 
+## Final module map and dependency graph — App, step A (2026-11-12)
+
+Status: C1 and I completed before A (3794afc, 2ceaf41). A code verification is complete; local trial snapshots and the final summary are being recorded.
+The map below is the final ownership; older step reports below describe the code at that step.
+
+| Part | Owns | Direct module dependencies |
+|---|---|---|
+| AIAccounts | accounts, paths, save format, test-home isolation | none |
+| AILocalization | L(), AppLanguage | none |
+| AISpaces | Space storage, versions, checks, isolated WebView | AIAccounts, AILocalization |
+| AIRuntime | CLI execution, Stop, sessions, streams, usage, local models | AIAccounts, AILocalization |
+| AIWorkspace | folder permissions, documents bridge, backup/Undo, whole AutoGuard, tool types, disk sizes | AIAccounts, AILocalization, AIRuntime |
+| AIProjects | Git work, repository locks, approvals, TODO storage/scheduling, project info/creation; Git/Plan/Task/TodoAdd/ProjectMaker providers | AIAccounts, AILocalization, AIRuntime, AIWorkspace |
+| AIChat | chat records/state/storage, routing, meetings/reviews, ask_ai, attachments, DeviceSync, chat/Space views; Peer/Convene/Chat/Memory/Storage providers | AIAccounts, AILocalization, AIRuntime, AIWorkspace, AIProjects, AISpaces |
+| AIIntegrations | Google auth/Drive gate, external MCP connections, AI Face; no providers | AIAccounts, AILocalization, AIRuntime (interface only), AIWorkspace |
+| App (app/macos) | startup, menu/settings, screens, update/login, wiring and explicit 13-provider list; Face/Drive/ExternalMCP conformances | all eight modules |
+
+Arrows mean imports, from caller to dependency (all direct edges are in the table):
+
+```text
+App            -> all eight modules
+AIChat         -> AIProjects, AISpaces, AIWorkspace, AIRuntime, AIAccounts, AILocalization
+AIProjects     -> AIWorkspace, AIRuntime, AIAccounts, AILocalization
+AIIntegrations -> AIWorkspace, AIRuntime, AIAccounts, AILocalization
+AIWorkspace    -> AIRuntime, AIAccounts, AILocalization
+AIRuntime      -> AIAccounts, AILocalization
+AISpaces       -> AIAccounts, AILocalization
+AIAccounts     -> {}
+AILocalization -> {}
+```
+
+No feature module imports AIIntegrations. Projects imports no Chat; Runtime imports no Workspace.
+`tools/check_module_dependencies.py` compares each module's dependencies and real imports with this fixed direction
+map before compilation. It rejects undeclared imports, forbidden declarations even if they would compile, unknown
+modules, duplicate or unused declarations and cycles. Missing dependencies means an empty list. AIIntegrations'
+AIRuntime declaration is the explicit public-interface-only exception. System framework imports are outside this map.
+Nested comments and ordinary/raw/multiline strings are masked; this is not a full Swift parser (nested interpolation
+quotes are a known limit). The independent compiler visibility checks remain in run_mode2. Tests may import module
+internals; app code may not use @testable (the existing stage-1 check).
+
+### App tool composition and exposure
+
+App passes `{ ToolHub.appProviders }` into ToolHub. The closure reads the explicit list again so replacing
+DriveLink.shared in an isolated test keeps working. The list is never dynamically registered or sorted:
+
+1. FaceLink
+2. DriveLink
+3. GitLink
+4. PlanLink
+5. PeerLink
+6. ConveneLink
+7. ChatLink
+8. MemoryLink
+9. ProjectMakerLink
+10. TaskLink
+11. TodoAddLink
+12. StorageLink
+13. ExternalMCP
+
+`shared` alone connects ProjectWork.revokeTools; a fixture hub cannot overwrite that hook.
+The clock defaults to Date(); tests inject time without waiting two hours. `available(context:legacy:)` holds the
+unchanged origin selection so its identities can be checked independently of providers' own permission gates.
+These are app-internal seams: no new module or public symbol.
+
+| Promise | Consumer | Check |
+|---|---|---|
+| The exact 13 singleton identities and order; current replaceable Drive singleton | ToolHub.shared | run_mode2 stage 1 exact source list; testToolHub identity and Drive replacement |
+| Tool listing preserves provider order and duplicate names; call uses the first active provider that lists the name in that context | CLI bridge | testToolHub duplicate fixtures, inactive/context-hidden list and call; baseline + A1/A2/A3 mutants |
+| member keeps the list; side has only Peer; consulted excludes Peer and Convene; legacy has only Face, before providers' own gates | workspace bridge, ask_ai, meetings, old Face bridge | testToolHub exact selected identities + list/call refusals, A4 mutant; testAskAI, testMeetingTool, testChatThroughCLI |
+| Unknown/expired sessions cannot list or call; project revocation removes only that project's sessions; unknown operations/names fail | all CLI calls, project turn end | testToolHub, injected-clock expiry, A5 mutant; testProjectHandoff |
+| Slow names are limited to tools actually exposed | workspace_mcp.py | testToolHub (empty intersection), testExternalMCP (real fake-server slow name) |
+| Each module follows its declared imports and allowed direction | every module/app build in run_mode2 | check_module_dependencies.py, DependencyRules temporary-tree falsifications, build_modules.sh visibility and cycle checks |
+| No trial behavior survives in the app sources | main | validate_app_modules.py app-source SHA256 comparison, return to main after local trial snapshots |
+
+### App code reviewed for later moves (list only; A moves none)
+
+| Candidate | Possible owner | Boundary to preserve |
+|---|---|---|
+| Poker.swift: cards, hand evaluator, betting/pot settlement, records and engine | a dedicated Poker module | keep poker.json shape, hidden cards and AI calls; PokerWindow stays a screen |
+| GitBranches.swift: parsing Git output, branch/version/distance report | AIProjects | inject Git runner; ProjectInfoView and its presentation stay App |
+| DriveUI.swift: DriveTree rows/writable and tree request/cache bookkeeping | pure tree data in AIIntegrations; observable screen state stays App | preserve lazy expansion, cycle/depth bound, inherited write rules and login-version rejection |
+| LocalModels.swift: LocalModelStore refresh/pull/cancel/delete state | AIRuntime behind a narrow view model | remove AppModel coupling first; opening NSWorkspace and the window stay App |
+| Settings.swift: pure default-chat-rule migration and account/model choice transformations | split by AIChat/AIAccounts/AIRuntime ownership | preserve UserDefaults keys, per-instance test settings and the App's ChatSettings conformance |
+
+Startup, ToolHub, ChatLinksApp/ChatScreensApp, RunConditions.app, settings/windows/menu, notifications, login and
+updater remain App composition or platform work. Gemini allowWeb in RunConditionsApp still expresses App policy;
+A does not relocate it or alter AutoGuard, permissions, signing, install or release files.
+
+### Final falsification and parallel trial
+
+The reproducible command is registered locally as `validate-app-modules`
+(`python3 -B tools/tests/validate_app_modules.py`). It first runs the unchanged Swift ToolHub test, then changes one
+body/list at a time in temporary copies. DependencyRules independently mutates disposable module trees.
+
+| Mutation | Detected by |
+|---|---|
+| A1 Peer/Convene order exchanged | testToolHub: exact original 13 singleton order |
+| A2 last(where:) instead of first(where:) | testToolHub: first eligible duplicate provider |
+| A3 active check removed from call dispatch | testToolHub: inactive providers absent from listing and calls |
+| A4 consulted Convene exclusion removed | testToolHub: exact consulted provider identities before providers' own gates |
+| A5 expiry check replaced with true | testToolHub: expired sessions cannot list or call |
+| Declared Runtime -> Chat reverse edge/cycle, undeclared/attributed/scoped imports, unknown/duplicate/unused declarations | DependencyRules temporary-tree tests |
+
+All five Swift mutants were caught after the unchanged baseline passed. No mutant touched main's source.
+The one parallel experiment overlapped both workers and both module contracts passed separately and after manual
+combination. Disjoint module directories were copied together; Git conflict detection was not performed. Consumer validation then failed with exit 133 at mode2's "everyone must give an opening view first":
+code tracing identifies the Gemini title's use in Discussion.label as the cause (no isolated consumer run was performed).
+**Module-only validation was insufficient for this behavior change.**
+The original experimental consumer assertions were kept; the trial behavior is never promoted to main.
+The combined run stopped at its first failure: later app assertions, space_web, icon and the final accounts checksum
+were not run in that experimental tree. Localization-only consumers were not run separately. Main's complete suite
+(including those later stages and the account checksum) passed independently.
+
+The first harness treated this experimental consumer failure as an exception and cleaned its temporary folder before
+saving artifacts. The exact deterministic mutation sources and result were recovered from its project_run output.
+The harness now checkpoints before consumers and records this expected negative finding. A link-only resume does
+not repeat the parallel experiment. The link-only resume passed (exit 0), including an unchanged-main-source hash check. A subsequent record preflight
+verified each recovered source equals current main plus exactly its one prescribed mutation; recovery provenance and
+the original consumer failure are recorded explicitly. Final main run_mode2.sh and the
+staged signed build both passed (exit 0). No trial behavior or built app is committed to main.
+
+Contract: [APP_PARALLEL_TRIAL.md](APP_PARALLEL_TRIAL.md). Two concurrent script workers change Accounts' Gemini
+display title and Localization's uppercase-language handling in isolated copies, run each leaf module's own contract,
+then combine and rerun both contracts, full run_mode2 and an all-source app link. Original app source hashes must be
+unchanged. Sources/results are preserved under ignored .ai-illuminati/a-trial for local trial branch snapshots.
+Unlike earlier trials, these are script workers in copies, not two AIs in worktrees. Connected git_* tools have no
+worktree/merge operation: the branch snapshots will use manual combination of disjoint paths. This does not prove a
+Git three-way merge succeeds; no such claim is made. Module-only success is limited to these cases, and never
+replaces the consumer tests in each promise row. C0's Space-refine app-path coverage gap is still open.
+
 ## How a module is built and used
 - `zsh tools/build_modules.sh <out> [swiftc options]` builds every `app/modules/<Name>/` alone into
   `<out>/<Name>.swiftmodule` + `<out>/lib<Name>.a` (static: nothing new in the app bundle, signing unchanged).
@@ -81,7 +211,7 @@ Chat notices (`localizedNotice`) belong to the chat: `ChatWindow.swift`.
 Public: `AppLanguage` (`current`, `resolve`, `locale`, its cases) and `L`. That is the whole file.
 
 ### AISpaces (`app/modules/AISpaces/`: Space, SpaceLibrary, SpaceTemplates, SpaceWeb)
-Depends on `AIAccounts` (`AccountStore.supportDir`: where `spaces/` is) and `AILocalization`. UI stays in the app:
+Depends on `AIAccounts` (`AccountStore.supportDir`: where `spaces/` is) and `AILocalization`. UI and chat callers are in AIChat since C1:
 `SpaceView.swift` (sidebar, the Space window, `extension Discussion` for Space actions), `Solo.swift` (chat side:
 `deliverSpaceBuild`, `drawSpacePictures`, `syncLibrary`, `spaceRule`), `Pictures.swift` (`extension SpacePictures`).
 SpaceWeb stays in this module (WebKit is a system framework, linked by its import): the isolation needs the CSP
@@ -135,7 +265,7 @@ Runs one AI's command line tool for one prompt and hands back its answer; keeps 
 (Ollama); reads usage. Depends on `AIAccounts` (accounts, their environment and folders, `AccountStore.home`) and
 `AILocalization`; it cannot import Workspace, Projects, Chat, Face or ToolHub (they are app files, not modules), and it
 decides no permission: what to start with comes in a `RunConditions` the caller built (`RunConditions.app` in
-`RunConditionsApp.swift`, since W0). Stays in the app: `extension Discussion` (`requestDebate` …, later the Chat module),
+`RunConditionsApp.swift`, since W0). Chat-side callers are now AIChat's: `extension Discussion` (`requestDebate` …),
 `GeminiLinks.workspaceNote` (names `WorkspaceLevel`, an `extension GeminiLinks` in `Workspace.swift`),
 `LocalModel.install` (opens Terminal: an `extension LocalModel` in `Login.swift`), `LocalModelStore`/the Ollama window
 (`LocalModels.swift`), `Login` (its `home`/`agyInstalled` now read `ToolHome`), `ChatTurn.Entry.reply` (uses
@@ -187,9 +317,8 @@ What an AI may do in a chat's linked folders and how its writes can be undone. D
 lives, `Account`), `AILocalization` (level titles) and `AIRuntime` (`DebateCancellation` for reads, `NativeSessions.directory`
 for the document cache, `GeminiLinks` for agy's note). It names nothing above it: the app hands it the tool gateway
 (`WorkspaceTools`, W0) and runs the tools itself (`RunConditions.app` in `RunConditionsApp.swift`).
-Stays in the app: `MaterialReader` (it turns an attached file into the chat's `RoomDocument` under `ChatStore.dir`: chat
-data, so it goes with Chat, C0/C1), `ToolHub` and every tool provider, `ProjectProcess` and project work, the Settings
-backup UI, `Discussion.setWorkspaceLevel`/`undoWorkspace` (Attachments.swift).
+Other owners since C1/I: MaterialReader and Discussion's workspace actions are AIChat's; ProjectProcess and project work
+are AIProjects'; ToolHub and the Settings backup UI stay App. Providers live with Chat/Projects or the three App conformances.
 
 | Promise | Users (files) | Module test (`workspace_contract.swift`) | User tests |
 |---|---|---|---|
@@ -243,11 +372,11 @@ providers: `GitLink`, `PlanLink`, `TaskLink`, `TodoAddLink`, `ProjectMakerLink`.
 tools read chats as `ProjectChatSummary` values (`ProjectChats.list`), and ToolHub hands in how a run's tool sessions end
 (`ProjectWork.revokeTools`). It decides commits, pushes and every TODO state change (retry, needs the user, review, the next
 start, the lock's release); the chat side makes the chat, picks the crew by usage and lock, sends, and says how it ended.
-Stays in the app: `ProjectChat.swift` (approval views; `extension Discussion` with `runProjectSolo`, linking, moving a chat),
+Chat-side files are AIChat's since C1: `ProjectChat.swift` (approval views; `extension Discussion` with `runProjectSolo`, linking, moving a chat),
 `ProjectCreate.swift` (`extension Discussion`: `addProjectChat`, disconnecting a folder, the menus), `TodoChatsApp.swift`
 (Discussion as `TodoChats`, the crew by `AutoPick`/`Enterprise.permits`, `TodoScheduler.noCrew`, the photo import),
-`TodoBoard.swift`, `ProjectInfoView.swift`, `GitBranches.swift`, `SidebarProjects.swift`, `ApprovalAlerts.swift`,
-`ProjectSnapshot` (Peer.swift, the review), `ToolHub` with the 13 providers in their order.
+`SidebarProjects.swift` and `ProjectSnapshot` (Peer.swift, the review). App keeps `TodoBoard.swift`, `ProjectInfoView.swift`,
+`GitBranches.swift`, `ApprovalAlerts.swift`, `ToolHub` with the 13 providers in their order.
 
 | Promise | Users (files) | Module test (`projects_contract.swift`) | User tests |
 |---|---|---|---|

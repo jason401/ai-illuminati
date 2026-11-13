@@ -85,7 +85,7 @@ def g3_app_files():
 
 OWNED = re.compile(r"^(?:@\w+(?:\([^)]*\))?[ \t]+)*(?:public|open)[ \t]+(?:(?:final|indirect)[ \t]+)*"
                    r"(?:class|struct|enum|protocol|actor|typealias)[ \t]+([A-Z]\w*)", re.M)
-EXTENSION = re.compile(r"^[ \t]*(?:@\w+[ \t]+)*(?:(?:public|private|fileprivate|internal)[ \t]+)?extension[ \t]+([A-Z]\w*)", re.M)
+EXTENSION = re.compile(r"^[ \t]*(?:@\w+[ \t]+)*(?:(?:public|private|fileprivate|internal)[ \t]+)?extension[ \t]+([A-Z]\w*(?:\.[A-Z]\w*)*)", re.M)
 
 
 def g4_extensions():
@@ -107,7 +107,9 @@ def g4_extensions():
         mine = rel.split("/")[2] if rel.startswith("app/modules/") else None
         text = code_only(Path(path).read_text())
         for match in EXTENSION.finditer(text):
-            typ = match.group(1)
+            # `extension AIChat.Discussion` names the module first: the type is the next part.
+            parts = match.group(1).split(".")
+            typ = parts[1] if len(parts) > 1 and parts[0] in modules() else parts[0]
             if typ in owner and mine not in owner[typ] and (rel, typ) not in allowed:
                 line = text.count("\n", 0, match.start()) + 1
                 warnings.append(f"G4 {rel}:{line}: extension of {typ} ({'/'.join(sorted(owner[typ]))}) outside its module; "

@@ -1,6 +1,12 @@
 #!/bin/zsh
 # Fast module guards (no compiler) before every commit: tools/check_modules.sh fast.
-# They check the working tree, so unstaged fixes count too; run_mode2 checks again before push.
+# They check what is staged (the index, copied to a temporary folder), not the working tree, so a fix left unstaged
+# does not hide a staged violation; run_mode2 checks again before push.
 # A failing check means the code changes, not the check; never commit with --no-verify (AGENTS.md "Module rules").
 cd "$(git rev-parse --show-toplevel)" || exit 1
-zsh tools/check_modules.sh fast || { echo "pre-commit: module guards failed; commit refused" >&2; exit 1 }
+STAGED=$(mktemp -d /tmp/ai-pre-commit.XXXXXX) || exit 1
+trap 'rm -rf "$STAGED"' EXIT
+git checkout-index -a --prefix="$STAGED/" || exit 1
+# Files kept out of Git here (CLAUDE.md) still count toward the rule budget.
+[[ -f CLAUDE.md && ! -e $STAGED/CLAUDE.md ]] && cp CLAUDE.md "$STAGED/"
+zsh "$STAGED/tools/check_modules.sh" fast || { echo "pre-commit: module guards failed on the staged files; commit refused" >&2; exit 1 }

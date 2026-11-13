@@ -685,6 +685,8 @@ Falsification (each in a copy of the tree, one change at a time, then thrown awa
 | S1 | `CloudModels.versionTitle` made public | fail | fail, with the one-line diff of `docs/api/AIRuntime.txt` |
 | boundary | `_ = AccountStore.noSuchName` added to AIAccounts' boundary | fail | fail: expected "inaccessible" missing, other error "no member" |
 | pre-commit | `git commit` with the G1 change staged (copy with `core.hooksPath=.githooks`) | refused | refused; the same tree without it committed |
+| pre-commit (review) | the G1 change staged, the working tree put back | refused | refused: the hook checks the index (copied out with `git checkout-index`), not the working tree |
+| G4 (review) | `extension AIChat.Discussion { func x() {} }` in an App file | warning | warning: a module-qualified name is read as its type |
 `tools/new_module.sh AIFoo AIAccounts` (in a copy) made the folder, contract, boundary and snapshot, left
 `module_graph.txt` and `module_guard.sha256` as they were, and G1 then failed until the graph line is added.
 

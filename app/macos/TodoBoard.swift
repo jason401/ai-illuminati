@@ -54,6 +54,11 @@ final class TodoDraft: ObservableObject {
     @Published var dropFolders: [URL] = []   // temporary folders of dropped Photos/screenshot files, removed once added
     @Published var dropTarget: UUID?   // where a drag is over now: a TODO, or `addBar`
     static let addBar = UUID()
+    // A TODO dragged by its handle to a new place in its list: the board's own type, so no drop takes it for a file.
+    static let itemType = UTType(exportedAs: "com.aiilluminati.todo-item")
+    var dragging: UUID?
+    struct Slot: Equatable { var id: UUID; var below: Bool }
+    @Published var dropSlot: Slot?   // where the dragged TODO would go: the line above or below this row
     @Published var projectRoot = ""
     @Published var after: Set<UUID> = []
     @Published var askFirst = false
@@ -201,13 +206,37 @@ struct TodoBoardView: View {
         return VStack(alignment: .leading, spacing: 4) {
             if editing { editor(item) } else {
             HStack(spacing: 8) {
+                Image(systemName: "line.3.horizontal").font(.system(size: 11)).foregroundColor(.secondary).frame(width: 22, height: 22).contentShape(Rectangle())
+                    .help(L("끌어서 순서 바꾸기", "Drag to reorder"))
+                    .onDrag {
+                        draft.dragging = item.id
+                        let provider = NSItemProvider()
+                        provider.registerDataRepresentation(forTypeIdentifier: TodoDraft.itemType.identifier, visibility: .ownProcess) { done in
+                            done(Data(item.id.uuidString.utf8), nil); return nil
+                        }
+                        return provider
+                    }
                 Text(list.sequential ? "\(index). " + item.title : item.title).font(.system(size: 13, weight: .medium))
                     .foregroundColor(item.state == .draft ? .secondary : .primary).lineLimit(2)
                 Spacer(minLength: 6)
                 if item.state == .ready, !waits.isEmpty {
                     Label(waits.map(\.title).joined(separator: ", ") + L(" 기다림", " first"), systemImage: "hourglass").font(.system(size: 11)).foregroundColor(.secondary).lineLimit(1)
                 }
-                Text(item.state.title + (item.state == .running ? runner(item) : "") + (item.state == .ready && data.stopped(item) ? L(" · 멈춤", " · paused") : "")).font(.system(size: 12, weight: .medium)).foregroundColor(item.state.color)
+                let status = item.state.title + (item.state == .running ? runner(item) : "") + (item.state == .ready && data.stopped(item) ? L(" · 멈춤", " · paused") : "")
+                if item.state == .draft || item.state == .ready {
+                    // One click: draft ↔ ready (the ⋯ menu has the same).
+                    Button(action: { act { try store.setReady(item.id, item.state == .draft); if item.state == .draft { TodoScheduler.shared?.wake() } } }) {
+                        Text(status).font(.system(size: 12, weight: .medium)).foregroundColor(item.state.color).lineLimit(1)
+                            .padding(.horizontal, 8).frame(minHeight: 22)
+                            .background(item.state.color.opacity(0.12), in: Capsule())
+                            .overlay(Capsule().strokeBorder(item.state.color.opacity(0.35)))
+                    }
+                    .buttonStyle(.plainHit)
+                    .help(item.state == .draft ? L("누르면 대기로: 차례가 오면 AI가 가져가요", "Click to make it ready: the AI takes it when its turn comes")
+                                               : L("누르면 초안으로: AI가 가져가지 않아요 (순서대로 목록에서는 건너뛰어요)", "Click to make it a draft: the AI leaves it (an in-order list skips it)"))
+                } else {
+                    Text(status).font(.system(size: 12, weight: .medium)).foregroundColor(item.state.color)
+                }
                 if item.state == .review {
                     Button(L("완료", "Done")) { store.accept(item.id) }.buttonStyle(.borderedProminent).controlSize(.small)
                 }
@@ -237,8 +266,8 @@ struct TodoBoardView: View {
                     if item.state != .running && item.state != .done && item.state != .cancelled {
                         Button(L("사진·파일 첨부…", "Attach photos or files…")) { let urls = Self.chooseFiles(); if !urls.isEmpty { act { try store.attach(item.id, files: urls) } } }
                     }
-                    if item.state == .draft { Button(L("대기로 (바로 가져가도 됨)", "Make ready")) { try? store.change(item.id) { $0.state = .ready } } }
-                    if item.state == .ready { Button(L("초안으로 되돌리기", "Back to draft")) { try? store.change(item.id) { $0.state = .draft } } }
+                    if item.state == .draft { Button(L("대기로 (바로 가져가도 됨)", "Make ready")) { act { try store.setReady(item.id, true); TodoScheduler.shared?.wake() } } }
+                    if item.state == .ready { Button(L("초안으로 되돌리기", "Back to draft")) { act { try store.setReady(item.id, false) } } }
                     Button(list.stopAfter == item.id ? L("멈춤 지점 지우기", "Remove the stop point") : L("여기까지 하고 멈추기", "Stop after this one")) {
                         act { try store.stop(after: item.id); TodoScheduler.shared?.wake() }
                     }
@@ -275,13 +304,34 @@ struct TodoBoardView: View {
         .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 9))
         .overlay(item.state == .draft ? RoundedRectangle(cornerRadius: 9).strokeBorder(Color.secondary.opacity(0.4), style: StrokeStyle(lineWidth: 1, dash: [5, 4])) : nil)
         .overlay(draft.dropTarget == item.id ? RoundedRectangle(cornerRadius: 9).strokeBorder(Color.accentColor, lineWidth: 2) : nil)
-        // Photos or files dropped on a TODO the AI is not working on are attached to it right away.
-        .onDrop(of: [UTType.fileURL, UTType.image, UTType.item],
-                delegate: TodoFileDrop(target: item.id, accepts: item.state != .running && item.state != .done && item.state != .cancelled) { urls, folder in
+        .overlay(alignment: draft.dropSlot?.below == true ? .bottom : .top) {
+            if draft.dropSlot?.id == item.id {
+                Capsule().fill(Color.accentColor).frame(height: 3).offset(y: draft.dropSlot?.below == true ? 4.5 : -4.5).allowsHitTesting(false)
+            }
+        }
+        // Photos or files dropped on a TODO the AI is not working on are attached to it right away; a TODO of the
+        // same list dragged by its handle goes above it (dragged up) or below it (dragged down).
+        .onDrop(of: [TodoDraft.itemType, UTType.fileURL, UTType.image, UTType.item],
+                delegate: TodoFileDrop(target: item.id, accepts: item.state != .running && item.state != .done && item.state != .cancelled,
+                                       reorder: { reorder(onto: item, in: list, probe: $0) }) { urls, folder in
             defer { if let folder { try? FileManager.default.removeItem(at: folder) } }
             if urls.isEmpty { draft.error = L("파일을 첨부할 수 없어요.", "Could not attach the file."); return }
             act { try store.attach(item.id, files: urls) }
         })
+    }
+
+    // Where the dragged TODO would go if dropped on `target`: below it when dragged down, above it when dragged up;
+    // nil for one of another list. probe false: moves it there.
+    private func reorder(onto target: TodoItem, in list: TodoList, probe: Bool) -> TodoDraft.Slot? {
+        let row = store.snapshot.ordered(list.id).map(\.id)
+        guard let moving = draft.dragging, moving != target.id, let from = row.firstIndex(of: moving), let to = row.firstIndex(of: target.id) else { return nil }
+        let below = from < to
+        if !probe {
+            let rest = row.filter { $0 != moving }
+            let before = below ? rest.firstIndex(of: target.id).flatMap { rest.indices.contains($0 + 1) ? rest[$0 + 1] : nil } : target.id
+            act { try store.move(moving, before: before) }
+        }
+        return TodoDraft.Slot(id: target.id, below: below)
     }
 
     // In place of the title and details while editing: [Cancel] / [Save] (Return saves, Shift+Return breaks a detail line, Esc cancels).
@@ -382,7 +432,7 @@ struct TodoBoardView: View {
         .padding(12)
         .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
         .overlay(draft.dropTarget == TodoDraft.addBar ? RoundedRectangle(cornerRadius: 10).strokeBorder(Color.accentColor, lineWidth: 2) : nil)
-        .onDrop(of: [UTType.fileURL, UTType.image, UTType.item], delegate: TodoFileDrop(target: TodoDraft.addBar, accepts: true) { urls, folder in
+        .onDrop(of: [TodoDraft.itemType, UTType.fileURL, UTType.image, UTType.item], delegate: TodoFileDrop(target: TodoDraft.addBar, accepts: true) { urls, folder in
             if urls.isEmpty { draft.error = L("파일을 첨부할 수 없어요.", "Could not attach the file."); if let folder { try? FileManager.default.removeItem(at: folder) }; return }
             // Promised files (Photos, screenshots) live in a temporary folder until the TODO is added.
             if let folder { draft.dropFolders.append(folder) }
@@ -533,18 +583,36 @@ private struct ShiftReturnNewline: ViewModifier {
 
 // Photos and files dragged onto the add bar or a TODO row: from Finder, the Photos app or a screenshot
 // thumbnail (PictureDrop). `receive` runs on the main thread; a temporary `folder` is the caller's to remove.
+// A TODO dragged by its handle (TodoDraft.itemType) is checked first: it is never taken as a file (the types
+// below include UTType.item). `reorder(true)` says where it would go, `reorder(false)` moves it; nil: not here.
 private struct TodoFileDrop: DropDelegate {
     let target: UUID
     let accepts: Bool
+    var reorder: ((Bool) -> TodoDraft.Slot?)? = nil
     let receive: ([URL], URL?) -> Void
+    private func moving(_ info: DropInfo) -> Bool { info.hasItemsConforming(to: [TodoDraft.itemType]) }
     func validateDrop(info: DropInfo) -> Bool {
-        accepts && (info.hasItemsConforming(to: [UTType.fileURL, UTType.image]) || PictureDrop.hasPromises())
+        if moving(info) { return reorder?(true) != nil }
+        return accepts && (info.hasItemsConforming(to: [UTType.fileURL, UTType.image]) || PictureDrop.hasPromises())
     }
-    func dropEntered(info: DropInfo) { if validateDrop(info: info) { TodoDraft.shared.dropTarget = target } }
-    func dropExited(info: DropInfo) { if TodoDraft.shared.dropTarget == target { TodoDraft.shared.dropTarget = nil } }
-    func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: validateDrop(info: info) ? .copy : .forbidden) }
+    func dropEntered(info: DropInfo) {
+        if moving(info) { TodoDraft.shared.dropSlot = reorder?(true) } else if validateDrop(info: info) { TodoDraft.shared.dropTarget = target }
+    }
+    func dropExited(info: DropInfo) {
+        if TodoDraft.shared.dropTarget == target { TodoDraft.shared.dropTarget = nil }
+        if TodoDraft.shared.dropSlot?.id == target { TodoDraft.shared.dropSlot = nil }
+    }
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        if moving(info) { return DropProposal(operation: reorder?(true) != nil ? .move : .forbidden) }
+        return DropProposal(operation: validateDrop(info: info) ? .copy : .forbidden)
+    }
     func performDrop(info: DropInfo) -> Bool {
         TodoDraft.shared.dropTarget = nil
+        if moving(info) {
+            TodoDraft.shared.dropSlot = nil
+            defer { TodoDraft.shared.dragging = nil }
+            return reorder?(false) != nil
+        }
         guard validateDrop(info: info) else { return false }
         PictureDrop.receive(info.itemProviders(for: [UTType.image]), done: receive)
         return true

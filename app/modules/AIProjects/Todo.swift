@@ -263,12 +263,13 @@ public struct TodoData: Codable, Equatable {
             return i != j ? i < j : a.createdAt < b.createdAt
         }
     }
-    // What a TODO waits for: its "after" links and, in a list in order, the nearest TODO above it that was not cancelled.
+    // What a TODO waits for: its "after" links and, in a list in order, the nearest TODO above it that is neither
+    // cancelled nor a draft (a draft is not going to run, so the ready ones below it go on in the user's order).
     public func blockers(_ item: TodoItem) -> [UUID] {
         var ids = item.after
         if list(item.listID)?.sequential == true {
             let row = ordered(item.listID)
-            if let at = row.firstIndex(where: { $0.id == item.id }), let above = row[..<at].last(where: { $0.state != .cancelled }) { ids.append(above.id) }
+            if let at = row.firstIndex(where: { $0.id == item.id }), let above = row[..<at].last(where: { $0.state != .cancelled && $0.state != .draft }) { ids.append(above.id) }
         }
         return ids
     }
@@ -297,6 +298,17 @@ public struct TodoData: Codable, Equatable {
             guard blockers(item).allSatisfy({ id in self.item(id).map { satisfied($0, for: item) } ?? true }) else { return false }
             return !held(root)
         }
+    }
+
+    // A TODO put in front of `before` (nil: at the end) of its own list; `before` in another list is not found.
+    mutating func place(_ id: UUID, before: UUID?) throws {
+        guard let item = item(id), let l = lists.firstIndex(where: { $0.id == item.listID }) else { throw TodoError.notFound }
+        guard before != id else { return }
+        var order = ordered(item.listID).map(\.id)
+        if let before, !order.contains(before) { throw TodoError.notFound }
+        order.removeAll { $0 == id }
+        order.insert(id, at: before.flatMap { order.firstIndex(of: $0) } ?? order.endIndex)
+        lists[l].order = order
     }
 
     // Waiting for each other in a circle (links and list order together) never starts: refused when saved.
@@ -448,6 +460,13 @@ public final class TodoStore: ObservableObject {
             data.lists[l].stopAfter = data.lists[l].stopAfter == id ? nil : id
         }
     }
+    // The row's draft/ready capsule: only while it is still one of the two (the scheduler may have taken it meanwhile).
+    public func setReady(_ id: UUID, _ ready: Bool) throws {
+        try change(id) { item in
+            guard item.state == .draft || item.state == .ready else { throw TodoError.notEditable }
+            item.state = ready ? .ready : .draft
+        }
+    }
     public func accept(_ id: UUID) { try? change(id) { guard $0.state == .review else { return }; $0.state = .done; $0.unreported = false } }
     // Change request: the feedback goes with the next attempt, in the same chat.
     public func requestChanges(_ id: UUID, _ text: String) {
@@ -476,18 +495,26 @@ public final class TodoStore: ObservableObject {
             item.title = title; item.detail = detail.trimmingCharacters(in: .whitespacesAndNewlines); item.askFirst = askFirst
         }
     }
-    // The todo_edit tool: only a draft (a ready one may be taken any moment), and only in a list the asking chat's
-    // organization may write (nil: personal; a list without a lock is the tool's to judge). Leaving a field out keeps it.
+    // The todo_edit tool, all checked again in the one save: never a running TODO (busy); a draft or ready one may
+    // change its text, become the other of the two and move; any other only moves (its text is the AI's already).
+    // Only in a list the asking chat's organization may write (nil: personal; a list without a lock is the tool's to
+    // judge). Leaving a field out keeps it. before: in front of that TODO of the same list; .some(nil): to the end.
     @discardableResult
-    func editDraft(_ id: UUID, title: String?, detail: String?, askFirst: Bool?, organization: String?) throws -> TodoItem {
+    func editForAI(_ id: UUID, title: String?, detail: String?, askFirst: Bool?, ready: Bool? = nil, before: UUID?? = nil, organization: String?) throws -> TodoItem {
         let title = title?.trimmingCharacters(in: .whitespacesAndNewlines)
         return try update { data in
             guard let i = data.items.firstIndex(where: { $0.id == id }), let list = data.list(data.items[i].listID) else { throw TodoError.notFound }
             if let held = list.lock, held.organization != organization { throw TodoError.notFound }
-            guard data.items[i].state == .draft else { throw TodoError.notEditable }
+            let state = data.items[i].state
+            guard state != .running else { throw TodoError.busy }
+            if title != nil || detail != nil || askFirst != nil || ready != nil {
+                guard Self.editable(data.items[i]) else { throw TodoError.notEditable }
+            }
             if let title, !title.isEmpty { data.items[i].title = title }
             if let detail { data.items[i].detail = detail.trimmingCharacters(in: .whitespacesAndNewlines) }
             if let askFirst { data.items[i].askFirst = askFirst }
+            if let ready { data.items[i].state = ready ? .ready : .draft }
+            if let before { try data.place(id, before: before) }
             return data.items[i]
         }
     }
@@ -556,6 +583,11 @@ public final class TodoStore: ObservableObject {
             order.swapAt(at, at + step)
             data.lists[l].order = order
         }
+    }
+    // Dragged on the board: in front of `before` (nil: to the end), in the same list only. A running TODO may move
+    // too (its place, not its work); an order that makes TODOs wait in a circle is refused by update.
+    public func move(_ id: UUID, before: UUID?) throws {
+        try update { data in try data.place(id, before: before) }
     }
     public func setAfter(_ id: UUID, _ after: [UUID]) throws { try change(id) { $0.after = after.filter { $0 != id } } }
     // accounts: [] goes back to automatic. Takes effect from the next start; a running attempt keeps its crew.
@@ -756,7 +788,8 @@ public struct TodoProject {
 
 // todo_add: from any chat (a project's or not, a TODO's own one too), the AI writes a TODO on a project's board
 // when the user asks, e.g. an idea from another talk. Always a draft: nothing runs until the user presses Start.
-// todo_drafts / todo_edit: the same chats read and rewrite drafts (not ready ones: those may be taken any moment).
+// todo_list / todo_edit: the same chats read a board in its order and, when the user asks, change any TODO that is
+// not running: a draft's or ready one's text, draft ↔ ready (ready runs without ▶ Start), and the place of any.
 // An Enterprise chat sees and writes only its organization's projects; any other chat only projects without a lock.
 public final class TodoAddLink: ToolProvider {
     public static let shared = TodoAddLink()
@@ -788,20 +821,21 @@ public final class TodoAddLink: ToolProvider {
                  "description": "Add a TODO to the user's TODO board for a project, from any chat, when the user asks to add or note one (or clearly agrees to your suggestion). Never on your own. It is added as a draft: it runs only when the user presses Start on the board. title: one short line in the user's language; detail: what to do, the context from this chat and what done looks like (the AI that takes it sees only this). project: a name or folder from the list\(here.map { "; leave it out for this chat's project \($0.name)" } ?? ""). One TODO per call. Projects: " + Self.describe(projects),
                  "inputSchema": ["type": "object", "properties": ["title": string, "detail": string, "project": string, "ask_first": ["type": "boolean"]],
                                  "required": ["title"], "additionalProperties": false]],
-                ["name": "todo_drafts",
-                 "description": "List the draft TODOs (not started yet) on a project's board with their id, title, ask_first and full detail, before todo_edit, 30 at a time (offset: how many to skip, for the next ones). project: as for todo_add\(here.map { "; leave it out for this chat's project \($0.name)" } ?? "; leave it out for every project")).",
-                 "inputSchema": ["type": "object", "properties": ["project": string, "offset": ["type": "integer"]], "additionalProperties": false]],
+                ["name": "todo_list",
+                 "description": "List the TODOs on a project's board in the board's order (in an in-order list the ready ones run top to bottom; drafts are skipped until made ready) with their position, id, state (draft, ready, running, review = waits for the user's check, needsYou = waits for the user's answer, done, cancelled), title, ask_first and full detail, before todo_edit, 30 at a time (offset: how many to skip, for the next ones). Done and cancelled ones only with include_done. project: as for todo_add\(here.map { "; leave it out for this chat's project \($0.name)" } ?? "; leave it out for every project")).",
+                 "inputSchema": ["type": "object", "properties": ["project": string, "offset": ["type": "integer"], "include_done": ["type": "boolean"]], "additionalProperties": false]],
                 ["name": "todo_edit",
-                 "description": "Change a draft TODO (from todo_drafts) when the user asks: only drafts, ready or running ones cannot be changed. id: its id from todo_drafts. Give only what changes: title (one short line), detail (replaces the whole detail: keep what still holds), ask_first. It stays a draft.",
-                 "inputSchema": ["type": "object", "properties": ["id": string, "title": string, "detail": string, "ask_first": ["type": "boolean"]],
+                 "description": "Change a TODO (from todo_list) only when the user asks. Never on your own: a TODO made ready runs without the user pressing Start. id: its id from todo_list. Give only what changes: title (one short line), detail (replaces the whole detail: keep what still holds), ask_first, state (\"draft\" or \"ready\"), before (the id of a TODO of the same board to put it in front of, or \"end\"). A running TODO cannot be changed at all; title, detail, ask_first and state only for draft or ready ones; any other (review, needsYou, done, cancelled) can only move with before.",
+                 "inputSchema": ["type": "object", "properties": ["id": string, "title": string, "detail": string, "ask_first": ["type": "boolean"],
+                                                                   "state": ["type": "string", "enum": ["draft", "ready"]], "before": string],
                                  "required": ["id"], "additionalProperties": false]]]
     }
 
-    // The drafts this chat may see: in lists of its projects (one project when given).
-    private func drafts(_ projects: [TodoProject], in data: TodoData) -> [(TodoProject, TodoItem)] {
-        data.lists.flatMap { list -> [(TodoProject, TodoItem)] in
+    // The TODOs this chat may see, in board order with their place in their list: in lists of its projects (one project when given).
+    private func visible(_ projects: [TodoProject], in data: TodoData) -> [(project: TodoProject, place: Int, item: TodoItem)] {
+        data.lists.flatMap { list -> [(project: TodoProject, place: Int, item: TodoItem)] in
             guard let root = list.project?.root, let p = projects.first(where: { $0.binding.root == root }) else { return [] }
-            return data.ordered(list.id).filter { $0.state == .draft }.map { (p, $0) }
+            return data.ordered(list.id).enumerated().map { (p, $0.offset + 1, $0.element) }
         }
     }
 
@@ -824,47 +858,64 @@ public final class TodoAddLink: ToolProvider {
     private static func reply(_ text: String) -> [String: Any] { ["content": [["type": "text", "text": text]], "isError": false] }
 
     public func call(_ name: String, _ arguments: [String: Any], context: ToolContext) -> [String: Any] {
-        guard ["todo_add", "todo_drafts", "todo_edit"].contains(name) else { return ProjectTools.failure("Unknown tool: " + name) }
+        guard ["todo_add", "todo_list", "todo_edit"].contains(name) else { return ProjectTools.failure("Unknown tool: " + name) }
         guard let (chat, projects) = scope(context), !projects.isEmpty else { return ProjectTools.failure("TODO tools are not available for this answer.") }
         func text(_ key: String) -> String { (arguments[key] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
         func oneLine(_ value: String) -> String { String(value.split(whereSeparator: \.isNewline).first.map(String.init)?.prefix(200) ?? "") }
         let store = store()
-        if name == "todo_drafts" {
+        if name == "todo_list" {
             var shown = projects
             if !text("project").isEmpty {
                 let (found, why) = Self.pick(text("project"), in: projects)
                 guard let found else { return ProjectTools.failure(why ?? "No such project.") }
                 shown = [found]
             } else if let p = chat.project, let found = projects.first(where: { $0.binding.root == p.root }) { shown = [found] }
-            let list = drafts(shown, in: store.current)
-            guard !list.isEmpty else { return Self.reply("No draft TODOs on " + shown.map(\.name).joined(separator: ", ") + ".") }
+            let data = store.current
+            let all = arguments["include_done"] as? Bool == true
+            let list = visible(shown, in: data).filter { all || ($0.item.state != .done && $0.item.state != .cancelled) }
+            guard !list.isEmpty else { return Self.reply("No\(all ? "" : " open") TODOs on " + shown.map(\.name).joined(separator: ", ") + ".") }
             let skip = min(max(arguments["offset"] as? Int ?? 0, 0), list.count)
             let page = list.dropFirst(skip).prefix(30)
-            guard !page.isEmpty else { return Self.reply("No drafts after offset \(skip): there are \(list.count).") }
-            let lines = page.map { p, item in
-                "id: \(item.id.uuidString)\nproject: \(p.name)\ntitle: \(item.title)\nask_first: \(item.askFirst)\ndetail:\n\(item.detail.isEmpty ? "(none)" : item.detail)"
+            guard !page.isEmpty else { return Self.reply("No TODOs after offset \(skip): there are \(list.count).") }
+            let lines = page.map { p, place, item in
+                let order = data.list(item.listID)?.sequential == true ? "in order" : "any order"
+                return "id: \(item.id.uuidString)\nproject: \(p.name) (\(order))\nplace: \(place)\nstate: \(item.state.rawValue)\ntitle: \(item.title)\nask_first: \(item.askFirst)\ndetail:\n\(item.detail.isEmpty ? "(none)" : item.detail)"
             }
             return Self.reply(lines.joined(separator: "\n\n---\n\n") + (skip + page.count < list.count ? "\n\n(\(list.count - skip - page.count) more: call again with offset \(skip + page.count).)" : ""))
         }
         if name == "todo_edit" {
-            guard let id = UUID(uuidString: text("id")) else { return ProjectTools.failure("id is required: take it from todo_drafts.") }
-            guard drafts(projects, in: store.current).contains(where: { $0.1.id == id }) else {
-                if let item = store.current.item(id), projects.contains(where: { $0.binding.root == store.current.list(item.listID)?.project?.root }) {
-                    return ProjectTools.failure("That TODO is \(item.state.rawValue), not a draft: only drafts can be changed. Tell the user.")
-                }
-                return ProjectTools.failure("No draft TODO with that id: call todo_drafts.")
-            }
+            guard let id = UUID(uuidString: text("id")) else { return ProjectTools.failure("id is required: take it from todo_list.") }
+            let data = store.current
+            guard let found = visible(projects, in: data).first(where: { $0.item.id == id })?.item else { return ProjectTools.failure("No TODO with that id here: call todo_list.") }
             let title = arguments["title"] == nil ? nil : oneLine(text("title"))
             if title?.isEmpty == true { return ProjectTools.failure("title cannot be empty.") }
             // A detail longer than todo_add's limit (written on the board) may be sent back whole: nothing is cut.
             let detail = arguments["detail"] == nil ? nil : text("detail")
-            let limit = max(8000, store.current.item(id)?.detail.count ?? 0)
+            let limit = max(8000, found.detail.count)
             if let detail, detail.count > limit { return ProjectTools.failure("detail is too long (\(detail.count) characters, at most \(limit)): shorten it; nothing was changed.") }
             let askFirst = arguments["ask_first"] as? Bool
-            guard title != nil || detail != nil || askFirst != nil else { return ProjectTools.failure("Nothing to change: give title, detail or ask_first.") }
+            var ready: Bool?
+            if arguments["state"] != nil {
+                guard ["draft", "ready"].contains(text("state")) else { return ProjectTools.failure("state must be \"draft\" or \"ready\".") }
+                ready = text("state") == "ready"
+            }
+            var before: UUID??
+            if arguments["before"] != nil {
+                if text("before").lowercased() == "end" { before = .some(nil) }
+                else if let other = UUID(uuidString: text("before")), data.item(other)?.listID == found.listID { before = .some(other) }
+                else { return ProjectTools.failure("before must be the id of a TODO on the same board (from todo_list) or \"end\"; nothing was changed.") }
+            }
+            guard title != nil || detail != nil || askFirst != nil || ready != nil || before != nil else {
+                return ProjectTools.failure("Nothing to change: give title, detail, ask_first, state or before.")
+            }
             do {
-                let item = try store.editDraft(id, title: title, detail: detail, askFirst: askFirst, organization: chat.lock?.organization)
-                return Self.reply("Changed the draft \"\(item.title)\". It is still a draft: it runs only when the user presses Start. Tell the user briefly.")
+                let item = try store.editForAI(id, title: title, detail: detail, askFirst: askFirst, ready: ready, before: before, organization: chat.lock?.organization)
+                let note = item.state == .ready ? " It is ready: it may start by itself when its turn comes." : item.state == .draft ? " It is a draft: it runs only when the user presses Start or makes it ready." : ""
+                return Self.reply("Changed \"\(item.title)\" (\(item.state.rawValue)).\(note) Tell the user briefly.")
+            } catch TodoError.busy {
+                return ProjectTools.failure("That TODO is running: it cannot be changed or moved now. Tell the user.")
+            } catch TodoError.notEditable {
+                return ProjectTools.failure("That TODO is \(store.current.item(id)?.state.rawValue ?? found.state.rawValue): only its place can change (before). Nothing was changed. Tell the user.")
             } catch { return ProjectTools.failure(error.localizedDescription) }
         }
         let title = oneLine(text("title"))

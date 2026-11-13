@@ -544,6 +544,70 @@ func testTodoPause() {
     print("PASS: TODO pause (list pause, stop point, resume, saved)")
 }
 
+// A list in order with drafts among ready TODOs: the ready ones go top to bottom, skipping the drafts (the board's
+// one-click draft/ready capsule is setReady); dragging is move(_:before:) inside the list.
+func testTodoMixedOrder() {
+    let p = ProjectBinding(root: "/tmp/todo-mixed", common: "", remote: "", remoteURL: "")
+    let other = ProjectBinding(root: "/tmp/todo-mixed-other", common: "", remote: "", remoteURL: "")
+    let store = TodoStore(url: todoStoreFile("mixed"))
+    let free = { (_: String) in false }
+    let a = try! store.add(title: "A", project: p, projectName: "P")
+    let b = try! store.add(title: "B", project: p, projectName: "P")
+    let c = try! store.add(title: "C", project: p, projectName: "P")
+    let elsewhere = try! store.add(title: "elsewhere", project: other, projectName: "O")
+    let list = a.listID
+    func order() -> [UUID] { store.current.ordered(list).map(\.id) }
+    func blockers(_ id: UUID) -> [UUID] { store.current.blockers(store.current.item(id)!) }
+    func eligible() -> [String] { store.current.eligible(held: free).map(\.title) }
+    try! store.setReady(a.id, true); try! store.setReady(c.id, true)
+    expect(store.current.item(b.id)?.state == .draft && blockers(c.id) == [a.id], "C waits for A, not for the draft B above it: \(blockers(c.id))")
+    expect(eligible() == ["A"], "A first: \(eligible())")
+    try! store.change(a.id) { $0.state = .running }
+    expect(eligible().isEmpty, "C waits while A runs")
+    try! store.change(a.id) { $0.state = .review }
+    expect(eligible() == ["C"], "C starts after A although B, a draft, is between: \(eligible())")
+    // B made ready while A still runs: B waits for A, and C now waits for B (the user's order holds).
+    try! store.change(a.id) { $0.state = .running }
+    try! store.setReady(b.id, true)
+    expect(blockers(b.id) == [a.id] && blockers(c.id) == [b.id], "B waits for A, C for B: \(blockers(b.id)) \(blockers(c.id))")
+    try! store.change(a.id) { $0.state = .review }
+    expect(eligible() == ["B"], "B goes next: \(eligible())")
+    try! store.setReady(b.id, false)
+    expect(store.current.item(b.id)?.state == .draft && eligible() == ["C"], "back to draft: skipped again")
+    // setReady only for a draft or a ready one.
+    try! store.change(a.id) { $0.state = .running }
+    do { try store.setReady(a.id, false); expect(false, "setReady on a running TODO is refused") } catch { expect(store.current.item(a.id)?.state == .running, "a running TODO stays running") }
+    try! store.change(a.id) { $0.state = .review }
+    // The stop point still holds by board order, also after a draft.
+    try! store.stop(after: b.id)
+    expect(store.current.stopped(store.current.item(c.id)!) && eligible().isEmpty, "stop after the draft B: C below it does not start")
+    try! store.stop(after: b.id)
+    expect(eligible() == ["C"], "the stop point lifted")
+    // Circles through the order that skips drafts are still refused.
+    do { try store.setAfter(a.id, [c.id]); expect(false, "A after C while C waits for A is a circle") } catch { expect(error as? TodoError == .cycle, "the circle error") }
+    expect(store.current.item(a.id)?.after.isEmpty == true, "a refused circle changes nothing")
+
+    // move(_:before:): in front of a TODO, to the end, a running one too, never into another list.
+    try! store.move(c.id, before: a.id)
+    expect(order() == [c.id, a.id, b.id], "in front of A: \(order())")
+    try! store.move(c.id, before: nil)
+    expect(order() == [a.id, b.id, c.id], "to the end")
+    try! store.move(a.id, before: c.id)
+    expect(order() == [b.id, a.id, c.id], "in front of C")
+    try! store.move(a.id, before: a.id)
+    expect(order() == [b.id, a.id, c.id], "in front of itself: nothing changes")
+    try! store.change(a.id) { $0.state = .running }
+    try! store.move(a.id, before: b.id)
+    expect(order() == [a.id, b.id, c.id] && store.current.item(a.id)?.state == .running, "a running TODO may move (its place only)")
+    do { try store.move(a.id, before: elsewhere.id); expect(false, "not into another list") } catch { expect(order() == [a.id, b.id, c.id], "another list's TODO is refused") }
+    try! store.change(a.id) { $0.state = .review }
+    try! store.setAfter(c.id, [a.id])
+    do { try store.move(c.id, before: a.id); expect(false, "a move that makes a circle is refused") }
+    catch { expect(error as? TodoError == .cycle && order() == [a.id, b.id, c.id], "the circle is refused and the order kept: \(order())") }
+    expect(TodoStore(url: store.url).current.ordered(list).map(\.id) == order(), "the new order is saved")
+    print("PASS: TODO mixed order (ready ones skip drafts, setReady, stop point, circles, move before)")
+}
+
 func testTodoEdit() {
     let a = ProjectBinding(root: "/tmp/todo-edit", common: "", remote: "", remoteURL: "")
     let url = todoStoreFile("edit")
@@ -870,7 +934,7 @@ func testTodoAddTool() {
     print("PASS: todo_add (any chat, by name or path, drafts only, no repeats, Enterprise apart, only for the newest answer)")
 }
 
-// todo_drafts / todo_edit: the AI reads and rewrites drafts only, within the projects its chat may write.
+// todo_list / todo_edit: the AI reads the board in order and changes what is not running, within the projects its chat may write.
 func testTodoEditTool() {
     let store = TodoStore(url: todoStoreFile("edit-tool"))
     let link = TodoAddLink.shared
@@ -900,31 +964,67 @@ func testTodoEditTool() {
     try! store.change(ready.id) { $0.state = .ready }
     let schoolDraft = try! store.add(title: "학교 초안", project: school, projectName: "School", lock: lock)
     let names = Set(link.tools(context: session(work)).compactMap { $0["name"] as? String })
-    expect(names.isSuperset(of: ["todo_add", "todo_drafts", "todo_edit"]), "the edit tools are offered with todo_add: \(names)")
-    let listed = run(work, "todo_drafts", [:])
-    expect(listed.ok && listed.text.contains(draft.id.uuidString) && listed.text.contains("처음 설명") && !listed.text.contains(ready.id.uuidString)
-           && !listed.text.contains(schoolDraft.id.uuidString), "drafts of this chat's project only, with id and detail: \(listed.text)")
+    expect(names.isSuperset(of: ["todo_add", "todo_list", "todo_edit"]) && !names.contains("todo_drafts"), "the edit tools are offered with todo_add: \(names)")
+    let editHelp = link.tools(context: session(work)).first { $0["name"] as? String == "todo_edit" }?["description"] as? String ?? ""
+    expect(editHelp.contains("Never on your own") && editHelp.contains("when the user asks"), "todo_edit is only for what the user asks")
+    let listed = run(work, "todo_list", [:])
+    expect(listed.ok && listed.text.contains(draft.id.uuidString) && listed.text.contains("처음 설명") && listed.text.contains(ready.id.uuidString)
+           && listed.text.contains("state: ready") && listed.text.contains("state: draft") && listed.text.contains("place: 2")
+           && !listed.text.contains(schoolDraft.id.uuidString), "this chat's project only, in order with id, state and detail: \(listed.text)")
+    expect(listed.text.range(of: draft.id.uuidString)!.lowerBound < listed.text.range(of: ready.id.uuidString)!.lowerBound, "in the board's order")
     let edited = run(work, "todo_edit", ["id": draft.id.uuidString, "detail": "고친 설명", "ask_first": true])
     let after = store.current.item(draft.id)
     expect(edited.ok && after?.title == "초안" && after?.detail == "고친 설명" && after?.askFirst == true && after?.state == .draft,
            "only the given fields change, and it stays a draft")
+    // Ready ones too, and state / before.
+    expect(run(work, "todo_edit", ["id": ready.id.uuidString, "title": "준비 수정"]).ok && store.current.item(ready.id)?.title == "준비 수정"
+           && store.current.item(ready.id)?.state == .ready, "a ready TODO is changed and stays ready")
+    expect(run(work, "todo_edit", ["id": ready.id.uuidString, "state": "draft"]).ok && store.current.item(ready.id)?.state == .draft, "state draft")
+    expect(run(work, "todo_edit", ["id": ready.id.uuidString, "state": "ready"]).ok && store.current.item(ready.id)?.state == .ready, "state ready")
+    expect(!run(work, "todo_edit", ["id": ready.id.uuidString, "state": "running"]).ok && store.current.item(ready.id)?.state == .ready, "only draft or ready")
+    let appList = store.current.item(draft.id)!.listID
+    expect(run(work, "todo_edit", ["id": ready.id.uuidString, "before": draft.id.uuidString]).ok
+           && store.current.ordered(appList).map(\.id) == [ready.id, draft.id], "before puts it in front of that TODO")
+    expect(run(work, "todo_edit", ["id": ready.id.uuidString, "before": "end"]).ok
+           && store.current.ordered(appList).map(\.id) == [draft.id, ready.id], "before end puts it last")
+    expect(!run(work, "todo_edit", ["id": ready.id.uuidString, "before": schoolDraft.id.uuidString]).ok
+           && store.current.ordered(appList).map(\.id) == [draft.id, ready.id], "before must be on the same board")
+    try! store.change(ready.id) { $0.state = .running }
+    let busy = run(work, "todo_edit", ["id": ready.id.uuidString, "before": draft.id.uuidString])
+    expect(!busy.ok && busy.text.contains("running") && store.current.ordered(appList).map(\.id) == [draft.id, ready.id], "a running TODO is not changed, not even moved")
+    expect(!run(work, "todo_edit", ["id": ready.id.uuidString, "title": "x"]).ok && store.current.item(ready.id)?.title == "준비 수정", "nor its text")
+    expect((try? store.editForAI(ready.id, title: nil, detail: nil, askFirst: nil, before: .some(nil), organization: nil)) == nil, "the store refuses a running one too")
+    for state in [TodoItem.State.review, .needsYou, .done, .cancelled] {
+        try! store.change(ready.id) { $0.state = state }
+        let text = run(work, "todo_edit", ["id": ready.id.uuidString, "title": "바꿈"])
+        expect(!text.ok && store.current.item(ready.id)?.title == "준비 수정", "\(state): its text is not changed")
+        expect(!run(work, "todo_edit", ["id": ready.id.uuidString, "state": "ready"]).ok && store.current.item(ready.id)?.state == state, "\(state): nor its state")
+        expect(run(work, "todo_edit", ["id": ready.id.uuidString, "before": draft.id.uuidString]).ok && store.current.ordered(appList).first?.id == ready.id, "\(state): it may move")
+        try! store.move(ready.id, before: nil)
+    }
+    let hidden = run(work, "todo_list", [:]), shownDone = run(work, "todo_list", ["include_done": true])
+    expect(!hidden.text.contains(ready.id.uuidString) && shownDone.text.contains(ready.id.uuidString) && shownDone.text.contains("state: cancelled"), "done/cancelled only with include_done")
+    try! store.change(ready.id) { $0.state = .ready }
     expect(run(work, "todo_edit", ["id": draft.id.uuidString, "title": "새 제목\n둘째 줄"]).ok && store.current.item(draft.id)?.title == "새 제목", "a title is one line")
     expect(!run(work, "todo_edit", ["id": draft.id.uuidString, "title": "  "]).ok && store.current.item(draft.id)?.title == "새 제목", "an empty title is refused")
     expect(!run(work, "todo_edit", ["id": draft.id.uuidString]).ok, "nothing to change is refused")
-    let notDraft = run(work, "todo_edit", ["id": ready.id.uuidString, "title": "바꿈"])
-    expect(!notDraft.ok && notDraft.text.contains("not a draft") && store.current.item(ready.id)?.title == "준비됨", "a ready TODO cannot be changed")
     expect(!run(work, "todo_edit", ["id": schoolDraft.id.uuidString, "title": "바꿈"]).ok && store.current.item(schoolDraft.id)?.title == "학교 초안",
            "a personal chat cannot change an Enterprise project's draft")
+    expect(!run(work, "todo_edit", ["id": schoolDraft.id.uuidString, "state": "ready"]).ok && store.current.item(schoolDraft.id)?.state == .draft,
+           "nor make it ready")
+    expect(!run(locked, "todo_edit", ["id": ready.id.uuidString, "title": "바꿈"]).ok && store.current.item(ready.id)?.title == "준비 수정",
+           "an Enterprise chat cannot change a personal project's TODO")
     expect(run(locked, "todo_edit", ["id": schoolDraft.id.uuidString, "title": "학교 수정"]).ok && store.current.item(schoolDraft.id)?.title == "학교 수정",
            "its organization's chat can")
-    expect((try? store.editDraft(schoolDraft.id, title: "x", detail: nil, askFirst: nil, organization: nil)) == nil, "the store checks the lock too")
+    expect((try? store.editForAI(schoolDraft.id, title: "x", detail: nil, askFirst: nil, organization: nil)) == nil, "the store checks the lock too")
+    expect((try? store.editForAI(schoolDraft.id, title: nil, detail: nil, askFirst: nil, before: .some(nil), organization: "다른 곳")) == nil, "another organization too")
     // Long details are not cut, too long ones refused; more than 30 drafts come by offset.
     let long = String(repeating: "가", count: 9000)
     try! store.change(draft.id) { $0.detail = long }
     expect(run(work, "todo_edit", ["id": draft.id.uuidString, "detail": long + "끝"]).ok == false && store.current.item(draft.id)?.detail == long, "a detail over the limit is refused, not cut")
     expect(run(work, "todo_edit", ["id": draft.id.uuidString, "detail": "앞" + long.dropFirst()]).ok && store.current.item(draft.id)?.detail.count == 9000, "a board detail longer than 8000 is kept whole")
     for n in 0..<31 { _ = try! store.add(title: "많은 초안 \(n)", project: app, projectName: "App", fromAI: true) }   // drafts although a TODO is ready
-    let first = run(work, "todo_drafts", [:]), second = run(work, "todo_drafts", ["offset": 30])
+    let first = run(work, "todo_list", [:]), second = run(work, "todo_list", ["offset": 30])
     expect(first.text.contains("offset 30") && !first.text.contains("많은 초안 30") && second.text.contains("많은 초안 30") && second.text.contains("많은 초안 29"), "the next drafts by offset")
-    print("PASS: todo_drafts/todo_edit (drafts only, given fields only, Enterprise apart, long details whole, offset)")
+    print("PASS: todo_list/todo_edit (board order and states, draft and ready text, state/before, running refused, others only move, Enterprise apart, long details whole, offset)")
 }

@@ -319,6 +319,7 @@ TodoStore.init(url:) | init(url: URL)
 TodoStore.lockProject(_:name:project:lock:) | func lockProject(_ key: String, name: String, project: ProjectBinding, lock: EnterpriseLock) throws
 TodoStore.locked | let locked: String?
 TodoStore.maxAttachments | static let maxAttachments: Int
+TodoStore.move(_:before:) | func move(_ id: UUID, before: UUID?) throws
 TodoStore.move(_:by:) | func move(_ id: UUID, by step: Int) throws
 TodoStore.pause(lists:) | func pause(lists: Set<UUID>? = nil) throws
 TodoStore.relink(_:to:) | func relink(_ ids: Set<UUID>, to project: ProjectBinding) throws
@@ -327,6 +328,7 @@ TodoStore.resume(lists:) | func resume(lists: Set<UUID>? = nil) throws
 TodoStore.saveError | @Published var saveError: String? { get set }
 TodoStore.setAfter(_:_:) | func setAfter(_ id: UUID, _ after: [UUID]) throws
 TodoStore.setList(_:sequential:waitForDone:accounts:) | func setList(_ listID: UUID, sequential: Bool? = nil, waitForDone: Bool? = nil, accounts: [String]? = nil) throws
+TodoStore.setReady(_:_:) | func setReady(_ id: UUID, _ ready: Bool) throws
 TodoStore.shared | static var shared: TodoStore
 TodoStore.snapshot | @Published var snapshot: TodoData { get set }
 TodoStore.startDrafts(lists:) | func startDrafts(lists: Set<UUID>? = nil)

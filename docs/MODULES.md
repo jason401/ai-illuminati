@@ -438,7 +438,7 @@ Public names and why (everything else stays internal: `ProjectError`, `ProjectTo
   `TodoQuestion`, `TodoReport`, `TodoAttachment`, `WorkStep` (a chat turn keeps the plan), `ProjectInfo`, `ProjectInfoData`,
   `ProjectFolder`, `ProjectLink`. Explicit public inits where Swift's memberwise ones are internal (`ProjectApproval`,
   `TodoReport`, `ProjectFolder`, `ProjectChatSummary`, `TodoTurnEnd`).
-- `TodoStore` (the board's actions, `shared`, `snapshot`, `current`, `change`, `update`, `file`, `locked`, `url`): the board,
+- `TodoStore` (the board's actions, among them `setReady` and `move(_:before:)` for a row's draft/ready capsule and drag, `shared`, `snapshot`, `current`, `change`, `update`, `file`, `locked`, `url`): the board,
   the scheduler's users and `Discussion` (`workers(room:)`, delete and disconnect).
 - `TodoScheduler` (`init(chats:store:)`, `start`, `startNow`, `wake`, `tick`, `recover`, `closeClocks`, `cancel`, `crew`, `lock`,
   `waiting`, `nextCheck`, `editing`, `question`, `instruction`, `threshold`, `maxAttempts`) and `TodoChats`, `TodoPhoto`,

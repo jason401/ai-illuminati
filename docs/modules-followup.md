@@ -156,3 +156,135 @@ T1 판정 "진행"(38.8%)에 따라 했다. 2026-11-13, 시작 HEAD `2d21509`, �
 
 남는 약 180 s는 모듈 빌드, 앱 테스트 컴파일, 맨 위 수준 검사, S1–S3라서 선택으로 줄지 않는다(T1 예상과 같음).
 부분 실행(34개, 8개, 5개, 1개)이 모두 통과해, 고른 묶음이 앞 테스트의 상태에 기대지 않음도 확인했다.
+
+## T3 Chat 조사
+AIChat에서 아래쪽 "기록·저장 층"을 새 모듈(가칭 `AIChatRecords`)로 뗄 수 있는지 판정한다. 2026-11-13, HEAD
+`22c0d52`, 시작할 때 작업 트리와 index 깨끗함. 실제 코드는 바꾸지 않았다. `/tmp` 복사본(`git archive HEAD`)에서
+옮겨 보고 컴파일하고 테스트한 뒤 복사본은 지웠다.
+
+### 지금 크기 (다시 잼)
+- Swift 전체(`app/**/*.swift`) 31,874줄, AIChat 13,512줄(42.4%). 계획 때 값은 31,576줄, 13,299줄(42%)이었다.
+- AIChat 안의 `extension Discussion`: 19개 파일, 24곳. 계획 때와 같다(run_mode2 C0 표와도 같음).
+
+### 1차 시도: 후보 8개 전부 → NO-GO
+| 파일 | 줄 | 위쪽(Discussion·Route·화면·도구)을 참조하는 곳 |
+|---|---:|---|
+| ChatRecords.swift | 402 | 직접 참조는 없음. 다만 `ChatTurn`·`Conversation`을 위쪽이 extension으로 넓힌다(아래). 의존: AISpaces(`SpaceDraftNote`), AIProjects(`WorkStep`) |
+| ChatValues.swift | 203 | `SyncSnapshot.turns: [ChatTurn]`, `ChatImage.url`이 `ChatStore.dir` 사용 |
+| ChatStorage.swift | 151 | `StorageLink`(chat_storage 도구)가 `ChatLink.shared.conversations()`, `ChatLink.allowed`, `toolFailure` 사용 |
+| DeviceSync.swift | 545 | `start(discussion: Discussion)`(112행), `Discussion.modernModes`(173), `Discussion.loadState`/`loadStateTurn`(254), `Conversation.isEnterprise`(128, Enterprise.swift), `extension Discussion` 1곳(429–534) |
+| Memory.swift | 228 | `ChatLink.day`(143), `ChatLink.shared.conversations()`(201), `Conversation.isEnterprise`(183) |
+| ChatNotes.swift | 74 | 없음. 다만 ChatWindow.swift(2466, 2668)와 Solo.swift(836)가 내부 멤버(`shared`, `flush`, `open`, `text`, `rule`, `current`)를 씀 |
+| RoomDocuments.swift | 117 | `extension Discussion` 1곳(42–117, `ProjectProcess.inspect` 포함) |
+| CollabLog.swift | 132 | 없음 |
+| 합계 | 1,852 | |
+
+막힌 이유:
+- **G4**: `ChatTurn`과 `Conversation`이 새 모듈로 가면 위쪽에 이미 있는 extension 4곳이 "다른 모듈 타입의 extension"이
+  된다. Route.swift:44 `ChatTurn.routeChoice`(`RouteChoice`, Route 쪽 타입), Solo.swift:65 `ChatTurn.Column`/`columns`,
+  ChatTools.swift:164 `Conversation.projectSummary`, Enterprise.swift:23 `Conversation.isEnterprise`/`isPersonalLocked`/
+  `isProjectChat`. 앞의 둘은 위쪽 타입을 쓰므로 아래로 내릴 수 없고, 함수로 바꾸면 그것을 쓰는 ChatWindow.swift
+  (260, 533, 2171 `turn.routeChoice`, 3081 `turn.columns`)를 고쳐야 한다. 세 파일 제외 조건과 충돌한다.
+- `ChatTurn`/`Conversation`이 남으면 그것에 기대는 DeviceSync, Memory, `SyncSnapshot`도 남아야 한다.
+- DeviceSync는 Discussion을 네 군데 부른다. `start`는 클로저 두 개로 주입하면 끊을 수 있지만(복사본에서 확인), 나머지는
+  Discussion의 정적 상태(`modernModes`, 상태 파일 경로)를 옮기거나 공개해야 한다.
+- 이게 풀리면 가능: (1) 위 4개 extension을 Chat 쪽 함수나 Chat 쪽 타입의 멤버로 바꾸는 별도 작업. 그림 draft TODO가
+  끝나 ChatWindow.swift를 고칠 수 있을 때. (2) `Discussion.modernModes`, `stateFile`/`stateTurnFile`/`loadState`를
+  기록 층의 경로 타입으로 내리는 작업. 그 뒤 ChatRecords, DeviceSync, Memory, `SyncSnapshot`을 다시 본다.
+
+### 2차 시도: 줄인 목록 → GO (조건: 사용자 승인)
+`ChatTurn`/`Conversation`/`ChatStore`와 Discussion에 기대지 않는 부분만 옮겼다. 위쪽에 기대는 조각은 AIChat에 남겼다.
+`/tmp` 복사본에서 모듈 빌드, 앱 `app/macos/*.swift` 타입 검사, 앱 테스트 컴파일, 계약 8개, 앱 테스트 57개
+(`▶` 57개 모두, exit 0)가 통과했다. run_mode2 1단계의 C0·I 파이썬 검사(`extension Discussion` 24곳 포함)와
+G1, G4(경고 0), G5도 통과했다. 실제 `accounts.json` 해시는 그대로였다. 새 모듈이라서 생기는 G2·G6·G7 실패
+(계약·boundary·API 스냅숏 없음, 문서에 모듈 없음, 그래프 해시)는 T4의 할 일이다(아래).
+
+옮길 파일 (새 모듈 `app/modules/AIChatRecords/`):
+| 새 모듈 파일 | 줄 | 내용 | AIChat에 남는 것 |
+|---|---:|---|---|
+| ChatValues.swift | 168 | `ChatImage`, `ImageStore`, `RoomDocument`, `MaterialUnit`, `CollaborationTask`, `VoteBallot`, `ChatRoute`, `MeetingLink`, `SyncOrigin`, `RemoteChat` | `SyncSnapshot`(turns를 가짐) → 새 파일 `AIChat/SyncSnapshot.swift`(38줄), 내용은 그대로 |
+| CollabLog.swift | 139 | 전부(+ `CollabEvent` 공개 init 7줄) | 없음 |
+| ChatStorage.swift | 116 | `ChatStorage`(크기 보고) | `StorageLink` → 새 파일 `AIChat/ChatStorageTool.swift`(38줄) |
+| RoomDocumentFiles.swift | 40 | `RoomDocuments` enum(`directory`, `keepDropped`, `read`, `extensions`) | `extension Discussion` → `AIChat/RoomDocuments.swift`(82줄). 파일 이름을 그대로 둬야 run_mode2 C0 표(`'RoomDocuments': 'a'`)가 바뀌지 않는다 |
+| ChatPaths.swift (새) | 6 | `public enum ChatPaths { public static let dir = AccountStore.supportDir + "/chats" }` | `ChatStore.dir = ChatPaths.dir` |
+| 합계 | 469 | AIChat 13,512 → 13,068줄(3.3% 감소). 새 모듈 469줄 | |
+
+남기는 것: ChatRecords, DeviceSync, Memory, ChatNotes(ChatWindow.swift가 내부 멤버를 씀; 옮기면 클래스와 멤버 6개 이상을
+공개해야 함).
+
+의존 방향:
+- `AIChatRecords`: AIAccounts, AILocalization, AIRuntime, AIWorkspace. AIRuntime은 ChatStorage의
+  `NativeSessions.directory` 때문이고(계획의 "Accounts, Localization, 필요하면 Workspace"보다 하나 더), AIWorkspace는
+  `DiskUsage` 때문이다. Workspace가 이미 Runtime에 기대므로 새 화살표가 순환을 만들지 않는다.
+- `AIChat`: 지금 의존 + AIChatRecords. 위쪽(Discussion, Route, 화면, ChatLink)을 참조하는 곳은 새 모듈에 남지 않는다
+  (새 모듈은 AIChat 없이 컴파일됨). 주입은 필요 없다. `ChatStore.dir`이 `ChatPaths.dir`을 그대로 넘겨받을 뿐이다.
+
+새로 public으로 여는 심볼 (컴파일러가 요구한 것만, 8개):
+| 심볼 | 이유 | 소비자 |
+|---|---|---|
+| `ChatPaths`, `ChatPaths.dir` | ChatStore가 위에 남아 채팅 폴더 경로를 아래에서 받아야 함. 값은 같은 식 | AIChat/ChatRecords.swift(`ChatStore.dir`) |
+| `RoomDocuments.extensions` | 자료 읽기가 붙일 수 있는 확장자를 봄 | AIChat/MaterialReader.swift:35 |
+| `RoomDocuments.keepDropped` | 채팅 창에 끌어 놓은 파일을 보관 | AIChat/ChatWindow.swift:2993 (파일은 안 고침) |
+| `ChatStorage.describe` | chat_storage 도구(`StorageLink`)가 위에 남음 | AIChat/ChatStorageTool.swift |
+| `CollabEvent.init(at:kind:chat:…:priorCalls:)` | Swift의 멤버별 init은 internal이라 다른 모듈에서 못 만듦. 필드는 계속 internal | AIChat/Peer.swift(ask_ai, 회의, 리뷰, 결과, 요청 기록) |
+| `CollabLog.add` | 기록 한 줄 추가 | AIChat/Peer.swift |
+| `CollabLog.smallTalk(_:)` | 인사·감사 메시지 판정 | AIChat/Peer.swift |
+| `CollabLog.asksOthers(_:)` | "다른 AI에게 물어봐" 요청 판정 | AIChat/Peer.swift |
+나머지 옮긴 타입은 이미 public이었다(C1a, C1b의 이유 그대로). 내부 상태는 열지 않는다.
+
+그 밖의 확인:
+- 다른 모듈 타입에 대한 extension: 새로 생기지 않음. 옮긴 타입을 넓히는 extension은 AIChat과 App, 테스트 어디에도 없고,
+  G4 경고 0. `module_extensions.txt`는 바꾸지 않는다.
+- 저장 형식: 바뀌지 않음. 옮긴 `Codable` 타입의 필드·이름은 그대로다(`CollabEvent`에 init을 더해도 합성된
+  `init(from:)`은 같음). 경로는 같은 식이다: `chats/`, `<id>.assets/<picture>.png`, `<id>.documents`, collab 로그 파일.
+  chat 계약(옛 채팅 fixture를 읽고 같은 JSON으로 저장), testCollabLog, testDeviceSync, testChatLinks와 mode2 첨부·저장
+  테스트가 통과했다.
+- ChatWindow.swift, Markdown.swift, Pictures.swift: 옮기지도 고치지도 않는다. 셋 다 옮긴 타입을 쓴다(`ChatImage` 13·1·1회,
+  `ImageStore` 1·0·3회, `RemoteChat`, `MeetingLink`, `VoteBallot`, `RoomDocuments`). Swift import는 파일마다라서,
+  ChatApp.swift 한 곳에 `@_exported import AIChatRecords`를 두어 모듈 전체와 App이 보게 했다. 이 방법 없이는 세 파일에
+  `import` 한 줄씩을 넣어야 한다. `@_exported`는 밑줄 속성(비공식)이지만 G1이 통과했고, App이 보는 이름은 전과 같다.
+  T4가 이 방법을 못 쓰면 그림 draft TODO가 끝난 뒤 import 세 줄로 대신한다.
+- 영향받는 MODULES.md 약속: "AIChat, step C1a" 표의 "Pictures at <id>.assets…"(이제 `ChatImage`가 AIChatRecords에 있음)와
+  "Public names and why" 목록, C1b의 "Settings' tabs: `ChatStorage`…, `CollabMode`/`CollabLog`", "DriveLink:
+  `RoomDocuments.directory`", Disk sizes 줄(`ChatStorage (report)`). 약속 내용은 같고 사는 모듈만 바뀐다.
+- 영향받는 테스트: `tools/tests/collab_log.swift`와 `mode2.swift`에 `@testable import AIChatRecords` 한 줄씩 추가.
+  collab_log는 `CollabEvent` 필드, `CollabLog.file`/`maxBytes`/`Summary`를 읽고, mode2는 `RoomDocuments.read`를 쓴다.
+  그 밖의 테스트 파일은 그대로 컴파일된다.
+
+### 판정
+- 후보 8개 전부: **NO-GO**(G4 4곳, ChatWindow.swift 수정 필요, DeviceSync의 Discussion 참조).
+- 줄인 목록(ChatValues에서 `SyncSnapshot`을 뺀 것, CollabLog, ChatStorage의 보고 부분, RoomDocuments enum, 새 ChatPaths):
+  **GO**. 순환 없음, 위쪽 참조 없음, 저장 형식 그대로, 새 extension 없음, 새 public 8개는 모두 소비자와 이유가 있음,
+  세 파일은 옮기거나 고치지 않음.
+- 조건: 새 모듈과 그래프 변경은 AGENTS.md상 **사용자 승인 사항**이다(`tools/new_module.sh`, `module_graph.txt`,
+  `module_guard.sha256`). T4는 승인 없이 시작하지 않는다. 사용자가 자리에 없으면 task_ask로 멈춘다.
+- 참고: 줄어드는 양은 AIChat의 3.3%(444줄)로 작다. 얻는 것은 크기보다 "기록 값과 로그는 Discussion을 모른다"는 경계다.
+  승인 여부는 이 이득이 새 모듈 하나(문서·계약·스냅숏 유지비)만큼 값어치가 있는지로 정하면 된다.
+
+### T4 작업 목록 (GO, 승인 후 그대로 따름)
+1. `zsh tools/new_module.sh AIChatRecords AIAccounts AILocalization AIRuntime AIWorkspace`. 만들어진 첫 파일은 지우거나
+   ChatPaths.swift로 쓴다.
+2. 파일 이동(`git mv`로 기록 유지):
+   - `AIChat/CollabLog.swift` → `AIChatRecords/CollabLog.swift`. `CollabEvent`에 public init 추가, `add`/`smallTalk`/`asksOthers`를 public으로.
+   - `AIChat/ChatValues.swift` → `AIChatRecords/ChatValues.swift`. `SyncSnapshot` 블록은 `AIChat/SyncSnapshot.swift`로
+     (import Foundation, AIAccounts). `ChatStore.dir` → `ChatPaths.dir`.
+   - `AIChat/ChatStorage.swift` → `AIChatRecords/ChatStorage.swift`. `StorageLink`는 `AIChat/ChatStorageTool.swift`로
+     (import Foundation, AIWorkspace). `describe`를 public으로. `ChatStore.dir` → `ChatPaths.dir`.
+   - `AIChat/RoomDocuments.swift`의 `enum RoomDocuments`(1–41행)는 `AIChatRecords/RoomDocumentFiles.swift`로
+     (`import AIProjects` 뺌). `keepDropped`/`extensions`를 public으로. `extension Discussion` 부분은
+     `AIChat/RoomDocuments.swift`에 그대로 남긴다.
+   - 새 `AIChatRecords/ChatPaths.swift`. `AIChat/ChatRecords.swift`의 `ChatStore.dir = ChatPaths.dir`.
+3. 연결: `AIChat/dependencies`에 `AIChatRecords`. `AIChat/ChatApp.swift`에 `@_exported import AIChatRecords`.
+   다른 AIChat 파일과 App 파일, 세 파일은 고치지 않는다.
+4. 검사 장치(승인 범위): `tools/module_graph.txt`에 `AIChatRecords: AIAccounts AILocalization AIRuntime AIWorkspace`, AIChat 줄에
+   `AIChatRecords`. `zsh tools/check_modules.sh guard > tools/module_guard.sha256`.
+5. 모듈 문서·계약(G2, G6): `AIChatRecords/boundary`(예: `_ = CollabLog.maxBytes<TAB>maxBytes`, `_ = RoomDocuments.read<TAB>read`처럼
+   internal로 남는 이름), `tools/tests/chatrecords_contract.swift`(사진 경로 `<id>.assets/<id>.png`, 나쁜 그림 거절,
+   collab 로그 크기 제한과 요약, 문서 폴더 경로, 크기 보고의 하드링크 한 번 세기), `zsh tools/check_modules.sh snapshot`으로
+   `docs/api/AIChatRecords.txt`·`docs/api/AIChat.txt` 갱신, AGENTS.md "Module rules"·CLAUDE.md Layout·MODULES.md "Module map"에
+   한 줄/절, 위 public 8개의 이유를 MODULES.md에, C1a·C1b의 해당 줄을 새 모듈로 옮겨 적기,
+   `tools/test_map.txt`에 `app/modules/AIChatRecords/	ALL AIChat(ALL)이 모든 채팅 기록 값을 이것으로 읽고 씀`.
+6. 테스트 파일: `collab_log.swift`, `mode2.swift`에 `@testable import AIChatRecords`.
+7. 확인: `zsh tools/check_modules.sh`(fast, G4 경고 0), 전체 `zsh tools/tests/run_mode2.sh`(`▶` 57개가
+   `docs/modules-followup-t1-tests.txt`와 같고 실제 accounts.json 그대로), `zsh tools/tests/render_chat.sh`. 저장 형식은
+   chat 계약 fixture 비교와 testCollabLog로 본다.

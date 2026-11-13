@@ -320,8 +320,8 @@ G1, G4(경고 0), G5도 통과했다. 실제 `accounts.json` 해시는 그대로
   `_ = RoomDocuments.read`로 고침, 검사는 안 바꿈). 2번째는 `testRuntimeThroughApp` 프로세스 그룹 검사에서 RC 133.
   T1 때 같은 HEAD에서도 난 샌드박스 쪽 흔들림으로 보인다(확인은 안 됨).
   **절차 위반**: TODO는 "두 번 실패하면 task_ask로 멈춘다"였고 원인 조건은 없었다. 여기서 멈췄어야 했는데 3번째를
-  돌리고 `cc8d7db`을 커밋·main에 푸시했다(되돌리지 않음: 푸시된 기록은 고치지 않는다). 사용자 확인 전까지 T4는 완료가
-  아니라 확인 대기다. 3번째 exit 0: 계약 9개, S1-S3, `▶` 57개가
+  돌리고 `cc8d7db`을 커밋·main에 푸시했다(되돌리지 않음: 푸시된 기록은 고치지 않는다). 2026-11-13 사용자가 그대로
+  받기로 확인해 T4는 완료다. 3번째 exit 0: 계약 9개, S1-S3, `▶` 57개가
   `docs/modules-followup-t1-tests.txt`와 같은 순서, 실제 accounts.json 그대로. `render_chat.sh`도 exit 0.
 - 저장 형식: chat 계약(옛 fixture 3개를 읽고 같은 JSON으로 저장), 새 계약의 옛 collab 줄 바이트 비교, testCollabLog,
   testDeviceSync, testChatLinks, mode2 첨부·저장 통과.

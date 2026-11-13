@@ -318,7 +318,7 @@ public struct Conversation: Identifiable, Codable {
 }
 
 public enum ChatStore {
-    public static let dir = AccountStore.supportDir + "/chats"
+    public static let dir = ChatPaths.dir
 
     // What else keeps a chat's data or hears of its changes, set once by the app before the first chat loads
     // (`ChatLinksApp.connect`): the chat side calls none of them by name. Unset (a program that did not connect):

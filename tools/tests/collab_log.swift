@@ -3,6 +3,7 @@ import AIAccounts
 import AILocalization
 @testable import AIRuntime
 import AIWorkspace
+@testable import AIChatRecords
 @testable import AIChat
 
 // The collaboration setting (off / show and go / on its own) and the collaboration log (CollabLog.swift).

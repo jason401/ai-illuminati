@@ -8,6 +8,7 @@ app/modules/AIAccounts/	ALL every part stores data through it (test home, accoun
 app/modules/AILocalization/	ALL nearly every file uses L()
 app/modules/AIRuntime/	ALL every chat and project run starts a CLI through it (cancellation, sessions, process groups)
 app/modules/AIWorkspace/	ALL folder rules and AutoGuard are under every tool call; a missed test would weaken isolation
+app/modules/AIChatRecords/	ALL AIChat (all of it) reads and writes every chat record value through it
 app/modules/AIChat/	ALL Discussion and ChatStore are under almost every app test (49 of 57)
 app/modules/AISpaces/	testAskAI testMeetingTool testSpace testSpaceLibrary testSpaceEnterpriseLock space_web
 app/modules/AIProjects/	testToolHub testRunConditions testChatThroughCLI testProjectWork testProjectCreate testProjectHandoff testDocumentsProject testDisconnectProjectFolder testStartTurn testTodoStore testTodoScheduler testTodoOrder testSidebarProjects testFinishedTodoCleanup testMoveChatToProject testProjectInfo testGitBranches testTodoAttachments testTodoPause testTodoEdit testTodoMixedOrder testTodoStartRace testTodoAddTool testTodoEditTool testTodoCrew testTodoTime testProjectSnapshot testFullAuto testWorkTiming testPeerReview testPickedRoute testAutoMeeting testEnterpriseMarks testChatMarkdown

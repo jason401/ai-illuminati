@@ -289,3 +289,42 @@ G1, G4(경고 0), G5도 통과했다. 실제 `accounts.json` 해시는 그대로
 7. 확인: `zsh tools/check_modules.sh`(fast, G4 경고 0), 전체 `zsh tools/tests/run_mode2.sh`(`▶` 57개가
    `docs/modules-followup-t1-tests.txt`와 같고 실제 accounts.json 그대로), `zsh tools/tests/render_chat.sh`. 저장 형식은
    chat 계약 fixture 비교와 testCollabLog로 본다.
+
+## T4 Chat 기록 층 분리
+2026-11-13. 시작 HEAD `09fdc18`, 작업 트리와 index 깨끗함. T3 판정은 줄인 목록 GO, 조건은 사용자 승인이었다. 이번 TODO가
+"그래프와 검사 장치 변경은 미리 승인"이라고 적었으므로 승인된 것으로 보고 T3 작업 목록 그대로만 했다.
+
+### 한 것
+- `zsh tools/new_module.sh AIChatRecords AIAccounts AILocalization AIRuntime AIWorkspace`. 첫 파일 `AIChatRecords.swift`는 지우고
+  그 한 줄 설명은 `ChatPaths.swift`에 옮겼다.
+- `git mv`: CollabLog, ChatValues, ChatStorage → `AIChatRecords/`. 남긴 조각: `SyncSnapshot` → `AIChat/SyncSnapshot.swift`,
+  `StorageLink` → `AIChat/ChatStorageTool.swift`, `enum RoomDocuments` → `AIChatRecords/RoomDocumentFiles.swift`
+  (`extension Discussion`은 `AIChat/RoomDocuments.swift`에 그대로). 새 `ChatPaths.dir`, `ChatStore.dir = ChatPaths.dir`.
+  본문은 `ChatStore.dir` → `ChatPaths.dir`, `public` 붙이기, `CollabEvent` public init 말고는 그대로.
+- 새 public은 T3 표의 8개(9개 이름: `ChatPaths`, `ChatPaths.dir`, `RoomDocuments.extensions`/`keepDropped`,
+  `ChatStorage.describe`, `CollabEvent.init(…)`, `CollabLog.add`/`smallTalk`/`asksOthers`)뿐. 이유는 MODULES.md "AIChatRecords".
+- 연결: `AIChat/dependencies`에 AIChatRecords, `AIChat/ChatApp.swift`에 `@_exported import AIChatRecords`(MODULES.md
+  Exceptions에 이유). ChatWindow.swift, Markdown.swift, Pictures.swift와 App 파일은 고치지 않았다.
+- 승인 범위 검사 장치: `module_graph.txt`(새 줄 + AIChat 줄), `module_guard.sha256`(graph 해시 한 줄만 바뀜).
+- 계약 `tools/tests/chatrecords_contract.swift`(경로, 그림 거절, 문서 폴더, 옛 collab 줄 그대로 다시 쓰기, 2 MB 반 자르기,
+  요약, 하드링크 한 번), boundary 4줄(`CollabLog.maxBytes`, `CollabLog.file`, `RoomDocuments.read`, `Summary.asks`),
+  `docs/api/AIChatRecords.txt`(138줄) 새로, `docs/api/AIChat.txt`는 옮긴 129줄이 빠짐(더해진 줄 없음).
+- 문서: AGENTS.md 모듈 목록(절 1,956자), MODULES.md(지도 표, 화살표, 빌드 설명, boundary 목록, 새 절, C1a·C1b의 옮긴
+  이름 표시, Exceptions, Records), `tools/test_map.txt` 한 줄(ALL), 테스트 `collab_log.swift`·`mode2.swift`에
+  `@testable import AIChatRecords`. CLAUDE.md Layout도 한 줄 고쳤다(Git 제외 파일이라 커밋되지 않음).
+- 크기: AIChat 13,512 → 13,067줄, AIChatRecords 465줄.
+
+### 검증
+- `zsh tools/check_modules.sh`: G1-G7 통과, G4 경고 없음.
+- 전체 `run_mode2.sh`(`project_run test`): 1번째는 S2 실패(내 boundary 줄이 Foundation 없이 `URL`을 씀; 줄을
+  `_ = RoomDocuments.read`로 고침, 검사는 안 바꿈). 2번째는 `testRuntimeThroughApp` 프로세스 그룹 검사에서 RC 133.
+  T1 때 같은 HEAD에서도 난 샌드박스 쪽 흔들림이고 바꾼 코드와 닿지 않는다. 3번째 exit 0: 계약 9개, S1-S3, `▶` 57개가
+  `docs/modules-followup-t1-tests.txt`와 같은 순서, 실제 accounts.json 그대로. `render_chat.sh`도 exit 0.
+- 저장 형식: chat 계약(옛 fixture 3개를 읽고 같은 JSON으로 저장), 새 계약의 옛 collab 줄 바이트 비교, testCollabLog,
+  testDeviceSync, testChatLinks, mode2 첨부·저장 통과.
+- 반증(`/tmp` 복사본, 하나씩, 끝나고 지움):
+  | 바꾼 것 | 기대 | 결과 |
+  |---|---|---|
+  | `AIChatRecords/dependencies`에 AIChat | G1 실패 | 실패: forbidden dependency, unused, cycle |
+  | `CollabLog.maxBytes`를 public | S1 실패 | 실패: `+CollabLog.maxBytes` 차이(S2도 실패) |
+  | App 파일(ChatLinksApp.swift)에서 `CollabLog.maxBytes` | 컴파일 실패 | "'maxBytes' is inaccessible due to 'internal' protection level" |

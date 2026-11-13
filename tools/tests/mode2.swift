@@ -7,6 +7,7 @@ import AISpaces
 @testable import AIRuntime
 @testable import AIWorkspace
 import AIProjects
+@testable import AIChatRecords
 @testable import AIChat
 @testable import AIIntegrations
 

@@ -27,7 +27,8 @@ Each `app/modules/<Name>/` is a Swift module; others see only its `public` names
 - `AIRuntime` runs the CLIs, sessions, usage, local model; decides no permission → Accounts, Localization
 - `AIWorkspace` folder rules, backups/Undo, AutoGuard (whole), tool gateway types → + Runtime
 - `AIProjects` Git work, approvals, TODO board and scheduler, project info → + Workspace
-- `AIChat` chats, Discussion, routing, meetings, ask_ai, chat window → + Projects, Spaces
+- `AIChatRecords` chat values, pictures, dropped files, collab log, disk report → Accounts, Localization, Runtime, Workspace
+- `AIChat` chats, Discussion, routing, meetings, ask_ai, chat window → + Projects, Spaces, ChatRecords
 - `AIIntegrations` Google login/Drive, outside MCP, AI Face link → Accounts, Localization, Workspace (Runtime
   only through Workspace's interface)
 - App (`app/macos`): screens, settings, app start, connecting modules; only it imports Integrations.

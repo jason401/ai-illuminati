@@ -9,5 +9,6 @@ AISpaces: AIAccounts AILocalization
 AIRuntime: AIAccounts AILocalization
 AIWorkspace: AIAccounts AILocalization AIRuntime
 AIProjects: AIAccounts AILocalization AIRuntime AIWorkspace
-AIChat: AIAccounts AILocalization AIRuntime AIWorkspace AIProjects AISpaces
+AIChatRecords: AIAccounts AILocalization AIRuntime AIWorkspace
+AIChat: AIAccounts AILocalization AIRuntime AIWorkspace AIProjects AISpaces AIChatRecords
 AIIntegrations: AIAccounts AILocalization AIRuntime* AIWorkspace

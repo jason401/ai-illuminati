@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+@_exported import AIChatRecords
 import AIAccounts
 import AIRuntime
 import AIWorkspace

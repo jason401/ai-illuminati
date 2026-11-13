@@ -63,13 +63,6 @@ ChatConfiguration.soloAccountID | var soloAccountID: String?
 ChatConfiguration.speechLength | var speechLength: Int?
 ChatConfiguration.turnsPerAI | var turnsPerAI: Int?
 ChatConfiguration.voteSkippedIDs | var voteSkippedIDs: [String]?
-ChatImage | struct ChatImage
-ChatImage.conversationID | var conversationID: UUID
-ChatImage.id | var id: UUID
-ChatImage.init(from:) | init(from decoder: any Decoder) throws
-ChatImage.init(id:conversationID:name:) | init(id: UUID = UUID(), conversationID: UUID, name: String)
-ChatImage.name | var name: String
-ChatImage.url | var url: URL { get }
 ChatLink | final class ChatLink
 ChatLink.active | var active: Bool { get }
 ChatLink.call(_:_:context:) | func call(_ name: String, _ arguments: [String : Any], context: ToolContext) -> [String : Any]
@@ -78,10 +71,6 @@ ChatLink.day(_:) | static func day(_ date: Date) -> String
 ChatLink.shared | static let shared: ChatLink
 ChatLink.tools() | func tools() -> [[String : Any]]
 ChatLink.tools(context:) | func tools(context: ToolContext) -> [[String : Any]]
-ChatRoute | enum ChatRoute
-ChatRoute.init(rawValue:) | init?(rawValue: String)
-ChatRoute.opinion | case opinion
-ChatRoute.work | case work
 ChatSettings | protocol ChatSettings : ObservableObject
 ChatSettings.accounts | var accounts: [Account] { get }
 ChatSettings.activeSharedFolders | var activeSharedFolders: [String] { get }
@@ -97,32 +86,6 @@ ChatSettings.pausedSharedFolders | var pausedSharedFolders: Set<String> { get se
 ChatSettings.pictureMakers | var pictureMakers: [Account] { get }
 ChatSettings.sharedFolders | var sharedFolders: [String] { get set }
 ChatSettings.writableSharedFolders | var writableSharedFolders: Set<String> { get set }
-ChatStorage | enum ChatStorage
-ChatStorage.Kind | enum Kind
-ChatStorage.Kind.backups | case backups
-ChatStorage.Kind.chat | case chat
-ChatStorage.Kind.documents | case documents
-ChatStorage.Kind.init(rawValue:) | init?(rawValue: String)
-ChatStorage.Kind.pictures | case pictures
-ChatStorage.Kind.sessions | case sessions
-ChatStorage.Kind.title | var title: String { get }
-ChatStorage.Kind.work | case work
-ChatStorage.Report | struct Report
-ChatStorage.Report.date | var date: Date
-ChatStorage.Report.orphans | var orphans: [(url: URL, size: ChatStorage.Size)]
-ChatStorage.Report.rooms | var rooms: [ChatStorage.Room]
-ChatStorage.Report.total | var total: ChatStorage.Size
-ChatStorage.Room | struct Room
-ChatStorage.Room.backups | var backups: Int
-ChatStorage.Room.id | var id: UUID
-ChatStorage.Room.meetings | var meetings: Int
-ChatStorage.Room.parts | var parts: [ChatStorage.Kind : ChatStorage.Size]
-ChatStorage.Room.title | var title: String
-ChatStorage.Room.total | var total: ChatStorage.Size { get }
-ChatStorage.Size | typealias Size = DiskUsage.Size
-ChatStorage.format(_:) | static func format(_ bytes: Int64) -> String
-ChatStorage.items(_:) | static func items(_ room: UUID) -> [(ChatStorage.Kind, URL)]
-ChatStorage.report(_:only:) | static func report(_ chats: [(id: UUID, title: String, meetingOf: UUID?)], only: Set<UUID>? = nil) -> ChatStorage.Report
 ChatStore | enum ChatStore
 ChatStore.Links | struct Links
 ChatStore.Links.deleted | var deleted: (UUID) -> Void
@@ -213,40 +176,6 @@ ChatTurn.workspaceChanges | var workspaceChanges: [WorkspaceChange]?
 ChatWindow | final class ChatWindow
 ChatWindow.init() | init()
 ChatWindow.show(discussion:) | func show(discussion: Discussion)
-CollabEvent | struct CollabEvent
-CollabEvent.Kind | enum Kind
-CollabEvent.Kind.ask | case ask
-CollabEvent.Kind.init(rawValue:) | init?(rawValue: String)
-CollabEvent.Kind.meeting | case meeting
-CollabEvent.Kind.outcome | case outcome
-CollabEvent.Kind.request | case request
-CollabEvent.Kind.review | case review
-CollabEvent.Kind.reviewed | case reviewed
-CollabEvent.init(from:) | init(from decoder: any Decoder) throws
-CollabLog | enum CollabLog
-CollabLog.Summary | struct Summary
-CollabLog.events(since:) | static func events(since: Date = .distantPast) -> [CollabEvent]
-CollabLog.line(_:) | static func line(_ s: CollabLog.Summary) -> String
-CollabLog.summary(_:) | static func summary(_ events: [CollabEvent]) -> CollabLog.Summary
-CollabMode | enum CollabMode
-CollabMode.auto | case auto
-CollabMode.init(rawValue:) | init?(rawValue: String)
-CollabMode.notify | case notify
-CollabMode.off | case off
-CollabMode.summary | var summary: String { get }
-CollabMode.title | var title: String { get }
-CollaborationTask | struct CollaborationTask
-CollaborationTask.accountID | var accountID: String
-CollaborationTask.dependsOn | var dependsOn: [String]?
-CollaborationTask.expectedFiles | var expectedFiles: [String]?
-CollaborationTask.id | var id: UUID
-CollaborationTask.init(from:) | init(from decoder: any Decoder) throws
-CollaborationTask.init(id:title:accountID:state:output:planID:dependsOn:expectedFiles:outputDigest:) | init(id: UUID = UUID(), title: String, accountID: String, state: String = "queued", output: String? = nil, planID: String? = nil, dependsOn: [String]? = nil, expectedFiles: [String]? = nil, outputDigest: String? = nil)
-CollaborationTask.output | var output: String?
-CollaborationTask.outputDigest | var outputDigest: String?
-CollaborationTask.planID | var planID: String?
-CollaborationTask.state | var state: String
-CollaborationTask.title | var title: String
 ConveneLink | final class ConveneLink
 ConveneLink.active | var active: Bool { get }
 ConveneLink.call(_:_:context:) | func call(_ name: String, _ arguments: [String : Any], context: ToolContext) -> [String : Any]
@@ -343,25 +272,8 @@ Discussion.viewingBoard | @Published var viewingBoard: Bool { get set }
 Discussion.viewingRemote | @Published var viewingRemote: RemoteViewing? { get set }
 Enterprise | enum Enterprise
 Enterprise.permits(_:lock:) | static func permits(_ account: Account, lock: EnterpriseLock?) -> Bool
-ImageStore | enum ImageStore
-ImageStore.Failure | enum Failure
-ImageStore.Failure.invalid | case invalid
-ImageStore.importImage(_:name:conversationID:id:maxEdge:) | static func importImage(_ data: Data, name: String, conversationID: UUID, id: UUID = UUID(), maxEdge: Int = 1600) throws -> ChatImage
-ImageStore.remove(_:) | static func remove(_ item: ChatImage) throws
 MaterialReader | enum MaterialReader
 MaterialReader.read(_:room:) | static func read(_ source: URL, room: UUID) throws -> RoomDocument
-MaterialUnit | struct MaterialUnit
-MaterialUnit.id | var id: String
-MaterialUnit.images | var images: [String]
-MaterialUnit.init(from:) | init(from decoder: any Decoder) throws
-MaterialUnit.init(id:locator:text:images:) | init(id: String, locator: String, text: String, images: [String] = [])
-MaterialUnit.locator | var locator: String
-MaterialUnit.text | var text: String
-MeetingLink | struct MeetingLink
-MeetingLink.init(from:) | init(from decoder: any Decoder) throws
-MeetingLink.init(room:turn:) | init(room: UUID, turn: UUID)
-MeetingLink.room | var room: UUID
-MeetingLink.turn | var turn: UUID
 MemoryData | struct MemoryData
 MemoryData.autoSave | var autoSave: Bool
 MemoryData.enabled | var enabled: Bool
@@ -415,35 +327,9 @@ ProjectGroup.todoRooms | var todoRooms: [Conversation]
 ProjectLockSection | @MainActor struct ProjectLockSection
 ProjectLockSection.body | @MainActor var body: some View { get }
 ProjectLockSection.init(discussion:group:) | @MainActor init(discussion: Discussion, group: ProjectGroup)
-RemoteChat | struct RemoteChat
-RemoteChat.Status | enum Status
-RemoteChat.Status.downloading | case downloading
-RemoteChat.Status.newerVersion | case newerVersion
-RemoteChat.Status.ready | case ready
-RemoteChat.Status.unreadable | case unreadable
-RemoteChat.chat | var chat: UUID
-RemoteChat.device | var device: String
-RemoteChat.deviceName | var deviceName: String
-RemoteChat.file | var file: URL
-RemoteChat.id | var id: String { get }
-RemoteChat.init(device:deviceName:chat:title:updatedAt:school:status:file:) | init(device: String, deviceName: String, chat: UUID, title: String, updatedAt: Date? = nil, school: Bool, status: RemoteChat.Status, file: URL)
-RemoteChat.school | var school: Bool
-RemoteChat.status | var status: RemoteChat.Status
-RemoteChat.title | var title: String
-RemoteChat.updatedAt | var updatedAt: Date?
 RemoteDevice | struct RemoteDevice
 RemoteDevice.id | var id: String
 RemoteViewing | struct RemoteViewing
-RoomDocument | struct RoomDocument
-RoomDocument.id | var id: UUID
-RoomDocument.init(from:) | init(from decoder: any Decoder) throws
-RoomDocument.init(id:name:text:units:notice:) | init(id: UUID = UUID(), name: String, text: String, units: [MaterialUnit]? = nil, notice: String? = nil)
-RoomDocument.name | var name: String
-RoomDocument.notice | var notice: String?
-RoomDocument.text | var text: String
-RoomDocument.units | var units: [MaterialUnit]?
-RoomDocuments | enum RoomDocuments
-RoomDocuments.directory(_:) | static func directory(_ id: UUID) -> URL
 RouteSorter | enum RouteSorter
 RouteSorter.State | enum State
 RouteSorter.State.checking | case checking
@@ -495,15 +381,6 @@ StorageLink.call(_:_:context:) | func call(_ name: String, _ arguments: [String 
 StorageLink.shared | static let shared: StorageLink
 StorageLink.tools() | func tools() -> [[String : Any]]
 StorageLink.tools(context:) | func tools(context: ToolContext) -> [[String : Any]]
-SyncOrigin | struct SyncOrigin
-SyncOrigin.chat | var chat: UUID
-SyncOrigin.contentAt | var contentAt: Date
-SyncOrigin.device | var device: String
-SyncOrigin.deviceName | var deviceName: String
-SyncOrigin.importedAt | var importedAt: Date
-SyncOrigin.init(device:deviceName:chat:lastTurn:contentAt:importedAt:) | init(device: String, deviceName: String, chat: UUID, lastTurn: UUID? = nil, contentAt: Date, importedAt: Date)
-SyncOrigin.init(from:) | init(from decoder: any Decoder) throws
-SyncOrigin.lastTurn | var lastTurn: UUID?
 SyncSnapshot | struct SyncSnapshot
 SyncSnapshot.createdAt | var createdAt: Date
 SyncSnapshot.enterpriseLock | var enterpriseLock: EnterpriseLock?
@@ -522,12 +399,6 @@ SyncSnapshot.title | var title: String
 SyncSnapshot.turns | var turns: [ChatTurn]
 SyncSnapshot.updatedAt | var updatedAt: Date
 SyncSnapshot.version | static let version: Int
-VoteBallot | struct VoteBallot
-VoteBallot.choice | var choice: Int?
-VoteBallot.init(from:) | init(from decoder: any Decoder) throws
-VoteBallot.init(speaker:choice:reason:) | init(speaker: String, choice: Int? = nil, reason: String)
-VoteBallot.reason | var reason: String
-VoteBallot.speaker | var speaker: String
 extension AIAccounts: Account.Provider.color | var color: Color { get }
 extension AIProjects: TodoItem.State.color | var color: Color { get }
 extension AIProjects: TodoItem.State.title | var title: String { get }

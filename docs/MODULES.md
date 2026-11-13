@@ -67,6 +67,9 @@ below cover it.
   dependency's public interface names.
 - S2: `AILocalization` has no internal name (only `L()` and `AppLanguage`, all public): its boundary file says `# none:`.
 - G2: `AILocalization` had no contract test; step M added `localization_contract.swift` rather than an exception.
+- `@_exported import AIChatRecords` in `AIChat/ChatApp.swift` (T4): ChatWindow.swift, Markdown.swift and Pictures.swift use the
+  moved values but were not to be edited, and Swift imports are per file. AIChat and App see the same names as before;
+  G1 still checks the edge. Without it: one `import AIChatRecords` line in each file that names a moved type.
 
 ## Module map
 
@@ -101,15 +104,17 @@ entries per call); those branches were not changed.
 | AIRuntime | CLI execution, Stop, sessions, streams, usage, local models | AIAccounts, AILocalization |
 | AIWorkspace | folder permissions, documents bridge, backup/Undo, whole AutoGuard, tool types, disk sizes | AIAccounts, AILocalization, AIRuntime |
 | AIProjects | Git work, repository locks, approvals, TODO storage/scheduling, project info/creation; Git/Plan/Task/TodoAdd/ProjectMaker providers | AIAccounts, AILocalization, AIRuntime, AIWorkspace |
-| AIChat | chat records/state/storage, routing, meetings/reviews, ask_ai, attachments, DeviceSync, chat/Space views; Peer/Convene/Chat/Memory/Storage providers | AIAccounts, AILocalization, AIRuntime, AIWorkspace, AIProjects, AISpaces |
+| AIChatRecords | chat record values (pictures, documents, sync origins…), the chats/ path, dropped files, collab log, disk report; no providers; knows no Discussion | AIAccounts, AILocalization, AIRuntime, AIWorkspace |
+| AIChat | chat records/state/storage, routing, meetings/reviews, ask_ai, attachments, DeviceSync, chat/Space views; Peer/Convene/Chat/Memory/Storage providers | AIAccounts, AILocalization, AIRuntime, AIWorkspace, AIProjects, AISpaces, AIChatRecords |
 | AIIntegrations | Google auth/Drive gate, external MCP connections, AI Face; no providers | AIAccounts, AILocalization, AIRuntime (interface only), AIWorkspace |
-| App (app/macos) | startup, menu/settings, screens, update/login, wiring and explicit 13-provider list; Face/Drive/ExternalMCP conformances | all eight modules |
+| App (app/macos) | startup, menu/settings, screens, update/login, wiring and explicit 13-provider list; Face/Drive/ExternalMCP conformances | all eight modules (AIChatRecords through AIChat's `@_exported import`) |
 
 Arrows mean imports, from caller to dependency (all direct edges are in the table):
 
 ```text
 App            -> all eight modules
-AIChat         -> AIProjects, AISpaces, AIWorkspace, AIRuntime, AIAccounts, AILocalization
+AIChat         -> AIChatRecords, AIProjects, AISpaces, AIWorkspace, AIRuntime, AIAccounts, AILocalization
+AIChatRecords  -> AIWorkspace, AIRuntime, AIAccounts, AILocalization
 AIProjects     -> AIWorkspace, AIRuntime, AIAccounts, AILocalization
 AIIntegrations -> AIWorkspace, AIRuntime, AIAccounts, AILocalization
 AIWorkspace    -> AIRuntime, AIAccounts, AILocalization
@@ -184,7 +189,7 @@ A does not relocate it or alter AutoGuard, permissions, signing, install or rele
   edges allowed by `tools/module_graph.txt` (G1). They are built
   first, and the compiler sees only theirs, so an import of any other module fails the build. Now
   `AISpaces` → `AIAccounts`, `AILocalization`; `AIRuntime` → `AIAccounts`, `AILocalization`; `AIWorkspace` → `AIAccounts`,
-  `AILocalization`, `AIRuntime`; `AIProjects` → `AIAccounts`, `AILocalization`, `AIRuntime`, `AIWorkspace`; `AIChat` → those five and `AISpaces` (Chat uses
+  `AILocalization`, `AIRuntime`; `AIProjects` → `AIAccounts`, `AILocalization`, `AIRuntime`, `AIWorkspace`; `AIChatRecords` → `AIAccounts`, `AILocalization`, `AIRuntime`, `AIWorkspace`; `AIChat` → those five, `AISpaces` and `AIChatRecords` (Chat uses
   Projects, never the other way: Projects names no chat type since P0); `AIIntegrations` → `AIAccounts`, `AILocalization`,
   `AIRuntime` (only because `AIWorkspace`'s interface names it), `AIWorkspace` (`WorkspaceRoot`: Drive's folders), used by the app only; the other two use none. No circles (the script refuses them).
 - Every `swiftc` that compiles app files runs it first and adds `-I <out> <out>/lib*.a`:
@@ -197,7 +202,7 @@ A does not relocate it or alter AutoGuard, permissions, signing, install or rele
   outside (`tools/tests/<part>_contract.swift`, public names only), and its `boundary` file checks that internal names
   (`AccountStore.place`, `SpaceStore.setting`, `SpaceAssets.served`, `Answerer.chatDir`, `Answerer.launchForTests`,
   `NativeSessions.split`, `CloudModels.apply`, `WorkspaceBackup.chats`/`keepPerChat`, the whole `AutoGuard` type,
-  `TodoScheduler.retryDelay`, `ProjectWork.leasePrefix`, `TodoStore.encoder`, `ChatTime.calendar`, `Discussion.maxRunning`, `Discussion.draft`, the whole `Peer` and `Route` types, `FaceLink.fallbackMoods`, `GoogleAuth.tokenURL`,
+  `TodoScheduler.retryDelay`, `ProjectWork.leasePrefix`, `TodoStore.encoder`, `ChatTime.calendar`, `CollabLog.maxBytes`/`file`/`Summary` fields, `RoomDocuments.read`, `Discussion.maxRunning`, `Discussion.draft`, the whole `Peer` and `Route` types, `FaceLink.fallbackMoods`, `GoogleAuth.tokenURL`,
   `DriveLink.isAllowed`, `ExternalMCP.callTimeout`) do not compile outside.
 - Tests build the modules with `-enable-testing` only so tests can say `@testable import`: `space_build.swift` for
   `AISpaces` (module insides such as `SpaceCheck`), and for `AIRuntime` the app tests that make their own usage
@@ -474,11 +479,9 @@ Public names and why (everything else stays internal: `ProjectError`, `ProjectTo
 - The five providers (`shared`, `ToolProvider`'s members; `ProjectMakerLink.cancellation`/`addChat`, `TodoAddLink.store`/
   `names` as before): ToolHub lists them in its order.
 
-### AIChat (`app/modules/AIChat/`: ChatRecords, ChatValues), step C1a
+### AIChat (`app/modules/AIChat/`: ChatRecords, SyncSnapshot; ChatValues went to AIChatRecords in T4), step C1a
 A chat's record and where it is kept: `Conversation` (chats/<id>.json), `ChatTurn` and `ChatTurn.Entry`, `ChatConfiguration`,
-`ChatStore` (`dir`, `loadAll`, `save`, `delete`, `links`), the values a record holds (`ChatImage` and `ImageStore` for
-<id>.assets, `RoomDocument`, `MaterialUnit`, `CollaborationTask`, `VoteBallot`, `ChatRoute`, `MeetingLink`, `SyncOrigin`,
-and a synced copy's `SyncSnapshot`/`RemoteChat`, which hold turns and are what `ChatStore.links.remote` returns) and the
+`ChatStore` (`dir`, `loadAll`, `save`, `delete`, `links`), a synced copy's `SyncSnapshot` (it holds turns; `SyncSnapshot.swift`) and the
 record's helpers (`ChatTurn.Entry.reply`/`shortLine`, `ChatTime`, `SpeechLength`). Moved as they were: the declarations are
 the same lines with `public` and an explicit init; the old files lost them (Discussion.swift, Attachments, RoomDocuments,
 MaterialReader, Collaboration, Vote, Route, Meeting, DeviceSync). Depends on `AIAccounts`, `AILocalization`, `AIRuntime`
@@ -491,12 +494,12 @@ names no chat type; Chat calls its public functions.
 | Older chats are read as they were (old keys `keepSessions`, `school`, `maxTurns`, `peerReview`/`peerAccountID`, turns without `mode` or times) and saved again with the same content as before the module: the fixtures' `*.saved.json` were written by the app's own ChatStore at f05fd72 (compared as JSON: JSONEncoder's key order differs run to run, before and after alike) | Discussion, DeviceSync, ChatSearch, ChatTools, Memory, ChatStorage, every test | "old keys are read", "… saved as before" (three fixtures in `tools/tests/chat_fixtures`: the oldest discussion, a locked synced project chat with most fields, a meeting's chat) | mode2 "legacy decoding", testDeviceSync, testChatSearch |
 | Newest first; an unreadable file skipped; a blank chat not written; files 0600 | Discussion | "all readable chats, newest first", "a blank chat is not kept", "a chat file is 0600" | mode2 (persistence), testAutoMeeting (order, indirectly) |
 | Delete: the links' purges in order, `<id>.work`, documents, `<id>.assets`, `<id>.json`, then `deleted`; the first failure throws and keeps it and what follows | Discussion (`removeChats`), Meeting | "a failure stops at once", "a failure keeps every place after it", "sessions, backups, then the documents' folder, deleted last" | `testChatLinks`, mode2 storage |
-| Pictures at <id>.assets/<picture id>.png, a bad picture refused | Attachments, Pictures, TodoChatsApp | "a picture lives in the chat's .assets folder", "a bad picture is refused" | mode2 attachments ("deleting chat must remove copied images") |
+| Pictures at <id>.assets/<picture id>.png, a bad picture refused (since T4 `ImageStore` is in AIChatRecords; this contract still checks it through ChatStore) | Attachments, Pictures, TodoChatsApp | "a picture lives in the chat's .assets folder", "a bad picture is refused" | mode2 attachments ("deleting chat must remove copied images") |
 
 Public names and why: the record types' stored fields and their inits are the save format (every reader and writer of a
 chat uses them; Swift's memberwise inits are internal, so each type got one public init with the same order and defaults);
-`ChatStore` and `Links` (C0's seam, set by `ChatLinksApp.connect`); `ImageStore` (pictures pasted, drawn or brought by a
-TODO); `SyncSnapshot.version`, `RemoteChat.Status` (DeviceSync lists and reads copies); `ChatTime.stamp`/`day`/`when`,
+`ChatStore` and `Links` (C0's seam, set by `ChatLinksApp.connect`); `SyncSnapshot.version` (DeviceSync reads copies; `ImageStore`,
+`RemoteChat.Status` and the other values moved to AIChatRecords in T4 with these reasons); `ChatTime.stamp`/`day`/`when`,
 `SpeechLength` (the chat window and the discussion modes); `Entry.reply`/`shortLine`. Internal: `ChatTime.calendar` (the
 boundary check), `ChatTime.format`.
 
@@ -550,11 +553,11 @@ everything else, Discussion's state above all, stays internal):
   `disconnectProjectFolder`; approvals: `approvalChatName`, `viewingRemote`); `TodoChats` (P0's seam, all its members);
   `Discussion.meets`/`autoPicked` (Settings' team picks).
 - The five tool providers (`shared`, `active`, `tools`, `call`; `MemoryLink.newestTurn` for ToolHub.register): ToolHub lists them.
-- Settings' tabs: `MemoryStore`/`MemoryItem`/`MemoryData`, `ChatStorage` (`report`, `items`, `format`, `Report`, `Room`, `Kind`),
-  `CollabMode`/`CollabLog`, `RouteSorter`, `ApprovalAlertSettings`, `DeviceSync` (settings, start, scan, the notes the links call),
+- Settings' tabs: `MemoryStore`/`MemoryItem`/`MemoryData`, `ChatStorage` (`report`, `items`, `format`, `Report`, `Room`, `Kind`; AIChatRecords since T4),
+  `CollabMode`/`CollabLog` (AIChatRecords since T4), `RouteSorter`, `ApprovalAlertSettings`, `DeviceSync` (settings, start, scan, the notes the links call),
   `ChatLink.conversations`; the board and Project info: `SidebarProjects` (`key`, `group`, `pickerName`), `ProjectGroup`,
   `SidebarFold`, `BoardTab`, `PictureDrop`, `Enterprise.permits`, `ProjectLockSection` (Project info's lock setting; the lock stays the chat's), `AutoPick.fiveHour`/`weekly`, `TodoItem.State.title`/`color`;
-  DriveLink: `MaterialReader.read`, `RoomDocuments.directory`; main: `ChatWindow`, `SpaceRefiner.watchLibrary`,
+  DriveLink: `MaterialReader.read`, `RoomDocuments.directory` (AIChatRecords since T4); main: `ChatWindow`, `SpaceRefiner.watchLibrary`,
   `ApprovalListView`; everyone's views: `PlainHitButtonStyle`/`.plainHit`, `SidebarHeader`.
 - `ChatSettings`, `ChatApp` (and `Face`, `Screens`): the seams above.
 
@@ -576,6 +579,34 @@ C1b falsification (one change in a copy of the tree; module contract, then the m
 
 Still open from C0: F7 (Space refine) is covered by the Spaces contract only; SpaceView is now in the module and in the test build,
 but no app test drives a Space's change box yet.
+
+### AIChatRecords (`app/modules/AIChatRecords/`: ChatPaths, ChatValues, RoomDocumentFiles, CollabLog, ChatStorage), step T4 (2026-11-13)
+The lower layer of the chat that knows no Discussion, Route, chat window or ChatLink (the module compiles without AIChat):
+`ChatPaths.dir` (chats/ in the data folder; `ChatStore.dir` takes it), the values a record holds (`ChatImage`/`ImageStore` for
+<id>.assets, `RoomDocument`, `MaterialUnit`, `CollaborationTask`, `VoteBallot`, `ChatRoute`, `MeetingLink`, `SyncOrigin`,
+`RemoteChat`), `RoomDocuments` (<id>.documents, dropped files, reading a document), `CollabMode`/`CollabEvent`/`CollabLog`
+(collab-log.jsonl) and `ChatStorage` (the disk report). Moved with `git mv`, bodies unchanged except `ChatStore.dir` →
+`ChatPaths.dir`; what leans on the chat stayed in AIChat: `SyncSnapshot` (holds turns) → `AIChat/SyncSnapshot.swift`,
+`StorageLink` (chat_storage, uses ChatLink) → `AIChat/ChatStorageTool.swift`, the `extension Discussion` part of
+RoomDocuments stays in `AIChat/RoomDocuments.swift` (same file name: run_mode2 C0's table). Not moved (T3: they lean on
+`ChatTurn`/`Conversation`/Discussion or the chat window uses their insides): ChatRecords, DeviceSync, Memory, ChatNotes.
+Depends on AIAccounts, AILocalization, AIRuntime (`NativeSessions.directory` in the report), AIWorkspace (`DiskUsage`,
+`WorkspaceBackup.base`); no cycle (Workspace already uses Runtime). Users: AIChat, and through its `@_exported import` the App
+(Settings' Storage and collaboration tabs, DriveLink).
+
+| Promise | Users | Module test (`chatrecords_contract.swift`) | User tests |
+|---|---|---|---|
+| Chats live in the data folder's chats/; pictures at <id>.assets/<picture id>.png, a bad picture refused and leaves no file | ChatStore, Attachments, Pictures, TodoChatsApp, ChatWindow | "chats live in …", "picture path", "bad picture refused", "a refused picture leaves no file" | chat contract (`ChatStore.dir`, pictures), mode2 attachments |
+| Dropped files are copied into <id>.documents; the readable kinds are fixed | ChatWindow (drop), MaterialReader, DriveLink | "documents folder", "a dropped file is copied …", "readable document kinds" | mode2 materials (`RoomDocuments.read`) |
+| collab-log.jsonl: old lines read and written back the same (sorted keys, ISO dates); past 2 MB the older half goes; the summary counts | Peer (ask_ai, meetings, reviews, requests), Settings' collaboration tab | "an old collab line …", "a full log keeps its newer half", "the summary line counts them" | testCollabLog |
+| Disk report: a hard-linked file counts once; the parts are named | Settings' Storage, chat_storage (`StorageLink`) | "a hard-linked file counts once", "the report line names the parts" | mode2 storage, testChatTools |
+
+Public names and why: the moved types were already public (C1a, C1b reasons). New in T4, each asked for by the compiler:
+`ChatPaths`/`ChatPaths.dir` (ChatStore stays above and takes its folder from here); `RoomDocuments.extensions`
+(MaterialReader checks the kinds) and `keepDropped` (ChatWindow's drop); `ChatStorage.describe` (`StorageLink` stays above);
+`CollabEvent.init(at:kind:chat:…:priorCalls:)` (Swift's memberwise init is internal; Peer builds events; the fields stay
+internal and the synthesized `Codable` is unchanged), `CollabLog.add`, `smallTalk(_:)`, `asksOthers(_:)` (Peer).
+Internal (boundary): `CollabLog.maxBytes`, `CollabLog.file`, the `Summary` counts, `RoomDocuments.read`.
 
 ### AIIntegrations (`app/modules/AIIntegrations/`: GoogleAuth, DriveLink, ExternalMCP, RemoteMCP, FaceLink, Failure), step I (2026-11-12)
 Moved (`git mv`) from `app/macos`: GoogleAuth (the Google login, its Keychain item, the bounded HTTP client, the sign-in callback),
@@ -704,6 +735,14 @@ Falsification (each in a copy of the tree, one change at a time, then thrown awa
 Left to the user: CI (a public-repository setting), cleaning up the trial branches, publishing stable.
 
 Earlier steps (A, I, C1, C0, P, W, R, the first modules): `docs/modules-history.md`.
+
+### T4: AIChatRecords split out of AIChat (2026-11-13)
+The reduced T3 list (`docs/modules-followup.md` "T3", "T4"): ChatValues without `SyncSnapshot`, CollabLog, ChatStorage's
+report, the `RoomDocuments` enum and a new `ChatPaths` moved to a module that knows no Discussion. Graph and guard hash
+changed with the user's advance approval for this plan (a new module is a graph change). No save format, path, permission
+or App file changed; ChatWindow/Markdown/Pictures untouched (`@_exported import`, Exceptions). 9 public names added, each
+with its reason above. Checks: fast G1-G7, full run_mode2 (57 tests), render_chat. Falsified in a copy: AIChat in its
+dependencies fails G1; `CollabLog.maxBytes` public fails S1; an App file using it fails to compile ("inaccessible").
 
 ### Stable publish screen API
 

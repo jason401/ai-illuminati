@@ -47,6 +47,11 @@ public struct CollabEvent: Codable, Equatable {
     var outcome: String?       // outcome: yes, partly, no or unknown (as the asking AI reports it)
     var points: Int?, taken: Int?, left: Int?   // review: findings and what the lead says it took / left
     var priorCalls: Int?       // request: cards under the previous answer when the user asked for other AIs
+    public init(at: Date = Date(), kind: Kind, chat: UUID, turn: UUID? = nil, mode: String? = nil, from: String? = nil, fromKind: String? = nil, to: [String]? = nil, toKinds: [String]? = nil, purpose: String? = nil, call: Int? = nil, failed: Int? = nil, smallTalk: Bool? = nil, outcome: String? = nil, points: Int? = nil, taken: Int? = nil, left: Int? = nil, priorCalls: Int? = nil) {
+        self.at = at; self.kind = kind; self.chat = chat; self.turn = turn; self.mode = mode; self.from = from; self.fromKind = fromKind
+        self.to = to; self.toKinds = toKinds; self.purpose = purpose; self.call = call; self.failed = failed; self.smallTalk = smallTalk
+        self.outcome = outcome; self.points = points; self.taken = taken; self.left = left; self.priorCalls = priorCalls
+    }
 }
 
 public enum CollabLog {
@@ -54,7 +59,7 @@ public enum CollabLog {
     private static let lock = NSLock()
     static var file: URL { URL(fileURLWithPath: AccountStore.supportDir).appendingPathComponent("collab-log.jsonl") }
 
-    static func add(_ event: CollabEvent) {
+    public static func add(_ event: CollabEvent) {
         let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601; encoder.outputFormatting = .sortedKeys
         guard var line = try? encoder.encode(event) else { return }
         line.append(0x0A)
@@ -78,7 +83,7 @@ public enum CollabLog {
     }
 
     // Greetings, thanks and acknowledgements only: a short request like "fix this" is not small talk.
-    static func smallTalk(_ message: String) -> Bool {
+    public static func smallTalk(_ message: String) -> Bool {
         let plain = message.lowercased().trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters).union(.symbols))
         guard !plain.isEmpty, plain.count <= 20 else { return false }
         let pattern = #"^(안녕(하세요|하십니까)?|하이|헬로|ㅎㅇ|고마워(요)?|감사(합니다|해요)?|ㄱㅅ|땡큐|수고(했어|하셨어요|했어요)?|좋아(요)?|알겠(어|어요|습니다)|오케이|ㅇㅋ|넵|네|응|ㅇㅇ|굿|잘\s?자|hi|hello|hey|thanks?( you)?|thx|ok(ay)?|got it|good (morning|night)|bye)[\s!~.ㅎㅋ^]*$"#
@@ -86,7 +91,7 @@ public enum CollabLog {
     }
 
     // The user asks the AIs to bring in another AI or a meeting.
-    static func asksOthers(_ message: String) -> Bool {
+    public static func asksOthers(_ message: String) -> Bool {
         let pattern = #"(다른\s?(ai|에이아이|모델)(한테|에게|들한테|들에게)?(도)?\s?(물어|의견|확인)|회의\s?(해|하자|열어|소집|좀)|ask (another|other|a different) (ai|model)|(hold|have|call) a meeting|second opinion)"#
         return message.lowercased().range(of: pattern, options: .regularExpression) != nil
     }

@@ -210,7 +210,9 @@ struct LocalModelsView: View {
         let list = (store.installed ?? []).filter { shown($0.name, LocalModel.title(for: $0.name)) }
         if !list.isEmpty {
             header(L("이 Mac에 있음", "On this Mac"))
-            ForEach(list, id: \.name) { item in
+            // Own ids: the same name also shows under Recommended, and a shared id in one LazyVStack makes SwiftUI draw the wrong row.
+            ForEach(list.map { (id: "installed/" + $0.name, item: $0) }, id: \.id) { pair in
+                let item = pair.item
                 row(title: LocalModel.title(for: item.name), detail: item.name + " · " + String(format: "%.1fGB", Double(item.bytes) / 1e9),
                     vision: item.capabilities?.contains("vision")) {
                     if LocalModel.sortOnly(item.name) {

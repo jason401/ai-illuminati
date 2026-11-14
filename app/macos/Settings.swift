@@ -405,6 +405,32 @@ final class AppModel: ObservableObject {
         if let onDisk, answer == .alertFirstButtonReturn { LocalModelStore.shared.delete(onDisk.name) }
     }
 
+    // One step from the ⋯ menu: delete the model files, and every entry that uses them (they could no longer answer).
+    func deleteLocal(_ account: Account) {
+        NSApp.activate(ignoringOtherApps: true)
+        let model = LocalModel.variant(account).model
+        let users = accounts.filter { $0.provider == .ollama && LocalModel.same(LocalModel.variant($0).model, model) }
+        let alert = NSAlert()
+        guard let onDisk = LocalModel.installed(timeout: 1)?.first(where: { LocalModel.matches($0.name, model) }) else {
+            alert.messageText = L("이 Mac에서 모델 파일을 찾지 못했어요.", "The model files were not found on this Mac.")
+            alert.informativeText = L("Ollama가 꺼져 있거나 이미 지워졌어요. 목록에서만 빼려면 '목록에서 빼기…'를 쓰세요.", "Ollama is off or the files are already gone. To take it off the list, use “Remove from list…”.")
+            alert.runModal()
+            return
+        }
+        let size = String(format: "%.1f", Double(onDisk.bytes) / 1e9)
+        alert.messageText = L("'\(account.name)'을 이 Mac에서 지울까요?", "Delete “\(account.name)” from this Mac?")
+        alert.informativeText = users.count > 1
+            ? L("모델 파일(\(size)GB)을 지우고, 이 모델을 쓰는 항목 \(users.count)개를 모두 목록에서 빼요. 나중에 다시 받을 수 있어요.", "Deletes the model files (\(size) GB) and removes all \(users.count) entries that use this model. You can download it again later.")
+            : L("모델 파일(\(size)GB)을 지우고 목록에서도 빼요. 나중에 다시 받을 수 있어요.", "Deletes the model files (\(size) GB) and removes the entry from the list. You can download it again later.")
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: L("지우기", "Delete"))
+        alert.addButton(withTitle: L("취소", "Cancel"))
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let ids = Set(users.map(\.id))
+        accounts.removeAll { ids.contains($0.id) }
+        LocalModelStore.shared.delete(onDisk.name)
+    }
+
     func setOpenAtLogin(_ on: Bool) {
         guard persist else { return }
         let service = SMAppService.mainApp
@@ -1946,6 +1972,9 @@ private struct AccountRow: View {
                 }
                 Divider()
                 Button(L("목록에서 빼기…", "Remove from list…")) { model.remove(account) }
+                if account.provider == .ollama {
+                    Button(L("이 Mac에서 지우기…", "Delete from this Mac…")) { model.deleteLocal(account) }
+                }
             } label: {
                 Image(systemName: "ellipsis.circle")
             }

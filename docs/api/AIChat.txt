@@ -1,3 +1,16 @@
+AIColors | enum AIColors
+AIColors.Preset | struct Preset
+AIColors.Preset.color | var color: NSColor { get }
+AIColors.Preset.id | let id: String
+AIColors.Preset.name | let name: String
+AIColors.brand(_:) | static func brand(_ provider: Account.Provider) -> AIColors.Preset
+AIColors.color(_:in:) | static func color(_ provider: Account.Provider, in defaults: UserDefaults = .standard) -> NSColor
+AIColors.presets | static let presets: [AIColors.Preset]
+AIColors.revisionKey | static let revisionKey: String
+AIColors.saved(_:in:) | static func saved(_ provider: Account.Provider, in defaults: UserDefaults = .standard) -> String?
+AIColors.set(_:for:in:) | static func set(_ value: String?, for provider: Account.Provider, in defaults: UserDefaults = .standard)
+AIColors.set(custom:for:in:) | static func set(custom color: NSColor, for provider: Account.Provider, in defaults: UserDefaults = .standard)
+AIColors.sharing(_:besides:in:) | static func sharing(_ value: String, besides provider: Account.Provider, in defaults: UserDefaults = .standard) -> [Account.Provider]
 ApprovalAlertSettings | enum ApprovalAlertSettings
 ApprovalAlertSettings.notify | static var notify: Bool { get }
 ApprovalAlertSettings.notifyKey | static let notifyKey: String

@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 import AIAccounts
 import AIChat
 // contract needs: chat fixtures
@@ -133,4 +134,24 @@ expect(ChatTime.when(first, last: false, updatedAt: now) == nil && ChatTime.when
        && ChatTime.when(work, last: false, updatedAt: now) == work.askedAt, "an old turn's time is the chat's last change only when last")
 do { _ = try ImageStore.importImage(Data("no picture".utf8), name: "bad.png", conversationID: UUID()); expect(false, "a bad picture is refused") }
 catch ImageStore.Failure.invalid {} catch { expect(false, "a bad picture fails as invalid") }
+// AI colors (AIColors): nothing saved = the brand preset; a preset or a picked color is kept per AI in the given
+// defaults (a throwaway suite here, never the real ones); clearing goes back to the brand; shared colors are found.
+let colorSuite = "ai-illuminati-test-colors-\(UUID().uuidString)"
+let colorDefaults = UserDefaults(suiteName: colorSuite)!
+defer { colorDefaults.removePersistentDomain(forName: colorSuite) }
+expect(AIColors.brand(.claude).id == "coral" && AIColors.brand(.codex).id == "green" && AIColors.brand(.gemini).id == "blue"
+       && AIColors.saved(.claude, in: colorDefaults) == nil, "brand colors by default")
+AIColors.set("green", for: .claude, in: colorDefaults)
+expect(AIColors.saved(.claude, in: colorDefaults) == "green" && AIColors.sharing("green", besides: .claude, in: colorDefaults) == [.codex],
+       "a preset is saved and the AI already wearing it is found")
+AIColors.set(custom: NSColor(srgbRed: 1, green: 0, blue: 0.5, alpha: 1), for: .gemini, in: colorDefaults)
+expect(AIColors.saved(.gemini, in: colorDefaults) == "#FF0080", "a picked color is saved as #RRGGBB")
+let picked = AIColors.color(.gemini, in: colorDefaults)
+NSAppearance(named: .darkAqua)!.performAsCurrentDrawingAppearance {
+    let c = picked.usingColorSpace(.sRGB)!
+    expect(abs(c.redComponent - 1) < 0.01 && c.greenComponent < 0.01 && abs(c.blueComponent - 0.5) < 0.01, "the picked color is shown as it is in dark mode") }
+let revision = colorDefaults.integer(forKey: AIColors.revisionKey)
+AIColors.set(nil, for: .claude, in: colorDefaults); AIColors.set(nil, for: .gemini, in: colorDefaults)
+expect(AIColors.saved(.claude, in: colorDefaults) == nil && colorDefaults.object(forKey: "aiColors") == nil
+       && colorDefaults.integer(forKey: AIColors.revisionKey) == revision + 2, "clearing goes back to the brand and tells the views")
 print("PASS: chat contract")

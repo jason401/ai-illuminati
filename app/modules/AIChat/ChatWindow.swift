@@ -38,6 +38,7 @@ struct ChatView<Model: ChatSettings>: View {
     @ObservedObject private var todos = TodoStore.shared
     @ObservedObject private var projectInfo = ProjectInfoStore.shared
     @ObservedObject private var photo = PhotoViewer.shared
+    @AppStorage(AIColors.revisionKey) private var aiColorsRevision = 0   // an AI's color changed: redraw
 
     var body: some View {
         let wide = layout.wide
@@ -404,7 +405,17 @@ struct ChatView<Model: ChatSettings>: View {
             .buttonStyle(.plainHit).padding(.leading, -6).padding(.trailing, -6)
             .help(open ? L("접기", "Fold") : L("펼치기", "Unfold"))
             Image(systemName: open ? "folder" : "folder.fill").font(.system(size: 12)).foregroundColor(.secondary).frame(width: 16)
-            Text(group.name).lineLimit(1).truncationMode(.tail).frame(maxWidth: .infinity, alignment: .leading)
+            // A chat of it answering: a ring right after the name (the name shortens first, the ring stays),
+            // in the answering AI's color, or a neutral one when AIs of different kinds answer.
+            HStack(spacing: 5) {
+                Text(group.name).lineLimit(1).truncationMode(.tail)
+                if !discussion.runningRooms.isDisjoint(with: rooms) {
+                    let kinds = Set(discussion.runningRooms.intersection(rooms).map { answering($0) })
+                    RunningRing(color: kinds.count == 1 ? kinds.first! : nil)
+                        .help(L("이 프로젝트의 채팅이 답하는 중", "A chat of this project is answering"))
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
             LockBadge(lock: SidebarProjects.lock(of: group, todo: todos.snapshot))
             if group.pinned { Image(systemName: "pin.fill").font(.system(size: 8)).foregroundColor(.secondary).help(L("고정된 프로젝트", "Pinned project")) }
             if waiting > 0 {
@@ -418,8 +429,6 @@ struct ChatView<Model: ChatSettings>: View {
                     Circle().fill(Color.orange).frame(width: 7, height: 7).help(L("허가를 기다려요", "Waiting for approval"))
                 }
             }
-            // Open or folded: a chat of it answering shows a spinner by the folder.
-            if !discussion.runningRooms.isDisjoint(with: rooms) { ProgressView().controlSize(.mini).help(L("이 프로젝트의 채팅이 답하는 중", "A chat of this project is answering")) }
             if hovered, let binding = group.bindings.first {
                 Button(action: { newChat(in: group, binding) }) { Image(systemName: "square.and.pencil").font(.system(size: 11)).frame(width: 20, height: 20) }
                     .buttonStyle(.plainHit).foregroundColor(.secondary)
@@ -525,33 +534,50 @@ struct ChatView<Model: ChatSettings>: View {
         .disabled(discussion.importingMaterials)
     }
 
+    // Which kind of AI is answering in a chat now, from its newest message: the one writing, the ones called
+    // together, or the name the status starts with ("Claude (Work) answering…"). nil: not known yet.
+    private func answering(_ room: UUID) -> Account.Provider? {
+        guard let turn = discussion.conversations.first(where: { $0.id == room })?.turns.last else { return nil }
+        if let by = turn.partialBy, let kind = Account.Provider.of(speaker: by) { return kind }
+        if let order = turn.answerOrder {
+            let kinds = Set(order.compactMap { id in model.accounts.first { $0.id == id }?.provider })
+            return kinds.count == 1 ? kinds.first : nil
+        }
+        return Account.Provider.of(speaker: turn.status) ?? turn.entries.last.flatMap { Account.Provider.of(speaker: $0.speaker) }
+    }
+
     private func chatRow(_ conversation: Conversation, meetings: Int = 0, shown: Bool = false, depth: Int = 0, todo: TodoItem.State? = nil) -> some View {
         let selected = conversation.id == discussion.currentID && discussion.viewingRemote == nil && !discussion.viewingBoard && discussion.viewingSpace == nil
         let hovered = discussion.hoverKey == conversation.id.uuidString
         let todoPrefix = "TODO · "
+        let running = discussion.runningRooms.contains(conversation.id)
         return HStack(spacing: 4) {
-            if let todo {
+            // The leading slot: a ring in the answering AI's color while it answers, else the TODO or work chat
+            // mark. Kept the same width either way, so the title never moves when an answer starts or ends.
+            if running {
+                RunningRing(color: answering(conversation.id)).frame(width: 14).help(L("답하는 중", "Answering"))
+            } else if let todo {
                 Image(systemName: "checkmark.square").font(.system(size: 10)).foregroundColor(todo.color).frame(width: 14)
                     .help(L("TODO 작업방 · ", "TODO chat · ") + todo.title)
             } else if conversation.isProjectChat && depth == 0 {
                 Image(systemName: "chevron.left.forwardslash.chevron.right")
                     .font(.system(size: 9, weight: .semibold)).foregroundColor(.secondary).frame(width: 14)
                     .help(L("작업방: Git 프로젝트가 연결된 대화", "Work chat: a Git project is linked"))
+            } else {
+                Color.clear.frame(width: 14, height: 1)
             }
             HStack(spacing: 5) {
+                // Answering: the title turns a soft blue (same weight, so it does not change width or cut off elsewhere).
                 Text(conversation.turns.isEmpty && todo == nil ? L("새 대화", "New chat")
                      : todo != nil && conversation.title.hasPrefix(todoPrefix) ? String(conversation.title.dropFirst(todoPrefix.count)) : conversation.title)
                     .lineLimit(1).truncationMode(.tail)
+                    .foregroundColor(running ? RunningRing.titleColor : nil)
                 LockBadge(lock: conversation.enterpriseLock)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             if approvals.requests.contains(where: { $0.room == conversation.id }) {
                 Circle().fill(Color.orange).frame(width: 7, height: 7)
                     .help(L("허가를 기다려요", "Waiting for approval"))
-            }
-            if discussion.runningRooms.contains(conversation.id) {
-                ProgressView().controlSize(.mini)
-                    .help(L("답하는 중", "Answering"))
             }
             if meetings > 0 {
                 Button(action: { discussion.toggleMeetings(conversation.id) }) {
@@ -3117,24 +3143,44 @@ private struct EntryRow: View {
 
 }
 
-// Each AI's own color for its name in the chat, close to its company's brand color.
-// A lighter shade in dark mode and a deeper one in light mode keep it readable on both.
+// Each AI's own color for its name in the chat, close to its company's brand color, unless the user picked
+// another one (AIColors). A lighter shade in dark mode and a deeper one in light mode keep it readable on both.
 extension Account.Provider {
-    public var color: Color {
-        let (dark, light): (NSColor, NSColor)
-        switch self {
-        case .claude: (dark, light) = (NSColor(srgbRed: 0.88, green: 0.55, blue: 0.42, alpha: 1), NSColor(srgbRed: 0.74, green: 0.36, blue: 0.22, alpha: 1))
-        case .codex: (dark, light) = (NSColor(srgbRed: 0.27, green: 0.76, blue: 0.60, alpha: 1), NSColor(srgbRed: 0.05, green: 0.53, blue: 0.41, alpha: 1))
-        case .gemini: (dark, light) = (NSColor(srgbRed: 0.45, green: 0.66, blue: 0.99, alpha: 1), NSColor(srgbRed: 0.10, green: 0.45, blue: 0.91, alpha: 1))
-        case .ollama: (dark, light) = (NSColor(srgbRed: 0.72, green: 0.58, blue: 0.98, alpha: 1), NSColor(srgbRed: 0.45, green: 0.30, blue: 0.80, alpha: 1))
-        }
-        return Color(nsColor: NSColor(name: nil) { appearance in
-            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light
-        })
-    }
+    public var color: Color { Color(nsColor: AIColors.color(self)) }
 
     // Speaker labels start with the AI's name (for example, "Claude (Work)"), so older replies get a color too.
     static func of(speaker: String) -> Self? { allCases.first { speaker.hasPrefix($0.title) } }
+}
+
+// The sidebar's "answering" mark: a small ring turning in the answering AI's color (gray when not known or
+// mixed). With macOS Reduce Motion it is a still dot of the same color.
+struct RunningRing: View {
+    let color: Account.Provider?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    static let titleColor = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(srgbRed: 0.62, green: 0.78, blue: 1.0, alpha: 1) : NSColor(srgbRed: 0.12, green: 0.40, blue: 0.82, alpha: 1)
+    })
+
+    var body: some View {
+        let tint = color?.color ?? Color.secondary
+        Group {
+            if reduceMotion {
+                Circle().fill(tint).frame(width: 7, height: 7)
+            } else {
+                TimelineView(.animation) { context in
+                    let turn = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1) * 360
+                    ZStack {
+                        Circle().stroke(tint.opacity(0.25), lineWidth: 1.6)
+                        Circle().trim(from: 0, to: 0.3).stroke(tint, style: StrokeStyle(lineWidth: 1.6, lineCap: .round))
+                            .rotationEffect(.degrees(turn))
+                    }
+                    .frame(width: 9, height: 9)
+                }
+            }
+        }
+        .frame(width: 10, height: 10)
+    }
 }
 
 // Several AIs answering one message at once (Solo.swift): one column each, in the order they were called, with
@@ -3348,4 +3394,94 @@ func localizedNotice(_ text: String) -> String {
     ]
     for (ko, en) in notices where text == ko || text == en { return L(ko, en) }
     return text
+}
+
+// The colors the user can give each AI (Settings > Appearance, or the AI's title in the usage menu): one of the
+// presets, which have a dark- and a light-mode shade like the brand colors, or any color from the color panel.
+// Saved in UserDefaults "aiColors" as provider → preset id or "#RRGGBB"; nothing saved = the brand color.
+// The colors are read when drawn, so views showing them only need to redraw (they watch `revisionKey` with @AppStorage).
+public enum AIColors {
+    static let key = "aiColors"
+    public static let revisionKey = "aiColorsRevision"   // bumped on every change; views watch it to redraw
+
+    public struct Preset {
+        public let id: String
+        public let name: String
+        let dark: NSColor, light: NSColor
+        public var color: NSColor { AIColors.dynamic(dark, light) }
+    }
+
+    private static func rgb(_ r: Double, _ g: Double, _ b: Double) -> NSColor { NSColor(srgbRed: r, green: g, blue: b, alpha: 1) }
+    public static let presets: [Preset] = [
+        Preset(id: "coral", name: L("코랄", "Coral"), dark: rgb(0.88, 0.55, 0.42), light: rgb(0.74, 0.36, 0.22)),
+        Preset(id: "red", name: L("빨강", "Red"), dark: rgb(0.97, 0.45, 0.45), light: rgb(0.78, 0.16, 0.18)),
+        Preset(id: "pink", name: L("분홍", "Pink"), dark: rgb(0.96, 0.52, 0.76), light: rgb(0.78, 0.20, 0.52)),
+        Preset(id: "yellow", name: L("노랑", "Yellow"), dark: rgb(0.95, 0.80, 0.35), light: rgb(0.62, 0.47, 0.02)),
+        Preset(id: "green", name: L("초록", "Green"), dark: rgb(0.27, 0.76, 0.60), light: rgb(0.05, 0.53, 0.41)),
+        Preset(id: "lime", name: L("연두", "Lime"), dark: rgb(0.62, 0.84, 0.36), light: rgb(0.32, 0.55, 0.08)),
+        Preset(id: "teal", name: L("청록", "Teal"), dark: rgb(0.35, 0.80, 0.86), light: rgb(0.05, 0.50, 0.58)),
+        Preset(id: "blue", name: L("파랑", "Blue"), dark: rgb(0.45, 0.66, 0.99), light: rgb(0.10, 0.45, 0.91)),
+        Preset(id: "purple", name: L("보라", "Purple"), dark: rgb(0.72, 0.58, 0.98), light: rgb(0.45, 0.30, 0.80)),
+        Preset(id: "gray", name: L("회색", "Gray"), dark: rgb(0.70, 0.70, 0.72), light: rgb(0.42, 0.42, 0.45)),
+    ]
+    // The brand colors, as the presets they match.
+    public static func brand(_ provider: Account.Provider) -> Preset {
+        let id: String
+        switch provider {
+        case .claude: id = "coral"
+        case .codex: id = "green"
+        case .gemini: id = "blue"
+        case .ollama: id = "purple"
+        }
+        return presets.first { $0.id == id }!
+    }
+
+    // What is saved for this AI: a preset id, "#RRGGBB", or nil for the brand color.
+    public static func saved(_ provider: Account.Provider, in defaults: UserDefaults = .standard) -> String? {
+        (defaults.dictionary(forKey: key) as? [String: String])?[provider.rawValue]
+    }
+
+    public static func set(_ value: String?, for provider: Account.Provider, in defaults: UserDefaults = .standard) {
+        var all = defaults.dictionary(forKey: key) as? [String: String] ?? [:]
+        all[provider.rawValue] = value
+        if all.isEmpty { defaults.removeObject(forKey: key) } else { defaults.set(all, forKey: key) }
+        defaults.set(defaults.integer(forKey: revisionKey) + 1, forKey: revisionKey)
+    }
+
+    public static func set(custom color: NSColor, for provider: Account.Provider, in defaults: UserDefaults = .standard) {
+        set(hex(color), for: provider, in: defaults)
+    }
+
+    public static func color(_ provider: Account.Provider, in defaults: UserDefaults = .standard) -> NSColor {
+        color(saved: saved(provider, in: defaults), brand: brand(provider))
+    }
+
+    static func color(saved: String?, brand: Preset) -> NSColor {
+        if let saved, let preset = presets.first(where: { $0.id == saved }) { return preset.color }
+        if let saved, let picked = color(hex: saved) {
+            // One picked color: as it is in dark mode, a deeper shade in light mode so it stays readable on white.
+            return dynamic(picked, picked.blended(withFraction: 0.3, of: .black) ?? picked)
+        }
+        return brand.color
+    }
+
+    // Other AIs already shown in this color (the menu marks them, so two AIs are not mixed up by accident).
+    public static func sharing(_ value: String, besides provider: Account.Provider, in defaults: UserDefaults = .standard) -> [Account.Provider] {
+        Account.Provider.allCases.filter { $0 != provider && (saved($0, in: defaults) ?? brand($0).id) == value }
+    }
+
+    static func hex(_ color: NSColor) -> String {
+        let c = color.usingColorSpace(.sRGB) ?? color
+        func byte(_ v: CGFloat) -> Int { Int((min(max(v, 0), 1) * 255).rounded()) }
+        return String(format: "#%02X%02X%02X", byte(c.redComponent), byte(c.greenComponent), byte(c.blueComponent))
+    }
+
+    static func color(hex: String) -> NSColor? {
+        guard hex.count == 7, hex.hasPrefix("#"), let v = Int(hex.dropFirst(), radix: 16) else { return nil }
+        return rgb(Double((v >> 16) & 0xFF) / 255, Double((v >> 8) & 0xFF) / 255, Double(v & 0xFF) / 255)
+    }
+
+    static func dynamic(_ dark: NSColor, _ light: NSColor) -> NSColor {
+        NSColor(name: nil) { appearance in appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light }
+    }
 }

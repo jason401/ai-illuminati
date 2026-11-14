@@ -1078,11 +1078,11 @@ public struct TodoTurnEnd: Equatable {
 
 // Picks and starts TODOs (main thread). Wakes on Start, every 30 minutes, when a chat finishes and when the board
 // changes. One of the three answering places stays free for the user's own chats; at most two TODOs at once; an
-// account needs 30% of both its 5-hour and weekly usage left to take a TODO.
+// account needs `threshold`% (10%) of both its 5-hour and weekly usage left to take a TODO.
 public final class TodoScheduler: ObservableObject {
     public static var shared: TodoScheduler?
     static let interval: TimeInterval = 1800
-    public static let threshold = 30.0
+    public static let threshold = 10.0
     static let maxTodos = 2
     public static let maxAttempts = 2   // retries after an error before the user is asked
     let chats: TodoChats

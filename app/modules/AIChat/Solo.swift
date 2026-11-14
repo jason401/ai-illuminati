@@ -10,7 +10,7 @@ import AIProjects
 // with usage left and, when that account runs low or hits its limit, another account continues from
 // the same chat history and the same folders.
 public enum AutoPick {
-    static let threshold = 15.0   // switch when the 5-hour or weekly limit has less than this left
+    static let threshold = 10.0   // switch when the 5-hour or weekly limit has less than this left
 
     // What is left (0–100). A plan without that limit is not held back by it (100). No reading yet: 50.
     public static func fiveHour(_ usage: AIUsage?) -> Double {

@@ -1598,7 +1598,7 @@ do {
     print("PASS: dropped pictures (Finder files, image data into a temporary folder, attached and folder removed)")
 }
 
-// Mode 0 plain chat: automatic account choice (15% rule, most weekly left, Gemini left out, school/personal
+// Mode 0 plain chat: automatic account choice (10% rule, most weekly left, Gemini left out, school/personal
 // sides), handoff when an account hits its limit, Gemini's YouTube search, the chat's own folder and the
 // read-only shared folders.
 do {
@@ -1622,14 +1622,14 @@ do {
     expect(schoolClaude.isSchool && schoolCodex.isSchool && !personalClaude.isSchool && !personalCodex.isSchool, "school accounts: by name or by the setting")
 
     var levels: [String: AIUsage] = ["solo-p-claude": usage(60, 30), "solo-p-codex": usage(40, 80), "solo-gemini": usage(nil, 100),
-                                     "solo-s-claude": usage(90, nil), "solo-s-codex": usage(10, 99)]
+                                     "solo-s-claude": usage(90, nil), "solo-s-codex": usage(5, 99)]
     expect(AutoPick.choose(all, usage: levels, lock: nil, current: nil, excluded: personalOnly)?.id == "solo-p-codex", "most weekly left among accounts with enough 5-hour left")
     expect(AutoPick.choose(all, usage: levels, lock: nil, current: "solo-p-claude", excluded: personalOnly)?.id == "solo-p-claude", "keep the current account while it has enough")
-    levels["solo-p-claude"] = usage(14, 30)
-    expect(AutoPick.choose(all, usage: levels, lock: nil, current: "solo-p-claude", excluded: personalOnly)?.id == "solo-p-codex", "switch under 15% of the 5-hour limit")
-    levels["solo-p-codex"] = usage(40, 12)
+    levels["solo-p-claude"] = usage(9, 30)
+    expect(AutoPick.choose(all, usage: levels, lock: nil, current: "solo-p-claude", excluded: personalOnly)?.id == "solo-p-codex", "switch under 10% of the 5-hour limit")
+    levels["solo-p-codex"] = usage(40, 8)
     expect(AutoPick.choose(all, usage: levels, lock: nil, current: nil, excluded: personalOnly)?.id == "solo-p-claude", "nobody has enough: the one with the most left (smaller of the two limits) still answers")
-    expect(AutoPick.choose(all, usage: levels, lock: schoolLock, current: nil)?.id == "solo-s-claude", "Enterprise chats: accounts of the organization only (5-hour of the other is under 15%)")
+    expect(AutoPick.choose(all, usage: levels, lock: schoolLock, current: nil)?.id == "solo-s-claude", "Enterprise chats: accounts of the organization only (5-hour of the other is under 10%)")
     expect(!AutoPick.candidates(all, usage: levels, lock: nil).contains { $0.provider == .gemini }, "Gemini never answers a plain chat")
     // Close levels: Enterprise first; a clear lead still wins.
     let close: [String: AIUsage] = ["solo-p-codex": usage(90, 70), "solo-s-codex": usage(90, 63)]
@@ -1774,7 +1774,7 @@ do {
     let codexArgs = try! invocation.arguments(provider: .codex, original: ["exec", "-C", "/tmp", "x"], directory: dir, web: false, tools: ToolHub.workspaceLink)
     expect(codexArgs.contains("mcp_servers.illuminati.default_tools_approval_mode=\"approve\"") && codexArgs.contains("sandbox_mode=\"workspace-write\"")
            && codexArgs.contains("sandbox_workspace_write.writable_roots=[\"" + own + "\",\"" + SpaceStore.root.path + "\",\"" + linkedDir.path + "\"]"), "Codex may write the chat folder, the Spaces folder and the linked folder only")
-    print("PASS: plain chat (auto pick 15% / weekly, Gemini out, Enterprise sides, limit handoff, YouTube via Gemini, chat and linked folders writable with backup and undo, shared read only)")
+    print("PASS: plain chat (auto pick 10% / weekly, Gemini out, Enterprise sides, limit handoff, YouTube via Gemini, chat and linked folders writable with backup and undo, shared read only)")
 
     // AI Face: the app is its one MCP client ("illuminati"); a model reaches it only through the bridge.
     let face = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("Library/Application Support/AI Face")

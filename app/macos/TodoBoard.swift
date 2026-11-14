@@ -488,7 +488,7 @@ struct TodoBoardView: View {
     }
 }
 
-// Which AIs take a project's TODOs: [AI ▾] picks them (automatic = every Claude/Codex with 30% left), then who
+// Which AIs take a project's TODOs: [AI ▾] picks them (automatic = every Claude/Codex with TodoScheduler.threshold% (10%) left), then who
 // works now (a running TODO's chat) or who would if one started now, or why nobody can.
 struct TodoCrewRow: View {
     let list: TodoList
@@ -699,13 +699,16 @@ struct TodoBoardHeader: View {
     }
 }
 
+// (An ObservableObject, not @State: see KeyMonitorBox.)
+private final class StandInBox: ObservableObject { @Published var on = false }
+
 // The report card: what the AI did and [Done] / [Request changes], or its questions with an answer box, [Stop] and [Done].
 struct TodoCard: View {
     let item: TodoItem
     @ObservedObject var discussion: Discussion
     var compact = false
     @ObservedObject private var draft = TodoDraft.shared
-    @State private var standingIn = false   // TodoScheduler.standingIn: the due time has passed, another AI answers now
+    @StateObject private var stand = StandInBox()   // TodoScheduler.standingIn: the due time has passed, another AI answers now
     private var text: String {
         get { draft.replies[item.id] ?? "" }
         nonmutating set { draft.replies[item.id] = newValue.isEmpty ? nil : newValue }
@@ -731,7 +734,7 @@ struct TodoCard: View {
                 }
             } else if let question = item.question {
                 Text(question.reason).font(.system(size: 12)).textSelection(.enabled)
-                if standingIn {
+                if stand.on {
                     Text(L("다른 AI가 네 대신 답하는 중이에요. 지금 답하면 그 답은 버려요.", "Another AI is answering for you. Answer now and its answer is dropped.")).font(.system(size: 11)).foregroundColor(.secondary)
                 } else if let due = TodoStore.shared.snapshot.standInDue(item) {
                     Text(L("\(due.formatted(date: .omitted, time: .shortened))까지 답이 없으면 다른 AI가 대신 답해요.", "Another AI answers for you if you have not by \(due.formatted(date: .omitted, time: .shortened)).")).font(.system(size: 11)).foregroundColor(.secondary)
@@ -775,7 +778,7 @@ struct TodoCard: View {
         }
         .padding(compact ? 0 : 12)
         .background(compact ? Color.clear : item.state.color.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
-        .onReceive(TodoScheduler.shared?.$standingIn.eraseToAnyPublisher() ?? Just([]).eraseToAnyPublisher()) { standingIn = $0.contains(item.id) }
+        .onReceive(TodoScheduler.shared?.$standingIn.eraseToAnyPublisher() ?? Just([]).eraseToAnyPublisher()) { stand.on = $0.contains(item.id) }
     }
 }
 

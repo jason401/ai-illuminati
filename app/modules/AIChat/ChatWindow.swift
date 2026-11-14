@@ -1758,8 +1758,8 @@ struct ChatView<Model: ChatSettings>: View {
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
-        .help(L("답할 AI: 자동이면 5시간이 15% 이상 남은 계정 중 주간이 가장 많이 남은 계정. 여러 명을 체크하면 일반 채팅에서는 모두 동시에 답하고, 프로젝트 채팅에서는 한 명이 작업하고 나머지가 바뀐 내용을 검수해요 (@는 그 메시지에만 적용).",
-                "Who answers: automatic picks, among accounts with at least 15% of the 5-hour limit left, the one with the most weekly usage left. Check several: in a plain chat they all answer at the same time; in a project chat one works and the others review its changes (@ applies to one message only)."))
+        .help(L("답할 AI: 자동이면 5시간이 \(Int(AutoPick.threshold))% 이상 남은 계정 중 주간이 가장 많이 남은 계정. 여러 명을 체크하면 일반 채팅에서는 모두 동시에 답하고, 프로젝트 채팅에서는 한 명이 작업하고 나머지가 바뀐 내용을 검수해요 (@는 그 메시지에만 적용).",
+                "Who answers: automatic picks, among accounts with at least \(Int(AutoPick.threshold))% of the 5-hour limit left, the one with the most weekly usage left. Check several: in a plain chat they all answer at the same time; in a project chat one works and the others review its changes (@ applies to one message only)."))
     }
 
     // Mode 4: every account votes unless unchecked; the crown drafts the choices when none are listed.

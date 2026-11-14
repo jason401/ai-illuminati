@@ -171,7 +171,7 @@ func testTodoScheduler() {
         var u = AIUsage(name: "x"); u.fiveHour = UsageWindow(usedPercent: 100 - five, resetsAt: nil); u.weekly = UsageWindow(usedPercent: 100 - week, resetsAt: nil); return u
     }
     model.latestUsage["todo-claude"] = left(80, 70)
-    model.latestUsage["todo-codex"] = left(25, 90)   // under 30%: no TODO work, so no reviewer either
+    model.latestUsage["todo-codex"] = left(5, 90)   // under 10%: no TODO work, so no reviewer either
     model.latestUsage["todo-gemini"] = left(100, 100)
     let chat = Discussion(model: model)
     let open = chat.currentID
@@ -231,8 +231,8 @@ func testTodoScheduler() {
     settle { store.current.item(second.id)?.state == .needsYou }
     let done = store.current.item(first.id)!
     expect(done.state == .review && done.result == "Did the first" && done.assumptions == ["kept the API"] && done.files == ["a.swift"], "task_done: waits for the check with the report")
-    expect(asked.allSatisfy { $0 == "todo-claude" } && toolsSeen == ["task_done", "task_ask"], "only the account with 30% left works: \(asked) \(toolsSeen)")
-    expect(chat.conversation(room).configuration?.memberIDs == ["todo-claude"], "no reviewer under 30%")
+    expect(asked.allSatisfy { $0 == "todo-claude" } && toolsSeen == ["task_done", "task_ask"], "only the account with 10% left works: \(asked) \(toolsSeen)")
+    expect(chat.conversation(room).configuration?.memberIDs == ["todo-claude"], "no reviewer under 10%")
     // The second started when the first waited for the check (in order, the default gate), and asked.
     let asking = store.current.item(second.id)!
     expect(asking.question?.items.first?.recommended == "B" && asking.room != room, "task_ask: the user decides, in the second TODO's own chat")
@@ -265,10 +265,10 @@ func testTodoScheduler() {
     scheduler.tick()
     expect(store.current.item(waits.id)?.state == .ready && scheduler.waiting != nil, "one of the three places stays free for the user's chats")
     chat.runningRooms = []
-    // Nobody with 30% left: it waits.
-    model.latestUsage["todo-claude"] = left(20, 70)
+    // Nobody with 10% left: it waits.
+    model.latestUsage["todo-claude"] = left(5, 70)
     scheduler.tick()
-    expect(store.current.item(waits.id)?.state == .ready && scheduler.waiting?.contains("30%") == true, "accounts under 30% do not take TODOs")
+    expect(store.current.item(waits.id)?.state == .ready && scheduler.waiting?.contains("10%") == true, "accounts under 10% do not take TODOs")
     model.latestUsage["todo-claude"] = left(80, 70)
     // A chat writing the repository: the TODO waits.
     let locks = try! ProjectWork.acquire(WorkspaceBinding(roots: [WorkspaceRoot(path: project.root, directory: true, writable: true)], level: .execute))
@@ -315,7 +315,7 @@ func testTodoScheduler() {
     let secretRoom = store.current.item(secret.id)?.room.map { chat.conversation($0) }
     expect(asked == ["todo-school"] && secretRoom?.enterpriseLock?.organization == "학교" && secretRoom?.configuration?.memberIDs == ["todo-school"],
            "an Enterprise project's TODO keeps the lock: \(asked)")
-    print("PASS: TODO scheduler (drafts wait, own chat, 30% rule, task_done/task_ask scoped, order gate, answer resent, no report, retries, one place free, folder lock, restart, report final at the end, busy chat waits, Enterprise lock)")
+    print("PASS: TODO scheduler (drafts wait, own chat, 10% rule, task_done/task_ask scoped, order gate, answer resent, no report, retries, one place free, folder lock, restart, report final at the end, busy chat waits, Enterprise lock)")
 }
 
 // The order of TODO state changes through the app (Discussion as TodoChats, the project chat's own repository lock):
@@ -834,18 +834,18 @@ func testTodoCrew() {
     try! store.setList(listID, accounts: ["c2"])
     let one = scheduler.crew(for: store.current.list(listID)!)
     expect(one?.lead.id == "c2" && one?.reviewer == nil, "one picked: it works without a review")
-    model.latestUsage["c2"] = left(20, 60)
-    expect(scheduler.crew(for: store.current.list(listID)!) == nil, "a picked AI under 30% waits, the others do not step in")
-    expect(TodoScheduler.noCrew(["c2"], accounts: model.accounts, lock: nil).contains("30%"), "the reason is the usage")
-    expect(!TodoScheduler.noCrew(["gone"], accounts: model.accounts, lock: nil).contains("30%"), "a removed account has its own reason")
+    model.latestUsage["c2"] = left(5, 60)
+    expect(scheduler.crew(for: store.current.list(listID)!) == nil, "a picked AI under 10% waits, the others do not step in")
+    expect(TodoScheduler.noCrew(["c2"], accounts: model.accounts, lock: nil).contains("10%"), "the reason is the usage")
+    expect(!TodoScheduler.noCrew(["gone"], accounts: model.accounts, lock: nil).contains("10%"), "a removed account has its own reason")
     let lock = EnterpriseLock(organization: "school", name: "School", lockedAt: Date())
-    expect(!TodoScheduler.noCrew(["c2"], accounts: model.accounts, lock: lock).contains("30%"), "an Enterprise lock has its own reason")
+    expect(!TodoScheduler.noCrew(["c2"], accounts: model.accounts, lock: lock).contains("10%"), "an Enterprise lock has its own reason")
 
     // The scheduler: the picked AI waits; the TODO is not started by another.
     try! store.change(item.id) { $0.state = .ready }
     scheduler.held = { _ in false }
     scheduler.tick()
-    expect(store.current.item(item.id)?.state == .ready && scheduler.waiting?.contains("30%") == true, "the scheduler waits for the picked AI: \(scheduler.waiting ?? "-")")
+    expect(store.current.item(item.id)?.state == .ready && scheduler.waiting?.contains("10%") == true, "the scheduler waits for the picked AI: \(scheduler.waiting ?? "-")")
     // The picker's lock is the next TODO's, as the start uses: a finished first TODO does not decide it.
     let school = Account(id: "s1", provider: .claude, name: "Claude (학교)")
     let other = Account(id: "o1", provider: .codex, name: "ChatGPT (회사)")

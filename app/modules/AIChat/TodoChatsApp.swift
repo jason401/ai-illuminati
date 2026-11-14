@@ -15,7 +15,7 @@ extension Discussion: TodoChats {
     public var importing: Bool { importingMaterials }
     public var chats: [ProjectChatSummary] { conversations.map(\.projectSummary) }
 
-    // Claude/Codex accounts with 30% of both limits left (and allowed by the lock), the most weekly usage first
+    // Claude/Codex accounts with TodoScheduler.threshold% (10%) of both limits left (and allowed by the lock), the most weekly usage first
     // (Enterprise first when close, like AutoPick); the reviewer of the other kind when there is one.
     public func crew(lock: EnterpriseLock?, allowed: [String]) -> (lead: Account, reviewer: Account?)? {
         let usage = model.latestUsage
@@ -90,12 +90,13 @@ extension TodoScheduler {
 
     // Why nobody can take a list's TODOs: the picked accounts are gone, kept out by the Enterprise lock, or low on usage.
     public static func noCrew(_ allowed: [String], accounts: [Account], lock: EnterpriseLock?) -> String {
-        guard !allowed.isEmpty else { return L("남은 사용량이 30% 넘는 Claude/Codex 계정이 없어서 기다려요.", "Waiting for a Claude/Codex account with 30% usage left.") }
+        let pct = "\(Int(threshold))%"
+        guard !allowed.isEmpty else { return L("남은 사용량이 \(pct) 이상인 Claude/Codex 계정이 없어서 기다려요.", "Waiting for a Claude/Codex account with \(pct) usage left.") }
         let picked = accounts.filter { allowed.contains($0.id) && [.claude, .codex].contains($0.provider) }
         if picked.isEmpty { return L("고른 AI 계정이 모두 없어졌어요. 보드에서 일할 AI를 다시 골라 주세요.", "The picked AI accounts are gone. Pick the AIs again on the board.") }
         if !picked.contains(where: { Enterprise.permits($0, lock: lock) }) {
             return L("고른 AI가 이 프로젝트의 잠금(Enterprise·개인)에 맞지 않아요. 일할 AI를 다시 골라 주세요.", "The picked AIs are not allowed by this project's lock (Enterprise or personal). Pick them again.")
         }
-        return L("고른 AI의 남은 사용량이 30% 넘을 때까지 기다려요.", "Waiting until a picked AI has 30% usage left.")
+        return L("고른 AI의 남은 사용량이 \(pct) 이상이 될 때까지 기다려요.", "Waiting until a picked AI has \(pct) usage left.")
     }
 }

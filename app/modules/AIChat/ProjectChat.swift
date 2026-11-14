@@ -301,7 +301,7 @@ extension Discussion {
         let chatLock = self.lock(of: id)
         var excluded = Set<String>(), checkpoint = run.checkpoint("Project turn started")
         // Picked by hand (@ or one account checked): that one. Otherwise the same rule as a plain chat: the last
-        // account keeps going while 5-hour and weekly usage both have 15% or more left (AutoPick). During the
+        // account keeps going while 5-hour and weekly usage both have AutoPick.threshold% (10%) or more left. During the
         // work only a usage-limit error hands it to another AI.
         var preferred = mentions.first ?? config.soloAccountID
         var handedFrom: String?   // the AI that reached its usage limit, shown while the next one takes over

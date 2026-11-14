@@ -221,10 +221,10 @@ func testProjectHandoff() {
            && chat.current.turns.last?.lastActivityAt != nil, "the plan and the last activity stay on the turn being answered")
     expect((try! ProjectProcess.git(["log", "--oneline"], root: root.path)).split(separator: "\n").count == 1, "handoff never fabricates a checkpoint commit")
 
-    // Not picked by hand: the same 15% rule as a plain chat. The last account (Codex) has 10% of its 5-hour limit
+    // Not picked by hand: the same 10% rule as a plain chat. The last account (Codex) has 5% of its 5-hour limit
     // left, so Claude starts; with enough left it keeps going.
     func left(_ five: Double) -> AIUsage { var u = AIUsage(name: "u"); u.fiveHour = UsageWindow(usedPercent: 100 - five, resetsAt: nil); u.weekly = UsageWindow(usedPercent: 20, resetsAt: nil); return u }
-    model.latestUsage = ["project-claude": left(70), "project-codex": left(10)]
+    model.latestUsage = ["project-claude": left(70), "project-codex": left(5)]
     chat.configure { $0.soloAccountID = nil; $0.lastSoloAccountID = "project-codex" }
     accounts = []
     chat.workspaceAnswer = { account, _, _, _, _ in accounts.append(account.id); return .success("Picked.") }
@@ -234,11 +234,11 @@ func testProjectHandoff() {
         while Date() < until && (chat.anyRunning || chat.current.turns.last?.final == nil) { RunLoop.main.run(until: Date().addingTimeInterval(0.03)) }
     }
     run()
-    expect(accounts == ["project-claude"], "project work: the last account under 15% is not started")
+    expect(accounts == ["project-claude"], "project work: the last account under 10% is not started")
     model.latestUsage["project-codex"] = left(60)
     chat.configure { $0.lastSoloAccountID = "project-codex" }
     accounts = []; run()
-    expect(accounts == ["project-codex"], "project work: the last account keeps going with 15% or more left")
+    expect(accounts == ["project-codex"], "project work: the last account keeps going with 10% or more left")
 
     // A TODO's chat: after a usage limit only the AIs picked for its list (when it started) take over, never the others.
     let savedTodos = TodoStore.shared
@@ -254,7 +254,7 @@ func testProjectHandoff() {
     run()
     expect(accounts == ["project-claude"] && chat.current.turns.last?.error?.contains(L("이 TODO에 고른 AI", "picked for this TODO")) == true,
            "a TODO's work is not handed to an AI outside its pick: \(accounts) \(chat.current.turns.last?.error ?? "-")")
-    print("PASS: project AI handoff (same plain chat, same dirty files, next AI continuation, old-token revocation and no forced commit, 15% rule at the start, TODO pick kept)")
+    print("PASS: project AI handoff (same plain chat, same dirty files, next AI continuation, old-token revocation and no forced commit, 10% rule at the start, TODO pick kept)")
 }
 
 func testFullAuto() {

@@ -21,7 +21,7 @@ public struct AIUsage {
     public var account: Account?
     public var fiveHour: UsageWindow?
     public var weekly: UsageWindow?
-    var checkedAt: Date?      // when the numbers were measured
+    public internal(set) var checkedAt: Date?   // when the numbers were measured (AutoPick: an old reading keeps the 10% bar)
     public var detail: String?       // e.g. "me@example.com · plus"
     public var note: String?         // why there are no numbers, shown in the menu
     public var extras: [String] = [] // more limits, already worded for the menu

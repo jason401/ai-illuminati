@@ -48,7 +48,7 @@ enum Peer {
     // (AutoPick's threshold) and, in an Enterprise chat, of its organization.
     static func available(asker: Account?, accounts: [Account], usage: [String: AIUsage], lock: EnterpriseLock?) -> [Account] {
         accounts.filter { kinds.contains($0.provider) && $0.id != asker?.id && usage[$0.id]?.needsLogin != true
-            && Enterprise.permits($0, lock: lock) && AutoPick.enough(usage[$0.id]) }
+            && Enterprise.permits($0, lock: lock) && AutoPick.enough(usage[$0.id], purpose: .chat) }
     }
 
     // Whom one ask_ai call asks. `to`: an account name, "different_kind" (the default) or "any". A name that is not

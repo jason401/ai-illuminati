@@ -417,6 +417,6 @@ extension AIAccounts: Account.Provider.color | var color: Color { get }
 extension AIProjects: TodoItem.State.color | var color: Color { get }
 extension AIProjects: TodoItem.State.title | var title: String { get }
 extension AIProjects: TodoScheduler.init(discussion:store:) | convenience init(discussion: Discussion, store: TodoStore)
-extension AIProjects: TodoScheduler.noCrew(_:accounts:lock:) | static func noCrew(_ allowed: [String], accounts: [Account], lock: EnterpriseLock?) -> String
+extension AIProjects: TodoScheduler.noCrew(_:accounts:lock:percent:note:) | static func noCrew(_ allowed: [String], accounts: [Account], lock: EnterpriseLock?, percent: String? = nil, note: String = "") -> String
 extension Foundation: NSNotification.Name.projectWorkEnded | static let projectWorkEnded: Notification.Name
 extension SwiftUI: ButtonStyle.plainHit | @MainActor static var plainHit: PlainHitButtonStyle { get }

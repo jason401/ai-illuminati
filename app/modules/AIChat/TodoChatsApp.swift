@@ -15,19 +15,16 @@ extension Discussion: TodoChats {
     public var importing: Bool { importingMaterials }
     public var chats: [ProjectChatSummary] { conversations.map(\.projectSummary) }
 
-    // Claude/Codex accounts with TodoScheduler.threshold% (10%) of both limits left (and allowed by the lock), the most weekly usage first
-    // (Enterprise first when close, like AutoPick); the reviewer of the other kind when there is one.
+    // Claude/Codex accounts with enough usage left for a TODO (AutoPick.need: lower near a reset), the most surplus first.
     public func crew(lock: EnterpriseLock?, allowed: [String]) -> (lead: Account, reviewer: Account?)? {
-        let usage = model.latestUsage
-        let ready = AutoPick.candidates(model.accounts, usage: usage, lock: lock)
-            .filter { [.claude, .codex].contains($0.provider) && AutoPick.enough(usage[$0.id], threshold: TodoScheduler.threshold) && (allowed.isEmpty || allowed.contains($0.id)) }
-        func score(_ a: Account) -> (Double, Double) { (AutoPick.weekly(usage[a.id]) + (a.isSchool ? AutoPick.enterpriseBonus : 0), AutoPick.fiveHour(usage[a.id])) }
-        guard let lead = ready.max(by: { score($0) < score($1) }) else { return nil }
-        let others = ready.filter { $0.id != lead.id }
-        let reviewer = others.filter { $0.provider != lead.provider }.max { score($0) < score($1) } ?? others.max { score($0) < score($1) }
-        return (lead, reviewer)
+        AutoPick.todoCrew(model.accounts, usage: model.latestUsage, lock: lock, allowed: allowed)
     }
-    public func noCrew(_ allowed: [String], lock: EnterpriseLock?) -> String { TodoScheduler.noCrew(allowed, accounts: model.accounts, lock: lock) }
+    // The bar shown is the lowest one any of the accounts that could take the TODO has now.
+    public func noCrew(_ allowed: [String], lock: EnterpriseLock?) -> String {
+        let able = model.accounts.filter { [.claude, .codex].contains($0.provider) && Enterprise.permits($0, lock: lock) && (allowed.isEmpty || allowed.contains($0.id)) }
+        let bar = AutoPick.todoBar(able, usage: model.latestUsage)
+        return TodoScheduler.noCrew(allowed, accounts: model.accounts, lock: lock, percent: bar.percent, note: bar.note)
+    }
 
     public func addChat(_ project: ProjectBinding, title: String, lock: EnterpriseLock?) -> UUID { addProjectChat(project, title: title, open: false, lock: lock) }
     public func setCrew(room: UUID, members: [String], lead: String) {
@@ -89,14 +86,15 @@ extension TodoScheduler {
     public convenience init(discussion: Discussion, store: TodoStore) { self.init(chats: discussion, store: store) }
 
     // Why nobody can take a list's TODOs: the picked accounts are gone, kept out by the Enterprise lock, or low on usage.
-    public static func noCrew(_ allowed: [String], accounts: [Account], lock: EnterpriseLock?) -> String {
-        let pct = "\(Int(threshold))%"
-        guard !allowed.isEmpty else { return L("남은 사용량이 \(pct) 이상인 Claude/Codex 계정이 없어서 기다려요.", "Waiting for a Claude/Codex account with \(pct) usage left.") }
+    // `percent`/`note`: the bar in use now and which reset lowers it (AutoPick.todoBar).
+    public static func noCrew(_ allowed: [String], accounts: [Account], lock: EnterpriseLock?, percent: String? = nil, note: String = "") -> String {
+        let pct = percent ?? "\(Int(threshold))%"
+        guard !allowed.isEmpty else { return L("남은 사용량이 \(pct) 이상인 Claude/Codex 계정이 없어서 기다려요\(note).", "Waiting for a Claude/Codex account with \(pct) usage left\(note).") }
         let picked = accounts.filter { allowed.contains($0.id) && [.claude, .codex].contains($0.provider) }
         if picked.isEmpty { return L("고른 AI 계정이 모두 없어졌어요. 보드에서 일할 AI를 다시 골라 주세요.", "The picked AI accounts are gone. Pick the AIs again on the board.") }
         if !picked.contains(where: { Enterprise.permits($0, lock: lock) }) {
             return L("고른 AI가 이 프로젝트의 잠금(Enterprise·개인)에 맞지 않아요. 일할 AI를 다시 골라 주세요.", "The picked AIs are not allowed by this project's lock (Enterprise or personal). Pick them again.")
         }
-        return L("고른 AI의 남은 사용량이 \(pct) 이상이 될 때까지 기다려요.", "Waiting until a picked AI has \(pct) usage left.")
+        return L("고른 AI의 남은 사용량이 \(pct) 이상이 될 때까지 기다려요\(note).", "Waiting until a picked AI has \(pct) usage left\(note).")
     }
 }

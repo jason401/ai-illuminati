@@ -1,5 +1,6 @@
 AIUsage | struct AIUsage
 AIUsage.account | var account: Account?
+AIUsage.checkedAt | var checkedAt: Date? { get }
 AIUsage.detail | var detail: String?
 AIUsage.extras | var extras: [String]
 AIUsage.fiveHour | var fiveHour: UsageWindow?

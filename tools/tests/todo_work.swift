@@ -861,6 +861,49 @@ func testTodoCrew() {
     print("PASS: TODO crew (picked AIs saved, only they work, no fallback, reasons)")
 }
 
+// The TODO bar near a reset (AutoPick.need/surplus): lower only for TODOs and only close to a reset, never above 10%;
+// chats keep 10%; the most surplus works first; the waiting text says the bar in use. Fixed `now`, made-up readings only.
+func testTodoUsageBar() {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    func window(_ left: Double, in seconds: TimeInterval?) -> UsageWindow { UsageWindow(usedPercent: 100 - left, resetsAt: seconds.map { now.addingTimeInterval($0) }) }
+    func weekNeed(_ days: Double?, _ purpose: AutoPick.Purpose = .todo) -> Double {
+        AutoPick.need(window: window(50, in: days.map { $0 * 86400 }), kind: .weekly, purpose: purpose, now: now)
+    }
+    expect(weekNeed(3) == 10 && weekNeed(2) == 10 && weekNeed(1) == 5 && weekNeed(0.5) == 3 && weekNeed(nil) == 10, "weekly bar: 3 d 10, 2 d 10, 1 d 5, half a day 3, no reset 10")
+    expect(AutoPick.need(window: nil, kind: .weekly, purpose: .todo, now: now) == 10 && weekNeed(-0.1) == 10, "no window or a reset already past: 10")
+    func fiveNeed(_ minutes: Double) -> Double { AutoPick.need(window: window(50, in: minutes * 60), kind: .fiveHour, purpose: .todo, now: now) }
+    expect(fiveNeed(61) == 10 && fiveNeed(59) == 3, "5-hour bar: 61 min 10, 59 min 3")
+    expect(weekNeed(0.5, .chat) == 10 && AutoPick.need(window: window(50, in: 600), kind: .fiveHour, purpose: .chat, now: now) == 10, "chats keep 10%")
+    expect(AutoPick.need(window: window(50, in: 43200), kind: .weekly, purpose: .todo, now: now, checkedAt: now.addingTimeInterval(-1800)) == 10
+           && AutoPick.need(window: window(50, in: 43200), kind: .weekly, purpose: .todo, now: now, checkedAt: now.addingTimeInterval(-1700)) == 3,
+           "a reading 30 minutes old keeps 10%")
+
+    func usage(five: Double = 100, week: Double, resetIn: TimeInterval?) -> AIUsage {
+        var u = AIUsage(name: "u"); u.fiveHour = window(five, in: 4 * 3600); u.weekly = window(week, in: resetIn); return u
+    }
+    // Just the bar left passes (>=); a bit less does not; a chat still needs 10%.
+    expect(AutoPick.enough(usage(week: 3, resetIn: 43200), purpose: .todo, now: now) && !AutoPick.enough(usage(week: 2.9, resetIn: 43200), purpose: .todo, now: now)
+           && !AutoPick.enough(usage(week: 3, resetIn: 43200), purpose: .chat, now: now), "exactly the bar passes; chats still need 10%")
+    let a = Account(id: "bar-a", provider: .claude, name: "Claude A"), b = Account(id: "bar-b", provider: .codex, name: "Codex B")
+    var levels = ["bar-a": usage(week: 70, resetIn: 43200), "bar-b": usage(week: 72, resetIn: 5 * 86400)]
+    expect(AutoPick.surplus(usage: levels["bar-a"], purpose: .todo, now: now) == 67 && AutoPick.surplus(usage: levels["bar-b"], purpose: .todo, now: now) == 62, "surplus 67 and 62")
+    let crew = AutoPick.todoCrew([b, a], usage: levels, lock: nil, allowed: [], now: now)
+    expect(crew?.lead.id == "bar-a" && crew?.reviewer?.id == "bar-b", "the most surplus works first (close reset, much left)")
+    levels["bar-b"] = usage(week: 67 + 10, resetIn: 5 * 86400)   // same surplus: the most weekly left
+    expect(AutoPick.todoCrew([a, b], usage: levels, lock: nil, allowed: [], now: now)?.lead.id == "bar-b", "same surplus: the most weekly left first")
+    levels = ["bar-a": usage(week: 4, resetIn: 43200), "bar-b": usage(week: 8, resetIn: 5 * 86400)]
+    expect(AutoPick.todoCrew([a, b], usage: levels, lock: nil, allowed: [], now: now).map { $0.lead.id == "bar-a" && $0.reviewer == nil } == true, "4% left half a day before the reset takes a TODO; 8% five days before does not")
+    expect(AutoPick.choose([a, b], usage: levels, lock: nil, current: nil)?.id == "bar-b", "a chat is not lowered: nobody has 10%, the most left answers as before")
+
+    // The waiting text shows the lowest bar of the accounts that could take it, from the function.
+    let bar = AutoPick.todoBar([a, b], usage: ["bar-a": usage(week: 1, resetIn: 86400), "bar-b": usage(week: 1, resetIn: 5 * 86400)], now: now)
+    expect(bar.percent == "5%" && bar.note.contains("1"), "the bar in use: \(bar.percent)\(bar.note)")
+    let text = TodoScheduler.noCrew([], accounts: [a, b], lock: nil, percent: bar.percent, note: bar.note)
+    expect(text.contains("5%") && text.contains(bar.note), "the waiting text says it: \(text)")
+    expect(AutoPick.todoBar([a, b], usage: ["bar-a": usage(week: 1, resetIn: nil)], now: now).percent == "10%", "no reset time: 10%")
+    print("PASS: TODO usage bar near a reset (need, surplus order, chats unchanged, waiting text)")
+}
+
 // Time per TODO: work (running, all attempts), waiting for the user, since the first start; the app's off time is not work.
 func testTodoTime() {
     let a = ProjectBinding(root: "/tmp/todo-time", common: "", remote: "", remoteURL: "")

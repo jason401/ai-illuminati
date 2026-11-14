@@ -384,7 +384,8 @@ streams `LocalStream`/`PullStream`, `LocalModel.ask` and the Ollama requests):
   models, pull, delete, keep-alive, the gate, `server` for mode2's fake server) and `LocalUsage.read`: the Settings
   Ollama section, the Ollama window, the menu and the Route sorter use all of them. It is the largest public part:
   model management came with the file (`Local.swift`); splitting it from running is a later step.
-- `AIUsage`, `UsageWindow` (fields, `left`, `leftNow`; no public inits: only the module makes readings),
+- `AIUsage`, `UsageWindow` (fields, `left`, `leftNow`; no public inits: only the module makes readings; `checkedAt` is
+  readable (`internal(set)`) so AutoPick can keep the 10% bar for a reading 30 minutes old or older),
   `CodexUsage`/`ClaudeUsage`/`GeminiUsage` (`read`, `forget`; `CodexUsage.binary` for the Codex login): the menu.
 
 ### AIWorkspace (`app/modules/AIWorkspace/`: Workspace, WorkspaceBackup, AutoGuard, Tools, DiskUsage)
@@ -450,7 +451,8 @@ start, the lock's release); the chat side makes the chat, picks the crew by usag
 Chat-side files are AIChat's since C1: `ProjectChat.swift` (approval views; `extension Discussion` with `runProjectSolo`, linking, moving a chat),
 `ProjectCreate.swift` (`extension Discussion`: `addProjectChat`, disconnecting a folder, the menus), `TodoChatsApp.swift`
 (Discussion as `TodoChats`, the crew by `AutoPick`/`Enterprise.permits`, `TodoScheduler.noCrew`, the photo import),
-`SidebarProjects.swift` and `ProjectSnapshot` (Peer.swift, the review). App keeps `TodoBoard.swift`, `ProjectInfoView.swift`,
+`SidebarProjects.swift` and `ProjectSnapshot` (Peer.swift, the review).
+TODO usage bar: `AutoPick.need(window:kind:purpose:now:checkedAt:)` (Solo.swift) is the one rule for how much must be left. For `.todo` it lowers the weekly bar to min(10, max(3, 5 × days to the reset)) and the five-hour bar to 3 in its last hour; for `.chat` (plain and project chats, `Peer.pick`) it stays `AutoPick.threshold` (10); never above 10, and no reset time, a reset already past or a reading `staleAfter` (30 min) old gives 10. `AutoPick.surplus` (the smaller of the two left − bar) orders the TODO crew (`todoCrew`, a tie by weekly left); `choose` keeps its order by weekly left so chats pick as before; `todoBar` gives `TodoScheduler.noCrew` the lowest bar of the able accounts for the waiting text (Discussion's `noCrew`, also on the board). Tests: todo_work `testTodoUsageBar`, `testTodoCrew`; mode2 "plain chat (auto pick 10% …)". App keeps `TodoBoard.swift`, `ProjectInfoView.swift`,
 `GitBranches.swift`, `ApprovalAlerts.swift`, `ToolHub` with the 13 providers in their order.
 
 | Promise | Users (files) | Module test (`projects_contract.swift`) | User tests |

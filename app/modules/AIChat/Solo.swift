@@ -13,17 +13,74 @@ public enum AutoPick {
     static let threshold = 10.0   // switch when the 5-hour or weekly limit has less than this left
 
     // What is left (0–100). A plan without that limit is not held back by it (100). No reading yet: 50.
-    public static func fiveHour(_ usage: AIUsage?) -> Double {
+    public static func fiveHour(_ usage: AIUsage?) -> Double { fiveHour(usage, now: Date()) }
+    public static func weekly(_ usage: AIUsage?) -> Double { weekly(usage, now: Date()) }
+    static func fiveHour(_ usage: AIUsage?, now: Date) -> Double {
         guard let usage else { return 50 }
-        if let w = usage.fiveHour { return w.left() }
+        if let w = usage.fiveHour { return w.left(now: now) }
         return usage.weekly != nil ? 100 : 50
     }
-    public static func weekly(_ usage: AIUsage?) -> Double {
+    static func weekly(_ usage: AIUsage?, now: Date) -> Double {
         guard let usage else { return 50 }
-        if let w = usage.weekly { return w.left() }
+        if let w = usage.weekly { return w.left(now: now) }
         return usage.fiveHour != nil ? 100 : 50
     }
-    static func enough(_ usage: AIUsage?, threshold: Double = threshold) -> Bool { fiveHour(usage) >= threshold && weekly(usage) >= threshold }
+
+    // How much must be left to take work. Chats (plain, project, Peer.pick) always keep `threshold` (10%) so the user's own
+    // share stays. TODOs may use what would be thrown away at a reset: weekly min(10, max(3, 5 × days to the reset)),
+    // 5-hour 3% in the last hour. Never above 10%; no reset time, a reset already past or a reading older than
+    // `staleAfter`: 10%.
+    enum Window { case fiveHour, weekly }
+    enum Purpose { case todo, chat }
+    static let staleAfter: TimeInterval = 1800
+    static func need(window: UsageWindow?, kind: Window, purpose: Purpose, now: Date = Date(), checkedAt: Date? = nil) -> Double {
+        let base = purpose == .todo ? TodoScheduler.threshold : threshold
+        guard purpose == .todo, let reset = window?.resetsAt, reset > now else { return base }
+        if let checkedAt, now.timeIntervalSince(checkedAt) >= staleAfter { return base }
+        let left = reset.timeIntervalSince(now)
+        switch kind {
+        case .weekly: return min(base, max(3, 5 * left / 86400))
+        case .fiveHour: return left > 3600 ? base : 3
+        }
+    }
+    // Room above what must be left (the tighter of the two limits): who has the most works first.
+    static func surplus(usage: AIUsage?, purpose: Purpose, now: Date = Date()) -> Double {
+        min(fiveHour(usage, now: now) - need(window: usage?.fiveHour, kind: .fiveHour, purpose: purpose, now: now, checkedAt: usage?.checkedAt),
+            weekly(usage, now: now) - need(window: usage?.weekly, kind: .weekly, purpose: purpose, now: now, checkedAt: usage?.checkedAt))
+    }
+    static func enough(_ usage: AIUsage?, purpose: Purpose, now: Date = Date()) -> Bool { surplus(usage: usage, purpose: purpose, now: now) >= 0 }
+
+    // TODO crew: Claude/Codex accounts with enough left for a TODO (and allowed by the lock), the most surplus first
+    // (Enterprise first when close, like choose; then the most weekly left); the reviewer of the other kind when there is one.
+    static func todoCrew(_ accounts: [Account], usage: [String: AIUsage], lock: EnterpriseLock?, allowed: [String], now: Date = Date()) -> (lead: Account, reviewer: Account?)? {
+        let ready = candidates(accounts, usage: usage, lock: lock)
+            .filter { [.claude, .codex].contains($0.provider) && enough(usage[$0.id], purpose: .todo, now: now) && (allowed.isEmpty || allowed.contains($0.id)) }
+        func score(_ a: Account) -> (Double, Double) {
+            (surplus(usage: usage[a.id], purpose: .todo, now: now) + (a.isSchool ? enterpriseBonus : 0), weekly(usage[a.id], now: now))
+        }
+        guard let lead = ready.max(by: { score($0) < score($1) }) else { return nil }
+        let others = ready.filter { $0.id != lead.id }
+        let reviewer = others.filter { $0.provider != lead.provider }.max { score($0) < score($1) } ?? others.max { score($0) < score($1) }
+        return (lead, reviewer)
+    }
+
+    // The bar a TODO waits for, for the waiting text: the lowest need among the given accounts, and which reset lowers it.
+    static func todoBar(_ accounts: [Account], usage: [String: AIUsage], now: Date = Date()) -> (percent: String, note: String) {
+        var best: (need: Double, kind: Window, reset: Date)?
+        for account in accounts {
+            let u = usage[account.id]
+            for (kind, window) in [(Window.fiveHour, u?.fiveHour), (.weekly, u?.weekly)] {
+                let n = need(window: window, kind: kind, purpose: .todo, now: now, checkedAt: u?.checkedAt)
+                if n < (best?.need ?? TodoScheduler.threshold), let reset = window?.resetsAt { best = (n, kind, reset) }
+            }
+        }
+        guard let best else { return ("\(Int(TodoScheduler.threshold))%", "") }
+        let left = best.reset.timeIntervalSince(now)
+        let ko = left >= 86400 ? "\(Int((left / 86400).rounded()))일" : left >= 3600 ? "\(Int((left / 3600).rounded()))시간" : "\(max(1, Int((left / 60).rounded())))분"
+        let en = left >= 86400 ? "\(Int((left / 86400).rounded())) d" : left >= 3600 ? "\(Int((left / 3600).rounded())) h" : "\(max(1, Int((left / 60).rounded()))) min"
+        let note = best.kind == .weekly ? L(" (주간 리셋까지 \(ko))", " (weekly resets in \(en))") : L(" (5시간 리셋까지 \(ko))", " (5-hour resets in \(en))")
+        return ("\(Int(best.need.rounded(.up)))%", note)
+    }
 
     // Claude and ChatGPT accounts that may work in this chat. Gemini (YouTube helper) and Gemma on this Mac
     // answer only when called with @; Gemma is also the last resort (see runSolo). In an Enterprise chat (`lock`)
@@ -45,9 +102,9 @@ public enum AutoPick {
     static func choose(_ accounts: [Account], usage: [String: AIUsage], lock: EnterpriseLock?, current: String?,
                        excluded: Set<String> = []) -> Account? {
         let list = candidates(accounts, usage: usage, lock: lock, excluded: excluded)
-        if let current, let keep = list.first(where: { $0.id == current }), enough(usage[keep.id]) { return keep }
+        if let current, let keep = list.first(where: { $0.id == current }), enough(usage[keep.id], purpose: .chat) { return keep }
         func bonus(_ account: Account) -> Double { account.isSchool ? enterpriseBonus : 0 }
-        let ready = list.filter { enough(usage[$0.id]) }
+        let ready = list.filter { enough(usage[$0.id], purpose: .chat) }
         if let best = ready.max(by: { (weekly(usage[$0.id]) + bonus($0), fiveHour(usage[$0.id])) < (weekly(usage[$1.id]) + bonus($1), fiveHour(usage[$1.id])) }) {
             return best
         }

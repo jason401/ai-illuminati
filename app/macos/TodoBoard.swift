@@ -488,7 +488,7 @@ struct TodoBoardView: View {
     }
 }
 
-// Which AIs take a project's TODOs: [AI ▾] picks them (automatic = every Claude/Codex with TodoScheduler.threshold% (10%) left), then who
+// Which AIs take a project's TODOs: [AI ▾] picks them (automatic = every Claude/Codex with enough left for a TODO, AutoPick.need), then who
 // works now (a running TODO's chat) or who would if one started now, or why nobody can.
 struct TodoCrewRow: View {
     let list: TodoList
@@ -557,7 +557,7 @@ struct TodoCrewRow: View {
             Text(L("지금 시작하면: ", "If started now: ") + discussion.label(crew.lead) + (crew.reviewer.map { L(" · 검수 ", " · review ") + discussion.label($0) } ?? L(" · 검수 없음", " · no review")))
                 .foregroundColor(.secondary).lineLimit(1)
         } else {
-            Text(TodoScheduler.noCrew(list.accounts, accounts: discussion.model.accounts, lock: lock)).foregroundColor(.orange).lineLimit(2)
+            Text(discussion.noCrew(list.accounts, lock: lock)).foregroundColor(.orange).lineLimit(2)
         }
     }
 }

@@ -178,6 +178,7 @@ TodoChats.maxAnswering | var maxAnswering: Int { get }
 TodoChats.noCrew(_:lock:) | func noCrew(_ allowed: [String], lock: EnterpriseLock?) -> String
 TodoChats.sentPhotos(_:) | func sentPhotos(_ room: UUID) -> Set<UUID>
 TodoChats.setCrew(room:members:lead:) | func setCrew(room: UUID, members: [String], lead: String)
+TodoChats.standIn(room:brief:done:) | func standIn(room: UUID, brief: String, done: @escaping (TodoStandInReply) -> Void)
 TodoChats.start(room:question:photos:review:extra:) | func start(room: UUID, question: String, photos: [TodoPhoto], review: Bool, extra: String) -> String?
 TodoChats.stop(_:) | func stop(_ room: UUID)
 TodoData | struct TodoData
@@ -189,6 +190,7 @@ TodoData.items | var items: [TodoItem]
 TodoData.lists | var lists: [TodoList]
 TodoData.ordered(_:) | func ordered(_ listID: UUID) -> [TodoItem]
 TodoData.satisfied(_:for:) | func satisfied(_ blocker: TodoItem, for item: TodoItem) -> Bool
+TodoData.standInDue(_:) | func standInDue(_ item: TodoItem) -> Date?
 TodoData.stopped(_:) | func stopped(_ item: TodoItem) -> Bool
 TodoData.workers(room:) | func workers(room: UUID) -> [String]?
 TodoItem | struct TodoItem
@@ -223,6 +225,7 @@ TodoItem.question | var question: TodoQuestion?
 TodoItem.report | var report: TodoReport?
 TodoItem.result | var result: String?
 TodoItem.room | var room: UUID?
+TodoItem.standIns | var standIns: Int
 TodoItem.startedAt | var startedAt: Date?
 TodoItem.state | var state: TodoItem.State
 TodoItem.stateSince | var stateSince: Date?
@@ -243,6 +246,7 @@ TodoList.lock | var lock: EnterpriseLock?
 TodoList.paused | var paused: Bool
 TodoList.project | var project: ProjectBinding?
 TodoList.sequential | var sequential: Bool
+TodoList.standIn | var standIn: Bool
 TodoList.stopAfter | var stopAfter: UUID?
 TodoList.title | var title: String
 TodoList.waitForDone | var waitForDone: Bool
@@ -254,6 +258,7 @@ TodoNote.Kind.init(rawValue:) | init?(rawValue: String)
 TodoNote.Kind.retry | case retry
 TodoNote.Kind.system | case system
 TodoNote.at | var at: Date
+TodoNote.by | var by: String?
 TodoNote.init(from:) | init(from decoder: any Decoder) throws
 TodoNote.kind | var kind: TodoNote.Kind
 TodoNote.text | var text: String
@@ -297,12 +302,18 @@ TodoScheduler.nextCheck | @Published var nextCheck: Date? { get set }
 TodoScheduler.question(_:files:documents:) | static func question(_ item: TodoItem, files: [String] = [], documents: Bool = false) -> String
 TodoScheduler.recover() | func recover()
 TodoScheduler.shared | static var shared: TodoScheduler?
+TodoScheduler.standInDelay | static let standInDelay: TimeInterval
 TodoScheduler.start() | func start()
 TodoScheduler.startNow(lists:) | func startNow(lists: Set<UUID>? = nil)
 TodoScheduler.threshold | static let threshold: Double
 TodoScheduler.tick() | func tick()
 TodoScheduler.waiting | @Published var waiting: String? { get set }
 TodoScheduler.wake() | func wake()
+TodoStandInReply | struct TodoStandInReply
+TodoStandInReply.by | var by: String?
+TodoStandInReply.error | var error: String?
+TodoStandInReply.init(by:text:error:) | init(by: String? = nil, text: String? = nil, error: String? = nil)
+TodoStandInReply.text | var text: String?
 TodoStore | final class TodoStore
 TodoStore.accept(_:) | func accept(_ id: UUID)
 TodoStore.add(title:detail:files:project:projectName:after:askFirst:originRoom:lock:fromAI:) | @discardableResult func add(title: String, detail: String = "", files: [URL] = [], project: ProjectBinding, projectName: String, after: [UUID] = [], askFirst: Bool = false, originRoom: UUID? = nil, lock: EnterpriseLock? = nil, fromAI: Bool = false) throws -> TodoItem
@@ -329,7 +340,7 @@ TodoStore.requestChanges(_:_:) | func requestChanges(_ id: UUID, _ text: String)
 TodoStore.resume(lists:) | func resume(lists: Set<UUID>? = nil) throws
 TodoStore.saveError | @Published var saveError: String? { get set }
 TodoStore.setAfter(_:_:) | func setAfter(_ id: UUID, _ after: [UUID]) throws
-TodoStore.setList(_:sequential:waitForDone:accounts:) | func setList(_ listID: UUID, sequential: Bool? = nil, waitForDone: Bool? = nil, accounts: [String]? = nil) throws
+TodoStore.setList(_:sequential:waitForDone:standIn:accounts:) | func setList(_ listID: UUID, sequential: Bool? = nil, waitForDone: Bool? = nil, standIn: Bool? = nil, accounts: [String]? = nil) throws
 TodoStore.setReady(_:_:) | func setReady(_ id: UUID, _ ready: Bool) throws
 TodoStore.shared | static var shared: TodoStore
 TodoStore.snapshot | @Published var snapshot: TodoData { get set }

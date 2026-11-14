@@ -2,6 +2,7 @@ import Foundation
 import Combine
 import AIAccounts
 import AILocalization
+import AIRuntime
 import AIWorkspace
 import AIProjects
 
@@ -48,6 +49,35 @@ extension Discussion: TodoChats {
         return TodoTurnEnd(error: turn?.error, unreviewed: turn?.peerNotes?.contains { $0.failed && $0.headline == nil } == true)
     }
     public func stop(_ room: UUID) { runToken(room)?.cancel() }
+
+    // A question left unanswered: another AI than the TODO's lead (a different kind first, the chat's lock kept, enough
+    // usage left) reads the chat's folders like ask_ai (read only) and answers in the user's place.
+    public func standIn(room: UUID, brief: String, done: @escaping (TodoStandInReply) -> Void) {
+        let lead = conversation(room).configuration?.leadID.flatMap { id in model.accounts.first { $0.id == id } }
+        let picked = Peer.pick(asker: lead, to: nil, count: 1, members: [], accounts: model.accounts.filter { $0.provider != .gemini },
+                               usage: model.latestUsage, lock: lock(of: room), label: label)
+        guard let peer = picked.accounts.first else { done(TodoStandInReply(error: L("대신 답할 AI가 없어요.", "No AI is free to answer."))); return }
+        let name = label(peer), view = Self.peerView(soloBinding(room))
+        let prompt = """
+        [STAND-IN ANSWER]
+        You are \(name). You are not talking to the user, and you cannot ask other AIs.
+        [Folders you may read — read only]
+        \(Peer.folderList(view.roots))
+        Read only the files you need; do not edit anything, run commands that change files or use Git writes.
+        \(brief)
+        Reply in the language of the TODO.
+        """
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self else { return }
+            let result = self.peerAnswer(peer, prompt: prompt, view: view, room: room, timeout: Peer.askTimeout, token: DebateCancellation())
+            DispatchQueue.main.async {
+                switch result {
+                case .success(let text): done(TodoStandInReply(by: name, text: text))
+                case .failure(let failure): done(TodoStandInReply(by: name, error: "\(failure)"))
+                }
+            }
+        }
+    }
 }
 
 extension TodoScheduler {

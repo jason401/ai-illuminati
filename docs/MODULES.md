@@ -456,6 +456,7 @@ Chat-side files are AIChat's since C1: `ProjectChat.swift` (approval views; `ext
 | Promise | Users (files) | Module test (`projects_contract.swift`) | User tests |
 |---|---|---|---|
 | TODO order: an error is counted and noted and the TODO is ready again, retried in the same chat before a TODO after it; a busy repository (`isBusy`) is not counted; after `maxAttempts` retries the user decides; a TODO waiting for the user is passed in list order (the next one goes on) unless "next after my check" is on, while an "after" link to it waits; a report becomes the check only when the chat ended; the next TODO starts only once the repository lock is let go, woken by `.projectReleased` (no tick) | TodoChatsApp (Discussion), main (start, quit), TodoBoard | "an error is counted and noted", "nothing starts while the repository is held", "the release starts the retry first", "a busy repository does not count", "after 2 retries the user decides", "B waits while A needs the user, after my check", "without it a question does not hold B", "the lock's release starts the next TODO" | todo_work `testTodoOrder` (through Discussion: A, its retry, then B, each start after a release, no tick), `testTodoScheduler` (retries, no report, report final at the end, busy chat waits) |
+| Stand-in answer: a question with choices (not blocked) unanswered for `standInDelay` (30 min) goes to another AI than the lead through `TodoChats.standIn`, once until the user answers (`standIns`); its answer (`ANSWER:`) makes the TODO ready with a note `by` that AI, anything else leaves it to the user; an answer to a question the user already answered is dropped; lists can turn it off (`TodoList.standIn`, on by default) | TodoChatsApp (`Peer.pick`, read-only `peerView`), TodoBoard | none | todo_work `testTodoStandIn` |
 | Scheduler limits: drafts wait for Start; one answering place stays free; a TODO's own chat; Stop cancels and stops the chat; after a quit running TODOs are ready, interrupted, one attempt counted | main, TodoBoard | "drafts wait for Start", "one of the places stays free", "Stop cancels a running TODO", "restart" | `testTodoScheduler`, `testTodoTime`, `testTodoPause` |
 | Save format: todos.json pretty with sorted keys, older files read, an unreadable or newer file held and never written over; project-info.json the same | TodoBoard, Todo tools, ProjectInfoView, Solo (rules) | "todos.json keeps its shape", "reads back", "an unreadable todos.json is held" | `testTodoStore` (held unreadable files, older files, failed save), `testProjectInfo` |
 | Repository lock: one writer per Git repository (common folder) and per documents folder, across app instances (lock files), shared locks above; refusals say `busyKorean`/`busyEnglish` | Discussion (every writing answer), TodoChatsApp | "a second writer is refused", "released" | `testProjectWork` (repo locks), `testDocumentsProject` (one writer per folder), `testTodoScheduler` (folder lock) |
@@ -467,17 +468,18 @@ Chat-side files are AIChat's since C1: `ProjectChat.swift` (approval views; `ext
 
 Public names and why (everything else stays internal: `ProjectError`, `ProjectTools`, the lock tables and files, `RunProgress`,
 `RunTimings`, `TodoStore.encoder`/`decoder`/`copyIn`, `TodoData.eligible`/`hasCycle`, `TodoScheduler.begin`/`settle`/
-`deliver`/`retryDelay`/`chats`, the tools' schemas and scopes):
+`deliver`/`retryDelay`/`chats`/`standIn()`/`standInBrief`/`standInAnswer`, `TodoStore.standIn`, the tools' schemas and scopes):
 - Saved values the board, the chats and the tools show (the save format above): `TodoItem` (its stored fields, `State`,
-  `timeLine`), `TodoList`, `TodoData` (`item`, `list`, `ordered`, `blockers`, `satisfied`, `stopped`, `workers`), `TodoNote`,
+  `timeLine`), `TodoList`, `TodoData` (`item`, `list`, `ordered`, `blockers`, `satisfied`, `stopped`, `workers`, `standInDue` for the card's
+  "another AI answers by …" line), `TodoNote` (`by`: who answered in the user's place),
   `TodoQuestion`, `TodoReport`, `TodoAttachment`, `WorkStep` (a chat turn keeps the plan), `ProjectInfo`, `ProjectInfoData`,
   `ProjectFolder`, `ProjectLink`. Explicit public inits where Swift's memberwise ones are internal (`ProjectApproval`,
   `TodoReport`, `ProjectFolder`, `ProjectChatSummary`, `TodoTurnEnd`).
 - `TodoStore` (the board's actions, among them `setReady` and `move(_:before:)` for a row's draft/ready capsule and drag, `shared`, `snapshot`, `current`, `change`, `update`, `file`, `locked`, `url`): the board,
   the scheduler's users and `Discussion` (`workers(room:)`, delete and disconnect).
 - `TodoScheduler` (`init(chats:store:)`, `start`, `startNow`, `wake`, `tick`, `recover`, `closeClocks`, `cancel`, `crew`, `lock`,
-  `waiting`, `nextCheck`, `editing`, `question`, `instruction`, `threshold`, `maxAttempts`) and `TodoChats`, `TodoPhoto`,
-  `TodoTurnEnd`: how the chat side plugs in (P0). `TodoScheduler.noCrew` and `init(discussion:store:)` are app extensions.
+  `waiting`, `nextCheck`, `editing`, `question`, `instruction`, `threshold`, `maxAttempts`, `standInDelay`) and `TodoChats`, `TodoPhoto`,
+  `TodoTurnEnd`, `TodoStandInReply`: how the chat side plugs in (P0; `TodoChats.standIn` has a default that asks nobody, for fakes). `TodoScheduler.noCrew` and `init(discussion:store:)` are app extensions.
 - `ProjectChatSummary`, `ProjectChats.list`: what project code may read of a chat (id, time, project, lock, the open turn);
   `TodoProject` (`all`, its fields): the board's and todo_add's project list.
 - `ProjectWork` (`acquire`, `release`, `busy`, `isBusy`, `isHeld`, `busyKorean`/`busyEnglish`, `register`, `finish`, `active`,

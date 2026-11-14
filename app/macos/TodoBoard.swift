@@ -179,6 +179,10 @@ struct TodoBoardView: View {
                 .help(L("켜면 앞 TODO에 [완료]를 눌러야 다음이 시작돼요. 끄면 앞 TODO가 확인 대기나 질문 대기가 될 때 시작해요.",
                         "On: the next starts after you press Done. Off: it starts when the previous one waits for your check or answer."))
         }
+        Toggle(L("30분 답 없으면 AI가 대신", "AI answers after 30 min"), isOn: Binding(get: { list.standIn }, set: { value in act { try store.setList(list.id, standIn: value) } }))
+            .toggleStyle(.checkbox).font(.system(size: 12)).fixedSize()
+            .help(L("선택지가 있는 질문에 30분 동안 답이 없으면, 물어본 AI와 다른 AI가 프로젝트를 읽고 대신 답해요(한 번만, 네가 답할 때까지). 승인·비밀번호·배포·삭제처럼 네가 정해야 할 건 넘기지 않고 기다려요.",
+                    "A question with choices left unanswered for 30 minutes is answered by another AI than the one that asked, after reading the project (once, until you answer). Approvals, secrets, publishing or deleting still wait for you."))
     }
 
     // ⏸ Pause / Resume for one list, with what holds it: paused now, or going on only up to a TODO.
@@ -722,6 +726,11 @@ struct TodoCard: View {
                 }
             } else if let question = item.question {
                 Text(question.reason).font(.system(size: 12)).textSelection(.enabled)
+                if let due = TodoStore.shared.snapshot.standInDue(item) {
+                    Text(L("\(due.formatted(date: .omitted, time: .shortened))까지 답이 없으면 다른 AI가 대신 답해요.", "Another AI answers for you if you have not by \(due.formatted(date: .omitted, time: .shortened)).")).font(.system(size: 11)).foregroundColor(.secondary)
+                } else if let note = item.notes.last, note.kind == .system, note.by != nil {
+                    Text(note.text).font(.system(size: 11)).foregroundColor(.secondary)
+                }
                 ForEach(Array(question.items.enumerated()), id: \.offset) { _, q in
                     VStack(alignment: .leading, spacing: 3) {
                         Text("• " + q.text).font(.system(size: 12, weight: .medium))

@@ -774,7 +774,7 @@ public final class TaskLink: ToolProvider {
                     t.report = report
                 }
             } catch { return ProjectTools.failure(error.localizedDescription) }
-            return ["content": [["type": "text", "text": "Recorded. Stop working now: end your reply with the reason and the questions. The user decides in the chat."]], "isError": false]
+            return ["content": [["type": "text", "text": "Recorded. Stop working now: end your reply with the reason and the questions. The user answers on the TODO card or in this chat."]], "isError": false]
         default: return ProjectTools.failure("Unknown tool: " + name)
         }
     }
@@ -1047,6 +1047,7 @@ public final class TodoScheduler: ObservableObject {
     private var standingIn: Set<UUID> = []           // asked now
     private var standInRetry: [UUID: Date] = [:]     // nobody could be asked: not before then
     private var standInWake: Date?                   // the wake already set for the next one due
+    private var chatSaid: [UUID: String] = [:]       // what the user wrote in the TODO's chat: shown first in its next attempt
     var held: (String) -> Bool = ProjectWork.isHeld
     // The TODO open for editing on the board: not started until the edit is saved or dropped.
     public var editing: UUID? { didSet { if oldValue != editing { wake() } } }
@@ -1064,6 +1065,31 @@ public final class TodoScheduler: ObservableObject {
                     // A chat lets go of a repository after its answer is marked finished: the next TODO need not wait 30 minutes.
                     NotificationCenter.default.publisher(for: .projectReleased).receive(on: DispatchQueue.main).sink { [weak self] _ in self?.wake() }]
         wake()
+    }
+
+    // A message the user wrote in a TODO's own chat while it does not run: it goes to the TODO (an answer, a change request,
+    // or a note that makes a ready or draft TODO ready) and the next attempt starts in that chat now when it may, so what
+    // is done for it ends in task_done/task_ask, never in a plain turn the TODO does not know about. Pictures become its
+    // attachments. False: no such TODO there (none, done or cancelled), an ordinary turn then.
+    public func chatMessage(room: UUID, text: String, files: [URL] = []) throws -> Bool {
+        settle()   // an attempt that just ended in this chat gets its state first
+        guard let item = store.current.items.filter({ $0.room == room && ![.done, .cancelled, .running].contains($0.state) })
+                .max(by: { $0.updatedAt < $1.updatedAt }) else { return false }
+        if !files.isEmpty { try store.attach(item.id, files: files) }
+        switch item.state {
+        case .needsYou: store.answer(item.id, text)
+        case .review: store.requestChanges(item.id, text)
+        default:
+            try store.change(item.id) { t in
+                guard t.state == .draft || t.state == .ready else { return }
+                if !text.isEmpty { t.notes.append(TodoNote(kind: .feedback, text: text)) }
+                t.state = .ready; t.attempts = 0; t.lastError = nil; t.standIns = 0
+            }
+        }
+        if !text.isEmpty { chatSaid[item.id] = text }
+        retryAt[item.id] = nil
+        tick()
+        return true
     }
 
     // ▶ Start now on the board.
@@ -1198,7 +1224,10 @@ public final class TodoScheduler: ObservableObject {
             try? store.change(item.id) { $0.room = room }   // the next try reuses this chat and the copies already made
             return error.localizedDescription
         }
-        let question = Self.question(item, files: delivered.paths, documents: project.isDocuments)
+        var question = Self.question(item, files: delivered.paths, documents: project.isDocuments)
+        // Sent from its chat: the user's message first, as they wrote it, then the TODO it belongs to.
+        let said = chatSaid[item.id].flatMap { said in item.notes.last?.text == said ? said : nil }
+        if let said { question = said + "\n\n" + L("[이 채팅의 TODO]", "[This chat's TODO]") + "\n" + question }
         // Running before the turn starts: the AI's first tool call must find it.
         do {
             try store.update { data in
@@ -1218,6 +1247,7 @@ public final class TodoScheduler: ObservableObject {
             return reason
         }
         try? store.change(item.id) { $0.interrupted = false }
+        chatSaid[item.id] = nil
         return nil
     }
 

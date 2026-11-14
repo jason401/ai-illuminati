@@ -400,13 +400,34 @@ public final class Discussion: ObservableObject {
         let batch = Array(ready.prefix(PendingInputs.batchSize(ready)))
         let sent = Set(queue.prefix(batch.count).map(\.id))
         let questions = batch.map(\.question).filter { !$0.isEmpty }
-        if let reason = startTurn(room: room, question: PendingInputs.merged(questions.isEmpty ? [L("첨부한 이미지를 설명해줘.", "Describe the attached images.")] : questions),
-                                  mentioned: batch[0].mentioned, images: batch.flatMap(\.images), forced: batch[0].picked) { return reason }
+        let merged = PendingInputs.merged(questions.isEmpty ? [L("첨부한 이미지를 설명해줘.", "Describe the attached images.")] : questions)
+        var note: String?
+        switch sendToTodo(.init(question: merged, mentioned: batch[0].mentioned, picked: batch[0].picked, images: batch.flatMap(\.images)), room: room) {
+        case .failed(let reason): return reason
+        case .sent(let why): note = why
+        case .notTodo:
+            if let reason = startTurn(room: room, question: merged, mentioned: batch[0].mentioned, images: batch.flatMap(\.images), forced: batch[0].picked) { return reason }
+        }
         change(room, save: true) { c in
             c.queued = (c.queued ?? []).filter { !sent.contains($0.id) }
             if c.queued?.isEmpty == true { c.queued = nil }
         }
-        return nil
+        return note
+    }
+
+    // A message in a TODO's own chat while the TODO does not run goes to the TODO (TodoScheduler.chatMessage): an answer,
+    // a change request or a note, and its next attempt starts here with it, so work done for it ends in task_done/task_ask
+    // and the TODO never stays ready after the chat finished it. A read-only way picked (one, all, meeting) is a plain answer.
+    enum TodoSend: Equatable { case notTodo, sent(String?), failed(String) }
+    func sendToTodo(_ ready: PendingInputs.Ready, room: UUID) -> TodoSend {
+        guard host == nil, ready.picked == nil || ready.picked == .work, let scheduler = TodoScheduler.shared else { return .notTodo }
+        do {
+            guard try scheduler.chatMessage(room: room, text: ready.question, files: ready.images.map(\.url)) else { return .notTodo }
+        } catch { return .failed(error.localizedDescription) }
+        for image in ready.images { try? ImageStore.remove(image) }   // copied into the TODO's attachments
+        if runningRooms.contains(room) { return .sent(nil) }
+        // It may not start yet (another TODO, its list paused, no account free): the message waits on the TODO.
+        return .sent(L("TODO에 전했어요. ", "Sent to the TODO. ") + (scheduler.waiting ?? L("차례가 오면 이 채팅에서 이어서 해요.", "It goes on in this chat when its turn comes.")))
     }
 
     // "Send now" in the message box: stops the answer and sends the queue at once; without an answer, sends it.
@@ -684,18 +705,26 @@ public final class Discussion: ObservableObject {
             enqueue(message, room: currentID)
         } else {
             let ready = prepare(message, room: currentID, forced: forcedRoute != nil)
-            if let reason = startTurn(room: currentID, question: ready.question, mentioned: ready.mentioned, images: ready.images, forced: ready.picked) {
-                attachmentError = reason
-                return
+            switch sendToTodo(ready, room: currentID) {
+            case .failed(let reason): attachmentError = reason; return
+            case .sent(let note): clearDraft(); attachmentError = note; return
+            case .notTodo:
+                if let reason = startTurn(room: currentID, question: ready.question, mentioned: ready.mentioned, images: ready.images, forced: ready.picked) {
+                    attachmentError = reason
+                    return
+                }
             }
         }
+        clearDraft()
+        attachmentError = nil
+    }
+    private func clearDraft() {
         draftMentions = []
         mentionQuery = nil
         slashMenu = nil
         pendingImages = []
         draft = ""
         pickedRoute = nil
-        attachmentError = nil
     }
 
     // The ways the message box offers for the open chat (RouteChoice.offered); none in the team modes.

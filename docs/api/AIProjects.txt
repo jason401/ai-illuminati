@@ -289,6 +289,7 @@ TodoReport.question | var question: TodoQuestion?
 TodoReport.summary | var summary: String?
 TodoScheduler | final class TodoScheduler
 TodoScheduler.cancel(_:) | func cancel(_ id: UUID)
+TodoScheduler.chatMessage(room:text:files:) | func chatMessage(room: UUID, text: String, files: [URL] = []) throws -> Bool
 TodoScheduler.closeClocks() | func closeClocks()
 TodoScheduler.crew(for:) | func crew(for list: TodoList) -> (lead: Account, reviewer: Account?)?
 TodoScheduler.crew(lock:allowed:) | func crew(lock: EnterpriseLock? = nil, allowed: [String] = []) -> (lead: Account, reviewer: Account?)?

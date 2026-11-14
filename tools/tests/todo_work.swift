@@ -1194,3 +1194,101 @@ func testTodoStandIn() {
     expect(old.lists[0].standIn, "an older list gets it on")
     print("PASS: TODO stand-in answer (30 minutes, once until the user answers, blocked/off/declined wait, failure retried later, late answer dropped)")
 }
+
+// A message written in a TODO's own chat (TodoScheduler.chatMessage through Discussion.send): it answers the question,
+// asks for changes or makes a draft ready, and the next attempt starts in the same chat with that message first, never a
+// plain turn the TODO does not know about; messages queued while it ran go the same way; a done TODO's chat is a plain chat.
+func testTodoChatMessage() {
+    let project = todoProject("todo-chat-message")
+    let saved = TodoStore.shared, savedScheduler = TodoScheduler.shared
+    let store = TodoStore(url: todoStoreFile("chat-message"))
+    TodoStore.shared = store
+    let model = AppModel()
+    model.accounts = [Account(id: "chatmsg-claude", provider: .claude, name: "Chat Claude")]
+    var u = AIUsage(name: "x"); u.fiveHour = UsageWindow(usedPercent: 10, resetsAt: nil); u.weekly = UsageWindow(usedPercent: 10, resetsAt: nil)
+    model.latestUsage["chatmsg-claude"] = u
+    let chat = Discussion(model: model)
+    let scheduler = TodoScheduler(discussion: chat, store: store)
+    TodoScheduler.shared = scheduler
+    defer { TodoStore.shared = saved; TodoScheduler.shared = savedScheduler }
+    var asks: [String] = [], askReply = ""
+    chat.workspaceAnswer = { _, prompt, binding, _, _ in
+        let current = prompt.components(separatedBy: "[User]\n").last ?? ""
+        asks.append(current)
+        guard current.contains("TODO: chatty") else { return .success("You're welcome.") }
+        let room = store.current.items.first { $0.state == .running }?.room ?? UUID()
+        let context = ToolContext(room: room, roots: binding.roots, projectRun: binding.projectRunID, projectGeneration: binding.projectGeneration)
+        func done(_ summary: String) -> Result<String, Answerer.Failure> { _ = TaskLink.shared.call("task_done", ["summary": summary], context: context); return .success(summary) }
+        if current.hasPrefix("and docs") { return done("Docs too") }
+        if current.hasPrefix("add docs") { return done("Docs") }
+        if current.hasPrefix("later please") { return done("Later") }
+        if current.hasPrefix("add tests") { Thread.sleep(forTimeInterval: 0.3); return done("Added tests") }
+        if current.hasPrefix("use B") { return done("Used B") }
+        let r = TaskLink.shared.call("task_ask", ["kind": "question", "reason": "Which way?", "questions": [["text": "A or B?", "options": ["A", "B"]]]], context: context)
+        askReply = ((r["content"] as? [[String: Any]])?.first?["text"] as? String) ?? ""
+        return .success("I need your decision.")
+    }
+    func settle(_ until: () -> Bool) {
+        let deadline = Date().addingTimeInterval(20)
+        while Date() < deadline && (!until() || chat.anyRunning) { RunLoop.main.run(until: Date().addingTimeInterval(0.03)) }
+    }
+    func say(_ text: String) { chat.draft = text; chat.send() }
+    scheduler.start()
+    let item = try! store.add(title: "chatty", project: project, projectName: "C")
+    store.startDrafts()
+    settle { store.current.item(item.id)?.state == .needsYou }
+    let room = store.current.item(item.id)!.room!
+    expect(askReply.contains("on the TODO card or in this chat"), "task_ask says where the user answers: \(askReply)")
+    chat.open(room)
+    expect(chat.currentID == room, "the TODO's chat is open")
+
+    // needsYou: the message is the answer, and the next attempt starts here at once with it first.
+    var turns = chat.conversation(room).turns.count
+    say("use B")
+    var t = store.current.item(item.id)!
+    expect(t.state == .running && t.question == nil && t.notes.last?.kind == .answer && t.notes.last?.text == "use B" && chat.draft.isEmpty, "the answer goes to the TODO: \(t.state)")
+    expect(chat.conversation(room).turns.count == turns + 1 && chat.conversation(room).turns.last?.question.hasPrefix("use B") == true
+           && chat.conversation(room).turns.last?.question.contains("TODO: chatty") == true, "one turn, the TODO's attempt, shows the message first")
+    settle { store.current.item(item.id)?.state == .review }
+    t = store.current.item(item.id)!
+    expect(t.result == "Used B" && t.standIns == 0 && store.current.standInDue(t) == nil, "the attempt ends in review, and no stand-in is due: \(t.state)")
+    expect(chat.conversation(room).turns.count == turns + 1, "no plain turn besides it")
+
+    // review: a change request; a message sent while it runs waits and goes to the TODO too when the attempt ends.
+    turns = chat.conversation(room).turns.count
+    say("add tests")
+    expect(store.current.item(item.id)?.state == .running && store.current.item(item.id)?.notes.last?.kind == .feedback, "a message on a result is a change request")
+    say("and docs")
+    expect(chat.conversation(room).queued?.count == 1, "sent while the TODO runs, it waits")
+    settle { store.current.item(item.id)?.result == "Docs too" && store.current.item(item.id)?.state == .review }
+    t = store.current.item(item.id)!
+    expect(t.state == .review && t.result == "Docs too" && t.notes.last?.text == "and docs" && chat.conversation(room).queued == nil, "the queued message is the next change request: \(t.result ?? "-")")
+    expect(chat.conversation(room).turns.count == turns + 2 && !asks.contains { $0.hasPrefix("and docs") && !$0.contains("TODO: chatty") }, "two attempts, no plain turn")
+
+    // draft (or ready): a note, ready, started.
+    try! store.change(item.id) { $0.state = .draft }
+    say("add docs")
+    settle { store.current.item(item.id)?.result == "Docs" }
+    t = store.current.item(item.id)!
+    expect(t.state == .review && t.notes.last?.kind == .feedback && t.notes.last?.text == "add docs", "a draft's chat message makes it ready and it runs: \(t.state)")
+
+    // It may not start now (its list is paused): the message waits on the TODO, said in the message box, no turn.
+    try! store.pause(lists: [t.listID])
+    turns = chat.conversation(room).turns.count
+    say("later please")
+    t = store.current.item(item.id)!
+    expect(t.state == .ready && t.notes.last?.text == "later please" && !chat.anyRunning && chat.attachmentError != nil && chat.conversation(room).turns.count == turns,
+           "a TODO that cannot start keeps the message: \(t.state)")
+    try! store.resume(lists: [t.listID])
+    settle { store.current.item(item.id)?.result == "Later" }
+    expect(store.current.item(item.id)?.state == .review && chat.conversation(room).turns.last?.question.hasPrefix("later please") == true, "it starts with that message once it may")
+
+    // done: a plain chat again.
+    store.accept(item.id)
+    turns = chat.conversation(room).turns.count
+    say("thanks")
+    settle { chat.conversation(room).turns.last?.final != nil }
+    expect(store.current.item(item.id)?.state == .done && chat.conversation(room).turns.count == turns + 1 && chat.conversation(room).turns.last?.question == "thanks",
+           "a done TODO's chat answers as a plain chat: \(store.current.item(item.id)?.state.rawValue ?? "-")")
+    print("PASS: TODO chat messages (answer, change request, draft made ready, queued message, waits when it cannot start, done is plain)")
+}

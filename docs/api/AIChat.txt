@@ -257,6 +257,7 @@ Discussion.importingMaterials | @Published var importingMaterials: Bool { get se
 Discussion.init(model:) | init(model: any ChatSettings)
 Discussion.label(_:) | func label(_ account: Account) -> String
 Discussion.listedConversations | var listedConversations: [Conversation] { get }
+Discussion.markTodoDone(_:) | func markTodoDone(_ id: UUID)
 Discussion.maxAnswering | var maxAnswering: Int { get }
 Discussion.meets(_:) | static func meets(_ account: Account) -> Bool
 Discussion.model | let model: any ChatSettings

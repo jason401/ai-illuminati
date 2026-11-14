@@ -263,6 +263,9 @@ struct ChatView<Model: ChatSettings>: View {
             Button(conversation.pinned == true ? L("고정 해제", "Unpin") : L("맨 위에 고정", "Pin to top")) { discussion.togglePin(conversation.id) }
         }
         moveMenu(conversation)
+        if let todo = Discussion.todoToFinish(room: conversation.id, in: todos.snapshot) {
+            Button(L("완료로 표시", "Mark as done")) { discussion.markTodoDone(todo.id) }
+        }
         Button(L("이 대화 폴더 열기", "Show this chat's folder")) { discussion.openChatFolder(conversation.id) }
         if sync.settings.enabled && !sync.settings.shareAll {
             Button(conversation.shareToDevices == true ? L("다른 기기에서 숨기기", "Hide on other Macs") : L("다른 기기에 보이기", "Show on other Macs")) {

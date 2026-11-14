@@ -167,6 +167,14 @@ let after = TodoScheduler(chats: FakeChats(), store: reread)
 after.recover()
 expect(reread.current.item(c.id)?.state == .ready && reread.current.item(c.id)?.interrupted == true && reread.current.item(c.id)?.attempts == 1,
        "restart: a running TODO is ready again and checks what is left")
+// [Mark as done] on the running C: saved done first, then its chat stops; the chat's end (an error) does not turn it back.
+let roomC = store.current.item(c.id)!.room!
+try! scheduler.markDone(c.id)
+expect(chats.events.last == "stop" && store.current.item(c.id)?.state == .done, "mark done stops a running TODO's chat and it is done")
+chats.endings[roomC] = TodoTurnEnd(error: "stopped")
+pump()
+scheduler.tick()
+expect(store.current.item(c.id)?.state == .done && store.current.item(c.id)?.attempts == 0, "settle does not turn a TODO marked done back")
 // An unreadable file is held, never written over.
 let broken = base.appendingPathComponent("broken.json")
 try! "{\"version\": 1, \"items\": [{\"id\": 1}]}".write(to: broken, atomically: true, encoding: .utf8)

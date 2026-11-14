@@ -298,6 +298,7 @@ TodoScheduler.init(chats:store:) | init(chats: any TodoChats, store: TodoStore)
 TodoScheduler.instruction(_:documents:) | static func instruction(_ item: TodoItem, documents: Bool = false) -> String
 TodoScheduler.lock(for:) | func lock(for list: TodoList) -> EnterpriseLock?
 TodoScheduler.lock(for:list:project:) | func lock(for item: TodoItem, list: TodoList, project: ProjectBinding) -> EnterpriseLock?
+TodoScheduler.markDone(_:) | func markDone(_ id: UUID) throws
 TodoScheduler.maxAttempts | static let maxAttempts: Int
 TodoScheduler.nextCheck | @Published var nextCheck: Date? { get set }
 TodoScheduler.question(_:files:documents:) | static func question(_ item: TodoItem, files: [String] = [], documents: Bool = false) -> String

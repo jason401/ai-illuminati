@@ -276,11 +276,14 @@ struct TodoBoardView: View {
                         act { try store.stop(after: item.id); TodoScheduler.shared?.wake() }
                     }
                     Divider()
+                    if item.state != .done { Button(L("완료로 표시", "Mark as done")) { discussion.markTodoDone(item.id) } }
                     if item.state != .done && item.state != .cancelled { Button(L("그만 (취소)", "Stop (cancel)")) { TodoScheduler.shared?.cancel(item.id) } }
                     Button(L("삭제", "Delete"), role: .destructive) { act { try store.delete(item.id) } }.disabled(item.state == .running)
                 } label: { Image(systemName: "ellipsis") }
                     .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
             }
+            // Right-click on the row: done from any state, without finding the ⋯.
+            .contextMenu { if item.state != .done { Button(L("완료로 표시", "Mark as done")) { discussion.markTodoDone(item.id) } } }
             if !item.detail.isEmpty { Text(item.detail).font(.system(size: 12)).foregroundColor(.secondary).lineLimit(3) }
             if item.startedAt != nil {
                 let live = item.state == .running || item.state == .review || item.state == .needsYou
@@ -695,7 +698,7 @@ struct TodoBoardHeader: View {
     }
 }
 
-// The report card: what the AI did and [Done] / [Request changes], or its questions with an answer box and [Stop].
+// The report card: what the AI did and [Done] / [Request changes], or its questions with an answer box, [Stop] and [Done].
 struct TodoCard: View {
     let item: TodoItem
     @ObservedObject var discussion: Discussion
@@ -755,6 +758,8 @@ struct TodoCard: View {
                     if !compact { Button(L("완료", "Done")) { TodoStore.shared.accept(item.id) }.buttonStyle(.borderedProminent) }
                 } else {
                     Button(L("그만", "Stop")) { TodoScheduler.shared?.cancel(item.id) }
+                    Button(L("완료", "Done")) { discussion.markTodoDone(item.id) }
+                        .help(L("답 없이 이 TODO를 끝난 것으로 표시해요", "Mark this TODO done without answering"))
                     Button(L("답하고 계속", "Answer and go on")) { TodoStore.shared.answer(item.id, text.trimmingCharacters(in: .whitespacesAndNewlines)); text = ""; TodoScheduler.shared?.wake() }
                         .buttonStyle(.borderedProminent)
                 }

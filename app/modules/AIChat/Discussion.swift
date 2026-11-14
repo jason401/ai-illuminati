@@ -415,6 +415,29 @@ public final class Discussion: ObservableObject {
         return note
     }
 
+    // [Mark as done] on the board, the sidebar's ⋯ or a card, from any state: a running TODO asks once, as its work stops.
+    public func markTodoDone(_ id: UUID) {
+        guard let item = TodoStore.shared.current.item(id), item.state != .done, let scheduler = TodoScheduler.shared else { return }
+        if item.state == .running {
+            let alert = NSAlert()
+            alert.messageText = L("작업을 멈추고 완료로 표시할까요?", "Stop the work and mark it as done?")
+            alert.informativeText = "TODO · " + item.title
+            alert.addButton(withTitle: L("완료로 표시", "Mark as done"))
+            alert.addButton(withTitle: L("취소", "Cancel"))
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+        }
+        do { try scheduler.markDone(id) } catch {
+            let failure = NSAlert()
+            failure.messageText = L("완료로 표시하지 못했어요", "Could not mark it as done")
+            failure.informativeText = error.localizedDescription
+            failure.runModal()
+        }
+    }
+    // The TODO a chat's ⋯ marks done: its newest one not done yet (a TODO chat has one).
+    static func todoToFinish(room: UUID, in data: TodoData) -> TodoItem? {
+        data.items.filter { $0.room == room && $0.state != .done }.max { $0.updatedAt < $1.updatedAt }
+    }
+
     // A message in a TODO's own chat while the TODO does not run goes to the TODO (TodoScheduler.chatMessage): an answer,
     // a change request or a note, and its next attempt starts here with it, so work done for it ends in task_done/task_ask
     // and the TODO never stays ready after the chat finished it. A read-only way picked (one, all, meeting) is a plain answer.

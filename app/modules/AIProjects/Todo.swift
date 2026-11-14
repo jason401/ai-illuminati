@@ -485,6 +485,23 @@ public final class TodoStore: ObservableObject {
         }
     }
     public func accept(_ id: UUID) { try? change(id) { guard $0.state == .review else { return }; $0.state = .done; $0.unreported = false } }
+    // Done by the user's word from any other state (the board, the sidebar, a card, todo_edit): the clocks close as
+    // on any state change. A running one only with `running` (TodoScheduler.markDone stops its chat after this; settle
+    // passes a TODO that no longer runs). organization: todo_edit's lock check (nil: personal); left out: the board's.
+    // Returns the TODO as it was; nil when it was done already (nothing changes).
+    @discardableResult
+    func markDone(_ id: UUID, running: Bool = false, organization: String?? = nil) throws -> TodoItem? {
+        try update { data in
+            guard let i = data.items.firstIndex(where: { $0.id == id }) else { throw TodoError.notFound }
+            if case .some(let organization) = organization, let held = data.list(data.items[i].listID)?.lock, held.organization != organization { throw TodoError.notFound }
+            let old = data.items[i]
+            guard old.state != .done else { return nil }
+            guard old.state != .running || running else { throw TodoError.busy }
+            data.items[i].state = .done; data.items[i].question = nil; data.items[i].report = nil; data.items[i].lastError = nil
+            data.items[i].unreported = false; data.items[i].standIns = 0; data.items[i].interrupted = false
+            return old
+        }
+    }
     // Change request: the feedback goes with the next attempt, in the same chat.
     public func requestChanges(_ id: UUID, _ text: String) { try? requestingChanges(id, text) }
     func requestingChanges(_ id: UUID, _ text: String) throws {
@@ -824,12 +841,14 @@ public struct TodoProject {
 // todo_add: from any chat (a project's or not, a TODO's own one too), the AI writes a TODO on a project's board
 // when the user asks, e.g. an idea from another talk. Always a draft: nothing runs until the user presses Start.
 // todo_list / todo_edit: the same chats read a board in its order and, when the user asks, change any TODO that is
-// not running: a draft's or ready one's text, draft ↔ ready (ready runs without ▶ Start), and the place of any.
+// not running: a draft's or ready one's text, draft ↔ ready (ready runs without ▶ Start), and the place of any;
+// and mark any TODO done (a running one's chat is stopped, unless it is the asking chat: its answer just ends).
 // An Enterprise chat sees and writes only its organization's projects; any other chat only projects without a lock.
 public final class TodoAddLink: ToolProvider {
     public static let shared = TodoAddLink()
     var store: () -> TodoStore = { TodoStore.shared }
     var names: () -> [String: String] = { ProjectInfoStore.shared.names }
+    var stopChat: (UUID) -> Void = { room in TodoScheduler.shared?.chats.stop(room) }   // a running TODO marked done from another chat (main thread)
     public var active: Bool { true }
     public func tools() -> [[String: Any]] { [] }
     private func main<T>(_ work: () -> T) -> T { Thread.isMainThread ? work() : DispatchQueue.main.sync(execute: work) }
@@ -860,9 +879,9 @@ public final class TodoAddLink: ToolProvider {
                  "description": "List the TODOs on a project's board in the board's order (in an in-order list the ready ones run top to bottom; drafts are skipped until made ready) with their position, id, state (draft, ready, running, review = waits for the user's check, needsYou = waits for the user's answer, done, cancelled), title, ask_first and full detail, before todo_edit, 30 at a time (offset: how many to skip, for the next ones). Done and cancelled ones only with include_done. project: as for todo_add\(here.map { "; leave it out for this chat's project \($0.name)" } ?? "; leave it out for every project")).",
                  "inputSchema": ["type": "object", "properties": ["project": string, "offset": ["type": "integer"], "include_done": ["type": "boolean"]], "additionalProperties": false]],
                 ["name": "todo_edit",
-                 "description": "Change a TODO (from todo_list) only when the user asks. Never on your own: a TODO made ready runs without the user pressing Start. id: its id from todo_list. Give only what changes: title (one short line), detail (replaces the whole detail: keep what still holds), ask_first, state (\"draft\" or \"ready\"), before (the id of a TODO of the same board to put it in front of, or \"end\"). A running TODO cannot be changed at all; title, detail, ask_first and state only for draft or ready ones; any other (review, needsYou, done, cancelled) can only move with before.",
+                 "description": "Change a TODO (from todo_list) only when the user asks. Never on your own: a TODO made ready runs without the user pressing Start. id: its id from todo_list. Give only what changes: title (one short line), detail (replaces the whole detail: keep what still holds), ask_first, state (\"draft\" or \"ready\"; \"done\" only when the user asks to mark it done or finished, alone), before (the id of a TODO of the same board to put it in front of, or \"end\"). state \"done\" works from any state: a running TODO's work stops (in its own chat this answer may finish), and the TODOs after it go on. Otherwise a running TODO cannot be changed at all; title, detail, ask_first and draft/ready only for draft or ready ones; any other (review, needsYou, done, cancelled) can only move with before.",
                  "inputSchema": ["type": "object", "properties": ["id": string, "title": string, "detail": string, "ask_first": ["type": "boolean"],
-                                                                   "state": ["type": "string", "enum": ["draft", "ready"]], "before": string],
+                                                                   "state": ["type": "string", "enum": ["draft", "ready", "done"]], "before": string],
                                  "required": ["id"], "additionalProperties": false]]]
     }
 
@@ -929,9 +948,23 @@ public final class TodoAddLink: ToolProvider {
             let limit = max(8000, found.detail.count)
             if let detail, detail.count > limit { return ProjectTools.failure("detail is too long (\(detail.count) characters, at most \(limit)): shorten it; nothing was changed.") }
             let askFirst = arguments["ask_first"] as? Bool
+            if text("state") == "done" {
+                guard title == nil, detail == nil, askFirst == nil, arguments["before"] == nil else {
+                    return ProjectTools.failure("state \"done\" goes alone: give only id and state; nothing was changed.")
+                }
+                do {
+                    // The TODO's own chat answers for it now: that answer just ends; another chat's work is stopped.
+                    guard let old = try store.markDone(id, running: true, organization: .some(chat.lock?.organization)) else {
+                        return Self.reply("\"\(found.title)\" is already done; nothing was changed. Tell the user.")
+                    }
+                    if old.state == .running, let room = old.room, room != chat.id { let stop = stopChat; main { stop(room) } }
+                    let stopped = old.state == .running ? (old.room == chat.id ? " Its attempt ends with this answer: do not call task_done or task_ask." : " Its running work was stopped.") : ""
+                    return Self.reply("Marked \"\(old.title)\" done (it was \(old.state.rawValue)).\(stopped) The TODOs after it go on. Tell the user briefly.")
+                } catch { return ProjectTools.failure(error.localizedDescription) }
+            }
             var ready: Bool?
             if arguments["state"] != nil {
-                guard ["draft", "ready"].contains(text("state")) else { return ProjectTools.failure("state must be \"draft\" or \"ready\".") }
+                guard ["draft", "ready"].contains(text("state")) else { return ProjectTools.failure("state must be \"draft\", \"ready\" or \"done\".") }
                 ready = text("state") == "ready"
             }
             var before: UUID??
@@ -1396,6 +1429,14 @@ public final class TodoScheduler: ObservableObject {
             try? store.change(id) { $0.state = .cancelled }
             if let room = item.room { chats.stop(room) }
         } else { try? store.cancel(id) }
+    }
+
+    // [Mark as done] from any state: a running TODO is saved done first, then its chat stops (as cancel does), so
+    // settle never turns it back. The list goes on: the next TODO and those waiting for it by "after" may start.
+    public func markDone(_ id: UUID) throws {
+        guard let item = store.current.item(id) else { throw TodoError.notFound }
+        guard let old = try store.markDone(id, running: item.state == .running) else { return }
+        if old.state == .running, let room = old.room { chats.stop(room) }
     }
 
     // What the AI is asked: the TODO, then everything the user said about it since.

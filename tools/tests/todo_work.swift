@@ -1089,7 +1089,112 @@ func testTodoEditTool() {
     for n in 0..<31 { _ = try! store.add(title: "많은 초안 \(n)", project: app, projectName: "App", fromAI: true) }   // drafts although a TODO is ready
     let first = run(work, "todo_list", [:]), second = run(work, "todo_list", ["offset": 30])
     expect(first.text.contains("offset 30") && !first.text.contains("많은 초안 30") && second.text.contains("많은 초안 30") && second.text.contains("많은 초안 29"), "the next drafts by offset")
-    print("PASS: todo_list/todo_edit (board order and states, draft and ready text, state/before, running refused, others only move, Enterprise apart, long details whole, offset)")
+    // state "done": from any state when the user asks; another chat's running work is stopped, the TODO chat's own answer just ends.
+    var stopped: [UUID] = []
+    let savedStop = link.stopChat
+    link.stopChat = { stopped.append($0) }
+    defer { link.stopChat = savedStop }
+    let finish = try! store.add(title: "끝낼 것", project: app, projectName: "App", fromAI: true)
+    expect(editHelp.contains("\"done\" only when the user asks"), "done is only for the user's word")
+    expect(!run(work, "todo_edit", ["id": finish.id.uuidString, "state": "done", "title": "x"]).ok && store.current.item(finish.id)?.state == .draft
+           && store.current.item(finish.id)?.title == "끝낼 것", "done goes alone")
+    for state in [TodoItem.State.draft, .ready, .needsYou, .review, .cancelled] {
+        try! store.change(finish.id) { $0.state = state; $0.question = TodoQuestion(blocked: true, reason: "q") }
+        let r = run(work, "todo_edit", ["id": finish.id.uuidString, "state": "done"])
+        expect(r.ok && store.current.item(finish.id)?.state == .done && store.current.item(finish.id)?.question == nil, "\(state): todo_edit marks it done: \(r.text)")
+    }
+    let again = run(work, "todo_edit", ["id": finish.id.uuidString, "state": "done"])
+    expect(again.ok && again.text.contains("already done"), "already done: nothing changes")
+    let elsewhere = UUID()
+    try! store.change(finish.id) { $0.state = .running; $0.room = elsewhere }
+    let fromOther = run(work, "todo_edit", ["id": finish.id.uuidString, "state": "done"])
+    expect(fromOther.ok && store.current.item(finish.id)?.state == .done && stopped == [elsewhere] && fromOther.text.contains("stopped"),
+           "a running TODO marked done from another chat: its chat is stopped: \(fromOther.text)")
+    try! store.change(finish.id) { $0.state = .running; $0.room = work.id }
+    let fromOwn = run(work, "todo_edit", ["id": finish.id.uuidString, "state": "done"])
+    expect(fromOwn.ok && store.current.item(finish.id)?.state == .done && stopped == [elsewhere] && fromOwn.text.contains("task_done"),
+           "in the TODO's own chat the answer is not stopped, it just ends: \(fromOwn.text)")
+    expect(!run(work, "todo_edit", ["id": schoolDraft.id.uuidString, "state": "done"]).ok && store.current.item(schoolDraft.id)?.state == .draft,
+           "a personal chat cannot mark an Enterprise TODO done")
+    expect(!run(locked, "todo_edit", ["id": ready.id.uuidString, "state": "done"]).ok && store.current.item(ready.id)?.state == .ready,
+           "an Enterprise chat cannot mark a personal TODO done")
+    expect((try? store.markDone(schoolDraft.id, organization: .some(nil))) == nil && store.current.item(schoolDraft.id)?.state == .draft, "the store checks the lock too")
+    expect(run(locked, "todo_edit", ["id": schoolDraft.id.uuidString, "state": "done"]).ok && store.current.item(schoolDraft.id)?.state == .done,
+           "its organization's chat can")
+    print("PASS: todo_list/todo_edit (board order and states, draft and ready text, state/before, running refused, others only move, Enterprise apart, long details whole, offset, done from any state)")
+}
+
+// The chat side for testTodoMarkDone: chats answer until stopped; a stopped chat's turn ended with an error.
+private final class DoneChats: TodoChats {
+    let changed = PassthroughSubject<Void, Never>()
+    var answering: Set<UUID> = []
+    var answeringChanged: AnyPublisher<Void, Never> { changed.eraseToAnyPublisher() }
+    var maxAnswering = 5
+    var importing = false
+    var chats: [ProjectChatSummary] = []
+    var started: [UUID] = [], stopped: [UUID] = []
+    func crew(lock: EnterpriseLock?, allowed: [String]) -> (lead: Account, reviewer: Account?)? { (Account(id: "done-lead", provider: .claude, name: "Lead"), nil) }
+    func noCrew(_ allowed: [String], lock: EnterpriseLock?) -> String { "nobody" }
+    func addChat(_ project: ProjectBinding, title: String, lock: EnterpriseLock?) -> UUID { UUID() }
+    func setCrew(room: UUID, members: [String], lead: String) {}
+    func folder(_ room: UUID) -> URL { URL(fileURLWithPath: AccountStore.home).appendingPathComponent("todo-done-chats/" + room.uuidString) }
+    func sentPhotos(_ room: UUID) -> Set<UUID> { [] }
+    func start(room: UUID, question: String, photos: [TodoPhoto], review: Bool, extra: String) -> String? { started.append(room); answering.insert(room); return nil }
+    func ended(_ room: UUID) -> TodoTurnEnd { TodoTurnEnd(error: "Stopped by the user") }
+    func stop(_ room: UUID) { stopped.append(room); answering.remove(room) }
+}
+
+// [Mark as done] from any state: question, report and stand-ins cleared, the clocks closed; a running TODO is saved done
+// and then its chat stops, so settle does not turn it back; the TODO below it and one waiting by "after" start.
+func testTodoMarkDone() {
+    let p = ProjectBinding(root: "/tmp/todo-markdone", common: "", remote: "", remoteURL: "")
+    let q = ProjectBinding(root: "/tmp/todo-markdone-2", common: "", remote: "", remoteURL: "")
+    let store = TodoStore(url: todoStoreFile("mark-done"))
+    var clock = Date(timeIntervalSince1970: 3_000_000)
+    store.now = { clock }
+    let chats = DoneChats()
+    let scheduler = TodoScheduler(chats: chats, store: store)
+    scheduler.held = { _ in false }
+    let states = ProjectBinding(root: "/tmp/todo-markdone-states", common: "", remote: "", remoteURL: "")
+    for state in [TodoItem.State.draft, .ready, .needsYou, .review, .cancelled] {
+        let item = try! store.add(title: "s-\(state)", project: states, projectName: "S")
+        try! store.change(item.id) { t in
+            t.state = state; t.question = TodoQuestion(blocked: true, reason: "q"); t.report = TodoReport(summary: "r"); t.unreported = true; t.standIns = 1
+        }
+        let set = clock
+        clock += 60
+        try! scheduler.markDone(item.id)
+        let t = store.current.item(item.id)!
+        // A cancelled one keeps its finishing time (clock's rule: finished once, done or cancelled).
+        expect(t.state == .done && t.question == nil && t.report == nil && !t.unreported && t.standIns == 0 && t.finishedAt == (state == .cancelled ? set : clock) && t.stateSince == clock,
+               "\(state): marked done at once with everything cleared")
+        if state == .needsYou || state == .review { expect(t.waitSeconds == 60, "\(state): its waiting time is kept: \(t.waitSeconds)") }
+        clock += 60
+        try! scheduler.markDone(item.id)
+        expect(store.current.item(item.id) == t, "\(state): done again changes nothing")
+    }
+    expect(chats.stopped.isEmpty && chats.started.isEmpty, "no chat stopped or started for TODOs that do not run")
+    expect(TodoStore(url: store.url).current.items.allSatisfy { $0.state == .done }, "saved")
+
+    // Running: A runs, B below it waits in order, C on another project waits for A by an "after" link.
+    let a = try! store.add(title: "A", project: p, projectName: "P")
+    let b = try! store.add(title: "B", project: p, projectName: "P")
+    let c = try! store.add(title: "C", project: q, projectName: "Q", after: [a.id])
+    scheduler.startNow()
+    expect(store.current.item(a.id)?.state == .running && store.current.item(b.id)?.state == .ready && store.current.item(c.id)?.state == .ready
+           && chats.started.count == 1, "A runs, B and C wait for it")
+    let room = store.current.item(a.id)!.room!
+    clock += 120
+    expect((try? store.markDone(a.id)) == nil && store.current.item(a.id)?.state == .running, "the store alone refuses a running TODO")
+    try! scheduler.markDone(a.id)
+    let done = store.current.item(a.id)!
+    expect(done.state == .done && chats.stopped == [room] && done.workSeconds == 120 && done.finishedAt == clock, "the chat is stopped and A is done, its work time kept")
+    scheduler.tick()   // settle sees the stopped chat's error: A is not running any more, so it stays done
+    let after = store.current.item(a.id)!
+    expect(after.state == .done && after.attempts == 0 && after.lastError == nil && !after.notes.contains { $0.kind == .retry }, "settle does not overwrite it: \(after.state)")
+    expect(store.current.item(b.id)?.state == .running && store.current.item(c.id)?.state == .running && chats.started.count == 3,
+           "the TODO below and the one waiting by \"after\" start")
+    print("PASS: mark done (every state at once, cleared and timed, done twice nothing; running: saved, chat stopped, settle passes it; B and C go on)")
 }
 
 // The chat side for testTodoStandIn: records what the AI answering in the user's place is asked; `reply` answers at

@@ -778,7 +778,13 @@ struct TodoCard: View {
         }
         .padding(compact ? 0 : 12)
         .background(compact ? Color.clear : item.state.color.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
-        .onReceive(TodoScheduler.shared?.$standingIn.eraseToAnyPublisher() ?? Just([]).eraseToAnyPublisher()) { stand.on = $0.contains(item.id) }
+        // The publisher is made anew on every redraw, so SwiftUI subscribes again and receives the current value at
+        // once. Setting a @Published value, even the same one, redraws the card: set it only when it changes, or the
+        // card redraws itself forever and the app stops answering (2026-11-14).
+        .onReceive(TodoScheduler.shared?.$standingIn.eraseToAnyPublisher() ?? Just([]).eraseToAnyPublisher()) { standing in
+            let on = standing.contains(item.id)
+            if stand.on != on { stand.on = on }
+        }
     }
 }
 

@@ -175,6 +175,17 @@ limit 600 xcrun swiftc -swift-version 5 -module-cache-path "$TEST_DIR/cache" -I 
     "$TEST_DIR/space-web-src/main.swift"
 limit 300 env AI_ILLUMINATI_TEST_HOME="$TEST_DIR/space-web-home" "$TEST_DIR/space-web"
 fi
+echo "[10/11] Screens stay still"
+if (( SELECT )); then
+  echo "skip: screens (affected tests only)"
+else
+mkdir -p "$TEST_DIR/screens-src" "$TEST_DIR/screens-home"
+cp tools/tests/screens_idle.swift "$TEST_DIR/screens-src/screens_idle.swift"
+SCREEN_SOURCES=(${(f)"$(ls app/macos/*.swift | grep -v '^app/macos/main.swift$')"})
+limit 900 xcrun swiftc -swift-version 5 -module-cache-path "$TEST_DIR/cache" -I "$MODULES" -o "$TEST_DIR/screens" "$MODULES"/lib*.a \
+    "${SCREEN_SOURCES[@]}" "$TEST_DIR/screens-src/screens_idle.swift"
+limit 60 env AI_ILLUMINATI_TEST_HOME="$TEST_DIR/screens-home" "$TEST_DIR/screens"
+fi
 echo "[11/11] Icon check"
 limit 300 xcrun swiftc -swift-version 5 -module-cache-path "$TEST_DIR/cache" -o "$TEST_DIR/icon-check" \
     app/macos/Icon.swift tools/tests/icon_animation.swift

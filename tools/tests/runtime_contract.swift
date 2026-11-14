@@ -23,6 +23,7 @@ try! #"""
 #!/bin/sh
 printf '%s\n' "$@" > "$FAKE_DIR/args"
 pwd -P > "$FAKE_DIR/cwd"
+case "$FAKE_MODE" in steer*) exec /usr/bin/python3 "$FAKE_DIR/steer.py" ;; esac
 cat > "$FAKE_DIR/stdin"
 out=""; prev=""; sid=""; for a in "$@"; do
   [ "$prev" = "-o" ] && out="$a"
@@ -250,4 +251,75 @@ var calls = 0
 _ = sessions.ask(claude, room: room, prompt: "source\n\nnew part\n\nmore\n[SOLO TURN]\nanswer", images: [], timeout: 30, token: stop, web: false, speaker: "Claude",
                  invoke: { text, images, call in calls += 1; stop.cancel(); return Answerer.ask(claude, prompt: text, cancellation: stop, session: call, run: run("session")) }, note: { _ in })
 expect(calls == 1 && records().last?["valid"] as? Bool == false, "a stopped session answer is not retried and the session is rebuilt next time")
-print("PASS: Runtime promises (errors, Stop, time out, process group, stream order, background thread, sessions saved, resumed and read from older files)")
+// Steering: a fake Claude that speaks stream-json. Messages go in only while a tool runs; one it reads (replayed) is
+// told once and belongs to the answer; one never written, or written but not read before the result, comes back from close().
+try! #"""
+import json, os, select, sys, time
+mode, d = os.environ["FAKE_MODE"], os.environ["FAKE_DIR"]
+fd = sys.stdin.fileno(); buf = b""; seen = []
+def out(o): sys.stdout.write(json.dumps(o) + "\n"); sys.stdout.flush()
+def line(wait):
+    global buf
+    end = time.time() + wait
+    while b"\n" not in buf:
+        left = end - time.time()
+        if left <= 0 or not select.select([fd], [], [], left)[0]: return None
+        chunk = os.read(fd, 65536)
+        if not chunk: return None
+        buf += chunk
+    raw, buf = buf.split(b"\n", 1)
+    text = "".join(b.get("text", "") for b in json.loads(raw)["message"]["content"])
+    seen.append(text); open(d + "/stdin", "w").write("\n".join(seen))
+    return text
+def replay(t): out({"type": "user", "isReplay": True, "parent_tool_use_id": None, "message": {"role": "user", "content": [{"type": "text", "text": t}]}})
+replay(line(5))
+read = None
+if mode in ("steer-tool", "steer-cutoff"):
+    out({"type": "stream_event", "event": {"type": "content_block_start", "content_block": {"type": "tool_use", "name": "Bash"}}})
+    out({"type": "assistant", "parent_tool_use_id": None, "message": {"content": [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {}}]}})
+    if mode == "steer-tool": read = line(5)
+    else: time.sleep(1)
+    out({"type": "user", "parent_tool_use_id": None, "message": {"content": [{"type": "tool_result", "tool_use_id": "t1"}]}})
+    if read: replay(read)
+else:
+    out({"type": "stream_event", "event": {"type": "message_start"}})
+    out({"type": "stream_event", "event": {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "wri"}}})
+    time.sleep(1)
+out({"type": "result", "is_error": False, "result": "first" + (" read: " + read if read else "")})
+late = line(30)   # the input closes after the result; a message still written here would be a second answer
+if late: replay(late); out({"type": "result", "is_error": False, "result": "second"})
+"""#.write(to: fake.appendingPathComponent("steer.py"), atomically: true, encoding: .utf8)
+func steered(_ mode: String, offerOn: @escaping (AnswerProgress) -> Bool) -> (String?, [String], [String], TimeInterval) {
+    clear()
+    let channel = SteerChannel()
+    var reads: [String] = []
+    let lock = NSLock()
+    channel.onRead = { text in lock.lock(); reads.append(text); lock.unlock() }
+    expect(!channel.live && !channel.offer("too early"), "nothing is taken before a call runs")
+    var conditions = run(mode); conditions.steering = channel
+    var offered = false
+    let started = Date()
+    let result = Answerer.ask(claude, prompt: "first prompt", timeout: 20, run: conditions, progress: { update in
+        if !offered && offerOn(update) { offered = true; expect(channel.live && channel.offer("change course"), "a running call takes a message") }
+    })
+    let took = Date().timeIntervalSince(started)
+    let left = channel.close()
+    expect(!channel.offer("after"), "a closed channel takes nothing")
+    lock.lock(); defer { lock.unlock() }
+    return (try? result.get(), reads, left, took)
+}
+func isTool(_ update: AnswerProgress) -> Bool { if case .activity = update { return true }; return false }
+func isText(_ update: AnswerProgress) -> Bool { if case .text = update { return true }; return false }
+var (answer, reads, left, took) = steered("steer-tool", offerOn: isTool)
+let steerArgs = read("args").split(separator: "\n").map(String.init)
+expect(steerArgs.contains("--replay-user-messages") && steerArgs.contains("--input-format") && !steerArgs.contains("first prompt"),
+       "steering keeps the input open as stream-json and asks for replays: \(steerArgs)")
+expect(answer == "first read: change course" && reads == ["change course"] && left.isEmpty, "a message written while a tool runs is read into the answer, once: \(String(describing: answer)) \(reads) \(left)")
+(answer, reads, left, took) = steered("steer-late", offerOn: isText)
+expect(answer == "first" && reads.isEmpty && left == ["change course"] && !read("stdin").contains("change course"),
+       "a message offered while the AI writes is not written; it comes back: \(String(describing: answer)) \(left)")
+expect(took < 10, "after the result the input closes and the call ends")
+(answer, reads, left, took) = steered("steer-cutoff", offerOn: isTool)
+expect(answer == "first" && reads.isEmpty && left == ["change course"] && took < 10,
+       "a message written but not read before the result ends the call (no second answer) and comes back: \(String(describing: answer)) \(left) \(took)")
+print("PASS: Runtime promises (errors, Stop, time out, process group, stream order, background thread, sessions saved, resumed and read from older files, steering)")

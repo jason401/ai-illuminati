@@ -90,6 +90,7 @@ public struct ChatTurn: Identifiable, Codable, Equatable {
     public var waitingApproval: Bool?
     public var spaceDraft: SpaceDraftNote?   // the Space this answer made: a preview card under it (SpaceView.swift)
     public var spaceEdits: [SpaceSyncNote]?  // Spaces this answer changed in the Spaces folder, as checked after it (SpaceLibrary.sync)
+    public var followUps: [String]?          // messages sent while it answered that the AI read in this answer (steering)
     public init(id: UUID = UUID(), question: String, images: [ChatImage]? = nil, status: String = "", entries: [Entry] = [], final: String? = nil, finalImages: [ChatImage]? = nil, finalBy: String? = nil, error: String? = nil, mode: Int? = nil, orderNote: String? = nil, endReason: String? = nil, modeVersion: Int? = nil, tasks: [CollaborationTask]? = nil, artifact: String? = nil, projectCommitted: Bool? = nil, projectPushed: Bool? = nil, backupPath: String? = nil, workspaceChanges: [WorkspaceChange]? = nil, projectLog: [String]? = nil, undone: Bool? = nil, sessionTranscript: String? = nil, debateFocus: String? = nil, maxTurns: Int? = nil, turnsPerAI: Int? = nil, mentions: [String]? = nil, moreAnswers: [Entry]? = nil, partial: String? = nil, partialBy: String? = nil, answerOrder: [String]? = nil, answerNames: [String]? = nil, partials: [String: String]? = nil, finalAccountID: String? = nil, activity: String? = nil, voteOptions: [String]? = nil, votes: [VoteBallot]? = nil, askedAt: Date? = nil, answeredAt: Date? = nil, peerNotes: [Entry]? = nil, peerFolded: Bool? = nil, route: ChatRoute? = nil, routeNote: String? = nil, routeOne: Bool? = nil, meetingRoom: UUID? = nil, plan: [WorkStep]? = nil, planNote: String? = nil, lastActivityAt: Date? = nil, waitingApproval: Bool? = nil, spaceDraft: SpaceDraftNote? = nil, spaceEdits: [SpaceSyncNote]? = nil) {
         self.id = id
         self.question = question
@@ -295,6 +296,8 @@ public struct Conversation: Identifiable, Codable {
     public var enterpriseLock: EnterpriseLock?
     // A meeting's own chat (Meeting.swift): the message it was held for. Not listed, searched or synced; deleted with that chat.
     public var meetingOf: MeetingLink?
+    // Messages sent while it answered, waiting for the answer to end (Discussion.flushQueue sends them together).
+    public var queued: [QueuedMessage]?
 
     // Something worth keeping: messages, materials or a linked folder. A chat with only settings is
     // "blank": it is not kept in the list once you leave it.
@@ -314,6 +317,19 @@ public struct Conversation: Identifiable, Codable {
         self.shareToDevices = shareToDevices
         self.enterpriseLock = enterpriseLock
         self.meetingOf = meetingOf
+    }
+}
+
+// A message sent while its chat was answering, as it was typed: read again (its @ and /way) when it is sent.
+public struct QueuedMessage: Identifiable, Codable, Equatable {
+    public var id = UUID()
+    public var text: String
+    public var images: [ChatImage]?
+    public var mentions: [String]?   // accounts picked from the @ list
+    public var route: String?        // the way picked with the chip (RouteChoice raw value)
+    public var sentAt = Date()
+    public init(id: UUID = UUID(), text: String, images: [ChatImage]? = nil, mentions: [String]? = nil, route: String? = nil, sentAt: Date = Date()) {
+        self.id = id; self.text = text; self.images = images; self.mentions = mentions; self.route = route; self.sentAt = sentAt
     }
 }
 

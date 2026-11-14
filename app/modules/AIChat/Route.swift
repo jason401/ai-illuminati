@@ -18,7 +18,7 @@ import AIWorkspace
 // Saved on the turn as `route` (opinion or work, as older builds read it) plus `routeOne` for one and `meetingRoom`
 // for a meeting (Meeting.swift). The user can also pick the way before sending (the chip in the message box, or
 // "/work " at the start of the message): that one message skips the sorter.
-enum RouteChoice: Hashable, CaseIterable {
+enum RouteChoice: String, Hashable, CaseIterable {   // raw: kept with a queued message (QueuedMessage.route)
     case work, one, all, meeting
     var route: ChatRoute { self == .work ? .work : .opinion }
     var title: String {

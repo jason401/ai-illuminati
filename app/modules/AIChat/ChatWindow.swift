@@ -1092,6 +1092,7 @@ struct ChatView<Model: ChatSettings>: View {
                     .font(.caption).foregroundColor(.secondary)
             }
             VStack(alignment: .leading, spacing: 8) {
+                if !(discussion.current.queued ?? []).isEmpty || !(discussion.steering[discussion.currentID] ?? []).isEmpty { waitingList }
                 if discussion.mentionQuery != nil { mentionList }
                 if discussion.slashMenu != nil { slashList }
                 if !discussion.pendingImages.isEmpty {
@@ -1439,7 +1440,63 @@ struct ChatView<Model: ChatSettings>: View {
         .disabled(discussion.running || discussion.importingMaterials)
     }
 
+    // Messages sent while this chat answers: the ones the answer may still read, then the queue (sent together at the end).
+    private var waitingList: some View {
+        let queued = discussion.current.queued ?? [], steering = discussion.steering[discussion.currentID] ?? []
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Image(systemName: "tray.full").foregroundColor(.secondary)
+                Text(queued.isEmpty ? L("답에 전달 중 \(steering.count)개", "\(steering.count) passing into the answer")
+                     : L("대기 중 \(queued.count)개 · 답이 끝나면 한 번에 보내요", "\(queued.count) waiting · sent together when the answer ends"))
+                    .font(.system(size: 12, weight: .medium)).foregroundColor(.secondary)
+                Spacer()
+                if !queued.isEmpty {
+                    Button(discussion.running ? L("멈추고 지금 보내기", "Stop and send now") : L("지금 보내기", "Send now")) { discussion.sendQueueNow() }
+                        .buttonStyle(.link).font(.system(size: 12))
+                        .disabled(discussion.stopping || (!discussion.running && discussion.runningRooms.count >= Discussion.maxRunning))
+                }
+            }
+            ForEach(steering, id: \.message.id) { pair in
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.turn.down.right").font(.system(size: 10)).foregroundColor(.secondary)
+                    Text(pair.message.text).font(.system(size: 12)).lineLimit(1).truncationMode(.tail)
+                    Spacer()
+                    Text(L("AI가 읽으면 이 답에 반영돼요", "Read into this answer when the AI gets to it")).font(.system(size: 11)).foregroundColor(.secondary)
+                }
+            }
+            ForEach(Array(queued.enumerated()), id: \.element.id) { n, message in
+                HStack(spacing: 6) {
+                    Text("\(n + 1).").font(.system(size: 12)).foregroundColor(.secondary)
+                    if !(message.images ?? []).isEmpty { Image(systemName: "photo").font(.system(size: 11)).foregroundColor(.secondary) }
+                    Text(message.text).font(.system(size: 12)).lineLimit(1).truncationMode(.tail)
+                    Spacer()
+                    Button(action: { discussion.editQueued(message.id) }) { Image(systemName: "pencil") }
+                        .buttonStyle(.plainHit).foregroundColor(.secondary)
+                        .help(L("입력창으로 꺼내서 고치기", "Back into the message box to change it"))
+                    Button(action: { discussion.removeQueued(message.id) }) { Image(systemName: "xmark") }
+                        .buttonStyle(.plainHit).foregroundColor(.secondary)
+                        .help(L("대기 중인 메시지 지우기", "Remove the waiting message"))
+                }
+            }
+        }
+        .padding(.horizontal, 10).padding(.vertical, 8)
+        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    private var queueButton: some View {
+        Button(action: { discussion.send() }) {
+            Image(systemName: "arrow.up").font(.system(size: 14, weight: .semibold))
+                .foregroundColor(.white).frame(width: 30, height: 30)
+        }
+        .buttonStyle(.plainHit)
+        .background(Color.accentColor, in: Circle())
+        .accessibilityLabel(L("보내기 (답이 끝나면 이어서)", "Send (after this answer)"))
+        .help(L("답하는 중이에요. 지금 답에 전달하거나, 끝나면 이어서 보내요 (Enter)", "Still answering: passed into this answer, or sent when it ends (Enter)"))
+        .keyboardShortcut(.return, modifiers: .command)
+    }
+
     @ViewBuilder private var composerAction: some View {
+        if discussion.running && discussion.canSend { queueButton }
         if discussion.running && discussion.debateCancellation != nil {
             Button(action: { discussion.stopDebate() }) {
                 Image(systemName: "stop.fill").font(.system(size: 11, weight: .semibold))
@@ -2090,6 +2147,18 @@ private struct TurnView: View, Equatable {
                         .textSelection(.enabled)
                         .padding(.horizontal, 14).padding(.vertical, 10)
                         .background(Color.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 18))
+                }
+                // Sent while it answered and read by the AI in this answer (steering).
+                ForEach(Array((turn.followUps ?? []).enumerated()), id: \.offset) { _, text in
+                    HStack {
+                        Spacer(minLength: 120)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(L("답하는 중에 보냄", "Sent while answering")).font(.system(size: 11)).foregroundColor(.secondary)
+                            Text(highlight.apply(AttributedString(text))).font(.system(size: 14)).lineSpacing(3).textSelection(.enabled)
+                        }
+                        .padding(.horizontal, 14).padding(.vertical, 8)
+                        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 18))
+                    }
                 }
                 HStack(spacing: 6) {
                     Spacer()

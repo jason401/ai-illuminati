@@ -352,7 +352,7 @@ extension Discussion {
                                           invoke: { text, images, session in
                     Answerer.ask(account, prompt: text, timeout: run.deadline.timeIntervalSinceNow, cancellation: run.attempt,
                                  images: images, web: true, session: session,
-                                 run: .app(account, WorkspaceInvocation(binding: workspace, room: id, readOnly: false, backupPath: self.activeWorkspaceBackupPath)), progress: progress)
+                                 run: Discussion.steered(.app(account, WorkspaceInvocation(binding: workspace, room: id, readOnly: false, backupPath: self.activeWorkspaceBackupPath)), self.steer), progress: progress)
                 }, note: { text in DispatchQueue.main.async { self.sessionNote = text } })
             }
             let started = Date()

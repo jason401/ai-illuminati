@@ -8,7 +8,8 @@ import AIWorkspace
 
 extension Discussion {
     var hasImages: Bool { !pendingImages.isEmpty || current.turns.contains { !($0.images ?? []).isEmpty } || (current.documents ?? []).contains { ($0.units ?? []).contains { !$0.images.isEmpty } } }
-    var canSend: Bool { !running && runningRooms.count < Self.maxRunning && !importingMaterials && current.meetingOf == nil && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !pendingImages.isEmpty) }
+    // While the chat answers a message can still be sent: it waits (Discussion.enqueue).
+    var canSend: Bool { (running || runningRooms.count < Self.maxRunning) && !importingMaterials && current.meetingOf == nil && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !pendingImages.isEmpty) }
 
     func chooseImages() {
         guard !running else { return }
@@ -80,7 +81,7 @@ extension Discussion {
 
     // fresh: a shorter prompt (summary + recent turns) for an AI that starts without a session it can resume.
     func requestDebate(_ account: Account, _ prompt: String, _ timeout: TimeInterval, _ token: DebateCancellation, web: Bool = false,
-                       fresh: String? = nil, workspace: WorkspaceBinding? = nil,
+                       fresh: String? = nil, workspace: WorkspaceBinding? = nil, steering: SteerChannel? = nil,
                        progress: ((AnswerProgress) -> Void)? = nil) -> Result<String, Answerer.Failure> {
         // `workspace` replaces the chat's folders for this one request (a read-only view for a second AI).
         let activeWorkspace = workspace ?? self.activeWorkspace
@@ -96,13 +97,13 @@ extension Discussion {
         if let room = activeSessionRoom, NativeSessions.eligible(account) {
             return nativeSessions.ask(account, room: room, prompt: full, images: pictures, timeout: timeout,
                                       token: token, web: web, speaker: label(account), fresh: fresh.map(wrap), invoke: { text, images, session in
-                Answerer.ask(account, prompt: text, timeout: timeout, cancellation: token, images: images, web: web, session: session, run: .app(account, activeWorkspace.map { WorkspaceInvocation(binding: $0, room: room) }), progress: progress)
+                Answerer.ask(account, prompt: text, timeout: timeout, cancellation: token, images: images, web: web, session: session, run: Discussion.steered(.app(account, activeWorkspace.map { WorkspaceInvocation(binding: $0, room: room) }), steering), progress: progress)
             }, note: { text in DispatchQueue.main.async { self.sessionNote = text } })
         }
         if let workspaceAnswer, let binding = activeWorkspace { return workspaceAnswer(account, start, binding, token, progress) }
         if pictures.isEmpty && activeWorkspace == nil { return debateAnswer(account, start, timeout, token, web) }
         if let pictureAnswer, activeWorkspace == nil { return pictureAnswer(account, start, pictures, timeout, token, web) }
-        return Answerer.ask(account, prompt: start, timeout: timeout, cancellation: token, images: pictures, web: web, run: .app(account, activeWorkspace.map { WorkspaceInvocation(binding: $0, room: activeSessionRoom ?? currentID) }), progress: progress)
+        return Answerer.ask(account, prompt: start, timeout: timeout, cancellation: token, images: pictures, web: web, run: Discussion.steered(.app(account, activeWorkspace.map { WorkspaceInvocation(binding: $0, room: activeSessionRoom ?? currentID) }), steering), progress: progress)
     }
 }
 

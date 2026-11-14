@@ -944,6 +944,82 @@ func testStartTurn() {
     print("PASS: startTurn (background chat, own settings, open chat and draft untouched, busy and full refused, Ask again keeps the draft)")
 }
 
+// Messages sent while a chat answers (PendingInputs.swift): queued and sent together when the answer ends (also when the
+// other places are taken), kept after Stop until "Send now", and written into the answer when the channel can take them.
+func testQueuedMessages() {
+    let a = PendingInputs.Ready(question: "a", mentioned: [], picked: nil, images: []), own = PendingInputs.Ready(question: "c", mentioned: ["x"], picked: nil, images: [])
+    let picked = PendingInputs.Ready(question: "d", mentioned: [], picked: .work, images: [])
+    expect(PendingInputs.batchSize([a, a, own, a]) == 2 && PendingInputs.batchSize([own, a, a]) == 3 && PendingInputs.batchSize([a, picked]) == 1
+           && PendingInputs.batchSize([]) == 0, "a message with its own way starts a new batch")
+    expect(PendingInputs.merged(["only"]) == "only" && PendingInputs.merged(["x", "y"]).contains("1. x\n\n2. y"), "one message goes as it is, several numbered")
+    let model = AppModel()
+    model.accounts = [Account(id: "queue-claude", provider: .claude, name: "Queue Claude")]
+    let chat = Discussion(model: model)
+    chat.configure { $0.mode = 0; $0.soloAccountID = "queue-claude" }
+    let room = chat.currentID
+    let gate = DispatchSemaphore(value: 0), lock = NSLock()
+    var prompts: [String] = [], hold = true
+    chat.workspaceAnswer = { _, prompt, _, _, _ in
+        lock.lock(); prompts.append(prompt); let n = prompts.count, wait = hold; lock.unlock()
+        if wait { gate.wait() }
+        return .success("done \(n)")
+    }
+    func turns() -> [ChatTurn] { chat.conversation(room).turns }
+    func settle(_ done: () -> Bool) {
+        let until = Date().addingTimeInterval(15)
+        while Date() < until && !done() { RunLoop.main.run(until: Date().addingTimeInterval(0.03)) }
+    }
+    chat.draft = "first"; chat.send()
+    expect(chat.running && chat.canSend == false, "answering; an empty box sends nothing")
+    chat.draft = "second"; expect(chat.canSend, "a message can be sent while the chat answers")
+    chat.send()
+    chat.draft = "third"; chat.send()
+    expect(chat.current.queued?.map(\.text) == ["second", "third"] && chat.draft.isEmpty && turns().count == 1, "both wait, the box is cleared, no turn yet")
+    expect(ChatStore.loadAll().first { $0.id == room }?.queued?.count == 2, "the queue is saved with the chat")
+    let others: Set<UUID> = [UUID(), UUID()]
+    chat.runningRooms.formUnion(others)   // every other place taken: the ending answer hands its own place to the queue
+    lock.lock(); hold = false; lock.unlock()
+    gate.signal()
+    settle { turns().count == 2 && turns()[1].final != nil }
+    chat.runningRooms.subtract(others)
+    expect(turns().count == 2 && turns()[1].question.contains("1. second") && turns()[1].question.contains("2. third") && chat.current.queued == nil,
+           "the queue went as one message when the answer ended: \(turns().map(\.question))")
+    lock.lock(); expect(prompts.count == 2, "two answers, not three: \(prompts.count)"); lock.unlock()
+
+    // Stop keeps the queue; "Send now" sends it.
+    lock.lock(); hold = true; lock.unlock()
+    chat.draft = "fourth"; chat.send()
+    chat.draft = "fifth"; chat.send()
+    chat.stopDebate()
+    gate.signal()
+    settle { !chat.runningRooms.contains(room) }
+    expect(chat.current.queued?.map(\.text) == ["fifth"] && turns().count == 3, "after Stop the queue waits")
+    lock.lock(); hold = false; lock.unlock()
+    chat.sendQueueNow()
+    settle { turns().count == 4 && turns()[3].final != nil }
+    expect(turns().count == 4 && turns()[3].question == "fifth" && chat.current.queued == nil, "Send now sends the waiting message")
+
+    // Steering: with a channel that can take it, the message goes into the answer; read, it is that turn's; not read, it comes back.
+    lock.lock(); hold = true; lock.unlock()
+    chat.draft = "sixth"; chat.send()
+    let channel = chat.steers[room]!
+    expect(channel.attach(), "the turn has an open channel")
+    var written: [String] = []
+    channel.tools { written.append($0); return true }
+    chat.draft = "steer me"; chat.send()
+    chat.draft = "not read"; chat.send()
+    expect(chat.current.queued == nil && chat.steering[room]?.count == 2 && written.count == 2, "both went into the answer, nothing queued")
+    channel.read(written[0])
+    settle { turns()[4].followUps != nil }
+    expect(turns()[4].followUps == ["steer me"], "a read message is that turn's: \(String(describing: turns()[4].followUps))")
+    channel.detach()
+    lock.lock(); hold = false; lock.unlock()
+    gate.signal()
+    settle { turns().count == 6 && turns()[5].final != nil }
+    expect(turns().count == 6 && turns()[5].question == "not read" && chat.steering[room] == nil, "an unread one is sent as the next message")
+    print("PASS: queued messages (sent together, keeps its place, saved, Stop keeps them, Send now, batches by way, steering read and unread)")
+}
+
 // The way picked before sending (the chip, "/work ") and meetings (Meeting.swift), with fake answers.
 func testPickedRoute() {
     let offered = RouteChoice.offered(project: true)

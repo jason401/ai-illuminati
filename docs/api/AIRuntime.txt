@@ -142,7 +142,14 @@ RunConditions.folders | var folders: RunConditions.Folders?
 RunConditions.init() | init()
 RunConditions.prefix | var prefix: [String]
 RunConditions.processGroup | var processGroup: Bool
+RunConditions.steering | var steering: SteerChannel?
 RunConditions.wrapper | var wrapper: [String]?
+SteerChannel | final class SteerChannel
+SteerChannel.close() | func close() -> [String]
+SteerChannel.init() | init()
+SteerChannel.live | var live: Bool { get }
+SteerChannel.offer(_:) | func offer(_ text: String) -> Bool
+SteerChannel.onRead | var onRead: ((String) -> Void)?
 ToolHome | enum ToolHome
 ToolHome.agyInstalled | static var agyInstalled: Bool { get }
 ToolHome.path | static var path: String { get }

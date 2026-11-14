@@ -353,14 +353,19 @@ decides no permission: what to start with comes in a `RunConditions` the caller 
 | Sessions: a new session starts with its own id (`--session-id` / Codex `thread.started`); the next call resumes it (`--resume <id>`, `exec resume <id>`) with only what is new; a stopped or failed answer marks it for a rebuild and is not retried (only "session not found" is, once, with the full context); compaction rebuilds | Attachments, Collaboration, ProjectChat (`nativeSessions.ask`) | session block (new, resumed, stopped, Codex resume) | mode2 "session delta, image reuse, role separation, compaction bootstrap …", `runtime_app.swift` ("after a stopped answer the next message starts a new session") |
 | Session save format: `rooms/<room>/ownership.json`, 0600, a JSON array of records `id`, `accountID`, `provider`, `role`, `nativeID`, `context`, `ownBlock` (`[<speaker>]\n<reply without its TL;DR line>` for speakers), `images`, `valid`; older files are read as they are; archive and purge keep or remove only what a room recorded | Attachments, Collaboration, ProjectChat, Discussion (delete, archive) | "ownership.json keeps its fields", "an older ownership.json is read", "is private" | mode2 "chat delete removes only its sessions …" |
 | Local model: no command line tool, one answer at a time (`gate`), keep-alive and unload | Local chat, Route sorter, Settings, LocalModels window, main (menu) | none (needs Ollama: a fake server in mode2) | mode2 "Ollama on this Mac", "Gemma on this Mac", `run_conditions.swift` ("the local model starts no command line tool") |
+| Steering (Claude with progress and `RunConditions.steering`): the input stays open (`--input-format stream-json --replay-user-messages`); a message is written only while a tool of the main conversation runs; one replayed before the first result is told once (`onRead`) and belongs to that answer; one never written, or written and not read by the result (the call is then ended, so it never becomes a second answer), comes back from `close()`; the first result is the answer. Claude Code's reading between tool calls is measured (2.1.300), not documented | Attachments (`requestDebate`), ProjectChat (project work), Discussion (`enqueue`, `afterRun`) | "a message written while a tool runs is read into the answer, once", "… offered while the AI writes is not written; it comes back", "… written but not read before the result ends the call" | testQueuedMessages (the chat's side of the channel) |
 | Usage readings and cloud model picks (stored per account in `UserDefaults.app`) | main, MenuCards, Settings, Solo, Meeting, Peer (auto pick by usage) | none | mode2 "menu bar …", "plain chat (auto pick 15% …)", testCloudModels |
 
 Public names and why (everything else stays internal: `Answerer.chatDir`/`askOnce`/`launchForTests`/`replyForTests`,
 `StreamParser`, `NativeSessions.split`/`load`/`save`, `CloudModels.apply`/`noteSeen`, `ClaudeUsage.binary`, the HTTP
 streams `LocalStream`/`PullStream`, `LocalModel.ask` and the Ollama requests):
 - `Answerer.ask`, `Answerer.Failure`, `AnswerProgress`: the one way in, its result and its progress (every caller).
-- `RunConditions` (all six fields, `init()`) and `RunConditions.Folders` (an explicit `init`): the app builds them
-  (`RunConditionsApp.swift`); the fields are what the caller decides.
+- `RunConditions` (all seven fields, `init()`) and `RunConditions.Folders` (an explicit `init`): the app builds them
+  (`RunConditionsApp.swift`); the fields are what the caller decides. `steering` is set by the chat (`Discussion.steered`)
+  for the one AI answering alone.
+- `SteerChannel` (`init`, `live`, `offer`, `close`, `onRead`): the chat hands messages sent while it answers to the running
+  answer and gets back what was read and what was not; strings only, so the runtime knows no chat type. Its call side
+  (`attach`, `detach`, `tools`, `read`) and `SteerLink` stay internal.
 - `Answerer.toolForTests`: the only public test hook, so `runtime_contract.swift` can run a fake CLI from outside; the
   app never sets it (run_mode2 stage 1 checks that no app file names it).
 - `DebateCancellation` (`init`, `isCancelled`, `child`, `attach`, `detach`, `cancel`, `end`): the app makes the tokens
@@ -509,6 +514,11 @@ names no chat type; Chat calls its public functions.
 | Newest first; an unreadable file skipped; a blank chat not written; files 0600 | Discussion | "all readable chats, newest first", "a blank chat is not kept", "a chat file is 0600" | mode2 (persistence), testAutoMeeting (order, indirectly) |
 | Delete: the links' purges in order, `<id>.work`, documents, `<id>.assets`, `<id>.json`, then `deleted`; the first failure throws and keeps it and what follows | Discussion (`removeChats`), Meeting | "a failure stops at once", "a failure keeps every place after it", "sessions, backups, then the documents' folder, deleted last" | `testChatLinks`, mode2 storage |
 | Pictures at <id>.assets/<picture id>.png, a bad picture refused (since T4 `ImageStore` is in AIChatRecords; this contract still checks it through ChatStore) | Attachments, Pictures, TodoChatsApp | "a picture lives in the chat's .assets folder", "a bad picture is refused" | mode2 attachments ("deleting chat must remove copied images") |
+
+Since 2026-11-13: `Conversation.queued` (`[QueuedMessage]`, messages sent while it answered, as typed) and
+`ChatTurn.followUps` (messages its answer read while it ran) are optional fields, so older chats read as before and
+are saved without them; `QueuedMessage` (`id`, `text`, `images`, `mentions`, `route` as a `RouteChoice` raw value, `sentAt`,
+one public init) is a saved value too.
 
 Public names and why: the record types' stored fields and their inits are the save format (every reader and writer of a
 chat uses them; Swift's memberwise inits are internal, so each type got one public init with the same order and defaults);

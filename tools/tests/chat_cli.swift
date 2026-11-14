@@ -20,7 +20,10 @@ func testChatThroughCLI() {
     try! #"""
     import sys, json, os, socket, subprocess, time
     D = sys.argv[1]; args = sys.argv[2:]
-    prompt = sys.stdin.read()
+    # stream-json input (pictures, or steering: the input stays open while it answers) is one JSON line per message.
+    if '--input-format' in args:
+        prompt = ''.join(b.get('text', '') for b in json.loads(sys.stdin.readline())['message']['content'])
+    else: prompt = sys.stdin.read()
     who = 'codex' if 'exec' in args else 'claude'
     reply, ask, commit = 'TL;DR: ok\nok', None, None
     for r in json.load(open(D + '/rules.json')):

@@ -34,6 +34,12 @@ public final class Discussion: ObservableObject {
     static let maxRunning = 3
     @Published public var runningRooms: Set<UUID> = []
     @Published public var stoppingRooms: Set<UUID> = []
+    // Messages sent while a chat answers (PendingInputs.swift): written into the running answer when it can read them
+    // (steering, one Claude answering alone), else queued in the chat (Conversation.queued) and sent together at the end.
+    var steer: SteerChannel?                        // a worker: its answer's channel (nil: nothing can be written into it)
+    var steers: [UUID: SteerChannel] = [:]          // the host: each running chat's channel
+    @Published var steering: [UUID: [(message: QueuedMessage, text: String)]] = [:]   // offered to the answer, not read yet
+    private var sendAfterStop: Set<UUID> = []       // "Send now": the stopped answer's queue goes at once
     weak var host: Discussion?
     private var workers: [UUID: Discussion] = [:]
     // For the open chat (a worker: always its own chat).
@@ -312,11 +318,119 @@ public final class Discussion: ObservableObject {
 
     // A worker finished (called on the main thread).
     private func runFinished(_ room: UUID) {
+        let stopped = stoppingRooms.contains(room)
         runningRooms.remove(room)
         stoppingRooms.remove(room)
         workers[room] = nil
         model.onAccountsChange?()   // refresh the usage numbers after the answer
         ChatStore.links.finished(conversations.first { $0.id == room })
+        afterRun(room, stopped: stopped)
+    }
+
+    // An answer ended (main thread, right after its chat left runningRooms): what it did not read goes back to the front
+    // of the queue, and the queue starts the next turn here, in the same main-thread block, so no other chat takes the free
+    // place in between. After Stop the queue waits (shown in the message box) unless "Send now" stopped it.
+    private func afterRun(_ room: UUID, stopped: Bool) {
+        if let channel = steers.removeValue(forKey: room) {
+            var left = channel.close()
+            let back = (steering[room] ?? []).filter { pair in
+                guard let i = left.firstIndex(of: pair.text) else { return false }
+                left.remove(at: i); return true
+            }.map(\.message)
+            if !back.isEmpty { change(room, save: true) { $0.queued = back + ($0.queued ?? []) } }
+        }
+        steering[room] = nil
+        if stopped && sendAfterStop.remove(room) == nil { return }
+        if let reason = flushQueue(room), room == currentID { attachmentError = reason }
+    }
+
+    // A queued message read the way the message box is read: "/way " at the start, @ names (picked or typed).
+    func prepare(_ message: QueuedMessage, room: UUID, forced: Bool = false) -> PendingInputs.Ready {
+        let chat = conversation(room)
+        let plain = Self.modernModes && configuration(of: room).mode == 0
+        var picked = message.route.flatMap(RouteChoice.init(rawValue:))
+        var typed = message.text
+        let offered = plain && chat.meetingOf == nil ? RouteChoice.offered(project: chat.workspace?.project != nil) : []
+        if plain, !forced, let found = Route.slash(typed, offered: offered) { picked = found.route; typed = found.rest }
+        let allowed = model.accounts.filter { Enterprise.permits($0, lock: chat.enterpriseLock) }
+        var mentioned = plain ? Self.mentions(in: typed, picked: message.mentions ?? [], accounts: allowed, label: label) : []
+        for id in mentioned { if let account = model.accounts.first(where: { $0.id == id }) { typed = typed.replacingOccurrences(of: "@" + label(account), with: "") } }
+        if plain {
+            for found in Self.typedMentions(in: typed, accounts: model.accounts, label: label, lock: chat.enterpriseLock,
+                                            usage: model.latestUsage, localEnabled: model.localEnabled) {
+                if let range = typed.range(of: found.token) { typed.replaceSubrange(range, with: "") }
+                if !mentioned.contains(found.id) { mentioned.append(found.id) }
+            }
+        }
+        typed = typed.replacingOccurrences(of: "  ", with: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+        let images = message.images ?? []
+        let question = !typed.isEmpty ? typed : !mentioned.isEmpty || picked != nil ? L("지금까지의 대화에 대해 네 의견을 말해 줘.", "What do you think about this conversation so far?")
+            : images.isEmpty ? "" : L("첨부한 이미지를 설명해줘.", "Describe the attached images.")
+        return .init(question: question, mentioned: mentioned, picked: picked, images: images)
+    }
+
+    // Sent while the chat answers: into the running answer when nothing waits before it and it picks no way of its own,
+    // else at the end of the queue.
+    func enqueue(_ message: QueuedMessage, room: UUID) {
+        let ready = prepare(message, room: room)
+        if (conversation(room).queued ?? []).isEmpty, !ready.ownWay, ready.images.isEmpty, let channel = steers[room] {
+            let text = PendingInputs.steerText(ready.question)
+            if channel.offer(text) { steering[room, default: []].append((message, text)); return }
+        }
+        change(room, save: true) { $0.queued = ($0.queued ?? []) + [message] }
+    }
+
+    // The running answer read a message (background thread): it belongs to that turn now.
+    private func steerRead(_ text: String, room: UUID, index: Int) {
+        DispatchQueue.main.async {
+            guard let i = self.steering[room]?.firstIndex(where: { $0.text == text }), let pair = self.steering[room]?.remove(at: i) else { return }
+            let question = self.prepare(pair.message, room: room).question
+            self.changeTurn(room, index, save: true) { $0.followUps = ($0.followUps ?? []) + [question] }
+        }
+    }
+
+    // A call's run conditions with the turn's channel (requestDebate, project work); the runtime uses it only for Claude.
+    static func steered(_ run: RunConditions, _ channel: SteerChannel?) -> RunConditions { var run = run; run.steering = channel; return run }
+
+    // Starts the next batch of a chat's queue. Returns why nothing started (the queue stays), nil when it started or was empty.
+    @discardableResult
+    func flushQueue(_ room: UUID) -> String? {
+        guard host == nil, !runningRooms.contains(room), let queue = conversations.first(where: { $0.id == room })?.queued, !queue.isEmpty else { return nil }
+        let ready = queue.map { prepare($0, room: room) }
+        let batch = Array(ready.prefix(PendingInputs.batchSize(ready)))
+        let sent = Set(queue.prefix(batch.count).map(\.id))
+        let questions = batch.map(\.question).filter { !$0.isEmpty }
+        if let reason = startTurn(room: room, question: PendingInputs.merged(questions.isEmpty ? [L("첨부한 이미지를 설명해줘.", "Describe the attached images.")] : questions),
+                                  mentioned: batch[0].mentioned, images: batch.flatMap(\.images), forced: batch[0].picked) { return reason }
+        change(room, save: true) { c in
+            c.queued = (c.queued ?? []).filter { !sent.contains($0.id) }
+            if c.queued?.isEmpty == true { c.queued = nil }
+        }
+        return nil
+    }
+
+    // "Send now" in the message box: stops the answer and sends the queue at once; without an answer, sends it.
+    func sendQueueNow() {
+        let room = currentID
+        if running, let cancellation = debateCancellation {
+            sendAfterStop.insert(room); stopping = true; cancellation.cancel()
+        } else if !running {
+            attachmentError = flushQueue(room)
+        }
+    }
+
+    // A queued message back into the message box (to change it), or away.
+    func editQueued(_ id: UUID) {
+        guard let message = current.queued?.first(where: { $0.id == id }) else { return }
+        draft = draft.isEmpty ? message.text : message.text + "\n" + draft
+        draftMentions += (message.mentions ?? []).filter { !draftMentions.contains($0) }
+        removeQueued(id)
+    }
+    func removeQueued(_ id: UUID) {
+        change(currentID, save: true) { c in
+            c.queued?.removeAll { $0.id == id }
+            if c.queued?.isEmpty == true { c.queued = nil }
+        }
     }
 
     /// Stops every chat that is working (quitting the app).
@@ -562,28 +676,18 @@ public final class Discussion: ObservableObject {
 
     func send() {
         guard canSend else { return }
-        // Plain chat: "@Name" picked from the list, or typed ("@지피", "@ㅋㄹㄷ"), sends this one message to those accounts.
-        let plain = Self.modernModes && configuration.mode == 0
-        // "/work " at the start picks the way for this message, like the chip in the message box.
-        var picked = forcedRoute ?? pickedRoute
-        var typed = draft
-        if plain, forcedRoute == nil, let found = Route.slash(draft, offered: routeChoices) { picked = found.route; typed = found.rest }
-        let allowed = model.accounts.filter { Enterprise.permits($0, lock: current.enterpriseLock) }
-        var mentioned = plain ? Self.mentions(in: typed, picked: draftMentions, accounts: allowed, label: label) : []
-        for id in mentioned { if let account = model.accounts.first(where: { $0.id == id }) { typed = typed.replacingOccurrences(of: "@" + label(account), with: "") } }
-        if plain {
-            for found in Self.typedMentions(in: typed, accounts: model.accounts, label: label, lock: current.enterpriseLock,
-                                            usage: model.latestUsage, localEnabled: model.localEnabled) {
-                if let range = typed.range(of: found.token) { typed.replaceSubrange(range, with: "") }
-                if !mentioned.contains(found.id) { mentioned.append(found.id) }
+        // Plain chat: "@Name" picked from the list, or typed ("@지피", "@ㅋㄹㄷ"), sends this one message to those accounts;
+        // "/work " at the start picks the way for this message, like the chip in the message box (prepare).
+        let message = QueuedMessage(text: draft, images: pendingImages.isEmpty ? nil : pendingImages,
+                                    mentions: draftMentions.isEmpty ? nil : draftMentions, route: (forcedRoute ?? pickedRoute)?.rawValue)
+        if running {
+            enqueue(message, room: currentID)
+        } else {
+            let ready = prepare(message, room: currentID, forced: forcedRoute != nil)
+            if let reason = startTurn(room: currentID, question: ready.question, mentioned: ready.mentioned, images: ready.images, forced: ready.picked) {
+                attachmentError = reason
+                return
             }
-        }
-        typed = typed.replacingOccurrences(of: "  ", with: " ").trimmingCharacters(in: .whitespacesAndNewlines)
-        let question = !typed.isEmpty ? typed : !mentioned.isEmpty || picked != nil ? L("지금까지의 대화에 대해 네 의견을 말해 줘.", "What do you think about this conversation so far?")
-            : L("첨부한 이미지를 설명해줘.", "Describe the attached images.")
-        if let reason = startTurn(room: currentID, question: question, mentioned: mentioned, images: pendingImages, forced: picked) {
-            attachmentError = reason
-            return
         }
         draftMentions = []
         mentionQuery = nil
@@ -744,6 +848,12 @@ public final class Discussion: ObservableObject {
         worker.activeImages = activeImages; worker.imageContext = imageContext; worker.imageNumber = imageNumber; worker.nextPicture = nextPicture
         pictureLock.unlock()
         workers[id] = worker
+        // Steering for a plain chat's answer (not a meeting or a TODO's run); only one AI answering alone uses it (Solo).
+        if plain && !meeting && !todoRun {
+            let channel = SteerChannel()
+            channel.onRead = { [weak self] text in self?.steerRead(text, room: id, index: index) }
+            worker.steer = channel; steers[id] = channel
+        }
         runningRooms.insert(id)
         stoppingRooms.remove(id)
         let usage = model.latestUsage
@@ -1081,6 +1191,7 @@ public final class Discussion: ObservableObject {
             // Plain chat: the message, then each reply under the name of the AI that wrote it.
             if turn.mode == 0 && turn.modeVersion == 2 {
                 var parts = ["[User]\n" + turn.question]
+                parts += (turn.followUps ?? []).map { "[User, while it answered]\n" + $0 }
                 if let images = turn.images, !images.isEmpty { parts.append("[Images: " + images.map { $0.id.uuidString }.joined(separator: ", ") + "]") }
                 if let final = turn.final { parts.append("[\(turn.finalBy ?? "AI")]\n" + final) }
                 parts += (turn.moreAnswers ?? []).filter { !$0.failed }.map { "[\($0.speaker)]\n" + $0.text }
@@ -1182,10 +1293,12 @@ public final class Discussion: ObservableObject {
         let room = currentID
         DispatchQueue.main.async {
             if let host = self.host { return host.runFinished(room) }
+            let stopped = self.stoppingRooms.contains(room)
             self.runningRooms.remove(room)
             self.stoppingRooms.remove(room)
             self.model.onAccountsChange?()   // refresh the usage numbers after the discussion
             ChatStore.links.finished(self.conversations.first { $0.id == room })
+            self.afterRun(room, stopped: stopped)
         }
     }
 

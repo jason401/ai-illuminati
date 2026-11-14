@@ -655,7 +655,8 @@ extension Discussion {
                     let result = self.requestDebate(account, Self.soloContext(rules: rules, transcript: asked) + "\n[SOLO TURN]\n" + instruction,
                                                     binding.fullAccess == true ? 8 * 3600 : 900, cancellation, web: true,
                                                     fresh: freshTranscript.map { Self.soloContext(rules: rules, transcript: $0) + "\n[SOLO TURN]\n" + instruction },
-                                                    workspace: k > 0 && called.count > 1 ? Self.sideView(binding) : nil, progress: progress)
+                                                    workspace: k > 0 && called.count > 1 ? Self.sideView(binding) : nil,
+                                                    steering: called.count == 1 ? self.steer : nil, progress: progress)
                     doneLock.lock(); done.insert(accountID); doneLock.unlock()
                     if cancellation.isCancelled { return }
                     var entry: ChatTurn.Entry
@@ -764,7 +765,7 @@ extension Discussion {
                 }
             }
             let result = requestDebate(account, prompt, 900, cancellation, web: true,
-                                       fresh: fresh.map { $0 + "\n[SOLO TURN]\n" + instruction }, progress: progress)
+                                       fresh: fresh.map { $0 + "\n[SOLO TURN]\n" + instruction }, steering: steer, progress: progress)
             if cancellation.isCancelled { break }
             switch result {
             case .success(let raw):

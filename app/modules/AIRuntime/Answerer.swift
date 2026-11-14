@@ -34,6 +34,7 @@ public struct RunConditions {
     public var processGroup = false                // the wrapper made a group: stop all of it when the call ends
     public var folders: Folders? = nil
     public var beforeStart: (() -> Void)? = nil   // the caller's own preparation (agy's web rule), just before the arguments
+    public var steering: SteerChannel? = nil       // Claude with progress: messages sent while it answers go into the answer
     public struct Folders {
         var directory: URL                  // the room's folder: runs without a session and read results go below it
         var arguments: ([String], URL, Bool) throws -> [String]   // (the tool's arguments, run folder, web) → with the folders
@@ -230,23 +231,22 @@ public enum Answerer {
             do { arguments = try folders.arguments(arguments, executionDirectory, web) }
             catch { return .failure(.failed("Workspace setup failed: " + error.localizedDescription)) }
         }
-        if !images.isEmpty {
-            if account.provider == .codex {
+        // Steering: the input stays open (stream-json) and Claude says which messages it read (replayed).
+        let steering = account.provider == .claude && streamed && launchForTests == nil ? run.steering : nil
+        if !images.isEmpty || steering != nil {
+            if account.provider == .codex && !images.isEmpty {
                 arguments.removeLast()
                 for url in images { arguments += ["--image", url.path] }
                 arguments += ["--", prompt]
             } else if account.provider == .claude {
                 arguments.remove(at: 1)
-                arguments += ["--input-format", "stream-json"]
+                arguments += ["--input-format", "stream-json"] + (steering != nil ? ["--replay-user-messages"] : [])
                 if session == nil && !arguments.contains("--output-format") { arguments += ["--output-format", "stream-json", "--verbose"] }
                 do {
-                    var blocks: [[String: Any]] = [["type": "text", "text": prompt]]
-                    for url in images {
-                        let data = try Data(contentsOf: url)
-                        blocks.append(["type": "image", "source": ["type": "base64", "media_type": "image/png", "data": data.base64EncodedString()]])
+                    let pictures = try images.map { url -> [String: Any] in
+                        ["type": "image", "source": ["type": "base64", "media_type": "image/png", "data": try Data(contentsOf: url).base64EncodedString()]]
                     }
-                    inputData = try JSONSerialization.data(withJSONObject: ["type": "user", "message": ["role": "user", "content": blocks]])
-                    inputData?.append(0x0a)
+                    inputData = SteerLink.line(prompt, images: pictures)
                 } catch { return .failure(.failed("Could not read an attached image.")) }
             }
         }
@@ -279,7 +279,11 @@ public enum Answerer {
         let inputFile = chatDir + "/input-\(UUID().uuidString).jsonl"
         defer { try? FileManager.default.removeItem(atPath: inputFile) }
         var inputHandle: FileHandle?
-        if let inputData {
+        // Steering: a pipe instead of the file, kept open for the messages written while a tool runs.
+        let inputPipe = steering?.attach() == true ? Pipe() : nil
+        let steer = inputPipe.map { SteerLink(channel: steering!, input: $0.fileHandleForWriting) }
+        defer { if let steer { steer.closeInput(); steer.channel.detach() } }
+        if let inputData, steer == nil {
             do {
                 guard FileManager.default.createFile(atPath: inputFile, contents: inputData, attributes: [.posixPermissions: 0o600]) else {
                     return .failure(.failed("Could not prepare private image input."))
@@ -288,8 +292,14 @@ public enum Answerer {
             } catch { return .failure(.failed("Could not prepare image input.")) }
         }
         defer { try? inputHandle?.close() }
-        process.standardInput = inputHandle ?? FileHandle.nullDevice
+        if steer != nil { Self.ignoreBrokenPipe }
+        process.standardInput = inputPipe ?? inputHandle ?? FileHandle.nullDevice
         guard (try? process.run()) != nil else { return .failure(.missingTool) }
+        if let steer, let inputData {
+            steer.end = { [weak process] in if let process { DebateCancellation.end(process) } }
+            // On its own thread: a large first message (pictures) waits until Claude reads it, under the time limit below.
+            DispatchQueue.global().async { if !steer.write(inputData) { steer.closeInput() } }
+        }
 
         cancellation?.attach(process)
         defer {
@@ -301,6 +311,7 @@ public enum Answerer {
         let readers = DispatchGroup()
         readers.enter()
         let parser = streamed ? StreamParser(provider: account.provider, report: progress!) : nil
+        if let steer { parser?.observe = steer.saw }
         let stdoutLock = NSLock()
         DispatchQueue.global().async {
             // Read as it arrives (not only at the end) so a streaming reply can be shown while it is written.
@@ -345,11 +356,13 @@ public enum Answerer {
         CloudModels.noteSeen(text, account: account, picked: model)
         if account.provider == .codex, let file = try? String(contentsOfFile: outFile, encoding: .utf8) { text = file }
         if account.provider == .claude && (!images.isEmpty || session != nil || streamed) {
-            let result = text.split(separator: "\n").compactMap { line -> [String: Any]? in
+            let results = text.split(separator: "\n").compactMap { line -> [String: Any]? in
                 guard let data = String(line).data(using: .utf8), let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                       json["type"] as? String == "result" else { return nil }
                 return json
-            }.last
+            }
+            // With steering the first result is this answer (anything after it was a late message, ended above).
+            let result = steer != nil ? results.first : results.last
             guard let result, result["is_error"] as? Bool != true, let answer = result["result"] as? String else {
                 let message = (result?["result"] as? String) ?? String(data: stderr, encoding: .utf8) ?? "Session response failed."
                 return .failure(.failed(modelNote + String(message.suffix(300))))
@@ -357,12 +370,17 @@ public enum Answerer {
             text = answer
         }
         text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard process.terminationStatus == 0, !text.isEmpty else {
+        guard process.terminationStatus == 0 || steer?.cutOff == true, !text.isEmpty else {
             let why = (String(data: stderr, encoding: .utf8) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             return .failure(.failed(modelNote + String(why.suffix(300))))
         }
         return .success(text)
     }
+}
+
+extension Answerer {
+    // A steered call writes into a pipe Claude may have closed: an error to handle, not a signal that ends the app.
+    static let ignoreBrokenPipe: Void = { signal(SIGPIPE, SIG_IGN) }()
 }
 
 public enum AnswerProgress {
@@ -380,6 +398,7 @@ final class StreamParser {
     private var pending = Data()
     private var text = ""
     private var lastSent = Date.distantPast
+    var observe: (([String: Any]) -> Void)?   // every event, before it is read for progress (steering)
 
     init(provider: Account.Provider, report: @escaping (AnswerProgress) -> Void) {
         self.provider = provider
@@ -391,7 +410,7 @@ final class StreamParser {
         while let newline = pending.firstIndex(of: 0x0A) {
             let line = pending[pending.startIndex..<newline]
             pending.removeSubrange(pending.startIndex...newline)
-            if let json = try? JSONSerialization.jsonObject(with: line) as? [String: Any] { handle(json) }
+            if let json = try? JSONSerialization.jsonObject(with: line) as? [String: Any] { observe?(json); handle(json) }
         }
     }
 

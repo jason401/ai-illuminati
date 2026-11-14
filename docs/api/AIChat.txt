@@ -136,6 +136,7 @@ ChatTurn.final | var final: String?
 ChatTurn.finalAccountID | var finalAccountID: String?
 ChatTurn.finalBy | var finalBy: String?
 ChatTurn.finalImages | var finalImages: [ChatImage]?
+ChatTurn.followUps | var followUps: [String]?
 ChatTurn.id | var id: UUID
 ChatTurn.images | var images: [ChatImage]?
 ChatTurn.init(from:) | init(from decoder: any Decoder) throws
@@ -196,6 +197,7 @@ Conversation.meetingOf | var meetingOf: MeetingLink?
 Conversation.origin | var origin: SyncOrigin?
 Conversation.pinned | var pinned: Bool?
 Conversation.projectSummary | var projectSummary: ProjectChatSummary { get }
+Conversation.queued | var queued: [QueuedMessage]?
 Conversation.shareToDevices | var shareToDevices: Bool?
 Conversation.summary | var summary: String
 Conversation.title | var title: String
@@ -327,6 +329,15 @@ ProjectGroup.todoRooms | var todoRooms: [Conversation]
 ProjectLockSection | @MainActor struct ProjectLockSection
 ProjectLockSection.body | @MainActor var body: some View { get }
 ProjectLockSection.init(discussion:group:) | @MainActor init(discussion: Discussion, group: ProjectGroup)
+QueuedMessage | struct QueuedMessage
+QueuedMessage.id | var id: UUID
+QueuedMessage.images | var images: [ChatImage]?
+QueuedMessage.init(from:) | init(from decoder: any Decoder) throws
+QueuedMessage.init(id:text:images:mentions:route:sentAt:) | init(id: UUID = UUID(), text: String, images: [ChatImage]? = nil, mentions: [String]? = nil, route: String? = nil, sentAt: Date = Date())
+QueuedMessage.mentions | var mentions: [String]?
+QueuedMessage.route | var route: String?
+QueuedMessage.sentAt | var sentAt: Date
+QueuedMessage.text | var text: String
 RemoteDevice | struct RemoteDevice
 RemoteDevice.id | var id: String
 RemoteViewing | struct RemoteViewing

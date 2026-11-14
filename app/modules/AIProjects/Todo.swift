@@ -1312,7 +1312,8 @@ public final class TodoScheduler: ObservableObject {
         return (paths, photos)
     }
 
-    // A TODO chat stopped answering while its TODO still runs: the AI did not report.
+    // A TODO chat stopped answering while its TODO still runs: the AI did not report. Each change checks again that it
+    // still runs: todo_edit (the tool thread) may mark it done after the list was read.
     func settle() {
         for item in store.current.items where item.state == .running {
             guard let room = item.room, !chats.answering.contains(room) else { continue }
@@ -1322,6 +1323,7 @@ public final class TodoScheduler: ObservableObject {
                 // Another chat writing the repository is not the TODO's fault: try again later.
                 let busy = ProjectWork.isBusy(error)
                 try? store.change(item.id) { t in
+                    guard t.state == .running else { return }
                     if !busy { t.attempts += 1 }
                     t.lastError = error
                     // It had reported, then the review or the fixes failed: the next attempt looks at what is there first.
@@ -1336,17 +1338,19 @@ public final class TodoScheduler: ObservableObject {
                     }
                 }
             } else if let question = report?.question {
-                try? store.change(item.id) { t in t.state = .needsYou; t.question = question; t.report = nil; t.unreported = true }
+                try? store.change(item.id) { t in guard t.state == .running else { return }; t.state = .needsYou; t.question = question; t.report = nil; t.unreported = true }
             } else if let report, let summary = report.summary {
                 // The review could not be done: the result still waits for the check, with that said on its card.
                 let unreviewed = turn.unreviewed
                 try? store.change(item.id) { t in
+                    guard t.state == .running else { return }
                     t.state = .review; t.result = summary; t.assumptions = report.assumptions; t.files = report.files; t.report = nil
                     t.question = nil; t.unreported = true
                     t.lastError = unreviewed ? L("검수하지 못했어요. 채팅에서 이유를 확인해 주세요.", "The review could not be done. See the chat for why.") : nil
                 }
             } else {
                 try? store.change(item.id) { t in
+                    guard t.state == .running else { return }
                     t.state = .needsYou; t.unreported = true; t.report = nil
                     t.question = TodoQuestion(blocked: true, reason: L("AI가 결과 보고(task_done/task_ask) 없이 끝냈어요. 채팅을 보고 정해 주세요.", "The AI ended without reporting (task_done/task_ask). Check the chat and decide."))
                 }

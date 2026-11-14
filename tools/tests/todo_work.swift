@@ -51,6 +51,14 @@ func testTodoStore() {
     store.accept(one.id)
     expect(store.current.item(one.id)?.state == .done && store.current.eligible(held: free).map(\.title) == ["two"], "Done lets the next one start")
     expect(store.current.eligible(held: { $0 == a.root }).isEmpty, "a folder a chat is writing is skipped")
+    // A question does not hold the list: the next one goes on, but not with "after my check", and an "after" link waits.
+    try! store.change(two.id) { $0.state = .needsYou }
+    expect(store.current.eligible(held: free).isEmpty, "\"after my check\": the next waits for the answer too")
+    try! store.setList(store.current.lists[0].id, waitForDone: false)
+    expect(store.current.eligible(held: free).map(\.title) == ["three"], "the next starts while the previous waits for an answer; a link to it waits: \(store.current.eligible(held: free).map(\.title))")
+    store.answer(two.id, "yes")
+    expect(store.current.eligible(held: free).map(\.title) == ["two"], "answered, it is next again and the order holds: \(store.current.eligible(held: free).map(\.title))")
+    try! store.setList(store.current.lists[0].id, waitForDone: true)
     // Not in order: every ready TODO of the list may start (one at a time per folder is the scheduler's job).
     try! store.setList(store.current.lists[0].id, sequential: false)
     expect(store.current.eligible(held: free).map(\.title) == ["two", "three"], "a list without order offers all of them")

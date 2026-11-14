@@ -176,8 +176,8 @@ struct TodoBoardView: View {
         if list.sequential {
             Toggle(L("내 확인 후 다음", "Next after my check"), isOn: Binding(get: { list.waitForDone }, set: { value in act { try store.setList(list.id, waitForDone: value) } }))
                 .toggleStyle(.checkbox).font(.system(size: 12)).fixedSize()
-                .help(L("켜면 앞 TODO에 [완료]를 눌러야 다음이 시작돼요. 끄면 앞 TODO가 확인 대기가 될 때 시작해요.",
-                        "On: the next starts after you press Done. Off: it starts when the previous one waits for your check."))
+                .help(L("켜면 앞 TODO에 [완료]를 눌러야 다음이 시작돼요. 끄면 앞 TODO가 확인 대기나 질문 대기가 될 때 시작해요.",
+                        "On: the next starts after you press Done. Off: it starts when the previous one waits for your check or answer."))
         }
     }
 

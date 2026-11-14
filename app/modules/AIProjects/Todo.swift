@@ -175,7 +175,8 @@ public struct TodoItem: Codable, Identifiable, Equatable {
 }
 
 // One list per project. In order: each TODO waits for the one above it. waitForDone: the next one waits for the
-// user's [Done] instead of starting when the previous one waits for the check (for work the user must see first).
+// user's [Done] (and answer) instead of starting when the previous one waits for the check or a question (for work
+// the user must see first).
 public struct TodoList: Codable, Identifiable, Equatable {
     public var id = UUID()
     public var title: String
@@ -265,11 +266,14 @@ public struct TodoData: Codable, Equatable {
     }
     // What a TODO waits for: its "after" links and, in a list in order, the nearest TODO above it that is neither
     // cancelled nor a draft (a draft is not going to run, so the ready ones below it go on in the user's order).
+    // One waiting for the user's answer is passed too, so one question does not hold the whole list; with
+    // waitForDone ("next after my check") it is not. An "after" link always waits: the user asked for that one.
     public func blockers(_ item: TodoItem) -> [UUID] {
         var ids = item.after
-        if list(item.listID)?.sequential == true {
+        if let list = list(item.listID), list.sequential {
             let row = ordered(item.listID)
-            if let at = row.firstIndex(where: { $0.id == item.id }), let above = row[..<at].last(where: { $0.state != .cancelled && $0.state != .draft }) { ids.append(above.id) }
+            let passed: Set<TodoItem.State> = list.waitForDone ? [.cancelled, .draft] : [.cancelled, .draft, .needsYou]
+            if let at = row.firstIndex(where: { $0.id == item.id }), let above = row[..<at].last(where: { !passed.contains($0.state) }) { ids.append(above.id) }
         }
         return ids
     }
@@ -1282,6 +1286,7 @@ public final class TodoScheduler: ObservableObject {
         \(item.askFirst ? "Before changing anything, ask with task_ask what is unclear (at most 3 questions, with options and your recommendation). If nothing is unclear, go ahead."
                        : "Where something is unclear, make a reasonable assumption, go on, and list it in task_done.")
         Never publish stable. Do not wait on approval cards: if a step needs the user's approval, call task_ask instead.
+        Changes you did not make may belong to another TODO waiting for the user's answer: leave them as they are\(documents ? "" : " and commit only your own files").
         """
     }
 }

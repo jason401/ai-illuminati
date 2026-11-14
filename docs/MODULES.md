@@ -245,12 +245,14 @@ prints them). `tools/affected_tests.sh` reads `tools/test_map.txt`: a module's l
 adds that module's contract and those of every module that depends on it; a test file gives its own tests (or ALL when
 another test uses what it defines). Paths not in the map, guard devices, `ToolHub.swift`/`Settings.swift`/`main.swift`,
 build scripts, resources and Accounts, Localization, Runtime, Workspace and Chat give ALL: the full run, unchanged.
-Stages 1, 3-9 and 11, the module build, S1-S3 and mode2's checks outside `runTest` always run (they set up the shared
-state and hold the data-folder rules), so only contracts, `runTest` functions and stage 10 are skipped. Without the
+Stages 1, 3-9 and 12, the module build, S1-S3 and mode2's checks outside `runTest` always run (they set up the shared
+state and hold the data-folder rules), so only contracts, `runTest` functions, stage 10 and stage 11 (screens) are skipped. Without the
 option nothing changes. A new row naming a test fails G6 until the map has it.
 Guard change (approved for T2): run_mode2's module block skips unpicked contracts only when `--affected` picked; the
 build, G1-G7 and S1-S3 lines are as before. `check_modules.py` adds the map check to G6 and hashes
 `tools/affected_tests.py` (G7). Without `--affected` every contract runs exactly as before (verified: same test list).
+Guard hash update (O1, 2026-11-14, user-approved test plan, output only): the module block got time lines (`part`: build,
+each contract with its compile time, S1-S3) and `affected_tests.py` reads stage 8 as `[8/12]` after the renumbering; no check or command changed.
 
 ### AIAccounts (`app/modules/AIAccounts/Accounts.swift`)
 | Promise | Users (files) | Module test | User tests (mode2.swift unless named) |

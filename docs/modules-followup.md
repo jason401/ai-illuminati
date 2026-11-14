@@ -373,3 +373,76 @@ T1과 T4에서 한 번씩 난 실패의 원인. 2026-11-13, HEAD `7759dbb`. 고�
   끝났으면 아무것도 확인하지 못한 것이므로 최대 3번까지 다시 한다. 검사 기준(시간 제한 6초, 사라짐 확인)은 그대로다.
 - 확인: 위 두 지연을 넣은 사본에서 고친 테스트가 통과했다. 지연 없는 단독 실행도 통과했고, 전체 `run_mode2.sh`(`project_run test`)도
   한 번에 통과했다. `check_modules.sh`도 통과했다.
+
+## 테스트 최적화 O1 측정
+O1(측정)은 O2 캐시 → O3 대기 시간 → O4 동시 실행 판단의 입력이다. 2026-11-14, HEAD `8464f75`에 출력만 더한 상태에서
+`project_run test`를 두 번 연달아 돌렸다(둘 다 통과, 실제 `accounts.json` 그대로). 앱 테스트는 62개이고,
+"Screens stay still" 단계가 새로 있다.
+
+### 바꾼 것 (판정·실행 내용은 그대로)
+- `run_mode2.sh`: 단계가 끝날 때 `  [n] 이름: x.x s`를 찍고, 2단계 안에서는 `build_modules.sh`, 계약 테스트 9개(각각, 컴파일
+  시간을 괄호에), S1–S3를 `    이름: x.x s`로 찍는다. 끝에는 `$TEST_DIR/cache`, `guard-cache` 크기(`du -sh`)와 `total`을 찍는다.
+  시각은 zsh `EPOCHREALTIME`이다. `total`은 스크립트 안에서 잰 값이라 zsh 시작과 `mktemp`는 들어 있지 않다(1초 미만).
+- 단계 번호: `[10/11]`이 두 번 나오던 것을 `/12`로 맞췄다(10 Space web, 11 Screens, 12 Icon). 시간 줄은 두 칸 들여쓰기로
+  시작해서, 앱의 `RunProgress.stage`(`[`로 시작하는 줄만 읽음)는 단계로 보지 않는다.
+- `affected_tests.py`가 8단계 파일 목록을 `"[8/11]"`~`"[9/11]"`로 찾던 것을 `/12`로 바꿨다. 모듈 검사 블록과 이 파일이
+  해시 대상이라 `tools/module_guard.sha256`을 갱신했다(이유: `docs/MODULES.md` "Which tests a change needs").
+
+### 단계별 시간 (초, T1과 나란히)
+T1은 바깥에서 줄 시각으로 근사한 값이고, O1은 스크립트가 직접 찍은 값이다. T1의 [10/11] Space web는 O1의 [10/12]에 맞췄다.
+
+| 단계 | T1 실행 1 | T1 실행 2 | O1 실행 1 | O1 실행 2 |
+|---|---:|---:|---:|---:|
+| 전체 | 623.2 | 518.4 | 405.6 | 402.1 |
+| [1] Module guards and the data folder rule | 0.6 | 1.9 | 0.6 | 0.6 |
+| [2] Modules on their own | 229.8 | 238.1 | 155.2 | 153.3 |
+| ↳ `build_modules.sh` | – | – | 66.3 | 66.5 |
+| ↳ 계약 테스트 9개 합 (그중 컴파일) | – | – | 27.2 (5.5) | 25.7 (4.8) |
+| ↳ S1–S3 (`check_modules.sh slow`) | – | – | 61.5 | 61.1 |
+| [3] Real data folder check | 2.4 | 1.1 | 0.5 | 0.5 |
+| [4] Build WorkspaceDocument | 2.7 | 1.5 | 0.4 | 0.4 |
+| [5] Installer tests | 0.5 | 0.6 | 0.2 | 0.2 |
+| [6] Workspace MCP tests | 0.5 | 0.5 | 0.1 | 0.1 |
+| [7] Material fixtures | 0.1 | 0.1 | 0.0 | 0.0 |
+| [8] Compile app tests | 48.0 | 36.9 | 18.8 | 18.9 |
+| [9] Run app tests | 308.0 | 219.1 | 196.1 | 195.2 |
+| ↳ 이름 있는 테스트 합 (T1 57개, O1 62개) | 263.8 | 179.0 | 165.2 | 165.4 |
+| ↳ `runTest` 밖 (맨 위 수준 검사, 시작) | 44.2 | 39.9 | 30.9 | 29.8 |
+| [10] Space web view isolation | 24.1 | 17.2 | 17.6 | 17.0 |
+| [11] Screens stay still (새 단계, 대부분 app/macos 전체 컴파일) | – | – | 15.3 | 15.1 |
+| [12] Icon check | 6.3 | 1.2 | 0.7 | 0.7 |
+
+- 두 O1 실행은 1초 안쪽으로 같았다. T1보다 2단계와 8단계가 많이 빨라진 것은 이번에 Mac의 다른 부하가 적었던 탓으로 보인다
+  (T1도 두 실행 사이에 100 s 차이가 났다). 그래서 T1과의 차이를 최적화 효과로 읽으면 안 된다.
+- 컴파일이 차지하는 몫: 모듈 빌드 66 s + S1–S3 61 s(대부분 API 스냅샷용 별도 컴파일) + 8단계 19 s + Screens 약 15 s + 계약·Space web·Icon
+  컴파일 수 초 ≈ 165 s, 전체의 약 40%. O2(캐시)가 볼 곳이다.
+
+### 계약 테스트 (초, 실행 1 / 실행 2; 괄호는 컴파일)
+AIAccounts 0.8 (0.7) / 0.5 (0.3) · AIChat 1.2 (1.0) / 1.0 (0.7) · AIChatRecords 0.8 (0.5) / 0.6 (0.4) ·
+AIIntegrations 1.0 (0.6) / 0.7 (0.6) · AILocalization 0.5 (0.3) / 0.4 (0.3) · **AIProjects 11.4 (0.6) / 11.1 (0.7)** ·
+**AIRuntime 8.4 (0.5) / 8.3 (0.5)** · AISpaces 0.9 (0.7) / 0.9 (0.7) · AIWorkspace 2.2 (0.6) / 2.2 (0.6)
+
+### 캐시 크기 (실행 끝 직전, 두 실행 같음)
+- `$TEST_DIR/cache` (모든 `swiftc -module-cache-path`): 247M
+- `$TEST_DIR/guard-cache` (S1–S3의 `check_modules.py`): 419M
+- 둘 다 실행마다 새로 만들고 끝나면 지운다.
+
+### 오래 걸리는 테스트가 시간을 쓰는 곳 (O3 입력)
+줄 수·호출 수는 코드를 읽어 센 추정이다. 확인한 것은 "확인"이라고 적었다. 프로젝트 Git 명령은 모두
+`ProjectProcess.run`(`app/modules/AIProjects/ProjectWork.swift:29`)이 `project_process.py`를 거쳐 띄우고 0.05 s 간격으로
+끝을 확인해서 한 번에 약 55 ms가 들고, 도구 호출 하나가 확인·체크포인트로 Git을 9번쯤 더 띄운다. 이것이 공통 바탕이다.
+- `testProjectWork` (36.1 / 35.9 s): 16 s는 일부러 둔 대기(확인). 15초였던 옛 브리지 시간 제한을 넘는지 보려고 명령이
+  `time.sleep(16)`을 한다(`tools/tests/project_work.swift:110`). 나머지 약 17 s는 Git·프로세스 띄우기 약 300번(`git_publish_stable` 2번이
+  약 80번)이고, Stop 뒤 2.2 s 고정 대기(`:156`)가 더 있다.
+- `testProjectHandoff` (33.3 / 33.2 s): 약 30 s는 끝까지 기다리는 대기(확인). 세 번째 `run()`은 실패로 끝나 `final`이 계속 nil이라서,
+  `:233–234`의 반복이 30초 기한까지 돈다. 같은 파일 `:556`처럼 `error != nil`도 끝으로 보면 된다. 나머지 약 3 s는 프로젝트 턴 4번이다.
+- `testPeerReview` (10.4 / 10.4 s): 고정 대기는 없다. 약 16번 보내는 동안 검수 스냅샷·diff·백업·체크포인트로 Git을
+  약 150번 띄우는 데 7–8 s가 든다.
+- `testTodoScheduler` (8.7 / 8.7 s, T1 16.5 / 12.2 s): 고정 대기는 없다. TODO 프로젝트 턴 약 11번 × Git 약 14번 ≈ 7.5 s.
+  재시도는 바로 돌아서 60 s `retryDelay`(`Todo.swift:1096`)에는 닿지 않는다.
+- AIProjects 계약 (11 s, 컴파일 0.6 s): Git 약 120–130번(`publishStable` 4번, pull 절) 약 6–7 s, `pump()` 0.1 s × 14번 = 1.4 s.
+- AIRuntime 계약 (8.3 s, 컴파일 0.5 s): 일부러 둔 대기 약 5.4 s(Stop 지연 0.8 s × 2, 시간 제한 1.5 s를 일부러 넘김, 가짜 CLI
+  `time.sleep(1)` × 2, 0.3 s 한 번). 나머지는 0.1 s 간격 확인과 가짜 CLI 실행이다.
+- O3 후보를 줄어드는 양 순으로 보면 이렇다. handoff 대기 조건 약 30 s, 16 s sleep을 앱 쪽의 짧은 시간 제한으로 시험하기 약 16 s,
+  `ProjectProcess.run`의 0.05 s 확인 간격과 중복된 Git 확인(프로젝트 테스트마다 수 초)이다. 마지막 것은 앱 코드라서 O3에서
+  따로 정한다.

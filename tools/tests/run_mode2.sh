@@ -44,8 +44,15 @@ limit() {
   (( rc == 142 )) && echo "FAIL: stopped after $secs s: ${1:t}" >&2
   return $rc
 }
-# "[n/m] name" before each stage: the app shows it under the current step (project_run).
-echo "[1/11] Module guards and the data folder rule"
+# "[n/m] name" before each stage: the app shows it under the current step (project_run). When a stage ends,
+# "  [n] name: x.x s" (its parts indented under it), and the whole run's time at the end: where the time goes.
+zmodload zsh/datetime
+RUN_T0=$EPOCHREALTIME STAGE= STAGE_T0=
+secs() { printf '%.1f' $(( EPOCHREALTIME - $1 )) }
+stage_end() { [[ -n $STAGE ]] && echo "  [${${STAGE#\[}%%/*}] ${STAGE#*\] }: $(secs $STAGE_T0) s"; STAGE= }
+stage() { stage_end; STAGE=$1 STAGE_T0=$EPOCHREALTIME; echo "$1" }
+part() { echo "    $1: $(secs $2) s${3:+ $3}" }
+stage "[1/12] Module guards and the data folder rule"
 # >>> module checks (hashed in tools/module_guard.sha256: changing them needs the user's approval)
 limit 60 zsh tools/check_modules.sh fast
 PYTHONDONTWRITEBYTECODE=1 limit 60 python3 tools/tests/test_module_dependencies.py
@@ -114,13 +121,15 @@ assert order == ['FaceLink.shared', 'DriveLink.shared', 'GitLink.shared', 'PlanL
 # App files see a module's public names only; @testable is for tests.
 assert subprocess.run(['grep', '-rl', '@testable', 'app'], capture_output=True, text=True).stdout.split() == [], 'no @testable import in app files'
 PY
-echo "[2/11] Modules on their own"
+stage "[2/12] Modules on their own"
 # >>> module checks (hashed in tools/module_guard.sha256: changing them needs the user's approval)
 # Each built alone (seeing only the modules it names), checked from outside with only its public API; reaching an
 # internal name must not compile. -enable-testing only lets the module tests (space_build, space_web) say @testable;
 # app files keep a plain import and see public names only.
 MODULES="$TEST_DIR/modules"
+PART_T0=$EPOCHREALTIME
 limit 300 zsh tools/build_modules.sh "$MODULES" -enable-testing -module-cache-path "$TEST_DIR/cache"
+part "build_modules.sh" $PART_T0
 # Every module folder's contract test (tools/tests/<name>_contract.swift, AIFoo -> foo): found here, not listed by hand.
 for DIR in app/modules/*(/N); do
   NAME=${(L)${DIR:t}#AI}; SRC=tools/tests/${NAME}_contract.swift
@@ -134,38 +143,43 @@ for DIR in app/modules/*(/N); do
   grep -q '^// contract needs: chat fixtures' $SRC && RUN_ENV+=(CHAT_FIXTURES="$PWD/tools/tests/chat_fixtures")
   mkdir -p "$TEST_DIR/$NAME-src" "$TEST_DIR/$NAME-home"
   cp $SRC "$TEST_DIR/$NAME-src/main.swift"
+  PART_T0=$EPOCHREALTIME
   limit 300 xcrun swiftc -swift-version 5 -module-cache-path "$TEST_DIR/cache" -I "$MODULES" -o "$TEST_DIR/$NAME-contract" "$TEST_DIR/$NAME-src/main.swift" "$MODULES"/lib*.a
+  COMPILED_AT=$EPOCHREALTIME
   limit 120 env $RUN_ENV "$TEST_DIR/$NAME-contract"
+  part "${DIR:t} contract" $PART_T0 "(compile $(printf '%.1f' $(( COMPILED_AT - PART_T0 ))) s)"
 done
 # S1 public API snapshots (docs/api), S2 each module's boundary file, S3 App size.
+PART_T0=$EPOCHREALTIME
 limit 900 zsh tools/check_modules.sh slow "$MODULES" "$TEST_DIR"
+part "S1-S3 (check_modules.sh slow)" $PART_T0
 # <<< module checks
-[[ ${1-} == --modules ]] && { echo "PASS: module stages (1-2) only"; exit 0 }
-echo "[3/11] Real data folder check"
+[[ ${1-} == --modules ]] && { stage_end; echo "PASS: module stages (1-2) only"; exit 0 }
+stage "[3/12] Real data folder check"
 mkdir -p "$TEST_DIR/real-home-src" && cp tools/tests/real_home.swift "$TEST_DIR/real-home-src/main.swift"
 limit 300 xcrun swiftc -swift-version 5 -module-cache-path "$TEST_DIR/cache" -I "$MODULES" -o "$TEST_DIR/real-home" "$TEST_DIR/real-home-src/main.swift" "$MODULES/libAIAccounts.a"
 limit 60 "$TEST_DIR/real-home"
-echo "[4/11] Build WorkspaceDocument"
+stage "[4/12] Build WorkspaceDocument"
 mkdir -p "$TEST_DIR/resources"
 cp app/resources/workspace_mcp.py app/resources/project_process.py app/resources/local_models.json "$TEST_DIR/resources/"
 limit 300 xcrun swiftc -swift-version 5 -module-cache-path "$TEST_DIR/cache" -o "$TEST_DIR/resources/WorkspaceDocument" tools/workspace_document.swift
-echo "[5/11] Installer tests"
+stage "[5/12] Installer tests"
 PYTHONDONTWRITEBYTECODE=1 limit 600 python3 tools/tests/test_install_app.py
-echo "[6/11] Workspace MCP tests"
+stage "[6/12] Workspace MCP tests"
 PYTHONDONTWRITEBYTECODE=1 limit 600 python3 tools/tests/test_workspace_mcp.py
-echo "[7/11] Material fixtures"
+stage "[7/12] Material fixtures"
 PYTHONDONTWRITEBYTECODE=1 limit 300 python3 tools/tests/material_fixtures.py "$TEST_DIR/data/material-fixtures"
-echo "[8/11] Compile app tests"
+stage "[8/12] Compile app tests"
 limit 900 xcrun swiftc -swift-version 5 -module-cache-path "$TEST_DIR/cache" -I "$MODULES" -o "$TEST_DIR/run" "$MODULES"/lib*.a \
     app/macos/Login.swift \
     app/macos/Settings.swift app/macos/LocalModels.swift app/macos/ExternalMCPTools.swift app/macos/DriveUI.swift app/macos/ToolHub.swift app/macos/DriveTools.swift app/macos/RunConditionsApp.swift app/macos/Updater.swift app/macos/ChatLinksApp.swift app/macos/GitBranches.swift tools/tests/space_build.swift tools/tests/google_drive.swift tools/tests/device_sync.swift tools/tests/window_drag.swift tools/tests/project_work.swift tools/tests/ask_ai.swift tools/tests/collab_log.swift tools/tests/meeting_tool.swift tools/tests/todo_work.swift tools/tests/project_info.swift tools/tests/update_channel.swift tools/tests/chat_search.swift tools/tests/search_fixtures.swift tools/tests/run_conditions.swift tools/tests/runtime_app.swift tools/tests/chat_links.swift tools/tests/chat_cli.swift tools/tests/tool_hub.swift "$TEST_DIR/main.swift"
-echo "[9/11] Run app tests"
+stage "[9/12] Run app tests"
 # The tests also stop themselves after 120 s without progress (mode2.swift) and name the test.
 APP_ENV=(AI_ILLUMINATI_TEST_HOME="$TEST_DIR/data" AI_ILLUMINATI_TEST_RESOURCES="$TEST_DIR/resources")
 # --affected: the picked runTest names, comma-separated; "-" when none (the checks outside runTest still run).
 if (( SELECT )); then ONLY=${(j:,:)TESTS}; APP_ENV+=(AI_ILLUMINATI_TEST_ONLY="${ONLY:--}"); fi
 limit 1500 env $APP_ENV "$TEST_DIR/run"
-echo "[10/11] Space web view isolation"
+stage "[10/12] Space web view isolation"
 if (( SELECT && ! SPACE_WEB )); then
   echo "skip: space web view (not affected)"
 else
@@ -175,7 +189,7 @@ limit 600 xcrun swiftc -swift-version 5 -module-cache-path "$TEST_DIR/cache" -I 
     "$TEST_DIR/space-web-src/main.swift"
 limit 300 env AI_ILLUMINATI_TEST_HOME="$TEST_DIR/space-web-home" "$TEST_DIR/space-web"
 fi
-echo "[10/11] Screens stay still"
+stage "[11/12] Screens stay still"
 if (( SELECT )); then
   echo "skip: screens (affected tests only)"
 else
@@ -186,10 +200,16 @@ limit 900 xcrun swiftc -swift-version 5 -module-cache-path "$TEST_DIR/cache" -I 
     "${SCREEN_SOURCES[@]}" "$TEST_DIR/screens-src/screens_idle.swift"
 limit 60 env AI_ILLUMINATI_TEST_HOME="$TEST_DIR/screens-home" "$TEST_DIR/screens"
 fi
-echo "[11/11] Icon check"
+stage "[12/12] Icon check"
 limit 300 xcrun swiftc -swift-version 5 -module-cache-path "$TEST_DIR/cache" -o "$TEST_DIR/icon-check" \
     app/macos/Icon.swift tools/tests/icon_animation.swift
 limit 60 "$TEST_DIR/icon-check"
+stage_end
+# What the compiler caches hold at the end (O2 decides whether to keep them between runs).
+for CACHE in cache guard-cache; do
+  echo "  $CACHE: $([[ -d $TEST_DIR/$CACHE ]] && du -sh "$TEST_DIR/$CACHE" | cut -f1 || echo none)"
+done
+echo "  total: $(secs $RUN_T0) s"
 if [[ "$(real_accounts)" != "$REAL_BEFORE" ]]; then
   echo "FAIL: the real accounts.json changed during the tests" >&2
   exit 1

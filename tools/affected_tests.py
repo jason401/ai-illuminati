@@ -59,7 +59,7 @@ def run_tests():
 def compiled():
     """The files of run_mode2 stage 8 (the app test binary), besides mode2.swift."""
     run = text(RUN)
-    stage = run[run.index('"[8/11]'):run.index('"[9/11]')]
+    stage = run[run.index('"[8/12]'):run.index('"[9/12]')]
     return re.findall(r"(?:app/macos|tools/tests)/\w+\.swift", stage)
 
 

@@ -901,6 +901,7 @@ func testTodoUsageBar() {
     let text = TodoScheduler.noCrew([], accounts: [a, b], lock: nil, percent: bar.percent, note: bar.note)
     expect(text.contains("5%") && text.contains(bar.note), "the waiting text says it: \(text)")
     expect(AutoPick.todoBar([a, b], usage: ["bar-a": usage(week: 1, resetIn: nil)], now: now).percent == "10%", "no reset time: 10%")
+    expect(AutoPick.todoBar([a], usage: ["bar-a": usage(week: 1, resetIn: 1.1 * 86400)], now: now).percent == "5.5%", "a bar between whole numbers is shown as it is (5.5%, not 6%)")
     print("PASS: TODO usage bar near a reset (need, surplus order, chats unchanged, waiting text)")
 }
 

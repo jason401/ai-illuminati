@@ -79,7 +79,9 @@ public enum AutoPick {
         let ko = left >= 86400 ? "\(Int((left / 86400).rounded()))일" : left >= 3600 ? "\(Int((left / 3600).rounded()))시간" : "\(max(1, Int((left / 60).rounded())))분"
         let en = left >= 86400 ? "\(Int((left / 86400).rounded())) d" : left >= 3600 ? "\(Int((left / 3600).rounded())) h" : "\(max(1, Int((left / 60).rounded()))) min"
         let note = best.kind == .weekly ? L(" (주간 리셋까지 \(ko))", " (weekly resets in \(en))") : L(" (5시간 리셋까지 \(ko))", " (5-hour resets in \(en))")
-        return ("\(Int(best.need.rounded(.up)))%", note)
+        // Not rounded to a whole number: 1.1 days before the reset the bar is 5.5%, not 6%.
+        let shown = (best.need * 10).rounded() / 10
+        return (shown == shown.rounded() ? "\(Int(shown))%" : String(format: "%.1f%%", shown), note)
     }
 
     // Claude and ChatGPT accounts that may work in this chat. Gemini (YouTube helper) and Gemma on this Mac

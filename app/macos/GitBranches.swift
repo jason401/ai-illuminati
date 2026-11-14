@@ -5,7 +5,8 @@ import AIWorkspace
 import AIProjects
 
 // Project info's read-only branch view: every local and origin branch with its role, nearest tag, last commit and how
-// far it is from origin and from stable. It only reads refs; the refresh button runs one `git fetch` (never on open).
+// far it is from origin and from stable. It only reads refs; the refresh button runs one `git fetch` (never on open) and,
+// when that finds main behind origin/main, offers to pull it (the user presses the button; never automatic).
 // The app's own backups (refs/ai-illuminati/*) are not branches and are never listed.
 struct GitCounts: Equatable { var ahead: Int; var behind: Int }
 
@@ -145,6 +146,24 @@ enum GitBranches {
         return report
     }
 
+    // What the refresh offers for local main against origin/main; nil when there is nothing to pull.
+    enum PullOffer: Equatable { case pull(Int), dirty(Int), diverged(GitCounts), otherBranch(Int) }
+    static func pullOffer(_ report: GitBranchReport, dirty: Bool) -> PullOffer? {
+        guard let main = report.rows.first(where: { !$0.remote && $0.branch == "main" }), let c = main.origin, c.behind > 0 else { return nil }
+        if !main.current { return .otherBranch(c.behind) }
+        if c.ahead > 0 { return .diverged(c) }   // ff-only would fail
+        return dirty ? .dirty(c.behind) : .pull(c.behind)
+    }
+    static func offerText(_ offer: PullOffer) -> String {
+        switch offer {
+        case .pull(let n): return L("origin/main에 새 커밋 \(n)개가 있어요. 최신 main을 받을까요?", "origin/main has \(n) new commits. Pull the latest main?")
+        case .dirty(let n): return L("origin/main에 새 커밋 \(n)개가 있지만, 커밋하지 않은 변경이 있어 받을 수 없어요.", "origin/main has \(n) new commits, but there are uncommitted changes, so it cannot pull.")
+        case .diverged(let c): return L("main이 origin/main과 갈라졌어요 (올리지 않은 커밋 \(c.ahead)개, 받지 않은 커밋 \(c.behind)개). 직접 정리해야 해요.",
+                                        "main and origin/main have diverged (\(c.ahead) not pushed, \(c.behind) not pulled); sort it out by hand.")
+        case .otherBranch(let n): return L("origin/main에 새 커밋 \(n)개가 있어요. 지금 이 폴더는 main이 아니라 여기서는 받지 않아요.", "origin/main has \(n) new commits; this folder is not on main, so it does not pull here.")
+        }
+    }
+
     // The one line on top of the list.
     static func summary(_ report: GitBranchReport) -> String? {
         guard let main = report.mainName, let stable = report.stableName else {
@@ -261,6 +280,30 @@ final class GitBranchStore: ObservableObject {
     @Published private(set) var publishing: Set<String> = []
     @Published private(set) var publishMessages: [String: String] = [:]
     @Published private(set) var publishRooms: [String: UUID] = [:]
+    @Published private(set) var offers: [String: GitBranches.PullOffer] = [:]   // set by a refresh only
+    @Published private(set) var pulling: Set<String> = []
+    @Published private(set) var pullMessages: [String: String] = [:]
+
+    func dismissOffer(_ root: String) { offers[root] = nil }
+    func pull(_ binding: ProjectBinding) {
+        let root = binding.root
+        guard !pulling.contains(root) else { return }
+        pulling.insert(root); pullMessages[root] = L("main 받는 중…", "Pulling main…")
+        DispatchQueue.global(qos: .userInitiated).async {
+            let message: String
+            do {
+                _ = try GitLink.shared.pullMain(binding)
+                message = L("최신 main을 받았어요. 소스만 바뀌었으니, 실행 중인 앱에 반영하려면 다시 빌드해야 해요.",
+                            "Pulled the latest main. Only the source changed; rebuild to update the running app.")
+            } catch {
+                message = L("받지 못했어요: ", "Could not pull: ") + error.localizedDescription
+            }
+            DispatchQueue.main.async {
+                self.pullMessages[root] = message; self.pulling.remove(root); self.offers[root] = nil
+                self.load(binding)
+            }
+        }
+    }
 
     func publish(_ binding: ProjectBinding, room: UUID) {
         let root = binding.root
@@ -311,7 +354,15 @@ final class GitBranchStore: ObservableObject {
                 try ProjectProcess.git($0, root: root, timeout: 10)
             }
             if let failed { report.error = report.error ?? failed }
-            DispatchQueue.main.async { self.reports[root] = report; self.busy.remove(root) }
+            // Only a successful refresh asks; a plain read only drops an offer that no longer applies (pulled elsewhere).
+            let offer = fetch && failed == nil
+                ? GitBranches.pullOffer(report, dirty: (try? ProjectProcess.git(["status", "--porcelain"], root: root, timeout: 10)).map { !$0.isEmpty } ?? true)
+                : nil
+            DispatchQueue.main.async {
+                self.reports[root] = report; self.busy.remove(root)
+                if fetch { self.offers[root] = offer; self.pullMessages[root] = nil }
+                else if GitBranches.pullOffer(report, dirty: false) == nil { self.offers[root] = nil }
+            }
         }
     }
 }

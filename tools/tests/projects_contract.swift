@@ -307,5 +307,34 @@ do {
     ProjectWork.release(held, notify: false)
 } catch { fatalError("publish contract: \(error)") }
 
+// The screen's pull: fast-forward main only, clean tree, main checked out, repository lock released.
+do {
+    let remote = base.appendingPathComponent("remote.git"), clone = base.appendingPathComponent("pull-clone")
+    func git(_ args: [String], _ dir: URL) throws -> String { try ProjectProcess.git(args, root: dir.path) }
+    _ = try git(["clone", "-q", remote.path, clone.path], base)
+    _ = try git(["config", "user.name", "Test"], clone); _ = try git(["config", "user.email", "test@example.invalid"], clone)
+    let publisher = base.appendingPathComponent("publish")
+    _ = try git(["commit", "--allow-empty", "-m", "newer"], publisher); _ = try git(["push", "-q", "origin", "main"], publisher)
+    let binding = try ProjectProcess.inspect(clone.path)
+    try "dirty".write(to: clone.appendingPathComponent("dirty.txt"), atomically: true, encoding: .utf8)
+    do { _ = try GitLink.shared.pullMain(binding); expect(false, "dirty pull must fail") }
+    catch { expect(!ProjectWork.isHeld(clone.path) && fm.fileExists(atPath: clone.appendingPathComponent("dirty.txt").path), "dirty pull keeps the edit and releases the lock") }
+    try fm.removeItem(at: clone.appendingPathComponent("dirty.txt"))
+    _ = try git(["switch", "-q", "-c", "fix/z"], clone)
+    do { _ = try GitLink.shared.pullMain(binding); expect(false, "pull on another branch must fail") } catch {}
+    _ = try git(["switch", "-q", "main"], clone)
+    let held = try ProjectWork.acquire(WorkspaceBinding(roots: [WorkspaceRoot(path: clone.path, directory: true, writable: true)], level: .execute, project: binding))
+    do { _ = try GitLink.shared.pullMain(binding); expect(false, "pull must wait for the lock") }
+    catch { expect(ProjectWork.isBusy(error.localizedDescription), "pull respects the repository lock") }
+    ProjectWork.release(held, notify: false)
+    _ = try GitLink.shared.pullMain(binding)
+    let pulled = try git(["rev-parse", "HEAD"], clone), pushed = try git(["rev-parse", "HEAD"], publisher)
+    expect(pulled == pushed && !ProjectWork.isHeld(clone.path), "pull fast-forwards main and releases the lock")
+    _ = try git(["commit", "--allow-empty", "-m", "local"], clone)
+    _ = try git(["commit", "--allow-empty", "-m", "other"], publisher); _ = try git(["push", "-q", "origin", "main"], publisher)
+    do { _ = try GitLink.shared.pullMain(binding); expect(false, "diverged pull must fail") }
+    catch { expect(try! git(["log", "-1", "--format=%s"], clone) == "local", "diverged: ff-only leaves main as it was") }
+} catch { fatalError("pull contract: \(error)") }
+
 print("PASS: Projects promises (TODO retry, busy repository, the user after retries, report on the check, next start after the lock's release, cancel, a free place, restart, todos.json, repository lock, scoped tools, work binding)")
 exit(0)

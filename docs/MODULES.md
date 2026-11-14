@@ -761,3 +761,7 @@ dependencies fails G1; `CollabLog.maxBytes` public fails S1; an App file using i
 ### Stable publish screen API
 
 `GitLink.publishStable(_:room:onWaiting:)` is public so the App project screen can publish without an AI turn. It acquires the existing repository lock and reuses the Git tool's exact-SHA approval path; its waiting callback updates the screen. The shared publish path fetches first, preserves publishing the exact local main SHA, rejects divergent stable, and supports the first stable publish. `projects_contract` checks approval, refusal, exact SHA and lock release against a temporary local remote.
+
+### Pull main screen API
+
+`GitLink.pullMain(_:)` is public so the App project screen can pull main when its refresh finds main behind origin/main. It holds the repository lock (no pull in the middle of an AI's work) and keeps `git_pull`'s rules: main checked out, clean tree, `pull --ff-only`, never stash/reset. `projects_contract` checks dirty, other branch, busy lock, fast-forward and diverged cases against a temporary local remote. No graph change.

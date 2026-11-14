@@ -186,6 +186,18 @@ func testGitBranches() {
     let mainLine = lines.first { $0.branch == "main" }!
     expect(mainLine.place == .both && mainLine.current && mainLine.sync == GitCounts(ahead: 1, behind: 0) && mainLine.version == "v0.1.0+4"
            && GitBranches.sync(mainLine) != nil, "main merged from local and origin: \(mainLine)")
+    // The refresh's pull offer: only for local main behind origin/main.
+    expect(GitBranches.pullOffer(report, dirty: false) == nil, "ahead only: nothing to pull")
+    func withMain(_ c: GitCounts, current: Bool = true) -> GitBranchReport {
+        var r = report; let i = r.rows.firstIndex { $0.ref == "refs/heads/main" }!
+        r.rows[i].origin = c; r.rows[i].current = current; return r
+    }
+    expect(GitBranches.pullOffer(withMain(GitCounts(ahead: 0, behind: 2)), dirty: false) == .pull(2)
+           && GitBranches.pullOffer(withMain(GitCounts(ahead: 0, behind: 2)), dirty: true) == .dirty(2)
+           && GitBranches.pullOffer(withMain(GitCounts(ahead: 1, behind: 2)), dirty: false) == .diverged(GitCounts(ahead: 1, behind: 2))
+           && GitBranches.pullOffer(withMain(GitCounts(ahead: 0, behind: 2), current: false), dirty: false) == .otherBranch(2)
+           && GitBranches.pullOffer(withMain(GitCounts(ahead: 0, behind: 0)), dirty: false) == nil, "pull offers")
+    expect(GitBranches.offerText(.pull(2)).contains("2"), "offer text")
     var behind = report                                             // a local stable behind origin: the line shows origin's
     behind.rows.append(GitBranchRow(ref: "refs/heads/stable", branch: "stable", remote: false, date: .distantPast, version: "v0.0.1"))
     let stableLine = GitBranches.lines(behind).first { $0.branch == "stable" }!

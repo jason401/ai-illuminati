@@ -376,6 +376,10 @@ struct GitBranchesView: View {
                 .help(L("origin에서 새로 가져오기 (git fetch)", "Fetch from origin (git fetch)"))
             }
             if let why = report?.error { Text(why).font(.system(size: 11)).foregroundColor(.orange) }
+            if let offer = store.offers[binding.root] { pullOffer(offer) }
+            if let message = store.pullMessages[binding.root] {
+                Text(message).font(.system(size: 11)).textSelection(.enabled)
+            }
             if let report, let flow = GitBranches.flow(report) { Text(flow).font(.system(size: 11)).foregroundColor(.secondary) }
             HStack(spacing: 8) {
                 Button(L("stable 배포…", "Publish stable…")) { store.publish(binding, room: room) }
@@ -413,6 +417,30 @@ struct GitBranchesView: View {
         .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
         // Local values are read again every time it is shown (commits or checkouts since); the old ones stay meanwhile.
         .onAppear { DispatchQueue.main.async { store.load(binding) } }
+    }
+
+    // After a refresh: pull main with one press, or why it cannot (dirty, diverged, another branch checked out).
+    private func pullOffer(_ offer: GitBranches.PullOffer) -> some View {
+        let pulling = store.pulling.contains(binding.root)
+        var canPull = false
+        if case .pull = offer { canPull = true }
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: canPull ? "arrow.down.circle" : "exclamationmark.triangle").font(.system(size: 12)).foregroundColor(canPull ? .accentColor : .orange)
+                Text(GitBranches.offerText(offer)).font(.system(size: 12)).fixedSize(horizontal: false, vertical: true)
+            }
+            HStack(spacing: 8) {
+                if canPull {
+                    Button(L("main 받기 (git pull)", "Pull main (git pull)")) { store.pull(binding) }.disabled(pulling)
+                    if pulling { ProgressView().controlSize(.small) }
+                }
+                Button(canPull ? L("나중에", "Later") : L("닫기", "Close")) { store.dismissOffer(binding.root) }.disabled(pulling)
+            }
+            if canPull {
+                Text(L("소스만 받아요. 실행 중인 앱에 반영하려면 다시 빌드해야 해요.", "Updates the source only; rebuild to update the running app."))
+                    .font(.system(size: 11)).foregroundColor(.secondary)
+            }
+        }.padding(10).background((canPull ? Color.accentColor : Color.orange).opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
     }
 
     // stable, main and the checked-out branch: name, what it is for, where it lives, version and last commit date.

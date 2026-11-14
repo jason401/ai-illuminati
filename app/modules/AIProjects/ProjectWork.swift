@@ -605,6 +605,19 @@ public final class GitLink: ToolProvider {
         try run.validate(run.generation)
         return try execute("git_publish_stable", [:], run, run.generation)
     }
+    // The project screen's "pull main" after a refresh found new commits: the repository lock (no pull in the middle of an
+    // AI's work) and git_pull's rules (fast-forward only, clean tree, never stash/reset), only with main checked out.
+    // Call off the main thread.
+    public func pullMain(_ binding: ProjectBinding) throws -> String {
+        guard !binding.isDocuments, !binding.isFolderless, !binding.remote.isEmpty else { throw ProjectError.make("A Git project is required.") }
+        let workspace = WorkspaceBinding(roots: [WorkspaceRoot(path: binding.root, directory: true, writable: true)], level: .execute, project: binding)
+        let held = try ProjectWork.acquire(workspace)
+        defer { ProjectWork.release(held) }
+        func git(_ argv: [String], timeout: TimeInterval = 30) throws -> String { try ProjectProcess.git(argv, root: binding.root, timeout: timeout) }
+        guard try git(["branch", "--show-current"]) == "main" else { throw ProjectError.make(L("main이 체크아웃되어 있지 않아 받지 않았어요.", "main is not checked out; nothing pulled.")) }
+        guard try git(["status", "--porcelain"]).isEmpty else { throw ProjectError.make(L("커밋하지 않은 변경이 있어 받지 않았어요.", "There are uncommitted changes; nothing pulled.")) }
+        return try git(["pull", "--ff-only", "--no-rebase", binding.remote, "main"], timeout: 180)
+    }
     private func execute(_ name: String, _ args: [String: Any], _ run: ProjectRun, _ generation: Int) throws -> String {
         func git(_ argv: [String], timeout: TimeInterval = 120) throws -> String { try run.validate(generation); return try ProjectProcess.git(argv, root: run.binding.root, token: run.attempt, timeout: min(timeout, run.deadline.timeIntervalSinceNow)) }
         func clean() throws { guard try git(["status", "--porcelain"]).isEmpty else { throw ProjectError.make("Working tree is not clean; preserve edits and do not pull/switch/stash.") } }

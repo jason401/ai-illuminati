@@ -52,7 +52,7 @@ extension Discussion: TodoChats {
 
     // A question left unanswered: another AI than the TODO's lead (a different kind first, the chat's lock kept, enough
     // usage left) reads the chat's folders like ask_ai (read only) and answers in the user's place.
-    public func standIn(room: UUID, brief: String, done: @escaping (TodoStandInReply) -> Void) {
+    public func standIn(room: UUID, brief: String, token: DebateCancellation, done: @escaping (TodoStandInReply) -> Void) {
         let lead = conversation(room).configuration?.leadID.flatMap { id in model.accounts.first { $0.id == id } }
         let picked = Peer.pick(asker: lead, to: nil, count: 1, members: [], accounts: model.accounts.filter { $0.provider != .gemini },
                                usage: model.latestUsage, lock: lock(of: room), label: label)
@@ -69,7 +69,7 @@ extension Discussion: TodoChats {
         """
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self else { return }
-            let result = self.peerAnswer(peer, prompt: prompt, view: view, room: room, timeout: Peer.askTimeout, token: DebateCancellation())
+            let result = self.peerAnswer(peer, prompt: prompt, view: view, room: room, timeout: Peer.askTimeout, token: token)
             DispatchQueue.main.async {
                 switch result {
                 case .success(let text): done(TodoStandInReply(by: name, text: text))
@@ -77,6 +77,11 @@ extension Discussion: TodoChats {
                 }
             }
         }
+    }
+    // A message sent there after `since`, or one waiting for the running answer.
+    public func userWrote(_ room: UUID, since: Date) -> Bool {
+        let chat = conversation(room)
+        return !(chat.queued ?? []).isEmpty || !(steering[room] ?? []).isEmpty || chat.turns.contains { ($0.askedAt ?? .distantPast) > since }
     }
 }
 

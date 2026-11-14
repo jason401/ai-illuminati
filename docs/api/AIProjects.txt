@@ -178,9 +178,10 @@ TodoChats.maxAnswering | var maxAnswering: Int { get }
 TodoChats.noCrew(_:lock:) | func noCrew(_ allowed: [String], lock: EnterpriseLock?) -> String
 TodoChats.sentPhotos(_:) | func sentPhotos(_ room: UUID) -> Set<UUID>
 TodoChats.setCrew(room:members:lead:) | func setCrew(room: UUID, members: [String], lead: String)
-TodoChats.standIn(room:brief:done:) | func standIn(room: UUID, brief: String, done: @escaping (TodoStandInReply) -> Void)
+TodoChats.standIn(room:brief:token:done:) | func standIn(room: UUID, brief: String, token: DebateCancellation, done: @escaping (TodoStandInReply) -> Void)
 TodoChats.start(room:question:photos:review:extra:) | func start(room: UUID, question: String, photos: [TodoPhoto], review: Bool, extra: String) -> String?
 TodoChats.stop(_:) | func stop(_ room: UUID)
+TodoChats.userWrote(_:since:) | func userWrote(_ room: UUID, since: Date) -> Bool
 TodoData | struct TodoData
 TodoData.blockers(_:) | func blockers(_ item: TodoItem) -> [UUID]
 TodoData.init() | init()
@@ -277,6 +278,7 @@ TodoQuestion.Item.options | var options: [String]
 TodoQuestion.Item.recommended | var recommended: String?
 TodoQuestion.Item.text | var text: String
 TodoQuestion.blocked | var blocked: Bool
+TodoQuestion.id | var id: UUID
 TodoQuestion.init(from:) | init(from decoder: any Decoder) throws
 TodoQuestion.items | var items: [TodoQuestion.Item]
 TodoQuestion.reason | var reason: String
@@ -305,6 +307,7 @@ TodoScheduler.question(_:files:documents:) | static func question(_ item: TodoIt
 TodoScheduler.recover() | func recover()
 TodoScheduler.shared | static var shared: TodoScheduler?
 TodoScheduler.standInDelay | static let standInDelay: TimeInterval
+TodoScheduler.standingIn | @Published var standingIn: Set<UUID> { get set }
 TodoScheduler.start() | func start()
 TodoScheduler.startNow(lists:) | func startNow(lists: Set<UUID>? = nil)
 TodoScheduler.threshold | static let threshold: Double

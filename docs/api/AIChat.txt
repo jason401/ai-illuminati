@@ -268,10 +268,11 @@ Discussion.runningRooms | @Published var runningRooms: Set<UUID> { get set }
 Discussion.sentPhotos(_:) | func sentPhotos(_ room: UUID) -> Set<UUID>
 Discussion.setCrew(room:members:lead:) | func setCrew(room: UUID, members: [String], lead: String)
 Discussion.showBoardTab(_:) | func showBoardTab(_ tab: BoardTab)
-Discussion.standIn(room:brief:done:) | func standIn(room: UUID, brief: String, done: @escaping (TodoStandInReply) -> Void)
+Discussion.standIn(room:brief:token:done:) | func standIn(room: UUID, brief: String, token: DebateCancellation, done: @escaping (TodoStandInReply) -> Void)
 Discussion.start(room:question:photos:review:extra:) | func start(room: UUID, question: String, photos: [TodoPhoto], review: Bool, extra: String) -> String?
 Discussion.stop(_:) | func stop(_ room: UUID)
 Discussion.stoppingRooms | @Published var stoppingRooms: Set<UUID> { get set }
+Discussion.userWrote(_:since:) | func userWrote(_ room: UUID, since: Date) -> Bool
 Discussion.viewingBoard | @Published var viewingBoard: Bool { get set }
 Discussion.viewingRemote | @Published var viewingRemote: RemoteViewing? { get set }
 Enterprise | enum Enterprise

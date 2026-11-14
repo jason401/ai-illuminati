@@ -1210,6 +1210,8 @@ private final class StandInChats: TodoChats {
     var questions: [String] = []
     var reply: TodoStandInReply? = TodoStandInReply(by: "Codex", text: "ANSWER: B, it is easy to undo")
     var later: ((TodoStandInReply) -> Void)?
+    var tokens: [DebateCancellation] = []
+    var wrote: Set<UUID> = []   // rooms where the user wrote since the question
     func crew(lock: EnterpriseLock?, allowed: [String]) -> (lead: Account, reviewer: Account?)? { (Account(id: "standin-lead", provider: .claude, name: "Lead"), nil) }
     func noCrew(_ allowed: [String], lock: EnterpriseLock?) -> String { "nobody" }
     func addChat(_ project: ProjectBinding, title: String, lock: EnterpriseLock?) -> UUID { UUID() }
@@ -1219,8 +1221,9 @@ private final class StandInChats: TodoChats {
     func start(room: UUID, question: String, photos: [TodoPhoto], review: Bool, extra: String) -> String? { questions.append(question); return nil }
     func ended(_ room: UUID) -> TodoTurnEnd { TodoTurnEnd() }
     func stop(_ room: UUID) {}
-    func standIn(room: UUID, brief: String, done: @escaping (TodoStandInReply) -> Void) {
-        briefs.append(brief)
+    func userWrote(_ room: UUID, since: Date) -> Bool { wrote.contains(room) }
+    func standIn(room: UUID, brief: String, token: DebateCancellation, done: @escaping (TodoStandInReply) -> Void) {
+        briefs.append(brief); tokens.append(token)
         if let reply { done(reply) } else { later = done }
     }
 }
@@ -1286,10 +1289,62 @@ func testTodoStandIn() {
     chats.reply = nil
     clock += 30 * 60; scheduler.tick()
     expect(chats.briefs.count == 4 && chats.later != nil, "tried again after 30 minutes")
+    expect(scheduler.standingIn == [later.id] && !chats.tokens[3].isCancelled, "the card can show that another AI answers now")
     store.answer(later.id, "mine")
+    scheduler.tick()
+    expect(chats.tokens[3].isCancelled && scheduler.standingIn.isEmpty, "the user's answer stops the AI still answering")
     chats.later?(TodoStandInReply(by: "Codex", text: "ANSWER: theirs"))
     t = store.current.item(later.id)!
     expect(t.notes.last?.text == "mine" && t.notes.allSatisfy { $0.by == nil } && t.standIns == 0, "an answer after the user's is dropped")
+
+    // Asked again in the same words before the late answer came (no tick between): it is not the question it answered.
+    let again = try! store.add(title: "again", project: ProjectBinding(root: "/tmp/todo-standin-5", common: "", remote: "", remoteURL: ""), projectName: "S5")
+    ask(again.id)
+    clock += 31 * 60; scheduler.tick()
+    expect(chats.briefs.count == 5 && scheduler.standingIn.contains(again.id), "asked")
+    let late = chats.later
+    store.answer(again.id, "A")
+    try! store.change(again.id) { $0.state = .running }
+    ask(again.id, TodoQuestion(blocked: false, reason: question.reason, items: question.items))
+    late?(TodoStandInReply(by: "Codex", text: "ANSWER: B"))
+    t = store.current.item(again.id)!
+    expect(t.state == .needsYou && t.question?.reason == "Which layout?" && t.notes.allSatisfy { $0.by == nil } && t.standIns == 0, "a late answer to the same words is dropped")
+    scheduler.tick()
+    expect(chats.briefs.count == 5, "the new question waits its own 30 minutes")
+
+    // A late failure for an old question does not hold back the new one's stand-in.
+    clock += 31 * 60; scheduler.tick()
+    expect(chats.briefs.count == 6, "the new question is asked after its 30 minutes")
+    let failed = chats.later
+    clock += 60
+    store.answer(again.id, "A again")
+    try! store.change(again.id) { $0.state = .running }
+    ask(again.id, TodoQuestion(blocked: false, reason: "Which font?", items: [.init(text: "Font", options: ["X", "Y"])]))
+    clock += 3 * 60
+    failed?(TodoStandInReply(error: "No AI is free"))
+    clock += 29 * 60; scheduler.tick()
+    expect(chats.briefs.count == 7 && chats.briefs[6].contains("Which font?"), "the retry of the old question is not the new one's")
+
+    // The user wrote in the TODO's chat since it asked: nobody answers for them.
+    chats.reply = TodoStandInReply(by: "Codex", text: "ANSWER: B")
+    let here = try! store.add(title: "here", project: ProjectBinding(root: "/tmp/todo-standin-6", common: "", remote: "", remoteURL: ""), projectName: "S6")
+    ask(here.id)
+    chats.wrote.insert(store.current.item(here.id)!.room!)
+    clock += 31 * 60; scheduler.tick()
+    expect(chats.briefs.count == 7 && store.current.item(here.id)?.state == .needsYou, "a user message in the chat holds the stand-in")
+    // Stopping the TODO stops a stand-in that runs.
+    chats.wrote = []; chats.reply = nil
+    clock += 60; scheduler.tick()
+    expect(chats.briefs.count == 8 && scheduler.standingIn.contains(here.id), "asked once the chat is quiet")
+    scheduler.cancel(here.id)
+    expect(chats.tokens[7].isCancelled && !scheduler.standingIn.contains(here.id), "Stop cancels it")
+
+    // A question saved before it had an id gets one; a saved id stays.
+    let saved = try! JSONSerialization.jsonObject(with: JSONEncoder().encode(question)) as! [String: Any]
+    expect(saved["id"] as? String == question.id.uuidString && (try! JSONDecoder().decode(TodoQuestion.self, from: JSONEncoder().encode(question))) == question, "the id is saved")
+    var bare = saved; bare.removeValue(forKey: "id")
+    let older = try! JSONDecoder().decode(TodoQuestion.self, from: JSONSerialization.data(withJSONObject: bare))
+    expect(older.reason == question.reason && older.items == question.items && older.id != question.id, "an older question gets a new id")
 
     // An older file without the setting: on.
     var data = TodoData(); data.lists = [TodoList(title: "old", project: p)]
@@ -1297,7 +1352,7 @@ func testTodoStandIn() {
     var lists = json["lists"] as! [[String: Any]]; lists[0].removeValue(forKey: "standIn"); json["lists"] = lists
     let old = try! TodoStore.decoder.decode(TodoData.self, from: JSONSerialization.data(withJSONObject: json))
     expect(old.lists[0].standIn, "an older list gets it on")
-    print("PASS: TODO stand-in answer (30 minutes, once until the user answers, blocked/off/declined wait, failure retried later, late answer dropped)")
+    print("PASS: TODO stand-in answer (30 minutes, once until the user answers, blocked/off/declined wait, failure retried later, late answer dropped, stopped when no longer wanted, same words asked again, retry per question, user in the chat, card state)")
 }
 
 // A message written in a TODO's own chat (TodoScheduler.chatMessage through Discussion.send): it answers the question,

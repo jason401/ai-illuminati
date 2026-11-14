@@ -3,6 +3,7 @@ import Combine
 import UniformTypeIdentifiers
 import AIAccounts
 import AILocalization
+import AIRuntime
 import AIWorkspace
 
 // TODO work (TODO_PLAN.md): the user writes TODOs on the board, presses Start, and the app gives the next one
@@ -25,6 +26,18 @@ public struct TodoQuestion: Codable, Equatable {
     public var blocked: Bool
     public var reason: String
     public var items: [Item] = []
+    // This asking: a late stand-in answer or retry belongs to it, not to a later question in the same words.
+    public var id = UUID()
+    private enum CodingKeys: String, CodingKey { case blocked, reason, items, id }
+}
+extension TodoQuestion {
+    // Older files have no id: a new one (nothing asked for them can be running then).
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        blocked = try c.decode(Bool.self, forKey: .blocked); reason = try c.decode(String.self, forKey: .reason)
+        items = (try c.decodeIfThere([Item].self, forKey: .items)) ?? []
+        id = (try c.decodeIfThere(UUID.self, forKey: .id)) ?? UUID()
+    }
 }
 
 // What task_done / task_ask said during an attempt. It becomes the TODO's state only when the whole attempt (the
@@ -526,7 +539,7 @@ public final class TodoStore: ObservableObject {
     // declined: it left the decision to the user; the TODO keeps waiting, with why on its notes.
     func standIn(_ id: UUID, question: TodoQuestion, answer: String?, declined: String?, by: String) {
         try? change(id) { t in
-            guard t.state == .needsYou, t.question == question else { return }
+            guard t.state == .needsYou, t.question?.id == question.id else { return }
             t.standIns += 1
             if let answer {
                 t.notes.append(TodoNote(kind: .answer, text: answer, by: by))
@@ -1036,10 +1049,13 @@ public protocol TodoChats: AnyObject {
     func ended(_ room: UUID) -> TodoTurnEnd       // how the chat's last answer ended
     func stop(_ room: UUID)
     // Asks another AI than the chat's lead (read only, the chat's folders) to answer in the user's place; `done` on the main thread.
-    func standIn(room: UUID, brief: String, done: @escaping (TodoStandInReply) -> Void)
+    // `token` is cancelled when the answer is no longer wanted (the user answered, the TODO moved on or asked again).
+    func standIn(room: UUID, brief: String, token: DebateCancellation, done: @escaping (TodoStandInReply) -> Void)
+    func userWrote(_ room: UUID, since: Date) -> Bool   // the user wrote in that chat after `since` (or a message waits there)
 }
 extension TodoChats {
-    public func standIn(room: UUID, brief: String, done: @escaping (TodoStandInReply) -> Void) { done(TodoStandInReply(error: "No other AI here.")) }
+    public func standIn(room: UUID, brief: String, token: DebateCancellation, done: @escaping (TodoStandInReply) -> Void) { done(TodoStandInReply(error: "No other AI here.")) }
+    public func userWrote(_ room: UUID, since: Date) -> Bool { false }
 }
 // What the AI answering in the user's place said (text), or why it could not be asked (error).
 public struct TodoStandInReply: Equatable {
@@ -1079,8 +1095,9 @@ public final class TodoScheduler: ObservableObject {
     private var retryAt: [UUID: (at: Date, reason: String)] = [:]   // a TODO whose chat refused to start: not tried again before `at`
     static let retryDelay: TimeInterval = 60
     public static let standInDelay: TimeInterval = 1800
-    private var standingIn: Set<UUID> = []           // asked now
-    private var standInRetry: [UUID: Date] = [:]     // nobody could be asked: not before then
+    @Published public private(set) var standingIn: Set<UUID> = []   // TODOs another AI answers for now (the card says so)
+    private var asked: [UUID: (question: UUID, token: DebateCancellation)] = [:]   // the question asked and how to stop it
+    private var standInRetry: [UUID: (question: UUID, at: Date)] = [:]   // nobody could be asked: not before then (that question only)
     private var standInWake: Date?                   // the wake already set for the next one due
     private var chatSaid: [UUID: String] = [:]       // what the user wrote in the TODO's chat: shown first in its next attempt
     var held: (String) -> Bool = ProjectWork.isHeld
@@ -1369,21 +1386,28 @@ public final class TodoScheduler: ObservableObject {
     // it to the user when only the user can decide. Once until the user answers, so two AIs do not settle a TODO alone.
     func standIn() {
         let now = store.now(), data = store.current
+        // The user answered, the TODO moved on or asked something else: the AI still answering stops (its quota is not spent for nothing).
+        for (id, ask) in asked where data.item(id).map({ $0.state != .needsYou || $0.question?.id != ask.question }) ?? true { stopStandIn(id) }
+        standInRetry = standInRetry.filter { data.item($0.key)?.question?.id == $0.value.question }
         var next: Date?
-        for item in data.items where !standingIn.contains(item.id) {
-            guard let due = data.standInDue(item), let room = item.room, let question = item.question else { continue }
-            let at = max(due, standInRetry[item.id] ?? due)
+        for item in data.items where asked[item.id] == nil {
+            guard let due = data.standInDue(item), let room = item.room, let question = item.question, let since = item.stateSince else { continue }
+            let at = max(due, standInRetry[item.id]?.at ?? due)
             if at > now || chats.answering.contains(room) { next = min(next ?? at, max(at, now.addingTimeInterval(Self.retryDelay))); continue }
-            standingIn.insert(item.id)
-            chats.standIn(room: room, brief: Self.standInBrief(item, question: question)) { [weak self] reply in
-                guard let self else { return }
-                self.standingIn.remove(item.id)
+            // The user wrote in the TODO's chat since it asked: they are here, nobody answers for them.
+            if chats.userWrote(room, since: since) { continue }
+            let token = DebateCancellation()
+            asked[item.id] = (question.id, token); standingIn.insert(item.id)
+            chats.standIn(room: room, brief: Self.standInBrief(item, question: question), token: token) { [weak self] reply in
+                guard let self, self.asked[item.id]?.token === token else { return }   // stopped meanwhile: dropped
+                self.asked[item.id] = nil; self.standingIn.remove(item.id)
                 if let text = reply.text, let by = reply.by {
                     let parsed = Self.standInAnswer(text)
-                    self.store.standIn(item.id, question: question, answer: parsed.answer, declined: parsed.declined, by: by)
+                    // The user wrote in its chat meanwhile: they are here and decide.
+                    if !self.chats.userWrote(room, since: since) { self.store.standIn(item.id, question: question, answer: parsed.answer, declined: parsed.declined, by: by) }
                     self.standInRetry[item.id] = nil
                 } else {
-                    self.standInRetry[item.id] = self.store.now().addingTimeInterval(Self.standInDelay)
+                    self.standInRetry[item.id] = (question.id, self.store.now().addingTimeInterval(Self.standInDelay))
                 }
                 self.wake()
             }
@@ -1393,6 +1417,10 @@ public final class TodoScheduler: ObservableObject {
             standInWake = next
             DispatchQueue.main.asyncAfter(deadline: .now() + max(1, next.timeIntervalSince(now))) { [weak self] in self?.standInWake = nil; self?.wake() }
         }
+    }
+
+    func stopStandIn(_ id: UUID) {
+        asked.removeValue(forKey: id)?.token.cancel(); standingIn.remove(id)
     }
 
     // The reply's first line says which: "ANSWER:" goes on with the rest, anything else waits for the user.
@@ -1433,6 +1461,7 @@ public final class TodoScheduler: ObservableObject {
             try? store.change(id) { $0.state = .cancelled }
             if let room = item.room { chats.stop(room) }
         } else { try? store.cancel(id) }
+        stopStandIn(id)
     }
 
     // [Mark as done] from any state: a running TODO is saved done first, then its chat stops (as cancel does), so
@@ -1441,6 +1470,7 @@ public final class TodoScheduler: ObservableObject {
         guard let item = store.current.item(id) else { throw TodoError.notFound }
         guard let old = try store.markDone(id, running: item.state == .running) else { return }
         if old.state == .running, let room = old.room { chats.stop(room) }
+        stopStandIn(id)
     }
 
     // What the AI is asked: the TODO, then everything the user said about it since.

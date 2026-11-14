@@ -426,8 +426,16 @@ public final class Discussion: ObservableObject {
         } catch { return .failed(error.localizedDescription) }
         for image in ready.images { try? ImageStore.remove(image) }   // copied into the TODO's attachments
         if runningRooms.contains(room) { return .sent(nil) }
-        // It may not start yet (another TODO, its list paused, no account free): the message waits on the TODO.
-        return .sent(L("TODO에 전했어요. ", "Sent to the TODO. ") + (scheduler.waiting ?? L("차례가 오면 이 채팅에서 이어서 해요.", "It goes on in this chat when its turn comes.")))
+        // It may not start yet (another TODO, its list paused, no account free): the message waits on the TODO and stays
+        // in the chat as a saved turn of its own, answered by that note.
+        let note = L("TODO에 전했어요. ", "Sent to the TODO. ") + (scheduler.waiting ?? L("차례가 오면 이 채팅에서 이어서 해요.", "It goes on in this chat when its turn comes."))
+        var turn = ChatTurn(question: ready.question)
+        turn.askedAt = Date(); turn.answeredAt = turn.askedAt
+        turn.mode = configuration(of: room).mode; turn.modeVersion = Self.modernModes ? 2 : nil
+        turn.final = note; turn.finalBy = "TODO"
+        if room == currentID { shownTurns += 1 }
+        change(room, save: true) { $0.turns.append(turn) }
+        return .sent(nil)
     }
 
     // "Send now" in the message box: stops the answer and sends the queue at once; without an answer, sends it.

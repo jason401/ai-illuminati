@@ -486,15 +486,17 @@ public final class TodoStore: ObservableObject {
     }
     public func accept(_ id: UUID) { try? change(id) { guard $0.state == .review else { return }; $0.state = .done; $0.unreported = false } }
     // Change request: the feedback goes with the next attempt, in the same chat.
-    public func requestChanges(_ id: UUID, _ text: String) {
-        try? change(id) { item in
+    public func requestChanges(_ id: UUID, _ text: String) { try? requestingChanges(id, text) }
+    func requestingChanges(_ id: UUID, _ text: String) throws {
+        try change(id) { item in
             guard item.state == .review else { return }
             item.notes.append(TodoNote(kind: .feedback, text: text)); item.state = .ready; item.attempts = 0; item.unreported = false; item.standIns = 0
         }
     }
     // The user's decision: ready again with the answer (links to cancelled TODOs are dropped).
-    public func answer(_ id: UUID, _ text: String) {
-        try? update { data in
+    public func answer(_ id: UUID, _ text: String) { try? answering(id, text) }
+    func answering(_ id: UUID, _ text: String) throws {
+        try update { data in
             guard let i = data.items.firstIndex(where: { $0.id == id }), data.items[i].state == .needsYou else { return }
             let gone = Set(data.cancelledBlockers(data.items[i]).map(\.id))
             data.items[i].after.removeAll { gone.contains($0) }
@@ -1077,8 +1079,8 @@ public final class TodoScheduler: ObservableObject {
                 .max(by: { $0.updatedAt < $1.updatedAt }) else { return false }
         if !files.isEmpty { try store.attach(item.id, files: files) }
         switch item.state {
-        case .needsYou: store.answer(item.id, text)
-        case .review: store.requestChanges(item.id, text)
+        case .needsYou: try store.answering(item.id, text)   // not saved: the caller keeps the message
+        case .review: try store.requestingChanges(item.id, text)
         default:
             try store.change(item.id) { t in
                 guard t.state == .draft || t.state == .ready else { return }
@@ -1089,6 +1091,8 @@ public final class TodoScheduler: ObservableObject {
         if !text.isEmpty { chatSaid[item.id] = text }
         retryAt[item.id] = nil
         tick()
+        // Not started now: the chat shows the message as it waits (Discussion), so the later attempt does not repeat it first.
+        if store.current.item(item.id)?.state != .running { chatSaid[item.id] = nil }
         return true
     }
 

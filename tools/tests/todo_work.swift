@@ -1221,7 +1221,7 @@ func testTodoChatMessage() {
         func done(_ summary: String) -> Result<String, Answerer.Failure> { _ = TaskLink.shared.call("task_done", ["summary": summary], context: context); return .success(summary) }
         if current.hasPrefix("and docs") { return done("Docs too") }
         if current.hasPrefix("add docs") { return done("Docs") }
-        if current.hasPrefix("later please") { return done("Later") }
+        if current.hasPrefix("TODO: chatty") && current.contains("later please") { return done("Later") }
         if current.hasPrefix("add tests") { Thread.sleep(forTimeInterval: 0.3); return done("Added tests") }
         if current.hasPrefix("use B") { return done("Used B") }
         let r = TaskLink.shared.call("task_ask", ["kind": "question", "reason": "Which way?", "questions": [["text": "A or B?", "options": ["A", "B"]]]], context: context)
@@ -1277,11 +1277,24 @@ func testTodoChatMessage() {
     turns = chat.conversation(room).turns.count
     say("later please")
     t = store.current.item(item.id)!
-    expect(t.state == .ready && t.notes.last?.text == "later please" && !chat.anyRunning && chat.attachmentError != nil && chat.conversation(room).turns.count == turns,
-           "a TODO that cannot start keeps the message: \(t.state)")
+    let waitTurn = chat.conversation(room).turns.last
+    expect(t.state == .ready && t.notes.last?.text == "later please" && !chat.anyRunning && chat.conversation(room).turns.count == turns + 1
+           && waitTurn?.question == "later please" && waitTurn?.final != nil && ChatStore.loadAll().first { $0.id == room }?.turns.last?.question == "later please",
+           "a TODO that cannot start keeps the message, and the chat shows and saves it: \(t.state)")
     try! store.resume(lists: [t.listID])
     settle { store.current.item(item.id)?.result == "Later" }
-    expect(store.current.item(item.id)?.state == .review && chat.conversation(room).turns.last?.question.hasPrefix("later please") == true, "it starts with that message once it may")
+    let later = chat.conversation(room).turns.last?.question ?? ""
+    expect(store.current.item(item.id)?.state == .review && later.hasPrefix("TODO: chatty") && later.contains("later please"), "it starts once it may, the message in its notes, not shown twice")
+
+    // Not saved (the TODO file cannot be written): the message stays in the box and nothing changes.
+    try! store.change(item.id) { $0.state = .needsYou; $0.question = TodoQuestion(blocked: true, reason: "r") }
+    let dir = store.url.deletingLastPathComponent()
+    try! FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: dir.path)
+    say("lost?")
+    try! FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
+    expect(chat.draft == "lost?" && chat.attachmentError != nil && store.current.item(item.id)?.state == .needsYou && !chat.anyRunning, "a failed save keeps the message: \(chat.draft)")
+    chat.draft = ""; chat.attachmentError = nil
+    try! store.change(item.id) { $0.state = .review; $0.question = nil }
 
     // done: a plain chat again.
     store.accept(item.id)

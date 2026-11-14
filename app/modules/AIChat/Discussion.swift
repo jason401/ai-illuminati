@@ -858,9 +858,9 @@ public final class Discussion: ObservableObject {
         stoppingRooms.remove(id)
         let usage = model.latestUsage
         let rules = model.chatRules.trimmingCharacters(in: .whitespacesAndNewlines)
-        // One member in a project chat, no way or AI picked, not a TODO's own run: while another chat or TODO is changing the
-        // project, that member answers read only instead of failing as busy.
-        let rerouteBusy = project && mentioned.isEmpty && forced == nil && !TodoStore.shared.current.items.contains { $0.room == id && $0.state == .running }
+        // One member (or one AI picked with @) in a project chat, no way picked, not a TODO's own run: while another chat or
+        // TODO is changing the project, that AI answers read only instead of failing as busy. Only /work still says busy.
+        let rerouteBusy = project && forced == nil && !TodoStore.shared.current.items.contains { $0.room == id && $0.state == .running }
         let debateLeader = Self.modernModes && !team.isEmpty && !team.contains(where: { $0.provider == config.leader }) ? team[0].provider : config.leader
         worker.work.async {
             // Only work that may write takes the repository lock, once its route is known: meetings, opinions and

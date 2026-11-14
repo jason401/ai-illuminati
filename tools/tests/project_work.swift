@@ -604,6 +604,13 @@ func testPeerReview() {
     expect(aloneBusy?.routeChoice == .one && aloneBusy?.error == nil && aloneBusy?.routeNote?.contains(L("작업 중", "is working")) == true
            && opinionViews.count == aloneBusyViews + 1 && opinionViews.last?.project == nil && git(["rev-parse", "HEAD"]) == aloneHead,
            "one member, busy project: it answers read only with a note")
+    // One AI picked with @ while the project is busy: it answers read only too, not an error.
+    chat.draftMentions = [claude.id]
+    send("@\(chat.label(claude)) Change README to eight.")
+    let pickedBusy = chat.current.turns.last
+    expect(pickedBusy?.routeChoice == .one && pickedBusy?.error == nil && opinionViews.count == aloneBusyViews + 2
+           && opinionViews.last?.project == nil && git(["rev-parse", "HEAD"]) == aloneHead,
+           "@ one, busy project: that AI answers read only instead of failing as busy")
     ProjectWork.release(aloneHeld)
     testRoute()
     print("PASS: review (members: lead works, the other opines and reviews read only, four asks per answer, only changes reviewed, one fix in the same turn, older review chats migrate)")

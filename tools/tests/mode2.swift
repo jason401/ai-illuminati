@@ -2059,7 +2059,7 @@ do {
     let lock = NSLock()
     var seen: [String] = []
     chat.workspaceAnswer = { _, prompt, _, _, _ in
-        let question = ["first", "second", "third"].first { prompt.contains("\($0) question") } ?? "?"
+        let question = prompt.range(of: #"q\d+ question"#, options: .regularExpression).map { String(prompt[$0].dropLast(9)) } ?? "?"
         lock.lock(); seen.append(question); lock.unlock()
         gate.wait()
         return .success("answer to \(question)")
@@ -2069,29 +2069,38 @@ do {
         while !done() && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
     }
     func asked() -> Int { lock.lock(); defer { lock.unlock() }; return seen.count }
-    chat.draft = "first question"; chat.send()
+    chat.draft = "q1 question"; chat.send()
     let first = chat.currentID
     expect(chat.running && chat.runningRooms == [first], "the first chat is answering")
     chat.newConversation()
     expect(chat.currentID != first && !chat.running, "a new chat opens while the first answers")
-    chat.draft = "second question"
+    chat.draft = "q2 question"
     expect(chat.canSend, "and can send")
     chat.send()
     let second = chat.currentID
     spin { asked() == 2 }
     expect(chat.runningRooms == [first, second] && asked() == 2, "two chats answer at the same time")
     chat.open(first)
-    expect(chat.currentID == first && chat.running && chat.current.turns.last?.question == "first question", "switching chats while both answer")
-    chat.newConversation(); chat.draft = "third question"; chat.send()
-    let third = chat.currentID
-    spin { asked() == 3 }
-    chat.newConversation(); chat.draft = "fourth question"
+    expect(chat.currentID == first && chat.running && chat.current.turns.last?.question == "q1 question", "switching chats while both answer")
+    var rooms = [first, second]
+    for n in 3...Discussion.maxRunning {
+        chat.newConversation(); chat.draft = "q\(n) question"
+        expect(chat.canSend, "chat \(n) can still send")
+        chat.send(); rooms.append(chat.currentID)
+        spin { asked() == n }
+    }
+    expect(asked() == Discussion.maxRunning && Set(rooms) == chat.runningRooms, "\(Discussion.maxRunning) chats answer at the same time")
+    chat.newConversation(); chat.draft = "q\(Discussion.maxRunning + 1) question"
+    let over = chat.currentID
     expect(!chat.canSend && chat.runningRooms.count == Discussion.maxRunning, "at most \(Discussion.maxRunning) chats answer at once")
+    let refusal = chat.startTurn(room: over, question: "q\(Discussion.maxRunning + 1) question")
+    expect(refusal?.contains("\(Discussion.maxRunning)") == true && asked() == Discussion.maxRunning && !chat.runningRooms.contains(over),
+           "chat \(Discussion.maxRunning + 1) is refused with the usual message: \(refusal ?? "nil")")
     chat.draft = ""
-    for _ in 0..<3 { gate.signal() }
+    for _ in 0..<Discussion.maxRunning { gate.signal() }
     spin { chat.runningRooms.isEmpty }
-    for (room, question) in [(first, "first"), (second, "second"), (third, "third")] {
-        expect(chat.conversations.first { $0.id == room }?.turns.last?.final == "answer to \(question)", "\(question) answer lands in its own chat")
+    for (n, room) in rooms.enumerated() {
+        expect(chat.conversations.first { $0.id == room }?.turns.last?.final == "answer to q\(n + 1)", "q\(n + 1) answer lands in its own chat")
     }
     expect(!chat.anyRunning && chat.stoppingRooms.isEmpty, "all done")
     expect(chat.conversations.first { $0.id == first }?.isEnterprise == false, "answering never locks a chat")

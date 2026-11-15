@@ -259,12 +259,12 @@ func testTodoScheduler() {
     expect(failed.attempts == 3 && failed.notes.filter { $0.kind == .retry }.count == 2 && failed.question?.reason.contains("network down") == true,
            "an error is retried \(TodoScheduler.maxAttempts) times, then asks: \(failed.attempts)")
     try! store.cancel(flaky.id)
-    // One place stays free for the user: with two chats answering, no TODO starts.
+    // One place stays free for the user: with all but one place answering, no TODO starts.
     let waits = try! store.add(title: "later", project: project, projectName: "P")
     store.startDrafts()
-    chat.runningRooms = [UUID(), UUID()]
+    chat.runningRooms = Set((1..<Discussion.maxRunning).map { _ in UUID() })
     scheduler.tick()
-    expect(store.current.item(waits.id)?.state == .ready && scheduler.waiting != nil, "one of the three places stays free for the user's chats")
+    expect(store.current.item(waits.id)?.state == .ready && scheduler.waiting != nil, "one of the \(Discussion.maxRunning) places stays free for the user's chats")
     chat.runningRooms = []
     // Nobody with 10% left: it waits.
     model.latestUsage["todo-claude"] = left(5, 70)

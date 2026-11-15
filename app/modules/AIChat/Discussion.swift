@@ -32,7 +32,7 @@ public final class Discussion: ObservableObject {
     // Several chats can work at once. Each sent message runs on its own worker (a Discussion with `host`
     // set and only that chat), so the run state below (active…, pictures, cancellation) is per chat; the
     // worker hands every change back to the host, which the window shows.
-    static let maxRunning = 3
+    static let maxRunning = 5
     @Published public var runningRooms: Set<UUID> = []
     @Published public var stoppingRooms: Set<UUID> = []
     // Messages sent while a chat answers (PendingInputs.swift): written into the running answer when it can read them

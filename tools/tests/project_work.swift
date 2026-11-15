@@ -993,8 +993,8 @@ func testStartTurn() {
     expect(chat.currentID == open && chat.draft == "half-written message" && chat.current.turns.count == 1, "the open chat and its draft are untouched")
     expect(chat.startTurn(room: background, question: "again") != nil, "a chat still answering refuses another turn")
     let saved = chat.runningRooms
-    chat.runningRooms = saved.union([UUID(), UUID()])
-    expect(chat.startTurn(room: open, question: "full") != nil, "three chats answering: no fourth turn")
+    chat.runningRooms = saved.union((saved.count..<Discussion.maxRunning).map { _ in UUID() })
+    expect(chat.startTurn(room: open, question: "full") != nil, "\(Discussion.maxRunning) chats answering: no more turns")
     chat.runningRooms = saved
     expect(chat.startTurn(room: UUID(), question: "x") != nil, "an unknown chat is refused")
     gate.signal()
@@ -1049,7 +1049,7 @@ func testQueuedMessages() {
     chat.draft = "third"; chat.send()
     expect(chat.current.queued?.map(\.text) == ["second", "third"] && chat.draft.isEmpty && turns().count == 1, "both wait, the box is cleared, no turn yet")
     expect(ChatStore.loadAll().first { $0.id == room }?.queued?.count == 2, "the queue is saved with the chat")
-    let others: Set<UUID> = [UUID(), UUID()]
+    let others = Set((1..<Discussion.maxRunning).map { _ in UUID() })
     chat.runningRooms.formUnion(others)   // every other place taken: the ending answer hands its own place to the queue
     lock.lock(); hold = false; lock.unlock()
     gate.signal()

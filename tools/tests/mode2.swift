@@ -11,6 +11,8 @@ import AIProjects
 @testable import AIChat
 @testable import AIIntegrations
 
+// stdout is a pipe (run_mode2 keeps a copy for its failure log): line by line, so a crash loses no line before it.
+setvbuf(stdout, nil, _IOLBF, 0)
 GoogleAuth.shared = GoogleAuth(store: MemoryGoogleStore())
 
 // A stuck test used to hang the whole run with only the last PASS line on screen: every check and test marks

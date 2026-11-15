@@ -1,6 +1,7 @@
 #!/bin/zsh
 set -eu
 cd "${0:A:h}/../.."
+ARGS=("$@")
 # --affected <changed paths>: only the contract tests, app tests and stage 10 that tools/affected_tests.sh picks
 # (all of them when it says ALL). Guards, builds, the checks outside runTest and the other stages always run.
 SELECT=0 CONTRACTS=() TESTS=() SPACE_WEB=0
@@ -22,7 +23,28 @@ LATE_PID=
 # Stages 10-12 run beside 8-9 (late_start below); a failed or stopped run stops them first. Ctrl-C and TERM exit
 # through the EXIT trap (zsh skips it when a signal kills it).
 late_stop() { [[ -n $LATE_PID ]] || return 0; kill -TERM -$LATE_PID 2>/dev/null || true; wait $LATE_PID 2>/dev/null || true; LATE_PID= }
-trap 'late_stop; rm -rf "$TEST_DIR"' EXIT
+# A failed, timed out or stopped run keeps its evidence outside $TEST_DIR (never in the real data folders): the stage,
+# exit code, the last app test started, stage 9's output and late.log. The newest 10 stay; a passing run keeps nothing.
+# The app's Stop (SIGKILL) skips every trap, so it leaves none.
+FAIL_ROOT="$HOME/Library/Logs/AI Illuminati/test-failures" FAIL_KEEP=10
+save_failure() {
+  local rc=$1 dir old
+  (( rc )) || return 0
+  dir="$FAIL_ROOT/$(date +%Y%m%d-%H%M%S)-$$"
+  mkdir -p "$dir" || return 0
+  for f in app-tests.log late.log; do [[ -f "$TEST_DIR/$f" ]] && cp "$TEST_DIR/$f" "$dir/"; done
+  { echo "exit: $rc"
+    echo "stage: ${STAGE:-none}"
+    [[ -f "$dir/late.log" ]] && echo "late stage: $(grep '^\[1[0-2]/12\]' "$dir/late.log" | tail -1)"
+    [[ -f "$dir/app-tests.log" ]] && echo "last app test started: ${$(grep '^▶ ' "$dir/app-tests.log" | tail -1):-none}"
+    echo "args: ${ARGS[*]:-}"
+    echo "head: $(git rev-parse --short HEAD 2>/dev/null)$( [[ -n $(git status --porcelain 2>/dev/null) ]] && echo ' (changed files)')"
+  } > "$dir/summary.txt"
+  old=("$FAIL_ROOT"/<->-<->-<->(/On))   # newest first: the names start with the time
+  (( ${#old} > FAIL_KEEP )) && rm -rf -- "${old[@]:$FAIL_KEEP}"
+  echo "failure log: $dir" >&2
+}
+trap 'RC=$?; late_stop; save_failure $RC; rm -rf "$TEST_DIR"' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 # Compiler module cache (the SDK's clang modules: Foundation, AppKit, SwiftUI, …) kept between runs; homes, data and
@@ -263,7 +285,11 @@ stage "[9/12] Run app tests"
 APP_ENV=(AI_ILLUMINATI_TEST_HOME="$TEST_DIR/data" AI_ILLUMINATI_TEST_RESOURCES="$TEST_DIR/resources")
 # --affected: the picked runTest names, comma-separated; "-" when none (the checks outside runTest still run).
 if (( SELECT )); then ONLY=${(j:,:)TESTS}; APP_ENV+=(AI_ILLUMINATI_TEST_ONLY="${ONLY:--}"); fi
-limit 1500 env $APP_ENV "$TEST_DIR/run"
+# Its output also goes to app-tests.log for the failure log: limit runs in the pipe's subshell, so its exit code is
+# taken from pipestatus (the subshell runs no EXIT trap).
+limit 1500 env $APP_ENV "$TEST_DIR/run" 2>&1 | tee "$TEST_DIR/app-tests.log"
+APP_RC=${pipestatus[1]}
+(( APP_RC == 0 )) || exit $APP_RC
 stage_end
 LATE_T0=$EPOCHREALTIME LATE_RC=0
 wait $LATE_PID || LATE_RC=$?
@@ -271,7 +297,8 @@ LATE_PID=
 cat "$TEST_DIR/late.log"
 echo "  [10-12] waited after stage 9: $(secs $LATE_T0) s"
 if (( LATE_RC )); then
-  echo "FAIL: $(grep '^\[1[0-2]/12\]' "$TEST_DIR/late.log" | tail -1) (stages 10-12 beside 8-9, exit $LATE_RC)" >&2
+  STAGE="$(grep '^\[1[0-2]/12\]' "$TEST_DIR/late.log" | tail -1) (stages 10-12 beside 8-9, exit $LATE_RC)"
+  echo "FAIL: $STAGE" >&2
   exit 1
 fi
 stage_end
@@ -279,7 +306,7 @@ stage_end
 echo "  test cache: $(du -sh "$CACHE" | cut -f1)"
 echo "  total: $(secs $RUN_T0) s"
 if [[ "$(real_accounts)" != "$REAL_BEFORE" ]]; then
-  echo "FAIL: the real accounts.json changed during the tests" >&2
+  STAGE="the real accounts.json check"; echo "FAIL: the real accounts.json changed during the tests" >&2
   exit 1
 fi
 echo "PASS: the real accounts.json is unchanged"

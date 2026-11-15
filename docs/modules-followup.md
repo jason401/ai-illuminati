@@ -727,3 +727,21 @@ O6은 가드를 바꾸지 않으므로 차례가 오면 바로 돈다. O5는 가
 - 반증: 10단계에 `limit 5 false`를 잠깐 넣었다. 9단계가 끝난 뒤 `FAIL: [10/12] Space web view isolation (…, exit 1)`, 전체 exit 1로 끝났고
   `$TEST_DIR`도 지워졌다. 그 줄은 되돌렸다. 이 실행의 testRuntimeThroughApp 7.4 s는 O4의 `-j`만 실행 7.3 s와 같은 흔들림으로 본다
   (11–12단계가 돌지 않아 부하는 오히려 적었음).
+
+## 테스트 실패 때 진단 증거 보존 (run_mode2)
+2026-11-14, 시작 HEAD `95ba95f`. 위 O2 동시 실행의 SIGSEGV(시도 1, RC 139)는 `$TEST_DIR`가 지워져 어느 테스트였는지 몰랐다.
+가드 블록과 `tools/module_guard.sha256`은 그대로다(`check_modules.sh guard` 출력이 같음).
+- 실패(0이 아닌 종료, 시간 초과 142, Ctrl-C 130, TERM 143)면 EXIT trap이 `$TEST_DIR`를 지우기 전에
+  `~/Library/Logs/AI Illuminati/test-failures/<YYYYMMDD-HHMMSS>-<pid>/`에 `summary.txt`(종료 코드, 단계, 10–12단계의 마지막 단계,
+  마지막으로 시작한 앱 테스트 `▶` 줄, 인자, HEAD), `app-tests.log`(9단계 stdout+stderr), `late.log`를 남기고
+  마지막 줄에 `failure log: <경로>`를 찍는다. 최근 10개만 둔다. 통과한 실행은 아무것도 남기지 않는다. 앱의 Stop(SIGKILL)은 trap을 건너뛰어 남지 않는다.
+- 9단계는 `limit … 2>&1 | tee app-tests.log`로 바꿨다. `limit`이 파이프의 subshell에서 돌므로 종료 코드는 `pipestatus[1]`로 받는다
+  (subshell은 EXIT trap을 돌지 않음을 확인). stderr도 stdout으로 합쳐 화면에 나온다.
+- `mode2.swift`: `▶ 이름` 줄은 이미 바로 flush했다. stdout이 파이프면 나머지 print는 블록 버퍼라 crash 직전 줄을 잃으므로
+  시작에 `setvbuf(stdout, nil, _IOLBF, 0)`를 넣었다.
+- 복사본(`git clone --local`, `--affected app/macos/Updater.swift`)에 고장을 넣어 확인: testUpdateChannels 첫 줄에
+  `print(…); raise(SIGSEGV)` → exit 139, summary에 `[9/12]`와 `▶ testUpdateChannels`, app-tests.log 끝에 flush 안 한 print 줄까지 남음.
+  12단계에 `limit 5 false` → `stage: [12/12] Icon check (…, exit 1)`, late.log 보존. 9단계 sleep 중 INT(그룹 전체) → 2 s 안에 130,
+  9단계 limit 10 s → 142, 1단계 G6 실패 → 1단계로 기록. 가짜 폴더 12개를 미리 두고 실패시키면 10개만 남음. 매번 남은 프로세스 없음.
+- 이미 있던 동작(바꾸지 않음): run_mode2 프로세스 하나에만 TERM을 보내면 zsh가 지금 단계가 끝날 때까지 trap을 미룬다(HEAD에서도 45 s 뒤 143).
+- 확인 뒤 전체 테스트 통과(273.4 s), 보존 폴더는 비어 있음.

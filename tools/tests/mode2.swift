@@ -18,6 +18,11 @@ GoogleAuth.shared = GoogleAuth(store: MemoryGoogleStore())
 // A stuck test used to hang the whole run with only the last PASS line on screen: every check and test marks
 // progress, and after `stuckAfter` seconds without any the run names where it stopped and exits.
 let progressLock = NSLock()
+// Fake AIs are called on several threads at once (all views, meetings, mode 1 and 3 openings, reviews). What a fake
+// records goes through `recording`, and a check that reads it while the AIs still run does too: unguarded appends to
+// a captured array once corrupted the heap (malloc stopped the run with RC 133; docs/modules-followup.md, TSan).
+let recordLock = NSLock()
+func recording<T>(_ body: () throws -> T) rethrows -> T { recordLock.lock(); defer { recordLock.unlock() }; return try body() }
 var progressAt = Date(), progressTest = "start", progressCheck = ""
 let stuckAfter: TimeInterval = 120
 func markProgress(test: String? = nil, check: String? = nil) {
@@ -685,7 +690,7 @@ do {
     var speeches: [String] = []
     chat.debateAnswer = { _, prompt, _, _, _ in
         if prompt.contains("[MODE3 MODERATION]") { return .success("{\"action\":\"finish\",\"reason\":\"Enough\"}") }
-        if prompt.contains("[MODE3 SPEECH]") { speeches.append(prompt) }
+        if prompt.contains("[MODE3 SPEECH]") { recording { speeches.append(prompt) } }
         return .success("TL;DR: Point\n\nDetail.")
     }
     chat.draft = "Default length."; chat.send(); waitFor(chat)

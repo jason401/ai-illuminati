@@ -924,3 +924,22 @@ O6 4번째 실행에서 한 번 난 실패의 원인. 2026-11-14, 시작 HEAD `1
 
 하지 말 것: 모드나 프로젝트 채팅을 모듈로 떼는 일, Discussion 멤버를 묶어서 public으로 여는 일, 화면 상태 분리를 test_map 목적만으로 하는 일
 (이득은 (c1)과 같고 동작 위험만 더함). 그래프 변경·새 모듈·가드 변경은 모두 사용자 승인 사항이라 이 절은 구현 TODO를 만들지 않는다.
+
+## 후속: 9단계 RC 133 heap corruption (ASan/TSan)
+2026-11-15, 기준 HEAD `1732097`. 위 "fresh 1차의 RC 133"(`testAutoMeeting` 중 `ChatStore.save` 안에서 malloc이 망가진 freelist를 보고 멈춤)의 원인.
+고친 곳은 테스트 세 파일뿐이고 앱 코드는 그대로다.
+- 방법: 2·8단계와 같은 파일·옵션에 `-sanitize=address -g` / `-sanitize=thread -g`를 더해 모듈과 `run`을 따로 지었다(임시 스크립트, 커밋 안 함.
+  `build_modules.sh`가 옵션을 그대로 넘긴다). 매번 `mktemp -d` 홈을 `AI_ILLUMINATI_TEST_HOME`으로 주고 실행 전후 실제 `accounts.json` 해시가 같은지 봤다(모두 같음).
+- ASan: 1회 전체 통과, 보고 0건. 이 버그는 두 스레드가 같은 배열을 동시에 늘릴 때만 나서 ASan으로는 잘 안 잡힌다.
+- TSan(고치기 전): 앱 테스트 전체에서 경고 8건, 전부 테스트의 가짜 AI 클로저였다. 앱은 의견 모으기(`/all`, `2명 의견`), 회의, 모드 1·3 첫 발언,
+  리뷰에서 여러 AI를 GCD 워커에서 동시에 부른다(`Debate.swift:195`, `Solo.swift:717`, `Attachments.swift:104`). 그런데 가짜가 캡처한
+  `var` 배열·집합·딕셔너리·카운터를 잠금 없이 바꿨다. `testAutoMeeting` 4건(`asked`/`moderations`, `viewAsked`, `localAsked`, `geminiAsked`),
+  `testPickedRoute` 2건(`asked`, `views`), 모드 1 발언 길이 테스트 1건(`speeches`, mode2.swift), `testMeetingTool` 1건(워커가 쓰는 `stopToken`을 main이 spin 중에 읽음).
+  Swift 배열을 동시에 append하면 두 스레드가 같은 버퍼를 다시 할당·해제할 수 있다. 그러면 힙이 망가지고, malloc은 나중에 아무 할당(여기서는 `JSONEncoder`)에서 그걸 발견해 멈춘다.
+  crash report의 위치(`testAutoMeeting`, 바로 앞에서 여러 AI가 답함)와 맞는다. 앱 코드 쪽 race는 TSan 3회 동안 한 건도 없었다.
+- 고침: mode2.swift에 `recordLock`/`recording { }`을 두고, 위 가짜들이 기록하는 부분(답 자체가 짧은 가짜는 본문 전체)을 그 안에서 한다. `stopToken`은 쓰기와 spin 안의 읽기 둘 다 거친다.
+  모드 3 가짜(`testLock`)와 모드 1 전환 테스트(`promptLock`)는 이미 같은 방식이었다. 검사 내용과 시간 제한은 그대로다.
+- 확인: 고친 뒤 TSan 2회 모두 경고 0건, rc 0. 전체 `run_mode2.sh`(`project_run test`)를 3번 연속 돌려 모두 통과했다(213.8 / 209.4 / 213.9 s, 실제 `accounts.json` 그대로).
+- 남은 것: RC 133은 이 heap corruption 말고도 `expect` 실패(SIGTRAP)로도 난다. 2026-11-14 `testDocumentsProject` 건은 위에서 따로 고쳤다.
+  RC 133만으로는 둘을 구분할 수 없으니 실패 로그의 마지막 줄과 crash report(`_xzm_*` malloc 프레임인지, `expect`인지)를 같이 본다.
+  새 가짜가 여러 AI를 동시에 받는 경로(의견·회의·리뷰·모드 1/3)에 쓰이면 기록은 `recording`으로 한다. 의심되면 TSan으로 9단계를 다시 돌려 본다.

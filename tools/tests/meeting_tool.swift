@@ -122,7 +122,7 @@ func testMeetingTool() {
         let context = ToolContext(room: chat.currentID, roots: binding.roots, asker: account, origin: binding.origin ?? .member)
         if prompt.contains("STOP ME") {
             let opened = text(ConveneLink.shared.call("convene_meeting", ["agenda": "SLOW agenda", "brief": "b", "decision_needed": "d"], context: context))
-            stopToken = token
+            recording { stopToken = token }
             stopped = text(ConveneLink.shared.call("meeting_result", ["id": meetingID(opened) ?? "", "wait_seconds": 60], context: context))
             return .success("stopped")
         }
@@ -164,7 +164,7 @@ func testMeetingTool() {
 
     // The stop button stops the meeting too, and the AI waiting for its result hears so at once.
     chat.draft = "STOP ME"; chat.send()
-    spin(20) { chat.current.turns.last?.peerNotes?.contains { $0.meeting != nil } == true && stopToken != nil }
+    spin(20) { chat.current.turns.last?.peerNotes?.contains { $0.meeting != nil } == true && recording { stopToken != nil } }
     chat.stopDebate()
     spin(20) { !chat.anyRunning }
     let halted = chat.current.turns.last?.peerNotes?.first { $0.meeting != nil }

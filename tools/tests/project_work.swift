@@ -1135,7 +1135,7 @@ func testPickedRoute() {
     let room = chat.currentID
     var judged = 0, asked: [(String, String)] = [], views: [WorkspaceBinding] = [], moderations = 0
     chat.routeJudge = { _ in judged += 1; return (.one, "Judge") }
-    chat.workspaceAnswer = { account, prompt, binding, _, _ in
+    chat.workspaceAnswer = { account, prompt, binding, _, _ in recording {
         asked.append((account.id, prompt)); views.append(binding)
         if prompt.contains("[MEETING RESULT]") { return .success("결론: README는 그대로 두자.\n이견: PG는 나누자고 했어.\n가자라고 하면 README를 정리할게.") }
         if prompt.contains("[MODE3 MODERATION]") {
@@ -1150,7 +1150,7 @@ func testPickedRoute() {
             _ = try! ProjectProcess.git(["commit", "-am", "Two"], root: root.path)
         }
         return .success("Claude here.")
-    }
+    } }
     func wait() {
         let deadline = Date().addingTimeInterval(30)
         while Date() < deadline && (chat.anyRunning || (chat.current.turns.last?.final == nil && chat.current.turns.last?.error == nil)) {
@@ -1282,7 +1282,7 @@ func testAutoMeeting() {
     let chat = Discussion(model: model)
     chat.configure { $0.mode = 0 }
     var asked: [String] = [], moderations = 0
-    chat.workspaceAnswer = { account, prompt, _, _, _ in
+    chat.workspaceAnswer = { account, prompt, _, _, _ in recording {
         asked.append(account.id)
         if prompt.contains("[MEETING RESULT]") { return .success("결론: 둘 다 괜찮아.") }
         if prompt.contains("[MODE3 MODERATION]") {
@@ -1290,7 +1290,7 @@ func testAutoMeeting() {
             return .success(moderations == 1 ? #"{"action":"speak","speaker":"claude2","focus":"check it"}"# : #"{"action":"finish","reason":"enough"}"#)
         }
         return .success("TL;DR: \(account.name)\n\n\(account.name) view.")
-    }
+    } }
     expect(chat.memberIDs.isEmpty, "the members are automatic")
     chat.draft = "이 구조로 갈지 회의해줘"; chat.send()
     let deadline = Date().addingTimeInterval(30)
@@ -1323,7 +1323,7 @@ func testAutoMeeting() {
     let views = Discussion(model: model)
     views.configure { $0.mode = 0 }
     views.workspaceAnswer = { account, prompt, _, _, _ in
-        viewAsked.append((account.id, prompt))
+        recording { viewAsked.append((account.id, prompt)) }
         return .success("\(account.name) view.")
     }
     let two = hold(views, "2명 의견 들려줘: A냐 B냐")
@@ -1355,7 +1355,7 @@ func testAutoMeeting() {
     one.toggleMember(x1.id)
     var oneAsked: Set<String> = []
     one.workspaceAnswer = { account, prompt, _, _, _ in
-        oneAsked.insert(account.id)
+        _ = recording { oneAsked.insert(account.id) }
         if prompt.contains("[MEETING RESULT]") { return .success("결론: 혼자.") }
         if prompt.contains("[MODE3 MODERATION]") { return .success(#"{"action":"finish","reason":"enough"}"#) }
         return .success("TL;DR: ok\n\nok")
@@ -1375,7 +1375,7 @@ func testAutoMeeting() {
         chat.workspaceAnswer = { account, prompt, _, _, _ in
             if prompt.contains("[MEETING RESULT]") { return .success("결론: 같이.") }
             if prompt.contains("[MODE3 MODERATION]") { return .success(#"{"action":"finish","reason":"enough"}"#) }
-            localAsked[account.id] = prompt
+            recording { localAsked[account.id] = prompt }
             return .success("TL;DR: ok\n\nok")
         }
         return chat
@@ -1409,7 +1409,7 @@ func testAutoMeeting() {
     geminis.configure { $0.mode = 0 }
     var geminiAsked: Set<String> = []
     geminis.workspaceAnswer = { account, prompt, _, _, _ in
-        geminiAsked.insert(account.id)
+        _ = recording { geminiAsked.insert(account.id) }
         if prompt.contains("[MEETING RESULT]") { return .success("결론: 제미나이 둘.") }
         if prompt.contains("[MODE3 MODERATION]") { return .success(#"{"action":"finish","reason":"enough"}"#) }
         return .success("TL;DR: ok\n\nok")

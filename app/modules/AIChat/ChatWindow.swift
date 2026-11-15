@@ -3401,7 +3401,7 @@ private struct ParallelAnswers: View {
 
 // Several views summed up by one AI (Route.swift, digestOpinions): the summary reads like a plain answer, under who wrote it, and
 // "Show each answer (4)" unfolds the answers as they were. Folded by default; the choice is kept with the turn, and a
-// synced copy (read only) keeps it for as long as it is open. ⌘F words found only in an answer unfold them.
+// synced copy (read only) keeps it for as long as it is open. ⌘F words found in an answer keep them unfolded, also after a fold by hand.
 private final class DigestFold: ObservableObject { @Published var open: Bool?   /* nil: as saved */ }
 private struct DigestedAnswers: View {
     let turn: ChatTurn
@@ -3415,7 +3415,7 @@ private struct DigestedAnswers: View {
     var body: some View {
         let answers = [turn.final].compactMap { $0 } + (turn.moreAnswers ?? []).map(\.text)
         let found = !highlight.words.isEmpty && answers.contains { !ChatFind.ranges($0, highlight.words).isEmpty }
-        let open = Binding(get: { fold.open ?? (turn.answersOpen == true || found) },
+        let open = Binding(get: { found || (fold.open ?? (turn.answersOpen == true)) },
                            set: { fold.open = $0; discussion.setAnswersOpen(turn.id, $0) })
         VStack(alignment: .leading, spacing: 10) {
             VStack(alignment: .leading, spacing: 8) {

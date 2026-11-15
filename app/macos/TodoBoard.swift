@@ -705,6 +705,7 @@ struct TodoBoardHeader: View {
 
 // (An ObservableObject, not @State: see KeyMonitorBox.)
 private final class StandInBox: ObservableObject { @Published var on = false }
+private final class HeightBox: ObservableObject { @Published var height: CGFloat = 0 }
 
 // The report card: what the AI did and [Done] / [Request changes], or its questions with an answer box, [Stop] and [Done].
 struct TodoCard: View {
@@ -715,6 +716,7 @@ struct TodoCard: View {
     var compact = false
     @ObservedObject private var draft = TodoDraft.shared
     @StateObject private var stand = StandInBox()   // TodoScheduler.standingIn: the due time has passed, another AI answers now
+    @StateObject private var reviewHeight = HeightBox()   // the review text's own height: the scroll box is no taller
     private var text: String {
         get { draft.replies[item.id] ?? "" }
         nonmutating set { draft.replies[item.id] = newValue.isEmpty ? nil : newValue }
@@ -772,11 +774,23 @@ struct TodoCard: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
+    private func measure(_ height: CGFloat) {
+        // Set only on a change (see the note at onReceive below).
+        if abs(reviewHeight.height - height) > 0.5 { reviewHeight.height = height }
+    }
     private var card: some View {
         VStack(alignment: .leading, spacing: 8) {
             if !compact { header }
             if item.state == .review {
-                if compact { reviewBody } else { ScrollView { reviewBody }.frame(maxHeight: 180).fixedSize(horizontal: false, vertical: true) }
+                if compact { reviewBody } else {
+                    // A ScrollView's own ideal height is not its content's: measured, so short text is not cut and long text scrolls.
+                    ScrollView {
+                        reviewBody.background(GeometryReader { g in
+                            Color.clear.onAppear { measure(g.size.height) }.onChange(of: g.size.height) { measure($0) }
+                        })
+                    }
+                    .frame(height: min(reviewHeight.height, 180))
+                }
                 if item.room.map({ discussion.conversation($0).configuration?.memberIDs?.count ?? 0 }) == 1 {
                     Text(L("리뷰 없음 (리뷰할 계정이 없었어요)", "No review (no account was free to review)")).font(.system(size: 11)).foregroundColor(.orange)
                 }

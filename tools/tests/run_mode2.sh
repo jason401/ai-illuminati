@@ -10,7 +10,8 @@ SELECT=0 CONTRACTS=() TESTS=() SPACE_WEB=0 SCREENS=0
 if [[ ${1-} == --affected ]]; then
   shift; (( $# )) || { echo "use: zsh tools/tests/run_mode2.sh --affected <paths from the project root>" >&2; exit 2 }
   PICKED=$(zsh tools/affected_tests.sh "$@")
-  for P in "$@"; do [[ ${P#./} == (app/macos/*|app/modules/AIProjects/*|tools/tests/screens_idle.swift) ]] && SCREENS=1; done
+  # Paths as affected_tests.py reads them: real path, relative to the project root (absolute and ./ forms too).
+  for P in "$@"; do [[ ${P:A} == "${PWD:A}"/(app/macos/*|app/modules/AIProjects/*|tools/tests/screens_idle.swift) ]] && SCREENS=1; done
   shift $#
   if [[ $PICKED == ALL* ]]; then
     echo "Affected: every test (${PICKED#ALL })"

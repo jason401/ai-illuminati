@@ -39,7 +39,7 @@ extension Discussion {
         }
         open(keep.id)   // the same chat keeps its draft and waiting pictures
         focusRequest += 1
-        let extra = blanks.filter { $0.id != keep.id }
+        let extra = blanks.filter { $0.id != keep.id && SidebarProjects.removableBlank($0) }
         if !extra.isEmpty { removeChats(extra) }
         return keep.id
     }

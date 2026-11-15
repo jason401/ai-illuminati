@@ -257,12 +257,14 @@ extension SidebarProjects {
 
     // A project chat nothing has happened in yet, which the project's new-chat button opens again instead of adding one:
     // no messages, materials, queue or meeting, not answering, not a TODO's chat, not continued from another Mac, locked
-    // as a new chat would be. A chat the user pinned or named is theirs: never reused or removed.
+    // as a new chat would be.
     static func reusableBlank(_ chat: Conversation, lock: EnterpriseLock?, todoRooms: Set<UUID>, running: Set<UUID>) -> Bool {
         chat.workspace?.project != nil && chat.turns.isEmpty && (chat.documents ?? []).isEmpty && (chat.queued ?? []).isEmpty
-            && chat.meetingOf == nil && chat.origin == nil && chat.pinned != true && chat.enterpriseLock == lock
-            && !todoRooms.contains(chat.id) && !running.contains(chat.id) && ["새 대화", "New chat"].contains(chat.title)
+            && chat.meetingOf == nil && chat.origin == nil && chat.enterpriseLock == lock
+            && !todoRooms.contains(chat.id) && !running.contains(chat.id)
     }
+    // An extra blank chat the button may remove: one the user pinned or named is theirs, so it stays.
+    static func removableBlank(_ chat: Conversation) -> Bool { chat.pinned != true && ["새 대화", "New chat"].contains(chat.title) }
 
     // Why this chat cannot go into this project (nil: it can). mode: the chat's mode (project work is plain chat only).
     static func moveRefusal(_ chat: Conversation, into group: ProjectGroup, todo: TodoData, running: Bool, mode: Int) -> String? {

@@ -804,7 +804,8 @@ func testMoveChatToProject() {
 }
 
 // The project row's new-chat button: the project's blank chat opens again (one per project), extra blank ones go,
-// pinned, named, TODO, answering and differently locked chats are never reused; the loose new chat is as before.
+// pinned and named ones are reused but never removed; TODO, answering and differently locked chats are never reused;
+// the loose new chat is as before.
 func testReuseBlankProjectChat() {
     func project(_ name: String) -> ProjectBinding {
         let root = AccountStore.home + "/reuse-\(name)-" + UUID().uuidString
@@ -854,10 +855,13 @@ func testReuseBlankProjectChat() {
     for (i, id) in piled.enumerated() { chat.change(id) { $0.updatedAt = Date(timeIntervalSinceNow: Double(i - 10)) } }
     let pinned = chat.addProjectChat(d, title: "New chat", open: false), named = chat.addProjectChat(d, title: "Plan", open: false)
     chat.change(pinned, save: true) { $0.pinned = true }
+    for id in [pinned, named] { chat.change(id) { $0.updatedAt = Date(timeIntervalSinceNow: -100) } }
     let kept = press(d)
     expect(kept == piled[2] && chat.currentID == kept, "the newest piled blank chat opens")
     expect(Set(chats(d).map(\.id)) == [piled[2], pinned, named] && !saved(piled[0]) && !saved(piled[1]) && saved(pinned) && saved(named),
            "the other blank chats are deleted; pinned and named ones stay")
+    let f = project("f"), onlyNamed = chat.addProjectChat(f, title: "Plan", open: false)
+    expect(press(f) == onlyNamed && chats(f).count == 1, "a named blank chat is still reused, not added to")
 
     // Not reused: an answering chat or one under another lock.
     let busy = press(e)
@@ -870,7 +874,7 @@ func testReuseBlankProjectChat() {
     expect(locked != busy && locked != notBusy && chat.conversation(locked).enterpriseLock == lock, "a project now locked gets a locked chat")
     expect(press(e, lock: lock) == locked, "and reuses it while locked")
 
-    chat.removeChats(chat.conversations.filter { [a, b, c, d, e].map(SidebarProjects.key).contains($0.workspace?.project.map(SidebarProjects.key) ?? "") })
+    chat.removeChats(chat.conversations.filter { [a, b, c, d, e, f].map(SidebarProjects.key).contains($0.workspace?.project.map(SidebarProjects.key) ?? "") })
     print("PASS: reuse blank project chat (one per project, kept draft, after a message, loose new chat, TODO chats, piled blanks, pinned/named kept, busy, lock)")
 }
 

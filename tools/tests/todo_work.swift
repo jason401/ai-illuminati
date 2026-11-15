@@ -1305,11 +1305,16 @@ func testTodoStandIn() {
     expect(t.state != .needsYou && t.standIns == 1 && t.notes.last?.by == "Codex" && t.notes.last?.text == "B, it is easy to undo", "its answer goes on: \(t.state)")
     expect(chats.questions.last?.contains("Codex") == true && chats.questions.last?.contains("B, it is easy to undo") == true, "the next attempt is told who answered")
     expect(TodoStore(url: store.url).current.item(a.id)?.notes.last?.by == "Codex", "who answered is saved")
-    // Asked again before the user said anything: no second stand-in, but the app hands it over at 30 minutes.
-    ask(a.id, TodoQuestion(kind: .choice, reason: "And the color?", items: [.init(text: "Color", options: ["red", "blue"], recommended: "blue")]))
+    // A new question in the next attempt (settle): its own two steps; declined this time, the app hands it over at 30 minutes.
+    chats.reply = TodoStandInReply(by: "Codex", text: "DECLINE: taste")
+    try! store.change(a.id) { $0.state = .running; $0.report = TodoReport(question: TodoQuestion(kind: .choice, reason: "And the color?", items: [.init(text: "Color", options: ["red", "blue"], recommended: "blue")])) }
+    scheduler.tick()
+    t = item(a.id)
+    expect(t.state == .needsYou && t.standIns == 0 && store.current.standInDue(t) != nil, "a new question starts its steps again")
     clock += 16 * 60; scheduler.tick()
     t = item(a.id)
-    expect(chats.briefs.count == 1 && store.current.standInDue(t) == nil && store.current.autoAnswerDue(t) == t.stateSince!.addingTimeInterval(1800) && t.state == .needsYou, "one stand-in until the user answers; the app's step is still due")
+    expect(chats.briefs.count == 2 && chats.briefs[1].contains("And the color?") && store.current.standInDue(t) == nil && store.current.autoAnswerDue(t) == t.stateSince!.addingTimeInterval(1800) && t.state == .needsYou, "its own stand-in; the app's step is still due")
+    chats.reply = TodoStandInReply(by: "Codex", text: "ANSWER: B, it is easy to undo")
     clock += 15 * 60; scheduler.tick()
     t = item(a.id)
     let auto = t.notes.last!
@@ -1336,10 +1341,10 @@ func testTodoStandIn() {
     ask(b.id, TodoQuestion(kind: .approval, reason: "Update the guard hash?"))
     clock += 16 * 60; scheduler.tick()
     t = item(b.id)
-    expect(chats.briefs.count == 2 && chats.briefs[1].contains("guard hash") && t.state == .needsYou && t.standIns == 1 && t.notes.last?.kind == .system && t.notes.last?.text.contains("budget") == true,
+    expect(chats.briefs.count == 3 && chats.briefs[2].contains("guard hash") && t.state == .needsYou && t.standIns == 1 && t.notes.last?.kind == .system && t.notes.last?.text.contains("budget") == true,
            "an approval goes to the other AI too; a decline waits")
     clock += 10 * 60; scheduler.tick()
-    expect(chats.briefs.count == 2 && item(b.id).state == .needsYou, "not asked again")
+    expect(chats.briefs.count == 3 && item(b.id).state == .needsYou, "not asked again")
     clock += 5 * 60; scheduler.tick()
     t = item(b.id)
     expect(t.notes.last?.by == TodoNote.appDelegated && t.notes.last?.text.contains(L("네 판단으로", "your call")) == true && t.state != .needsYou, "30 minutes: handed over with the AI's own judgment")
@@ -1350,11 +1355,11 @@ func testTodoStandIn() {
     chats.reply = TodoStandInReply(error: "No AI is free")
     ask(c.id, TodoQuestion(kind: .missingInfo, reason: "Which API key name?"))
     clock += 16 * 60; scheduler.tick()
-    expect(chats.briefs.count == 3 && item(c.id).standIns == 0 && item(c.id).state == .needsYou, "a failed ask is not counted")
+    expect(chats.briefs.count == 4 && item(c.id).standIns == 0 && item(c.id).state == .needsYou, "a failed ask is not counted")
     clock += 60; scheduler.tick()
-    expect(chats.briefs.count == 3, "and not tried again at once")
+    expect(chats.briefs.count == 4, "and not tried again at once")
     clock += 14 * 60; scheduler.tick()
-    expect(chats.briefs.count == 3 && item(c.id).notes.filter(\.delegation).count == 1 && item(c.id).state != .needsYou, "30 minutes: handed over, no second ask")
+    expect(chats.briefs.count == 4 && item(c.id).notes.filter(\.delegation).count == 1 && item(c.id).state != .needsYou, "30 minutes: handed over, no second ask")
 
     // Failed retries and no report: neither step, and no button.
     for kind in [TodoQuestion.Kind.failed, .noReport] {
@@ -1363,14 +1368,14 @@ func testTodoStandIn() {
         clock += 3600; scheduler.tick()
         scheduler.delegate(f.id)
         t = item(f.id)
-        expect(chats.briefs.count == 3 && t.state == .needsYou && t.notes.isEmpty && store.current.autoAnswerDue(t) == nil && t.question?.delegable == false, "\(kind) waits for the user")
+        expect(chats.briefs.count == 4 && t.state == .needsYou && t.notes.isEmpty && store.current.autoAnswerDue(t) == nil && t.question?.delegable == false, "\(kind) waits for the user")
     }
     // Turned off for the list: neither step.
     let off = try! store.add(title: "off", project: project(), projectName: "S")
     try! store.setList(off.listID, standIn: false)
     ask(off.id)
     clock += 3600; scheduler.tick()
-    expect(chats.briefs.count == 3 && item(off.id).state == .needsYou && item(off.id).notes.isEmpty, "a list that turned it off waits for the user")
+    expect(chats.briefs.count == 4 && item(off.id).state == .needsYou && item(off.id).notes.isEmpty, "a list that turned it off waits for the user")
 
     // The user wrote in the TODO's chat since it asked: nobody answers for them.
     chats.reply = TodoStandInReply(by: "Codex", text: "ANSWER: B")
@@ -1378,7 +1383,7 @@ func testTodoStandIn() {
     ask(here.id)
     chats.wrote.insert(item(here.id).room!)
     clock += 3600; scheduler.tick()
-    expect(chats.briefs.count == 3 && item(here.id).state == .needsYou && item(here.id).notes.isEmpty, "a user message in the chat holds both steps")
+    expect(chats.briefs.count == 4 && item(here.id).state == .needsYou && item(here.id).notes.isEmpty, "a user message in the chat holds both steps")
     chats.wrote = []
 
     // 알아서 해 while the other AI is still answering: ready at once, a delegation note, the other AI stopped, its late answer dropped.
@@ -1386,22 +1391,23 @@ func testTodoStandIn() {
     let d = try! store.add(title: "button", project: project(), projectName: "S")
     ask(d.id)
     clock += 16 * 60; scheduler.tick()
-    expect(chats.briefs.count == 4 && scheduler.standingIn.contains(d.id), "the other AI answers now")
+    expect(chats.briefs.count == 5 && scheduler.standingIn.contains(d.id), "the other AI answers now")
     scheduler.delegate(d.id)
     t = item(d.id)
     expect(t.state != .needsYou && t.notes.last?.by == TodoNote.userDelegated && t.notes.last?.text.contains("B") == true && t.standIns == 2 && t.delegated == 1, "the button hands it over at once")
-    expect(chats.tokens[3].isCancelled && !scheduler.standingIn.contains(d.id), "and stops the other AI")
+    expect(chats.tokens[4].isCancelled && !scheduler.standingIn.contains(d.id), "and stops the other AI")
     chats.later?(TodoStandInReply(by: "Codex", text: "ANSWER: A"))
     expect(item(d.id).notes.filter { $0.by == "Codex" }.isEmpty, "its late answer is dropped")
+    expect(try! scheduler.chatMessage(room: item(d.id).room!, text: "also do X") && item(d.id).delegated == 0, "a message of the user's while it waits ends the delegation's guard")
 
     // The user answers while the other AI is still thinking: its answer is dropped, nothing is handed over.
     let e = try! store.add(title: "mine", project: project(), projectName: "S")
     ask(e.id)
     clock += 16 * 60; scheduler.tick()
-    expect(chats.briefs.count == 5 && !chats.tokens[4].isCancelled, "asked")
+    expect(chats.briefs.count == 6 && !chats.tokens[5].isCancelled, "asked")
     store.answer(e.id, "mine")
     scheduler.tick()
-    expect(chats.tokens[4].isCancelled && !scheduler.standingIn.contains(e.id), "the user's answer stops the AI still answering")
+    expect(chats.tokens[5].isCancelled && !scheduler.standingIn.contains(e.id), "the user's answer stops the AI still answering")
     chats.later?(TodoStandInReply(by: "Codex", text: "ANSWER: theirs"))
     t = item(e.id)
     expect(t.notes.last?.text == "mine" && t.notes.allSatisfy { $0.by == nil } && t.standIns == 0, "an answer after the user's is dropped")
@@ -1415,12 +1421,12 @@ func testTodoStandIn() {
     ask(g.id, TodoQuestion(kind: .choice, reason: question.reason, items: question.items))
     late?(TodoStandInReply(by: "Codex", text: "ANSWER: B"))
     t = item(g.id)
-    expect(chats.briefs.count == 6 && t.state == .needsYou && t.notes.allSatisfy { $0.by == nil } && t.standIns == 0, "a late answer to the same words is dropped")
+    expect(chats.briefs.count == 7 && t.state == .needsYou && t.notes.allSatisfy { $0.by == nil } && t.standIns == 0, "a late answer to the same words is dropped")
     // Stopping the TODO stops a stand-in that runs.
     clock += 16 * 60; scheduler.tick()
-    expect(chats.briefs.count == 7 && scheduler.standingIn.contains(g.id), "the new question is asked after its own 15 minutes")
+    expect(chats.briefs.count == 8 && scheduler.standingIn.contains(g.id), "the new question is asked after its own 15 minutes")
     scheduler.cancel(g.id)
-    expect(chats.tokens[6].isCancelled && !scheduler.standingIn.contains(g.id), "Stop cancels it")
+    expect(chats.tokens[7].isCancelled && !scheduler.standingIn.contains(g.id), "Stop cancels it")
 
     // After a restart: both steps are timed from the saved stateSince.
     let r = try! store.add(title: "restart", project: project(), projectName: "S")
@@ -1432,7 +1438,7 @@ func testTodoStandIn() {
     let restarted = TodoScheduler(chats: chats, store: reopened)
     restarted.held = { _ in false }
     restarted.tick()
-    expect(chats.briefs.count == 7 && reopened.current.item(r.id)?.notes.last?.by == TodoNote.appDelegated, "past 30 minutes after a restart: handed over at once, no stand-in first")
+    expect(chats.briefs.count == 8 && reopened.current.item(r.id)?.notes.last?.by == TodoNote.appDelegated, "past 30 minutes after a restart: handed over at once, no stand-in first")
 
     // The delegation's wording.
     let words = TodoScheduler.delegateAnswer(TodoQuestion(kind: .choice, reason: "r", items: [.init(text: "One", recommended: "X"), .init(text: "Two")]))

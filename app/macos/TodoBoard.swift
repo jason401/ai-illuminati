@@ -182,8 +182,8 @@ struct TodoBoardView: View {
         }
         Toggle(L("답 없으면 AI가 알아서", "AI goes on without me"), isOn: Binding(get: { list.standIn }, set: { value in act { try store.setList(list.id, standIn: value) } }))
             .toggleStyle(.checkbox).font(.system(size: 12)).fixedSize()
-            .help(L("질문에 15분 동안 답이 없으면 물어본 AI와 다른 AI가 프로젝트를 읽고 대신 답하고, 30분이 지나도 멈춰 있으면 AI에게 판단을 맡겨 알아서 진행해요(네가 답할 때까지 질문 하나씩 한 번만). push·배포·삭제·계정·돈이 걸린 단계는 하지 않고 그 직전에 확인을 받아요. 실패·보고 없음은 너를 기다려요.",
-                    "A question unanswered for 15 minutes is answered by another AI than the one that asked, after reading the project; still waiting after 30 minutes, the AI is told to decide and go on (once each until you answer). Steps that push, publish, delete, touch accounts or spend money are left for your check. Failures and missing reports wait for you."))
+            .help(L("질문에 15분 동안 답이 없으면 물어본 AI와 다른 AI가 프로젝트를 읽고 대신 답하고, 30분이 지나도 멈춰 있으면 AI에게 판단을 맡겨 알아서 진행해요(질문마다 한 번씩, 위임 뒤 또 물으면 추천안으로 한 번 더, 그다음엔 너를 기다려요). push·배포·삭제·계정·돈이 걸린 단계는 하지 않고 그 직전에 확인을 받아요. 실패·보고 없음은 너를 기다려요.",
+                    "A question unanswered for 15 minutes is answered by another AI than the one that asked, after reading the project; still waiting after 30 minutes, the AI is told to decide and go on (once per question; asked again after that, the recommended answer goes on once, then it waits for you). Steps that push, publish, delete, touch accounts or spend money are left for your check. Failures and missing reports wait for you."))
     }
 
     // ⏸ Pause / Resume for one list, with what holds it: paused now, or going on only up to a TODO.

@@ -104,8 +104,8 @@ public struct TodoItem: Codable, Identifiable, Equatable {
     public var workers: [String]?          // the running attempt's allowed accounts (the list's pick when it started); nil: any
     public var interrupted = false         // the app quit while it ran: the next attempt checks git status first
     public var unreported = false          // review or needsYou not yet announced (macOS notification)
-    // Who answered in the user's place since the user last answered: 0 another AI is still due, 1 the app's own
-    // delegation is still due, 2 nothing more (the user decides the next question).
+    // Who answered the current question in the user's place: 0 another AI is still due, 1 the app's own delegation
+    // is still due, 2 nothing more. A new question starts again at 0; asking again right after a delegation is `delegated`'s.
     public var standIns = 0
     // The decision was handed to the AI (TodoScheduler.delegate): 1 its next attempt may not ask again (the recommended
     // answers go on once), 2 they went on once; asking again then fails. 0 once the user answers or it reports.
@@ -572,7 +572,7 @@ public final class TodoStore: ObservableObject {
     }
     // The decision handed to the AI (the card's "알아서 해", or the app after autoAnswerDelay): ready again with that
     // answer, marked by who handed it so the next attempt and the user can tell it from the user's own answer. Only to
-    // the question it was given for. Nothing more is answered in the user's place until the user answers.
+    // the question it was given for.
     func delegating(_ id: UUID, question: TodoQuestion, text: String, by: String) -> Bool {
         (try? update { data -> Bool in
             guard let i = data.items.firstIndex(where: { $0.id == id }), data.items[i].state == .needsYou, data.items[i].question?.id == question.id else { return false }
@@ -1186,7 +1186,7 @@ public final class TodoScheduler: ObservableObject {
             try store.change(item.id) { t in
                 guard t.state == .draft || t.state == .ready else { return }
                 if !text.isEmpty { t.notes.append(TodoNote(kind: .feedback, text: text)) }
-                t.state = .ready; t.attempts = 0; t.lastError = nil; t.standIns = 0
+                t.state = .ready; t.attempts = 0; t.lastError = nil; t.standIns = 0; t.delegated = 0
             }
         }
         if !text.isEmpty { chatSaid[item.id] = text }
@@ -1418,7 +1418,7 @@ public final class TodoScheduler: ObservableObject {
                     } else if t.delegated > 0 {
                         t.state = .needsYou; t.unreported = true; t.delegated = 0
                         t.question = TodoQuestion(kind: .failed, reason: L("판단을 위임받고도 다시 물었어요: ", "It asked again after the decision was handed to it: ") + question.reason, items: question.items)
-                    } else { t.state = .needsYou; t.question = question; t.unreported = true }
+                    } else { t.state = .needsYou; t.question = question; t.unreported = true; t.standIns = 0 }   // each question its own two steps
                 }
             } else if let report, let summary = report.summary {
                 // The review could not be done: the result still waits for the check, with that said on its card.
@@ -1448,7 +1448,8 @@ public final class TodoScheduler: ObservableObject {
 
     // A question nobody answered: after 15 minutes another AI (not the one that asked) answers in the user's place, or
     // leaves it to the user when only the user can decide; after 30 minutes the app hands the decision to the AI
-    // (delegate). Each once until the user answers (standIns), so AIs do not settle a TODO alone question after question.
+    // (delegate). Each once per question (standIns); asking again right after a delegation goes on with the recommended
+    // answers once, then fails (settle, `delegated`), so AIs cannot keep settling the same decision.
     func standIn() {
         let now = store.now(), data = store.current
         // The user answered, the TODO moved on or asked something else: the AI still answering stops (its quota is not spent for nothing).

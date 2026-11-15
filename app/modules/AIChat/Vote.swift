@@ -139,7 +139,8 @@ extension Discussion {
                 """
             group.enter()
             DispatchQueue.global().async {
-                let result = self.requestDebate(account, prompt, 300, cancellation, web: true)
+                let ran = AnswerModel()
+                let result = self.requestDebate(account, prompt, 300, cancellation, web: true, progress: ran.watch())
                 defer { group.leave() }
                 guard !cancellation.isCancelled else { return }
                 var entry: ChatTurn.Entry
@@ -151,7 +152,7 @@ extension Discussion {
                         ballot.reason = vote.reason
                         let picked = L("\(vote.choice)번 「\(list[vote.choice - 1])」", "#\(vote.choice) “\(list[vote.choice - 1])”")
                         entry = ChatTurn.Entry(round: 1, speaker: ballot.speaker,
-                                               text: "**" + L("투표: ", "Vote: ") + picked + "**\n\n" + vote.reason, failed: false)
+                                               text: "**" + L("투표: ", "Vote: ") + picked + "**\n\n" + vote.reason, failed: false, model: ran.name)
                         entry.headline = picked + (vote.headline.map { " — " + $0 } ?? "")
                     } else {
                         entry = .init(round: 1, speaker: ballot.speaker,

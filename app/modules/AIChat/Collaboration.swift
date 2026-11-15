@@ -56,14 +56,14 @@ extension Discussion {
     }
     func openArtifact(_ path: String) { NSWorkspace.shared.open(URL(fileURLWithPath: path)) }
     func collaborationCall(_ account: Account, prompt: String, images: [URL], role: String,
-                           room: UUID, token: DebateCancellation, web: Bool = false, mutable: Bool = false) -> Result<String, Answerer.Failure> {
+                           room: UUID, token: DebateCancellation, web: Bool = false, mutable: Bool = false, ran: AnswerModel = AnswerModel()) -> Result<String, Answerer.Failure> {
         if token.isCancelled { return .failure(.failed("Cancelled")) }
         guard permits(account, room: room) else { return .failure(Enterprise.blocked(account)) }
         let marker = ["Plan", "계획", "Integrate deliverable", "최종 통합"].contains(role) ? "[MODE3 MODERATION]" : "[MODE3 SPEECH]"
         let full = "[COLLABORATION]\n" + prompt + "\n" + marker + "\nRole: " + role
         let invoke: (String, [URL], NativeSessionCall?) -> Result<String, Answerer.Failure> = { text, pictures, session in
             if let fake = self.collaborationAnswer { return fake(account, text, pictures, token) }
-            return Answerer.ask(account, prompt: text, timeout: 600, cancellation: token, images: pictures, web: web, session: session, run: .app(account, self.activeWorkspace.map { WorkspaceInvocation(binding: $0, room: room, readOnly: !mutable, backupPath: self.activeWorkspaceBackupPath) }))
+            return Answerer.ask(account, prompt: text, timeout: 600, cancellation: token, images: pictures, web: web, session: session, run: .app(account, self.activeWorkspace.map { WorkspaceInvocation(binding: $0, room: room, readOnly: !mutable, backupPath: self.activeWorkspaceBackupPath) }), progress: ran.watch())
         }
         if activeSessionRoom != nil {
             return nativeSessions.ask(account, room: room, prompt: full, images: images, timeout: 600, token: token, web: web,
@@ -108,13 +108,13 @@ extension Discussion {
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
             return url.path
         }
-        func perform(_ account: Account, title: String, prompt: String, images: [URL] = [], mutable: Bool = false, expectedFiles: [String] = [], planID: String? = nil, prerequisites: [String] = []) -> String? {
+        func perform(_ account: Account, title: String, prompt: String, images: [URL] = [], mutable: Bool = false, expectedFiles: [String] = [], planID: String? = nil, prerequisites: [String] = [], ran: AnswerModel = AnswerModel()) -> String? {
             if cancellation.isCancelled { return nil }
             var task = CollaborationTask(title: title, accountID: account.id, state: "running")
             task.planID = planID; task.dependsOn = prerequisites; task.expectedFiles = expectedFiles
             taskLock.lock(); tasks.append(task); taskLock.unlock(); persist()
             changeTurn(id, index) { $0.status = self.label(account) + ": " + title }
-            let result = collaborationCall(account, prompt: prompt, images: images, role: title, room: id, token: cancellation, web: true, mutable: mutable)
+            let result = collaborationCall(account, prompt: prompt, images: images, role: title, room: id, token: cancellation, web: true, mutable: mutable, ran: ran)
             if cancellation.isCancelled { task.state = "stopped" }
             else if case .success(let text) = result, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 do {
@@ -127,7 +127,9 @@ extension Discussion {
                     }
                     let file = try write(text, "\(task.id.uuidString).md")
                     task.output = file; task.outputDigest = try WorkspaceBackup.digest(URL(fileURLWithPath: file)); task.state = "done"
-                    changeTurn(id, index, save: true) { $0.entries.append(.reply(round: 1, speaker: self.label(account), text: text)) }
+                    var entry = ChatTurn.Entry.reply(round: 1, speaker: self.label(account), text: text)
+                    entry.model = ran.name
+                    changeTurn(id, index, save: true) { [entry] in $0.entries.append(entry) }
                     taskLock.lock(); if let i = tasks.firstIndex(where: { $0.id == task.id }) { tasks[i] = task }; taskLock.unlock(); persist(); return text
                 } catch { task.state = "failed: " + error.localizedDescription }
             } else {
@@ -230,7 +232,8 @@ extension Discussion {
             }
             let contributions = outputs.map { "[Task \($0.0.id) · \(label($0.1))]\n\($0.2)" }.joined(separator: "\n\n")
             guard contributions.count + shared.count + reviews.joined().count <= 150000 else { finishRun("Integration is too large for one call. Individual deliverables are saved; request integration in sections."); return }
-            if let final = perform(integrator, title: L("최종 통합", "Integrate deliverable"), prompt: base + "\n" + coverage + "\n[Evidence]\n" + shared + "\n[Contributions]\n" + contributions + "\n[Cross-review]\n" + reviews.joined(separator: "\n\n") + "\nCreate the final deliverable requested by the user, not a summary of the team's conversation. Resolve review findings against evidence. If a draft is requested, write the full draft with sections. Clearly mark missing data, provisional claims and unresolved tasks. Preserve citations to file/page/slide IDs. When writing is granted, apply review corrections to the actual requested deliverable files before replying. Markdown output; no TL;DR requirement or short chat length limit.", mutable: (self.activeWorkspace?.level ?? .view) != .view) {
+            let integrated = AnswerModel()
+            if let final = perform(integrator, title: L("최종 통합", "Integrate deliverable"), prompt: base + "\n" + coverage + "\n[Evidence]\n" + shared + "\n[Contributions]\n" + contributions + "\n[Cross-review]\n" + reviews.joined(separator: "\n\n") + "\nCreate the final deliverable requested by the user, not a summary of the team's conversation. Resolve review findings against evidence. If a draft is requested, write the full draft with sections. Clearly mark missing data, provisional claims and unresolved tasks. Preserve citations to file/page/slide IDs. When writing is granted, apply review corrections to the actual requested deliverable files before replying. Markdown output; no TL;DR requirement or short chat length limit.", mutable: (self.activeWorkspace?.level ?? .view) != .view, ran: integrated) {
                 do {
                     var file = try write(final, "result.md")
                     if let workspace = activeWorkspace, workspace.level != .view, let root = workspace.roots.first(where: \.directory) {
@@ -239,7 +242,7 @@ extension Discussion {
                         let output = folder.appendingPathComponent("AI-Illuminati-Result-\(turnID.uuidString).md")
                         try final.write(to: output, atomically: true, encoding: .utf8); file = output.path
                     }
-                    changeTurn(id, index, save: true) { $0.final = final; $0.finalBy = self.label(integrator); $0.artifact = file }
+                    changeTurn(id, index, save: true) { $0.final = final; $0.finalBy = self.label(integrator); $0.finalModel = integrated.name; $0.artifact = file }
                 } catch { changeTurn(id, index, save: true) { $0.error = error.localizedDescription } }
             }
         }

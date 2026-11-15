@@ -768,3 +768,68 @@ O6 4번째 실행에서 한 번 난 실패의 원인. 2026-11-14, 시작 HEAD `1
   재시도나 대기 시간은 늘리지 않았다.
 - 확인: 고친 뒤 같은 사본에서 0.3 s 지연 3/3 통과, 2 s 지연 1/1 통과. 지연 없는 단독 10/10 통과. 전체 `run_mode2.sh`
   (`project_run test`) 한 번에 통과(266.1 s, testDocumentsProject 2.5 s), 실제 accounts.json 그대로.
+
+## AIChat 분해 설계 검토 (구현 없음)
+2026-11-15, HEAD `40cc84e`, 작업 트리 깨끗함. 코드, 검사 장치, `test_map.txt`, `module_graph.txt`는 바꾸지 않았다. 숫자는
+`grep`/`wc`로 셌다. "추정"이라고 적은 public 수는 컴파일러로 잰 값이 아니고 소스를 읽어서 센 값이다(같은 이름의 지역 변수가 섞이거나
+간접 참조가 빠질 수 있어 ±20% 정도로 본다).
+
+### 지금 상태
+- Swift 전체 33,333줄, AIChat 13,846줄(41.5%). ChatWindow.swift 3,506 · Discussion.swift 1,387 · Solo.swift 1,115줄.
+- `extension Discussion` 19개 파일 24곳(run_mode2 C0 표, 그대로).
+- `test_map.txt`의 AIChat 줄이 ALL인 이유는 "Discussion이나 ChatStore를 앱 테스트 62개 중 43개가 부른다"이다. 즉 ALL은 모듈 경계
+  때문이 아니라 **테스트가 Discussion을 직접 돌리기 때문**이다. 어떤 분해를 해도 Discussion이 남는 쪽의 변경은 계속 ALL이다.
+  이득은 "Discussion 쪽을 건드리지 않는 커밋"의 비율만큼만 생긴다.
+- 그 비율(2026-11-13 이후 AIChat을 건드린 커밋 21개, `git log --name-only`):
+  | 커밋이 건드린 AIChat 파일 | 커밋 수 |
+  |---|---:|
+  | 화면 파일만(ChatWindow, SpaceView, Markdown, WindowDrag, AIColorWindow, ChatUI) | 4 (19%) |
+  | 화면 파일 + 다른 파일 | 6 |
+  | 회의·토론 모드 파일만(Meeting, Debate, Vote, Collaboration) | 1 (5%) |
+  | 그 외 | 10 |
+- 선택 실행이 줄일 수 있는 시간: 전체 약 260 s 중 [9] 앱 테스트 실행 147 s(O4 기준). 나머지(모듈 빌드, 컴파일, 계약, S1–S3)는
+  선택으로 줄지 않는다(T2: 앱 테스트 1개만 골라도 전체의 47%).
+
+### 후보 비교
+(a) 채팅 창 화면 ↔ Discussion 상태: 화면을 새 모듈(가칭 `AIChatWindow`, AIChat 위)로 옮기고 view model/protocol로 잇는다.
+(b) 회의·토론 모드(Meeting/Debate/Vote/Collaboration)를 새 모듈로.
+(c) 읽다가 찾은 것: (c1) 모듈은 그대로 두고 `test_map.txt`에 **AIChat 화면 파일 단위 줄**을 허용, (c2) 프로젝트·TODO 채팅 묶음
+(ProjectChat, ProjectCreate, SidebarProjects, TodoChatsApp, 1,094줄; ChatWindow 다음으로 자주 바뀜). Markdown만 따로 떼는 것은
+301줄짜리 모듈이 "Common" 성격이 되고, Markdown을 바꾼 커밋 4개가 모두 ChatWindow도 바꿔 이득이 없어 표에서 뺐다.
+
+| | (a) 화면 모듈 | (b) 모드 모듈 | (c1) 파일 단위 test_map | (c2) 프로젝트·TODO 채팅 |
+|---|---|---|---|---|
+| 옮길 파일·줄 | ChatWindow 3,506, SpaceView 731, Markdown 301, AIColorWindow 159, ChatFind 119, ChatUI 89, WindowDrag 79 = **4,984줄(AIChat의 36%)**. 그 밖에 core 파일 안의 View 6개(ChatSearch의 `ChatSearchFilters`/`ChatSearchRow`, Enterprise의 `EnterpriseLockButtons`/`LockBadge`, ProjectChat의 `ProjectApprovalView`/`ApprovalBanner`)는 옮기거나 public | Meeting 426, Debate 369, Collaboration 254, Vote 194 = **1,243줄(9%)** | 없음 | 1,094줄(8%) |
+| 새 public(추정) | Discussion 인스턴스 멤버 약 128개 + 정적 5개(ChatWindow·SpaceView·ChatFind가 `discussion.x`로 쓰는 서로 다른 이름) + core의 internal 타입 12개·그 멤버 약 14개 + `ChatTurn.columns`/`routeChoice` 같은 AIChat 쪽 extension 멤버 수 개 → **약 160개**. 화면 전용 상태 약 30개(`hoverKey`, `slashIndex`, `mention*`, `sidebarSearch*`, `shownTurns`, `reachedBottom`, `jumpTurn`, `findFocus`, `inputHeight`, `openEntries`, `imageDropActive`, `dragging*` …)를 화면 쪽 view model로 먼저 옮기면 **약 130개**. C1b에서 잰 117개보다 많다(그 뒤 멤버가 늘었음). protocol로 감싸도 요구 사항이 public이어야 하므로 수는 줄지 않는다 | 모드가 쓰는 Discussion·Solo·Route·Peer 멤버 **약 45–60개**(`activeMeeting`, `activeHeld`, `recentTurns`, `runningRooms`, `memberIDs`, `send`, `soloBinding`, `savedConversation` …) + 거꾸로 core가 부르는 모드 이름(`runDebate`/`runVote`/`runCollaboration`/`runMeeting`, `ConveneLink`, `meetings`, `meetingRunning` …) 주입 | **0** | 모드와 같은 형태: `extension Discussion` 4곳(b,b,a,a)과 `extension Discussion: TodoChats` 적합성. 수십 개(세지 않음) |
+| 양방향 참조 | 거의 한 방향(화면 → Discussion). core가 화면 타입을 쓰는 곳은 ChatFind의 `.plainHit`(ChatFind도 화면 쪽)뿐. 다만 `Discussion.select`가 화면 상태를 되돌리므로(Discussion.swift 22–24) view model로 옮기면 되돌림 알림 하나가 거꾸로 필요. `extension Discussion` 2곳(ChatFind `jump`, SpaceView `openSpace`)은 AIChat에 남기거나 view model 함수로 바꿔야 함(G4) | **양방향.** 모드 파일은 전부 `extension Discussion`(C0 표의 Meeting 'ba', Debate·Vote·Collaboration 'a')이라 다른 모듈로 가면 G4 위반(AGENTS "Never"). core에서 모드로: Discussion.swift 19곳, ChatWindow 20, Peer 7, Enterprise 5, SidebarProjects 4, Route·ProjectCreate 각 1. 어느 쪽에 두어도 반대 방향은 주입이나 protocol이 필요 | 해당 없음 | 양방향(모드와 같은 이유, TodoChatsApp은 Projects의 `TodoChats` 이음매 자체) |
+| module_graph.txt | `AIChatWindow: … AIChatRecords AIChat` 한 줄 추가(App만 import). AGENTS "Module rules", MODULES.md, `module_extensions.txt`의 ChatWindow `Account`·ChatUI `TodoItem` 줄의 경로 | 한 줄 추가 + 주입 registry. 위/아래 어느 쪽이든 새 화살표 | 없음 | 한 줄 추가 + 주입 |
+| 검사 장치 변경 | run_mode2 C0 표(`ChatFind`, `SpaceView` 행과 "24곳" 단언), `module_extensions.txt`, render_chat/screens의 컴파일 목록, `module_guard.sha256` | C0 표(모드 4행), `module_guard.sha256` | `tools/affected_tests.py`(해시 대상): 지금은 `app/modules/<M>/*.swift`를 모두 모듈 줄로 접어(124–125행) 파일 줄이 안 먹는다. 파일 줄 우선 규칙과 그 줄의 검사가 필요 | C0 표, 해시 |
+| 영향받는 테스트 | testChatMarkdown, testWindowDrag, testChatFind, testShownTurns, chat 계약(`AIColors`), render_chat 미리보기(`ChatView`, `ChatDragWindow`), screens(App 컴파일). view model로 옮긴 상태를 쓰는 테스트는 import와 대상 객체를 바꿈 | testMeetingTool, testAutoMeeting, testMeetingFold, ask_ai(ConveneLink), 투표·토론·협업 테스트. 이들은 Discussion도 돌림 | 없음(목록만 정함) | todo_work 전부(testTodo* 20여 개), project_work |
+| test_map에서 ALL 탈출 | **화면 모듈 줄만**: 위 테스트 4–5개 + 계약. AIChat 줄은 ALL 그대로이고 AIChat 변경엔 새 모듈 계약도 붙는다. 대상 커밋 19% | 모드 줄이 생겨도 모드 테스트가 Discussion을 돌리므로 사실상 거의 ALL. 대상 커밋 5% | **화면 파일 줄만**, (a)와 같은 4–5개. 대상 커밋 19%(ChatFind·SpaceView는 `extension Discussion`이 있어 ALL로 남김 → 실제로는 ChatWindow·Markdown·WindowDrag·AIColorWindow·ChatUI) | 못 벗어남(TODO 테스트가 곧 Discussion 테스트) |
+| 비용 | 큼: public 약 130–160개(AGENTS "bulk public" 금지에 걸림, 이름마다 이유), 4,984줄 이동, 화면 상태 분리는 스크롤·찾기·점프 동작 위험 | 큼: G4 때문에 모드 4개를 `extension`에서 별도 타입으로 다시 써야 함 | 작음: 스크립트 한 곳과 그 검사 | 큼 |
+
+(c1)의 위험과 그 막이: 같은 모듈 안이라 화면 파일도 internal에 닿는다. 그래도 테스트는 화면을 돌리지 않으므로(미리보기 제외) 화면 파일의
+변경이 테스트 결과를 바꾸는 길은 (1) 테스트가 부르는 그 파일의 이름(`ChatMarkdown`, `WindowDragView`, `AIColors` 등), (2) 그 파일에
+새로 생긴 `extension`이나 최상위 함수가 core의 이름 해석·오버로드를 바꾸는 경우뿐이다. (1)은 파일 줄의 테스트 목록으로, (2)는 "파일 줄이 있는
+화면 파일에는 core 타입의 `extension`과 최상위 함수를 두지 않는다"는 검사로 막는다(`extension Discussion`은 이미 C0 표가 파일별 개수로
+막는다. ChatWindow의 `Account.Provider.color`는 AIAccounts 타입이라 core 이름과 겹치지 않음). 컴파일은 선택 실행에서도 전부 하므로 타입 오류는 그대로 잡힌다.
+
+### 추천
+**새 모듈 분해는 지금은 안 함.**
+- (a)는 C1b가 117개 public 때문에 접은 것과 같은 길이고, 지금은 그보다 많다(약 130–160개, 추정). 얻는 것은 화면만 바꾼 커밋(19%)의
+  선택 실행인데, 이것은 (c1)이 public 0개로 똑같이 준다. 크기(3,506줄 파일)가 문제라면 모듈이 아니라 같은 모듈 안에서 ChatWindow.swift를
+  파일 여러 개로 나누는 일이고, 검사 장치를 건드리지 않는다.
+- (b)·(c2)는 양방향이고, 모드·TODO 테스트가 어차피 Discussion을 돌려 ALL을 벗어나지 못한다. 비용만 크다.
+- 목적이 `--affected` 이득이면 **(c1)을 하나 고른다.** 검사 장치(`affected_tests.py`) 변경이라 사용자 승인 대상이다. 승인 안 하면 아무것도
+  하지 않는 것도 맞다: 대상이 커밋의 약 19%이고, 한 번에 줄어드는 것은 앱 테스트 단계(147 s) 대부분, 즉 실행당 약 2분이다(추정, 미측정).
+
+(c1) 첫 단계 범위(승인되면, 한 TODO):
+1. ChatWindow·Markdown·WindowDrag·AIColorWindow·ChatUI 각각에 대해, 그 파일이 정의한 이름을 부르는 runTest를 정적으로 구해 목록을 만든다
+   (예상: testChatMarkdown, testWindowDrag, testShownTurns, testChatFind 중 일부 + chat 계약, render_chat).
+2. `affected_tests.py`: `test_map.txt`에 정확한 파일 경로 줄이 있으면 모듈 줄보다 먼저 쓴다. `check`에 "파일 줄의 파일에는 core 타입의
+   extension·최상위 함수가 없다"와 "목록이 1번의 정적 목록을 포함한다"를 더한다. `module_guard.sha256` 갱신.
+3. 확인: `--affected app/modules/AIChat/ChatWindow.swift`가 ALL이 아니고, Discussion.swift·ChatFind.swift는 여전히 ALL. 그 고른 묶음이 통과하는지와
+   전체 테스트 한 번, 시간 비교 표(T2 형식).
+
+하지 말 것: 모드나 프로젝트 채팅을 모듈로 떼는 일, Discussion 멤버를 묶어서 public으로 여는 일, 화면 상태 분리를 test_map 목적만으로 하는 일
+(이득은 (c1)과 같고 동작 위험만 더함). 그래프 변경·새 모듈·가드 변경은 모두 사용자 승인 사항이라 이 절은 구현 TODO를 만들지 않는다.

@@ -159,6 +159,8 @@ struct ChatView<Model: ChatSettings>: View {
             // Other chats stay usable while one answers (Discussion.maxRunning at once).
             .disabled(discussion.importingMaterials)
             if !discussion.sidebarSearching { workingChats }
+            // Full-width hairlines above and below the scroll view: where the fixed rows end and where the list is cut.
+            Divider().padding(.top, 6)
             ScrollView {
                 VStack(alignment: .leading, spacing: 1) {
                     // Searching keeps the folders above the results, as before; otherwise they sit between Spaces and Recents.
@@ -188,6 +190,8 @@ struct ChatView<Model: ChatSettings>: View {
                         // Chats with a Git project under its folder (SidebarProjects.swift); the rest pinned or recent.
                         let grouped = SidebarProjects.group(chats, todo: todos.snapshot, pinned: folds.pinnedProjects, withLists: !discussion.sidebarSearching,
                                                              names: projectInfo.names)
+                        // Pinned stays in the scroll view: any number of pins, each chatGroup can take several lines,
+                        // and with Working's up to 5 rows above it would eat the list's space.
                         let pinned = grouped.loose.filter { $0.pinned == true }
                         if !pinned.isEmpty {
                             SidebarHeader(title: L("고정됨", "Pinned"), fold: "pinned")
@@ -222,9 +226,11 @@ struct ChatView<Model: ChatSettings>: View {
                     }
                     if sync.settings.enabled { otherMacs }
                 }
-                .padding(.horizontal, 10).padding(.bottom, 12)
+                .padding(.horizontal, 10).padding(.top, 6).padding(.bottom, 12)
             }
-            Spacer(minLength: 0)
+            // The scroll view fills the rest, so this line is where its rows are clipped.
+            .frame(maxHeight: .infinity)
+            Divider()
             HStack {
                 Menu {
                     Button(L("대화 전부 지우기…", "Delete all chats…"), role: .destructive) { discussion.deleteAll() }

@@ -805,7 +805,7 @@ O6 4번째 실행에서 한 번 난 실패의 원인. 2026-11-14, 시작 HEAD `1
 | module_graph.txt | `AIChatWindow: … AIChatRecords AIChat` 한 줄 추가(App만 import). AGENTS "Module rules", MODULES.md, `module_extensions.txt`의 ChatWindow `Account`·ChatUI `TodoItem` 줄의 경로 | 한 줄 추가 + 주입 registry. 위/아래 어느 쪽이든 새 화살표 | 없음 | 한 줄 추가 + 주입 |
 | 검사 장치 변경 | run_mode2 C0 표(`ChatFind`, `SpaceView` 행과 "24곳" 단언), `module_extensions.txt`, render_chat/screens의 컴파일 목록, `module_guard.sha256` | C0 표(모드 4행), `module_guard.sha256` | `tools/affected_tests.py`(해시 대상): 지금은 `app/modules/<M>/*.swift`를 모두 모듈 줄로 접어(124–125행) 파일 줄이 안 먹는다. 파일 줄 우선 규칙과 그 줄의 검사가 필요 | C0 표, 해시 |
 | 영향받는 테스트 | testChatMarkdown, testWindowDrag, testChatFind, testShownTurns, chat 계약(`AIColors`), render_chat 미리보기(`ChatView`, `ChatDragWindow`), screens(App 컴파일). view model로 옮긴 상태를 쓰는 테스트는 import와 대상 객체를 바꿈 | testMeetingTool, testAutoMeeting, testMeetingFold, ask_ai(ConveneLink), 투표·토론·협업 테스트. 이들은 Discussion도 돌림 | 없음(목록만 정함) | todo_work 전부(testTodo* 20여 개), project_work |
-| test_map에서 ALL 탈출 | **화면 모듈 줄만**: 위 테스트 4–5개 + 계약. AIChat 줄은 ALL 그대로이고 AIChat 변경엔 새 모듈 계약도 붙는다. 대상 커밋 19% | 모드 줄이 생겨도 모드 테스트가 Discussion을 돌리므로 사실상 거의 ALL. 대상 커밋 5% | **화면 파일 줄만**, (a)와 같은 4–5개. 대상 커밋 19%(ChatFind·SpaceView는 `extension Discussion`이 있어 ALL로 남김 → 실제로는 ChatWindow·Markdown·WindowDrag·AIColorWindow·ChatUI) | 못 벗어남(TODO 테스트가 곧 Discussion 테스트) |
+| test_map에서 ALL 탈출 | **화면 모듈 줄만**: 위 테스트 4–5개 + 계약. AIChat 줄은 ALL 그대로이고 AIChat 변경엔 새 모듈 계약도 붙는다. 대상 커밋 19% | 가능은 함: 새 모듈 줄에 모드 코드에 닿는 runTest만 적으면 된다(`affected_tests.py`는 바뀐 모듈의 줄과 그 모듈에 기대는 모듈의 계약만 고르고, 테스트가 Discussion을 부른다는 이유로 넓히지 않음. AIProjects 줄이 그 예). 다만 모드·회의 이름을 부르는 runTest를 거칠게 세면 62개 중 약 31개(상한, `mode`/`meeting` 같은 이름 grep)라 절반 정도는 남는다. 모드를 아래 모듈로 두면 AIChat 변경은 그대로 ALL. 대상 커밋 5% | **화면 파일 줄만**, (a)와 같은 4–5개. 대상 커밋 19%(ChatFind·SpaceView는 `extension Discussion`이 있어 ALL로 남김 → 실제로는 ChatWindow·Markdown·WindowDrag·AIColorWindow·ChatUI) | 가능은 함(같은 이유): 프로젝트·TODO 이름을 부르는 runTest가 약 32개(상한, grep)로 AIProjects 줄(38개)과 비슷한 크기. 이 네 파일만 바꾼 커밋은 21개 중 4개(19%: e215e0a, ec01134, db64cc8, aa08856)로 화면과 같다 |
 | 비용 | 큼: public 약 130–160개(AGENTS "bulk public" 금지에 걸림, 이름마다 이유), 4,984줄 이동, 화면 상태 분리는 스크롤·찾기·점프 동작 위험 | 큼: G4 때문에 모드 4개를 `extension`에서 별도 타입으로 다시 써야 함 | 작음: 스크립트 한 곳과 그 검사 | 큼 |
 
 (c1)의 위험과 그 막이: 같은 모듈 안이라 화면 파일도 internal에 닿는다. 그래도 테스트는 화면을 돌리지 않으므로(미리보기 제외) 화면 파일의
@@ -819,7 +819,7 @@ O6 4번째 실행에서 한 번 난 실패의 원인. 2026-11-14, 시작 HEAD `1
 - (a)는 C1b가 117개 public 때문에 접은 것과 같은 길이고, 지금은 그보다 많다(약 130–160개, 추정). 얻는 것은 화면만 바꾼 커밋(19%)의
   선택 실행인데, 이것은 (c1)이 public 0개로 똑같이 준다. 크기(3,506줄 파일)가 문제라면 모듈이 아니라 같은 모듈 안에서 ChatWindow.swift를
   파일 여러 개로 나누는 일이고, 검사 장치를 건드리지 않는다.
-- (b)·(c2)는 양방향이고, 모드·TODO 테스트가 어차피 Discussion을 돌려 ALL을 벗어나지 못한다. 비용만 크다.
+- (b)·(c2)도 모듈 줄에 고른 테스트 목록을 적으면 ALL은 벗어난다. 하지만 목록이 앱 테스트의 절반쯤(약 31·32개, 상한 추정)이라 아낄 시간이 화면 쪽(4–5개)보다 훨씬 작다. 게다가 둘 다 양방향 참조이고, 모드 파일·프로젝트 채팅 파일의 `extension Discussion`을 다른 모듈로 옮기면 G4에 걸려 별도 타입으로 다시 써야 한다. 이득에 비해 비용이 크다. (c2)의 선택 실행만 원하면 (c1)처럼 파일 단위 줄로 같은 이득을 얻는다(그 네 파일엔 `extension Discussion`이 있어 C0 표 제약을 함께 봐야 함).
 - 목적이 `--affected` 이득이면 **(c1)을 하나 고른다.** 검사 장치(`affected_tests.py`) 변경이라 사용자 승인 대상이다. 승인 안 하면 아무것도
   하지 않는 것도 맞다: 대상이 커밋의 약 19%이고, 한 번에 줄어드는 것은 앱 테스트 단계(147 s) 대부분, 즉 실행당 약 2분이다(추정, 미측정).
 

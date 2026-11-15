@@ -486,11 +486,11 @@ struct ChatView<Model: ChatSettings>: View {
         .disabled(discussion.importingMaterials)
     }
 
-    // A new chat linked to the project's newest root, locked like its chats or its TODO lists when they are locked
-    // (a project may have only a locked list left).
+    // The project's blank chat, or a new one linked to its newest root, locked like its chats or its TODO lists when
+    // they are locked (a project may have only a locked list left).
     private func newChat(in group: ProjectGroup, _ binding: ProjectBinding) {
         let lock = SidebarProjects.lock(of: group, todo: todos.snapshot)
-        discussion.addProjectChat(binding, title: L("새 대화", "New chat"), open: true, lock: lock)
+        discussion.openOrAddProjectChat(group, binding, lock: lock, todo: todos.snapshot)
         if folds.isFolded("project." + group.id) { folds.toggle("project." + group.id) }
     }
 

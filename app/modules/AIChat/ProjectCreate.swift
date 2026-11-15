@@ -24,6 +24,26 @@ extension Discussion {
         return chat.id
     }
 
+    // The project row's new-chat button (and its menu): opens the project's blank chat when it has one, so pressing it
+    // again adds nothing (one blank chat per project, like the one loose blank chat of newConversation). Older blank
+    // chats of the project go. Project chats are never dropped as blank (hasContent counts the linked project).
+    @discardableResult
+    func openOrAddProjectChat(_ group: ProjectGroup, _ binding: ProjectBinding, lock: EnterpriseLock?, todo: TodoData) -> UUID {
+        guard !importingMaterials else { return currentID }
+        let todoRooms = Set(todo.items.compactMap(\.room))
+        let blanks = group.chats.compactMap { chat in conversations.first { $0.id == chat.id } }
+            .filter { SidebarProjects.reusableBlank($0, lock: lock, todoRooms: todoRooms, running: runningRooms) }
+            .sorted { $0.updatedAt > $1.updatedAt }
+        guard let keep = blanks.first(where: { $0.id == currentID }) ?? blanks.first else {
+            return addProjectChat(binding, title: L("새 대화", "New chat"), open: true, lock: lock)
+        }
+        open(keep.id)   // the same chat keeps its draft and waiting pictures
+        focusRequest += 1
+        let extra = blanks.filter { $0.id != keep.id }
+        if !extra.isEmpty { removeChats(extra) }
+        return keep.id
+    }
+
     // Sidebar Projects + → Empty project: a name only; folders can be added later.
     func newEmptyProject() {
         guard !running, !importingMaterials else { return }

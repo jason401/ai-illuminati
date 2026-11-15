@@ -255,6 +255,15 @@ extension SidebarProjects {
             ?? todo.lists.first { group.lists.contains($0.id) && $0.lock != nil }?.lock
     }
 
+    // A project chat nothing has happened in yet, which the project's new-chat button opens again instead of adding one:
+    // no messages, materials, queue or meeting, not answering, not a TODO's chat, not continued from another Mac, locked
+    // as a new chat would be. A chat the user pinned or named is theirs: never reused or removed.
+    static func reusableBlank(_ chat: Conversation, lock: EnterpriseLock?, todoRooms: Set<UUID>, running: Set<UUID>) -> Bool {
+        chat.workspace?.project != nil && chat.turns.isEmpty && (chat.documents ?? []).isEmpty && (chat.queued ?? []).isEmpty
+            && chat.meetingOf == nil && chat.origin == nil && chat.pinned != true && chat.enterpriseLock == lock
+            && !todoRooms.contains(chat.id) && !running.contains(chat.id) && ["새 대화", "New chat"].contains(chat.title)
+    }
+
     // Why this chat cannot go into this project (nil: it can). mode: the chat's mode (project work is plain chat only).
     static func moveRefusal(_ chat: Conversation, into group: ProjectGroup, todo: TodoData, running: Bool, mode: Int) -> String? {
         guard group.bindings.first != nil else { return L("이 프로젝트에는 연결할 폴더가 없어요.", "This project has no folder to link.") }

@@ -803,6 +803,77 @@ func testMoveChatToProject() {
     print("PASS: move chat to project (who may move, the new link, shows in the folder)")
 }
 
+// The project row's new-chat button: the project's blank chat opens again (one per project), extra blank ones go,
+// pinned, named, TODO, answering and differently locked chats are never reused; the loose new chat is as before.
+func testReuseBlankProjectChat() {
+    func project(_ name: String) -> ProjectBinding {
+        let root = AccountStore.home + "/reuse-\(name)-" + UUID().uuidString
+        return ProjectBinding(root: root, common: root + "/.git", remote: "origin", remoteURL: "")
+    }
+    let a = project("a"), b = project("b"), c = project("c"), d = project("d"), e = project("e")
+    let chat = Discussion(model: AppModel())
+    var todo = TodoData()
+    func group(_ p: ProjectBinding) -> ProjectGroup {
+        SidebarProjects.group(chat.listedConversations, todo: todo, pinned: []).projects.first { $0.id == SidebarProjects.key(p) }
+            ?? ProjectGroup(id: SidebarProjects.key(p), name: "x", bindings: [p], lists: [], chats: [], todoRooms: [], pinned: false, updatedAt: .distantPast)
+    }
+    func press(_ p: ProjectBinding, lock: EnterpriseLock? = nil) -> UUID { chat.openOrAddProjectChat(group(p), p, lock: lock, todo: todo) }
+    func chats(_ p: ProjectBinding) -> [Conversation] { chat.conversations.filter { $0.workspace?.project.map(SidebarProjects.key) == SidebarProjects.key(p) } }
+    func blanks(_ p: ProjectBinding) -> [Conversation] { chats(p).filter { $0.turns.isEmpty } }
+    func saved(_ id: UUID) -> Bool { ChatStore.loadAll().contains { $0.id == id } }
+
+    let first = press(a)
+    chat.draft = "typing"
+    let again = press(a), third = press(a)
+    expect(first == again && again == third && chat.currentID == first && blanks(a).count == 1, "three presses: one blank chat, the same one open")
+    expect(chat.draft == "typing", "pressing again on the open blank chat keeps the draft")
+    chat.draft = ""
+
+    let other = press(b)
+    expect(other != first && blanks(b).count == 1 && blanks(a).map(\.id) == [first], "another project gets its own; the first project's stays")
+
+    chat.change(first, save: true) { $0.turns = [ChatTurn(question: "hi")] }
+    let next = press(a)
+    expect(next != first && chat.conversation(first).turns.count == 1 && blanks(a).map(\.id) == [next], "after a message a new chat starts")
+
+    // The loose new chat: still one blank, also after a blank project chat was open.
+    chat.newConversation(); chat.newConversation(); chat.newConversation()
+    expect(chat.conversations.filter { !$0.hasContent }.count == 1 && chat.current.workspace == nil, "the loose new chat stays one")
+
+    // A blank TODO chat (default title) is never reused or removed.
+    let todoRoom = chat.addChat(c, title: L("새 대화", "New chat"), lock: nil)
+    var item = TodoItem(listID: UUID(), title: "x"); item.room = todoRoom
+    todo.items.append(item)
+    let notTodo = press(c)
+    expect(notTodo != todoRoom && chat.conversations.contains { $0.id == todoRoom } && saved(todoRoom), "a TODO's blank chat stays its own")
+    let keepTodo = press(c)
+    expect(keepTodo == notTodo && chat.conversations.contains { $0.id == todoRoom }, "pressing again does not merge it")
+
+    // Blank chats piled up before: one press leaves the newest; pinned and named ones stay.
+    let piled = (0..<3).map { _ in chat.addProjectChat(d, title: L("새 대화", "New chat"), open: false) }
+    for (i, id) in piled.enumerated() { chat.change(id) { $0.updatedAt = Date(timeIntervalSinceNow: Double(i - 10)) } }
+    let pinned = chat.addProjectChat(d, title: "New chat", open: false), named = chat.addProjectChat(d, title: "Plan", open: false)
+    chat.change(pinned, save: true) { $0.pinned = true }
+    let kept = press(d)
+    expect(kept == piled[2] && chat.currentID == kept, "the newest piled blank chat opens")
+    expect(Set(chats(d).map(\.id)) == [piled[2], pinned, named] && !saved(piled[0]) && !saved(piled[1]) && saved(pinned) && saved(named),
+           "the other blank chats are deleted; pinned and named ones stay")
+
+    // Not reused: an answering chat or one under another lock.
+    let busy = press(e)
+    chat.runningRooms.insert(busy)
+    let notBusy = press(e)
+    chat.runningRooms.remove(busy)
+    expect(notBusy != busy, "an answering chat is not reused")
+    let lock = EnterpriseLock(organization: "acme", name: "Acme", lockedAt: Date())
+    let locked = press(e, lock: lock)
+    expect(locked != busy && locked != notBusy && chat.conversation(locked).enterpriseLock == lock, "a project now locked gets a locked chat")
+    expect(press(e, lock: lock) == locked, "and reuses it while locked")
+
+    chat.removeChats(chat.conversations.filter { [a, b, c, d, e].map(SidebarProjects.key).contains($0.workspace?.project.map(SidebarProjects.key) ?? "") })
+    print("PASS: reuse blank project chat (one per project, kept draft, after a message, loose new chat, TODO chats, piled blanks, pinned/named kept, busy, lock)")
+}
+
 // The AIs picked for a project's TODOs: saved with the list (old files: automatic), only they work and review,
 // never a fallback to the others, and the reason shown when none of them can.
 func testTodoCrew() {

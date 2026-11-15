@@ -63,7 +63,11 @@ private final class ColorPanelWindow: NSPanel {
     override func cancelOperation(_ sender: Any?) { close() }   // Esc
 
     override func close() {
-        if editing != nil { NSColorPanel.shared.setTarget(nil); NSColorPanel.shared.setAction(nil); editing = nil }
+        if editing != nil {   // the color panel opened from here goes too: left open it would change nothing
+            let panel = NSColorPanel.shared
+            panel.setTarget(nil); panel.setAction(nil); panel.orderOut(nil)
+            editing = nil
+        }
         super.close()
     }
 

@@ -320,12 +320,13 @@ struct DriveSidebarSection: View {
             } else if !center.connected {
                 // No folders and no login: nothing to show; the section's + menu is where Drive starts.
                 if !center.folders.isEmpty {
-                    hint(L("Google Drive 연결 안 됨 · 눌러서 연결 (폴더 \(center.folders.count)개)", "Google Drive not connected · click to connect (\(center.folders.count) folders)"), symbol: "cloud") { center.connect() }
+                    hint(L("Google Drive 연결 안 됨 · 눌러서 연결", "Google Drive not connected · click to connect"), symbol: "cloud") { center.connect() }
                 }
-            } else {
-                if !center.on && !center.folders.isEmpty {
-                    hint(L("Google Drive 꺼 둠 · 눌러서 켜기", "Google Drive off · click to turn on"), symbol: "power") { center.on = true }
-                }
+            } else if !center.on {
+                hint(L("Google Drive 꺼 둠 · 눌러서 켜기", "Google Drive off · click to turn on"), symbol: "power") { center.on = true }
+            }
+            // The saved roots stay listed under any hint, so they can still be paused, removed or opened.
+            if !folds.isFolded("shared") {
                 ForEach(center.treeRows) { item in
                     row(item)
                     if center.expanded.contains(item.folder.id) {
@@ -378,7 +379,7 @@ struct DriveSidebarSection: View {
                     .font(.system(size: 9, weight: .semibold)).foregroundColor(.secondary).frame(width: 22, height: 24)
             }.buttonStyle(.plainHit).accessibilityLabel(L("하위 폴더 펼치기/접기", "Expand/collapse subfolders"))
             Image(systemName: root ? "cloud" : "folder").foregroundColor(.secondary).frame(width: 18)
-            Text(folder.name).lineLimit(1).foregroundColor(paused || !center.on ? .secondary : .primary)
+            Text(folder.name).lineLimit(1).foregroundColor(paused || !center.on || !center.connected ? .secondary : .primary)
             Spacer(minLength: 2)
             Menu {
                 Button(L("쓰기 허용…", "Allow Writing…")) { center.setWritable(folder, true, rootID: item.rootID) }

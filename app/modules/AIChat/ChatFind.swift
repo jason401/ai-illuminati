@@ -7,7 +7,7 @@ enum ChatFind {
     // What is searched in a turn: what the chat shows open (the message, the answer and the other members'
     // answers), not the folded discussion replies.
     static func texts(_ turn: ChatTurn) -> [String] {
-        [turn.question] + [turn.final].compactMap { $0 } + (turn.moreAnswers ?? []).filter { !$0.failed }.map(\.text)
+        [turn.question] + [turn.digest, turn.final].compactMap { $0 } + (turn.moreAnswers ?? []).filter { !$0.failed }.map(\.text)
     }
 
     static func ranges(_ text: String, _ query: String) -> [Range<String.Index>] {

@@ -18,6 +18,7 @@ public protocol ChatSettings: ObservableObject {
     var pictureMakers: [Account] { get }
     var autoTeamPicks: [String: Bool] { get }
     var collaboration: CollabMode { get }
+    var opinionDigest: Bool { get }   // several views: one AI sums them up (Settings → Chat, on by default)
     var sharedFolders: [String] { get set }
     var activeSharedFolders: [String] { get }
     var pausedSharedFolders: Set<String> { get set }

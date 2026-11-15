@@ -86,6 +86,13 @@ public struct ChatTurn: Identifiable, Codable, Equatable {
     public var routeNote: String?      // "Opinion · 3 AIs · judged by Gemma 4 E4B", shown above the answer
     public var routeOne: Bool?         // with route opinion: only the lead answered (nil: everyone did)
     public var meetingRoom: UUID?      // with route opinion: the members met in this hidden chat and `final` is their result (Meeting.swift)
+    // With route opinion and several answers: one AI's summary of all of them, shown first with the answers folded under it
+    // (Discussion.digestOpinions). `final`/`moreAnswers` keep the answers themselves, as before.
+    public var digest: String?
+    public var digestBy: String?
+    public var digestAccountID: String?
+    public var digestModel: String?
+    public var answersOpen: Bool?      // with a digest: the answers unfolded (nil: folded)
     // Project work: the step list (the AI's, then the app's review steps), why it last changed, when the AI last
     // did something (the chat says "last activity 4 min ago", never "stuck") and whether an approval card waits.
     public var plan: [WorkStep]?

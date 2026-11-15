@@ -109,7 +109,7 @@ public final class ChatLink: ToolProvider {
     }
 
     static func turnText(_ turn: ChatTurn, _ n: Int) -> String {
-        "[Turn \(n)] User:\n\(turn.question)" + (turn.final.map { "\n\(turn.finalBy ?? "AI"):\n\($0)" } ?? "")
+        "[Turn \(n)] User:\n\(turn.question)" + (turn.digest.map { "\n\(turn.digestBy ?? "AI") (summary of the views below):\n\($0)" } ?? "") + (turn.final.map { "\n\(turn.finalBy ?? "AI"):\n\($0)" } ?? "")
             + (turn.moreAnswers ?? []).filter { !$0.failed }.map { "\n\($0.speaker):\n\($0.text)" }.joined()
     }
 

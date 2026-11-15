@@ -532,6 +532,10 @@ Since 2026-11-13: `Conversation.queued` (`[QueuedMessage]`, messages sent while 
 are saved without them; `QueuedMessage` (`id`, `text`, `images`, `mentions`, `route` as a `RouteChoice` raw value, `sentAt`,
 one public init) is a saved value too.
 
+Since 2026-11-15: `ChatTurn.digest`/`digestBy`/`digestAccountID`/`digestModel` (opinion mode: one AI's summary of the
+answers, Route.swift, digestOpinions) and `answersOpen` (its answers unfolded) are optional fields, so older chats read as before and a
+synced copy shows the summary and the fold; `final`/`moreAnswers` keep the answers themselves.
+
 Public names and why: the record types' stored fields and their inits are the save format (every reader and writer of a
 chat uses them; Swift's memberwise inits are internal, so each type got one public init with the same order and defaults);
 `ChatStore` and `Links` (C0's seam, set by `ChatLinksApp.connect`); `SyncSnapshot.version` (DeviceSync reads copies; `ImageStore`,
@@ -558,8 +562,8 @@ behind `@_spi`. In the module the views use the state directly, and the app reac
 
 Direction: AIChat → AIProjects (and Workspace, Runtime, Spaces, Accounts, Localization). Projects names no chat type.
 What the chat gets from the app, set by the app (the chat side names none of these app parts; unset it runs plainly):
-- `ChatSettings` (protocol, `AppModel` conforms: `extension AppModel: ChatSettings {}`): the 14 settings the chat reads
-  (accounts, usage, chat rules, local model, picture makers, team picks, collaboration, shared folders); `Discussion(model:)`
+- `ChatSettings` (protocol, `AppModel` conforms: `extension AppModel: ChatSettings {}`): the 15 settings the chat reads
+  (accounts, usage, chat rules, local model, picture makers, team picks, collaboration, opinion digest, shared folders); `Discussion(model:)`
   takes it, `ChatView` is generic over it so the window still observes the settings.
 - `ChatApp.run` = `RunConditions.app` (RunConditionsApp.swift), `ChatApp.face` = FaceLink's extract/show/active/moods/rule,
   `ChatApp.driveRule` = DriveLink's rule while on: set in `ChatLinksApp.connect()` (main.swift and mode2, as in C0).

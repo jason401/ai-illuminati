@@ -97,6 +97,7 @@ ChatSettings.hasLocal | var hasLocal: Bool { get }
 ChatSettings.latestUsage | var latestUsage: [String : AIUsage] { get }
 ChatSettings.localEnabled | var localEnabled: Bool { get }
 ChatSettings.onAccountsChange | var onAccountsChange: (() -> Void)? { get }
+ChatSettings.opinionDigest | var opinionDigest: Bool { get }
 ChatSettings.pausedSharedFolders | var pausedSharedFolders: Set<String> { get set }
 ChatSettings.pictureMakers | var pictureMakers: [Account] { get }
 ChatSettings.sharedFolders | var sharedFolders: [String] { get set }
@@ -141,10 +142,15 @@ ChatTurn.activity | var activity: String?
 ChatTurn.answerNames | var answerNames: [String]?
 ChatTurn.answerOrder | var answerOrder: [String]?
 ChatTurn.answeredAt | var answeredAt: Date?
+ChatTurn.answersOpen | var answersOpen: Bool?
 ChatTurn.artifact | var artifact: String?
 ChatTurn.askedAt | var askedAt: Date?
 ChatTurn.backupPath | var backupPath: String?
 ChatTurn.debateFocus | var debateFocus: String?
+ChatTurn.digest | var digest: String?
+ChatTurn.digestAccountID | var digestAccountID: String?
+ChatTurn.digestBy | var digestBy: String?
+ChatTurn.digestModel | var digestModel: String?
 ChatTurn.endReason | var endReason: String?
 ChatTurn.entries | var entries: [ChatTurn.Entry]
 ChatTurn.error | var error: String?

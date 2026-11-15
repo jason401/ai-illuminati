@@ -80,6 +80,7 @@ public final class Discussion: ObservableObject {
     var activeHeld: Bool { activeHeldBy != nil }
     var activeSpeechLength = SpeechLength.unlimited
     var activeImages: [URL] = []
+    var digestViews = false   // a worker answering in opinion mode: several answers are summed up (Route.swift, digestOpinions)
     // Tests only: answers requests that have folders attached (mode 0 always does) without calling the real tools.
     var workspaceAnswer: ((Account, String, WorkspaceBinding, DebateCancellation, ((AnswerProgress) -> Void)?) -> Result<String, Answerer.Failure>)?
     // Tests only: sorts a project chat's message (Route.swift) without calling Gemma or an AI.
@@ -959,6 +960,7 @@ public final class Discussion: ObservableObject {
                 let name = { (accountID: String) in worker.model.accounts.first { $0.id == accountID }.map(worker.label) ?? accountID }
                 let note = Self.routeNote(.all, by: nil, names: mentioned.map(name), forced: true)
                 worker.changeTurn(id, index, save: true) { $0.route = RouteChoice.all.route; $0.routeNote = note }
+                worker.digestViews = true
                 let binding = worker.activeWorkspace ?? worker.soloBinding(id)
                 worker.activeWorkspace = Route.opinionView(binding, chatFolder: Self.chatFolder(id).path)
                 let peer = worker.beginPeer(id: id, index: index, question: question, binding: worker.activeWorkspace ?? binding, cancellation: cancellation)
@@ -1007,6 +1009,7 @@ public final class Discussion: ObservableObject {
                 let binding = worker.activeWorkspace ?? worker.soloBinding(id)
                 if route != .work {
                     worker.activeWorkspace = Route.opinionView(binding, chatFolder: Self.chatFolder(id).path)
+                    worker.digestViews = route == .all
                     let peer = worker.beginPeer(id: id, index: index, question: question, binding: worker.activeWorkspace ?? binding, cancellation: cancellation)
                     worker.runSolo(question: question, history: history, rules: rules, config: config, mentions: answering,
                                    cancellation: cancellation, id: id, index: index,
@@ -1273,6 +1276,11 @@ public final class Discussion: ObservableObject {
                 var parts = ["[User]\n" + turn.question]
                 parts += (turn.followUps ?? []).map { "[User, while it answered]\n" + $0 }
                 if let images = turn.images, !images.isEmpty { parts.append("[Images: " + images.map { $0.id.uuidString }.joined(separator: ", ") + "]") }
+                // Views summed up (Route.swift, digestOpinions): the summary stands for every answer, which saves the next AIs' tokens.
+                if let digest = turn.digest {
+                    parts.append("[\(turn.digestBy ?? "AI") — summary of the views of \((turn.answerNames ?? []).joined(separator: ", "))]\n" + digest)
+                    return parts.joined(separator: "\n\n")
+                }
                 if let final = turn.final { parts.append("[\(turn.finalBy ?? "AI")]\n" + final) }
                 parts += (turn.moreAnswers ?? []).filter { !$0.failed }.map { "[\($0.speaker)]\n" + $0.text }
                 return parts.joined(separator: "\n\n")

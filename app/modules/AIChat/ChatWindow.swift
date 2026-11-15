@@ -2411,7 +2411,10 @@ private struct TurnView: View, Equatable {
                     .padding(.horizontal, 10).padding(.vertical, 4)
                     .background(Color.orange.opacity(0.10), in: Capsule())
             }
-            if turn.mode == 0, let order = turn.answerOrder, order.count > 1 {
+            if turn.mode == 0, let order = turn.answerOrder, order.count > 1, let digest = turn.digest {
+                // Views summed up (Route.swift, digestOpinions): the summary first, the answers folded under it.
+                DigestedAnswers(turn: turn, order: order, digest: digest, discussion: discussion, highlight: highlight, answeredTime: answeredTime)
+            } else if turn.mode == 0, let order = turn.answerOrder, order.count > 1 {
                 // Several AIs answered at once: side by side (or one under the other), each reply as it is written.
                 ParallelAnswers(turn: turn, order: order, highlight: highlight, answeredTime: answeredTime)
             } else if turn.mode == 0, let final = turn.final {
@@ -3391,6 +3394,52 @@ private struct ParallelAnswers: View {
             } else {
                 Text(column.writing ? L("쓰는 중…", "Writing…") : L("답 없음", "No reply"))
                     .font(.system(size: 13)).foregroundColor(.secondary)
+            }
+        }
+    }
+}
+
+// Several views summed up by one AI (Route.swift, digestOpinions): the summary reads like a plain answer, under who wrote it, and
+// "Show each answer (4)" unfolds the answers as they were. Folded by default; the choice is kept with the turn, and a
+// synced copy (read only) keeps it for as long as it is open. ⌘F words found only in an answer unfold them.
+private final class DigestFold: ObservableObject { @Published var open: Bool?   /* nil: as saved */ }
+private struct DigestedAnswers: View {
+    let turn: ChatTurn
+    let order: [String]
+    let digest: String
+    let discussion: Discussion
+    let highlight: FindHighlight
+    let answeredTime: String?
+    @StateObject private var fold = DigestFold()
+
+    var body: some View {
+        let answers = [turn.final].compactMap { $0 } + (turn.moreAnswers ?? []).map(\.text)
+        let found = !highlight.words.isEmpty && answers.contains { !ChatFind.ranges($0, highlight.words).isEmpty }
+        let open = Binding(get: { fold.open ?? (turn.answersOpen == true || found) },
+                           set: { fold.open = $0; discussion.setAnswersOpen(turn.id, $0) })
+        VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 8) {
+                if let by = turn.digestBy {
+                    HStack(spacing: 6) {
+                        Circle().fill(Account.Provider.of(speaker: by)?.color ?? .secondary).frame(width: 7, height: 7)
+                        TurnView.named(Text(L("\(by) · 의견 정리", "\(by) · summary of the views")).font(.system(size: 12, weight: .medium)).foregroundColor(.secondary),
+                                       model: turn.digestModel)
+                    }
+                    .aiColorMenu(Account.Provider.of(speaker: by))
+                }
+                MarkdownText(text: digest, size: 15, highlight: highlight)
+                    .font(.system(size: 15)).lineSpacing(5)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                HStack(spacing: 6) {
+                    CopyButton(text: digest, key: "digest-\(turn.id)")
+                    if let answeredTime { Text(answeredTime).font(.system(size: 11)).foregroundColor(.secondary) }
+                }
+            }
+            DisclosureGroup(isExpanded: open) {
+                ParallelAnswers(turn: turn, order: order, highlight: highlight, answeredTime: answeredTime).padding(.top, 6)
+            } label: {
+                Text(L("개별 답변 보기 (\(order.count))", "Show each answer (\(order.count))")).font(.system(size: 12)).foregroundColor(.secondary)
             }
         }
     }

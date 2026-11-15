@@ -679,6 +679,7 @@ extension Discussion {
             let group = DispatchGroup()
             let doneLock = NSLock()
             var done: Set<String> = []
+            var answered: [(k: Int, account: Account, text: String)] = []   // good replies, for the digest
             for (k, account) in called.enumerated() {
                 let speaker = label(account)
                 var instruction = soloInstruction(account, binding: binding, helper: helper, chat: id, spaceRule: k == 0)
@@ -733,6 +734,7 @@ extension Discussion {
                         let harvest = self.collectPictures(text, account: account, since: started, id: id, index: index, cancellation: cancellation)
                         entry = .init(round: 1, speaker: speaker, text: harvest.text, failed: false, model: ran.name)
                         entry.images = harvest.images.isEmpty ? nil : harvest.images
+                        doneLock.lock(); answered.append((k, account, harvest.text)); doneLock.unlock()
                     case .failure(let failure):
                         entry = .init(round: 1, speaker: speaker, text: Self.describe(failure), failed: true)
                     }
@@ -756,6 +758,10 @@ extension Discussion {
             if var made = backup, (try? made.finish()) != nil { changes += made.changes.filter { $0.kind != "directory" } }
             let found = changes
             changeTurn(id, index, save: true) { $0.workspaceChanges = found.isEmpty ? nil : found }
+            if digestViews && together {
+                digestOpinions(question: question, answers: answered.sorted { $0.k < $1.k }.map { ($0.account, $0.text) }, rules: rules,
+                               binding: binding, cancellation: cancellation, id: id, index: index)
+            }
             return endSolo(id, index, stopped: cancellation.isCancelled)
         }
 

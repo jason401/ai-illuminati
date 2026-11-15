@@ -481,6 +481,7 @@ func testPeerReview() {
     var judged: [String] = [], nextRoute = RouteChoice.work, opinionViews: [WorkspaceBinding] = []
     chat.routeJudge = { prompt in judged.append(prompt); return (nextRoute, "Judge") }
     chat.workspaceAnswer = { account, prompt, binding, _, _ in
+        if prompt.contains("[VIEWS SUMMARY]") { return .success("Summary of the views.") }   // the digest: testOpinionDigest
         if prompt.contains("[Opinion mode]") && account.id == claude.id { opinionViews.append(binding); return .success("Claude's view: keep it short.") }
         if account.id == codex.id {
             peerPrompts.append(prompt); peerViews.append(binding)
@@ -571,8 +572,9 @@ func testPeerReview() {
     // "가자" after the opinions: work, and the lead reads both opinions.
     nextRoute = .work; step = 4
     send("가자")
-    expect(chat.current.turns.last?.route == .work && prompts.last?.contains("Claude's view: keep it short.") == true && prompts.last?.contains("Plan is fine") == true,
-           "go: the lead works with every opinion in the transcript")
+    expect(opinion?.digest == "Summary of the views." && opinion?.answersOpen == nil, "opinion: one summary, the answers folded under it")
+    expect(chat.current.turns.last?.route == .work && prompts.last?.contains("Summary of the views.") == true && prompts.last?.contains("Plan is fine") == false,
+           "go: the lead works with the opinions' summary in the transcript, not every answer")
 
     // Run again as opinions: the same message, no judging.
     let judgedBefore = judged.count
@@ -1323,6 +1325,7 @@ func testAutoMeeting() {
     let views = Discussion(model: model)
     views.configure { $0.mode = 0 }
     views.workspaceAnswer = { account, prompt, _, _, _ in
+        if prompt.contains("[VIEWS SUMMARY]") { return .success("요약.") }   // the digest: testOpinionDigest
         recording { viewAsked.append((account.id, prompt)) }
         return .success("\(account.name) view.")
     }
@@ -1668,4 +1671,115 @@ func testDisconnectProjectFolder() {
     expect(ProjectInfoStore.shared.info(SidebarProjects.key(kept)).folders.map(\.path) == [tree.path], "the old folder can stay as a read-only shared folder")
     SidebarFold.shared.togglePin(new)
     print("PASS: disconnect work folder (folderless with a new key, chats, TODO lists, info, pin and tab kept, worktree roots removed, refusals, keep read only)")
+}
+
+// Opinion mode, several answers summed up (Route.swift, digestOpinions): the answerer with the most usage left writes one summary,
+// the answers stay as they were under it, and the next message reads the summary. One answer, a failed summary or the
+// setting off: the answers as before, no error. Mock answers only; the test home is a temp folder (run_mode2.sh).
+func testOpinionDigest() {
+    let c = Account(id: "dg-claude", provider: .claude, name: "DC", dir: nil, school: false)
+    let x = Account(id: "dg-codex", provider: .codex, name: "DX", dir: nil, school: false)
+    let model = AppModel()
+    model.accounts = [c, x]
+    func left(_ percent: Double) -> AIUsage {
+        var u = AIUsage(name: "u"); u.fiveHour = UsageWindow(usedPercent: 100 - percent, resetsAt: nil); u.weekly = UsageWindow(usedPercent: 100 - percent, resetsAt: nil); return u
+    }
+    model.latestUsage = [c.id: left(30), x.id: left(80)]
+    expect(model.opinionDigest, "views are summed up by default")
+    expect(Discussion.digestWriter([c, x], usage: model.latestUsage)?.id == x.id
+           && Discussion.digestWriter([c, x], usage: [c.id: left(0), x.id: left(0)]) == nil
+           && Discussion.digestWriter([c, Account(id: "dg-local", provider: .ollama, name: "L")], usage: [c.id: left(0)]) == nil,
+           "the writer: most usage left; nobody with usage (or only a local model) sums up")
+    let chat = Discussion(model: model)
+    chat.configure { $0.mode = 0 }
+    var asked: [(String, String)] = [], digests: [(String, String, WorkspaceBinding)] = []
+    var failing: Set<String> = [], digestFails = false
+    chat.workspaceAnswer = { account, prompt, view, _, _ in recording {
+        if prompt.contains("[VIEWS SUMMARY]") {
+            digests.append((account.id, prompt, view))
+            return digestFails ? .failure(.timedOut) : .success("결론: B가 낫다.\n\n갈린 점: DC는 A, DX는 B.")
+        }
+        asked.append((account.id, prompt))
+        return failing.contains(account.id) ? .failure(.failed("down")) : .success("\(account.name) says \(account.id == c.id ? "A, because it is simpler" : "B, because it is faster").")
+    } }
+    func hold(_ text: String) -> ChatTurn? {
+        chat.draft = text; chat.send()
+        let deadline = Date().addingTimeInterval(30)
+        while Date() < deadline && (chat.anyRunning || (chat.current.turns.last?.final == nil && chat.current.turns.last?.error == nil)) {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.03))
+        }
+        return chat.current.turns.last
+    }
+
+    // Two good answers: one summary by the one with more usage left, the answers kept, folded.
+    let two = hold("2명 의견 줘: A냐 B냐")
+    expect(two?.routeChoice == .all && Set(asked.map(\.0)) == [c.id, x.id], "two AIs give views: \(asked.map(\.0))")
+    expect(digests.count == 1 && digests[0].0 == x.id && two?.digest == "결론: B가 낫다.\n\n갈린 점: DC는 A, DX는 B." && two?.digestBy == chat.label(x)
+           && two?.digestAccountID == x.id && two?.error == nil && two?.status == "", "a summary by the AI with the most usage left")
+    let prompt = digests.first?.1 ?? ""
+    expect(prompt.contains("2명 의견 줘: A냐 B냐") && prompt.contains("### \(chat.label(c))\nDC says A, because it is simpler.")
+           && prompt.contains("### \(chat.label(x))\nDX says B, because it is faster.") && prompt.contains("Do not settle a split by majority")
+           && prompt.contains("For you to decide"), "the summary gets the question and every answer by name")
+    expect(digests.first?.2.roots.allSatisfy { $0.writable != true } == true && digests.first?.2.project == nil, "the summary only reads")
+    expect(Set([two?.final ?? ""] + (two?.moreAnswers?.map(\.text) ?? [])) == ["DC says A, because it is simpler.", "DX says B, because it is faster."]
+           && two?.answersOpen == nil && two?.routeNote?.contains(chat.label(x)) == true, "the answers stay as they were, folded, and the note names who summed up")
+
+    // The next message reads the summary instead of every answer.
+    let context = Discussion.transcript([two!])
+    expect(context.contains("결론: B가 낫다.") && !context.contains("DC says A") && !context.contains("DX says B"), "context: the summary, not the answers")
+    asked = []
+    _ = hold("고마워")
+    expect(asked.first?.1.contains("결론: B가 낫다.") == true && asked.first?.1.contains("DC says A") == false, "the next answer reads the summary")
+
+    // Folding is kept with the turn, the chat does not move up.
+    let turnID = two!.id
+    chat.setAnswersOpen(turnID, true)
+    expect(chat.current.turns.first { $0.id == turnID }?.answersOpen == true
+           && ChatStore.loadAll().first { $0.id == chat.currentID }?.turns.first { $0.id == turnID }?.answersOpen == true, "unfolded and saved")
+    chat.setAnswersOpen(turnID, false)
+    expect(chat.current.turns.first { $0.id == turnID }?.answersOpen == nil, "folded again")
+
+    // Only one good answer: nothing to sum up.
+    failing = [c.id]; digests = []
+    let one = hold("2명 의견 줘: C냐 D냐")
+    expect(digests.isEmpty && one?.digest == nil && one?.final == "DX says B, because it is faster." && one?.error == nil, "one answer: no summary")
+    failing = []
+
+    // The summary fails: the answers as before, no error, no note.
+    digestFails = true; digests = []
+    let failed = hold("2명 의견 줘: E냐 F냐")
+    expect(digests.count == 1 && failed?.digest == nil && failed?.error == nil && failed?.moreAnswers?.count == 1
+           && failed?.routeNote?.contains(chat.label(x)) == false && failed?.status == "", "a failed summary: the answers as before")
+    expect(Discussion.transcript([failed!]).contains("DC says A"), "no summary: the context keeps the answers")
+    digestFails = false
+
+    // Off in Settings → Chat: no summary.
+    model.opinionDigest = false; digests = []
+    let off = hold("2명 의견 줘: G냐 H냐")
+    expect(digests.isEmpty && off?.digest == nil && off?.moreAnswers?.count == 1, "setting off: no summary")
+    model.opinionDigest = true
+
+    // Several AIs that are not opinion mode (members answering every message): not summed up.
+    let members = Discussion(model: model)
+    members.configure { $0.mode = 0 }
+    members.workspaceAnswer = chat.workspaceAnswer
+    members.toggleMember(c.id); members.toggleMember(x.id)
+    digests = []
+    members.draft = "hello both"; members.send()
+    let until = Date().addingTimeInterval(30)
+    while Date() < until && members.anyRunning { RunLoop.main.run(until: Date().addingTimeInterval(0.03)) }
+    expect(digests.isEmpty && members.current.turns.last?.digest == nil && members.current.turns.last?.moreAnswers?.count == 1, "members, not opinion mode: no summary")
+
+    // An older opinion turn (saved before summaries) reads as it was: no summary, the answers in the context.
+    let old = #"{"id":"33333333-3333-4333-8333-333333333333","question":"q","status":"","entries":[],"final":"A view","finalBy":"Claude","mode":0,"modeVersion":2,"#
+        + #""answerOrder":["a","b"],"answerNames":["Claude","ChatGPT"],"finalAccountID":"a","route":"opinion","routeNote":"의견 · 2명","#
+        + #""moreAnswers":[{"id":"33333333-0000-4000-8000-000000000001","round":1,"speaker":"ChatGPT","text":"B view","failed":false,"accountID":"b"}]}"#
+    let older = try? JSONDecoder().decode(ChatTurn.self, from: Data(old.utf8))
+    expect(older?.digest == nil && older?.answersOpen == nil && older?.columns(["a", "b"]).map(\.text) == ["A view", "B view"]
+           && Discussion.transcript([older!]).contains("B view"), "an older opinion turn: both answers, side by side, in the context")
+    // A synced copy keeps the summary and the fold.
+    var synced = two!; synced.answersOpen = true
+    let copy = try? JSONDecoder().decode(ChatTurn.self, from: JSONEncoder().encode(synced))
+    expect(copy?.digest == two?.digest && copy?.digestBy == two?.digestBy && copy?.answersOpen == true, "the summary and the fold travel with the turn")
+    print("PASS: opinion digest (most usage left sums up, answers kept and folded, summary in the context, one answer / failure / off / members: as before, older turns, synced copy)")
 }

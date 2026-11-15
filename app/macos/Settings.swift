@@ -194,6 +194,10 @@ final class AppModel: ObservableObject {
     @Published var collaboration: CollabMode {
         didSet { defaults.set(collaboration.rawValue, forKey: "aiCollaboration") }
     }
+    // Several views on one message: the AI with the most usage left sums them up and the answers fold under it.
+    @Published var opinionDigest: Bool {
+        didSet { defaults.set(opinionDigest, forKey: "opinionDigest") }
+    }
     var pictureMakers: [Account] { accounts.filter { $0.provider == .codex && !pictureMakersOff.contains($0.id) } }
     var onAccountsChange: (() -> Void)?
     var onDisplayChange: (() -> Void)?
@@ -229,6 +233,7 @@ final class AppModel: ObservableObject {
         pictureMakersOff = Set(defaults.stringArray(forKey: "pictureMakersOff") ?? [])
         autoTeamPicks = defaults.dictionary(forKey: "autoTeamPicks") as? [String: Bool] ?? [:]
         collaboration = defaults.string(forKey: "aiCollaboration").flatMap(CollabMode.init(rawValue:)) ?? .notify
+        opinionDigest = defaults.object(forKey: "opinionDigest") as? Bool ?? true
         localEnabled = persist ? LocalModel.enabled : true
         localKeepAlive = persist ? LocalModel.keepAlive : 5
         routeSorter = persist ? RouteSorter.current : .off
@@ -1093,6 +1098,14 @@ struct ChatSettingsTab: View {
             }
             CollabSettingsCard(model: model)
             AutoTeamSettingsCard(model: model)
+            SettingsCard(title: L("의견 자동 정리", "Sum up views"),
+                         help: L("여러 AI가 의견을 내면, 답한 AI 중 사용량이 가장 많이 남은 AI가 결론·합의·갈린 점·결정할 것으로 정리해요. 개별 답변은 그 아래에 접혀요. 정리하지 못하면 개별 답변만 보여요.",
+                                 "When several AIs give views, the one with the most usage left sums them up: conclusion, agreements, disagreements, what to decide. The answers fold under it. If it cannot, the answers show as before.")) {
+                SettingsRow(title: L("자동 정리", "Sum up")) {
+                    Spacer()
+                    Toggle(L("의견 자동 정리", "Sum up views"), isOn: $model.opinionDigest).labelsHidden().toggleStyle(.switch)
+                }
+            }
             let makers = model.accounts.filter { $0.provider == .codex }
             if !makers.isEmpty {
                 SettingsCard(title: L("그림 담당", "Picture makers"),

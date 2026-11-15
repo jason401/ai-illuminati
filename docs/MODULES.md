@@ -804,7 +804,8 @@ dependencies fails G1; `CollabLog.maxBytes` public fails S1; an App file using i
 ### AIChatRecords imported directly, no `@_exported` (2026-11-15)
 
 T4's `@_exported import AIChatRecords` in `AIChat/ChatApp.swift` is gone (removed from Exceptions): 20 AIChat files
-(ChatApp's line now a plain import) and 2 App files (`ChatLinksApp.swift`, `Settings.swift`) say `import AIChatRecords`, so import
+(ChatApp's line now a plain import) and 2 App files (`ChatLinksApp.swift`, `Settings.swift`) say `import AIChatRecords` (and 7 tests that leaned on the
+re-export: chat_contract, chat_links, chat_search, device_sync, project_work, render_chat, todo_work), so import
 lines again show who uses a module. No graph or guard change (App is outside `module_graph.txt`; AIChat already
 declared the edge). S1 snapshots unchanged: `@_exported` re-exports names but does not change AIChat's own public API.
 

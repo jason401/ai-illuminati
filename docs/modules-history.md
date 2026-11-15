@@ -573,6 +573,12 @@ in other process groups (AIRuntime's fake CLIs: every program under this run's `
 trap does the same when the run stops. Jobs drop the script's EXIT trap, which would delete `$TEST_DIR`. The contracts
 took 26 s one after another and now take about as long as AIProjects alone (12 s) (`docs/modules-followup.md` "O5-B").
 `AI_ILLUMINATI_CONTRACT_JOBS=1` runs them one at a time; 0, a negative or a non-number stops the run (exit 2) instead of waiting forever. `build_modules.sh`, S1-S3 and stage 1's block are unchanged.
+Guard hash update (O5-B follow-up, 2026-11-15, user-approved): each contract runs in a fresh `zsh -f` under the perl
+leader stages 10-12 use (now the function `watched`, outside the block), which stops it within 2 s when run_mode2 is
+gone (the app's Stop, SIGKILL) and then kills what it left under `$TEST_DIR`. Leftovers are also killed after the
+contracts pass (`contracts_stop` always runs; the pattern takes `$TEST_DIR` and `${TEST_DIR:A}`). A job counts as
+running from zsh's `$jobstates`, not `kill -0` (no PID reuse). Each contract's start and end are shown at once, plus
+"still running" every 60 s. Same contracts, limits, skips and failure messages (`docs/modules-followup.md` "O5-B 잔손질").
 
 ### C1a falsification (was under "AIChat (…), step C1a")
 C1a falsification (one change in a copy of the tree, "app" = the mode2 app tests):

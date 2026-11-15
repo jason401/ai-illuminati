@@ -24,6 +24,7 @@ if [[ ${1-} == --affected ]]; then
   fi
 fi
 # Every swiftc splits its work over all CPUs: without -j it ran few jobs at once (docs/modules-followup.md "O4", "O5-A").
+# hw.ncpu counts the efficiency cores too (M3 Pro 11 = 5 P + 6 E); measured as is, so left that way.
 J=(-j$(sysctl -n hw.ncpu))
 TEST_DIR=$(mktemp -d /tmp/ai-mode2-check.XXXXXX)
 LATE_PID=
@@ -114,6 +115,35 @@ limit() {
   # script at a function's failure, but runs it on exit.
   exit $rc
 }
+# A background job (the contracts, stages 10-12) runs under a perl leader in the leader's own process group. The leader
+# stops the group (TERM, KILL 2 s later; each limit inside stops its own) when asked (TERM) or when run_mode2 ($1) is
+# gone: the app stops a run with SIGKILL, which skips every trap. Then it also kills what the job left in other process
+# groups: programs whose command line matches $2 (a pgrep pattern for this run's $TEST_DIR) and their children.
+# Only as a background job (`watched … &`): exec makes perl that job, a child of run_mode2 itself.
+watched() {
+  exec perl -e '
+    use POSIX ":sys_wait_h";
+    my ($main, $left) = splice @ARGV, 0, 2; setpgrp(0, 0);   # run_mode2 names itself: read later, getppid could already be launchd
+    my $pid = fork // die "fork: $!\n";
+    if (!$pid) { exec @ARGV or die "exec: $!\n" }
+    sub pg { open(my $fh, "-|", "pgrep", @_) or return (); my @p = grep { $_ != $$ } map { 0 + $_ } <$fh>; close $fh; @p }
+    sub stop { $SIG{TERM} = "IGNORE"; kill "TERM", -$$; sleep 2; kill "KILL", -$$ }
+    $SIG{TERM} = \&stop; $SIG{INT} = "IGNORE";
+    while (1) {
+      if (waitpid($pid, WNOHANG) == $pid) { exit($? & 127 ? 128 + ($? & 127) : $? >> 8) }
+      if (getppid() != $main) {
+        $SIG{TERM} = "IGNORE"; kill "TERM", -$$; sleep 2;
+        my @all; my @next = pg("-f", "--", $left);
+        while (@next) { push @all, @next; @next = map { pg("-P", $_) } @next }
+        kill "KILL", @all if @all; kill "KILL", -$$;
+      }
+      select(undef, undef, undef, 0.2);
+    }
+  ' "$@"
+}
+# What this run started: its programs and folders are under $TEST_DIR, spelled /tmp/... or /private/tmp/... (pgrep -f
+# reads it as a regex, so the dots are escaped).
+LEFT="(${TEST_DIR//./\\.}|${${TEST_DIR:A}//./\\.})/"
 # "[n/m] name" before each stage: the app shows it under the current step (project_run). When a stage ends,
 # "  [n] name: x.x s" (its parts indented under it), and the whole run's time at the end: where the time goes.
 zmodload zsh/datetime
@@ -202,50 +232,60 @@ limit 300 zsh tools/build_modules.sh "$MODULES" $J -enable-testing -module-cache
 part "build_modules.sh" $PART_T0
 # Every module folder's contract test (tools/tests/<name>_contract.swift, AIFoo -> foo): found here, not listed by hand.
 # They run at once (O5-B), each with its own home, source, program and limits, up to CONTRACT_JOBS at a time
-# (AI_ILLUMINATI_CONTRACT_JOBS, default the CPU count). Each writes $TEST_DIR/<name>.log, shown in name order when
-# all end. The first failure or time out names its contract and stops the others (each limit stops its own process
-# group on TERM; the EXIT trap does the same when the run stops), then the stage fails.
-CONTRACT_JOBS=${AI_ILLUMINATI_CONTRACT_JOBS:-$(sysctl -n hw.ncpu)} PIDS=() NAMES=() STARTED=() FAILED=
+# (AI_ILLUMINATI_CONTRACT_JOBS, default the CPU count). Each is a fresh zsh under a perl leader (watched: it stops
+# the contract when run_mode2 is gone) writing $TEST_DIR/<name>.log, shown in name order when all end; its start and
+# end (and every 60 s what still runs) are shown at once. The first failure or time out names its contract and stops
+# the others, then the stage fails. Whatever a contract left running (AIRuntime's fake CLIs) is killed when the
+# contracts end, passed or not, and when the run stops (EXIT trap).
+CONTRACT_JOBS=${AI_ILLUMINATI_CONTRACT_JOBS:-$(sysctl -n hw.ncpu)} PIDS=() NAMES=() T0S=() STARTED=() FAILED=
 # 0 or less would wait forever for a free place.
 [[ $CONTRACT_JOBS == <1-> ]] || { echo "FAIL: AI_ILLUMINATI_CONTRACT_JOBS must be 1 or more, not '$CONTRACT_JOBS'" >&2; exit 2 }
+# Runs in its own zsh -f, so none of the script's traps are there (no EXIT trap deleting $TEST_DIR); TERM ends it.
 contract_job() {
-  trap - EXIT; trap 'exit 143' TERM   # a background job must never run the script's EXIT trap (it deletes $TEST_DIR)
   local t0=$EPOCHREALTIME compiled
   limit 300 xcrun swiftc -swift-version 5 $J -module-cache-path "$CACHE" -I "$MODULES" -o "$TEST_DIR/$1-contract" "$TEST_DIR/$1-src/main.swift" "$MODULES"/lib*.a
   compiled=$EPOCHREALTIME
   limit 120 env $RUN_ENV "$TEST_DIR/$1-contract"
   part "$2 contract" $t0 "(compile $(printf '%.1f' $(( compiled - t0 ))) s)"
 }
-# TERM to each job and to its limit (zsh runs a job's trap only after its limit returns), then wait for them all.
-# A stopped contract leaves what it started in other process groups (AIRuntime's fake CLIs and their children), so
-# every program of this run's $TEST_DIR still running, and its children, is killed too.
+# TERM to each job's leader (it stops its group, limits included, within 2 s), then wait for them all. A contract
+# leaves what it started in other process groups (AIRuntime's fake CLIs and a `sleep 30` each), passed or stopped,
+# so every program of this run's $TEST_DIR still running, and its children, is killed too.
 contracts_stop() {
-  (( ${#PIDS} )) || return 0
   local p left=() next=()
-  for p in $PIDS; do kill -TERM $p 2>/dev/null || true; pkill -TERM -P $p 2>/dev/null || true; done
+  for p in $PIDS; do kill -TERM $p 2>/dev/null || true; done
   for p in $PIDS; do wait $p 2>/dev/null || true; done
-  PIDS=() NAMES=() next=($(pgrep -f -- "$TEST_DIR/" || true))
+  PIDS=() NAMES=() T0S=() next=($(pgrep -f -- "$LEFT" || true))
   while (( ${#next} )); do left+=($next); next=($(for p in $next; do pgrep -P $p; done || true)); done
   (( ! ${#left} )) || kill -KILL $left 2>/dev/null || true
 }
+# A job runs while zsh's own job table says so: a PID taken again by another program after the job ended (kill -0
+# would call it alive) is not in it.
+zmodload zsh/parameter
+running() { [[ -n ${(k)jobstates[(R)*:$1=running*]} ]] }
 # Waits until fewer than $1 jobs run; a failed one sets FAILED and stops the rest.
 contract_reap() {
   local i rc
   while (( ${#PIDS} >= $1 )); do
     for (( i = ${#PIDS}; i >= 1; i-- )); do
-      kill -0 ${PIDS[i]} 2>/dev/null && continue
+      running ${PIDS[i]} && continue
       wait ${PIDS[i]} && rc=0 || rc=$?
       if (( rc )); then
         FAILED="${NAMES[i]} contract (exit $rc)"; (( rc != 142 )) || FAILED+=" (timed out)"
+        echo "    ${NAMES[i]} contract: failed after $(secs ${T0S[i]}) s"
         contracts_stop; return 1
       fi
-      PIDS[i]=(); NAMES[i]=()
+      echo "    ${NAMES[i]} contract: passed ($(secs ${T0S[i]}) s)"
+      PIDS[i]=() NAMES[i]=() T0S[i]=()
     done
-    (( ${#PIDS} < $1 )) || sleep 0.1
+    if (( ${#PIDS} >= $1 )); then
+      sleep 0.1
+      (( EPOCHREALTIME - BEAT < 60 )) || { BEAT=$EPOCHREALTIME; echo "    still running after $(secs $PART_T0) s: ${NAMES[*]}" }
+    fi
   done
   return 0
 }
-PART_T0=$EPOCHREALTIME
+PART_T0=$EPOCHREALTIME BEAT=$EPOCHREALTIME
 for DIR in app/modules/*(/N); do
   NAME=${(L)${DIR:t}#AI}; SRC=tools/tests/${NAME}_contract.swift
   # --affected: only the picked modules' contracts (the build above, the file checks and S1-S3 below stay).
@@ -259,10 +299,13 @@ for DIR in app/modules/*(/N); do
   mkdir -p "$TEST_DIR/$NAME-src" "$TEST_DIR/$NAME-home"
   cp $SRC "$TEST_DIR/$NAME-src/main.swift"
   contract_reap $CONTRACT_JOBS || break
-  contract_job $NAME ${DIR:t} > "$TEST_DIR/$NAME.log" 2>&1 &
-  PIDS+=($!) NAMES+=(${DIR:t}) STARTED+=($NAME)
+  watched $$ "$LEFT" zsh -fc "set -eu; zmodload zsh/datetime; $(typeset -p TEST_DIR CACHE MODULES J RUN_ENV)
+    $(typeset -f limit secs part contract_job); contract_job $NAME ${DIR:t}" > "$TEST_DIR/$NAME.log" 2>&1 < /dev/null &
+  PIDS+=($!) NAMES+=(${DIR:t}) T0S+=($EPOCHREALTIME) STARTED+=($NAME)
+  echo "    ${DIR:t} contract: started"
 done
 [[ -n $FAILED ]] || contract_reap 1 || true
+contracts_stop   # passed contracts leave their fake CLIs too
 for NAME in $STARTED; do cat "$TEST_DIR/$NAME.log"; done
 [[ -z $FAILED ]] || { echo "FAIL: $FAILED" >&2; exit 1 }
 (( ! ${#STARTED} )) || part "contracts (${#STARTED}, up to $CONTRACT_JOBS at once)" $PART_T0
@@ -289,8 +332,8 @@ PYTHONDONTWRITEBYTECODE=1 limit 300 python3 tools/tests/material_fixtures.py "$T
 # Stages 10-12 need only the modules (stage 2), so they run beside 8-9 (about 24 s less; docs/modules-followup.md
 # "O4"). One background job in its own process group writes to late.log, shown after stage 9: its stage lines
 # reach the app's progress (RunProgress) in order. Keep it all above stage 8's line: affected_tests.py reads stage
-# 8's files from the stage 8 marker to the stage 9 marker (both quoted). The perl leader stops the group (each
-# stage's limit stops its own) when run_mode2 asks (late_stop) or is gone: the app stops a run with SIGKILL.
+# 8's files from the stage 8 marker to the stage 9 marker (both quoted). Its perl leader (watched) stops it when
+# run_mode2 asks (late_stop) or is gone.
 late_stages() {
   stage "[10/12] Space web view isolation"
   if (( SELECT && ! SPACE_WEB )); then
@@ -320,19 +363,7 @@ late_stages() {
   stage_end
 }
 late_start() {
-  perl -e '
-    use POSIX ":sys_wait_h";
-    my $main = shift; setpgrp(0, 0);   # run_mode2 names itself: read later, getppid could already be launchd
-    my $pid = fork // die "fork: $!\n";
-    if (!$pid) { exec @ARGV or die "exec: $!\n" }
-    sub stop { $SIG{TERM} = "IGNORE"; kill "TERM", -$$; sleep 2; kill "KILL", -$$ }
-    $SIG{TERM} = \&stop; $SIG{INT} = "IGNORE";
-    while (1) {
-      if (waitpid($pid, WNOHANG) == $pid) { exit($? & 127 ? 128 + ($? & 127) : $? >> 8) }
-      stop() if getppid() != $main;
-      select(undef, undef, undef, 0.2);
-    }
-  ' $$ zsh -fc "set -eu; zmodload zsh/datetime; $(typeset -p TEST_DIR CACHE MODULES SELECT SPACE_WEB SCREENS J)
+  watched $$ "$LEFT" zsh -fc "set -eu; zmodload zsh/datetime; $(typeset -p TEST_DIR CACHE MODULES SELECT SPACE_WEB SCREENS J)
     $(typeset -f limit secs stage_end stage part late_stages); STAGE= STAGE_T0=; late_stages" \
     > "$TEST_DIR/late.log" 2>&1 < /dev/null &
   LATE_PID=$!

@@ -791,7 +791,8 @@ RC 133은 assertionFailure였고 이번은 malloc이 멈춘 것이라, 같은 �
   하나는 또 다른 그룹)가 `limit`의 그룹 종료를 빠져나갔다. 그래서 멈출 때 `pgrep -f "$TEST_DIR/"`로 이번 실행의 폴더 아래 프로그램과 그
   자식들까지 KILL한다. 순차 실행에서도 AIRuntime 계약이 시간 초과로 멈추면 같은 프로세스가 남았을 것이다(이번에 함께 막힘).
 - 메인 스크립트는 기다리는 동안 0.1 s마다 확인하므로, TERM·Ctrl-C가 오면 바로 EXIT trap으로 가서 `contracts_stop`을 부른다.
-  앱의 Stop(SIGKILL)은 trap을 건너뛰므로 돌던 계약은 자기 `limit`이 끝날 때까지 남는다(O6의 9단계와 같은 이미 있던 한계).
+  앱의 Stop(SIGKILL)은 trap을 건너뛰므로 돌던 계약은 자기 `limit`이 끝날 때까지(최대 300+120 s) 남았다(O6의 9단계와 같은 한계).
+  **후속(아래 "O5-B 잔손질")에서 고침**: 계약도 10–12단계처럼 perl 리더 아래에서 돌아 run_mode2가 없어지면 2 s 안에 멈춘다.
 
 ### 고장 주입 (`git clone --local` 복사본, `--modules`)
 | 주입 | 결과 | 남은 프로세스 |
@@ -818,6 +819,32 @@ RC 133은 assertionFailure였고 이번은 malloc이 멈춘 것이라, 같은 �
 - AIProjects·AIRuntime 계약 시간은 순차와 같다(차이 ±0.5 s 안). 계약마다 컴파일은 0.4–0.7 → 0.9–1.2 s로 조금 늘었지만(같은 CPU를
   나눠 씀) 짧은 계약끼리라 합계에 드러나지 않는다. 시간에 민감한 9단계 테스트도 O5-A와 같다: RunConditions 5.1 ×3,
   RuntimeThroughApp 4.7/4.6/4.5, ProjectWork 25.6/25.6/25.5, TodoScheduler 8.8/8.7/8.7, PeerReview 10.6 ×3.
+
+### O5-B 잔손질 (가드 변경)
+2026-11-15, 기준 HEAD `1732097`. O5-B 리뷰의 작은 개선. `module_guard.sha256`에서는 `run_mode2.sh#module-checks` 한 줄만 바뀌었다.
+- 계약마다 `watched`(10–12단계가 쓰던 perl 리더를 함수로 뺀 것, 블록 밖) 아래 새 `zsh -fc`로 돈다. 리더는 자기 프로세스 그룹을
+  TERM(2 s 뒤 KILL)으로 멈추고, run_mode2가 없어지면(`getppid() != $main`, 앱의 Stop = SIGKILL) 멈추기 전에 이번 실행의
+  `$TEST_DIR` 아래 프로그램과 그 자식까지 KILL한다. 그래서 `contracts_stop`은 리더에만 TERM을 보낸다(`pkill -P` 불필요).
+  함수를 백그라운드로 돌리면 perl이 subshell의 자식이 되어 처음엔 바로 멈췄다(exit 137): `watched`는 `exec perl`이다.
+- 남은 프로세스 정리를 성공 경로에서도 한다(계약 루프 뒤 `contracts_stop`, EXIT trap에서도 PIDS가 비어 있어도 정리).
+  HEAD에서 그대로는 통과한 계약이 남긴 프로세스를 1 s 간격 `ps`로 못 찾았다(AIRuntime 계약이 스스로 정리). 남기는 계약을 주입하면
+  HEAD는 남겼고(`/bin/sh -c 'sleep 300; :' …/localization-home/stray` + `sleep 300`) 새 코드는 없앴다. 패턴은 `$TEST_DIR`와
+  `${TEST_DIR:A}`(/private/tmp) 둘 다, 점은 escape. (pgrep -f는 부분 일치라 `/tmp/…/`가 `/private/tmp/…/`에도 이미 맞았다.)
+- 살아 있는지 판단은 `kill -0` 대신 zsh의 `$jobstates`(zsh/parameter): 끝난 작업의 PID를 다른 프로그램이 다시 받아도 살아 있다고 보지 않는다.
+- 계약마다 시작·통과·실패 줄을 바로 찍고, 기다리는 동안 60 s마다 `still running after N s: <계약들>`을 찍는다. 전체 로그는 지금처럼 끝나고.
+- 작업이 새 `zsh -f`라 스크립트의 trap을 물려받지 않는다(`trap - EXIT`, `trap 'exit 143' TERM` 삭제). 앞의 "물려받지 않게" 설명도
+  정정: zsh 5.9는 `&` subshell에서 부모의 EXIT trap을 원래 돌리지 않았다(방어용이었음).
+- `-j$(sysctl -n hw.ncpu)`가 E-core까지 센다는 주석만 남김(M3 Pro 11 = P 5 + E 6). 동작은 그대로.
+
+| 주입 (`git clone --local` 복사본, `--modules`, AILocalization 계약에 주입) | 결과 | 남은 프로세스 |
+|---|---|---|
+| 3 s 뒤 `exit(7)` | exit 1, `FAIL: AILocalization contract (exit 7)` | 없음 |
+| 다른 그룹에 `sleep 300` 남기고 통과 | exit 0 (HEAD는 같은 주입에서 남김) | 없음 |
+| `sleep(200)` (limit 120) | exit 1, 60·120 s에 `still running`, `stopped after 120 s: env`, `(exit 142) (timed out)` | 없음 |
+| 계약 도는 중 메인에 TERM | 143, 2.3 s 안에 끝 | 없음 |
+| 계약 도는 중 그룹 전체에 INT (+ stray) | 130, 2.2 s | 없음 |
+| 계약 도는 중 메인에 SIGKILL (+ stray) | 137, 3 s 뒤 확인 | 없음 (`$TEST_DIR`는 남음: trap 없음, 이미 있던 한계) |
+| `AI_ILLUMINATI_CONTRACT_JOBS=1` / `=0` | 9개 차례로 통과 / exit 2 | – |
 
 ## 테스트 실패 때 진단 증거 보존 (run_mode2)
 2026-11-14, 시작 HEAD `95ba95f`. 위 O2 동시 실행의 SIGSEGV(시도 1, RC 139)는 `$TEST_DIR`가 지워져 어느 테스트였는지 몰랐다.

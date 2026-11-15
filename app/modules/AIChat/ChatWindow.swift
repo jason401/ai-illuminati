@@ -431,8 +431,11 @@ struct ChatView<Model: ChatSettings>: View {
                 }
             }
             if hovered, let binding = group.bindings.first {
-                Button(action: { newChat(in: group, binding) }) { Image(systemName: "square.and.pencil").font(.system(size: 11)).frame(width: 20, height: 20) }
+                // Hit area 30x30 (the whole row height), laid out as 20pt like before so nothing moves;
+                // more on the left would cover the badge and pin.
+                Button(action: { newChat(in: group, binding) }) { Image(systemName: "square.and.pencil").font(.system(size: 11)).frame(width: 30, height: 30) }
                     .buttonStyle(.plainHit).foregroundColor(.secondary)
+                    .padding(.leading, -4).padding(.trailing, -6)
                     .help(L("이 프로젝트에 새 대화", "New chat in this project"))
             }
         }

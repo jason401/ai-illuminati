@@ -1,3 +1,6 @@
+AIColorWindow | enum AIColorWindow
+AIColorWindow.menuTitle(_:) | static func menuTitle(_ provider: Account.Provider) -> String
+AIColorWindow.show(_:in:) | static func show(_ provider: Account.Provider, in defaults: UserDefaults = .standard)
 AIColors | enum AIColors
 AIColors.Preset | struct Preset
 AIColors.Preset.color | var color: NSColor { get }

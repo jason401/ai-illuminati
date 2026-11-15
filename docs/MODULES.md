@@ -611,7 +611,7 @@ everything else, Discussion's state above all, stays internal):
   `Discussion.meets`/`autoPicked` (Settings' team picks).
 - The five tool providers (`shared`, `active`, `tools`, `call`; `MemoryLink.newestTurn` for ToolHub.register): ToolHub lists them.
 - Settings' tabs: `MemoryStore`/`MemoryItem`/`MemoryData`, `ChatStorage` (`report`, `items`, `format`, `Report`, `Room`, `Kind`; AIChatRecords since T4),
-  `CollabMode`/`CollabLog` (AIChatRecords since T4), `RouteSorter`, `ApprovalAlertSettings`, `AIColors` (each AI's color: Appearance's swatches and the usage menu's color menu change what `Account.Provider.color` draws; `revisionKey` lets their views redraw), `DeviceSync` (settings, start, scan, the notes the links call),
+  `CollabMode`/`CollabLog` (AIChatRecords since T4), `RouteSorter`, `ApprovalAlertSettings`, `AIColors` (each AI's color: the color window changes what `Account.Provider.color` draws; `revisionKey` lets their views redraw), `AIColorWindow` (`show`, `menuTitle`: Appearance's "Change…" and the usage menu's "Change <AI> Color…" open the same window as a right-click on an AI's name in the chat), `DeviceSync` (settings, start, scan, the notes the links call),
   `ChatLink.conversations`; the board and Project info: `SidebarProjects` (`key`, `group`, `pickerName`), `ProjectGroup`,
   `SidebarFold`, `BoardTab`, `PictureDrop`, `Enterprise.permits`, `ProjectLockSection` (Project info's lock setting; the lock stays the chat's), `AutoPick.fiveHour`/`weekly`, `TodoItem.State.title`/`color`;
   DriveLink: `MaterialReader.read`, `RoomDocuments.directory` (AIChatRecords since T4); main: `ChatWindow`, `SpaceRefiner.watchLibrary`,

@@ -315,7 +315,7 @@ extension MenuCardItem {
             let group = usages.filter { $0.account?.provider == provider }
             guard !group.isEmpty else { continue }
             let title = viewItem(ComparisonGroupTitle(provider: provider), row: true)
-            title.submenu = AIColorMenu.make(provider)
+            title.submenu = AIColorMenu.make(provider)   // hovering the AI's title: its color window
             items.append(title)
             for usage in group {
                 let row = viewItem(ComparisonRow(usage: usage, style: style), row: true)
@@ -350,51 +350,28 @@ extension MenuCardItem {
         }
         if let provider = usage.account?.provider {
             menu.addItem(.separator())
-            let colors = NSMenuItem(title: L("\(provider.title) 색 바꾸기", "\(provider.title) Color"), action: nil, keyEquivalent: "")
-            colors.image = AIColorMenu.swatch(AIColors.color(provider))
-            colors.submenu = AIColorMenu.make(provider)
+            let colors = AIColorMenu.item(provider)
             menu.addItem(colors)
         }
         return menu
     }
 }
 
-// Changing an AI's color from the usage menu, the way color labels usually work (Finder tags, calendars):
-// a row of preset swatches with a check on the current one, "Other Color…" for the system color panel, and
-// back to the brand color. A preset another AI already wears is marked with that AI's name, so two AIs are
-// not given the same color by accident. The same colors are in Settings > Appearance.
+// Changing an AI's color from the usage menu: one "<AI> 색 바꾸기…" item that opens the color window
+// (AIColorWindow), the same one as a right-click on the AI's name in the chat and Settings > Appearance.
 enum AIColorMenu {
     static func make(_ provider: Account.Provider) -> NSMenu {
         let menu = NSMenu()
-        let header = NSMenuItem(title: L("\(provider.title) 색", "\(provider.title) color"), action: nil, keyEquivalent: "")
-        header.isEnabled = false
-        menu.addItem(header)
-        let current = AIColors.saved(provider) ?? AIColors.brand(provider).id
-        for preset in AIColors.presets {
-            var title = preset.name
-            if preset.id == AIColors.brand(provider).id { title += L(" (기본)", " (default)") }
-            let others = AIColors.sharing(preset.id, besides: provider)
-            if !others.isEmpty { title += " · " + others.map(\.title).joined(separator: ", ") }
-            let item = NSMenuItem(title: title, action: #selector(AIColorActions.pick(_:)), keyEquivalent: "")
-            item.target = AIColorActions.shared
-            item.representedObject = [provider.rawValue, preset.id]
-            item.image = swatch(preset.color)
-            item.state = current == preset.id ? .on : .off
-            menu.addItem(item)
-        }
-        menu.addItem(.separator())
-        let other = NSMenuItem(title: L("다른 색…", "Other Color…"), action: #selector(AIColorActions.custom(_:)), keyEquivalent: "")
-        other.target = AIColorActions.shared
-        other.representedObject = provider.rawValue
-        if current.hasPrefix("#") { other.state = .on; other.image = swatch(AIColors.color(provider)) }
-        menu.addItem(other)
-        if AIColors.saved(provider) != nil {
-            let reset = NSMenuItem(title: L("기본 색으로", "Use Default Color"), action: #selector(AIColorActions.pick(_:)), keyEquivalent: "")
-            reset.target = AIColorActions.shared
-            reset.representedObject = [provider.rawValue]
-            menu.addItem(reset)
-        }
+        menu.addItem(item(provider))
         return menu
+    }
+
+    static func item(_ provider: Account.Provider) -> NSMenuItem {
+        let item = NSMenuItem(title: AIColorWindow.menuTitle(provider), action: #selector(AIColorOpener.open(_:)), keyEquivalent: "")
+        item.target = AIColorOpener.shared
+        item.representedObject = provider.rawValue
+        item.image = swatch(AIColors.color(provider))
+        return item
     }
 
     // A round swatch for a menu item; drawn when shown, so it follows light and dark mode.
@@ -406,5 +383,13 @@ enum AIColorMenu {
             NSBezierPath(ovalIn: rect.insetBy(dx: 1, dy: 1)).stroke()
             return true
         }
+    }
+}
+
+final class AIColorOpener: NSObject {
+    static let shared = AIColorOpener()
+    @objc func open(_ item: NSMenuItem) {
+        guard let raw = item.representedObject as? String, let provider = Account.Provider(rawValue: raw) else { return }
+        AIColorWindow.show(provider)
     }
 }

@@ -665,86 +665,29 @@ struct AppearanceSettingsTab: View {
     }
 }
 
-// Each AI's color (names in the chat and the menu, the sidebar's answering ring): a preset swatch, any color
-// from the color panel, or back to the brand color. The usage menu's AI titles offer the same (MenuCards.swift).
+// Each AI's color (names in the chat and the menu, the sidebar's answering ring): one line per AI with its color
+// and "Change…", which opens the color window (AIColorWindow, also on a right-click of the AI's name).
 private struct AIColorsSettingsCard: View {
-    @AppStorage(AIColors.revisionKey) private var revision = 0   // redraw when a color changes here or in the menu
+    @AppStorage(AIColors.revisionKey) private var revision = 0   // redraw when a color changes in the color window
 
     var body: some View {
         SettingsCard(title: L("AI 색", "AI colors"),
-                     help: L("채팅 이름, 사용량 메뉴, 사이드바의 '답하는 중' 표시에 쓰여요.", "Used for names in the chat, the usage menu and the sidebar's answering mark.")) {
+                     help: L("채팅 이름, 사용량 메뉴, 사이드바의 '답하는 중' 표시에 쓰여요. AI 이름을 우클릭해도 바꿀 수 있어요.",
+                             "Used for names in the chat, the usage menu and the sidebar's answering mark. You can also right-click an AI's name.")) {
             ForEach(Account.Provider.allCases, id: \.self) { provider in
                 if provider != Account.Provider.allCases.first { Divider() }
-                row(provider)
+                HStack(spacing: 8) {
+                    Circle().fill(Color(nsColor: AIColors.color(provider))).frame(width: 10, height: 10)
+                    Text(provider.title)
+                    Spacer()
+                    Button(L("변경…", "Change…")) { AIColorWindow.show(provider) }
+                        .help(AIColorWindow.menuTitle(provider))
+                }
+                .padding(.horizontal, 10).padding(.vertical, 6)
+                .frame(minHeight: 32)
             }
         }
         .id(revision)
-    }
-
-    private func row(_ provider: Account.Provider) -> some View {
-        let current = AIColors.saved(provider) ?? AIColors.brand(provider).id
-        return SettingsRow(title: provider.title) {
-            HStack(spacing: 3) {
-                ForEach(AIColors.presets, id: \.id) { preset in
-                    Button { AIColors.set(preset.id == AIColors.brand(provider).id ? nil : preset.id, for: provider) } label: {
-                        Circle().fill(Color(nsColor: preset.color)).frame(width: 13, height: 13)
-                            .overlay(Circle().strokeBorder(Color.primary.opacity(current == preset.id ? 0.9 : 0.12), lineWidth: current == preset.id ? 2 : 1).padding(-2.5))
-                            .frame(width: 20, height: 22)
-                    }
-                    .buttonStyle(.plainHit)
-                    .help(preset.name + (preset.id == AIColors.brand(provider).id ? L(" (기본)", " (default)") : "")
-                          + AIColors.sharing(preset.id, besides: provider).map { " · " + $0.title }.joined())
-                }
-            }
-            Button { AIColorActions.shared.open(provider) } label: {
-                Image(systemName: current.hasPrefix("#") ? "eyedropper.full" : "eyedropper").font(.system(size: 11))
-                    .foregroundStyle(current.hasPrefix("#") ? Color(nsColor: AIColors.color(provider)) : Color.secondary)
-                    .frame(width: 22, height: 22)
-            }
-            .buttonStyle(.plainHit).help(L("다른 색…", "Other color…"))
-            if AIColors.saved(provider) != nil {
-                Button { AIColors.set(nil, for: provider) } label: {
-                    Image(systemName: "arrow.uturn.backward").font(.system(size: 10)).foregroundStyle(.secondary).frame(width: 22, height: 22)
-                }
-                .buttonStyle(.plainHit).help(L("기본 색으로", "Use default color"))
-            }
-        }
-    }
-}
-
-// Applies the color menu's choices (MenuCards.swift) and the Appearance card's "Other color…".
-final class AIColorActions: NSObject {
-    static let shared = AIColorActions()
-    private var editing: Account.Provider?
-
-    @objc func pick(_ item: NSMenuItem) {
-        guard let parts = item.representedObject as? [String], let provider = parts.first.flatMap(Account.Provider.init(rawValue:)) else { return }
-        let value = parts.count > 1 ? parts[1] : nil
-        AIColors.set(value == AIColors.brand(provider).id ? nil : value, for: provider)   // the brand preset = default
-    }
-
-    // The system color panel; every change applies at once, so the menu and the chat show it while choosing.
-    @objc func custom(_ item: NSMenuItem) {
-        guard let raw = item.representedObject as? String, let provider = Account.Provider(rawValue: raw) else { return }
-        open(provider)
-    }
-
-    func open(_ provider: Account.Provider) {
-        editing = provider
-        let panel = NSColorPanel.shared
-        panel.setTarget(nil); panel.setAction(nil)   // setting the color below must not save it to the AI before
-        panel.showsAlpha = false
-        panel.color = AIColors.color(provider).usingColorSpace(.sRGB) ?? .gray   // as it looks now
-        panel.title = L("\(provider.title) 색", "\(provider.title) Color")
-        panel.setTarget(self)
-        panel.setAction(#selector(changed(_:)))
-        NSApp.activate(ignoringOtherApps: true)
-        panel.makeKeyAndOrderFront(nil)
-    }
-
-    @objc private func changed(_ panel: NSColorPanel) {
-        guard let editing else { return }
-        AIColors.set(custom: panel.color, for: editing)
     }
 }
 

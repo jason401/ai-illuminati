@@ -1573,6 +1573,7 @@ struct ChatView<Model: ChatSettings>: View {
                             Image(systemName: discussion.configuration.leaderAccountID == account.id ? "crown.fill" : "crown")
                         }.buttonStyle(.plainHit).help(L("대표로 지정", "Make moderator"))
                     }.padding(5).background(Color.secondary.opacity(0.1)).cornerRadius(6)
+                    .aiColorMenu(account.provider)
                 }
             }.toggleStyle(.checkbox)
         }.disabled(discussion.running || discussion.importingMaterials)
@@ -1808,6 +1809,7 @@ struct ChatView<Model: ChatSettings>: View {
                             Image(systemName: moderator == account.id ? "crown.fill" : "crown")
                         }.buttonStyle(.plainHit).help(L("대표로 지정 (선택지를 적지 않았을 때 선택지를 만듦)", "Make moderator (drafts the choices when none are listed)"))
                     }.padding(5).background(Color.secondary.opacity(0.1)).cornerRadius(6)
+                    .aiColorMenu(account.provider)
                 }
             }.toggleStyle(.checkbox)
         }.disabled(discussion.running || discussion.importingMaterials)
@@ -1821,6 +1823,7 @@ struct ChatView<Model: ChatSettings>: View {
                         Toggle(provider.title, isOn: Binding(
                             get: { discussion.configuration.participants.contains(provider) },
                             set: { discussion.setParticipation(provider, enabled: $0) }))
+                            .aiColorMenu(provider)
                         Menu {
                             Button(L("대표로 지정", "Make moderator")) {
                                 discussion.configure { $0.leader = provider }
@@ -2323,6 +2326,7 @@ private struct TurnView: View, Equatable {
                             Circle().fill(Account.Provider.of(speaker: by)?.color ?? .secondary).frame(width: 7, height: 7)
                             Self.named(Text(by).font(.system(size: 12, weight: .medium)).foregroundColor(.secondary), model: turn.finalModel)
                         }
+                        .aiColorMenu(Account.Provider.of(speaker: by))
                     }
                     let pictures = Self.finalPictures(turn, final: final)
                     MarkdownText(text: final, size: 15, highlight: highlight, pictures: pictures)
@@ -2348,6 +2352,7 @@ private struct TurnView: View, Equatable {
                             (Text(turn.mode == 0 ? L("답: ", "Answered by: ") : L("정리: ", "Final answer by: ")).foregroundColor(.secondary)
                              + Self.named(Text(by).bold().foregroundColor(Account.Provider.of(speaker: by)?.color ?? .secondary), model: turn.finalModel))
                                 .font(.caption)
+                                .aiColorMenu(Account.Provider.of(speaker: by))
                         }
                         CopyButton(text: final, key: "final-\(turn.id)")
                         if let answeredTime { timeText(answeredTime) }
@@ -2367,6 +2372,7 @@ private struct TurnView: View, Equatable {
                         Circle().fill(Account.Provider.of(speaker: answer.speaker)?.color ?? .secondary).frame(width: 7, height: 7)
                         Self.named(Text(answer.speaker).font(.system(size: 12, weight: .medium)).foregroundColor(.secondary), model: answer.failed ? nil : answer.model)
                     }
+                    .aiColorMenu(Account.Provider.of(speaker: answer.speaker))
                     Group {
                         if answer.failed { Text(answer.text) } else { MarkdownText(text: answer.text, size: 15, highlight: highlight, pictures: answer.images ?? []) }
                     }
@@ -2387,6 +2393,7 @@ private struct TurnView: View, Equatable {
                             Circle().fill(Account.Provider.of(speaker: by)?.color ?? .secondary).frame(width: 7, height: 7)
                             Text(by).font(.system(size: 12, weight: .medium)).foregroundColor(.secondary)
                         }
+                        .aiColorMenu(Account.Provider.of(speaker: by))
                     }
                     MarkdownText(text: partial, size: 15)
                         .font(.system(size: 15))
@@ -3132,6 +3139,7 @@ private struct EntryRow: View {
             .buttonStyle(.plainHit)
             .help(isOpen ? L("접기", "Collapse") : L("자세히 보기", "Show full reply"))
             .accessibilityLabel(label + ": " + entry.shortLine)
+            .aiColorMenu(Account.Provider.of(speaker: entry.speaker))
             if let images = entry.images, !images.isEmpty {
                 PictureStrip(images: images, size: 110)
             }
@@ -3261,6 +3269,7 @@ private struct ParallelAnswers: View {
                 TurnView.named(Text(column.name).font(.system(size: 12, weight: .medium)).foregroundColor(.secondary), model: column.failed ? nil : column.model)
                 if column.writing { ProgressView().controlSize(.mini) }
             }
+            .aiColorMenu(Account.Provider.of(speaker: column.name))
             if let text = column.text {
                 let pictures = column.final ? TurnView.finalPictures(turn, final: text) : column.images
                 Group {

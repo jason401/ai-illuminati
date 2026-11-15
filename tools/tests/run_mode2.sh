@@ -44,7 +44,19 @@ save_failure() {
   (( ${#old} > FAIL_KEEP )) && rm -rf -- "${old[@]:$FAIL_KEEP}"
   echo "failure log: $dir" >&2
 }
-trap 'RC=$?; late_stop; save_failure $RC; rm -rf "$TEST_DIR"' EXIT
+# The real account list must come out of the tests exactly as it went in, so every exit checks it: a pass, a failed
+# or timed out stage, Ctrl-C/TERM and --modules. A changed file adds its FAIL; a passing run then fails (exit 1), a
+# failing one keeps its own exit code. The app's Stop (SIGKILL) skips the trap, so a stopped run is not checked.
+REAL_ACCOUNTS="$HOME/Library/Application Support/AI Illuminati/accounts.json"
+real_accounts() { [[ -f "$REAL_ACCOUNTS" ]] && shasum -a 256 "$REAL_ACCOUNTS" || echo missing }
+REAL_BEFORE=$(real_accounts)
+accounts_check() {
+  [[ "$(real_accounts)" != "$REAL_BEFORE" ]] || { (( $1 )) && echo "the real accounts.json is unchanged" >&2 || echo "PASS: the real accounts.json is unchanged"; return 0 }
+  echo "FAIL: the real accounts.json changed during the tests" >&2
+  (( $1 )) && STAGE="${STAGE:-none}; the real accounts.json changed" || STAGE="the real accounts.json check"
+  return 1
+}
+trap 'RC=$?; late_stop; accounts_check $RC || (( RC )) || RC=1; save_failure $RC; rm -rf "$TEST_DIR"; exit $RC' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 # Compiler module cache (the SDK's clang modules: Foundation, AppKit, SwiftUI, …) kept between runs; homes, data and
@@ -72,10 +84,6 @@ else
   fi
   zsystem flock -r -f CACHE_FD "$CACHE_LOCK"   # shared, held until this script ends
 fi
-# The real account list must come out of the tests exactly as it went in.
-REAL_ACCOUNTS="$HOME/Library/Application Support/AI Illuminati/accounts.json"
-real_accounts() { [[ -f "$REAL_ACCOUNTS" ]] && shasum -a 256 "$REAL_ACCOUNTS" || echo missing }
-REAL_BEFORE=$(real_accounts)
 mkdir -p "$TEST_DIR/data"
 cp tools/tests/mode2.swift "$TEST_DIR/main.swift"
 # Each stage has a time limit, so a stuck one names itself instead of hanging the run. The stage runs in its own
@@ -305,9 +313,4 @@ stage_end
 # What the compiler module cache holds at the end (over 2 GB, the next run clears it).
 echo "  test cache: $(du -sh "$CACHE" | cut -f1)"
 echo "  total: $(secs $RUN_T0) s"
-if [[ "$(real_accounts)" != "$REAL_BEFORE" ]]; then
-  STAGE="the real accounts.json check"; echo "FAIL: the real accounts.json changed during the tests" >&2
-  exit 1
-fi
-echo "PASS: the real accounts.json is unchanged"
 if (( SELECT )); then echo "PASS: affected tests only; the full test is zsh tools/tests/run_mode2.sh"; fi

@@ -173,7 +173,26 @@ func testProjectWork() {
     outer.cancel()
     for _ in 0..<50 where !run.attempt.isCancelled { Thread.sleep(forTimeInterval: 0.02) }
     expect(run.attempt.isCancelled && call("git_status")["isError"] as? Bool == true, "outer Stop cancels current AI and tool capability")
-    print("PASS: plain-chat projects (repo locks, scoped tools, selective commits, push, dirty handoff, exact-SHA approval, named command approval and Stop)")
+    // A running TODO's chat: git_push only asks; the app pushes the final HEAD once when the turn ends (after the review).
+    let todo = ProjectRun(room: UUID(), binding: selected, token: DebateCancellation()); todo.deferPush = true
+    ProjectWork.register(todo); todo.nextAttempt()
+    defer { ProjectWork.finish(todo) }
+    let scoped = ToolContext(room: todo.room, roots: binding.roots, projectRun: todo.id, projectGeneration: todo.generation)
+    func todoCall(_ name: String, _ args: [String: Any] = [:]) -> Bool { provider.call(name, args, context: scoped)["isError"] as? Bool == false }
+    let remoteBefore = git(["rev-parse", "refs/heads/main"], at: origin)
+    expect((try? provider.pushDeferred(todo)) == .some(nil), "nothing asked: the app pushes nothing")
+    write("README.md", "TODO work\n")
+    expect(todoCall("git_commit", ["message": "TODO work", "paths": ["README.md"]]) && todoCall("git_push"), "a TODO's commit and git_push succeed")
+    expect(todo.pushWanted && !todo.pushed && git(["rev-parse", "refs/heads/main"], at: origin) == remoteBefore, "a TODO's git_push only asks; the remote keeps its commit")
+    expect(todo.checkpoint("check").contains("push requested"), "the checkpoint tells a next AI the push is asked for")
+    write("README.md", "TODO work after the review\n")
+    expect(todoCall("git_commit", ["message": "Review fix", "paths": ["README.md"]]) && todoCall("git_push"), "the review fix commits and asks again")
+    expect(git(["rev-parse", "refs/heads/main"], at: origin) == remoteBefore, "still nothing on the remote before the turn ends")
+    let finalHead = git(["rev-parse", "HEAD"], at: root)
+    expect(((try? provider.pushDeferred(todo)) ?? nil)?.contains(finalHead) == true && todo.pushed
+           && git(["rev-parse", "refs/heads/main"], at: origin) == finalHead, "the app pushes the final HEAD once")
+    expect(!todoCall("git_status"), "the app's push ends the AI's tool sessions")
+    print("PASS: plain-chat projects (repo locks, scoped tools, selective commits, push, dirty handoff, exact-SHA approval, named command approval, Stop and a TODO's one push)")
 }
 
 func testProjectHandoff() {
@@ -267,7 +286,40 @@ func testProjectHandoff() {
     run()
     expect(accounts == ["project-claude"] && chat.current.turns.last?.error?.contains(L("이 TODO에 고른 AI", "picked for this TODO")) == true,
            "a TODO's work is not handed to an AI outside its pick: \(accounts) \(chat.current.turns.last?.error ?? "-")")
-    print("PASS: project AI handoff (same plain chat, same dirty files, next AI continuation, old-token revocation and no forced commit, 10% rule at the start, TODO pick kept)")
+
+    // The turn's push (here a TODO's chat; plain chats the same): git_push only asks, the app pushes once when the turn
+    // ends well; a failed push is the turn's error.
+    let origin = root.deletingLastPathComponent().appendingPathComponent("handoff-origin-\(UUID().uuidString).git")
+    git(["init", "--bare", origin.path]); git(["remote", "set-url", "origin", origin.path])
+    let pushing = try! ProjectProcess.inspect(root.path)
+    chat.change(chat.currentID) { $0.workspace = WorkspaceBinding(roots: [WorkspaceRoot(path: root.path, directory: true)], project: pushing) }
+    func remoteMain() -> String? { try? ProjectProcess.git(["rev-parse", "--verify", "--quiet", "refs/heads/main"], root: origin.path) }
+    var asked = false, lose = false
+    chat.workspaceAnswer = { _, prompt, binding, _, _ in
+        let context = ToolContext(room: chat.currentID, roots: binding.roots, projectRun: binding.projectRunID, projectGeneration: binding.projectGeneration)
+        let remoteAtStart = remoteMain()
+        try! "TODO change \(UUID())".write(to: root.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
+        let commit = GitLink.shared.call("git_commit", ["message": "TODO change", "paths": ["README.md"]], context: context)
+        let push = GitLink.shared.call("git_push", [:], context: context)
+        asked = prompt.contains("[Push at the end]") && commit["isError"] as? Bool == false && push["isError"] as? Bool == false && remoteMain() == remoteAtStart
+        if lose { try! FileManager.default.moveItem(at: origin, to: origin.appendingPathExtension("gone")) }
+        return .success("TODO done.")
+    }
+    // The pushed mark is saved after the turn ends (with the backup): wait for it, as above.
+    func runTodo() {
+        chat.draft = "TODO step."; chat.send()
+        let until = Date().addingTimeInterval(30)
+        while Date() < until && (chat.anyRunning || chat.current.turns.last?.projectCommitted == nil) { RunLoop.main.run(until: Date().addingTimeInterval(0.03)) }
+    }
+    runTodo()
+    let head = try! ProjectProcess.git(["rev-parse", "HEAD"], root: root.path)
+    expect(asked && remoteMain() == head && chat.current.turns.last?.projectPushed == true && chat.current.turns.last?.error == nil
+           && chat.current.turns.last?.plan?.last?.status == .done,
+           "a TODO's turn pushes its final HEAD once, at the end: asked \(asked) remote \(remoteMain() ?? "-") head \(head) pushed \(String(describing: chat.current.turns.last?.projectPushed)) plan \(chat.current.turns.last?.plan?.map { "\($0.text) \($0.status)" } ?? []) \(chat.current.turns.last?.error ?? "-")")
+    lose = true; runTodo()
+    expect(asked && chat.current.turns.last?.error?.contains(L("push하지 못했어요", "the push failed")) == true && chat.current.turns.last?.projectPushed != true
+           && chat.current.turns.last?.plan?.last?.status == .blocked, "a failed TODO push is the turn's error; the commits stay local")
+    print("PASS: project AI handoff (same plain chat, same dirty files, next AI continuation, old-token revocation and no forced commit, 10% rule at the start, TODO pick kept, a TODO's one push)")
 }
 
 func testFullAuto() {

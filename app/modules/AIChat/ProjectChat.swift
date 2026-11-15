@@ -260,6 +260,9 @@ extension Discussion {
         guard let selected = binding.project else { finish(id, index, error: "No project selected."); return }
         let fullAuto = binding.isFullAuto
         let run = ProjectRun(room: id, binding: selected, token: cancellation, fullAuto: fullAuto)
+        // Only the turn's final result goes to the remote, once, after the review and its fixes (TODOs and plain chats).
+        run.deferPush = !selected.isDocuments && !selected.isFolderless
+        let extraNote = run.deferPush ? (note.isEmpty ? "" : note + "\n") + Self.deferredPushNote : note
         run.onNote = { [weak self] log in self?.changeTurn(id, index) { $0.projectLog = log; $0.lastActivityAt = Date() } }
         run.onPlan = { [weak self] steps, note in self?.changeTurn(id, index) { $0.plan = steps; $0.planNote = note; $0.lastActivityAt = Date() } }
         run.onWaiting = { [weak self] waiting in self?.changeTurn(id, index) { $0.waitingApproval = waiting ? true : nil; $0.lastActivityAt = Date() } }
@@ -332,7 +335,7 @@ extension Discussion {
             func attempt(_ extra: String, transcript: String, fresh: String?, ran: AnswerModel = AnswerModel()) -> Result<String, Answerer.Failure> {
                 var instruction = soloInstruction(account, binding: workspace, helper: "",
                                                   project: ProjectPart(root: selected.root, fullAuto: fullAuto, rules: projectRules, folderless: selected.isFolderless, documents: selected.isDocuments), chat: id)
-                if !note.isEmpty { instruction += "\n" + note }
+                if !extraNote.isEmpty { instruction += "\n" + extraNote }
                 if keepState { instruction += "\n" + Self.stateRule(current: Self.loadState(id)) }
                 instruction += "\n[Verified app checkpoint; do not repeat completed operations blindly]\n" + checkpoint + extra
                 let prompt = Self.soloContext(rules: rules, transcript: transcript) + "\n[SOLO TURN]\n" + instruction
@@ -445,6 +448,13 @@ extension Discussion {
                         turn.moreAnswers?.append(ChatTurn.Entry(round: 1, speaker: self.label(reviewer), text: reviewText, failed: failed, model: failed ? nil : reviewed.name))
                     }
                 }
+                if run.pushWanted, !cancellation.isCancelled {
+                    do { _ = try GitLink.shared.pushDeferred(run); run.setAppStep(9, L("push (main에 한 번)", "Push (once)"), .done) } catch {
+                        run.setAppStep(9, L("push (main에 한 번)", "Push (once)"), .blocked)
+                        finish(id, index, error: L("작업과 검토는 끝났지만 push하지 못했어요. commit은 로컬에 남아 있어요: ", "The work and review are done, but the push failed. The commits stay local: ")
+                               + error.localizedDescription); return
+                    }
+                }
                 _ = run.checkpoint("Project turn completed by " + speaker)
                 finish(id, index); return
             case .failure(let failure) where Self.isOutOfUsage(failure):
@@ -456,6 +466,11 @@ extension Discussion {
         }
         finish(id, index, error: L("프로젝트 작업을 중지했습니다. 변경은 보존했어요.", "Project work stopped. Changes are preserved."))
     }
+
+    static let deferredPushNote = """
+    [Push at the end] Commit as usual and call git_push when the work is complete: it only asks for the push. The app pushes once when
+    this turn ends, after the review and your fixes, so only the final result reaches the remote. Never push any other way.
+    """
 
     static let fullAutoNote = """
     [FULL AUTO] The user may be away. Work to completion without asking questions; make reasonable decisions and list them at the end.

@@ -109,6 +109,8 @@ In plain chat, open `+` → **Link folder (full access)**. A top-level Git folde
 (Git tools below); any other folder gets the same full access, backed up before each answer with Undo.
 Claude or Codex can edit it and use app-hosted Git tools for status/diff/log, fast-forward pull,
 explicit-path commit, and normal push to main or feature/fix/codex branches.
+git_push only asks for the push (plain chats and TODOs): the app pushes once when the turn ends well, after the
+review and its fixes, so only the final result reaches the remote (a failed push is the turn's error; the commits stay local).
 The project permission remains attached to that chat until disabled from the same menu.
 Project work uses the same instruction as any plain chat, plus the Git steps: the AI knows the shared folders
 (read only here), can search the web with sources, uses Drive, pictures and AI Face, and keeps the chat state

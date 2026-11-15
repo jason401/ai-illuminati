@@ -3,6 +3,7 @@ GitLink.active | var active: Bool { get }
 GitLink.call(_:_:context:) | func call(_ name: String, _ arguments: [String : Any], context: ToolContext) -> [String : Any]
 GitLink.publishStable(_:room:onWaiting:) | func publishStable(_ binding: ProjectBinding, room: UUID, onWaiting: @escaping (Bool) -> Void) throws -> String
 GitLink.pullMain(_:) | func pullMain(_ binding: ProjectBinding) throws -> String
+GitLink.pushDeferred(_:) | func pushDeferred(_ run: ProjectRun) throws -> String?
 GitLink.shared | static let shared: GitLink
 GitLink.tools() | func tools() -> [[String : Any]]
 GitLink.tools(context:) | func tools(context: ToolContext) -> [[String : Any]]
@@ -116,6 +117,7 @@ ProjectRun.binding | let binding: ProjectBinding
 ProjectRun.checkpoint(_:) | func checkpoint(_ note: String) -> String
 ProjectRun.committed | var committed: Bool
 ProjectRun.deadline | let deadline: Date
+ProjectRun.deferPush | var deferPush: Bool
 ProjectRun.endAttempt() | func endAttempt()
 ProjectRun.generation | var generation: Int { get }
 ProjectRun.id | let id: UUID
@@ -127,6 +129,7 @@ ProjectRun.onNote | var onNote: (([String]) -> Void)?
 ProjectRun.onPlan | var onPlan: (([WorkStep], String?) -> Void)?
 ProjectRun.onWaiting | var onWaiting: ((Bool) -> Void)?
 ProjectRun.outer | let outer: DebateCancellation
+ProjectRun.pushWanted | var pushWanted: Bool { get }
 ProjectRun.pushed | var pushed: Bool
 ProjectRun.room | let room: UUID
 ProjectRun.setAppStep(_:_:_:) | func setAppStep(_ i: Int, _ text: String, _ status: WorkStep.Status)

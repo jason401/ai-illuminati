@@ -221,6 +221,10 @@ public final class ProjectRun {
     private var ended = false
     func stop() { lifecycle.lock(); ended = true; lifecycle.unlock(); attempt.cancel() }
     public var committed = false, pushed = false
+    // A project turn pushes once, after the review and its fixes: git_push only asks for it, and the chat calls
+    // GitLink.pushDeferred when the turn ends well. Without a successful end the commits stay local (a TODO retries).
+    public var deferPush = false
+    public internal(set) var pushWanted = false
     // Tool results for this turn's work log; the chat shows them under the reply, not above the chat.
     public var onNote: (([String]) -> Void)?
     private var notes: [String] = []
@@ -303,7 +307,7 @@ public final class ProjectRun {
         let head = (try? ProjectProcess.git(["rev-parse", "HEAD"], root: binding.root)) ?? ""
         let status = (try? ProjectProcess.git(["status", "--short"], root: binding.root)) ?? ""
         let diff = (try? ProjectProcess.git(["diff", "--no-ext-diff", "--no-textconv", "--stat"], root: binding.root)) ?? ""
-        let text = "Project: \(binding.root)\n\(note)\nHEAD: \(head)\n\(status)\n\(diff)\nCommitted: \(committed); pushed: \(pushed). Preserve unfinished files. Do not pull a dirty tree." + WorkStep.summary(plan)
+        let text = "Project: \(binding.root)\n\(note)\nHEAD: \(head)\n\(status)\n\(diff)\nCommitted: \(committed); pushed: \(pushed)\(pushWanted && !pushed ? " (push requested; the app pushes at the end of this turn)" : ""). Preserve unfinished files. Do not pull a dirty tree." + WorkStep.summary(plan)
         save(checkpoint: text)
         return text
     }
@@ -592,6 +596,23 @@ public final class GitLink: ToolProvider {
             return ["content": [["type": "text", "text": output]], "isError": false]
         } catch { _ = run.checkpoint(name + " failed: " + String(error.localizedDescription.prefix(500))); run.note(name + " failed"); return ProjectTools.failure(error.localizedDescription) }
     }
+    // The end of a project turn: the push its git_push asked for, with the same branch rules, on a fresh attempt (the
+    // AI's attempts are over). nil: nothing was asked. Throws when the push fails; the commits stay local.
+    public func pushDeferred(_ run: ProjectRun) throws -> String? {
+        guard run.deferPush, run.pushWanted else { return nil }
+        run.nextAttempt()
+        defer { run.endAttempt() }
+        run.operations.lock(); defer { run.operations.unlock() }
+        let generation = run.generation
+        do {
+            try run.validate(generation)
+            _ = run.checkpoint("Starting the turn's push; inspect remote state if interrupted.")
+            let output = try execute("git_push", [:], run, generation, app: true)
+            _ = run.checkpoint("Turn push completed")
+            run.note(L("push (리뷰 후 한 번) → ", "push (once, after the review) → ") + String(output.prefix(180)))
+            return output
+        } catch { _ = run.checkpoint("Turn push failed: " + String(error.localizedDescription.prefix(500))); run.note(L("push 실패", "push failed")); throw error }
+    }
     // The project screen uses the same approval and publish path as the scoped tool, without an AI turn.
     // Call off the main thread: approval waits while the main thread displays the card.
     public func publishStable(_ binding: ProjectBinding, room: UUID, onWaiting: @escaping (Bool) -> Void) throws -> String {
@@ -618,7 +639,7 @@ public final class GitLink: ToolProvider {
         guard try git(["status", "--porcelain"]).isEmpty else { throw ProjectError.make(L("커밋하지 않은 변경이 있어 받지 않았어요.", "There are uncommitted changes; nothing pulled.")) }
         return try git(["pull", "--ff-only", "--no-rebase", binding.remote, "main"], timeout: 180)
     }
-    private func execute(_ name: String, _ args: [String: Any], _ run: ProjectRun, _ generation: Int) throws -> String {
+    private func execute(_ name: String, _ args: [String: Any], _ run: ProjectRun, _ generation: Int, app: Bool = false) throws -> String {
         func git(_ argv: [String], timeout: TimeInterval = 120) throws -> String { try run.validate(generation); return try ProjectProcess.git(argv, root: run.binding.root, token: run.attempt, timeout: min(timeout, run.deadline.timeIntervalSinceNow)) }
         func clean() throws { guard try git(["status", "--porcelain"]).isEmpty else { throw ProjectError.make("Working tree is not clean; preserve edits and do not pull/switch/stash.") } }
         func approve(_ title: String, _ detail: String) throws {
@@ -652,6 +673,10 @@ public final class GitLink: ToolProvider {
         case "git_push":
             let branch = try git(["branch", "--show-current"])
             guard branch == "main" || branch.hasPrefix("feature/") || branch.hasPrefix("codex/") || branch.hasPrefix("fix/") else { throw ProjectError.make("Push supports main or a feature/fix/codex branch. Use the publish tool for stable.") }
+            if run.deferPush && !app {
+                run.pushWanted = true
+                return "Push requested. The app pushes HEAD of " + branch + " once, after the review and your fixes, when this turn ends; do not push any other way. Commit later fixes as usual; nothing else is needed for the push."
+            }
             let sha = try git(["rev-parse", "HEAD"])
             let result = try git(["push", run.binding.remote, sha + ":refs/heads/" + branch], timeout: 180)
             run.pushed = true; return result + "\nPushed " + sha

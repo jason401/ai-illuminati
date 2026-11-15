@@ -50,10 +50,19 @@ let testOnly: Set<String>? = ProcessInfo.processInfo.environment["AI_ILLUMINATI_
     return Set(raw.split(separator: ",").map(String.init)).subtracting(["-"])
 }
 var testsSeen: [String] = []
+// AI_ILLUMINATI_TEST_CLAIM (run_mode2.sh stage 9 shards): several copies of this program, each with its own test home,
+// go through runTest in this file's order and each test runs in the first copy that makes <folder>/<name> (mkdir is
+// atomic). AI_ILLUMINATI_TEST_SHARD names the copy in its lines; its list at the end is what AI_ILLUMINATI_TEST_ONLY
+// reruns alone. Unset: every test here, as before.
+let testClaim = ProcessInfo.processInfo.environment["AI_ILLUMINATI_TEST_CLAIM"].map { URL(fileURLWithPath: $0) }
+let testShard = ProcessInfo.processInfo.environment["AI_ILLUMINATI_TEST_SHARD"] ?? "1"
+var testsRun: [String] = []
 // One test function: its name before, its time after (slow ones stand out).
 func runTest(_ name: String, _ test: () -> Void) {
     testsSeen.append(name)
     if let testOnly, !testOnly.contains(name) { return }
+    if let testClaim, (try? FileManager.default.createDirectory(at: testClaim.appendingPathComponent(name), withIntermediateDirectories: false)) == nil { return }
+    testsRun.append(name)
     markProgress(test: name)
     print("▶ \(name)"); fflush(stdout)
     let start = Date()
@@ -3053,4 +3062,7 @@ if let testOnly {
     let unknown = testOnly.subtracting(testsSeen).sorted()
     expect(unknown.isEmpty, "AI_ILLUMINATI_TEST_ONLY names no such test: \(unknown.joined(separator: ", "))")
     print("PASS: selected tests only (\(testsSeen.filter(testOnly.contains).count) of \(testsSeen.count))")
+}
+if testClaim != nil {
+    print("PASS: shard \(testShard) ran \(testsRun.count) of \(testsSeen.count) tests: AI_ILLUMINATI_TEST_ONLY=\(testsRun.isEmpty ? "-" : testsRun.joined(separator: ","))")
 }

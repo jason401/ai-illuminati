@@ -32,7 +32,8 @@ LATE_PID=
 # through the EXIT trap (zsh skips it when a signal kills it).
 late_stop() { [[ -n $LATE_PID ]] || return 0; kill -TERM -$LATE_PID 2>/dev/null || true; wait $LATE_PID 2>/dev/null || true; LATE_PID= }
 # A failed, timed out or stopped run keeps its evidence outside $TEST_DIR (never in the real data folders): the stage,
-# exit code, the last app test started, stage 9's output and late.log. The newest 10 stay; a passing run keeps nothing.
+# exit code, the last app test started (each shard's), stage 9's output (app-tests.log, or app-tests-<shard>.log) and
+# late.log. The newest 10 stay; a passing run keeps nothing.
 # The app's Stop (SIGKILL) skips every trap, so it leaves none.
 FAIL_ROOT="$HOME/Library/Logs/AI Illuminati/test-failures" FAIL_KEEP=10
 save_failure() {
@@ -40,11 +41,15 @@ save_failure() {
   (( rc )) || return 0
   dir="$FAIL_ROOT/$(date +%Y%m%d-%H%M%S)-$$"
   mkdir -p "$dir" || return 0
-  for f in app-tests.log late.log; do [[ -f "$TEST_DIR/$f" ]] && cp "$TEST_DIR/$f" "$dir/"; done
+  for f in "$TEST_DIR"/(app-tests(|-<->).log|late.log)(N); do cp "$f" "$dir/"; done
   { echo "exit: $rc"
     echo "stage: ${STAGE:-none}"
     [[ -f "$dir/late.log" ]] && echo "late stage: $(grep '^\[1[0-2]/12\]' "$dir/late.log" | tail -1)"
     [[ -f "$dir/app-tests.log" ]] && echo "last app test started: ${$(grep '^▶ ' "$dir/app-tests.log" | tail -1):-none}"
+    for f in "$dir"/app-tests-<->.log(Nn); do
+      echo "last app test started (shard ${${f:t:r}#app-tests-}): ${$(grep '^▶ ' "$f" | tail -1):-none}"
+    done
+    [[ -n ${SHARD_FAILED-} ]] && echo "failed shard ${SHARD_FAILED}; alone: $(shard_rerun ${SHARD_FAILED%% *}) $TEST_DIR/run (built by stage 8)"
     echo "args: ${ARGS[*]:-}"
     echo "head: $(git rev-parse --short HEAD 2>/dev/null)$( [[ -n $(git status --porcelain 2>/dev/null) ]] && echo ' (changed files)')"
   } > "$dir/summary.txt"
@@ -64,7 +69,7 @@ accounts_check() {
   (( $1 )) && STAGE="${STAGE:-none}; the real accounts.json changed" || STAGE="the real accounts.json check"
   return 1
 }
-trap 'RC=$?; late_stop; (( ! ${+functions[contracts_stop]} )) || contracts_stop; accounts_check $RC || (( RC )) || RC=1; save_failure $RC; rm -rf "$TEST_DIR"; exit $RC' EXIT
+trap 'RC=$?; late_stop; (( ! ${+functions[contracts_stop]} )) || contracts_stop; (( ! ${+functions[shards_stop]} )) || shards_stop; accounts_check $RC || (( RC )) || RC=1; save_failure $RC; rm -rf "$TEST_DIR"; exit $RC' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 # Compiler module cache (the SDK's clang modules: Foundation, AppKit, SwiftUI, …) kept between runs; homes, data and
@@ -375,14 +380,84 @@ limit 900 xcrun swiftc -swift-version 5 $J -module-cache-path "$CACHE" -I "$MODU
     app/macos/Settings.swift app/macos/LocalModels.swift app/macos/ExternalMCPTools.swift app/macos/DriveUI.swift app/macos/ToolHub.swift app/macos/DriveTools.swift app/macos/RunConditionsApp.swift app/macos/Updater.swift app/macos/ChatLinksApp.swift app/macos/GitBranches.swift tools/tests/space_build.swift tools/tests/google_drive.swift tools/tests/device_sync.swift tools/tests/window_drag.swift tools/tests/project_work.swift tools/tests/ask_ai.swift tools/tests/collab_log.swift tools/tests/meeting_tool.swift tools/tests/todo_work.swift tools/tests/project_info.swift tools/tests/update_channel.swift tools/tests/chat_search.swift tools/tests/search_fixtures.swift tools/tests/run_conditions.swift tools/tests/runtime_app.swift tools/tests/chat_links.swift tools/tests/chat_cli.swift tools/tests/tool_hub.swift "$TEST_DIR/main.swift"
 stage "[9/12] Run app tests"
 # The tests also stop themselves after 120 s without progress (mode2.swift) and name the test.
-APP_ENV=(AI_ILLUMINATI_TEST_HOME="$TEST_DIR/data" AI_ILLUMINATI_TEST_RESOURCES="$TEST_DIR/resources")
+APP_ENV=(AI_ILLUMINATI_TEST_RESOURCES="$TEST_DIR/resources")
 # --affected: the picked runTest names, comma-separated; "-" when none (the checks outside runTest still run).
 if (( SELECT )); then ONLY=${(j:,:)TESTS}; APP_ENV+=(AI_ILLUMINATI_TEST_ONLY="${ONLY:--}"); fi
-# Its output also goes to app-tests.log for the failure log: limit runs in the pipe's subshell, so its exit code is
-# taken from pipestatus (the subshell runs no EXIT trap).
-limit 1500 env $APP_ENV "$TEST_DIR/run" 2>&1 | tee "$TEST_DIR/app-tests.log"
-APP_RC=${pipestatus[1]}
-(( APP_RC == 0 )) || exit $APP_RC
+# Shards: AI_ILLUMINATI_TEST_JOBS copies of the test program at once (default the P cores, at most 4: M3 Pro 5, M4 4),
+# each with its own copy of the test home ($TEST_DIR/data-<k>: the material fixtures and nothing else yet). Each copy
+# runs every check outside runTest (they set up what the tests share) and takes the next runTest no copy has taken
+# yet (mode2.swift, AI_ILLUMINATI_TEST_CLAIM), so the slow tests spread out without a table of times. 1: one program
+# with $TEST_DIR/data in order, as before (the before/after baseline). docs/modules-followup.md "stage 9 shards".
+P_CORES=$(sysctl -n hw.perflevel0.physicalcpu 2>/dev/null || sysctl -n hw.physicalcpu)
+TEST_JOBS=${AI_ILLUMINATI_TEST_JOBS:-$(( P_CORES < 4 ? P_CORES : 4 ))}
+[[ $TEST_JOBS == <1-> ]] || { echo "FAIL: AI_ILLUMINATI_TEST_JOBS must be 1 or more, not '$TEST_JOBS'" >&2; exit 2 }
+# --affected with fewer picked tests than shards: no copy only for the checks outside runTest.
+(( ! SELECT || ${#TESTS} >= TEST_JOBS )) || TEST_JOBS=$(( ${#TESTS} ? ${#TESTS} : 1 ))
+# The tests a shard ran, as the environment that reruns just them (its "▶" lines, in order).
+shard_rerun() { local names=(${${(M)${(f)"$(<"$TEST_DIR/app-tests-$1.log")"}:#▶ *}#▶ }); echo "AI_ILLUMINATI_TEST_ONLY=${(j:,:)names:--}" }
+if (( TEST_JOBS == 1 )); then
+  # Its output also goes to app-tests.log for the failure log: limit runs in the pipe's subshell, so its exit code is
+  # taken from pipestatus (the subshell runs no EXIT trap).
+  limit 1500 env $APP_ENV AI_ILLUMINATI_TEST_HOME="$TEST_DIR/data" "$TEST_DIR/run" 2>&1 | tee "$TEST_DIR/app-tests.log"
+  APP_RC=${pipestatus[1]}
+  (( APP_RC == 0 )) || exit $APP_RC
+else
+  # Each shard is a fresh zsh under a perl leader (watched: no EXIT trap of this script in it, and it stops when
+  # run_mode2 is gone) writing app-tests-<k>.log, shown in shard order when all end; meanwhile each end, and every
+  # 60 s the test each shard is in. The first failure or time out stops the others (TERM to their leaders; not the
+  # $LEFT sweep of contracts_stop, which would also stop stages 10-12) and fails the stage.
+  SHARD_PIDS=() SHARDS_LEFT=() SHARD_FAILED= SHARD_RC=0 PART_T0=$EPOCHREALTIME BEAT=$EPOCHREALTIME
+  shards_stop() {
+    local p
+    for p in $SHARD_PIDS; do kill -TERM $p 2>/dev/null || true; done
+    for p in $SHARD_PIDS; do wait $p 2>/dev/null || true; done
+    SHARD_PIDS=()
+  }
+  mkdir "$TEST_DIR/claims"
+  for K in {1..$TEST_JOBS}; do
+    cp -R "$TEST_DIR/data" "$TEST_DIR/data-$K"
+    SHARD_ENV=($APP_ENV AI_ILLUMINATI_TEST_HOME="$TEST_DIR/data-$K" AI_ILLUMINATI_TEST_CLAIM="$TEST_DIR/claims" AI_ILLUMINATI_TEST_SHARD=$K)
+    watched $$ "$LEFT" zsh -fc "set -eu; $(typeset -p TEST_DIR SHARD_ENV)
+      $(typeset -f limit); limit 1500 env \$SHARD_ENV \"\$TEST_DIR/run\"" > "$TEST_DIR/app-tests-$K.log" 2>&1 < /dev/null &
+    SHARD_PIDS+=($!) SHARDS_LEFT+=($K)
+  done
+  echo "    $TEST_JOBS shards started"
+  while (( ${#SHARDS_LEFT} )); do
+    for K in $SHARDS_LEFT; do
+      running ${SHARD_PIDS[K]} && continue
+      wait ${SHARD_PIDS[K]} && SHARD_RC=0 || SHARD_RC=$?
+      SHARDS_LEFT=(${SHARDS_LEFT:#$K})
+      if (( SHARD_RC )); then
+        SHARD_FAILED="$K (exit $SHARD_RC)"; (( SHARD_RC != 142 )) || SHARD_FAILED+=" (timed out)"
+        echo "    shard $K: failed after $(secs $PART_T0) s"
+        shards_stop; SHARDS_LEFT=(); break
+      fi
+      echo "    shard $K: passed ($(secs $PART_T0) s, $(grep -c '^▶ ' "$TEST_DIR/app-tests-$K.log") tests)"
+    done
+    (( ${#SHARDS_LEFT} )) || break
+    sleep 0.1
+    if (( EPOCHREALTIME - BEAT >= 60 )); then
+      BEAT=$EPOCHREALTIME
+      NOW=()
+      for K in $SHARDS_LEFT; do NOW+=("shard $K ${${$(grep '^▶ ' "$TEST_DIR/app-tests-$K.log" | tail -1)#▶ }:-starting}"); done
+      echo "    still running after $(secs $PART_T0) s: ${(j:, :)NOW}"
+    fi
+  done
+  # Every shard repeats the checks outside runTest (all before the first runTest): their lines are shown from shard 1
+  # (and a failed shard) only, so the output stays about as long as one program's and the run's end is not cut off.
+  for K in {1..$TEST_JOBS}; do
+    if (( K == 1 )) || [[ ${SHARD_FAILED%% *} == $K ]]; then
+      echo "  shard $K:"; cat "$TEST_DIR/app-tests-$K.log"
+    else
+      echo "  shard $K (its checks outside runTest as in shard 1):"; awk '/^▶ /{on=1} on || /^PASS: shard /' "$TEST_DIR/app-tests-$K.log"
+    fi
+  done
+  if [[ -n $SHARD_FAILED ]]; then
+    echo "FAIL: shard $SHARD_FAILED; alone: $(shard_rerun ${SHARD_FAILED%% *})" >&2
+    exit $SHARD_RC
+  fi
+  part "$TEST_JOBS shards" $PART_T0
+fi
 stage_end
 LATE_T0=$EPOCHREALTIME LATE_RC=0
 wait $LATE_PID || LATE_RC=$?

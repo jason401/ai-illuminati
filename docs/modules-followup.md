@@ -970,3 +970,34 @@ O6 4번째 실행에서 한 번 난 실패의 원인. 2026-11-14, 시작 HEAD `1
 - 남은 것: RC 133은 이 heap corruption 말고도 `expect` 실패(SIGTRAP)로도 난다. 2026-11-14 `testDocumentsProject` 건은 위에서 따로 고쳤다.
   RC 133만으로는 둘을 구분할 수 없으니 실패 로그의 마지막 줄과 crash report(`_xzm_*` malloc 프레임인지, `expect`인지)를 같이 본다.
   새 가짜가 여러 AI를 동시에 받는 경로(의견·회의·리뷰·모드 1/3)에 쓰이면 기록은 `recording`으로 한다. 의심되면 TSan으로 9단계를 다시 돌려 본다.
+
+## 테스트 최적화: stage 9 shards (runTest 병렬)
+2026-11-15, 기준 HEAD `46561b7`. 가드는 바뀌지 않았다(`run_mode2.sh#module-checks` 해시 그대로). 바꾼 곳은 `run_mode2.sh` 9단계와
+EXIT trap·실패 로그, `mode2.swift`의 `runTest`, `.ai-illuminati.json`의 `test-serial`이다.
+- 정한 것(사용자가 결정을 넘김): 범위는 A만 했다. runTest를 shard로 나누고, runTest 밖 검사는 shard마다 반복한다. 분배는 동적 claim으로 하고 shard마다 실행 목록을 남긴다.
+  기본 shard 수는 `min(4, P-core)`다(`hw.perflevel0.physicalcpu`, M3 Pro 5·M4 4라서 둘 다 4). `AI_ILLUMINATI_TEST_JOBS`로 바꿀 수 있고, `1`이면 예전처럼
+  프로그램 하나가 `$TEST_DIR/data`로 차례대로 돈다(전/후 비교 기준).
+- 동작: 각 shard는 따로 홈을 쓴다. `$TEST_DIR/data-<k>`는 7단계 material fixtures를 복사한 것이다. shard는 runTest 밖 검사를 모두 돌고,
+  `runTest`마다 `AI_ILLUMINATI_TEST_CLAIM/<이름>`을 mkdir한다. mkdir은 원자적이라 먼저 만든 shard 하나만 그 테스트를 돈다. 시간 표가 없어도 긴 테스트가 저절로 흩어진다.
+  각 shard는 `watched` 리더 아래의 새 `zsh -f`다(이 스크립트의 EXIT trap이 없고, run_mode2가 사라지면 멈춤). 처음 실패하거나 시간 초과한 shard가 나머지 리더에 TERM을 보낸다.
+  `contracts_stop`의 `$LEFT` 정리는 10–12단계까지 죽이므로 쓰지 않는다. 끝나면 shard 순서로 로그를 보여 준다. runTest 밖 검사 줄은 shard 1(과 실패한 shard)에서만 보인다.
+  처음엔 shard 4개 분량이 그대로 나가서 앱 출력 한도(약 60 KB)에 걸렸고, 끝(total, accounts 검사)이 잘렸다.
+- 재현: 각 shard 끝 줄이 `PASS: shard k ran n of 64 tests: AI_ILLUMINATI_TEST_ONLY=…`다. 실패하면 `FAIL: shard k (exit rc); alone: AI_ILLUMINATI_TEST_ONLY=…`가
+  나오고, 실패 로그(`test-failures/…`)에는 `app-tests-<k>.log` 전부, shard별 마지막 테스트, 그 재실행 줄이 남는다. 같은 shard는 runTest 밖 검사와 그 목록을 돌므로 혼자 다시 돌리면 순서도 같다.
+- `--affected`: 고른 테스트 수가 shard 수보다 적으면 그 수로 줄인다(0개면 1).
+- 시뮬레이션(가짜 `run`, 커밋 안 함): 통과, 한 shard 실패(나머지 30 s짜리 shard가 바로 멈추고 남은 프로세스 0), 재실행 목록을 확인했다.
+
+측정(MacBook Pro M3 Pro `Mac15,6`, 5 P + 6 E, `project_run`):
+
+| 실행 | 9단계 | 전체 | 결과 |
+|---|---|---|---|
+| `test-serial` (`AI_ILLUMINATI_TEST_JOBS=1`) | 161.8 s | 209.5 s | 통과 |
+| `test` 4 shards, 1차 | 80.6 s | (출력 잘림, 약 128 s) | 통과 |
+| `test` 4 shards, 2차 | 85.0 s | (출력 잘림) | 통과 |
+| `test` 4 shards, 3차 (출력 줄인 뒤) | 78.3 s | 125.4 s | 통과, 실제 `accounts.json` 그대로 |
+
+- 9단계는 161.8 → 78–85 s(약 −50%), 전체는 209.5 → 125.4 s(−40%)다. 10–12단계는 9단계보다 먼저 끝나서 기다린 시간은 0.0 s였다.
+- 프로토타입(10–12단계 없이 4 shard 69.7 s)보다 느리다. 10–12단계 컴파일이 9단계 앞부분과 겹치고 shard 4개가 함께 돌아서 CPU를 다툰다.
+  `testProjectWork`가 25.3 s에서 35–40 s로 늘었다. 9단계 하한은 대략 runTest 밖 검사(약 30 s, 부하 중엔 더 김) + `testProjectWork`다.
+- 다음(별도 TODO 후보): B는 runTest 밖 검사 약 30 s를 shard마다 반복하지 않도록 이름 붙은 단위로 나누는 것이고, C는 `testProjectWork` 분할이다. C는 B로 9단계가 `testProjectWork` 아래로 내려갈 때만 효과가 있다.
+  `AI_ILLUMINATI_TEST_JOBS=3`/`5` 비교는 재지 않았다.

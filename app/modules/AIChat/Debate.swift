@@ -1,6 +1,7 @@
 import Foundation
 import Darwin
 import AIAccounts
+import AIChatRecords
 import AILocalization
 import AIRuntime
 

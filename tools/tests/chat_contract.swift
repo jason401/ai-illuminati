@@ -2,6 +2,7 @@ import Foundation
 import AppKit
 import AIAccounts
 import AIChat
+import AIChatRecords
 // contract needs: chat fixtures
 
 // The promises of Chat (AIChat), checked from outside with only its public API: chats saved by older builds

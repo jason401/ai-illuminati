@@ -1,6 +1,7 @@
 import Cocoa
 import CryptoKit
 import AIAccounts
+import AIChatRecords
 import AILocalization
 import AIRuntime
 import AIWorkspace

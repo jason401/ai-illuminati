@@ -1,4 +1,5 @@
 import Foundation
+import AIChatRecords
 import AILocalization
 
 // Messages sent while a chat answers (Discussion.enqueue): they wait together and go as one message when the answer

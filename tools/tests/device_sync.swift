@@ -1,5 +1,6 @@
 import Foundation
 import AIAccounts
+import AIChatRecords
 import AIWorkspace
 @testable import AIChat
 

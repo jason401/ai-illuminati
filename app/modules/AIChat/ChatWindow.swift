@@ -3,6 +3,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 import ImageIO
 import AIAccounts
+import AIChatRecords
 import AILocalization
 import AIRuntime
 import AIWorkspace

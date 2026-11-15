@@ -2,6 +2,7 @@ import Cocoa
 import PDFKit
 import ImageIO
 import UniformTypeIdentifiers
+import AIChatRecords
 import AIRuntime
 
 private final class OfficeXML: NSObject, XMLParserDelegate {

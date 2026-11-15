@@ -2,6 +2,7 @@ import Foundation
 import Combine
 import Cocoa
 import AIAccounts
+import AIChatRecords
 import AILocalization
 @testable import AIRuntime
 import AIWorkspace

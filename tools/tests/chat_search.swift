@@ -1,5 +1,6 @@
 import Foundation
 import AIAccounts
+import AIChatRecords
 @testable import AIRuntime
 @testable import AIWorkspace
 @testable import AIProjects

@@ -2,6 +2,7 @@ import Cocoa
 import ImageIO
 import UniformTypeIdentifiers
 import AIAccounts
+import AIChatRecords
 import AILocalization
 import AIRuntime
 import AIWorkspace

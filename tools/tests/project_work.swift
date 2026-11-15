@@ -2,6 +2,7 @@ import Foundation
 import Darwin
 import CryptoKit
 import AIAccounts
+import AIChatRecords
 import AILocalization
 @testable import AIRuntime
 @testable import AIWorkspace

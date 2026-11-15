@@ -3,6 +3,7 @@ import ServiceManagement
 import SwiftUI
 import UniformTypeIdentifiers
 import AIAccounts
+import AIChatRecords
 import AILocalization
 import AIRuntime
 import AIWorkspace

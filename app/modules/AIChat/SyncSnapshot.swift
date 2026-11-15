@@ -1,5 +1,6 @@
 import Foundation
 import AIAccounts
+import AIChatRecords
 
 // One chat as another Mac sees it. Unknown newer versions are listed as unreadable, never guessed at.
 public struct SyncSnapshot: Codable, Equatable {

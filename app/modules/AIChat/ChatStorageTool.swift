@@ -1,4 +1,5 @@
 import Foundation
+import AIChatRecords
 import AIWorkspace
 
 // chat_storage: the AI answering a chat can tell how much disk that chat (or, with scope "all", the chats it

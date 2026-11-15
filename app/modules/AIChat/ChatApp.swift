@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
-@_exported import AIChatRecords
 import AIAccounts
+import AIChatRecords
 import AIRuntime
 import AIWorkspace
 

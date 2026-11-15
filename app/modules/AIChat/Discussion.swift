@@ -1,6 +1,7 @@
 import Foundation
 import Cocoa
 import AIAccounts
+import AIChatRecords
 import AILocalization
 import AISpaces
 import AIRuntime

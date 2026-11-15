@@ -78,9 +78,6 @@ below cover it.
   dependency's public interface names.
 - S2: `AILocalization` has no internal name (only `L()` and `AppLanguage`, all public): its boundary file says `# none:`.
 - G2: `AILocalization` had no contract test; step M added `localization_contract.swift` rather than an exception.
-- `@_exported import AIChatRecords` in `AIChat/ChatApp.swift` (T4): ChatWindow.swift, Markdown.swift and Pictures.swift use the
-  moved values but were not to be edited, and Swift imports are per file. AIChat and App see the same names as before;
-  G1 still checks the edge. Without it: one `import AIChatRecords` line in each file that names a moved type.
 
 ## Module map
 
@@ -118,12 +115,12 @@ entries per call); those branches were not changed.
 | AIChatRecords | chat record values (pictures, documents, sync origins…), the chats/ path, dropped files, collab log, disk report; no providers; knows no Discussion | AIAccounts, AILocalization, AIRuntime, AIWorkspace |
 | AIChat | chat records/state/storage, routing, meetings/reviews, ask_ai, attachments, DeviceSync, chat/Space views; Peer/Convene/Chat/Memory/Storage providers | AIAccounts, AILocalization, AIRuntime, AIWorkspace, AIProjects, AISpaces, AIChatRecords |
 | AIIntegrations | Google auth/Drive gate, external MCP connections, AI Face; no providers | AIAccounts, AILocalization, AIRuntime (interface only), AIWorkspace |
-| App (app/macos) | startup, menu/settings, screens, update/login, wiring and explicit 13-provider list; Face/Drive/ExternalMCP conformances | all nine modules: eight imported directly, AIChatRecords through AIChat's `@_exported import` |
+| App (app/macos) | startup, menu/settings, screens, update/login, wiring and explicit 13-provider list; Face/Drive/ExternalMCP conformances | all nine modules, each imported directly by the files that use it |
 
 Arrows mean imports, from caller to dependency (all direct edges are in the table):
 
 ```text
-App            -> the eight other modules directly; AIChatRecords through AIChat's `@_exported import`
+App            -> all nine modules directly
 AIChat         -> AIChatRecords, AIProjects, AISpaces, AIWorkspace, AIRuntime, AIAccounts, AILocalization
 AIChatRecords  -> AIWorkspace, AIRuntime, AIAccounts, AILocalization
 AIProjects     -> AIWorkspace, AIRuntime, AIAccounts, AILocalization
@@ -651,8 +648,8 @@ The lower layer of the chat that knows no Discussion, Route, chat window or Chat
 RoomDocuments stays in `AIChat/RoomDocuments.swift` (same file name: run_mode2 C0's table). Not moved (T3: they lean on
 `ChatTurn`/`Conversation`/Discussion or the chat window uses their insides): ChatRecords, DeviceSync, Memory, ChatNotes.
 Depends on AIAccounts, AILocalization, AIRuntime (`NativeSessions.directory` in the report), AIWorkspace (`DiskUsage`,
-`WorkspaceBackup.base`); no cycle (Workspace already uses Runtime). Users: AIChat, and through its `@_exported import` the App
-(Settings' Storage and collaboration tabs, DriveLink).
+`WorkspaceBackup.base`); no cycle (Workspace already uses Runtime). Users: AIChat and the App
+(Settings' Storage and collaboration tabs, DriveLink), each file with its own `import AIChatRecords`.
 
 | Promise | Users | Module test (`chatrecords_contract.swift`) | User tests |
 |---|---|---|---|
@@ -803,6 +800,13 @@ changed with the user's advance approval for this plan (a new module is a graph 
 or App file changed; ChatWindow/Markdown/Pictures untouched (`@_exported import`, Exceptions). 9 public names added, each
 with its reason above. Checks: fast G1-G7, full run_mode2 (57 tests), render_chat. Falsified in a copy: AIChat in its
 dependencies fails G1; `CollabLog.maxBytes` public fails S1; an App file using it fails to compile ("inaccessible").
+
+### AIChatRecords imported directly, no `@_exported` (2026-11-15)
+
+T4's `@_exported import AIChatRecords` in `AIChat/ChatApp.swift` is gone (removed from Exceptions): 20 AIChat files
+(ChatApp's line now a plain import) and 2 App files (`ChatLinksApp.swift`, `Settings.swift`) say `import AIChatRecords`, so import
+lines again show who uses a module. No graph or guard change (App is outside `module_graph.txt`; AIChat already
+declared the edge). S1 snapshots unchanged: `@_exported` re-exports names but does not change AIChat's own public API.
 
 ### Stable publish screen API
 

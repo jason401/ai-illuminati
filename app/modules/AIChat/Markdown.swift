@@ -1,4 +1,5 @@
 import SwiftUI
+import AIChatRecords
 import AILocalization
 
 // Chat replies in Markdown: headings, tables and rules become their own pieces, the rest stays

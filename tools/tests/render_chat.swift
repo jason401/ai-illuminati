@@ -1,5 +1,6 @@
 import Cocoa
 import SwiftUI
+import AIChatRecords
 import AILocalization
 import AIAccounts
 import AIWorkspace

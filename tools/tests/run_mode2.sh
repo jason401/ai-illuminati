@@ -238,7 +238,7 @@ late_stages() {
 late_start() {
   perl -e '
     use POSIX ":sys_wait_h";
-    my $main = getppid(); setpgrp(0, 0);
+    my $main = shift; setpgrp(0, 0);   # run_mode2 names itself: read later, getppid could already be launchd
     my $pid = fork // die "fork: $!\n";
     if (!$pid) { exec @ARGV or die "exec: $!\n" }
     sub stop { $SIG{TERM} = "IGNORE"; kill "TERM", -$$; sleep 2; kill "KILL", -$$ }
@@ -248,7 +248,7 @@ late_start() {
       stop() if getppid() != $main;
       select(undef, undef, undef, 0.2);
     }
-  ' zsh -fc "set -eu; zmodload zsh/datetime; $(typeset -p TEST_DIR CACHE MODULES SELECT SPACE_WEB)
+  ' $$ zsh -fc "set -eu; zmodload zsh/datetime; $(typeset -p TEST_DIR CACHE MODULES SELECT SPACE_WEB)
     $(typeset -f limit secs stage_end stage part late_stages); STAGE= STAGE_T0=; late_stages" \
     > "$TEST_DIR/late.log" 2>&1 < /dev/null &
   LATE_PID=$!

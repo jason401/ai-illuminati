@@ -46,18 +46,38 @@ public enum ChatApp {
     public static var driveRule: () -> String? = { nil }
 
     // The app's screens shown inside the chat window: the TODO board (its sidebar row, the board, a chat's TODO cards),
-    // Project info and its rename, the Drive section of the sidebar, the app's icon.
+    // Project info and its rename, the app's icon. (Drive's sidebar rows come in through FolderSources.)
     public struct Screens {
         public var boardRow: (Discussion) -> AnyView = { _ in AnyView(EmptyView()) }
         public var board: (Discussion) -> AnyView = { _ in AnyView(EmptyView()) }
         public var cards: (UUID, Discussion) -> AnyView = { _, _ in AnyView(EmptyView()) }
         public var projectInfo: (Discussion, String) -> AnyView = { _, _ in AnyView(EmptyView()) }
         public var renameProject: (String, String) -> Void = { _, _ in }
-        public var drive: () -> AnyView = { AnyView(EmptyView()) }
         public var icon: (Bool) -> NSImage = { _ in NSImage() }
         public init() {}
     }
     public static var screens = Screens()
+}
+
+// Folders from outside this Mac, listed in the sidebar's Shared folders after the local ones (Google Drive now; another
+// cloud is one more entry): its item in the section's + menu, its rows (with its own account hints) and how many folders
+// it has, so the section shows one empty hint only while every kind is empty. Only the list is shared, not the storage.
+// The rows stay in the view while the section is folded (SidebarFold "shared"): they hide their own content there.
+public struct FolderSource {
+    public let id: String
+    public var addTitle: String
+    public var add: () -> Void
+    public var rows: () -> AnyView
+    public init(id: String, addTitle: String, add: @escaping () -> Void, rows: @escaping () -> AnyView) {
+        self.id = id; self.addTitle = addTitle; self.add = add; self.rows = rows
+    }
+}
+
+public final class FolderSources: ObservableObject {
+    public static let shared = FolderSources()
+    @Published public var list: [FolderSource] = []
+    @Published public var counts: [String: Int] = [:]
+    var isEmpty: Bool { list.allSatisfy { (counts[$0.id] ?? 0) == 0 } }
 }
 
 extension RunConditions {

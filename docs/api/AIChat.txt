@@ -43,7 +43,6 @@ ChatApp.Screens | struct Screens
 ChatApp.Screens.board | var board: (Discussion) -> AnyView
 ChatApp.Screens.boardRow | var boardRow: (Discussion) -> AnyView
 ChatApp.Screens.cards | var cards: (UUID, Discussion) -> AnyView
-ChatApp.Screens.drive | var drive: () -> AnyView
 ChatApp.Screens.icon | var icon: (Bool) -> NSImage
 ChatApp.Screens.init() | init()
 ChatApp.Screens.projectInfo | var projectInfo: (Discussion, String) -> AnyView
@@ -297,6 +296,16 @@ Discussion.viewingBoard | @Published var viewingBoard: Bool { get set }
 Discussion.viewingRemote | @Published var viewingRemote: RemoteViewing? { get set }
 Enterprise | enum Enterprise
 Enterprise.permits(_:lock:) | static func permits(_ account: Account, lock: EnterpriseLock?) -> Bool
+FolderSource | struct FolderSource
+FolderSource.add | var add: () -> Void
+FolderSource.addTitle | var addTitle: String
+FolderSource.id | let id: String
+FolderSource.init(id:addTitle:add:rows:) | init(id: String, addTitle: String, add: @escaping () -> Void, rows: @escaping () -> AnyView)
+FolderSource.rows | var rows: () -> AnyView
+FolderSources | final class FolderSources
+FolderSources.counts | @Published var counts: [String : Int] { get set }
+FolderSources.list | @Published var list: [FolderSource] { get set }
+FolderSources.shared | static let shared: FolderSources
 MaterialReader | enum MaterialReader
 MaterialReader.read(_:room:) | static func read(_ source: URL, room: UUID) throws -> RoomDocument
 MemoryData | struct MemoryData

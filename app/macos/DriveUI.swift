@@ -7,7 +7,7 @@ import AILocalization
 import AIChat
 import AIIntegrations
 
-// Google Drive in the chat sidebar, under Shared folders: connect (read only), the Drive folders the AIs may read
+// Google Drive in the chat sidebar, inside Shared folders after the local ones: connect (read only), the Drive folders the AIs may read
 // (each with an eye to pause it), and the folder picker. The login lives in GoogleAuth (Keychain); the gate that
 // keeps the AIs inside these folders is DriveLink.isAllowed.
 struct DriveTreeItem: Identifiable {
@@ -45,6 +45,7 @@ final class DriveCenter: ObservableObject {
     @Published private(set) var signingIn = false
     @Published private(set) var email: String?
     @Published var picking = false
+    private var pickAfterSignIn = false
     let picker = DrivePicker()
     @Published var folders: [DriveFolder] = DriveLink.folders {
         didSet {
@@ -202,8 +203,8 @@ final class DriveCenter: ObservableObject {
                     guard self.attempt == current else { return }
                     self.signingIn = false; self.refresh()
                     switch result {
-                    case .success: if self.folders.isEmpty { self.picking = true }
-                    case .failure(let error): self.show(error)
+                    case .success: if self.folders.isEmpty || self.pickAfterSignIn { self.picking = true }; self.pickAfterSignIn = false
+                    case .failure(let error): self.pickAfterSignIn = false; self.show(error)
                     }
                 }
             }
@@ -220,8 +221,8 @@ final class DriveCenter: ObservableObject {
                     self.signingIn = false
                     self.refresh()
                     switch result {
-                    case .success: if self.folders.isEmpty { self.picking = true }
-                    case .failure(let error): self.show(error)
+                    case .success: if self.folders.isEmpty || self.pickAfterSignIn { self.picking = true }; self.pickAfterSignIn = false
+                    case .failure(let error): self.pickAfterSignIn = false; self.show(error)
                     }
                 }
             }
@@ -233,7 +234,16 @@ final class DriveCenter: ObservableObject {
         } catch { show(error) }
     }
 
+    // The Shared folders + menu: the picker now, or after the sign-in it starts (cancelled alerts leave no flag behind).
+    func addFolder() {
+        if connected { picking = true; return }
+        pickAfterSignIn = true
+        connect()
+        if !signingIn { pickAfterSignIn = false }
+    }
+
     func cancelSignIn() {
+        pickAfterSignIn = false
         attempt = UUID()
         signingIn = false
         GoogleAuth.shared.cancelAuthorization()
@@ -293,39 +303,28 @@ final class DriveCenter: ObservableObject {
     }
 }
 
-// The sidebar section under Shared folders.
+// Drive's rows in the sidebar's Shared folders section, after the local folders (ChatScreensApp registers it as a
+// FolderSource): one hint line for the account (signing in, reconnect, off) above the folder tree. Kept in the view
+// while the section is folded so the picker sheet and the refreshes still run.
 struct DriveSidebarSection: View {
     @ObservedObject var center = DriveCenter.shared
     @ObservedObject private var folds = SidebarFold.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
-            SidebarHeader(title: "Google Drive", fold: "drive") {
-                if center.signingIn {
-                    ProgressView().controlSize(.mini).frame(width: 22, height: 22)
-                } else {
-                    Button(action: { center.connected ? (center.picking = true) : center.connect() }) {
-                        Image(systemName: "plus").font(.system(size: 11, weight: .semibold)).frame(width: 22, height: 22)
-                    }
-                    .buttonStyle(.plainHit).foregroundColor(.secondary)
-                    .help(center.connected ? L("AI가 읽을 드라이브 폴더 추가", "Add a Drive folder the AIs can read")
-                                           : L("Google 드라이브 연결 (읽기 전용)", "Connect Google Drive (read only)"))
-                    .accessibilityLabel(center.connected ? L("드라이브 폴더 추가", "Add Drive folder") : L("드라이브 연결", "Connect Drive"))
-                }
-            }
-            if folds.isFolded("drive") {
+            if folds.isFolded("shared") {
             } else if center.signingIn {
                 hint(L("구글 로그인 창에서 허용을 눌러 주세요 · 취소", "Press Allow in the Google sign-in window · Cancel"), symbol: "safari") { center.cancelSignIn() }
             } else if center.needsReconnect {
-                hint(L("다시 연결 필요", "Reconnect needed"), symbol: "exclamationmark.triangle", color: .orange) { center.connect() }
+                hint(L("Google Drive 다시 연결 필요", "Google Drive: reconnect needed"), symbol: "exclamationmark.triangle", color: .orange) { center.connect() }
             } else if !center.connected {
-                hint(L("드라이브 연결 · 읽기 전용", "Connect Drive · read only"), symbol: "cloud") { center.connect() }
-            } else {
-                if !center.on {
-                    hint(L("꺼 둠 · 눌러서 켜기", "Off · click to turn on"), symbol: "power") { center.on = true }
+                // No folders and no login: nothing to show; the section's + menu is where Drive starts.
+                if !center.folders.isEmpty {
+                    hint(L("Google Drive 연결 안 됨 · 눌러서 연결 (폴더 \(center.folders.count)개)", "Google Drive not connected · click to connect (\(center.folders.count) folders)"), symbol: "cloud") { center.connect() }
                 }
-                if center.folders.isEmpty {
-                    hint(L("폴더 추가 · AI가 읽을 드라이브 폴더", "Add a folder · the AIs read only these"), symbol: "folder.badge.plus") { center.picking = true }
+            } else {
+                if !center.on && !center.folders.isEmpty {
+                    hint(L("Google Drive 꺼 둠 · 눌러서 켜기", "Google Drive off · click to turn on"), symbol: "power") { center.on = true }
                 }
                 ForEach(center.treeRows) { item in
                     row(item)
@@ -348,6 +347,7 @@ struct DriveSidebarSection: View {
         }
         .sheet(isPresented: $center.picking) { DriveFolderPicker(center: center) }
         .onAppear { center.refresh() }
+        .onReceive(center.$folders) { FolderSources.shared.counts["drive"] = $0.count }   // the section's empty hint
         .onReceive(Timer.publish(every: 60, on: .main, in: .common).autoconnect()) { _ in center.refresh() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in center.refresh() }
     }
@@ -363,7 +363,9 @@ struct DriveSidebarSection: View {
         .contextMenu { accountMenu }
     }
 
-    // Double-click opens it in the browser; the eye pauses it (it stays listed); right-click to remove.
+    // Like a local folder row: double-click opens it (in the browser), then the pencil (writing, inherited by
+    // subfolders) and the eye (roots only; a subfolder keeps the eye's place empty so the pencils line up).
+    // Right-click to remove a root, and for the account.
     private func row(_ item: DriveTreeItem) -> some View {
         let folder = item.folder, root = item.depth == 0
         let paused = (item.ancestors + [folder.id]).contains { center.paused.contains($0) }
@@ -375,7 +377,7 @@ struct DriveSidebarSection: View {
                 Image(systemName: center.expanded.contains(folder.id) ? "chevron.down" : "chevron.right")
                     .font(.system(size: 9, weight: .semibold)).foregroundColor(.secondary).frame(width: 22, height: 24)
             }.buttonStyle(.plainHit).accessibilityLabel(L("하위 폴더 펼치기/접기", "Expand/collapse subfolders"))
-            Image(systemName: root ? "cloud" : "folder").foregroundColor(.secondary).frame(width: 16)
+            Image(systemName: root ? "cloud" : "folder").foregroundColor(.secondary).frame(width: 18)
             Text(folder.name).lineLimit(1).foregroundColor(paused || !center.on ? .secondary : .primary)
             Spacer(minLength: 2)
             Menu {
@@ -383,27 +385,35 @@ struct DriveSidebarSection: View {
                 Button(L("읽기 전용", "Read Only")) { center.setWritable(folder, false, rootID: item.rootID) }
                 Button(L("상위 폴더 설정 따르기", "Inherit Parent Permission")) { center.writeRules.removeValue(forKey: folder.id) }
             } label: {
-                Image(systemName: writable ? "pencil" : "lock")
-                    .font(.system(size: 11)).foregroundColor(explicit ? .primary : .secondary).frame(width: 24, height: 24)
+                // Inherited from a parent: the same pencil, fainter.
+                Image(systemName: writable ? "pencil" : "pencil.slash").font(.system(size: 12, weight: .medium))
+                    .foregroundColor(writable ? .accentColor.opacity(explicit ? 1 : 0.55) : .secondary.opacity(explicit ? 0.6 : 0.35))
+                    .frame(width: 24, height: 24)
             }
-            .menuStyle(.borderlessButton).fixedSize()
-            .help(L("이 폴더와 하위 폴더의 쓰기 권한", "Writing permission for this folder and descendants"))
+            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+            .help((writable ? L("쓰기 허용: AI가 drive_* 도구로 이 폴더와 하위 폴더를 고칠 수 있어요", "Writable: the AIs may change this folder and its subfolders with the drive_* tools")
+                            : L("읽기만: AI가 drive_* 도구로 읽기만 해요", "Read only: the AIs only read it with the drive_* tools"))
+                  + (explicit ? "" : L(" (상위 폴더 설정을 따름)", " (inherited from the parent)")) + L(" · 눌러서 바꾸기", " · Click to change"))
+            .accessibilityLabel(L("쓰기 권한", "Writing permission"))
             if root {
-            Button(action: { center.togglePaused(folder.id) }) {
-                Image(systemName: paused ? "eye.slash" : "eye").font(.system(size: 12))
-                    .foregroundColor(.secondary.opacity(paused ? 0.6 : 0.9)).frame(width: 24, height: 24)
-            }
-            .buttonStyle(.plainHit)
-            .help(paused ? L("공유 꺼짐: AI가 이 폴더를 못 봐요. 눌러서 켜기", "Not shared: the AIs cannot see it. Click to share")
-                         : L("공유 중: 일반 채팅의 AI가 볼 수 있어요. 쓰기는 별도 폴더 설정을 따릅니다. 눌러서 끄기", "Shared: the AI in plain chat can read it. Writing follows folder permissions. Click to stop"))
-            .accessibilityLabel(paused ? L("공유 켜기", "Share") : L("공유 끄기", "Stop sharing"))
+                Button(action: { center.togglePaused(folder.id) }) {
+                    Image(systemName: paused ? "eye.slash" : "eye").font(.system(size: 12))
+                        .foregroundColor(.secondary.opacity(paused ? 0.6 : 0.9)).frame(width: 24, height: 24)
+                }
+                .buttonStyle(.plainHit)
+                .help(paused ? L("공유 꺼짐: AI가 이 드라이브 폴더를 못 봐요. 눌러서 켜기", "Not shared: the AIs cannot see this Drive folder. Click to share")
+                             : L("공유 중: 일반 채팅의 AI(Claude·Codex)가 drive_* 도구로만 읽어요. 파일로는 안 보이고, 함께 묻는 AI·회의·토론 모드에는 없어요. 눌러서 끄기",
+                                 "Shared: the AI of plain chats (Claude, Codex) reads it only through the drive_* tools. It is not a file, and AIs asked along, meetings and discussion modes do not get it. Click to stop"))
+                .accessibilityLabel(paused ? L("공유 켜기", "Share") : L("공유 끄기", "Stop sharing"))
+            } else {
+                Color.clear.frame(width: 24, height: 24)
             }
         }
         .font(.system(size: 13))
-        .padding(.leading, 6 + CGFloat(min(item.depth, 8)) * 12).padding(.trailing, 8).frame(height: 28)
+        .padding(.leading, 6 + CGFloat(min(item.depth, 8)) * 12).padding(.trailing, 10).frame(height: root ? 30 : 28)
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { NSWorkspace.shared.open(link) }
-        .help(folder.name + (center.email.map { "\n" + $0 } ?? "") + "\n" + L("두 번 눌러 브라우저에서 열기", "Double-click to open in the browser"))
+        .help(folder.name + " · Google Drive" + (center.email.map { "\n" + $0 } ?? "") + "\n" + L("두 번 눌러 브라우저에서 열기", "Double-click to open in the browser"))
         .contextMenu {
             Button(L("쓰기 허용…", "Allow Writing…")) { center.setWritable(folder, true, rootID: item.rootID) }
             Button(L("읽기 전용", "Read Only")) { center.setWritable(folder, false, rootID: item.rootID) }
@@ -411,7 +421,7 @@ struct DriveSidebarSection: View {
             Button(L("하위 폴더 새로고침", "Refresh Subfolders")) { center.expanded.insert(folder.id); center.loadChildren(folder.id, force: true) }
             if root {
             Button(paused ? L("공유 켜기", "Share") : L("공유 끄기", "Stop sharing")) { center.togglePaused(folder.id) }
-            Button(L("드라이브 폴더에서 빼기", "Remove from Drive folders"), role: .destructive) { center.folders.removeAll { $0.id == folder.id } }
+            Button(L("공동 폴더에서 빼기", "Remove from shared folders"), role: .destructive) { center.folders.removeAll { $0.id == folder.id } }
             }
             Divider()
             accountMenu
@@ -419,9 +429,10 @@ struct DriveSidebarSection: View {
     }
 
     @ViewBuilder private var accountMenu: some View {
+        if !center.connected { Button(L("Google Drive 연결…", "Connect Google Drive…")) { center.connect() } }
         Button(L("내 등록 파일로 연결…", "Connect with Own Client File…")) { center.connectOwnClient() }
         if center.connected {
-        Button(L("폴더 추가…", "Add Folder…")) { center.picking = true }
+        Button(L("Google Drive 폴더 추가…", "Add Google Drive Folder…")) { center.picking = true }
         Button(center.on ? L("드라이브 끄기", "Turn Drive Off") : L("드라이브 켜기", "Turn Drive On")) { center.on.toggle() }
         Button(L("다시 연결…", "Reconnect…")) { center.connect() }
         Button(L("연결 끊기…", "Disconnect…")) { center.disconnect() }

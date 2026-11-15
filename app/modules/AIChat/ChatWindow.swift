@@ -36,6 +36,7 @@ struct ChatView<Model: ChatSettings>: View {
     @ObservedObject private var sync = DeviceSync.shared
     @ObservedObject private var approvals = ProjectCenter.shared
     @ObservedObject private var folds = SidebarFold.shared
+    @ObservedObject private var folderSources = FolderSources.shared
     @ObservedObject private var todos = TodoStore.shared
     @ObservedObject private var projectInfo = ProjectInfoStore.shared
     @ObservedObject private var photo = PhotoViewer.shared
@@ -159,7 +160,6 @@ struct ChatView<Model: ChatSettings>: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 1) {
                     sharedFolders
-                    ChatApp.screens.drive().disabled(discussion.importingMaterials)
                     // A new chat with nothing in it yet is not listed (like the desktop apps); it appears once it has a message.
                     // Searching: the filters apply, and words find chats by their messages and answers too.
                     let chats = discussion.listedConversations.filter {
@@ -1583,19 +1583,24 @@ struct ChatView<Model: ChatSettings>: View {
         }.disabled(discussion.running || discussion.importingMaterials)
     }
 
-    // Folders every chat's AI may read (read only for now). Right-click to open or remove.
+    // Shared folders: this Mac's folders first (plain chats' AIs read them as files), then each outside kind's rows
+    // (Google Drive: read only through its drive_* tools). One section, one + menu; each kind keeps its own storage.
     private var sharedFolders: some View {
         VStack(alignment: .leading, spacing: 1) {
             SidebarHeader(title: L("공동 폴더", "Shared folders"), fold: "shared") {
-                Button(action: { model.addSharedFolder() }) { Image(systemName: "plus").font(.system(size: 11, weight: .semibold)).frame(width: 22, height: 22) }
-                    .buttonStyle(.plainHit).foregroundColor(.secondary)
-                    .help(L("모든 대화의 AI가 읽을 폴더 추가", "Add a folder every chat's AI can read"))
-                    .accessibilityLabel(L("공동 폴더 추가", "Add shared folder"))
+                Menu { addSharedMenu } label: {
+                    Image(systemName: "plus").font(.system(size: 11, weight: .semibold)).frame(width: 22, height: 22)
+                }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                .foregroundColor(.secondary)
+                .help(L("공동 폴더 추가: 이 Mac의 폴더 또는 Google Drive 폴더", "Add a shared folder: one on this Mac or in Google Drive"))
+                .accessibilityLabel(L("공동 폴더 추가", "Add shared folder"))
             }
             if folds.isFolded("shared") {
-            } else if model.sharedFolders.isEmpty {
-                Button(action: { model.addSharedFolder() }) {
-                    Label(L("폴더 추가 · 모든 대화에서 읽기", "Add a folder · read in every chat"), systemImage: "folder.badge.plus")
+            } else if model.sharedFolders.isEmpty && folderSources.isEmpty {
+                // A plain button (a Menu's label would not take the hint's gray) that opens the + menu's items.
+                Button(action: popUpAddShared) {
+                    Label(L("폴더 추가 · 로컬 또는 Google Drive", "Add a folder · local or Drive"), systemImage: "folder.badge.plus")
                         .font(.system(size: 12)).foregroundColor(.secondary)
                         .padding(.horizontal, 10).frame(height: 28, alignment: .leading)
                 }
@@ -1630,7 +1635,8 @@ struct ChatView<Model: ChatSettings>: View {
                     }
                     .buttonStyle(.plainHit)
                     .help(paused ? L("공유 꺼짐: AI가 이 폴더를 못 봐요. 눌러서 켜기", "Not shared: the AIs cannot see it. Click to share")
-                                 : L("공유 중: 모든 대화의 AI가 볼 수 있어요. 눌러서 끄기", "Shared: every chat's AI can see it. Click to stop"))
+                                 : L("공유 중: 일반 채팅의 AI가 파일로 바로 읽어요 (함께 묻는 AI·회의는 읽기만, 토론 모드에는 안 보여요). 눌러서 끄기",
+                                     "Shared: the AIs of plain chats read it as files (AIs asked along and meetings read only; not in discussion modes). Click to stop"))
                     .accessibilityLabel(paused ? L("공유 켜기", "Share") : L("공유 끄기", "Stop sharing"))
                 }
                 .font(.system(size: 13))
@@ -1648,8 +1654,28 @@ struct ChatView<Model: ChatSettings>: View {
                     Button(L("공동 폴더에서 빼기", "Remove from shared folders"), role: .destructive) { model.sharedFolders.removeAll { $0 == path } }
                 }
             }
+            // Shown folded too: a kind's rows hide themselves under the fold but keep their sheets and refreshes.
+            ForEach(folderSources.list, id: \.id) { source in source.rows() }
         }
         .disabled(discussion.importingMaterials)
+    }
+
+    private func popUpAddShared() {
+        let menu = NSMenu()
+        let actions = [(L("로컬 폴더…", "Local Folder…"), { model.addSharedFolder() })] + folderSources.list.map { ($0.addTitle, $0.add) }
+        for (title, run) in actions {
+            let target = SidebarMenuAction(run)
+            let item = NSMenuItem(title: title, action: #selector(SidebarMenuAction.fire), keyEquivalent: "")
+            item.target = target; item.representedObject = target   // the item keeps its target alive
+            menu.addItem(item)
+        }
+        menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+    }
+
+    // Local first, then each outside kind (another cloud later is one more FolderSource).
+    @ViewBuilder private var addSharedMenu: some View {
+        Button(L("로컬 폴더…", "Local Folder…")) { model.addSharedFolder() }
+        ForEach(folderSources.list, id: \.id) { source in Button(source.addTitle) { source.add() } }
     }
 
     // Mode 0: this chat's folder and links on the right; everything else lives in the message box.
@@ -2843,6 +2869,12 @@ private struct PictureStrip: View {
 
 // A picture where its marker was in the reply: as wide as the chat allows, at most `maxSide` points
 // and never larger than the picture itself.
+final class SidebarMenuAction: NSObject {
+    let run: () -> Void
+    init(_ run: @escaping () -> Void) { self.run = run }
+    @objc func fire() { run() }
+}
+
 struct InlinePicture: View {
     let item: ChatImage
     let maxSide: CGFloat

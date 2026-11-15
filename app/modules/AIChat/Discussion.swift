@@ -59,8 +59,9 @@ public final class Discussion: ObservableObject {
     var debateAnswer: (Account, String, TimeInterval, DebateCancellation, Bool) -> Result<String, Answerer.Failure> = {
         Answerer.ask($0, prompt: $1, timeout: $2, cancellation: $3, web: $4, run: .app($0))
     }
-    @Published var draft = ""
-    @Published var pendingImages: [ChatImage] = []
+    // The open chat's message box; every other chat's unsent box waits in roomDrafts (RoomDrafts below).
+    @Published var draft = "" { didSet { if draft != oldValue { draftsChanged() } } }
+    @Published var pendingImages: [ChatImage] = [] { didSet { if pendingImages != oldValue { draftsChanged() } } }
     @Published var attachmentError: String?
     @Published var sessionNote = "" {
         // A worker's notes show only while its chat is the open one.
@@ -204,7 +205,7 @@ public final class Discussion: ObservableObject {
     }
     @Published var teamSettingsOpen = false   // the team mode settings popover in the message box
     // @ in the message box: the accounts picked so far, and the list while it is open.
-    @Published var draftMentions: [String] = []
+    @Published var draftMentions: [String] = [] { didSet { if draftMentions != oldValue { draftsChanged() } } }
     @Published var mentionQuery: String?      // what was typed after @ (the list is open while this is set)
     @Published var mentionIndex = 0
     var mentionLocation = 0
@@ -291,12 +292,18 @@ public final class Discussion: ObservableObject {
         nativeSessions = NativeSessions()
         // The newest blank chat (settings only) becomes the new chat, so its settings are kept;
         // older blank ones hold nothing and are removed.
+        // A blank chat with an unsent message box stays, also one never saved (a new chat typed into before quitting).
         let loaded = ChatStore.loadAll()
-        let blanks = loaded.filter { !$0.hasContent }
+        let saved = Self.loadDrafts(known: Set(loaded.map(\.id)))
+        let blanks = loaded.filter { !$0.hasContent && saved[$0.id] == nil }
         for old in blanks.dropFirst() { try? ChatStore.delete(old) }
-        let fresh = blanks.first ?? Conversation()
-        conversations = [fresh] + loaded.filter(\.hasContent)
+        let drafted = loaded.filter { !$0.hasContent && saved[$0.id] != nil }
+            + saved.keys.filter { id in !loaded.contains { $0.id == id } }.sorted { $0.uuidString < $1.uuidString }.map { Conversation(id: $0) }
+        let fresh = blanks.first ?? drafted.first ?? Conversation()
+        conversations = [fresh] + drafted.filter { $0.id != fresh.id } + loaded.filter(\.hasContent)
         currentID = fresh.id
+        roomDrafts = saved
+        restoreDraft()
         linkChatTools()
         SidebarFold.shared.adoptPins(conversations)
     }
@@ -492,9 +499,11 @@ public final class Discussion: ObservableObject {
     func runToken(_ room: UUID) -> DebateCancellation? { workers[room]?.runCancellation }
 
     // Leaving a blank chat: drop it from the list and remove its settings-only file.
+    // One with an unsent message box (hasDraft) stays: leaving it keeps what was typed.
     func dropBlanks(except keep: UUID?) {
-        for blank in conversations where !blank.hasContent && blank.id != keep { try? ChatStore.delete(blank) }
-        conversations.removeAll { !$0.hasContent && $0.id != keep }
+        let drop = conversations.filter { !$0.hasContent && $0.id != keep && !hasDraft($0.id) }
+        for blank in drop { try? ChatStore.delete(blank) }
+        conversations.removeAll { chat in drop.contains { $0.id == chat.id } }
     }
 
     public var current: Conversation { conversation(currentID) }
@@ -508,22 +517,29 @@ public final class Discussion: ObservableObject {
         viewingSpace = nil
         if viewingRemote != nil && current.turns.isEmpty { viewingRemote = nil; return }
         if current.turns.isEmpty && (current.documents ?? []).isEmpty && current.workspace == nil { return }
-        discardPendingImages()
+        // A loose blank chat left with something typed is the new chat again, with its box.
+        if let blank = conversations.first(where: { !$0.hasContent && $0.meetingOf == nil && $0.origin == nil && roomDrafts[$0.id] != nil }) {
+            open(blank.id); return
+        }
+        stashDraft()
         viewingRemote = nil
         dropBlanks(except: nil)
         let fresh = Conversation()
         conversations.insert(fresh, at: 0)
         currentID = fresh.id
+        restoreDraft()
     }
 
     public func open(_ id: UUID) {
         guard !importingMaterials else { return }
-        if currentID != id { discardPendingImages() }
+        let leaving = currentID != id
+        if leaving { stashDraft() }   // the box goes with the chat it was typed in, and comes back with it
         viewingRemote = nil
         viewingBoard = false
         viewingSpace = nil
         dropBlanks(except: id)
         currentID = id
+        if leaving { restoreDraft() }
         sessionNote = ""
     }
 
@@ -595,14 +611,15 @@ public final class Discussion: ObservableObject {
             // Its meetings first: a chat whose meeting could not be deleted is kept, so no meeting is left without its chat.
             guard removeMeetings(of: conversation.id) == 0 else { failed += 1; continue }
             do {
-                try ChatStore.delete(conversation)
+                try ChatStore.delete(conversation)   // its waiting pictures go with its .assets folder
                 conversations.removeAll { $0.id == conversation.id }
+                roomDrafts[conversation.id] = nil
             } catch { failed += 1 }
         }
         // Leave exactly one empty "new chat": the open one if it is empty, else a fresh one.
         dropBlanks(except: currentID)
         if !conversations.contains(where: { $0.id == currentID }) {
-            pendingImages = []; attachmentError = nil; draft = ""
+            pendingImages = []; attachmentError = nil; draft = ""; draftMentions = []
             let fresh = Conversation()
             conversations.insert(fresh, at: 0)
             currentID = fresh.id
@@ -716,11 +733,13 @@ public final class Discussion: ObservableObject {
             return
         }
         conversations.removeAll { $0.id == id }
+        roomDrafts[id] = nil
         removeMeetings(of: id)
         if currentID == id {
             pendingImages = []
             attachmentError = nil
             draft = ""
+            draftMentions = []
             let fresh = Conversation()
             conversations.insert(fresh, at: 0)
             currentID = fresh.id
@@ -1383,5 +1402,104 @@ public final class Discussion: ObservableObject {
             return L("답하지 못했어요.", "Could not respond.") + (why.isEmpty ? "" : " (\(why))")
         }
     }
-}
 
+    // MARK: RoomDrafts: each chat's unsent message box (text, @ names, waiting pictures). The open chat's box is
+    // draft/draftMentions/pendingImages; leaving a chat moves it here (stashDraft), opening one brings its box back
+    // (restoreDraft). Only sending, emptying the box or deleting the chat throws it away. Kept on this Mac only
+    // (draftsFile), never synced; the pictures stay in the chat's .assets folder and only their names are written.
+    struct RoomDraft: Codable, Equatable {
+        var text = ""
+        var mentions: [String] = []
+        var images: [ChatImage] = []
+        var blank: Bool?   // its chat had nothing saved yet (a new chat): it comes back after a restart
+        var isEmpty: Bool { text.isEmpty && images.isEmpty }
+    }
+    /// Where the unsent message boxes are kept between launches; set by the app before the first chat loads.
+    /// nil (tests, other programs): in memory only.
+    public static var draftsFile: URL?
+    var roomDrafts: [UUID: RoomDraft] = [:] { didSet { draftsChanged() } }
+    private var draftsSave: DispatchWorkItem?
+
+    func hasDraft(_ room: UUID) -> Bool {
+        roomDrafts[room] != nil || (room == currentID && !(draft.isEmpty && pendingImages.isEmpty))
+    }
+
+    func stashDraft() {
+        commitComposing()
+        let box = RoomDraft(text: draft, mentions: draftMentions, images: pendingImages)
+        // A meeting chat has no message box: nothing is kept for it.
+        if box.isEmpty || current.meetingOf != nil {
+            for item in box.images { try? ImageStore.remove(item) }
+            roomDrafts[currentID] = nil
+        } else {
+            roomDrafts[currentID] = box
+        }
+        draft = ""; draftMentions = []; pendingImages = []
+        attachmentError = nil; mentionQuery = nil; slashMenu = nil
+    }
+
+    func restoreDraft() {
+        let box = roomDrafts.removeValue(forKey: currentID) ?? RoomDraft()
+        draft = box.text; draftMentions = box.mentions; pendingImages = box.images
+    }
+
+    // A Korean (or other) character still being composed is not in `draft` yet, and the box would not take the next
+    // chat's text while it is: finish it first.
+    private func commitComposing() {
+        guard let editor = mentionEditor, editor.hasMarkedText() else { return }
+        editor.unmarkText()
+        editor.inputContext?.discardMarkedText()
+        draft = editor.string
+    }
+
+    private func draftsChanged() {
+        guard host == nil, Self.draftsFile != nil else { return }
+        draftsSave?.cancel()
+        let save = DispatchWorkItem { [weak self] in self?.saveDrafts() }
+        draftsSave = save
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: save)
+    }
+
+    /// Writes the unsent message boxes now (quitting the app; otherwise half a second after a change).
+    public func saveDrafts() {
+        draftsSave?.cancel(); draftsSave = nil
+        guard host == nil, let file = Self.draftsFile else { return }
+        var all = roomDrafts
+        all[currentID] = RoomDraft(text: draft, mentions: draftMentions, images: pendingImages)
+        var out: [String: RoomDraft] = [:]
+        for (room, box) in all where !box.isEmpty && conversation(room).meetingOf == nil {
+            var box = box
+            box.blank = conversations.contains { $0.id == room && !$0.hasContent } ? true : nil
+            out[room.uuidString] = box
+        }
+        do {
+            if out.isEmpty {
+                if FileManager.default.fileExists(atPath: file.path) { try FileManager.default.removeItem(at: file) }
+                return
+            }
+            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try JSONEncoder().encode(out).write(to: file, options: .atomic)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+        } catch {}
+    }
+
+    // The boxes saved last time: pictures whose file is gone are left out; the box of a chat deleted since (not a blank
+    // new chat) goes with its pictures.
+    static func loadDrafts(known: Set<UUID>) -> [UUID: RoomDraft] {
+        guard let file = draftsFile, let data = try? Data(contentsOf: file),
+              let saved = try? JSONDecoder().decode([String: RoomDraft].self, from: data) else { return [:] }
+        var out: [UUID: RoomDraft] = [:]
+        for (key, box) in saved {
+            guard let room = UUID(uuidString: key) else { continue }
+            guard known.contains(room) || box.blank == true else {
+                for item in box.images { try? ImageStore.remove(item) }
+                continue
+            }
+            var box = box
+            box.images = box.images.filter { FileManager.default.fileExists(atPath: $0.url.path) }
+            box.blank = nil
+            if !box.isEmpty { out[room] = box }
+        }
+        return out
+    }
+}

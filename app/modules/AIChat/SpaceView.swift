@@ -654,7 +654,8 @@ struct SpaceSidebarSection: View {
             Divider()
             Button(L("채팅에서 말로 만들기…", "Make one by asking in a chat…")) {
                 discussion.newConversation()
-                discussion.draft = L("Space 만들어 줘: ", "Make a Space: ")
+                let prefix = L("Space 만들어 줘: ", "Make a Space: ")   // a box reopened with words keeps them
+                if !discussion.draft.hasPrefix(prefix) { discussion.draft = prefix + discussion.draft }
             }
             Button(L("Spaces 폴더 열기", "Open the Spaces folder")) { SpaceStyle.reveal(SpaceStore.root) }
         } label: { Image(systemName: "plus").font(.system(size: 11)).frame(width: 22, height: 22) }

@@ -2531,6 +2531,115 @@ do {
 }
 
 
+// Each chat keeps its unsent message box (text, @ names, waiting pictures) while another chat is open and across a
+// restart (a drafts file in the test home), and loses it only when sent or deleted. Fake answers, nothing real.
+func testRoomDrafts() {
+    let file = URL(fileURLWithPath: AccountStore.supportDir + "/drafts-test-\(UUID().uuidString).json")
+    Discussion.draftsFile = file
+    defer { Discussion.draftsFile = nil; try? FileManager.default.removeItem(at: file) }
+    let model = AppModel()
+    model.accounts = [Account(id: "draft-claude", provider: .claude, name: "Draft Claude")]
+    let chat = Discussion(model: model)
+    chat.configure { $0.mode = 0; $0.soloAccountID = "draft-claude" }
+    chat.answer = { _, _, _ in .success("ok") }
+    chat.workspaceAnswer = { _, _, _, _, _ in .success("ok") }
+    chat.debateAnswer = { _, _, _, _, _ in .success("ok") }
+    let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 8, pixelsHigh: 8, bitsPerSample: 8, samplesPerPixel: 4,
+                                  hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+    let png = bitmap.representation(using: .png, properties: [:])!
+    let a = chat.currentID
+    chat.change(a, save: true) { $0.turns = [ChatTurn(question: "a")] }
+    chat.newConversation()
+    let b = chat.currentID
+    chat.change(b, save: true) { $0.turns = [ChatTurn(question: "b")] }
+    chat.open(a)
+
+    // A: text with its last character still being composed, an @ name and a picture.
+    let editor = NSTextView()
+    chat.mentionEditor = editor
+    editor.string = "@Draft Claude 안녕 테스"
+    editor.setSelectedRange(NSRange(location: (editor.string as NSString).length, length: 0))
+    editor.setMarkedText("트", selectedRange: NSRange(location: 1, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
+    expect(editor.hasMarkedText(), "the fixture composes a character")
+    chat.draft = "@Draft Claude 안녕 테스"   // the box has not taken the character being composed
+    chat.draftMentions = ["draft-claude"]
+    try! chat.addImage(png, name: "a.png")
+    let picture = chat.pendingImages[0]
+    chat.open(b)
+    expect(!editor.hasMarkedText() && chat.draft.isEmpty && chat.draftMentions.isEmpty && chat.pendingImages.isEmpty,
+           "leaving finishes the composed character and empties the box for the next chat")
+    expect(FileManager.default.fileExists(atPath: picture.url.path), "a waiting picture is not deleted when its chat is left")
+    chat.draft = "B 초안"
+    chat.open(a)
+    expect(chat.draft == "@Draft Claude 안녕 테스트" && chat.draftMentions == ["draft-claude"] && chat.pendingImages == [picture],
+           "A's box comes back whole, with the composed character: \(chat.draft)")
+    chat.open(b)
+    expect(chat.draft == "B 초안" && chat.pendingImages.isEmpty && chat.draftMentions.isEmpty, "B's box is its own")
+
+    // A blank new chat with something typed is not removed as blank, and the new-chat button opens it again.
+    chat.newConversation()
+    let c = chat.currentID
+    expect(c != a && c != b && chat.draft.isEmpty, "a new chat starts with an empty box")
+    chat.draft = "새 대화 초안"
+    chat.open(a)
+    expect(chat.conversations.contains { $0.id == c }, "a blank chat with a draft stays in the list")
+    chat.newConversation()
+    expect(chat.currentID == c && chat.draft == "새 대화 초안", "the new-chat button reopens the blank chat with its box")
+    chat.open(a)
+
+    // After a restart: the boxes come back (the blank chat too, though it was never saved).
+    chat.saveDrafts()
+    expect(FileManager.default.fileExists(atPath: file.path), "the boxes are written")
+    let written = (try? String(contentsOf: file, encoding: .utf8)) ?? ""
+    expect(!written.contains("summary") && written.contains(picture.id.uuidString), "only the box is written, the picture by name")
+    do {
+        let again = Discussion(model: model)
+        let boxC = again.currentID == c ? again.draft : again.roomDrafts[c]?.text
+        expect(again.roomDrafts[b]?.text == "B 초안" && again.conversations.contains { $0.id == c } && boxC == "새 대화 초안",
+               "after a restart every chat's box is back")
+        // A's box is the open one in `chat`; its restart copy holds the picture and the name.
+        let boxA = again.currentID == a ? (again.draft, again.pendingImages) : (again.roomDrafts[a]?.text ?? "", again.roomDrafts[a]?.images ?? [])
+        expect(boxA.0 == "@Draft Claude 안녕 테스트" && boxA.1 == [picture], "after a restart the open chat's box is back with its picture")
+    }
+    // Pictures whose file is gone are left out; the box of a chat deleted since goes, a blank new chat's comes back.
+    let gone = UUID(), blank = UUID()
+    let stale: [String: Discussion.RoomDraft] = [
+        a.uuidString: .init(text: "x", images: [ChatImage(conversationID: a, name: "gone.png")]),
+        gone.uuidString: .init(text: "deleted chat"),
+        blank.uuidString: .init(text: "new chat", blank: true)]
+    let staleFile = URL(fileURLWithPath: file.path + ".stale")
+    try! JSONEncoder().encode(stale).write(to: staleFile)
+    Discussion.draftsFile = staleFile
+    let loaded = Discussion.loadDrafts(known: [a, b])
+    Discussion.draftsFile = file
+    try? FileManager.default.removeItem(at: staleFile)
+    expect(loaded[a]?.images == [] && loaded[a]?.text == "x" && loaded[gone] == nil && loaded[blank]?.text == "new chat",
+           "on start: missing pictures dropped, a deleted chat's box dropped, a blank chat's kept")
+
+    // Sending empties that chat's box for good; the text being written for a rerun stays (Route.rerun).
+    chat.removePendingImage(picture)   // text only: a picture would go to a real CLI
+    chat.send()
+    waitFor(chat)
+    expect(chat.conversation(a).turns.count == 2 && chat.draft.isEmpty && chat.pendingImages.isEmpty && chat.roomDrafts[a] == nil, "sent: the box is empty")
+    chat.open(b); chat.open(a)
+    expect(chat.draft.isEmpty && chat.pendingImages.isEmpty && chat.draftMentions.isEmpty, "a sent box does not come back")
+    chat.draft = "다음 질문"; chat.draftMentions = ["draft-claude"]
+    chat.rerun(chat.conversation(a).turns.last!, as: .one)
+    waitFor(chat)
+    expect(chat.conversation(a).turns.count == 3 && chat.draft == "다음 질문" && chat.draftMentions == ["draft-claude"], "rerun keeps the box")
+    chat.draft = ""; chat.draftMentions = []
+
+    // Deleting a chat drops its box and its waiting pictures.
+    chat.open(b)
+    try! chat.addImage(png, name: "b.png")
+    let bPicture = chat.pendingImages[0]
+    chat.open(a)
+    expect(chat.roomDrafts[b]?.images == [bPicture], "B's picture waits with B")
+    chat.removeChats([chat.conversation(b)])
+    expect(chat.roomDrafts[b] == nil && !FileManager.default.fileExists(atPath: bPicture.url.path), "deleting B drops its box and picture")
+    print("PASS: room drafts (per chat, composed character, @ names and pictures kept, blank new chat kept and reopened, restart, stale entries, send, rerun, delete)")
+}
+
 runTest("testToolHub", testToolHub)
 runTest("testGoogleDrive", testGoogleDrive)
 
@@ -2553,6 +2662,7 @@ runTest("testDocumentsProject", testDocumentsProject)
 runTest("testDisconnectProjectFolder", testDisconnectProjectFolder)
 runTest("testStartTurn", testStartTurn)
 runTest("testQueuedMessages", testQueuedMessages)
+runTest("testRoomDrafts", testRoomDrafts)
 runTest("testTodoStore", testTodoStore)
 runTest("testTodoScheduler", testTodoScheduler)
 runTest("testTodoOrder", testTodoOrder)

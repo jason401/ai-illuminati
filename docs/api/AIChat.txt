@@ -265,6 +265,7 @@ Discussion.current | var current: Conversation { get }
 Discussion.currentID | @Published var currentID: UUID { get set }
 Discussion.discardPendingImages() | func discardPendingImages()
 Discussion.disconnectProjectFolder(_:name:) | func disconnectProjectFolder(_ key: String, name: String)
+Discussion.draftsFile | static var draftsFile: URL?
 Discussion.ended(_:) | func ended(_ room: UUID) -> TodoTurnEnd
 Discussion.fillSpaceLocks() | func fillSpaceLocks()
 Discussion.folder(_:) | func folder(_ room: UUID) -> URL
@@ -283,6 +284,7 @@ Discussion.noCrew(_:lock:) | func noCrew(_ allowed: [String], lock: EnterpriseLo
 Discussion.open(_:) | func open(_ id: UUID)
 Discussion.openBoard(project:tab:) | func openBoard(project: String?, tab: BoardTab? = nil)
 Discussion.runningRooms | @Published var runningRooms: Set<UUID> { get set }
+Discussion.saveDrafts() | func saveDrafts()
 Discussion.sentPhotos(_:) | func sentPhotos(_ room: UUID) -> Set<UUID>
 Discussion.setCrew(room:members:lead:) | func setCrew(room: UUID, members: [String], lead: String)
 Discussion.showBoardTab(_:) | func showBoardTab(_ tab: BoardTab)

@@ -481,7 +481,7 @@ extension Discussion {
     // side, with no folders, sessions or project. The copy itself is never changed.
     @discardableResult
     func continueFromDevice(_ snap: SyncSnapshot, device: String, deviceName: String) -> UUID {
-        discardPendingImages()   // their files live with the chat being left, which may be removed below
+        stashDraft()   // the box stays with the chat being left (which then is not removed below as blank)
         var chat = Conversation()
         chat.title = snap.title
         chat.turns = snap.turns
@@ -502,6 +502,7 @@ extension Discussion {
         conversations.insert(chat, at: 0)
         viewingRemote = nil
         currentID = chat.id
+        restoreDraft()
         sessionNote = L("\(deviceName)에서 가져온 대화예요. 다음 질문은 새 세션에서 시작해요.",
                         "Copied from \(deviceName). The next message starts a new session.")
         return chat.id

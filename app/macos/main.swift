@@ -151,7 +151,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let motionObservation { NSWorkspace.shared.notificationCenter.removeObserver(motionObservation) }
         TodoScheduler.shared?.closeClocks()
         discussion.cancelAll()
-        discussion.discardPendingImages()
+        discussion.saveDrafts()   // unsent message boxes and their pictures wait for the next launch
         ExternalMCP.shared.stopAll()
     }
 
@@ -414,6 +414,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 // Only the app itself uses the real accounts and settings; tests and previews never call this.
 AccountStore.useRealHome()
 ChatLinksApp.connect()
+Discussion.draftsFile = URL(fileURLWithPath: AccountStore.supportDir + "/drafts.json")   // the app's own; tests keep boxes in memory
 ChatScreensApp.connect()
 let app = NSApplication.shared
 let delegate = AppDelegate()

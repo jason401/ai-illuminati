@@ -253,6 +253,14 @@ build, G1-G7 and S1-S3 lines are as before. `check_modules.py` adds the map chec
 `tools/affected_tests.py` (G7). Without `--affected` every contract runs exactly as before (verified: same test list).
 Guard hash update (O1, 2026-11-14, user-approved test plan, output only): the module block got time lines (`part`: build,
 each contract with its compile time, S1-S3) and `affected_tests.py` reads stage 8 as `[8/12]` after the renumbering; no check or command changed.
+Guard hash update (O2, 2026-11-14, user-approved test plan, cache path only): every compiler in run_mode2, S1 and S2
+included, uses one module cache, `~/Library/Caches/AI Illuminati/test-cache`, passed as its real path (`:A`) and kept
+between runs; `check_modules.sh slow` takes it as an optional fourth argument (default `TMP/guard-cache` as before). It
+holds only SDK clang modules (the app's modules are rebuilt into `$TEST_DIR` every run), so no check reads anything old.
+Over 2 GB at the start, run_mode2 clears it ("test cache over 2 GB: cleared"); `AI_ILLUMINATI_TEST_CACHE=fresh` uses an
+empty one in `$TEST_DIR` as before. Clang locks the cache, so runs at once may share it. No check, verdict or command changed.
+Clearing it by hand (only while no test runs; the next run rebuilds it and is slower once):
+`rm -rf ~/Library/Caches/"AI Illuminati"/test-cache`.
 
 ### AIAccounts (`app/modules/AIAccounts/Accounts.swift`)
 | Promise | Users (files) | Module test | User tests (mode2.swift unless named) |

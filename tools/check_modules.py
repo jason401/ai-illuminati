@@ -2,7 +2,8 @@
 """Module guards (docs/MODULES.md "Rules"). Run through tools/check_modules.sh.
 
 fast                 G2-G7 from the files alone (no compiler); G1 is check_module_dependencies.py.
-slow MODULES TMP     S1 public API snapshots, S2 boundary files, S3 App size, on modules built by build_modules.sh.
+slow MODULES TMP [CACHE]  S1 public API snapshots, S2 boundary files, S3 App size, on modules built by build_modules.sh;
+                     CACHE is the compiler module cache (default TMP/guard-cache; run_mode2 passes its shared one).
 snapshot MODULES     writes docs/api/<Module>.txt from built modules (after a reviewed public change).
 guard                prints the lines of tools/module_guard.sha256 for the current files.
 """
@@ -173,7 +174,7 @@ def g7_guard():
 
 
 # Slow checks: on modules built by build_modules.sh.
-def api(built, name, tmp):
+def api(built, name, tmp, cache):
     out = Path(tmp) / "symbols" / name
     out.mkdir(parents=True, exist_ok=True)
     triple = json.loads(subprocess.run(["xcrun", "swiftc", "-print-target-info"], capture_output=True, text=True,
@@ -181,7 +182,7 @@ def api(built, name, tmp):
     sdk = subprocess.run(["xcrun", "--show-sdk-path"], capture_output=True, text=True, check=True).stdout.strip()
     run = subprocess.run(["xcrun", "swift-symbolgraph-extract", "-module-name", name, "-I", f"{built}/.see/{name}",
                           "-I", built, "-target", triple, "-sdk", sdk, "-minimum-access-level", "public",
-                          "-skip-synthesized-members", "-module-cache-path", f"{tmp}/guard-cache", "-output-dir", str(out)],
+                          "-skip-synthesized-members", "-module-cache-path", cache, "-output-dir", str(out)],
                          capture_output=True, text=True)
     if run.returncode:
         raise SystemExit(f"FAIL: S1 swift-symbolgraph-extract {name}:\n{run.stderr}")
@@ -196,11 +197,11 @@ def api(built, name, tmp):
     return "".join(line + "\n" for line in sorted(lines))
 
 
-def s1_snapshots(built, tmp):
+def s1_snapshots(built, tmp, cache):
     for name in modules():
         path = ROOT / "docs/api" / f"{name}.txt"
         want = path.read_text() if path.exists() else ""
-        have = api(built, name, tmp)
+        have = api(built, name, tmp, cache)
         if have != want:
             diff = "".join(difflib.unified_diff(want.splitlines(True), have.splitlines(True), f"docs/api/{name}.txt", "built"))
             failures.append(f"S1 {name}: public API differs from docs/api/{name}.txt:\n{diff}"
@@ -208,7 +209,7 @@ def s1_snapshots(built, tmp):
                             "commit: zsh tools/check_modules.sh snapshot")
 
 
-def s2_boundaries(built, tmp):
+def s2_boundaries(built, tmp, cache):
     for name in modules():
         checks = [line.split("\t") for line in rows(MODULES / name / "boundary")]
         if not checks:
@@ -229,7 +230,7 @@ def s2_boundaries(built, tmp):
         folder = Path(tmp) / f"boundary-{name}"
         folder.mkdir(parents=True, exist_ok=True)
         (folder / "main.swift").write_text(f"import {name}\n" + "".join(parts[0] + "\n" for parts in checks))
-        run = subprocess.run(["xcrun", "swiftc", "-swift-version", "5", "-typecheck", "-module-cache-path", f"{tmp}/guard-cache",
+        run = subprocess.run(["xcrun", "swiftc", "-swift-version", "5", "-typecheck", "-module-cache-path", cache,
                               "-I", built, str(folder / "main.swift")], capture_output=True, text=True)
         errors = [line for line in run.stderr.splitlines() if ": error: " in line]
         missing = [e for e in expected if not any(e in line for line in errors)]
@@ -266,13 +267,14 @@ if __name__ == "__main__":
         report("module guards G2-G7 (required files, App files, extensions, @testable, documents, guard hashes)")
     elif command == "slow":
         built, tmp = sys.argv[2], sys.argv[3]
-        s1_snapshots(built, tmp); s2_boundaries(built, tmp); lines = s3_app_size()
+        cache = sys.argv[4] if len(sys.argv) > 4 else f"{tmp}/guard-cache"
+        s1_snapshots(built, tmp, cache); s2_boundaries(built, tmp, cache); lines = s3_app_size()
         report(f"public API snapshots, boundary files, App size ({lines} lines)")
     elif command == "snapshot":
         built, tmp = sys.argv[2], sys.argv[3]
         (ROOT / "docs/api").mkdir(exist_ok=True)
         for name in modules():
-            (ROOT / "docs/api" / f"{name}.txt").write_text(api(built, name, tmp))
+            (ROOT / "docs/api" / f"{name}.txt").write_text(api(built, name, tmp, f"{tmp}/guard-cache"))
             print(f"wrote docs/api/{name}.txt")
     elif command == "guard":
         print("# sha256 of the module guard devices (G7). Update only with the user's approval: zsh tools/check_modules.sh guard")

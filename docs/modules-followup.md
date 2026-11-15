@@ -982,8 +982,9 @@ EXIT trap·실패 로그, `mode2.swift`의 `runTest`, `.ai-illuminati.json`의 `
   각 shard는 `watched` 리더 아래의 새 `zsh -f`다(이 스크립트의 EXIT trap이 없고, run_mode2가 사라지면 멈춤). 처음 실패하거나 시간 초과한 shard가 나머지 리더에 TERM을 보낸다.
   `contracts_stop`의 `$LEFT` 정리는 10–12단계까지 죽이므로 쓰지 않는다. 끝나면 shard 순서로 로그를 보여 준다. runTest 밖 검사 줄은 shard 1(과 실패한 shard)에서만 보인다.
   처음엔 shard 4개 분량이 그대로 나가서 앱 출력 한도(약 60 KB)에 걸렸고, 끝(total, accounts 검사)이 잘렸다.
-- 재현: 각 shard 끝 줄이 `PASS: shard k ran n of 64 tests: AI_ILLUMINATI_TEST_ONLY=…`다. 실패하면 `FAIL: shard k (exit rc); alone: AI_ILLUMINATI_TEST_ONLY=…`가
+- 재현: 각 shard 끝 줄이 `PASS: shard k ran n of 64 tests: AI_ILLUMINATI_TEST_ONLY=…`다. 실패하면 `FAIL: shard k (exit rc); alone: AI_ILLUMINATI_TEST_JOBS=1 AI_ILLUMINATI_TEST_ONLY=… zsh tools/tests/run_mode2.sh`가
   나오고, 실패 로그(`test-failures/…`)에는 `app-tests-<k>.log` 전부, shard별 마지막 테스트, 그 재실행 줄이 남는다. 같은 shard는 runTest 밖 검사와 그 목록을 돌므로 혼자 다시 돌리면 순서도 같다.
+- claim mkdir이 "이미 있음" 말고 다른 이유로 실패하면 그 shard는 건너뛰지 않고 실패한다(아무도 안 돈 테스트를 건너뛰고 PASS하지 않게).
 - `--affected`: 고른 테스트 수가 shard 수보다 적으면 그 수로 줄인다(0개면 1).
 - 시뮬레이션(가짜 `run`, 커밋 안 함): 통과, 한 shard 실패(나머지 30 s짜리 shard가 바로 멈추고 남은 프로세스 0), 재실행 목록을 확인했다.
 

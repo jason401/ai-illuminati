@@ -49,7 +49,7 @@ save_failure() {
     for f in "$dir"/app-tests-<->.log(Nn); do
       echo "last app test started (shard ${${f:t:r}#app-tests-}): ${$(grep '^▶ ' "$f" | tail -1):-none}"
     done
-    [[ -n ${SHARD_FAILED-} ]] && echo "failed shard ${SHARD_FAILED}; alone: $(shard_rerun ${SHARD_FAILED%% *}) $TEST_DIR/run (built by stage 8)"
+    [[ -n ${SHARD_FAILED-} ]] && echo "failed shard ${SHARD_FAILED}; alone: $(shard_rerun ${SHARD_FAILED%% *})"
     echo "args: ${ARGS[*]:-}"
     echo "head: $(git rev-parse --short HEAD 2>/dev/null)$( [[ -n $(git status --porcelain 2>/dev/null) ]] && echo ' (changed files)')"
   } > "$dir/summary.txt"
@@ -393,8 +393,9 @@ TEST_JOBS=${AI_ILLUMINATI_TEST_JOBS:-$(( P_CORES < 4 ? P_CORES : 4 ))}
 [[ $TEST_JOBS == <1-> ]] || { echo "FAIL: AI_ILLUMINATI_TEST_JOBS must be 1 or more, not '$TEST_JOBS'" >&2; exit 2 }
 # --affected with fewer picked tests than shards: no copy only for the checks outside runTest.
 (( ! SELECT || ${#TESTS} >= TEST_JOBS )) || TEST_JOBS=$(( ${#TESTS} ? ${#TESTS} : 1 ))
-# The tests a shard ran, as the environment that reruns just them (its "▶" lines, in order).
-shard_rerun() { local names=(${${(M)${(f)"$(<"$TEST_DIR/app-tests-$1.log")"}:#▶ *}#▶ }); echo "AI_ILLUMINATI_TEST_ONLY=${(j:,:)names:--}" }
+# The tests a shard ran (its "▶" lines, in order), as the command that rebuilds and reruns just them in one program
+# with a fresh test home ($TEST_DIR is gone by then; the outside checks run as in the shard).
+shard_rerun() { local names=(${${(M)${(f)"$(<"$TEST_DIR/app-tests-$1.log")"}:#▶ *}#▶ }); echo "AI_ILLUMINATI_TEST_JOBS=1 AI_ILLUMINATI_TEST_ONLY=${(j:,:)names:--} zsh tools/tests/run_mode2.sh" }
 if (( TEST_JOBS == 1 )); then
   # Its output also goes to app-tests.log for the failure log: limit runs in the pipe's subshell, so its exit code is
   # taken from pipestatus (the subshell runs no EXIT trap).

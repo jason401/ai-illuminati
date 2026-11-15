@@ -61,7 +61,12 @@ var testsRun: [String] = []
 func runTest(_ name: String, _ test: () -> Void) {
     testsSeen.append(name)
     if let testOnly, !testOnly.contains(name) { return }
-    if let testClaim, (try? FileManager.default.createDirectory(at: testClaim.appendingPathComponent(name), withIntermediateDirectories: false)) == nil { return }
+    // Only "already there" means another copy took it; any other failure would skip a test nobody ran.
+    if let testClaim {
+        do { try FileManager.default.createDirectory(at: testClaim.appendingPathComponent(name), withIntermediateDirectories: false) }
+        catch CocoaError.fileWriteFileExists { return }
+        catch { fatalError("cannot claim \(name) in \(testClaim.path): \(error)") }
+    }
     testsRun.append(name)
     markProgress(test: name)
     print("▶ \(name)"); fflush(stdout)

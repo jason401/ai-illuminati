@@ -3,7 +3,7 @@
 The only connection is the app's local tool socket (plain chat). Google credentials stay in the app."""
 import base64, fnmatch, hashlib, json, os, pathlib, socket, subprocess, sys, zipfile
 import xml.etree.ElementTree as ET
-import shutil, stat, tempfile
+import math, shutil, stat, tempfile
 
 class Workspace:
     def __init__(self, manifest):
@@ -27,7 +27,13 @@ class Workspace:
     def ask_hub(self, message):
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
             name = message.get('name', '')
-            timeout = 3610 if name.startswith('git_') or name in ('project_run', 'ask_ai', 'ask_peer', 'meeting_result', 'create_project') else 125 if name in getattr(self, 'slow', ()) else (65 if name.startswith('drive_') else 15)
+            # Only the ordinary bridge limit changes in the child test process; long tools keep their allowance.
+            ordinary_timeout = 15
+            try:
+                value = float(os.environ.get('AI_ILLUMINATI_TEST_BRIDGE_TIMEOUT', '15'))
+                if name and math.isfinite(value) and value > 0: ordinary_timeout = value
+            except ValueError: pass
+            timeout = 3610 if name.startswith('git_') or name in ('project_run', 'ask_ai', 'ask_peer', 'meeting_result', 'create_project') else 125 if name in getattr(self, 'slow', ()) else (65 if name.startswith('drive_') else ordinary_timeout)
             s.settimeout(timeout); s.connect(self.hub)
             if self.tool_session: message = dict(message, session=self.tool_session)
             s.sendall(json.dumps(message).encode() + b'\n')

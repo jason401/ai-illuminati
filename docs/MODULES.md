@@ -401,6 +401,14 @@ streams `LocalStream`/`PullStream`, `LocalModel.ask` and the Ollama requests):
   `CodexUsage`/`ClaudeUsage`/`GeminiUsage` (`read`, `forget`; `CodexUsage.binary` for the Codex login): the menu.
 
 ### AIWorkspace (`app/modules/AIWorkspace/`: Workspace, WorkspaceBackup, AutoGuard, Tools, DiskUsage)
+
+O3 test hook: the bundled Python bridge accepts `AI_ILLUMINATI_TEST_BRIDGE_TIMEOUT` (finite, positive seconds) for
+its ordinary named-tool socket limit. `testProjectWork` uses 1 second only in its child bridge and delays the command
+2 seconds, preserving the long-command exemption check. Defaults remain 15 seconds (ordinary), 3610 (long tools),
+65 (Drive), 125 (outside MCP). Invalid values and tool inventory requests keep 15 seconds. No Swift public name is
+added, so `docs/api` snapshots stay unchanged and S1 still checks them. `test_workspace_mcp.py` checks the override,
+inventory, invalid values and default; the app test checks the real bridge and app socket together.
+
 What an AI may do in a chat's linked folders and how its writes can be undone. Depends on `AIAccounts` (where the data
 lives, `Account`), `AILocalization` (level titles) and `AIRuntime` (`DebateCancellation` for reads, `NativeSessions.directory`
 for the document cache, `GeminiLinks` for agy's note). It names nothing above it: the app hands it the tool gateway

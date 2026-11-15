@@ -520,3 +520,80 @@ AIIntegrations 1.0 (0.6) / 0.7 (0.6) · AILocalization 0.5 (0.3) / 0.4 (0.3) · 
 
 ### 판정
 효과가 5 s보다 훨씬 크므로(캐시 있음 약 90 s, 캐시 없음 약 30 s) 바꾼 내용을 남긴다. O3(대기 시간)는 9단계 약 195 s를 본다.
+
+## 테스트 최적화 O3: 일부러 기다리는 시간 줄이기
+2026-11-14, 시작 HEAD `f354519`(main, 깨끗한 작업 트리). O1 측정과 O2 완료 기록을 먼저 읽었다.
+대상은 한 프로세스에서 차례로 실행하는 이름 있는 앱 테스트 62개다. 전 시간은 위 O1의 두 실행을 기준으로 삼고,
+T1에서만 10초를 넘은 테스트도 함께 조사했다. 아래 전후 차이에는 Mac 부하 차이도 있으므로 전부 최적화 효과로 보지 않는다.
+
+### 10초 이상 걸렸던 테스트의 분류
+(a) 고정 지연, (b) 완료됐지만 조건이 틀려 기한까지 기다림, (c) Git·프로세스·파일 등 실제 작업.
+
+| 테스트 | 분류와 확인한 원인 | 전 (초) | 후 전체 1 / 2 (초) |
+|---|---|---:|---:|
+| testProjectWork | (a)+(c): 브리지 명령의 16초 sleep, Stop 뒤 2.2초 고정 관찰; 나머지는 승인·Git·프로세스 | O1 36.1 / 35.9 | 19.7 / 21.1 |
+| testProjectHandoff | (b)+(c): 세 번째 run은 예상한 usage-limit 오류로 끝나 final이 nil인데 성공만 기다려 30초를 모두 소비 | O1 33.3 / 33.2 | 3.9 / 4.2 |
+| testPeerReview | (c): 여러 프로젝트 턴의 검수 스냅샷·diff·체크포인트·Git; 고정 sleep이나 기한 소진 없음 | O1 10.4 / 10.4 | 10.4 / 11.2 |
+| testTodoScheduler | (c): 프로젝트 턴·Git; 테스트의 재시도는 즉시 돌아 60초 retryDelay를 기다리지 않음 | O1 8.7 / 8.7 (T1 16.5 / 12.2) | 8.7 / 9.2 |
+| testRunConditions | (c): 실행 조건 캡처와 프로젝트 턴의 Git·백업; CLI는 launchForTests로 즉시 응답 | T1 16.2 / 7.6 | 5.1 / 5.5 |
+| testProjectCreate | (c): 가짜 gh와 로컬 저장소 생성·검사·push를 실제 자식 프로세스로 실행 | T1 10.0 / 8.9 (경계라 함께 확인) | 4.8 / 5.3 |
+
+추가로 O1에서 11초였던 AIProjects 계약은 (a)+(c): 비동기 스케줄러 알림을 전달하는 pump(0.1초) 약 14번과
+Git·프로세스 실행이다. 이번 62개 앱 테스트 대기 최적화에서는 계약의 판정·pump와 앱의 Git 폴링 간격(0.05초)을
+바꾸지 않았다. 이번 전체 실행의 AIProjects 계약은 11.0 / 11.7초(컴파일 0.6 / 0.6초)였다.
+AIRuntime 계약의 의도한 시간 초과/Stop 대기는 O1에서 8.3초로 이번 10초 대상 밖이다.
+
+### 바뀐 곳마다 같은 의미를 검사하는 이유
+- `workspace_mcp.py`: `AI_ILLUMINATI_TEST_BRIDGE_TIMEOUT`으로 이름 있는 일반 도구의 기본 소켓 제한만
+  테스트 자식에서 1초로 바꾸고 명령 sleep은 16→2초로 바꿨다. **일반 제한보다 오래 걸리는 project_run이 실제 stdio
+  브리지·앱 소켓·승인을 통과해야 한다**는 기존 expect는 그대로다. 긴 도구 3610초, Drive 65초, 외부 MCP 125초와
+  제품 기본 15초, 도구 목록 조회 15초는 그대로다. 값이 잘못됐거나 0 이하/무한대/NaN이면 15초다.
+- `test_workspace_mcp.py`: 실제 소켓에 설정하는 값으로 기본·짧은 값·잘못된 값·목록 조회·Git 예외를 확인한다.
+  훅 자체가 무시되는 회귀는 이 검사, project_run의 긴 제한 예외가 사라지는 회귀는 앱 테스트가 맡는다.
+- `testProjectWork` Stop: parent가 시작됐다는 표시 대신 **실제 writer 자식의 PID가 준비됨**을 기다린다.
+  취소 후 PID가 사라지면 지연 쓰기가 불가능하므로 즉시 끝낸다. 기존 파일 미생성·오류·stopped 기록 expect를 유지하고
+  자식 종료 expect를 추가했다. 자식의 2초 sleep은 버그가 있을 때 쓸 시간을 나타내므로 유지했고 parent의 30초 sleep은
+  취소로 끝난다. 기존 준비 마감 15초, 종료 관찰 상한 2.2초는 줄이지 않았다.
+- `testProjectHandoff` run: `final != nil || error != nil`을 완료로 보되 `anyRunning`이 끝날 때까지 기다린다.
+  TODO에서 선택하지 않은 AI로 넘기지 않고 정해진 오류로 끝나는지 보는 기존 expect와 30초 마감은 그대로다.
+- Swift public 이름은 추가하지 않았다. 새 Python 환경 변수의 이유는 `docs/MODULES.md` AIWorkspace 절에 적었다.
+  Swift API가 같아서 `docs/api` 스냅샷은 변경하지 않고 S1로 일치 여부를 검사했다.
+- `testRuntimeThroughApp`의 시작 지연 검사(94bd977)는 바꾸지 않았다. 브리지 프로세스 40초/바깥 대기 45초도 그대로다.
+  조회 요청까지 1초가 되는 검토 지적은 받아들여 목록 조회는 기존 15초를 유지한다.
+
+### 검증
+- `project_run test-o3`: 통과(exit 0). `AI_ILLUMINATI_TEST_ONLY=이름`과 `--affected`로 매번 새로 실행했다.
+  - testProjectWork 5/5: **19.6, 19.7, 19.7, 19.7, 21.0초**.
+  - testProjectHandoff 5/5: **3.9, 3.9, 4.0, 4.1, 3.9초**.
+  - Python 브리지 단위 검사 11개 통과.
+- 반증: `/tmp/ai-o3-validation.*/mutant` 복사본에서 project_run만 긴 제한 예외에서 제거했다.
+  모듈·컴파일·Python 검사는 통과하고, 실제 앱의 기존 expect에서
+  `Fatal error: long project tool survives Python bridge timeout and approval`로 실패했다. 복사본은 종료 시 삭제했다.
+- `project_run test-o3-full`: **전체 2회 모두 통과(exit 0)**. 이름 있는 62개를 필터 없이 실행했고 실제
+  accounts.json 불변 검사도 두 번 통과했다. 전체 테스트 실패 0회.
+- 각 전체 실행의 `check_modules` fast(G1–G7), slow(S1–S3: public API 스냅샷·경계·App 크기) 통과.
+  두 실행 뒤 별도 `zsh tools/check_modules.sh`도 통과.
+- Claude (학교)의 두 차례 검토 반영: inventory의 15초 유지, mock 시간 제한 값 검사,
+  자식 종료와 파일 미생성 판정의 의미 보존 확인. 준비/Stop가 공유하던 15초 마감은 원래 코드와 같고 줄이지 않았다.
+
+| 단계 (초) | O2 캐시 있음 | O3 전체 1 | O3 전체 2 |
+|---|---:|---:|---:|
+| 전체 | 313.9 | **260.9** | **269.1** |
+| [2] 모듈 빌드·계약·S1–S3 | 66.4 | 61.6 | 62.4 |
+| [8] 앱 테스트 컴파일 | 18.1 | 17.0 | 17.1 |
+| [9] 앱 테스트 실행 | 195.2 | **149.2** | **156.4** |
+| [10] Space 웹뷰 | 16.7 | 16.6 | 16.5 |
+| [11] 화면 | 14.9 | 14.4 | 14.8 |
+
+줄인 의도적 대기는 명령 sleep 14초, Stop 고정 관찰 최대 2.2초, handoff 잘못된 완료 조건 약 30초다.
+앱 실행 단계의 실제 차이는 O2 캐시 있음 대비 46.0 / 38.8초다. 그대로인 Git 테스트와 빌드 시간도 실행마다
+달라지므로 전체 53.0 / 44.8초 차이를 전부 이번 대기 변경의 효과로 해석하지 않는다.
+제품의 시간 제한 기본값과 Git 실행·권한·취소 처리는 바꾸지 않았고 expect를 약하게 만든 곳은 없다.
+
+검증 래퍼 `tools/tests/o3_validation.sh`는 각 실행에서 이름 있는 앱 테스트가 정확히 하나였는지도 검사한다.
+`--affected app/resources/workspace_mcp.py`는 공용 경로라 ALL을 고르므로 외부 `AI_ILLUMINATI_TEST_ONLY`가 유지된다.
+`--affected tools/tests/project_work.swift`는 그 파일의 여러 이름으로 필터를 덮어써 단독 실행이 아니므로 쓰지 않았다.
+매 실행은 기존 run_mode2의 새 임시 홈과 실제 accounts.json 불변 검사를 그대로 거친다.
+
+검증 준비 중 Python mock 줄바꿈 오기와 래퍼의 rg 미설치를 고쳤다. 해당 준비 실패는 단독 5회 통과와
+전체 2회 통과 횟수에 포함하지 않았다.

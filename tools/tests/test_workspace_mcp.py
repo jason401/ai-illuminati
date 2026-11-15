@@ -8,6 +8,22 @@ class WorkspaceTests(unittest.TestCase):
         self.cache=self.root/'cache'
         self.ws=module.Workspace({'roots':[{'path':str(self.folder),'directory':True}],'level':'view','cache':str(self.cache),'extractor':'unused'})
     def tearDown(self): self.tmp.cleanup()
+    def test_bridge_ordinary_timeout_override(self):
+        self.ws.hub = 'fixture.sock'
+        # No elapsed-time assumption: inspect the exact socket limit the real bridge selects.
+        for value, expected in [(None, 15), ('1', 1), ('bad', 15), ('0', 15), ('-1', 15), ('nan', 15), ('inf', 15)]:
+            with self.subTest(value=value), patch.dict(os.environ, {}, clear=True), patch.object(module.socket, 'socket') as factory:
+                if value is not None: os.environ['AI_ILLUMINATI_TEST_BRIDGE_TIMEOUT'] = value
+                sock = factory.return_value.__enter__.return_value
+                sock.recv.return_value = b'{}\n'
+                self.ws.ask_hub({'name': 'set_expression'})
+                sock.settimeout.assert_called_once_with(expected)
+                sock.settimeout.reset_mock()
+                self.ws.ask_hub({'op': 'tools'})
+                sock.settimeout.assert_called_once_with(15)
+                sock.settimeout.reset_mock()
+                self.ws.ask_hub({'name': 'git_status'})
+                sock.settimeout.assert_called_once_with(3610)
     def test_inventory_is_lazy_even_for_1500_pages(self):
         for i in range(15): (self.folder/('%02d.pdf'%i)).write_bytes(b'not opened during link')
         self.assertEqual(len(self.ws.list_files()),15);self.assertFalse(self.cache.exists())

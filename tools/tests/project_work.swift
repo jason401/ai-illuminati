@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import CryptoKit
 import AIAccounts
 import AILocalization
@@ -106,16 +107,17 @@ func testProjectWork() {
     while twice.wait(timeout: .now()) != .success && Date() < twiceAt { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
     RunLoop.main.run(until: Date().addingTimeInterval(0.1))
     expect(twiceAnswer == false && ProjectCenter.shared.requests.isEmpty && ProjectCenter.shared.expired.isEmpty, "first decision wins; a second click is ignored")
-    // Exercise the real Python stdio bridge and app socket beyond the old 15-second timeout.
-    write(".ai-illuminati.json", #"{"version":1,"commands":{"delayed":{"executable":"/usr/bin/python3","args":["-c","import time; time.sleep(16); print('long command fixture')"]}}}"#)
+    // Exceed the ordinary bridge limit (15 s in production, 1 s only in this bridge child).
+    write(".ai-illuminati.json", #"{"version":1,"commands":{"delayed":{"executable":"/usr/bin/python3","args":["-c","import time; time.sleep(2); print('long command fixture')"]}}}"#)
     let capability = ToolHub.shared.register(room: run.room, roots: binding.roots, projectRun: run.id, generation: run.generation)
     let manifest = base.appendingPathComponent("bridge.json")
     let object: [String: Any] = ["roots": [["path": root.path, "directory": true]], "level": "view", "cache": base.appendingPathComponent("cache").path, "extractor": WorkspaceInvocation.resources.appendingPathComponent("WorkspaceDocument").path, "tools": ToolHub.socketPath, "toolSession": capability]
     try! JSONSerialization.data(withJSONObject: object).write(to: manifest)
     let client = base.appendingPathComponent("client.py")
     try! """
-    import subprocess, sys, json
-    p = subprocess.Popen([sys.executable, sys.argv[1], sys.argv[2]], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+    import subprocess, sys, json, os
+    env = dict(os.environ, AI_ILLUMINATI_TEST_BRIDGE_TIMEOUT='1')
+    p = subprocess.Popen([sys.executable, sys.argv[1], sys.argv[2]], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, env=env)
     def request(i, method, params=None):
         p.stdin.write(json.dumps({'jsonrpc':'2.0','id':i,'method':method,'params':params or {}})+'\\n'); p.stdin.flush()
         return json.loads(p.stdout.readline())['result']
@@ -139,22 +141,31 @@ func testProjectWork() {
     expect(bridgeApproved && bridgeResult.contains("long command fixture") && !bridgeResult.contains("timed out"), "long project tool survives Python bridge timeout and approval")
     // Stop must kill background writers, not merely the foreground build process.
     let startedFile = root.appendingPathComponent("process-started"), leakedFile = root.appendingPathComponent("orphan-wrote")
-    let childCode = "import time,pathlib; time.sleep(2); pathlib.Path(" + String(reflecting: leakedFile.path) + ").write_text('leaked')"
-    let parentCode = "import subprocess,sys,time,pathlib; subprocess.Popen([sys.executable,'-c'," + String(reflecting: childCode) + "]); pathlib.Path(" + String(reflecting: startedFile.path) + ").write_text('ready'); time.sleep(30)"
+    let childCode = "import os,time,pathlib; pathlib.Path(" + String(reflecting: startedFile.path) + ").write_text(str(os.getpid())); time.sleep(2); pathlib.Path(" + String(reflecting: leakedFile.path) + ").write_text('leaked')"
+    let parentCode = "import subprocess,sys,time; subprocess.Popen([sys.executable,'-c'," + String(reflecting: childCode) + "]); time.sleep(30)"
     let longConfig: [String: Any] = ["version": 1, "commands": ["long": ["executable": "/usr/bin/python3", "args": ["-c", parentCode]]]]
     try! JSONSerialization.data(withJSONObject: longConfig).write(to: root.appendingPathComponent(".ai-illuminati.json"))
     let stoppedDone = DispatchSemaphore(value: 0); var stoppedResult: [String: Any] = [:]
     DispatchQueue.global().async { stoppedResult = call("project_run", ["name": "long"]); stoppedDone.signal() }
+    func writerPID() -> pid_t? {
+        guard let text = try? String(contentsOf: startedFile, encoding: .utf8),
+              let pid = pid_t(text), pid > 0 else { return nil }
+        return pid
+    }
     let stopDeadline = Date().addingTimeInterval(15)
-    while !FileManager.default.fileExists(atPath: startedFile.path) && Date() < stopDeadline {
+    while writerPID() == nil && Date() < stopDeadline {
         RunLoop.main.run(until: Date().addingTimeInterval(0.02))
         if let card = ProjectCenter.shared.requests.first(where: { $0.run == run.id }) { ProjectCenter.shared.decide(card.id, allow: true) }
     }
-    expect(FileManager.default.fileExists(atPath: startedFile.path), "approved background-writer fixture started")
+    expect(writerPID() != nil, "approved background-writer fixture started")
+    let childPID = writerPID()!
+    func writerAlive() -> Bool { kill(childPID, 0) == 0 || errno != ESRCH }
     outer.cancel()
     while stoppedDone.wait(timeout: .now()) != .success && Date() < stopDeadline { RunLoop.main.run(until: Date().addingTimeInterval(0.03)) }
     let verifyUntil = Date().addingTimeInterval(2.2)
-    while Date() < verifyUntil { RunLoop.main.run(until: Date().addingTimeInterval(0.03)) }
+    // A dead writer cannot perform the delayed write; keep the old bound for reaping.
+    while Date() < verifyUntil && writerAlive() { RunLoop.main.run(until: Date().addingTimeInterval(0.03)) }
+    expect(!writerAlive(), "Stop terminates the ready background writer")
     expect(stoppedResult["isError"] as? Bool == true && !FileManager.default.fileExists(atPath: leakedFile.path), "Stop kills foreground and background project writers")
     let stoppedRecord = ((try? JSONSerialization.jsonObject(with: Data(contentsOf: RunTimings.file(root.path)))) as? [String: Any])?["long"] as? [[String: Any]]
     expect(stoppedRecord?.last?["outcome"] as? String == "stopped" && stoppedRecord?.last?["exit"] == nil, "a stopped command is recorded as stopped")
@@ -231,7 +242,8 @@ func testProjectHandoff() {
     func run() {
         chat.draft = "Next step."; chat.send()
         let until = Date().addingTimeInterval(30)
-        while Date() < until && (chat.anyRunning || chat.current.turns.last?.final == nil) { RunLoop.main.run(until: Date().addingTimeInterval(0.03)) }
+        // A usage-limit error is also a completed turn; the assertion below still checks that error.
+        while Date() < until && (chat.anyRunning || (chat.current.turns.last?.final == nil && chat.current.turns.last?.error == nil)) { RunLoop.main.run(until: Date().addingTimeInterval(0.03)) }
     }
     run()
     expect(accounts == ["project-claude"], "project work: the last account under 10% is not started")

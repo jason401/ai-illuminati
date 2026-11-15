@@ -2,12 +2,16 @@
 set -eu
 cd "${0:A:h}/../.."
 ARGS=("$@")
-# --affected <changed paths>: only the contract tests, app tests and stage 10 that tools/affected_tests.sh picks
+# --affected <changed paths>: only the contract tests, app tests, stage 10 and stage 11 that the paths pick
 # (all of them when it says ALL). Guards, builds, the checks outside runTest and the other stages always run.
-SELECT=0 CONTRACTS=() TESTS=() SPACE_WEB=0
+# Stage 11 (screens) runs when a path is an app file (it compiles them all), AIProjects (the TODO card shows its
+# TodoItem) or the screens test itself; affected_tests.py (G7) does not know stage 11, so the choice is made here.
+SELECT=0 CONTRACTS=() TESTS=() SPACE_WEB=0 SCREENS=0
 if [[ ${1-} == --affected ]]; then
   shift; (( $# )) || { echo "use: zsh tools/tests/run_mode2.sh --affected <paths from the project root>" >&2; exit 2 }
-  PICKED=$(zsh tools/affected_tests.sh "$@"); shift $#
+  PICKED=$(zsh tools/affected_tests.sh "$@")
+  for P in "$@"; do [[ ${P#./} == (app/macos/*|app/modules/AIProjects/*|tools/tests/screens_idle.swift) ]] && SCREENS=1; done
+  shift $#
   if [[ $PICKED == ALL* ]]; then
     echo "Affected: every test (${PICKED#ALL })"
   else
@@ -15,7 +19,7 @@ if [[ ${1-} == --affected ]]; then
     for KIND NAME in ${=PICKED}; do
       case $KIND in contract) CONTRACTS+=($NAME) ;; test) TESTS+=($NAME) ;; stage) SPACE_WEB=1 ;; *) echo "FAIL: $KIND $NAME" >&2; exit 1 ;; esac
     done
-    echo "Affected: contracts ${CONTRACTS[*]:-none}; app tests ${TESTS[*]:-none}; space web $(( SPACE_WEB ? 1 : 0 ))"
+    echo "Affected: contracts ${CONTRACTS[*]:-none}; app tests ${TESTS[*]:-none}; space web $(( SPACE_WEB ? 1 : 0 )); screens $SCREENS"
   fi
 fi
 TEST_DIR=$(mktemp -d /tmp/ai-mode2-check.XXXXXX)
@@ -249,8 +253,8 @@ late_stages() {
     limit 300 env AI_ILLUMINATI_TEST_HOME="$TEST_DIR/space-web-home" "$TEST_DIR/space-web"
   fi
   stage "[11/12] Screens stay still"
-  if (( SELECT )); then
-    echo "skip: screens (affected tests only)"
+  if (( SELECT && ! SCREENS )); then
+    echo "skip: screens (not affected)"
   else
     mkdir -p "$TEST_DIR/screens-src" "$TEST_DIR/screens-home"
     cp tools/tests/screens_idle.swift "$TEST_DIR/screens-src/screens_idle.swift"
@@ -278,7 +282,7 @@ late_start() {
       stop() if getppid() != $main;
       select(undef, undef, undef, 0.2);
     }
-  ' $$ zsh -fc "set -eu; zmodload zsh/datetime; $(typeset -p TEST_DIR CACHE MODULES SELECT SPACE_WEB)
+  ' $$ zsh -fc "set -eu; zmodload zsh/datetime; $(typeset -p TEST_DIR CACHE MODULES SELECT SPACE_WEB SCREENS)
     $(typeset -f limit secs stage_end stage part late_stages); STAGE= STAGE_T0=; late_stages" \
     > "$TEST_DIR/late.log" 2>&1 < /dev/null &
   LATE_PID=$!

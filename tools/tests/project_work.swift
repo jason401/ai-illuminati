@@ -1521,8 +1521,16 @@ func testDocumentsProject() {
            "the review lists this answer's changes with a text diff against the backup")
     let turn = chat.current.turns.last
     expect(reviewRoots.first?.contains { $0.path.contains("workspace-backups") } == true, "the reviewer may read the backup copy")
-    expect(turn?.workspaceChanges?.map(\.path).sorted() == [paper.appendingPathComponent("figures/fig1.svg").resolvingSymlinksInPath().path, paper.appendingPathComponent("main.tex").resolvingSymlinksInPath().path].sorted()
-           && turn?.backupPath != nil && turn?.projectCommitted == false, "the changes are listed with a backup")
+    let wantChanges = [paper.appendingPathComponent("figures/fig1.svg").resolvingSymlinksInPath().path, paper.appendingPathComponent("main.tex").resolvingSymlinksInPath().path].sorted()
+    let gotChanges = turn?.workspaceChanges?.map(\.path).sorted()
+    // On failure: what was expected and seen, whether the run had ended, and what the backup folder held.
+    func backupState() -> String {
+        guard let path = turn?.backupPath else { return "no backupPath" }
+        let files = (FileManager.default.enumerator(atPath: path)?.allObjects as? [String] ?? []).sorted()
+        return path + " [" + files.joined(separator: ", ") + "]"
+    }
+    expect(gotChanges == wantChanges && turn?.backupPath != nil && turn?.projectCommitted == false,
+           "the changes are listed with a backup: want \(wantChanges), got \(String(describing: gotChanges)), committed \(String(describing: turn?.projectCommitted)), running \(chat.anyRunning), final \(turn?.final != nil), backup \(backupState())")
     if let turn { chat.undoWorkspace(turn) }
     let until = Date().addingTimeInterval(10)
     while Date() < until && chat.current.turns.last?.undone != true { RunLoop.main.run(until: Date().addingTimeInterval(0.03)) }

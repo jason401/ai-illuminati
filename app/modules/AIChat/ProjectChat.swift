@@ -275,6 +275,12 @@ extension Discussion {
                 if !stopped { NotificationCenter.default.post(name: .projectWorkEnded, object: nil, userInfo: ["room": id, "index": index, "problem": why as Any]) }
             }
         }
+        // The turn ends (Stop goes away, the next question or TODO may start) only after the cleanup deferred below has
+        // run: the backup's change list for Undo, the project lock, the status. Ending first let a chat look finished
+        // without its changes (docs/modules-followup.md "testDocumentsProject").
+        var ended: String??
+        func end(_ error: String? = nil) { ended = .some(error) }
+        defer { if let ended { finish(id, index, error: ended) } }
         // Full auto keeps the Mac awake while the AI works (the display may still sleep).
         let awake = fullAuto ? ProcessInfo.processInfo.beginActivity(options: [.userInitiated, .idleSystemSleepDisabled], reason: "AI Illuminati full-auto project work") : nil
         defer { if let awake { ProcessInfo.processInfo.endActivity(awake) } }
@@ -298,7 +304,7 @@ extension Discussion {
             let saved = try WorkspaceBackup.begin(backed, room: id, runID: run.id)
             backup = saved; activeWorkspaceBackupPath = saved.directory
             changeTurn(id, index, save: true) { $0.backupPath = saved.directory }
-        } catch { finish(id, index, error: error.localizedDescription); return }
+        } catch { end(error.localizedDescription); return }
         let projectRules = ProjectRules.read(root: selected.root).prompt
         let transcript = Self.transcript(history) + "\n[User]\n" + question
         let chatLock = self.lock(of: id)
@@ -319,13 +325,13 @@ extension Discussion {
             let account = preferred.flatMap { wanted in eligible.first { $0.id == wanted } }
                 ?? AutoPick.choose(eligible, usage: model.latestUsage, lock: chatLock, current: config.lastSoloAccountID)
             guard let account else {
-                finish(id, index, error: workers != nil
-                       ? L("이 TODO에 고른 AI 중 이어서 작업할 계정이 없어요. 파일 변경은 보존했어요.", "None of the AIs picked for this TODO can continue. Changes are preserved.")
-                       : chatLock?.isPersonal == true
-                       ? L("이 개인 방에서 작업할 개인 Claude/Codex 계정이 필요해요. 파일 변경은 보존했어요.", "This personal chat needs a personal Claude/Codex account to continue. Changes are preserved.")
-                       : chatLock != nil
-                       ? L("이 Enterprise 방에서 작업할 \(chatLock?.name ?? "") Claude/Codex 계정이 필요해요. 파일 변경은 보존했어요.", "This Enterprise chat needs a \(chatLock?.name ?? "") Claude/Codex account to continue. Changes are preserved.")
-                       : L("이어서 작업할 Claude/Codex 계정이 필요해요. 파일 변경은 보존했어요.", "No Claude/Codex account is available to continue. Changes are preserved.")); return
+                end(workers != nil
+                    ? L("이 TODO에 고른 AI 중 이어서 작업할 계정이 없어요. 파일 변경은 보존했어요.", "None of the AIs picked for this TODO can continue. Changes are preserved.")
+                    : chatLock?.isPersonal == true
+                    ? L("이 개인 방에서 작업할 개인 Claude/Codex 계정이 필요해요. 파일 변경은 보존했어요.", "This personal chat needs a personal Claude/Codex account to continue. Changes are preserved.")
+                    : chatLock != nil
+                    ? L("이 Enterprise 방에서 작업할 \(chatLock?.name ?? "") Claude/Codex 계정이 필요해요. 파일 변경은 보존했어요.", "This Enterprise chat needs a \(chatLock?.name ?? "") Claude/Codex account to continue. Changes are preserved.")
+                    : L("이어서 작업할 Claude/Codex 계정이 필요해요. 파일 변경은 보존했어요.", "No Claude/Codex account is available to continue. Changes are preserved.")); return
             }
             run.nextAttempt(); workspace.projectGeneration = run.generation; activeWorkspace = workspace
             let speaker = label(account)
@@ -451,20 +457,20 @@ extension Discussion {
                 if run.pushWanted, !cancellation.isCancelled {
                     do { _ = try GitLink.shared.pushDeferred(run); run.setAppStep(9, L("push (main에 한 번)", "Push (once)"), .done) } catch {
                         run.setAppStep(9, L("push (main에 한 번)", "Push (once)"), .blocked)
-                        finish(id, index, error: L("작업과 검토는 끝났지만 push하지 못했어요. commit은 로컬에 남아 있어요: ", "The work and review are done, but the push failed. The commits stay local: ")
-                               + error.localizedDescription); return
+                        end(L("작업과 검토는 끝났지만 push하지 못했어요. commit은 로컬에 남아 있어요: ", "The work and review are done, but the push failed. The commits stay local: ")
+                            + error.localizedDescription); return
                     }
                 }
                 _ = run.checkpoint("Project turn completed by " + speaker)
-                finish(id, index); return
+                end(); return
             case .failure(let failure) where Self.isOutOfUsage(failure):
                 checkpoint = run.checkpoint("Usage exhausted: " + speaker + ". Continue the same unfinished project without overwriting it.")
                 excluded.insert(account.id); preferred = nil; handedFrom = speaker
                 run.note(speaker + L(" 한도 소진 → 다른 AI로 인계", " reached its limit → handing off"))
-            case .failure(let failure): finish(id, index, error: Self.describe(failure)); return
+            case .failure(let failure): end(Self.describe(failure)); return
             }
         }
-        finish(id, index, error: L("프로젝트 작업을 중지했습니다. 변경은 보존했어요.", "Project work stopped. Changes are preserved."))
+        end(L("프로젝트 작업을 중지했습니다. 변경은 보존했어요.", "Project work stopped. Changes are preserved."))
     }
 
     static let deferredPushNote = """

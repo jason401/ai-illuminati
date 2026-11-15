@@ -745,3 +745,26 @@ O6은 가드를 바꾸지 않으므로 차례가 오면 바로 돈다. O5는 가
   9단계 limit 10 s → 142, 1단계 G6 실패 → 1단계로 기록. 가짜 폴더 12개를 미리 두고 실패시키면 10개만 남음. 매번 남은 프로세스 없음.
 - 이미 있던 동작(바꾸지 않음): run_mode2 프로세스 하나에만 TERM을 보내면 zsh가 지금 단계가 끝날 때까지 trap을 미룬다(HEAD에서도 45 s 뒤 143).
 - 확인 뒤 전체 테스트 통과(273.4 s), 보존 폴더는 비어 있음.
+
+## 후속: `testDocumentsProject` 간헐 실패 ("the changes are listed with a backup")
+O6 4번째 실행에서 한 번 난 실패의 원인. 2026-11-14, 시작 HEAD `1ef3421`. 앱이 틀렸다. 고친 곳은 `AIChat/ProjectChat.swift`이고,
+테스트는 assertion 메시지만 보강했다(검사 조건은 그대로).
+- 원인: `runProjectSolo`는 성공하면 `finish(id, index)`를 부른 뒤 `return`했다. 백업의 변경 목록(`saved.finish()` →
+  `workspaceChanges`, `projectCommitted`)은 그 뒤 `defer`에서 정해졌다. `finish`는 main에 `runningRooms.remove`를 먼저 넣고,
+  변경 목록은 `saved.finish()`(백업과 폴더 비교)가 끝난 다음에야 main에 들어간다. 그 사이에 main이 돌면 대화는 끝난 것으로 보이는데
+  (Stop 사라짐, 다음 질문이나 TODO 시작 가능) 변경 목록과 Undo 정보는 아직 없다. 테스트는 `!anyRunning && final != nil`까지 기다린 뒤
+  (30 ms마다 RunLoop) 바로 봤으므로, 비교가 조금만 길어지면 `workspaceChanges == nil`을 보고 RC 133으로 멈췄다. 같은 이유로
+  `ProjectWork.finish`(프로젝트 잠금 해제)와 깨우기 해제도 `finish` 뒤였다. Solo·Collaboration은 이미 변경 목록을 먼저 정하고
+  `finish`를 부른다(Solo.swift 757, Collaboration.swift `finishRun`). 프로젝트 경로만 순서가 거꾸로였다.
+- 다른 가설: 이전 테스트의 상태 오염은 아니다(fixture가 UUID 폴더, 홈은 매번 새 것이고 단독 실행에서도 지연만 넣으면 재현됨).
+  mtime 해상도도 아니다(실패 때 리뷰 diff는 맞았고, 목록 자체가 nil이었다). 부하는 창을 넓힐 뿐 원인은 아니다.
+  실제 실패 때 비교가 얼마나 걸렸는지는 기록이 없어 모른다. 지연 없는 단독 10회에서는 재현되지 않았다(작은 폴더의 비교는 짧아서 창이 좁음).
+- 재현: `git clone --local` 사본에서 앱 테스트를 한 번 빌드하고 `AI_ILLUMINATI_TEST_ONLY=testDocumentsProject`로 매번 새
+  `AI_ILLUMINATI_TEST_HOME`(mktemp)에서 돌렸다. 고치기 전: 지연 없이 10/10 통과. `defer`의 `saved.finish()` 앞에 0.3 s sleep을
+  넣으면 3/3 실패, 보강한 메시지: `got nil, committed nil, running false, final true, backup …[0, 1, 1/figures, 1/main.tex, 1/talk.pptx, complete.json]`
+  (백업은 있는데 대화는 이미 끝났고 목록이 없음).
+- 고침: `finish` 호출을 모두 `end(...)`로 바꿔 결과만 적어 두고, 알림 `defer` 바로 다음에 둔 `defer`가 `finish`를 부른다.
+  `defer`는 거꾸로 돌므로 순서가 백업 목록 → 잠금 해제·상태 정리 → 깨우기 해제 → `finish`(대화 끝) → 끝 알림이 된다.
+  재시도나 대기 시간은 늘리지 않았다.
+- 확인: 고친 뒤 같은 사본에서 0.3 s 지연 3/3 통과, 2 s 지연 1/1 통과. 지연 없는 단독 10/10 통과. 전체 `run_mode2.sh`
+  (`project_run test`) 한 번에 통과(266.1 s, testDocumentsProject 2.5 s), 실제 accounts.json 그대로.

@@ -128,8 +128,9 @@ struct ChatView<Model: ChatSettings>: View {
         }
     }
 
-    // Like the Claude and ChatGPT apps: New chat and Search on top, shared folders, then pinned and recent
-    // chats as single lines. Right-click (or ⋯ on hover) to pin or delete.
+    // Like the Claude and ChatGPT apps: New chat and Search on top, then pinned chats, projects, Spaces, shared
+    // folders, recent chats as single lines and other Macs last. Folders sit above Recents, which keeps growing.
+    // Right-click (or ⋯ on hover) to pin or delete.
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
             // The title bar above is macOS's own; it moves the window (no drag view of ours there).
@@ -160,7 +161,8 @@ struct ChatView<Model: ChatSettings>: View {
             if !discussion.sidebarSearching { workingChats }
             ScrollView {
                 VStack(alignment: .leading, spacing: 1) {
-                    sharedFolders
+                    // Searching keeps the folders above the results, as before; otherwise they sit between Spaces and Recents.
+                    if discussion.sidebarSearching { sharedFolders }
                     // A new chat with nothing in it yet is not listed (like the desktop apps); it appears once it has a message.
                     // Searching: the filters apply, and words find chats by their messages and answers too.
                     let chats = discussion.listedConversations.filter {
@@ -186,6 +188,11 @@ struct ChatView<Model: ChatSettings>: View {
                         // Chats with a Git project under its folder (SidebarProjects.swift); the rest pinned or recent.
                         let grouped = SidebarProjects.group(chats, todo: todos.snapshot, pinned: folds.pinnedProjects, withLists: !discussion.sidebarSearching,
                                                              names: projectInfo.names)
+                        let pinned = grouped.loose.filter { $0.pinned == true }
+                        if !pinned.isEmpty {
+                            SidebarHeader(title: L("고정됨", "Pinned"), fold: "pinned")
+                            if !folds.isFolded("pinned") { ForEach(pinned) { chatGroup($0) } }
+                        }
                         SidebarHeader(title: L("프로젝트", "Projects"), fold: "projects", badge: todos.waitingForUser) { addProjectMenu }
                         if !folds.isFolded("projects") { ChatApp.screens.boardRow(discussion) }
                         if folds.isFolded("projects") {
@@ -199,12 +206,7 @@ struct ChatView<Model: ChatSettings>: View {
                         } else {
                             ForEach(grouped.projects) { projectGroup($0) }
                         }
-                        if !discussion.sidebarSearching { SpaceSidebarSection(discussion: discussion) }
-                        let pinned = grouped.loose.filter { $0.pinned == true }
-                        if !pinned.isEmpty {
-                            SidebarHeader(title: L("고정됨", "Pinned"), fold: "pinned")
-                            if !folds.isFolded("pinned") { ForEach(pinned) { chatGroup($0) } }
-                        }
+                        if !discussion.sidebarSearching { SpaceSidebarSection(discussion: discussion); sharedFolders }
                         let recents = grouped.loose.filter { $0.pinned != true }
                         if !recents.isEmpty {
                             SidebarHeader(title: L("최근", "Recents"), fold: "recents")

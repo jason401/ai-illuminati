@@ -66,6 +66,10 @@ final class TodoDraft: ObservableObject {
     @Published var error: String?
     @Published var showDone = false
     @Published var replies: [UUID: String] = [:]   // a card's answer or change request, by TODO
+    // A chat card folded to one line, with what it showed then: a new state, question or result opens it again.
+    struct Fold: Equatable { var state: TodoItem.State; var question: UUID?; var result: String? }
+    static func fold(_ item: TodoItem) -> Fold { Fold(state: item.state, question: item.question?.id, result: item.result) }
+    @Published var collapsed: [UUID: Fold] = [:]
     // Editing a TODO the AI has not taken yet (TodoStore.editable); the scheduler leaves it alone meanwhile.
     @Published private(set) var editing: UUID?
     @Published var editTitle = ""
@@ -715,22 +719,64 @@ struct TodoCard: View {
         get { draft.replies[item.id] ?? "" }
         nonmutating set { draft.replies[item.id] = newValue.isEmpty ? nil : newValue }
     }
+    // Only the chat cards fold; the board's compact card always shows everything.
+    private var folded: Bool { !compact && draft.collapsed[item.id] == TodoDraft.fold(item) }
+    private func toggleFold() {
+        // Set only on a change (see the note at onReceive below).
+        if folded { draft.collapsed[item.id] = nil } else { draft.collapsed[item.id] = TodoDraft.fold(item) }
+    }
+    private var header: some View {
+        Button(action: toggleFold) {
+            HStack(spacing: 6) {
+                Image(systemName: folded ? "chevron.right" : "chevron.down").font(.system(size: 10, weight: .semibold)).foregroundColor(.secondary).frame(width: 12)
+                Image(systemName: item.state == .review ? "checkmark.seal" : "questionmark.bubble").foregroundColor(item.state.color)
+                Text("TODO · " + item.title).font(.system(size: 13, weight: .semibold)).lineLimit(1).layoutPriority(1)
+                if folded, let line = (item.state == .review ? item.result : item.question?.reason)?
+                    .split(whereSeparator: \.isNewline).first.map(String.init) {
+                    Text("— " + line).font(.system(size: 12)).foregroundColor(.secondary).lineLimit(1).truncationMode(.tail)
+                }
+                Spacer(minLength: 4)
+                Text(item.state.title).font(.system(size: 12, weight: .medium)).foregroundColor(item.state.color)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(folded ? L("펼치기", "Expand") : L("접기", "Collapse"))
+    }
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if !compact {
-                HStack {
-                    Image(systemName: item.state == .review ? "checkmark.seal" : "questionmark.bubble").foregroundColor(item.state.color)
-                    Text("TODO · " + item.title).font(.system(size: 13, weight: .semibold)).lineLimit(1)
-                    Spacer()
-                    Text(item.state.title).font(.system(size: 12, weight: .medium)).foregroundColor(item.state.color)
+        if folded {
+            HStack(spacing: 8) {
+                header
+                if item.state == .review {
+                    Button(L("완료", "Done")) { TodoStore.shared.accept(item.id) }.buttonStyle(.borderedProminent)
+                } else if question?.delegable == true {
+                    Button(L("알아서 해", "Your call")) { text = ""; TodoScheduler.shared?.delegate(item.id) }
                 }
             }
+            .font(.system(size: 12)).controlSize(.small)
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .background(item.state.color.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+        } else {
+            card
+        }
+    }
+    // The result, assumptions and errors; in the chat card they scroll inside a capped height so the chat stays visible.
+    @ViewBuilder private var reviewBody: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let result = item.result { Text(result).font(.system(size: 12)).textSelection(.enabled).lineLimit(compact ? 3 : nil) }
+            if !item.assumptions.isEmpty {
+                Text(L("가정: ", "Assumed: ") + item.assumptions.joined(separator: " · ")).font(.system(size: 11)).foregroundColor(.secondary)
+                    .textSelection(.enabled)
+            }
+            if let error = item.lastError { Text(error).font(.system(size: 11)).foregroundColor(.orange) }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+    private var card: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if !compact { header }
             if item.state == .review {
-                if let result = item.result { Text(result).font(.system(size: 12)).textSelection(.enabled).lineLimit(compact ? 3 : 12) }
-                if !item.assumptions.isEmpty {
-                    Text(L("가정: ", "Assumed: ") + item.assumptions.joined(separator: " · ")).font(.system(size: 11)).foregroundColor(.secondary)
-                }
-                if let error = item.lastError { Text(error).font(.system(size: 11)).foregroundColor(.orange) }
+                if compact { reviewBody } else { ScrollView { reviewBody }.frame(maxHeight: 180).fixedSize(horizontal: false, vertical: true) }
                 if item.room.map({ discussion.conversation($0).configuration?.memberIDs?.count ?? 0 }) == 1 {
                     Text(L("리뷰 없음 (리뷰할 계정이 없었어요)", "No review (no account was free to review)")).font(.system(size: 11)).foregroundColor(.orange)
                 }

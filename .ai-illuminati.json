@@ -3,6 +3,8 @@
   "commands": {
     "test": {"executable": "/bin/zsh", "args": ["tools/tests/run_mode2.sh"]},
     "build": {"executable": "/bin/zsh", "args": ["tools/build_app.sh", "--stage"]},
-    "validate-app-modules": {"executable": "/usr/bin/python3", "args": ["-B", "tools/tests/validate_app_modules.py"]}
+    "validate-app-modules": {"executable": "/usr/bin/python3", "args": ["-B", "tools/tests/validate_app_modules.py"]},
+    "test-fresh-cache": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_CACHE=fresh", "/bin/zsh", "tools/tests/run_mode2.sh"]},
+    "test-affected-projects": {"executable": "/bin/zsh", "args": ["tools/tests/run_mode2.sh", "--affected", "app/modules/AIProjects/Todo.swift"]}
   }
 }

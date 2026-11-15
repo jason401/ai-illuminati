@@ -238,6 +238,11 @@ kept between runs; it holds only SDK clang modules (the app's modules are rebuil
 clears it unless another run holds it; `AI_ILLUMINATI_TEST_CACHE=fresh` uses an empty one. Clearing it by hand (only
 while no test runs; the next run rebuilds it and is slower once): `rm -rf ~/Library/Caches/"AI Illuminati"/test-cache`.
 The guard changes behind `--affected` and the cache (T2, O1, O2) are in `docs/modules-history.md`.
+Guard hash update (O5-A, 2026-11-15, user-approved, compiler job count only): run_mode2 sets `J=(-j<CPU count>)` at the top
+and every `swiftc` in it gets `$J`; inside the module block that is the `build_modules.sh` call (which passes its options to
+each module's `swiftc` unchanged, so it is not edited) and the contract compile. Without `-j` swiftc ran few of its jobs
+at once (`docs/modules-followup.md` "O4"). Same compiler, inputs and checks; only how the work is split changes.
+`check_modules.sh` (S1-S3) and stage 1's block are unchanged.
 
 ### AIAccounts (`app/modules/AIAccounts/Accounts.swift`)
 | Promise | Users (files) | Module test | User tests (mode2.swift unless named) |

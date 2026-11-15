@@ -23,6 +23,8 @@ if [[ ${1-} == --affected ]]; then
     echo "Affected: contracts ${CONTRACTS[*]:-none}; app tests ${TESTS[*]:-none}; space web $(( SPACE_WEB ? 1 : 0 )); screens $SCREENS"
   fi
 fi
+# Every swiftc splits its work over all CPUs: without -j it ran few jobs at once (docs/modules-followup.md "O4", "O5-A").
+J=(-j$(sysctl -n hw.ncpu))
 TEST_DIR=$(mktemp -d /tmp/ai-mode2-check.XXXXXX)
 LATE_PID=
 # Stages 10-12 run beside 8-9 (late_start below); a failed or stopped run stops them first. Ctrl-C and TERM exit
@@ -196,7 +198,7 @@ stage "[2/12] Modules on their own"
 # app files keep a plain import and see public names only.
 MODULES="$TEST_DIR/modules"
 PART_T0=$EPOCHREALTIME
-limit 300 zsh tools/build_modules.sh "$MODULES" -enable-testing -module-cache-path "$CACHE"
+limit 300 zsh tools/build_modules.sh "$MODULES" $J -enable-testing -module-cache-path "$CACHE"
 part "build_modules.sh" $PART_T0
 # Every module folder's contract test (tools/tests/<name>_contract.swift, AIFoo -> foo): found here, not listed by hand.
 for DIR in app/modules/*(/N); do
@@ -212,7 +214,7 @@ for DIR in app/modules/*(/N); do
   mkdir -p "$TEST_DIR/$NAME-src" "$TEST_DIR/$NAME-home"
   cp $SRC "$TEST_DIR/$NAME-src/main.swift"
   PART_T0=$EPOCHREALTIME
-  limit 300 xcrun swiftc -swift-version 5 -module-cache-path "$CACHE" -I "$MODULES" -o "$TEST_DIR/$NAME-contract" "$TEST_DIR/$NAME-src/main.swift" "$MODULES"/lib*.a
+  limit 300 xcrun swiftc -swift-version 5 $J -module-cache-path "$CACHE" -I "$MODULES" -o "$TEST_DIR/$NAME-contract" "$TEST_DIR/$NAME-src/main.swift" "$MODULES"/lib*.a
   COMPILED_AT=$EPOCHREALTIME
   limit 120 env $RUN_ENV "$TEST_DIR/$NAME-contract"
   part "${DIR:t} contract" $PART_T0 "(compile $(printf '%.1f' $(( COMPILED_AT - PART_T0 ))) s)"
@@ -225,12 +227,12 @@ part "S1-S3 (check_modules.sh slow)" $PART_T0
 [[ ${1-} == --modules ]] && { stage_end; echo "PASS: module stages (1-2) only"; exit 0 }
 stage "[3/12] Real data folder check"
 mkdir -p "$TEST_DIR/real-home-src" && cp tools/tests/real_home.swift "$TEST_DIR/real-home-src/main.swift"
-limit 300 xcrun swiftc -swift-version 5 -module-cache-path "$CACHE" -I "$MODULES" -o "$TEST_DIR/real-home" "$TEST_DIR/real-home-src/main.swift" "$MODULES/libAIAccounts.a"
+limit 300 xcrun swiftc -swift-version 5 $J -module-cache-path "$CACHE" -I "$MODULES" -o "$TEST_DIR/real-home" "$TEST_DIR/real-home-src/main.swift" "$MODULES/libAIAccounts.a"
 limit 60 "$TEST_DIR/real-home"
 stage "[4/12] Build WorkspaceDocument"
 mkdir -p "$TEST_DIR/resources"
 cp app/resources/workspace_mcp.py app/resources/project_process.py app/resources/local_models.json "$TEST_DIR/resources/"
-limit 300 xcrun swiftc -swift-version 5 -module-cache-path "$CACHE" -o "$TEST_DIR/resources/WorkspaceDocument" tools/workspace_document.swift
+limit 300 xcrun swiftc -swift-version 5 $J -module-cache-path "$CACHE" -o "$TEST_DIR/resources/WorkspaceDocument" tools/workspace_document.swift
 stage "[5/12] Installer tests"
 PYTHONDONTWRITEBYTECODE=1 limit 600 python3 tools/tests/test_install_app.py
 stage "[6/12] Workspace MCP tests"
@@ -249,7 +251,7 @@ late_stages() {
   else
     mkdir -p "$TEST_DIR/space-web-src" "$TEST_DIR/space-web-home"
     cp tools/tests/space_web.swift "$TEST_DIR/space-web-src/main.swift"
-    limit 600 xcrun swiftc -swift-version 5 -module-cache-path "$CACHE" -I "$MODULES" -o "$TEST_DIR/space-web" "$MODULES"/lib*.a \
+    limit 600 xcrun swiftc -swift-version 5 $J -module-cache-path "$CACHE" -I "$MODULES" -o "$TEST_DIR/space-web" "$MODULES"/lib*.a \
         "$TEST_DIR/space-web-src/main.swift"
     limit 300 env AI_ILLUMINATI_TEST_HOME="$TEST_DIR/space-web-home" "$TEST_DIR/space-web"
   fi
@@ -260,12 +262,12 @@ late_stages() {
     mkdir -p "$TEST_DIR/screens-src" "$TEST_DIR/screens-home"
     cp tools/tests/screens_idle.swift "$TEST_DIR/screens-src/screens_idle.swift"
     SCREEN_SOURCES=(${(f)"$(ls app/macos/*.swift | grep -v '^app/macos/main.swift$')"})
-    limit 900 xcrun swiftc -swift-version 5 -module-cache-path "$CACHE" -I "$MODULES" -o "$TEST_DIR/screens" "$MODULES"/lib*.a \
+    limit 900 xcrun swiftc -swift-version 5 $J -module-cache-path "$CACHE" -I "$MODULES" -o "$TEST_DIR/screens" "$MODULES"/lib*.a \
         "${SCREEN_SOURCES[@]}" "$TEST_DIR/screens-src/screens_idle.swift"
     limit 60 env AI_ILLUMINATI_TEST_HOME="$TEST_DIR/screens-home" "$TEST_DIR/screens"
   fi
   stage "[12/12] Icon check"
-  limit 300 xcrun swiftc -swift-version 5 -module-cache-path "$CACHE" -o "$TEST_DIR/icon-check" \
+  limit 300 xcrun swiftc -swift-version 5 $J -module-cache-path "$CACHE" -o "$TEST_DIR/icon-check" \
       app/macos/Icon.swift tools/tests/icon_animation.swift
   limit 60 "$TEST_DIR/icon-check"
   stage_end
@@ -283,14 +285,14 @@ late_start() {
       stop() if getppid() != $main;
       select(undef, undef, undef, 0.2);
     }
-  ' $$ zsh -fc "set -eu; zmodload zsh/datetime; $(typeset -p TEST_DIR CACHE MODULES SELECT SPACE_WEB SCREENS)
+  ' $$ zsh -fc "set -eu; zmodload zsh/datetime; $(typeset -p TEST_DIR CACHE MODULES SELECT SPACE_WEB SCREENS J)
     $(typeset -f limit secs stage_end stage part late_stages); STAGE= STAGE_T0=; late_stages" \
     > "$TEST_DIR/late.log" 2>&1 < /dev/null &
   LATE_PID=$!
 }
 late_start
 stage "[8/12] Compile app tests"
-limit 900 xcrun swiftc -swift-version 5 -module-cache-path "$CACHE" -I "$MODULES" -o "$TEST_DIR/run" "$MODULES"/lib*.a \
+limit 900 xcrun swiftc -swift-version 5 $J -module-cache-path "$CACHE" -I "$MODULES" -o "$TEST_DIR/run" "$MODULES"/lib*.a \
     app/macos/Login.swift \
     app/macos/Settings.swift app/macos/LocalModels.swift app/macos/ExternalMCPTools.swift app/macos/DriveUI.swift app/macos/ToolHub.swift app/macos/DriveTools.swift app/macos/RunConditionsApp.swift app/macos/Updater.swift app/macos/ChatLinksApp.swift app/macos/GitBranches.swift tools/tests/space_build.swift tools/tests/google_drive.swift tools/tests/device_sync.swift tools/tests/window_drag.swift tools/tests/project_work.swift tools/tests/ask_ai.swift tools/tests/collab_log.swift tools/tests/meeting_tool.swift tools/tests/todo_work.swift tools/tests/project_info.swift tools/tests/update_channel.swift tools/tests/chat_search.swift tools/tests/search_fixtures.swift tools/tests/run_conditions.swift tools/tests/runtime_app.swift tools/tests/chat_links.swift tools/tests/chat_cli.swift tools/tests/tool_hub.swift "$TEST_DIR/main.swift"
 stage "[9/12] Run app tests"

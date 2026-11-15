@@ -180,10 +180,10 @@ struct TodoBoardView: View {
                 .help(L("켜면 앞 TODO에 [완료]를 눌러야 다음이 시작돼요. 끄면 앞 TODO가 확인 대기나 질문 대기가 될 때 시작해요.",
                         "On: the next starts after you press Done. Off: it starts when the previous one waits for your check or answer."))
         }
-        Toggle(L("30분 답 없으면 AI가 대신", "AI answers after 30 min"), isOn: Binding(get: { list.standIn }, set: { value in act { try store.setList(list.id, standIn: value) } }))
+        Toggle(L("답 없으면 AI가 알아서", "AI goes on without me"), isOn: Binding(get: { list.standIn }, set: { value in act { try store.setList(list.id, standIn: value) } }))
             .toggleStyle(.checkbox).font(.system(size: 12)).fixedSize()
-            .help(L("선택지가 있는 질문에 30분 동안 답이 없으면, 물어본 AI와 다른 AI가 프로젝트를 읽고 대신 답해요(한 번만, 네가 답할 때까지). 승인·비밀번호·배포·삭제처럼 네가 정해야 할 건 넘기지 않고 기다려요.",
-                    "A question with choices left unanswered for 30 minutes is answered by another AI than the one that asked, after reading the project (once, until you answer). Approvals, secrets, publishing or deleting still wait for you."))
+            .help(L("질문에 15분 동안 답이 없으면 물어본 AI와 다른 AI가 프로젝트를 읽고 대신 답하고, 30분이 지나도 멈춰 있으면 AI에게 판단을 맡겨 알아서 진행해요(네가 답할 때까지 질문 하나씩 한 번만). push·배포·삭제·계정·돈이 걸린 단계는 하지 않고 그 직전에 확인을 받아요. 실패·보고 없음은 너를 기다려요.",
+                    "A question unanswered for 15 minutes is answered by another AI than the one that asked, after reading the project; still waiting after 30 minutes, the AI is told to decide and go on (once each until you answer). Steps that push, publish, delete, touch accounts or spend money are left for your check. Failures and missing reports wait for you."))
     }
 
     // ⏸ Pause / Resume for one list, with what holds it: paused now, or going on only up to a TODO.
@@ -705,6 +705,8 @@ private final class StandInBox: ObservableObject { @Published var on = false }
 // The report card: what the AI did and [Done] / [Request changes], or its questions with an answer box, [Stop] and [Done].
 struct TodoCard: View {
     let item: TodoItem
+    private var question: TodoQuestion? { item.question }
+    static func time(_ date: Date) -> String { date.formatted(date: .omitted, time: .shortened) }
     @ObservedObject var discussion: Discussion
     var compact = false
     @ObservedObject private var draft = TodoDraft.shared
@@ -736,8 +738,14 @@ struct TodoCard: View {
                 Text(question.reason).font(.system(size: 12)).textSelection(.enabled)
                 if stand.on {
                     Text(L("다른 AI가 네 대신 답하는 중이에요. 지금 답하면 그 답은 버려요.", "Another AI is answering for you. Answer now and its answer is dropped.")).font(.system(size: 11)).foregroundColor(.secondary)
-                } else if let due = TodoStore.shared.snapshot.standInDue(item) {
-                    Text(L("\(due.formatted(date: .omitted, time: .shortened))까지 답이 없으면 다른 AI가 대신 답해요.", "Another AI answers for you if you have not by \(due.formatted(date: .omitted, time: .shortened)).")).font(.system(size: 11)).foregroundColor(.secondary)
+                } else if let auto = TodoStore.shared.snapshot.autoAnswerDue(item) {
+                    let stand = TodoStore.shared.snapshot.standInDue(item)
+                    if let note = item.notes.last, note.kind == .system, note.by != nil, stand == nil {
+                        Text(note.text).font(.system(size: 11)).foregroundColor(.secondary)
+                    }
+                    Text((stand.map { L("\(Self.time($0)) 다른 AI가 대신 답 · ", "\(Self.time($0)) another AI answers · ") } ?? "")
+                         + L("\(Self.time(auto)) 알아서 진행 (그 전에 답하면 네 답대로)", "\(Self.time(auto)) it goes on by itself (unless you answer first)"))
+                        .font(.system(size: 11)).foregroundColor(.secondary)
                 } else if let note = item.notes.last, note.kind == .system, note.by != nil {
                     Text(note.text).font(.system(size: 11)).foregroundColor(.secondary)
                 }
@@ -767,6 +775,11 @@ struct TodoCard: View {
                     Button(L("그만", "Stop")) { TodoScheduler.shared?.cancel(item.id) }
                     Button(L("완료", "Done")) { discussion.markTodoDone(item.id) }
                         .help(L("답 없이 이 TODO를 끝난 것으로 표시해요", "Mark this TODO done without answering"))
+                    if question?.delegable == true {
+                        Button(L("알아서 해", "Your call")) { text = ""; TodoScheduler.shared?.delegate(item.id) }
+                            .help(L("AI에게 판단을 맡겨요. 추천안이 있으면 그걸로, 없으면 AI가 정해서 진행하고, push·배포·삭제 같은 단계는 하지 않고 확인을 받아요.",
+                                    "Hand the decision to the AI: it takes the recommended answer or decides itself, and leaves pushing, publishing or deleting for your check."))
+                    }
                     Button(L("답하고 계속", "Answer and go on")) { TodoStore.shared.answer(item.id, text.trimmingCharacters(in: .whitespacesAndNewlines)); text = ""; TodoScheduler.shared?.wake() }
                         .buttonStyle(.borderedProminent)
                 }

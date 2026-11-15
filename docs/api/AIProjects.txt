@@ -186,6 +186,7 @@ TodoChats.start(room:question:photos:review:extra:) | func start(room: UUID, que
 TodoChats.stop(_:) | func stop(_ room: UUID)
 TodoChats.userWrote(_:since:) | func userWrote(_ room: UUID, since: Date) -> Bool
 TodoData | struct TodoData
+TodoData.autoAnswerDue(_:) | func autoAnswerDue(_ item: TodoItem) -> Date?
 TodoData.blockers(_:) | func blockers(_ item: TodoItem) -> [UUID]
 TodoData.init() | init()
 TodoData.init(from:) | init(from decoder: any Decoder) throws
@@ -213,6 +214,7 @@ TodoItem.assumptions | var assumptions: [String]
 TodoItem.attachments | var attachments: [TodoAttachment]
 TodoItem.attempts | var attempts: Int
 TodoItem.createdAt | var createdAt: Date
+TodoItem.delegated | var delegated: Int
 TodoItem.detail | var detail: String
 TodoItem.encode(to:) | func encode(to encoder: any Encoder) throws
 TodoItem.files | var files: [String]
@@ -280,10 +282,20 @@ TodoQuestion.Item.init(from:) | init(from decoder: any Decoder) throws
 TodoQuestion.Item.options | var options: [String]
 TodoQuestion.Item.recommended | var recommended: String?
 TodoQuestion.Item.text | var text: String
-TodoQuestion.blocked | var blocked: Bool
+TodoQuestion.Kind | enum Kind
+TodoQuestion.Kind.approval | case approval
+TodoQuestion.Kind.choice | case choice
+TodoQuestion.Kind.failed | case failed
+TodoQuestion.Kind.init(rawValue:) | init?(rawValue: String)
+TodoQuestion.Kind.missingInfo | case missingInfo
+TodoQuestion.Kind.noReport | case noReport
+TodoQuestion.blocked | var blocked: Bool { get }
+TodoQuestion.delegable | var delegable: Bool { get }
+TodoQuestion.encode(to:) | func encode(to encoder: any Encoder) throws
 TodoQuestion.id | var id: UUID
 TodoQuestion.init(from:) | init(from decoder: any Decoder) throws
 TodoQuestion.items | var items: [TodoQuestion.Item]
+TodoQuestion.kind | var kind: TodoQuestion.Kind
 TodoQuestion.reason | var reason: String
 TodoReport | struct TodoReport
 TodoReport.assumptions | var assumptions: [String]
@@ -298,6 +310,7 @@ TodoScheduler.chatMessage(room:text:files:) | func chatMessage(room: UUID, text:
 TodoScheduler.closeClocks() | func closeClocks()
 TodoScheduler.crew(for:) | func crew(for list: TodoList) -> (lead: Account, reviewer: Account?)?
 TodoScheduler.crew(lock:allowed:) | func crew(lock: EnterpriseLock? = nil, allowed: [String] = []) -> (lead: Account, reviewer: Account?)?
+TodoScheduler.delegate(_:) | func delegate(_ id: UUID)
 TodoScheduler.editing | var editing: UUID? { get set }
 TodoScheduler.init(chats:store:) | init(chats: any TodoChats, store: TodoStore)
 TodoScheduler.instruction(_:documents:) | static func instruction(_ item: TodoItem, documents: Bool = false) -> String

@@ -72,6 +72,7 @@ extension Discussion {
     func openSpace(_ id: String) {
         SpaceRefiner.check()
         guard SpaceStore.shared.manifest(id) != nil else { return }
+        commitComposing()
         viewingRemote = nil; viewingBoard = false; sidebarOverlay = false
         viewingSpace = id
     }

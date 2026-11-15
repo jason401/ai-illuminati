@@ -2587,6 +2587,22 @@ func testRoomDrafts() {
     expect(chat.currentID == c && chat.draft == "새 대화 초안", "the new-chat button reopens the blank chat with its box")
     chat.open(a)
 
+    // A character still being composed goes into the box before another screen and before quitting.
+    editor.string = "보드"; editor.setSelectedRange(NSRange(location: 2, length: 0))
+    editor.setMarkedText("로", selectedRange: NSRange(location: 1, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
+    let boxBefore = chat.draft
+    chat.draft = "보드"
+    chat.openBoard(project: nil)
+    expect(!editor.hasMarkedText() && chat.draft == "보드로", "opening the board finishes the composed character: \(chat.draft)")
+    chat.open(a)
+    editor.string = "끝"; editor.setSelectedRange(NSRange(location: 1, length: 0))
+    editor.setMarkedText("내", selectedRange: NSRange(location: 1, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
+    chat.draft = "끝"
+    chat.saveDrafts()
+    expect(!editor.hasMarkedText() && chat.draft == "끝내"
+           && ((try? String(contentsOf: file, encoding: .utf8)) ?? "").contains("끝내"), "quitting writes the composed character too")
+    chat.draft = boxBefore
+
     // After a restart: the boxes come back (the blank chat too, though it was never saved).
     chat.saveDrafts()
     expect(FileManager.default.fileExists(atPath: file.path), "the boxes are written")

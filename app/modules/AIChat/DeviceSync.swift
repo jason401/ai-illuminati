@@ -461,6 +461,7 @@ extension Discussion {
     func openRemote(_ chat: RemoteChat) {
         // Read and decoded off the main thread, so a long chat does not hold up the window.
         let shown = viewingRemote?.chat.id == chat.id ? viewingRemote?.snapshot : nil   // a newer copy: keep the old one up meanwhile
+        commitComposing()   // the read-only view has no message box: the box keeps the whole text
         viewingSpace = nil
         viewingRemote = RemoteViewing(chat: chat, snapshot: shown, loading: true)
         DispatchQueue.global(qos: .userInitiated).async {

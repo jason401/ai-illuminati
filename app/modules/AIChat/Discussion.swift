@@ -1444,8 +1444,8 @@ public final class Discussion: ObservableObject {
     }
 
     // A Korean (or other) character still being composed is not in `draft` yet, and the box would not take the next
-    // chat's text while it is: finish it first.
-    private func commitComposing() {
+    // chat's text while it is: finish it first (also before a screen without the box, and before quitting).
+    func commitComposing() {
         guard let editor = mentionEditor, editor.hasMarkedText() else { return }
         editor.unmarkText()
         editor.inputContext?.discardMarkedText()
@@ -1455,13 +1455,19 @@ public final class Discussion: ObservableObject {
     private func draftsChanged() {
         guard host == nil, Self.draftsFile != nil else { return }
         draftsSave?.cancel()
-        let save = DispatchWorkItem { [weak self] in self?.saveDrafts() }
+        let save = DispatchWorkItem { [weak self] in self?.writeDrafts() }
         draftsSave = save
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: save)
     }
 
-    /// Writes the unsent message boxes now (quitting the app; otherwise half a second after a change).
+    /// Writes the unsent message boxes now, with a character still being composed (quitting the app).
     public func saveDrafts() {
+        commitComposing()
+        writeDrafts()
+    }
+
+    // Half a second after a change: the character being composed is left alone (the user is still typing it).
+    private func writeDrafts() {
         draftsSave?.cancel(); draftsSave = nil
         guard host == nil, let file = Self.draftsFile else { return }
         var all = roomDrafts

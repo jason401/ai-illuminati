@@ -91,6 +91,10 @@ private struct EmptyPreviewLogin: GoogleTokenStore {
             var notes = Conversation(); notes.title = "Todo list structure idea"; notes.turns = [ChatTurn(question: "ideas")]; notes.pinned = true
             chat.conversations = [conversation, meeting, todoRoom, linked("Face expressions", face), notes]
             SidebarFold.shared.toggle("project." + face.common)
+            // --working: two chats answering (one stopping) listed under Search.
+            if CommandLine.arguments.contains("--working") {
+                chat.runningRooms = [todoRoom.id, chat.conversations[3].id, notes.id]; chat.stoppingRooms = [notes.id]
+            }
             // CHAT_BOARD=todo|info|all opens the project's folder (its TODO board or Project info) or every project's board in place of the chat.
             if let tab = ProcessInfo.processInfo.environment["CHAT_BOARD"] {
                 chat.openBoard(project: tab == "all" ? nil : SidebarProjects.key(repo), tab: tab == "info" ? .info : .todo)

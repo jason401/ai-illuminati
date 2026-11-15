@@ -157,6 +157,7 @@ struct ChatView<Model: ChatSettings>: View {
             .padding(.horizontal, 10)
             // Other chats stay usable while one answers (Discussion.maxRunning at once).
             .disabled(discussion.importingMaterials)
+            if !discussion.sidebarSearching { workingChats }
             ScrollView {
                 VStack(alignment: .leading, spacing: 1) {
                     sharedFolders
@@ -238,6 +239,71 @@ struct ChatView<Model: ChatSettings>: View {
         }
         .frame(width: ChatViewSize.sidebarWidth)
         .background(Color.primary.opacity(0.035))
+    }
+
+    // Shortcuts to the chats answering now, outside the scroll view so they stay in sight; hidden when none.
+    // Opening one selects it in its own list below too (the same currentID).
+    @ViewBuilder private var workingChats: some View {
+        let working = WorkingChats.list(conversations: discussion.conversations, running: discussion.runningRooms,
+                                        stopping: discussion.stoppingRooms, todo: todos.snapshot, names: projectInfo.names)
+        if !working.isEmpty {
+            VStack(alignment: .leading, spacing: 1) {
+                SidebarHeader(title: L("작업 중", "Working"), fold: "working") {
+                    Text("\(discussion.runningRooms.count)/\(Discussion.maxRunning)").font(.system(size: 10).monospacedDigit())
+                        .foregroundColor(.secondary)
+                        .help(L("동시에 \(Discussion.maxRunning)개 대화까지 답할 수 있어요", "Up to \(Discussion.maxRunning) chats can answer at once"))
+                }
+                if !folds.isFolded("working") {
+                    // At most maxRunning rows (a meeting or attachments can add more); the rest as "+n".
+                    ForEach(working.prefix(Discussion.maxRunning)) { workingRow($0) }
+                    if working.count > Discussion.maxRunning {
+                        Text(L("+\(working.count - Discussion.maxRunning)개 더", "+\(working.count - Discussion.maxRunning) more"))
+                            .font(.system(size: 11)).foregroundColor(.secondary).padding(.leading, 28).frame(height: 20)
+                    }
+                }
+            }
+            .padding(.horizontal, 10)
+            .disabled(discussion.importingMaterials)
+        }
+    }
+
+    private func workingRow(_ chat: WorkingChat) -> some View {
+        let id = chat.conversation.id
+        let key = "working." + id.uuidString
+        let selected = id == discussion.currentID && discussion.viewingRemote == nil && !discussion.viewingBoard && discussion.viewingSpace == nil
+        let title = chat.conversation.title
+        return HStack(spacing: 6) {
+            if chat.stopping {
+                Image(systemName: "stop.circle").font(.system(size: 10)).foregroundColor(.secondary).frame(width: 14)
+            } else {
+                RunningRing(color: answering(id)).frame(width: 14)
+            }
+            Text(chat.todo && title.hasPrefix("TODO · ") ? String(title.dropFirst("TODO · ".count)) : title)
+                .lineLimit(1).truncationMode(.tail)
+                .foregroundColor(chat.stopping ? .secondary : RunningRing.titleColor)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if chat.stopping {
+                Text(L("멈추는 중", "Stopping")).font(.system(size: 10)).foregroundColor(.secondary)
+            } else {
+                // Short, so the title keeps most of the row: a TODO mark, then the project's name.
+                if chat.todo {
+                    Image(systemName: "checkmark.square").font(.system(size: 9)).foregroundColor(.secondary).help(L("TODO 작업방", "TODO chat"))
+                }
+                if let project = chat.project {
+                    Text(project).font(.system(size: 10)).foregroundColor(.secondary).lineLimit(1).truncationMode(.tail)
+                        .frame(maxWidth: 72, alignment: .trailing)
+                }
+            }
+        }
+        .font(.system(size: 12))
+        .padding(.leading, 10).padding(.trailing, 10).frame(height: 26)
+        .background(selected ? Color.primary.opacity(0.10) : discussion.hoverKey == key ? Color.primary.opacity(0.05) : .clear,
+                    in: RoundedRectangle(cornerRadius: 8))
+        .contentShape(Rectangle())
+        .onTapGesture { discussion.open(id) }
+        .onHover { inside in discussion.hover(key, inside) }
+        .help(chat.stopping ? L("멈추는 중 · ", "Stopping · ") + title : L("답하는 중 · ", "Answering · ") + title)
+        .accessibilityAddTraits(.isButton)
     }
 
     // Projects header +: make a new Git project or an empty one, or link an existing folder (Git → code project, otherwise documents).

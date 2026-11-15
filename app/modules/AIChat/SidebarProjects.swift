@@ -284,3 +284,31 @@ extension SidebarProjects {
     // The chat's link after the move: the project's newest root, writable, plus what else it had linked.
     static func moved(_ workspace: WorkspaceBinding?, to project: ProjectBinding) -> WorkspaceBinding { ProjectWork.moving(workspace, to: project) }
 }
+
+// The "Working" shortcuts under Search: every chat answering now (a TODO chat answers through runningRooms too,
+// and a meeting answers in its parent chat, so the parent is the one listed). In the order they started, so rows
+// stay put while answers stream in; a chat not yet loaded is left out. The rows are links, not copies.
+struct WorkingChat: Identifiable {
+    var id: UUID { conversation.id }
+    let conversation: Conversation
+    let project: String?     // the project folder's name as the sidebar shows it
+    let todo: Bool           // a TODO's own chat
+    let stopping: Bool
+}
+
+enum WorkingChats {
+    static func list(conversations: [Conversation], running: Set<UUID>, stopping: Set<UUID> = [], todo: TodoData,
+                            names: [String: String] = [:]) -> [WorkingChat] {
+        let todoRooms = Set(todo.items.compactMap(\.room))
+        func started(_ c: Conversation) -> Date { c.turns.last?.askedAt ?? c.updatedAt }
+        return conversations.filter { running.contains($0.id) && $0.meetingOf == nil }
+            .sorted { started($0) != started($1) ? started($0) < started($1) : $0.id.uuidString < $1.id.uuidString }
+            .map { chat in
+                let project = chat.workspace?.project.map { p -> String in
+                    let key = SidebarProjects.key(p)
+                    return names[key] ?? todo.lists.first { $0.project.map(SidebarProjects.key) == key }?.title ?? SidebarProjects.folderName(p)
+                }
+                return WorkingChat(conversation: chat, project: project, todo: todoRooms.contains(chat.id), stopping: stopping.contains(chat.id))
+            }
+    }
+}

@@ -1678,3 +1678,52 @@ func testTodoChatMessage() {
            "a done TODO's chat answers as a plain chat: \(store.current.item(item.id)?.state.rawValue ?? "-")")
     print("PASS: TODO chat messages (answer, change request, draft made ready, queued message, waits when it cannot start, done is plain)")
 }
+
+// The "Working" shortcuts under Search follow runningRooms: a chat shows when it starts answering (in start
+// order, TODO chats marked, a meeting through its parent), goes when it ends, and a row opens its chat.
+func testWorkingChats() {
+    let project = ProjectBinding(root: "/tmp/work-repo", common: "/tmp/work-repo/.git", remote: "origin", remoteURL: "")
+    let now = Date()
+    func chat(_ title: String, asked minutes: Double, project: ProjectBinding? = nil) -> Conversation {
+        var c = Conversation()
+        c.title = title
+        var turn = ChatTurn(question: "q")
+        turn.askedAt = now.addingTimeInterval(minutes * 60)
+        c.turns = [turn]
+        c.updatedAt = now.addingTimeInterval(600 - minutes)   // newest updated is the last started: order must not follow it
+        if let project { c.workspace = WorkspaceBinding(roots: [WorkspaceRoot(path: project.root, directory: true, writable: true)], project: project) }
+        return c
+    }
+    let first = chat("first", asked: 1), second = chat("second", asked: 2, project: project), todoChat = chat("TODO · fix", asked: 3, project: project)
+    var meeting = chat("meeting", asked: 4)
+    meeting.meetingOf = MeetingLink(room: first.id, turn: UUID())
+    let idle = chat("idle", asked: 0)
+    let store = TodoStore(url: todoStoreFile("working"))
+    let fix = try! store.add(title: "fix", project: project, projectName: "Work repo")
+    try! store.change(fix.id) { $0.room = todoChat.id; $0.state = .running }
+    let all = [idle, todoChat, meeting, second, first]
+
+    expect(WorkingChats.list(conversations: all, running: [], todo: store.current).isEmpty, "nothing answering: no section")
+    let listed = WorkingChats.list(conversations: all, running: [first.id, second.id, todoChat.id, meeting.id], stopping: [second.id], todo: store.current)
+    expect(listed.map(\.conversation.title) == ["first", "second", "TODO · fix"],
+           "answering chats in start order, the meeting through its parent, idle chats out: \(listed.map(\.conversation.title))")
+    expect(listed.map(\.todo) == [false, false, true] && listed.map(\.stopping) == [false, true, false]
+           && listed.map(\.project) == [nil, "Work repo", "Work repo"], "TODO chat marked, stopping shown, project named")
+    expect(WorkingChats.list(conversations: all, running: [second.id], todo: store.current, names: [project.common: "Mine"]).first?.project == "Mine",
+           "the project's own name comes first")
+    expect(WorkingChats.list(conversations: all, running: [UUID()], todo: store.current).isEmpty, "a chat not loaded is left out")
+
+    // Through Discussion: starts → listed, opening a row moves currentID, ends → gone.
+    let chats = Discussion(model: AppModel())
+    chats.conversations = all; chats.currentID = idle.id
+    func working() -> [UUID] { WorkingChats.list(conversations: chats.conversations, running: chats.runningRooms, todo: store.current).map(\.id) }
+    chats.runningRooms = [second.id, first.id]
+    expect(working() == [first.id, second.id], "two chats answering: both listed")
+    chats.open(second.id)
+    expect(chats.currentID == second.id, "a row opens its chat")
+    chats.runningRooms.remove(first.id)
+    expect(working() == [second.id], "a finished chat leaves the list")
+    chats.runningRooms = []
+    expect(working().isEmpty, "all finished: the section hides")
+    print("PASS: working chats under Search (answering chats in start order, TODO and stopping marked, meeting through its parent, opens the chat, gone when done)")
+}

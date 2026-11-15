@@ -559,6 +559,20 @@ every run holds a shared lock on `test-cache.lock` beside it, and clearing needs
 another run going it prints "kept this time"). No check, verdict or command changed.
 Clearing it by hand (only while no test runs; the next run rebuilds it and is slower once):
 `rm -rf ~/Library/Caches/"AI Illuminati"/test-cache`.
+Guard hash update (O5-A, 2026-11-15, user-approved, compiler job count only): run_mode2 sets `J=(-j<CPU count>)` at the top
+and every `swiftc` in it gets `$J`; inside the module block that is the `build_modules.sh` call (which passes its options to
+each module's `swiftc` unchanged, so it is not edited) and the contract compile. Without `-j` swiftc ran few of its jobs
+at once (`docs/modules-followup.md` "O4"). Same compiler, inputs and checks; only how the work is split changes.
+`check_modules.sh` (S1-S3) and stage 1's block are unchanged.
+Guard hash update (O5-B, 2026-11-15, user-approved, contracts at once): stage 2 runs every contract's compile and run as
+a background job, up to `AI_ILLUMINATI_CONTRACT_JOBS` at a time (default the CPU count), each with its own home, source,
+program, `limit 300`/`limit 120` and log (`$TEST_DIR/<name>.log`, shown in name order when all end). `--affected` skips
+and the `contract needs` markers are as before. The first failure or time out names its contract (`FAIL: AIRuntime
+contract (exit 142) (timed out)`), stops the other jobs and their `limit`s, then kills what a stopped contract left
+in other process groups (AIRuntime's fake CLIs: every program under this run's `$TEST_DIR` and its children); the EXIT
+trap does the same when the run stops. Jobs drop the script's EXIT trap, which would delete `$TEST_DIR`. The contracts
+took 26 s one after another and now take about as long as AIProjects alone (12 s) (`docs/modules-followup.md` "O5-B").
+`AI_ILLUMINATI_CONTRACT_JOBS=1` runs them one at a time; 0, a negative or a non-number stops the run (exit 2) instead of waiting forever. `build_modules.sh`, S1-S3 and stage 1's block are unchanged.
 
 ### C1a falsification (was under "AIChat (…), step C1a")
 C1a falsification (one change in a copy of the tree, "app" = the mode2 app tests):

@@ -514,3 +514,146 @@ list: each becomes Chat's, moves down, or comes in by injection.
   - F7: Space refine is covered by the contract only; add an app-path check when SpaceView's shell moves.
   - `ChatStorage` (the storage tool) still names `NativeSessions.directory`, `RoomDocuments.directory`, `WorkspaceBackup.base` to
     measure; C0 left it (not Discussion or ChatStore). It goes with the Storage tool.
+
+## Moved from docs/MODULES.md (2026-11-15)
+
+Dated measurements and step records taken out of `docs/MODULES.md` at 0a272b8, values and wording unchanged; "above",
+"below", "here" and "this file" in them mean `docs/MODULES.md` as it was then.
+
+### Size line (was the header's third line)
+Size (T5, 2026-11-13, `git ls-files 'app/*.swift'`, 82 files): 31,894 lines; AIChat 13,067 (41.0%), AIChatRecords 465, App 7,184.
+
+### Step status and commits (was under "Final module map and dependency graph — App, step A (2026-11-12)")
+Status: C1 and I completed before A (3794afc, 2ceaf41). A completed: implementation a98ec3e; main's full suite and staged signed build passed. Trial behavior remains on local branches only.
+
+| Stage | Implementation / contract follow-up commits |
+|---|---|
+| 1 AIAccounts | 94d3c85; promise/user checks 2fb027b |
+| 2 AILocalization + AISpaces | 3ed052f |
+| 3 Runtime R0 | 922eb6f, cdbec40 |
+| 4 Runtime R1 | d3df383; contract follow-up 4c67045 |
+| 5 Workspace W0 | 186f895 |
+| 6 Workspace W1 | 159e511 |
+| 7 Projects P0 / P1 | c37b11e, a9d353e |
+| 8 Chat C0 | f05fd72 |
+| 9 Chat C1a / C1b | b88d0a8, 3794afc |
+| 10 Integrations I | 2ceaf41 |
+| 11 App A | a98ec3e; final documentation follows |
+
+Older hashes were confirmed read-only through the existing trial branch histories (the connected git_log returns ten
+entries per call); those branches were not changed.
+
+### Selective-run guard changes and test cache (was under "Which tests a change needs")
+Guard change (approved for T2): run_mode2's module block skips unpicked contracts only when `--affected` picked; the
+build, G1-G7 and S1-S3 lines are as before. `check_modules.py` adds the map check to G6 and hashes
+`tools/affected_tests.py` (G7). Without `--affected` every contract runs exactly as before (verified: same test list).
+Guard hash update (O1, 2026-11-14, user-approved test plan, output only): the module block got time lines (`part`: build,
+each contract with its compile time, S1-S3) and `affected_tests.py` reads stage 8 as `[8/12]` after the renumbering; no check or command changed.
+Guard hash update (O2, 2026-11-14, user-approved test plan, cache path only): every compiler in run_mode2, S1 and S2
+included, uses one module cache, `~/Library/Caches/AI Illuminati/test-cache`, passed as its real path (`:A`) and kept
+between runs; `check_modules.sh slow` takes it as an optional fourth argument (default `TMP/guard-cache` as before). It
+holds only SDK clang modules (the app's modules are rebuilt into `$TEST_DIR` every run), so no check reads anything old.
+Over 2 GB at the start, run_mode2 clears it ("test cache over 2 GB: cleared"); `AI_ILLUMINATI_TEST_CACHE=fresh` uses an
+empty one in `$TEST_DIR` as before. Clang locks each module, so runs at once may share it; clearing is guarded apart:
+every run holds a shared lock on `test-cache.lock` beside it, and clearing needs the exclusive one without waiting (with
+another run going it prints "kept this time"). No check, verdict or command changed.
+Clearing it by hand (only while no test runs; the next run rebuilds it and is slower once):
+`rm -rf ~/Library/Caches/"AI Illuminati"/test-cache`.
+
+### C1a falsification (was under "AIChat (…), step C1a")
+C1a falsification (one change in a copy of the tree, "app" = the mode2 app tests):
+| Change | Module contract | App tests |
+|---|---|---|
+| F1 `delete` tells `deleted` before the purges | caught ("a failure stops at once, nothing told") | caught (testChatLinks "deleted is told per chat …") |
+| F2 a picture's folder `.asset` | caught ("a picture lives in the chat's .assets folder") | caught (mode2 "deleting chat must remove copied images") |
+| F3 `loadAll` oldest first | caught ("newest first") | caught, indirectly (testAutoMeeting picks by the first chats) |
+| F4 a chat file saved 0644 | caught ("a chat file is 0600") | **missed**: only the module test checks the mode |
+
+### C1b falsification (was under "AIChat, step C1b")
+C1b falsification (one change in a copy of the tree; module contract, then the mode2 app tests):
+| Change | Module contract | App tests |
+|---|---|---|
+| G1 the app connects no AI Face tag reader (`face.extract` returns the text) | passed (not its promise) | caught: mode2 chat members "both replies are shown, the first done on top" |
+| G2 the app's run conditions drop the folders (`ChatApp.run` ignores the workspace) | passed | caught: testRunConditions "full access runs with AutoGuard's environment" |
+| G3 ask_ai asks by usage only (no "different kind first") | passed | **missed at first**; caught after C1 added testAskAI "a different kind first, even when another account of the asker's kind has more usage left" |
+| G4 a review with findings starts no fix | passed | caught: testChatThroughCLI "review: the work, its review and the fix in one turn" (and testPeerReview) |
+
+### I falsification (was under "AIIntegrations (…), step I (2026-11-12)")
+I falsification (one change in a copy of the tree; module contract, then the app tests without the module contracts):
+| Change | Module contract | App tests |
+|---|---|---|
+| H1 the Google item's prefix becomes `…-v2:` (an existing login is no longer read) | caught ("a saved login is connected, writable as saved") | **missed**: google_drive writes and reads with the same code; only the contract holds a login in the old form |
+| H2 a dead AI Face connection is kept while the setup is the same (no reconnect) | caught ("with AI Face gone the link offers nothing…") | **missed at first**; caught after I added mode2 "a restarted AI Face is connected again on the next use" (this test's server killed by its path in the test home) |
+| H3 an outside MCP tool set to "ask" runs without asking | passed (no connected server in the contract) | caught: testRemoteMCP "a write tool asks first; no answer is no" |
+| H4 Drive returns a result after a folder was paused during the call (post-request check gone) | passed (needs Drive answers) | caught: google_drive "in-flight result withheld after folder pause with another folder active" |
+| H6 the app's list offers outside MCP tools in Enterprise chats | passed (the rule is the app's) | caught: testExternalMCP "no outside servers in Enterprise chats" |
+
+The first H3 run (three copies at once) stopped earlier at testMeetingTool "the meeting stops…" (timing under load, unrelated: no
+meeting code changed); alone it reached and failed the MCP check above.
+
+### Step M: keeping the lines (2026-11-12)
+Rules written short (AGENTS.md "Module rules", 1,792 characters; AGENTS.md + CLAUDE.md about 10,000 of the 30,000 the app
+passes), the guards above made, and this file reordered (rules → map → records; the step records moved to
+`docs/modules-history.md` unchanged). No behavior, save format, permission, AutoGuard, `project_process.py`, signing,
+install or release file changed; the app build options are unchanged (S1 extracts from the test build's modules).
+
+Built on what A made instead of beside it: `check_module_dependencies.py` (G1) now reads `tools/module_graph.txt`
+instead of its own table, and its temp-tree tests still run. run_mode2's hand-written contract list (7 lines) and
+boundary list (22 checks in 3 forms) became a loop over the module folders and their `boundary` files; the two
+"cannot find … in scope" checks (AutoGuard; Peer and Route) became `hidden` lines, and S2 now also fails when any other
+error appears. A boundary file is compiled once per module (8 typechecks instead of 22).
+
+Differences from the plan, and why:
+- S1 extraction: `swift-symbolgraph-extract` (first choice) adopted. Two extractions from separate builds (one with,
+  one without `-enable-testing`) gave identical text for all four modules compared (AILocalization 8, AIAccounts 42,
+  AIRuntime 151, AIChat 534 lines), so `-emit-module-interface` was not tried. `-skip-synthesized-members` keeps
+  protocol default members out (AIChat's raw graph is 11 MB with them, 0.8 MB without). Its module cache is apart from
+  the test's (`guard-cache`): sharing it under `/tmp` and `/private/tmp` spellings crashed the extractor.
+- G2: AILocalization had no contract test, so `localization_contract.swift` was added instead of an exception; contracts
+  that need app resources or chat fixtures say so in one marker line, read by run_mode2.
+- G4 stays a warning, as planned for its first step: the 17 hits in today's code are all listed with reasons and the
+  falsification hit was found, but "no false hits" needs time on new code. Raise it to a failure (a guard change) later.
+- G6 also checks the AGENTS.md section size (≤ 2,000) and the two files' total (≤ 25,000).
+- Hooks do not run for the app's own commits and pushes (`core.hooksPath=/dev/null` in ProjectWork, kept on purpose);
+  they cover terminal and CLI commits in this folder. run_mode2 repeats every check.
+- CLAUDE.md is excluded from Git in this checkout (`.git/info/exclude`): its Layout was rewritten locally; G6 counts it
+  only when present.
+- The fast check takes about 0.4 s; the module stages (`run_mode2.sh --modules`, the pre-push hook) about 2 minutes.
+
+Falsification (each in a copy of the tree, one change at a time, then thrown away; nothing reached main):
+| Target | Deliberate change | Expected | Result |
+|---|---|---|---|
+| G1 | `AIChat` added to `AISpaces/dependencies` | fail | fail: forbidden dependency, unused dependency, cycle |
+| G2 | `chat_contract.swift` renamed `chats_contract.swift` | fail | fail: AIChat has no contract; a contract with no module |
+| G3 | `app/macos/Foo.swift` added | fail | fail: not in `tools/app_files.txt` |
+| G4 | `extension Discussion { func x() {} }` in an App file | warning | warning (PokerWindow.swift:410, since removed), exit 0 |
+| G5 | `@testable import AIChat` in ChatLinksApp.swift | fail | fail |
+| G6 | the `AIIntegrations` line removed from AGENTS.md | fail | fail: names differ from the folders |
+| G7 | the contract run line removed from run_mode2.sh | fail | fail: run_mode2 module checks changed |
+| S1 | `CloudModels.versionTitle` made public | fail | fail, with the one-line diff of `docs/api/AIRuntime.txt` |
+| boundary | `_ = AccountStore.noSuchName` added to AIAccounts' boundary | fail | fail: expected "inaccessible" missing, other error "no member" |
+| pre-commit | `git commit` with the G1 change staged (copy with `core.hooksPath=.githooks`) | refused | refused; the same tree without it committed |
+| pre-commit (review) | the G1 change staged, the working tree put back | refused | refused: the hook checks the index (copied out with `git checkout-index`), not the working tree |
+| G4 (review) | `extension AIChat.Discussion { func x() {} }` in an App file | warning | warning: a module-qualified name is read as its type |
+`tools/new_module.sh AIFoo AIAccounts` (in a copy) made the folder, contract, boundary and snapshot, left
+`module_graph.txt` and `module_guard.sha256` as they were, and G1 then failed until the graph line is added.
+
+Left to the user: CI (a public-repository setting), cleaning up the trial branches, publishing stable.
+
+Earlier steps (A, I, C1, C0, P, W, R, the first modules): `docs/modules-history.md`.
+
+### T4: AIChatRecords split out of AIChat (2026-11-13)
+The reduced T3 list (`docs/modules-followup.md` "T3", "T4"): ChatValues without `SyncSnapshot`, CollabLog, ChatStorage's
+report, the `RoomDocuments` enum and a new `ChatPaths` moved to a module that knows no Discussion. Graph and guard hash
+changed with the user's advance approval for this plan (a new module is a graph change). No save format, path, permission
+or App file changed; ChatWindow/Markdown/Pictures untouched (`@_exported import`, Exceptions). 9 public names added, each
+with its reason above. Checks: fast G1-G7, full run_mode2 (57 tests), render_chat. Falsified in a copy: AIChat in its
+dependencies fails G1; `CollabLog.maxBytes` public fails S1; an App file using it fails to compile ("inaccessible").
+
+### AIChatRecords imported directly, no `@_exported` (2026-11-15)
+
+T4's `@_exported import AIChatRecords` in `AIChat/ChatApp.swift` is gone (removed from Exceptions): 20 AIChat files
+(ChatApp's line now a plain import) and 2 App files (`ChatLinksApp.swift`, `Settings.swift`) say `import AIChatRecords` (and 7 tests that leaned on the
+re-export: chat_contract, chat_links, chat_search, device_sync, project_work, render_chat, todo_work), so import
+lines again show who uses a module. No graph or guard change (App is outside `module_graph.txt`; AIChat already
+declared the edge). S1 snapshots unchanged: `@_exported` re-exports names but does not change AIChat's own public API.

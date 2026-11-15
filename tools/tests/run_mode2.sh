@@ -18,7 +18,13 @@ if [[ ${1-} == --affected ]]; then
   fi
 fi
 TEST_DIR=$(mktemp -d /tmp/ai-mode2-check.XXXXXX)
-trap 'rm -rf "$TEST_DIR"' EXIT
+LATE_PID=
+# Stages 10-12 run beside 8-9 (late_start below); a failed or stopped run stops them first. Ctrl-C and TERM exit
+# through the EXIT trap (zsh skips it when a signal kills it).
+late_stop() { [[ -n $LATE_PID ]] || return 0; kill -TERM -$LATE_PID 2>/dev/null || true; wait $LATE_PID 2>/dev/null || true; LATE_PID= }
+trap 'late_stop; rm -rf "$TEST_DIR"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 # Compiler module cache (the SDK's clang modules: Foundation, AppKit, SwiftUI, …) kept between runs; homes, data and
 # built programs stay in $TEST_DIR. One real path (:A) for every compiler: a moved, copied or differently spelled
 # cache (/tmp vs /private/tmp) breaks. Clang locks each module, so several runs at once may share it; clearing it
@@ -67,7 +73,9 @@ limit() {
   ' "$secs" "$@" && return 0
   local rc=$?
   (( rc == 142 )) && echo "FAIL: stopped after $secs s: ${1:t}" >&2
-  return $rc
+  # A failed stage ends the run here: zsh 5.9 skips the EXIT trap (late_stop, rm $TEST_DIR) when set -e stops the
+  # script at a function's failure, but runs it on exit.
+  exit $rc
 }
 # "[n/m] name" before each stage: the app shows it under the current step (project_run). When a stage ends,
 # "  [n] name: x.x s" (its parts indented under it), and the whole run's time at the end: where the time goes.
@@ -194,6 +202,58 @@ stage "[6/12] Workspace MCP tests"
 PYTHONDONTWRITEBYTECODE=1 limit 600 python3 tools/tests/test_workspace_mcp.py
 stage "[7/12] Material fixtures"
 PYTHONDONTWRITEBYTECODE=1 limit 300 python3 tools/tests/material_fixtures.py "$TEST_DIR/data/material-fixtures"
+# Stages 10-12 need only the modules (stage 2), so they run beside 8-9 (about 24 s less; docs/modules-followup.md
+# "O4"). One background job in its own process group writes to late.log, shown after stage 9: its stage lines
+# reach the app's progress (RunProgress) in order. Keep it all above stage 8's line: affected_tests.py reads stage
+# 8's files from the stage 8 marker to the stage 9 marker (both quoted). The perl leader stops the group (each
+# stage's limit stops its own) when run_mode2 asks (late_stop) or is gone: the app stops a run with SIGKILL.
+late_stages() {
+  stage "[10/12] Space web view isolation"
+  if (( SELECT && ! SPACE_WEB )); then
+    echo "skip: space web view (not affected)"
+  else
+    mkdir -p "$TEST_DIR/space-web-src" "$TEST_DIR/space-web-home"
+    cp tools/tests/space_web.swift "$TEST_DIR/space-web-src/main.swift"
+    limit 600 xcrun swiftc -swift-version 5 -module-cache-path "$CACHE" -I "$MODULES" -o "$TEST_DIR/space-web" "$MODULES"/lib*.a \
+        "$TEST_DIR/space-web-src/main.swift"
+    limit 300 env AI_ILLUMINATI_TEST_HOME="$TEST_DIR/space-web-home" "$TEST_DIR/space-web"
+  fi
+  stage "[11/12] Screens stay still"
+  if (( SELECT )); then
+    echo "skip: screens (affected tests only)"
+  else
+    mkdir -p "$TEST_DIR/screens-src" "$TEST_DIR/screens-home"
+    cp tools/tests/screens_idle.swift "$TEST_DIR/screens-src/screens_idle.swift"
+    SCREEN_SOURCES=(${(f)"$(ls app/macos/*.swift | grep -v '^app/macos/main.swift$')"})
+    limit 900 xcrun swiftc -swift-version 5 -module-cache-path "$CACHE" -I "$MODULES" -o "$TEST_DIR/screens" "$MODULES"/lib*.a \
+        "${SCREEN_SOURCES[@]}" "$TEST_DIR/screens-src/screens_idle.swift"
+    limit 60 env AI_ILLUMINATI_TEST_HOME="$TEST_DIR/screens-home" "$TEST_DIR/screens"
+  fi
+  stage "[12/12] Icon check"
+  limit 300 xcrun swiftc -swift-version 5 -module-cache-path "$CACHE" -o "$TEST_DIR/icon-check" \
+      app/macos/Icon.swift tools/tests/icon_animation.swift
+  limit 60 "$TEST_DIR/icon-check"
+  stage_end
+}
+late_start() {
+  perl -e '
+    use POSIX ":sys_wait_h";
+    my $main = getppid(); setpgrp(0, 0);
+    my $pid = fork // die "fork: $!\n";
+    if (!$pid) { exec @ARGV or die "exec: $!\n" }
+    sub stop { $SIG{TERM} = "IGNORE"; kill "TERM", -$$; sleep 2; kill "KILL", -$$ }
+    $SIG{TERM} = \&stop; $SIG{INT} = "IGNORE";
+    while (1) {
+      if (waitpid($pid, WNOHANG) == $pid) { exit($? & 127 ? 128 + ($? & 127) : $? >> 8) }
+      stop() if getppid() != $main;
+      select(undef, undef, undef, 0.2);
+    }
+  ' zsh -fc "set -eu; zmodload zsh/datetime; $(typeset -p TEST_DIR CACHE MODULES SELECT SPACE_WEB)
+    $(typeset -f limit secs stage_end stage part late_stages); STAGE= STAGE_T0=; late_stages" \
+    > "$TEST_DIR/late.log" 2>&1 < /dev/null &
+  LATE_PID=$!
+}
+late_start
 stage "[8/12] Compile app tests"
 limit 900 xcrun swiftc -swift-version 5 -module-cache-path "$CACHE" -I "$MODULES" -o "$TEST_DIR/run" "$MODULES"/lib*.a \
     app/macos/Login.swift \
@@ -204,31 +264,16 @@ APP_ENV=(AI_ILLUMINATI_TEST_HOME="$TEST_DIR/data" AI_ILLUMINATI_TEST_RESOURCES="
 # --affected: the picked runTest names, comma-separated; "-" when none (the checks outside runTest still run).
 if (( SELECT )); then ONLY=${(j:,:)TESTS}; APP_ENV+=(AI_ILLUMINATI_TEST_ONLY="${ONLY:--}"); fi
 limit 1500 env $APP_ENV "$TEST_DIR/run"
-stage "[10/12] Space web view isolation"
-if (( SELECT && ! SPACE_WEB )); then
-  echo "skip: space web view (not affected)"
-else
-mkdir -p "$TEST_DIR/space-web-src" "$TEST_DIR/space-web-home"
-cp tools/tests/space_web.swift "$TEST_DIR/space-web-src/main.swift"
-limit 600 xcrun swiftc -swift-version 5 -module-cache-path "$CACHE" -I "$MODULES" -o "$TEST_DIR/space-web" "$MODULES"/lib*.a \
-    "$TEST_DIR/space-web-src/main.swift"
-limit 300 env AI_ILLUMINATI_TEST_HOME="$TEST_DIR/space-web-home" "$TEST_DIR/space-web"
+stage_end
+LATE_T0=$EPOCHREALTIME LATE_RC=0
+wait $LATE_PID || LATE_RC=$?
+LATE_PID=
+cat "$TEST_DIR/late.log"
+echo "  [10-12] waited after stage 9: $(secs $LATE_T0) s"
+if (( LATE_RC )); then
+  echo "FAIL: $(grep '^\[1[0-2]/12\]' "$TEST_DIR/late.log" | tail -1) (stages 10-12 beside 8-9, exit $LATE_RC)" >&2
+  exit 1
 fi
-stage "[11/12] Screens stay still"
-if (( SELECT )); then
-  echo "skip: screens (affected tests only)"
-else
-mkdir -p "$TEST_DIR/screens-src" "$TEST_DIR/screens-home"
-cp tools/tests/screens_idle.swift "$TEST_DIR/screens-src/screens_idle.swift"
-SCREEN_SOURCES=(${(f)"$(ls app/macos/*.swift | grep -v '^app/macos/main.swift$')"})
-limit 900 xcrun swiftc -swift-version 5 -module-cache-path "$CACHE" -I "$MODULES" -o "$TEST_DIR/screens" "$MODULES"/lib*.a \
-    "${SCREEN_SOURCES[@]}" "$TEST_DIR/screens-src/screens_idle.swift"
-limit 60 env AI_ILLUMINATI_TEST_HOME="$TEST_DIR/screens-home" "$TEST_DIR/screens"
-fi
-stage "[12/12] Icon check"
-limit 300 xcrun swiftc -swift-version 5 -module-cache-path "$CACHE" -o "$TEST_DIR/icon-check" \
-    app/macos/Icon.swift tools/tests/icon_animation.swift
-limit 60 "$TEST_DIR/icon-check"
 stage_end
 # What the compiler module cache holds at the end (over 2 GB, the next run clears it).
 echo "  test cache: $(du -sh "$CACHE" | cut -f1)"

@@ -18,7 +18,9 @@ if [[ ${1-} == full ]]; then
   exit 0
 fi
 PYTHONDONTWRITEBYTECODE=1 python3 tools/tests/test_workspace_mcp.py
-for NAME in testProjectWork testProjectHandoff; do
+NAMES=(testProjectWork testProjectHandoff)
+[[ ${1-} != work ]] || NAMES=(testProjectWork)
+for NAME in $NAMES; do
   for ROUND in 1 2 3 4 5; do
     echo "[O3] $NAME alone $ROUND/5"
     if ! AI_ILLUMINATI_TEST_ONLY=$NAME zsh tools/tests/run_mode2.sh --affected app/resources/workspace_mcp.py > "$VALIDATION_DIR/run.log" 2>&1; then
@@ -28,6 +30,11 @@ for NAME in testProjectWork testProjectHandoff; do
     /usr/bin/grep -E "^  $NAME:|^  total:|PASS: real" "$VALIDATION_DIR/run.log" || { cat "$VALIDATION_DIR/run.log"; exit 1 }
   done
 done
+if [[ ${1-} == work ]]; then
+  zsh tools/check_modules.sh
+  echo "[O3] PASS: reviewed Stop wait, testProjectWork 5/5"
+  exit 0
+fi
 echo "[O3] mutation: project_run incorrectly uses the ordinary socket limit"
 python3 - "$VALIDATION_DIR/mutant" <<'PY'
 import pathlib, shutil, sys

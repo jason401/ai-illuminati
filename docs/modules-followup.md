@@ -562,14 +562,14 @@ AIRuntime 계약의 의도한 시간 초과/Stop 대기는 O1에서 8.3초로 �
   조회 요청까지 1초가 되는 검토 지적은 받아들여 목록 조회는 기존 15초를 유지한다.
 
 ### 검증
-- `project_run test-o3`: 통과(exit 0). `AI_ILLUMINATI_TEST_ONLY=이름`과 `--affected`로 매번 새로 실행했다.
+- `project_run test-o3`(62635df 당시 등록): 통과(exit 0). `AI_ILLUMINATI_TEST_ONLY=이름`과 `--affected`로 매번 새로 실행했다.
   - testProjectWork 5/5: **19.6, 19.7, 19.7, 19.7, 21.0초**.
   - testProjectHandoff 5/5: **3.9, 3.9, 4.0, 4.1, 3.9초**.
   - Python 브리지 단위 검사 11개 통과.
 - 반증: `/tmp/ai-o3-validation.*/mutant` 복사본에서 project_run만 긴 제한 예외에서 제거했다.
   모듈·컴파일·Python 검사는 통과하고, 실제 앱의 기존 expect에서
   `Fatal error: long project tool survives Python bridge timeout and approval`로 실패했다. 복사본은 종료 시 삭제했다.
-- `project_run test-o3-full`: **전체 2회 모두 통과(exit 0)**. 이름 있는 62개를 필터 없이 실행했고 실제
+- `project_run test-o3-full`(62635df 당시 등록): **전체 2회 모두 통과(exit 0)**. 이름 있는 62개를 필터 없이 실행했고 실제
   accounts.json 불변 검사도 두 번 통과했다. 전체 테스트 실패 0회.
 - 각 전체 실행의 `check_modules` fast(G1–G7), slow(S1–S3: public API 스냅샷·경계·App 크기) 통과.
   두 실행 뒤 별도 `zsh tools/check_modules.sh`도 통과.
@@ -597,3 +597,17 @@ AIRuntime 계약의 의도한 시간 초과/Stop 대기는 O1에서 8.3초로 �
 
 검증 준비 중 Python mock 줄바꿈 오기와 래퍼의 rg 미설치를 고쳤다. 해당 준비 실패는 단독 5회 통과와
 전체 2회 통과 횟수에 포함하지 않았다.
+
+### 62635df 게시 후 리뷰 반영
+- Stop의 `writerAlive`는 `kill(childPID, 0) == 0`만 살아 있음으로 본다. 우리가 띄운 같은 사용자 자식은
+  신호를 확인할 수 있으므로, 다른 사용자 프로세스에 PID가 재사용되어 EPERM이 나오는 경우를 자식 생존으로 오인하지 않는다.
+  자식 종료 expect, 누출 파일 미생성 expect, stopped 기록 expect와 대기 상한은 유지했다.
+- 수정한 testProjectWork만 단독으로 5회 다시 통과: **21.1, 19.8, 19.8, 19.7, 20.9초**.
+  Python 검사 11개와 각 실행의 모듈 검사, 끝의 별도 `check_modules.sh`도 통과했다.
+  이미 끝난 handoff 5회·전체 2회·브리지 반증은 반복하지 않았다.
+- `test-o3`, `test-o3-full`은 일회성 검증이므로 `.ai-illuminati.json`에서 등록 해제했다.
+  `o3_validation.sh`는 단독 실행 수·임시 홈 격리·반증의 정확한 실패 지점을 재현하기 위한 기록으로 남긴다.
+  수동 실행은 `zsh tools/tests/o3_validation.sh`(두 테스트 각 5회와 반증, 약 30분),
+  `zsh tools/tests/o3_validation.sh full`(전체 2회, 약 9분),
+  `zsh tools/tests/o3_validation.sh work`(testProjectWork만 5회, 약 14분)다.
+  앱에서는 필요한 모드만 명시적으로 임시 등록해 실행하고, 끝나면 그 등록을 제거한다.

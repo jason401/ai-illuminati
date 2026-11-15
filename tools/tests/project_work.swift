@@ -159,7 +159,8 @@ func testProjectWork() {
     }
     expect(writerPID() != nil, "approved background-writer fixture started")
     let childPID = writerPID()!
-    func writerAlive() -> Bool { kill(childPID, 0) == 0 || errno != ESRCH }
+    // Our child is signalable; EPERM can instead refer to a PID reused by another user.
+    func writerAlive() -> Bool { kill(childPID, 0) == 0 }
     outer.cancel()
     while stoppedDone.wait(timeout: .now()) != .success && Date() < stopDeadline { RunLoop.main.run(until: Date().addingTimeInterval(0.03)) }
     let verifyUntil = Date().addingTimeInterval(2.2)

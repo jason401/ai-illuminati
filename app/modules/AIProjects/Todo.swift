@@ -1254,7 +1254,11 @@ public final class TodoScheduler: ObservableObject {
         var note: String?
         for item in store.current.eligible(held: held) {
             let data = store.current
-            guard data.items.filter({ $0.state == .running }).count < Self.maxTodos else { break }
+            guard data.items.filter({ $0.state == .running }).count < Self.maxTodos else {
+                // Without a note the board shows a ready TODO and nothing else: it looks stuck.
+                note = L("TODO는 한 번에 \(Self.maxTodos)개까지 진행해요. 다른 프로젝트의 TODO가 끝나면 시작돼요.",
+                         "At most \(Self.maxTodos) TODOs run at once. This starts when another project's TODO finishes."); break
+            }
             guard chats.answering.count + 1 < chats.maxAnswering, !chats.importing else {
                 note = L("다른 대화가 답하는 중이라 기다려요.", "Waiting for other chats to finish."); break
             }

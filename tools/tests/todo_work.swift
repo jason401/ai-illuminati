@@ -1267,22 +1267,23 @@ private final class DoneChats: TodoChats {
 // The global TODO cap and the user's reserved answering place apply across distinct project roots.
 func testTodoConcurrency() {
     expect(TodoScheduler.maxTodos == 4, "the app-wide TODO limit is four")
-    for (maxAnswering, userChat, limit) in [(6, false, 4), (5, true, 3)] {
-        let store = TodoStore(url: todoStoreFile("concurrency-\(maxAnswering)"))
+    for (maxAnswering, userChat, limit) in [(6, false, 4), (5, false, 4), (5, true, 3)] {
+        let store = TodoStore(url: todoStoreFile("concurrency-\(maxAnswering)-\(userChat)"))
         let chats = DoneChats()
         chats.maxAnswering = maxAnswering
         let userRoom = UUID()
         if userChat { chats.answering.insert(userRoom) }
         let scheduler = TodoScheduler(chats: chats, store: store)
         scheduler.held = { _ in false }
-        let items = (0..<5).map { index in
+        for index in 0..<5 {
             let project = ProjectBinding(root: "/tmp/todo-concurrency-\(maxAnswering)-\(index)", common: "", remote: "", remoteURL: "")
-            return try! store.add(title: "TODO \(index)", project: project, projectName: "Project \(index)")
+            _ = try! store.add(title: "TODO \(index)", project: project, projectName: "Project \(index)")
         }
         scheduler.startNow()
-        expect(items.prefix(limit).allSatisfy { store.current.item($0.id)?.state == .running }
-               && items.dropFirst(limit).allSatisfy { store.current.item($0.id)?.state == .ready }
-               && chats.started.count == limit, "\(maxAnswering) answering places: exactly \(limit) TODOs start")
+        let running = Set(store.current.items.filter { $0.state == .running }.map(\.id))
+        let ready = Set(store.current.items.filter { $0.state == .ready }.map(\.id))
+        expect(running.count == limit && ready.count == 5 - limit
+               && chats.started.count == limit && chats.answering.count == limit + (userChat ? 1 : 0), "\(maxAnswering) answering places: exactly \(limit) TODOs start")
         scheduler.tick()   // The board shows the waiting reason on a tick that starts nothing.
         let note = userChat
             ? L("다른 대화가 답하는 중이라 기다려요.", "Waiting for other chats to finish.")
@@ -1292,11 +1293,13 @@ func testTodoConcurrency() {
         expect(chats.answering.count < chats.maxAnswering && (!userChat || chats.answering.contains(userRoom)),
                "one answering place stays free and the user's chat keeps answering")
 
-        let finished = items[0], waiting = items[limit]
-        try! scheduler.markDone(finished.id)
+        let finished = running.first!
+        try! scheduler.markDone(finished)
         scheduler.tick()
-        expect(store.current.item(finished.id)?.state == .done && store.current.item(waiting.id)?.state == .running
-               && store.current.items.filter { $0.state == .running }.count == limit && chats.started.count == limit + 1,
+        let next = Set(store.current.items.filter { $0.state == .running }.map(\.id))
+        expect(store.current.item(finished)?.state == .done && next.intersection(ready).count == 1
+               && running.subtracting([finished]).isSubset(of: next)
+               && next.count == limit && chats.started.count == limit + 1,
                "the next waiting TODO starts when one finishes")
         expect(chats.answering.count < chats.maxAnswering && (!userChat || chats.answering.contains(userRoom)),
                "finishing a TODO preserves the user's answering place")

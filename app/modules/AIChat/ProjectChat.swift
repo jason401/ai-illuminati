@@ -329,7 +329,7 @@ extension Discussion {
             let working = handedFrom.map { L("\($0) 한도 → \(speaker)가 이어받아 작업 중", "\($0) hit its limit → \(speaker) took over") }
                 ?? speaker + L(" · 프로젝트 작업 중", " · working on project")
             changeTurn(id, index) { $0.status = working; $0.activity = nil; $0.lastActivityAt = Date() }
-            func attempt(_ extra: String, transcript: String, fresh: String?) -> Result<String, Answerer.Failure> {
+            func attempt(_ extra: String, transcript: String, fresh: String?, ran: AnswerModel = AnswerModel()) -> Result<String, Answerer.Failure> {
                 var instruction = soloInstruction(account, binding: workspace, helper: "",
                                                   project: ProjectPart(root: selected.root, fullAuto: fullAuto, rules: projectRules, folderless: selected.isFolderless, documents: selected.isDocuments), chat: id)
                 if !note.isEmpty { instruction += "\n" + note }
@@ -343,6 +343,7 @@ extension Discussion {
                     case .text(let text): self.changeTurn(id, index) { $0.partial = Self.extractState(ChatApp.face.extract(text).text).reply; $0.partialBy = speaker; $0.lastActivityAt = Date() }
                     case .activity(let text): self.changeTurn(id, index) { $0.activity = text; $0.lastActivityAt = Date() }
                     case .todos(let todos): run.setPlan(todos: todos, generation: generation)
+                    case .model: ran.note(update)
                     }
                 }
                 guard permits(account, room: id) else { return .failure(Enterprise.blocked(account)) }
@@ -356,7 +357,8 @@ extension Discussion {
                 }, note: { text in DispatchQueue.main.async { self.sessionNote = text } })
             }
             let started = Date()
-            let result = attempt("", transcript: transcript, fresh: fresh)
+            let ran = AnswerModel()
+            let result = attempt("", transcript: transcript, fresh: fresh, ran: ran)
             run.endAttempt() // All app commands and CLI descendants finish before another AI can write.
             if cancellation.isCancelled { break }
             switch result {
@@ -370,7 +372,7 @@ extension Discussion {
                 let harvest = collectPictures(reply, account: account, since: started, id: id, index: index, cancellation: cancellation)
                 let text = harvest.text
                 changeTurn(id, index, save: true) {
-                    $0.final = text; $0.finalBy = speaker; $0.partial = nil; $0.activity = nil; $0.status = ""
+                    $0.final = text; $0.finalBy = speaker; $0.finalModel = ran.name; $0.partial = nil; $0.activity = nil; $0.status = ""
                     $0.finalImages = harvest.images.isEmpty ? nil : harvest.images
                 }
                 change(id, save: true) { conversation in
@@ -429,8 +431,9 @@ extension Discussion {
                     view.level = .view; view.project = nil; view.projectRunID = nil; view.projectGeneration = nil
                     view.roots = workspace.roots.map { WorkspaceRoot(path: $0.path, directory: $0.directory, writable: $0.path == Self.chatFolder(id).path ? true : nil) }
                     let reviewPrompt = Self.soloContext(rules: rules, transcript: transcript + "\n[Writer result]\n" + text) + "\n[SOLO TURN]\nReview the linked project read-only. Do not edit the project or run Git writes.\n" + run.checkpoint("Read-only review")
+                    let reviewed = AnswerModel()
                     let reviewResult = !permits(reviewer, room: id) ? .failure(Enterprise.blocked(reviewer))
-                        : workspaceAnswer?(reviewer, reviewPrompt, view, run.attempt, nil) ?? Answerer.ask(reviewer, prompt: reviewPrompt, timeout: min(900, run.deadline.timeIntervalSinceNow), cancellation: run.attempt, run: .app(reviewer, WorkspaceInvocation(binding: view, room: id)))
+                        : workspaceAnswer?(reviewer, reviewPrompt, view, run.attempt, reviewed.watch()) ?? Answerer.ask(reviewer, prompt: reviewPrompt, timeout: min(900, run.deadline.timeIntervalSinceNow), cancellation: run.attempt, run: .app(reviewer, WorkspaceInvocation(binding: view, room: id)), progress: reviewed.watch())
                     run.attempt.cancel()
                     let reviewText: String, failed: Bool
                     switch reviewResult {
@@ -439,7 +442,7 @@ extension Discussion {
                     }
                     changeTurn(id, index, save: true) { turn in
                         if turn.moreAnswers == nil { turn.moreAnswers = [] }
-                        turn.moreAnswers?.append(ChatTurn.Entry(round: 1, speaker: self.label(reviewer), text: reviewText, failed: failed))
+                        turn.moreAnswers?.append(ChatTurn.Entry(round: 1, speaker: self.label(reviewer), text: reviewText, failed: failed, model: failed ? nil : reviewed.name))
                     }
                 }
                 _ = run.checkpoint("Project turn completed by " + speaker)

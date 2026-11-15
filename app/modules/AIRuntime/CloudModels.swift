@@ -73,8 +73,23 @@ public enum CloudModels {
         return nil
     }
 
+    // The model one answer ran on, only when the CLI's output names it (never the pick or an earlier answer's).
+    // Only from JSON event output (`events`): plain output is the answer itself, which may hold any JSON.
+    // Claude: its stream-json lines. Codex: a "model" field in its --json events. agy -p prints only the answer.
+    static func reported(_ output: String, provider: Account.Provider, events: Bool) -> String? {
+        guard events else { return nil }
+        if provider == .claude { return resolved(output) }
+        guard provider == .codex else { return nil }
+        for line in output.split(separator: "\n") where line.contains("\"model\"") {
+            guard let json = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any], json["type"] is String else { continue }
+            let name = (json["model"] ?? (json["item"] as? [String: Any])?["model"]) as? String
+            if let name, valid(name) { return name }
+        }
+        return nil
+    }
+
     // "claude-fable-5-1" → "Fable 5.1", "claude-haiku-4-5-20251001" → "Haiku 4.5", "claude-opus-5-5[1m]" → "Opus 5.5 [1m]".
-    static func versionTitle(_ id: String) -> String {
+    public static func versionTitle(_ id: String) -> String {
         var name = id.hasPrefix("claude-") ? String(id.dropFirst(7)) : id
         var tail = ""
         if let bracket = name.firstIndex(of: "[") { tail = " " + name[bracket...]; name = String(name[..<bracket]) }

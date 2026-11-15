@@ -190,7 +190,8 @@ extension Discussion {
             group.enter()
             DispatchQueue.global().async {
                 let started = Date()
-                var result = self.requestDebate(account, prompt, 300, cancellation, web: true)
+                let ran = AnswerModel()
+                var result = self.requestDebate(account, prompt, 300, cancellation, web: true, progress: ran.watch())
                 var pictures: [ChatImage] = []
                 if case .success(let text) = result {
                     let harvest = self.collectPictures(text, account: account, since: started, id: id, cancellation: cancellation)
@@ -200,7 +201,7 @@ extension Discussion {
                 if !cancellation.isCancelled {
                     var entry: ChatTurn.Entry
                     switch result {
-                    case .success(let text): entry = .reply(round: 1, speaker: self.label(account), text: text); entry.images = pictures.isEmpty ? nil : pictures
+                    case .success(let text): entry = .reply(round: 1, speaker: self.label(account), text: text); entry.images = pictures.isEmpty ? nil : pictures; entry.model = ran.name
                     case .failure(let failure): entry = .init(round: 1, speaker: self.label(account), text: Self.describe(failure), failed: true)
                     }
                     self.changeTurn(id, index, save: true) { $0.entries.append(entry) }
@@ -290,7 +291,8 @@ extension Discussion {
                 t.debateFocus = currentFocus
             }
             let started = Date()
-            let speech = requestDebate(account, debateSpeech(account, rules: rules, focus: focus, transcript: transcript, opening: false), 300, cancellation, web: true)
+            let ran = AnswerModel()
+            let speech = requestDebate(account, debateSpeech(account, rules: rules, focus: focus, transcript: transcript, opening: false), 300, cancellation, web: true, progress: ran.watch())
             if cancellation.isCancelled { break }
             count += 1 // Failed attempts count too, so the loop is always bounded.
             used[account.id, default: 0] += 1
@@ -301,6 +303,7 @@ extension Discussion {
                 let harvest = collectPictures(text, account: account, since: started, id: id, cancellation: cancellation)
                 entry = .reply(round: 1, speaker: label(account), text: harvest.text)
                 entry.images = harvest.images.isEmpty ? nil : harvest.images
+                entry.model = ran.name
                 sharePictures(harvest.images, by: label(account))
                 if !board.isEmpty { transcript += "\n\n[Moderator board]\n" + board }
                 transcript += "\n\n[Moderator focus]\n" + focus
@@ -323,10 +326,11 @@ extension Discussion {
         if !cancellation.isCancelled, let moderator, moderatorAnswered() {
             changeTurn(id, index) { $0.status = L("대표가 최종 답을 정리하는 중…", "Moderator is writing the final answer…") }
             let finalStarted = Date()
+            let ran = AnswerModel()
             let missing = team.filter { !successful.contains($0.id) }.map(label)
             let result = meeting != nil ? requestDebate(moderator, Self.debateContext(rules: rules, transcript: transcript) + "\n"
                 + (board.isEmpty ? "" : "Moderator board:\n" + board + "\n") + "End reason: \(ending)\n" + Self.meetingFinal(missing: missing, caller: activeHeldBy)
-                + "\n\(pictureRule(moderator))\nDo not change files or execute commands.", 180, cancellation) : requestDebate(moderator, """
+                + "\n\(pictureRule(moderator))\nDo not change files or execute commands.", 180, cancellation, progress: ran.watch()) : requestDebate(moderator, """
                 \(Self.debateContext(rules: rules, transcript: transcript))
                 [MODE3 FINAL]
                 Write the final answer to the latest user question, using the best of what the team found.
@@ -339,13 +343,13 @@ extension Discussion {
                 (e.g. [그림 2] / [Picture 2]) and say why in one line; make a new one only if the team made none.
                 \(pictureRule(moderator))
                 Do not change files or execute commands.
-                """, 180, cancellation)
+                """, 180, cancellation, progress: ran.watch())
             if !cancellation.isCancelled {
                 switch result {
                 case .success(let text):
                     let harvest = collectPictures(text, account: moderator, since: finalStarted, id: id, index: index, cancellation: cancellation)
                     changeTurn(id, index, save: true) {
-                        $0.final = harvest.text; $0.finalBy = self.label(moderator)
+                        $0.final = harvest.text; $0.finalBy = self.label(moderator); $0.finalModel = ran.name
                         $0.finalImages = harvest.images.isEmpty ? nil : harvest.images
                     }
                     outcome = (harvest.text, harvest.images)

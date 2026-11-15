@@ -11,6 +11,7 @@ AIUsage.note | var note: String?
 AIUsage.weekly | var weekly: UsageWindow?
 AnswerProgress | enum AnswerProgress
 AnswerProgress.activity(_:) | case activity(String)
+AnswerProgress.model(_:) | case model(String)
 AnswerProgress.text(_:) | case text(String)
 AnswerProgress.todos(_:) | case todos(Any?)
 Answerer | enum Answerer
@@ -35,6 +36,7 @@ CloudModels.seenKey | static let seenKey: String
 CloudModels.seenTitle(_:picked:) | static func seenTitle(_ id: String, picked: String?) -> String
 CloudModels.set(_:for:defaults:) | static func set(_ name: String?, for account: Account, defaults: UserDefaults = .app)
 CloudModels.valid(_:) | static func valid(_ name: String) -> Bool
+CloudModels.versionTitle(_:) | static func versionTitle(_ id: String) -> String
 CodexUsage | enum CodexUsage
 CodexUsage.binary | static var binary: String? { get }
 CodexUsage.forget(_:) | static func forget(_ account: Account)

@@ -131,6 +131,7 @@ extension ChatTurn {
         var failed = false
         var writing = false
         var done = false
+        var model: String?   // the model the reply ran on, when its output named it
     }
 
     // In the order they were called. Replies saved without an account match by name.
@@ -139,9 +140,9 @@ extension ChatTurn {
             let name = answerNames?.indices.contains(k) == true ? answerNames![k] : accountID
             var column = Column(id: accountID, name: name)
             if let final, finalAccountID == accountID || (finalAccountID == nil && finalBy == name) {
-                column.text = final; column.images = finalImages ?? []; column.final = true; column.done = true
+                column.text = final; column.images = finalImages ?? []; column.final = true; column.done = true; column.model = finalModel
             } else if let entry = (moreAnswers ?? []).first(where: { $0.accountID == accountID || ($0.accountID == nil && $0.speaker == name) }) {
-                column.text = entry.text; column.images = entry.images ?? []; column.failed = entry.failed; column.done = true
+                column.text = entry.text; column.images = entry.images ?? []; column.failed = entry.failed; column.done = true; column.model = entry.model
             } else if let partial = partials?[accountID], !partial.isEmpty {
                 column.text = partial; column.writing = true
             } else {
@@ -704,9 +705,10 @@ extension Discussion {
                             t.partial = shown; t.partialBy = speaker
                         }
                     case .activity(let what): self.changeTurn(id, index) { $0.activity = what }
-                    case .todos: break
+                    case .todos, .model: break
                     }
                 }
+                let ran = AnswerModel()
                 group.enter()
                 DispatchQueue.global(qos: .userInitiated).async {
                     defer { group.leave() }
@@ -715,7 +717,7 @@ extension Discussion {
                                                     binding.fullAccess == true ? 8 * 3600 : 900, cancellation, web: true,
                                                     fresh: freshTranscript.map { Self.soloContext(rules: rules, transcript: $0) + "\n[SOLO TURN]\n" + instruction },
                                                     workspace: k > 0 && called.count > 1 ? Self.sideView(binding) : nil,
-                                                    steering: called.count == 1 ? self.steer : nil, progress: progress)
+                                                    steering: called.count == 1 ? self.steer : nil, progress: ran.watch(progress))
                     doneLock.lock(); done.insert(accountID); doneLock.unlock()
                     if cancellation.isCancelled { return }
                     var entry: ChatTurn.Entry
@@ -728,7 +730,7 @@ extension Discussion {
                         if let newState, k == 0 { self.saveState(newState, room: id, index: index) }
                         if k == 0 { self.deliverSpaceBuild(tagless, room: id, turn: index, cancellation: cancellation) }
                         let harvest = self.collectPictures(text, account: account, since: started, id: id, index: index, cancellation: cancellation)
-                        entry = .init(round: 1, speaker: speaker, text: harvest.text, failed: false)
+                        entry = .init(round: 1, speaker: speaker, text: harvest.text, failed: false, model: ran.name)
                         entry.images = harvest.images.isEmpty ? nil : harvest.images
                     case .failure(let failure):
                         entry = .init(round: 1, speaker: speaker, text: Self.describe(failure), failed: true)
@@ -740,7 +742,7 @@ extension Discussion {
                         t.partials?[accountID] = nil
                         if t.partials?.isEmpty == true { t.partials = nil }
                         if !finished.failed && t.final == nil {
-                            t.final = finished.text; t.finalBy = speaker; t.finalImages = finished.images
+                            t.final = finished.text; t.finalBy = speaker; t.finalImages = finished.images; t.finalModel = finished.model
                             if together { t.finalAccountID = accountID }
                         } else {
                             t.moreAnswers = (t.moreAnswers ?? []) + [finished]
@@ -820,11 +822,12 @@ extension Discussion {
                     self.changeTurn(id, index) { $0.partial = shown; $0.partialBy = speaker }
                 case .activity(let what):
                     self.changeTurn(id, index) { $0.activity = what }
-                case .todos: break
+                case .todos, .model: break
                 }
             }
+            let ran = AnswerModel()
             let result = requestDebate(account, prompt, 900, cancellation, web: true,
-                                       fresh: fresh.map { $0 + "\n[SOLO TURN]\n" + instruction }, steering: steer, progress: progress)
+                                       fresh: fresh.map { $0 + "\n[SOLO TURN]\n" + instruction }, steering: steer, progress: ran.watch(progress))
             if cancellation.isCancelled { break }
             switch result {
             case .success(let raw):
@@ -845,6 +848,7 @@ extension Discussion {
                     guard c.turns.indices.contains(index) else { return }
                     c.turns[index].final = harvest.text
                     c.turns[index].finalBy = self.label(account)
+                    c.turns[index].finalModel = ran.name
                     c.turns[index].finalImages = harvest.images.isEmpty ? nil : harvest.images
                     c.turns[index].workspaceChanges = changes.isEmpty ? nil : changes
                     c.turns[index].partial = nil; c.turns[index].partialBy = nil; c.turns[index].activity = nil

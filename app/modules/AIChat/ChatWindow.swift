@@ -2321,7 +2321,7 @@ private struct TurnView: View, Equatable {
                     if let by = turn.finalBy {
                         HStack(spacing: 6) {
                             Circle().fill(Account.Provider.of(speaker: by)?.color ?? .secondary).frame(width: 7, height: 7)
-                            Text(by).font(.system(size: 12, weight: .medium)).foregroundColor(.secondary)
+                            Self.named(Text(by).font(.system(size: 12, weight: .medium)).foregroundColor(.secondary), model: turn.finalModel)
                         }
                     }
                     let pictures = Self.finalPictures(turn, final: final)
@@ -2346,7 +2346,7 @@ private struct TurnView: View, Equatable {
                     HStack(spacing: 6) {
                         if let by = turn.finalBy {
                             (Text(turn.mode == 0 ? L("답: ", "Answered by: ") : L("정리: ", "Final answer by: ")).foregroundColor(.secondary)
-                             + Text(by).bold().foregroundColor(Account.Provider.of(speaker: by)?.color ?? .secondary))
+                             + Self.named(Text(by).bold().foregroundColor(Account.Provider.of(speaker: by)?.color ?? .secondary), model: turn.finalModel))
                                 .font(.caption)
                         }
                         CopyButton(text: final, key: "final-\(turn.id)")
@@ -2365,7 +2365,7 @@ private struct TurnView: View, Equatable {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 6) {
                         Circle().fill(Account.Provider.of(speaker: answer.speaker)?.color ?? .secondary).frame(width: 7, height: 7)
-                        Text(answer.speaker).font(.system(size: 12, weight: .medium)).foregroundColor(.secondary)
+                        Self.named(Text(answer.speaker).font(.system(size: 12, weight: .medium)).foregroundColor(.secondary), model: answer.failed ? nil : answer.model)
                     }
                     Group {
                         if answer.failed { Text(answer.text) } else { MarkdownText(text: answer.text, size: 15, highlight: highlight, pictures: answer.images ?? []) }
@@ -2512,6 +2512,14 @@ private struct TurnView: View, Equatable {
     }
 
     // The final answer's own pictures, plus named team pictures using localized [Picture N] markers.
+    // The model an answer ran on, after its name (" · Opus 5.5"), lighter and smaller. Nothing when the CLI's output
+    // did not name one: never the account's pick or an earlier answer's model.
+    static func named(_ name: Text, model: String?) -> Text {
+        guard let model, !model.isEmpty else { return name }
+        let tag = Text(verbatim: " · " + CloudModels.versionTitle(model)).font(.system(size: 10.5)).foregroundColor(.secondary.opacity(0.7))
+        return Text("\(name)\(tag)")
+    }
+
     static func finalPictures(_ turn: ChatTurn, final: String) -> [ChatImage] {
         var pictures = turn.finalImages ?? []
         let regex = try! NSRegularExpression(pattern: "\\[(?:그림|Picture) (\\d+)\\]")
@@ -3105,9 +3113,10 @@ private struct EntryRow: View {
         VStack(alignment: .leading, spacing: 6) {
             Button(action: { withAnimation(.easeInOut(duration: 0.15)) { isOpen.toggle() } }) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(label)
+                    TurnView.named(Text(label)
                         .font(.caption.bold())
-                        .foregroundColor(entry.failed ? .red : Account.Provider.of(speaker: entry.speaker)?.color ?? .secondary)
+                        .foregroundColor(entry.failed ? .red : Account.Provider.of(speaker: entry.speaker)?.color ?? .secondary),
+                                   model: entry.failed ? nil : entry.model)
                         .fixedSize()
                     Text(entry.failed ? entry.text : entry.shortLine)
                         .lineLimit(isOpen ? nil : 1)
@@ -3249,7 +3258,7 @@ private struct ParallelAnswers: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Circle().fill(Account.Provider.of(speaker: column.name)?.color ?? .secondary).frame(width: 7, height: 7)
-                Text(column.name).font(.system(size: 12, weight: .medium)).foregroundColor(.secondary)
+                TurnView.named(Text(column.name).font(.system(size: 12, weight: .medium)).foregroundColor(.secondary), model: column.failed ? nil : column.model)
                 if column.writing { ProgressView().controlSize(.mini) }
             }
             if let text = column.text {

@@ -107,6 +107,17 @@ extension Discussion {
     }
 }
 
+// The model one answer ran on (AnswerProgress.model, only when the CLI's output named it), kept for the saved reply.
+// Called on the answer's background thread; read after the answer returns.
+final class AnswerModel {
+    private let lock = NSLock()
+    private var seen: String?
+    var name: String? { lock.lock(); defer { lock.unlock() }; return seen }
+    func note(_ update: AnswerProgress) { if case .model(let name) = update { lock.lock(); seen = name; lock.unlock() } }
+    // A progress that notes the model and passes everything on to `progress`.
+    func watch(_ progress: ((AnswerProgress) -> Void)? = nil) -> (AnswerProgress) -> Void { { self.note($0); progress?($0) } }
+}
+
 /// Pictures from a drop (same as AI Face's PictureDrop). Finder hands over file URLs; the Photos app and
 /// screenshot thumbnails hand over promised files (written when dropped, after an iCloud download if
 /// needed) or only image data. Those are copied into a temporary folder first: `done(urls, folder)` runs on

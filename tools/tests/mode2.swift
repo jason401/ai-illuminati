@@ -1963,6 +1963,7 @@ do {
         case .text(let t): return "text:" + t
         case .activity: return "activity"
         case .todos(let todos): return "todos:" + (PlanLink.todos(todos)?.map(\.text).joined(separator: ",") ?? "none")
+        case .model(let name): return "model:" + name
         }
     }
     expect(order == ["text:Plan ", "todos:One", "todos:none", "activity", "text:Plan "], "TodoWrite lists come raw, each one, between the text and the tool start: \(order)")
@@ -3010,7 +3011,32 @@ func testCloudModels() {
     }
     expect(CloudModels.seenTitle("claude-opus-5-5", picked: "opus[1m]") == "Opus 5.5 [1m]" && CloudModels.seenTitle("claude-opus-5-5[1m]", picked: "opus[1m]") == "Opus 5.5 [1m]"
            && CloudModels.seenTitle("claude-fable-5-1", picked: "fable") == "Fable 5.1", "a typed [1m] stays in the title")
-    print("PASS: cloud models (Auto, per account, CLI options, invalid names, Codex and agy lists, Claude versions)")
+    // The model one answer ran on: only from JSON event output, never guessed.
+    expect(CloudModels.reported(stream, provider: .claude, events: true) == "claude-fable-5-1", "a Claude answer reports its stream's model")
+    expect(CloudModels.reported(stream, provider: .claude, events: false) == nil, "plain output (the answer itself) reports none")
+    expect(CloudModels.reported(#"{"type":"turn.started","model":"gpt-6.1-sol"}"#, provider: .codex, events: true) == "gpt-6.1-sol", "Codex: a model field in its events")
+    expect(CloudModels.reported(#"{"type":"item.completed","item":{"type":"agent_message","text":"hi"}}"#, provider: .codex, events: true) == nil, "Codex events without a model: none")
+    expect(CloudModels.reported(#"{"model":"gpt-6.1-sol"}"#, provider: .codex, events: true) == nil, "a JSON line that is no event: none")
+    expect(CloudModels.reported(stream, provider: .gemini, events: true) == nil, "agy: none")
+    // Saved replies: the model sits beside the name (never in it), and chats saved before it open as they were.
+    var turn = ChatTurn(question: "q", final: "a", finalBy: "Claude (학교)")
+    turn.finalModel = "claude-opus-5-5"
+    turn.moreAnswers = [ChatTurn.Entry(round: 1, speaker: "ChatGPT", text: "b", failed: false, accountID: "codex-1", model: "gpt-6.1-sol")]
+    let back = try! JSONDecoder().decode(ChatTurn.self, from: JSONEncoder().encode(turn))
+    expect(back.finalModel == "claude-opus-5-5" && back.finalBy == "Claude (학교)" && back.moreAnswers?.first?.model == "gpt-6.1-sol", "the model is saved beside the name")
+    var old = try! JSONSerialization.jsonObject(with: JSONEncoder().encode(ChatTurn(question: "q", final: "a", finalBy: "Claude"))) as! [String: Any]
+    old["finalModel"] = nil
+    let oldTurn = try! JSONDecoder().decode(ChatTurn.self, from: JSONSerialization.data(withJSONObject: old))
+    let oldEntry = try! JSONDecoder().decode(ChatTurn.Entry.self, from: Data(#"{"id":"\#(UUID().uuidString)","round":1,"speaker":"Claude","text":"t","failed":false}"#.utf8))
+    expect(oldTurn.finalModel == nil && oldTurn.finalBy == "Claude" && oldEntry.model == nil, "an older chat opens with names only")
+    turn.answerOrder = ["claude-1", "codex-1"]; turn.answerNames = ["Claude (학교)", "ChatGPT"]; turn.finalAccountID = "claude-1"
+    expect(turn.columns(turn.answerOrder!).map(\.model) == ["claude-opus-5-5", "gpt-6.1-sol"], "side by side: each column its own model")
+    let model = AnswerModel(), passed = NSLock()
+    var forwarded = 0
+    let watch = model.watch { _ in passed.lock(); forwarded += 1; passed.unlock() }
+    watch(.text("x")); watch(.model("claude-opus-5-5"))
+    expect(model.name == "claude-opus-5-5" && forwarded == 2, "AnswerModel keeps the model and passes every update on")
+    print("PASS: cloud models (Auto, per account, CLI options, invalid names, Codex and agy lists, Claude versions, reported models)")
 }
 runTest("testCloudModels", testCloudModels)
 // A selected name that no runTest has is a typo or a renamed test: fail rather than pass having run nothing.

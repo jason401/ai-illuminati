@@ -154,13 +154,15 @@ func events(_ account: Account, _ lines: [String], mode: String) -> ([String], S
         case .text(let text): seen.append("text:" + text)
         case .activity(let text): seen.append("activity:" + text)
         case .todos(let todos): seen.append("todos:" + String(describing: (todos as? [[String: Any]])?.compactMap { $0["content"] as? String } ?? ["not a list"]))
+        case .model(let name): seen.append("model:" + name)
         }
     }).get()
     expect(!main, "progress comes on a background thread")
     return (seen, answer)
 }
 clear()
-let (claudeEvents, claudeAnswer) = events(claude, [
+let (claudeAll, claudeAnswer) = events(claude, [
+    #"{"type":"system","subtype":"init","model":"claude-opus-5-5"}"#,
     #"{"type":"stream_event","event":{"type":"message_start"}}"#,
     #"{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"Hel"}}}"#,
     #"{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"lo"}}}"#,
@@ -175,6 +177,8 @@ let (claudeEvents, claudeAnswer) = events(claude, [
     #"{"type":"result","result":"Done","is_error":false}"#,
 ], mode: "stream")
 expect(claudeAnswer == "Done", "Claude's answer is its result line")
+expect(claudeAll.filter { $0.hasPrefix("model:") } == ["model:claude-opus-5-5"] && claudeAll.last == "model:claude-opus-5-5", "the model its stream named comes once, last: \(claudeAll)")
+let claudeEvents = claudeAll.filter { !$0.hasPrefix("model:") }
 expect(read("args").contains("stream-json") && read("args").contains("--include-partial-messages"), "a streamed Claude call asks for partial messages")
 // Repeated text of one message (the ~12-a-second limit) is folded: what is left is the order of events.
 var folded: [String] = []

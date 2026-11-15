@@ -127,8 +127,9 @@ ChatTurn.Entry.headline | var headline: String?
 ChatTurn.Entry.id | var id: UUID
 ChatTurn.Entry.images | var images: [ChatImage]?
 ChatTurn.Entry.init(from:) | init(from decoder: any Decoder) throws
-ChatTurn.Entry.init(id:round:speaker:text:failed:focus:headline:images:accountID:meeting:) | init(id: UUID = UUID(), round: Int, speaker: String, text: String, failed: Bool, focus: String? = nil, headline: String? = nil, images: [ChatImage]? = nil, accountID: String? = nil, meeting: UUID? = nil)
+ChatTurn.Entry.init(id:round:speaker:text:failed:focus:headline:images:accountID:meeting:model:) | init(id: UUID = UUID(), round: Int, speaker: String, text: String, failed: Bool, focus: String? = nil, headline: String? = nil, images: [ChatImage]? = nil, accountID: String? = nil, meeting: UUID? = nil, model: String? = nil)
 ChatTurn.Entry.meeting | var meeting: UUID?
+ChatTurn.Entry.model | var model: String?
 ChatTurn.Entry.reply(round:speaker:text:) | static func reply(round: Int, speaker: String, text: String) -> ChatTurn.Entry
 ChatTurn.Entry.round | var round: Int
 ChatTurn.Entry.shortLine | var shortLine: String { get }
@@ -149,6 +150,7 @@ ChatTurn.final | var final: String?
 ChatTurn.finalAccountID | var finalAccountID: String?
 ChatTurn.finalBy | var finalBy: String?
 ChatTurn.finalImages | var finalImages: [ChatImage]?
+ChatTurn.finalModel | var finalModel: String?
 ChatTurn.followUps | var followUps: [String]?
 ChatTurn.id | var id: UUID
 ChatTurn.images | var images: [ChatImage]?

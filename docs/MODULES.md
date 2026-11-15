@@ -372,6 +372,8 @@ Public names and why (everything else stays internal: `Answerer.chatDir`/`askOnc
 `StreamParser`, `NativeSessions.split`/`load`/`save`, `CloudModels.apply`/`noteSeen`, `ClaudeUsage.binary`, the HTTP
 streams `LocalStream`/`PullStream`, `LocalModel.ask` and the Ollama requests):
 - `Answerer.ask`, `Answerer.Failure`, `AnswerProgress`: the one way in, its result and its progress (every caller).
+  `AnswerProgress.model`: the model the answering call's own output named (Claude stream-json, a Codex event field),
+  sent once before a successful result; the chat saves it beside the speaker's name.
 - `RunConditions` (all seven fields, `init()`) and `RunConditions.Folders` (an explicit `init`): the app builds them
   (`RunConditionsApp.swift`); the fields are what the caller decides. `steering` is set by the chat (`Discussion.steered`)
   for the one AI answering alone.
@@ -391,7 +393,7 @@ streams `LocalStream`/`PullStream`, `LocalModel.ask` and the Ollama requests):
   `RunConditionsApp.swift` agy's web rule (`allowWeb`, it writes agy's settings) to the same type; `RunConditions.beforeStart` is how the app runs that
   rule just before the tool starts, so the runtime changes no permission itself (review, 2026-11-11).
 - `CloudModels` (`model`, `set`, `valid`, `Choice`, `claudeChoices`, `codexChoices`, `loadGemini`, `seenKey`, `seenTitle`):
-  the Settings model menus.
+  the Settings model menus. `versionTitle`: the chat shows a reply's model after its name ("· Opus 5.5").
 - `LocalModel` (63 names: variants, the catalog and its entries, fit by memory, Ollama's library, installed/loaded
   models, pull, delete, keep-alive, the gate, `server` for mode2's fake server) and `LocalUsage.read`: the Settings
   Ollama section, the Ollama window, the menu and the Route sorter use all of them. It is the largest public part:
@@ -529,7 +531,9 @@ Public names and why (everything else stays internal: `ProjectError`, `ProjectTo
 ### AIChat (`app/modules/AIChat/`: ChatRecords, SyncSnapshot; ChatValues went to AIChatRecords in T4), step C1a
 A chat's record and where it is kept: `Conversation` (chats/<id>.json), `ChatTurn` and `ChatTurn.Entry`, `ChatConfiguration`,
 `ChatStore` (`dir`, `loadAll`, `save`, `delete`, `links`), a synced copy's `SyncSnapshot` (it holds turns; `SyncSnapshot.swift`) and the
-record's helpers (`ChatTurn.Entry.reply`/`shortLine`, `ChatTime`, `SpeechLength`). Moved as they were: the declarations are
+record's helpers (`ChatTurn.Entry.reply`/`shortLine`, `ChatTime`, `SpeechLength`). `ChatTurn.finalModel` and
+`ChatTurn.Entry.model` (optional, so older chats open as they were): the model a reply ran on when its output named it,
+kept apart from `finalBy`/`speaker`, which colors and speaker matching read. Moved as they were: the declarations are
 the same lines with `public` and an explicit init; the old files lost them (Discussion.swift, Attachments, RoomDocuments,
 MaterialReader, Collaboration, Vote, Route, Meeting, DeviceSync). Depends on `AIAccounts`, `AILocalization`, `AIRuntime`
 (`ReplyHeadline`), `AIWorkspace` (`WorkspaceBinding`, `WorkspaceChange`), `AISpaces` (`SpaceDraftNote`, `SpaceSyncNote`) and

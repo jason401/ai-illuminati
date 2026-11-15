@@ -23,7 +23,8 @@ public struct ChatTurn: Identifiable, Codable, Equatable {
         public var images: [ChatImage]?  // pictures this AI made in this reply (Pictures.swift)
         public var accountID: String?    // mode 0, several AIs at once: whose reply this is (labels can repeat)
         public var meeting: UUID?        // a meeting an AI convened (convene_meeting): its hidden chat, shown as "Show the meeting"
-        public init(id: UUID = UUID(), round: Int, speaker: String, text: String, failed: Bool, focus: String? = nil, headline: String? = nil, images: [ChatImage]? = nil, accountID: String? = nil, meeting: UUID? = nil) {
+        public var model: String?        // the model this reply ran on, when the CLI's output named it (never in `speaker`: colors and matching use it)
+        public init(id: UUID = UUID(), round: Int, speaker: String, text: String, failed: Bool, focus: String? = nil, headline: String? = nil, images: [ChatImage]? = nil, accountID: String? = nil, meeting: UUID? = nil, model: String? = nil) {
             self.id = id
             self.round = round
             self.speaker = speaker
@@ -34,6 +35,7 @@ public struct ChatTurn: Identifiable, Codable, Equatable {
             self.images = images
             self.accountID = accountID
             self.meeting = meeting
+            self.model = model
         }
     }
     public var id = UUID()
@@ -44,6 +46,7 @@ public struct ChatTurn: Identifiable, Codable, Equatable {
     public var final: String?
     public var finalImages: [ChatImage]?
     public var finalBy: String?
+    public var finalModel: String?   // the model `final` ran on, when the CLI's output named it (beside finalBy, not in it)
     public var error: String?
     public var mode: Int?  // missing in older chats means mode 1
     public var orderNote: String?

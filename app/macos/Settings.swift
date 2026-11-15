@@ -1962,9 +1962,11 @@ private struct AccountRow: View {
                     .textFieldStyle(.plain)
                     .labelsHidden()
                 HStack(spacing: 6) {
+                    // Fixed width so every row's Enterprise box starts at the same x.
                     Text(account.provider.title).foregroundStyle(.secondary)
-                    status
+                        .frame(width: 46, alignment: .leading)
                     if account.provider == .ollama {
+                        status
                         // How long the model stays in memory after a reply (closing the chat window unloads it anyway).
                         Menu {
                             Picker(L("답한 뒤 메모리에 남겨 두기", "Keep in memory after a reply"), selection: $model.localKeepAlive) {
@@ -1983,6 +1985,7 @@ private struct AccountRow: View {
                             set: { model.setSchool(account.id, $0) }))
                             .toggleStyle(.checkbox).controlSize(.mini)
                             .help(L("엔터프라이즈(학교·회사) 계정: 직접 잠근 Enterprise 방에는 이름이 같은 엔터프라이즈 계정과 내 Mac 모델만 참여해요", "Enterprise (school or work) account: a chat you lock as Enterprise is answered only by Enterprise accounts of the same name and models on this Mac"))
+                        status
                     }
                 }.font(.system(size: 10)).lineLimit(1)
             }
@@ -2014,13 +2017,11 @@ private struct AccountRow: View {
         .accessibilityAction(named: L("아래로 이동", "Move down")) { model.move(account, by: 1) }
     }
 
-    // Like AI Face's "Connected": green when signed in, orange when a sign-in is needed.
+    // Like AI Face's "Connected": green when signed in, orange when a sign-in is needed. Usage % lives in the menu, not here.
     @ViewBuilder private var status: some View {
         if let usage = model.latestUsage[account.id] {
             if usage.needsLogin {
                 Text(L("로그인 필요", "Sign-in needed")).foregroundStyle(.orange)
-            } else if let left = usage.leftNow {
-                Text(L("\(Int(left.rounded()))% 남음", "\(Int(left.rounded()))% left")).foregroundStyle(.green)
             } else {
                 Text(L("연결됨", "Connected")).foregroundStyle(.green)
             }

@@ -21,17 +21,28 @@ TEST_DIR=$(mktemp -d /tmp/ai-mode2-check.XXXXXX)
 trap 'rm -rf "$TEST_DIR"' EXIT
 # Compiler module cache (the SDK's clang modules: Foundation, AppKit, SwiftUI, …) kept between runs; homes, data and
 # built programs stay in $TEST_DIR. One real path (:A) for every compiler: a moved, copied or differently spelled
-# cache (/tmp vs /private/tmp) breaks. Clang locks its cache, so several runs at once may share it.
+# cache (/tmp vs /private/tmp) breaks. Clang locks each module, so several runs at once may share it; clearing it
+# does not take clang's locks, so every run holds a shared lock on test-cache.lock for its whole run and clearing
+# needs the exclusive one (not waited for: with another run going, the cache stays until a later run).
 # AI_ILLUMINATI_TEST_CACHE=fresh: an empty cache inside $TEST_DIR, as before (when the cache is suspected).
 if [[ ${AI_ILLUMINATI_TEST_CACHE-} == fresh ]]; then
   CACHE="${TEST_DIR:A}/cache"; echo "test cache: fresh"
 else
   CACHE="$HOME/Library/Caches/AI Illuminati/test-cache"
-  mkdir -p "$CACHE"; CACHE=${CACHE:A}
-  if (( $(du -sk "$CACHE" | cut -f1) > 2 * 1024 * 1024 )); then
-    # Moved into $TEST_DIR (same disk) and deleted with it: an AI's rm would put 2 GB in the Trash.
-    mv "$CACHE" "$TEST_DIR/old-cache"; mkdir -p "$CACHE"; echo "test cache over 2 GB: cleared"
+  mkdir -p "$CACHE"; CACHE=${CACHE:A} CACHE_LOCK="${CACHE:h}/test-cache.lock"
+  : >> "$CACHE_LOCK"; zmodload zsh/system
+  cache_full() { (( $(du -sk "$CACHE" | cut -f1) > 2 * 1024 * 1024 )) }
+  if cache_full; then
+    if zsystem flock -t 0 -f CACHE_FD "$CACHE_LOCK" 2>/dev/null; then
+      # Measured again under the lock: another run may have just cleared it. Moved into $TEST_DIR (same disk) and
+      # deleted with it: an AI's rm would put 2 GB in the Trash.
+      if cache_full; then mv "$CACHE" "$TEST_DIR/old-cache"; mkdir -p "$CACHE"; echo "test cache over 2 GB: cleared"; fi
+      zsystem flock -u $CACHE_FD
+    else
+      echo "test cache over 2 GB: another test run is using it, kept this time"
+    fi
   fi
+  zsystem flock -r -f CACHE_FD "$CACHE_LOCK"   # shared, held until this script ends
 fi
 # The real account list must come out of the tests exactly as it went in.
 REAL_ACCOUNTS="$HOME/Library/Application Support/AI Illuminati/accounts.json"

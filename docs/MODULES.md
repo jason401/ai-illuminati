@@ -258,7 +258,9 @@ included, uses one module cache, `~/Library/Caches/AI Illuminati/test-cache`, pa
 between runs; `check_modules.sh slow` takes it as an optional fourth argument (default `TMP/guard-cache` as before). It
 holds only SDK clang modules (the app's modules are rebuilt into `$TEST_DIR` every run), so no check reads anything old.
 Over 2 GB at the start, run_mode2 clears it ("test cache over 2 GB: cleared"); `AI_ILLUMINATI_TEST_CACHE=fresh` uses an
-empty one in `$TEST_DIR` as before. Clang locks the cache, so runs at once may share it. No check, verdict or command changed.
+empty one in `$TEST_DIR` as before. Clang locks each module, so runs at once may share it; clearing is guarded apart:
+every run holds a shared lock on `test-cache.lock` beside it, and clearing needs the exclusive one without waiting (with
+another run going it prints "kept this time"). No check, verdict or command changed.
 Clearing it by hand (only while no test runs; the next run rebuilds it and is slower once):
 `rm -rf ~/Library/Caches/"AI Illuminati"/test-cache`.
 

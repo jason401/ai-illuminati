@@ -206,6 +206,8 @@ part "build_modules.sh" $PART_T0
 # all end. The first failure or time out names its contract and stops the others (each limit stops its own process
 # group on TERM; the EXIT trap does the same when the run stops), then the stage fails.
 CONTRACT_JOBS=${AI_ILLUMINATI_CONTRACT_JOBS:-$(sysctl -n hw.ncpu)} PIDS=() NAMES=() STARTED=() FAILED=
+# 0 or less would wait forever for a free place.
+[[ $CONTRACT_JOBS == <1-> ]] || { echo "FAIL: AI_ILLUMINATI_CONTRACT_JOBS must be 1 or more, not '$CONTRACT_JOBS'" >&2; exit 2 }
 contract_job() {
   trap - EXIT; trap 'exit 143' TERM   # a background job must never run the script's EXIT trap (it deletes $TEST_DIR)
   local t0=$EPOCHREALTIME compiled

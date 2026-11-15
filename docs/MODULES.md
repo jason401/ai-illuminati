@@ -251,7 +251,7 @@ contract (exit 142) (timed out)`), stops the other jobs and their `limit`s, then
 in other process groups (AIRuntime's fake CLIs: every program under this run's `$TEST_DIR` and its children); the EXIT
 trap does the same when the run stops. Jobs drop the script's EXIT trap, which would delete `$TEST_DIR`. The contracts
 took 26 s one after another and now take about as long as AIProjects alone (12 s) (`docs/modules-followup.md` "O5-B").
-`AI_ILLUMINATI_CONTRACT_JOBS=1` runs them one at a time. `build_modules.sh`, S1-S3 and stage 1's block are unchanged.
+`AI_ILLUMINATI_CONTRACT_JOBS=1` runs them one at a time; 0, a negative or a non-number stops the run (exit 2) instead of waiting forever. `build_modules.sh`, S1-S3 and stage 1's block are unchanged.
 
 ### AIAccounts (`app/modules/AIAccounts/Accounts.swift`)
 | Promise | Users (files) | Module test | User tests (mode2.swift unless named) |

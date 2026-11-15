@@ -778,6 +778,43 @@ EXC_BREAKPOINT가 났다. malloc 자체가 힙이 망가진 것을 발견하고 
 RC 133은 assertionFailure였고 이번은 malloc이 멈춘 것이라, 같은 원인인지는 모른다. 원인 조사는 따로 할 일이다
 (Address/Thread Sanitizer로 9단계 돌려 보기).
 
+## 테스트 최적화 O5-B: 계약 9개 동시 실행 (가드 변경)
+2026-11-15, 기준 HEAD `f0e9808`(O5-A 뒤). 사용자가 "알아서 판단하고 진행해"로 가드 변경을 맡겼다. 바뀐 것은 2단계 계약 루프와,
+블록 밖의 EXIT trap에 넣은 `contracts_stop` 호출 하나다. `module_guard.sha256`에서는 `run_mode2.sh#module-checks` 한 줄만 바뀌었다.
+- 계약마다 컴파일+실행을 백그라운드 작업 하나로 돌린다. 홈·소스·프로그램은 지금처럼 계약마다 따로이고 출력은 `$TEST_DIR/<name>.log`에
+  모았다가 모두 끝나면 이름 순서로 보여 준다. 동시 개수는 `AI_ILLUMINATI_CONTRACT_JOBS`(기본 CPU 수, 이 Mac은 11이라 9개 모두 동시)다.
+  `--affected` 건너뛰기, `limit 300`/`limit 120`, `contract needs` 마커는 그대로다.
+- 첫 실패·시간 초과는 `FAIL: <모듈> contract (exit n)`(142면 `(timed out)`을 붙임)로 이름을 찍는다. 그 뒤 나머지 작업과 그 아래
+  `limit`에 TERM을 보내 끝날 때까지 기다리고, 실패로 끝난다. zsh는 작업의 TERM trap을 지금 도는 `limit`이 끝난 뒤에야 돌리므로
+  `limit`(perl 리더)에도 직접 TERM을 보낸다. 작업은 `trap - EXIT`로 스크립트의 EXIT trap(`rm -rf $TEST_DIR`)을 물려받지 않는다.
+- 처음 고장 주입에서 남은 프로세스를 찾았다. AIRuntime 계약이 자기 프로세스 그룹으로 띄운 fake CLI(`runtime-home/fake/cli`, `sleep 30` 자식
+  하나는 또 다른 그룹)가 `limit`의 그룹 종료를 빠져나갔다. 그래서 멈출 때 `pgrep -f "$TEST_DIR/"`로 이번 실행의 폴더 아래 프로그램과 그
+  자식들까지 KILL한다. 순차 실행에서도 AIRuntime 계약이 시간 초과로 멈추면 같은 프로세스가 남았을 것이다(이번에 함께 막힘).
+- 메인 스크립트는 기다리는 동안 0.1 s마다 확인하므로, TERM·Ctrl-C가 오면 바로 EXIT trap으로 가서 `contracts_stop`을 부른다.
+  앱의 Stop(SIGKILL)은 trap을 건너뛰므로 돌던 계약은 자기 `limit`이 끝날 때까지 남는다(O6의 9단계와 같은 이미 있던 한계).
+
+### 고장 주입 (`git clone --local` 복사본, `--modules`)
+| 주입 | 결과 | 남은 프로세스 |
+|---|---|---|
+| (처음 코드) AILocalization 계약 3 s 뒤 `exit(7)` | exit 1, `FAIL: AILocalization contract (exit 7)`, AIProjects·AIRuntime는 도중에 멈춤 | **fake CLI + `sleep 30` 남음** → 위처럼 고침 |
+| 같은 주입 2회 (고친 뒤) | exit 1, 같은 FAIL, 나머지 로그는 이름 순서로 출력 | 없음 |
+| `limit 120` → `limit 6` (AIRuntime 8 s) | exit 1, `FAIL: stopped after 6 s: env`, `FAIL: AIRuntime contract (exit 142) (timed out)` | 없음 |
+| 계약 4개 도는 중 메인에 TERM | 143, 실패 로그 남김, `$TEST_DIR` 지움 | 없음 |
+| 계약 4개 도는 중 그룹 전체에 INT | 130, 같음 | 없음 |
+
+### 측정 (초)
+순차 기준은 같은 코드에 `AI_ILLUMINATI_CONTRACT_JOBS=1`(복사본, `--modules`)로 쟀다. 계약 합계는 루프 전체의 벽시계 시간이다.
+| 실행 | 계약 합계 | [2] | AIProjects 계약 | AIRuntime 계약 | 전체 | 결과 |
+|---|---:|---:|---:|---:|---:|---|
+| 순차 1–3 (`JOBS=1`) | 26.2 / 27.0 / 26.3 | 49.5 / 49.9 / 49.6 | 11.6 / 12.2 / 12.0 | 8.1 / 8.3 / 8.1 | – | 3/3 통과 |
+| 동시 `--modules` 1–5 | 12.7 / 12.6 / 12.0 / 11.9 / 11.9 | 35.5 / 35.6 / 34.7 / 34.7 / 34.8 | 12.5 / 12.5 / 11.9 / 11.7 / 11.8 | 8.3 / 8.3 / 8.3 / 8.2 / 8.0 | – | 5/5 통과 |
+| 동시 전체 1–3 | 11.9 / 11.9 / 12.0 | 34.7 / 35.0 / 35.1 | 11.8 / 11.8 / 11.8 | 8.0 / 8.3 / 8.1 | **209.3 / 207.7 / 208.2** | 3/3 통과 |
+
+- 계약 루프 26.5 → 12 s, 2단계 49.7 → 35 s(−14 s, O4 예상과 같음). 전체는 O5-A의 218.9–231.5 s(평균 223.9)에서 207.7–209.3 s(평균 208.4)다.
+- AIProjects·AIRuntime 계약 시간은 순차와 같다(차이 ±0.5 s 안). 계약마다 컴파일은 0.4–0.7 → 0.9–1.2 s로 조금 늘었지만(같은 CPU를
+  나눠 씀) 짧은 계약끼리라 합계에 드러나지 않는다. 시간에 민감한 9단계 테스트도 O5-A와 같다: RunConditions 5.1 ×3,
+  RuntimeThroughApp 4.7/4.6/4.5, ProjectWork 25.6/25.6/25.5, TodoScheduler 8.8/8.7/8.7, PeerReview 10.6 ×3.
+
 ## 테스트 실패 때 진단 증거 보존 (run_mode2)
 2026-11-14, 시작 HEAD `95ba95f`. 위 O2 동시 실행의 SIGSEGV(시도 1, RC 139)는 `$TEST_DIR`가 지워져 어느 테스트였는지 몰랐다.
 가드 블록과 `tools/module_guard.sha256`은 그대로다(`check_modules.sh guard` 출력이 같음).

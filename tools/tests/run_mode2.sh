@@ -63,7 +63,7 @@ accounts_check() {
   (( $1 )) && STAGE="${STAGE:-none}; the real accounts.json changed" || STAGE="the real accounts.json check"
   return 1
 }
-trap 'RC=$?; late_stop; accounts_check $RC || (( RC )) || RC=1; save_failure $RC; rm -rf "$TEST_DIR"; exit $RC' EXIT
+trap 'RC=$?; late_stop; (( ! ${+functions[contracts_stop]} )) || contracts_stop; accounts_check $RC || (( RC )) || RC=1; save_failure $RC; rm -rf "$TEST_DIR"; exit $RC' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 # Compiler module cache (the SDK's clang modules: Foundation, AppKit, SwiftUI, …) kept between runs; homes, data and
@@ -201,11 +201,54 @@ PART_T0=$EPOCHREALTIME
 limit 300 zsh tools/build_modules.sh "$MODULES" $J -enable-testing -module-cache-path "$CACHE"
 part "build_modules.sh" $PART_T0
 # Every module folder's contract test (tools/tests/<name>_contract.swift, AIFoo -> foo): found here, not listed by hand.
+# They run at once (O5-B), each with its own home, source, program and limits, up to CONTRACT_JOBS at a time
+# (AI_ILLUMINATI_CONTRACT_JOBS, default the CPU count). Each writes $TEST_DIR/<name>.log, shown in name order when
+# all end. The first failure or time out names its contract and stops the others (each limit stops its own process
+# group on TERM; the EXIT trap does the same when the run stops), then the stage fails.
+CONTRACT_JOBS=${AI_ILLUMINATI_CONTRACT_JOBS:-$(sysctl -n hw.ncpu)} PIDS=() NAMES=() STARTED=() FAILED=
+contract_job() {
+  trap - EXIT; trap 'exit 143' TERM   # a background job must never run the script's EXIT trap (it deletes $TEST_DIR)
+  local t0=$EPOCHREALTIME compiled
+  limit 300 xcrun swiftc -swift-version 5 $J -module-cache-path "$CACHE" -I "$MODULES" -o "$TEST_DIR/$1-contract" "$TEST_DIR/$1-src/main.swift" "$MODULES"/lib*.a
+  compiled=$EPOCHREALTIME
+  limit 120 env $RUN_ENV "$TEST_DIR/$1-contract"
+  part "$2 contract" $t0 "(compile $(printf '%.1f' $(( compiled - t0 ))) s)"
+}
+# TERM to each job and to its limit (zsh runs a job's trap only after its limit returns), then wait for them all.
+# A stopped contract leaves what it started in other process groups (AIRuntime's fake CLIs and their children), so
+# every program of this run's $TEST_DIR still running, and its children, is killed too.
+contracts_stop() {
+  (( ${#PIDS} )) || return 0
+  local p left=() next=()
+  for p in $PIDS; do kill -TERM $p 2>/dev/null || true; pkill -TERM -P $p 2>/dev/null || true; done
+  for p in $PIDS; do wait $p 2>/dev/null || true; done
+  PIDS=() NAMES=() next=($(pgrep -f -- "$TEST_DIR/" || true))
+  while (( ${#next} )); do left+=($next); next=($(for p in $next; do pgrep -P $p; done || true)); done
+  (( ! ${#left} )) || kill -KILL $left 2>/dev/null || true
+}
+# Waits until fewer than $1 jobs run; a failed one sets FAILED and stops the rest.
+contract_reap() {
+  local i rc
+  while (( ${#PIDS} >= $1 )); do
+    for (( i = ${#PIDS}; i >= 1; i-- )); do
+      kill -0 ${PIDS[i]} 2>/dev/null && continue
+      wait ${PIDS[i]} && rc=0 || rc=$?
+      if (( rc )); then
+        FAILED="${NAMES[i]} contract (exit $rc)"; (( rc != 142 )) || FAILED+=" (timed out)"
+        contracts_stop; return 1
+      fi
+      PIDS[i]=(); NAMES[i]=()
+    done
+    (( ${#PIDS} < $1 )) || sleep 0.1
+  done
+  return 0
+}
+PART_T0=$EPOCHREALTIME
 for DIR in app/modules/*(/N); do
   NAME=${(L)${DIR:t}#AI}; SRC=tools/tests/${NAME}_contract.swift
   # --affected: only the picked modules' contracts (the build above, the file checks and S1-S3 below stay).
   if (( SELECT && ! ${CONTRACTS[(Ie)${DIR:t}]} )) && [[ -f $SRC ]]; then echo "skip: ${DIR:t} contract (not affected)"; continue; fi
-  [[ -f $SRC ]] || { echo "FAIL: ${DIR:t} has no contract test $SRC" >&2; exit 1 }
+  [[ -f $SRC ]] || { contracts_stop; echo "FAIL: ${DIR:t} has no contract test $SRC" >&2; exit 1 }
   RUN_ENV=(AI_ILLUMINATI_TEST_HOME="$TEST_DIR/$NAME-home")
   # Projects runs its commands through project_process.py (the app's resources); Chat reads older chats
   # (tools/tests/chat_fixtures) and saves them as the app did before the module.
@@ -213,12 +256,14 @@ for DIR in app/modules/*(/N); do
   grep -q '^// contract needs: chat fixtures' $SRC && RUN_ENV+=(CHAT_FIXTURES="$PWD/tools/tests/chat_fixtures")
   mkdir -p "$TEST_DIR/$NAME-src" "$TEST_DIR/$NAME-home"
   cp $SRC "$TEST_DIR/$NAME-src/main.swift"
-  PART_T0=$EPOCHREALTIME
-  limit 300 xcrun swiftc -swift-version 5 $J -module-cache-path "$CACHE" -I "$MODULES" -o "$TEST_DIR/$NAME-contract" "$TEST_DIR/$NAME-src/main.swift" "$MODULES"/lib*.a
-  COMPILED_AT=$EPOCHREALTIME
-  limit 120 env $RUN_ENV "$TEST_DIR/$NAME-contract"
-  part "${DIR:t} contract" $PART_T0 "(compile $(printf '%.1f' $(( COMPILED_AT - PART_T0 ))) s)"
+  contract_reap $CONTRACT_JOBS || break
+  contract_job $NAME ${DIR:t} > "$TEST_DIR/$NAME.log" 2>&1 &
+  PIDS+=($!) NAMES+=(${DIR:t}) STARTED+=($NAME)
 done
+[[ -n $FAILED ]] || contract_reap 1 || true
+for NAME in $STARTED; do cat "$TEST_DIR/$NAME.log"; done
+[[ -z $FAILED ]] || { echo "FAIL: $FAILED" >&2; exit 1 }
+(( ! ${#STARTED} )) || part "contracts (${#STARTED}, up to $CONTRACT_JOBS at once)" $PART_T0
 # S1 public API snapshots (docs/api), S2 each module's boundary file, S3 App size.
 PART_T0=$EPOCHREALTIME
 limit 900 zsh tools/check_modules.sh slow "$MODULES" "$TEST_DIR" "$CACHE"

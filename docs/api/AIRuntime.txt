@@ -153,6 +153,25 @@ SteerChannel.init() | init()
 SteerChannel.live | var live: Bool { get }
 SteerChannel.offer(_:) | func offer(_ text: String) -> Bool
 SteerChannel.onRead | var onRead: ((String) -> Void)?
+TokenCounts | struct TokenCounts
+TokenCounts.+(_:_:) | static func + (a: TokenCounts, b: TokenCounts) -> TokenCounts
+TokenCounts.+=(_:_:) | static func += (a: inout TokenCounts, b: TokenCounts)
+TokenCounts.cacheRead | var cacheRead: Int
+TokenCounts.cacheWrite | var cacheWrite: Int
+TokenCounts.fresh | var fresh: Int { get }
+TokenCounts.init(from:) | init(from decoder: any Decoder) throws
+TokenCounts.init(input:cacheWrite:cacheRead:output:) | init(input: Int = 0, cacheWrite: Int = 0, cacheRead: Int = 0, output: Int = 0)
+TokenCounts.input | var input: Int
+TokenCounts.isEmpty | var isEmpty: Bool { get }
+TokenCounts.output | var output: Int
+TokenCounts.total | var total: Int { get }
+TokenLedger | enum TokenLedger
+TokenLedger.read(_:toolHome:) | static func read(_ accounts: [Account], toolHome: String) -> [TokenSource]
+TokenSource | struct TokenSource
+TokenSource.accountID | let accountID: String?
+TokenSource.days | let days: [Date : TokenCounts]
+TokenSource.folder | let folder: String
+TokenSource.provider | let provider: Account.Provider
 ToolHome | enum ToolHome
 ToolHome.agyInstalled | static var agyInstalled: Bool { get }
 ToolHome.path | static var path: String { get }

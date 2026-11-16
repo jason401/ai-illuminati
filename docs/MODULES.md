@@ -318,7 +318,7 @@ Public names and why (everything else stays internal: `SpaceCheck`, `SpaceRules`
   `makeCoordinator`, `Coordinator`), `SpaceMigrator.run` (an enum: the page behind it and its WebKit delegate methods
   stay inside).
 
-### AIRuntime (`app/modules/AIRuntime/`: Answerer, Cancellation, NativeSessions, Local, Usage, CloudModels)
+### AIRuntime (`app/modules/AIRuntime/`: Answerer, Cancellation, NativeSessions, Local, Usage, TokenUsage, CloudModels)
 Runs one AI's command line tool for one prompt and hands back its answer; keeps its sessions; runs the local model
 (Ollama); reads usage. Depends on `AIAccounts` (accounts, their environment and folders, `AccountStore.home`) and
 `AILocalization`; it cannot import Workspace, Projects, Chat, Face or ToolHub (they are app files, not modules), and it
@@ -343,6 +343,7 @@ decides no permission: what to start with comes in a `RunConditions` the caller 
 | Local model: no command line tool, one answer at a time (`gate`), keep-alive and unload | Local chat, Route sorter, Settings, LocalModels window, main (menu) | none (needs Ollama: a fake server in mode2) | mode2 "Ollama on this Mac", "Gemma on this Mac", `run_conditions.swift` ("the local model starts no command line tool") |
 | Steering (Claude with progress and `RunConditions.steering`): the input stays open (`--input-format stream-json --replay-user-messages`); a message is written only while a tool of the main conversation runs; one replayed before the first result is told once (`onRead`) and belongs to that answer; one never written, or written and not read by the result (the call is then ended, so it never becomes a second answer), comes back from `close()`; the first result is the answer. Claude Code's reading between tool calls is measured (2.1.300), not documented | Attachments (`requestDebate`), ProjectChat (project work), Discussion (`enqueue`, `afterRun`) | "a message written while a tool runs is read into the answer, once", "… offered while the AI writes is not written; it comes back", "… written but not read before the result ends the call" | testQueuedMessages (the chat's side of the channel) |
 | Usage readings and cloud model picks (stored per account in `UserDefaults.app`) | main, MenuCards, Settings, Solo, Meeting, Peer (auto pick by usage) | none | mode2 "menu bar …", "plain chat (auto pick 10% …)", testCloudModels |
+| Token counts from the CLI logs (read only): a split Claude message once, a Codex running total split by day, only new lines read later (kept in `token-usage.json`), unused tool folders = outside the app | Settings (Accounts > Usage) | "a Claude message split over lines counts once …", "a Codex running total …", "a later read takes only the new lines" | none |
 
 Public names and why (everything else stays internal: `Answerer.chatDir`/`askOnce`/`launchForTests`/`replyForTests`,
 `StreamParser`, `NativeSessions.split`/`load`/`save`, `CloudModels.apply`/`noteSeen`, `ClaudeUsage.binary`, the HTTP
@@ -377,6 +378,9 @@ streams `LocalStream`/`PullStream`, `LocalModel.ask` and the Ollama requests):
 - `AIUsage`, `UsageWindow` (fields, `left`, `leftNow`; no public inits: only the module makes readings; `checkedAt` is
   readable (`internal(set)`) so AutoPick can keep the 10% bar for a reading 30 minutes old or older),
   `CodexUsage`/`ClaudeUsage`/`GeminiUsage` (`read`, `forget`; `CodexUsage.binary` for the Codex login): the menu.
+- `TokenLedger.read`, `TokenSource` (fields), `TokenCounts` (the four counts, `init`, `fresh`, `total`, `isEmpty`, `+`, `+=`):
+  Settings > Accounts > Usage sums the tokens in the CLIs' own logs by period and account. The app adds counts up per
+  day, week, month and year, so the counts have a public init and `+`; reading the logs stays in the module.
 
 ### AIWorkspace (`app/modules/AIWorkspace/`: Workspace, WorkspaceBackup, AutoGuard, Tools, DiskUsage)
 

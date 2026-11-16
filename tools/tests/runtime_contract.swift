@@ -326,4 +326,45 @@ expect(took < 10, "after the result the input closes and the call ends")
 (answer, reads, left, took) = steered("steer-cutoff", offerOn: isTool)
 expect(answer == "first" && reads.isEmpty && left == ["change course"] && took < 10,
        "a message written but not read before the result ends the call (no second answer) and comes back: \(String(describing: answer)) \(left) \(took)")
-print("PASS: Runtime promises (errors, Stop, time out, process group, stream order, background thread, sessions saved, resumed and read from older files, steering)")
+
+// Token counts from the CLIs' own logs (TokenLedger): a split Claude message counts once, a Codex session's running
+// total is split by the day each rise happened, later reads take only new lines, and the tool folders no account uses
+// are "outside the app". Everything is in the test home.
+let tokHome = home + "/tokens"
+let tokClaude = Account(id: "tok-claude", provider: .claude, name: "C", dir: tokHome + "/claude-a")
+let tokCodex = Account(id: "tok-codex", provider: .codex, name: "X", dir: tokHome + "/codex-a")
+func tokWrite(_ path: String, _ lines: [String], append: Bool = false) {
+    try! fm.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+    let text = lines.map { $0 + "\n" }.joined()
+    if append, let h = FileHandle(forWritingAtPath: path) { h.seekToEndOfFile(); h.write(Data(text.utf8)); try! h.close() }
+    else { try! text.write(toFile: path, atomically: true, encoding: .utf8) }
+}
+func tokDay(_ iso: String) -> Date { Calendar.current.startOfDay(for: ISO8601DateFormatter().date(from: iso)!) }
+func tokClaudeLine(_ id: String, _ at: String, out: Int) -> String {
+    #"{"type":"assistant","timestamp":"\#(at)","message":{"id":"\#(id)","usage":{"input_tokens":2,"cache_creation_input_tokens":10,"cache_read_input_tokens":100,"output_tokens":\#(out)}}}"#
+}
+func tokCodexLine(_ at: String, input: Int, cached: Int, out: Int) -> String {
+    #"{"timestamp":"\#(at)","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":\#(input),"cached_input_tokens":\#(cached),"output_tokens":\#(out)}}}}"#
+}
+let tokA = "2026-03-10T12:00:00Z", tokB = "2026-03-11T12:00:00Z"
+let claudeLog = tokHome + "/claude-a/projects/p/s.jsonl"
+tokWrite(claudeLog, [tokClaudeLine("m1", tokA, out: 5), tokClaudeLine("m1", tokA, out: 5),
+                     #"{"type":"user","timestamp":"\#(tokA)","message":{"content":"usage"}}"#, tokClaudeLine("m2", tokB, out: 7)])
+tokWrite(tokHome + "/codex-a/sessions/2026/03/10/r.jsonl", [tokCodexLine(tokA, input: 100, cached: 60, out: 3),
+                                                           tokCodexLine(tokB, input: 250, cached: 160, out: 8)])
+tokWrite(tokHome + "/.claude/projects/q/o.jsonl", [tokClaudeLine("o1", tokA, out: 4)])
+var tokens = TokenLedger.read([tokClaude, tokCodex], toolHome: tokHome)
+let tc = tokens.first { $0.accountID == "tok-claude" }!, tx = tokens.first { $0.accountID == "tok-codex" }!
+expect(tc.days[tokDay(tokA)] == TokenCounts(input: 2, cacheWrite: 10, cacheRead: 100, output: 5) && tc.days[tokDay(tokB)]?.output == 7,
+       "a Claude message split over lines counts once, by its day: \(tc.days)")
+expect(tx.days[tokDay(tokA)] == TokenCounts(input: 40, cacheRead: 60, output: 3)
+       && tx.days[tokDay(tokB)] == TokenCounts(input: 50, cacheRead: 100, output: 5),
+       "a Codex running total is split by the day of each rise, cached input taken out: \(tx.days)")
+expect(tokens.filter { $0.accountID == nil }.map(\.folder) == [tokHome + "/.claude"] && tokens.first { $0.accountID == nil }?.days[tokDay(tokA)]?.output == 4,
+       "a tool folder no account uses is outside the app; an empty one is left out: \(tokens.map(\.folder))")
+tokWrite(claudeLog, [tokClaudeLine("m2", tokB, out: 7), tokClaudeLine("m3", tokB, out: 1)], append: true)
+tokens = TokenLedger.read([tokClaude, tokCodex], toolHome: tokHome)
+expect(tokens.first { $0.accountID == "tok-claude" }!.days[tokDay(tokB)]?.output == 8,
+       "a later read takes only the new lines (the repeated last message counts once)")
+expect(fm.fileExists(atPath: AccountStore.supportDir + "/token-usage.json"), "what was read is kept in the support folder")
+print("PASS: Runtime promises (errors, Stop, time out, process group, stream order, background thread, sessions saved, resumed and read from older files, steering, token logs)")

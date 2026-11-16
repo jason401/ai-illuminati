@@ -28,6 +28,8 @@ It runs only on your Mac. The developer runs no server and collects no data from
 
 - Chats, settings and usage numbers are saved only on your Mac
   (`~/Library/Application Support/AI Illuminati`).
+- Settings → Accounts → Usage reads the token counts in the Claude Code and Codex session logs on this Mac (read only)
+  and keeps only the daily sums there (`token-usage.json`). The conversation text is not kept or sent anywhere.
 - Only if you turn on **Chats from other Macs** (Settings → Chat): copies of the chats you choose are saved as plain
   readable files in the sync folder you pick (iCloud Drive by default), so your other Macs can show them. Enterprise
   chats are left out unless you include them. Settings → Chat → "Remove this Mac's copies" deletes them.

@@ -872,9 +872,17 @@ enum DataFolders {
 
 struct AccountsSettingsTab: View {
     @ObservedObject var model: AppModel
+    @StateObject private var usage = TokenUsageModel()
 
     var body: some View {
         SettingsPage {
+            SettingsSegments(options: [(L("계정 관리", "Manage"), false), (L("사용량", "Usage"), true)], selection: $usage.shown)
+                .frame(width: 200).frame(maxWidth: .infinity)
+            if usage.shown { TokenUsageView(model: model, ledger: usage) } else { manage }
+        }
+    }
+
+    @ViewBuilder private var manage: some View {
             HStack {
                 Text(L("계정", "Accounts")).font(.system(size: 12, weight: .semibold))
                 Text("\(model.accounts.count)").foregroundStyle(.secondary)
@@ -931,7 +939,339 @@ struct AccountsSettingsTab: View {
                     }
                 }
             }
+    }
+}
+
+// Settings > Accounts > Usage: tokens from the CLIs' own logs (TokenLedger) by day, week, month or year, laid out like
+// AI Face's History. Bars count new tokens (cache reads only with "All") on one scale for every account; the 5-hour and
+// weekly % are the menu's own readings (latestUsage), never estimated from tokens.
+// (The page's choices live here: this Mac's Command Line Tools cannot build SwiftUI's @State macro.)
+final class TokenUsageModel: ObservableObject {
+    enum Span: Hashable { case day, week, month, year }
+    @Published var shown = false      // Accounts: the Usage page instead of the list
+    @Published var span: Span = .week
+    @Published var back = 0           // how many periods before the current one
+    @Published var all = false        // bars include cache reads
+    @Published var sources: [TokenSource]?
+    private var reading = false
+
+    func load(_ accounts: [Account], toolHome: String) {
+        guard !reading else { return }
+        reading = true
+        DispatchQueue.global(qos: .utility).async {
+            let read = TokenLedger.read(accounts, toolHome: toolHome)
+            DispatchQueue.main.async { self.sources = read; self.reading = false }
         }
+    }
+}
+
+struct TokenUsageView: View {
+    typealias Span = TokenUsageModel.Span
+    struct Line: Identifiable {
+        let id: String
+        let name: String
+        let provider: Account.Provider
+        let color: Color
+        let source: TokenSource?
+        var outside: Bool { source != nil && source?.accountID == nil }
+    }
+
+    @ObservedObject var model: AppModel
+    @ObservedObject var ledger: TokenUsageModel
+    @AppStorage(AIColors.revisionKey) private var revision = 0   // redraw when an AI's color changes
+    private var span: Span { ledger.span }
+    private var back: Int { ledger.back }
+    private var all: Bool { ledger.all }
+
+    static let inputColor = Color(red: 0.30, green: 0.55, blue: 0.98)
+    static let writeColor = Color(red: 0.62, green: 0.48, blue: 0.95)
+    static let outputColor = Color(red: 0.96, green: 0.76, blue: 0.25)
+    static let readColor = Color.gray.opacity(0.55)
+
+    private var calendar: Calendar { .current }
+    private var unit: Calendar.Component {
+        switch span { case .day: return .day; case .week: return .weekOfYear; case .month: return .month; case .year: return .year }
+    }
+    private var period: DateInterval {
+        let anchor = calendar.date(byAdding: unit, value: -back, to: Date()) ?? Date()
+        return calendar.dateInterval(of: unit, for: anchor) ?? DateInterval(start: anchor, duration: 86400)
+    }
+    // Chart columns: the days of a week or month, the months of a year. The logs count by day, so a day has no chart.
+    private var columns: [DateInterval] {
+        guard span != .day else { return [] }
+        var list: [DateInterval] = []
+        var start = period.start
+        while start < period.end, let next = calendar.date(byAdding: span == .year ? .month : .day, value: 1, to: start) {
+            list.append(DateInterval(start: start, end: next))
+            start = next
+        }
+        return list
+    }
+
+    private var lines: [Line] {
+        let cloud = model.accounts.filter { $0.provider != .ollama }
+        var result = cloud.map { a -> Line in
+            let same = cloud.filter { $0.provider == a.provider }
+            let base = Color(nsColor: AIColors.color(a.provider))
+            return Line(id: a.id, name: a.name, provider: a.provider,
+                        color: same.first?.id == a.id ? base : base.opacity(0.5),
+                        source: ledger.sources?.first { $0.accountID == a.id })
+        }
+        for s in ledger.sources ?? [] where s.accountID == nil {
+            result.append(Line(id: s.folder, name: (s.folder as NSString).abbreviatingWithTildeInPath, provider: s.provider,
+                               color: .gray, source: s))
+        }
+        return result
+    }
+
+    private func counts(_ line: Line, _ range: DateInterval) -> TokenCounts {
+        (line.source?.days ?? [:]).reduce(into: TokenCounts()) { if $1.key >= range.start && $1.key < range.end { $0 += $1.value } }
+    }
+    private func value(_ c: TokenCounts) -> Int { all ? c.total : c.fresh }
+
+    var body: some View {
+        let _ = revision
+        VStack(alignment: .leading, spacing: 10) {
+            SettingsSegments(options: [(L("일", "Day"), Span.day), (L("주", "Week"), .week), (L("월", "Month"), .month), (L("년", "Year"), .year)],
+                             selection: Binding(get: { ledger.span }, set: { ledger.span = $0; ledger.back = 0 }))
+            HStack(spacing: 6) {
+                Button { ledger.back += 1 } label: { Image(systemName: "chevron.left") }.buttonStyle(.plainHit)
+                Text(periodTitle).font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                Button { ledger.back -= 1 } label: { Image(systemName: "chevron.right") }.buttonStyle(.plainHit)
+                    .disabled(back == 0).opacity(back == 0 ? 0.3 : 1)
+                Spacer()
+                SettingsSegments(options: [(L("신규", "New"), false), (L("전체", "All"), true)], selection: $ledger.all)
+                    .frame(width: 92)
+                    .help(L("신규: 캐시 아닌 입력 + 캐시 쓰기 + 출력. 전체: 캐시 읽기까지 (에이전트는 매 턴 전체 대화를 다시 읽어서 대부분 캐시 읽기예요)",
+                            "New: uncached input + cache writes + output. All: also cache reads (agents reread the whole conversation every turn, so most of it is cache reads)"))
+            }
+            if ledger.sources == nil {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text(L("CLI 로그를 읽는 중… (처음 한 번은 몇 초 걸려요)", "Reading the CLI logs… (the first time takes a few seconds)"))
+                        .foregroundStyle(.secondary)
+                }.padding(.vertical, 20).frame(maxWidth: .infinity)
+            } else {
+                content
+            }
+        }
+        .onAppear { ledger.load(model.accounts, toolHome: model.persist ? ToolHome.path : AccountStore.home) }
+    }
+
+    @ViewBuilder private var content: some View {
+        let lines = self.lines
+        let totals = lines.map { counts($0, period) }
+        let sum = totals.reduce(TokenCounts(), +)
+        header(sum)
+        if !columns.isEmpty { chart(lines) }
+        SettingsCard(title: L("계정별", "By account")) {
+            let scale = max(totals.map(value).max() ?? 0, 1)
+            ForEach(Array(lines.enumerated()), id: \.1.id) { index, line in
+                if index > 0 { Divider() }
+                row(line, totals[index], scale: scale)
+            }
+        }
+        legend
+        Text(L("이 Mac의 CLI 로그 기준 · 웹·데스크톱 앱 사용량 제외 · 출력에 thinking/reasoning 포함 · 한도 %는 메뉴와 같은 값",
+               "From this Mac's CLI logs · Web and desktop app use not included · Output includes thinking/reasoning · Limit % is the menu's reading"))
+            .font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func header(_ sum: TokenCounts) -> some View {
+        let fed = sum.input + sum.cacheWrite + sum.cacheRead
+        return HStack(alignment: .bottom) {
+            VStack(alignment: .leading, spacing: 0) {
+                Text(L("출력", "Output")).font(.system(size: 11)).foregroundStyle(.secondary)
+                Text(Self.short(sum.output)).font(.system(size: 26, weight: .semibold, design: .rounded)).foregroundStyle(Self.outputColor)
+            }
+            Spacer()
+            VStack(alignment: .trailing, spacing: 1) {
+                Text(L("신규 ", "New ") + Self.short(sum.fresh))
+                Text(L("캐시 읽기 ", "Cache reads ") + Self.short(sum.cacheRead))
+                Text(L("캐시 적중 ", "Cache hits ") + (fed > 0 ? "\(Int((Double(sum.cacheRead) / Double(fed) * 100).rounded()))%" : "—"))
+            }.font(.system(size: 11)).foregroundStyle(.secondary)
+        }
+        .padding(10).frame(maxWidth: .infinity)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .controlBackgroundColor)))
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(0.07)))
+        .help(L("출력은 AI가 실제로 쓴 토큰이에요. 적중 = 캐시 읽기 ÷ 전체 입력", "Output is what the AIs actually wrote. Hits = cache reads ÷ all input"))
+    }
+
+    // One stacked column per day (month per year): each account's color, all on one scale.
+    private func chart(_ lines: [Line]) -> some View {
+        let cols = columns
+        let stacks = cols.map { col in lines.map { value(counts($0, col)) } }
+        let top = max(stacks.map { $0.reduce(0, +) }.max() ?? 0, 1)
+        let height: CGFloat = 86
+        return SettingsCard(title: all ? L("일별 전체 토큰", "Tokens per day") : (span == .year ? L("월별 신규 토큰", "New tokens per month") : L("일별 신규 토큰", "New tokens per day"))) {
+            HStack(alignment: .bottom, spacing: cols.count > 12 ? 2 : 5) {
+                ForEach(cols.indices, id: \.self) { i in
+                    let total = stacks[i].reduce(0, +)
+                    VStack(spacing: 2) {
+                        if cols.count <= 7 {
+                            Text(total > 0 ? Self.short(total) : " ").font(.system(size: 8)).foregroundStyle(.secondary).lineLimit(1).fixedSize()
+                        }
+                        ZStack(alignment: .bottom) {
+                            RoundedRectangle(cornerRadius: 2).fill(Color.primary.opacity(0.06))
+                            VStack(spacing: 0) {
+                                ForEach(lines.indices.reversed(), id: \.self) { k in
+                                    Rectangle().fill(lines[k].color)
+                                        .frame(height: CGFloat(stacks[i][k]) / CGFloat(top) * height)
+                                }
+                            }.clipShape(RoundedRectangle(cornerRadius: 2))
+                        }.frame(height: height)
+                        Text(columnLabel(cols[i], index: i)).font(.system(size: 9)).foregroundStyle(.secondary).lineLimit(1).fixedSize()
+                    }
+                    .frame(maxWidth: .infinity)
+                    .help(columnHelp(cols[i]) + " · " + Self.short(total))
+                }
+            }.padding(10)
+        }
+    }
+
+    private func row(_ line: Line, _ c: TokenCounts, scale: Int) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Circle().fill(line.color).frame(width: 8, height: 8)
+                Text(line.outside ? L("앱 밖 \(line.provider == .claude ? "Claude Code" : "Codex")", "\(line.provider == .claude ? "Claude Code" : "Codex") outside the app") : line.name).lineLimit(1)
+                Spacer()
+                Text(line.provider == .gemini ? "—" : Self.short(value(c))).font(.system(size: 12, weight: .semibold)).monospacedDigit()
+            }
+            if line.provider == .gemini {
+                Text(L("토큰 기록 없음 (Gemini CLI가 토큰 수를 남기지 않아요)", "No token log (the Gemini CLI does not record tokens)"))
+                    .font(.system(size: 10)).foregroundStyle(.secondary)
+            } else {
+                bar(c, scale: scale)
+                Text(L("출력 ", "Output ") + Self.short(c.output) + L(" · 캐시 쓰기 ", " · Cache writes ")
+                     + (line.provider == .codex && c.cacheWrite == 0 ? "—" : Self.short(c.cacheWrite))
+                     + L(" · 읽기 ", " · Reads ") + Self.short(c.cacheRead))
+                    .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+            }
+            if line.outside {
+                Text(line.name + L(" · 어느 계정 한도인지 몰라요", " · Unknown which account's limit"))
+                    .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+            } else {
+                limits(line)
+            }
+        }
+        .padding(.horizontal, 10).padding(.vertical, 7)
+        .overlay(line.outside ? RoundedRectangle(cornerRadius: 6).strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                    .foregroundStyle(Color.secondary.opacity(0.5)).padding(2) : nil)
+    }
+
+    // The four kinds side by side, the bar's length on the scale shared by every account.
+    private func bar(_ c: TokenCounts, scale: Int) -> some View {
+        let parts: [(Int, Color)] = [(c.input, Self.inputColor), (c.cacheWrite, Self.writeColor), (c.output, Self.outputColor)]
+            + (all ? [(c.cacheRead, Self.readColor)] : [])
+        return GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                RoundedRectangle(cornerRadius: 3).fill(Color.primary.opacity(0.06))
+                HStack(spacing: 0) {
+                    ForEach(parts.indices, id: \.self) { i in
+                        Rectangle().fill(parts[i].1).frame(width: CGFloat(parts[i].0) / CGFloat(scale) * geo.size.width)
+                    }
+                }.clipShape(RoundedRectangle(cornerRadius: 3))
+            }
+        }.frame(height: 7)
+    }
+
+    @ViewBuilder private func limits(_ line: Line) -> some View {
+        if let usage = model.latestUsage[line.id] {
+            if usage.fiveHour == nil && usage.weekly == nil {
+                Text(usage.note ?? L("한도 정보 없음", "No limit reading")).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+            } else {
+                HStack(spacing: 6) {
+                    if line.provider == .gemini {
+                        Text(L("한도 주간 ", "Weekly limit ") + (usage.weekly.map { "\(Int($0.left().rounded()))%" } ?? "—") + L(" 남음", " left"))
+                    } else {
+                        gauge("5h", usage.fiveHour)
+                        gauge(L("주간", "Week"), usage.weekly)
+                    }
+                    Spacer(minLength: 2)
+                    if let at = usage.checkedAt { Text(Self.clock(at) + L(" 기준", "")).foregroundStyle(.tertiary) }
+                }
+                .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+                .help(usage.note ?? L("메뉴와 같은, 서비스가 알려 준 사용 %예요", "The same used % the menu shows, as the service reports it"))
+            }
+        } else {
+            Text(L("한도 확인 중…", "Checking limits…")).font(.system(size: 10)).foregroundStyle(.secondary)
+        }
+    }
+
+    // Used %, like the menu's bars ("—" when the plan has no such limit).
+    private func gauge(_ title: String, _ window: UsageWindow?) -> some View {
+        let used = window.map { 100 - $0.left() }
+        return HStack(spacing: 3) {
+            Text(title)
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.primary.opacity(0.1))
+                Capsule().fill(Color.secondary).frame(width: CGFloat((used ?? 0) / 100) * 36)
+            }.frame(width: 36, height: 4)
+            Text(used.map { "\(Int($0.rounded()))%" } ?? "—").monospacedDigit().frame(width: 28, alignment: .leading)
+        }
+    }
+
+    private var legend: some View {
+        HStack(spacing: 8) {
+            ForEach([(L("캐시 아닌 입력", "Uncached input"), Self.inputColor), (L("캐시 쓰기", "Cache writes"), Self.writeColor),
+                     (L("출력", "Output"), Self.outputColor)] + (all ? [(L("캐시 읽기", "Cache reads"), Self.readColor)] : []), id: \.0) { item in
+                HStack(spacing: 3) {
+                    RoundedRectangle(cornerRadius: 2).fill(item.1).frame(width: 8, height: 8)
+                    Text(item.0).lineLimit(1)
+                }
+            }
+        }.font(.system(size: 10)).foregroundStyle(.secondary)
+    }
+
+    private var periodTitle: String {
+        let f = DateFormatter()
+        f.locale = AppLanguage.current.locale
+        switch span {
+        case .day: f.setLocalizedDateFormatFromTemplate("MMMdEEE")
+        case .week:
+            let i = DateIntervalFormatter()
+            i.locale = AppLanguage.current.locale
+            i.dateTemplate = "MMMd"
+            return i.string(from: period.start, to: period.end.addingTimeInterval(-1))
+        case .month: f.setLocalizedDateFormatFromTemplate("yMMMM")
+        case .year: f.setLocalizedDateFormatFromTemplate("y")
+        }
+        return f.string(from: period.start)
+    }
+
+    private func columnLabel(_ col: DateInterval, index: Int) -> String {
+        let f = DateFormatter()
+        f.locale = AppLanguage.current.locale
+        switch span {
+        case .week: f.setLocalizedDateFormatFromTemplate("EEE")
+        case .year: f.setLocalizedDateFormatFromTemplate("MMM"); return f.string(from: col.start).replacingOccurrences(of: ".", with: "")
+        default: return index % 5 == 0 ? "\(index + 1)" : ""
+        }
+        return f.string(from: col.start)
+    }
+
+    private func columnHelp(_ col: DateInterval) -> String {
+        let f = DateFormatter()
+        f.locale = AppLanguage.current.locale
+        f.setLocalizedDateFormatFromTemplate(span == .year ? "yMMMM" : "MMMdEEE")
+        return f.string(from: col.start)
+    }
+
+    static func clock(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.locale = AppLanguage.current.locale
+        f.setLocalizedDateFormatFromTemplate("Hm")
+        return f.string(from: date)
+    }
+
+    // 950, 12.3K, 7.58M, 1.48B: three digits at most.
+    static func short(_ n: Int) -> String {
+        let v = Double(n)
+        for (size, mark) in [(1e9, "B"), (1e6, "M"), (1e3, "K")] where v >= size {
+            let x = v / size
+            return String(format: x >= 100 ? "%.0f" : x >= 10 ? "%.1f" : "%.2f", x) + mark
+        }
+        return "\(n)"
     }
 }
 

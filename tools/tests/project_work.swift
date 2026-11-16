@@ -1294,25 +1294,22 @@ func testAutoMeeting() {
         return .success("TL;DR: \(account.name)\n\n\(account.name) view.")
     } }
     expect(chat.memberIDs.isEmpty, "the members are automatic")
-    chat.draft = "이 구조로 갈지 회의해줘"; chat.send()
-    let deadline = Date().addingTimeInterval(30)
-    while Date() < deadline && (chat.anyRunning || (chat.current.turns.last?.final == nil && chat.current.turns.last?.error == nil)) {
-        RunLoop.main.run(until: Date().addingTimeInterval(0.03))
+    // Waits for the answer (at most 60 s). One that does not end fails here by name: the checks after it read what the
+    // fake AIs write on their own threads.
+    func hold(_ chat: Discussion, _ text: String) -> ChatTurn? {
+        chat.draft = text; chat.send()
+        let deadline = Date().addingTimeInterval(60)
+        func ended() -> Bool { !chat.anyRunning && (chat.current.turns.last?.final != nil || chat.current.turns.last?.error != nil) }
+        while Date() < deadline && !ended() { RunLoop.main.run(until: Date().addingTimeInterval(0.03)) }
+        expect(ended(), "\(text): answered within 60 s")
+        return chat.current.turns.last
     }
-    let turn = chat.current.turns.last
+    let turn = hold(chat, "이 구조로 갈지 회의해줘")
     let meeting = chat.conversations.first { $0.id == turn?.meetingRoom }
     let speeches = meeting?.turns.first?.entries.filter { !$0.failed } ?? []
     expect(turn?.meetingRoom != nil && turn?.final == "결론: 둘 다 괜찮아." && Set(asked) == [c1.id, x1.id, g.id, c2.id]
            && speeches.count == 5 && speeches.last?.speaker == chat.label(c2),
            "auto members: asked in words, four AIs meet (two Claude accounts apart) and the second Claude speaks when named: \(speeches.map(\.speaker))")
-    func hold(_ chat: Discussion, _ text: String) -> ChatTurn? {
-        chat.draft = text; chat.send()
-        let deadline = Date().addingTimeInterval(30)
-        while Date() < deadline && (chat.anyRunning || (chat.current.turns.last?.final == nil && chat.current.turns.last?.error == nil)) {
-            RunLoop.main.run(until: Date().addingTimeInterval(0.03))
-        }
-        return chat.current.turns.last
-    }
     // Several views asked for in words, in a plain chat: as many as asked, read only; a bare opinion question is one answer.
     expect(Route.askedViewers("2명 의견 들려줘") == 2 && Route.askedViewers("셋이 각자 생각 말해봐") == 3 && Route.askedViewers("2~3명 의견 줘") == 3
            && Route.askedViewers("다들 의견 줘") == Discussion.meetingMost && Route.askedViewers("What do two of you think?") == 2

@@ -10,9 +10,12 @@ import AIWorkspace
 // stops the meeting, one meeting per answer, and nobody in the meeting can ask or convene on (depth 1).
 func testMeetingTool() {
     func text(_ reply: [String: Any]) -> String { ((reply["content"] as? [[String: Any]])?.first?["text"] as? String) ?? "" }
-    func spin(_ seconds: TimeInterval, until done: () -> Bool) {
+    // Polls until done, at most `seconds`; false when the time ran out. A wait that ends with the fake AIs still running
+    // fails here by name: the checks after it read what the fakes write on their own threads.
+    @discardableResult func spin(_ seconds: TimeInterval, until done: () -> Bool) -> Bool {
         let deadline = Date().addingTimeInterval(seconds)
         while Date() < deadline && !done() { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
+        return done()
     }
     func meetingID(_ reply: String) -> String? {
         reply.range(of: #"[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}"#, options: .regularExpression).map { String(reply[$0]) }
@@ -81,7 +84,7 @@ func testMeetingTool() {
     expect(held != nil && reply.contains(held!.id.uuidString) && reply.contains("meeting_result"), "convening returns the meeting id at once")
     held?.start()
     var state = HeldMeeting.State.running
-    spin(30) { state = held?.state ?? .stopped; return state != .running }
+    expect(spin(60) { state = held?.state ?? .stopped; return state != .running }, "the meeting ends within 60 s")
     expect(state == .done("결론: A로 가자.\n이견: 없음."), "the result goes to the AI that called it: \(state)")
     expect(direct.activeWorkspace?.roots == own.roots && direct.activeWorkspace?.face == true && direct.activeSessionRoom == ownRoom
            && !direct.activeMeeting && direct.activeHeldBy == nil && direct.runCancellation == nil,
@@ -106,7 +109,7 @@ func testMeetingTool() {
     // Convened, but the answer ended before it was registered: never started, its chat and card end as stopped.
     let (never, _) = direct.holdMeeting(request, asker: claude, id: room, index: 0, question: "q", binding: own, cancellation: DebateCancellation())
     never?.abandon()
-    spin(10) { direct.current.turns.first?.peerNotes?.first { $0.meeting == never?.id }?.headline?.hasPrefix(L("회의 멈춤", "Meeting stopped")) == true }
+    spin(30) { direct.current.turns.first?.peerNotes?.first { $0.meeting == never?.id }?.headline?.hasPrefix(L("회의 멈춤", "Meeting stopped")) == true }
     expect(never?.state == .stopped && never?.token.isCancelled == true
            && direct.conversations.first { $0.id == never?.id }?.turns.first?.answeredAt != nil
            && direct.current.turns.first?.peerNotes?.first { $0.meeting == never?.id }?.headline?.hasPrefix(L("회의 멈춤", "Meeting stopped")) == true,
@@ -145,7 +148,7 @@ func testMeetingTool() {
         return .success("회의 결과: " + result)
     }
     chat.draft = "A와 B 중 골라 줘"; chat.send()
-    spin(30) { !chat.anyRunning && chat.current.turns.last?.final != nil }
+    expect(spin(60) { !chat.anyRunning && chat.current.turns.last?.final != nil }, "the message with a meeting is answered within 60 s")
     let last = chat.current.turns.last
     expect(tools == ["convene_meeting", "meeting_result"] && instruction.contains("[Meetings]") && instruction.contains("convene_meeting"),
            "the answering AI has both tools and is told when to use them")
@@ -164,11 +167,12 @@ func testMeetingTool() {
 
     // The stop button stops the meeting too, and the AI waiting for its result hears so at once.
     chat.draft = "STOP ME"; chat.send()
-    spin(20) { chat.current.turns.last?.peerNotes?.contains { $0.meeting != nil } == true && recording { stopToken != nil } }
+    expect(spin(60) { chat.current.turns.last?.peerNotes?.contains { $0.meeting != nil } == true && recording { stopToken != nil } },
+           "the slow meeting is convened within 60 s")
     chat.stopDebate()
-    spin(20) { !chat.anyRunning }
+    expect(spin(60) { !chat.anyRunning }, "the stopped answer ends within 60 s")
     let halted = chat.current.turns.last?.peerNotes?.first { $0.meeting != nil }
-    spin(10) { chat.current.turns.last?.peerNotes?.first { $0.meeting != nil }?.headline?.hasPrefix(L("회의 멈춤", "Meeting stopped")) == true }
+    spin(30) { chat.current.turns.last?.peerNotes?.first { $0.meeting != nil }?.headline?.hasPrefix(L("회의 멈춤", "Meeting stopped")) == true }
     let stoppedCard = chat.current.turns.last?.peerNotes?.first { $0.meeting != nil }
     expect(halted != nil && stopped.contains("stopped") && stoppedCard?.headline?.hasPrefix(L("회의 멈춤", "Meeting stopped")) == true,
            "stop: the meeting stops and meeting_result says so: \(stopped) / \(stoppedCard?.headline ?? "")")

@@ -1371,6 +1371,9 @@ public final class Discussion: ObservableObject {
     }
 
     func finish(_ id: UUID, _ index: Int, error: String? = nil) {
+        // The message's ask_ai and meeting tools close before the chat shows it ended (the caller's endPeer after this
+        // finds nothing left): closed after, an AI could still convene for an answer that looked done.
+        endPeer(activePeerSession)
         changeTurn(id, index, save: true) { t in
             if let error {
                 t.error = error

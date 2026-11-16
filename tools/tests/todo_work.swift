@@ -548,7 +548,7 @@ func testTodoPause() {
     try! store.move(three.id, by: -1)
     expect(store.current.eligible(held: free).map(\.title) == ["three", "other"], "the stop point follows the board order")
     try! store.stop(after: two.id)
-    expect(store.current.list(listA)?.stopAfter == nil && store.current.eligible(held: free).map(\.title) == ["three", "late", "other"], "the same TODO again lifts it: \(store.current.eligible(held: free).map(\.title))")
+    expect(store.current.list(listA)?.stopAfter == nil && store.current.eligible(held: free).map(\.title) == ["three", "other"] && store.current.blockers(store.current.item(late.id)!) == [two.id, three.id], "the same TODO again lifts it; late waits for three above the reviewed two: \(store.current.eligible(held: free).map(\.title))")
     try! store.stop(after: two.id)
     try! store.delete(two.id)
     expect(store.current.list(listA)?.paused == true && store.current.list(listA)?.stopAfter == nil, "deleting the stop point keeps the list stopped")
@@ -1386,6 +1386,7 @@ private final class StandInChats: TodoChats {
     var later: ((TodoStandInReply) -> Void)?
     var tokens: [DebateCancellation] = []
     var wrote: Set<UUID> = []   // rooms where the user wrote since the question
+    var failing: String?        // every attempt ends with this error
     func crew(lock: EnterpriseLock?, allowed: [String]) -> (lead: Account, reviewer: Account?)? { (Account(id: "standin-lead", provider: .claude, name: "Lead"), nil) }
     func noCrew(_ allowed: [String], lock: EnterpriseLock?) -> String { "nobody" }
     func addChat(_ project: ProjectBinding, title: String, lock: EnterpriseLock?) -> UUID { UUID() }
@@ -1393,7 +1394,7 @@ private final class StandInChats: TodoChats {
     func folder(_ room: UUID) -> URL { URL(fileURLWithPath: AccountStore.home).appendingPathComponent("todo-standin-chats/" + room.uuidString) }
     func sentPhotos(_ room: UUID) -> Set<UUID> { [] }
     func start(room: UUID, question: String, photos: [TodoPhoto], review: Bool, extra: String) -> String? { questions.append(question); return nil }
-    func ended(_ room: UUID) -> TodoTurnEnd { TodoTurnEnd() }
+    func ended(_ room: UUID) -> TodoTurnEnd { TodoTurnEnd(error: failing) }
     func stop(_ room: UUID) {}
     func userWrote(_ room: UUID, since: Date) -> Bool { wrote.contains(room) }
     func standIn(room: UUID, brief: String, token: DebateCancellation, done: @escaping (TodoStandInReply) -> Void) {
@@ -1670,6 +1671,18 @@ func testTodoRunModes() {
     expect(item(a.id).parked == nil && item(a.id).aiHelped == 0 && item(a.id).state == .ready, "the user's answer lifts the park")
     clear(a, b)
 
+    // aiThenPark: an error after the other AI's fix is not retried: it fails and is parked at once, and B starts.
+    chats.reply = TodoStandInReply(by: "Codex", text: "ANSWER: try the other port")
+    (a, b) = pair(.aiThenPark)
+    clock += 15 * 60; scheduler.tick()
+    expect(started(a) && item(a.id).aiHelped == 1, "the fix goes on")
+    chats.failing = "connection refused"
+    scheduler.tick()
+    chats.failing = nil
+    expect(item(a.id).question?.kind == .failed && item(a.id).question?.reason.contains("connection refused") == true && item(a.id).attempts == 1 && item(a.id).isParked && started(b),
+           "failed again after the help: no retries, parked with the error, B goes on: \(item(a.id).state) \(item(a.id).attempts)")
+    clear(a, b)
+
     // aiThenPark, declined: parked at once, B starts.
     chats.reply = TodoStandInReply(by: "Codex", text: "DECLINE: only the user knows")
     (a, b) = pair(.aiThenPark)
@@ -1720,6 +1733,8 @@ func testTodoRunModes() {
         try! store.change(qc.id) { $0.state = .ready }; try! store.change(linked.id) { $0.state = .ready }
         let ready = { store.current.eligible(held: { _ in false }).map(\.id) }
         expect(!ready().contains(qc.id) && store.current.blockers(item(qc.id)) == [qb.id, qa.id], "\(mode): C does not pass A, asking above the done B")
+        try! store.change(qb.id) { $0.state = .review }
+        expect(!ready().contains(qc.id) && store.current.blockers(item(qc.id)) == [qb.id, qa.id], "\(mode): nor above a B that waits for the check")
         try! store.change(qa.id) { $0.parked = TodoPark(questionID: $0.question!.id, at: clock, reason: "t") }
         expect(ready().contains(qc.id) && !ready().contains(linked.id), "\(mode): parked, C goes on, the TODO linked after A waits")
         for t in [qa, qb, qc, linked] { try! store.change(t.id) { $0.state = .cancelled } }

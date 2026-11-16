@@ -337,16 +337,18 @@ public struct TodoData: Codable, Equatable {
         }
     }
     // What a TODO waits for: its "after" links and the nearest TODO above it in its list that is not passed: cancelled,
-    // a draft (not going to run, so the ready ones below go on in the user's order) or parked. When that one is done
-    // (marked so by the user while one above still waits), also the nearest above it that is not done, so the rest is
-    // still held. An "after" link always waits, parked or not: the user asked for that one.
+    // a draft (not going to run, so the ready ones below go on in the user's order) or parked. When that one is done or
+    // waits for the check (it may pass), also the nearest above it that is neither (one asked again after a change request,
+    // or marked done by the user while one above still waits), so the rest is still held. An "after" link always waits,
+    // parked or not: the user asked for that one.
     public func blockers(_ item: TodoItem) -> [UUID] {
         var ids = item.after
         let row = ordered(item.listID)
         let passed = { (t: TodoItem) in t.state == .cancelled || t.state == .draft || t.isParked }
         if let at = row.firstIndex(where: { $0.id == item.id }), let above = row[..<at].last(where: { !passed($0) }) {
             ids.append(above.id)
-            if above.state == .done, let waiting = row[..<at].last(where: { !passed($0) && $0.state != .done }) { ids.append(waiting.id) }
+            let through = { (t: TodoItem) in t.state == .done || t.state == .review }
+            if through(above), let waiting = row[..<at].last(where: { !passed($0) && !through($0) }) { ids.append(waiting.id) }
         }
         return ids
     }
@@ -1462,6 +1464,8 @@ public final class TodoScheduler: ObservableObject {
             if let error = turn.error {
                 // Another chat writing the repository is not the TODO's fault: try again later.
                 let busy = ProjectWork.isBusy(error)
+                // aiThenPark: failing again after another AI's fix is not retried; it waits (and is parked) at once.
+                let helpedAgain = !busy && item.aiHelped > 0 && store.current.mode(item) == .aiThenPark
                 try? store.change(item.id) { t in
                     guard t.state == .running else { return }
                     if !busy { t.attempts += 1 }
@@ -1469,7 +1473,10 @@ public final class TodoScheduler: ObservableObject {
                     // It had reported, then the review or the fixes failed: the next attempt looks at what is there first.
                     if report != nil { t.interrupted = true }
                     t.report = nil
-                    if t.attempts > Self.maxAttempts {
+                    if helpedAgain {
+                        t.state = .needsYou; t.unreported = true
+                        t.question = TodoQuestion(kind: .failed, reason: L("AI가 도와준 뒤에도 다시 실패했어요: ", "It failed again after an AI's help: ") + String(error.prefix(600)))
+                    } else if t.attempts > Self.maxAttempts {
                         t.state = .needsYou; t.unreported = true
                         t.question = TodoQuestion(kind: .failed, reason: L("\(Self.maxAttempts)번 다시 시도했지만 실패했어요: ", "Failed after \(Self.maxAttempts) retries: ") + String(error.prefix(600)))
                     } else {

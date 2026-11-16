@@ -1984,6 +1984,7 @@ private final class NameEditing: ObservableObject {
         didSet {
             guard (id == nil) != (monitor == nil) else { return }
             if let monitor { NSEvent.removeMonitor(monitor); self.monitor = nil; return }
+            window = NSApp.keyWindow
             monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
                 self?.clicked(event)
                 return event
@@ -1991,9 +1992,11 @@ private final class NameEditing: ObservableObject {
         }
     }
     private var monitor: Any?
+    // The Settings window the edit is in: clicks in other windows (a chat) leave their focus alone.
+    private weak var window: NSWindow?
 
     private func clicked(_ event: NSEvent) {
-        guard let window = event.window else { return }
+        guard let window, event.window === window else { return }
         if let editor = window.firstResponder as? NSTextView, editor.isFieldEditor,
            let field = editor.delegate as? NSView,
            field.bounds.contains(field.convert(event.locationInWindow, from: nil)) { return }

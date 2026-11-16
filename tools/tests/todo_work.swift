@@ -1101,6 +1101,7 @@ func testTodoAddTool() {
         let r = link.call("todo_add", args, context: session(c))
         return (r["isError"] as? Bool == false, ((r["content"] as? [[String: Any]])?.first?["text"] as? String) ?? "")
     }
+    func run2(_ c: Conversation) -> String { ((link.call("todo_list", [:], context: session(c))["content"] as? [[String: Any]])?.first?["text"] as? String) ?? "" }
 
     let menu = offered(plain) ?? ""
     expect(menu.contains("AI Face") && menu.contains("todo-add-app") && !menu.contains("todo-add-school"), "a plain chat is offered the projects without a lock: \(menu)")
@@ -1120,6 +1121,18 @@ func testTodoAddTool() {
     expect(add(chat("경로", nil), ["title": "y", "project": "/tmp/todo-add-app/"]).ok == false, "a chat that is not in the app gets no tool")
     chats.append(chat("경로", nil)); let byPath = chats.last!
     expect(add(byPath, ["title": "경로로", "project": "/tmp/todo-add-app/"]).ok, "a folder path picks the project too")
+    // after: open TODOs of the same board only; a bad id adds nothing.
+    expect(menu.contains("never saw this chat") && menu.contains("done when") && menu.contains("todo_list") && menu.contains("after:"), "todo_add says how to write a TODO another AI can start")
+    let first = store.current.items.first { $0.title == "후속 작업" }!
+    let count = store.current.items.count
+    let chained = add(work, ["title": "그 다음", "after": [running.id.uuidString, first.id.uuidString]])
+    expect(chained.ok && chained.text.contains("waits for") && chained.text.contains("후속 작업")
+           && store.current.items.first { $0.title == "그 다음" }?.after == [running.id, first.id], "after saves the links and says what it waits for: \(chained.text)")
+    expect(!add(work, ["title": "모름", "after": [UUID().uuidString]]).ok && !add(work, ["title": "다른 보드", "after": [item!.id.uuidString]]).ok
+           && !add(work, ["title": "엉터리", "after": ["abc"]]).ok && store.current.items.count == count + 1, "an unknown or other-board id fails and adds nothing")
+    try! store.change(first.id) { $0.state = .done }
+    expect(!add(work, ["title": "끝난 것 뒤", "after": [first.id.uuidString]]).ok && store.current.items.count == count + 1, "a done TODO cannot be waited for")
+    expect(run2(work).contains("after: \(running.id.uuidString)"), "todo_list shows after")
     // Enterprise: only its organization's projects, with the lock.
     let lockedMenu = offered(locked) ?? ""
     expect(lockedMenu.contains("todo-add-school") && !lockedMenu.contains("AI Face"), "an Enterprise chat sees only its organization's projects")
@@ -1172,7 +1185,7 @@ func testTodoEditTool() {
     let names = Set(link.tools(context: session(work)).compactMap { $0["name"] as? String })
     expect(names.isSuperset(of: ["todo_add", "todo_list", "todo_edit"]) && !names.contains("todo_drafts"), "the edit tools are offered with todo_add: \(names)")
     let editHelp = link.tools(context: session(work)).first { $0["name"] as? String == "todo_edit" }?["description"] as? String ?? ""
-    expect(editHelp.contains("Never on your own") && editHelp.contains("when the user asks"), "todo_edit is only for what the user asks")
+    expect(editHelp.contains("Never on your own") && editHelp.contains("when the user asks") && editHelp.contains("done when"), "todo_edit is only for what the user asks")
     let listed = run(work, "todo_list", [:])
     expect(listed.ok && listed.text.contains(draft.id.uuidString) && listed.text.contains("처음 설명") && listed.text.contains(ready.id.uuidString)
            && listed.text.contains("state: ready") && listed.text.contains("state: draft") && listed.text.contains("place: 2")

@@ -1018,14 +1018,14 @@ public final class TodoAddLink: ToolProvider {
         let string: [String: Any] = ["type": "string"]
         let here = chat.project.flatMap { p in projects.first { $0.binding.root == p.root } }
         return [["name": "todo_add",
-                 "description": "Add a TODO to the user's TODO board for a project, from any chat, when the user asks to add or note one (or clearly agrees to your suggestion). Never on your own. It is added as a draft: it runs only when the user presses Start on the board. title: one short line in the user's language; detail: what to do, the context from this chat and what done looks like (the AI that takes it sees only this). project: a name or folder from the list\(here.map { "; leave it out for this chat's project \($0.name)" } ?? ""). One TODO per call. Projects: " + Self.describe(projects),
-                 "inputSchema": ["type": "object", "properties": ["title": string, "detail": string, "project": string, "ask_first": ["type": "boolean"]],
+                 "description": "Add a TODO to the user's TODO board for a project, from any chat, when the user asks to add or note one (or clearly agrees to your suggestion). Never on your own. It is added as a draft: it runs only when the user presses Start on the board. title: one short line in the user's language; detail: write it so an AI that never saw this chat can start at once (no \"as discussed\"): the goal or problem and why; the steps; done when (how to check). When relevant, add: the files or places involved, what you checked versus guessed, and what not to touch. Before adding, check todo_list; if a TODO already covers it, offer to merge with todo_edit instead. after: ids from todo_list of TODOs on the same board that must finish first, only when order matters. project: a name or folder from the list\(here.map { "; leave it out for this chat's project \($0.name)" } ?? ""). One TODO per call. Projects: " + Self.describe(projects),
+                 "inputSchema": ["type": "object", "properties": ["title": string, "detail": string, "project": string, "ask_first": ["type": "boolean"], "after": ["type": "array", "items": string]],
                                  "required": ["title"], "additionalProperties": false]],
                 ["name": "todo_list",
                  "description": "List the TODOs on a project's board in the board's order (the ready ones run top to bottom; drafts are skipped until made ready) with their position, id, state (draft, ready, running, review = waits for the user's check, needsYou = waits for the user's answer, needsYou (parked) = waits for the user's answer while the TODOs below go on, done, cancelled), title, ask_first and full detail, before todo_edit, 30 at a time (offset: how many to skip, for the next ones). Done and cancelled ones only with include_done. project: as for todo_add\(here.map { "; leave it out for this chat's project \($0.name)" } ?? "; leave it out for every project")).",
                  "inputSchema": ["type": "object", "properties": ["project": string, "offset": ["type": "integer"], "include_done": ["type": "boolean"]], "additionalProperties": false]],
                 ["name": "todo_edit",
-                 "description": "Change a TODO (from todo_list) only when the user asks. Never on your own: a TODO made ready runs without the user pressing Start. id: its id from todo_list. Give only what changes: title (one short line), detail (replaces the whole detail: keep what still holds), ask_first, state (\"draft\" or \"ready\"; \"done\" only when the user asks to mark it done or finished, alone), before (the id of a TODO of the same board to put it in front of, or \"end\"). state \"done\" works from any state: a running TODO's work stops (in its own chat this answer may finish), and the TODOs after it go on. Otherwise a running TODO cannot be changed at all; title, detail, ask_first and draft/ready only for draft or ready ones; any other (review, needsYou, done, cancelled) can only move with before.",
+                 "description": "Change a TODO (from todo_list) only when the user asks. Never on your own: a TODO made ready runs without the user pressing Start. id: its id from todo_list. Give only what changes: title (one short line), detail (replaces the whole detail: when changing it, keep its parts (goal, steps, done when) and every requirement that still holds), ask_first, state (\"draft\" or \"ready\"; \"done\" only when the user asks to mark it done or finished, alone), before (the id of a TODO of the same board to put it in front of, or \"end\"). state \"done\" works from any state: a running TODO's work stops (in its own chat this answer may finish), and the TODOs after it go on. Otherwise a running TODO cannot be changed at all; title, detail, ask_first and draft/ready only for draft or ready ones; any other (review, needsYou, done, cancelled) can only move with before.",
                  "inputSchema": ["type": "object", "properties": ["id": string, "title": string, "detail": string, "ask_first": ["type": "boolean"],
                                                                    "state": ["type": "string", "enum": ["draft", "ready", "done"]], "before": string],
                                  "required": ["id"], "additionalProperties": false]]]
@@ -1079,7 +1079,7 @@ public final class TodoAddLink: ToolProvider {
             guard !page.isEmpty else { return Self.reply("No TODOs after offset \(skip): there are \(list.count).") }
             let lines = page.map { p, place, item in
                 let mode = data.mode(item).rawValue
-                return "id: \(item.id.uuidString)\nproject: \(p.name) (in order, mode \(mode))\nplace: \(place)\nstate: \(item.state.rawValue)\(item.isParked ? " (parked)" : "")\ntitle: \(item.title)\nask_first: \(item.askFirst)\ndetail:\n\(item.detail.isEmpty ? "(none)" : item.detail)"
+                return "id: \(item.id.uuidString)\nproject: \(p.name) (in order, mode \(mode))\nplace: \(place)\nstate: \(item.state.rawValue)\(item.isParked ? " (parked)" : "")\ntitle: \(item.title)\nask_first: \(item.askFirst)\(item.after.isEmpty ? "" : "\nafter: " + item.after.map(\.uuidString).joined(separator: ", "))\ndetail:\n\(item.detail.isEmpty ? "(none)" : item.detail)"
             }
             return Self.reply(lines.joined(separator: "\n\n---\n\n") + (skip + page.count < list.count ? "\n\n(\(list.count - skip - page.count) more: call again with offset \(skip + page.count).)" : ""))
         }
@@ -1146,14 +1146,29 @@ public final class TodoAddLink: ToolProvider {
         }
         // The report card shows in the chat it came from, unless that is a TODO's own chat (it has its own card).
         let origin = store.current.items.contains { $0.room == chat.id } ? nil : chat.id
+        // after: open TODOs of the board it goes to; any other id refuses the whole call (none is dropped silently).
+        var after: [UUID] = []
+        if let raw = arguments["after"] {
+            let data = store.current
+            let board = data.lists.first { $0.project?.root == target.binding.root }?.id
+            for value in raw as? [Any] ?? [raw] {
+                let s = (value as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                guard let id = UUID(uuidString: s), let other = data.item(id), other.listID == board, ![.done, .cancelled].contains(other.state) else {
+                    return ProjectTools.failure("after: \"\(s)\" is not an open TODO on \(target.name)'s board (take ids from todo_list); nothing was added.")
+                }
+                if !after.contains(id) { after.append(id) }
+            }
+        }
         let before = Set(store.current.items.map(\.id))
         do {
-            let item = try store.add(title: title, detail: String(text("detail").prefix(8000)), project: target.binding, projectName: target.name,
+            let item = try store.add(title: title, detail: String(text("detail").prefix(8000)), project: target.binding, projectName: target.name, after: after,
                                      askFirst: arguments["ask_first"] as? Bool ?? false, originRoom: origin, lock: target.lock, fromAI: true)
             if before.contains(item.id) {
                 return ["content": [["type": "text", "text": "Already on \(target.name)'s board as \"\(item.title)\" (\(item.state.rawValue)); nothing was added or changed. Tell the user."]], "isError": false]
             }
-            return ["content": [["type": "text", "text": "Added to \(target.name)'s TODO board as a draft: \"\(item.title)\". It runs only when the user presses Start on the board. Tell the user briefly."]], "isError": false]
+            let titles = after.compactMap { store.current.item($0).map { "\"\($0.title)\"" } }
+            let waits = titles.isEmpty ? "" : " It waits for " + titles.joined(separator: ", ") + " to finish first."
+            return ["content": [["type": "text", "text": "Added to \(target.name)'s TODO board as a draft: \"\(item.title)\".\(waits) It runs only when the user presses Start on the board. Tell the user briefly."]], "isError": false]
         } catch { return ProjectTools.failure(error.localizedDescription) }
     }
 }

@@ -8,7 +8,7 @@ import AIRuntime
 // The promises of the Runtime (AIRuntime), checked from outside with only its public API and a fake command line
 // tool (a shell script started as the AI's tool): errors, Stop, time out, the process group, stream events in
 // order, sessions saved and resumed. Run with AI_ILLUMINATI_TEST_HOME set to an empty folder (run_mode2.sh).
-// No real CLI, home, Keychain or account folder is used; Gemini is left out (it would touch agy's real settings).
+// No real CLI, home, Keychain or account folder is used; Gemini's fake calls use RunConditions(), without app settings.
 func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
     if !condition() { fatalError("FAIL: " + message) }
 }
@@ -37,6 +37,7 @@ case "$FAKE_MODE" in
   group) echo $$ > "$FAKE_DIR/pid"; sh -c 'echo $$ > "$FAKE_DIR/child"; exec sleep 30' </dev/null >/dev/null 2>&1 &
          echo 'left one' ;;
   fail) echo "boom from the tool" >&2; exit 3 ;;
+  modelcodex|modelgemini) exec /usr/bin/python3 "$FAKE_DIR/models.py" "$out" ;;
   stream) cat "$FAKE_DIR/stream.jsonl" ;;
   codex) cat "$FAKE_DIR/stream.jsonl"; printf 'codex answer' > "$out" ;;
   session) [ "$sid" = "" ] && sid="$FAKE_SID"
@@ -55,6 +56,7 @@ func run(_ mode: String, sid: String = "", turn: String = "", group: Bool = fals
     var run = RunConditions()
     run.environment = { env in
         var env = env; env["FAKE_MODE"] = mode; env["FAKE_DIR"] = fake.path; env["FAKE_SID"] = sid; env["FAKE_TURN"] = turn
+        env["HOME"] = home
         env["AI_ILLUMINATI_PROJECT_PROCESS"] = marker ? "1" : nil
         return env
     }
@@ -200,8 +202,60 @@ let (codexEvents, codexAnswer) = events(codex, [
 ], mode: "codex")
 expect(codexAnswer == "codex answer", "Codex's answer is its -o file")
 expect(read("args").contains("--json"), "a streamed Codex call asks for JSON events")
-expect(codexEvents.count == 4 && codexEvents[0].hasPrefix("activity:") && codexEvents[1] == "text:first"
-       && codexEvents[2].hasPrefix("activity:") && codexEvents[3] == "text:second", "Codex stream events in order: \(codexEvents)")
+expect(codexEvents.count == 5 && codexEvents[0].hasPrefix("activity:") && codexEvents[1] == "text:first"
+       && codexEvents[2].hasPrefix("activity:") && codexEvents[3] == "text:second" && codexEvents[4] == "model:", "Codex stream events in order: \(codexEvents)")
+
+// Real subprocess path for model attribution, entirely under the isolated home. No live CLI or agy settings.
+try! #"""
+import os, sys, json, uuid, datetime, pathlib
+provider = os.environ["FAKE_MODE"]
+scenario = os.environ["FAKE_TURN"]
+sid = str(uuid.uuid4())
+def write(path, rows):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(json.dumps(row) + "\n" for row in rows))
+if provider == "modelcodex":
+    root = pathlib.Path(os.environ["CODEX_HOME"])
+    rows = [
+        {"type":"session_meta", "payload":{"id":sid, "cwd":os.getcwd()}},
+        {"type":"turn_context", "timestamp":datetime.datetime.now(datetime.timezone.utc).isoformat(),
+         "payload":{"model":"gpt-actual-" + (scenario or "first")}}
+    ]
+    if scenario != "missing":
+        write(root / "sessions" / ("rollout-" + sid + ".jsonl"), rows)
+    pathlib.Path(sys.argv[1]).write_text("codex model answer")
+    print(json.dumps({"type":"thread.started", "thread_id":sid}))
+    print(json.dumps({"type":"turn.completed"}))
+else:
+    root = pathlib.Path(os.environ["HOME"]) / ".gemini/antigravity-cli/brain"
+    if scenario != "missing":
+        write(root / sid / ".system_generated/logs/transcript.jsonl",
+              [{"type":"PLANNER_RESPONSE", "model":"gemini-early"},
+               {"type":"PLANNER_RESPONSE", "model":"gemini-actual"}])
+    print(json.dumps({"type":"system", "subtype":"init", "session_id":sid, "model":"selected-alias"}))
+    print(json.dumps({"type":"result", "session_id":sid, "is_error":scenario == "fail",
+                      "result":"gemini model answer"}))
+"""#.write(to: fake.appendingPathComponent("models.py"), atomically: true, encoding: .utf8)
+let geminiAccount = Account(id: "gemini-rt", provider: .gemini, name: "Gemini")
+func modelAnswer(_ account: Account, scenario: String = "") -> (String?, [String]) {
+    var names: [String] = []
+    let lock = NSLock()
+    let result = Answerer.ask(account, prompt: "hi", run: run(account.provider == .codex ? "modelcodex" : "modelgemini", turn: scenario)) {
+        if case .model(let name) = $0 { lock.lock(); names.append(name); lock.unlock() }
+    }
+    return (try? result.get(), names)
+}
+let modelC = modelAnswer(codex)
+expect(modelC.0 == "codex model answer" && modelC.1 == ["gpt-actual-first"], "Codex model reaches progress from the exact thread log: \(modelC)")
+expect(!read("args").contains("--ephemeral"), "a visible Codex answer keeps its model log")
+expect(modelAnswer(codex, scenario: "second").1 == ["gpt-actual-second"], "next call uses its own changed model")
+expect(modelAnswer(codex, scenario: "missing").1 == [""], "missing Codex log explicitly reports unknown, never the prior call")
+let modelG = modelAnswer(geminiAccount)
+expect(modelG.0 == "gemini model answer" && modelG.1 == ["gemini-actual"], "Gemini JSON is decoded and its final log model reaches progress")
+expect(read("args").contains("--output-format\nstream-json"), "Gemini requests machine-readable output")
+expect(modelAnswer(geminiAccount, scenario: "missing").1 == [""], "Gemini init pick never substitutes for a missing actual model")
+let failedG = modelAnswer(geminiAccount, scenario: "fail")
+expect(failedG.0 == nil && failedG.1.isEmpty, "failed Gemini result emits no successful model")
 
 // Sessions: a new session is saved in the room's ownership.json (the format older app versions wrote and read),
 // the next call resumes it with only what is new, and a file from an older version is read as it is.

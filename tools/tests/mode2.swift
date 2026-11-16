@@ -3181,6 +3181,52 @@ func testCloudModels() {
     expect(CloudModels.reported(#"{"type":"item.completed","item":{"type":"agent_message","text":"hi"}}"#, provider: .codex, events: true) == nil, "Codex events without a model: none")
     expect(CloudModels.reported(#"{"model":"gpt-6.1-sol"}"#, provider: .codex, events: true) == nil, "a JSON line that is no event: none")
     expect(CloudModels.reported(stream, provider: .gemini, events: true) == nil, "agy: none")
+    // Exact per-call log matching, isolated fixtures: no real provider folders or credentials.
+    let logs = folder.appendingPathComponent("model-logs")
+    let sid = UUID().uuidString.lowercased(), other = UUID().uuidString.lowercased()
+    let start = Date(timeIntervalSince1970: 1800000000)
+    let date = ISO8601DateFormatter()
+    func log(_ path: String, _ rows: [[String: Any]]) {
+        let file = logs.appendingPathComponent(path)
+        try! FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let text = rows.map { String(decoding: try! JSONSerialization.data(withJSONObject: $0), as: UTF8.self) }.joined(separator: "\n") + "\n"
+        try! text.write(to: file, atomically: true, encoding: .utf8)
+    }
+    let thread = "{\"type\":\"thread.started\",\"thread_id\":\"\(sid)\"}"
+    let meta: [String: Any] = ["type": "session_meta", "payload": ["id": sid, "cwd": "/call"]]
+    func context(_ seconds: Double, _ model: String) -> [String: Any] {
+        ["type": "turn_context", "timestamp": date.string(from: start.addingTimeInterval(seconds)), "payload": ["model": model]]
+    }
+    let rollout = "sessions/2026/rollout-\(sid).jsonl"
+    log(rollout, [meta, context(-60, "gpt-old"), context(1, "gpt-actual")])
+    log("sessions/rollout-\(other).jsonl", [["type": "session_meta", "payload": ["id": other, "cwd": "/call"]], context(2, "gpt-unrelated")])
+    func logged(_ output: String = thread, _ provider: Account.Provider = .codex, _ cwd: String = "/call") -> String? {
+        CloudModels.logged(output, provider: provider, home: logs.path, since: start, directory: cwd)
+    }
+    expect(logged() == "gpt-actual", "exact thread and current turn, ignoring another newer session and old model")
+    expect(logged(thread, .codex, "/other") == nil, "a thread from another working folder is not this call")
+    expect(logged("{\"type\":\"thread.started\",\"thread_id\":\"../../bad\"}") == nil, "IDs cannot escape the log folder")
+    log(rollout, [meta, context(-60, "gpt-old")])
+    expect(logged() == nil, "a resumed session without this turn never reuses its old model")
+    log(rollout, [meta, context(1, "gpt-first"), context(2, "gpt-second")])
+    expect(logged() == nil, "concurrent turns of the same thread are ambiguous")
+    log(rollout, [meta, context(1, "gpt-actual")])
+    log("archived_sessions/rollout-\(sid).jsonl", [meta, context(1, "gpt-copy")])
+    expect(logged() == nil, "ambiguous duplicated log paths never choose the newest")
+    let gemini = "{\"type\":\"result\",\"session_id\":\"\(sid)\"}"
+    let transcript = "\(sid)/.system_generated/logs/transcript.jsonl"
+    log(transcript, [["type": "PLANNER_RESPONSE", "model": "gemini-early"], ["type": "PLANNER_RESPONSE", "model": "gemini-final"]])
+    log("\(other)/.system_generated/logs/transcript.jsonl", [["type": "PLANNER_RESPONSE", "model": "gemini-unrelated"]])
+    expect(logged(gemini, .gemini) == "gemini-final", "Gemini's last response stage in the exact conversation")
+    log(transcript, [["type": "PLANNER_RESPONSE", "model": "gemini-early"], ["type": "PLANNER_RESPONSE"]])
+    expect(logged(gemini, .gemini) == nil, "a missing final model never reuses an earlier step")
+    expect(logged("{\"type\":\"result\",\"session_id\":\"\(UUID().uuidString)\"}", .gemini) == nil, "missing Gemini log: unknown")
+    expect(logged(gemini + "\n{\"type\":\"system\",\"session_id\":\"\(other)\"}", .gemini) == nil, "conflicting conversation IDs: unknown")
+    expect(CloudModels.reported(#"{"type":"item.completed","item":{"type":"command_execution","model":"fake"}}"#, provider: .codex, events: true) == nil, "tool models are not answer models")
+    expect(CloudModels.reported(#"{"type":"item.completed","item":{"type":"agent_message","model":"gpt-final"}}"#, provider: .codex, events: true) == "gpt-final", "assistant event model is supported")
+    let broken = logs.appendingPathComponent(transcript)
+    try! "{\"type\":\"PLANNER_RESPONSE\",\"model\":\"gemini-earlier\"}\n{\"type\":".write(to: broken, atomically: true, encoding: .utf8)
+    expect(logged(gemini, .gemini) == nil, "a truncated final log never reuses an earlier model")
     // Saved replies: the model sits beside the name (never in it), and chats saved before it open as they were.
     var turn = ChatTurn(question: "q", final: "a", finalBy: "Claude (학교)")
     turn.finalModel = "claude-opus-5-5"
@@ -3194,6 +3240,10 @@ func testCloudModels() {
     expect(oldTurn.finalModel == nil && oldTurn.finalBy == "Claude" && oldEntry.model == nil, "an older chat opens with names only")
     turn.answerOrder = ["claude-1", "codex-1"]; turn.answerNames = ["Claude (학교)", "ChatGPT"]; turn.finalAccountID = "claude-1"
     expect(turn.columns(turn.answerOrder!).map(\.model) == ["claude-opus-5-5", "gpt-6.1-sol"], "side by side: each column its own model")
+    var unknownTurn = ChatTurn(question: "q", final: "a", finalBy: "Gemini")
+    unknownTurn.finalModel = ""
+    let savedUnknown = try! JSONDecoder().decode(ChatTurn.self, from: JSONEncoder().encode(unknownTurn))
+    expect(savedUnknown.finalModel == "", "checked-but-unavailable survives saving separately from legacy nil")
     let model = AnswerModel(), passed = NSLock()
     var forwarded = 0
     let watch = model.watch { _ in passed.lock(); forwarded += 1; passed.unlock() }

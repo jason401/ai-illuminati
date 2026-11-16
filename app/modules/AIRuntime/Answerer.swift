@@ -221,7 +221,7 @@ public enum Answerer {
         case .gemini:
             binary = ToolHome.agyInstalled ? ToolHome.path + "/.local/bin/agy" : nil
             arguments = ["-p", pictureNote + (run.folders == nil ? GeminiLinks.toolNote : "") + prompt, "--sandbox", "--disable-slash-commands",
-                         "--print-timeout", "\(Int(timeout) - 10)s"]
+                         "--print-timeout", "\(Int(timeout) - 10)s", "--output-format", "stream-json"]
             if let geminiPictures { arguments += ["--add-dir", geminiPictures.path] }
         case .ollama:
             return .failure(.missingTool)   // answered above, without a CLI
@@ -267,6 +267,9 @@ public enum Answerer {
             inputData = Data(prompt.utf8)
         }
         // A call that leaves no session log returns its usage as JSON, recorded below (TokenLedger.recordApp).
+        // Codex JSON events omit the model; visible answers need its turn_context log.
+        // Auxiliary calls without progress keep their ephemeral usage-recording behavior.
+        if account.provider == .codex && progress != nil { arguments.removeAll { $0 == "--ephemeral" } }
         let unlogged = account.provider == .claude ? arguments.contains("--no-session-persistence") : account.provider == .codex && arguments.contains("--ephemeral")
         let askedJSON = unlogged && account.provider == .claude && !arguments.contains("--output-format")
         if askedJSON { arguments += ["--output-format", "json"] }
@@ -310,6 +313,7 @@ public enum Answerer {
         defer { try? inputHandle?.close() }
         if steer != nil { Self.ignoreBrokenPipe }
         process.standardInput = inputPipe ?? inputHandle ?? FileHandle.nullDevice
+        let began = Date()
         guard (try? process.run()) != nil else { return .failure(.missingTool) }
         if let steer, let inputData {
             steer.end = { [weak process] in if let process { DebateCancellation.end(process) } }
@@ -373,7 +377,7 @@ public enum Answerer {
         if unlogged { TokenLedger.recordApp(account, output: output, model: model, kind: run.usageKind, folder: executionDirectory.path) }
         CloudModels.noteSeen(text, account: account, picked: model)
         if account.provider == .codex, let file = try? String(contentsOfFile: outFile, encoding: .utf8) { text = file }
-        if account.provider == .claude && arguments.contains("--output-format") {
+        if (account.provider == .claude || account.provider == .gemini) && arguments.contains("--output-format") {
             let results = text.split(separator: "\n").compactMap { line -> [String: Any]? in
                 guard let data = String(line).data(using: .utf8), let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                       json["type"] as? String == "result" else { return nil }
@@ -396,7 +400,20 @@ public enum Answerer {
             let why = (String(data: stderr, encoding: .utf8) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             return .failure(.failed(modelNote + String(why.suffix(300))))
         }
-        if let progress, let name = CloudModels.reported(output, provider: account.provider, events: arguments.contains("--json") || arguments.contains("stream-json")) { report(.model(name), to: progress) }
+        if let progress {
+            let events = arguments.contains("--json") || arguments.contains("stream-json")
+            let name: String?
+            if account.provider == .codex || account.provider == .gemini {
+                name = CloudModels.logged(output, provider: account.provider,
+                    home: account.provider == .codex ? (executionEnvironment["CODEX_HOME"] ?? account.dir ?? AccountStore.home + "/.codex")
+                        : AccountStore.home + "/.gemini/antigravity-cli/brain",
+                    since: began, directory: executionDirectory.path)
+                    ?? CloudModels.reported(output, provider: account.provider, events: events)
+            } else { name = CloudModels.reported(output, provider: account.provider, events: events) }
+            // Empty means checked but unknown; nil on older saved replies remains absent.
+            if let name { report(.model(name), to: progress) }
+            else if account.provider == .codex || account.provider == .gemini { report(.model(""), to: progress) }
+        }
         return .success(text)
     }
 }
@@ -417,7 +434,7 @@ public enum AnswerProgress {
     case text(String)      // the reply so far (the whole text, not only the new part)
     case activity(String)  // what the AI is doing now, e.g. reading files or searching the web
     case todos(Any?)       // Claude's own TodoWrite list as it came (its "todos" input); project work turns it into its plan
-    case model(String)     // the model the answer ran on, as the CLI's output named it; once, just before a successful result
+    case model(String)     // actual CLI model; empty = checked but unknown. Once, before a successful result.
 }
 
 // Turns a CLI's JSON lines into progress. Claude: text deltas within the current message (a new message,

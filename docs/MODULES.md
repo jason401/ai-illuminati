@@ -350,8 +350,12 @@ Public names and why (everything else stays internal: `Answerer.chatDir`/`askOnc
 `StreamParser`, `NativeSessions.split`/`load`/`save`, `CloudModels.apply`/`noteSeen`, `ClaudeUsage.binary`, the HTTP
 streams `LocalStream`/`PullStream`, `LocalModel.ask` and the Ollama requests):
 - `Answerer.ask`, `Answerer.Failure`, `AnswerProgress`: the one way in, its result and its progress (every caller).
-  `AnswerProgress.model`: the model the answering call's own output named (Claude stream-json, a Codex event field),
-  sent once before a successful result; the chat saves it beside the speaker's name.
+  `AnswerProgress.model`: actual ID from the answering call (Claude stream, Codex thread log/current turn_context,
+  Gemini conversation log/final PLANNER_RESPONSE; Codex assistant event as fallback). Sent once before success;
+  empty means checked but unavailable, nil on older stored replies remains absent. The chat saves it beside the name.
+  Visible stateless Codex answers omit --ephemeral so the CLI retains its model log; auxiliary calls keep it.
+  Log attribution is read only, ID-bound and bounded to 4 MiB plus the first metadata line; ambiguous or missing logs
+  never reuse another call. Checked by testCloudModels fixtures and runtime_contract fake subprocesses (including Gemini).
 - `RunConditions` (all seven fields, `init()`) and `RunConditions.Folders` (an explicit `init`): the app builds them
   (`RunConditionsApp.swift`); the fields are what the caller decides. `steering` is set by the chat (`Discussion.steered`)
   for the one AI answering alone.
@@ -371,7 +375,7 @@ streams `LocalStream`/`PullStream`, `LocalModel.ask` and the Ollama requests):
   `RunConditionsApp.swift` agy's web rule (`allowWeb`, it writes agy's settings) to the same type; `RunConditions.beforeStart` is how the app runs that
   rule just before the tool starts, so the runtime changes no permission itself (review, 2026-11-11).
 - `CloudModels` (`model`, `set`, `valid`, `Choice`, `claudeChoices`, `codexChoices`, `loadGemini`, `seenKey`, `seenTitle`):
-  the Settings model menus. `versionTitle`: the chat shows a reply's model after its name ("· Opus 5.5").
+  the Settings model menus. `versionTitle`: formats Claude versions in Settings; chat replies preserve the exact ID.
 - `LocalModel` (63 names: variants, the catalog and its entries, fit by memory, Ollama's library, installed/loaded
   models, pull, delete, keep-alive, the gate, `server` for mode2's fake server) and `LocalUsage.read`: the Settings
   Ollama section, the Ollama window, the menu and the Route sorter use all of them. It is the largest public part:

@@ -2626,11 +2626,11 @@ private struct TurnView: View, Equatable {
     }
 
     // The final answer's own pictures, plus named team pictures using localized [Picture N] markers.
-    // The model an answer ran on, after its name (" · Opus 5.5"), lighter and smaller. Nothing when the CLI's output
-    // did not name one: never the account's pick or an earlier answer's model.
+    // Keep the exact runtime ID after the speaker; empty means checked but unavailable, nil is a legacy reply.
     static func named(_ name: Text, model: String?) -> Text {
-        guard let model, !model.isEmpty else { return name }
-        let tag = Text(verbatim: " · " + CloudModels.versionTitle(model)).font(.system(size: 10.5)).foregroundColor(.secondary.opacity(0.7))
+        guard let model else { return name }
+        let title = model.isEmpty ? L("모델 확인 불가", "Model unavailable") : model
+        let tag = Text(verbatim: " · " + title).font(.system(size: 10.5)).foregroundColor(.secondary.opacity(0.7))
         return Text("\(name)\(tag)")
     }
 

@@ -1132,6 +1132,8 @@ func testTodoAddTool() {
            && !add(work, ["title": "엉터리", "after": ["abc"]]).ok && store.current.items.count == count + 1, "an unknown or other-board id fails and adds nothing")
     try! store.change(first.id) { $0.state = .done }
     expect(!add(work, ["title": "끝난 것 뒤", "after": [first.id.uuidString]]).ok && store.current.items.count == count + 1, "a done TODO cannot be waited for")
+    expect((try? store.add(title: "저장 때 검사", project: app, projectName: "App", after: [first.id], fromAI: true)) == nil && store.current.items.count == count + 1,
+           "the store checks after in the same save (done in between: nothing added)")
     expect(run2(work).contains("after: \(running.id.uuidString)"), "todo_list shows after")
     // Enterprise: only its organization's projects, with the lock.
     let lockedMenu = offered(locked) ?? ""

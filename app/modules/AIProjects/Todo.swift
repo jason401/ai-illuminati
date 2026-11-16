@@ -555,6 +555,8 @@ public final class TodoStore: ObservableObject {
                 if fromAI, let held, held.organization != lock?.organization { throw TodoError.locked(L("이 채팅에서는 그 프로젝트에 TODO를 적을 수 없어요 (Enterprise).", "This chat cannot add TODOs to that project (Enterprise).")) }
                 let list = TodoList(title: projectName, project: project, lock: held ?? lock); data.lists.append(list); listID = list.id
             }
+            // The tool's after: open TODOs of this list, checked in the same save (one may have just finished).
+            if fromAI, after.contains(where: { id in data.item(id).map { $0.listID != listID || [.done, .cancelled].contains($0.state) } ?? true }) { throw TodoError.notFound }
             var item = TodoItem(listID: listID, title: title, detail: detail, askFirst: askFirst, after: after, originRoom: originRoom)
             item.id = id; item.attachments = attachments
             if !fromAI, data.list(listID)?.paused != true, data.items.contains(where: { $0.listID == listID && ($0.state == .running || $0.state == .ready) }) { item.state = .ready }
@@ -1169,6 +1171,8 @@ public final class TodoAddLink: ToolProvider {
             let titles = after.compactMap { store.current.item($0).map { "\"\($0.title)\"" } }
             let waits = titles.isEmpty ? "" : " It waits for " + titles.joined(separator: ", ") + " to finish first."
             return ["content": [["type": "text", "text": "Added to \(target.name)'s TODO board as a draft: \"\(item.title)\".\(waits) It runs only when the user presses Start on the board. Tell the user briefly."]], "isError": false]
+        } catch TodoError.notFound where !after.isEmpty {
+            return ProjectTools.failure("after: a TODO in it is no longer open on \(target.name)'s board (call todo_list again); nothing was added.")
         } catch { return ProjectTools.failure(error.localizedDescription) }
     }
 }

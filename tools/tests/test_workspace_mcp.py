@@ -56,8 +56,20 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(entry['similar'],[str((self.folder/'app'/'macos'/'Discussion.swift').resolve())]);self.assertIn('Same-name',entry['hint'])
         entry=json.loads(self.ws.read_failure({'path':'/etc/passwd'},PermissionError('outside'))[0]['text'])['read_failed']
         self.assertNotIn('similar',entry)
+    def test_search_files_greps_inside_roots_only(self):
+        (self.folder/'app').mkdir();(self.folder/'app'/'a.swift').write_text('let x = 1\nfunc runTurn() {}\n')
+        (self.folder/'b.txt').write_text('RUNTURN here');(self.folder/'blob.bin').write_bytes(b'\0runTurn')
+        (self.folder/'.hidden').write_text('runTurn');target=self.root/'outside.txt';target.write_text('runTurn')
+        (self.folder/'escape.txt').symlink_to(target)
+        found=json.loads(self.ws.call('search_files',{'query':r'runTurn\('})[0]['text'])
+        self.assertEqual(found['matches'],[{'path':str((self.folder/'app'/'a.swift').resolve()),'line':2,'text':'func runTurn() {}'}])
+        loose=self.ws.search_files('runturn',ignore_case=True,pattern='*.txt')
+        self.assertEqual([pathlib.Path(m['path']).name for m in loose['matches']],['b.txt'])
+        self.assertTrue(self.ws.search_files('.',max_results=1)['truncated'])
+        with self.assertRaises(PermissionError):self.ws.search_files('x',path=str(target))
+        with self.assertRaises(ValueError):self.ws.search_files('(')
     def test_view_exposes_no_mutations(self):
-        self.assertEqual([t['name'] for t in self.ws.tools()],['list_files','read_document'])
+        self.assertEqual([t['name'] for t in self.ws.tools()],['list_files','search_files','read_document'])
         with self.assertRaises(PermissionError):self.ws.call('write_file',{'path':'notes.txt','content':'bad'})
     def test_writes_require_backup_and_restore_boundary(self):
         self.ws.manifest['level']='write'
@@ -68,10 +80,17 @@ class WorkspaceTests(unittest.TestCase):
         self.ws.write_file('edit.txt',content='modified')
         self.ws.write_file('new.txt',content='created')
         self.assertEqual((self.folder/'edit.txt').read_text(),'modified')
+        self.ws.write_file('code.py',content='a = 1\nb = 1\n')
+        with self.assertRaises(ValueError):self.ws.edit_file('code.py','= 1','= 2')
+        with self.assertRaises(ValueError):self.ws.edit_file('code.py','missing','x')
+        self.assertEqual(self.ws.edit_file('code.py','b = 1','b = 2')['replacements'],1)
+        self.assertEqual(self.ws.edit_file('code.py','= ','== ',replace_all=True)['replacements'],2)
+        self.assertEqual((self.folder/'code.py').read_text(),'a == 1\nb == 2\n')
         self.ws.delete_file('new.txt');self.assertFalse((self.folder/'new.txt').exists())
         with self.assertRaises(PermissionError):self.ws.write_file('../outside',content='bad')
         (backup/'complete.json').write_text(json.dumps({'roots':self.ws.manifest['roots'],'restored':True}))
         with self.assertRaises(PermissionError):self.ws.delete_file('edit.txt')
+        with self.assertRaises(PermissionError):self.ws.edit_file('edit.txt','modified','bad')
     def test_chat_folder_writable_without_backup_other_roots_read_only(self):
         own=self.root/'chat';own.mkdir()
         ws=module.Workspace({'roots':[{'path':str(own),'directory':True,'writable':True},{'path':str(self.folder),'directory':True}],'level':'view','cache':str(self.cache),'extractor':'unused'})

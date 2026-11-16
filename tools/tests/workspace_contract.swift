@@ -94,6 +94,12 @@ let codexExe = try! WorkspaceInvocation(binding: WorkspaceBinding(roots: [root],
     .arguments(provider: .codex, original: codexBase, directory: session, web: false, tools: gateway)
 expect(codexExe.contains("sandbox_mode=\"workspace-write\"") && codexExe.contains("features.shell_tool=true")
        && codexExe.contains("sandbox_workspace_write.writable_roots=[\"\(folder.path)\"]"), "Codex execute: writes only in the linked folder")
+expect(!codexExe.contains(where: { $0.hasPrefix("shell_environment_policy") }), "Codex execute without a chat folder: no temp folder in the user's folder")
+let ownExecute = WorkspaceBinding(roots: [root, WorkspaceRoot(path: own.path, directory: true, writable: true)], level: .execute), ownRoom = UUID()
+let codexOwnExe = try! WorkspaceInvocation(binding: ownExecute, room: ownRoom, readOnly: false, backupPath: try! WorkspaceBackup.begin(ownExecute, room: ownRoom, runID: UUID()).directory)
+    .arguments(provider: .codex, original: codexBase, directory: session, web: false, tools: gateway)
+expect(codexOwnExe.contains("shell_environment_policy.set.TMPDIR=\"\(own.path)/.tmp\"") && codexOwnExe.contains("sandbox_workspace_write.exclude_tmpdir_env_var=true")
+       && fm.fileExists(atPath: own.path + "/.tmp"), "Codex execute: commands get a temp folder in the chat folder, /tmp stays closed")
 
 // The bridge's manifest: private, the folders and level, and the tool gateway only when this chat offers tools.
 asked = 0

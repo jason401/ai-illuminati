@@ -234,8 +234,9 @@ public struct WorkspaceInvocation {
             }
             let own = level == .view || binding.projectRunID != nil ? ownFolders : []
             if binding.fullAccessActive {
+                // Sub-agents like Claude's Agent tool; they run in this process with the same guarded environment.
                 result = ["-c", "sandbox_mode=\"danger-full-access\"", "-c", "approval_policy=\"never\"", "-c", "features.shell_tool=true",
-                          "-c", "features.multi_agent=false", "-c", "web_search=\"live\"",
+                          "-c", "features.multi_agent=true", "-c", "web_search=\"live\"",
                           "-c", "mcp_servers.illuminati.command=" + json(command), "-c", "mcp_servers.illuminati.args=" + json(args),
                           "-c", "mcp_servers.illuminati.required=true", "-c", "mcp_servers.illuminati.default_tools_approval_mode=\"approve\"",
                           "-c", "mcp_servers.illuminati.tool_timeout_sec=3610"] + base
@@ -251,6 +252,13 @@ public struct WorkspaceInvocation {
                       // need no approval; "auto" still asked for write_file, which fails with approval "never".
                       "-c", "mcp_servers.illuminati.default_tools_approval_mode=" + json(own.isEmpty ? "auto" : "approve")]
             result += ["-c", "mcp_servers.illuminati.tool_timeout_sec=3610"]
+            // /tmp and $TMPDIR stay closed; commands get a temp folder inside the chat folder instead,
+            // or mktemp, swiftc and pip fail there while Claude's sandbox gives them one.
+            if level == .execute, let own = ownFolders.first {
+                let tmp = own + "/.tmp"
+                try FileManager.default.createDirectory(atPath: tmp, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+                result += ["-c", "shell_environment_policy.set.TMPDIR=" + json(tmp)]
+            }
             result += base
         case .ollama:
             break   // no CLI: it reads files through the app's workspace_reads requests

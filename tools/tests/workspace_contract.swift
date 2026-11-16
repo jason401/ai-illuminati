@@ -46,6 +46,29 @@ expect(value(fullClaude, after: "--permission-mode") == "bypassPermissions" && v
 let fullCodex = try! WorkspaceInvocation(binding: full, room: UUID()).arguments(provider: .codex, original: codexBase, directory: session, web: false, tools: gateway)
 expect(fullCodex.contains("sandbox_mode=\"danger-full-access\"") && fullCodex.contains("approval_policy=\"never\"")
        && !fullCodex.contains("--sandbox") && value(fullCodex, after: "-C") == session.path, "Codex full access: no sandbox, runs in the session folder")
+// An Enterprise workspace that forbids full access (its cached cloud requirements): workspace-write on the writable folder,
+// not danger-full-access (Codex would fall back to a read-only root). Allowed or no requirements: full access as before.
+func codexAccount(_ name: String, requirements: String?) -> Account {
+    let dir = base.appendingPathComponent(name)
+    try! fm.createDirectory(at: dir, withIntermediateDirectories: true)
+    if let requirements {
+        let bundle: [String: Any] = ["signed_payload": ["bundle": ["requirements_toml": ["enterprise_managed": [["id": "baseline", "contents": requirements]]]]]]
+        try! JSONSerialization.data(withJSONObject: bundle).write(to: dir.appendingPathComponent("cloud-config-bundle-cache.json"))
+    }
+    return Account(id: name, provider: .codex, name: name, dir: dir.path)
+}
+let managedRun = WorkspaceBinding(roots: [WorkspaceRoot(path: folder.path, directory: true, writable: true)], projectRunID: UUID())
+expect(managedRun.fullAccessActive, "a full auto project run has full access")
+func managedCodex(_ account: Account) -> [String] {
+    try! WorkspaceInvocation(binding: managedRun, room: UUID(), account: account).arguments(provider: .codex, original: codexBase, directory: session, web: false, tools: gateway)
+}
+let blocked = managedCodex(codexAccount("codex-managed", requirements: "allowed_approval_policies = [ \"on-request\" ]\nallowed_sandbox_modes = [\n  \"read-only\",\n  \"workspace-write\" ]\n"))
+expect(blocked.contains("sandbox_mode=\"workspace-write\"") && !blocked.contains { $0.contains("danger-full-access") }
+       && blocked.contains { $0.hasPrefix("sandbox_workspace_write.writable_roots=") && $0.contains(folder.path) },
+       "managed Codex without full access: workspace-write on the project: \(blocked)")
+expect(managedCodex(codexAccount("codex-allowed", requirements: "allowed_sandbox_modes = [\"read-only\", \"workspace-write\", \"danger-full-access\"]")).contains("sandbox_mode=\"danger-full-access\"")
+       && managedCodex(codexAccount("codex-plain", requirements: nil)).contains("sandbox_mode=\"danger-full-access\""),
+       "Codex keeps full access when its requirements allow it or there are none")
 
 // View: read tools only, no Bash, no writes, no sandbox settings; Codex read only.
 let view = WorkspaceBinding(roots: [root])

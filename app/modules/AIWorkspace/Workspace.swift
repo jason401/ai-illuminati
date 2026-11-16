@@ -174,6 +174,23 @@ public struct WorkspaceInvocation {
 
     var executionFolders: [String] { binding.projectRunID == nil ? binding.roots.filter(\.directory).map(\.path) : ownFolders }
     var ownFolders: [String] { binding.roots.filter { $0.directory && $0.writable == true }.map(\.path) }
+    // An Enterprise workspace may forbid Codex's full access (managed requirements: the cloud bundle Codex caches in
+    // its home, or /etc/codex). Codex then silently falls back to a read-only root, so full auto asks for workspace-write.
+    var codexFullAccessAllowed: Bool {
+        guard let account, account.provider == .codex else { return true }
+        var texts = [(try? String(contentsOfFile: "/etc/codex/requirements.toml", encoding: .utf8)) ?? ""]
+        if let data = FileManager.default.contents(atPath: account.codexHome + "/cloud-config-bundle-cache.json"),
+           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let bundle = (object["signed_payload"] as? [String: Any])?["bundle"] as? [String: Any],
+           let managed = (bundle["requirements_toml"] as? [String: Any])?["enterprise_managed"] as? [[String: Any]] {
+            texts += managed.compactMap { $0["contents"] as? String }
+        }
+        return !texts.contains { text in
+            guard let start = text.range(of: "allowed_sandbox_modes") else { return false }
+            let list = text[start.upperBound...].prefix { $0 != "]" }
+            return !list.contains("danger-full-access")
+        }
+    }
 
     public func arguments(provider: Account.Provider, original: [String], directory: URL, web: Bool, tools: WorkspaceTools) throws -> [String] {
         let (command, args) = try prepare(in: directory, tools: tools)
@@ -233,7 +250,7 @@ public struct WorkspaceInvocation {
                 i += 1
             }
             let own = level == .view || binding.projectRunID != nil ? ownFolders : []
-            if binding.fullAccessActive {
+            if binding.fullAccessActive, codexFullAccessAllowed {
                 // Sub-agents like Claude's Agent tool; they run in this process with the same guarded environment.
                 result = ["-c", "sandbox_mode=\"danger-full-access\"", "-c", "approval_policy=\"never\"", "-c", "features.shell_tool=true",
                           "-c", "features.multi_agent=true", "-c", "web_search=\"live\"",

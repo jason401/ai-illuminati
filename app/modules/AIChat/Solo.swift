@@ -880,8 +880,12 @@ extension Discussion {
                 handedOver = true
                 notes.append(L("\(label(account)) 한도 도달 → 다른 계정이 이어받음", "\(label(account)) hit its limit → another account continues"))
             case .failure(let failure):
-                let error = label(account) + ": " + Self.describe(failure)
-                changeTurn(id, index, save: true) { Self.keepCutOff(&$0, $0.partialBy == speaker ? $0.partial : nil, by: speaker, error: error) }
+                // Its own reply so far, else the one an account out of usage left before it took over.
+                let error = label(account) + ": " + Self.describe(failure), earlier = unfinished
+                changeTurn(id, index, save: true) { t in
+                    let own = t.partialBy == speaker ? t.partial.flatMap { $0.isEmpty ? nil : $0 } : nil
+                    Self.keepCutOff(&t, own ?? earlier?.text, by: own != nil ? speaker : earlier?.by, error: error)
+                }
                 break answering
             }
         }

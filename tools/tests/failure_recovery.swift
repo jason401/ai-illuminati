@@ -183,6 +183,25 @@ func testFailureRecovery() {
         fake.rules([["if": "Limit", "chunks": ["Half from A."], "end": "limit"]])
         send(alone, "Limit test, alone.")
         _ = failedKeeping(alone, "Half from A.", "limit, nobody left")
+        // The account taking over fails before it writes anything: A's reply so far still stays.
+        model.accounts = [a, b]
+        let twice = Discussion(model: model)
+        twice.configure { $0.mode = 0; $0.soloAccountID = a.id }
+        fake.rules([["who": "fail-a", "if": "Limit", "chunks": ["Half from A."], "end": "limit"],
+                    ["who": "fail-b", "if": "Limit", "chunks": [], "end": "network"]])
+        send(twice, "Limit test, then the network.")
+        _ = failedKeeping(twice, "Half from A.", "limit, then the next account fails")
+
+        // Text after the last save, then a long silence (a tool, the network): still saved within the save interval.
+        model.accounts = [a]
+        let quiet = Discussion(model: model)
+        quiet.configure { $0.mode = 0; $0.soloAccountID = a.id }
+        let quietRoom = quiet.currentID
+        fake.rules([["if": "Quiet", "chunks": ["First. ", "Second."], "pause": 0.3, "end": "hang"]])
+        quiet.draft = "Quiet after this."; quiet.send()
+        check(wait(10) { onDisk(quietRoom)?.turns.last?.partial?.contains("Second.") == true }, "quiet: text after the last save is never saved while nothing more comes")
+        quiet.stopDebate()
+        _ = wait(30) { !quiet.anyRunning }
 
         // 5. The account switched while it answers (the chat hides its account chip then, so in Settings: the answering
         // account removed or signed out): the answer still lands in its turn under its own account, saved; the next

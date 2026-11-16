@@ -56,6 +56,7 @@ public final class Discussion: ObservableObject {
     var runCancellation: DebateCancellation?
     // A worker: when the reply so far was last saved while it was written (changeWriting).
     private var partialSavedAt = Date.distantPast
+    private var partialSaveQueued = false
     private let partialSaveLock = NSLock()
     var debateCancellation: DebateCancellation? { host == nil ? workers[currentID]?.runCancellation : runCancellation }
     var collaborationAnswer: ((Account, String, [URL], DebateCancellation) -> Result<String, Answerer.Failure>)?
@@ -1149,12 +1150,20 @@ public final class Discussion: ObservableObject {
 
     // The reply so far as it is written: saved every few seconds too, so a crash keeps most of it (a quit keeps all, cancelAll).
     static var partialSaveEvery: TimeInterval = 2
+    // Text that comes sooner is saved when the time is up, also when nothing more comes (a tool running, the network waiting).
     func changeWriting(_ id: UUID, _ index: Int, _ edit: @escaping (inout ChatTurn) -> Void) {
         partialSaveLock.lock()
-        let due = Date().timeIntervalSince(partialSavedAt) >= Self.partialSaveEvery
+        let wait = Self.partialSaveEvery - Date().timeIntervalSince(partialSavedAt)
+        let due = wait <= 0, later = !due && !partialSaveQueued
         if due { partialSavedAt = Date() }
+        if later { partialSaveQueued = true }
         partialSaveLock.unlock()
         changeTurn(id, index, save: due, edit)
+        guard later else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + wait) {
+            self.partialSaveLock.lock(); self.partialSavedAt = Date(); self.partialSaveQueued = false; self.partialSaveLock.unlock()
+            self.change(id, save: true) { _ in }
+        }
     }
 
     // Said after a failure: Try again (under the answer) sends the message again and continues the reply so far.

@@ -146,6 +146,7 @@ ChatTurn.answersOpen | var answersOpen: Bool?
 ChatTurn.artifact | var artifact: String?
 ChatTurn.askedAt | var askedAt: Date?
 ChatTurn.backupPath | var backupPath: String?
+ChatTurn.cutOff | var cutOff: Bool?
 ChatTurn.debateFocus | var debateFocus: String?
 ChatTurn.digest | var digest: String?
 ChatTurn.digestAccountID | var digestAccountID: String?

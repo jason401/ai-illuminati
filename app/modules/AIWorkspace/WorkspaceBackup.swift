@@ -431,6 +431,14 @@ public struct WorkspaceBackup: Codable {
         try? trim()
         Self.cleanUpSoon()
     }
+    // A backup whose answer never ended (the app quit or crashed during it): finished now, so its changes are listed and
+    // Undo can put them back. nil when it was finished already (its changes are where that answer kept them).
+    public static func finishLeftOpen(_ path: String) throws -> [WorkspaceChange]? {
+        var backup = try load(path)
+        guard backup.after == nil else { return nil }
+        try backup.finish()
+        return backup.changes
+    }
     public static func load(_ path: String) throws -> WorkspaceBackup {
         let url = URL(fileURLWithPath: path).resolvingSymlinksInPath()
         guard url.path.hasPrefix(base.resolvingSymlinksInPath().path + "/") else { throw WorkspaceError.make("앱 소유 백업이 아닙니다.") }

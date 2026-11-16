@@ -67,6 +67,7 @@ WorkspaceBackup.cloud | var cloud: [String]?
 WorkspaceBackup.digest(_:) | static func digest(_ url: URL) throws -> String
 WorkspaceBackup.directory | var directory: String
 WorkspaceBackup.finish() | mutating func finish() throws
+WorkspaceBackup.finishLeftOpen(_:) | static func finishLeftOpen(_ path: String) throws -> [WorkspaceChange]?
 WorkspaceBackup.init(from:) | init(from decoder: any Decoder) throws
 WorkspaceBackup.load(_:) | static func load(_ path: String) throws -> WorkspaceBackup
 WorkspaceBackup.purgeRoom(_:) | static func purgeRoom(_ room: UUID) throws

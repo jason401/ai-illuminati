@@ -280,14 +280,24 @@ extension Discussion {
         // without its changes (docs/modules-followup.md "testDocumentsProject").
         var ended: String??
         func end(_ error: String? = nil) { ended = .some(error) }
-        defer { if let ended { finish(id, index, error: ended) } }
+        defer {
+            if let ended {
+                // On the main thread after the cleanup below, which kept the reply so far (cutOff): the failure says Try again.
+                if let error = ended { changeTurn(id, index) { Self.keepCutOff(&$0, nil, by: nil, error: error) } }
+                finish(id, index)
+            }
+        }
         // Full auto keeps the Mac awake while the AI works (the display may still sleep).
         let awake = fullAuto ? ProcessInfo.processInfo.beginActivity(options: [.userInitiated, .idleSystemSleepDisabled], reason: "AI Illuminati full-auto project work") : nil
         defer { if let awake { ProcessInfo.processInfo.endActivity(awake) } }
         ProjectWork.register(run)
         defer {
             ProjectWork.finish(run)
-            changeTurn(id, index) { $0.partial = nil; $0.activity = nil; $0.status = ""; $0.waitingApproval = nil }
+            changeTurn(id, index) { t in
+                // Ended while writing (a failure, Stop, nobody left): the reply so far stays as the answer, cut off.
+                if t.final == nil, let text = t.partial, !text.isEmpty { t.final = text; t.finalBy = t.partialBy; t.cutOff = true }
+                t.partial = nil; t.activity = nil; t.status = ""; t.waitingApproval = nil
+            }
         }
         var backup: WorkspaceBackup?
         defer {
@@ -349,7 +359,7 @@ extension Discussion {
                 let generation = run.generation
                 let progress: (AnswerProgress) -> Void = { update in
                     switch update {
-                    case .text(let text): self.changeTurn(id, index) { $0.partial = Self.extractState(ChatApp.face.extract(text).text).reply; $0.partialBy = speaker; $0.lastActivityAt = Date() }
+                    case .text(let text): self.changeWriting(id, index) { $0.partial = Self.extractState(ChatApp.face.extract(text).text).reply; $0.partialBy = speaker; $0.lastActivityAt = Date() }
                     case .activity(let text): self.changeTurn(id, index) { $0.activity = text; $0.lastActivityAt = Date() }
                     case .todos(let todos): run.setPlan(todos: todos, generation: generation)
                     case .model: ran.note(update)

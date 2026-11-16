@@ -337,6 +337,7 @@ TodoScheduler.maxAttempts | static let maxAttempts: Int
 TodoScheduler.nextCheck | @Published var nextCheck: Date? { get set }
 TodoScheduler.question(_:files:documents:) | static func question(_ item: TodoItem, files: [String] = [], documents: Bool = false) -> String
 TodoScheduler.recover() | func recover()
+TodoScheduler.retrying(_:) | static func retrying(_ item: TodoItem) -> (label: String, why: String)?
 TodoScheduler.shared | static var shared: TodoScheduler?
 TodoScheduler.standInDelay | static let standInDelay: TimeInterval
 TodoScheduler.standingIn | @Published var standingIn: Set<UUID> { get set }

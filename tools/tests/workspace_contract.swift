@@ -200,6 +200,15 @@ try! "user".write(to: folder.appendingPathComponent("a.txt"), atomically: true, 
 do { try second.restore(); expect(false, "Undo over a later change is refused") }
 catch { expect((try? String(contentsOf: folder.appendingPathComponent("a.txt"), encoding: .utf8)) == "user", "a refused Undo writes nothing") }
 do { _ = try WorkspaceBackup.load(base.path); expect(false, "only the app's own backups load") } catch {}
+// A backup whose answer never ended (the app quit): finished at the next launch, once, and Undo then works.
+try! "user".write(to: folder.appendingPathComponent("a.txt"), atomically: true, encoding: .utf8)
+let leftOpen = try! WorkspaceBackup.begin(WorkspaceBinding(roots: [root], level: .write), room: room, runID: UUID())
+try! "half".write(to: folder.appendingPathComponent("a.txt"), atomically: true, encoding: .utf8)
+expect(try! WorkspaceBackup.finishLeftOpen(leftOpen.directory) == [WorkspaceChange(path: folder.path + "/a.txt", kind: "modified")]
+       && (try! WorkspaceBackup.finishLeftOpen(leftOpen.directory)) == nil, "a backup left open is finished later, once")
+var reopened = try! WorkspaceBackup.load(leftOpen.directory)
+try! reopened.restore()
+expect((try? String(contentsOf: folder.appendingPathComponent("a.txt"), encoding: .utf8)) == "user", "a backup left open is finished later: Undo puts it back")
 // A backup must not hold its own location, and linked folders may not overlap.
 do { _ = try WorkspaceBackup.begin(WorkspaceBinding(roots: [root, WorkspaceRoot(path: folder.path + "/sub", directory: true)]), room: room, runID: UUID()); expect(false, "nested folders are refused") } catch {}
 do { _ = try WorkspaceBackup.begin(WorkspaceBinding(roots: [WorkspaceRoot(path: home, directory: true)]), room: room, runID: UUID()); expect(false, "a folder holding the backups is refused") } catch {}

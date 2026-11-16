@@ -1289,6 +1289,12 @@ public final class TodoScheduler: ObservableObject {
     }
 
     // The app quit while TODOs ran: they are ready again, and the next attempt first looks at what is left.
+    // A ready TODO that failed or was cut off and waits for its next try (the board shows it beside Ready, the reason on hover).
+    public static func retrying(_ item: TodoItem) -> (label: String, why: String)? {
+        guard item.state == .ready, item.attempts > 0, let note = item.notes.last(where: { $0.kind == .retry }) else { return nil }
+        return (L("다시 시도 \(item.attempts)/\(maxAttempts)", "Retry \(item.attempts) of \(maxAttempts)"), note.text)
+    }
+
     public func recover() {
         try? store.update { data in
             for i in data.items.indices where data.items[i].state == .running {

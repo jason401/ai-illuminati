@@ -245,6 +245,9 @@ struct TodoBoardView: View {
                 if item.state == .ready, !waits.isEmpty {
                     Label(waits.map(\.title).joined(separator: ", ") + L(" 기다림", " first"), systemImage: "hourglass").font(.system(size: 11)).foregroundColor(.secondary).lineLimit(1)
                 }
+                if let retry = TodoScheduler.retrying(item) {
+                    Label(retry.label, systemImage: "arrow.clockwise").font(.system(size: 11)).foregroundColor(.orange).lineLimit(1).help(retry.why)
+                }
                 let status = item.state.title + (item.state == .running ? runner(item) : "") + (item.state == .ready && data.stopped(item) ? L(" · 멈춤", " · paused") : "")
                 if item.state == .draft || item.state == .ready {
                     // One click: draft ↔ ready (the ⋯ menu has the same).
@@ -867,7 +870,8 @@ struct TodoCard: View {
                             .help(L("AI에게 판단을 맡겨요. 추천안이 있으면 그걸로, 없으면 AI가 정해서 진행하고, push·배포·삭제 같은 단계는 하지 않고 확인을 받아요.",
                                     "Hand the decision to the AI: it takes the recommended answer or decides itself, and leaves pushing, publishing or deleting for your check."))
                     }
-                    Button(L("답하고 계속", "Answer and go on")) { TodoStore.shared.answer(item.id, text.trimmingCharacters(in: .whitespacesAndNewlines)); text = ""; TodoScheduler.shared?.wake() }
+                    // Failed after its retries: with nothing typed it simply tries again.
+                    Button(question?.kind == .failed && text.trimmingCharacters(in: .whitespaces).isEmpty ? L("다시 시도", "Try again") : L("답하고 계속", "Answer and go on")) { TodoStore.shared.answer(item.id, text.trimmingCharacters(in: .whitespacesAndNewlines)); text = ""; TodoScheduler.shared?.wake() }
                         .buttonStyle(.borderedProminent)
                 }
                 if !compact, let room = item.room, room != discussion.currentID, discussion.conversations.contains(where: { $0.id == room }) {

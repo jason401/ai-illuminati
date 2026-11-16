@@ -5,6 +5,7 @@ import AILocalization
 import AISpaces
 import AIRuntime
 import AIWorkspace
+import AIProjects
 
 // A project chat with two or more members decides per message how to answer, before anyone starts:
 // one — the lead answers alone, the project read only (facts, checks, explanations, short follow-ups);
@@ -429,6 +430,22 @@ extension Discussion {
         let saved = draft, savedMentions = draftMentions, savedImages = pendingImages
         draft = turn.question; draftMentions = []; pendingImages = turn.images ?? []
         forcedRoute = route
+        send()
+        forcedRoute = nil
+        draft = saved; draftMentions = savedMentions; pendingImages = savedImages
+    }
+
+    // Try again after a failure: the same message, the same @ names and pictures, the same way it was answered. Not in a
+    // meeting's hidden chat, nor in a TODO's chat while the TODO is open (the board retries it and asks the user).
+    func canRetry(_ turn: ChatTurn) -> Bool {
+        guard current.turns.last?.id == turn.id, current.meetingOf == nil else { return false }
+        return !TodoStore.shared.current.items.contains { $0.room == currentID && $0.state != .done && $0.state != .cancelled }
+    }
+    func retry(_ turn: ChatTurn) {
+        guard !running, canRetry(turn) else { return }
+        let saved = draft, savedMentions = draftMentions, savedImages = pendingImages
+        draft = turn.question; draftMentions = turn.mentions ?? []; pendingImages = turn.images ?? []
+        forcedRoute = turn.routeChoice
         send()
         forcedRoute = nil
         draft = saved; draftMentions = savedMentions; pendingImages = savedImages

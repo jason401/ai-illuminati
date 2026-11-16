@@ -2335,6 +2335,12 @@ private struct TurnView: View, Equatable {
             }
             if let error = turn.error {
                 Text(error).foregroundColor(.red)
+                if last && !busy && discussion.canRetry(turn) {
+                    Button(L("다시 시도", "Try again")) { discussion.retry(turn) }
+                        .buttonStyle(.link).font(.system(size: 12))
+                        .help(turn.cutOff == true ? L("같은 메시지를 다시 보내요. AI가 끊긴 답을 보고 이어서 답해요.", "Sends the same message again: the AI sees the cut-off reply and continues it.")
+                                                  : L("같은 메시지를 다시 보내요.", "Sends the same message again."))
+                }
             }
             if (turn.modeVersion == 2 && (1...2).contains(turn.mode ?? 1)) || (turn.modeVersion == nil && turn.mode == 3) {
                 Text(L("AI 발언 \(turn.entries.count)/\(turn.maxTurns ?? 9)", "AI turns \(turn.entries.count)/\(turn.maxTurns ?? 9)")

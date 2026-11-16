@@ -54,6 +54,9 @@ public final class Discussion: ObservableObject {
     }
     public var anyRunning: Bool { !runningRooms.isEmpty }
     var runCancellation: DebateCancellation?
+    // A worker: when the reply so far was last saved while it was written (changeWriting).
+    private var partialSavedAt = Date.distantPast
+    private let partialSaveLock = NSLock()
     var debateCancellation: DebateCancellation? { host == nil ? workers[currentID]?.runCancellation : runCancellation }
     var collaborationAnswer: ((Account, String, [URL], DebateCancellation) -> Result<String, Answerer.Failure>)?
     var debateAnswer: (Account, String, TimeInterval, DebateCancellation, Bool) -> Result<String, Answerer.Failure> = {
@@ -294,7 +297,7 @@ public final class Discussion: ObservableObject {
         // The newest blank chat (settings only) becomes the new chat, so its settings are kept;
         // older blank ones hold nothing and are removed.
         // A blank chat with an unsent message box stays, also one never saved (a new chat typed into before quitting).
-        let loaded = ChatStore.loadAll()
+        let loaded = ChatStore.loadAll().map(Self.recoverInterrupted)
         let saved = Self.loadDrafts(known: Set(loaded.map(\.id)))
         let blanks = loaded.filter { !$0.hasContent && saved[$0.id] == nil }
         for old in blanks.dropFirst() { try? ChatStore.delete(old) }
@@ -495,7 +498,12 @@ public final class Discussion: ObservableObject {
     }
 
     /// Stops every chat that is working (quitting the app).
-    public func cancelAll() { for worker in workers.values { worker.runCancellation?.cancel() } }
+    // The app is quitting: every answer stops, and what each answering chat holds now (the reply so far) is saved at once,
+    // before the app ends; the next launch finds the turn unfinished (recoverInterrupted).
+    public func cancelAll() {
+        for worker in workers.values { worker.runCancellation?.cancel() }
+        for room in runningRooms { if let chat = conversations.first(where: { $0.id == room }) { ChatStore.save(chat) } }
+    }
     // The stop button of the chat that is answering now (create_project waits on it).
     func runToken(_ room: UUID) -> DebateCancellation? { workers[room]?.runCancellation }
 
@@ -1139,6 +1147,59 @@ public final class Discussion: ObservableObject {
         change(id, save: save) { c in if c.turns.indices.contains(index) { edit(&c.turns[index]) } }
     }
 
+    // The reply so far as it is written: saved every few seconds too, so a crash keeps most of it (a quit keeps all, cancelAll).
+    static var partialSaveEvery: TimeInterval = 2
+    func changeWriting(_ id: UUID, _ index: Int, _ edit: @escaping (inout ChatTurn) -> Void) {
+        partialSaveLock.lock()
+        let due = Date().timeIntervalSince(partialSavedAt) >= Self.partialSaveEvery
+        if due { partialSavedAt = Date() }
+        partialSaveLock.unlock()
+        changeTurn(id, index, save: due, edit)
+    }
+
+    // Said after a failure: Try again (under the answer) sends the message again and continues the reply so far.
+    static func tryAgainNote(cut: Bool) -> String {
+        cut ? L(" 받은 부분까지 남겼어요. 다시 시도하면 이어서 답해요.", " The reply so far is kept. Try again to continue it.")
+            : L(" 다시 시도할 수 있어요.", " Try again to send it once more.")
+    }
+
+    // A reply cut off before its end (the CLI killed, failed or timed out, no account left to take over): what was written
+    // stays as the answer, marked unfinished, and the failure says Try again continues it.
+    static func keepCutOff(_ t: inout ChatTurn, _ text: String?, by: String?, error: String) {
+        if t.final == nil, let text, !text.isEmpty { t.final = text; t.finalBy = by; t.cutOff = true }
+        t.error = error + tryAgainNote(cut: t.cutOff == true)
+    }
+
+    // A chat that was answering when the app quit or crashed (its turn still says so on disk). Nothing answers at launch,
+    // so the turn ends here: the reply so far stays (cut off), the files it changed are worked out from its backup so Undo
+    // shows, and the chat says it stopped and can be tried again. Saved at once.
+    static func recoverInterrupted(_ chat: Conversation) -> Conversation {
+        var chat = chat, changed = false
+        for i in chat.turns.indices {
+            var t = chat.turns[i]
+            guard !t.status.isEmpty || t.partial != nil || t.partials != nil || t.waitingApproval == true else { continue }
+            if t.final == nil, let text = t.partial, !text.isEmpty { t.final = text; t.finalBy = t.partialBy; t.cutOff = true }
+            if let partials = t.partials, let order = t.answerOrder {
+                for (k, accountID) in order.enumerated() {
+                    guard let text = partials[accountID], !text.isEmpty else { continue }
+                    let name = t.answerNames?.indices.contains(k) == true ? t.answerNames![k] : accountID
+                    if t.final == nil { t.final = text; t.finalBy = name; t.finalAccountID = accountID; t.cutOff = true }
+                    else { var entry = ChatTurn.Entry(round: 1, speaker: name, text: text, failed: false); entry.accountID = accountID; t.moreAnswers = (t.moreAnswers ?? []) + [entry] }
+                }
+            }
+            t.status = ""; t.activity = nil; t.partial = nil; t.partialBy = nil; t.partials = nil; t.waitingApproval = nil
+            t.plan = t.plan?.map { var step = $0; if step.status == .doing { step.status = .blocked }; return step }
+            if t.workspaceChanges == nil, let path = t.backupPath, let found = try? WorkspaceBackup.finishLeftOpen(path) {
+                let files = found.filter { $0.kind != "directory" }
+                t.workspaceChanges = files.isEmpty ? nil : files
+            }
+            if t.error == nil { t.error = L("앱이 종료되어 답이 중간에 멈췄어요.", "The app quit while it answered.") + tryAgainNote(cut: t.cutOff == true) }
+            chat.turns[i] = t; changed = true
+        }
+        if changed { ChatStore.save(chat) }
+        return chat
+    }
+
     // Asks everyone at once and waits for all answers.
     private func askAll(_ team: [Account], round: Int, prompt: (Account) -> String, id: UUID, index: Int) -> [(Account, String)] {
         let lock = NSLock()
@@ -1281,7 +1342,10 @@ public final class Discussion: ObservableObject {
                     parts.append("[\(turn.digestBy ?? "AI") — summary of the views of \((turn.answerNames ?? []).joined(separator: ", "))]\n" + digest)
                     return parts.joined(separator: "\n\n")
                 }
-                if let final = turn.final { parts.append("[\(turn.finalBy ?? "AI")]\n" + final) }
+                if let final = turn.final {
+                    let cut = turn.cutOff == true ? " — unfinished reply, cut off before its end: if the same message comes again, continue from it" : ""
+                    parts.append("[\(turn.finalBy ?? "AI")\(cut)]\n" + final)
+                }
                 parts += (turn.moreAnswers ?? []).filter { !$0.failed }.map { "[\($0.speaker)]\n" + $0.text }
                 return parts.joined(separator: "\n\n")
             }

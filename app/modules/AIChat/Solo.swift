@@ -699,7 +699,7 @@ extension Discussion {
                     switch update {
                     case .text(let text):
                         let shown = Self.extractState(ChatApp.face.extract(text).text).reply
-                        self.changeTurn(id, index) { t in
+                        self.changeWriting(id, index) { t in
                             // Checked again here: text that arrives after the reply is done must not bring it back.
                             guard !finished() else { return }
                             if together { t.partials = (t.partials ?? [:]).merging([accountID: shown]) { $1 }; return }
@@ -716,7 +716,7 @@ extension Discussion {
                     defer { group.leave() }
                     let started = Date()
                     let result = self.requestDebate(account, Self.soloContext(rules: rules, transcript: asked) + "\n[SOLO TURN]\n" + instruction,
-                                                    binding.fullAccess == true ? 8 * 3600 : 900, cancellation, web: true,
+                                                    binding.fullAccess == true ? 8 * 3600 : Self.soloTimeout, cancellation, web: true,
                                                     fresh: freshTranscript.map { Self.soloContext(rules: rules, transcript: $0) + "\n[SOLO TURN]\n" + instruction },
                                                     workspace: k > 0 && called.count > 1 ? Self.sideView(binding) : nil,
                                                     steering: called.count == 1 ? self.steer : nil, progress: ran.watch(progress))
@@ -739,12 +739,20 @@ extension Discussion {
                         entry = .init(round: 1, speaker: speaker, text: Self.describe(failure), failed: true)
                     }
                     if together { entry.accountID = accountID }
-                    let finished = entry
+                    let failedEntry = entry
                     self.changeTurn(id, index, save: true) { t in
+                        var finished = failedEntry
+                        // Failed while writing: the reply so far stays (one called: as the answer, cut off; several: in its column).
+                        let cut = finished.failed ? (together ? t.partials?[accountID] : t.partialBy == speaker ? t.partial : nil) : nil
                         if t.partialBy == speaker { t.partial = nil; t.partialBy = nil; t.activity = nil }
                         t.partials?[accountID] = nil
                         if t.partials?.isEmpty == true { t.partials = nil }
-                        if !finished.failed && t.final == nil {
+                        if let cut, !cut.isEmpty {
+                            if !together { return Self.keepCutOff(&t, cut, by: speaker, error: speaker + ": " + finished.text) }
+                            finished.text = cut + "\n\n_" + L("(답이 중간에 끊겼어요: ", "(Cut off: ") + finished.text + ")_"
+                            finished.failed = false
+                            t.moreAnswers = (t.moreAnswers ?? []) + [finished]
+                        } else if !finished.failed && t.final == nil {
                             t.final = finished.text; t.finalBy = speaker; t.finalImages = finished.images; t.finalModel = finished.model
                             if together { t.finalAccountID = accountID }
                         } else {
@@ -771,7 +779,7 @@ extension Discussion {
         var unfinished: (by: String, text: String)?
         var last = config.lastSoloAccountID
         var manual = config.soloAccountID
-        while !cancellation.isCancelled {
+        answering: while !cancellation.isCancelled {
             let usage = model.latestUsage
             let account: Account
             if let id = manual, let chosen = model.accounts.first(where: { $0.id == id }), !excluded.contains(id), Enterprise.permits(chosen, lock: chatLock) {
@@ -788,7 +796,8 @@ extension Discussion {
                 let error = chatLock != nil
                     ? L("이어받을 엔터프라이즈 계정이 없어요. 모두 한도에 걸렸거나 로그인이 필요해요.", "No Enterprise account can continue: all are out of usage or signed out.")
                     : L("이어받을 계정이 없어요. 모두 한도에 걸렸거나 로그인이 필요해요.", "No account can continue: all are out of usage or signed out.")
-                changeTurn(id, index, save: true) { $0.error = error }
+                let cut = unfinished
+                changeTurn(id, index, save: true) { Self.keepCutOff(&$0, cut?.text, by: cut?.by, error: error) }
                 break
             }
             manual = nil
@@ -826,14 +835,14 @@ extension Discussion {
                 case .text(let text):
                     partialLock.lock(); partialText = text; partialLock.unlock()
                     let shown = Self.extractState(ChatApp.face.extract(text).text).reply
-                    self.changeTurn(id, index) { $0.partial = shown; $0.partialBy = speaker }
+                    self.changeWriting(id, index) { $0.partial = shown; $0.partialBy = speaker }
                 case .activity(let what):
                     self.changeTurn(id, index) { $0.activity = what }
                 case .todos, .model: break
                 }
             }
             let ran = AnswerModel()
-            let result = requestDebate(account, prompt, 900, cancellation, web: true,
+            let result = requestDebate(account, prompt, Self.soloTimeout, cancellation, web: true,
                                        fresh: fresh.map { $0 + "\n[SOLO TURN]\n" + instruction }, steering: steer, progress: ran.watch(progress))
             if cancellation.isCancelled { break }
             switch result {
@@ -871,12 +880,21 @@ extension Discussion {
                 handedOver = true
                 notes.append(L("\(label(account)) 한도 도달 → 다른 계정이 이어받음", "\(label(account)) hit its limit → another account continues"))
             case .failure(let failure):
-                changeTurn(id, index, save: true) { $0.error = self.label(account) + ": " + Self.describe(failure) }
-                return endSolo(id, index)
+                let error = label(account) + ": " + Self.describe(failure)
+                changeTurn(id, index, save: true) { Self.keepCutOff(&$0, $0.partialBy == speaker ? $0.partial : nil, by: speaker, error: error) }
+                break answering
             }
         }
+        // Ended without an answer (a failure, nobody left, Stop): what it changed in the folders is listed too, so Undo shows.
+        var changes = Self.changes(own, since: before)
+        if var made = backup, (try? made.finish()) != nil { changes += made.changes.filter { $0.kind != "directory" } }
+        let found = changes
+        changeTurn(id, index, save: true) { $0.workspaceChanges = found.isEmpty ? nil : found }
         endSolo(id, index, stopped: cancellation.isCancelled)
     }
+
+    // How long one plain chat answer may take (full access: 8 hours). Tests shorten it.
+    static var soloTimeout: TimeInterval = 900
 
     static let fullAccessNote = """
     [FULL ACCESS] You may run any command, install tools and use the network to work on the linked folder.

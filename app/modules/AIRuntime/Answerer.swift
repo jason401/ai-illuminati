@@ -371,6 +371,10 @@ public enum Answerer {
         }
         // A picked model the account cannot use fails here: say which one, so Settings is the obvious fix.
         let modelNote = model.map { L("모델 \($0) · ", "Model \($0) · ") } ?? ""
+        // Killed (by the system, out of memory, by hand): it says nothing itself, so the reason is the signal.
+        let killed = process.terminationReason == .uncaughtSignal
+            ? L("CLI가 답하는 도중에 종료됐어요 (신호 \(process.terminationStatus)).", "The CLI was stopped while it answered (signal \(process.terminationStatus)).") : ""
+        func reason(_ text: String) -> String { killed.isEmpty ? text : text.isEmpty ? killed : killed + " " + text }
         var text = String(data: stdout, encoding: .utf8) ?? ""
         let output = text
         if let session { session.observe(text) }
@@ -392,13 +396,13 @@ public enum Answerer {
                 text = answer
             } else {
                 let message = (result?["result"] as? String) ?? String(data: stderr, encoding: .utf8) ?? "Session response failed."
-                return .failure(.failed(modelNote + String(message.suffix(300))))
+                return .failure(.failed(modelNote + reason(String(message.trimmingCharacters(in: .whitespacesAndNewlines).suffix(300)))))
             }
         }
         text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard process.terminationStatus == 0 || steer?.cutOff == true, !text.isEmpty else {
             let why = (String(data: stderr, encoding: .utf8) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            return .failure(.failed(modelNote + String(why.suffix(300))))
+            return .failure(.failed(modelNote + reason(String(why.suffix(300)))))
         }
         if let progress {
             let events = arguments.contains("--json") || arguments.contains("stream-json")

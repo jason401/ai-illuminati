@@ -95,5 +95,15 @@ func testTokenStats() {
     stats.picked = stats.columns.first { $0.start <= t1 && t1 < $0.end }
     expect(stats.current.allSatisfy(\.hourly) && stats.current.reduce(0) { $0 + $1.counts.output } == 5 + 6 + 2,
            "a picked hour counts only that hour: \(String(describing: stats.picked)) \(stats.current.map(\.counts.output))")
+    // Patterns: two accounts of one provider differ, the Settings order decides (not the ranking), other Macs' names
+    // follow by name, and an unknown account is always "/".
+    let mine = accounts + [Account(id: "a-claude2", provider: .claude, name: "Home")]
+    let hatched = TokenStatsModel.hatches(mine, keys: ["claude#Zed", "claude#Away", "claude#Home", "codex#Personal", "claude#?terminal"])
+    expect(hatched["claude#School"] == .solid && hatched["claude#Home"] == .backslash && hatched["claude#Away"] == .grid && hatched["claude#Zed"] == .horizontal
+           && hatched["codex#Personal"] == .solid, "patterns follow the Settings order, then other names by name: \(hatched)")
+    expect(TokenStatsModel.hatches(mine, keys: ["claude#Home"])["claude#School"] == .solid && TokenStatsModel.hatches(mine, keys: [])["claude#Home"] == .backslash,
+           "a pattern stays when the period or ranking changes")
+    expect(TokenStatsModel.hatch("claude#?terminal", in: hatched) == .slash && TokenStatsModel.hatch("codex#?", in: [:]) == .slash
+           && !hatched.values.contains(.slash), "an unknown account is always \"/\", a known one never")
     print("PASS: Usage window: summary = chart = table with the rest = export; chats, projects, worktrees, unknown accounts, older sums, Macs, filters")
 }

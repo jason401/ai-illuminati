@@ -55,6 +55,7 @@ final class TokenStatsModel: ObservableObject {
     @Published var facts: [Fact] = []
     @Published var labels: [Dim: [String: String]] = [:]
     @Published var paths: [String: String] = [:]                    // project key → full path (tooltips)
+    @Published var hatches: [String: Hatch] = [:]                   // account key → its pattern (Stack by: Account)
     @Published var syncedAt: Date?
     @Published var reading = false
     @Published var syncOn = UserDefaults.app.bool(forKey: TokenStatsModel.syncKey) {
@@ -143,7 +144,8 @@ final class TokenStatsModel: ObservableObject {
         let accounts = app?.accounts ?? [], chats = self.chats(), peers = syncOn ? self.peers : []
         DispatchQueue.global(qos: .userInitiated).async {
             let built = Self.build(Self.named(report.entries, accounts), peers: peers, chats: chats)
-            DispatchQueue.main.async { self.facts = built.facts; self.labels = built.labels; self.paths = built.paths }
+            let hatches = Self.hatches(accounts, keys: Set(built.facts.map { $0.key(.account) }))
+            DispatchQueue.main.async { self.facts = built.facts; self.labels = built.labels; self.paths = built.paths; self.hatches = hatches }
         }
     }
 
@@ -231,6 +233,23 @@ final class TokenStatsModel: ObservableObject {
         }
         return (facts, labels, paths)
     }
+
+    // Accounts of one provider share its color, so each gets a pattern that never moves with the period or the ranking:
+    // the Settings list order first, then names from other Macs by name. "/" is kept for an unknown account.
+    enum Hatch: CaseIterable { case solid, backslash, grid, horizontal, dots, slash }
+    static func hatches(_ accounts: [Account], keys: Set<String>) -> [String: Hatch] {
+        let order: [Hatch] = [.solid, .backslash, .grid, .horizontal, .dots]
+        let listed = accounts.map { $0.provider.rawValue + "#" + $0.name }
+        let others = keys.subtracting(listed).filter { !$0.contains("#?") }.sorted()
+        var out: [String: Hatch] = [:], used: [Substring: Int] = [:]
+        for k in listed + others where out[k] == nil {
+            let p = k.prefix { $0 != "#" }
+            out[k] = order[used[p, default: 0] % order.count]
+            used[p, default: 0] += 1
+        }
+        return out
+    }
+    static func hatch(_ key: String, in map: [String: Hatch]) -> Hatch { key.contains("#?") ? .slash : map[key] ?? .solid }
 
     static func unknownAccount(_ p: Account.Provider, _ origin: TokenEntry.Origin?) -> String {
         switch (p, origin) {
@@ -714,15 +733,16 @@ struct TokenStatsView: View {
     // Who used it (the provider's color) or a plain palette for what has no provider; never the token kinds' colors.
     private var providerColored: Bool { [.account, .provider, .model, .session].contains(stats.stack) }
     private var colorMeaning: String {
-        providerColored ? L("색 = 제공자. 같은 제공자의 계정·모델은 같은 색이고 경계선과 이름으로 구분해요. 빗금 = 계정 미상.",
-                            "Color = provider. Accounts and models of one provider share its color, told apart by gaps and names. Stripes = account unknown.")
+        stats.stack == .account ? L("색 = 제공자. 같은 제공자의 계정은 무늬로 구분해요 (민무늬·\\ 빗금·격자·가로줄·점). 옅은 바탕의 / 빗금 = 계정 미상.",
+                                    "Color = provider. Accounts of one provider are told apart by pattern (plain, \\ lines, grid, rows, dots). / lines on a faint color = account unknown.")
+        : providerColored ? L("색 = 제공자. 같은 제공자의 모델은 같은 색이고 경계선과 이름으로 구분해요.",
+                              "Color = provider. Models of one provider share its color, told apart by gaps and names.")
                         : L("색 = \(Self.dimName(stats.stack)) 구분용 (제공자나 토큰 종류 아님)", "Color = \(Self.dimName(stats.stack)) only (not provider, not token kind)")
     }
     @ViewBuilder private func segment(_ row: M.Row?) -> some View {
         if let row {
             if providerColored, let p = row.provider {
-                let c = Color(nsColor: AIColors.color(p))
-                if stats.stack == .account && row.id.contains("#?") { ZStack { c.opacity(0.3); Stripes().stroke(c, lineWidth: 1.5) }.clipped() } else { c }
+                if stats.stack == .account { HatchFill(color: AIColors.color(p), hatch: M.hatch(row.id, in: stats.hatches)) } else { Color(nsColor: AIColors.color(p)) }
             } else {
                 Self.palette[row.id.unicodeScalars.reduce(0) { ($0 &* 31 &+ Int($1.value)) & 0xFFFF } % Self.palette.count]   // the same color every launch
             }
@@ -878,7 +898,11 @@ struct TokenStatsView: View {
         let filtered = stats.filters[d] == row.id
         return HStack {
             HStack(spacing: 5) {
-                if let p = row.provider, row.id != "~rest" { Circle().fill(Color(nsColor: AIColors.color(p))).frame(width: 7, height: 7) }
+                if let p = row.provider, row.id != "~rest" {
+                    if d == .account && stats.stack == .account {
+                        HatchFill(color: AIColors.color(p), hatch: M.hatch(row.id, in: stats.hatches)).frame(width: 9, height: 9).clipShape(RoundedRectangle(cornerRadius: 2))
+                    } else { Circle().fill(Color(nsColor: AIColors.color(p))).frame(width: 7, height: 7) }
+                }
                 Text(row.name).lineLimit(1).truncationMode(.middle)
                 if filtered { Image(systemName: "line.3.horizontal.decrease.circle.fill").foregroundStyle(Color.accentColor).font(.system(size: 10)) }
             }.frame(maxWidth: .infinity, alignment: .leading)
@@ -1014,7 +1038,8 @@ struct TokenStatsView: View {
     }
 
     private func folderRow(_ f: TokenFolder) -> some View {
-        let who = f.accountID.flatMap { id in model.accounts.first { $0.id == id }?.name } ?? M.unknownAccount(f.provider, nil)
+        let name = f.accountID.flatMap { id in model.accounts.first { $0.id == id }?.name }
+        let who = name ?? M.unknownAccount(f.provider, nil)
         var parts: [String] = []
         if !f.exists { parts.append(L("폴더 없음 (기록 없음)", "No folder (no records)")) }
         else {
@@ -1025,7 +1050,8 @@ struct TokenStatsView: View {
         if f.legacy > 0 { parts.append(L("그중 \(f.legacy)개는 이전 일별 합계만", "\(f.legacy) of them older daily sums only")) }
         if f.failed > 0 { parts.append(L("읽기 실패 \(f.failed)개", "\(f.failed) unreadable")) }
         return HStack(alignment: .firstTextBaseline) {
-            Circle().fill(Color(nsColor: AIColors.color(f.provider))).frame(width: 7, height: 7)
+            HatchFill(color: AIColors.color(f.provider), hatch: M.hatch(f.provider.rawValue + (name.map { "#" + $0 } ?? "#?"), in: stats.hatches))
+                .frame(width: 9, height: 9).clipShape(RoundedRectangle(cornerRadius: 2))
             Text(who).lineLimit(1)
             Spacer()
             Text(parts.joined(separator: " · ")).font(.system(size: 10)).foregroundStyle(f.failed > 0 ? .orange : .secondary).lineLimit(1)
@@ -1166,15 +1192,59 @@ private struct FlowLegend: View {
     }
 }
 
-// Diagonal lines: an account that is not known.
-private struct Stripes: Shape {
+// An account's swatch: the provider's full color with dark or light lines over it, so the color stays the color;
+// an unknown account is "/" lines in the color over a faint one.
+private struct HatchFill: View {
+    let color: NSColor
+    let hatch: TokenStatsModel.Hatch
+    @Environment(\.colorScheme) private var scheme
+    var body: some View {
+        let c = Color(nsColor: color)
+        switch hatch {
+        case .solid: c
+        case .slash: ZStack { c.opacity(0.3); HatchPattern(hatch: .slash).stroke(c, lineWidth: 1.5) }.clipped()
+        case .dots: ZStack { c; HatchPattern(hatch: .dots).fill(ink.opacity(0.4)) }.clipped()
+        default: ZStack { c; HatchPattern(hatch: hatch).stroke(ink.opacity(0.35), lineWidth: 1) }.clipped()
+        }
+    }
+    // Dark lines on a light color, light on a dark one, judged in this view's appearance (AI colors differ per mode).
+    private var ink: Color {
+        var light = true
+        NSAppearance(named: scheme == .dark ? .darkAqua : .aqua)?.performAsCurrentDrawingAppearance {
+            if let rgb = color.usingColorSpace(.sRGB) { light = 0.299 * rgb.redComponent + 0.587 * rgb.greenComponent + 0.114 * rgb.blueComponent > 0.55 }
+        }
+        return light ? .black : .white
+    }
+}
+
+private struct HatchPattern: Shape {
+    let hatch: TokenStatsModel.Hatch
     func path(in r: CGRect) -> Path {
         var p = Path()
-        var x = -r.height
-        while x < r.width {
-            p.move(to: CGPoint(x: r.minX + x, y: r.maxY))
-            p.addLine(to: CGPoint(x: r.minX + x + r.height, y: r.minY))
-            x += 4
+        let gap: CGFloat = 3
+        func diagonals(up: Bool) {
+            var x = -r.height
+            while x < r.width {
+                p.move(to: CGPoint(x: r.minX + x, y: up ? r.maxY : r.minY))
+                p.addLine(to: CGPoint(x: r.minX + x + r.height, y: up ? r.minY : r.maxY))
+                x += gap + 1
+            }
+        }
+        switch hatch {
+        case .solid: break
+        case .slash: diagonals(up: true)
+        case .backslash: diagonals(up: false)
+        case .grid: diagonals(up: true); diagonals(up: false)
+        case .horizontal:
+            var y = r.minY + 1.5
+            while y < r.maxY { p.move(to: CGPoint(x: r.minX, y: y)); p.addLine(to: CGPoint(x: r.maxX, y: y)); y += gap }
+        case .dots:
+            var y = r.minY + 1.5, row = 0
+            while y < r.maxY {
+                var x = r.minX + (row % 2 == 0 ? 1.5 : 3)
+                while x < r.maxX { p.addEllipse(in: CGRect(x: x - 0.8, y: y - 0.8, width: 1.6, height: 1.6)); x += gap }
+                y += gap; row += 1
+            }
         }
         return p
     }

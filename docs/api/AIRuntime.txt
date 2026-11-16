@@ -165,8 +165,21 @@ TokenCounts.input | var input: Int
 TokenCounts.isEmpty | var isEmpty: Bool { get }
 TokenCounts.output | var output: Int
 TokenCounts.total | var total: Int { get }
+TokenDevice | struct TokenDevice
+TokenDevice.id | let id: String
+TokenDevice.name | let name: String
+TokenDevice.shares | let shares: [TokenShare]
+TokenDevice.writtenAt | let writtenAt: Date
 TokenLedger | enum TokenLedger
 TokenLedger.read(_:toolHome:) | static func read(_ accounts: [Account], toolHome: String) -> [TokenSource]
+TokenShare | struct TokenShare
+TokenShare.days | var days: [Date : TokenCounts]
+TokenShare.init(provider:name:outside:origin:days:) | init(provider: Account.Provider, name: String, outside: Bool, origin: TokenSource.Origin?, days: [Date : TokenCounts])
+TokenShare.key | var key: String { get }
+TokenShare.name | var name: String
+TokenShare.origin | var origin: TokenSource.Origin?
+TokenShare.outside | var outside: Bool
+TokenShare.provider | var provider: Account.Provider
 TokenSource | struct TokenSource
 TokenSource.Origin | enum Origin
 TokenSource.Origin.desktop | case desktop
@@ -178,6 +191,10 @@ TokenSource.days | let days: [Date : TokenCounts]
 TokenSource.folder | let folder: String
 TokenSource.origin | let origin: TokenSource.Origin?
 TokenSource.provider | let provider: Account.Provider
+TokenSync | enum TokenSync
+TokenSync.cached() | static func cached() -> [TokenDevice]
+TokenSync.exchange(_:folder:deviceID:deviceName:) | static func exchange(_ mine: [TokenShare], folder: URL, deviceID: String, deviceName: String) -> [TokenDevice]
+TokenSync.removeMine(folder:deviceID:) | static func removeMine(folder: URL, deviceID: String)
 ToolHome | enum ToolHome
 ToolHome.agyInstalled | static var agyInstalled: Bool { get }
 ToolHome.path | static var path: String { get }

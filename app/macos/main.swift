@@ -143,6 +143,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         ExternalMCP.shared.start()   // servers added in Settings → MCP
         // Chats from your other Macs (off until turned on in Settings → Chat).
         DeviceSync.shared.start(discussion: discussion)
+        // Token sums from the other Macs (off until turned on in Settings → Accounts → Usage).
+        TokenUsageModel.shared.start(model)
         model.refreshLoginItemStatus()
     }
 

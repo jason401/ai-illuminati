@@ -50,7 +50,7 @@ public final class DeviceSync: ObservableObject {
     @Published public private(set) var lastChecked: Date?
     @Published public private(set) var problem: String?
 
-    let deviceID: String
+    public let deviceID: String
     private let persist: Bool
     // Set by the app: the chats to share (the saved list) and whether a chat is answering right now.
     var conversations: () -> [Conversation] = { [] }
@@ -88,7 +88,7 @@ public final class DeviceSync: ObservableObject {
     var devicesFolder: URL { folder.appendingPathComponent("devices") }
     var myFolder: URL { devicesFolder.appendingPathComponent(deviceID) }
     var myChats: URL { myFolder.appendingPathComponent("chats") }
-    var deviceName: String {
+    public var deviceName: String {
         let name = settings.deviceName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return name.isEmpty ? (Host.current().localizedName ?? "Mac") : String(name.prefix(60))
     }

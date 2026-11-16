@@ -81,9 +81,9 @@ public enum TokenLedger {
         where !roots.contains(where: { $0.2 == folder }) {
             roots.append((nil, p, folder))
         }
-        var saved = (try? Data(contentsOf: cacheFile)).flatMap { try? JSONDecoder().decode(Saved.self, from: $0) }
-        if saved?.version != version { saved = nil }
-        var old = saved?.files ?? [:]
+        let saved = (try? Data(contentsOf: cacheFile)).flatMap { try? JSONDecoder().decode(Saved.self, from: $0) }
+        // A new format reads every log again, but a deleted log's sums are all that is left of it: they stay.
+        var old = saved?.version == version ? saved?.files ?? [:] : (saved?.files ?? [:]).filter { $0.value.gone == true }
         var kept: [String: FileState] = [:]
         var sources: [TokenSource] = []
         for (id, provider, folder) in roots {

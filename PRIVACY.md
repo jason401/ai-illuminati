@@ -31,6 +31,8 @@ It runs only on your Mac. The developer runs no server and collects no data from
 - Settings → Accounts → Usage reads the token counts in the Claude Code, Codex and Gemini (agy) session logs on this Mac (read only)
   and keeps only the daily sums there (`token-usage.json`), also after a CLI deletes an old log. The conversation
   text is not kept or sent anywhere.
+- Only if you turn on **All Macs together** there: those daily sums with each account's name are written to
+  `token-usage/<this Mac>.json` in the same sync folder, so your other Macs can add them up. "Remove mine" deletes it.
 - Only if you turn on **Chats from other Macs** (Settings → Chat): copies of the chats you choose are saved as plain
   readable files in the sync folder you pick (iCloud Drive by default), so your other Macs can show them. Enterprise
   chats are left out unless you include them. Settings → Chat → "Remove this Mac's copies" deletes them.

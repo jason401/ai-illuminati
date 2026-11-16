@@ -872,7 +872,7 @@ enum DataFolders {
 
 struct AccountsSettingsTab: View {
     @ObservedObject var model: AppModel
-    @StateObject private var usage = TokenUsageModel()
+    @ObservedObject private var usage = TokenUsageModel.shared
 
     var body: some View {
         SettingsPage {
@@ -943,47 +943,98 @@ struct AccountsSettingsTab: View {
 }
 
 // Settings > Accounts > Usage: tokens from the CLIs' own logs (TokenLedger) by day, week, month or year, laid out like
-// AI Face's History. Bars count input and output without cache reads (cache reads are most of an agent loop's total
-// and would hide the rest; they stay as a number), on one scale for every account. Limits % are the menu's, not here.
+// AI Face's History. Every count is there: the header splits the period's tokens into the four kinds with their shares,
+// and the metric picks what the chart and bars measure (everything, everything but cache reads, or output), on one
+// scale for every account. With sync on, other Macs' sums (TokenSync) are added to the same accounts by provider and
+// name. Limits % are the menu's, not here.
 // (The page's choices live here: this Mac's Command Line Tools cannot build SwiftUI's @State macro.)
 final class TokenUsageModel: ObservableObject {
     enum Span: Hashable { case day, week, month, year }
+    enum Metric: Hashable { case all, fresh, output }
+    static let shared = TokenUsageModel()
+    static let syncKey = "tokenUsageSync"
     @Published var shown = false      // Accounts: the Usage page instead of the list
     @Published var span: Span = .week
+    @Published var metric: Metric = .all
     @Published var back = 0           // how many periods before the current one
-    @Published var open: Set<String> = []   // rows showing the four kinds
+    @Published var open: Set<String> = []   // rows showing every count
+    @Published var device: String?    // nil: every Mac; "": this Mac; else another Mac's id
     @Published var sources: [TokenSource]?
+    @Published var peers: [TokenDevice] = []
+    @Published var syncedAt: Date?
+    @Published var syncOn = UserDefaults.app.bool(forKey: TokenUsageModel.syncKey) {
+        didSet {
+            UserDefaults.app.set(syncOn, forKey: Self.syncKey)
+            if !syncOn { peers = []; device = nil; syncedAt = nil }
+        }
+    }
     private var reading = false
+    private var timer: Timer?
 
-    func load(_ accounts: [Account], toolHome: String) {
+    // App start: with sync on, this Mac's sums go up every 30 minutes even when Settings stays closed.
+    func start(_ model: AppModel) {
+        if syncOn { peers = TokenSync.cached() }
+        let ticker = Timer(timeInterval: 1800, repeats: true) { [weak self, weak model] _ in
+            guard let self, let model, self.syncOn else { return }
+            self.load(model)
+        }
+        ticker.tolerance = 120
+        RunLoop.main.add(ticker, forMode: .common)
+        timer = ticker
+        if syncOn { DispatchQueue.main.asyncAfter(deadline: .now() + 60) { [weak self, weak model] in if let model { self?.load(model) } } }
+    }
+
+    func load(_ model: AppModel) {
         guard !reading else { return }
         reading = true
+        let accounts = model.accounts, toolHome = model.persist ? ToolHome.path : AccountStore.home
+        let sync = syncOn && model.persist ? DeviceSync.shared : nil
+        let folder = sync?.folder, id = sync?.deviceID, name = sync?.deviceName
         DispatchQueue.global(qos: .utility).async {
             let read = TokenLedger.read(accounts, toolHome: toolHome)
-            DispatchQueue.main.async { self.sources = read; self.reading = false }
+            DispatchQueue.main.async { self.sources = read }
+            var peers: [TokenDevice]?
+            if let folder, let id, let name {
+                peers = TokenSync.exchange(Self.shares(read, accounts), folder: folder, deviceID: id, deviceName: name)
+            }
+            DispatchQueue.main.async {
+                if let peers, self.syncOn { self.peers = peers; self.syncedAt = Date() }
+                self.reading = false
+            }
+        }
+    }
+
+    // What this Mac shares: its sums per account name (ids differ on each Mac) and per program outside the app.
+    static func shares(_ sources: [TokenSource], _ accounts: [Account]) -> [TokenShare] {
+        sources.compactMap { s in
+            if let id = s.accountID {
+                guard let a = accounts.first(where: { $0.id == id }) else { return nil }
+                return TokenShare(provider: s.provider, name: a.name, outside: false, origin: nil, days: s.days)
+            }
+            return TokenShare(provider: s.provider, name: "", outside: true, origin: s.origin, days: s.days)
         }
     }
 }
 
 struct TokenUsageView: View {
     typealias Span = TokenUsageModel.Span
+    typealias Metric = TokenUsageModel.Metric
     struct Line: Identifiable {
-        let id: String
+        let id: String                       // TokenShare.key
         let name: String
         let provider: Account.Provider
-        let color: Color
-        let source: TokenSource?
-        var outside: Bool { source != nil && source?.accountID == nil }
+        let outside: Bool
+        var folder: String?                  // outside the app on this Mac
+        var days: [String: [Date: TokenCounts]] = [:]   // by Mac: "" this Mac, else its id
     }
+    enum Kind: CaseIterable { case input, cacheWrite, cacheRead, output }
 
     @ObservedObject var model: AppModel
     @ObservedObject var ledger: TokenUsageModel
+    @ObservedObject private var deviceSync = DeviceSync.shared
     @AppStorage(AIColors.revisionKey) private var revision = 0   // redraw when an AI's color changes
     private var span: Span { ledger.span }
     private var back: Int { ledger.back }
-
-    static let inputColor = Color(red: 0.30, green: 0.55, blue: 0.98)
-    static let outputColor = Color(red: 0.96, green: 0.76, blue: 0.25)
 
     private var calendar: Calendar { .current }
     private var unit: Calendar.Component {
@@ -1005,40 +1056,79 @@ struct TokenUsageView: View {
         return list
     }
 
-    // The provider's color, mixed toward white (and then black) for its second, third… account: solid colors, so the
-    // stacked chart never shows one account through another. Outside the app: the provider's color grayed.
-    private static func shade(_ provider: Account.Provider, _ index: Int, outside: Bool) -> Color {
-        let base = AIColors.color(provider)
-        let (other, f): (NSColor, CGFloat) = outside ? (.gray, 0.55 + 0.15 * CGFloat(min(index, 2)))
-            : index == 0 ? (.white, 0) : (index % 2 == 1 ? .white : .black, 0.25 + 0.15 * CGFloat((index - 1) / 2))
-        return Color(nsColor: NSColor(name: nil) { appearance in
-            var out = base
-            appearance.performAsCurrentDrawingAppearance {
-                out = base.usingColorSpace(.sRGB).flatMap { $0.blended(withFraction: f, of: other) } ?? base
-            }
-            return out
-        })
+    // The kinds of tokens: the header's split, the account bars and the legend.
+    static func kindColor(_ k: Kind) -> Color {
+        switch k {
+        case .input: return Color(red: 0.30, green: 0.55, blue: 0.98)
+        case .cacheWrite: return Color(red: 0.62, green: 0.48, blue: 0.96)
+        case .cacheRead: return Color(nsColor: .systemGray)
+        case .output: return Color(red: 0.96, green: 0.76, blue: 0.25)
+        }
+    }
+    static func kindName(_ k: Kind) -> String {
+        switch k {
+        case .input: return L("캐시 아닌 입력", "Uncached input")
+        case .cacheWrite: return L("캐시 쓰기", "Cache writes")
+        case .cacheRead: return L("캐시 읽기", "Cache reads")
+        case .output: return L("출력", "Output")
+        }
+    }
+    static func value(_ c: TokenCounts, _ k: Kind) -> Int {
+        switch k { case .input: return c.input; case .cacheWrite: return c.cacheWrite; case .cacheRead: return c.cacheRead; case .output: return c.output }
+    }
+    private func kinds(_ m: Metric) -> [Kind] {
+        switch m { case .all: return Kind.allCases; case .fresh: return [.input, .cacheWrite, .output]; case .output: return [.output] }
+    }
+    private func measure(_ c: TokenCounts) -> Int { kinds(ledger.metric).reduce(0) { $0 + Self.value(c, $1) } }
+
+    // Accounts in the menu's colors: every account of a provider has its color, told apart by a line between them
+    // (and their names). Outside the app: the same color striped.
+    private func color(_ line: Line) -> Color { Color(nsColor: AIColors.color(line.provider)) }
+    @ViewBuilder private func swatch(_ line: Line) -> some View {
+        if line.outside {
+            ZStack { color(line).opacity(0.3); Stripes().stroke(color(line), lineWidth: 1.5) }.clipped()
+        } else {
+            color(line)
+        }
     }
 
     private var lines: [Line] {
-        let cloud = model.accounts.filter { $0.provider != .ollama }
-        var result = cloud.map { a -> Line in
-            Line(id: a.id, name: a.name, provider: a.provider,
-                 color: Self.shade(a.provider, cloud.filter { $0.provider == a.provider }.firstIndex { $0.id == a.id } ?? 0, outside: false),
-                 source: ledger.sources?.first { $0.accountID == a.id })
+        let sources = ledger.sources ?? []
+        var result: [Line] = []
+        func add(_ line: Line, device: String, _ days: [Date: TokenCounts]) {
+            if let i = result.firstIndex(where: { $0.id == line.id }) { result[i].days[device] = days; return }
+            var line = line
+            line.days[device] = days
+            result.append(line)
         }
-        let outside = (ledger.sources ?? []).filter { $0.accountID == nil }
-        for s in outside {
-            let index = outside.filter { $0.provider == s.provider }.firstIndex { $0.folder == s.folder && $0.origin == s.origin } ?? 0
-            result.append(Line(id: s.folder + "#" + (s.origin?.rawValue ?? ""), name: Self.outsideName(s), provider: s.provider,
-                               color: Self.shade(s.provider, index, outside: true), source: s))
+        let local = TokenUsageModel.shares(sources, model.accounts)
+        for a in model.accounts where a.provider != .ollama {
+            let share = local.first { !$0.outside && $0.name == a.name && $0.provider == a.provider }
+            add(Line(id: a.provider.rawValue + "#" + a.name, name: a.name, provider: a.provider, outside: false), device: "", share?.days ?? [:])
         }
-        return result
+        for s in sources where s.accountID == nil {
+            let share = TokenShare(provider: s.provider, name: "", outside: true, origin: s.origin, days: s.days)
+            add(Line(id: share.key, name: Self.outsideName(s.provider, s.origin), provider: s.provider, outside: true, folder: s.folder),
+                device: "", s.days)
+        }
+        for peer in ledger.syncOn ? ledger.peers : [] {
+            for share in peer.shares {
+                add(Line(id: share.key, name: share.outside ? Self.outsideName(share.provider, share.origin) : share.name,
+                         provider: share.provider, outside: share.outside), device: peer.id, share.days)
+            }
+        }
+        // Accounts first (in the app's order), then outside the app; a provider's lines together.
+        let order = Account.Provider.allCases
+        return result.enumerated().sorted { a, b in
+            let ka = (a.element.outside ? 1 : 0, order.firstIndex(of: a.element.provider) ?? 9, a.offset)
+            let kb = (b.element.outside ? 1 : 0, order.firstIndex(of: b.element.provider) ?? 9, b.offset)
+            return ka < kb
+        }.map(\.element)
     }
 
     // Which program wrote the logs no account uses (Claude `entrypoint`, Codex `originator`).
-    private static func outsideName(_ s: TokenSource) -> String {
-        switch (s.provider, s.origin) {
+    private static func outsideName(_ provider: Account.Provider, _ origin: TokenSource.Origin?) -> String {
+        switch (provider, origin) {
         case (.claude, .desktop?): return L("Claude 데스크톱 앱 (Code)", "Claude desktop app (Code)")
         case (.claude, .terminal?): return L("터미널의 Claude Code", "Claude Code in Terminal")
         case (.codex, .desktop?): return L("Codex 앱", "Codex app")
@@ -1049,12 +1139,17 @@ struct TokenUsageView: View {
         }
     }
 
-    private func counts(_ line: Line, _ range: DateInterval) -> TokenCounts {
-        (line.source?.days ?? [:]).reduce(into: TokenCounts()) { if $1.key >= range.start && $1.key < range.end { $0 += $1.value } }
+    // The Macs counted: every one, this Mac or one other Mac.
+    private func counted(_ device: String) -> Bool { ledger.device == nil || ledger.device == device }
+    private func counts(_ line: Line, _ range: DateInterval, device: String? = nil) -> TokenCounts {
+        line.days.reduce(into: TokenCounts()) { sum, entry in
+            guard device.map({ $0 == entry.key }) ?? counted(entry.key) else { return }
+            for (day, c) in entry.value where day >= range.start && day < range.end { sum += c }
+        }
     }
-    // Input without cache reads: what the provider had not cached (Claude counts it as a cache write, Codex and
-    // Gemini as plain input), so one color compares accounts fairly.
-    private static func input(_ c: TokenCounts) -> Int { c.input + c.cacheWrite }
+    private func deviceName(_ id: String) -> String {
+        id.isEmpty ? L("이 Mac", "This Mac") : ledger.peers.first { $0.id == id }?.name ?? L("다른 Mac", "Other Mac")
+    }
 
     var body: some View {
         let _ = revision
@@ -1067,8 +1162,12 @@ struct TokenUsageView: View {
                 Button { ledger.back -= 1 } label: { Image(systemName: "chevron.right") }.buttonStyle(.plainHit)
                     .disabled(back == 0).opacity(back == 0 ? 0.3 : 1)
                 Spacer()
-                if let first = firstDay, period.start < first { partial(first) }
+                let picker = ledger.syncOn && !ledger.peers.isEmpty
+                if let first = firstDay, period.start < first { partial(first, short: picker) }
+                if picker { devicePicker }
             }
+            SettingsSegments(options: [(L("전체", "All"), Metric.all), (L("캐시 읽기 제외", "No cache reads"), .fresh), (L("출력만", "Output only"), .output)],
+                             selection: $ledger.metric)
             if ledger.sources == nil {
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.small)
@@ -1078,21 +1177,33 @@ struct TokenUsageView: View {
             } else {
                 content
             }
+            syncCard
         }
-        .onAppear { ledger.load(model.accounts, toolHome: model.persist ? ToolHome.path : AccountStore.home) }
+        .onAppear { ledger.load(model) }
+    }
+
+    private var devicePicker: some View {
+        Menu {
+            Button(L("모든 Mac", "All Macs")) { ledger.device = nil }
+            Button(L("이 Mac", "This Mac")) { ledger.device = "" }
+            ForEach(ledger.peers, id: \.id) { peer in Button(peer.name) { ledger.device = peer.id } }
+        } label: {
+            Text(ledger.device.map(deviceName) ?? L("모든 Mac", "All Macs")).lineLimit(1)
+        }.fixedSize().help(L("어느 Mac의 사용량을 볼지", "Which Macs to count"))
     }
 
     // The first day any log has: earlier days are missing, not unused (Claude Code deletes logs after 30 days, and
     // what it deleted before the app first read it cannot be counted).
-    private var firstDay: Date? { (ledger.sources ?? []).flatMap { $0.days.filter { !$0.value.isEmpty }.keys }.min() }
+    private var firstDay: Date? { lines.flatMap { $0.days.values.flatMap { $0.filter { !$0.value.isEmpty }.keys } }.min() }
 
-    private func partial(_ first: Date) -> some View {
+    private func partial(_ first: Date, short: Bool) -> some View {
         let f = DateFormatter()
         f.locale = AppLanguage.current.locale
         f.setLocalizedDateFormatFromTemplate("MMMd")
-        return Label(L("\(f.string(from: first)) 이전 기록 없음", "No logs before \(f.string(from: first))"), systemImage: "exclamationmark.triangle")
+        let text = L("\(f.string(from: first)) 이전 기록 없음", "No logs before \(f.string(from: first))")
+        return Label(text, systemImage: "exclamationmark.triangle").labelStyle(PartialLabel(iconOnly: short))
             .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
-            .help(L("Claude Code는 30일 지난 로그를 지워요. 앱이 한 번 읽은 로그는 지워져도 합계가 남지만, 그 전에 지워진 건 셀 수 없어요.",
+            .help(text + " · " + L("Claude Code는 30일 지난 로그를 지워요. 앱이 한 번 읽은 로그는 지워져도 합계가 남지만, 그 전에 지워진 건 셀 수 없어요.",
                     "Claude Code deletes logs after 30 days. A log the app has read keeps its sums when deleted; ones deleted before cannot be counted."))
     }
 
@@ -1103,72 +1214,110 @@ struct TokenUsageView: View {
         header(sum)
         if !columns.isEmpty { chart(lines) }
         SettingsCard(title: L("계정별 (같은 눈금)", "By account (one scale)")) {
-            let scale = max(totals.map(\.fresh).max() ?? 0, 1)
+            let scale = max(totals.map(measure).max() ?? 0, 1)
             ForEach(Array(lines.enumerated()), id: \.1.id) { index, line in
                 if index > 0 { Divider() }
                 row(line, totals[index], scale: scale)
             }
         }
         legend
-        Text(L("이 Mac의 CLI 로그와 데스크톱 앱의 Code 작업 기준 · 웹과 앱의 일반 채팅은 빠져요 · 출력에 thinking/reasoning 포함",
-               "From this Mac's CLI logs and the desktop apps' Code work · Web and plain app chats are not included · Output includes thinking/reasoning"))
+        Text((ledger.device == nil && !ledger.peers.isEmpty ? L("동기화한 Mac들의", "From the synced Macs'") : L("이 Mac의", "From this Mac's"))
+             + L(" CLI 로그와 데스크톱 앱의 Code 작업 기준 · 웹과 앱의 일반 채팅은 빠져요 · 출력에 thinking/reasoning 포함",
+                 " CLI logs and the desktop apps' Code work · Web and plain app chats are not included · Output includes thinking/reasoning"))
             .font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
     }
 
     private static let cacheHelp = L("에이전트는 요청마다 지금까지의 대화 전체를 다시 보내요. 이미 처리한 앞부분은 캐시에서 읽어서(입력 단가의 약 0.1배) 숫자는 크지만 새로 한 일은 아니에요.",
                                      "Agents resend the whole conversation with every request. The part already processed is read from the cache (about 0.1× the input price): a big number, but no new work.")
+    private static func help(_ k: Kind) -> String {
+        switch k {
+        case .input: return L("캐시에 없던 입력: 내 메시지, 도구 결과(파일 내용, 명령 출력), 처음 보낸 대화 기록.", "Input not in the cache: your messages, tool results (files, command output), conversation sent the first time.")
+        case .cacheWrite: return L("캐시에 새로 저장한 입력. Claude만 따로 세요(Codex·Gemini는 캐시 아닌 입력에 들어가요).", "Input newly stored in the cache. Only Claude counts it apart (Codex and Gemini count it as uncached input).")
+        case .cacheRead: return cacheHelp
+        case .output: return L("AI가 만든 토큰 전부: 보이는 답, thinking/reasoning, 도구 호출(쓴 코드, 실행한 명령)까지.", "Every token the AIs produced: the answers you see, thinking/reasoning and tool calls (code written, commands run).")
+        }
+    }
 
+    private static func percent(_ part: Int, of whole: Int) -> String {
+        guard whole > 0 else { return "—" }
+        let p = Double(part) / Double(whole) * 100
+        if part == 0 { return "0%" }
+        return p < 0.1 ? "<0.1%" : p < 10 ? String(format: "%.1f%%", p) : "\(Int(p.rounded()))%"
+    }
+
+    // The period's tokens: the metric's total, and every kind with its share of all tokens.
     private func header(_ sum: TokenCounts) -> some View {
         let fed = sum.input + sum.cacheWrite + sum.cacheRead
-        return HStack(alignment: .bottom) {
-            VStack(alignment: .leading, spacing: 0) {
-                HStack(spacing: 3) {
-                    Text(L("출력", "Output"))
-                    Image(systemName: "info.circle")
-                }.font(.system(size: 11)).foregroundStyle(.secondary)
-                .help(L("AI가 만든 토큰 전부예요: 보이는 답, thinking/reasoning, 도구 호출(쓴 코드, 실행한 명령)까지.",
-                        "Every token the AIs produced: the answers you see, thinking/reasoning and tool calls (code written, commands run)."))
-                Text(Self.short(sum.output)).font(.system(size: 26, weight: .semibold, design: .rounded)).foregroundStyle(Self.outputColor)
+        let title: String
+        switch ledger.metric {
+        case .all: title = L("전체 토큰", "All tokens")
+        case .fresh: title = L("캐시 읽기 제외", "Without cache reads")
+        case .output: title = L("출력", "Output")
+        }
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .bottom) {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(title).font(.system(size: 11)).foregroundStyle(.secondary)
+                    Text(Self.short(measure(sum))).font(.system(size: 26, weight: .semibold, design: .rounded))
+                        .foregroundStyle(ledger.metric == .output ? Self.kindColor(.output) : Color.primary)
+                }
+                Spacer()
+                VStack(alignment: .trailing, spacing: 1) {
+                    if ledger.metric != .all { Text(L("전체 ", "All ") + Self.short(sum.total)) }
+                    if ledger.metric != .fresh { Text(L("캐시 읽기 제외 ", "No cache reads ") + Self.short(sum.fresh)) }
+                    Text(L("캐시 적중 ", "Cache hits ") + Self.percent(sum.cacheRead, of: fed))
+                        .help(L("입력 중 캐시에서 읽은 비율: 캐시 읽기 ÷ (캐시 아닌 입력 + 캐시 쓰기 + 캐시 읽기)",
+                                "The share of input read from the cache: cache reads ÷ (uncached input + cache writes + cache reads)"))
+                }.font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
             }
-            Spacer()
-            VStack(alignment: .trailing, spacing: 1) {
-                Text(L("입력(캐시 읽기 제외) ", "Input (no cache reads) ") + Self.short(Self.input(sum)))
-                    .help(L("모델이 새로 처리한 입력: 내 메시지, 도구 결과, 처음 보낸 대화 기록. 캐시 쓰기 포함.",
-                            "Input the model processed anew: your messages, tool results, conversation sent the first time. Includes cache writes."))
-                HStack(spacing: 3) {
-                    Text(L("캐시 읽기 ", "Cache reads ") + Self.short(sum.cacheRead))
-                    Image(systemName: "info.circle")
-                }.help(Self.cacheHelp)
-                Text(L("캐시 적중 ", "Cache hits ") + (fed > 0 ? "\(Int((Double(sum.cacheRead) / Double(fed) * 100).rounded()))%" : "—"))
-                    .help(L("입력 중 캐시에서 읽은 비율", "The share of input read from the cache"))
-            }.font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+            split(sum, kinds: Kind.allCases, scale: sum.total, height: 8)
+            VStack(spacing: 2) {
+                ForEach(Kind.allCases, id: \.self) { k in
+                    HStack(spacing: 4) {
+                        RoundedRectangle(cornerRadius: 2).fill(Self.kindColor(k)).frame(width: 8, height: 8)
+                        Text(Self.kindName(k)).lineLimit(1)
+                        Spacer(minLength: 2)
+                        Text(Self.short(Self.value(sum, k))).monospacedDigit().foregroundStyle(.primary)
+                        Text(Self.percent(Self.value(sum, k), of: sum.total)).monospacedDigit().frame(width: 42, alignment: .trailing)
+                    }
+                    .opacity(kinds(ledger.metric).contains(k) ? 1 : 0.5)
+                    .help(Self.help(k))
+                }
+            }.font(.system(size: 10)).foregroundStyle(.secondary)
         }
         .padding(10).frame(maxWidth: .infinity)
         .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .controlBackgroundColor)))
         .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(0.07)))
     }
 
-    // One stacked column per day (month per year): each account's color, all on one scale.
+    // One stacked column per day (month per year): each account in its provider's color, a thin gap between
+    // accounts, all on one scale.
     private func chart(_ lines: [Line]) -> some View {
         let cols = columns
-        let stacks = cols.map { col in lines.map { counts($0, col).fresh } }
+        let stacks = cols.map { col in lines.map { measure(counts($0, col)) } }
         let top = max(stacks.map { $0.reduce(0, +) }.max() ?? 0, 1)
         let height: CGFloat = 86
-        return SettingsCard(title: span == .year ? L("월별 입력+출력 (캐시 읽기 제외)", "Input + output per month (no cache reads)")
-                                                 : L("일별 입력+출력 (캐시 읽기 제외)", "Input + output per day (no cache reads)")) {
+        let what: String
+        switch ledger.metric {
+        case .all: what = span == .year ? L("월별 전체 토큰", "All tokens per month") : L("일별 전체 토큰", "All tokens per day")
+        case .fresh: what = span == .year ? L("월별 토큰 (캐시 읽기 제외)", "Tokens per month (no cache reads)") : L("일별 토큰 (캐시 읽기 제외)", "Tokens per day (no cache reads)")
+        case .output: what = span == .year ? L("월별 출력", "Output per month") : L("일별 출력", "Output per day")
+        }
+        return SettingsCard(title: what) {
             HStack(alignment: .bottom, spacing: cols.count > 12 ? 2 : 5) {
                 ForEach(cols.indices, id: \.self) { i in
                     let total = stacks[i].reduce(0, +)
+                    let parts = lines.indices.reversed().filter { stacks[i][$0] > 0 }
+                    let room = max(height - CGFloat(max(parts.count - 1, 0)), 0)
                     VStack(spacing: 2) {
                         if cols.count <= 7 {
                             Text(total > 0 ? Self.short(total) : " ").font(.system(size: 8)).foregroundStyle(.secondary).lineLimit(1).fixedSize()
                         }
                         ZStack(alignment: .bottom) {
                             RoundedRectangle(cornerRadius: 2).fill(Color.primary.opacity(0.06))
-                            VStack(spacing: 0) {
-                                ForEach(lines.indices.reversed(), id: \.self) { k in
-                                    Rectangle().fill(lines[k].color)
-                                        .frame(height: CGFloat(stacks[i][k]) / CGFloat(top) * height)
+                            VStack(spacing: 1) {
+                                ForEach(parts, id: \.self) { k in
+                                    swatch(lines[k]).frame(height: CGFloat(stacks[i][k]) / CGFloat(top) * room)
                                 }
                             }.clipShape(RoundedRectangle(cornerRadius: 2))
                         }.frame(height: height)
@@ -1184,35 +1333,41 @@ struct TokenUsageView: View {
 
     private func row(_ line: Line, _ c: TokenCounts, scale: Int) -> some View {
         let open = ledger.open.contains(line.id)
+        let devices = line.days.keys.filter(counted).sorted { ($0.isEmpty ? "" : deviceName($0)) < ($1.isEmpty ? "" : deviceName($1)) }
         return VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
-                Circle().fill(line.color).frame(width: 8, height: 8)
+                swatch(line).frame(width: 8, height: 8).clipShape(Circle())
                 Text(line.name).lineLimit(1)
                 Spacer()
-                Text(Self.short(c.fresh)).font(.system(size: 12, weight: .semibold)).monospacedDigit()
+                Text(Self.short(measure(c))).font(.system(size: 12, weight: .semibold)).monospacedDigit()
                 Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold)).foregroundStyle(.tertiary)
                     .rotationEffect(.degrees(open ? 90 : 0))
             }
-            bar(c, scale: scale)
+            split(c, kinds: kinds(ledger.metric), scale: scale, height: 7)
             if open {
                 VStack(alignment: .leading, spacing: 1) {
-                    detail(L("캐시 아닌 입력", "Uncached input"), Self.short(c.input))
-                    detail(L("캐시 쓰기", "Cache writes"), line.provider == .claude ? Self.short(c.cacheWrite) : "—")
-                    detail(L("캐시 읽기", "Cache reads"), Self.short(c.cacheRead))
-                    detail(L("출력", "Output"), Self.short(c.output))
+                    ForEach(Kind.allCases, id: \.self) { k in
+                        detail(Self.kindName(k), k == .cacheWrite && line.provider != .claude ? "—"
+                               : Self.short(Self.value(c, k)) + "  " + Self.percent(Self.value(c, k), of: c.total), color: Self.kindColor(k))
+                    }
+                    detail(L("전체", "All"), Self.short(c.total), color: nil)
                 }
                 if line.provider != .claude {
                     Text(L("캐시 쓰기는 Claude만 따로 세요", "Only Claude counts cache writes separately"))
                         .font(.system(size: 9)).foregroundStyle(.tertiary)
                 }
+                if devices.count > 1 || devices.first.map({ !$0.isEmpty }) == true {
+                    Text(devices.map { deviceName($0) + " " + Self.short(measure(counts(line, period, device: $0))) }.joined(separator: " · "))
+                        .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(2)
+                }
             } else {
-                Text(L("입력 ", "Input ") + Self.short(Self.input(c)) + L(" · 출력 ", " · Output ") + Self.short(c.output)
-                     + L(" · 캐시 읽기 ", " · Cache reads ") + Self.short(c.cacheRead))
+                Text(L("입력 ", "In ") + Self.short(c.input) + L(" · 쓰기 ", " · Write ") + (line.provider == .claude ? Self.short(c.cacheWrite) : "—")
+                     + L(" · 읽기 ", " · Read ") + Self.short(c.cacheRead) + L(" · 출력 ", " · Out ") + Self.short(c.output))
                     .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
             }
             if line.outside {
-                Text((line.source?.folder ?? "").replacingOccurrences(of: AccountStore.home, with: "~")
-                     + L(" · 앱 계정 밖이라 어느 계정인지 몰라요", " · Not an app account: unknown which one"))
+                Text(((line.folder?.replacingOccurrences(of: AccountStore.home, with: "~")).map { $0 + " · " } ?? "")
+                     + L("앱 계정 밖이라 어느 계정인지 몰라요", "Not an app account: unknown which one"))
                     .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
             }
         }
@@ -1223,42 +1378,85 @@ struct TokenUsageView: View {
                     .foregroundStyle(Color.secondary.opacity(0.5)).padding(2) : nil)
     }
 
-    private func detail(_ title: String, _ value: String) -> some View {
-        HStack {
+    private func detail(_ title: String, _ value: String, color: Color?) -> some View {
+        HStack(spacing: 4) {
+            if let color { RoundedRectangle(cornerRadius: 2).fill(color).frame(width: 6, height: 6) }
             Text(title)
             Spacer()
             Text(value).monospacedDigit()
         }.font(.system(size: 10)).foregroundStyle(.secondary)
     }
 
-    // Input and output side by side, the bar's length on the scale shared by every account.
-    private func bar(_ c: TokenCounts, scale: Int) -> some View {
-        let parts: [(Int, Color)] = [(Self.input(c), Self.inputColor), (c.output, Self.outputColor)]
-        return GeometryReader { geo in
+    // The kinds side by side, the bar's length on the given scale.
+    private func split(_ c: TokenCounts, kinds: [Kind], scale: Int, height: CGFloat) -> some View {
+        GeometryReader { geo in
             ZStack(alignment: .leading) {
                 RoundedRectangle(cornerRadius: 3).fill(Color.primary.opacity(0.06))
                 HStack(spacing: 0) {
-                    ForEach(parts.indices, id: \.self) { i in
-                        Rectangle().fill(parts[i].1).frame(width: CGFloat(parts[i].0) / CGFloat(scale) * geo.size.width)
+                    ForEach(kinds, id: \.self) { k in
+                        Rectangle().fill(Self.kindColor(k)).frame(width: CGFloat(Self.value(c, k)) / CGFloat(max(scale, 1)) * geo.size.width)
                     }
                 }.clipShape(RoundedRectangle(cornerRadius: 3))
             }
-        }.frame(height: 7)
+        }.frame(height: height)
+    }
+
+    private static func shortName(_ k: Kind) -> String {
+        switch k {
+        case .input: return L("입력", "Input")
+        case .cacheWrite: return L("캐시 쓰기", "Cache write")
+        case .cacheRead: return L("캐시 읽기", "Cache read")
+        case .output: return L("출력", "Output")
+        }
     }
 
     private var legend: some View {
         HStack(spacing: 8) {
-            ForEach([(L("입력(캐시 읽기 제외)", "Input (no cache reads)"), Self.inputColor), (L("출력", "Output"), Self.outputColor)], id: \.0) { item in
+            ForEach(kinds(ledger.metric), id: \.self) { k in
                 HStack(spacing: 3) {
-                    RoundedRectangle(cornerRadius: 2).fill(item.1).frame(width: 8, height: 8)
-                    Text(item.0).lineLimit(1)
+                    RoundedRectangle(cornerRadius: 2).fill(Self.kindColor(k)).frame(width: 8, height: 8)
+                    Text(Self.shortName(k)).lineLimit(1).fixedSize()
                 }
             }
             HStack(spacing: 3) {
-                RoundedRectangle(cornerRadius: 2).strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [2, 2])).frame(width: 8, height: 8)
-                Text(L("앱 밖", "Outside the app")).lineLimit(1)
+                ZStack { Color.secondary.opacity(0.3); Stripes().stroke(Color.secondary, lineWidth: 1.2) }.frame(width: 8, height: 8).clipShape(RoundedRectangle(cornerRadius: 2))
+                Text(L("앱 밖", "Outside")).lineLimit(1).fixedSize()
             }
         }.font(.system(size: 10)).foregroundStyle(.secondary)
+    }
+
+    // Other Macs' sums (TokenSync), through the folder of Chats from other Macs.
+    private var syncCard: some View {
+        SettingsCard(title: L("모든 Mac 합산", "All Macs together"),
+                     help: L("각 Mac이 일별 토큰 합계(계정 이름과 숫자만, 대화 내용 없음)를 동기화 폴더(기본: iCloud Drive)의 자기 파일에만 쓰고 다른 Mac 것을 읽어요. 계정은 provider와 이름이 같으면 합쳐요. 30분마다, 그리고 이 화면을 열 때 올라가요.",
+                             "Each Mac writes its daily token sums (account names and numbers only, no chat text) to its own file in the sync folder (iCloud Drive by default) and reads the others. Accounts with the same provider and name add up. Sent every 30 minutes and when this page opens.")) {
+            SettingsRow(title: L("켜기", "On")) {
+                Text(syncStatus).font(.system(size: 11)).foregroundStyle(ledger.syncOn && !deviceSync.folderAvailable ? .orange : .secondary).lineLimit(1)
+                Spacer()
+                Toggle(L("켜기", "On"), isOn: Binding(get: { ledger.syncOn }, set: { on in
+                    ledger.syncOn = on
+                    if on { ledger.peers = TokenSync.cached(); ledger.load(model) }
+                })).labelsHidden().toggleStyle(.switch)
+            }
+            if ledger.syncOn {
+                Divider()
+                SettingsRow(title: L("관리", "Manage")) {
+                    SettingsAction(title: L("지금 동기화", "Sync now")) { ledger.load(model) }
+                    SettingsAction(title: L("내 사본 지우기", "Remove mine")) {
+                        let sync = DeviceSync.shared
+                        DispatchQueue.global(qos: .utility).async { TokenSync.removeMine(folder: sync.folder, deviceID: sync.deviceID) }
+                        ledger.syncOn = false
+                    }
+                }
+            }
+        }
+    }
+
+    private var syncStatus: String {
+        guard ledger.syncOn else { return L("꺼짐 · 이 Mac만", "Off · this Mac only") }
+        if !deviceSync.folderAvailable { return L("iCloud Drive가 꺼져 있어요", "iCloud Drive is off") }
+        let macs = L("다른 Mac \(ledger.peers.count)대", "\(ledger.peers.count) other Macs")
+        return ledger.syncedAt.map { macs + L(" · 확인 ", " · checked ") + DeviceSync.ago($0) } ?? macs
     }
 
     private var periodTitle: String {
@@ -1295,6 +1493,27 @@ struct TokenUsageView: View {
         return f.string(from: col.start)
     }
 
+    // The "no logs before" note, as its icon alone when the Mac picker needs the room.
+    private struct PartialLabel: LabelStyle {
+        let iconOnly: Bool
+        func makeBody(configuration: Configuration) -> some View {
+            HStack(spacing: 3) { configuration.icon; if !iconOnly { configuration.title } }
+        }
+    }
+
+    // Diagonal lines: a source outside the app.
+    private struct Stripes: Shape {
+        func path(in r: CGRect) -> Path {
+            var p = Path()
+            var x = -r.height
+            while x < r.width {
+                p.move(to: CGPoint(x: r.minX + x, y: r.maxY))
+                p.addLine(to: CGPoint(x: r.minX + x + r.height, y: r.minY))
+                x += 4
+            }
+            return p
+        }
+    }
     // 950, 12.3K, 7.58M, 1.48B: three digits at most.
     static func short(_ n: Int) -> String {
         let v = Double(n)

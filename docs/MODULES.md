@@ -381,6 +381,10 @@ streams `LocalStream`/`PullStream`, `LocalModel.ask` and the Ollama requests):
 - `TokenLedger.read`, `TokenSource` (fields; `origin`/`Origin` name the program outside the app, desktop app or Terminal), `TokenCounts` (the four counts, `init`, `fresh`, `total`, `isEmpty`, `+`, `+=`):
   Settings > Accounts > Usage sums the tokens in the CLIs' own logs by period and account. The app adds counts up per
   day, week, month and year, so the counts have a public init and `+`; reading the logs stays in the module.
+- `TokenSync` (`exchange`, `cached`, `removeMine`), `TokenShare` (fields, `init`, `key`), `TokenDevice` (fields): the same page adds
+  up every Mac. The app names this Mac's sums by account (`TokenShare`; account ids differ on each Mac, so `key` matches
+  them by provider and name) and passes the folder and id of chats from other Macs (AIChat's DeviceSync, which the module
+  cannot import); writing this Mac's file and reading the others' whole stays in the module.
 
 ### AIWorkspace (`app/modules/AIWorkspace/`: Workspace, WorkspaceBackup, AutoGuard, Tools, DiskUsage)
 
@@ -600,7 +604,7 @@ everything else, Discussion's state above all, stays internal):
   `Discussion.meets`/`autoPicked` (Settings' team picks).
 - The five tool providers (`shared`, `active`, `tools`, `call`; `MemoryLink.newestTurn` for ToolHub.register): ToolHub lists them.
 - Settings' tabs: `MemoryStore`/`MemoryItem`/`MemoryData`, `ChatStorage` (`report`, `items`, `format`, `Report`, `Room`, `Kind`; AIChatRecords since T4),
-  `CollabMode`/`CollabLog` (AIChatRecords since T4), `RouteSorter`, `ApprovalAlertSettings`, `AIColors` (each AI's color: the color window changes what `Account.Provider.color` draws; `revisionKey` lets their views redraw), `AIColorWindow` (`show`, `menuTitle`: Appearance's "Change…" and the usage menu's "Change <AI> Color…" open the same window as a right-click on an AI's name in the chat), `DeviceSync` (settings, start, scan, the notes the links call),
+  `CollabMode`/`CollabLog` (AIChatRecords since T4), `RouteSorter`, `ApprovalAlertSettings`, `AIColors` (each AI's color: the color window changes what `Account.Provider.color` draws; `revisionKey` lets their views redraw), `AIColorWindow` (`show`, `menuTitle`: Appearance's "Change…" and the usage menu's "Change <AI> Color…" open the same window as a right-click on an AI's name in the chat), `DeviceSync` (settings, start, scan, the notes the links call; `deviceID` and `deviceName`: Settings > Accounts > Usage puts this Mac's token sums in the same folder under the same id and name, so a Mac is one Mac in both),
   `ChatLink.conversations`; the board and Project info: `SidebarProjects` (`key`, `group`, `pickerName`), `ProjectGroup`,
   `SidebarFold`, `BoardTab`, `PictureDrop`, `Enterprise.permits`, `ProjectLockSection` (Project info's lock setting; the lock stays the chat's), `AutoPick.fiveHour`/`weekly`, `TodoItem.State.title`/`color`;
   DriveLink: `MaterialReader.read`, `RoomDocuments.directory` (AIChatRecords since T4); main: `ChatWindow`, `SpaceRefiner.watchLibrary`,

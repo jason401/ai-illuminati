@@ -391,4 +391,31 @@ let tokOut = tokens.filter { $0.accountID == nil && $0.provider == .codex }
 expect(tokOut.count == 2 && tokOut.first { $0.origin == .desktop }?.days[tokDay(tokA)]?.output == 1
        && tokOut.first { $0.origin == .terminal }?.days[tokDay(tokA)]?.output == 2,
        "outside the app, the desktop app and Terminal are told apart: \(tokOut.map { ($0.origin, $0.days) })")
-print("PASS: Runtime promises (errors, Stop, time out, process group, stream order, background thread, sessions saved, resumed and read from older files, steering, token logs, deleted logs, Gemini)")
+// A new cache format reads the logs again but keeps a deleted log's sums.
+try! fm.moveItem(atPath: claudeLog, toPath: claudeLog + ".bak")
+_ = TokenLedger.read([tokClaude, tokCodex], toolHome: tokHome)
+let tokCache = AccountStore.supportDir + "/token-usage.json"
+var tokSaved = try! JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: tokCache))) as! [String: Any]
+tokSaved["version"] = 1
+try! JSONSerialization.data(withJSONObject: tokSaved).write(to: URL(fileURLWithPath: tokCache))
+tokens = TokenLedger.read([tokClaude, tokCodex], toolHome: tokHome)
+expect(tokens.first { $0.accountID == "tok-claude" }!.days[tokDay(tokB)]?.output == 8, "a new cache format keeps a deleted log's sums")
+try! fm.moveItem(atPath: claudeLog + ".bak", toPath: claudeLog)
+// Other Macs (TokenSync): each writes only its own file; a half-written file keeps the last whole copy; a removed one leaves.
+let tokSync = URL(fileURLWithPath: home + "/sync-root/AI Illuminati Sync")
+try! fm.createDirectory(at: tokSync.deletingLastPathComponent(), withIntermediateDirectories: true)
+let tokShare = TokenShare(provider: .claude, name: "C", outside: false, origin: nil, days: [tokDay(tokA): TokenCounts(output: 9)])
+expect(TokenSync.exchange([tokShare], folder: tokSync, deviceID: "mac-b", deviceName: "Mac mini").isEmpty, "no other Mac yet")
+var tokPeers = TokenSync.exchange([TokenShare(provider: .claude, name: "C", outside: false, origin: nil, days: [tokDay(tokA): TokenCounts(output: 2)])],
+                                  folder: tokSync, deviceID: "mac-a", deviceName: "MacBook")
+expect(tokPeers.count == 1 && tokPeers[0].name == "Mac mini" && tokPeers[0].shares == [tokShare] && tokPeers[0].shares[0].key == "claude#C",
+       "another Mac's sums come back whole, matched by provider and name: \(tokPeers)")
+try! "{\"version\":1,\"id\":\"mac-b\",\"na".write(to: tokSync.appendingPathComponent("token-usage/mac-b.json"), atomically: true, encoding: .utf8)
+tokPeers = TokenSync.exchange([], folder: tokSync, deviceID: "mac-a", deviceName: "MacBook")
+expect(tokPeers.first?.shares == [tokShare], "a half-synced file keeps the last whole copy")
+TokenSync.removeMine(folder: tokSync, deviceID: "mac-b")
+tokPeers = TokenSync.exchange([], folder: tokSync, deviceID: "mac-a", deviceName: "MacBook")
+expect(tokPeers.isEmpty && TokenSync.cached().isEmpty, "a Mac that removed its copy leaves")
+expect(TokenSync.exchange([tokShare], folder: URL(fileURLWithPath: home + "/no-icloud/AI Illuminati Sync"), deviceID: "mac-a", deviceName: "MacBook").isEmpty
+       && !fm.fileExists(atPath: home + "/no-icloud"), "no folder is made when iCloud Drive is off")
+print("PASS: Runtime promises (errors, Stop, time out, process group, stream order, background thread, sessions saved, resumed and read from older files, steering, token logs, deleted logs, Gemini, other Macs' tokens)")

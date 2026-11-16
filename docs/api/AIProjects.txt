@@ -151,6 +151,12 @@ ProjectWork.register(_:) | static func register(_ run: ProjectRun)
 ProjectWork.release(_:notify:) | static func release(_ paths: [String], notify: Bool = true)
 ProjectWork.revokeTools | static var revokeTools: (UUID) -> Void { get set }
 ProjectWork.workBinding(_:project:chatFolder:run:) | static func workBinding(_ binding: WorkspaceBinding, project: ProjectBinding, chatFolder: String, run: ProjectRun) -> WorkspaceBinding
+RunMode | enum RunMode
+RunMode.aiThenPark | case aiThenPark
+RunMode.auto | case auto
+RunMode.checkEach | case checkEach
+RunMode.init(rawValue:) | init?(rawValue: String)
+RunMode.stopOnIssue | case stopOnIssue
 TaskLink | final class TaskLink
 TaskLink.active | var active: Bool { get }
 TaskLink.call(_:_:context:) | func call(_ name: String, _ arguments: [String : Any], context: ToolContext) -> [String : Any]
@@ -193,7 +199,9 @@ TodoData.init(from:) | init(from decoder: any Decoder) throws
 TodoData.item(_:) | func item(_ id: UUID) -> TodoItem?
 TodoData.items | var items: [TodoItem]
 TodoData.lists | var lists: [TodoList]
+TodoData.mode(_:) | func mode(_ item: TodoItem) -> RunMode
 TodoData.ordered(_:) | func ordered(_ listID: UUID) -> [TodoItem]
+TodoData.parkDue(_:) | func parkDue(_ item: TodoItem) -> Date?
 TodoData.satisfied(_:for:) | func satisfied(_ blocker: TodoItem, for item: TodoItem) -> Bool
 TodoData.standInDue(_:) | func standInDue(_ item: TodoItem) -> Date?
 TodoData.stopped(_:) | func stopped(_ item: TodoItem) -> Bool
@@ -209,6 +217,7 @@ TodoItem.State.ready | case ready
 TodoItem.State.review | case review
 TodoItem.State.running | case running
 TodoItem.after | var after: [UUID]
+TodoItem.aiHelped | var aiHelped: Int
 TodoItem.askFirst | var askFirst: Bool
 TodoItem.assumptions | var assumptions: [String]
 TodoItem.attachments | var attachments: [TodoAttachment]
@@ -223,10 +232,12 @@ TodoItem.id | var id: UUID
 TodoItem.init(from:) | init(from decoder: any Decoder) throws
 TodoItem.init(listID:title:detail:askFirst:after:originRoom:) | init(listID: UUID, title: String, detail: String = "", askFirst: Bool = false, after: [UUID] = [], originRoom: UUID? = nil)
 TodoItem.interrupted | var interrupted: Bool
+TodoItem.isParked | var isParked: Bool { get }
 TodoItem.lastError | var lastError: String?
 TodoItem.listID | var listID: UUID
 TodoItem.notes | var notes: [TodoNote]
 TodoItem.originRoom | var originRoom: UUID?
+TodoItem.parked | var parked: TodoPark?
 TodoItem.question | var question: TodoQuestion?
 TodoItem.report | var report: TodoReport?
 TodoItem.result | var result: String?
@@ -240,6 +251,7 @@ TodoItem.title | var title: String
 TodoItem.unreported | var unreported: Bool
 TodoItem.updatedAt | var updatedAt: Date
 TodoItem.waitSeconds | var waitSeconds: Double
+TodoItem.wasParked | var wasParked: Bool
 TodoItem.workSeconds | var workSeconds: Double
 TodoItem.workers | var workers: [String]?
 TodoList | struct TodoList
@@ -249,13 +261,11 @@ TodoList.id | var id: UUID
 TodoList.init(from:) | init(from decoder: any Decoder) throws
 TodoList.init(title:project:lock:) | init(title: String, project: ProjectBinding?, lock: EnterpriseLock? = nil)
 TodoList.lock | var lock: EnterpriseLock?
+TodoList.mode | var mode: RunMode
 TodoList.paused | var paused: Bool
 TodoList.project | var project: ProjectBinding?
-TodoList.sequential | var sequential: Bool
-TodoList.standIn | var standIn: Bool
 TodoList.stopAfter | var stopAfter: UUID?
 TodoList.title | var title: String
-TodoList.waitForDone | var waitForDone: Bool
 TodoNote | struct TodoNote
 TodoNote.Kind | enum Kind
 TodoNote.Kind.answer | case answer
@@ -268,6 +278,12 @@ TodoNote.by | var by: String?
 TodoNote.init(from:) | init(from decoder: any Decoder) throws
 TodoNote.kind | var kind: TodoNote.Kind
 TodoNote.text | var text: String
+TodoPark | struct TodoPark
+TodoPark.at | var at: Date
+TodoPark.init(from:) | init(from decoder: any Decoder) throws
+TodoPark.init(questionID:at:reason:) | init(questionID: UUID, at: Date, reason: String)
+TodoPark.questionID | var questionID: UUID
+TodoPark.reason | var reason: String
 TodoPhoto | struct TodoPhoto
 TodoPhoto.file | var file: URL
 TodoPhoto.id | var id: UUID
@@ -361,7 +377,7 @@ TodoStore.requestChanges(_:_:) | func requestChanges(_ id: UUID, _ text: String)
 TodoStore.resume(lists:) | func resume(lists: Set<UUID>? = nil) throws
 TodoStore.saveError | @Published var saveError: String? { get set }
 TodoStore.setAfter(_:_:) | func setAfter(_ id: UUID, _ after: [UUID]) throws
-TodoStore.setList(_:sequential:waitForDone:standIn:accounts:) | func setList(_ listID: UUID, sequential: Bool? = nil, waitForDone: Bool? = nil, standIn: Bool? = nil, accounts: [String]? = nil) throws
+TodoStore.setList(_:mode:accounts:) | func setList(_ listID: UUID, mode: RunMode? = nil, accounts: [String]? = nil) throws
 TodoStore.setReady(_:_:) | func setReady(_ id: UUID, _ ready: Bool) throws
 TodoStore.shared | static var shared: TodoStore
 TodoStore.snapshot | @Published var snapshot: TodoData { get set }

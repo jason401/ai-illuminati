@@ -100,9 +100,9 @@ now = store.current.item(a.id)!
 expect(now.attempts == 1 && now.notes.filter { $0.kind == .retry }.count == 1, "a busy repository does not count: \(now.attempts)")
 expect(chats.events.suffix(1) == ["start TODO: A"] && now.state == .running, "and it is tried again: \(chats.events)")
 
-// The retries run out: the user decides. With "next after my check" B (after it, in order) does not start;
-// without it B would go on (A is passed, B waits for nothing).
-try! store.setList(a.listID, waitForDone: true)
+// The retries run out: the user decides, and B (after it, in order) does not start while A waits (stopOnIssue: no AI
+// steps); parked, A would be passed and B would wait for nothing.
+try! store.setList(a.listID, mode: .stopOnIssue)
 for _ in 0..<TodoScheduler.maxAttempts {
     chats.endings[roomA] = TodoTurnEnd(error: "still down")
     chats.answering.remove(roomA)
@@ -111,15 +111,16 @@ for _ in 0..<TodoScheduler.maxAttempts {
 now = store.current.item(a.id)!
 expect(now.state == .needsYou && now.attempts == TodoScheduler.maxAttempts + 1 && now.question?.reason.contains("still down") == true,
        "after \(TodoScheduler.maxAttempts) retries the user decides: \(now.state) \(now.attempts)")
-expect(!chats.events.contains("start TODO: B") && store.current.item(b.id)?.state == .ready, "B waits while A needs the user, after my check")
+expect(!chats.events.contains("start TODO: B") && store.current.item(b.id)?.state == .ready, "B waits while A needs the user")
 var going = store.current
-going.lists[going.lists.firstIndex { $0.id == a.listID }!].waitForDone = false
-expect(going.blockers(going.item(b.id)!).isEmpty, "without it a question does not hold B")
+let ai = going.items.firstIndex { $0.id == a.id }!
+going.items[ai].parked = TodoPark(questionID: going.items[ai].question!.id, at: Date(), reason: "contract")
+expect(going.blockers(going.item(b.id)!).isEmpty, "a parked question does not hold B")
 
 // The user's answer: ready again with the answer, attempts back to 0. This time A reports while its chat still holds
 // the repository: A waits for the check, B may start, but only after the lock is let go.
 store.answer(a.id, "try once more")
-try! store.setList(a.listID, waitForDone: false)
+try! store.setList(a.listID, mode: .aiThenPark)
 let lock = try! ProjectWork.acquire(WorkspaceBinding(roots: [WorkspaceRoot(path: repo.path, directory: true, writable: true)], level: .execute))
 pump()
 expect(store.current.item(a.id)?.state == .ready && store.current.item(a.id)?.attempts == 0, "the answer makes it ready again")

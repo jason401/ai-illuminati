@@ -163,22 +163,12 @@ struct TodoBoardView: View {
     private func listView(_ list: TodoList) -> some View {
         let rows = store.snapshot.ordered(list.id).filter { draft.showDone || ($0.state != .done && $0.state != .cancelled) }
         return VStack(alignment: .leading, spacing: 6) {
-            // A narrow window puts the order choice on its own line instead of pushing the board wider.
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 10) {
-                    Text(title(list)).font(.system(size: 15, weight: .semibold)).lineLimit(1)
-                    orderControls(list)
-                    Spacer()
-                    pauseControl(list)
-                }
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 10) {
-                        Text(title(list)).font(.system(size: 15, weight: .semibold)).lineLimit(1).truncationMode(.middle)
-                        Spacer(minLength: 6)
-                        pauseControl(list)
-                    }
-                    HStack(spacing: 10) { orderControls(list) }
-                }
+            // One line: a long project name gives way, the mode menu and pause keep their size.
+            HStack(spacing: 10) {
+                Text(title(list)).font(.system(size: 15, weight: .semibold)).lineLimit(1).truncationMode(.middle)
+                modeControl(list)
+                Spacer(minLength: 6)
+                pauseControl(list)
             }
             if let scheduler = TodoScheduler.shared { TodoCrewRow(list: list, scheduler: scheduler, discussion: discussion, error: { draft.error = $0 }) }
             ForEach(Array(rows.enumerated()), id: \.element.id) { index, item in row(item, index: index + 1, list: list) }
@@ -189,22 +179,29 @@ struct TodoBoardView: View {
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.primary.opacity(0.08), lineWidth: 1).allowsHitTesting(false))
     }
 
-    @ViewBuilder private func orderControls(_ list: TodoList) -> some View {
-        Picker("", selection: Binding(get: { list.sequential }, set: { value in act { try store.setList(list.id, sequential: value) } })) {
-            Text(L("순서대로", "In order")).tag(true)
-            Text(L("상관없음", "Any order")).tag(false)
+    // How the list goes on when a TODO waits for the user (RunMode); always in order.
+    static func modeTitle(_ mode: RunMode) -> String {
+        switch mode {
+        case .checkEach: return L("하나씩 내가 확인", "Check each one")
+        case .stopOnIssue: return L("문제 생기면 멈춤", "Stop on issues")
+        case .aiThenPark: return L("AI 판단 후 보류", "AI decides, else park")
+        case .auto: return L("완전 자동", "Fully automatic")
         }
-        .pickerStyle(.segmented).fixedSize()
-        if list.sequential {
-            Toggle(L("내 확인 후 다음", "Next after my check"), isOn: Binding(get: { list.waitForDone }, set: { value in act { try store.setList(list.id, waitForDone: value) } }))
-                .toggleStyle(.checkbox).font(.system(size: 12)).fixedSize()
-                .help(L("켜면 앞 TODO에 [완료]를 눌러야 다음이 시작돼요. 끄면 앞 TODO가 확인 대기나 질문 대기가 될 때 시작해요.",
-                        "On: the next starts after you press Done. Off: it starts when the previous one waits for your check or answer."))
+    }
+    static func modeHelp(_ mode: RunMode) -> String {
+        switch mode {
+        case .checkEach: return L("결과 확인·질문·실패 모두 내가 처리해야 다음 TODO가 시작돼요. AI가 대신 답하지 않아요.", "The next TODO starts only after you check each result and answer each question or failure. No AI answers for you.")
+        case .stopOnIssue: return L("결과는 확인 대기로 두고 다음으로 넘어가요. 질문이나 실패는 내가 답할 때까지 멈춰요.", "Results wait for your check while the next one starts; a question or failure stops the list until you answer.")
+        case .aiThenPark: return L("질문·실패는 멈추고 15분 뒤 다른 AI가 답이나 해결책을 줘요. 안 되면(거절, 30분 경과, 도움 뒤 또 막힘) 보류하고 다음으로 가요.", "A question or failure stops the list; after 15 minutes another AI answers or proposes a fix. Otherwise (declined, 30 minutes, stuck again) it is parked and the next one goes on.")
+        case .auto: return L("실패는 바로 보류하고 다음으로 가요. 질문은 15분 뒤 다른 AI가 답하고, 30분 뒤 AI에게 판단을 맡기고, 그래도 막히면 보류해요.", "A failure is parked at once and the next one goes on. A question gets another AI at 15 minutes, the AI's own call at 30, and is parked if still stuck.")
         }
-        Toggle(L("답 없으면 AI가 알아서", "AI goes on without me"), isOn: Binding(get: { list.standIn }, set: { value in act { try store.setList(list.id, standIn: value) } }))
-            .toggleStyle(.checkbox).font(.system(size: 12)).fixedSize()
-            .help(L("질문에 15분 동안 답이 없으면 물어본 AI와 다른 AI가 프로젝트를 읽고 대신 답하고, 30분이 지나도 멈춰 있으면 AI에게 판단을 맡겨 알아서 진행해요(질문마다 한 번씩, 위임 뒤 또 물으면 추천안으로 한 번 더, 그다음엔 너를 기다려요). push·배포·삭제·계정·돈이 걸린 단계는 하지 않고 그 직전에 확인을 받아요. 실패·보고 없음은 너를 기다려요.",
-                    "A question unanswered for 15 minutes is answered by another AI than the one that asked, after reading the project; still waiting after 30 minutes, the AI is told to decide and go on (once per question; asked again after that, the recommended answer goes on once, then it waits for you). Steps that push, publish, delete, touch accounts or spend money are left for your check. Failures and missing reports wait for you."))
+    }
+    private func modeControl(_ list: TodoList) -> some View {
+        Picker("", selection: Binding(get: { list.mode }, set: { value in act { try store.setList(list.id, mode: value); TodoScheduler.shared?.wake() } })) {
+            ForEach(RunMode.allCases, id: \.self) { mode in Text(Self.modeTitle(mode)).tag(mode).help(Self.modeHelp(mode)) }
+        }
+        .pickerStyle(.menu).labelsHidden().fixedSize().font(.system(size: 12))
+        .help(Self.modeHelp(list.mode))
     }
 
     // ⏸ Pause / Resume for one list, with what holds it: paused now, or going on only up to a TODO.
@@ -242,7 +239,7 @@ struct TodoBoardView: View {
                         }
                         return provider
                     }
-                Text(list.sequential ? "\(index). " + item.title : item.title).font(.system(size: 13, weight: .medium))
+                Text("\(index). " + item.title).font(.system(size: 13, weight: .medium))
                     .foregroundColor(item.state == .draft ? .secondary : .primary).lineLimit(2)
                 Spacer(minLength: 6)
                 if item.state == .ready, !waits.isEmpty {
@@ -729,6 +726,16 @@ struct TodoCard: View {
     let item: TodoItem
     private var question: TodoQuestion? { item.question }
     static func time(_ date: Date) -> String { date.formatted(date: .omitted, time: .shortened) }
+    // What happens next to a TODO waiting for the user, by its list's mode: another AI, the delegation, parking.
+    static func steps(_ item: TodoItem, _ data: TodoData) -> [(at: Date, what: String)]? {
+        let steps = [data.standInDue(item).map { ($0, L("AI 판단", "an AI decides")) }, data.autoAnswerDue(item).map { ($0, L("위임", "handed to the AI")) },
+                     data.parkDue(item).map { ($0, L("보류", "parked")) }].compactMap { $0 }.sorted { $0.0 < $1.0 }
+        return steps.isEmpty ? nil : steps.map { (at: $0.0, what: $0.1) }
+    }
+    static func left(_ at: Date, from now: Date) -> String {
+        let m = Int((at.timeIntervalSince(now) / 60).rounded(.up))
+        return m <= 0 ? L("곧", "soon:") : L("\(m)분 뒤", "in \(m) min:")
+    }
     @ObservedObject var discussion: Discussion
     var compact = false
     @ObservedObject private var draft = TodoDraft.shared
@@ -815,14 +822,17 @@ struct TodoCard: View {
                 Text(question.reason).font(.system(size: 12)).textSelection(.enabled)
                 if stand.on {
                     Text(L("다른 AI가 네 대신 답하는 중이에요. 지금 답하면 그 답은 버려요.", "Another AI is answering for you. Answer now and its answer is dropped.")).font(.system(size: 11)).foregroundColor(.secondary)
-                } else if let auto = TodoStore.shared.snapshot.autoAnswerDue(item) {
-                    let stand = TodoStore.shared.snapshot.standInDue(item)
-                    if let note = item.notes.last, note.kind == .system, note.by != nil, stand == nil {
+                } else if item.isParked {
+                    Text(L("⏸ 보류됨 · 답하면 다시 진행", "⏸ Parked · answer to go on")).font(.system(size: 11, weight: .medium)).foregroundColor(.orange)
+                    if let reason = item.parked?.reason { Text(reason).font(.system(size: 11)).foregroundColor(.secondary) }
+                } else if let steps = Self.steps(item, TodoStore.shared.snapshot) {
+                    if let note = item.notes.last, note.kind == .system, note.by != nil, TodoStore.shared.snapshot.standInDue(item) == nil {
                         Text(note.text).font(.system(size: 11)).foregroundColor(.secondary)
                     }
-                    Text((stand.map { L("\(Self.time($0)) 다른 AI가 대신 답 · ", "\(Self.time($0)) another AI answers · ") } ?? "")
-                         + L("\(Self.time(auto)) 알아서 진행 (그 전에 답하면 네 답대로)", "\(Self.time(auto)) it goes on by itself (unless you answer first)"))
-                        .font(.system(size: 11)).foregroundColor(.secondary)
+                    TimelineView(.periodic(from: .now, by: 30)) { context in
+                        Text(steps.map { Self.left($0.at, from: context.date) + " " + $0.what }.joined(separator: " · ") + L(" (그 전에 답하면 네 답대로)", " (unless you answer first)"))
+                            .font(.system(size: 11)).foregroundColor(.secondary)
+                    }
                 } else if let note = item.notes.last, note.kind == .system, note.by != nil {
                     Text(note.text).font(.system(size: 11)).foregroundColor(.secondary)
                 }

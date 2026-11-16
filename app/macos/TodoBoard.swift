@@ -224,7 +224,9 @@ struct TodoBoardView: View {
 
     private func row(_ item: TodoItem, index: Int, list: TodoList) -> some View {
         let data = store.snapshot
-        let waits = data.blockers(item).compactMap(data.item).filter { !data.satisfied($0, for: item) && $0.state != .cancelled }
+        // Once each: a link to the TODO just above is also the order's wait.
+        let waits = data.blockers(item).reduce(into: [UUID]()) { if !$0.contains($1) { $0.append($1) } }
+            .compactMap(data.item).filter { !data.satisfied($0, for: item) && $0.state != .cancelled }
         let editing = draft.editing == item.id && TodoStore.editable(item)
         return VStack(alignment: .leading, spacing: 4) {
             if editing { editor(item) } else {
@@ -243,11 +245,16 @@ struct TodoBoardView: View {
                     .foregroundColor(item.state == .draft ? .secondary : .primary).lineLimit(2)
                 Spacer(minLength: 6)
                 if item.state == .ready, !waits.isEmpty {
+                    let linked = waits.filter { item.after.contains($0.id) }, above = waits.filter { !item.after.contains($0.id) }
                     Label(waits.map(\.title).joined(separator: ", ") + L(" 기다림", " first"), systemImage: "hourglass").font(.system(size: 11)).foregroundColor(.secondary).lineLimit(1)
+                        .help(([linked.isEmpty ? nil : L("직접 건 링크: ", "Linked by you: ") + linked.map(\.title).joined(separator: ", "),
+                                above.isEmpty ? nil : L("위 TODO가 끝나길 기다려요(순서대로): ", "Waits for the TODO above (in order): ") + above.map(\.title).joined(separator: ", ")] as [String?])
+                                .compactMap { $0 }.joined(separator: "\n"))
                 }
                 if let retry = TodoScheduler.retrying(item) {
                     Label(retry.label, systemImage: "arrow.clockwise").font(.system(size: 11)).foregroundColor(.orange).lineLimit(1).help(retry.why)
                 }
+                if !item.after.isEmpty { linkDropdown(item) }
                 let status = item.state.title + (item.state == .running ? runner(item) : "") + (item.state == .ready && data.stopped(item) ? L(" · 멈춤", " · paused") : "")
                 if item.state == .draft || item.state == .ready {
                     // One click: draft ↔ ready (the ⋯ menu has the same).
@@ -282,13 +289,7 @@ struct TodoBoardView: View {
                     if TodoStore.editable(item) { Button(L("고치기…", "Edit…")) { draft.beginEdit(item) } }
                     Button(L("위로", "Move up")) { act { try store.move(item.id, by: -1) } }
                     Button(L("아래로", "Move down")) { act { try store.move(item.id, by: 1) } }
-                    Menu(L("먼저 끝나야 할 TODO", "Must finish first")) {
-                        ForEach(data.items.filter { $0.id != item.id && $0.state != .cancelled }) { other in
-                            Button((item.after.contains(other.id) ? "✓ " : "") + other.title) {
-                                act { try store.setAfter(item.id, item.after.contains(other.id) ? item.after.filter { $0 != other.id } : item.after + [other.id]) }
-                            }
-                        }
-                    }
+                    Menu(L("먼저 끝나야 할 TODO", "Must finish first")) { linkItems(item) }
                     if item.state != .running && item.state != .done && item.state != .cancelled {
                         Button(L("사진·파일 첨부…", "Attach photos or files…")) { let urls = Self.chooseFiles(); if !urls.isEmpty { act { try store.attach(item.id, files: urls) } } }
                     }
@@ -386,6 +387,49 @@ struct TodoBoardView: View {
         .onExitCommand { draft.endEdit() }
     }
 
+    // The list a new TODO for `root` goes to (nil until its first TODO).
+    private func boardList(_ root: String) -> TodoList? { store.snapshot.lists.first { $0.project?.root == root } }
+
+    // One "must finish first" line: ✓ when linked, the board's number, and why it no longer holds one back.
+    private func linkLine(_ choice: (item: TodoItem, number: Int?), linked: Bool, for item: TodoItem?) -> String {
+        let other = choice.item, data = store.snapshot
+        let state: String
+        switch other.state {
+        case .done: state = L(" · 완료", " · done")
+        case .cancelled: state = L(" · 취소됨", " · cancelled")
+        case .review where data.satisfied(other, for: item ?? other): state = L(" · 확인 대기 (통과)", " · waiting for check (passed)")
+        default: state = item.map { other.listID != $0.listID } == true ? L(" · 다른 목록", " · other list") : ""
+        }
+        return (linked ? "✓ " : "") + (choice.number.map { "\($0). " } ?? "") + other.title + state
+    }
+
+    // The ⋯ menu's "must finish first" items and the row's dropdown: the same list. Links change only while the AI has not
+    // taken the TODO (draft or ready); otherwise they are shown only.
+    @ViewBuilder private func linkItems(_ item: TodoItem) -> some View {
+        let open = item.state == .draft || item.state == .ready
+        ForEach(store.snapshot.linkChoices(item.listID, except: item.id, linked: item.after, showingDone: draft.showDone), id: \.item.id) { choice in
+            let on = item.after.contains(choice.item.id)
+            Button(linkLine(choice, linked: on, for: item)) {
+                act { try store.setAfter(item.id, on ? item.after.filter { $0 != choice.item.id } : item.after + [choice.item.id]) }
+            }
+            .disabled(!open)
+        }
+    }
+
+    // [먼저: n ▾] left of the state chip, only with links the user set (more are added from ⋯). Fixed size, so the title
+    // keeps its room; dimmed once none of them holds the TODO back any more.
+    private func linkDropdown(_ item: TodoItem) -> some View {
+        let data = store.snapshot
+        let linked = item.after.compactMap(data.item)
+        let holding = linked.filter { !data.satisfied($0, for: item) }
+        return Menu { linkItems(item) } label: {
+            Text(L("먼저: \(linked.count)개", "First: \(linked.count)")).font(.system(size: 12)).foregroundColor(holding.isEmpty ? .secondary : .primary)
+        }
+        .menuStyle(.borderlessButton).fixedSize()
+        .help(L("직접 건 링크 (먼저 끝나야 할 TODO): ", "Linked by you (must finish first): ") + linked.map(\.title).joined(separator: ", ")
+              + (holding.isEmpty ? L(" · 모두 통과", " · all passed") : ""))
+    }
+
     private func runner(_ item: TodoItem) -> String {
         guard let room = item.room, let lead = discussion.conversation(room).configuration?.leadID,
               let account = discussion.model.accounts.first(where: { $0.id == lead }) else { return "" }
@@ -396,7 +440,11 @@ struct TodoBoardView: View {
     @ViewBuilder private func projectPicker(_ options: [(name: String, binding: ProjectBinding)], _ root: String) -> some View {
         // One project's board: its only root needs no picking.
         if discussion.boardProject == nil || options.count > 1 {
-            Picker(L("프로젝트", "Project"), selection: Binding(get: { root }, set: { draft.projectRoot = $0 })) {
+            Picker(L("프로젝트", "Project"), selection: Binding(get: { root }, set: { value in
+                // Links are within one list: ones to the old project's TODOs go.
+                let mine = Set(store.snapshot.ordered(boardList(value)?.id ?? UUID()).map(\.id))
+                draft.projectRoot = value; draft.after = draft.after.filter(mine.contains)
+            })) {
                 ForEach(options, id: \.binding.root) { option in
                     Text(SidebarProjects.pickerName(option, among: options, board: discussion.boardProject)).tag(option.binding.root)
                 }
@@ -405,13 +453,16 @@ struct TodoBoardView: View {
         }
     }
 
-    @ViewBuilder private var fileAndOrder: some View {
+    @ViewBuilder private func fileAndOrder(_ root: String) -> some View {
         Button(action: { addDraftFiles(Self.chooseFiles()) }) { Label(L("첨부", "Attach"), systemImage: "paperclip") }
             .help(L("사진이나 파일을 첨부해요 (여기나 TODO 줄 위에 끌어다 놓아도 돼요 · 사진 앱·스크린샷도)", "Attach photos or files (or drop them here or on a TODO, also from Photos or a screenshot)"))
             .fixedSize()
         Menu(draft.after.isEmpty ? L("먼저 끝나야 할 TODO", "Must finish first") : L("먼저: \(draft.after.count)개", "First: \(draft.after.count)")) {
-            ForEach(store.snapshot.items.filter { $0.state != .done && $0.state != .cancelled }) { other in
-                Button((draft.after.contains(other.id) ? "✓ " : "") + other.title) { if draft.after.contains(other.id) { draft.after.remove(other.id) } else { draft.after.insert(other.id) } }
+            let data = store.snapshot
+            ForEach(data.linkChoices(boardList(root)?.id, except: nil, linked: Array(draft.after), showingDone: draft.showDone), id: \.item.id) { choice in
+                Button(linkLine(choice, linked: draft.after.contains(choice.item.id), for: nil)) {
+                    if draft.after.contains(choice.item.id) { draft.after.remove(choice.item.id) } else { draft.after.insert(choice.item.id) }
+                }
             }
         }
         .fixedSize()
@@ -441,14 +492,14 @@ struct TodoBoardView: View {
             }
             // All in one line when it fits, else the project on its own line, then the choices over two lines.
             ViewThatFits(in: .horizontal) {
-                HStack(spacing: 10) { projectPicker(options, root); fileAndOrder; askAndAdd(root) }
+                HStack(spacing: 10) { projectPicker(options, root); fileAndOrder(root); askAndAdd(root) }
                 VStack(alignment: .leading, spacing: 8) {
                     projectPicker(options, root)
-                    HStack(spacing: 10) { fileAndOrder; askAndAdd(root) }
+                    HStack(spacing: 10) { fileAndOrder(root); askAndAdd(root) }
                 }
                 VStack(alignment: .leading, spacing: 8) {
                     projectPicker(options, root)
-                    HStack(spacing: 10) { fileAndOrder }
+                    HStack(spacing: 10) { fileAndOrder(root) }
                     HStack(spacing: 10) { askAndAdd(root) }
                 }
             }
@@ -497,7 +548,7 @@ struct TodoBoardView: View {
             ?? discussion.conversations.first { $0.workspace?.project.map(SidebarProjects.key) == SidebarProjects.key(project.binding) && $0.enterpriseLock != nil }?.enterpriseLock
         act {
             try store.add(title: text, detail: draft.detail.trimmingCharacters(in: .whitespacesAndNewlines), files: draft.files.map(\.url), project: project.binding, projectName: project.name,
-                          after: Array(draft.after), askFirst: draft.askFirst, originRoom: origin, lock: lock)
+                          after: Array(draft.after.filter { store.snapshot.item($0)?.listID == boardList(root)?.id }), askFirst: draft.askFirst, originRoom: origin, lock: lock)
             draft.title = ""; draft.detail = ""; draft.files = []; draft.after = []
             for folder in draft.dropFolders { try? FileManager.default.removeItem(at: folder) }
             draft.dropFolders = []

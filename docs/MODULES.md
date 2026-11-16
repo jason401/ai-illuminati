@@ -483,7 +483,7 @@ Public names and why (everything else stays internal: `ProjectError`, `ProjectTo
 `RunTimings`, `TodoStore.encoder`/`decoder`/`copyIn`, `TodoData.eligible`/`hasCycle`, `TodoScheduler.begin`/`settle`/
 `deliver`/`retryDelay`/`chats`/`standIn()`/`standInBrief`/`standInAnswer`, `TodoStore.standIn`, the tools' schemas and scopes):
 - Saved values the board, the chats and the tools show (the save format above): `TodoItem` (its stored fields, `State`,
-  `timeLine`), `TodoList`, `TodoData` (`item`, `list`, `ordered`, `blockers`, `satisfied`, `stopped`, `workers`, `standInDue` for the card's
+  `timeLine`), `TodoList`, `TodoData` (`item`, `list`, `ordered`, `blockers`, `satisfied`, `linkChoices` for the board's "must finish first" menus, `stopped`, `workers`, `standInDue` for the card's
   "an AI decides in n min" step, `autoAnswerDue` for its "handed to the AI in n min" step, `parkDue` for its "parked in n min" step,
   `mode(_:)` for a TODO's list mode),
   `RunMode` and `TodoList.mode` (the board's mode menu, saved), `TodoPark` and `TodoItem.parked`/`isParked`/`aiHelped`/`wasParked`

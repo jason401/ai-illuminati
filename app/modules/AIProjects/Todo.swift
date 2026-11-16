@@ -357,6 +357,20 @@ public struct TodoData: Codable, Equatable {
         blocker.state == .done || (blocker.state == .review && (list(item.listID)?.mode ?? .aiThenPark) != .checkEach)
     }
     public func mode(_ item: TodoItem) -> RunMode { list(item.listID)?.mode ?? .aiThenPark }
+    // What a TODO (`except`; nil for a new one) may be linked to wait for: the unfinished TODOs of its list in board order, then
+    // the ones already `linked` (kept even when done, cancelled or of another list, so they can be taken off). `number` is the
+    // board's: done and cancelled ones are counted only when the board shows them; nil for one the board does not show there.
+    public func linkChoices(_ listID: UUID?, except: UUID?, linked: [UUID], showingDone: Bool) -> [(item: TodoItem, number: Int?)] {
+        let open = { (t: TodoItem) in t.state != .done && t.state != .cancelled }
+        var choices: [(item: TodoItem, number: Int?)] = [], n = 0
+        for t in listID.map(ordered) ?? [] {
+            let shown = showingDone || open(t)
+            if shown { n += 1 }
+            if t.id != except, open(t) || linked.contains(t.id) { choices.append((t, shown ? n : nil)) }
+        }
+        let rest = linked.filter { id in id != except && !choices.contains { $0.item.id == id } }.compactMap(item)
+        return choices + rest.map { ($0, nil) }
+    }
     // The steps for a TODO waiting for the user, by its list's mode, timed from when it came (stateSince, saved, so a
     // restart keeps them): another AI answers in the user's place after standInDelay (15 min); then aiThenPark parks it
     // after parkDelay (30 min), auto hands the decision to the AI after autoAnswerDelay (30 min: TodoScheduler.delegateAnswer).

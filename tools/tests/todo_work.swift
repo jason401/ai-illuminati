@@ -608,6 +608,18 @@ func testTodoMixedOrder() {
     do { try store.setAfter(a.id, [c.id]); expect(false, "A after C while C waits for A is a circle") } catch { expect(error as? TodoError == .cycle, "the circle error") }
     expect(store.current.item(a.id)?.after.isEmpty == true, "a refused circle changes nothing")
 
+    // Link choices: the list's unfinished TODOs in board order with the board's numbers; linked ones always (to take off).
+    func choices(_ id: UUID?, linked: [UUID], all: Bool = false) -> [String] {
+        store.current.linkChoices(list, except: id, linked: linked, showingDone: all).map { ($0.number.map(String.init) ?? "-") + $0.item.title }
+    }
+    expect(choices(c.id, linked: []) == ["1A", "2B"], "A (review) and B (draft) of the same list, not C or elsewhere: \(choices(c.id, linked: []))")
+    expect(choices(nil, linked: []) == ["1A", "2B", "3C"], "a new TODO: every open one: \(choices(nil, linked: []))")
+    try! store.change(a.id) { $0.state = .done }
+    expect(choices(c.id, linked: []) == ["1B"], "done A gone, B renumbered as the board shows it: \(choices(c.id, linked: []))")
+    expect(choices(c.id, linked: [a.id, elsewhere.id]) == ["-A", "1B", "-elsewhere"], "linked done A and another list's TODO stay: \(choices(c.id, linked: [a.id, elsewhere.id]))")
+    expect(choices(c.id, linked: [a.id], all: true) == ["1A", "2B"], "with done ones shown, A has its number: \(choices(c.id, linked: [a.id], all: true))")
+    try! store.change(a.id) { $0.state = .review }
+
     // move(_:before:): in front of a TODO, to the end, a running one too, never into another list.
     try! store.move(c.id, before: a.id)
     expect(order() == [c.id, a.id, b.id], "in front of A: \(order())")

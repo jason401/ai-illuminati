@@ -198,6 +198,7 @@ TodoData.init() | init()
 TodoData.init(from:) | init(from decoder: any Decoder) throws
 TodoData.item(_:) | func item(_ id: UUID) -> TodoItem?
 TodoData.items | var items: [TodoItem]
+TodoData.linkChoices(_:except:linked:showingDone:) | func linkChoices(_ listID: UUID?, except: UUID?, linked: [UUID], showingDone: Bool) -> [(item: TodoItem, number: Int?)]
 TodoData.lists | var lists: [TodoList]
 TodoData.mode(_:) | func mode(_ item: TodoItem) -> RunMode
 TodoData.ordered(_:) | func ordered(_ listID: UUID) -> [TodoItem]

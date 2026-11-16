@@ -913,9 +913,6 @@ struct AccountsSettingsTab: View {
                     AccountRow(model: model, account: account, naming: naming)
                         .padding(.horizontal, 10).padding(.vertical, 6)
                         .contentShape(Rectangle())
-                        // Clicking another row ends the edit; off otherwise so the row's controls get every click.
-                        .gesture(TapGesture().onEnded { naming.id = nil },
-                                 including: naming.id != nil && naming.id != account.id ? .all : .subviews)
                         .onDrag {
                             model.draggingAccount = account.id
                             return NSItemProvider(object: account.id as NSString)
@@ -1980,7 +1977,33 @@ private struct MCPToolsSheet: View {
 }
 
 // (An ObservableObject, not @State: see DriveUI.swift.)
-private final class NameEditing: ObservableObject { @Published var id: String? }
+// While a name is edited, any click outside its field ends the edit (macOS keeps the caret when empty
+// background is clicked). The click itself goes on, so another row's menus and buttons still work.
+private final class NameEditing: ObservableObject {
+    @Published var id: String? {
+        didSet {
+            guard (id == nil) != (monitor == nil) else { return }
+            if let monitor { NSEvent.removeMonitor(monitor); self.monitor = nil; return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+                self?.clicked(event)
+                return event
+            }
+        }
+    }
+    private var monitor: Any?
+
+    private func clicked(_ event: NSEvent) {
+        guard let window = event.window else { return }
+        if let editor = window.firstResponder as? NSTextView, editor.isFieldEditor,
+           let field = editor.delegate as? NSView,
+           field.bounds.contains(field.convert(event.locationInWindow, from: nil)) { return }
+        // Before the click is handled: a click on another name still opens that one.
+        window.makeFirstResponder(nil)
+        id = nil
+    }
+
+    deinit { if let monitor { NSEvent.removeMonitor(monitor) } }
+}
 
 private struct AccountRow: View {
     @ObservedObject var model: AppModel
@@ -2003,29 +2026,28 @@ private struct AccountRow: View {
                         .onExitCommand { naming.id = nil }
                         .onChange(of: nameFocused) { focused in if !focused && naming.id == account.id { naming.id = nil } }
                 } else {
-                    HStack(spacing: 6) {
-                        Text(name.isEmpty ? L("이름", "Name") : name)
-                            .foregroundStyle(name.isEmpty ? .secondary : .primary)
-                            .lineLimit(1).truncationMode(.tail)
-                            .help(L("눌러서 이름 바꾸기", "Click to rename"))
-                        // Only Enterprise accounts get a mark; the switch itself sits in the ⋯ menu.
-                        if isSchool {
-                            Text(L("엔터프라이즈", "Enterprise"))
-                                .font(.system(size: 9, weight: .medium)).foregroundStyle(Color.accentColor)
-                                .padding(.horizontal, 5).padding(.vertical, 1)
-                                .background(Capsule().fill(Color.accentColor.opacity(0.18)))
-                                .fixedSize()
-                                .help(enterpriseHelp)
-                        }
-                        Spacer(minLength: 0)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    Text(name.isEmpty ? L("이름", "Name") : name)
+                        .foregroundStyle(name.isEmpty ? .secondary : .primary)
+                        .lineLimit(1).truncationMode(.tail)
+                        .help(L("눌러서 이름 바꾸기", "Click to rename"))
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
                     .onTapGesture { naming.id = account.id }
                 }
                 HStack(spacing: 4) {
                     status
                     Text(account.provider.title).foregroundStyle(.secondary)
+                    // Only Enterprise accounts get a mark, here so the name keeps the whole first line;
+                    // the switch itself sits in the ⋯ menu.
+                    if isSchool {
+                        Text(L("엔터프라이즈", "Enterprise"))
+                            .font(.system(size: 9, weight: .medium)).foregroundStyle(Color.accentColor)
+                            .padding(.horizontal, 5).padding(.vertical, 1)
+                            .background(Capsule().fill(Color.accentColor.opacity(0.18)))
+                            .fixedSize()
+                            .help(enterpriseHelp)
+                            .padding(.leading, 2)
+                    }
                     if account.provider == .ollama {
                         Text("·").foregroundStyle(.secondary)
                         // How long the model stays in memory after a reply (closing the chat window unloads it anyway).

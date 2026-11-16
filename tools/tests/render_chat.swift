@@ -76,6 +76,8 @@ private struct EmptyPreviewLogin: GoogleTokenStore {
             // The sidebar by project: a repository with a chat, its meeting and a TODO chat; a folded one; a plain chat.
             let repo = ProjectBinding(root: "/tmp/preview/AI Illuminati", common: "/tmp/preview/AI Illuminati/.git", remote: "origin", remoteURL: "")
             let face = ProjectBinding(root: "/tmp/preview/AI Face", common: "/tmp/preview/AI Face/.git", remote: "origin", remoteURL: "")
+            // A documents project (no Git): its folder has no branch badge.
+            let papers = ProjectBinding(root: "/tmp/preview/Papers", common: "/tmp/preview/Papers", remote: "", remoteURL: "", kind: ProjectBinding.documentsKind)
             func linked(_ title: String, _ project: ProjectBinding) -> Conversation {
                 var c = Conversation(); c.title = title; c.turns = [ChatTurn(question: title)]
                 c.workspace = WorkspaceBinding(roots: [WorkspaceRoot(path: project.root, directory: true, writable: true)], project: project)
@@ -89,7 +91,7 @@ private struct EmptyPreviewLogin: GoogleTokenStore {
             let item = try? TodoStore.shared.add(title: "Drag and drop PDFs", project: repo, projectName: "AI Illuminati")
             if let item { try? TodoStore.shared.change(item.id) { $0.room = todoRoom.id; $0.state = .review } }
             var notes = Conversation(); notes.title = "Todo list structure idea"; notes.turns = [ChatTurn(question: "ideas")]; notes.pinned = true
-            chat.conversations = [conversation, meeting, todoRoom, linked("Face expressions", face), notes]
+            chat.conversations = [conversation, meeting, todoRoom, linked("Face expressions", face), linked("Lamb wave draft", papers), notes]
             SidebarFold.shared.toggle("project." + face.common)
             // --working: two chats answering (one stopping) listed under Search.
             if CommandLine.arguments.contains("--working") {

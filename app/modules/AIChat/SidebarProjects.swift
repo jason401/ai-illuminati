@@ -27,6 +27,9 @@ public struct ProjectGroup: Identifiable, Equatable {
 public enum SidebarProjects {
     public static func key(_ project: ProjectBinding) -> String { project.groupKey }
 
+    // A Git project (code), not a documents or folderless one: its folder gets the branch badge.
+    static func isGit(_ group: ProjectGroup) -> Bool { group.bindings.contains { !$0.isDocuments } }
+
     // "AI Illuminati" for …/AI Illuminati/.git, else the root's folder name.
     static func folderName(_ project: ProjectBinding) -> String {
         if project.isFolderless { return L("새 프로젝트", "New project") }

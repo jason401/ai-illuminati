@@ -398,6 +398,10 @@ func testSidebarProjects() {
     let repo = grouped.projects.first { $0.id == common }
     expect(grouped.projects.map(\.id) == ["/tmp/side-other/.git", common, "/tmp/side-quiet/.git"],
            "folders by repository, newest first; a project with only TODOs still has one: \(grouped.projects.map(\.id))")
+    expect(repo.map(SidebarProjects.isGit) == true, "a Git project's folder gets the branch badge")
+    let docs = ProjectBinding(root: "/tmp/side-docs", common: "/tmp/side-docs", remote: "", remoteURL: "", kind: ProjectBinding.documentsKind)
+    let docsGroup = SidebarProjects.group([chat("docs", docs, minutes: 4)], todo: TodoData(), pinned: []).projects.first
+    expect(docsGroup.map(SidebarProjects.isGit) == false, "a documents project's folder has no branch badge")
     expect(repo?.chats.map(\.title) == ["A", "B"] && repo?.todoRooms.map(\.title) == ["TODO · fix"] && repo?.name == "Main repo"
            && repo?.bindings.map(\.root) == ["/tmp/side-repo-wt", "/tmp/side-repo"] && repo?.lists.count == 1,
            "worktrees share the folder (each root kept), the pinned chat on top, the TODO chat apart: \(String(describing: repo))")

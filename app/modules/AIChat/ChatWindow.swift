@@ -479,7 +479,7 @@ struct ChatView<Model: ChatSettings>: View {
             }
             .buttonStyle(.plainHit).padding(.leading, -6).padding(.trailing, -6)
             .help(open ? L("접기", "Fold") : L("펼치기", "Unfold"))
-            Image(systemName: open ? "folder" : "folder.fill").font(.system(size: 12)).foregroundColor(.secondary).frame(width: 16)
+            ProjectFolderIcon(open: open, git: SidebarProjects.isGit(group))
             // A chat of it answering: a ring right after the name (the name shortens first, the ring stays),
             // in the answering AI's color, or a neutral one when AIs of different kinds answer.
             HStack(spacing: 5) {
@@ -3660,5 +3660,48 @@ public enum AIColors {
 
     static func dynamic(_ dark: NSColor, _ light: NSColor) -> NSColor {
         NSColor(name: nil) { appearance in appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light }
+    }
+}
+
+// A project's folder in the sidebar: outlined when unfolded, filled when folded. A Git project adds a small gray
+// branch badge at its bottom right; the folder is cut out around it (transparent, so it reads on any row background).
+struct ProjectFolderIcon: View {
+    let open: Bool
+    let git: Bool
+    var body: some View {
+        let folder = Image(systemName: open ? "folder" : "folder.fill").font(.system(size: 12)).frame(width: 16, height: 16)
+        Group {
+            if git {
+                ZStack {
+                    folder.mask(ZStack {
+                        Rectangle()
+                        Circle().frame(width: 11, height: 11).offset(x: 5, y: 4).blendMode(.destinationOut)
+                    }.compositingGroup())
+                    GitBranchGlyph().frame(width: 8, height: 9).offset(x: 5, y: 4)
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(L("Git 저장소", "Git repository"))
+                .help(L("Git 저장소", "Git repository"))
+            } else {
+                folder
+            }
+        }
+        .foregroundColor(.secondary).frame(width: 16)
+    }
+}
+
+// Drawn rather than arrow.triangle.branch: at 8 pt that symbol reads as an arrowed Y. A trunk with a branch joining
+// it and filled dots (open rings would close up at this size).
+struct GitBranchGlyph: View {
+    var body: some View {
+        Canvas { context, size in
+            let w = size.width, h = size.height, r = w * 0.17
+            let trunk = CGPoint(x: w * 0.25, y: r), base = CGPoint(x: w * 0.25, y: h - r), tip = CGPoint(x: w - r, y: h * 0.3)
+            var lines = Path()
+            lines.move(to: trunk); lines.addLine(to: base)
+            lines.move(to: tip); lines.addQuadCurve(to: CGPoint(x: trunk.x, y: h * 0.72), control: CGPoint(x: tip.x, y: h * 0.62))
+            context.stroke(lines, with: .foreground, lineWidth: w * 0.14)
+            for p in [trunk, base, tip] { context.fill(Path(ellipseIn: CGRect(x: p.x - r, y: p.y - r, width: 2 * r, height: 2 * r)), with: .foreground) }
+        }
     }
 }

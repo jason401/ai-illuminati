@@ -1,6 +1,7 @@
 {
   "version": 1,
   "commands": {
+    "test-todo-board": {"executable": "/bin/zsh", "args": ["tools/tests/run_mode2.sh", "--affected", "app/macos/TodoBoard.swift"]},
     "test": {"executable": "/bin/zsh", "args": ["tools/tests/run_mode2.sh"]},
     "build": {"executable": "/bin/zsh", "args": ["tools/build_app.sh", "--stage"]},
     "validate-app-modules": {"executable": "/usr/bin/python3", "args": ["-B", "tools/tests/validate_app_modules.py"]},

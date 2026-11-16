@@ -872,6 +872,8 @@ enum DataFolders {
 
 struct AccountsSettingsTab: View {
     @ObservedObject var model: AppModel
+    // The one name being edited; names are plain text otherwise, so no stray caret shows.
+    @StateObject private var naming = NameEditing()
 
     var body: some View {
         SettingsPage { manage }
@@ -902,9 +904,12 @@ struct AccountsSettingsTab: View {
                 }
                 ForEach(model.accounts, id: \.id) { account in
                     if account.id != model.accounts.first?.id { Divider() }
-                    AccountRow(model: model, account: account)
+                    AccountRow(model: model, account: account, naming: naming)
                         .padding(.horizontal, 10).padding(.vertical, 6)
                         .contentShape(Rectangle())
+                        // Clicking another row ends the edit; off otherwise so the row's controls get every click.
+                        .gesture(TapGesture().onEnded { naming.id = nil },
+                                 including: naming.id != nil && naming.id != account.id ? .all : .subviews)
                         .onDrag {
                             model.draggingAccount = account.id
                             return NSItemProvider(object: account.id as NSString)
@@ -1968,18 +1973,37 @@ private struct MCPToolsSheet: View {
     }
 }
 
+// (An ObservableObject, not @State: see DriveUI.swift.)
+private final class NameEditing: ObservableObject { @Published var id: String? }
+
 private struct AccountRow: View {
     @ObservedObject var model: AppModel
     let account: Account
+    @ObservedObject var naming: NameEditing
+    @FocusState private var nameFocused: Bool
+
+    private var name: String { model.accounts.first { $0.id == account.id }?.name ?? "" }
 
     var body: some View {
         HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 1) {
-                TextField(L("이름", "Name"), text: Binding(
-                    get: { model.accounts.first { $0.id == account.id }?.name ?? "" },
-                    set: { model.rename(account.id, to: $0) }))
-                    .textFieldStyle(.plain)
-                    .labelsHidden()
+                if naming.id == account.id {
+                    TextField(L("이름", "Name"), text: Binding(get: { name }, set: { model.rename(account.id, to: $0) }))
+                        .textFieldStyle(.plain)
+                        .labelsHidden()
+                        .focused($nameFocused)
+                        .onAppear { nameFocused = true }
+                        .onSubmit { naming.id = nil }
+                        .onExitCommand { naming.id = nil }
+                        .onChange(of: nameFocused) { focused in if !focused && naming.id == account.id { naming.id = nil } }
+                } else {
+                    Text(name.isEmpty ? L("이름", "Name") : name)
+                        .foregroundStyle(name.isEmpty ? .secondary : .primary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                        .onTapGesture { naming.id = account.id }
+                        .help(L("눌러서 이름 바꾸기", "Click to rename"))
+                }
                 HStack(spacing: 6) {
                     // Fixed width so every row's Enterprise box starts at the same x.
                     Text(account.provider.title).foregroundStyle(.secondary)

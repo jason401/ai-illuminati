@@ -124,13 +124,20 @@ struct TodoBoardView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 let lists = shownLists
-                if let scheduler = TodoScheduler.shared {
-                    TodoBoardHeader(scheduler: scheduler, discussion: discussion,
-                                    project: discussion.boardProject.map { projectInfo.names[$0] ?? projects.first?.name ?? lists.first.map(title) ?? "" }, lists: Set(lists.map(\.id)))
+                if TodoScheduler.shared != nil || !lists.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        if let scheduler = TodoScheduler.shared {
+                            TodoBoardHeader(scheduler: scheduler, discussion: discussion,
+                                            project: discussion.boardProject.map { projectInfo.names[$0] ?? projects.first?.name ?? lists.first.map(title) ?? "" }, lists: Set(lists.map(\.id)))
+                        }
+                        if !lists.isEmpty {
+                            Toggle(L("완료·취소된 것도 보기", "Show done and cancelled"), isOn: $draft.showDone)
+                                .toggleStyle(.checkbox).font(.system(size: 12))
+                                .frame(maxWidth: .infinity, alignment: .trailing)
+                        }
+                    }
+                    .padding(.bottom, lists.isEmpty ? 0 : 6)
                 }
-                Toggle(L("완료·취소된 것도 보기", "Show done and cancelled"), isOn: $draft.showDone)
-                    .toggleStyle(.checkbox).font(.system(size: 12))
-                    .frame(maxWidth: .infinity, alignment: .trailing)
                 if let error = draft.error ?? store.saveError { Text(error).font(.system(size: 12)).foregroundColor(.red) }
                 ForEach(lists) { list in listView(list) }
                 if lists.isEmpty {

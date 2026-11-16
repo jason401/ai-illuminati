@@ -6,10 +6,6 @@
     "validate-app-modules": {"executable": "/usr/bin/python3", "args": ["-B", "tools/tests/validate_app_modules.py"]},
     "test-fresh-cache": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_CACHE=fresh", "/bin/zsh", "tools/tests/run_mode2.sh"]},
     "test-serial": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_JOBS=1", "/bin/zsh", "tools/tests/run_mode2.sh"]},
-    "test-modules": {"executable": "/bin/zsh", "args": ["tools/tests/run_mode2.sh", "--modules"]},
-    "test-todo-board": {"executable": "/bin/zsh", "args": ["tools/tests/run_mode2.sh", "--affected", "app/macos/TodoBoard.swift"]},
-    "preview-todo-board": {"executable": "/usr/bin/env", "args": ["CHAT_BOARD=all", "CHAT_WIDTH=1040", "CHAT_SIDEBAR=0", "CHAT_HEIGHT=1000", "/bin/zsh", "tools/tests/render_chat.sh", "/tmp/ai-preview-todo-board", "--projects"]},
-    "preview-todo-board-empty": {"executable": "/usr/bin/env", "args": ["CHAT_BOARD=all", "CHAT_WIDTH=520", "CHAT_SIDEBAR=0", "CHAT_HEIGHT=1000", "/bin/zsh", "tools/tests/render_chat.sh", "/tmp/ai-preview-todo-board-empty", "--projects", "--empty-board"]},
-    "preview-todo-board-narrow": {"executable": "/usr/bin/env", "args": ["CHAT_BOARD=all", "CHAT_WIDTH=520", "CHAT_SIDEBAR=0", "CHAT_HEIGHT=1000", "CHAT_KOREAN=1", "/bin/zsh", "tools/tests/render_chat.sh", "/tmp/ai-preview-todo-board-narrow", "--projects"]}
+    "test-modules": {"executable": "/bin/zsh", "args": ["tools/tests/run_mode2.sh", "--modules"]}
   }
 }

@@ -55,10 +55,10 @@ final class TodoDraft: ObservableObject {
     @Published var dropFolders: [URL] = []   // temporary folders of dropped Photos/screenshot files, removed once added
     @Published var dropTarget: UUID?   // where a drag is over now: a TODO, or `addBar`
     static let addBar = UUID()
-    // A TODO dragged by its handle to a new place in its list. It travels as plain text (like Settings > Accounts):
-    // the board's own type was not declared in Info.plist and no drop saw it. A drag cancelled outside a drop
-    // tells nobody, so the next click in the app or leaving the app clears it: a stale value would make the next
-    // text drop a move.
+    // A TODO dragged by its handle to a new place in its list. It travels as plain data: the board's own type was
+    // not declared in Info.plist and no drop saw it, and text would be typed into the add bar's fields. A drag
+    // cancelled outside a drop tells nobody, so the next click in the app or leaving the app clears it: a stale
+    // value would make the next drop without files a move.
     var dragging: UUID? { didSet { if dragging != nil { watchDragEnd() } } }
     private var clickWatch: Any?, leaveWatch: NSObjectProtocol?
     private func watchDragEnd() {
@@ -253,7 +253,11 @@ struct TodoBoardView: View {
                     .help(L("끌어서 순서 바꾸기", "Drag to reorder"))
                     .onDrag {
                         draft.dragging = item.id
-                        return NSItemProvider(object: item.id.uuidString as NSString)
+                        let provider = NSItemProvider()
+                        provider.registerDataRepresentation(forTypeIdentifier: UTType.data.identifier, visibility: .all) { done in
+                            done(Data(item.id.uuidString.utf8), nil); return nil
+                        }
+                        return provider
                     }
                 Text("\(index). " + item.title).font(.system(size: 13, weight: .medium))
                     .foregroundColor(item.state == .draft ? .secondary : .primary).lineLimit(2)
@@ -355,7 +359,7 @@ struct TodoBoardView: View {
         }
         // Photos or files dropped on a TODO the AI is not working on are attached to it right away; a TODO of the
         // same list dragged by its handle goes above it (dragged up) or below it (dragged down).
-        .onDrop(of: [UTType.fileURL, UTType.image, UTType.text, UTType.item],
+        .onDrop(of: [UTType.fileURL, UTType.image, UTType.data, UTType.item],
                 delegate: TodoFileDrop(target: item.id, accepts: item.state != .running && item.state != .done && item.state != .cancelled,
                                        reorder: { reorder(onto: item, in: list, probe: $0) }) { urls, folder in
             defer { if let folder { try? FileManager.default.removeItem(at: folder) } }
@@ -533,7 +537,7 @@ struct TodoBoardView: View {
         .padding(12)
         .background(Color.primary.opacity(0.015), in: RoundedRectangle(cornerRadius: 10))
         .overlay(draft.dropTarget == TodoDraft.addBar ? RoundedRectangle(cornerRadius: 10).strokeBorder(Color.accentColor, lineWidth: 2) : nil)
-        .onDrop(of: [UTType.fileURL, UTType.image, UTType.text, UTType.item], delegate: TodoFileDrop(target: TodoDraft.addBar, accepts: true) { urls, folder in
+        .onDrop(of: [UTType.fileURL, UTType.image, UTType.data, UTType.item], delegate: TodoFileDrop(target: TodoDraft.addBar, accepts: true) { urls, folder in
             if urls.isEmpty { draft.error = L("파일을 첨부할 수 없어요.", "Could not attach the file."); if let folder { try? FileManager.default.removeItem(at: folder) }; return }
             // Promised files (Photos, screenshots) live in a temporary folder until the TODO is added.
             if let folder { draft.dropFolders.append(folder) }
@@ -689,7 +693,7 @@ private struct ShiftReturnNewline: ViewModifier {
 
 // Photos and files dragged onto the add bar or a TODO row: from Finder, the Photos app or a screenshot
 // thumbnail (PictureDrop). `receive` runs on the main thread; a temporary `folder` is the caller's to remove.
-// A TODO dragged by its handle (TodoDraft.dragging, carried as text) is checked first: it is never taken as a
+// A TODO dragged by its handle (TodoDraft.dragging, carried as plain data) is checked first: it is never taken as a
 // file (the types below include UTType.item); a file or photo drop clears a stale `dragging`.
 // `reorder(true)` says where it would go, `reorder(false)` moves it; nil: not here.
 private struct TodoFileDrop: DropDelegate {

@@ -28,11 +28,14 @@ It runs only on your Mac. The developer runs no server and collects no data from
 
 - Chats, settings and usage numbers are saved only on your Mac
   (`~/Library/Application Support/AI Illuminati`).
-- Settings → Accounts → Usage reads the token counts in the Claude Code, Codex and Gemini (agy) session logs on this Mac (read only)
-  and keeps only the daily sums there (`token-usage.json`), also after a CLI deletes an old log. The conversation
-  text is not kept or sent anywhere.
-- Only if you turn on **All Macs together** there: those daily sums with each account's name are written to
-  `token-usage/<this Mac>.json` in the same sync folder, so your other Macs can add them up. "Remove mine" deletes it.
+- The Usage window (Settings → Accounts → Show Usage…) reads the token counts in the Claude Code, Codex and Gemini (agy)
+  session logs on this Mac (read only, compressed `.zst` ones too) and keeps only sums there (`token-usage.json`): by hour,
+  model, session id and working folder path, also after a CLI deletes an old log. For the app's own calls that leave no
+  log, the usage the CLI reports is kept the same way (`token-usage-app.jsonl`, with what the call was for). The
+  conversation text is not kept or sent anywhere. Exports (CSV/JSON) hold only these names and numbers.
+- Only if you turn on **All Macs** there: those sums with each account's name, model, session id and working folder path
+  are written to `token-usage/<this Mac>.json` in the same sync folder, so your other Macs can add them up. "Remove mine"
+  deletes it.
 - Only if you turn on **Chats from other Macs** (Settings → Chat): copies of the chats you choose are saved as plain
   readable files in the sync folder you pick (iCloud Drive by default), so your other Macs can show them. Enterprise
   chats are left out unless you include them. Settings → Chat → "Remove this Mac's copies" deletes them.

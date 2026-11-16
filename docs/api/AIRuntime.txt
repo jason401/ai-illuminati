@@ -146,6 +146,8 @@ RunConditions.init() | init()
 RunConditions.prefix | var prefix: [String]
 RunConditions.processGroup | var processGroup: Bool
 RunConditions.steering | var steering: SteerChannel?
+RunConditions.tagged(_:) | func tagged(_ kind: String) -> RunConditions
+RunConditions.usageKind | var usageKind: String?
 RunConditions.wrapper | var wrapper: [String]?
 SteerChannel | final class SteerChannel
 SteerChannel.close() | func close() -> [String]
@@ -160,40 +162,69 @@ TokenCounts.cacheRead | var cacheRead: Int
 TokenCounts.cacheWrite | var cacheWrite: Int
 TokenCounts.fresh | var fresh: Int { get }
 TokenCounts.init(from:) | init(from decoder: any Decoder) throws
-TokenCounts.init(input:cacheWrite:cacheRead:output:) | init(input: Int = 0, cacheWrite: Int = 0, cacheRead: Int = 0, output: Int = 0)
+TokenCounts.init(input:cacheWrite:cacheRead:output:reasoning:) | init(input: Int = 0, cacheWrite: Int = 0, cacheRead: Int = 0, output: Int = 0, reasoning: Int? = nil)
 TokenCounts.input | var input: Int
 TokenCounts.isEmpty | var isEmpty: Bool { get }
 TokenCounts.output | var output: Int
+TokenCounts.reasoning | var reasoning: Int?
 TokenCounts.total | var total: Int { get }
 TokenDevice | struct TokenDevice
+TokenDevice.entries | let entries: [TokenEntry]
 TokenDevice.id | let id: String
+TokenDevice.init(id:name:writtenAt:revision:entries:) | init(id: String, name: String, writtenAt: Date, revision: Int, entries: [TokenEntry])
 TokenDevice.name | let name: String
-TokenDevice.shares | let shares: [TokenShare]
+TokenDevice.revision | let revision: Int
 TokenDevice.writtenAt | let writtenAt: Date
+TokenEntry | struct TokenEntry
+TokenEntry.Origin | enum Origin
+TokenEntry.Origin.desktop | case desktop
+TokenEntry.Origin.init(rawValue:) | init?(rawValue: String)
+TokenEntry.Origin.other | case other
+TokenEntry.Origin.terminal | case terminal
+TokenEntry.Source | enum Source
+TokenEntry.Source.app | case app
+TokenEntry.Source.init(rawValue:) | init?(rawValue: String)
+TokenEntry.Source.legacy | case legacy
+TokenEntry.Source.log | case log
+TokenEntry.accountID | var accountID: String?
+TokenEntry.accountName | var accountName: String?
+TokenEntry.counts | var counts: TokenCounts
+TokenEntry.device | var device: String
+TokenEntry.folder | var folder: String
+TokenEntry.hourly | var hourly: Bool
+TokenEntry.init(provider:accountID:accountName:folder:origin:source:start:hourly:model:session:project:kind:counts:) | init(provider: Account.Provider, accountID: String?, accountName: String? = nil, folder: String, origin: TokenEntry.Origin?, source: TokenEntry.Source, start: Date, hourly: Bool, model: String?, session: String?, project: String?, kind: String?, counts: TokenCounts)
+TokenEntry.kind | var kind: String?
+TokenEntry.model | var model: String?
+TokenEntry.origin | var origin: TokenEntry.Origin?
+TokenEntry.project | var project: String?
+TokenEntry.provider | var provider: Account.Provider
+TokenEntry.session | var session: String?
+TokenEntry.source | var source: TokenEntry.Source
+TokenEntry.start | var start: Date
+TokenFolder | struct TokenFolder
+TokenFolder.accountID | var accountID: String?
+TokenFolder.compressed | var compressed: Int
+TokenFolder.deleted | var deleted: Int
+TokenFolder.exists | var exists: Bool
+TokenFolder.failed | var failed: Int
+TokenFolder.files | var files: Int
+TokenFolder.first | var first: Date?
+TokenFolder.folder | var folder: String
+TokenFolder.last | var last: Date?
+TokenFolder.legacy | var legacy: Int
+TokenFolder.provider | var provider: Account.Provider
 TokenLedger | enum TokenLedger
-TokenLedger.read(_:toolHome:) | static func read(_ accounts: [Account], toolHome: String) -> [TokenSource]
-TokenShare | struct TokenShare
-TokenShare.days | var days: [Date : TokenCounts]
-TokenShare.init(provider:name:outside:origin:days:) | init(provider: Account.Provider, name: String, outside: Bool, origin: TokenSource.Origin?, days: [Date : TokenCounts])
-TokenShare.key | var key: String { get }
-TokenShare.name | var name: String
-TokenShare.origin | var origin: TokenSource.Origin?
-TokenShare.outside | var outside: Bool
-TokenShare.provider | var provider: Account.Provider
-TokenSource | struct TokenSource
-TokenSource.Origin | enum Origin
-TokenSource.Origin.desktop | case desktop
-TokenSource.Origin.init(rawValue:) | init?(rawValue: String)
-TokenSource.Origin.other | case other
-TokenSource.Origin.terminal | case terminal
-TokenSource.accountID | let accountID: String?
-TokenSource.days | let days: [Date : TokenCounts]
-TokenSource.folder | let folder: String
-TokenSource.origin | let origin: TokenSource.Origin?
-TokenSource.provider | let provider: Account.Provider
+TokenLedger.projectRoot(_:) | static func projectRoot(_ cwd: String) -> String
+TokenLedger.read(_:toolHome:) | static func read(_ accounts: [Account], toolHome: String) -> TokenReport
+TokenLedger.recordApp(_:output:model:kind:folder:at:) | static func recordApp(_ account: Account, output: String, model: String?, kind: String?, folder: String?, at: Date = Date())
+TokenLedger.together(_:_:) | static func together(_ local: [TokenEntry], _ peers: [TokenDevice]) -> [TokenEntry]
+TokenReport | struct TokenReport
+TokenReport.entries | var entries: [TokenEntry]
+TokenReport.folders | var folders: [TokenFolder]
+TokenReport.readAt | var readAt: Date
 TokenSync | enum TokenSync
 TokenSync.cached() | static func cached() -> [TokenDevice]
-TokenSync.exchange(_:folder:deviceID:deviceName:) | static func exchange(_ mine: [TokenShare], folder: URL, deviceID: String, deviceName: String) -> [TokenDevice]
+TokenSync.exchange(_:folder:deviceID:deviceName:) | static func exchange(_ mine: [TokenEntry], folder: URL, deviceID: String, deviceName: String) -> [TokenDevice]
 TokenSync.removeMine(folder:deviceID:) | static func removeMine(folder: URL, deviceID: String)
 ToolHome | enum ToolHome
 ToolHome.agyInstalled | static var agyInstalled: Bool { get }

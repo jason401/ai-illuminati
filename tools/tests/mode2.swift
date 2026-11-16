@@ -2672,6 +2672,7 @@ runTest("testWindowDrag", testWindowDrag)
 
 runTest("testRunConditions", testRunConditions)
 runTest("testRuntimeThroughApp", testRuntimeThroughApp)
+runTest("testTokenStats", testTokenStats)
 runTest("testChatLinks", testChatLinks)
 runTest("testChatThroughCLI", testChatThroughCLI)
 runTest("testProjectWork", testProjectWork)

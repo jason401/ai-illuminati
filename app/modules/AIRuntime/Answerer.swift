@@ -35,6 +35,7 @@ public struct RunConditions {
     public var folders: Folders? = nil
     public var beforeStart: (() -> Void)? = nil   // the caller's own preparation (agy's web rule), just before the arguments
     public var steering: SteerChannel? = nil       // Claude with progress: messages sent while it answers go into the answer
+    public var usageKind: String? = nil            // what the call is for, kept with its tokens when it leaves no log (TokenLedger)
     public struct Folders {
         var directory: URL                  // the room's folder: runs without a session and read results go below it
         var arguments: ([String], URL, Bool) throws -> [String]   // (the tool's arguments, run folder, web) → with the folders
@@ -45,6 +46,7 @@ public struct RunConditions {
         }
     }
     public init() {}
+    public func tagged(_ kind: String) -> RunConditions { var r = self; r.usageKind = kind; return r }
 }
 
 public enum Answerer {
@@ -264,6 +266,11 @@ public enum Answerer {
             else { arguments[arguments.count - 1] = "-" }
             inputData = Data(prompt.utf8)
         }
+        // A call that leaves no session log returns its usage as JSON, recorded below (TokenLedger.recordApp).
+        let unlogged = account.provider == .claude ? arguments.contains("--no-session-persistence") : account.provider == .codex && arguments.contains("--ephemeral")
+        let askedJSON = unlogged && account.provider == .claude && !arguments.contains("--output-format")
+        if askedJSON { arguments += ["--output-format", "json"] }
+        if unlogged && account.provider == .codex && !arguments.contains("--json"), let exec = arguments.firstIndex(of: "exec") { arguments.insert("--json", at: exec + 1) }
         arguments = CloudModels.apply(arguments, provider: account.provider, model: model)
         guard let binary = toolForTests ?? binary ?? (launchForTests == nil ? nil : "<cli>") else { return .failure(.missingTool) }
 
@@ -363,9 +370,10 @@ public enum Answerer {
         var text = String(data: stdout, encoding: .utf8) ?? ""
         let output = text
         if let session { session.observe(text) }
+        if unlogged { TokenLedger.recordApp(account, output: output, model: model, kind: run.usageKind, folder: executionDirectory.path) }
         CloudModels.noteSeen(text, account: account, picked: model)
         if account.provider == .codex, let file = try? String(contentsOfFile: outFile, encoding: .utf8) { text = file }
-        if account.provider == .claude && (!images.isEmpty || session != nil || streamed) {
+        if account.provider == .claude && arguments.contains("--output-format") {
             let results = text.split(separator: "\n").compactMap { line -> [String: Any]? in
                 guard let data = String(line).data(using: .utf8), let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                       json["type"] as? String == "result" else { return nil }
@@ -373,11 +381,15 @@ public enum Answerer {
             }
             // With steering the first result is this answer (anything after it was a late message, ended above).
             let result = steer != nil ? results.first : results.last
-            guard let result, result["is_error"] as? Bool != true, let answer = result["result"] as? String else {
+            // JSON asked only for the usage, and the tool answered in plain text: that text is the answer.
+            if result == nil && askedJSON && process.terminationStatus == 0 {
+                text = output
+            } else if let result, result["is_error"] as? Bool != true, let answer = result["result"] as? String {
+                text = answer
+            } else {
                 let message = (result?["result"] as? String) ?? String(data: stderr, encoding: .utf8) ?? "Session response failed."
                 return .failure(.failed(modelNote + String(message.suffix(300))))
             }
-            text = answer
         }
         text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard process.terminationStatus == 0 || steer?.cutOff == true, !text.isEmpty else {

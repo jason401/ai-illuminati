@@ -19,3 +19,5 @@ app/macos/DriveUI.swift	testGoogleDrive
 app/macos/DriveTools.swift	testToolHub testGoogleDrive
 app/macos/ExternalMCPTools.swift	testToolHub testExternalMCP testRemoteMCP
 tools/tests/search_fixtures.swift	testEnterpriseMarks testMeetingFold testChatFind testChatSearch testChatTools testMemory
+app/macos/TokenStats.swift	testTokenStats
+tools/tests/token_stats.swift	testTokenStats

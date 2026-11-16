@@ -143,8 +143,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         ExternalMCP.shared.start()   // servers added in Settings → MCP
         // Chats from your other Macs (off until turned on in Settings → Chat).
         DeviceSync.shared.start(discussion: discussion)
-        // Token sums from the other Macs (off until turned on in Settings → Accounts → Usage).
-        TokenUsageModel.shared.start(model)
+        // The Usage window's chat names and links, and token sums from the other Macs (off until turned on there).
+        TokenStatsModel.shared.chats = { [weak self] in
+            guard let self else { return [:] }
+            return Dictionary(self.discussion.conversations.map { ($0.id, (title: $0.title, project: $0.workspace?.project?.root)) }) { a, _ in a }
+        }
+        TokenStatsWindow.openChat = { [weak self] room in
+            guard let self else { return }
+            self.chat.show(discussion: self.discussion)
+            self.discussion.open(room)
+        }
+        TokenStatsModel.shared.start(model)
         model.refreshLoginItemStatus()
     }
 

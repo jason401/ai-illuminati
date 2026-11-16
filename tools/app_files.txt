@@ -8,6 +8,7 @@ MenuCards.swift screen: the menu's account cards
 Icon.swift screen: the menu bar icon and its animation
 Login.swift app start: Terminal login and install scripts for each CLI (later move candidate: LocalModel.install)
 LocalModels.swift screen: the Ollama models window
+TokenStats.swift screen: the Usage window (token sums by period, account, model, project, chat, Mac; chat names from AIChat, sums from AIRuntime)
 Updater.swift app start: the update channel and the app-owned checkout
 ApprovalAlerts.swift screen: approval notifications, Dock badge, approval window
 ChatLinksApp.swift connects modules: the chat store to what keeps a chat's data

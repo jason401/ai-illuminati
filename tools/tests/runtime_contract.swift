@@ -327,9 +327,12 @@ expect(took < 10, "after the result the input closes and the call ends")
 expect(answer == "first" && reads.isEmpty && left == ["change course"] && took < 10,
        "a message written but not read before the result ends the call (no second answer) and comes back: \(String(describing: answer)) \(left) \(took)")
 
-// Token counts from the CLIs' own logs (TokenLedger): a split Claude message counts once, a Codex session's running
-// total is split by the day each rise happened, later reads take only new lines, and the tool folders no account uses
-// are "outside the app". Everything is in the test home.
+// Token counts from the CLIs' own logs (TokenLedger), everything in the test home: a Claude message counts once with
+// each field at its highest (a later line that grew adds only the rise, to the hour of its first line); one seen in
+// another file is not counted again; a Codex session counts up to its highest total once, wherever it is (moved to the
+// archive, compressed as .zst, copied); reasoning is a part of output; a deleted log keeps its sums; the older format's
+// deleted logs stay as day sums and their archived copy adds only what came after; tool folders no account uses are
+// outside the app; Gemini's shared log has no account; app calls without a log are recorded from the CLI's reply.
 let tokHome = home + "/tokens"
 let tokClaude = Account(id: "tok-claude", provider: .claude, name: "C", dir: tokHome + "/claude-a")
 let tokCodex = Account(id: "tok-codex", provider: .codex, name: "X", dir: tokHome + "/codex-a")
@@ -339,14 +342,15 @@ func tokWrite(_ path: String, _ lines: [String], append: Bool = false) {
     if append, let h = FileHandle(forWritingAtPath: path) { h.seekToEndOfFile(); h.write(Data(text.utf8)); try! h.close() }
     else { try! text.write(toFile: path, atomically: true, encoding: .utf8) }
 }
-func tokDay(_ iso: String) -> Date { Calendar.current.startOfDay(for: ISO8601DateFormatter().date(from: iso)!) }
-func tokClaudeLine(_ id: String, _ at: String, out: Int) -> String {
-    #"{"type":"assistant","timestamp":"\#(at)","message":{"id":"\#(id)","usage":{"input_tokens":2,"cache_creation_input_tokens":10,"cache_read_input_tokens":100,"output_tokens":\#(out)}}}"#
+func tokHour(_ iso: String) -> Date { let d = ISO8601DateFormatter().date(from: iso)!; return Date(timeIntervalSince1970: floor(d.timeIntervalSince1970 / 3600) * 3600) }
+func tokSum(_ r: TokenReport, _ keep: (TokenEntry) -> Bool) -> TokenCounts { r.entries.filter(keep).reduce(TokenCounts()) { $0 + $1.counts } }
+func tokClaudeLine(_ id: String, _ at: String, out: Int, model: String = "claude-test") -> String {
+    #"{"type":"assistant","timestamp":"\#(at)","sessionId":"sess-c","cwd":"/work/app","message":{"id":"\#(id)","model":"\#(model)","usage":{"input_tokens":2,"cache_creation_input_tokens":10,"cache_read_input_tokens":100,"output_tokens":\#(out)}}}"#
 }
 func tokCodexLine(_ at: String, input: Int, cached: Int, out: Int) -> String {
     #"{"timestamp":"\#(at)","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":\#(input),"cached_input_tokens":\#(cached),"output_tokens":\#(out)}}}}"#
 }
-let tokA = "2026-03-10T12:00:00Z", tokB = "2026-03-11T12:00:00Z"
+let tokA = "2026-03-10T12:00:00Z", tokA2 = "2026-03-10T23:59:30Z", tokB = "2026-03-11T12:00:00Z"
 let claudeLog = tokHome + "/claude-a/projects/p/s.jsonl"
 tokWrite(claudeLog, [tokClaudeLine("m1", tokA, out: 5), tokClaudeLine("m1", tokA, out: 5),
                      #"{"type":"user","timestamp":"\#(tokA)","message":{"content":"usage"}}"#, tokClaudeLine("m2", tokB, out: 7)])
@@ -354,68 +358,158 @@ tokWrite(tokHome + "/codex-a/sessions/2026/03/10/r.jsonl", [tokCodexLine(tokA, i
                                                            tokCodexLine(tokB, input: 250, cached: 160, out: 8)])
 tokWrite(tokHome + "/.claude/projects/q/o.jsonl", [tokClaudeLine("o1", tokA, out: 4)])
 var tokens = TokenLedger.read([tokClaude, tokCodex], toolHome: tokHome)
-let tc = tokens.first { $0.accountID == "tok-claude" }!, tx = tokens.first { $0.accountID == "tok-codex" }!
-expect(tc.days[tokDay(tokA)] == TokenCounts(input: 2, cacheWrite: 10, cacheRead: 100, output: 5) && tc.days[tokDay(tokB)]?.output == 7,
-       "a Claude message split over lines counts once, by its day: \(tc.days)")
-expect(tx.days[tokDay(tokA)] == TokenCounts(input: 40, cacheRead: 60, output: 3)
-       && tx.days[tokDay(tokB)] == TokenCounts(input: 50, cacheRead: 100, output: 5),
-       "a Codex running total is split by the day of each rise, cached input taken out: \(tx.days)")
-expect(tokens.filter { $0.accountID == nil }.map(\.folder) == [tokHome + "/.claude"] && tokens.first { $0.accountID == nil }?.days[tokDay(tokA)]?.output == 4,
-       "a tool folder no account uses is outside the app; an empty one is left out: \(tokens.map(\.folder))")
-tokWrite(claudeLog, [tokClaudeLine("m2", tokB, out: 7), tokClaudeLine("m3", tokB, out: 1)], append: true)
+let isC: (TokenEntry) -> Bool = { $0.accountID == "tok-claude" }, isX: (TokenEntry) -> Bool = { $0.accountID == "tok-codex" }
+expect(tokSum(tokens) { isC($0) && $0.start == tokHour(tokA) } == TokenCounts(input: 2, cacheWrite: 10, cacheRead: 100, output: 5)
+       && tokSum(tokens) { isC($0) && $0.start == tokHour(tokB) }.output == 7, "a Claude message split over lines counts once, by its hour: \(tokens.entries.filter(isC))")
+let tokC1 = tokens.entries.first { isC($0) }!
+expect(tokC1.model == "claude-test" && tokC1.session == "sess-c" && tokC1.project == "/work/app" && tokC1.hourly && tokC1.source == .log,
+       "a Claude sum keeps its model, session and working folder: \(tokC1)")
+expect(tokSum(tokens) { isX($0) && $0.start == tokHour(tokA) } == TokenCounts(input: 40, cacheRead: 60, output: 3)
+       && tokSum(tokens) { isX($0) && $0.start == tokHour(tokB) } == TokenCounts(input: 50, cacheRead: 100, output: 5),
+       "a Codex running total is split by the hour of each rise, cached input taken out: \(tokens.entries.filter(isX))")
+expect(Set(tokens.entries.filter { $0.accountID == nil }.map(\.folder)) == [tokHome + "/.claude"] && tokSum(tokens) { $0.accountID == nil }.output == 4,
+       "a tool folder no account uses is outside the app: \(tokens.entries.map(\.folder))")
+expect(tokens.folders.first { $0.folder == tokHome + "/.codex" }?.exists == false && tokens.folders.first { $0.accountID == "tok-claude" }?.files == 1,
+       "each folder says whether it is there and how many logs it has: \(tokens.folders)")
+// A later line of the same message with more output (it streamed), past midnight: only the rise, to the first line's hour.
+tokWrite(claudeLog, [tokClaudeLine("m2", tokB, out: 7), tokClaudeLine("m3", tokB, out: 1), tokClaudeLine("m1", tokA2, out: 9)], append: true)
 tokens = TokenLedger.read([tokClaude, tokCodex], toolHome: tokHome)
-expect(tokens.first { $0.accountID == "tok-claude" }!.days[tokDay(tokB)]?.output == 8,
-       "a later read takes only the new lines (the repeated last message counts once)")
+expect(tokSum(tokens) { isC($0) && $0.start == tokHour(tokB) }.output == 8 && tokSum(tokens) { isC($0) && $0.start == tokHour(tokA) }.output == 9
+       && tokSum(tokens, isC).cacheRead == 300, "a grown message adds only the rise, in its first hour; a repeated one counts once: \(tokens.entries.filter(isC))")
 expect(fm.fileExists(atPath: AccountStore.supportDir + "/token-usage.json"), "what was read is kept in the support folder")
+// The same message in another file (a copied or forked session) is not counted again.
+tokWrite(tokHome + "/claude-a/projects/copy/s2.jsonl", [tokClaudeLine("m2", tokB, out: 7), tokClaudeLine("m4", tokB, out: 2)])
+tokens = TokenLedger.read([tokClaude, tokCodex], toolHome: tokHome)
+expect(tokSum(tokens, isC).output == 19, "a message already counted in another file is not counted again: \(tokSum(tokens, isC))")
 // A deleted log (Claude Code removes them after 30 days) keeps its sums; when it comes back it is not counted twice.
 try! fm.moveItem(atPath: claudeLog, toPath: claudeLog + ".bak")
 tokens = TokenLedger.read([tokClaude, tokCodex], toolHome: tokHome)
-expect(tokens.first { $0.accountID == "tok-claude" }!.days[tokDay(tokB)]?.output == 8, "a deleted log keeps its daily sums")
+expect(tokSum(tokens, isC).output == 19 && tokens.folders.first { $0.accountID == "tok-claude" }?.deleted == 1, "a deleted log keeps its sums")
 try! fm.moveItem(atPath: claudeLog + ".bak", toPath: claudeLog)
 tokens = TokenLedger.read([tokClaude, tokCodex], toolHome: tokHome)
-expect(tokens.first { $0.accountID == "tok-claude" }!.days[tokDay(tokB)]?.output == 8, "a log that comes back is not counted twice")
-// Gemini (agy) steps; outside the app split by the program that wrote the logs.
+expect(tokSum(tokens, isC).output == 19, "a log that comes back is not counted twice")
+// A file rewritten shorter is read again from the start, without counting what it had twice.
+tokWrite(claudeLog, [tokClaudeLine("m1", tokA, out: 9)])
+tokens = TokenLedger.read([tokClaude, tokCodex], toolHome: tokHome)
+expect(tokSum(tokens, isC).output == 11, "a rewritten log counts what it has now: \(tokSum(tokens, isC))")
+// Codex: a session moved to the archive and compressed (.zst) adds only what came after; a copy adds nothing.
+let tokZst = Data(base64Encoded: "KLUv/WSnkKUfADaxgx1QdQ4MpdphHPJ2+5hQOvZmelrmpqQka0rZXTWi15EAjABmABTVmKTJ8iKUw5okruld3mW9S3BRHJLJlXnXRC0SU2W5AJ0OW7zMS2Qeg1owiFXUFU2SQ6ooFmAQqqIMIhWFGWAWLMAUjN0fRYqNhsAbjEiQrzmBY2zBdypG2BjEGBLjQIwRURJNRGEBFl1vkpgoybKexSD2KJqLBZihNag1KLHQUKBN0NmSQYwyiS7rTaSLcQLq/C67UXnTqdvcRG2I/tv+61qbkxv3dRMR0WGOSXqeRHpgnqc9DorxaDaRpHoX6rEoEwvkyVCNZ8JQleKJLCRLBXre43oa1NOeN0kEBrEDxK4puizJsiIJVbGA9SaTd0mJZ00UxXpVp4MJxyRNlBW9igX0slCdYLzHIlqwQGsIMeuyUKbniCxLQhJdAdlu2W0qamYjf3PVb84TnXL38+7iq27uY+Pm/LndpXPvZc7cd8VOVkRs7d/tvi61HblXX9nzkRu/Ort3zc762+qYqejbtr/dER1rY/P7ZupyuqPLptzv3tjtty7j7672pzImtmzuNYBOp9PJdYns/86ulXnf6aI+dlvHT3Vf193OiMuq2PmOmU2X391dOu5O5Ma7r7qJj7st+x+VHRMdNteoysi/mK2ImoiYrqHb33R16L3Nv9uqnNmI3xruozeHvfzbqJzZir/ttx/d1W2BTagxWJuIiKQgKUhpGQMBW5CRJqUOIhgUBEEQgoQAQQgQhCAhSAgSgj9BCMAFROAH1l3pgUDvBwmFQS17Kcsel8yXjAfZeCS64eeVXkbyySiMSZdNlkGaoS5LIoNWtiZTSXaVTClWtUxSBvFkt6Ll3XE1ZFZk0svSZKHKrGIpxtaMqWMqxyrGlMeqOYbSyq7FIsaspUzlyVwiqyRTTrZORk1mucnwFcnykA2DFrsUYxFrLXZpMVnF1sSijK2KUcFWcgyJxoAeWxKDqDLLE1NBbK2YWswSDGVM8li6GNSYtdhKsaVi6mIrLUY1YZTHosdIx6TFRIwtFVMXWxajFKs2thwDPTYdE1ExkzOmSuyymKKYO7G3N8a8xLzFrMRCbozFxagQWyqmLLY0VhkLPTY5Bl0sNaZS7KqYsthqMZXAUP0xSzHQY9MxkWJSxpTFVospxajBVsdIjqWLRcmYtSazFJsco4aYyBuz190w0mHTYZFgU8IoMZh9MZgCmBrYtbKY+oT4tJTPrJ9RRc/Dmc8QoTDifwBMHyDzfcDsV0xLGUD7/KQzo5yX71kP86l6/v7n5tuJzAeA9SGneBaTJcmjP0sEepmOTjqPTveOrlcNJfd1KF/pAV4AViFPaDSlKg1NfRVfujw1")!
+let tokSession = "rollout-2026-03-10T12-00-00-01a13269-6157-70e2-adf8-ff13aa96615b"
+let tokPlain = tokHome + "/codex-a/sessions/2026/03/10/" + tokSession + ".jsonl"
+tokWrite(tokPlain, [#"{"timestamp":"\#(tokA)","type":"session_meta","payload":{"id":"01a13269-6157-70e2-adf8-ff13aa96615b","cwd":"/work/proj","originator":"codex_exec"}}"#,
+                    #"{"timestamp":"\#(tokA)","type":"turn_context","payload":{"model":"gpt-test"}}"#,
+                    #"{"timestamp":"\#(tokA)","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":60,"output_tokens":3,"reasoning_output_tokens":1}}}}"#])
+tokens = TokenLedger.read([tokClaude, tokCodex], toolHome: tokHome)
+let isS: (TokenEntry) -> Bool = { $0.session == "01a13269-6157-70e2-adf8-ff13aa96615b" }
+expect(tokSum(tokens, isS) == TokenCounts(input: 40, cacheRead: 60, output: 3, reasoning: 1) && tokens.entries.first(where: isS)?.model == "gpt-test"
+       && tokens.entries.first(where: isS)?.project == "/work/proj", "a Codex session keeps its model, folder and reasoning (part of output): \(tokens.entries.filter(isS))")
+try! fm.removeItem(atPath: tokPlain)
+try! fm.createDirectory(atPath: tokHome + "/codex-a/archived_sessions", withIntermediateDirectories: true)
+try! tokZst.write(to: URL(fileURLWithPath: tokHome + "/codex-a/archived_sessions/" + tokSession + ".jsonl.zst"))
+tokens = TokenLedger.read([tokClaude, tokCodex], toolHome: tokHome)
+expect(tokSum(tokens, isS) == TokenCounts(input: 50, cacheRead: 70, output: 4, reasoning: 2)
+       && tokSum(tokens) { isS($0) && $0.start == tokHour(tokB) } == TokenCounts(input: 10, cacheRead: 10, output: 1, reasoning: 1),
+       "the archived .zst copy of a session adds only what came after: \(tokens.entries.filter(isS))")
+try! tokZst.write(to: URL(fileURLWithPath: tokHome + "/codex-a/archived_sessions/copy-" + tokSession + ".jsonl.zst"))
+tokens = TokenLedger.read([tokClaude, tokCodex], toolHome: tokHome)
+expect(tokSum(tokens, isS).total == 124 && tokens.folders.first { $0.accountID == "tok-codex" }?.compressed == 2, "a copy of a session adds nothing")
+try! Data("not zstd".utf8).write(to: URL(fileURLWithPath: tokHome + "/codex-a/archived_sessions/rollout-broken.jsonl.zst"))
+tokens = TokenLedger.read([tokClaude, tokCodex], toolHome: tokHome)
+expect(tokens.folders.first { $0.accountID == "tok-codex" }?.failed == 1 && tokSum(tokens, isS).total == 124, "a broken .zst is counted as unreadable, nothing else changes")
+// Gemini (agy) steps: its one folder has no account in it; outside the app split by the program that wrote the logs.
 let tokGemini = Account(id: "tok-gemini", provider: .gemini, name: "G")
 tokWrite(tokHome + "/.gemini/antigravity-cli/brain/b1/.system_generated/logs/transcript.jsonl", [
     #"{"step_index":0,"type":"USER_INPUT","created_at":"\#(tokA)","content":"output_tokens"}"#,
-    #"{"step_index":1,"type":"PLANNER_RESPONSE","created_at":"\#(tokA)","input_tokens":300,"cache_read_tokens":0,"output_tokens":20}"#,
+    #"{"step_index":1,"type":"PLANNER_RESPONSE","created_at":"\#(tokA)","model":"gemini-test","input_tokens":300,"cache_read_tokens":0,"output_tokens":20}"#,
     #"{"step_index":3,"type":"PLANNER_RESPONSE","created_at":"\#(tokA)","input_tokens":40,"cache_read_tokens":300,"output_tokens":6}"#])
 tokWrite(tokHome + "/.codex/sessions/2026/03/10/d.jsonl", [
     #"{"timestamp":"\#(tokA)","type":"session_meta","payload":{"originator":"Codex Desktop"}}"#, tokCodexLine(tokA, input: 10, cached: 0, out: 1)])
 tokWrite(tokHome + "/.codex/sessions/2026/03/10/t.jsonl", [
     #"{"timestamp":"\#(tokA)","type":"session_meta","payload":{"originator":"codex_cli_rs"}}"#, tokCodexLine(tokA, input: 20, cached: 0, out: 2)])
 tokens = TokenLedger.read([tokClaude, tokCodex, tokGemini], toolHome: tokHome)
-expect(tokens.first { $0.accountID == "tok-gemini" }?.days[tokDay(tokA)] == TokenCounts(input: 340, cacheRead: 300, output: 26),
-       "Gemini's model steps are counted for the Gemini account: \(tokens.map(\.days))")
-let tokOut = tokens.filter { $0.accountID == nil && $0.provider == .codex }
-expect(tokOut.count == 2 && tokOut.first { $0.origin == .desktop }?.days[tokDay(tokA)]?.output == 1
-       && tokOut.first { $0.origin == .terminal }?.days[tokDay(tokA)]?.output == 2,
-       "outside the app, the desktop app and Terminal are told apart: \(tokOut.map { ($0.origin, $0.days) })")
-// A new cache format reads the logs again but keeps a deleted log's sums.
-try! fm.moveItem(atPath: claudeLog, toPath: claudeLog + ".bak")
-_ = TokenLedger.read([tokClaude, tokCodex], toolHome: tokHome)
+let tokG = tokens.entries.filter { $0.provider == .gemini }
+expect(tokG.reduce(TokenCounts()) { $0 + $1.counts } == TokenCounts(input: 340, cacheRead: 300, output: 26) && tokG.allSatisfy { $0.accountID == nil && $0.session == "b1" },
+       "Gemini's model steps are counted with no account (its log has none): \(tokG)")
+let tokOut = tokens.entries.filter { $0.accountID == nil && $0.provider == .codex }
+expect(tokOut.first { $0.origin == .desktop }?.counts.output == 1 && tokOut.first { $0.origin == .terminal }?.counts.output == 2,
+       "outside the app, the desktop app and Terminal are told apart: \(tokOut.map { ($0.origin, $0.counts) })")
+// App calls that leave no log: the CLI's own usage, what the call was for; the same call written twice counts once.
+let tokResult = #"{"type":"result","session_id":"call-1","is_error":false,"result":"ok","usage":{"input_tokens":5,"cache_creation_input_tokens":7,"cache_read_input_tokens":11,"output_tokens":13},"modelUsage":{"claude-haiku":{}}}"#
+TokenLedger.recordApp(tokClaude, output: tokResult, model: nil, kind: "routing", folder: home + "/.ai-illuminati/chat")
+TokenLedger.recordApp(tokClaude, output: tokResult, model: nil, kind: "routing", folder: home + "/.ai-illuminati/chat")
+TokenLedger.recordApp(tokCodex, output: #"{"type":"thread.started","thread_id":"t-1"}"# + "\n" + #"{"type":"turn.completed","usage":{"input_tokens":30,"cached_input_tokens":10,"output_tokens":4,"reasoning_output_tokens":2}}"#,
+                      model: "gpt-test", kind: "meeting", folder: nil)
+TokenLedger.recordApp(tokCodex, output: "plain text, no usage", model: nil, kind: "chat", folder: nil)
+tokens = TokenLedger.read([tokClaude, tokCodex, tokGemini], toolHome: tokHome)
+let tokApp = tokens.entries.filter { $0.source == .app }
+expect(tokApp.count == 2 && tokApp.first { $0.kind == "routing" }?.counts == TokenCounts(input: 5, cacheWrite: 7, cacheRead: 11, output: 13)
+       && tokApp.first { $0.kind == "routing" }?.model == "claude-haiku" && tokApp.first { $0.kind == "routing" }?.accountID == "tok-claude"
+       && tokApp.first { $0.kind == "meeting" }?.counts == TokenCounts(input: 20, cacheRead: 10, output: 4, reasoning: 2),
+       "app calls without a log are counted once, with what they were for: \(tokApp)")
+// The older format (version 2, daily sums): read again, but its deleted logs stay as day sums (nothing else known), and
+// a Codex session among them that is now in the archive adds only what came after its last total.
+let tokHome2 = home + "/tokens2"
+let tokCodex2 = Account(id: "tok-codex2", provider: .codex, name: "X2", dir: tokHome2 + "/codex-b")
 let tokCache = AccountStore.supportDir + "/token-usage.json"
-var tokSaved = try! JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: tokCache))) as! [String: Any]
-tokSaved["version"] = 1
-try! JSONSerialization.data(withJSONObject: tokSaved).write(to: URL(fileURLWithPath: tokCache))
-tokens = TokenLedger.read([tokClaude, tokCodex], toolHome: tokHome)
-expect(tokens.first { $0.accountID == "tok-claude" }!.days[tokDay(tokB)]?.output == 8, "a new cache format keeps a deleted log's sums")
-try! fm.moveItem(atPath: claudeLog + ".bak", toPath: claudeLog)
-// Other Macs (TokenSync): each writes only its own file; a half-written file keeps the last whole copy; a removed one leaves.
+let tokOld: [String: Any] = ["version": 2, "files": [
+    tokHome2 + "/codex-b/sessions/2026/03/10/" + tokSession + ".jsonl": ["size": 10, "offset": 10, "gone": true, "last": [100, 60, 0, 3],
+        "days": ["2026-03-10": ["input": 40, "cacheWrite": 0, "cacheRead": 60, "output": 3]]],
+    tokHome2 + "/codex-b/sessions/2026/01/05/rollout-old.jsonl": ["size": 10, "offset": 10, "gone": true,
+        "days": ["2026-01-05": ["input": 1, "cacheWrite": 0, "cacheRead": 0, "output": 50]]],
+    tokHome2 + "/codex-b/sessions/2026/03/10/live.jsonl": ["size": 1, "offset": 1, "days": ["2026-03-10": ["input": 999, "cacheWrite": 0, "cacheRead": 0, "output": 999]]]]]
+try! JSONSerialization.data(withJSONObject: tokOld).write(to: URL(fileURLWithPath: tokCache))
+tokWrite(tokHome2 + "/codex-b/sessions/2026/03/10/live.jsonl", [tokCodexLine(tokA, input: 10, cached: 0, out: 1)])
+try! fm.createDirectory(atPath: tokHome2 + "/codex-b/archived_sessions", withIntermediateDirectories: true)
+try! tokZst.write(to: URL(fileURLWithPath: tokHome2 + "/codex-b/archived_sessions/" + tokSession + ".jsonl.zst"))
+tokens = TokenLedger.read([tokCodex2], toolHome: tokHome2)
+let tokLegacy = tokens.entries.filter { $0.source == .legacy }
+expect(tokLegacy.count == 2 && tokLegacy.allSatisfy { !$0.hourly && $0.model == nil } && tokLegacy.reduce(0) { $0 + $1.counts.output } == 53,
+       "the older format's deleted logs stay as day sums: \(tokLegacy)")
+expect(tokSum(tokens, isS) == TokenCounts(input: 10, cacheRead: 10, output: 1, reasoning: 1) && tokSum(tokens) { $0.source == .log && !isS($0) }.output == 1
+       && tokens.folders[0].legacy == 2, "an archived copy of an old-format session adds only what came after; a live log is read again, once: \(tokens.entries)")
+// Folders: a Git worktree goes with its repository.
+try! fm.createDirectory(atPath: home + "/repo/.git/worktrees/wt", withIntermediateDirectories: true)
+try! fm.createDirectory(atPath: home + "/wt/sub", withIntermediateDirectories: true)
+try! "gitdir: \(home)/repo/.git/worktrees/wt\n".write(toFile: home + "/wt/.git", atomically: true, encoding: .utf8)
+expect(TokenLedger.projectRoot(home + "/wt/sub") == home + "/repo" && TokenLedger.projectRoot(home + "/repo") == home + "/repo"
+       && TokenLedger.projectRoot("/no/such/folder") == "/no/such/folder", "a worktree's project is its repository")
+// Every Mac together: a session found on two Macs (its log copied) counts once; sums without a session never merge.
+func tokEntry(_ session: String?, _ out: Int, source: TokenEntry.Source = .log) -> TokenEntry {
+    TokenEntry(provider: .claude, accountID: nil, accountName: "C", folder: "", origin: nil, source: source, start: tokHour(tokA), hourly: true,
+               model: nil, session: session, project: nil, kind: nil, counts: TokenCounts(output: out))
+}
+let tokPeer = TokenDevice(id: "mac-b", name: "Mac mini", writtenAt: Date(), revision: 1, entries: [tokEntry("s1", 5), tokEntry("s2", 7), tokEntry(nil, 3), tokEntry(nil, 4, source: .app)])
+let tokAll = TokenLedger.together([tokEntry("s1", 5), tokEntry(nil, 3)], [tokPeer])
+let tokAllOut: Int = tokAll.reduce(0) { $0 + $1.counts.output }
+let tokS1: [String] = tokAll.filter { $0.session == "s1" }.map(\.device)
+expect(tokAllOut == 22 && tokS1 == [""], "a session on two Macs counts once (this Mac's); sums without a session add up: \(tokAllOut) \(tokS1)")
+// Other Macs (TokenSync): each writes only its own file, whole; syncing again changes nothing; a correction replaces
+// the old numbers; a half-written file keeps the last whole copy; an older app's file is read as day sums; a removed one leaves.
 let tokSync = URL(fileURLWithPath: home + "/sync-root/AI Illuminati Sync")
 try! fm.createDirectory(at: tokSync.deletingLastPathComponent(), withIntermediateDirectories: true)
-let tokShare = TokenShare(provider: .claude, name: "C", outside: false, origin: nil, days: [tokDay(tokA): TokenCounts(output: 9)])
-expect(TokenSync.exchange([tokShare], folder: tokSync, deviceID: "mac-b", deviceName: "Mac mini").isEmpty, "no other Mac yet")
-var tokPeers = TokenSync.exchange([TokenShare(provider: .claude, name: "C", outside: false, origin: nil, days: [tokDay(tokA): TokenCounts(output: 2)])],
-                                  folder: tokSync, deviceID: "mac-a", deviceName: "MacBook")
-expect(tokPeers.count == 1 && tokPeers[0].name == "Mac mini" && tokPeers[0].shares == [tokShare] && tokPeers[0].shares[0].key == "claude#C",
-       "another Mac's sums come back whole, matched by provider and name: \(tokPeers)")
-try! "{\"version\":1,\"id\":\"mac-b\",\"na".write(to: tokSync.appendingPathComponent("token-usage/mac-b.json"), atomically: true, encoding: .utf8)
+expect(TokenSync.exchange([tokEntry("s9", 9)], folder: tokSync, deviceID: "mac-b", deviceName: "Mac mini").isEmpty, "no other Mac yet")
+var tokPeers = TokenSync.exchange([tokEntry("s1", 2)], folder: tokSync, deviceID: "mac-a", deviceName: "MacBook")
+expect(tokPeers.count == 1 && tokPeers[0].name == "Mac mini" && tokPeers[0].entries.map(\.counts.output) == [9] && tokPeers[0].entries[0].accountName == "C"
+       && tokPeers[0].entries[0].session == "s9" && tokPeers[0].revision == 1, "another Mac's ledger comes back whole, with account names: \(tokPeers)")
+_ = TokenSync.exchange([tokEntry("s9", 9)], folder: tokSync, deviceID: "mac-b", deviceName: "Mac mini")
+tokPeers = TokenSync.exchange([tokEntry("s1", 2)], folder: tokSync, deviceID: "mac-a", deviceName: "MacBook")
+expect(tokPeers[0].revision == 1 && tokPeers[0].entries.map(\.counts.output) == [9], "syncing again changes nothing")
+_ = TokenSync.exchange([tokEntry("s9", 6)], folder: tokSync, deviceID: "mac-b", deviceName: "Mac mini")
 tokPeers = TokenSync.exchange([], folder: tokSync, deviceID: "mac-a", deviceName: "MacBook")
-expect(tokPeers.first?.shares == [tokShare], "a half-synced file keeps the last whole copy")
+expect(tokPeers[0].revision == 2 && tokPeers[0].entries.map(\.counts.output) == [6], "a correction (fewer tokens) replaces the old copy: \(tokPeers)")
+try! "{\"version\":2,\"id\":\"mac-b\",\"na".write(to: tokSync.appendingPathComponent("token-usage/mac-b.json"), atomically: true, encoding: .utf8)
+tokPeers = TokenSync.exchange([], folder: tokSync, deviceID: "mac-a", deviceName: "MacBook")
+expect(tokPeers.first?.entries.map(\.counts.output) == [6], "a half-synced file keeps the last whole copy")
+try! #"{"version":1,"id":"mac-c","name":"Old Mac","writtenAt":"2026-03-12T00:00:00Z","shares":[{"provider":"codex","name":"X","outside":false,"days":{"2026-03-10":{"input":1,"cacheWrite":0,"cacheRead":0,"output":2}}}]}"#
+    .write(to: tokSync.appendingPathComponent("token-usage/mac-c.json"), atomically: true, encoding: .utf8)
+tokPeers = TokenSync.exchange([], folder: tokSync, deviceID: "mac-a", deviceName: "MacBook")
+let tokOldMac = tokPeers.first { $0.id == "mac-c" }
+expect(tokOldMac?.entries.count == 1 && tokOldMac?.entries[0].source == .legacy && tokOldMac?.entries[0].accountName == "X" && tokOldMac?.entries[0].hourly == false,
+       "an older app's daily sums are read as day sums: \(String(describing: tokOldMac))")
 TokenSync.removeMine(folder: tokSync, deviceID: "mac-b")
+TokenSync.removeMine(folder: tokSync, deviceID: "mac-c")
 tokPeers = TokenSync.exchange([], folder: tokSync, deviceID: "mac-a", deviceName: "MacBook")
 expect(tokPeers.isEmpty && TokenSync.cached().isEmpty, "a Mac that removed its copy leaves")
-expect(TokenSync.exchange([tokShare], folder: URL(fileURLWithPath: home + "/no-icloud/AI Illuminati Sync"), deviceID: "mac-a", deviceName: "MacBook").isEmpty
+expect(TokenSync.exchange([tokEntry("s1", 1)], folder: URL(fileURLWithPath: home + "/no-icloud/AI Illuminati Sync"), deviceID: "mac-a", deviceName: "MacBook").isEmpty
        && !fm.fileExists(atPath: home + "/no-icloud"), "no folder is made when iCloud Drive is off")
-print("PASS: Runtime promises (errors, Stop, time out, process group, stream order, background thread, sessions saved, resumed and read from older files, steering, token logs, deleted logs, Gemini, other Macs' tokens)")
+print("PASS: Runtime promises (errors, Stop, time out, process group, stream order, background thread, sessions saved, resumed and read from older files, steering, token logs by hour/model/session, Claude usage updates, Codex .zst and archive once, deleted and older-format logs, Gemini, app calls, other Macs' ledgers)")

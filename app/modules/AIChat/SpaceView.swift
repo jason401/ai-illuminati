@@ -221,7 +221,7 @@ extension Discussion {
             var started = Date()
             let outcome = SpaceBuilder.refine(prompt: prompt, kept: html.kept, ask: { prompt in
                 started = Date()
-                return Answerer.ask(account, prompt: prompt, timeout: 600, cancellation: cancel, run: .app(account))
+                return Answerer.ask(account, prompt: prompt, timeout: 600, cancellation: cancel, run: .app(account).tagged("space"))
                     .map { ChatApp.face.extract($0).text }.mapError { SpaceBad(reason: Self.describe($0)) }
             }, made: {
                 // Pictures ChatGPT made in this answer and those already in the page go in for their markers.

@@ -57,7 +57,7 @@ public final class Discussion: ObservableObject {
     var debateCancellation: DebateCancellation? { host == nil ? workers[currentID]?.runCancellation : runCancellation }
     var collaborationAnswer: ((Account, String, [URL], DebateCancellation) -> Result<String, Answerer.Failure>)?
     var debateAnswer: (Account, String, TimeInterval, DebateCancellation, Bool) -> Result<String, Answerer.Failure> = {
-        Answerer.ask($0, prompt: $1, timeout: $2, cancellation: $3, web: $4, run: .app($0))
+        Answerer.ask($0, prompt: $1, timeout: $2, cancellation: $3, web: $4, run: .app($0).tagged("meeting"))
     }
     // The open chat's message box; every other chat's unsent box waits in roomDrafts (RoomDrafts below).
     @Published var draft = "" { didSet { if draft != oldValue { draftsChanged() } } }

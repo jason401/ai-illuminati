@@ -6,6 +6,7 @@
     "validate-app-modules": {"executable": "/usr/bin/python3", "args": ["-B", "tools/tests/validate_app_modules.py"]},
     "test-fresh-cache": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_CACHE=fresh", "/bin/zsh", "tools/tests/run_mode2.sh"]},
     "test-serial": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_JOBS=1", "/bin/zsh", "tools/tests/run_mode2.sh"]},
-    "test-modules": {"executable": "/bin/zsh", "args": ["tools/tests/run_mode2.sh", "--modules"]}
+    "test-modules": {"executable": "/bin/zsh", "args": ["tools/tests/run_mode2.sh", "--modules"]},
+    "test-token-stats": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_JOBS=1", "AI_ILLUMINATI_TEST_ONLY=testTokenStats,testRunConditions", "/bin/zsh", "tools/tests/run_mode2.sh"]}
   }
 }

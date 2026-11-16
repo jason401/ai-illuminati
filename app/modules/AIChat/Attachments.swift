@@ -77,7 +77,7 @@ extension Discussion {
     func request(_ account: Account, prompt: String, timeout: TimeInterval = 240) -> Result<String, Answerer.Failure> {
         guard permits(account, room: currentID) else { return .failure(Enterprise.blocked(account)) }
         if activeImages.isEmpty { return answer(account, activeDocumentText + "\n" + prompt, timeout) }
-        return Answerer.ask(account, prompt: activeDocumentText + "\n" + imageContext + "\n" + prompt, timeout: timeout, images: activeImages, run: .app(account))
+        return Answerer.ask(account, prompt: activeDocumentText + "\n" + imageContext + "\n" + prompt, timeout: timeout, images: activeImages, run: .app(account).tagged("attachment"))
     }
 
     // fresh: a shorter prompt (summary + recent turns) for an AI that starts without a session it can resume.

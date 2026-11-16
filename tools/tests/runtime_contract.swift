@@ -367,4 +367,28 @@ tokens = TokenLedger.read([tokClaude, tokCodex], toolHome: tokHome)
 expect(tokens.first { $0.accountID == "tok-claude" }!.days[tokDay(tokB)]?.output == 8,
        "a later read takes only the new lines (the repeated last message counts once)")
 expect(fm.fileExists(atPath: AccountStore.supportDir + "/token-usage.json"), "what was read is kept in the support folder")
-print("PASS: Runtime promises (errors, Stop, time out, process group, stream order, background thread, sessions saved, resumed and read from older files, steering, token logs)")
+// A deleted log (Claude Code removes them after 30 days) keeps its sums; when it comes back it is not counted twice.
+try! fm.moveItem(atPath: claudeLog, toPath: claudeLog + ".bak")
+tokens = TokenLedger.read([tokClaude, tokCodex], toolHome: tokHome)
+expect(tokens.first { $0.accountID == "tok-claude" }!.days[tokDay(tokB)]?.output == 8, "a deleted log keeps its daily sums")
+try! fm.moveItem(atPath: claudeLog + ".bak", toPath: claudeLog)
+tokens = TokenLedger.read([tokClaude, tokCodex], toolHome: tokHome)
+expect(tokens.first { $0.accountID == "tok-claude" }!.days[tokDay(tokB)]?.output == 8, "a log that comes back is not counted twice")
+// Gemini (agy) steps; outside the app split by the program that wrote the logs.
+let tokGemini = Account(id: "tok-gemini", provider: .gemini, name: "G")
+tokWrite(tokHome + "/.gemini/antigravity-cli/brain/b1/.system_generated/logs/transcript.jsonl", [
+    #"{"step_index":0,"type":"USER_INPUT","created_at":"\#(tokA)","content":"output_tokens"}"#,
+    #"{"step_index":1,"type":"PLANNER_RESPONSE","created_at":"\#(tokA)","input_tokens":300,"cache_read_tokens":0,"output_tokens":20}"#,
+    #"{"step_index":3,"type":"PLANNER_RESPONSE","created_at":"\#(tokA)","input_tokens":40,"cache_read_tokens":300,"output_tokens":6}"#])
+tokWrite(tokHome + "/.codex/sessions/2026/03/10/d.jsonl", [
+    #"{"timestamp":"\#(tokA)","type":"session_meta","payload":{"originator":"Codex Desktop"}}"#, tokCodexLine(tokA, input: 10, cached: 0, out: 1)])
+tokWrite(tokHome + "/.codex/sessions/2026/03/10/t.jsonl", [
+    #"{"timestamp":"\#(tokA)","type":"session_meta","payload":{"originator":"codex_cli_rs"}}"#, tokCodexLine(tokA, input: 20, cached: 0, out: 2)])
+tokens = TokenLedger.read([tokClaude, tokCodex, tokGemini], toolHome: tokHome)
+expect(tokens.first { $0.accountID == "tok-gemini" }?.days[tokDay(tokA)] == TokenCounts(input: 340, cacheRead: 300, output: 26),
+       "Gemini's model steps are counted for the Gemini account: \(tokens.map(\.days))")
+let tokOut = tokens.filter { $0.accountID == nil && $0.provider == .codex }
+expect(tokOut.count == 2 && tokOut.first { $0.origin == .desktop }?.days[tokDay(tokA)]?.output == 1
+       && tokOut.first { $0.origin == .terminal }?.days[tokDay(tokA)]?.output == 2,
+       "outside the app, the desktop app and Terminal are told apart: \(tokOut.map { ($0.origin, $0.days) })")
+print("PASS: Runtime promises (errors, Stop, time out, process group, stream order, background thread, sessions saved, resumed and read from older files, steering, token logs, deleted logs, Gemini)")

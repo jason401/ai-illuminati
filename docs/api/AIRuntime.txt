@@ -168,9 +168,15 @@ TokenCounts.total | var total: Int { get }
 TokenLedger | enum TokenLedger
 TokenLedger.read(_:toolHome:) | static func read(_ accounts: [Account], toolHome: String) -> [TokenSource]
 TokenSource | struct TokenSource
+TokenSource.Origin | enum Origin
+TokenSource.Origin.desktop | case desktop
+TokenSource.Origin.init(rawValue:) | init?(rawValue: String)
+TokenSource.Origin.other | case other
+TokenSource.Origin.terminal | case terminal
 TokenSource.accountID | let accountID: String?
 TokenSource.days | let days: [Date : TokenCounts]
 TokenSource.folder | let folder: String
+TokenSource.origin | let origin: TokenSource.Origin?
 TokenSource.provider | let provider: Account.Provider
 ToolHome | enum ToolHome
 ToolHome.agyInstalled | static var agyInstalled: Bool { get }

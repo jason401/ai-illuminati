@@ -885,8 +885,12 @@ struct AccountsSettingsTab: View {
                 Text("\(model.accounts.count)").foregroundStyle(.secondary)
                 Spacer()
                 // Token statistics live in their own window: this page manages accounts.
-                Button(L("사용량 보기…", "Show Usage…")) { TokenStatsWindow.shared.show(model: model) }.fixedSize()
-                    .help(L("모든 계정·기기의 토큰 사용량 (CLI 로그 기준)", "Token usage of every account and Mac (from the CLI logs)"))
+                // Icons, not words: two labelled buttons pushed the title onto two lines in a narrow window.
+                Button { TokenStatsWindow.shared.show(model: model) } label: {
+                    Image(systemName: "chart.bar").frame(width: 22, height: 18)
+                }.fixedSize()
+                    .help(L("사용량 보기: 모든 계정·기기의 토큰 사용량 (CLI 로그 기준)", "Show Usage: token usage of every account and Mac (from the CLI logs)"))
+                    .accessibilityLabel(L("사용량 보기", "Show Usage"))
                 Menu {
                     Button(L("Claude 계정 추가", "Add Claude")) { model.add(.claude) }
                     Button(L("ChatGPT 계정 추가", "Add ChatGPT")) { model.add(.codex) }
@@ -894,8 +898,10 @@ struct AccountsSettingsTab: View {
                     Divider()
                     Button(L("Ollama 모델 (내 Mac)…", "Ollama Models (this Mac)…")) { LocalModelsWindow.shared.show(model: model) }
                 } label: {
-                    Label(L("계정 추가", "Add account"), systemImage: "plus")
-                }.fixedSize()
+                    Image(systemName: "plus").frame(width: 22, height: 18)
+                }.menuIndicator(.hidden).fixedSize()
+                    .help(L("계정 추가", "Add account"))
+                    .accessibilityLabel(L("계정 추가", "Add account"))
             }
             VStack(spacing: 0) {
                 if model.accounts.isEmpty {
@@ -921,7 +927,7 @@ struct AccountsSettingsTab: View {
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(0.07)))
             .onDisappear { model.draggingAccount = nil }
-            Text(L("이름을 눌러 수정 · 오른쪽에서 모델 선택 · 끌어서 순서 변경 · ⋯에서 로그인과 폴더 열기", "Edit names directly · Pick each model on the right · Drag to reorder · ⋯ for sign-in and folders"))
+            Text(L("이름을 눌러 수정 · 오른쪽에서 모델 선택 · 끌어서 순서 변경 · ⋯에서 로그인, 폴더, 엔터프라이즈", "Edit names directly · Pick each model on the right · Drag to reorder · ⋯ for sign-in, folders and Enterprise"))
                 .font(.system(size: 11)).foregroundStyle(.secondary)
             Text(L("계정을 추가하면 브라우저 로그인을 위해 터미널이 열려요. 같은 ChatGPT 계정을 중복 추가하지 마세요.",
                    "Adding opens Terminal for browser sign-in. Add each ChatGPT account only once."))
@@ -1997,19 +2003,31 @@ private struct AccountRow: View {
                         .onExitCommand { naming.id = nil }
                         .onChange(of: nameFocused) { focused in if !focused && naming.id == account.id { naming.id = nil } }
                 } else {
-                    Text(name.isEmpty ? L("이름", "Name") : name)
-                        .foregroundStyle(name.isEmpty ? .secondary : .primary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
-                        .onTapGesture { naming.id = account.id }
-                        .help(L("눌러서 이름 바꾸기", "Click to rename"))
+                    HStack(spacing: 6) {
+                        Text(name.isEmpty ? L("이름", "Name") : name)
+                            .foregroundStyle(name.isEmpty ? .secondary : .primary)
+                            .lineLimit(1).truncationMode(.tail)
+                            .help(L("눌러서 이름 바꾸기", "Click to rename"))
+                        // Only Enterprise accounts get a mark; the switch itself sits in the ⋯ menu.
+                        if isSchool {
+                            Text(L("엔터프라이즈", "Enterprise"))
+                                .font(.system(size: 9, weight: .medium)).foregroundStyle(Color.accentColor)
+                                .padding(.horizontal, 5).padding(.vertical, 1)
+                                .background(Capsule().fill(Color.accentColor.opacity(0.18)))
+                                .fixedSize()
+                                .help(enterpriseHelp)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                    .onTapGesture { naming.id = account.id }
                 }
-                HStack(spacing: 6) {
-                    // Fixed width so every row's Enterprise box starts at the same x.
+                HStack(spacing: 4) {
+                    status
                     Text(account.provider.title).foregroundStyle(.secondary)
-                        .frame(width: 46, alignment: .leading)
                     if account.provider == .ollama {
-                        status
+                        Text("·").foregroundStyle(.secondary)
                         // How long the model stays in memory after a reply (closing the chat window unloads it anyway).
                         Menu {
                             Picker(L("답한 뒤 메모리에 남겨 두기", "Keep in memory after a reply"), selection: $model.localKeepAlive) {
@@ -2021,14 +2039,6 @@ private struct AccountRow: View {
                         .menuStyle(.borderlessButton).fixedSize().controlSize(.mini)
                         .help(L("답한 뒤 모델을 메모리에 남겨 두는 시간. 다시 부를 때 기다리지 않아요. 채팅창을 닫으면 바로 내려요.",
                                 "How long the model stays in memory after a reply, so the next one starts at once. Closing the chat window unloads it."))
-                    }
-                    if account.provider != .ollama {
-                        Toggle(L("엔터프라이즈", "Enterprise"), isOn: Binding(
-                            get: { model.accounts.first { $0.id == account.id }?.isSchool ?? false },
-                            set: { model.setSchool(account.id, $0) }))
-                            .toggleStyle(.checkbox).controlSize(.mini)
-                            .help(L("엔터프라이즈(학교·회사) 계정: 직접 잠근 Enterprise 방에는 이름이 같은 엔터프라이즈 계정과 내 Mac 모델만 참여해요", "Enterprise (school or work) account: a chat you lock as Enterprise is answered only by Enterprise accounts of the same name and models on this Mac"))
-                        status
                     }
                 }.font(.system(size: 10)).lineLimit(1)
             }
@@ -2042,6 +2052,12 @@ private struct AccountRow: View {
                 Button(account.provider == .ollama ? L("다시 받기·업데이트", "Download again or update") : L("로그인…", "Sign in…")) { model.login(account) }
                 if let dir = account.dir {
                     Button(L("Finder에서 폴더 열기", "Show folder in Finder")) { DataFolders.open(dir) }
+                }
+                if account.provider != .ollama {
+                    Divider()
+                    Toggle(L("엔터프라이즈 계정", "Enterprise account"), isOn: Binding(
+                        get: { isSchool }, set: { model.setSchool(account.id, $0) }))
+                        .help(enterpriseHelp)
                 }
                 Divider()
                 Button(L("목록에서 빼기…", "Remove from list…")) { model.remove(account) }
@@ -2060,17 +2076,23 @@ private struct AccountRow: View {
         .accessibilityAction(named: L("아래로 이동", "Move down")) { model.move(account, by: 1) }
     }
 
-    // Like AI Face's "Connected": green when signed in, orange when a sign-in is needed. Usage % lives in the menu, not here.
+    private var isSchool: Bool { model.accounts.first { $0.id == account.id }?.isSchool ?? false }
+    private var enterpriseHelp: String {
+        L("엔터프라이즈(학교·회사) 계정: 직접 잠근 Enterprise 방에는 이름이 같은 엔터프라이즈 계정과 내 Mac 모델만 참여해요", "Enterprise (school or work) account: a chat you lock as Enterprise is answered only by Enterprise accounts of the same name and models on this Mac")
+    }
+
+    // A dot instead of words so the row never truncates: green signed in, orange sign-in needed, grey checking.
+    // Usage % lives in the menu, not here.
     @ViewBuilder private var status: some View {
-        if let usage = model.latestUsage[account.id] {
-            if usage.needsLogin {
-                Text(L("로그인 필요", "Sign-in needed")).foregroundStyle(.orange)
-            } else {
-                Text(L("연결됨", "Connected")).foregroundStyle(.green)
-            }
-        } else {
-            Text(L("확인 중…", "Checking…")).foregroundStyle(.secondary)
-        }
+        let (color, text): (Color, String) = {
+            guard let usage = model.latestUsage[account.id] else { return (.secondary, L("확인 중…", "Checking…")) }
+            return usage.needsLogin ? (.orange, L("로그인 필요", "Sign-in needed")) : (.green, L("연결됨", "Connected"))
+        }()
+        Circle().fill(color).frame(width: 7, height: 7)
+            .frame(width: 10, height: 12)
+            .contentShape(Rectangle())
+            .help(text)
+            .accessibilityLabel(text)
     }
 }
 

@@ -88,7 +88,7 @@ private struct EmptyPreviewLogin: GoogleTokenStore {
             var meeting = Conversation(); meeting.title = "Meeting"; meeting.turns = [ChatTurn(question: "Sidebar structure: folders or chats?")]
             meeting.meetingOf = MeetingLink(room: conversation.id, turn: turn.id)
             let todoRoom = linked("TODO · Drag and drop PDFs", repo)
-            let item = try? TodoStore.shared.add(title: "Drag and drop PDFs", project: repo, projectName: "AI Illuminati")
+            let item = CommandLine.arguments.contains("--empty-board") ? nil : try? TodoStore.shared.add(title: "Drag and drop PDFs", project: repo, projectName: "AI Illuminati")
             if let item { try? TodoStore.shared.change(item.id) { $0.room = todoRoom.id; $0.state = .review } }
             var notes = Conversation(); notes.title = "Todo list structure idea"; notes.turns = [ChatTurn(question: "ideas")]; notes.pinned = true
             chat.conversations = [conversation, meeting, todoRoom, linked("Face expressions", face), linked("Lamb wave draft", papers), notes]

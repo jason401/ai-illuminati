@@ -128,14 +128,20 @@ struct TodoBoardView: View {
                     TodoBoardHeader(scheduler: scheduler, discussion: discussion,
                                     project: discussion.boardProject.map { projectInfo.names[$0] ?? projects.first?.name ?? lists.first.map(title) ?? "" }, lists: Set(lists.map(\.id)))
                 }
+                Toggle(L("완료·취소된 것도 보기", "Show done and cancelled"), isOn: $draft.showDone)
+                    .toggleStyle(.checkbox).font(.system(size: 12))
+                    .frame(maxWidth: .infinity, alignment: .trailing)
                 if let error = draft.error ?? store.saveError { Text(error).font(.system(size: 12)).foregroundColor(.red) }
                 ForEach(lists) { list in listView(list) }
                 if lists.isEmpty {
                     Text(L("아직 TODO가 없어요. 아래에서 프로젝트를 고르고 적어 주세요.", "No TODOs yet. Pick a project below and write one."))
                         .font(.system(size: 13)).foregroundColor(.secondary)
                 }
-                Toggle(L("완료·취소된 것도 보기", "Show done and cancelled"), isOn: $draft.showDone).toggleStyle(.checkbox).font(.system(size: 12))
-                addBar
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(L("새 TODO", "New TODO")).font(.system(size: 12)).foregroundColor(.secondary)
+                    addBar
+                }
+                .padding(.top, 6)   // Together with the board spacing: 24 pt clear of the last card or empty message.
             }
             .frame(maxWidth: 760, alignment: .leading)
             .padding(.horizontal, 28).padding(.vertical, 16)

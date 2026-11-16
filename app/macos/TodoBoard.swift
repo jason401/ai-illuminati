@@ -387,6 +387,13 @@ struct TodoBoardView: View {
         .onExitCommand { draft.endEdit() }
     }
 
+    // The new TODO's links that count: only to TODOs of the list it goes to. The project can change without the picker (another
+    // project's board opened), so the menu, its count and the add all read this, never draft.after directly.
+    private func draftLinks(_ root: String) -> [UUID] {
+        guard let id = boardList(root)?.id else { return [] }
+        return store.snapshot.ordered(id).map(\.id).filter(draft.after.contains)
+    }
+
     // The list a new TODO for `root` goes to (nil until its first TODO).
     private func boardList(_ root: String) -> TodoList? { store.snapshot.lists.first { $0.project?.root == root } }
 
@@ -457,12 +464,12 @@ struct TodoBoardView: View {
         Button(action: { addDraftFiles(Self.chooseFiles()) }) { Label(L("첨부", "Attach"), systemImage: "paperclip") }
             .help(L("사진이나 파일을 첨부해요 (여기나 TODO 줄 위에 끌어다 놓아도 돼요 · 사진 앱·스크린샷도)", "Attach photos or files (or drop them here or on a TODO, also from Photos or a screenshot)"))
             .fixedSize()
-        Menu(draft.after.isEmpty ? L("먼저 끝나야 할 TODO", "Must finish first") : L("먼저: \(draft.after.count)개", "First: \(draft.after.count)")) {
-            let data = store.snapshot
-            ForEach(data.linkChoices(boardList(root)?.id, except: nil, linked: Array(draft.after), showingDone: draft.showDone), id: \.item.id) { choice in
-                Button(linkLine(choice, linked: draft.after.contains(choice.item.id), for: nil)) {
-                    if draft.after.contains(choice.item.id) { draft.after.remove(choice.item.id) } else { draft.after.insert(choice.item.id) }
-                }
+        let links = draftLinks(root)
+        Menu(links.isEmpty ? L("먼저 끝나야 할 TODO", "Must finish first") : L("먼저: \(links.count)개", "First: \(links.count)")) {
+            ForEach(store.snapshot.linkChoices(boardList(root)?.id, except: nil, linked: links, showingDone: draft.showDone), id: \.item.id) { choice in
+                let on = links.contains(choice.item.id)
+                // From the shown links only: ones left from another project (another board open) go with the first change.
+                Button(linkLine(choice, linked: on, for: nil)) { draft.after = Set(on ? links.filter { $0 != choice.item.id } : links + [choice.item.id]) }
             }
         }
         .fixedSize()
@@ -548,7 +555,7 @@ struct TodoBoardView: View {
             ?? discussion.conversations.first { $0.workspace?.project.map(SidebarProjects.key) == SidebarProjects.key(project.binding) && $0.enterpriseLock != nil }?.enterpriseLock
         act {
             try store.add(title: text, detail: draft.detail.trimmingCharacters(in: .whitespacesAndNewlines), files: draft.files.map(\.url), project: project.binding, projectName: project.name,
-                          after: Array(draft.after.filter { store.snapshot.item($0)?.listID == boardList(root)?.id }), askFirst: draft.askFirst, originRoom: origin, lock: lock)
+                          after: draftLinks(root), askFirst: draft.askFirst, originRoom: origin, lock: lock)
             draft.title = ""; draft.detail = ""; draft.files = []; draft.after = []
             for folder in draft.dropFolders { try? FileManager.default.removeItem(at: folder) }
             draft.dropFolders = []

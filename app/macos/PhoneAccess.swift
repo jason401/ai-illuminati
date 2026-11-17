@@ -79,6 +79,8 @@ final class PhoneAccess: ObservableObject {
 
     // The standalone app's CLI first (the one the Tailscale menu offers to link), then the usual installs.
     static let cliPaths = ["/Applications/Tailscale.app/Contents/MacOS/Tailscale", "/opt/homebrew/bin/tailscale", "/usr/local/bin/tailscale"]
+    // Started from an app (no TERM), the standalone app's binary tries to open its GUI and fails; this makes it the CLI.
+    static var cliEnvironment: [String: String] { ProcessInfo.processInfo.environment.merging(["TAILSCALE_BE_CLI": "1"]) { $1 } }
 
     func refresh(then done: ((TailnetStatus) -> Void)? = nil) {
         guard !busy else { if let done { DispatchQueue.main.asyncAfter(deadline: .now() + 1) { self.refresh(then: done) } }; return }
@@ -108,6 +110,7 @@ final class PhoneAccess: ObservableObject {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: path)
         process.arguments = args
+        process.environment = cliEnvironment
         let out = Pipe()
         process.standardOutput = out
         process.standardError = FileHandle.nullDevice
@@ -198,6 +201,7 @@ final class PhoneServer: ObservableObject {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: cli)
             process.arguments = args
+            process.environment = PhoneAccess.cliEnvironment
             let err = Pipe()
             process.standardOutput = FileHandle.nullDevice
             process.standardError = err

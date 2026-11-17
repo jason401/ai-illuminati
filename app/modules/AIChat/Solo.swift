@@ -842,7 +842,8 @@ extension Discussion {
                 }
             }
             let ran = AnswerModel()
-            let result = requestDebate(account, prompt, Self.soloTimeout, cancellation, web: true,
+            // Full access works on its own for long (tests, builds): the same 8 hours as a called AI, not 15 minutes.
+            let result = requestDebate(account, prompt, binding.fullAccess == true ? 8 * 3600 : Self.soloTimeout, cancellation, web: true,
                                        fresh: fresh.map { $0 + "\n[SOLO TURN]\n" + instruction }, steering: steer, progress: ran.watch(progress))
             if cancellation.isCancelled { break }
             switch result {

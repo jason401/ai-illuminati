@@ -163,13 +163,14 @@ public final class Discussion: ObservableObject {
         }
     }
 
-    // Earlier pictures sent again with each message besides the ones attached to it. Older ones stay in the
-    // chat and in the numbered list, as a line only, unless the message names them ("Image 3", "사진 3").
+    // Earlier pictures sent again with a message that has none of its own (a follow-up about them). A message
+    // with photos gets only those: the user means the new ones. Others stay in the numbered list, as a line
+    // only, unless the message names them ("Image 3", "사진 3").
     static let recentImages = 6
     // Indexes of `pictures` (every picture in the chat, in order; the last `current` belong to this message) to attach.
     static func picturesToSend(_ pictures: [String], current: Int, question: String) -> Set<Int> {
         let earlier = max(0, pictures.count - current)
-        var sent = Set(earlier..<pictures.count).union(max(0, earlier - recentImages)..<earlier)
+        var sent = current > 0 ? Set(earlier..<pictures.count) : Set(max(0, earlier - recentImages)..<earlier)
         let pattern = try! NSRegularExpression(pattern: #"(?i)(?:image|picture|photo|사진|그림|이미지)\s*(\d{1,4})"#)
         for match in pattern.matches(in: question, range: NSRange(question.startIndex..., in: question)) {
             if let range = Range(match.range(at: 1), in: question), let n = Int(question[range]), n >= 1, n <= pictures.count { sent.insert(n - 1) }

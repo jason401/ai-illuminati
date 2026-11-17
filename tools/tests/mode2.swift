@@ -523,10 +523,11 @@ do {
     try? FileManager.default.removeItem(at: RoomDocuments.directory(imageChat.currentID))
 }
 let fifteen = (1...15).map { "picture \($0)" }
-expect(Discussion.picturesToSend(fifteen, current: 2, question: "이거 봐") == Set(7..<15), "send this message's photos and the latest earlier ones only")
+expect(Discussion.picturesToSend(fifteen, current: 2, question: "이거 봐") == Set(13..<15), "a message with photos sends only its own photos")
+expect(Discussion.picturesToSend(fifteen, current: 2, question: "사진 3이랑 비교") == Set(13..<15).union([2]), "a message with photos still sends a named earlier one")
 expect(Discussion.picturesToSend(fifteen, current: 0, question: "Image 3 다시 보고 사진 40도") == Set(9..<15).union([2]), "a named earlier picture is sent again; out-of-range numbers are ignored")
 expect(Discussion.picturesToSend([], current: 0, question: "Image 3, 사진 1").isEmpty, "a numbered picture in a chat without pictures is ignored")
-expect(Discussion.picturesToSend(Array(fifteen.prefix(4)), current: 1, question: "") == Set(0..<4), "a short chat sends everything")
+expect(Discussion.picturesToSend(Array(fifteen.prefix(4)), current: 0, question: "") == Set(0..<4), "a follow-up in a short chat sends every earlier picture")
 print("PASS: normalized attachment copy, image-only send, persistence, transcript image links, actual image deletion, invalid input, clipboard image import")
 
 // Switching modes inside one chat: 1 → 2 → 1. Mode 1 must see what was said in mode 2.

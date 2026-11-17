@@ -47,7 +47,7 @@ extension Discussion {
     }
 
     func addImage(_ data: Data, name: String) throws {
-        // The AIs get only this message's photos and the latest few (Discussion.recentImages), so a chat can hold many.
+        // The AIs get only this message's photos, or the latest few without any (Discussion.recentImages), so a chat can hold many.
         guard pendingImages.count < 4, current.turns.flatMap({ $0.images ?? [] }).count + pendingImages.count < 200 else {
             attachmentError = L("한 메시지에 4장, 한 대화에 200장까지 첨부할 수 있습니다.", "Attach up to 4 images per message and 200 per chat.")
             return

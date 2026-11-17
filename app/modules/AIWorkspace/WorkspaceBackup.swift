@@ -150,16 +150,26 @@ public struct WorkspaceBackup: Codable {
         var made = false
         defer { if !made { release(folder.path) } }
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        let (before, cloud) = try survey(binding.roots)
-        for (i, root) in binding.roots.enumerated() {
-            try copyTree(URL(fileURLWithPath: root.path), folder.appendingPathComponent(String(i)), key: "\(i)/", skip: cloud)
-        }
-        let copiedRoots = binding.roots.enumerated().map { WorkspaceRoot(path: folder.appendingPathComponent(String($0.offset)).path, directory: $0.element.directory) }
-        let copied = try stamps(copiedRoots), current = try stamps(binding.roots)
-        let expected = before.filter { !cloud.contains($0.key) }
-        guard copied == expected, current == before else {
-            let difference = Set(expected.keys).union(copied.keys).filter { expected[$0] != copied[$0] }.sorted().prefix(5).joined(separator: ", ")
-            throw WorkspaceError.make("백업 검증 실패로 쓰기를 시작하지 않았습니다: " + difference)
+        // Something else may write in the folder while it is copied (the background `git fetch` touching .git/FETCH_HEAD,
+        // an editor saving): then the copy is thrown away and made again, a few times, before giving up.
+        var before: [String: Stamp] = [:], cloud: Set<String> = [], attempt = 0
+        while true {
+            attempt += 1
+            (before, cloud) = try survey(binding.roots)
+            for (i, root) in binding.roots.enumerated() {
+                try copyTree(URL(fileURLWithPath: root.path), folder.appendingPathComponent(String(i)), key: "\(i)/", skip: cloud)
+            }
+            let copiedRoots = binding.roots.enumerated().map { WorkspaceRoot(path: folder.appendingPathComponent(String($0.offset)).path, directory: $0.element.directory) }
+            let copied = try stamps(copiedRoots), current = try stamps(binding.roots)
+            let expected = before.filter { !cloud.contains($0.key) }
+            if copied == expected, current == before { break }
+            for i in binding.roots.indices { try? FileManager.default.removeItem(at: folder.appendingPathComponent(String(i))) }
+            guard attempt < 4 else {
+                let moved = Set(before.keys).union(current.keys).filter { before[$0] != current[$0] }
+                let difference = Set(expected.keys).union(copied.keys).filter { expected[$0] != copied[$0] }.union(moved).sorted().prefix(5).joined(separator: ", ")
+                throw WorkspaceError.make("백업 검증 실패로 쓰기를 시작하지 않았습니다: " + difference)
+            }
+            Thread.sleep(forTimeInterval: Double(attempt) * 0.5)
         }
         var backup = WorkspaceBackup(directory: folder.path, roots: binding.roots, before: before)
         backup.created = Date()

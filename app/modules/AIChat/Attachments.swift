@@ -22,8 +22,8 @@ extension Discussion {
         for url in panel.urls { importImageFile(url) }
     }
 
+    // Pictures may be added while the chat answers: the message waits in the queue (send) with them.
     func importImageFile(_ url: URL) {
-        guard !running else { return }
         let access = url.startAccessingSecurityScopedResource()
         defer { if access { url.stopAccessingSecurityScopedResource() } }
         do {
@@ -34,7 +34,6 @@ extension Discussion {
     }
 
     func addPastedImages(_ pasteboard: NSPasteboard) -> Bool {
-        guard !running else { return false }
         if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL], !urls.isEmpty {
             attachFiles(urls)   // pictures into the question, other files (PDFs…) linked whole
             return true
@@ -48,7 +47,6 @@ extension Discussion {
     }
 
     func addImage(_ data: Data, name: String) throws {
-        guard !running else { return }
         // The AIs get only this message's photos and the latest few (Discussion.recentImages), so a chat can hold many.
         guard pendingImages.count < 4, current.turns.flatMap({ $0.images ?? [] }).count + pendingImages.count < 200 else {
             attachmentError = L("한 메시지에 4장, 한 대화에 200장까지 첨부할 수 있습니다.", "Attach up to 4 images per message and 200 per chat.")
@@ -57,6 +55,7 @@ extension Discussion {
         let item = try ImageStore.importImage(data, name: name, conversationID: currentID)
         pendingImages.append(item)
         attachmentError = nil
+        // While answering configure() waits; flushQueue switches the leader when the queued message starts.
         if configuration.leader == .gemini {
             configure { config in config.leader = config.participants.contains(.claude) ? .claude : .codex }
         }

@@ -507,6 +507,19 @@ do {
     imageChat.attachFiles(kept)
     expect(imageChat.pendingImages.isEmpty && (imageChat.current.workspace?.roots ?? []).contains { $0.path == kept[0].resolvingSymlinksInPath().path }, "promised PDF must be linked whole")
     imageChat.change(imageChat.currentID, save: false) { $0.workspace = nil }
+    // While answering a dropped photo still attaches (it waits in the queue); a PDF would reset the session, so it waits.
+    let photoURL = pdfFolder.appendingPathComponent("photo.png")
+    try fixture.write(to: photoURL)
+    let before = imageChat.pendingImages.count
+    imageChat.runningRooms.insert(imageChat.currentID)
+    let busyDrop = NSPasteboard.withUniqueName()
+    busyDrop.writeObjects([photoURL as NSURL, pdfURL as NSURL])
+    expect(imageChat.addPastedImages(busyDrop), "a drop while answering is taken")
+    expect(imageChat.pendingImages.count == before + 1, "a photo dropped while answering attaches")
+    expect(imageChat.current.workspace == nil && imageChat.attachmentError != nil, "a PDF dropped while answering is not linked and says why")
+    imageChat.runningRooms.remove(imageChat.currentID)
+    if let added = imageChat.pendingImages.last { imageChat.removePendingImage(added) }
+    imageChat.attachmentError = nil
     try? FileManager.default.removeItem(at: RoomDocuments.directory(imageChat.currentID))
 }
 let fifteen = (1...15).map { "picture \($0)" }

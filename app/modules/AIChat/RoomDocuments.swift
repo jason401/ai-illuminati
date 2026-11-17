@@ -57,12 +57,18 @@ extension Discussion {
 
     // Shared by Attach file, drag and drop and paste. A PDF is not a picture: rendering it as one kept
     // only its first page, so it is linked like any other file and the AI reads all of it.
+    // While answering only pictures attach: linking a file resets the AI session mid-answer.
     func attachFiles(_ urls: [URL]) {
-        guard !running && !importingMaterials else { return }
+        guard !importingMaterials else { return }
         let isImage = { (url: URL) in (try? url.resourceValues(forKeys: [.contentTypeKey]).contentType?.conforms(to: .image)) == true }
         for url in urls where isImage(url) { importImageFile(url) }
         let others = urls.filter { !isImage($0) }
         guard !others.isEmpty else { return }
+        guard !running else {
+            attachmentError = L("답하는 중에는 사진만 첨부할 수 있어요. 다른 파일은 답이 끝난 뒤 넣어 주세요.",
+                                "Only pictures can be attached while answering. Add other files when the answer is done.")
+            return
+        }
         do {
             let roots = try others.map { url -> WorkspaceRoot in
                 let path = url.resolvingSymlinksInPath()

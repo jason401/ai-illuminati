@@ -414,6 +414,10 @@ public final class Discussion: ObservableObject {
         let sent = Set(queue.prefix(batch.count).map(\.id))
         let questions = batch.map(\.question).filter { !$0.isEmpty }
         let merged = PendingInputs.merged(questions.isEmpty ? [L("첨부한 이미지를 설명해줘.", "Describe the attached images.")] : questions)
+        // Pictures added while answering could not switch a Gemini leader then (addImage).
+        if batch.contains(where: { !$0.images.isEmpty }), configuration(of: room).leader == .gemini {
+            configure(room: room) { config in config.leader = config.participants.contains(.claude) ? .claude : .codex }
+        }
         var note: String?
         switch sendToTodo(.init(question: merged, mentioned: batch[0].mentioned, picked: batch[0].picked, images: batch.flatMap(\.images)), room: room) {
         case .failed(let reason): return reason

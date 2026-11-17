@@ -1214,7 +1214,7 @@ struct ChatView<Model: ChatSettings>: View {
                                     }
                                     .buttonStyle(.plainHit)
                                     .accessibilityLabel(L("첨부 제거: ", "Remove attachment: ") + item.name)
-                                    .disabled(discussion.running || discussion.importingMaterials)
+                                    .disabled(discussion.importingMaterials)
                                 }
                                 .help(item.name)
                             }
@@ -3206,7 +3206,7 @@ private struct ImageAttachmentDropDelegate: DropDelegate {
     let discussion: Discussion
     func validateDrop(info: DropInfo) -> Bool {
         // The board and Project info take their own drops; the chat behind them is not shown.
-        !discussion.running && !discussion.viewingBoard && (info.hasItemsConforming(to: [UTType.fileURL, UTType.image]) || PictureDrop.hasPromises())
+        !discussion.viewingBoard && (info.hasItemsConforming(to: [UTType.fileURL, UTType.image]) || PictureDrop.hasPromises())
     }
     func dropEntered(info: DropInfo) { discussion.imageDropActive = validateDrop(info: info) }
     func dropExited(info: DropInfo) { discussion.imageDropActive = false }
@@ -3217,7 +3217,7 @@ private struct ImageAttachmentDropDelegate: DropDelegate {
         let conversationID = discussion.currentID
         PictureDrop.receive(info.itemProviders(for: [UTType.image])) { urls, folder in
             defer { if let folder { try? FileManager.default.removeItem(at: folder) } }
-            guard discussion.currentID == conversationID, !discussion.running else { return }
+            guard discussion.currentID == conversationID else { return }
             if urls.isEmpty { discussion.attachmentError = L("파일을 첨부할 수 없습니다.", "Could not attach file."); return }
             // Pictures attach, others (PDFs…) are linked whole. Promised files (Mail, …) sit in a temporary
             // folder removed below, so those are first copied into the chat's own folder.

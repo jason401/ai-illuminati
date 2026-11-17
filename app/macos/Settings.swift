@@ -198,6 +198,10 @@ final class AppModel: ObservableObject {
     @Published var opinionDigest: Bool {
         didSet { defaults.set(opinionDigest, forKey: "opinionDigest") }
     }
+    // Linked Git projects pull main by themselves when it is safe (GitBranchStore.autoPull); on by default.
+    @Published var autoPullMain: Bool {
+        didSet { defaults.set(autoPullMain, forKey: "autoPullMain") }
+    }
     var pictureMakers: [Account] { accounts.filter { $0.provider == .codex && !pictureMakersOff.contains($0.id) } }
     var onAccountsChange: (() -> Void)?
     var onDisplayChange: (() -> Void)?
@@ -234,6 +238,7 @@ final class AppModel: ObservableObject {
         autoTeamPicks = defaults.dictionary(forKey: "autoTeamPicks") as? [String: Bool] ?? [:]
         collaboration = defaults.string(forKey: "aiCollaboration").flatMap(CollabMode.init(rawValue:)) ?? .notify
         opinionDigest = defaults.object(forKey: "opinionDigest") as? Bool ?? true
+        autoPullMain = defaults.object(forKey: "autoPullMain") as? Bool ?? true
         localEnabled = persist ? LocalModel.enabled : true
         localKeepAlive = persist ? LocalModel.keepAlive : 5
         routeSorter = persist ? RouteSorter.current : .off
@@ -1117,6 +1122,14 @@ struct ChatSettingsTab: View {
                 SettingsRow(title: L("자동 정리", "Sum up")) {
                     Spacer()
                     Toggle(L("의견 자동 정리", "Sum up views"), isOn: $model.opinionDigest).labelsHidden().toggleStyle(.switch)
+                }
+            }
+            SettingsCard(title: L("main 자동으로 받기", "Pull main by itself"),
+                         help: L("연결된 Git 프로젝트마다 앱을 켤 때, Mac이 잠에서 깰 때, 그리고 10분마다 origin/main의 새 커밋을 받아요. main이 체크아웃되어 있고, 커밋하지 않은 변경과 올리지 않은 커밋이 없을 때만 받아요(fast-forward). AI가 그 프로젝트에서 작업 중이면 다음에 받아요.",
+                                 "For each linked Git project, pulls new commits of origin/main when the app starts, when the Mac wakes and every 10 minutes. Only when main is checked out with no uncommitted changes and nothing unpushed (fast-forward). If an AI is working in the project, it waits for the next round.")) {
+                SettingsRow(title: L("자동으로 받기", "Pull by itself")) {
+                    Spacer()
+                    Toggle(L("main 자동으로 받기", "Pull main by itself"), isOn: $model.autoPullMain).labelsHidden().toggleStyle(.switch)
                 }
             }
             let makers = model.accounts.filter { $0.provider == .codex }

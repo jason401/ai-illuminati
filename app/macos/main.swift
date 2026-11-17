@@ -31,6 +31,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var accounts: [Account] { model.accounts }
     private var usages: [AIUsage] = []
     private var timer: Timer?
+    private var pullTimer: Timer?
+    private var wakeObservation: NSObjectProtocol?
 
     private var markTimer: Timer?
     private var runningObservation: AnyCancellable?
@@ -118,6 +120,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         rebuildMenu()
         refresh()
         timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in self?.refresh() }
+        // Linked projects pull main by themselves: shortly after start, on wake (back from another device) and every 10 minutes.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak self] in self?.autoPullProjects() }
+        pullTimer = Timer.scheduledTimer(withTimeInterval: 600, repeats: true) { [weak self] _ in self?.autoPullProjects() }
+        wakeObservation = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 20) { self?.autoPullProjects() }   // the network comes back after wake
+        }
         // The halo works while any chat is answering and shimmers when the last one finishes.
         runningObservation = discussion.$runningRooms.map { !$0.isEmpty }.removeDuplicates().sink { [weak self] running in
             guard let self else { return }
@@ -224,6 +232,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         submenu(L("윈도우", "Window"), [(L("닫기", "Close"), #selector(NSWindow.performClose(_:)), "w", .command),
                         (L("최소화", "Minimize"), #selector(NSWindow.performMiniaturize(_:)), "m", .command)])
         return main
+    }
+
+    private func autoPullProjects() {
+        guard model.autoPullMain else { return }
+        let projects = SidebarProjects.group(discussion.listedConversations.filter(\.hasContent), todo: TodoStore.shared.snapshot, pinned: []).projects
+        GitBranchStore.shared.autoPull(projects.flatMap(\.bindings))
     }
 
     @objc private func refresh() {

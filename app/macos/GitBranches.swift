@@ -6,7 +6,8 @@ import AIProjects
 
 // Project info's read-only branch view: every local and origin branch with its role, nearest tag, last commit and how
 // far it is from origin and from stable. It only reads refs; the refresh button runs one `git fetch` (never on open) and,
-// when that finds main behind origin/main, offers to pull it (the user presses the button; never automatic).
+// when that finds main behind origin/main, offers to pull it. With Settings "Pull main by itself" on, autoPull does the
+// same in the background, but pulls only the plain case (.pull); every other case stays an offer for the user.
 // The app's own backups (refs/ai-illuminati/*) are not branches and are never listed.
 struct GitCounts: Equatable { var ahead: Int; var behind: Int }
 
@@ -338,6 +339,36 @@ final class GitBranchStore: ObservableObject {
 
     @Published var expanded: Set<String> = []   // folders whose whole branch list is shown
     private let queue = DispatchQueue(label: "ai-illuminati.git-branches", qos: .userInitiated)
+    private let autoQueue = DispatchQueue(label: "ai-illuminati.git-autopull", qos: .utility)
+
+    // The background pull for linked projects (app start, wake, every 10 minutes): fetch, then pull main only when it is
+    // checked out, clean and has nothing unpushed (pullMain: fast-forward only, never stash/reset). An AI working in the
+    // repository holds its lock, so pullMain refuses and the next round tries again. Dirty or diverged stays an offer.
+    func autoPull(_ bindings: [ProjectBinding]) {
+        var seen = Set<String>()
+        for binding in bindings where !binding.isDocuments && !binding.remote.isEmpty && seen.insert(binding.root).inserted {
+            let root = binding.root
+            guard !busy.contains(root), !pulling.contains(root) else { continue }
+            busy.insert(root)
+            autoQueue.async {
+                guard (try? ProjectProcess.git(GitBranches.fetchArgs, root: root, timeout: 30)) != nil else {
+                    DispatchQueue.main.async { self.busy.remove(root) }; return   // offline: quietly try next round
+                }
+                let report = GitBranches.read(root: root) { try ProjectProcess.git($0, root: root, timeout: 10) }
+                let offer = GitBranches.pullOffer(report, dirty: (try? ProjectProcess.git(["status", "--porcelain"], root: root, timeout: 10)).map { !$0.isEmpty } ?? true)
+                var pulled: String?
+                if case .pull(let n) = offer, (try? GitLink.shared.pullMain(binding)) != nil {
+                    pulled = L("main의 새 커밋 \(n)개를 자동으로 받았어요.", "Pulled \(n) new commits of main automatically.")
+                }
+                DispatchQueue.main.async {
+                    self.busy.remove(root)
+                    if let pulled { self.offers[root] = nil; self.pullMessages[root] = pulled }
+                    else if case .pull = offer {} else { self.offers[root] = offer }   // a refused pull: next round, no card
+                    self.load(binding)
+                }
+            }
+        }
+    }
 
     // Local values only, unless `fetch`: then `git fetch --prune origin` first; when that fails the local values still show.
     func load(_ binding: ProjectBinding, fetch: Bool = false) {

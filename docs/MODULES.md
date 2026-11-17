@@ -747,7 +747,9 @@ Public, each with its reason: `RemoteServer` (init, `start`, `stop`, `running`, 
 AIChat's new public names for it (`RemoteChats.swift`, an enum, not an `extension Discussion`): `RemoteChats.list` (the sidebar's
 sections as JSON values, built from the sidebar's own internal lists), `chat(_:_:opened:)` (one chat's messages, answers so far and
 approval cards; opened counts as seen), `image(_:_:id:)` (a picture of that chat only) and `send(_:room:text:photos:)` (the message
-box's path for any chat: queue while answering, TODO, or a new turn; photos imported like `addImage`).
+box's path for any chat: queue while answering, TODO, or a new turn; photos imported like `addImage`), `search(_:_:)` (the
+sidebar's ChatSearch for the page's search field) and `create(_:project:text:photos:)` (the page's new chat: a loose or project chat
+made only with its first message, sent through `send`, removed again when that fails; the Mac's open chat stays).
 
 ## Records
 

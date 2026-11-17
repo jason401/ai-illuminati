@@ -30,6 +30,8 @@ expect(!RemoteHTTP.authorized(RemoteRequest(method: "GET", path: "/api/x"), key:
 // The page is one HTML document in the app's language, with the list, the chat and the message box.
 let page = String(data: RemotePage.html(), encoding: .utf8) ?? ""
 expect(page.hasPrefix("<!doctype html>") && page.contains("id=\"listView\"") && page.contains("id=\"send\"") && !page.contains("__STRINGS__"), "the page")
+expect(page.contains("id=\"chatView\"") && page.contains("id=\"compose\"") && page.contains("id=\"q\"") && page.contains("/api/chat/new")
+       && page.contains("/api/search"), "the page has the chat, new chat and search")
 
 // A real server on 127.0.0.1: the page and icon without a key, /api/ only with it, answers from the handler on the main queue.
 var port: UInt16 = 0

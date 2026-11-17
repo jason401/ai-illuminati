@@ -218,14 +218,22 @@ final class PhoneServer: ObservableObject {
         }
     }
 
-    // GET /api/chats, GET /api/chat/<id>[?open=1], GET /api/image/<chat>/<picture>, POST /api/chat/<id>/send,
-    // POST /api/approval/<id> {allow}.
+    // GET /api/chats, GET /api/search?q=, GET /api/chat/<id>[?open=1], GET /api/image/<chat>/<picture>,
+    // POST /api/chat/new {text, images, project?} → {id}, POST /api/chat/<id>/send, POST /api/approval/<id> {allow}.
     func handle(_ request: RemoteRequest) -> RemoteResponse {
         guard let discussion else { return .error(404, "not ready") }
         let parts = request.path.split(separator: "/").map(String.init)   // ["api", ...]
         switch (request.method, parts.count > 1 ? parts[1] : "", parts.count) {
         case ("GET", "chats", 2):
             return .json(["sections": RemoteChats.list(discussion)])
+        case ("GET", "search", 2):
+            return .json(["results": RemoteChats.search(discussion, request.query["q"] ?? "")])
+        case ("POST", "chat", 3) where parts[2] == "new":
+            guard let body = request.json else { return .error(400, "bad request") }
+            let photos = ((body["images"] as? [String]) ?? []).compactMap { Data(base64Encoded: $0) }
+            let made = RemoteChats.create(discussion, project: body["project"] as? String, text: (body["text"] as? String) ?? "", photos: photos)
+            guard let id = made.id else { return .error(409, made.reason ?? L("보내지 못했어요.", "Could not send.")) }
+            return .json(["id": id.uuidString])
         case ("GET", "chat", 3):
             guard let room = UUID(uuidString: parts[2]), let chat = RemoteChats.chat(discussion, room, opened: request.query["open"] == "1") else {
                 return .error(404, L("대화를 찾지 못했어요.", "Chat not found."))

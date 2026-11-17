@@ -91,4 +91,28 @@ func testPhoneServer() {
     expect(call("POST", "/api/chat/\(UUID().uuidString)/send", ["text": "x"]).0 == 409, "phone server: an unknown chat is refused")
     expect(call("POST", "/api/chat/\(room.uuidString)/send", ["text": "  "]).0 == 409, "phone server: nothing to send is refused")
     expect(call("GET", "/api/nothing").0 == 404, "phone server: unknown paths")
+    expect(turns.allSatisfy { ($0["key"] as? String).map { !$0.isEmpty } ?? false } && Set(turns.compactMap { $0["key"] as? String }).count == turns.count,
+           "phone server: every message has its own key, so the page redraws only what changed")
+    expect(turns[0]["time"] as? String != nil && turns[0]["day"] as? String != nil, "phone server: my message has its time and the day line")
+
+    // Search finds a chat by words in its messages; a new chat is made only with its first message, and the Mac's open chat stays open.
+    let found = call("GET", "/api/search?q=phone").1["results"] as? [[String: Any]] ?? []
+    expect(found.first?["id"] as? String == room.uuidString && found.first?["turn"] as? String == chat.conversation(room).turns[0].id.uuidString,
+           "phone server: search finds the chat and the turn")
+    expect((call("GET", "/api/search?q=").1["results"] as? [Any])?.isEmpty == true, "phone server: an empty search finds nothing")
+    let before = chat.conversations.count, open = chat.currentID
+    expect(call("POST", "/api/chat/new", ["text": " "]).0 == 409 && chat.conversations.count == before, "phone server: an empty new chat is not made")
+    expect(call("POST", "/api/chat/new", ["text": "x", "project": "nowhere"]).0 == 409 && chat.conversations.count == before,
+           "phone server: an unknown project is refused")
+    let made = call("POST", "/api/chat/new", ["text": "a new chat from the phone"])
+    let newRoom = (made.1["id"] as? String).flatMap(UUID.init(uuidString:))
+    expect(made.0 == 200 && newRoom != nil && newRoom != room, "phone server: a new chat \(made.1)")
+    settle()
+    if let newRoom {
+        expect(chat.conversation(newRoom).turns.first?.question == "a new chat from the phone" && chat.conversation(newRoom).turns.first?.final == "phone answer",
+               "phone server: the new chat got the message and its answer")
+        expect(chat.currentID == open, "phone server: the Mac's open chat is left as it was")
+        let newList = call("GET", "/api/chats").1["sections"] as? [[String: Any]] ?? []
+        expect(newList.contains { ($0["chats"] as? [[String: Any]] ?? []).contains { $0["id"] as? String == newRoom.uuidString } }, "phone server: the list has the new chat")
+    }
 }

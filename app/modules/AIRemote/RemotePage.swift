@@ -1,27 +1,41 @@
 import Foundation
 import AILocalization
 
-// The one page the iPhone opens: the chat list like the Mac sidebar, a chat with its answers as they come,
-// text and photos to send, and the chat's approval cards. The list is the start; a chat is `#c=<id>`, so Back,
-// the left-edge swipe and the home-screen app all return to the list. It polls the App's /api/ while visible.
+// The one page the iPhone opens, drawn like the Mac's chat window: the list like its sidebar (search, new chat,
+// projects that fold), and a chat that slides in from the right with the Mac's look (my message in a gray bubble on the
+// right, answers full width under the AI's colored name, the rounded message box). A chat is `#c=<id>` and a new one
+// `#new[=<project>]`, so Back and a swipe to the right (the page follows the finger) return to the list, which keeps
+// its place. Only changed messages are redrawn. It polls the App's /api/ while visible.
 public enum RemotePage {
     public static func html() -> Data {
         let strings: [String: String] = [
-            "lang": L("ko", "en"),
             "list": L("목록", "Chats"),
             "empty": L("채팅이 없어요.", "No chats."),
             "noKey": L("Mac의 'iPhone 연결' 창에서 QR을 다시 찍어 주세요.", "Scan the QR again in 'Connect iPhone' on the Mac."),
             "offline": L("Mac에 연결할 수 없어요.", "Cannot reach the Mac."),
             "working": L("답변 중", "Answering"),
-            "approval": L("승인 필요", "Needs approval"),
+            "answering": L("답변 중…", "Responding…"),
             "allow": L("허용", "Allow"),
             "deny": L("거절", "Deny"),
-            "message": L("메시지", "Message"),
-            "send": L("보내기", "Send"),
-            "photo": L("사진", "Photo"),
-            "you": L("나", "You"),
+            "message": L("메시지를 입력하세요…", "Write a message…"),
+            "askAnything": L("무엇이든 물어보세요", "How can I help you today?"),
             "failed": L("보내지 못했어요", "Could not send"),
             "details": L("자세히", "Details"),
+            "newChat": L("새 대화", "New chat"),
+            "newIn": L("이 프로젝트에 새 대화", "New chat in this project"),
+            "search": L("대화 검색", "Search chats"),
+            "cancel": L("취소", "Cancel"),
+            "results": L("검색 결과", "Results"),
+            "noResults": L("찾은 대화가 없어요", "No chats found"),
+            "copy": L("복사", "Copy"),
+            "copied": L("복사됨", "Copied"),
+            "readOnly": L("회의 기록 · 읽기 전용", "Meeting record · read only"),
+            "queued": L("대기 중", "Waiting"),
+            "justStarted": L("· 방금 시작", "· just started"),
+            "minutes": L("· {n}분째", "· {n} min"),
+            "toBottom": L("맨 아래로", "Scroll to bottom"),
+            "photo": L("사진", "Photo"),
+            "send": L("보내기", "Send"),
         ]
         let json = String(data: (try? JSONSerialization.data(withJSONObject: strings)) ?? Data("{}".utf8), encoding: .utf8) ?? "{}"
         return Data(template.replacingOccurrences(of: "__STRINGS__", with: json)
@@ -36,108 +50,238 @@ public enum RemotePage {
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="AI Illuminati">
 <meta name="color-scheme" content="light dark">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <title>AI Illuminati</title>
 <style>
-:root { --bg:#f2f2f7; --card:#fff; --text:#000; --dim:#8e8e93; --line:#d1d1d6; --mine:#007aff; --ai:#e9e9eb; --accent:#007aff; }
-@media (prefers-color-scheme: dark) { :root { --bg:#000; --card:#1c1c1e; --text:#fff; --dim:#8e8e93; --line:#38383a; --mine:#0a84ff; --ai:#262629; --accent:#0a84ff; } }
+/* The Mac window's colors: a white chat, a light gray sidebar, the secondary gray, primary washes for bubbles and rows. */
+:root { --bg:#fff; --side:#f5f5f6; --text:#1d1d1f; --dim:#86868b; --line:rgba(0,0,0,.1); --fill:rgba(0,0,0,.065); --press:rgba(0,0,0,.08);
+  --box:#fff; --accent:#007aff; --warn:#e8870e; --red:#e5483d; --shade:.14; --bar:rgba(255,255,255,.78); --sidebar:rgba(245,245,246,.8); }
+@media (prefers-color-scheme: dark) { :root { --bg:#1e1e1e; --side:#232325; --text:#ececec; --dim:#98989d; --line:rgba(255,255,255,.12);
+  --fill:rgba(255,255,255,.085); --press:rgba(255,255,255,.1); --box:#2a2a2c; --accent:#0a84ff; --warn:#ff9f0a; --red:#ff6b60; --shade:.35;
+  --bar:rgba(30,30,30,.78); --sidebar:rgba(35,35,37,.8); } }
 * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
-html, body { margin:0; height:100%; background:var(--bg); color:var(--text); font:17px -apple-system, system-ui, sans-serif; }
-.view { position:fixed; inset:0; display:flex; flex-direction:column; }
+html, body { margin:0; height:100%; overflow:hidden; background:var(--side); color:var(--text); font:16px -apple-system, system-ui, sans-serif;
+  -webkit-text-size-adjust:100%; }
+button { font:inherit; color:inherit; }
+svg { display:block; }
 .hidden { display:none !important; }
-header { padding:calc(env(safe-area-inset-top) + 8px) 12px 8px; display:flex; align-items:center; gap:8px;
-  background:var(--bg); border-bottom:0.5px solid var(--line); min-height:44px; }
-header h1 { font-size:28px; margin:6px 4px; }
-header .title { flex:1; text-align:center; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-right:56px; }
-.back { color:var(--accent); background:none; border:0; font-size:17px; padding:6px 4px; width:64px; text-align:left; }
-.scroll { flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; padding:0 12px calc(env(safe-area-inset-bottom) + 12px); }
-.section { color:var(--dim); font-size:13px; text-transform:uppercase; margin:18px 8px 6px; }
-.group { background:var(--card); border-radius:10px; overflow:hidden; }
-.row { display:flex; align-items:center; gap:10px; padding:12px 14px; border-top:0.5px solid var(--line); }
-.row:first-child { border-top:0; }
-a.row { color:inherit; text-decoration:none; }
-.row.folder { font-weight:600; }
-.row .name { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.row .sub { color:var(--dim); font-size:13px; }
-.row .chev { color:var(--dim); }
-.dot { width:9px; height:9px; border-radius:50%; background:#34c759; flex:none; }
-.dot.unread { background:var(--accent); }
-.badge { background:#ff9500; color:#fff; font-size:12px; border-radius:9px; padding:1px 7px; }
-.note { color:var(--dim); text-align:center; margin:40px 20px; }
-#turns { padding-top:10px; }
-.turn { margin:10px 0; display:flex; flex-direction:column; }
-.turn.mine { align-items:flex-end; }
-.who { color:var(--dim); font-size:13px; margin:0 6px 3px; }
-.bubble { max-width:88%; padding:9px 13px; border-radius:18px; background:var(--ai); line-height:1.38; overflow-wrap:anywhere; }
-.mine .bubble { background:var(--mine); color:#fff; }
-.bubble pre { white-space:pre-wrap; background:rgba(127,127,127,.15); padding:8px; border-radius:8px; font-size:13px; overflow-x:auto; }
-.bubble code { font:13px ui-monospace, Menlo, monospace; }
-.bubble img { max-width:100%; border-radius:10px; display:block; margin:4px 0; }
-.bubble p { margin:0 0 6px; } .bubble p:last-child { margin:0; }
-.bubble.wait { color:var(--dim); }
-.error { color:#ff3b30; font-size:13px; margin:3px 6px; }
-.approval { background:var(--card); border:1px solid #ff9500; border-radius:12px; padding:12px; margin:10px 0; }
+
+/* Two screens side by side: the chat slides over the list, which moves a little left under a shade (like iOS). */
+.view { position:fixed; inset:0; display:flex; flex-direction:column; will-change:transform;
+  transition:transform .38s cubic-bezier(.32,.72,0,1); }
+#listView { background:var(--side); }
+#chatView { background:var(--bg); transform:translateX(calc(100% + 30px)); z-index:2; box-shadow:-6px 0 24px rgba(0,0,0,.14); }
+#shade { position:fixed; inset:0; background:#000; opacity:0; pointer-events:none; z-index:1; transition:opacity .38s cubic-bezier(.32,.72,0,1); }
+body.open #chatView { transform:none; }
+body.open #listView { transform:translateX(-30%); }
+body.open #shade { opacity:var(--shade); }
+body.instant .view, body.instant #shade, body.dragging .view, body.dragging #shade { transition:none !important; }
+@media (prefers-reduced-motion: reduce) { .view, #shade { transition-duration:.01s; } }
+
+/* Bars float over their scroll view, blurred, with a hairline once the content runs under them. */
+.bar { position:absolute; left:0; right:0; top:0; z-index:3; padding:env(safe-area-inset-top) 6px 0; height:calc(env(safe-area-inset-top) + 48px);
+  display:flex; align-items:center; gap:4px; -webkit-backdrop-filter:saturate(1.8) blur(20px); backdrop-filter:saturate(1.8) blur(20px);
+  border-bottom:0.5px solid transparent; transition:border-color .2s; }
+#listView .bar { background:var(--sidebar); } #chatView .bar { background:var(--bar); }
+.bar.under { border-bottom-color:var(--line); }
+.bar .mid { position:absolute; left:84px; right:84px; text-align:center; pointer-events:none; overflow:hidden; }
+.bar .mid b { display:block; font-size:16px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.bar .mid small { display:block; font-size:12px; color:var(--dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+#listTitle { opacity:0; transition:opacity .15s; } #listView .bar.under #listTitle { opacity:1; }
+.tool { width:44px; height:44px; border:0; background:none; color:var(--accent); display:flex; align-items:center; justify-content:center; border-radius:22px; }
+.tool:active { background:var(--press); }
+.back { border:0; background:none; color:var(--accent); display:flex; align-items:center; gap:2px; height:44px; padding:0 8px 0 4px; font-size:17px; }
+.spacer { flex:1; }
+.scroll { flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; overscroll-behavior-y:contain;
+  padding:calc(env(safe-area-inset-top) + 48px) 0 0; }
+
+/* The list, like the Mac sidebar: a big title, the search field, small section names, flat rows with rounded presses. */
+#list { padding:0 10px calc(env(safe-area-inset-bottom) + 24px); }
+h1 { font-size:30px; font-weight:700; margin:4px 12px 10px; letter-spacing:-.3px; }
+.searchbox { display:flex; align-items:center; gap:8px; margin:0 10px 6px; }
+.field { flex:1; display:flex; align-items:center; gap:7px; height:38px; padding:0 10px; border-radius:10px; background:var(--fill); color:var(--dim); }
+.field input { flex:1; min-width:0; border:0; outline:0; background:none; color:var(--text); font:16px -apple-system, system-ui; }
+.field input::placeholder { color:var(--dim); }
+.field .clear { border:0; background:none; color:var(--dim); padding:4px; }
+.cancel { border:0; background:none; color:var(--accent); font-size:16px; padding:6px 2px; }
+.section { color:var(--dim); font-size:13px; font-weight:600; margin:18px 12px 4px; }
+.row { display:flex; align-items:center; gap:10px; min-height:44px; padding:8px 12px; border-radius:10px; color:inherit; text-decoration:none; }
+.row:active, .row.pressed { background:var(--press); }
+.row .mark { width:12px; flex:none; display:flex; justify-content:center; }
+.row .name { flex:1; min-width:0; }
+.row .name > div { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.row .sub { color:var(--dim); font-size:13px; margin-top:1px; }
+.row.child { padding-left:34px; }
+.folder { font-weight:600; font-size:15px; }
+.folder .chev { color:var(--dim); transition:transform .2s; flex:none; }
+.folder.folded .chev { transform:rotate(-90deg); }
+.folder .ficon { color:var(--dim); flex:none; }
+.folder .tool { width:36px; height:36px; margin:-6px -8px -6px 0; color:var(--dim); }
+.children.folded { display:none; }
+.dot { width:8px; height:8px; border-radius:50%; background:var(--accent); }
+.ring { width:11px; height:11px; border-radius:50%; border:2px solid var(--c, var(--dim)); border-right-color:transparent; animation:spin 1s linear infinite; }
+.ring, .aidot { --c:var(--cl, var(--dim)); }
+@media (prefers-color-scheme: dark) { .ring, .aidot { --c:var(--cd, var(--dim)); } }
+@media (prefers-reduced-motion: reduce) { .ring, .spin { animation:none; } }
+@keyframes spin { to { transform:rotate(360deg); } }
+.badge { background:var(--warn); color:#fff; font-size:12px; font-weight:600; border-radius:9px; padding:1px 7px; flex:none; }
+.result .snippet { color:var(--dim); font-size:13px; white-space:normal !important; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; }
+mark { background:rgba(255,214,10,.45); color:inherit; border-radius:3px; padding:0 1px; }
+.note { color:var(--dim); text-align:center; margin:44px 24px; line-height:1.5; }
+
+/* The chat: the Mac transcript at phone size. */
+#chatScroll { padding-bottom:12px; }
+#turns { padding:6px 16px 0; }
+.turn { display:flex; flex-direction:column; align-items:flex-start; margin:0 0 26px; }
+.turn.mine { align-items:flex-end; margin-bottom:22px; }
+.turn.mine.queued { opacity:.6; }
+.day { align-self:stretch; text-align:center; color:var(--dim); font-size:12px; font-weight:500; margin:4px 0 18px; }
+.bubble { max-width:84%; padding:9px 14px; border-radius:18px; background:var(--fill); line-height:1.45; overflow-wrap:anywhere; font-size:16px; }
+.who { display:flex; align-items:center; gap:6px; color:var(--dim); font-size:13px; font-weight:500; margin:0 0 6px; }
+.who .model { font-weight:400; opacity:.8; }
+.aidot { width:7px; height:7px; border-radius:50%; background:var(--c, var(--dim)); flex:none; }
+.meta { display:flex; align-items:center; gap:4px; color:var(--dim); font-size:12px; margin-top:4px; min-height:26px; }
+.meta button { border:0; background:none; color:var(--dim); display:flex; align-items:center; gap:3px; padding:4px 6px; border-radius:8px; font-size:12px; }
+.meta button:active { background:var(--press); }
+.pics { display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end; margin-bottom:6px; max-width:100%; }
+.turn:not(.mine) .pics { justify-content:flex-start; margin:8px 0 0; }
+.pics img { max-width:200px; max-height:200px; border-radius:12px; display:block; object-fit:cover; }
+.turn:not(.mine) .pics img { max-width:100%; max-height:none; }
+.status { display:flex; align-items:center; gap:8px; color:var(--dim); font-size:14px; margin-top:4px; }
+.status.warn { color:var(--warn); }
+.spin { width:13px; height:13px; border-radius:50%; border:2px solid currentColor; border-right-color:transparent; animation:spin .9s linear infinite; flex:none; opacity:.8; }
+.error { color:var(--red); font-size:14px; margin-top:6px; }
+.found { animation:found 2.4s ease-out; border-radius:12px; }
+@keyframes found { 0%, 40% { background:rgba(255,214,10,.22); } 100% { background:transparent; } }
+
+/* Answers' markdown, sized like the Mac's 15 pt text with its line spacing. */
+.md { width:100%; font-size:16px; line-height:1.6; overflow-wrap:anywhere; }
+.md p { margin:0 0 10px; } .md > :last-child { margin-bottom:0; }
+.md h1, .md h2, .md h3, .md h4 { line-height:1.3; margin:16px 0 8px; }
+.md h1 { font-size:21px; } .md h2 { font-size:19px; } .md h3 { font-size:17px; } .md h4 { font-size:16px; }
+.md > :first-child { margin-top:0; }
+.md a { color:var(--accent); text-decoration:none; }
+.md code { font:14px ui-monospace, Menlo, monospace; background:var(--fill); padding:1px 5px; border-radius:5px; }
+.md .code { position:relative; margin:0 0 10px; }
+.md pre { margin:0; padding:12px; padding-top:30px; background:var(--fill); border-radius:10px; overflow-x:auto; line-height:1.45; }
+.md pre code { background:none; padding:0; font-size:13px; white-space:pre; }
+.md .ccopy { position:absolute; top:4px; right:6px; border:0; background:none; color:var(--dim); font-size:12px; padding:4px 6px; border-radius:6px; }
+.md blockquote { margin:0 0 10px; padding:0 0 0 12px; border-left:3px solid var(--line); color:var(--dim); }
+.md hr { border:0; border-top:1px solid var(--line); margin:14px 0; }
+.md .list { margin:0 0 10px; }
+.md .li { display:flex; gap:8px; padding-left:calc(var(--lvl) * 18px); margin:3px 0; }
+.md .li .mk { flex:none; min-width:12px; color:var(--dim); text-align:right; }
+.md .li > div { flex:1; min-width:0; }
+.md .tablewrap { overflow-x:auto; margin:0 0 10px; }
+.md table { border-collapse:collapse; font-size:14px; line-height:1.4; }
+.md th, .md td { border:1px solid var(--line); padding:6px 9px; text-align:left; vertical-align:top; }
+.md th { background:var(--fill); font-weight:600; }
+
+/* Approval cards like the Mac's banner. */
+#approvals { padding:0 16px; }
+.approval { background:var(--box); border:1px solid var(--warn); border-radius:16px; padding:14px; margin:0 0 16px; box-shadow:0 2px 10px rgba(0,0,0,.06); }
 .approval b { display:block; margin-bottom:4px; }
 .approval details { color:var(--dim); font-size:13px; margin:6px 0; }
 .approval details pre { white-space:pre-wrap; overflow-wrap:anywhere; max-height:40vh; overflow:auto; }
-.approval .buttons { display:flex; gap:10px; margin-top:8px; }
-.approval button { flex:1; font-size:16px; padding:10px; border-radius:10px; border:0; }
-.allow { background:var(--accent); color:#fff; } .deny { background:var(--ai); color:var(--text); }
-footer { border-top:0.5px solid var(--line); background:var(--bg); padding:8px 10px calc(env(safe-area-inset-bottom) + 8px); }
+.approval .buttons { display:flex; gap:10px; margin-top:10px; }
+.approval button { flex:1; font-size:16px; font-weight:500; padding:10px; border-radius:12px; border:0; }
+.allow { background:var(--accent); color:#fff !important; } .deny { background:var(--fill); }
+.approval button:disabled { opacity:.5; }
+
+/* The message box: one rounded card, text on top, + on the left and send on the right (the Mac's composer). */
+footer { position:relative; padding:6px 10px calc(env(safe-area-inset-bottom) + 8px); background:var(--bg); }
+.box { border-radius:22px; border:1px solid var(--line); background:var(--box); box-shadow:0 3px 12px rgba(0,0,0,.07); padding:10px 10px 8px 14px; }
+.box textarea { display:block; width:100%; resize:none; border:0; outline:0; background:none; color:var(--text); padding:2px 0 6px;
+  font:16px/1.4 -apple-system, system-ui; max-height:160px; }
+.box textarea::placeholder { color:var(--dim); }
+.boxrow { display:flex; align-items:center; gap:8px; }
+.boxrow .hint { color:var(--dim); font-size:13px; }
+.round { width:32px; height:32px; border-radius:16px; flex:none; display:flex; align-items:center; justify-content:center; padding:0; }
+#pick { border:1px solid var(--line); background:none; color:var(--dim); }
+#send { border:0; background:var(--accent); color:#fff; }
+#send:disabled { background:var(--fill); color:var(--dim); }
 #thumbs { display:flex; gap:8px; overflow-x:auto; }
-#thumbs:not(:empty) { margin-bottom:8px; }
+#thumbs:not(:empty) { margin:2px 0 8px; padding-top:6px; }
 .thumb { position:relative; flex:none; }
-.thumb img { width:64px; height:64px; object-fit:cover; border-radius:8px; display:block; }
-.thumb button { position:absolute; top:-6px; right:-6px; width:22px; height:22px; border-radius:11px; border:0; background:#555; color:#fff; font-size:13px; line-height:22px; padding:0; }
-.compose { display:flex; align-items:flex-end; gap:8px; }
-.compose textarea { flex:1; resize:none; font:17px -apple-system, system-ui; padding:8px 12px; border-radius:18px; border:1px solid var(--line);
-  background:var(--card); color:var(--text); max-height:140px; outline:none; }
-.icon { width:36px; height:36px; border-radius:18px; border:0; font-size:20px; flex:none; }
-#pick { background:var(--ai); color:var(--text); }
-#send { background:var(--accent); color:#fff; }
-#send:disabled { opacity:.4; }
+.thumb img { width:58px; height:58px; object-fit:cover; border-radius:10px; display:block; }
+.thumb button { position:absolute; top:-6px; right:-6px; width:22px; height:22px; border-radius:11px; border:0; background:rgba(0,0,0,.7); color:#fff;
+  font-size:12px; line-height:22px; padding:0; }
+.readonly { display:flex; align-items:center; justify-content:center; gap:8px; color:var(--dim); font-size:14px; border-radius:20px;
+  border:1px solid var(--line); background:var(--fill); padding:12px; }
+#toBottom { position:absolute; left:50%; top:-44px; margin-left:-17px; width:34px; height:34px; border-radius:17px; border:1px solid var(--line);
+  background:var(--box); color:var(--text); box-shadow:0 1px 5px rgba(0,0,0,.2); display:flex; align-items:center; justify-content:center; padding:0;
+  transition:opacity .15s; }
+#toBottom.gone { opacity:0; pointer-events:none; }
+
+#viewer { position:fixed; inset:0; z-index:10; background:rgba(0,0,0,.92); display:flex; align-items:center; justify-content:center; }
+#viewer img { max-width:100%; max-height:100%; object-fit:contain; }
 </style>
 </head>
 <body>
 <div id="listView" class="view">
-  <header><h1>AI Illuminati</h1></header>
-  <div class="scroll" id="list"></div>
+  <div class="bar" id="listBar">
+    <div class="mid" id="listTitle"><b>AI Illuminati</b></div>
+    <div class="spacer"></div>
+    <button class="tool" id="compose" aria-label="new chat"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6"/><path d="M17.6 3.4a1.9 1.9 0 0 1 2.7 2.7L12 14.4l-3.6.9.9-3.6z"/></svg></button>
+  </div>
+  <div class="scroll" id="listScroll">
+    <h1>AI Illuminati</h1>
+    <div class="searchbox">
+      <label class="field"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m20 20-4.8-4.8"/></svg>
+        <input id="q" type="search" enterkeyhint="search" autocomplete="off" autocorrect="off"><button class="clear hidden" id="qClear" aria-label="clear">✕</button></label>
+      <button class="cancel hidden" id="qCancel"></button>
+    </div>
+    <div id="list"></div>
+  </div>
 </div>
-<div id="chatView" class="view hidden">
-  <header><button class="back" id="back">‹ <span id="backText"></span></button><div class="title" id="chatTitle"></div></header>
+<div id="shade"></div>
+<div id="chatView" class="view">
+  <div class="bar" id="chatBar">
+    <button class="back" id="back"><svg width="13" height="21" viewBox="0 0 13 21" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M11 2 2.5 10.5 11 19"/></svg><span id="backText"></span></button>
+    <div class="mid"><b id="chatTitle"></b><small id="chatSub"></small></div>
+  </div>
   <div class="scroll" id="chatScroll"><div id="turns"></div><div id="approvals"></div></div>
-  <footer>
-    <div id="thumbs"></div>
-    <div class="compose">
-      <button class="icon" id="pick" aria-label="photo">＋</button>
+  <footer id="footer">
+    <button id="toBottom" class="gone" aria-label="bottom"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v16M5 13l7 7 7-7"/></svg></button>
+    <div class="readonly hidden" id="readOnly"></div>
+    <div class="box" id="box">
+      <div id="thumbs"></div>
       <textarea id="text" rows="1"></textarea>
-      <button class="icon" id="send" aria-label="send" disabled>↑</button>
+      <div class="boxrow">
+        <button class="round" id="pick" aria-label="photo"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+        <span class="hint" id="hint"></span>
+        <div class="spacer"></div>
+        <button class="round" id="send" aria-label="send" disabled><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20V4M5 11l7-7 7 7"/></svg></button>
+      </div>
     </div>
     <input type="file" id="file" accept="image/*" multiple class="hidden">
   </footer>
 </div>
+<div id="viewer" class="hidden"><img alt=""></div>
 <script>
 const S = __STRINGS__;
 const params = new URLSearchParams(location.search);
 if (params.get('k')) localStorage.setItem('k', params.get('k'));
 const KEY = params.get('k') || localStorage.getItem('k') || '';
 const $ = id => document.getElementById(id);
-const drafts = {};
-let current = null, opened = false, timer = null, lastList = '', lastChat = '', photos = [], sending = false;
+const standalone = navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
+const ICON_COPY = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="8" y="8" width="12" height="12" rx="2.5"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>';
+const ICON_FOLDER = '<svg width="17" height="15" viewBox="0 0 24 20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M2 4.5A2.5 2.5 0 0 1 4.5 2h4.2l2.3 2.6h8.5A2.5 2.5 0 0 1 22 7.1v8.4a2.5 2.5 0 0 1-2.5 2.5h-15A2.5 2.5 0 0 1 2 15.5z"/></svg>';
+const ICON_CHEV = '<svg class="chev" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m2 3.5 3 3 3-3"/></svg>';
+const ICON_NEW = '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6"/><path d="M17.6 3.4a1.9 1.9 0 0 1 2.7 2.7L12 14.4l-3.6.9.9-3.6z"/></svg>';
+
+// current: what the chat screen shows ('<id>' or 'new:<project>'), null on the list. chatId: the chat's id once it exists.
+const drafts = {}, cache = {}, titles = {}, projects = {};
+let current = null, chatId = null, newProject = null, opened = false, timer = null, lastList = '', lastChat = '', photos = [], sending = false;
+let navAnimate = false, pushed = false, searching = false, searchTimer = null, jump = null;
+const folded = new Set(JSON.parse(localStorage.getItem('folded') || '[]'));
 
 function esc(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-function inline(s) {
-  return esc(s).replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
-    .replace(/^#{1,6} +(.*)$/gm, '<b>$1</b>').replace(/\n/g, '<br>');
-}
-function markdown(text) {
-  return String(text).split(/```[^\n]*\n?/).map((part, i) => i % 2 ? '<pre><code>' + esc(part.replace(/\n$/, '')) + '</code></pre>'
-    : part.split(/\n{2,}/).filter(p => p.trim()).map(p => '<p>' + inline(p.trim()) + '</p>').join('')).join('');
-}
 function withKey(url) { return url + (url.includes('?') ? '&' : '?') + 'k=' + encodeURIComponent(KEY); }
+function colorStyle(c) { return c && c.length === 2 ? ' style="--cl:' + esc(c[0]) + ';--cd:' + esc(c[1]) + '"' : ''; }
 async function api(path, body) {
   const r = await fetch(path, body === undefined ? { headers: { 'X-Remote-Key': KEY }, cache: 'no-store' }
     : { method: 'POST', headers: { 'X-Remote-Key': KEY, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -146,62 +290,312 @@ async function api(path, body) {
   return data;
 }
 
+// Markdown as the Mac draws it: headings, lists, quotes, tables, code blocks (with Copy), links, bold, italic, code.
+function inline(s) {
+  const codes = [];
+  let out = esc(s).replace(/`([^`\n]+)`/g, (_, c) => { codes.push(c); return '\u0000' + (codes.length - 1) + '\u0000'; });
+  out = out.replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+    .replace(/(^|[\s(])(https?:\/\/[^\s<]*[^\s<.,;:!?)'"])/g, '$1<a href="$2" target="_blank" rel="noopener">$2</a>')
+    .replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>').replace(/__([^_\n]+)__/g, '<b>$1</b>')
+    .replace(/(^|[^*\w])\*([^*\s][^*\n]*?)\*(?!\*)/g, '$1<i>$2</i>').replace(/~~([^~\n]+)~~/g, '<s>$1</s>');
+  return out.replace(/\u0000(\d+)\u0000/g, (_, i) => '<code>' + codes[+i] + '</code>');
+}
+const FENCE = /^\s*```/, HEAD = /^(#{1,6})\s+(.*)$/, RULE = /^\s*([-*_])(\s*\1){2,}\s*$/, ITEM = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/,
+  QUOTE = /^\s*>/, TROW = /^\s*\|.*\|\s*$/, TSEP = /^\s*\|?\s*:?-{2,}/;
+function startsBlock(l, next) { return FENCE.test(l) || HEAD.test(l) || RULE.test(l) || ITEM.test(l) || QUOTE.test(l) || (TROW.test(l) && TSEP.test(next || '')); }
+function markdown(text) {
+  const lines = String(text).replace(/\r/g, '').split('\n');
+  let html = '', i = 0, m;
+  const cells = r => r.trim().replace(/^\||\|$/g, '').split('|').map(c => c.trim());
+  while (i < lines.length) {
+    const l = lines[i];
+    if (!l.trim()) { i++; continue; }
+    if (FENCE.test(l)) {
+      const code = []; i++;
+      while (i < lines.length && !/^\s*```\s*$/.test(lines[i])) code.push(lines[i++]);
+      i++;
+      html += '<div class="code"><button class="ccopy">' + esc(S.copy) + '</button><pre><code>' + esc(code.join('\n')) + '</code></pre></div>';
+    } else if ((m = l.match(HEAD))) {
+      const n = Math.min(4, m[1].length); html += '<h' + n + '>' + inline(m[2]) + '</h' + n + '>'; i++;
+    } else if (RULE.test(l)) { html += '<hr>'; i++;
+    } else if (TROW.test(l) && TSEP.test(lines[i + 1] || '')) {
+      const rows = []; while (i < lines.length && TROW.test(lines[i])) rows.push(lines[i++]);
+      html += '<div class="tablewrap"><table><thead><tr>' + cells(rows[0]).map(c => '<th>' + inline(c) + '</th>').join('') + '</tr></thead><tbody>' +
+        rows.slice(2).map(r => '<tr>' + cells(r).map(c => '<td>' + inline(c) + '</td>').join('') + '</tr>').join('') + '</tbody></table></div>';
+    } else if (QUOTE.test(l)) {
+      const q = []; while (i < lines.length && QUOTE.test(lines[i])) q.push(lines[i++].replace(/^\s*>\s?/, ''));
+      html += '<blockquote>' + markdown(q.join('\n')) + '</blockquote>';
+    } else if (ITEM.test(l)) {
+      const items = [];
+      while (i < lines.length) {
+        const mm = lines[i].match(ITEM);
+        if (mm) { items.push({ lvl: Math.min(3, Math.floor(mm[1].length / 2)), mark: /\d/.test(mm[2]) ? mm[2].replace(')', '.') : '•', text: mm[3] }); i++; }
+        else if (items.length && /^\s{2,}\S/.test(lines[i])) { items[items.length - 1].text += '\n' + lines[i++].trim(); }
+        else break;
+      }
+      html += '<div class="list">' + items.map(it => '<div class="li" style="--lvl:' + it.lvl + '"><span class="mk">' + esc(it.mark) + '</span><div>' +
+        it.text.split('\n').map(inline).join('<br>') + '</div></div>').join('') + '</div>';
+    } else {
+      const p = [lines[i++]];
+      while (i < lines.length && lines[i].trim() && !startsBlock(lines[i], lines[i + 1])) p.push(lines[i++]);
+      html += '<p>' + p.map(inline).join('<br>') + '</p>';
+    }
+  }
+  return html;
+}
+
+// Screens: the chat slides in from the right for our own taps and swipes. Safari's own back swipe has already moved
+// the page, so a hash change we did not make switches at once instead of sliding a second time.
+function setOpen(open, animate) {
+  const b = document.body;
+  if (!animate) b.classList.add('instant');
+  b.classList.toggle('open', open);
+  $('listView').setAttribute('aria-hidden', open ? 'true' : 'false');
+  if (!animate) requestAnimationFrame(() => requestAnimationFrame(() => b.classList.remove('instant')));
+}
+function go(hash) { navAnimate = true; pushed = true; location.hash = hash; }
+function back() {
+  navAnimate = true;
+  if (pushed) { pushed = false; history.back(); }
+  else { history.replaceState(null, '', location.pathname + location.search); route(); }
+}
 function route() {
-  const m = location.hash.match(/^#c=(.+)$/);
-  const id = m ? decodeURIComponent(m[1]) : null;
+  const h = location.hash;
+  let m, id = null, project = null, isNew = false;
+  if ((m = h.match(/^#c=(.+)$/))) id = decodeURIComponent(m[1]);
+  else if ((m = h.match(/^#new(?:=(.*))?$/))) { isNew = true; project = m[1] ? decodeURIComponent(m[1]) : null; }
+  const key = id || (isNew ? 'new:' + (project || '') : null);
+  const animate = navAnimate; navAnimate = false;
   if (current !== null) drafts[current] = $('text').value;
-  current = id; opened = false; lastChat = ''; photos = []; renderThumbs();
-  $('listView').classList.toggle('hidden', !!id);
-  $('chatView').classList.toggle('hidden', !id);
-  if (id) { $('text').value = drafts[id] || ''; grow(); $('turns').innerHTML = ''; $('approvals').innerHTML = ''; $('chatTitle').textContent = ''; }
+  if (!key) pushed = false;
+  if (key && key !== current) {
+    chatId = id; newProject = project; opened = false; lastChat = ''; photos = []; renderThumbs();
+    $('text').value = drafts[key] || ''; grow();
+    $('turns').innerHTML = ''; $('approvals').innerHTML = '';
+    const known = id ? titles[id] : null;
+    $('chatTitle').textContent = id ? (known ? known.title : '') : S.newChat;
+    $('chatSub').textContent = id ? (known && known.detail || '') : (project && projects[project] || '');
+    $('footer').classList.remove('hidden'); $('readOnly').classList.add('hidden'); $('box').classList.remove('hidden');
+    $('hint').textContent = '';
+    if (id && cache[id]) renderChat(cache[id], true);
+    else if (!id) $('turns').innerHTML = '<div class="note">' + esc(S.askAnything) + '</div>';
+    $('chatScroll').scrollTop = 1e9;
+    if (isNew) setTimeout(() => $('text').focus(), animate ? 380 : 0);
+  }
+  current = key;
+  if (!key) { chatId = null; document.activeElement && document.activeElement.blur && document.activeElement.blur(); }
+  setOpen(!!key, animate);
   poll();
 }
 function poll() {
   clearTimeout(timer);
   if (document.hidden) return;
-  (current ? loadChat() : loadList()).finally(() => { timer = setTimeout(poll, current ? 1500 : 4000); });
+  const work = chatId && current ? loadChat() : !current ? loadList() : Promise.resolve();
+  work.finally(() => { timer = setTimeout(poll, current ? 1500 : 4000); });
 }
 
+// The list, in the Mac sidebar's sections; a project's chats fold under its row (remembered on this phone).
+function chatRow(c, child) {
+  titles[c.id] = { title: c.title, detail: c.detail || '' };
+  const mark = c.working ? '<span class="ring"' + colorStyle(c.color) + '></span>' : c.unread ? '<span class="dot"></span>' : '';
+  return '<a class="row' + (child ? ' child' : '') + '" href="#c=' + encodeURIComponent(c.id) + '" data-id="' + esc(c.id) + '"><span class="mark">' + mark + '</span>' +
+    '<span class="name"><div>' + esc(c.title) + '</div>' + (c.detail ? '<div class="sub">' + esc(c.detail) + '</div>' : '') + '</span>' +
+    (c.approvals ? '<span class="badge">' + c.approvals + '</span>' : '') + '</a>';
+}
+function renderList(data) {
+  if (!data.sections.length) { $('list').innerHTML = '<div class="note">' + esc(S.empty) + '</div>'; return; }
+  $('list').innerHTML = data.sections.map(s => {
+    let out = '<div class="section">' + esc(s.title) + '</div>', open = false;
+    for (const c of s.chats) {
+      if (c.folder) {
+        if (open) out += '</div>';
+        projects[c.project] = c.folder;
+        const f = folded.has(c.project) ? ' folded' : '';
+        out += '<div class="row folder' + f + '" data-project="' + esc(c.project) + '"><span class="mark">' + ICON_CHEV + '</span><span class="ficon">' + ICON_FOLDER + '</span>' +
+          '<span class="name"><div>' + esc(c.folder) + '</div></span>' + (c.approvals ? '<span class="badge">' + c.approvals + '</span>' : '') +
+          '<button class="tool" data-new="' + esc(c.project) + '" aria-label="' + esc(S.newIn) + '">' + ICON_NEW + '</button></div><div class="children' + f + '">';
+        open = true;
+      } else {
+        if (open && !c.depth) { out += '</div>'; open = false; }
+        out += chatRow(c, open);
+      }
+    }
+    return out + (open ? '</div>' : '');
+  }).join('');
+}
 async function loadList() {
+  if (searching) return;
   if (!KEY) { $('list').innerHTML = '<div class="note">' + esc(S.noKey) + '</div>'; return; }
   try {
     const data = await api('/api/chats');
+    if (searching) return;
     const text = JSON.stringify(data);
     if (text === lastList) return;
     lastList = text;
-    if (!data.sections.length) { $('list').innerHTML = '<div class="note">' + esc(S.empty) + '</div>'; return; }
-    $('list').innerHTML = data.sections.map(s => '<div class="section">' + esc(s.title) + '</div><div class="group">' +
-      s.chats.map(c => c.folder ? '<div class="row folder"><span class="name">📁 ' + esc(c.folder) + '</span></div>' :
-        '<a class="row" href="#c=' + encodeURIComponent(c.id) + '" style="padding-left:' + (14 + 18 * (c.depth || 0)) + 'px">' +
-        (c.working ? '<span class="dot"></span>' : c.unread ? '<span class="dot unread"></span>' : '') +
-        '<span class="name">' + esc(c.title) + (c.detail ? '<div class="sub">' + esc(c.detail) + '</div>' : '') + '</span>' +
-        (c.approvals ? '<span class="badge">' + c.approvals + '</span>' : '') + '<span class="chev">›</span></a>').join('') + '</div>').join('');
+    renderList(data);
   } catch (e) { $('list').innerHTML = '<div class="note">' + esc(String(e.message) === '401' ? S.noKey : (e.message || S.offline)) + '</div>'; lastList = ''; }
 }
+$('list').addEventListener('click', e => {
+  const add = e.target.closest('[data-new]');
+  if (add) { e.preventDefault(); go('#new=' + encodeURIComponent(add.dataset.new)); return; }
+  const folder = e.target.closest('.folder');
+  if (folder) {
+    const p = folder.dataset.project, now = !folded.has(p);
+    now ? folded.add(p) : folded.delete(p);
+    localStorage.setItem('folded', JSON.stringify([...folded]));
+    folder.classList.toggle('folded', now); folder.nextElementSibling.classList.toggle('folded', now);
+    return;
+  }
+  const row = e.target.closest('a.row'); if (!row) return;
+  e.preventDefault();
+  row.classList.add('pressed'); setTimeout(() => row.classList.remove('pressed'), 400);
+  jump = row.dataset.turn ? { turn: row.dataset.turn, words: row.dataset.words || '' } : null;
+  go('#c=' + encodeURIComponent(row.dataset.id));
+});
+$('compose').addEventListener('click', () => go('#new'));
 
-async function loadChat() {
-  const id = current;
+// Search like the Mac sidebar: titles, messages and answers; a result opens its chat at the turn it was found in.
+function highlight(text, words) {
+  const html = esc(text); if (!words) return html;
+  const w = esc(words).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return html.replace(new RegExp(w, 'gi'), x => '<mark>' + x + '</mark>');
+}
+async function runSearch() {
+  const q = $('q').value.trim();
+  if (!q) return;
   try {
-    const data = await api('/api/chat/' + encodeURIComponent(id) + (lastChat === '' && !opened ? '?open=1' : ''));
-    opened = true;
-    if (id !== current) return;
-    const text = JSON.stringify(data);
-    if (text === lastChat) return;
-    lastChat = text;
-    const box = $('chatScroll'), atEnd = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
-    $('chatTitle').textContent = data.title;
-    document.querySelector('footer').classList.toggle('hidden', !!data.readOnly);
-    $('turns').innerHTML = data.turns.map(t => '<div class="turn' + (t.mine ? ' mine' : '') + '">' +
-      (t.mine ? '' : '<div class="who">' + esc(t.name) + '</div>') +
-      '<div class="bubble' + (t.waiting ? ' wait' : '') + '">' + (t.images || []).map(u => '<img src="' + esc(withKey(u)) + '" loading="lazy">').join('') +
-      (t.waiting && !t.text ? esc(S.working) + ' …' : markdown(t.text)) + '</div>' +
-      (t.error ? '<div class="error">' + esc(t.error) + '</div>' : '') + '</div>').join('');
+    const data = await api('/api/search?q=' + encodeURIComponent(q));
+    if (!searching || $('q').value.trim() !== q) return;
+    $('list').innerHTML = '<div class="section">' + esc(S.results) + '</div>' + (data.results.length ? data.results.map(r => {
+      titles[r.id] = titles[r.id] || { title: r.title, detail: '' };
+      return '<a class="row result" href="#c=' + encodeURIComponent(r.id) + '" data-id="' + esc(r.id) + '"' + (r.turn ? ' data-turn="' + esc(r.turn) + '"' : '') +
+        ' data-words="' + esc(r.words || '') + '"><span class="name"><div>' + highlight(r.title, r.words) + '</div>' +
+        (r.snippet ? '<div class="snippet">' + highlight(r.snippet, r.words) + '</div>' : '') + '<div class="sub">' + esc(r.date || '') + '</div></span></a>';
+    }).join('') : '<div class="note">' + esc(S.noResults) + '</div>');
+  } catch (e) { $('list').innerHTML = '<div class="note">' + esc(e.message || S.offline) + '</div>'; }
+}
+function endSearch() {
+  $('q').value = ''; $('q').blur(); searching = false; lastList = '';
+  $('qClear').classList.add('hidden'); $('qCancel').classList.add('hidden'); poll();
+}
+$('q').addEventListener('focus', () => $('qCancel').classList.remove('hidden'));
+$('q').addEventListener('input', () => {
+  const q = $('q').value.trim();
+  $('qClear').classList.toggle('hidden', !$('q').value);
+  clearTimeout(searchTimer);
+  if (!q) { if (searching) { searching = false; lastList = ''; poll(); } return; }
+  searching = true; searchTimer = setTimeout(runSearch, 250);
+});
+$('q').addEventListener('keydown', e => { if (e.key === 'Enter') { clearTimeout(searchTimer); runSearch(); $('q').blur(); } });
+$('q').addEventListener('blur', () => { if (!$('q').value) $('qCancel').classList.add('hidden'); });
+$('qClear').addEventListener('click', e => { e.preventDefault(); $('q').value = ''; $('q').dispatchEvent(new Event('input')); $('q').focus(); });
+$('qCancel').addEventListener('click', endSearch);
+
+// The chat: each message is drawn once and redrawn only when it changes (answers being written, a new status),
+// so pictures do not reload and the page does not flicker while an answer comes in.
+function renderTurn(t) {
+  const el = document.createElement('div');
+  el.className = 'turn' + (t.mine ? ' mine' : '') + (t.mine && t.waiting ? ' queued' : '');
+  el.dataset.key = t.key || '';
+  el._text = t.text || '';
+  const pics = (t.images || []).map(u => '<img src="' + esc(withKey(u)) + '" loading="lazy" alt="">').join('');
+  const copy = '<button class="copy">' + ICON_COPY + '<span>' + esc(S.copy) + '</span></button>';
+  let h = t.day ? '<div class="day">' + esc(t.day) + '</div>' : '';
+  if (t.mine) {
+    if (pics) h += '<div class="pics">' + pics + '</div>';
+    if (t.text) h += '<div class="bubble">' + esc(t.text).replace(/\n/g, '<br>') + '</div>';
+    h += '<div class="meta">' + (t.waiting ? '<span>' + esc(S.queued) + '</span>' : '') + (t.time ? '<span>' + esc(t.time) + '</span>' : '') + (t.text ? copy : '') + '</div>';
+  } else {
+    h += '<div class="who"><span class="aidot"' + colorStyle(t.color) + '></span>' + esc(t.name || 'AI') + (t.model ? ' <span class="model">' + esc(t.model) + '</span>' : '') + '</div>';
+    if (t.text) h += '<div class="md">' + markdown(t.text) + '</div>';
+    if (pics) h += '<div class="pics">' + pics + '</div>';
+    if (t.status || (t.waiting && !t.text)) h += '<div class="status' + (t.approval ? ' warn' : '') + '"><span class="spin"></span><span>' + esc(t.status || S.working) +
+      (t.since ? ' <span class="elapsed" data-since="' + t.since + '"></span>' : '') + '</span></div>';
+    if (t.error) h += '<div class="error">' + esc(t.error) + '</div>';
+    if (t.text && !t.waiting) h += '<div class="meta">' + copy + (t.time ? '<span>' + esc(t.time) + '</span>' : '') + '</div>';
+  }
+  el.innerHTML = h;
+  return el;
+}
+function tick() {
+  const now = Date.now() / 1000;
+  document.querySelectorAll('.elapsed').forEach(e => {
+    const m = Math.floor((now - +e.dataset.since) / 60);
+    e.textContent = m < 1 ? S.justStarted : S.minutes.replace('{n}', m);
+  });
+}
+setInterval(tick, 15000);
+function renderChat(data, first) {
+  const box = $('chatScroll'), atEnd = first || box.scrollHeight - box.scrollTop - box.clientHeight < 90;
+  $('chatTitle').textContent = data.title;
+  $('chatSub').textContent = data.project || '';
+  $('box').classList.toggle('hidden', !!data.readOnly);
+  $('readOnly').classList.toggle('hidden', !data.readOnly);
+  $('readOnly').textContent = S.readOnly;
+  $('hint').textContent = data.working ? S.answering : '';
+  const list = $('turns');
+  if (!data.turns.length) { list.innerHTML = '<div class="note">' + esc(S.askAnything) + '</div>'; }
+  else {
+    const old = new Map([...list.children].filter(e => e.dataset.key).map(e => [e.dataset.key, e]));
+    [...list.children].forEach(e => { if (!e.dataset.key) e.remove(); });
+    let prev = null;
+    for (const t of data.turns) {
+      const sig = JSON.stringify(t);
+      let el = old.get(t.key);
+      if (!el || el._sig !== sig) { const fresh = renderTurn(t); fresh._sig = sig; if (el) el.replaceWith(fresh); el = fresh; }
+      old.delete(t.key);
+      const want = prev ? prev.nextSibling : list.firstChild;
+      if (el !== want) list.insertBefore(el, want);
+      prev = el;
+    }
+    old.forEach(e => e.remove());
+  }
+  const cards = JSON.stringify(data.approvals);
+  if ($('approvals')._sig !== cards) {
+    $('approvals')._sig = cards;
     $('approvals').innerHTML = data.approvals.map(a => '<div class="approval"><b>' + esc(a.title) + '</b>' +
       (a.detail ? '<details><summary>' + esc(S.details) + '</summary><pre>' + esc(a.detail) + '</pre></details>' : '') +
       '<div class="buttons"><button class="deny" data-id="' + esc(a.id) + '" data-allow="0">' + esc(S.deny) + '</button>' +
       '<button class="allow" data-id="' + esc(a.id) + '" data-allow="1">' + esc(S.allow) + '</button></div></div>').join('');
-    if (atEnd) box.scrollTop = box.scrollHeight;
-  } catch (e) { if (id === current) $('chatTitle').textContent = e.message || S.offline; lastChat = ''; }
+  }
+  tick();
+  if (jump && showFound()) return;
+  if (atEnd) box.scrollTop = box.scrollHeight;
+  bottomButton();
+}
+// A search result's turn: scrolled into view with its words marked.
+function showFound() {
+  const el = [...$('turns').children].find(e => (e.dataset.key || '').startsWith(jump.turn));
+  if (!el) return false;
+  const words = jump.words; jump = null;
+  if (words) {
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT), hits = [], low = words.toLowerCase();
+    while (walker.nextNode()) if (walker.currentNode.nodeValue.toLowerCase().includes(low)) hits.push(walker.currentNode);
+    for (const node of hits) {
+      const span = document.createElement('span');
+      span.innerHTML = highlight(node.nodeValue, words);
+      node.replaceWith(span);
+    }
+  }
+  el.classList.add('found');
+  const box = $('chatScroll');
+  box.scrollTop = el.offsetTop - 70;
+  bottomButton();
+  return true;
+}
+async function loadChat() {
+  const id = chatId;
+  try {
+    const data = await api('/api/chat/' + encodeURIComponent(id) + (!opened ? '?open=1' : ''));
+    if (id !== chatId) return;
+    const first = !opened && !cache[id];
+    opened = true;
+    cache[id] = data;
+    const text = JSON.stringify(data);
+    if (text === lastChat) return;
+    lastChat = text;
+    renderChat(data, first);
+  } catch (e) { if (id === chatId && !cache[id]) $('chatTitle').textContent = e.message || S.offline; lastChat = ''; }
 }
 
 $('approvals').addEventListener('click', async e => {
@@ -210,8 +604,31 @@ $('approvals').addEventListener('click', async e => {
   try { await api('/api/approval/' + encodeURIComponent(b.dataset.id), { allow: b.dataset.allow === '1' }); } catch (err) { alert(err.message); }
   lastChat = ''; poll();
 });
+function copyText(text, button) {
+  const done = () => { const s = button.querySelector('span') || button; const was = s.textContent; s.textContent = S.copied; setTimeout(() => { s.textContent = was; }, 1200); };
+  if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).then(done, () => {});
+  else { const t = document.createElement('textarea'); t.value = text; document.body.appendChild(t); t.select(); document.execCommand('copy'); t.remove(); done(); }
+}
+$('turns').addEventListener('click', e => {
+  const code = e.target.closest('.ccopy');
+  if (code) { copyText(code.nextElementSibling.innerText, code); return; }
+  const copy = e.target.closest('.copy');
+  if (copy) { copyText(copy.closest('.turn')._text, copy); return; }
+  const img = e.target.closest('.pics img');
+  if (img) { $('viewer').querySelector('img').src = img.src; $('viewer').classList.remove('hidden'); }
+});
+$('viewer').addEventListener('click', () => $('viewer').classList.add('hidden'));
 
-function grow() { const t = $('text'); t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 140) + 'px'; canSend(); }
+function bottomButton() {
+  const box = $('chatScroll');
+  $('toBottom').classList.toggle('gone', box.scrollHeight - box.scrollTop - box.clientHeight < 200);
+}
+function barLine(scroll, bar) { $(bar).classList.toggle('under', $(scroll).scrollTop > 6); }
+$('chatScroll').addEventListener('scroll', () => { bottomButton(); barLine('chatScroll', 'chatBar'); }, { passive: true });
+$('listScroll').addEventListener('scroll', () => barLine('listScroll', 'listBar'), { passive: true });
+$('toBottom').addEventListener('click', () => $('chatScroll').scrollTo({ top: 1e9, behavior: 'smooth' }));
+
+function grow() { const t = $('text'); t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 160) + 'px'; canSend(); }
 function canSend() { $('send').disabled = sending || (!$('text').value.trim() && !photos.length); }
 $('text').addEventListener('input', grow);
 $('pick').addEventListener('click', () => $('file').click());
@@ -239,28 +656,80 @@ function renderThumbs() {
   canSend();
 }
 $('thumbs').addEventListener('click', e => { const b = e.target.closest('button'); if (b) { photos.splice(+b.dataset.i, 1); renderThumbs(); } });
+// A new chat is made on the Mac only when its first message goes; the page then stays on it as `#c=<id>`.
 $('send').addEventListener('click', async () => {
-  const id = current, text = $('text').value.trim();
-  if (!id || sending || (!text && !photos.length)) return;
+  const key = current, text = $('text').value.trim();
+  if (!key || sending || (!text && !photos.length)) return;
   sending = true; canSend();
+  const images = photos.map(p => p.split(',')[1]);
   try {
-    await api('/api/chat/' + encodeURIComponent(id) + '/send', { text, images: photos.map(p => p.split(',')[1]) });
-    $('text').value = ''; drafts[id] = ''; photos = []; renderThumbs(); grow();
-    lastChat = ''; setTimeout(() => { $('chatScroll').scrollTop = 1e9; }, 50);
+    if (chatId) await api('/api/chat/' + encodeURIComponent(chatId) + '/send', { text, images });
+    else {
+      const made = await api('/api/chat/new', { text, images, project: newProject || undefined });
+      if (current === key) {
+        drafts[key] = '';
+        chatId = made.id; current = made.id; opened = false;
+        history.replaceState(null, '', location.pathname + location.search + '#c=' + encodeURIComponent(made.id));
+      }
+    }
+    if (current === key || current === chatId) {
+      $('text').value = ''; drafts[current] = ''; photos = []; renderThumbs(); grow();
+      lastChat = ''; setTimeout(() => { $('chatScroll').scrollTop = 1e9; }, 60);
+    }
   } catch (e) { alert(S.failed + ': ' + e.message); }
   sending = false; canSend(); poll();
 });
 
-$('back').addEventListener('click', () => { if (history.length > 1 && location.hash) history.back(); else location.hash = ''; });
+$('back').addEventListener('click', back);
 $('backText').textContent = S.list;
 $('text').placeholder = S.message;
-// The home-screen app has no Safari back swipe: a swipe from the left edge goes back to the list.
-let sx = null, sy = 0;
-$('chatView').addEventListener('touchstart', e => { const t = e.touches[0]; sx = t.clientX < 28 ? t.clientX : null; sy = t.clientY; }, { passive: true });
-$('chatView').addEventListener('touchend', e => {
-  if (sx === null) return; const t = e.changedTouches[0];
-  if (t.clientX - sx > 80 && Math.abs(t.clientY - sy) < 60) $('back').click(); sx = null;
+$('q').placeholder = S.search;
+$('qCancel').textContent = S.cancel;
+$('pick').setAttribute('aria-label', S.photo);
+$('send').setAttribute('aria-label', S.send);
+$('toBottom').setAttribute('aria-label', S.toBottom);
+$('compose').setAttribute('aria-label', S.newChat);
+
+// Back by swiping right anywhere on the chat: the chat follows the finger, the list comes along under it, and letting
+// go past a third of the screen (or with a flick) goes back; less springs back. Not from rows that scroll sideways
+// (code, tables, photos), and in Safari not from the left edge, which is Safari's own back swipe.
+let drag = null;
+const shadeMax = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--shade')) || .14;
+$('chatView').addEventListener('touchstart', e => {
+  drag = null;
+  if (!current || e.touches.length !== 1 || !$('viewer').classList.contains('hidden')) return;
+  const t = e.touches[0];
+  if (!standalone && t.clientX < 24) return;
+  if (e.target.closest('.code, .tablewrap, #thumbs, textarea')) return;
+  drag = { x: t.clientX, y: t.clientY, on: false, dx: 0, lastX: t.clientX, lastT: e.timeStamp, v: 0 };
 }, { passive: true });
+$('chatView').addEventListener('touchmove', e => {
+  if (!drag) return;
+  const t = e.touches[0], dx = t.clientX - drag.x, dy = t.clientY - drag.y;
+  if (!drag.on) {
+    if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
+    if (dx > 0 && Math.abs(dx) > Math.abs(dy) * 1.4) {
+      drag.on = true; document.body.classList.add('dragging');
+      if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+    } else { drag = null; return; }
+  }
+  e.preventDefault();
+  const w = innerWidth, x = Math.max(0, dx);
+  drag.v = (t.clientX - drag.lastX) / Math.max(1, e.timeStamp - drag.lastT); drag.lastX = t.clientX; drag.lastT = e.timeStamp; drag.dx = x;
+  $('chatView').style.transform = 'translateX(' + x + 'px)';
+  $('listView').style.transform = 'translateX(' + (-30 + 30 * x / w) + '%)';
+  $('shade').style.opacity = shadeMax() * (1 - x / w);
+}, { passive: false });
+function endDrag() {
+  const d = drag; drag = null;
+  if (!d || !d.on) return;
+  document.body.classList.remove('dragging');
+  $('chatView').style.transform = ''; $('listView').style.transform = ''; $('shade').style.opacity = '';
+  if (d.dx > innerWidth * 0.33 || (d.v > 0.45 && d.dx > 30)) { setOpen(false, true); back(); }
+}
+$('chatView').addEventListener('touchend', endDrag, { passive: true });
+$('chatView').addEventListener('touchcancel', endDrag, { passive: true });
+
 document.addEventListener('visibilitychange', () => { if (!document.hidden) { lastList = ''; lastChat = ''; } poll(); });
 window.addEventListener('hashchange', route);
 route();

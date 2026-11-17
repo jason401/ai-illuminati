@@ -426,6 +426,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 AccountStore.useRealHome()
 ChatLinksApp.connect()
 Discussion.draftsFile = URL(fileURLWithPath: AccountStore.supportDir + "/drafts.json")   // the app's own; tests keep boxes in memory
+Discussion.unreadFile = URL(fileURLWithPath: AccountStore.supportDir + "/unread.json")   // "Needs review", this Mac only
 ChatScreensApp.connect()
 let app = NSApplication.shared
 let delegate = AppDelegate()

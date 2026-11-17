@@ -307,11 +307,16 @@ enum WorkingChats {
         return conversations.filter { running.contains($0.id) && $0.meetingOf == nil }
             .sorted { started($0) != started($1) ? started($0) < started($1) : $0.id.uuidString < $1.id.uuidString }
             .map { chat in
-                let project = chat.workspace?.project.map { p -> String in
-                    let key = SidebarProjects.key(p)
-                    return names[key] ?? todo.lists.first { $0.project.map(SidebarProjects.key) == key }?.title ?? SidebarProjects.folderName(p)
-                }
-                return WorkingChat(conversation: chat, project: project, todo: todoRooms.contains(chat.id), stopping: stopping.contains(chat.id))
+                WorkingChat(conversation: chat, project: projectName(chat, todo: todo, names: names),
+                            todo: todoRooms.contains(chat.id), stopping: stopping.contains(chat.id))
             }
+    }
+
+    // The project folder's name as the sidebar shows it (also for "Needs review", UnreadChats.swift).
+    static func projectName(_ chat: Conversation, todo: TodoData, names: [String: String]) -> String? {
+        chat.workspace?.project.map { p -> String in
+            let key = SidebarProjects.key(p)
+            return names[key] ?? todo.lists.first { $0.project.map(SidebarProjects.key) == key }?.title ?? SidebarProjects.folderName(p)
+        }
     }
 }

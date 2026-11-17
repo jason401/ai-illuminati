@@ -107,6 +107,9 @@ struct ChatView<Model: ChatSettings>: View {
         .onChange(of: discussion.viewingRemote == nil) { _ in photo.image = nil }
         .onChange(of: discussion.viewingBoard) { _ in photo.image = nil }
         .onChange(of: discussion.viewingSpace == nil) { _ in photo.image = nil }
+        // Back in front, or back from the board/Space/another Mac's chat: the open chat counts as seen ("Needs review" in Discussion.swift).
+        .onChange(of: discussion.showingChat) { _ in discussion.seeOpenChat() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in discussion.seeOpenChat() }
         .frame(minWidth: ChatViewSize.minSize.width, minHeight: ChatViewSize.minSize.height)
         .background(Color(nsColor: .textBackgroundColor))
         // A photo dropped anywhere in the window is attached, not only on the message box.
@@ -158,7 +161,7 @@ struct ChatView<Model: ChatSettings>: View {
             .padding(.horizontal, 10)
             // Other chats stay usable while one answers (Discussion.maxRunning at once).
             .disabled(discussion.importingMaterials)
-            if !discussion.sidebarSearching { workingChats }
+            if !discussion.sidebarSearching { workingChats; unreadChats }
             // Full-width hairlines above and below the scroll view: where the fixed rows end and where the list is cut.
             Divider().padding(.top, 6)
             ScrollView {
@@ -273,6 +276,62 @@ struct ChatView<Model: ChatSettings>: View {
             .padding(.horizontal, 10)
             .disabled(discussion.importingMaterials)
         }
+    }
+
+    // Under Working, also fixed: chats whose answer ended while you were elsewhere, until you open them (UnreadChats.swift).
+    @ViewBuilder private var unreadChats: some View {
+        let unread = UnreadChats.list(conversations: discussion.conversations, unread: discussion.unreadRooms,
+                                      running: discussion.runningRooms, todo: todos.snapshot, names: projectInfo.names)
+        if !unread.isEmpty {
+            VStack(alignment: .leading, spacing: 1) {
+                SidebarHeader(title: L("확인 필요", "Needs review"), fold: "unread", badge: unread.count) {
+                    Button(action: { discussion.markAllSeen() }) {
+                        Image(systemName: "checkmark").font(.system(size: 10, weight: .semibold)).frame(width: 22, height: 18)
+                    }
+                    .buttonStyle(.plainHit).foregroundColor(.secondary)
+                    .help(L("모두 확인한 걸로 표시", "Mark all as seen"))
+                    .accessibilityLabel(L("모두 확인", "Mark all as seen"))
+                }
+                if !folds.isFolded("unread") {
+                    let page = SidebarFold.projectPage
+                    let listed = Array(unread.prefix(folds.limit("unread", page: page)))
+                    ForEach(listed) { unreadRow($0) }
+                    moreRow("unread", page: page, total: unread.count, listed: listed.count, indent: 28)
+                }
+            }
+            .padding(.horizontal, 10)
+            .disabled(discussion.importingMaterials)
+        }
+    }
+
+    private func unreadRow(_ chat: UnreadChat) -> some View {
+        let id = chat.conversation.id
+        let key = "unread." + id.uuidString
+        return HStack(spacing: 6) {
+            Group {
+                if chat.failed {
+                    Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 9)).foregroundColor(.orange)
+                } else {
+                    Circle().fill(Color.accentColor).frame(width: 7, height: 7)
+                }
+            }
+            .frame(width: 14)
+            Text(chat.conversation.title).lineLimit(1).truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if let project = chat.project {
+                Text(project).font(.system(size: 10)).foregroundColor(.secondary).lineLimit(1).truncationMode(.tail)
+                    .frame(maxWidth: 72, alignment: .trailing)
+            }
+        }
+        .font(.system(size: 12))
+        .padding(.leading, 10).padding(.trailing, 10).frame(height: 26)
+        .background(discussion.hoverKey == key ? Color.primary.opacity(0.05) : .clear, in: RoundedRectangle(cornerRadius: 8))
+        .contentShape(Rectangle())
+        .onTapGesture { discussion.open(id) }
+        .onHover { inside in discussion.hover(key, inside) }
+        .contextMenu { Button(L("확인한 걸로 표시", "Mark as seen")) { discussion.markSeen(id) } }
+        .help((chat.failed ? L("오류로 끝남 · ", "Ended with an error · ") : L("새 답변 · ", "New answer · ")) + chat.conversation.title)
+        .accessibilityAddTraits(.isButton)
     }
 
     private func workingRow(_ chat: WorkingChat) -> some View {

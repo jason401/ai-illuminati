@@ -35,6 +35,8 @@ public final class Discussion: ObservableObject {
     static let maxRunning = 5
     @Published public var runningRooms: Set<UUID> = []
     @Published public var stoppingRooms: Set<UUID> = []
+    // Chats whose answer ended while you were elsewhere, not opened since (UnreadChats.swift): room → when it ended.
+    @Published var unreadRooms: [UUID: Date] = [:]
     // Messages sent while a chat answers (PendingInputs.swift): written into the running answer when it can read them
     // (steering, one Claude answering alone), else queued in the chat (Conversation.queued) and sent together at the end.
     var steer: SteerChannel?                        // a worker: its answer's channel (nil: nothing can be written into it)
@@ -308,6 +310,7 @@ public final class Discussion: ObservableObject {
         conversations = [fresh] + drafted.filter { $0.id != fresh.id } + loaded.filter(\.hasContent)
         currentID = fresh.id
         roomDrafts = saved
+        unreadRooms = Self.loadUnread(known: Set(loaded.map(\.id)))
         restoreDraft()
         linkChatTools()
         SidebarFold.shared.adoptPins(conversations)
@@ -337,6 +340,7 @@ public final class Discussion: ObservableObject {
         workers[room] = nil
         model.onAccountsChange?()   // refresh the usage numbers after the answer
         ChatStore.links.finished(conversations.first { $0.id == room })
+        noteFinished(room, stopped: stopped)
         afterRun(room, stopped: stopped)
     }
 
@@ -555,6 +559,7 @@ public final class Discussion: ObservableObject {
         currentID = id
         if leaving { restoreDraft() }
         sessionNote = ""
+        markSeen(id)
     }
 
     // Pinned chats first (in their usual order), then the rest.
@@ -1594,6 +1599,69 @@ public final class Discussion: ObservableObject {
             box.blank = nil
             if !box.isEmpty { out[room] = box }
         }
+        return out
+    }
+
+    // "Needs review" (확인 필요) under Working: a chat whose answer ended while you were not looking at it stays listed
+    // until you open it, so it need not be looked for again. Only this Mac's own chats, kept in `unreadFile` (never
+    // synced). Left out: a TODO's chat (its board shows it), a meeting's chat, and an answer you stopped yourself.
+    /// Where the list is kept between launches; set by the app before the first chat loads. nil (tests, other programs): in memory only.
+    public static var unreadFile: URL?
+    // Whether the app is in front; no NSApp (a test program) counts as in front.
+    static var appActive: () -> Bool = { NSApp?.isActive ?? true }
+
+    // The open chat is on screen (not the board, a Space or another Mac's chat).
+    var showingChat: Bool { viewingRemote == nil && !viewingBoard && viewingSpace == nil }
+
+    // An answer ended (main thread, from runFinished).
+    func noteFinished(_ room: UUID, stopped: Bool) {
+        guard host == nil, !stopped, let chat = conversations.first(where: { $0.id == room }), chat.meetingOf == nil, chat.hasContent,
+              !TodoStore.shared.snapshot.items.contains(where: { $0.room == room }) else { return }
+        // On screen as it ended: already seen.
+        if room == currentID && showingChat && Self.appActive() { return }
+        unreadRooms[room] = Date()
+        writeUnread()
+    }
+
+    // Opening a chat is enough to count it as seen.
+    func markSeen(_ room: UUID) {
+        guard unreadRooms.removeValue(forKey: room) != nil else { return }
+        writeUnread()
+    }
+
+    func markAllSeen() {
+        guard !unreadRooms.isEmpty else { return }
+        unreadRooms = [:]
+        writeUnread()
+    }
+
+    // The app came to the front, or the chat came back in place of the board/Space: the open chat is seen now.
+    func seeOpenChat() { if showingChat && Self.appActive() { markSeen(currentID) } }
+
+    private func writeUnread() {
+        guard host == nil, let file = Self.unreadFile else { return }
+        var out: [String: Date] = [:]
+        for (room, at) in unreadRooms { out[room.uuidString] = at }
+        do {
+            if out.isEmpty {
+                if FileManager.default.fileExists(atPath: file.path) { try FileManager.default.removeItem(at: file) }
+                return
+            }
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            try encoder.encode(out).write(to: file, options: .atomic)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+        } catch {}
+    }
+
+    // The list saved last time, without chats deleted since.
+    static func loadUnread(known: Set<UUID>) -> [UUID: Date] {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        guard let file = unreadFile, let data = try? Data(contentsOf: file),
+              let saved = try? decoder.decode([String: Date].self, from: data) else { return [:] }
+        var out: [UUID: Date] = [:]
+        for (key, at) in saved { if let room = UUID(uuidString: key), known.contains(room) { out[room] = at } }
         return out
     }
 }

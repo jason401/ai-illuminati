@@ -300,6 +300,7 @@ Discussion.standIn(room:brief:token:done:) | func standIn(room: UUID, brief: Str
 Discussion.start(room:question:photos:review:extra:) | func start(room: UUID, question: String, photos: [TodoPhoto], review: Bool, extra: String) -> String?
 Discussion.stop(_:) | func stop(_ room: UUID)
 Discussion.stoppingRooms | @Published var stoppingRooms: Set<UUID> { get set }
+Discussion.unreadFile | static var unreadFile: URL?
 Discussion.userWrote(_:since:) | func userWrote(_ room: UUID, since: Date) -> Bool
 Discussion.viewingBoard | @Published var viewingBoard: Bool { get set }
 Discussion.viewingRemote | @Published var viewingRemote: RemoteViewing? { get set }

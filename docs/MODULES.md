@@ -604,7 +604,7 @@ Public names and why (found by the compiler, not by hand: a script opened only w
 everything else, Discussion's state above all, stays internal):
 - Discussion (about 30 of its members): `init(model:)`; what main.swift does with the chat (`open`, `current`, `anyRunning`,
   `cancelAll`, `discardPendingImages`, `draftsFile`/`saveDrafts` (2026-11-15: main.swift says where each chat's unsent message
-  box is kept, the app's own `drafts.json`; tests leave it nil and keep boxes in memory; quitting writes them), `importingMaterials`, `fillSpaceLocks`, `runningRooms`/`stoppingRooms` and their
+  box is kept, the app's own `drafts.json`; tests leave it nil and keep boxes in memory; quitting writes them), `unreadFile` (2026-11-16: main.swift says where "Needs review" is kept, the app's own `unread.json`, this Mac only; tests leave it nil), `importingMaterials`, `fillSpaceLocks`, `runningRooms`/`stoppingRooms` and their
   publishers); what the app's screens show (TODO board: `conversations`, `conversation`, `currentID`, `label`, `openBoard`,
   `viewingBoard`, `boardProject`, `hover`/`hoverKey`, `model`; Project info: `listedConversations`, `showBoardTab`,
   `disconnectProjectFolder`; approvals: `approvalChatName`, `viewingRemote`; `markTodoDone`: the board's and cards' [Mark as done],

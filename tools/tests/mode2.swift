@@ -2678,6 +2678,77 @@ func testRoomDrafts() {
     print("PASS: room drafts (per chat, composed character, @ names and pictures kept, blank new chat kept and reopened, restart, stale entries, send, rerun, delete)")
 }
 
+// "Needs review" under Working: a chat whose answer ended while it was not on screen stays listed until it is opened;
+// an answer seen as it ended, one you stopped and a meeting's chat are not listed. Kept in a file in the test home. Fake answers.
+func testUnreadChats() {
+    let file = URL(fileURLWithPath: AccountStore.supportDir + "/unread-test-\(UUID().uuidString).json")
+    Discussion.unreadFile = file
+    let active = Discussion.appActive
+    defer { Discussion.unreadFile = nil; Discussion.appActive = active; try? FileManager.default.removeItem(at: file) }
+    var front = true
+    Discussion.appActive = { front }
+    let model = AppModel()
+    model.accounts = [Account(id: "unread-claude", provider: .claude, name: "Unread Claude")]
+    let chat = Discussion(model: model)
+    chat.configure { $0.mode = 0; $0.soloAccountID = "unread-claude" }
+    let gate = DispatchSemaphore(value: 0)
+    var hold = false
+    chat.answer = { _, _, _ in if hold { gate.wait() }; return .success("ok") }
+    chat.workspaceAnswer = { _, _, _, _, _ in .success("ok") }
+    chat.debateAnswer = { _, _, _, _, _ in .success("ok") }
+    func settle() {
+        let deadline = Date().addingTimeInterval(5)
+        while !chat.runningRooms.isEmpty && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        expect(chat.runningRooms.isEmpty, "the answers finished")
+    }
+    let a = chat.currentID
+    chat.draft = "first"; chat.send(); settle()
+    expect(chat.unreadRooms.isEmpty, "an answer that ends on screen, app in front, is already seen")
+
+    // Another chat open while it answers: listed, newest first, until it is opened.
+    chat.newConversation()
+    let b = chat.currentID
+    chat.change(b, save: true) { $0.turns = [ChatTurn(question: "b")] }
+    chat.open(a)
+    hold = true
+    chat.draft = "second"; chat.send()
+    chat.open(b)
+    gate.signal(); settle(); hold = false
+    expect(chat.unreadRooms[a] != nil && chat.unreadRooms.count == 1, "an answer that ended elsewhere is listed")
+    let listed = UnreadChats.list(conversations: chat.conversations, unread: chat.unreadRooms, running: chat.runningRooms, todo: TodoData())
+    expect(listed.map(\.id) == [a] && listed[0].failed == false, "the list shows that chat, not as an error")
+    expect(FileManager.default.fileExists(atPath: file.path), "the list is written")
+    expect(Discussion(model: model).unreadRooms[a] != nil, "and comes back after a restart")
+    chat.open(a)
+    expect(chat.unreadRooms.isEmpty, "opening it is enough")
+    expect(!FileManager.default.fileExists(atPath: file.path), "an empty list leaves no file")
+
+    // The app in the back: even the open chat is listed, and seen once the app comes to the front.
+    front = false
+    chat.draft = "third"; chat.send(); settle()
+    expect(chat.unreadRooms[a] != nil, "an answer that ends with the app in the back is listed")
+    front = true
+    chat.seeOpenChat()
+    expect(chat.unreadRooms.isEmpty, "the app coming to the front with it open sees it")
+
+    // The board in place of the chat counts as elsewhere; stopped answers and meetings are never listed.
+    chat.openBoard(project: nil)
+    chat.noteFinished(a, stopped: false)
+    expect(chat.unreadRooms[a] != nil, "an answer that ends behind the board is listed")
+    chat.markAllSeen()
+    chat.noteFinished(b, stopped: true)
+    expect(chat.unreadRooms.isEmpty, "an answer you stopped is not listed")
+    var meeting = Conversation(); meeting.turns = [ChatTurn(question: "m")]
+    meeting.meetingOf = MeetingLink(room: a, turn: UUID())
+    chat.conversations.append(meeting)
+    chat.noteFinished(meeting.id, stopped: false)
+    expect(chat.unreadRooms.isEmpty, "a meeting's chat is not listed")
+    let stale = Discussion.loadUnread(known: [])
+    expect(stale.isEmpty, "a deleted chat drops out on start")
+    print("PASS: Needs review (seen on screen, listed elsewhere, newest first, restart, opened, app in back, board, stopped, meeting)")
+}
+
 runTest("testToolHub", testToolHub)
 runTest("testGoogleDrive", testGoogleDrive)
 
@@ -2704,6 +2775,7 @@ runTest("testDisconnectProjectFolder", testDisconnectProjectFolder)
 runTest("testStartTurn", testStartTurn)
 runTest("testQueuedMessages", testQueuedMessages)
 runTest("testRoomDrafts", testRoomDrafts)
+runTest("testUnreadChats", testUnreadChats)
 runTest("testTodoStore", testTodoStore)
 runTest("testTodoScheduler", testTodoScheduler)
 runTest("testTodoOrder", testTodoOrder)

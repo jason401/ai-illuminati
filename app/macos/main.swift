@@ -143,6 +143,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         ExternalMCP.shared.start()   // servers added in Settings → MCP
         // Chats from your other Macs (off until turned on in Settings → Chat).
         DeviceSync.shared.start(discussion: discussion)
+        // The iPhone page, when it was turned on in Manage chats → Connect iPhone (PhoneAccess.swift).
+        PhoneServer.shared.start(discussion: discussion)
         // The Usage window's chat names and links, and token sums from the other Macs (off until turned on there).
         TokenStatsModel.shared.chats = { [weak self] in
             guard let self else { return [:] }

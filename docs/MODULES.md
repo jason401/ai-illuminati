@@ -99,12 +99,13 @@ The map below is the final ownership; step reports are in `docs/modules-history.
 | AIChatRecords | chat record values (pictures, documents, sync origins…), the chats/ path, dropped files, collab log, disk report; no providers; knows no Discussion | AIAccounts, AILocalization, AIRuntime, AIWorkspace |
 | AIChat | chat records/state/storage, routing, meetings/reviews, ask_ai, attachments, DeviceSync, chat/Space views; Peer/Convene/Chat/Memory/Storage providers | AIAccounts, AILocalization, AIRuntime, AIWorkspace, AIProjects, AISpaces, AIChatRecords |
 | AIIntegrations | Google auth/Drive gate, external MCP connections, AI Face; no providers | AIAccounts, AILocalization, AIRuntime (interface only), AIWorkspace |
-| App (app/macos) | startup, menu/settings, screens, update/login, wiring and explicit 13-provider list; Face/Drive/ExternalMCP conformances | all nine modules, each imported directly by the files that use it |
+| AIRemote | the iPhone page and its 127.0.0.1 server (key check, HTTP parsing); knows no chat | AILocalization |
+| App (app/macos) | startup, menu/settings, screens, update/login, wiring and explicit 13-provider list; Face/Drive/ExternalMCP conformances | all ten modules, each imported directly by the files that use it |
 
 Arrows mean imports, from caller to dependency (all direct edges are in the table):
 
 ```text
-App            -> all nine modules directly
+App            -> all ten modules directly
 AIChat         -> AIChatRecords, AIProjects, AISpaces, AIWorkspace, AIRuntime, AIAccounts, AILocalization
 AIChatRecords  -> AIWorkspace, AIRuntime, AIAccounts, AILocalization
 AIProjects     -> AIWorkspace, AIRuntime, AIAccounts, AILocalization
@@ -112,6 +113,7 @@ AIIntegrations -> AIWorkspace, AIRuntime, AIAccounts, AILocalization
 AIWorkspace    -> AIRuntime, AIAccounts, AILocalization
 AIRuntime      -> AIAccounts, AILocalization
 AISpaces       -> AIAccounts, AILocalization
+AIRemote       -> AILocalization
 AIAccounts     -> {}
 AILocalization -> {}
 ```
@@ -726,6 +728,26 @@ the three provider extensions (`@retroactive`: the conformance is the app's on p
 as main.swift does. Previews import the module.
 
 I falsification table: `docs/modules-history.md`.
+
+### AIRemote (`app/modules/AIRemote/`: AIRemote, RemotePage), 2026-11-17
+The iPhone page (Manage chats → Connect iPhone, `app/macos/PhoneAccess.swift`): a small HTTP/1.1 server on 127.0.0.1 only
+(`tailscale serve` brings `https://<mac>.ts.net/` to it) and the one page it serves. It knows no chat: the App's `PhoneServer.handle`
+answers each `/api/` call from AIChat's `RemoteChats` (`RemoteChats.swift`) and
+`ProjectCenter.decide`. Every `/api/` call needs the QR's key (header `X-Remote-Key` or `k`): any program on this Mac, the AI CLIs
+included, reaches 127.0.0.1 and must not send messages or allow its own approvals. Depends on `AILocalization` only; used only by App.
+| Promise | Users (files) | Module test | User tests (mode2.swift unless named) |
+|---|---|---|---|
+| A request is read only whole (head, then Content-Length bytes); chunked, broken or over `maxBody` is refused | PhoneAccess.swift | remote contract | testPhoneServer |
+| `/api/` without the key (or with part of it) is 401; the page and icon need none; nothing else is served | PhoneAccess.swift | remote contract | testPhoneServer |
+| The handler runs on the main queue (the chats are main-thread state) | PhoneAccess.swift | remote contract | testPhoneServer |
+
+Public, each with its reason: `RemoteServer` (init, `start`, `stop`, `running`, `port`: the App starts it with its key and handler),
+`RemoteRequest`/`RemoteResponse` (what the handler reads and returns; `json`, `error`), `RemoteHTTP` (`parse`, `authorized`, `newKey`,
+`maxBody`: the contract checks them, the App makes the key), `RemotePage.html()` (the App hands it to the server).
+AIChat's new public names for it (`RemoteChats.swift`, an enum, not an `extension Discussion`): `RemoteChats.list` (the sidebar's
+sections as JSON values, built from the sidebar's own internal lists), `chat(_:_:opened:)` (one chat's messages, answers so far and
+approval cards; opened counts as seen), `image(_:_:id:)` (a picture of that chat only) and `send(_:room:text:photos:)` (the message
+box's path for any chat: queue while answering, TODO, or a new turn; photos imported like `addImage`).
 
 ## Records
 

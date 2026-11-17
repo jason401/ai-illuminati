@@ -31,6 +31,7 @@ Each `app/modules/<Name>/` is a Swift module; others see only its `public` names
 - `AIChat` chats, Discussion, routing, meetings, ask_ai, chat window → + Projects, Spaces, ChatRecords
 - `AIIntegrations` Google login/Drive, outside MCP, AI Face link → Accounts, Localization, Workspace (Runtime
   only through Workspace's interface)
+- `AIRemote` iPhone page and its 127.0.0.1 server → Localization
 - App (`app/macos`): screens, settings, app start, connecting modules; only it imports Integrations.
 
 Where new code goes: (1) the module that owns the work; (2) App, only if it is a screen, a setting, app start or

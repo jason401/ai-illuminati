@@ -12,3 +12,4 @@ AIProjects: AIAccounts AILocalization AIRuntime AIWorkspace
 AIChatRecords: AIAccounts AILocalization AIRuntime AIWorkspace
 AIChat: AIAccounts AILocalization AIRuntime AIWorkspace AIProjects AISpaces AIChatRecords
 AIIntegrations: AIAccounts AILocalization AIRuntime* AIWorkspace
+AIRemote: AILocalization

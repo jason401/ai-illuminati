@@ -21,4 +21,4 @@ DriveUI.swift screen: Google Drive in the chat sidebar
 GitBranches.swift screen: Project info's read-only branch view (later move candidate: ref parsing)
 ProjectInfoView.swift screen: the Project info tab
 TodoBoard.swift screen: the TODO board and its report cards
-PhoneAccess.swift screen: the Connect iPhone window (this Mac's Tailscale address as a QR, whether the iPhones are on the tailnet; reads tailscale status only)
+PhoneAccess.swift screen + connects modules: the Connect iPhone window (Tailscale address QR, iPhones on the tailnet, the phone page switch) and PhoneServer, which hands AIRemote's /api/ calls to AIChat and ProjectCenter

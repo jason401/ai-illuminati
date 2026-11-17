@@ -381,6 +381,11 @@ QueuedMessage.mentions | var mentions: [String]?
 QueuedMessage.route | var route: String?
 QueuedMessage.sentAt | var sentAt: Date
 QueuedMessage.text | var text: String
+RemoteChats | enum RemoteChats
+RemoteChats.chat(_:_:opened:) | static func chat(_ d: Discussion, _ room: UUID, opened: Bool) -> [String : Any]?
+RemoteChats.image(_:_:id:) | static func image(_ d: Discussion, _ room: UUID, id: UUID) -> URL?
+RemoteChats.list(_:) | static func list(_ d: Discussion) -> [[String : Any]]
+RemoteChats.send(_:room:text:photos:) | static func send(_ d: Discussion, room: UUID, text: String, photos: [Data]) -> String?
 RemoteDevice | struct RemoteDevice
 RemoteDevice.id | var id: String
 RemoteViewing | struct RemoteViewing

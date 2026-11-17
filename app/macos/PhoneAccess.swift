@@ -1,11 +1,15 @@
 import AppKit
 import SwiftUI
 import CoreImage
+import AIAccounts
 import AILocalization
+import AIChat
+import AIProjects
+import AIRemote
 
-// iPhone access over Tailscale (docs: the chat's mobile plan): this Mac's tailnet address as a QR the iPhone camera opens,
-// and whether the user's iPhones are on the tailnet now. Read only: it runs `tailscale status`/`serve status` and changes
-// nothing (no serve, no ACL). "Connected" is Tailscale's own Online flag: the phone is on the tailnet, not that a page is open.
+// iPhone access over Tailscale: this Mac's tailnet address as a QR the iPhone camera opens, whether the user's iPhones are
+// on the tailnet now, and (turned on in the window) the phone page: AIRemote's server on 127.0.0.1 with `tailscale serve`
+// bringing https://<mac>.ts.net/ to it. "Connected" is Tailscale's own Online flag: the phone is on the tailnet.
 struct TailnetStatus: Equatable {
     struct Phone: Equatable, Identifiable {
         var id: String
@@ -20,6 +24,8 @@ struct TailnetStatus: Equatable {
     var served: String?        // what `tailscale serve` sends https://host/ to, nil while nothing is served
     var phones: [Phone] = []
     var url: URL? { host.map { URL(string: "https://\($0)/") } ?? nil }
+    // The phone page is what serve sends the address to.
+    var servesPhone: Bool { served == PhoneServer.target }
 
     // `tailscale status --json` and `tailscale serve status --json`; phones are the peers whose OS is iOS.
     static func parse(status: Data?, serve: Data?) -> TailnetStatus {
@@ -74,8 +80,8 @@ final class PhoneAccess: ObservableObject {
     // The standalone app's CLI first (the one the Tailscale menu offers to link), then the usual installs.
     static let cliPaths = ["/Applications/Tailscale.app/Contents/MacOS/Tailscale", "/opt/homebrew/bin/tailscale", "/usr/local/bin/tailscale"]
 
-    func refresh() {
-        guard !busy else { return }
+    func refresh(then done: ((TailnetStatus) -> Void)? = nil) {
+        guard !busy else { if let done { DispatchQueue.main.asyncAfter(deadline: .now() + 1) { self.refresh(then: done) } }; return }
         busy = true
         DispatchQueue.global(qos: .utility).async {
             let cli = Self.cliPaths.first { FileManager.default.isExecutableFile(atPath: $0) }
@@ -85,6 +91,7 @@ final class PhoneAccess: ObservableObject {
                 self.busy = false
                 self.checked = true
                 if self.status != next { self.status = next }
+                done?(next)
             }
         }
     }
@@ -112,6 +119,144 @@ final class PhoneAccess: ObservableObject {
         process.waitUntilExit()
         killer.cancel()
         return process.terminationStatus == 0 ? data : nil
+    }
+}
+
+// The phone page (turned on in the iPhone window, remembered across launches): AIRemote serves it, the chats answer
+// (AIChat's RemoteChats) and approvals are ProjectCenter's, so deciding on the phone clears the
+// Mac's card too. The key in the QR guards every /api/ call; a new key (the window's "New QR") locks out old phones.
+final class PhoneServer: ObservableObject {
+    static let shared = PhoneServer()
+    static let port: UInt16 = 47380
+    static let target = "http://127.0.0.1:\(port)"
+    static let enabledKey = "phone.enabled", keyKey = "phone.key"
+    @Published private(set) var running = false
+    @Published private(set) var problem: String?
+    weak var discussion: Discussion?   // set by start; tests set it directly
+    private var server: RemoteServer?
+
+    @Published private(set) var enabled = UserDefaults.app.bool(forKey: PhoneServer.enabledKey)
+    var key: String {
+        if let key = UserDefaults.app.string(forKey: Self.keyKey), !key.isEmpty { return key }
+        let key = RemoteHTTP.newKey()
+        UserDefaults.app.set(key, forKey: Self.keyKey)
+        return key
+    }
+    func address(_ status: TailnetStatus) -> String? { status.url.map { $0.absoluteString + "?k=" + key } }
+
+    // App start: the page comes back if it was on (serve --bg stays set in Tailscale itself).
+    func start(discussion: Discussion) {
+        self.discussion = discussion
+        guard enabled else { return }
+        listen()
+        // Tailscale forgets serve after `serve reset`: set it again unless another site took the address.
+        PhoneAccess.shared.refresh { [weak self] status in
+            guard let self, self.running, status.state == .running, status.served == nil else { return }
+            self.serve(["serve", "--bg", "--https=443", Self.target])
+        }
+    }
+
+    func setEnabled(_ on: Bool, status: TailnetStatus) {
+        UserDefaults.app.set(on, forKey: Self.enabledKey)
+        enabled = on
+        problem = nil
+        if on {
+            listen()
+            guard running else { return }
+            // Another site already at https://<mac>/ is the user's: it is not replaced.
+            if let other = status.served, other != Self.target {
+                problem = L("tailscale serve가 이미 \(other)를 보여 주고 있어요. 그걸 끄면 켤 수 있어요.",
+                            "tailscale serve already shows \(other). Turn that off first.")
+                return
+            }
+            if !status.servesPhone { serve(["serve", "--bg", "--https=443", Self.target]) }
+        } else {
+            server?.stop(); server = nil; running = false
+            if status.servesPhone { serve(["serve", "--https=443", "off"]) }
+        }
+    }
+
+    func newKey() {
+        UserDefaults.app.set(RemoteHTTP.newKey(), forKey: Self.keyKey)
+        if running { server?.stop(); server = nil; running = false; listen() }
+    }
+
+    private func listen() {
+        guard server == nil else { return }
+        let icon = NSApp.applicationIconImage.flatMap { Self.png($0, size: 180) }
+        let server = RemoteServer(port: Self.port, key: key, page: { RemotePage.html() }, icon: icon) { [weak self] request in
+            self?.handle(request) ?? .error(404, "not found")
+        }
+        do { try server.start(); self.server = server; running = true } catch {
+            problem = L("폰 페이지를 열지 못했어요: ", "Could not start the phone page: ") + error.localizedDescription
+        }
+    }
+
+    private func serve(_ args: [String]) {
+        guard let cli = PhoneAccess.cliPaths.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else { return }
+        DispatchQueue.global(qos: .utility).async {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: cli)
+            process.arguments = args
+            let err = Pipe()
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = err
+            var message: String?
+            do { try process.run(); process.waitUntilExit() } catch { message = error.localizedDescription }
+            if message == nil, process.terminationStatus != 0 {
+                message = String(data: err.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            DispatchQueue.main.async {
+                if let message { self.problem = "tailscale serve: " + message }
+                PhoneAccess.shared.refresh()
+            }
+        }
+    }
+
+    // GET /api/chats, GET /api/chat/<id>[?open=1], GET /api/image/<chat>/<picture>, POST /api/chat/<id>/send,
+    // POST /api/approval/<id> {allow}.
+    func handle(_ request: RemoteRequest) -> RemoteResponse {
+        guard let discussion else { return .error(404, "not ready") }
+        let parts = request.path.split(separator: "/").map(String.init)   // ["api", ...]
+        switch (request.method, parts.count > 1 ? parts[1] : "", parts.count) {
+        case ("GET", "chats", 2):
+            return .json(["sections": RemoteChats.list(discussion)])
+        case ("GET", "chat", 3):
+            guard let room = UUID(uuidString: parts[2]), let chat = RemoteChats.chat(discussion, room, opened: request.query["open"] == "1") else {
+                return .error(404, L("대화를 찾지 못했어요.", "Chat not found."))
+            }
+            return .json(chat)
+        case ("GET", "image", 4):
+            guard let room = UUID(uuidString: parts[2]), let id = UUID(uuidString: parts[3]),
+                  let url = RemoteChats.image(discussion, room, id: id), let data = try? Data(contentsOf: url) else { return .error(404, "no picture") }
+            return RemoteResponse(type: "image/png", body: data)
+        case ("POST", "chat", 4) where parts[3] == "send":
+            guard let room = UUID(uuidString: parts[2]), let body = request.json else { return .error(400, "bad request") }
+            let photos = ((body["images"] as? [String]) ?? []).compactMap { Data(base64Encoded: $0) }
+            if let reason = RemoteChats.send(discussion, room: room, text: (body["text"] as? String) ?? "", photos: photos) { return .error(409, reason) }
+            return .json(["ok": true])
+        case ("POST", "approval", 3):
+            guard let id = UUID(uuidString: parts[2]), let allow = request.json?["allow"] as? Bool else { return .error(400, "bad request") }
+            guard ProjectCenter.shared.requests.contains(where: { $0.id == id }) else {
+                return .error(409, L("이미 처리된 요청이에요.", "This request was already decided."))
+            }
+            ProjectCenter.shared.decide(id, allow: allow)
+            return .json(["ok": true])
+        default:
+            return .error(404, "not found")
+        }
+    }
+
+    private static func png(_ image: NSImage, size: CGFloat) -> Data? {
+        guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(size), pixelsHigh: Int(size), bitsPerSample: 8,
+                                         samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)
+        else { return nil }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        image.draw(in: NSRect(x: 0, y: 0, width: size, height: size))
+        NSGraphicsContext.restoreGraphicsState()
+        return rep.representation(using: .png, properties: [:])
     }
 }
 
@@ -153,6 +298,7 @@ final class PhoneAccessWindow: NSObject, NSWindowDelegate {
 
 struct PhoneAccessView: View {
     @ObservedObject var access: PhoneAccess
+    @ObservedObject var server = PhoneServer.shared
     private var status: TailnetStatus { access.status }
 
     var body: some View {
@@ -166,7 +312,8 @@ struct PhoneAccessView: View {
             } else if status.state == .stopped {
                 notice(L("Tailscale이 꺼져 있어요. 메뉴 막대의 Tailscale에서 연결하세요.", "Tailscale is off. Connect it from Tailscale in the menu bar."))
             } else {
-                qrSection
+                pageSection
+                if server.enabled { qrSection }
                 Divider()
                 phonesSection
                 Divider()
@@ -180,8 +327,23 @@ struct PhoneAccessView: View {
         .padding(20)
     }
 
+    @ViewBuilder private var pageSection: some View {
+        Toggle(isOn: Binding(get: { server.enabled }, set: { server.setEnabled($0, status: status) })) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(L("iPhone에서 채팅 쓰기", "Use chats on iPhone")).font(.headline)
+                Text(L("켜 두면 이 Mac에서 앱이 켜져 있는 동안 폰에서 채팅 목록을 보고, 메시지·사진을 보내고, 승인할 수 있어요.",
+                       "While on and this app runs, the iPhone can see the chats, send messages and photos, and approve requests."))
+                    .font(.system(size: 11)).foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .toggleStyle(.switch)
+        if let problem = server.problem {
+            Text(problem).font(.system(size: 11)).foregroundColor(.orange).fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
     @ViewBuilder private var qrSection: some View {
-        if let url = status.url, let image = TailnetStatus.qr(url.absoluteString) {
+        if let url = server.address(status).flatMap(URL.init(string:)), let image = TailnetStatus.qr(url.absoluteString) {
             HStack(alignment: .top, spacing: 16) {
                 Image(nsImage: image).interpolation(.none).resizable().frame(width: 168, height: 168)
                     .padding(8).background(Color.white).cornerRadius(6)
@@ -190,9 +352,14 @@ struct PhoneAccessView: View {
                     Text(L("iPhone의 Tailscale이 켜져 있어야 열려요. 열리면 공유 → 홈 화면에 추가.",
                            "Opens only while Tailscale is on on the iPhone. Then Share → Add to Home Screen."))
                         .font(.system(size: 11)).foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true)
-                    Text(url.absoluteString).font(.system(size: 11).monospaced()).textSelection(.enabled)
-                    Button(L("주소 복사", "Copy Address")) {
-                        NSPasteboard.general.clearContents(); NSPasteboard.general.setString(url.absoluteString, forType: .string)
+                    Text(status.url?.absoluteString ?? "").font(.system(size: 11).monospaced()).textSelection(.enabled)
+                    HStack {
+                        Button(L("주소 복사", "Copy Address")) {
+                            NSPasteboard.general.clearContents(); NSPasteboard.general.setString(url.absoluteString, forType: .string)
+                        }
+                        // The address carries the key: a new one locks out every phone that opened the old QR.
+                        Button(L("새 QR", "New QR")) { server.newKey() }
+                            .help(L("전에 찍은 폰은 다시 찍어야 열려요", "Phones that scanned the old QR must scan again"))
                     }
                     .controlSize(.small)
                 }
@@ -224,8 +391,10 @@ struct PhoneAccessView: View {
     @ViewBuilder private var checks: some View {
         check(status.https, L("HTTPS 인증서", "HTTPS certificate"),
               status.https ? nil : L("관리 콘솔 → DNS → Enable HTTPS", "Admin console → DNS → Enable HTTPS"))
-        check(status.served != nil, L("웹 연결 (tailscale serve)", "Web access (tailscale serve)"),
-              status.served.map { "→ " + $0 } ?? L("켜진 게 없어서 지금은 QR을 찍어도 페이지가 안 열려요", "Nothing is served, so the QR opens no page yet"))
+        check(status.servesPhone && server.running, L("웹 연결 (tailscale serve)", "Web access (tailscale serve)"),
+              status.servesPhone && server.running ? nil
+                : !server.enabled ? L("위 스위치를 켜면 연결돼요", "Turn on the switch above")
+                : status.served.map { "→ " + $0 } ?? L("연결 중…", "Connecting…"))
     }
 
     private func check(_ ok: Bool, _ title: String, _ detail: String?) -> some View {

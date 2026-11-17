@@ -1,0 +1,33 @@
+RemoteHTTP | enum RemoteHTTP
+RemoteHTTP.Parsed | enum Parsed
+RemoteHTTP.Parsed.bad(_:) | case bad(Int)
+RemoteHTTP.Parsed.done(_:) | case done(RemoteRequest)
+RemoteHTTP.Parsed.more | case more
+RemoteHTTP.authorized(_:key:) | static func authorized(_ request: RemoteRequest, key: String) -> Bool
+RemoteHTTP.maxBody | static let maxBody: Int
+RemoteHTTP.newKey() | static func newKey() -> String
+RemoteHTTP.parse(_:) | static func parse(_ data: Data) -> RemoteHTTP.Parsed
+RemotePage | enum RemotePage
+RemotePage.html() | static func html() -> Data
+RemoteRequest | struct RemoteRequest
+RemoteRequest.body | var body: Data
+RemoteRequest.headers | var headers: [String : String]
+RemoteRequest.init(method:path:query:headers:body:) | init(method: String, path: String, query: [String : String] = [:], headers: [String : String] = [:], body: Data = Data())
+RemoteRequest.json | var json: [String : Any]? { get }
+RemoteRequest.method | var method: String
+RemoteRequest.path | var path: String
+RemoteRequest.query | var query: [String : String]
+RemoteResponse | struct RemoteResponse
+RemoteResponse.body | var body: Data
+RemoteResponse.error(_:_:) | static func error(_ status: Int, _ message: String) -> RemoteResponse
+RemoteResponse.init(status:type:body:) | init(status: Int = 200, type: String, body: Data)
+RemoteResponse.json(_:status:) | static func json(_ object: Any, status: Int = 200) -> RemoteResponse
+RemoteResponse.status | var status: Int
+RemoteResponse.type | var type: String
+RemoteServer | final class RemoteServer
+RemoteServer.Handler | typealias Handler = (RemoteRequest) -> RemoteResponse
+RemoteServer.init(port:key:page:icon:handler:) | init(port: UInt16, key: String, page: @escaping () -> Data, icon: Data? = nil, handler: @escaping RemoteServer.Handler)
+RemoteServer.port | let port: UInt16
+RemoteServer.running | var running: Bool { get }
+RemoteServer.start() | func start() throws
+RemoteServer.stop() | func stop()

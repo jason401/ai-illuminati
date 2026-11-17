@@ -1,6 +1,10 @@
 import Foundation
 import AppKit
 import CoreImage
+import AIAccounts
+import AIRemote
+@testable import AIProjects
+@testable import AIChat
 
 /// iPhone access (PhoneAccess.swift): `tailscale status`/`serve status` JSON read the way the window shows it; only iOS
 /// peers count as phones, an iPhone named "localhost" takes its DNS name, and nothing served means no web access.
@@ -26,4 +30,65 @@ func testPhoneAccess() {
     expect(idle.state == .stopped && idle.served == nil && !idle.https && idle.phones.isEmpty, "phone access: stopped, nothing served")
     expect(TailnetStatus.parse(status: nil, serve: nil).state == .missing, "phone access: no CLI output means not installed")
     expect(TailnetStatus.qr("https://mac.tail1.ts.net/") != nil, "phone access: the QR is drawn")
+}
+
+/// The phone page's /api/ (PhoneServer.handle → Discussion.remote*): a message with a photo sent from the phone starts a
+/// turn like the message box, the chat and its picture come back, the list has it, and an approval decided on the phone
+/// leaves ProjectCenter (so the Mac's card goes too); a second decision and unknown chats are refused.
+func testPhoneServer() {
+    let model = AppModel()
+    model.accounts = [Account(id: "phone-claude", provider: .claude, name: "Phone Claude")]
+    let chat = Discussion(model: model)
+    chat.configure { $0.mode = 0; $0.soloAccountID = "phone-claude" }
+    var asked: [String] = []
+    chat.answer = { _, prompt, _ in asked.append(prompt); return .success("phone answer") }
+    chat.workspaceAnswer = { _, _, _, _, _ in .success("phone answer") }
+    chat.debateAnswer = { _, _, _, _, _ in .success("phone answer") }
+    let server = PhoneServer.shared
+    let saved = server.discussion
+    server.discussion = chat
+    defer { server.discussion = saved }
+    func call(_ method: String, _ path: String, _ body: [String: Any]? = nil) -> (Int, [String: Any]) {
+        let data = body.map { try! JSONSerialization.data(withJSONObject: $0) } ?? Data()
+        let parts = path.split(separator: "?", maxSplits: 1)
+        let query = parts.count > 1 ? Dictionary(uniqueKeysWithValues: parts[1].split(separator: "&").map { item -> (String, String) in
+            let kv = item.split(separator: "="); return (String(kv[0]), kv.count > 1 ? String(kv[1]) : "") }) : [:]
+        let response = server.handle(RemoteRequest(method: method, path: String(parts[0]), query: query, body: data))
+        return (response.status, ((try? JSONSerialization.jsonObject(with: response.body)) as? [String: Any]) ?? ["raw": response.body])
+    }
+    func settle() {
+        let deadline = Date().addingTimeInterval(5)
+        while !chat.runningRooms.isEmpty && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+    }
+    let room = chat.currentID
+    let png = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 4, pixelsHigh: 4, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+                               isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!.representation(using: .png, properties: [:])!
+    let sent = call("POST", "/api/chat/\(room.uuidString)/send", ["text": "from the phone", "images": [png.base64EncodedString()]])
+    expect(sent.0 == 200, "phone server: the message is sent \(sent.1)")
+    settle()
+    expect(chat.conversation(room).turns.count == 1 && chat.conversation(room).turns[0].question == "from the phone"
+           && chat.conversation(room).turns[0].images?.count == 1 && chat.conversation(room).turns[0].final == "phone answer",
+           "phone server: one turn with the photo, answered")
+    expect(chat.draft.isEmpty, "phone server: the Mac's message box is left alone")
+    let opened = call("GET", "/api/chat/\(room.uuidString)?open=1")
+    let turns = opened.1["turns"] as? [[String: Any]] ?? []
+    expect(opened.0 == 200 && turns.count == 2 && turns[0]["mine"] as? Bool == true && turns[1]["text"] as? String == "phone answer"
+           && turns[1]["name"] as? String != nil, "phone server: the chat reads as my message, then the answer")
+    let link = (turns[0]["images"] as? [String])?.first ?? ""
+    let picture = server.handle(RemoteRequest(method: "GET", path: link))
+    expect(picture.status == 200 && picture.type == "image/png" && !picture.body.isEmpty, "phone server: the photo is served")
+    let list = call("GET", "/api/chats").1["sections"] as? [[String: Any]] ?? []
+    expect(list.contains { ($0["chats"] as? [[String: Any]] ?? []).contains { $0["id"] as? String == room.uuidString } }, "phone server: the list has the chat")
+
+    let request = ProjectApproval(room: room, run: UUID(), title: "git_push", detail: "origin main")
+    ProjectCenter.shared.requests.append(request)
+    let card = (call("GET", "/api/chat/\(room.uuidString)").1["approvals"] as? [[String: Any]])?.first
+    expect(card?["id"] as? String == request.id.uuidString && card?["detail"] as? String == "origin main", "phone server: the approval card with its details")
+    expect(call("POST", "/api/approval/\(request.id.uuidString)", ["allow": false]).0 == 200
+           && !ProjectCenter.shared.requests.contains { $0.id == request.id }, "phone server: denied from the phone, gone everywhere")
+    expect(call("POST", "/api/approval/\(request.id.uuidString)", ["allow": true]).0 == 409, "phone server: decided once only")
+    expect(call("POST", "/api/chat/\(UUID().uuidString)/send", ["text": "x"]).0 == 409, "phone server: an unknown chat is refused")
+    expect(call("POST", "/api/chat/\(room.uuidString)/send", ["text": "  "]).0 == 409, "phone server: nothing to send is refused")
+    expect(call("GET", "/api/nothing").0 == 404, "phone server: unknown paths")
 }

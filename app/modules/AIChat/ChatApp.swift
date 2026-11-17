@@ -47,7 +47,8 @@ public enum ChatApp {
     public static var driveRule: () -> String? = { nil }
 
     // The app's screens shown inside the chat window: the TODO board (its sidebar row, the board, a chat's TODO cards),
-    // Project info and its rename, the app's icon. (Drive's sidebar rows come in through FolderSources.)
+    // Project info and its rename, the app's icon, the items the app adds to Manage chats (iPhone access).
+    // (Drive's sidebar rows come in through FolderSources.)
     public struct Screens {
         public var boardRow: (Discussion) -> AnyView = { _ in AnyView(EmptyView()) }
         public var board: (Discussion) -> AnyView = { _ in AnyView(EmptyView()) }
@@ -55,6 +56,7 @@ public enum ChatApp {
         public var projectInfo: (Discussion, String) -> AnyView = { _, _ in AnyView(EmptyView()) }
         public var renameProject: (String, String) -> Void = { _, _ in }
         public var icon: (Bool) -> NSImage = { _ in NSImage() }
+        public var manageItems: () -> AnyView = { AnyView(EmptyView()) }
         public init() {}
     }
     public static var screens = Screens()

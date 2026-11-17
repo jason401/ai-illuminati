@@ -45,6 +45,7 @@ ChatApp.Screens.boardRow | var boardRow: (Discussion) -> AnyView
 ChatApp.Screens.cards | var cards: (UUID, Discussion) -> AnyView
 ChatApp.Screens.icon | var icon: (Bool) -> NSImage
 ChatApp.Screens.init() | init()
+ChatApp.Screens.manageItems | var manageItems: () -> AnyView
 ChatApp.Screens.projectInfo | var projectInfo: (Discussion, String) -> AnyView
 ChatApp.Screens.renameProject | var renameProject: (String, String) -> Void
 ChatApp.driveRule | static var driveRule: () -> String?

@@ -586,7 +586,8 @@ What the chat gets from the app, set by the app (the chat side names none of the
   takes it, `ChatView` is generic over it so the window still observes the settings.
 - `ChatApp.run` = `RunConditions.app` (RunConditionsApp.swift), `ChatApp.face` = FaceLink's extract/show/active/moods/rule,
   `ChatApp.driveRule` = DriveLink's rule while on: set in `ChatLinksApp.connect()` (main.swift and mode2, as in C0).
-- `ChatApp.screens`: the TODO board (row, board, a chat's cards), Project info and its rename, the icon:
+- `ChatApp.screens`: the TODO board (row, board, a chat's cards), Project info and its rename, the icon, `manageItems`
+  (2026-11-16: the app's items atop the sidebar's Manage chats menu, now Connect iPhone in PhoneAccess.swift):
   set in the new `ChatScreensApp.connect()` (main.swift after ChatLinksApp, stage 1 checks the place; the chat preview too).
 - `FolderSources` / `FolderSource`: outside folder kinds shown in the sidebar's Shared folders after the local ones (their
   + menu item, rows and folder count); Google Drive's is registered in `ChatScreensApp.connect()`. Only the list is joined,

@@ -21,4 +21,6 @@ app/macos/ExternalMCPTools.swift	testToolHub testExternalMCP testRemoteMCP
 tools/tests/search_fixtures.swift	testEnterpriseMarks testMeetingFold testChatFind testChatSearch testChatTools testMemory
 app/macos/TokenStats.swift	testTokenStats
 tools/tests/token_stats.swift	testTokenStats
+app/macos/PhoneAccess.swift	testPhoneAccess
+tools/tests/phone_access.swift	testPhoneAccess
 tools/tests/failure_recovery.swift	testFailureRecovery testTodoFailureRecovery

@@ -236,6 +236,8 @@ struct ChatView<Model: ChatSettings>: View {
             Divider()
             HStack {
                 Menu {
+                    ChatApp.screens.manageItems()
+                    Divider()
                     Button(L("대화 전부 지우기…", "Delete all chats…"), role: .destructive) { discussion.deleteAll() }
                         .disabled(!discussion.conversations.contains(where: \.hasContent) || discussion.anyRunning)
                 } label: {

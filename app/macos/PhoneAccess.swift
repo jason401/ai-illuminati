@@ -23,6 +23,7 @@ struct TailnetStatus: Equatable {
     var https = false          // the admin console's HTTPS certificates are on for this host
     var served: String?        // what `tailscale serve` sends https://host/ to, nil while nothing is served
     var phones: [Phone] = []
+    var macs: [String: Bool] = [:]   // the other Macs on the tailnet: MagicDNS name (lowercased) → online
     var url: URL? { host.map { URL(string: "https://\($0)/") } ?? nil }
     // The phone page is what serve sends the address to.
     var servesPhone: Bool { served == PhoneServer.target }
@@ -50,6 +51,10 @@ struct TailnetStatus: Equatable {
                          lastSeen: seen.flatMap { $0.timeIntervalSince1970 > 0 ? $0 : nil })
         }
         .sorted { ($0.online ? 0 : 1, $0.name) < ($1.online ? 0 : 1, $1.name) }
+        for peer in peers.values where (peer["OS"] as? String) == "macOS" {
+            guard let dns = (peer["DNSName"] as? String)?.trimmingCharacters(in: CharacterSet(charactersIn: ".")).lowercased(), !dns.isEmpty else { continue }
+            result.macs[dns] = (peer["Online"] as? Bool) == true
+        }
         if let host = result.host, let data = serve, let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
            let web = json["Web"] as? [String: [String: Any]], let site = web[host + ":443"],
            let handlers = site["Handlers"] as? [String: [String: Any]] {
@@ -93,6 +98,7 @@ final class PhoneAccess: ObservableObject {
                 self.busy = false
                 self.checked = true
                 if self.status != next { self.status = next }
+                PhoneServer.shared.tailnetChecked(next)
                 done?(next)
             }
         }
@@ -147,6 +153,18 @@ final class PhoneServer: ObservableObject {
     }
     func address(_ status: TailnetStatus) -> String? { status.url.map { $0.absoluteString + "?k=" + key } }
 
+    // After each Tailscale check: which other Macs are online, and what this Mac's page offers them (DeviceSync
+    // writes it to the sync folder only while "Let my other Macs connect" is on there).
+    func tailnetChecked(_ status: TailnetStatus) {
+        let sync = DeviceSync.shared
+        let online = status.state == .running ? Set(status.macs.filter(\.value).keys) : []
+        if sync.onlineHosts != online { sync.onlineHosts = online }
+        let open = enabled && running && status.state == .running && status.servesPhone
+        sync.offerConnection(open ? status.host.flatMap { host in address(status).map {
+            RemoteConnection(address: $0, host: host, app: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "")
+        } } : nil)
+    }
+
     // App start: the page comes back if it was on (serve --bg stays set in Tailscale itself).
     func start(discussion: Discussion) {
         self.discussion = discussion
@@ -175,6 +193,7 @@ final class PhoneServer: ObservableObject {
             if !status.servesPhone { serve(["serve", "--bg", "--https=443", Self.target]) }
         } else {
             server?.stop(); server = nil; running = false
+            DeviceSync.shared.offerConnection(nil)
             if status.servesPhone { serve(["serve", "--https=443", "off"]) }
         }
     }
@@ -182,6 +201,7 @@ final class PhoneServer: ObservableObject {
     func newKey() {
         UserDefaults.app.set(RemoteHTTP.newKey(), forKey: Self.keyKey)
         if running { server?.stop(); server = nil; running = false; listen() }
+        PhoneAccess.shared.refresh()   // the other Macs get the new address
     }
 
     private func listen() {
@@ -352,6 +372,7 @@ struct PhoneAccessView: View {
         if let problem = server.problem {
             Text(problem).font(.system(size: 11)).foregroundColor(.orange).fixedSize(horizontal: false, vertical: true)
         }
+        if server.enabled { MacConnectToggle() }
     }
 
     @ViewBuilder private var qrSection: some View {
@@ -428,5 +449,30 @@ struct PhoneAccessView: View {
         let f = RelativeDateTimeFormatter()
         f.unitsStyle = .short
         return L("오프라인 · ", "Offline · ") + f.localizedString(for: date, relativeTo: Date())
+    }
+}
+
+// "Let my other Macs connect": this Mac's phone page address (with its key) goes in the sync folder, so the user's
+// other Macs list this Mac under Other Macs and open it like the iPhone does. Off by default; needs Settings → Chat →
+// Chats from other Macs (the sync folder) and the phone page on.
+struct MacConnectToggle: View {
+    @ObservedObject var sync = DeviceSync.shared
+
+    var body: some View {
+        Toggle(isOn: Binding(get: { sync.settings.enabled && sync.settings.sharesConnection }, set: { on in
+            sync.settings.sharesConnection = on
+            if on { PhoneAccess.shared.refresh() }
+        })) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(L("다른 Mac에서 연결 허용", "Let my other Macs connect")).font(.system(size: 12, weight: .medium))
+                Text(sync.settings.enabled
+                     ? L("이 페이지 주소(열쇠 포함)를 iCloud 동기화 폴더에 둬요. 같은 iCloud·Tailscale 계정의 다른 Mac이 Other Macs에서 이 Mac을 바로 열 수 있어요.",
+                         "Puts this page's address (with its key) in the iCloud sync folder, so your other Macs on the same iCloud and Tailscale can open this Mac from Other Macs.")
+                     : L("먼저 설정 → 채팅 → ‘다른 기기의 대화’를 켜 주세요.", "First turn on Settings → Chat → ‘Chats from other Macs’."))
+                    .font(.system(size: 11)).foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .toggleStyle(.switch)
+        .disabled(!sync.settings.enabled)
     }
 }

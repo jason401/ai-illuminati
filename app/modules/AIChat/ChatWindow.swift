@@ -34,6 +34,7 @@ struct ChatView<Model: ChatSettings>: View {
     // of these changes, not on every frame of the drag.
     @ObservedObject private var layout = ChatLayout.shared
     @ObservedObject private var sync = DeviceSync.shared
+    @ObservedObject private var connect = MacConnect.shared
     @ObservedObject private var approvals = ProjectCenter.shared
     @ObservedObject private var folds = SidebarFold.shared
     @ObservedObject private var folderSources = FolderSources.shared
@@ -52,7 +53,10 @@ struct ChatView<Model: ChatSettings>: View {
         let notesInline = inline ? layout.notesFit : layout.notesFitAlone
         // Notes belong to a chat: a project folder (board or info) or another Mac's chat hides them, and they come
         // back when a chat of this Mac is open again.
-        let notesShown = discussion.notesShown && !discussion.viewingBoard && discussion.viewingRemote == nil && discussion.viewingSpace == nil
+        // Another Mac opened from Other Macs takes the notes' place (MacConnect.swift).
+        let macShown = connect.shown.flatMap { id in sync.devices.first { $0.id == id } }
+        let macInline = inline ? layout.macFit : layout.macFitAlone
+        let notesShown = macShown == nil && discussion.notesShown && !discussion.viewingBoard && discussion.viewingRemote == nil && discussion.viewingSpace == nil
         // A clicked photo is shown large over the whole window until it is closed.
         let photoShown = photo.image != nil && !discussion.viewingBoard && discussion.viewingSpace == nil
         Group {
@@ -69,6 +73,18 @@ struct ChatView<Model: ChatSettings>: View {
                     if notesShown && notesInline {
                         Divider().opacity(0.5)
                         NotesPanel(room: discussion.currentID) { discussion.notesShown = false }
+                    }
+                    if let macShown, macInline {
+                        Divider().opacity(0.5)
+                        MacPanel(device: macShown, sync: sync)
+                    }
+                }
+                if let macShown, !macInline {
+                    HStack(spacing: 0) {
+                        Spacer(minLength: 0)
+                        MacPanel(device: macShown, sync: sync)
+                            .background(Color(nsColor: .windowBackgroundColor))
+                            .shadow(color: .black.opacity(0.25), radius: 12)
                     }
                 }
                 if notesShown && !notesInline {
@@ -103,6 +119,7 @@ struct ChatView<Model: ChatSettings>: View {
             PhotoViewer.shared.chatTitle = { [weak chats] id in chats?.conversations.first { $0.id == id }?.title }
         }
         .onChange(of: discussion.currentID) { _ in discussion.sidebarOverlay = false; photo.image = nil }
+        .onChange(of: discussion.notesShown) { if $0 { connect.shown = nil } }
         // Leaving the chat (another Mac's chat, the board or a Space) closes the photo, so it does not come back later.
         .onChange(of: discussion.viewingRemote == nil) { _ in photo.image = nil }
         .onChange(of: discussion.viewingBoard) { _ in photo.image = nil }
@@ -756,7 +773,8 @@ struct ChatView<Model: ChatSettings>: View {
         .disabled(discussion.importingMaterials)
     }
 
-    // Chats on your other Macs (read only): one header per Mac, newest first.
+    // Your other Macs: one row per Mac with whether it can be opened now; clicking opens its phone page in the notes'
+    // place (MacConnect.swift). Its read-only chat copies (for when it is off) unfold under the row.
     @ViewBuilder private var otherMacs: some View {
         let search = discussion.sidebarSearch
         SidebarHeader(title: L("다른 기기", "Other Macs"), fold: "devices") {
@@ -769,23 +787,66 @@ struct ChatView<Model: ChatSettings>: View {
             Text(L("iCloud Drive가 꺼져 있거나 동기화 폴더가 없어요. 설정 → 채팅에서 확인해 주세요.", "iCloud Drive is off or the sync folder is missing. Check Settings → Chat."))
                 .font(.system(size: 11)).foregroundColor(.secondary).padding(.horizontal, 10)
         } else if sync.devices.isEmpty {
-            Text(sync.lastChecked == nil ? L("확인하는 중…", "Checking…") : L("아직 다른 Mac의 대화가 없어요. 다른 Mac에서도 켜 주세요.", "No chats from other Macs yet. Turn this on there too."))
+            Text(sync.lastChecked == nil ? L("확인하는 중…", "Checking…") : L("아직 다른 Mac이 없어요. 다른 Mac에서도 켜 주세요.", "No other Macs yet. Turn this on there too."))
                 .font(.system(size: 11)).foregroundColor(.secondary).padding(.horizontal, 10)
         }
         ForEach(folds.isFolded("devices") ? [] : sync.devices) { device in
             let chats = device.chats.filter { search.isEmpty || $0.title.localizedCaseInsensitiveContains(search) }
             if !chats.isEmpty || search.isEmpty {
-                Text(device.name).font(.system(size: 11)).foregroundColor(.secondary)
-                    .padding(.horizontal, 10).padding(.top, 6).padding(.bottom, 2)
-                    .help(device.writtenAt.map { L("마지막으로 올린 시각 ", "Last written ") + DeviceSync.ago($0) } ?? "")
-                // Each Mac shows its newest page (and the open chat); every match while searching.
-                let all = discussion.sidebarSearching || !search.isEmpty
-                let key = "device." + device.id, page = SidebarFold.devicePage
-                let listed = all ? chats : SidebarFold.listed(chats, limit: folds.limit(key, page: page), open: discussion.viewingRemote?.chat.id)
-                ForEach(listed) { remoteRow($0) }
-                if !all { moreRow(key, page: page, total: chats.count, listed: listed.count) }
+                macRow(device)
+                if connect.copiesOpen.contains(device.id) || !search.isEmpty {
+                    // Each Mac shows its newest page (and the open chat); every match while searching.
+                    let all = discussion.sidebarSearching || !search.isEmpty
+                    let key = "device." + device.id, page = SidebarFold.devicePage
+                    let listed = all ? chats : SidebarFold.listed(chats, limit: folds.limit(key, page: page), open: discussion.viewingRemote?.chat.id)
+                    ForEach(listed) { remoteRow($0).padding(.leading, 14) }
+                    if !all { moreRow(key, page: page, total: chats.count, listed: listed.count, indent: 24) }
+                    if chats.isEmpty {
+                        Text(L("저장된 사본이 없어요", "No saved copies")).font(.system(size: 11)).foregroundColor(.secondary)
+                            .padding(.leading, 24).frame(height: 22)
+                    }
+                }
             }
         }
+    }
+
+    private func macRow(_ device: RemoteDevice) -> some View {
+        let selected = connect.shown == device.id
+        let hovered = discussion.hoverKey == "mac." + device.id
+        let copies = connect.copiesOpen.contains(device.id)
+        return HStack(spacing: 6) {
+            Image(systemName: "desktopcomputer").font(.system(size: 11)).foregroundColor(.secondary).frame(width: 14)
+            Text(device.name).lineLimit(1).truncationMode(.tail)
+            MacReachDot(reach: sync.reach(device))
+            Spacer(minLength: 0)
+            if hovered || copies {
+                Button(action: { connect.toggleCopies(device.id) }) {
+                    Image(systemName: copies ? "chevron.down" : "chevron.right").font(.system(size: 9, weight: .semibold))
+                        .frame(width: 22, height: 22)
+                }
+                .buttonStyle(.plainHit).foregroundColor(.secondary)
+                .help(copies ? L("저장된 사본 접기", "Hide saved copies") : L("저장된 사본 보기 (읽기 전용)", "Show saved copies (read only)"))
+            }
+        }
+        .font(.system(size: 13))
+        .padding(.horizontal, 10).frame(height: 30)
+        .background(selected ? Color.primary.opacity(0.10) : hovered ? Color.primary.opacity(0.05) : .clear, in: RoundedRectangle(cornerRadius: 8))
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if device.connection?.url != nil { discussion.notesShown = false; connect.toggle(device) } else { connect.toggleCopies(device.id) }
+        }
+        .onHover { inside in discussion.hover("mac." + device.id, inside) }
+        .contextMenu {
+            if device.connection?.url != nil {
+                Button(L("옆에 열기", "Open Beside")) { discussion.notesShown = false; connect.shown = device.id }
+                Button(L("새 창으로 열기", "Open in New Window")) { connect.openWindow(device) }
+                Divider()
+            }
+            Button(copies ? L("저장된 사본 접기", "Hide Saved Copies") : L("저장된 사본 보기", "Show Saved Copies")) { connect.toggleCopies(device.id) }
+        }
+        .help(device.connection == nil ? L("그 Mac에서 ‘다른 Mac에서 연결 허용’이 꺼져 있어요. 눌러서 저장된 사본 보기", "‘Let my other Macs connect’ is off on that Mac. Click for saved copies")
+              : device.writtenAt.map { L("마지막으로 올린 시각 ", "Last written ") + DeviceSync.ago($0) } ?? "")
+        .disabled(discussion.importingMaterials)
     }
 
     // "Show more (n)" under a shortened list, and "Show less" once it was lengthened.
@@ -2904,6 +2965,8 @@ private final class ChatLayout: ObservableObject {
     @Published private(set) var wide = true
     @Published private(set) var notesFit = true
     @Published private(set) var notesFitAlone = true
+    @Published private(set) var macFit = true
+    @Published private(set) var macFitAlone = true
 
     func measure(_ width: CGFloat) {
         let isWide = width >= ChatViewSize.sidebarFits
@@ -2912,6 +2975,10 @@ private final class ChatLayout: ObservableObject {
         if isWide != wide { wide = isWide }
         if fit != notesFit { notesFit = fit }
         if fitAlone != notesFitAlone { notesFitAlone = fitAlone }
+        let mac = width - ChatViewSize.sidebarWidth - 1 - MacConnect.panelWidth >= ChatViewSize.minSize.width
+        let macAlone = width - MacConnect.panelWidth >= ChatViewSize.minSize.width
+        if mac != macFit { macFit = mac }
+        if macAlone != macFitAlone { macFitAlone = macAlone }
     }
 }
 

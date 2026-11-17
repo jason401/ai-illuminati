@@ -196,5 +196,43 @@ func testDeviceSync() {
     expect(first.contains("Goal: long lenses") && first.contains("QUESTION-TWO") && first.contains("QUESTION-FIVE"), "the new session starts from the state and the turns after it")
     expect(!first.contains("QUESTION-ONE") && first.contains(Discussion.historyFile(longID).path), "earlier turns stay in the history file")
     expect(here.current.turns.last?.final == "Next answer", "the continued chat answers here")
+    testMacConnection(folder: folder)
     print("PASS: chats from other Macs: own folder only, chosen chats, no paths or pictures, Enterprise kept off, broken/newer/downloading copies, continue as a new chat with state")
+}
+
+/// Other Macs → connect: a Mac with its phone page on leaves remote.json only while "Let my other Macs connect" is on;
+/// the other Mac lists it with the address, and only a tailnet https address of that same host is opened.
+func testMacConnection(folder: URL) {
+    let fm = FileManager.default
+    var on = DeviceSyncSettings(); on.enabled = true; on.folder = folder.path; on.deviceName = "Studio"
+    let a = DeviceSync(deviceID: "mac-c", persist: false, settings: on)
+    on.deviceName = "Air"
+    let b = DeviceSync(deviceID: "mac-d", persist: false, settings: on)
+    let offered = RemoteConnection(address: "https://studio.tail1.ts.net/?k=KEY", host: "Studio.tail1.ts.net", app: "0.3.0")
+    a.offerConnection(offered); a.waitForWrites()
+    expect(!fm.fileExists(atPath: a.connectionFile.path), "connect: nothing goes up while ‘Let my other Macs connect’ is off")
+    a.settings.sharesConnection = true; a.waitForWrites()
+    expect(fm.fileExists(atPath: a.connectionFile.path), "connect: turned on, this Mac's address goes in its folder")
+    let listed = b.scanNow().first { $0.id == "mac-c" }
+    expect(listed?.name == "Studio" && listed?.connection?.url?.absoluteString == "https://studio.tail1.ts.net/?k=KEY", "connect: the other Mac lists it with its address")
+    expect(listed.map(b.reach) == .unknown, "connect: unknown until Tailscale was checked")
+    b.onlineHosts = ["studio.tail1.ts.net"]
+    expect(listed.map(b.reach) == .ready, "connect: online on Tailscale means ready")
+    b.onlineHosts = []
+    expect(listed.map(b.reach) == .offline, "connect: not online means off or asleep")
+    let bad = RemoteConnection(address: "https://evil.example.com/?k=KEY", host: "studio.tail1.ts.net", app: "")
+    let plain = RemoteConnection(address: "http://studio.tail1.ts.net/?k=KEY", host: "studio.tail1.ts.net", app: "")
+    expect(bad.url == nil && plain.url == nil, "connect: only a tailnet https address of its own host is opened")
+    a.offerConnection(nil); a.waitForWrites()
+    expect(!fm.fileExists(atPath: a.connectionFile.path), "connect: the page turned off takes the address down")
+    a.offerConnection(offered); a.waitForWrites()
+    a.settings.sharesConnection = false; a.waitForWrites()
+    expect(!fm.fileExists(atPath: a.connectionFile.path), "connect: turning connecting off takes the address down")
+    a.settings.sharesConnection = true; a.waitForWrites()
+    a.settings.enabled = false; a.waitForWrites()
+    expect(!fm.fileExists(atPath: a.connectionFile.path), "connect: turning the sync folder off takes it down too")
+    expect(b.scanNow().first { $0.id == "mac-c" }?.connection == nil, "connect: then the other Mac has no address for it")
+    var saved = DeviceSyncSettings(); saved.enabled = true
+    let old = try! JSONSerialization.data(withJSONObject: ["enabled": true, "shareAll": false, "includeSchool": false])
+    expect((try? JSONDecoder().decode(DeviceSyncSettings.self, from: old))?.sharesConnection == false && !saved.sharesConnection, "connect: older settings read as off")
 }

@@ -730,6 +730,22 @@ function endDrag() {
 $('chatView').addEventListener('touchend', endDrag, { passive: true });
 $('chatView').addEventListener('touchcancel', endDrag, { passive: true });
 
+// On a Mac (another Mac opens this page, or a desktop browser): Esc closes the photo or goes back; a two-finger swipe
+// to the right on the trackpad goes back too, except over rows that scroll sideways.
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape' || e.isComposing) return;
+  if (!$('viewer').classList.contains('hidden')) { $('viewer').classList.add('hidden'); return; }
+  if (current) { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); setOpen(false, true); back(); }
+});
+let wheel = 0, wheelTimer = null;
+$('chatView').addEventListener('wheel', e => {
+  if (!current || Math.abs(e.deltaX) <= Math.abs(e.deltaY) || e.target.closest('.code, .tablewrap, #thumbs, textarea')) return;
+  wheel += e.deltaX;
+  clearTimeout(wheelTimer);
+  wheelTimer = setTimeout(() => { wheel = 0; }, 250);
+  if (wheel < -140) { wheel = 0; setOpen(false, true); back(); }
+}, { passive: true });
+
 document.addEventListener('visibilitychange', () => { if (!document.hidden) { lastList = ''; lastChat = ''; } poll(); });
 window.addEventListener('hashchange', route);
 route();

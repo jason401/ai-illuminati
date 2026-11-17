@@ -1523,6 +1523,17 @@ private struct DeviceSyncSettingsView: View {
                         .labelsHidden().toggleStyle(.switch)
                 }
                 Divider()
+                SettingsRow(title: L("Mac 연결", "Connect Macs")) {
+                    Text(PhoneServer.shared.enabled ? L("다른 Mac에서 이 Mac 열기 허용", "Let other Macs open this Mac")
+                         : L("iPhone 연결 창에서 폰 페이지를 켜야 해요", "Needs the phone page on (Connect iPhone)"))
+                        .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                    Spacer()
+                    Toggle("", isOn: Binding(get: { sync.settings.sharesConnection }, set: { on in
+                        sync.settings.sharesConnection = on
+                        if on { PhoneAccess.shared.refresh() }
+                    })).labelsHidden().toggleStyle(.switch)
+                }
+                Divider()
                 SettingsRow(title: L("폴더", "Folder")) {
                     Text(sync.folder.path.replacingOccurrences(of: DeviceSync.iCloudDrive.path, with: "iCloud Drive"))
                         .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)

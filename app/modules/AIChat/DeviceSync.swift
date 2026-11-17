@@ -8,6 +8,8 @@ import AILocalization
 // Chats from your other Macs, read only, through a folder both Macs see (iCloud Drive by default):
 //   <folder>/devices/<deviceID>/device.json         this Mac's name, app version, last write
 //   <folder>/devices/<deviceID>/chats/<chatID>.json  one copy per shared chat (SyncSnapshot)
+//   <folder>/devices/<deviceID>/remote.json          this Mac's phone page (address with its key), only while the page
+//                                                     is on and "Let my other Macs connect" is on
 // Each Mac writes only its own folder and only reads the others, so two Macs never write the same file and
 // nothing is merged. To go on with a chat from another Mac, "Continue on this Mac" makes a new chat here
 // from the copy (Discussion.continueFromDevice): a new session that starts from the copied turns and state.
@@ -21,12 +23,35 @@ struct SyncDeviceInfo: Codable {
     var writtenAt: Date
 }
 
+// Another Mac's phone page as it left it in the sync folder: the other Macs open it like the iPhone does
+// (MacConnect.swift). The address carries the key; Tailscale keeps it inside the user's tailnet.
+public struct RemoteConnection: Codable, Equatable {
+    var address: String   // https://<mac>.ts.net/?k=<key>
+    var host: String      // that Mac's MagicDNS name, looked up in Tailscale's list of online Macs
+    var app: String
+    var writtenAt: Date
+    public init(address: String, host: String, app: String, writtenAt: Date = Date()) {
+        self.address = address; self.host = host.lowercased(); self.app = app; self.writtenAt = writtenAt
+    }
+    // Only a tailnet https address of the same host is opened, whatever else a changed file may say.
+    var url: URL? {
+        guard let url = URL(string: address), url.scheme == "https", let h = url.host?.lowercased(),
+              h == host, h.hasSuffix(".ts.net") else { return nil }
+        return url
+    }
+    func sameTarget(_ other: RemoteConnection?) -> Bool { other.map { $0.address == address && $0.host == host && $0.app == app } ?? false }
+}
+
 public struct RemoteDevice: Identifiable, Equatable {
     public var id: String
     var name: String
     var writtenAt: Date?
     var chats: [RemoteChat]
+    var connection: RemoteConnection?
 }
+
+// Whether another Mac can be opened now: its page is on and Tailscale sees it online.
+enum MacReach: Equatable { case ready, offline, pageOff, unknown }
 
 public struct DeviceSyncSettings: Codable, Equatable {
     public var enabled = false
@@ -34,6 +59,11 @@ public struct DeviceSyncSettings: Codable, Equatable {
     public var deviceName: String?      // nil: this Mac's name
     public var shareAll = false         // false: only chats marked "Show on other Macs"
     public var includeSchool = false    // Enterprise (school/work) chats stay off a personal iCloud unless turned on
+    public var shareConnection: Bool?   // "Let my other Macs connect": the phone page's address goes in the folder (nil: off)
+    public var sharesConnection: Bool {
+        get { shareConnection == true }
+        set { shareConnection = newValue ? true : nil }
+    }
 }
 
 public final class DeviceSync: ObservableObject {
@@ -44,8 +74,11 @@ public final class DeviceSync: ObservableObject {
             guard settings != oldValue else { return }
             if persist, let data = try? JSONEncoder().encode(settings) { UserDefaults.app.set(data, forKey: Self.settingsKey) }
             if settings.enabled { reconcile(); scan() } else { devices = []; lastChecked = nil }
+            writeConnection()
         }
     }
+    // The MagicDNS names of the Macs Tailscale sees online (set by the app; nil until it was checked).
+    @Published public var onlineHosts: Set<String>?
     @Published public private(set) var devices: [RemoteDevice] = []
     @Published public private(set) var lastChecked: Date?
     @Published public private(set) var problem: String?
@@ -57,6 +90,9 @@ public final class DeviceSync: ObservableObject {
     var isBusy: (UUID) -> Bool = { _ in false }
     // Whether this Mac still has the chat's own file (one the list could not read, so not deleted).
     var hasLocalFile: (String) -> Bool = { FileManager.default.fileExists(atPath: ChatStore.dir + "/" + $0) }
+    // Set by the app: looks at Tailscale again (onlineHosts) when the other Macs are looked at.
+    public var checkOnline: () -> Void = {}
+    private var connection: RemoteConnection?   // this Mac's phone page, while it is on (the app offers it)
 
     private var pending: [UUID: Conversation] = [:]
     private var flushScheduled = false
@@ -121,6 +157,40 @@ public final class DeviceSync: ObservableObject {
         RunLoop.main.add(ticker, forMode: .common)
         timer = ticker
         if settings.enabled { reconcile(); scan() }
+        writeConnection()
+    }
+
+    // MARK: This Mac's phone page for the other Macs
+
+    // The app tells what its phone page offers now: an address while the page is on, nil when it is off.
+    public func offerConnection(_ offered: RemoteConnection?) {
+        onMain {
+            guard !(offered.map { $0.sameTarget(self.connection) } ?? (self.connection == nil)) else { return }
+            self.connection = offered
+            self.writeConnection()
+        }
+    }
+
+    var connectionFile: URL { myFolder.appendingPathComponent("remote.json") }
+
+    // remote.json is there only while sharing and "Let my other Macs connect" are on and the page is on.
+    func writeConnection() {
+        let offered = settings.enabled && settings.sharesConnection ? connection : nil
+        let file = connectionFile, info = offered == nil ? nil : deviceInfo()
+        io.async {
+            guard let offered else { Self.removeFile(file); return }
+            info?()   // the name the other Macs list it under
+            let old = (try? Data(contentsOf: file)).flatMap { try? Self.decoder().decode(RemoteConnection.self, from: $0) }
+            guard !offered.sameTarget(old), let data = try? Self.encoder().encode(offered) else { return }
+            try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? data.write(to: file, options: .atomic)
+        }
+    }
+
+    func reach(_ device: RemoteDevice) -> MacReach {
+        guard let connection = device.connection, connection.url != nil else { return .pageOff }
+        guard let online = onlineHosts else { return .unknown }
+        return online.contains(connection.host) ? .ready : .offline
     }
 
     // MARK: What is shared
@@ -321,6 +391,7 @@ public final class DeviceSync: ObservableObject {
     public func removeMine() {
         let folder = myFolder
         io.async { try? FileManager.default.removeItem(at: folder) }
+        writeConnection()   // the page's address stays while connecting is on
     }
 
     // Waits for the queued file work (tests).
@@ -331,6 +402,7 @@ public final class DeviceSync: ObservableObject {
     public func scan() {
         guard settings.enabled, !scanning else { return }
         scanning = true
+        checkOnline()
         io.async {
             let found = self.scanNow()
             DispatchQueue.main.async {
@@ -354,6 +426,9 @@ public final class DeviceSync: ObservableObject {
             Self.download(infoFile)
             let info = (try? Data(contentsOf: infoFile)).flatMap { try? Self.decoder().decode(SyncDeviceInfo.self, from: $0) }
             let name = info?.name ?? L("다른 Mac", "Other Mac")
+            let remoteFile = deviceFolder.appendingPathComponent("remote.json")
+            Self.download(remoteFile)
+            let connection = (try? Data(contentsOf: remoteFile)).flatMap { try? Self.decoder().decode(RemoteConnection.self, from: $0) }
             let chatsFolder = deviceFolder.appendingPathComponent("chats")
             var chats: [RemoteChat] = []
             for entry in (try? fm.contentsOfDirectory(atPath: chatsFolder.path)) ?? [] {
@@ -371,9 +446,9 @@ public final class DeviceSync: ObservableObject {
                 let file = chatsFolder.appendingPathComponent(entry)
                 if let listed = header(file, device: id, deviceName: name, chat: chat) { chats.append(listed) }
             }
-            if chats.isEmpty && info == nil { continue }
+            if chats.isEmpty && info == nil && connection == nil { continue }
             chats.sort { ($0.updatedAt ?? .distantPast) > ($1.updatedAt ?? .distantPast) }
-            result.append(RemoteDevice(id: id, name: name, writtenAt: info?.writtenAt, chats: chats))
+            result.append(RemoteDevice(id: id, name: name, writtenAt: info?.writtenAt, chats: chats, connection: connection))
         }
         return result.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }

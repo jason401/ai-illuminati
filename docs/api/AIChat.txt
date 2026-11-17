@@ -232,6 +232,7 @@ Conversation.workspace | var workspace: WorkspaceBinding?
 DeviceSync | final class DeviceSync
 DeviceSync.ago(_:now:) | static func ago(_ date: Date, now: Date = Date()) -> String
 DeviceSync.chatLocked(_:) | func chatLocked(_ conversation: Conversation)
+DeviceSync.checkOnline | var checkOnline: () -> Void
 DeviceSync.deviceID | let deviceID: String
 DeviceSync.deviceName | var deviceName: String { get }
 DeviceSync.devices | @Published var devices: [RemoteDevice] { get set }
@@ -243,6 +244,8 @@ DeviceSync.load(_:) | static func load(_ chat: RemoteChat) -> SyncSnapshot?
 DeviceSync.noteDeleted(_:) | func noteDeleted(_ id: UUID)
 DeviceSync.noteFinished(_:) | func noteFinished(_ conversation: Conversation?)
 DeviceSync.noteSaved(_:) | func noteSaved(_ conversation: Conversation)
+DeviceSync.offerConnection(_:) | func offerConnection(_ offered: RemoteConnection?)
+DeviceSync.onlineHosts | @Published var onlineHosts: Set<String>? { get set }
 DeviceSync.problem | @Published var problem: String? { get set }
 DeviceSync.reconcile() | func reconcile()
 DeviceSync.removeMine() | func removeMine()
@@ -257,6 +260,8 @@ DeviceSyncSettings.folder | var folder: String?
 DeviceSyncSettings.includeSchool | var includeSchool: Bool
 DeviceSyncSettings.init(from:) | init(from decoder: any Decoder) throws
 DeviceSyncSettings.shareAll | var shareAll: Bool
+DeviceSyncSettings.shareConnection | var shareConnection: Bool?
+DeviceSyncSettings.sharesConnection | var sharesConnection: Bool { get set }
 Discussion | final class Discussion
 Discussion.addChat(_:title:lock:) | func addChat(_ project: ProjectBinding, title: String, lock: EnterpriseLock?) -> UUID
 Discussion.answering | var answering: Set<UUID> { get }
@@ -388,6 +393,9 @@ RemoteChats.image(_:_:id:) | static func image(_ d: Discussion, _ room: UUID, id
 RemoteChats.list(_:) | static func list(_ d: Discussion) -> [[String : Any]]
 RemoteChats.search(_:_:) | static func search(_ d: Discussion, _ query: String) -> [[String : Any]]
 RemoteChats.send(_:room:text:photos:) | static func send(_ d: Discussion, room: UUID, text: String, photos: [Data]) -> String?
+RemoteConnection | struct RemoteConnection
+RemoteConnection.init(address:host:app:writtenAt:) | init(address: String, host: String, app: String, writtenAt: Date = Date())
+RemoteConnection.init(from:) | init(from decoder: any Decoder) throws
 RemoteDevice | struct RemoteDevice
 RemoteDevice.id | var id: String
 RemoteViewing | struct RemoteViewing

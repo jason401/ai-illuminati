@@ -26,6 +26,7 @@ func testPhoneAccess() {
     expect(s.phones.map(\.name) == ["iphone-15-pro", "old-phone"], "phone access: only iPhones, online first, named by DNS")
     expect(s.phones[0].online && s.phones[0].lastSeen == nil, "phone access: an online phone has no last seen")
     expect(!s.phones[1].online && s.phones[1].lastSeen != nil, "phone access: an offline phone's last seen")
+    expect(s.macs == ["mini.tail1.ts.net": true], "phone access: the other Macs on the tailnet, by DNS name, with Online")
     let idle = TailnetStatus.parse(status: Data(#"{"BackendState":"Stopped","Self":{"DNSName":"mac.tail1.ts.net."}}"#.utf8), serve: Data("{}".utf8))
     expect(idle.state == .stopped && idle.served == nil && !idle.https && idle.phones.isEmpty, "phone access: stopped, nothing served")
     expect(TailnetStatus.parse(status: nil, serve: nil).state == .missing, "phone access: no CLI output means not installed")

@@ -150,6 +150,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         FaceLink.shared.start()
         ExternalMCP.shared.start()   // servers added in Settings → MCP
         // Chats from your other Macs (off until turned on in Settings → Chat).
+        DeviceSync.shared.checkOnline = { PhoneAccess.shared.refresh() }   // Other Macs: which Macs Tailscale sees online
         DeviceSync.shared.start(discussion: discussion)
         // The iPhone page, when it was turned on in Manage chats → Connect iPhone (PhoneAccess.swift).
         PhoneServer.shared.start(discussion: discussion)

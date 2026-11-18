@@ -521,6 +521,8 @@ private func checkMilestonePush(_ project: ProjectBinding, origin: URL) {
     let other = origin.deletingLastPathComponent().appendingPathComponent("milestone-other-" + UUID().uuidString).path
     _ = git(["clone", "-q", origin.path, other], at: origin.deletingLastPathComponent().path)
     _ = git(["config", "user.name", "Fixture"], at: other); _ = git(["config", "user.email", "fixture@example.invalid"], at: other)
+    let stale = origin.deletingLastPathComponent().appendingPathComponent("milestone-stale-" + UUID().uuidString + ".git").path
+    _ = git(["clone", "-q", "--bare", origin.path, stale], at: origin.deletingLastPathComponent().path)
     write("racing\n", "race.txt", in: other); commit(other, "Remote moved on"); _ = git(["push", "-q", "origin", "main"], at: other)
     let raced = remoteMain()
     var moved: GitLink.MilestoneRemoteMoved?
@@ -537,6 +539,23 @@ private func checkMilestonePush(_ project: ProjectBinding, origin: URL) {
     expect(hooked?.localizedDescription.contains("fixture hook refused") == true && remoteMain() == raced && candidate.verifiedSHA == integrated.candidate,
            "the repository's pre-push hook runs and can refuse: \(String(describing: hooked))")
     try! FileManager.default.removeItem(atPath: stop)
+    // The candidate's hook must be runnable; a push URL apart from the fetch URL is checked where the push lands.
+    _ = git(["config", "core.fileMode", "false"])
+    try! FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: tree.path + "/.githooks/pre-push")
+    let notRunnable = failure { try GitLink.pushMilestone(project, tree, candidate: &candidate) }
+    expect(notRunnable?.localizedDescription.contains(L("실행할 수 없어요", "not executable")) == true && remoteMain() == raced,
+           "a candidate hook that cannot run refuses the push: \(String(describing: notRunnable))")
+    try! FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: tree.path + "/.githooks/pre-push")
+    _ = git(["config", "--unset", "core.fileMode"])
+    _ = git(["config", "remote.origin.pushurl", stale])
+    let elsewhere = failure { try GitLink.pushMilestone(project, tree, candidate: &candidate) }
+    expect(elsewhere?.localizedDescription.contains(L("push 주소", "push URL")) == true && remoteMain() == raced && candidate.verifiedSHA == integrated.candidate
+           && git(["rev-parse", "refs/heads/main"], at: stale) == start, "a push URL whose branch is not the checked SHA is refused: \(String(describing: elsewhere))")
+    _ = git(["config", "--unset", "remote.origin.pushurl"])
+    // Hooks turned off in the config and push.followTags with an annotated tag: the hook still runs, only main goes.
+    _ = git(["config", "core.hooksPath", "/dev/null"]); _ = git(["config", "push.followTags", "true"])
+    _ = git(["tag", "-a", "-m", "Not pushed", "milestone-tag", integrated.candidate])
+    defer { _ = try? ProjectProcess.git(["config", "--unset", "core.hooksPath"], root: project.root); _ = try? ProjectProcess.git(["config", "--unset", "push.followTags"], root: project.root) }
     let pushed = Result { try GitLink.pushMilestone(project, tree, candidate: &candidate) }
     let hookLog = (try? String(contentsOfFile: log, encoding: .utf8)) ?? ""
     expect((try? pushed.get()) != nil && remoteMain() == integrated.candidate && candidate.phase == .confirmation,
@@ -545,9 +564,11 @@ private func checkMilestonePush(_ project: ProjectBinding, origin: URL) {
            && hookLog.split(separator: "\n").last.map(String.init) == integrated.candidate,
            "the hook saw the explicit SHA to main and ran in the candidate's tree: \(hookLog)")
     expect((try? ProjectProcess.git(["rev-parse", "--verify", "refs/heads/" + tree.branch], root: origin.path)) == nil, "the Goal branch stays local")
-    try? FileManager.default.removeItem(atPath: other)
+    expect((try? ProjectProcess.git(["rev-parse", "--verify", "refs/tags/milestone-tag"], root: origin.path)) == nil, "no tag goes along with the target branch")
+    try? FileManager.default.removeItem(atPath: other); try? FileManager.default.removeItem(atPath: stale)
+    _ = git(["tag", "-d", "milestone-tag"])
     try? FileManager.default.removeItem(atPath: log)
-    print("PASS: Milestone push (verified SHA only, Goal branch never the target, remote race back to integration, pre-push hook, explicit fast-forward)")
+    print("PASS: Milestone push (verified SHA only, Goal branch never the target, remote race back to integration, required pre-push hook, push URL checked, explicit fast-forward without tags)")
 }
 
 func testProjectHandoff() {

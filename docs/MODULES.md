@@ -65,7 +65,8 @@ Hooks: `.githooks/pre-commit` (fast) and `.githooks/pre-push` (`run_mode2.sh --m
 `zsh tools/setup_dev.sh` (`core.hooksPath`, never overwriting another value); run_mode2 warns when they are missing.
 They are a convenience, not enforcement: the app's own Git commands run with `core.hooksPath=/dev/null` (ProjectWork,
 on purpose: a repository's hooks never run inside the app), so the same checks run again in run_mode2. One exception:
-a Milestone's push (`GitLink.pushMilestone`) runs the repository's pre-push hook as is, from the Goal's tree (its candidate). Real enforcement
+a Milestone's push (`GitLink.pushMilestone`) runs the candidate's `.githooks/pre-push` as is (refused when it cannot run;
+without one, the configured hooks), from the Goal's tree. Real enforcement
 would be CI, which the user decides (public repository).
 New module: `zsh tools/new_module.sh <Name> <deps...>` makes the folder, `dependencies`, `boundary`, a contract stub,
 an empty snapshot and the map entry to fill; it prints, but does not make, the graph and guard lines (approval).

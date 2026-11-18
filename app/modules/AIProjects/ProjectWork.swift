@@ -814,8 +814,8 @@ public final class GitLink: ToolProvider {
     // TODO structure 12 (off until 16): a Milestone's push. Only the candidate SHA its review and full test both passed, only
     // while the remote target branch (never the Goal branch) is still the base they were measured from, as that exact SHA to
     // refs/heads/<target>: a fast-forward, never forced (no +, no --force*; a non-fast-forward is the remote's refusal). Unlike
-    // the app's other Git commands the repository's pre-push hook runs as is (its core.hooksPath, else the candidate's
-    // .githooks), from the Goal's tree so it checks the candidate itself. Throws MilestoneRemoteMoved after resetting the
+    // the app's other Git commands the repository's pre-push hook runs as is (the candidate's .githooks, else its
+    // core.hooksPath), from the Goal's tree so it checks the candidate itself. Throws MilestoneRemoteMoved after resetting the
     // candidate when the remote moved on; any other refusal leaves it as it was.
     static func pushMilestone(_ binding: ProjectBinding, _ tree: SubWork.Tree, candidate: inout TodoItem.MilestoneCandidate,
                               token: DebateCancellation? = nil) throws -> String {
@@ -849,7 +849,16 @@ public final class GitLink: ToolProvider {
                 guard try git(["fetch", "--no-tags", binding.remote, "+refs/heads/\(target):\(tracking)"], timeout: 180).status == 0 else {
                     throw refuse("원격 대상 branch를 확인하지 못했어요.", "could not read the remote target branch.")
                 }
-                return try value(["rev-parse", "--verify", tracking + "^{commit}"])
+                let fetched = try value(["rev-parse", "--verify", tracking + "^{commit}"])
+                // A separate push URL (pushurl, pushInsteadOf) is where the branch moves: its SHA must be the one checked.
+                let pushURL = try value(["remote", "get-url", "--push", binding.remote])
+                if pushURL != (try value(["remote", "get-url", binding.remote])) {
+                    let line = try value(["ls-remote", "--", pushURL, "refs/heads/" + target])
+                    guard line.split(separator: "\t").first.map(String.init) == fetched else {
+                        throw refuse("push 주소의 대상 branch가 fetch한 SHA와 달라요.", "the target branch at the push URL differs from the fetched SHA.")
+                    }
+                }
+                return fetched
             }
         }
         func moved(_ remote: String) -> Error {
@@ -868,11 +877,19 @@ public final class GitLink: ToolProvider {
               try git(["rev-parse", "-q", "--verify", "MERGE_HEAD"], tree.path).status != 0 else {
             throw refuse("Goal 작업 폴더가 후보 SHA 그대로가 아니에요.", "the Goal's work tree is not exactly the candidate SHA.")
         }
-        // Without ProjectProcess.gitReply's core.hooksPath=/dev/null: the configured hooks, else the candidate's .githooks.
-        let configured = try ProjectProcess.run("/usr/bin/git", ["config", "--get", "core.hooksPath"], cwd: tree.path, token: token).status == 0
-        let hooks = !configured && FileManager.default.isExecutableFile(atPath: tree.path + "/.githooks/pre-push") ? ["-c", "core.hooksPath=.githooks"] : []
+        // Without ProjectProcess.gitReply's core.hooksPath=/dev/null. The candidate's .githooks/pre-push, when it has one, runs
+        // whatever core.hooksPath says (it may be /dev/null or another folder) and must be runnable; otherwise the configured hooks.
+        let required = tree.path + "/.githooks/pre-push"
+        var hooks: [String] = []
+        if FileManager.default.fileExists(atPath: required) {
+            guard FileManager.default.isExecutableFile(atPath: required) else {
+                throw refuse("후보의 .githooks/pre-push를 실행할 수 없어요.", "the candidate's .githooks/pre-push is not executable.")
+            }
+            hooks = ["-c", "core.hooksPath=.githooks"]
+        }
+        // Only the target branch: no tags (push.followTags) and no submodules go along.
         let result = try ProjectProcess.run("/usr/bin/git", ["--literal-pathspecs", "-c", "core.fsmonitor=false", "-c", "submodule.recurse=false"] + hooks
-                                            + ["push", "--no-recurse-submodules", binding.remote, sha + ":refs/heads/" + target],
+                                            + ["push", "--no-recurse-submodules", "--no-follow-tags", binding.remote, sha + ":refs/heads/" + target],
                                             cwd: tree.path, token: token, deadline: Date().addingTimeInterval(1800))
         guard result.status == 0 else {
             // Refused: a remote that moved on in the meantime sends the candidate back; anything else (the hook) keeps it.

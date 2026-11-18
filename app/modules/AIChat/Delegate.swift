@@ -67,7 +67,11 @@ struct Split: Codable, Equatable {
     // Owned paths that could name the same file: equal, one a folder of the other, or a glob matching the other (globs
     // against globs: their fixed beginnings, so a doubtful pair counts as overlapping).
     static func overlap(_ a: String, _ b: String) -> Bool {
-        func clean(_ s: String) -> String { s.hasPrefix("./") ? String(s.dropFirst(2)) : s }
+        // "./", "//" and "a/./b" name the same path as without them.
+        func clean(_ s: String) -> String {
+            let parts = s.split(separator: "/", omittingEmptySubsequences: true).filter { $0 != "." }
+            return parts.joined(separator: "/") + (s.hasSuffix("/") && !parts.isEmpty ? "/" : "")
+        }
         func glob(_ s: String) -> Bool { s.contains("*") || s.contains("?") || s.contains("[") }
         func fixed(_ s: String) -> String { String(s.prefix { !"*?[".contains($0) }) }
         func folder(_ s: String) -> String { s.hasSuffix("/") ? s : s + "/" }
@@ -75,8 +79,9 @@ struct Split: Codable, Equatable {
         if x == y || x.isEmpty || y.isEmpty { return true }
         switch (glob(x), glob(y)) {
         case (false, false): return folder(x).hasPrefix(folder(y)) || folder(y).hasPrefix(folder(x))
-        case (true, false): return fnmatch(x, y, 0) == 0 || fixed(x).hasPrefix(folder(y))
-        case (false, true): return fnmatch(y, x, 0) == 0 || fixed(y).hasPrefix(folder(x))
+        // A glob and a folder: the glob may reach into the folder (src/*/a.swift and src/foo/) or the folder hold it.
+        case (true, false): return fnmatch(x, y, 0) == 0 || fixed(x).hasPrefix(folder(y)) || folder(y).hasPrefix(fixed(x))
+        case (false, true): return fnmatch(y, x, 0) == 0 || fixed(y).hasPrefix(folder(x)) || folder(x).hasPrefix(fixed(y))
         case (true, true): return fixed(x).hasPrefix(fixed(y)) || fixed(y).hasPrefix(fixed(x))
         }
     }
@@ -306,7 +311,10 @@ extension Discussion {
         var problems: [String] = []
         for part in split.parts where !part.removed && !part.live {
             let link = SubRoomLink(room: main, split: id, n: part.n)
-            guard let tree = part.tree else { SplitStore.shared.changePart(link) { $0.removed = true; if !$0.ended { $0.state = .cancelled } }; continue }
+            // No tree saved (the app quit right after making it): what Git and the folder show is discarded too.
+            let left = part.tree == nil ? try? SubWork.leftover(binding, split: id, n: part.n) : nil
+            let found = left.flatMap { l in l.exists || l.listed != nil || l.branch ? SubWork.Tree(path: l.listed ?? l.path, branch: SubRoomLink.branch(id, part.n), base: "") : nil }
+            guard let tree = part.tree ?? found else { SplitStore.shared.changePart(link) { $0.removed = true; if !$0.ended { $0.state = .cancelled } }; continue }
             do {
                 let tip = try SubWork.discard(binding, tree)
                 SplitStore.shared.changePart(link) { $0.removed = true; if $0.state != .merged { $0.state = .cancelled }; $0.error = tip.map { "discarded; last commit \($0)" } }

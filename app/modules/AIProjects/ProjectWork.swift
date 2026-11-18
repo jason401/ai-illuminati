@@ -737,6 +737,21 @@ public final class GitLink: ToolProvider {
             }
             let diff = try git(["diff", "--no-ext-diff", "--no-textconv", "HEAD", "--"] + paths)
             if !run.fullAuto, paths.contains(where: { path in run.initialDirty.contains(where: { dirty in path == "." || dirty == path || dirty.hasPrefix(path + "/") }) }) { try approve("기존 변경 포함 / Include existing edits", diff) }
+            // A merge left for the AI to resolve (delegate_resync, or its own merge): Git refuses a partial commit then, so
+            // the resolved files are added and the merge is committed whole, only once no file is left unmerged.
+            if (try? ProjectWork.git(["rev-parse", "-q", "--verify", "MERGE_HEAD"], root: run.binding.root)) != nil {
+                // `git add` marks a file resolved even with its markers left, so they are looked for first.
+                let marked = paths.filter { path in
+                    let text = (try? String(contentsOfFile: run.binding.root + "/" + path, encoding: .utf8)) ?? ""
+                    return text.split(separator: "\n").contains { $0.hasPrefix("<<<<<<< ") || $0.hasPrefix(">>>>>>> ") }
+                }
+                guard marked.isEmpty else { throw ProjectError.make("These files still have conflicts; resolve and include them: " + marked.joined(separator: ", ")) }
+                _ = try git(["add", "--"] + paths)
+                let unmerged = try git(["diff", "--name-only", "--diff-filter=U"])
+                guard unmerged.isEmpty else { throw ProjectError.make("These files still have conflicts; resolve and include them: " + unmerged.replacingOccurrences(of: "\n", with: ", ")) }
+                let result = try git(["commit", "--no-edit", "-m", message])
+                run.committed = true; return result
+            }
             let result = try git(["add", "--"] + paths) + "\n" + git(["commit", "--only", "-m", message, "--"] + paths)
             run.committed = true; return result
         case "git_push":

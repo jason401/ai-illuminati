@@ -196,6 +196,7 @@ func testProjectWork() {
     checkProjectStep(selected, origin: origin)
     checkGoalPushGuard(selected, origin: origin)
     checkMilestoneFullTest(selected)
+    checkMilestonePush(selected, origin: origin)
     print("PASS: plain-chat projects (repo locks, scoped tools, selective commits, push, dirty handoff, exact-SHA approval, named command approval, Stop and a TODO's one push)")
 }
 
@@ -465,6 +466,88 @@ private func checkMilestoneFullTest(_ project: ProjectBinding) {
     _ = git(["reflog", "expire", "--expire=all", "HEAD", "refs/heads/" + tree.branch])
     expect(run("pass") != nil && candidate.testedSHA == nil, "without reflogs a return to the candidate could go undetected")
     print("PASS: Milestone full test (unfiltered, isolated, exact reviewed SHA, failure, cancellation, dirty tree, moved HEAD)")
+}
+
+// TODO structure 12: a Milestone pushes only its reviewed and fully tested SHA, as a fast-forward of the remote target branch.
+private func checkMilestonePush(_ project: ProjectBinding, origin: URL) {
+    func git(_ args: [String], at root: String = project.root) -> String { try! ProjectProcess.git(args, root: root) }
+    func write(_ text: String, _ name: String, in folder: String) { try! text.write(toFile: folder + "/" + name, atomically: true, encoding: .utf8) }
+    func commit(_ folder: String, _ message: String) { _ = git(["add", "-A"], at: folder); _ = git(["commit", "-q", "-m", message], at: folder) }
+    func remoteMain() -> String { git(["rev-parse", "refs/heads/main"], at: origin.path) }
+    func failure(_ body: () throws -> Any) -> Error? { do { _ = try body(); return nil } catch { return error } }
+    let goalPathBefore = TodoData.goalPath
+    defer { TodoData.goalPath = goalPathBefore }
+    let common = git(["rev-parse", "--path-format=absolute", "--git-common-dir"])
+    let log = common + "/milestone-hook-log", stop = common + "/milestone-hook-fail"
+    let tree = try! SubWork.goal(project, goal: UUID(), target: "main")
+    // The repository's pre-push hook, committed in the candidate: it logs what it was asked to push and from which HEAD.
+    try! FileManager.default.createDirectory(atPath: tree.path + "/.githooks", withIntermediateDirectories: true)
+    write("""
+    #!/bin/sh
+    [ -e "\(stop)" ] && { echo "fixture hook refused" >&2; exit 1; }
+    { cat; git rev-parse HEAD; } >> "\(log)"
+    """, ".githooks/pre-push", in: tree.path)
+    try! FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: tree.path + "/.githooks/pre-push")
+    write("milestone\n", "milestone.txt", in: tree.path); commit(tree.path, "Goal Step with a pre-push hook")
+    var integrated = try! SubWork.integrate(project, tree, target: "main")
+    func verified(_ base: String, _ sha: String) -> TodoItem.MilestoneCandidate {
+        var c = TodoItem.MilestoneCandidate(branch: "main", baseSHA: base, candidateSHA: sha)
+        c.recordReview(for: sha); c.recordTest(for: sha); return c
+    }
+    var candidate = verified(integrated.base, integrated.candidate)
+    let start = remoteMain()
+
+    TodoData.goalPath = false
+    expect(failure { try GitLink.pushMilestone(project, tree, candidate: &candidate) } != nil && remoteMain() == start, "off until TODO structure 16")
+    TodoData.goalPath = true
+
+    // SHA mismatches: not fully tested, tested for another SHA, the Goal branch as target, a tree moved past the candidate.
+    var untested = TodoItem.MilestoneCandidate(branch: "main", baseSHA: integrated.base, candidateSHA: integrated.candidate)
+    untested.recordReview(for: integrated.candidate); untested.recordTest(for: integrated.base)
+    let mismatch = failure { try GitLink.pushMilestone(project, tree, candidate: &untested) }
+    expect(mismatch?.localizedDescription.contains(L("리뷰한 SHA", "reviewed")) == true && untested.testedSHA == nil && remoteMain() == start,
+           "reviewed but not tested as this SHA is refused: \(String(describing: mismatch))")
+    var toGoal = TodoItem.MilestoneCandidate(branch: tree.branch, baseSHA: integrated.base, candidateSHA: integrated.candidate)
+    toGoal.recordReview(for: integrated.candidate); toGoal.recordTest(for: integrated.candidate)
+    expect(failure { try GitLink.pushMilestone(project, tree, candidate: &toGoal) } != nil && (try? ProjectProcess.git(["rev-parse", "--verify", "refs/heads/" + tree.branch], root: origin.path)) == nil,
+           "the Goal branch is never the push target")
+    _ = git(["commit", "-q", "--allow-empty", "-m", "After the review"], at: tree.path)
+    expect(failure { try GitLink.pushMilestone(project, tree, candidate: &candidate) } != nil && remoteMain() == start && candidate.verifiedSHA == integrated.candidate,
+           "a Goal tree moved past the candidate is refused, the verdict kept")
+    _ = git(["reset", "-q", "--hard", integrated.candidate], at: tree.path)
+    expect(!FileManager.default.fileExists(atPath: log), "nothing refused reached the hook")
+
+    // The remote moved on after the review: nothing pushed, the candidate back at integration on the new remote SHA.
+    let other = origin.deletingLastPathComponent().appendingPathComponent("milestone-other-" + UUID().uuidString).path
+    _ = git(["clone", "-q", origin.path, other], at: origin.deletingLastPathComponent().path)
+    _ = git(["config", "user.name", "Fixture"], at: other); _ = git(["config", "user.email", "fixture@example.invalid"], at: other)
+    write("racing\n", "race.txt", in: other); commit(other, "Remote moved on"); _ = git(["push", "-q", "origin", "main"], at: other)
+    let raced = remoteMain()
+    var moved: GitLink.MilestoneRemoteMoved?
+    do { _ = try GitLink.pushMilestone(project, tree, candidate: &candidate) } catch let m as GitLink.MilestoneRemoteMoved { moved = m } catch { expect(false, "a remote race error: \(error)") }
+    expect(moved?.remote == raced && remoteMain() == raced && candidate.phase == .integration && candidate.candidateSHA == nil
+           && candidate.baseSHA == raced && candidate.verifiedSHA == nil, "a moved remote sends the Milestone back to integration: \(candidate)")
+
+    // Integrated again, reviewed and tested again: the pre-push hook refuses once, then the exact SHA fast-forwards main.
+    integrated = try! SubWork.integrate(project, tree, target: "main")
+    expect(integrated.base == raced, "integration starts from the new remote SHA")
+    candidate = verified(integrated.base, integrated.candidate)
+    FileManager.default.createFile(atPath: stop, contents: Data())
+    let hooked = failure { try GitLink.pushMilestone(project, tree, candidate: &candidate) }
+    expect(hooked?.localizedDescription.contains("fixture hook refused") == true && remoteMain() == raced && candidate.verifiedSHA == integrated.candidate,
+           "the repository's pre-push hook runs and can refuse: \(String(describing: hooked))")
+    try! FileManager.default.removeItem(atPath: stop)
+    let pushed = Result { try GitLink.pushMilestone(project, tree, candidate: &candidate) }
+    let hookLog = (try? String(contentsOfFile: log, encoding: .utf8)) ?? ""
+    expect((try? pushed.get()) != nil && remoteMain() == integrated.candidate && candidate.phase == .confirmation,
+           "a verified fast-forward pushes its exact SHA: \(pushed)")
+    expect(hookLog.contains("refs/heads/main \(raced)") && hookLog.contains(" \(integrated.candidate) ")
+           && hookLog.split(separator: "\n").last.map(String.init) == integrated.candidate,
+           "the hook saw the explicit SHA to main and ran in the candidate's tree: \(hookLog)")
+    expect((try? ProjectProcess.git(["rev-parse", "--verify", "refs/heads/" + tree.branch], root: origin.path)) == nil, "the Goal branch stays local")
+    try? FileManager.default.removeItem(atPath: other)
+    try? FileManager.default.removeItem(atPath: log)
+    print("PASS: Milestone push (verified SHA only, Goal branch never the target, remote race back to integration, pre-push hook, explicit fast-forward)")
 }
 
 func testProjectHandoff() {

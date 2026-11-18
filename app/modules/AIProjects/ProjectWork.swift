@@ -803,6 +803,85 @@ public final class GitLink: ToolProvider {
         guard try git(["status", "--porcelain"]).isEmpty else { throw ProjectError.make(L("커밋하지 않은 변경이 있어 받지 않았어요.", "There are uncommitted changes; nothing pulled.")) }
         return try git(["pull", "--ff-only", "--no-rebase", binding.remote, "main"], timeout: 180)
     }
+    // The remote target branch is no longer the Milestone's base: the candidate went back to integration (TODO structure 07)
+    // on `remote`, and its review and full test start over.
+    struct MilestoneRemoteMoved: LocalizedError, Equatable {
+        var remote: String
+        var errorDescription: String? {
+            L("원격 대상 branch가 리뷰한 기준에서 앞서 나가 push하지 않았어요. 새 원격 커밋과 다시 통합해요: ", "The remote target branch moved past the reviewed base; nothing pushed. Integrating the new remote commit again: ") + remote
+        }
+    }
+    // TODO structure 12 (off until 16): a Milestone's push. Only the candidate SHA its review and full test both passed, only
+    // while the remote target branch (never the Goal branch) is still the base they were measured from, as that exact SHA to
+    // refs/heads/<target>: a fast-forward, never forced (no +, no --force*; a non-fast-forward is the remote's refusal). Unlike
+    // the app's other Git commands the repository's pre-push hook runs as is (its core.hooksPath, else the candidate's
+    // .githooks), from the Goal's tree so it checks the candidate itself. Throws MilestoneRemoteMoved after resetting the
+    // candidate when the remote moved on; any other refusal leaves it as it was.
+    static func pushMilestone(_ binding: ProjectBinding, _ tree: SubWork.Tree, candidate: inout TodoItem.MilestoneCandidate,
+                              token: DebateCancellation? = nil) throws -> String {
+        func refuse(_ korean: String, _ english: String) -> Error { ProjectError.make(L("Milestone push 거부: ", "Milestone push refused: ") + L(korean, english)) }
+        guard TodoData.goalPath else { throw refuse("Goal 경로가 아직 꺼져 있어요.", "the Goal path is still off.") }
+        func git(_ args: [String], _ root: String = binding.root, timeout: TimeInterval = 120) throws -> ProjectProcess.Reply {
+            try ProjectProcess.gitReply(["-c", "core.quotePath=false"] + args, root: root, token: token, timeout: timeout)
+        }
+        func value(_ args: [String], _ root: String = binding.root) throws -> String {
+            let r = try git(args, root)
+            guard r.status == 0 else { throw ProjectError.make("git failed (\(r.status)): " + r.output) }
+            return r.output.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let target = candidate.branch
+        guard !binding.isDocuments, !binding.isFolderless, !binding.remote.isEmpty, let common = ProjectWork.commonDir(binding.root),
+              tree.branch.hasPrefix("todo-goal/"), !target.hasPrefix("todo-goal/"), !target.hasPrefix("-"),
+              (try? value(["check-ref-format", "--branch", target])) == target else {
+            throw refuse("Goal 작업 폴더와 원격 대상 branch(Goal branch가 아닌)가 필요해요.", "a Goal work tree and a remote target branch (not the Goal branch) are required.")
+        }
+        guard let sha = candidate.candidateSHA, candidate.reviewedSHA == sha, candidate.testedSHA == sha else {
+            throw refuse("후보 SHA가 리뷰한 SHA, 전체 테스트한 SHA와 같지 않아요.", "the candidate SHA is not both the reviewed and the fully tested SHA.")
+        }
+        candidate.setPhase(.push)
+        let held: [String]
+        do { held = try ProjectWork.acquire(WorkspaceBinding(roots: [WorkspaceRoot(path: tree.path, directory: true, writable: true)], level: .execute)) }
+        catch where ProjectWork.isBusy(error.localizedDescription) { throw refuse("Step이 아직 Goal 작업 폴더를 쓰고 있어요.", "a Step is still writing the Goal's work tree.") }
+        defer { ProjectWork.release(held, notify: false) }
+        let tracking = "refs/remotes/\(binding.remote)/\(target)"
+        func remoteNow() throws -> String {
+            try ProjectWork.withRefs(binding.root, token: token) {
+                guard try git(["fetch", "--no-tags", binding.remote, "+refs/heads/\(target):\(tracking)"], timeout: 180).status == 0 else {
+                    throw refuse("원격 대상 branch를 확인하지 못했어요.", "could not read the remote target branch.")
+                }
+                return try value(["rev-parse", "--verify", tracking + "^{commit}"])
+            }
+        }
+        func moved(_ remote: String) -> Error {
+            candidate = TodoItem.MilestoneCandidate(branch: target, baseSHA: remote)
+            return MilestoneRemoteMoved(remote: remote)
+        }
+        let remote = try remoteNow()
+        if remote == sha { candidate.setPhase(.confirmation); return "Already on \(binding.remote)/\(target): " + sha }   // an earlier push that was not recorded
+        guard remote == candidate.baseSHA else { throw moved(remote) }
+        guard try git(["merge-base", "--is-ancestor", remote, sha]).status == 0 else {
+            throw refuse("후보가 원격 기준 SHA에서 fast-forward되지 않아요.", "the candidate is not a fast-forward of the remote base SHA.")
+        }
+        // The hook runs in the Goal's tree, so that tree must be the candidate exactly.
+        guard SubWork.ownsGoalTree(tree, common: common, token: token), try value(["rev-parse", "HEAD"], tree.path) == sha,
+              try value(["status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none"], tree.path).isEmpty,
+              try git(["rev-parse", "-q", "--verify", "MERGE_HEAD"], tree.path).status != 0 else {
+            throw refuse("Goal 작업 폴더가 후보 SHA 그대로가 아니에요.", "the Goal's work tree is not exactly the candidate SHA.")
+        }
+        // Without ProjectProcess.gitReply's core.hooksPath=/dev/null: the configured hooks, else the candidate's .githooks.
+        let configured = try ProjectProcess.run("/usr/bin/git", ["config", "--get", "core.hooksPath"], cwd: tree.path, token: token).status == 0
+        let hooks = !configured && FileManager.default.isExecutableFile(atPath: tree.path + "/.githooks/pre-push") ? ["-c", "core.hooksPath=.githooks"] : []
+        let result = try ProjectProcess.run("/usr/bin/git", ["--literal-pathspecs", "-c", "core.fsmonitor=false", "-c", "submodule.recurse=false"] + hooks
+                                            + ["push", "--no-recurse-submodules", binding.remote, sha + ":refs/heads/" + target],
+                                            cwd: tree.path, token: token, deadline: Date().addingTimeInterval(1800))
+        guard result.status == 0 else {
+            // Refused: a remote that moved on in the meantime sends the candidate back; anything else (the hook) keeps it.
+            if let now = try? remoteNow(), now != candidate.baseSHA, now != sha { throw moved(now) }
+            throw ProjectError.make(L("Milestone push 실패 (exit \(result.status)): ", "Milestone push failed (exit \(result.status)): ") + result.output)
+        }
+        candidate.setPhase(.confirmation)
+        return result.output + "\nPushed " + sha + " to " + binding.remote + "/" + target
+    }
     // TODO structure 11: a Goal's commits reach the remote only as the SHA its Milestone reviewed and fully tested. A plain
     // chat that merged a todo-goal/ branch into its HEAD (a common commit not on the remote) or cherry-picked from it (the
     // same patch, --cherry-mark) is refused unless HEAD is exactly that SHA for this branch. Branches without the app's

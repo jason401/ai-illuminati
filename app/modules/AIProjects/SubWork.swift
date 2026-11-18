@@ -62,7 +62,7 @@ public enum SubWork {
         guard !binding.isDocuments, !binding.isFolderless, let common = ProjectWork.commonDir(binding.root) else { throw ProjectError.make("A Git project is required.") }
         return common
     }
-    private static func ownsGoalTree(_ tree: Tree, common: String, token: DebateCancellation?) -> Bool {
+    static func ownsGoalTree(_ tree: Tree, common: String, token: DebateCancellation?) -> Bool {
         let prefix = "todo-goal/"
         guard tree.branch.hasPrefix(prefix) else { return false }
         func real(_ path: String) -> String { URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path }

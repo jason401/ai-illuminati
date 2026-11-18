@@ -64,7 +64,8 @@ declared public only inside an extension or a nested type, `tools/tests/` files 
 Hooks: `.githooks/pre-commit` (fast) and `.githooks/pre-push` (`run_mode2.sh --modules`: stages 1-2), installed by
 `zsh tools/setup_dev.sh` (`core.hooksPath`, never overwriting another value); run_mode2 warns when they are missing.
 They are a convenience, not enforcement: the app's own Git commands run with `core.hooksPath=/dev/null` (ProjectWork,
-on purpose: a repository's hooks never run inside the app), so the same checks run again in run_mode2. Real enforcement
+on purpose: a repository's hooks never run inside the app), so the same checks run again in run_mode2. One exception:
+a Milestone's push (`GitLink.pushMilestone`) runs the repository's pre-push hook as is, from the Goal's tree (its candidate). Real enforcement
 would be CI, which the user decides (public repository).
 New module: `zsh tools/new_module.sh <Name> <deps...>` makes the folder, `dependencies`, `boundary`, a contract stub,
 an empty snapshot and the map entry to fill; it prints, but does not make, the graph and guard lines (approval).

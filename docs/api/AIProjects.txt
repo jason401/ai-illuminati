@@ -240,6 +240,24 @@ TodoData.standInDue(_:) | func standInDue(_ item: TodoItem) -> Date?
 TodoData.stopped(_:) | func stopped(_ item: TodoItem) -> Bool
 TodoData.workers(room:) | func workers(room: UUID) -> [String]?
 TodoItem | struct TodoItem
+TodoItem.MilestoneCandidate | struct MilestoneCandidate
+TodoItem.MilestoneCandidate.Phase | enum Phase
+TodoItem.MilestoneCandidate.Phase.confirmation | case confirmation
+TodoItem.MilestoneCandidate.Phase.init(rawValue:) | init?(rawValue: String)
+TodoItem.MilestoneCandidate.Phase.integration | case integration
+TodoItem.MilestoneCandidate.Phase.push | case push
+TodoItem.MilestoneCandidate.Phase.review | case review
+TodoItem.MilestoneCandidate.Phase.test | case test
+TodoItem.MilestoneCandidate.baseSHA | let baseSHA: String
+TodoItem.MilestoneCandidate.branch | let branch: String
+TodoItem.MilestoneCandidate.candidateSHA | var candidateSHA: String? { get set }
+TodoItem.MilestoneCandidate.init(branch:baseSHA:candidateSHA:) | init(branch: String, baseSHA: String, candidateSHA: String? = nil)
+TodoItem.MilestoneCandidate.init(from:) | init(from decoder: any Decoder) throws
+TodoItem.MilestoneCandidate.phase | var phase: TodoItem.MilestoneCandidate.Phase
+TodoItem.MilestoneCandidate.recordReview(for:) | mutating func recordReview(for sha: String)
+TodoItem.MilestoneCandidate.recordTest(for:) | mutating func recordTest(for sha: String)
+TodoItem.MilestoneCandidate.reviewedSHA | var reviewedSHA: String? { get }
+TodoItem.MilestoneCandidate.testedSHA | var testedSHA: String? { get }
 TodoItem.Role | enum Role
 TodoItem.Role.goal | case goal
 TodoItem.Role.init(rawValue:) | init?(rawValue: String)
@@ -275,6 +293,7 @@ TodoItem.interrupted | var interrupted: Bool
 TodoItem.isParked | var isParked: Bool { get }
 TodoItem.lastError | var lastError: String?
 TodoItem.listID | var listID: UUID
+TodoItem.milestoneCandidate | var milestoneCandidate: TodoItem.MilestoneCandidate?
 TodoItem.notes | var notes: [TodoNote]
 TodoItem.originRoom | var originRoom: UUID?
 TodoItem.parked | var parked: TodoPark?

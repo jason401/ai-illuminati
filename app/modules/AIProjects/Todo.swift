@@ -89,6 +89,52 @@ public struct TodoItem: Codable, Identifiable, Equatable {
     // worktree; a milestone reviews and fully tests the steps' sum since the remote and fast-forward pushes that exact SHA.
     // Saved only; until the goal path is turned on every TODO still runs as plain.
     public enum Role: String, Codable, CaseIterable { case plain, goal, step, milestone }
+
+    // The review covers baseSHA...candidateSHA on the way to this remote branch.
+    public struct MilestoneCandidate: Codable, Equatable {
+        public enum Phase: String, Codable { case integration, review, test, push, confirmation }
+
+        public let branch: String
+        public let baseSHA: String
+        public var candidateSHA: String? {
+            didSet {
+                guard candidateSHA != oldValue else { return }
+                reviewedSHA = nil
+                testedSHA = nil
+                phase = .integration
+            }
+        }
+        public private(set) var reviewedSHA: String?
+        public private(set) var testedSHA: String?
+        public var phase: Phase = .integration
+
+        public init(branch: String, baseSHA: String, candidateSHA: String? = nil) {
+            self.branch = branch
+            self.baseSHA = baseSHA
+            self.candidateSHA = candidateSHA
+        }
+
+        public mutating func recordReview(for sha: String) {
+            if sha == candidateSHA { reviewedSHA = sha }
+        }
+
+        public mutating func recordTest(for sha: String) {
+            if sha == candidateSHA { testedSHA = sha }
+        }
+
+        private enum CodingKeys: String, CodingKey { case branch, baseSHA, candidateSHA, reviewedSHA, testedSHA, phase }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            branch = try c.decode(String.self, forKey: .branch)
+            baseSHA = try c.decode(String.self, forKey: .baseSHA)
+            candidateSHA = try c.decodeIfPresent(String.self, forKey: .candidateSHA)
+            phase = (try c.decodeIfThere(Phase.self, forKey: .phase)) ?? .integration
+            if let sha = try c.decodeIfPresent(String.self, forKey: .reviewedSHA) { recordReview(for: sha) }
+            if let sha = try c.decodeIfPresent(String.self, forKey: .testedSHA) { recordTest(for: sha) }
+        }
+    }
+
     public var id = UUID()
     public var listID: UUID
     public var title: String
@@ -100,6 +146,7 @@ public struct TodoItem: Codable, Identifiable, Equatable {
     public var role: Role = .plain
     public var goal: UUID?                 // a step's or milestone's goal
     public var tests: [String] = []        // a step's picked tests (AI_ILLUMINATI_TEST_ONLY names); a milestone runs them all
+    public var milestoneCandidate: MilestoneCandidate?
     public var room: UUID?                 // the TODO's own chat, made when it first starts
     public var originRoom: UUID?           // the chat it was written from: its report card shows there too
     public var notes: [TodoNote] = []      // the user's answers and change requests, retries; sent with the next attempt
@@ -141,7 +188,7 @@ public struct TodoItem: Codable, Identifiable, Equatable {
     // cannot be read fails the whole file, which TodoStore then keeps as it is (no default silently saved over it).
     private enum Keys: String, CodingKey {
         case id, listID, title, detail, attachments, askFirst, state, after, role, goal, tests, room, originRoom, notes, question, attempts, lastError, result, assumptions, files, report, workers, interrupted, unreported, standIns, delegated, aiHelped, parked, wasParked, createdAt, updatedAt,
-             workSeconds, waitSeconds, stateSince, startedAt, finishedAt
+             workSeconds, waitSeconds, stateSince, startedAt, finishedAt, milestoneCandidate
     }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
@@ -164,6 +211,7 @@ public struct TodoItem: Codable, Identifiable, Equatable {
         }
         goal = try c.decodeIfPresent(UUID.self, forKey: .goal)
         tests = (try c.decodeIfThere([String].self, forKey: .tests)) ?? []
+        milestoneCandidate = try c.decodeIfPresent(MilestoneCandidate.self, forKey: .milestoneCandidate)
         room = try c.decodeIfPresent(UUID.self, forKey: .room)
         originRoom = try c.decodeIfPresent(UUID.self, forKey: .originRoom)
         notes = (try c.decodeIfThere([TodoNote].self, forKey: .notes)) ?? []
@@ -198,6 +246,7 @@ public struct TodoItem: Codable, Identifiable, Equatable {
         if role != .plain { try c.encode(role.rawValue, forKey: .role) }
         try c.encodeIfPresent(goal, forKey: .goal)
         if !tests.isEmpty { try c.encode(tests, forKey: .tests) }
+        try c.encodeIfPresent(milestoneCandidate, forKey: .milestoneCandidate)
         try c.encodeIfPresent(room, forKey: .room); try c.encodeIfPresent(originRoom, forKey: .originRoom); try c.encode(notes, forKey: .notes)
         try c.encodeIfPresent(question, forKey: .question); try c.encode(attempts, forKey: .attempts); try c.encodeIfPresent(lastError, forKey: .lastError)
         try c.encodeIfPresent(result, forKey: .result); try c.encode(assumptions, forKey: .assumptions); try c.encode(files, forKey: .files)

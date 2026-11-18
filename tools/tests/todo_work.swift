@@ -104,6 +104,37 @@ func testTodoPlan() {
     expect(!plainJSON.contains("\"tests\""), "a plain TODO writes no tests")
 }
 
+private func checkMilestoneCandidate(_ store: TodoStore, milestoneID: UUID) {
+    let base = String(repeating: "a", count: 40)
+    let first = String(repeating: "b", count: 40)
+    let next = String(repeating: "c", count: 40)
+    var candidate = TodoItem.MilestoneCandidate(branch: "release/next", baseSHA: base, candidateSHA: first)
+    expect(candidate.phase == .integration && candidate.reviewedSHA == nil && candidate.testedSHA == nil, "a new candidate starts in integration without passes")
+    candidate.recordReview(for: first)
+    candidate.recordTest(for: first)
+    expect(candidate.reviewedSHA == first && candidate.testedSHA == first, "both passes record the candidate SHA")
+    candidate.phase = .push
+    try! store.change(milestoneID) { $0.milestoneCandidate = candidate }
+
+    let reopened = TodoStore(url: store.url)
+    expect(reopened.current.item(milestoneID)?.milestoneCandidate == candidate, "reopening restores the branch, SHAs, passes and phase")
+    try! reopened.change(milestoneID) { $0.milestoneCandidate?.candidateSHA = first }
+    expect(reopened.current.item(milestoneID)?.milestoneCandidate == candidate, "setting the same SHA keeps the passes and phase")
+    try! reopened.change(milestoneID) {
+        $0.milestoneCandidate?.candidateSHA = next
+        $0.milestoneCandidate?.recordReview(for: first)
+        $0.milestoneCandidate?.recordTest(for: first)
+    }
+    let replaced = TodoStore(url: store.url).current.item(milestoneID)?.milestoneCandidate
+    expect(replaced == TodoItem.MilestoneCandidate(branch: "release/next", baseSHA: base, candidateSHA: next), "replacing the SHA clears both passes and resets the saved phase even if old results arrive")
+
+    let staleJSON = """
+        {"branch":"release/next","baseSHA":"\(base)","candidateSHA":"\(next)","reviewedSHA":"\(first)","testedSHA":"\(first)"}
+        """
+    let decoded = try! JSONDecoder().decode(TodoItem.MilestoneCandidate.self, from: Data(staleJSON.utf8))
+    expect(decoded == replaced, "decoding drops passes for another SHA and defaults a missing phase to integration")
+}
+
 func testTodoStore() {
     let a = ProjectBinding(root: "/tmp/todo-a", common: "", remote: "", remoteURL: "")
     let b = ProjectBinding(root: "/tmp/todo-b", common: "", remote: "", remoteURL: "")
@@ -176,7 +207,7 @@ func testTodoStore() {
     try! old.write(to: oldURL, atomically: true, encoding: .utf8)
     let read = TodoStore(url: oldURL).current
     expect(read.lists.first?.mode == .aiThenPark && read.items.first?.state == .draft && read.version == 1, "older files: defaults for missing fields, unknown ones ignored")
-    expect(read.items.first?.role == .plain && read.items.first?.goal == nil, "an older TODO is plain, with no goal")
+    expect(read.items.first?.role == .plain && read.items.first?.goal == nil && read.items.first?.milestoneCandidate == nil, "an older TODO is plain, with no goal or candidate")
     // Goal, step and milestone roles are saved and read back; order stays `after`; a plain TODO writes no role.
     let roleURL = todoStoreFile("roles")
     let roles = TodoStore(url: roleURL)
@@ -192,9 +223,11 @@ func testTodoStore() {
     expect(rolesBack.item(goal.id)?.role == .goal && rolesBack.item(goal.id)?.goal == nil, "a goal has no goal above it")
     expect(rolesBack.item(step.id)?.role == .step && rolesBack.item(step.id)?.goal == goal.id, "a step keeps its goal")
     expect(rolesBack.item(milestone.id)?.role == .milestone && rolesBack.item(milestone.id)?.goal == goal.id && rolesBack.item(milestone.id)?.after == [step.id], "a milestone keeps its goal and its order")
+    expect(rolesBack.item(milestone.id)?.milestoneCandidate == nil, "a milestone saved without a candidate starts with no candidate")
+    checkMilestoneCandidate(roles, milestoneID: milestone.id)
     expect(rolesBack.item(plain.id)?.role == .plain, "a TODO without a role is plain")
     let plainJSON = String(data: try! JSONEncoder().encode(rolesBack.item(plain.id)!), encoding: .utf8)!
-    expect(!plainJSON.contains("\"role\"") && !plainJSON.contains("\"goal\""), "a plain TODO is saved as before: \(plainJSON)")
+    expect(!plainJSON.contains("\"role\"") && !plainJSON.contains("\"goal\"") && !plainJSON.contains("\"milestoneCandidate\""), "a plain TODO is saved as before: \(plainJSON)")
     // A newer app's role is not run as plain: the file is held, not rewritten.
     let newerURL = todoStoreFile("newer-role")
     let newer = """

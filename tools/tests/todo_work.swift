@@ -373,7 +373,10 @@ func testTodoSplitExecution() {
     try! store.setList(finish.listID, mode: .checkEach)
     let originalRoom = chat.addProjectChat(project, title: "Original", open: false)
     chat.change(originalRoom) { $0.workspace?.fullAuto = false }
-    try! store.change(finish.id) { $0.room = originalRoom }
+    try! store.change(finish.id) {
+        $0.room = originalRoom
+        $0.notes.append(TodoNote(kind: .answer, text: "Use the existing format"))
+    }
     let attachment = store.url.deletingLastPathComponent().appendingPathComponent("split-attachment.txt")
     try! "original attachment".write(to: attachment, atomically: true, encoding: .utf8)
     try! store.attach(finish.id, files: [attachment])
@@ -436,6 +439,8 @@ func testTodoSplitExecution() {
             expect(prompt.contains("split-attachment.txt"), "the original attachment reaches both steps")
         } else {
             expect(gitRestricted.isSubset(of: gitTools) && prompt.contains("Run the full test suite"), "the finish can push and gets full test instructions")
+            expect(item.askFirst && prompt.contains("Use the existing format") && prompt.contains("Ask only questions that are still unresolved."),
+                   "the finish keeps ask-first for unresolved questions and sees the earlier answer")
         }
         expect(remoteHead() == initialHead, "the group stays local until finish")
         let name = item.title + ".txt"
@@ -482,6 +487,12 @@ func testTodoSplitExecution() {
     let original = chat.conversation(originalRoom).turns.last
     expect(!chat.anyRunning && original?.projectPushed == false && original?.peerNotes == nil && reviews.isEmpty,
            "the old turn ends without its review or queued push")
+    // A later read-only answer in the finish room is independent of the first step.
+    chat.runningRooms.insert(originalRoom)
+    spin({ store.current.ordered(finish.listID).first?.state == .running }, tick: true)
+    expect(chat.runningRooms.contains(originalRoom) && store.current.ordered(finish.listID).first?.state == .running,
+           "the first step starts while the finish room is answering a later message")
+    chat.runningRooms.remove(originalRoom)
     spin({ store.current.item(finish.id)?.state == .review && !chat.anyRunning }, tick: true)
     let pieces = store.current.ordered(finish.listID)
     let results = pieces.map { "\($0.title)/\($0.state)/\($0.result ?? "-")/\($0.lastError ?? "-")" }
@@ -528,7 +539,12 @@ func testTodoSplitExecution() {
                && piecesStore.current.item(blocked.id)?.state == .ready && blockedChats.questions.isEmpty,
                "answering or delegating the finish cannot drop its cancelled step")
     }
-    print("PASS: TODO split execution (late reports, turn boundary, recover, tools, checkEach, group review and one push, cancellation, auto needsYou)")
+    try! piecesStore.delete(order[1].id)
+    blockedScheduler.tick()
+    expect(piecesStore.current.item(blocked.id)?.state == .ready && blockedChats.questions.isEmpty
+           && blockedScheduler.waiting == L("Blocked finish의 묶음에서 필요한 조각을 찾을 수 없어요.", "A required piece of the split for Blocked finish is missing."),
+           "a deleted prerequisite keeps the finish blocked and explains why")
+    print("PASS: TODO split execution (late reports, exact turn boundary, recover, tools, checkEach, group review and one push, missing and cancelled steps, auto needsYou)")
 }
 
 func testTodoScheduler() {

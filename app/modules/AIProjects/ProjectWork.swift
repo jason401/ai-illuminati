@@ -389,6 +389,14 @@ public enum ProjectWork {
     }
     public static var active: Bool { mutex.lock(); defer { mutex.unlock() }; return !runs.isEmpty }
     static func get(_ id: UUID?) -> ProjectRun? { mutex.lock(); defer { mutex.unlock() }; return id.flatMap { runs[$0] } }
+    // The run that was replaced by a split stays registered through its cleanup.
+    static func finishingTodoSplit(_ group: UUID, in store: TodoStore) -> Bool {
+        mutex.lock()
+        let candidates = runs.values.filter { $0.todoStore === store && $0.todoAttempt?.id == group }
+        mutex.unlock()
+        return candidates.contains(where: \.todoWasSplit)
+    }
+
     // The project turn a tool call belongs to, while that AI's attempt is current (another module's tools: sub-rooms).
     public static func run(for context: ToolContext) -> ProjectRun? {
         guard let run = get(context.projectRun), run.room == context.room, context.projectGeneration == run.generation, !run.cancelled else { return nil }

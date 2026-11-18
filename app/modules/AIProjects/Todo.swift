@@ -461,8 +461,9 @@ public struct TodoData: Codable, Equatable {
         let busy = Set(items.filter { $0.state == .running }.compactMap { list($0.listID)?.project?.root })
         return lists.flatMap { ordered($0.id) }.filter { item in
             guard item.state == .ready, !stopped(item), let root = list(item.listID)?.project?.root, !busy.contains(root), cancelledBlockers(item).isEmpty else { return false }
-            if let group = item.group, item.piece == .step, let finish = self.item(group),
-               finish.state == .done || finish.state == .cancelled { return false }
+            if let group = item.group, item.piece == .step {
+                guard let finish = self.item(group), finish.state != .done, finish.state != .cancelled else { return false }
+            }
             guard blockers(item).allSatisfy({ id in self.item(id).map { satisfied($0, for: item) } ?? (item.group == nil) }) else { return false }
             return !held(root)
         }
@@ -1497,8 +1498,12 @@ public final class TodoScheduler: ObservableObject {
             if item.id == editing { note = L("고치는 중인 TODO는 저장할 때까지 기다려요.", "The TODO being edited waits until it is saved."); continue }
             guard data.item(item.id)?.state == .ready, let list = data.list(item.listID), let project = list.project,
                   !data.items.contains(where: { $0.state == .running && data.list($0.listID)?.project?.root == project.root }) else { continue }
-            if let group = item.group, let room = data.item(group)?.room, chats.answering.contains(room) {
+            if let group = item.group, ProjectWork.finishingTodoSplit(group, in: store) {
                 note = L("이전 TODO 실행이 끝날 때까지 기다려요.", "Waiting for the previous TODO turn to end.")
+                continue
+            }
+            if item.piece == .finish, let room = item.room, chats.answering.contains(room) {
+                note = L("마무리 조각의 채팅이 답하는 중이에요.", "The finish step's chat is still answering.")
                 continue
             }
             let lock = lock(for: item, list: list, project: project)
@@ -1518,12 +1523,19 @@ public final class TodoScheduler: ObservableObject {
         }
         let data = store.current
         let ready = data.items.filter { $0.state == .ready }
-        if started == 0, note == nil,
-           let item = ready.first(where: { item in
-               guard let group = item.group else { return false }
-               return data.blockers(item).contains { id in data.item(id).map { $0.group == group && $0.state == .cancelled } == true }
-           }) {
-            note = L("\(item.title): 취소된 앞 조각을 다시 시작해야 해요.", "\(item.title) is waiting for a cancelled step to be restarted.")
+        if started == 0, note == nil {
+            for item in ready {
+                guard let group = item.group else { continue }
+                let blockers = data.blockers(item)
+                if data.item(group) == nil || blockers.contains(where: { data.item($0) == nil }) {
+                    note = L("\(item.title)의 묶음에서 필요한 조각을 찾을 수 없어요.", "A required piece of the split for \(item.title) is missing.")
+                    break
+                }
+                if blockers.contains(where: { id in data.item(id).map { $0.group == group && $0.state == .cancelled } == true }) {
+                    note = L("\(item.title): 취소된 앞 조각을 다시 시작해야 해요.", "\(item.title) is waiting for a cancelled step to be restarted.")
+                    break
+                }
+            }
         }
         waiting = started == 0 && !ready.isEmpty ? note : nil
     }
@@ -1904,12 +1916,13 @@ public final class TodoScheduler: ObservableObject {
         } else {
             usual = "Work in this project as usual (plan, change, test, commit and push when the project rules say so)."
         }
+        let previousAnswers = item.piece == .finish ? "\nUse the answers already given in this TODO. Ask only questions that are still unresolved." : ""
         return """
         [TODO work] This is a TODO from the user's board, done while the user may be away. \(usual)
         When it is finished and \(documents ? "checked" : "tested"), call task_done with a summary, the assumptions you made and the files you changed\(documents ? " (and any steps left for the user)" : ""), then end with a short report.
         If you cannot go on (missing information, a decision or an approval only the user can give, contradicting requirements), call task_ask and stop.
         \(item.askFirst ? "Before changing anything, ask with task_ask what is unclear (at most 3 questions, with options and your recommendation). If nothing is unclear, go ahead."
-                       : "Where something is unclear, make a reasonable assumption, go on, and list it in task_done.")
+                       : "Where something is unclear, make a reasonable assumption, go on, and list it in task_done.")\(previousAnswers)
         Never publish stable. Do not wait on approval cards: if a step needs the user's approval, call task_ask instead.
         An answer given in the user's place by another AI is a reasonable guess, not the user's decision: follow it, keep what it decides easy to undo, and list it in task_done's assumptions.
         A decision handed to you (answer marked as delegated): decide it yourself and do not ask it again.

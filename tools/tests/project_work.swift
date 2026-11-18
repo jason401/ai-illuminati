@@ -2260,6 +2260,8 @@ func testGoalIntegration() {
     write("step\n", "step.txt", in: tree.path); commit(tree.path, "Step 1")
     let step = git(["rev-parse", "HEAD"], at: tree.path)
 
+    // Local settings that would refuse the merge or leave it uncommitted do not change the result.
+    _ = git(["config", "merge.ff", "only"], at: main); _ = git(["config", "branch.\(tree.branch).mergeOptions", "--no-commit --squash"], at: main)
     // Nothing new on the remote: the candidate is the Goal's HEAD as it is, nothing merged.
     let same = try! SubWork.integrate(binding, tree, target: "main")
     expect(same.base == tree.base && same.candidate == step, "up to date: the Step's HEAD is the candidate: \(same)")
@@ -2300,6 +2302,18 @@ func testGoalIntegration() {
     let fixed = try! SubWork.integrate(binding, tree, target: "main")
     expect(fixed.base == clash && fixed.candidate == git(["rev-parse", "HEAD"], at: tree.path), "after the fix, the resolved merge is the candidate: \(fixed)")
     expect((try? SubWork.integrate(binding, SubWork.Tree(path: main, branch: "main", base: tree.base), target: "main")) == nil, "the main checkout is not a Goal tree")
+    // The user's checkout on a todo-goal/ branch is not the Goal's tree, even with its branch name.
+    _ = git(["stash", "-q", "-u"], at: main); _ = git(["switch", "-q", "-c", "todo-goal/feedbeef"], at: main)
+    let fake = SubWork.Tree(path: main, branch: "todo-goal/feedbeef", base: tree.base), fakeHead = git(["rev-parse", "HEAD"], at: main)
+    _ = push("later\n", "later.txt", "Remote later")
+    expect((try? SubWork.integrate(binding, fake, target: "main")) == nil && git(["rev-parse", "HEAD"], at: main) == fakeHead, "a checkout outside the Goal's folder is refused")
+    _ = git(["switch", "-q", "main"], at: main); _ = git(["stash", "pop", "-q"], at: main)
+    // Conflicted names come back whole: a leading newline is kept.
+    write("goal\n", "\nodd.txt", in: tree.path); commit(tree.path, "Step odd")
+    write("remote\n", "\nodd.txt", in: other.path); commit(other.path, "Remote odd"); _ = git(["push", "-q", "origin", "main"], at: other.path)
+    var odd: SubWork.Conflict?
+    do { _ = try SubWork.integrate(binding, tree, target: "main") } catch let c as SubWork.Conflict { odd = c } catch {}
+    expect(odd?.files == ["\nodd.txt"], "a name with a leading newline is kept as it is: \(String(describing: odd?.files))")
     expect(mainState() == before, "main unchanged at the end")
     try? FileManager.default.removeItem(at: base)
     print("PASS: Goal integration (remote target fetched and merged into the Goal's tree, Steps' SHAs kept, conflict left in the tree with its files, main checkout untouched)")

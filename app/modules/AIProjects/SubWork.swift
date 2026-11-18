@@ -183,17 +183,30 @@ public enum SubWork {
         guard !binding.remote.isEmpty, !target.hasPrefix("-"), (try? git(["check-ref-format", "--branch", target], binding.root, token)) == target else {
             throw ProjectError.make("A remote and a valid target branch are required for a Goal.")
         }
-        guard FileManager.default.fileExists(atPath: tree.path), ProjectWork.commonDir(tree.path) == common,
-              (try? git(["branch", "--show-current"], tree.path, token)) == tree.branch else {
-            throw ProjectError.make("The Goal's work tree is missing or not on " + tree.branch)
+        // Only the Goal's own folder as SubWork.goal makes it: a user's checkout on a todo-goal/ branch is never merged in.
+        func real(_ folder: String) -> String { URL(fileURLWithPath: folder).resolvingSymlinksInPath().standardizedFileURL.path }
+        let own = real(folder(common: common, name: "goal-" + tree.branch.dropFirst("todo-goal/".count)))
+        func owned() -> Bool {
+            FileManager.default.fileExists(atPath: tree.path) && real(tree.path) == own && ProjectWork.commonDir(tree.path) == common
+                && (try? git(["rev-parse", "--show-toplevel"], tree.path, token)).map(real) == own
+                && (try? git(["branch", "--show-current"], tree.path, token)) == tree.branch
         }
+        guard owned() else { throw ProjectError.make("The Goal's work tree is missing or not on " + tree.branch) }
         let held: [String]
         do { held = try ProjectWork.acquire(WorkspaceBinding(roots: [WorkspaceRoot(path: tree.path, directory: true, writable: true)], level: .execute)) }
         catch where ProjectWork.isBusy(error.localizedDescription) { throw fail("Step이 아직 Goal 작업 폴더를 쓰고 있어요. 끝난 뒤 다시 해 주세요.", "A Step is still writing the Goal's work tree; try again once it ends.") }
         defer { ProjectWork.release(held, notify: false) }
         return try ProjectWork.withRefs(binding.root, token: token) {
+            guard owned() else { throw ProjectError.make("The Goal's work tree is missing or not on " + tree.branch) }
             let remoteRef = "refs/remotes/\(binding.remote)/\(target)"
-            func unmerged() throws -> [String] { paths(try git(["diff", "-z", "--name-only", "--diff-filter=U"], tree.path, token)) }
+            // The whole NUL list from a file: the shared Git output is trimmed and capped, a Fix Step needs every name as it is.
+            func unmerged() throws -> [String] {
+                let file = NSTemporaryDirectory() + "goal-unmerged-" + UUID().uuidString
+                defer { try? FileManager.default.removeItem(atPath: file) }
+                let r = try reply(["diff", "-z", "--name-only", "--diff-filter=U", "--output=" + file], tree.path, token)
+                guard r.status == 0, let data = FileManager.default.contents(atPath: file) else { throw ProjectError.make("git diff failed: " + r.output) }
+                return data.split(separator: 0).map { String(decoding: $0, as: UTF8.self) }
+            }
             if try merging(tree.path, token) {
                 // Left from an earlier conflict: the same state again, nothing new started.
                 let files = try unmerged(), head = (try? git(["rev-parse", "--verify", "MERGE_HEAD"], tree.path, token)) ?? ""
@@ -206,7 +219,8 @@ public enum SubWork {
             let remote = try git(["rev-parse", "--verify", remoteRef + "^{commit}"], binding.root, token)
             if try !isAncestor(remote, "HEAD", tree.path, token) {
                 let message = "Merge \(binding.remote)/\(target) (\(remote.prefix(10))) into \(tree.branch)"
-                let result = try started(["merge", "--no-edit", "-m", message, remote], tree.path, token)
+                // Explicit, so merge.ff, merge.squash or the branch's mergeOptions cannot turn it into no commit or a refusal.
+                let result = try started(["merge", "--ff", "--commit", "--no-squash", "--no-edit", "-m", message, remote], tree.path, token)
                 if result.status != 0 {
                     let files = try unmerged()
                     if !files.isEmpty { throw Conflict(files: files, remote: remote) }
@@ -214,7 +228,11 @@ public enum SubWork {
                     throw ProjectError.make(L("원격 최신 커밋과 합치다 예상과 달리 실패해 방금 시작한 merge만 되돌렸어요: ", "Merging the newest remote commit failed unexpectedly; only that merge was aborted: ") + result.output)
                 }
             }
-            return (remote, try git(["rev-parse", "HEAD"], tree.path, token))
+            let candidate = try git(["rev-parse", "HEAD"], tree.path, token)
+            guard try !merging(tree.path, token), try isAncestor(remote, candidate, tree.path, token) else {
+                throw ProjectError.make("The Goal's HEAD does not contain the remote SHA after merging: " + remote)
+            }
+            return (remote, candidate)
         }
     }
 

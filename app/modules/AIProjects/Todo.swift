@@ -94,7 +94,7 @@ public struct TodoItem: Codable, Identifiable, Equatable {
     public struct MilestoneCandidate: Codable, Equatable {
         public enum Phase: String, Codable { case integration, review, test, push, confirmation }
 
-        public let branch: String
+        public let branch: String // Branch name under refs/heads/ on the project binding's remote.
         public let baseSHA: String
         public var candidateSHA: String? {
             didSet {
@@ -106,7 +106,7 @@ public struct TodoItem: Codable, Identifiable, Equatable {
         }
         public private(set) var reviewedSHA: String?
         public private(set) var testedSHA: String?
-        public var phase: Phase = .integration
+        public private(set) var phase: Phase = .integration
 
         public init(branch: String, baseSHA: String, candidateSHA: String? = nil) {
             self.branch = branch
@@ -122,6 +122,14 @@ public struct TodoItem: Codable, Identifiable, Equatable {
             if sha == candidateSHA { testedSHA = sha }
         }
 
+        public mutating func setPhase(_ phase: Phase) {
+            guard phase == .integration || candidateSHA != nil else { return }
+            if phase == .push || phase == .confirmation {
+                guard reviewedSHA == candidateSHA, testedSHA == candidateSHA else { return }
+            }
+            self.phase = phase
+        }
+
         private enum CodingKeys: String, CodingKey { case branch, baseSHA, candidateSHA, reviewedSHA, testedSHA, phase }
 
         public init(from decoder: Decoder) throws {
@@ -129,9 +137,12 @@ public struct TodoItem: Codable, Identifiable, Equatable {
             branch = try c.decode(String.self, forKey: .branch)
             baseSHA = try c.decode(String.self, forKey: .baseSHA)
             candidateSHA = try c.decodeIfPresent(String.self, forKey: .candidateSHA)
-            phase = (try c.decodeIfThere(Phase.self, forKey: .phase)) ?? .integration
-            if let sha = try c.decodeIfPresent(String.self, forKey: .reviewedSHA) { recordReview(for: sha) }
-            if let sha = try c.decodeIfPresent(String.self, forKey: .testedSHA) { recordTest(for: sha) }
+            let savedPhase = (try c.decodeIfThere(Phase.self, forKey: .phase)) ?? .integration
+            let savedReview = try c.decodeIfPresent(String.self, forKey: .reviewedSHA)
+            let savedTest = try c.decodeIfPresent(String.self, forKey: .testedSHA)
+            if let savedReview { recordReview(for: savedReview) }
+            if let savedTest { recordTest(for: savedTest) }
+            if savedReview == reviewedSHA, savedTest == testedSHA { setPhase(savedPhase) }
         }
     }
 
@@ -143,10 +154,14 @@ public struct TodoItem: Codable, Identifiable, Equatable {
     public var askFirst = false            // ask before starting; otherwise assume, go on and list the assumptions
     public var state: State = .draft
     public var after: [UUID] = []          // TODOs that must be finished first (any list)
-    public var role: Role = .plain
+    public var role: Role = .plain {
+        didSet { if role != .milestone { milestoneCandidate = nil } }
+    }
     public var goal: UUID?                 // a step's or milestone's goal
     public var tests: [String] = []        // a step's picked tests (AI_ILLUMINATI_TEST_ONLY names); a milestone runs them all
-    public var milestoneCandidate: MilestoneCandidate?
+    public var milestoneCandidate: MilestoneCandidate? {
+        didSet { if role != .milestone { milestoneCandidate = nil } }
+    }
     public var room: UUID?                 // the TODO's own chat, made when it first starts
     public var originRoom: UUID?           // the chat it was written from: its report card shows there too
     public var notes: [TodoNote] = []      // the user's answers and change requests, retries; sent with the next attempt
@@ -211,7 +226,9 @@ public struct TodoItem: Codable, Identifiable, Equatable {
         }
         goal = try c.decodeIfPresent(UUID.self, forKey: .goal)
         tests = (try c.decodeIfThere([String].self, forKey: .tests)) ?? []
-        milestoneCandidate = try c.decodeIfPresent(MilestoneCandidate.self, forKey: .milestoneCandidate)
+        if role == .milestone {
+            milestoneCandidate = try c.decodeIfPresent(MilestoneCandidate.self, forKey: .milestoneCandidate)
+        }
         room = try c.decodeIfPresent(UUID.self, forKey: .room)
         originRoom = try c.decodeIfPresent(UUID.self, forKey: .originRoom)
         notes = (try c.decodeIfThere([TodoNote].self, forKey: .notes)) ?? []

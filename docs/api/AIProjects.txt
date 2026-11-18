@@ -253,10 +253,11 @@ TodoItem.MilestoneCandidate.branch | let branch: String
 TodoItem.MilestoneCandidate.candidateSHA | var candidateSHA: String? { get set }
 TodoItem.MilestoneCandidate.init(branch:baseSHA:candidateSHA:) | init(branch: String, baseSHA: String, candidateSHA: String? = nil)
 TodoItem.MilestoneCandidate.init(from:) | init(from decoder: any Decoder) throws
-TodoItem.MilestoneCandidate.phase | var phase: TodoItem.MilestoneCandidate.Phase
+TodoItem.MilestoneCandidate.phase | var phase: TodoItem.MilestoneCandidate.Phase { get }
 TodoItem.MilestoneCandidate.recordReview(for:) | mutating func recordReview(for sha: String)
 TodoItem.MilestoneCandidate.recordTest(for:) | mutating func recordTest(for sha: String)
 TodoItem.MilestoneCandidate.reviewedSHA | var reviewedSHA: String? { get }
+TodoItem.MilestoneCandidate.setPhase(_:) | mutating func setPhase(_ phase: TodoItem.MilestoneCandidate.Phase)
 TodoItem.MilestoneCandidate.testedSHA | var testedSHA: String? { get }
 TodoItem.Role | enum Role
 TodoItem.Role.goal | case goal
@@ -293,14 +294,14 @@ TodoItem.interrupted | var interrupted: Bool
 TodoItem.isParked | var isParked: Bool { get }
 TodoItem.lastError | var lastError: String?
 TodoItem.listID | var listID: UUID
-TodoItem.milestoneCandidate | var milestoneCandidate: TodoItem.MilestoneCandidate?
+TodoItem.milestoneCandidate | var milestoneCandidate: TodoItem.MilestoneCandidate? { get set }
 TodoItem.notes | var notes: [TodoNote]
 TodoItem.originRoom | var originRoom: UUID?
 TodoItem.parked | var parked: TodoPark?
 TodoItem.question | var question: TodoQuestion?
 TodoItem.report | var report: TodoReport?
 TodoItem.result | var result: String?
-TodoItem.role | var role: TodoItem.Role
+TodoItem.role | var role: TodoItem.Role { get set }
 TodoItem.room | var room: UUID?
 TodoItem.standIns | var standIns: Int
 TodoItem.startedAt | var startedAt: Date?

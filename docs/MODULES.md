@@ -500,10 +500,12 @@ Public names and why (everything else stays internal: `ProjectError`, `ProjectTo
   plain, or a goal and its steps and milestones in `after`'s order, so the Goal/Step/Milestone runs, the board and the
   tools tell them apart; an unknown role holds the file like an unknown state; nothing runs differently yet), `TodoItem.tests` (saved field: a step's picked
   test names for AI_ILLUMINATI_TEST_ONLY; written only when there are some), `TodoItem.milestoneCandidate` and its
-  `MilestoneCandidate` value and initializer (the milestone run's saved remote branch, base and candidate SHAs),
-  `Phase`/`phase` (where the run resumes), and `recordReview(for:)`/`recordTest(for:)` with `reviewedSHA` and
-  `testedSHA` (passes for the current candidate; changing its SHA clears both and returns to integration; tested by
-  `testTodoStore`), `TodoPlan`/`Part` (a Goal's split plan the planner hands
+  `MilestoneCandidate` value and initializer (saved only on milestones, with the branch name under `refs/heads/`
+  on the project binding's remote and the base and candidate SHAs), `Phase`/`phase` (where the run resumes),
+  `setPhase(_:)` (push and confirmation require both passes for the candidate SHA), and
+  `recordReview(for:)`/`recordTest(for:)` with `reviewedSHA` and `testedSHA` (passes for the current candidate).
+  Changing the candidate SHA clears both passes and returns to integration. Restoring stale passes discards them
+  and returns to integration (`testTodoStore`). `TodoPlan`/`Part` (a Goal's split plan the planner hands
   `TodoStore.savePlan` in one go: keys, roles, titles, `after` keys and a step's tests), `TodoReport`, `TodoAttachment`, `WorkStep` (a chat turn keeps the plan), `ProjectInfo`, `ProjectInfoData`,
   `ProjectFolder`, `ProjectLink`. Explicit public inits where Swift's memberwise ones are internal (`ProjectApproval`,
   `TodoReport`, `ProjectFolder`, `ProjectChatSummary`, `TodoTurnEnd`, `TodoPark`).

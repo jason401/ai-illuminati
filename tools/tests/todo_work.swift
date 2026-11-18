@@ -110,10 +110,18 @@ private func checkMilestoneCandidate(_ store: TodoStore, milestoneID: UUID) {
     let next = String(repeating: "c", count: 40)
     var candidate = TodoItem.MilestoneCandidate(branch: "release/next", baseSHA: base, candidateSHA: first)
     expect(candidate.phase == .integration && candidate.reviewedSHA == nil && candidate.testedSHA == nil, "a new candidate starts in integration without passes")
+    candidate.setPhase(.push)
+    expect(candidate.phase == .integration, "push requires both passes")
+    candidate.setPhase(.review)
     candidate.recordReview(for: first)
+    candidate.setPhase(.confirmation)
+    expect(candidate.phase == .review, "confirmation requires a test pass as well as review")
     candidate.recordTest(for: first)
     expect(candidate.reviewedSHA == first && candidate.testedSHA == first, "both passes record the candidate SHA")
-    candidate.phase = .push
+    candidate.setPhase(.confirmation)
+    expect(candidate.phase == .confirmation, "confirmation accepts both passes for the candidate")
+    candidate.setPhase(.push)
+    expect(candidate.phase == .push, "push accepts both passes for the candidate")
     try! store.change(milestoneID) { $0.milestoneCandidate = candidate }
 
     let reopened = TodoStore(url: store.url)
@@ -131,8 +139,31 @@ private func checkMilestoneCandidate(_ store: TodoStore, milestoneID: UUID) {
     let staleJSON = """
         {"branch":"release/next","baseSHA":"\(base)","candidateSHA":"\(next)","reviewedSHA":"\(first)","testedSHA":"\(first)"}
         """
-    let decoded = try! JSONDecoder().decode(TodoItem.MilestoneCandidate.self, from: Data(staleJSON.utf8))
+    let decoder = JSONDecoder()
+    let decoded = try! decoder.decode(TodoItem.MilestoneCandidate.self, from: Data(staleJSON.utf8))
     expect(decoded == replaced, "decoding drops passes for another SHA and defaults a missing phase to integration")
+    let stalePush = String(staleJSON.dropLast()) + ",\"phase\":\"push\"}"
+    let decodedPush = try! decoder.decode(TodoItem.MilestoneCandidate.self, from: Data(stalePush.utf8))
+    expect(decodedPush == replaced, "decoding sends a saved push with stale passes back to integration")
+    let emptyReview = """
+        {"branch":"release/next","baseSHA":"\(base)","phase":"review"}
+        """
+    let decodedEmpty = try! decoder.decode(TodoItem.MilestoneCandidate.self, from: Data(emptyReview.utf8))
+    expect(decodedEmpty.candidateSHA == nil && decodedEmpty.phase == .integration, "decoding an advanced phase without a candidate returns to integration")
+
+    for role in [TodoItem.Role.plain, .step, .goal] {
+        let saved = """
+            {"id":"\(milestoneID)","listID":"\(UUID())","role":"\(role.rawValue)","milestoneCandidate":\(staleJSON)}
+            """
+        var item = try! decoder.decode(TodoItem.self, from: Data(saved.utf8))
+        expect(item.role == role && item.milestoneCandidate == nil, "only milestones decode a stored candidate")
+        item.milestoneCandidate = candidate
+        expect(item.milestoneCandidate == nil, "only milestones accept a candidate")
+        item.role = .milestone
+        item.milestoneCandidate = candidate
+        item.role = role
+        expect(item.milestoneCandidate == nil, "changing a milestone to another role clears its candidate")
+    }
 }
 
 func testTodoStore() {

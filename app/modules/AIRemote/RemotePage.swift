@@ -36,6 +36,23 @@ public enum RemotePage {
             "toBottom": L("맨 아래로", "Scroll to bottom"),
             "photo": L("사진", "Photo"),
             "send": L("보내기", "Send"),
+            "usage": L("AI 사용량", "AI Usage"),
+            "usageClose": L("닫기", "Close"),
+            "usageRefresh": L("새로고침", "Refresh"),
+            "usageLoading": L("사용량 확인 중…", "Loading usage…"),
+            "usageEmpty": L("표시할 계정이 없어요.", "No accounts to show."),
+            "usageNoReading": L("{device} 기준 · 측정 기록 없음", "{device} · No readings yet"),
+            "usageAge": L("{device} 기준 · {n}분 전 측정", "{device} · Measured {n} min ago"),
+            "usageRecent": L("{device} 기준 · 방금 측정", "{device} · Measured just now"),
+            "usageFive": L("5시간", "5h"),
+            "usageWeek": L("주간", "Week"),
+            "usageLogin": L("로그인 필요", "Sign-in required"),
+            "usageUnused": L("아직 안 씀", "Not used yet"),
+            "usageRefilled": L("충전됨", "Refilled"),
+            "usageRefills": L("{time} 후 충전", "Refills in {time}"),
+            "usageDays": L("{n}일", "{n}d"),
+            "usageHours": L("{n}시간", "{n}h"),
+            "usageMinutes": L("{n}분", "{n}m"),
             "update": L("업데이트", "Update"),
             "updCurrent": L("이 Mac의 버전", "This Mac's version"),
             "updAvailable": L("업데이트 있음 {a} → {b}", "Update available {a} → {b}"),
@@ -110,7 +127,7 @@ body.instant .view, body.instant #shade, body.dragging .view, body.dragging #sha
 .bar .mid { position:absolute; left:84px; right:84px; text-align:center; pointer-events:none; overflow:hidden; }
 .bar .mid b { display:block; font-size:16px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .bar .mid small { display:block; font-size:12px; color:var(--dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-#listTitle { opacity:0; transition:opacity .15s; } #listView .bar.under #listTitle { opacity:1; }
+#listTitle { left:106px; right:106px; opacity:0; transition:opacity .15s; } #listView .bar.under #listTitle { opacity:1; }
 .tool { width:44px; height:44px; border:0; background:none; color:var(--accent); display:flex; align-items:center; justify-content:center; border-radius:22px; }
 .tool:active { background:var(--press); }
 .back { border:0; background:none; color:var(--accent); display:flex; align-items:center; gap:2px; height:44px; padding:0 8px 0 4px; font-size:17px; }
@@ -226,6 +243,39 @@ mark { background:rgba(255,214,10,.45); color:inherit; border-radius:3px; paddin
 .updrow { margin:4px 10px 0; background:var(--fill); }
 .updrow .name > div { white-space:normal !important; }
 
+#usagePanel { width:min(560px, calc(100% - 24px)); max-height:calc(100% - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 24px);
+  border:1px solid var(--line); border-radius:20px; padding:0; background:var(--bg); color:var(--text); }
+#usagePanel[open] { display:flex; flex-direction:column; }
+#usagePanel::backdrop { background:rgba(0,0,0,.44); }
+.usageHead, .usageFoot { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 14px; }
+.usageHead { border-bottom:1px solid var(--line); }
+.usageHead h2 { font-size:18px; margin:0; }
+.usageFoot { border-top:1px solid var(--line); font-size:13px; color:var(--dim); }
+.usageHead button, .usageFoot button { flex:none; min-height:44px; padding:6px 10px; border:0; border-radius:10px; background:var(--fill); color:var(--accent); }
+.usageFoot button:disabled { opacity:.5; }
+#usageAge, #usageAccounts { min-width:0; overflow-wrap:anywhere; }
+#usageAccounts { min-height:0; overflow:auto; overscroll-behavior:contain; padding:0 14px 14px; }
+#usageStatus { color:var(--dim); font-size:13px; padding:0 14px; margin:0; }
+#usageStatus:not(:empty) { padding-bottom:8px; }
+.usageGroup h3 { color:var(--cl, var(--text)); font-size:14px; margin:16px 0 6px; }
+@media (prefers-color-scheme: dark) { .usageGroup h3 { color:var(--cd, var(--text)); } }
+.usageAccount { padding:9px 0; border-top:1px solid var(--line); }
+.usageName { margin:0 0 6px; font-size:15px; }
+.usageSmall, .usageTime, .usageLabel { color:var(--dim); font-size:13px; }
+.usageSmall { margin:4px 0 0; font-weight:normal; }
+.usagePlan { margin-inline-start:8px; }
+.usageLogin { color:var(--warn); }
+.usageLimit { display:grid; grid-template-columns:3.25rem minmax(0, 1fr) 3rem; gap:2px 6px; align-items:center; margin:4px 0; }
+.usageTime { grid-column:2 / -1; }
+.usageLeft { text-align:right; font-size:14px; font-weight:600; font-variant-numeric:tabular-nums; color:var(--remaining, var(--text)); }
+.usageLow { --remaining:var(--warn); } .usageCritical { --remaining:var(--red); }
+.usageBar { position:relative; height:6px; border-radius:6px; background:var(--fill); }
+.usageBar i { display:block; height:100%; border-radius:inherit; background:var(--remaining, var(--text)); opacity:.8; }
+.usageBar b { position:absolute; top:-2px; width:1px; height:10px; background:var(--text); opacity:.55; }
+@media (min-width:520px) {
+  .usageLimits { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:16px; }
+}
+
 /* The message box: one rounded card, text on top, + on the left and send on the right (the Mac's composer). */
 footer { position:relative; padding:6px 10px calc(env(safe-area-inset-bottom) + 8px); background:var(--bg); }
 .box { border-radius:22px; border:1px solid var(--line); background:var(--box); box-shadow:0 3px 12px rgba(0,0,0,.07); padding:10px 10px 8px 14px; }
@@ -259,6 +309,7 @@ footer { position:relative; padding:6px 10px calc(env(safe-area-inset-bottom) + 
 <div id="listView" class="view">
   <div class="bar" id="listBar">
     <div class="mid" id="listTitle"><b>AI Illuminati</b></div>
+    <button class="tool" id="usageTool" aria-haspopup="dialog"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.2 17a9 9 0 1 1 15.6 0H4.2ZM12 14l4-5"/><circle cx="12" cy="14" r="1"/></svg></button>
     <button class="tool" id="updTool" aria-label="update"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v8M8.5 12.5 12 16l3.5-3.5"/></svg></button>
     <div class="spacer"></div>
     <button class="tool" id="compose" aria-label="new chat"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6"/><path d="M17.6 3.4a1.9 1.9 0 0 1 2.7 2.7L12 14.4l-3.6.9.9-3.6z"/></svg></button>
@@ -298,6 +349,12 @@ footer { position:relative; padding:6px 10px calc(env(safe-area-inset-bottom) + 
   </footer>
 </div>
 <div id="viewer" class="hidden"><img alt=""></div>
+<dialog id="usagePanel" aria-labelledby="usageTitle">
+  <div class="usageHead"><h2 id="usageTitle"></h2><button id="usageClose" autofocus></button></div>
+  <div id="usageAccounts"></div>
+  <p id="usageStatus" role="status"></p>
+  <div class="usageFoot"><span id="usageAge"></span><button id="usageRefresh"></button></div>
+</dialog>
 <script>
 const S = __STRINGS__;
 const params = new URLSearchParams(location.search);
@@ -499,6 +556,94 @@ $('list').addEventListener('click', e => {
 $('compose').addEventListener('click', () => go('#new'));
 $('updTool').addEventListener('click', () => go('#update'));
 $('updRow').addEventListener('click', e => { e.preventDefault(); go('#update'); });
+
+const usagePanel = $('usagePanel'), usageRefresh = $('usageRefresh');
+let usageTimer = null, usagePending = false, usageSnapshot = null;
+
+function usageRefill(resetsAt, now) {
+  if (resetsAt === null) return S.usageUnused;
+  if (resetsAt <= now) return S.usageRefilled;
+  const minutes = Math.floor((resetsAt - now) / 60000);
+  let time;
+  if (minutes < 60) {
+    time = S.usageMinutes.replace('{n}', Math.max(minutes, 1));
+  } else if (minutes < 1440) {
+    time = S.usageHours.replace('{n}', Math.floor(minutes / 60));
+    if (minutes % 60) time += ' ' + S.usageMinutes.replace('{n}', minutes % 60);
+  } else {
+    time = S.usageDays.replace('{n}', Math.floor(minutes / 1440));
+    const hours = Math.floor((minutes % 1440) / 60);
+    if (hours) time += ' ' + S.usageHours.replace('{n}', hours);
+  }
+  return S.usageRefills.replace('{time}', time);
+}
+
+function usageLimit(label, limit, duration, now) {
+  const title = '<span class="usageLabel">' + esc(label) + '</span>';
+  if (!limit) return '<div class="usageLimit">' + title + '<span class="usageSmall">—</span></div>';
+  const remaining = limit.resetsAt !== null && limit.resetsAt <= now ? 100 : limit.left;
+  const level = remaining < 10 ? ' usageCritical' : remaining < 30 ? ' usageLow' : '';
+  const tick = limit.resetsAt > now ? '<b style="left:clamp(0px,' +
+    Math.min(100, (limit.resetsAt - now) * 100 / duration) + '%,calc(100% - 1px))"></b>' : '';
+  return '<div class="usageLimit' + level + '">' + title +
+    '<span class="usageBar" aria-hidden="true"><i style="width:' + remaining + '%"></i>' + tick + '</span>' +
+    '<span class="usageLeft">' + Math.round(remaining) + '%</span>' +
+    '<span class="usageTime">' + esc(usageRefill(limit.resetsAt, now)) + '</span></div>';
+}
+
+function renderUsage(data) {
+  const now = Date.now();
+  const minutes = Math.max(0, Math.floor((now - data.checkedAt) / 60000));
+  const age = data.checkedAt === null ? S.usageNoReading : minutes > 0 ? S.usageAge : S.usageRecent;
+  $('usageAge').textContent = age.replace('{n}', minutes).replace('{device}', () => data.device);
+  $('usageAccounts').innerHTML = data.groups.map(g => '<section class="usageGroup"' + colorStyle(g.color) + '><h3>' +
+    esc(g.name) + '</h3>' + g.accounts.map(a =>
+      '<div class="usageAccount"><h4 class="usageName">' + esc(a.name) +
+      (a.plan ? '<span class="usageSmall usagePlan">' + esc(a.plan) + '</span>' : '') + '</h4>' +
+      '<div class="usageLimits">' + usageLimit(S.usageFive, a.fiveHour, 5 * 60 * 60 * 1000, now) +
+      usageLimit(S.usageWeek, a.weekly, 7 * 24 * 60 * 60 * 1000, now) + '</div>' +
+      (a.needsLogin && g.provider !== 'ollama' ? '<p class="usageSmall usageLogin">' + esc(S.usageLogin) + '</p>' : '') +
+      (a.note ? '<p class="usageSmall">' + esc(a.note) + '</p>' : '') +
+      a.extras.map(extra => '<p class="usageSmall">' + esc(extra) + '</p>').join('') + '</div>'
+    ).join('') + '</section>').join('') || '<p class="note">' + esc(S.usageEmpty) + '</p>';
+}
+
+async function loadUsage(refresh = false) {
+  clearTimeout(usageTimer);
+  if (!usagePanel.open || document.hidden || usagePending) return;
+  if (!KEY) { $('usageStatus').textContent = S.noKey; return; }
+  usagePending = true;
+  usageRefresh.disabled = true;
+  if (!usageSnapshot) $('usageStatus').textContent = S.usageLoading;
+  try {
+    usageSnapshot = await api(refresh ? '/api/usage/refresh' : '/api/usage', refresh ? {} : undefined, 8000);
+    if (usagePanel.open) {
+      renderUsage(usageSnapshot);
+      $('usageStatus').textContent = '';
+    }
+  } catch {
+    if (usagePanel.open) $('usageStatus').textContent = S.offline;
+  } finally {
+    usagePending = false;
+    usageRefresh.disabled = false;
+    if (usagePanel.open && !document.hidden) usageTimer = setTimeout(loadUsage, 45000);
+  }
+}
+
+$('usageTool').setAttribute('aria-label', S.usage);
+$('usageTitle').textContent = S.usage;
+$('usageClose').textContent = S.usageClose;
+usageRefresh.textContent = S.usageRefresh;
+$('usageTool').addEventListener('click', () => {
+  usagePanel.showModal();
+  if (usageSnapshot) renderUsage(usageSnapshot);
+  loadUsage();
+});
+$('usageClose').addEventListener('click', () => usagePanel.close());
+usagePanel.addEventListener('close', () => { if (!usagePanel.open) clearTimeout(usageTimer); });
+usageRefresh.addEventListener('click', () => loadUsage(true));
+document.addEventListener('visibilitychange', () => loadUsage());
+
 
 // Updating this Mac from the phone: Update Now restarts the app, so the page loses it for a while. `track` (kept on this
 // phone) says which version it left from; a new version answering means done, the old one answering again after the
@@ -857,7 +1002,7 @@ $('chatView').addEventListener('touchcancel', endDrag, { passive: true });
 // On a Mac (another Mac opens this page, or a desktop browser): Esc closes the photo or goes back; a two-finger swipe
 // to the right on the trackpad goes back too, except over rows that scroll sideways.
 document.addEventListener('keydown', e => {
-  if (e.key !== 'Escape' || e.isComposing) return;
+  if (e.key !== 'Escape' || e.isComposing || usagePanel.open) return;
   if (!$('viewer').classList.contains('hidden')) { $('viewer').classList.add('hidden'); return; }
   if (current) { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); setOpen(false, true); back(); }
 });

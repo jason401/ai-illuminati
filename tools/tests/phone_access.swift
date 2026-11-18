@@ -4,6 +4,7 @@ import CoreImage
 import AIAccounts
 import AILocalization
 import AIRemote
+@testable import AIRuntime
 @testable import AIProjects
 @testable import AIChat
 
@@ -161,6 +162,8 @@ func testPhoneUpdates() {
            && first.1["work"] as? Int == 2 && first.1["busy"] as? Bool == false, "phone updates: the state \(first)")
     expect(call("GET", "/api/update", key: nil).0 == 401 && call("POST", "/api/update/install", key: "wrong").0 == 401 && fake.installs == 0,
            "phone updates: no key, no state and no install")
+    expect(call("GET", "/api/usage", key: nil).0 == 401 && call("POST", "/api/usage/refresh", key: "wrong").0 == 401,
+           "phone usage: both routes require the remote key")
     expect(call("POST", "/api/update/check", key: key).0 == 200 && fake.checks == 1, "phone updates: a check")
     let started = call("POST", "/api/update/install", key: key)
     expect(started.0 == 200 && started.1["busy"] as? Bool == true && fake.installs == 1, "phone updates: the install starts and says so")
@@ -227,4 +230,99 @@ func testPhoneUpdates() {
     expect(state["current"] is String && state["busy"] as? Bool == false && state["channel"] as? String != nil, "phone updates: the updater's state")
     expect(Updater.describe(["status": "failed", "detail": "x", "lastResult": "rolled-back", "lastDetail": "x"]).contains(L("되돌렸어요", "went back")),
            "phone updates: a rollback says so")
+}
+
+/// The usage route reads synthetic snapshots with no discussion, settings or provider process.
+func testPhoneUsage() {
+    final class FakeUsage: PhoneUsage {
+        var snapshot: PhoneUsageSnapshot
+        var refreshes = 0
+        init(_ snapshot: PhoneUsageSnapshot) { self.snapshot = snapshot }
+        func phoneUsageSnapshot() -> PhoneUsageSnapshot { snapshot }
+        func phoneRefreshUsage() {
+            refreshes += 1
+            // Replace immediately to prove POST returns the snapshot that was already available.
+            snapshot = PhoneUsageSnapshot(device: snapshot.device, accounts: [], readings: [:], colors: [:])
+        }
+    }
+
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let first = Account(id: "personal", provider: .codex, name: "Personal")
+    let second = Account(id: "school", provider: .claude, name: "School school@example.test")
+    let third = Account(id: "work", provider: .codex, name: "Work")
+    let local = Account(id: "local", provider: .ollama, name: "Local")
+    var personal = AIUsage(name: first.name, account: first)
+    personal.fiveHour = UsageWindow(usedPercent: 90, resetsAt: now.addingTimeInterval(-1))
+    personal.weekly = UsageWindow(usedPercent: 79, resetsAt: now.addingTimeInterval(3600))
+    personal.detail = "private@example.test · plus"
+    personal.checkedAt = now.addingTimeInterval(-30)
+    var school = AIUsage(name: second.name, account: second)
+    school.detail = "school@example.test"
+    school.note = "Sign in as school@example.test to continue"
+    school.extras = ["Extra limit", "Account: school@example.test"]
+    school.needsLogin = true
+    school.checkedAt = now.addingTimeInterval(-120)
+    var ollama = AIUsage(name: local.name, account: local)
+    ollama.fiveHour = UsageWindow(usedPercent: 0, resetsAt: nil)
+    ollama.weekly = ollama.fiveHour
+    var removed = AIUsage(name: "Removed")
+    removed.checkedAt = now.addingTimeInterval(-600)
+    let fake = FakeUsage(PhoneUsageSnapshot(device: "Mini", accounts: [first, second, third, local],
+                                            readings: [first.id: personal, second.id: school, local.id: ollama, "removed": removed],
+                                            colors: [.codex: ["#008850", "#00bb80"]]))
+    let server = PhoneServer(enabled: false)
+    func call(_ method: String, _ path: String, uptime: TimeInterval = 100) -> RemoteResponse {
+        server.handle(RemoteRequest(method: method, path: path), now: now, uptime: uptime)
+    }
+    func object(_ response: RemoteResponse) -> [String: Any] {
+        (try? JSONSerialization.jsonObject(with: response.body)) as? [String: Any] ?? [:]
+    }
+    expect(call("GET", "/api/usage").status == 404, "phone usage: no provider, not ready")
+    server.usage = fake
+
+    let initial = call("GET", "/api/usage"), data = object(initial)
+    let groups = data["groups"] as? [[String: Any]] ?? []
+    let codex = groups.first?["accounts"] as? [[String: Any]] ?? []
+    let personalRow = codex.first ?? [:]
+    let schoolRows = groups.first { $0["provider"] as? String == "claude" }?["accounts"] as? [[String: Any]] ?? []
+    let schoolRow = schoolRows.first ?? [:]
+    let localRows = groups.last?["accounts"] as? [[String: Any]] ?? []
+    let localRow = localRows.first ?? [:]
+    let five = personalRow["fiveHour"] as? [String: Any]
+    let week = personalRow["weekly"] as? [String: Any]
+    expect(initial.status == 200 && data["device"] as? String == "Mini"
+           && data["checkedAt"] as? Double == (now.timeIntervalSince1970 - 120) * 1000,
+           "phone usage: oldest reading for a current account, ignoring removed accounts")
+    expect(groups.compactMap { $0["provider"] as? String } == ["codex", "claude", "ollama"]
+           && groups.first?["color"] as? [String] == ["#008850", "#00bb80"]
+           && codex.compactMap { $0["name"] as? String } == ["Personal", "Work"],
+           "phone usage: groups ordered by first appearance, accounts in settings order")
+    expect(personalRow["plan"] as? String == "plus" && five?["left"] as? Double == 100
+           && five?["resetsAt"] as? Double == (now.timeIntervalSince1970 - 1) * 1000
+           && week?["left"] as? Double == 21 && week?["resetsAt"] as? Double == (now.timeIntervalSince1970 + 3600) * 1000,
+           "phone usage: plan and raw reset dates, expired limits display 100%")
+    expect(schoolRow["fiveHour"] is NSNull && schoolRow["weekly"] is NSNull && schoolRow["plan"] is NSNull
+           && schoolRow["needsLogin"] as? Bool == true
+           && schoolRow["note"] as? String == "Sign in as … to continue"
+           && schoolRow["extras"] as? [String] == ["Extra limit", "Account: …"]
+           && codex.last?["weekly"] is NSNull,
+           "phone usage: missing limits and readings are null; note, extras and login state are retained")
+    expect(localRow["fiveHour"] is NSNull && localRow["weekly"] is NSNull
+           && localRow["extras"] as? [String] == [L("한도 없음", "No limit")],
+           "phone usage: Ollama has no limits even when the status icon uses synthetic full bars")
+    expect(!String(decoding: initial.body, as: UTF8.self).contains("@"), "phone usage: no email anywhere in the response")
+    expect(call("GET", "/api/usage/refresh").status == 404 && call("POST", "/api/usage").status == 404 && fake.refreshes == 0,
+           "phone usage: only POST refresh can start a measurement")
+    let started = call("POST", "/api/usage/refresh")
+    expect(started.status == 200 && object(started)["checkedAt"] as? Double == data["checkedAt"] as? Double && fake.refreshes == 1,
+           "phone usage: the first refresh returns the cached snapshot immediately")
+    let throttled = call("POST", "/api/usage/refresh", uptime: 159.99)
+    expect(throttled.status == 200 && object(throttled)["checkedAt"] is NSNull && fake.refreshes == 1,
+           "phone usage: an early repeat returns the latest snapshot without starting another measurement")
+    expect(call("POST", "/api/usage/refresh", uptime: 160).status == 200 && fake.refreshes == 2,
+           "phone usage: refresh is accepted at the 60-second boundary")
+
+    let page = String(decoding: RemotePage.html(), as: UTF8.self)
+    expect(page.contains("id=\"usagePanel\"") && page.contains("'/api/usage/refresh'") && page.contains("45000"),
+           "phone usage: the page has the usage panel, refresh route and polling timer")
 }

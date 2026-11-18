@@ -4,6 +4,7 @@ import SwiftUI
 import CoreImage
 import AIAccounts
 import AILocalization
+import AIRuntime
 import AIChat
 import AIProjects
 import AIRemote
@@ -145,6 +146,75 @@ protocol PhoneUpdates: AnyObject {
 
 extension Updater: PhoneUpdates {}
 
+protocol PhoneUsage: AnyObject {
+    func phoneUsageSnapshot() -> PhoneUsageSnapshot
+    func phoneRefreshUsage()
+}
+
+struct PhoneUsageSnapshot {
+    let device: String
+    let accounts: [Account]
+    let readings: [String: AIUsage]
+    let colors: [Account.Provider: [String]]
+
+    func json(at now: Date) -> [String: Any] {
+        // Account names and notes can contain user-supplied text, including email addresses.
+        func safe(_ text: String) -> String {
+            text.replacingOccurrences(of: #"\S*@\S*"#, with: "…", options: .regularExpression)
+        }
+        // All date values on the wire use Unix milliseconds for JavaScript.
+        func timestamp(_ date: Date?) -> Any {
+            guard let date else { return NSNull() }
+            return date.timeIntervalSince1970 * 1000
+        }
+        func window(_ usage: UsageWindow?) -> Any {
+            guard let usage else { return NSNull() }
+            return ["left": usage.left(now: now), "resetsAt": timestamp(usage.resetsAt)]
+        }
+        var providers: [Account.Provider] = []
+        var entries: [Account.Provider: [[String: Any]]] = [:]
+        for account in accounts {
+            if entries[account.provider] == nil { providers.append(account.provider) }
+            let usage = readings[account.id]
+            let plan = usage?.detail?.components(separatedBy: " · ").last
+            let isLocal = account.provider == .ollama
+            var extras = usage?.extras.map(safe) ?? []
+            // Ollama's synthetic full bars are only for the menu bar icon.
+            if isLocal, usage?.fiveHour != nil || usage?.weekly != nil {
+                extras.insert(L("한도 없음", "No limit"), at: 0)
+            }
+            entries[account.provider, default: []].append([
+                "name": safe(account.name),
+                "plan": plan.flatMap { $0.isEmpty || $0.contains("@") ? nil : $0 } as Any? ?? NSNull(),
+                "fiveHour": window(isLocal ? nil : usage?.fiveHour),
+                "weekly": window(isLocal ? nil : usage?.weekly),
+                "extras": extras,
+                "note": usage?.note.map(safe) as Any? ?? NSNull(),
+                "needsLogin": usage?.needsLogin ?? false,
+            ])
+        }
+        let checkedAt = accounts.compactMap { readings[$0.id]?.checkedAt }.min()
+        let groups: [[String: Any]] = providers.map { provider in
+            ["provider": provider.rawValue, "name": provider.title,
+             "color": colors[provider] ?? [], "accounts": entries[provider] ?? []]
+        }
+        return ["device": safe(device), "checkedAt": timestamp(checkedAt), "groups": groups]
+    }
+
+    static func webColors(_ provider: Account.Provider) -> [String] {
+        let color = AIColors.color(provider, in: .app)
+        return [NSAppearance.Name.aqua, .darkAqua].map { name in
+            var hex = "#888888"
+            NSAppearance(named: name)?.performAsCurrentDrawingAppearance {
+                guard let rgb = color.usingColorSpace(.sRGB) else { return }
+                hex = String(format: "#%02x%02x%02x",
+                             Int(rgb.redComponent * 255), Int(rgb.greenComponent * 255), Int(rgb.blueComponent * 255))
+            }
+            return hex
+        }
+    }
+}
+
 final class PhoneServer: ObservableObject {
     static let shared = PhoneServer()
     static let port: UInt16 = 47380
@@ -154,9 +224,16 @@ final class PhoneServer: ObservableObject {
     @Published private(set) var problem: String?
     weak var discussion: Discussion?   // set by start; tests set it directly
     weak var updates: PhoneUpdates?    // set at app start; tests set a stand-in
+    weak var usage: PhoneUsage?        // set at app start; tests set a stand-in
+    private var lastUsageRefresh: TimeInterval?
     private var server: RemoteServer?
 
-    @Published private(set) var enabled = UserDefaults.app.bool(forKey: PhoneServer.enabledKey)
+    @Published private(set) var enabled: Bool
+
+    init(enabled: Bool = UserDefaults.app.bool(forKey: PhoneServer.enabledKey)) {
+        self.enabled = enabled
+    }
+
     var key: String {
         if let key = UserDefaults.app.string(forKey: Self.keyKey), !key.isEmpty { return key }
         let key = RemoteHTTP.newKey()
@@ -300,9 +377,14 @@ final class PhoneServer: ObservableObject {
     // GET /api/chats, GET /api/search?q=, GET /api/chat/<id>[?open=1], GET /api/image/<chat>/<picture>,
     // POST /api/chat/new {text, images, project?} → {id}, POST /api/chat/<id>/send, POST /api/approval/<id> {allow},
     // GET /api/update, POST /api/update/check, POST /api/update/install (409 while an update step runs).
-    func handle(_ request: RemoteRequest) -> RemoteResponse {
+    // GET /api/usage, POST /api/usage/refresh (returns the cached reading immediately).
+    func handle(_ request: RemoteRequest, now: Date = Date(),
+                uptime: TimeInterval = ProcessInfo.processInfo.systemUptime) -> RemoteResponse {
         let parts = request.path.split(separator: "/").map(String.init)   // ["api", ...]
         if parts.count > 1, parts[1] == "update" { return handleUpdate(request.method, Array(parts.dropFirst(2))) }
+        if parts.count > 1, parts[1] == "usage" {
+            return handleUsage(request.method, Array(parts.dropFirst(2)), now: now, uptime: uptime)
+        }
         guard let discussion else { return .error(404, "not ready") }
         switch (request.method, parts.count > 1 ? parts[1] : "", parts.count) {
         case ("GET", "chats", 2):
@@ -336,6 +418,23 @@ final class PhoneServer: ObservableObject {
             }
             ProjectCenter.shared.decide(id, allow: allow)
             return .json(["ok": true])
+        default:
+            return .error(404, "not found")
+        }
+    }
+
+    private func handleUsage(_ method: String, _ rest: [String], now: Date, uptime: TimeInterval) -> RemoteResponse {
+        guard let usage else { return .error(404, "not ready") }
+        switch (method, rest) {
+        case ("GET", []):
+            return .json(usage.phoneUsageSnapshot().json(at: now))
+        case ("POST", ["refresh"]):
+            let response = RemoteResponse.json(usage.phoneUsageSnapshot().json(at: now))
+            if lastUsageRefresh.map({ uptime - $0 >= 60 }) ?? true {
+                lastUsageRefresh = uptime
+                usage.phoneRefreshUsage()
+            }
+            return response
         default:
             return .error(404, "not found")
         }

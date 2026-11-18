@@ -12,7 +12,7 @@ import AIIntegrations
 // AI Illuminati: a menu bar gauge that shows how much of each AI subscription is left
 // (5-hour and weekly limits) and when each one resets, for any number of Claude and ChatGPT
 // accounts. Uses each tool's own login (subscription), never API keys.
-final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, PhoneUsage {
     private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let menu = NSMenu()
     private let work = DispatchQueue(label: "usage")
@@ -149,6 +149,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             .sink { [weak self] _ in self?.showPending(); self?.rebuildMenu() }
         // The phone page's update screen; an update started there is acknowledged once that page answers again.
         PhoneServer.shared.updates = model.updater
+        PhoneServer.shared.usage = self
         model.updater.phoneReady = { PhoneServer.shared.reachable($0) }
         model.updater.start()
         // The bridge's tool socket and AI Face's older socket open first, then the link to AI Face (as before I).
@@ -247,6 +248,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let projects = SidebarProjects.group(discussion.listedConversations.filter(\.hasContent), todo: TodoStore.shared.snapshot, pinned: []).projects
         GitBranchStore.shared.autoPull(projects.flatMap(\.bindings))
     }
+
+    func phoneUsageSnapshot() -> PhoneUsageSnapshot {
+        let colors = Dictionary(uniqueKeysWithValues: Set(accounts.map(\.provider)).map { ($0, PhoneUsageSnapshot.webColors($0)) })
+        return PhoneUsageSnapshot(device: DeviceSync.shared.deviceName, accounts: accounts, readings: model.latestUsage, colors: colors)
+    }
+
+    func phoneRefreshUsage() { refresh() }
 
     @objc private func refresh() {
         let list = accounts

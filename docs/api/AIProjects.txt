@@ -219,6 +219,7 @@ SubWork.merge(_:_:sha:owned:reported:token:) | static func merge(_ binding: Proj
 SubWork.remove(_:_:token:) | static func remove(_ binding: ProjectBinding, _ tree: SubWork.Tree, token: DebateCancellation? = nil) throws
 SubWork.report(_:token:) | static func report(_ tree: SubWork.Tree, token: DebateCancellation? = nil) throws -> (sha: String, changed: [String])
 SubWork.resync(_:_:token:) | static func resync(_ binding: ProjectBinding, _ tree: SubWork.Tree, token: DebateCancellation? = nil) throws -> [String]
+SubWork.testMilestone(_:_:candidate:room:fullAuto:token:onLine:) | static func testMilestone(_ binding: ProjectBinding, _ tree: SubWork.Tree, candidate: inout TodoItem.MilestoneCandidate, room: UUID, fullAuto: Bool, token: DebateCancellation, onLine: ((String) -> Void)? = nil) throws
 TaskLink | final class TaskLink
 TaskLink.active | var active: Bool { get }
 TaskLink.call(_:_:context:) | func call(_ name: String, _ arguments: [String : Any], context: ToolContext) -> [String : Any]

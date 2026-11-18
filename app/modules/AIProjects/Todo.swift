@@ -145,6 +145,11 @@ public struct TodoItem: Codable, Identifiable, Equatable {
             if sha == candidateSHA { testedSHA = sha }
         }
 
+        mutating func clearTest() {
+            testedSHA = nil
+            if phase == .push || phase == .confirmation { phase = .test }
+        }
+
         public mutating func setPhase(_ phase: Phase) {
             guard phase == .integration || candidateSHA != nil else { return }
             if phase == .push || phase == .confirmation {

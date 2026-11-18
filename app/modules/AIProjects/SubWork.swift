@@ -62,6 +62,15 @@ public enum SubWork {
         guard !binding.isDocuments, !binding.isFolderless, let common = ProjectWork.commonDir(binding.root) else { throw ProjectError.make("A Git project is required.") }
         return common
     }
+    private static func ownsGoalTree(_ tree: Tree, common: String, token: DebateCancellation?) -> Bool {
+        let prefix = "todo-goal/"
+        guard tree.branch.hasPrefix(prefix) else { return false }
+        func real(_ path: String) -> String { URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path }
+        let own = real(folder(common: common, name: "goal-" + tree.branch.dropFirst(prefix.count)))
+        return FileManager.default.fileExists(atPath: tree.path) && real(tree.path) == own && ProjectWork.commonDir(tree.path) == common
+            && (try? git(["rev-parse", "--show-toplevel"], tree.path, token)).map(real) == own
+            && (try? git(["branch", "--show-current"], tree.path, token)) == tree.branch
+    }
     // The sub-room's work tree lock, held while the app changes that tree: a sub-room still writing (here or in another
     // app instance) makes the step stop instead.
     private static func holding<T>(_ tree: Tree, _ body: () throws -> T) throws -> T {
@@ -184,12 +193,8 @@ public enum SubWork {
             throw ProjectError.make("A remote and a valid target branch are required for a Goal.")
         }
         // Only the Goal's own folder as SubWork.goal makes it: a user's checkout on a todo-goal/ branch is never merged in.
-        func real(_ folder: String) -> String { URL(fileURLWithPath: folder).resolvingSymlinksInPath().standardizedFileURL.path }
-        let own = real(folder(common: common, name: "goal-" + tree.branch.dropFirst("todo-goal/".count)))
         func owned() -> Bool {
-            FileManager.default.fileExists(atPath: tree.path) && real(tree.path) == own && ProjectWork.commonDir(tree.path) == common
-                && (try? git(["rev-parse", "--show-toplevel"], tree.path, token)).map(real) == own
-                && (try? git(["branch", "--show-current"], tree.path, token)) == tree.branch
+            ownsGoalTree(tree, common: common, token: token)
         }
         guard owned() else { throw ProjectError.make("The Goal's work tree is missing or not on " + tree.branch) }
         let held: [String]
@@ -233,6 +238,62 @@ public enum SubWork {
                 throw ProjectError.make("The Goal's HEAD does not contain the remote SHA after merging: " + remote)
             }
             return (remote, candidate)
+        }
+    }
+
+    // TODO structure 10. The Milestone runner saves this candidate on the TODO when it returns.
+    public static func testMilestone(_ binding: ProjectBinding, _ tree: Tree, candidate: inout TodoItem.MilestoneCandidate,
+                                     room: UUID, fullAuto: Bool, token: DebateCancellation, onLine: ((String) -> Void)? = nil) throws {
+        candidate.clearTest()
+        guard let sha = candidate.candidateSHA, candidate.reviewedSHA == sha else {
+            throw fail("후보 SHA의 리뷰가 먼저 필요해요.", "Review the candidate SHA before running its full test.")
+        }
+        candidate.setPhase(.test)
+        let common = try project(binding), root = tree.path
+        func checkTree() throws {
+            guard ownsGoalTree(tree, common: common, token: token),
+                  try git(["rev-parse", "HEAD"], root, token) == sha else {
+                throw fail("Goal 작업 폴더의 HEAD가 후보 SHA와 달라요.", "The Goal work tree's HEAD differs from the candidate SHA.")
+            }
+            guard try git(["status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none"], root, token).isEmpty,
+                  try !merging(root, token) else {
+                throw fail("Goal 작업 폴더에 커밋하지 않은 변경이 있어요.", "The Goal work tree has uncommitted changes.")
+            }
+        }
+        // Compare both logs so a checkout or ref update followed by a return to the candidate also invalidates the run.
+        func reflogs() throws -> [String] {
+            try ["HEAD", "refs/heads/" + tree.branch].map { try git(["reflog", "show", "--format=%H", $0], root, token) }
+        }
+        let filters = ["AI_ILLUMINATI_TEST_ONLY", "AI_ILLUMINATI_TEST_CLAIM", "AI_ILLUMINATI_TEST_SHARD"]
+        let args = filters.flatMap { ["-u", $0] } + ["/bin/zsh", "-f", StepTests.script]
+        try holding(tree) {
+            try checkTree()
+            if !fullAuto {
+                let request = ProjectApproval(room: room, run: UUID(), title: L("Milestone 전체 테스트", "Milestone full test"),
+                                              detail: root + "\n" + sha + "\n/usr/bin/env " + args.joined(separator: " "))
+                guard ProjectCenter.shared.approve(request, token: token, deadline: Date().addingTimeInterval(900)) else {
+                    throw fail("Milestone 전체 테스트 실행을 승인받지 못했어요.", "Running the Milestone's full test was not approved.")
+                }
+            }
+            let deadline = Date().addingTimeInterval(2700)
+            try ProjectWork.oneRun(root, until: deadline, token: token,
+                                   waiting: { onLine?(L("이 저장소의 다른 명령이 끝나길 기다리는 중", "Waiting for another command in this repository")) }) {
+                let logs = try reflogs()
+                try checkTree()
+                let home = FileManager.default.temporaryDirectory.appendingPathComponent("ai-milestone-" + UUID().uuidString)
+                try FileManager.default.createDirectory(at: home, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+                defer { try? FileManager.default.removeItem(at: home) }
+                let result = try ProjectProcess.run("/usr/bin/env", args, cwd: root, token: token, deadline: deadline, guarded: true,
+                                                    extra: ["AI_ILLUMINATI_TEST_HOME": home.path], onLine: onLine)
+                guard result.status == 0 else {
+                    throw fail("Milestone 전체 테스트 실패 (exit \(result.status))", "Milestone full test failed (exit \(result.status))")
+                }
+                try checkTree()
+                guard try reflogs() == logs, !token.isCancelled else {
+                    throw fail("테스트 중에 Goal HEAD가 바뀌었거나 실행이 취소됐어요.", "The Goal's HEAD moved during the test or the run was cancelled.")
+                }
+                candidate.recordTest(for: sha)
+            }
         }
     }
 

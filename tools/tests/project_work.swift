@@ -195,6 +195,7 @@ func testProjectWork() {
     expect(!todoCall("git_status"), "the app's push ends the AI's tool sessions")
     checkProjectStep(selected, origin: origin)
     checkGoalPushGuard(selected, origin: origin)
+    checkMilestoneFullTest(selected)
     print("PASS: plain-chat projects (repo locks, scoped tools, selective commits, push, dirty handoff, exact-SHA approval, named command approval, Stop and a TODO's one push)")
 }
 
@@ -378,6 +379,66 @@ private func checkGoalPushGuard(_ project: ProjectBinding, origin: URL) {
     reply = push()
     expect(reply.ok && remoteMain() == git(["rev-parse", "HEAD"]), "the check uses the remote's current main, not a stale tracking ref: \(reply.text)")
     print("PASS: Goal push guard (plain push unchanged, merged or cherry-picked Goal commits refused, only the Milestone's verified SHA)")
+}
+
+private func checkMilestoneFullTest(_ project: ProjectBinding) {
+    let tree = try! SubWork.goal(project, goal: UUID(), target: "main")
+    func git(_ args: [String]) -> String { try! ProjectProcess.git(args, root: tree.path) }
+    let dir = URL(fileURLWithPath: tree.path).appendingPathComponent("tools/tests")
+    try! FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    try! #"""
+    set -eu
+    [[ $# == 0 && ${AI_ILLUMINATI_TEST_ONLY+x}${AI_ILLUMINATI_TEST_CLAIM+x}${AI_ILLUMINATI_TEST_SHARD+x} == "" ]] || exit 21
+    [[ -d "$AI_ILLUMINATI_TEST_HOME" && "$AI_ILLUMINATI_TEST_HOME" != "$AI_MILESTONE_PARENT_HOME" ]] || exit 22
+    case "$AI_MILESTONE_CASE" in
+      pass) ;;
+      fail) exit 29 ;;
+      dirty) touch new-test-output ;;
+      moved|returned)
+        original=$(/usr/bin/git rev-parse HEAD)
+        /usr/bin/git commit -q --allow-empty -m 'HEAD moved in test'
+        [[ "$AI_MILESTONE_CASE" == moved ]] || /usr/bin/git reset -q --hard "$original"
+        ;;
+      stop) echo stopping; sleep 30 ;;
+    esac
+    """#.write(to: dir.appendingPathComponent("run_mode2.sh"), atomically: true, encoding: .utf8)
+    _ = git(["add", "tools/tests/run_mode2.sh"])
+    _ = git(["commit", "-qm", "Milestone test fixture"])
+    let sha = git(["rev-parse", "HEAD"])
+    var candidate = TodoItem.MilestoneCandidate(branch: "main", baseSHA: tree.base, candidateSHA: sha)
+    let environment = ["AI_ILLUMINATI_TEST_ONLY": "testProjectWork", "AI_ILLUMINATI_TEST_CLAIM": tree.path + "/old-claims",
+                       "AI_ILLUMINATI_TEST_SHARD": "9", "AI_MILESTONE_PARENT_HOME": AccountStore.home, "AI_MILESTONE_CASE": "pass"]
+    let saved = ProcessInfo.processInfo.environment
+    for (key, value) in environment { setenv(key, value, 1) }
+    defer {
+        for key in environment.keys {
+            if let value = saved[key] { setenv(key, value, 1) } else { unsetenv(key) }
+        }
+    }
+    func run(_ scenario: String) -> Error? {
+        setenv("AI_MILESTONE_CASE", scenario, 1)
+        let token = DebateCancellation()
+        do {
+            try SubWork.testMilestone(project, tree, candidate: &candidate, room: UUID(), fullAuto: true, token: token,
+                                      onLine: { if $0 == "stopping" { token.cancel() } })
+            return nil
+        } catch { return error }
+    }
+    expect(run("pass") != nil && candidate.testedSHA == nil, "the candidate needs its own review")
+    candidate.recordReview(for: sha)
+    let passed = run("pass")
+    expect(passed == nil && candidate.testedSHA == sha && candidate.phase == .test,
+           "the full command has no selection or sharding environment and uses a fresh test home: \(String(describing: passed))")
+    candidate.setPhase(.push)
+    let failed = run("fail")
+    expect(failed?.localizedDescription.contains("29") == true && candidate.testedSHA == nil && candidate.phase == .test, "failure clears earlier evidence")
+    expect(run("stop") != nil && candidate.testedSHA == nil, "cancelling a running test issues no tested SHA")
+    expect(run("dirty") != nil && candidate.testedSHA == nil, "an untracked file left by the test prevents certification")
+    expect(run("pass") != nil && candidate.testedSHA == nil, "a work tree with an untracked file cannot pass")
+    try! FileManager.default.removeItem(atPath: tree.path + "/new-test-output")
+    expect(run("returned") != nil && candidate.testedSHA == nil && git(["rev-parse", "HEAD"]) == sha, "moving HEAD and returning to the candidate still invalidates a run")
+    expect(run("moved") != nil && candidate.testedSHA == nil && git(["rev-parse", "HEAD"]) != sha, "a successful test that moves HEAD issues no tested SHA")
+    print("PASS: Milestone full test (unfiltered, isolated, exact reviewed SHA, failure, cancellation, dirty tree, moved HEAD)")
 }
 
 func testProjectHandoff() {

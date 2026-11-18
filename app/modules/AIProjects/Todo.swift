@@ -641,9 +641,10 @@ public struct TodoData: Codable, Equatable {
         }
         return ids
     }
-    // A TODO it waits for is far enough: done, or waiting for the user's check unless the list checks each one. A Goal with
-    // parts only when done: its last Milestone is on the remote (finishMilestone), not before.
+    // Goal parts need completed prerequisites. Other TODOs may pass a blocker awaiting a check according to their
+    // list's mode, except a Goal with parts must have finished its last Milestone.
     public func satisfied(_ blocker: TodoItem, for item: TodoItem) -> Bool {
+        if item.heldPart { return blocker.state == .done }
         if blocker.role == .goal, items.contains(where: { $0.goal == blocker.id }) { return blocker.state == .done }
         return blocker.state == .done || (blocker.state == .review && (list(item.listID)?.mode ?? .aiThenPark) != .checkEach)
     }
@@ -766,6 +767,10 @@ public struct TodoData: Codable, Equatable {
     }
 
     mutating func editMilestone(in goal: UUID, moving: UUID?, after step: UUID?) throws {
+        if item(goal)?.state == .running {
+            throw TodoError.plan(L("계획 AI가 실행 중이에요. 계획이 끝나면 Milestone을 편집할 수 있어요.",
+                                   "The planning AI is running. You can edit Milestones after planning finishes."))
+        }
         let parts = milestoneParts(goal)
         guard let final = parts.last, final.role == .milestone,
               let listIndex = lists.firstIndex(where: { $0.id == final.listID }) else { throw TodoError.notEditable }
@@ -875,7 +880,8 @@ public struct TodoData: Codable, Equatable {
         }
     }
 
-    // Draft parts become ready when their Goal prerequisites are done. Eligibility applies external links and pause/stop.
+    // Draft parts become ready when their Goal prerequisites are done. Eligibility waits for external prerequisites
+    // to finish as well, so an external TODO can release a ready part without updating its Goal.
     mutating func readyParts(_ goal: UUID) {
         for i in items.indices where items[i].goal == goal && items[i].heldPart && items[i].state == .draft
             && localPrerequisitesDone(items[i]) { items[i].state = .ready }

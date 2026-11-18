@@ -1131,15 +1131,20 @@ private func checkTodoMilestoneEdit() {
         expect(store.current.ordered(goal.listID).map(\.id) == [goal.id] + ids + [other.id], "board order after \(label)")
         expect(TodoStore(url: url).current == store.current, "edit survives reload after \(label)")
     }
-    func refuse(_ label: String, expected: TodoError? = nil, _ edit: () throws -> Void) {
+    func refuse(_ label: String, expected: TodoError, _ edit: () throws -> Void) {
         let before = store.current
         do { try edit(); expect(false, "refuse \(label)") }
-        catch { if let expected { expect(error as? TodoError == expected, "\(label) returned \(error)") } }
+        catch { expect(error as? TodoError == expected, "\(label) returned \(error)") }
         expect(store.current == before && TodoStore(url: url).current == before, "refusal is atomic for \(label)")
     }
+    let planning = TodoError.plan(L("계획 AI가 실행 중이에요. 계획이 끝나면 Milestone을 편집할 수 있어요.",
+                                    "The planning AI is running. You can edit Milestones after planning finishes."))
+    let finalMilestone = TodoError.plan(L("최종 Milestone은 이동하거나 삭제할 수 없어요.", "The final Milestone cannot be moved or deleted."))
+    let invalidGap = TodoError.plan(L("아직 시작하지 않은 두 Step 사이를 골라 주세요.", "Choose a gap between two Steps that have not started."))
 
     try! store.change(goal.id) { $0.state = .running }
-    refuse("editing before the planning turn settles", expected: .notEditable) { try store.placeMilestone(in: goal.id, after: b) }
+    refuse("inserting before the planning turn settles", expected: planning) { try store.placeMilestone(in: goal.id, after: b) }
+    refuse("deleting before the planning turn settles", expected: planning) { try store.delete(end) }
     try! store.change(goal.id) { $0.state = .ready }
     try! store.placeMilestone(in: goal.id, after: b)
     let checkpoint = store.current.items.first { $0.goal == goal.id && $0.role == .milestone && $0.id != end }!.id
@@ -1154,21 +1159,22 @@ private func checkTodoMilestoneEdit() {
     checkOrder([a, b, c, checkpoint, d, end], "moving later")
     expect(row(b).after == [a] && row(checkpoint).after.contains(c) && row(d).after.contains(checkpoint), "moving later reconnects the old successor to the preceding Step")
 
-    refuse("deleting the final Milestone") { try store.delete(end) }
-    refuse("moving the final Milestone") { try store.placeMilestone(in: goal.id, moving: end, after: a) }
-    refuse("inserting at the end") { try store.placeMilestone(in: goal.id, after: d) }
+    refuse("deleting the final Milestone", expected: finalMilestone) { try store.delete(end) }
+    refuse("moving the final Milestone", expected: finalMilestone) { try store.placeMilestone(in: goal.id, moving: end, after: a) }
+    refuse("inserting at the end", expected: invalidGap) { try store.placeMilestone(in: goal.id, after: d) }
     try! store.setAfter(other.id, [b])
     try! store.setAfter(checkpoint, row(checkpoint).after + [other.id])
     refuse("a cycle through another TODO", expected: .cycle) { try store.placeMilestone(in: goal.id, moving: checkpoint, after: a) }
     try! store.setAfter(checkpoint, row(checkpoint).after.filter { $0 != other.id })
     try! store.setAfter(other.id, [checkpoint])
-    refuse("deleting a Milestone another TODO depends on") { try store.delete(checkpoint) }
+    let linked = TodoError.plan(L("다른 TODO가 이 Milestone을 기다리고 있어요.", "Another TODO depends on this Milestone."))
+    refuse("deleting a Milestone another TODO depends on", expected: linked) { try store.delete(checkpoint) }
     try! store.setAfter(other.id, [])
 
     try! store.change(b) { $0.state = .done; $0.stepSHA = String(repeating: "a", count: 40) }
     let committed = row(b)
-    refuse("moving before a locally committed Step") { try store.placeMilestone(in: goal.id, moving: checkpoint, after: a) }
-    refuse("inserting at the progress boundary") { try store.placeMilestone(in: goal.id, after: b) }
+    refuse("moving before a locally committed Step", expected: invalidGap) { try store.placeMilestone(in: goal.id, moving: checkpoint, after: a) }
+    refuse("inserting at the progress boundary", expected: invalidGap) { try store.placeMilestone(in: goal.id, after: b) }
     try! store.delete(checkpoint)
     checkOrder([a, b, c, d, end], "deleting a future checkpoint")
     expect(row(b) == committed && row(d).after.contains(c) && !row(d).after.contains(checkpoint), "deleting preserves the commit and reconnects later steps")
@@ -1177,7 +1183,7 @@ private func checkTodoMilestoneEdit() {
     try! store.change(later) { $0.state = .running }
     try! store.change(later) { $0.state = .ready }
     refuse("deleting a previously started Milestone", expected: .notEditable) { try store.delete(later) }
-    refuse("inserting into the started segment") { try store.placeMilestone(in: goal.id, after: c) }
+    refuse("inserting into the started segment", expected: invalidGap) { try store.placeMilestone(in: goal.id, after: c) }
 
     try! store.setAfter(d, row(d).after + [other.id])
     for id in [a, c] { try! store.change(id) { $0.state = .done } }
@@ -1188,11 +1194,15 @@ private func checkTodoMilestoneEdit() {
     try! store.update { try $0.finishMilestone(later) }
     expect(row(d).state == .ready && !store.current.eligible(held: { _ in false }).contains { $0.id == d },
            "the next Step waits on its external link once the Milestone is confirmed")
+    try! store.change(other.id) { $0.state = .review }
+    expect(store.current.satisfied(row(other.id), for: row(goal.id))
+           && !store.current.eligible(held: { _ in false }).contains { $0.id == d },
+           "an external TODO awaiting a check can pass for a top-level TODO but still blocks the Step")
     try! store.change(other.id) { $0.state = .done }
     expect(store.current.eligible(held: { _ in false }).contains { $0.id == d }, "the external completion releases the Step")
 
     try! store.change(goal.id) { $0.state = .cancelled }
-    refuse("deleting the final Milestone from a cancelled Goal") { try store.delete(end) }
+    refuse("deleting the final Milestone from a cancelled Goal", expected: .notEditable) { try store.delete(end) }
     try! store.delete(goal.id)
     try! store.delete(end)
     expect(store.current.item(end) == nil, "an orphaned Milestone remains removable")

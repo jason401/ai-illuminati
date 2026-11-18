@@ -193,16 +193,13 @@ public enum SubWork {
             throw ProjectError.make("A remote and a valid target branch are required for a Goal.")
         }
         // Only the Goal's own folder as SubWork.goal makes it: a user's checkout on a todo-goal/ branch is never merged in.
-        func owned() -> Bool {
-            ownsGoalTree(tree, common: common, token: token)
-        }
-        guard owned() else { throw ProjectError.make("The Goal's work tree is missing or not on " + tree.branch) }
+        guard ownsGoalTree(tree, common: common, token: token) else { throw ProjectError.make("The Goal's work tree is missing or not on " + tree.branch) }
         let held: [String]
         do { held = try ProjectWork.acquire(WorkspaceBinding(roots: [WorkspaceRoot(path: tree.path, directory: true, writable: true)], level: .execute)) }
         catch where ProjectWork.isBusy(error.localizedDescription) { throw fail("Step이 아직 Goal 작업 폴더를 쓰고 있어요. 끝난 뒤 다시 해 주세요.", "A Step is still writing the Goal's work tree; try again once it ends.") }
         defer { ProjectWork.release(held, notify: false) }
         return try ProjectWork.withRefs(binding.root, token: token) {
-            guard owned() else { throw ProjectError.make("The Goal's work tree is missing or not on " + tree.branch) }
+            guard ownsGoalTree(tree, common: common, token: token) else { throw ProjectError.make("The Goal's work tree is missing or not on " + tree.branch) }
             let remoteRef = "refs/remotes/\(binding.remote)/\(target)"
             // The whole NUL list from a file: the shared Git output is trimmed and capped, a Fix Step needs every name as it is.
             func unmerged() throws -> [String] {
@@ -260,17 +257,26 @@ public enum SubWork {
                 throw fail("Goal 작업 폴더에 커밋하지 않은 변경이 있어요.", "The Goal work tree has uncommitted changes.")
             }
         }
-        // Compare both logs so a checkout or ref update followed by a return to the candidate also invalidates the run.
+        // The Goal's HEAD and branch logs also show recorded moves that end back on the candidate.
         func reflogs() throws -> [String] {
-            try ["HEAD", "refs/heads/" + tree.branch].map { try git(["reflog", "show", "--format=%H", $0], root, token) }
+            let logs = try ["HEAD", "refs/heads/" + tree.branch].map { try git(["reflog", "show", "--format=%H", $0], root, token) }
+            guard !logs.contains(where: \.isEmpty) else {
+                throw fail("Goal의 HEAD 변경 이력을 확인할 수 없어요.", "Could not verify the Goal's HEAD history.")
+            }
+            return logs
         }
-        let filters = ["AI_ILLUMINATI_TEST_ONLY", "AI_ILLUMINATI_TEST_CLAIM", "AI_ILLUMINATI_TEST_SHARD"]
-        let args = filters.flatMap { ["-u", $0] } + ["/bin/zsh", "-f", StepTests.script]
+        let homeKey = "AI_ILLUMINATI_TEST_HOME"
+        // Start with the suite's defaults, including no golden fixture writes to an inherited path.
+        let overrides = ProcessInfo.processInfo.environment.keys.filter {
+            ($0.hasPrefix("AI_ILLUMINATI_TEST_") && $0 != homeKey) || $0 == "AI_ILLUMINATI_WRITE_GOLDEN"
+        }.sorted()
+        let args = overrides.flatMap { ["-u", $0] } + ["/bin/zsh", "-f", StepTests.script]
         try holding(tree) {
             try checkTree()
             if !fullAuto {
                 let request = ProjectApproval(room: room, run: UUID(), title: L("Milestone 전체 테스트", "Milestone full test"),
-                                              detail: root + "\n" + sha + "\n/usr/bin/env " + args.joined(separator: " "))
+                                              detail: L("리뷰한 후보의 스크립트를 사용자 권한으로 실행해요.", "Runs the reviewed candidate's script as your user.")
+                                              + "\n" + root + "\n" + sha + "\n/bin/zsh -f " + StepTests.script)
                 guard ProjectCenter.shared.approve(request, token: token, deadline: Date().addingTimeInterval(900)) else {
                     throw fail("Milestone 전체 테스트 실행을 승인받지 못했어요.", "Running the Milestone's full test was not approved.")
                 }
@@ -284,7 +290,7 @@ public enum SubWork {
                 try FileManager.default.createDirectory(at: home, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
                 defer { try? FileManager.default.removeItem(at: home) }
                 let result = try ProjectProcess.run("/usr/bin/env", args, cwd: root, token: token, deadline: deadline, guarded: true,
-                                                    extra: ["AI_ILLUMINATI_TEST_HOME": home.path], onLine: onLine)
+                                                    extra: [homeKey: home.path], onLine: onLine)
                 guard result.status == 0 else {
                     throw fail("Milestone 전체 테스트 실패 (exit \(result.status))", "Milestone full test failed (exit \(result.status))")
                 }

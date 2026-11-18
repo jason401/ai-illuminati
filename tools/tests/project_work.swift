@@ -389,7 +389,9 @@ private func checkMilestoneFullTest(_ project: ProjectBinding) {
     try! #"""
     set -eu
     [[ $# == 0 && ${AI_ILLUMINATI_TEST_ONLY+x}${AI_ILLUMINATI_TEST_CLAIM+x}${AI_ILLUMINATI_TEST_SHARD+x} == "" ]] || exit 21
-    [[ -d "$AI_ILLUMINATI_TEST_HOME" && "$AI_ILLUMINATI_TEST_HOME" != "$AI_MILESTONE_PARENT_HOME" ]] || exit 22
+    [[ -z ${AI_ILLUMINATI_TEST_RESOURCES+x}${AI_ILLUMINATI_WRITE_GOLDEN+x} ]] || exit 22
+    [[ -d "$AI_ILLUMINATI_TEST_HOME" && "$AI_ILLUMINATI_TEST_HOME" != "$AI_MILESTONE_PARENT_HOME" ]] || exit 23
+    [[ -z $(/bin/ls -A "$AI_ILLUMINATI_TEST_HOME") ]] || exit 24
     case "$AI_MILESTONE_CASE" in
       pass) ;;
       fail) exit 29 ;;
@@ -407,7 +409,9 @@ private func checkMilestoneFullTest(_ project: ProjectBinding) {
     let sha = git(["rev-parse", "HEAD"])
     var candidate = TodoItem.MilestoneCandidate(branch: "main", baseSHA: tree.base, candidateSHA: sha)
     let environment = ["AI_ILLUMINATI_TEST_ONLY": "testProjectWork", "AI_ILLUMINATI_TEST_CLAIM": tree.path + "/old-claims",
-                       "AI_ILLUMINATI_TEST_SHARD": "9", "AI_MILESTONE_PARENT_HOME": AccountStore.home, "AI_MILESTONE_CASE": "pass"]
+                       "AI_ILLUMINATI_TEST_SHARD": "9", "AI_ILLUMINATI_TEST_RESOURCES": WorkspaceInvocation.resources.path,
+                       "AI_ILLUMINATI_WRITE_GOLDEN": tree.path + "/unexpected-golden",
+                       "AI_MILESTONE_PARENT_HOME": AccountStore.home, "AI_MILESTONE_CASE": "pass"]
     let saved = ProcessInfo.processInfo.environment
     for (key, value) in environment { setenv(key, value, 1) }
     defer {
@@ -438,6 +442,10 @@ private func checkMilestoneFullTest(_ project: ProjectBinding) {
     try! FileManager.default.removeItem(atPath: tree.path + "/new-test-output")
     expect(run("returned") != nil && candidate.testedSHA == nil && git(["rev-parse", "HEAD"]) == sha, "moving HEAD and returning to the candidate still invalidates a run")
     expect(run("moved") != nil && candidate.testedSHA == nil && git(["rev-parse", "HEAD"]) != sha, "a successful test that moves HEAD issues no tested SHA")
+    expect(run("pass") != nil && candidate.testedSHA == nil, "a candidate already behind HEAD cannot pass")
+    _ = git(["reset", "-q", "--hard", sha])
+    _ = git(["reflog", "expire", "--expire=all", "HEAD", "refs/heads/" + tree.branch])
+    expect(run("pass") != nil && candidate.testedSHA == nil, "without reflogs a return to the candidate could go undetected")
     print("PASS: Milestone full test (unfiltered, isolated, exact reviewed SHA, failure, cancellation, dirty tree, moved HEAD)")
 }
 

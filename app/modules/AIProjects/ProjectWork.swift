@@ -102,7 +102,7 @@ public enum ProjectProcess {
         return try run("/usr/bin/sandbox-exec", ["-D", "STEP_ROOT=" + root, "-D", "STEP_TEMP=" + temp,
                        "-D", "STEP_GIT=" + gitFile, "-D", "STEP_COMMON=" + common,
                        "-p", profile, executable] + args, cwd: project.root, token: token, deadline: deadline,
-                       guarded: true, extra: ["TMPDIR": temp], onLine: onLine)
+                       guarded: true, extra: ["TMPDIR": temp, "TMPPREFIX": temp + "/zsh"], onLine: onLine)   // zsh's here-documents: TMPPREFIX, not TMPDIR
     }
     public static func git(_ args: [String], root: String, token: DebateCancellation? = nil, timeout: TimeInterval = 60) throws -> String {
         let reply = try gitReply(args, root: root, token: token, timeout: timeout)

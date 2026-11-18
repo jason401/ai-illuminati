@@ -155,10 +155,11 @@ public struct TodoItem: Codable, Identifiable, Equatable {
     public var state: State = .draft
     public var after: [UUID] = []          // TODOs that must be finished first (any list)
     public var role: Role = .plain {
-        didSet { if role != .milestone { milestoneCandidate = nil } }
+        didSet { if role != .milestone { milestoneCandidate = nil }; if role != .step { stepTests = nil } }
     }
     public var goal: UUID?                 // a step's or milestone's goal
     public var tests: [String] = []        // a step's picked tests (AI_ILLUMINATI_TEST_ONLY names); a milestone runs them all
+    public var stepTests: StepTestResult?  // a step's: the app's run of its tests this attempt (StepTests); cleared when it starts
     public var milestoneCandidate: MilestoneCandidate? {
         didSet { if role != .milestone { milestoneCandidate = nil } }
     }
@@ -203,7 +204,7 @@ public struct TodoItem: Codable, Identifiable, Equatable {
     // cannot be read fails the whole file, which TodoStore then keeps as it is (no default silently saved over it).
     private enum Keys: String, CodingKey {
         case id, listID, title, detail, attachments, askFirst, state, after, role, goal, tests, room, originRoom, notes, question, attempts, lastError, result, assumptions, files, report, workers, interrupted, unreported, standIns, delegated, aiHelped, parked, wasParked, createdAt, updatedAt,
-             workSeconds, waitSeconds, stateSince, startedAt, finishedAt, milestoneCandidate
+             workSeconds, waitSeconds, stateSince, startedAt, finishedAt, milestoneCandidate, stepTests
     }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
@@ -229,6 +230,7 @@ public struct TodoItem: Codable, Identifiable, Equatable {
         if role == .milestone {
             milestoneCandidate = try c.decodeIfPresent(MilestoneCandidate.self, forKey: .milestoneCandidate)
         }
+        if role == .step { stepTests = try c.decodeIfPresent(StepTestResult.self, forKey: .stepTests) }
         room = try c.decodeIfPresent(UUID.self, forKey: .room)
         originRoom = try c.decodeIfPresent(UUID.self, forKey: .originRoom)
         notes = (try c.decodeIfThere([TodoNote].self, forKey: .notes)) ?? []
@@ -264,6 +266,7 @@ public struct TodoItem: Codable, Identifiable, Equatable {
         try c.encodeIfPresent(goal, forKey: .goal)
         if !tests.isEmpty { try c.encode(tests, forKey: .tests) }
         try c.encodeIfPresent(milestoneCandidate, forKey: .milestoneCandidate)
+        if role == .step { try c.encodeIfPresent(stepTests, forKey: .stepTests) }
         try c.encodeIfPresent(room, forKey: .room); try c.encodeIfPresent(originRoom, forKey: .originRoom); try c.encode(notes, forKey: .notes)
         try c.encodeIfPresent(question, forKey: .question); try c.encode(attempts, forKey: .attempts); try c.encodeIfPresent(lastError, forKey: .lastError)
         try c.encodeIfPresent(result, forKey: .result); try c.encode(assumptions, forKey: .assumptions); try c.encode(files, forKey: .files)
@@ -282,6 +285,13 @@ public struct TodoItem: Codable, Identifiable, Equatable {
     // A step or milestone waits for the goal path (off until it is turned on): never taken as a plain TODO, never made
     // ready, and passed in its list's order like a draft so the TODOs below it go on.
     var heldPart: Bool { role == .step || role == .milestone }
+    // A step's report counts only with its own tests passed on this attempt; otherwise why not (nil: it may end).
+    var stepUnfinished: String? {
+        guard role == .step else { return nil }
+        guard let run = stepTests else { return L("Step 테스트를 실행하지 않았어요.", "The Step's tests were not run.") }
+        guard run.passed, run.tests == tests, !tests.isEmpty else { return StepTests.failure(run) }
+        return nil
+    }
 
     // Parked for the question it waits on now (a newer question is not parked).
     public var isParked: Bool { state == .needsYou && parked != nil && parked?.questionID == question?.id }
@@ -902,6 +912,10 @@ public final class TodoStore: ObservableObject {
             if let before { try data.place(id, before: before) }
             return data.items[i]
         }
+    }
+    // StepTests' result for a running step (from its chat when the AI is done); anything else is left alone.
+    public func recordStepTests(_ id: UUID, _ result: StepTestResult) throws {
+        try change(id) { guard $0.role == .step, $0.state == .running else { throw TodoError.notEditable }; $0.stepTests = result }
     }
     public func cancel(_ id: UUID) throws { try change(id) { guard $0.state != .running else { throw TodoError.busy }; $0.state = .cancelled; $0.unreported = false; $0.wasParked = false } }
     public func delete(_ id: UUID) throws {
@@ -1636,7 +1650,7 @@ public final class TodoScheduler: ObservableObject {
             try store.update { data in
                 guard let i = data.items.firstIndex(where: { $0.id == item.id }), data.items[i] == item,
                       data.eligible(held: { _ in false }).contains(where: { $0.id == item.id }) else { throw TodoError.notEditable }
-                data.items[i].state = .running; data.items[i].room = room; data.items[i].lastError = nil; data.items[i].report = nil
+                data.items[i].state = .running; data.items[i].room = room; data.items[i].lastError = nil; data.items[i].report = nil; data.items[i].stepTests = nil
                 data.items[i].workers = list.accounts.isEmpty ? nil : list.accounts
             }
         } catch TodoError.notEditable {
@@ -1683,8 +1697,10 @@ public final class TodoScheduler: ObservableObject {
     func settle() {
         for item in store.current.items where item.state == .running {
             guard let room = item.room, !chats.answering.contains(room) else { continue }
-            let turn = chats.ended(room)
+            var turn = chats.ended(room)
             let report = item.report
+            // A step that reported without its tests passing is not done: it goes the way of an error (retried).
+            if turn.error == nil, report?.summary != nil, report?.question == nil, let unfinished = item.stepUnfinished { turn.error = unfinished }
             if let error = turn.error {
                 // Another chat writing the repository is not the TODO's fault: try again later.
                 let busy = ProjectWork.isBusy(error)

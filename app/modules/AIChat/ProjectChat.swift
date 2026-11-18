@@ -486,6 +486,17 @@ extension Discussion {
                         turn.moreAnswers?.append(ChatTurn.Entry(round: 1, speaker: self.label(reviewer), text: reviewText, failed: failed, model: failed ? nil : reviewed.name))
                     }
                 }
+                // A TODO's Step: the app runs the Step's picked tests on its commits; only a pass ends it (StepTests).
+                if run.isStep, !cancellation.isCancelled,
+                   let item = TodoStore.shared.current.items.first(where: { $0.room == id && $0.state == .running && $0.role == .step }) {
+                    let picked = L("고른 테스트: ", "Picked tests: ") + item.tests.joined(separator: ", ")
+                    run.setAppStep(0, picked, .doing)
+                    let result = StepTests.run(item.tests, in: run)
+                    try? TodoStore.shared.recordStepTests(item.id, result)
+                    run.setAppStep(0, picked, result.passed ? .done : .blocked)
+                    run.note(L("Step 테스트 ", "Step tests ") + result.outcome.rawValue + " · build \(result.buildSeconds ?? 0) s · tests \(result.testSeconds ?? 0) s")
+                    guard result.passed else { end(StepTests.failure(result)); return }
+                }
                 if run.pushWanted, !cancellation.isCancelled {
                     do {
                         _ = try GitLink.shared.pushDeferred(run); run.setAppStep(9, L("push (main에 한 번)", "Push (once)"), .done)

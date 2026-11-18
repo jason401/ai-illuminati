@@ -104,6 +104,134 @@ func testTodoPlan() {
     expect(!plainJSON.contains("\"tests\""), "a plain TODO writes no tests")
 }
 
+// A Step's picked tests run by the app (StepTests) in its Goal work tree, against a stand-in run_mode2.sh: no tests and a
+// mistyped name are refused before anything runs, a failure or uncommitted work does not pass, the shared build and the
+// tests are timed apart; and a step whose report came without passing tests is not done (settle retries it).
+private final class StepChats: TodoChats {
+    let changed = PassthroughSubject<Void, Never>()
+    var answering: Set<UUID> = []
+    var answeringChanged: AnyPublisher<Void, Never> { changed.eraseToAnyPublisher() }
+    var maxAnswering = 5
+    var importing = false
+    var chats: [ProjectChatSummary] = []
+    func crew(lock: EnterpriseLock?, allowed: [String]) -> (lead: Account, reviewer: Account?)? { nil }
+    func noCrew(_ allowed: [String], lock: EnterpriseLock?) -> String { "nobody" }
+    func addChat(_ project: ProjectBinding, title: String, lock: EnterpriseLock?) -> UUID { UUID() }
+    func setCrew(room: UUID, members: [String], lead: String) {}
+    func folder(_ room: UUID) -> URL { URL(fileURLWithPath: AccountStore.home).appendingPathComponent("todo-step-chats/" + room.uuidString) }
+    func sentPhotos(_ room: UUID) -> Set<UUID> { [] }
+    func start(room: UUID, question: String, photos: [TodoPhoto], review: Bool, extra: String) -> String? { "not in this test" }
+    func ended(_ room: UUID) -> TodoTurnEnd { TodoTurnEnd() }
+    func stop(_ room: UUID) {}
+}
+
+func testStepTests() {
+    let base = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("step-tests-" + UUID().uuidString).resolvingSymlinksInPath()
+    let main = base.appendingPathComponent("repo").path, origin = base.appendingPathComponent("origin.git").path
+    try! FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+    func git(_ args: [String], at folder: String) -> String { try! ProjectProcess.git(args, root: folder) }
+    func write(_ text: String, _ name: String, in folder: String) {
+        let url = URL(fileURLWithPath: folder + "/" + name)
+        try! FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try! text.write(to: url, atomically: true, encoding: .utf8)
+    }
+    func commit(_ folder: String, _ message: String) { _ = git(["add", "-A"], at: folder); _ = git(["commit", "-q", "-m", message], at: folder) }
+    _ = git(["init", "--bare", "-b", "main", origin], at: base.path); _ = git(["init", "-b", "main", main], at: base.path)
+    _ = git(["config", "user.name", "Fixture"], at: main); _ = git(["config", "user.email", "fixture@example.invalid"], at: main)
+    _ = git(["remote", "add", "origin", origin], at: main)
+    // The stand-in: run_mode2's stage lines, "▶ name" per picked test and its PASS line; it fails when fail.flag is committed.
+    // With moves.flag committed it commits during the run: the HEAD it tested is gone.
+    write("""
+        runTest("testAlpha", testAlpha)
+        runTest("testBeta", testBeta)
+        // runTest("testCommented", x)
+        """, "tools/tests/mode2.swift", in: main)
+    write("""
+        echo run >> runs.log
+        echo "[1/2] Compile app tests"
+        if [[ -f moves.flag ]]; then git commit -q --allow-empty -m "moved by the test run"; fi
+        sleep 0.4
+        echo "[2/2] Run app tests"
+        for n in ${(s:,:)AI_ILLUMINATI_TEST_ONLY}; do echo "▶ $n"; done
+        if [[ -f fail.flag ]]; then echo "FAIL: testBeta broke" >&2; exit 1; fi
+        sleep 0.3
+        echo "  [2] Run app tests: 0.3 s"
+        echo "PASS: selected tests only (1 of 2)"
+        """, "tools/tests/run_mode2.sh", in: main)
+    write("runs.log\n", ".gitignore", in: main)
+    commit(main, "Fixture"); _ = git(["push", "-q", "-u", "origin", "main"], at: main)
+    let project = try! ProjectProcess.inspect(main)
+    let tree = try! SubWork.goal(project, goal: UUID(), target: "main")
+    let chatFolder = base.appendingPathComponent("chat").path
+    try! FileManager.default.createDirectory(atPath: chatFolder, withIntermediateDirectories: true)
+    let (run, _) = try! ProjectWork.startStep(tree, in: WorkspaceBinding(roots: project.linkedRoots, project: project), chatFolder: chatFolder,
+                                              room: UUID(), token: DebateCancellation())
+    defer { ProjectWork.finish(run) }
+    func runs() -> Int { ((try? String(contentsOfFile: tree.path + "/runs.log", encoding: .utf8)) ?? "").split(separator: "\n").count }
+
+    let empty = StepTests.run([], in: run)
+    expect(!empty.passed && empty.outcome == .refused && runs() == 0, "an empty list is refused without running: \(empty)")
+    let typo = StepTests.run(["testAlpah"], in: run)
+    expect(!typo.passed && typo.outcome == .refused && typo.reason?.contains("testAlpah") == true && runs() == 0,
+           "a name no runTest has is refused before the build: \(typo)")
+    expect(StepTests.refusal(["testCommented"], root: tree.path) != nil && StepTests.refusal(["testAlpha", "testBeta"], root: tree.path) == nil,
+           "names come from runTest lines only")
+    expect(StepTests.command(["testAlpha", "testBeta"]) == ("/usr/bin/env", ["AI_ILLUMINATI_TEST_ONLY=testAlpha,testBeta", "/bin/zsh", "tools/tests/run_mode2.sh"])
+           && !FileManager.default.fileExists(atPath: tree.path + "/.ai-illuminati.json"), "the app's own command, nothing registered for it")
+
+    let head = git(["rev-parse", "HEAD"], at: tree.path)
+    let passed = StepTests.run(["testAlpha"], in: run)
+    expect(passed.passed && passed.exit == 0 && passed.sha == head && runs() == 1, "the picked test passes on the Goal's HEAD: \(passed)")
+    expect((passed.buildSeconds ?? 0) >= 0.3 && (passed.testSeconds ?? 0) >= 0.2 && (passed.seconds ?? 0) >= (passed.buildSeconds ?? 0) + (passed.testSeconds ?? 0) - 0.1,
+           "the shared build and the tests are timed apart: \(passed)")
+    let timings = (try? Data(contentsOf: RunTimings.file(tree.path))).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+    expect((timings?[StepTests.timingKey] as? [[String: Any]])?.last?["outcome"] as? String == "ok", "the run goes to project-timings like project_run's")
+
+    write("dirty\n", "notes.txt", in: tree.path)
+    let dirty = StepTests.run(["testAlpha"], in: run)
+    expect(dirty.outcome == .refused && runs() == 1, "uncommitted work is not tested: \(dirty)")
+    try! FileManager.default.removeItem(atPath: tree.path + "/notes.txt")
+    write("x\n", "fail.flag", in: tree.path); commit(tree.path, "Breaks testBeta")
+    let failed = StepTests.run(["testAlpha", "testBeta"], in: run)
+    expect(!failed.passed && failed.outcome == .failed && failed.exit == 1 && failed.reason?.contains("testBeta broke") == true && runs() == 2,
+           "a failing run does not pass: \(failed)")
+
+    try! FileManager.default.removeItem(atPath: tree.path + "/fail.flag"); write("x\n", "moves.flag", in: tree.path); commit(tree.path, "Moves HEAD")
+    let moved = StepTests.run(["testAlpha"], in: run)
+    expect(!moved.passed && moved.outcome == .failed && moved.sha != git(["rev-parse", "HEAD"], at: tree.path) && runs() == 3,
+           "a run that moves the Goal's HEAD does not pass: \(moved)")
+
+    // The board: a step's report without a passing run of its own tests goes back to ready with the reason.
+    let store = TodoStore(url: todoStoreFile("step-tests"))
+    let scheduler = TodoScheduler(chats: StepChats(), store: store)
+    scheduler.held = { _ in false }
+    let goal = try! store.add(title: "goal", project: project, projectName: "P")
+    let step = try! store.savePlan(goal: goal.id, TodoPlan(parts: [
+        .init(key: "s", role: .step, title: "step", tests: ["testAlpha", "testBeta"]), .init(key: "m", role: .milestone, title: "ms", after: ["s"])])).first { $0.role == .step }!
+    func reported(_ result: StepTestResult?) -> TodoItem {
+        _ = try! store.update { data in
+            let i = data.items.firstIndex { $0.id == step.id }!
+            data.items[i].state = .running; data.items[i].room = UUID(); data.items[i].stepTests = nil
+            var report = TodoReport(); report.summary = "done"; data.items[i].report = report
+        }
+        if let result { try! store.recordStepTests(step.id, result) }
+        scheduler.settle()
+        return store.current.item(step.id)!
+    }
+    for (result, what) in [(nil, "not run"), (failed, "failed"), (typo, "refused"), (passed, "passed other tests")] as [(StepTestResult?, String)] {
+        let item = reported(result)
+        expect(item.state != .review && item.state != .done && item.lastError != nil && item.result == nil, "a step whose tests \(what) is not done: \(item.state)")
+    }
+    var both = passed; both.tests = ["testAlpha", "testBeta"]
+    let done = reported(both)
+    expect(done.state == .review && done.result == "done" && done.stepTests == both, "a step with its own tests passed waits for the check")
+    let saved = try! JSONDecoder().decode(TodoItem.self, from: JSONEncoder().encode(done))
+    expect(saved.stepTests == both && saved.stepTests?.buildSeconds == both.buildSeconds, "the run is saved with the step")
+    try? store.recordStepTests(goal.id, both)
+    expect(store.current.item(goal.id)?.stepTests == nil, "only a running step keeps a run")
+    print("PASS: Step tests (empty and mistyped lists refused before running, failure and dirty tree not passed, build and test timed apart, step not done without its pass)")
+}
+
 private func checkMilestoneCandidate(_ store: TodoStore, milestoneID: UUID) {
     let base = String(repeating: "a", count: 40)
     let first = String(repeating: "b", count: 40)

@@ -188,6 +188,7 @@ struct PhoneUsageSnapshot {
                 "plan": plan.flatMap { $0.isEmpty || $0.contains("@") ? nil : $0 } as Any? ?? NSNull(),
                 "fiveHour": window(isLocal ? nil : usage?.fiveHour),
                 "weekly": window(isLocal ? nil : usage?.weekly),
+                "checkedAt": timestamp(usage?.checkedAt),
                 "extras": extras,
                 "note": usage?.note.map(safe) as Any? ?? NSNull(),
                 "needsLogin": usage?.needsLogin ?? false,
@@ -429,12 +430,14 @@ final class PhoneServer: ObservableObject {
         case ("GET", []):
             return .json(usage.phoneUsageSnapshot().json(at: now))
         case ("POST", ["refresh"]):
-            let response = RemoteResponse.json(usage.phoneUsageSnapshot().json(at: now))
-            if lastUsageRefresh.map({ uptime - $0 >= 60 }) ?? true {
+            let started = lastUsageRefresh.map { uptime - $0 >= 60 } ?? true
+            var response = usage.phoneUsageSnapshot().json(at: now)
+            response["refreshStarted"] = started
+            if started {
                 lastUsageRefresh = uptime
                 usage.phoneRefreshUsage()
             }
-            return response
+            return .json(response)
         default:
             return .error(404, "not found")
         }

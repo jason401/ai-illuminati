@@ -370,6 +370,20 @@ func testSubRoomScreens() {
            "another executable, argument, work tree, config or permission is another command")
     try! "echo changed\n".write(toFile: tree + "/tools/t.sh", atomically: true, encoding: .utf8)
     expect(key() != first && key(args: [tree + "/tools/t.sh"]) != key(args: [tree + "/tools/t.sh", "x"]), "an edited script is another command (asked again)")
+    // A script the approved one calls, elsewhere in the tree, and a file beside the named script count too; other sources do not.
+    try! fm.createDirectory(atPath: tree + "/scripts", withIntermediateDirectories: true); try! fm.createDirectory(atPath: tree + "/src", withIntermediateDirectories: true)
+    try! "echo inner\n".write(toFile: tree + "/scripts/inner.sh", atomically: true, encoding: .utf8)
+    try! "let a = 1\n".write(toFile: tree + "/src/a.swift", atomically: true, encoding: .utf8)
+    try! "data\n".write(toFile: tree + "/tools/data.txt", atomically: true, encoding: .utf8)
+    let before = key()
+    try! "echo inner changed\n".write(toFile: tree + "/scripts/inner.sh", atomically: true, encoding: .utf8)
+    let calledChanged = key()
+    try! "data changed\n".write(toFile: tree + "/tools/data.txt", atomically: true, encoding: .utf8)
+    let besideChanged = key()
+    try! "let a = 2\n".write(toFile: tree + "/src/a.swift", atomically: true, encoding: .utf8)
+    expect(before != calledChanged && calledChanged != besideChanged && besideChanged == key(), "a called script or a file beside the named one changed: asked again; an edited source is not")
+    expect(CommandIdentity.key(executable: "/bin/zsh", args: [], tree: tree, config: config, permission: "user", mostFiles: 1)
+           != CommandIdentity.key(executable: "/bin/zsh", args: [], tree: tree, config: config, permission: "user", mostFiles: 1), "a tree too large to read is never the same")
 
     // A sub-room's project_run in a chat without full auto: its card is gathered in the main room; "allow during this
     // split" lets the same command through without a card, an edited script asks again.

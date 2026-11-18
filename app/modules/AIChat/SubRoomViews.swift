@@ -421,19 +421,20 @@ struct SubRoomRow: View {
     }
 }
 
-// Folded sub-rooms: one row that unfolds them ("2 sub-rooms · ended (click for the record)").
+// The sub-rooms' fold row, above them: unfolds them ("2 sub-rooms · ended (click for the record)") or folds them again.
 struct SubRoomsFoldedRow: View {
     let main: UUID
     let count: Int
     @ObservedObject var discussion: Discussion
     var depth = 0
     var body: some View {
-        let ended = discussion.openSplits(main).isEmpty
+        let ended = discussion.openSplits(main).isEmpty, shown = discussion.subRoomsShown(main)
         Button(action: { discussion.toggleSubRooms(main) }) {
             HStack(spacing: 5) {
-                Image(systemName: "chevron.right").font(.system(size: 8, weight: .semibold)).frame(width: 18)
-                Text(ended ? L("하위방 \(count)개 · 끝남 (눌러서 기록 보기)", "\(count) sub-rooms · ended (click for the record)")
-                           : L("하위방 \(count)개 · 접힘 (눌러서 보기)", "\(count) sub-rooms · folded (click to show)"))
+                Image(systemName: shown ? "chevron.down" : "chevron.right").font(.system(size: 8, weight: .semibold)).frame(width: 18)
+                Text(shown ? L("하위방 \(count)개 · 접기", "\(count) sub-rooms · fold")
+                     : ended ? L("하위방 \(count)개 · 끝남 (눌러서 기록 보기)", "\(count) sub-rooms · ended (click for the record)")
+                     : L("하위방 \(count)개 · 접힘 (눌러서 보기)", "\(count) sub-rooms · folded (click to show)"))
                     .lineLimit(1).truncationMode(.tail)
                 Spacer(minLength: 0)
             }

@@ -843,18 +843,41 @@ public final class GitLink: ToolProvider {
 
 // "The same command" for an approval given once for a split (docs/SUBROOM_PLAN.md 7): the executable's real path, the
 // arguments, the work tree, the bytes of .ai-illuminati.json and the permission it runs with, not the command's name.
-// The executable and arguments that are files inside the work tree are hashed too, so an edited script asks again.
+// What the command may run is hashed too, so a changed one asks again: every script in the work tree (by its ending or
+// the executable bit) and every file in the folders of the files the command names (tools/tests/ for run_mode2.sh).
+// A tree too large to read gets a key of its own: never the same, so it is asked each time.
 enum CommandIdentity {
-    static func key(executable: String, args: [String], tree: String, config: Data, permission: String) -> String {
+    static let scriptEndings: Set<String> = ["sh", "zsh", "bash", "command", "py", "rb", "pl", "js", "mjs", "json", "toml", "yaml", "yml", "mk"]
+    static let skipped: Set<String> = [".git", "node_modules", ".build", "build", "dist", "DerivedData", "__pycache__"]
+    static func key(executable: String, args: [String], tree: String, config: Data, permission: String, mostFiles: Int = 20_000) -> String {
         func sha(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
+        let fm = FileManager.default
         let root = URL(fileURLWithPath: tree).resolvingSymlinksInPath().standardizedFileURL.path
         var parts = [URL(fileURLWithPath: executable).resolvingSymlinksInPath().path, root, permission, sha(config), String(args.count)] + args
-        for (i, arg) in ([executable] + args).enumerated() {
+        // The folders of the in-tree files the command names: all their files count.
+        var folders: [String] = []
+        for arg in [executable] + args {
             let path = URL(fileURLWithPath: arg.hasPrefix("/") ? arg : root + "/" + arg).resolvingSymlinksInPath().standardizedFileURL.path
             var directory: ObjCBool = false
-            guard path.hasPrefix(root + "/"), FileManager.default.fileExists(atPath: path, isDirectory: &directory), !directory.boolValue,
-                  let data = FileManager.default.contents(atPath: path), data.count < 8_000_000 else { continue }
-            parts.append("\(i):" + sha(data))
+            guard path.hasPrefix(root + "/"), fm.fileExists(atPath: path, isDirectory: &directory) else { continue }
+            folders.append(directory.boolValue ? path + "/" : (path as NSString).deletingLastPathComponent + "/")
+        }
+        guard let walk = fm.enumerator(at: URL(fileURLWithPath: root), includingPropertiesForKeys: [.isDirectoryKey, .isRegularFileKey, .fileSizeKey]) else {
+            return UUID().uuidString
+        }
+        var files: [String] = [], bytes = 0
+        for case let url as URL in walk {
+            let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey, .fileSizeKey])
+            if values?.isDirectory == true { if skipped.contains(url.lastPathComponent) { walk.skipDescendants() }; continue }
+            guard values?.isRegularFile == true else { continue }
+            let path = url.standardizedFileURL.path
+            guard scriptEndings.contains(url.pathExtension.lowercased()) || folders.contains(where: { path.hasPrefix($0) }) || fm.isExecutableFile(atPath: path) else { continue }
+            files.append(path); bytes += values?.fileSize ?? 0
+            if files.count > mostFiles || bytes > 400_000_000 { return UUID().uuidString }
+        }
+        for path in files.sorted() {
+            guard let data = fm.contents(atPath: path) else { return UUID().uuidString }
+            parts.append(String(path.dropFirst(root.count)) + ":" + sha(data))
         }
         return sha(Data(parts.joined(separator: "\u{0}").utf8))
     }

@@ -388,6 +388,7 @@ private func checkMilestoneFullTest(_ project: ProjectBinding) {
     try! FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     try! #"""
     set -eu
+    echo milestone-fixture-started
     [[ $# == 0 && ${AI_ILLUMINATI_TEST_ONLY+x}${AI_ILLUMINATI_TEST_CLAIM+x}${AI_ILLUMINATI_TEST_SHARD+x} == "" ]] || exit 21
     [[ -z ${AI_ILLUMINATI_TEST_RESOURCES+x}${AI_ILLUMINATI_WRITE_GOLDEN+x} ]] || exit 22
     [[ -d "$AI_ILLUMINATI_TEST_HOME" && "$AI_ILLUMINATI_TEST_HOME" != "$AI_MILESTONE_PARENT_HOME" ]] || exit 23
@@ -411,19 +412,13 @@ private func checkMilestoneFullTest(_ project: ProjectBinding) {
     let environment = ["AI_ILLUMINATI_TEST_ONLY": "testProjectWork", "AI_ILLUMINATI_TEST_CLAIM": tree.path + "/old-claims",
                        "AI_ILLUMINATI_TEST_SHARD": "9", "AI_ILLUMINATI_TEST_RESOURCES": WorkspaceInvocation.resources.path,
                        "AI_ILLUMINATI_WRITE_GOLDEN": tree.path + "/unexpected-golden",
-                       "AI_MILESTONE_PARENT_HOME": AccountStore.home, "AI_MILESTONE_CASE": "pass"]
-    let saved = ProcessInfo.processInfo.environment
-    for (key, value) in environment { setenv(key, value, 1) }
-    defer {
-        for key in environment.keys {
-            if let value = saved[key] { setenv(key, value, 1) } else { unsetenv(key) }
-        }
-    }
+                       "AI_ILLUMINATI_TEST_HOME": AccountStore.home, "AI_MILESTONE_PARENT_HOME": AccountStore.home]
     func run(_ scenario: String) -> Error? {
-        setenv("AI_MILESTONE_CASE", scenario, 1)
+        var extra = environment
+        extra["AI_MILESTONE_CASE"] = scenario
         let token = DebateCancellation()
         do {
-            try SubWork.testMilestone(project, tree, candidate: &candidate, room: UUID(), fullAuto: true, token: token,
+            try SubWork.testMilestone(project, tree, candidate: &candidate, room: UUID(), fullAuto: true, token: token, extra: extra,
                                       onLine: { if $0 == "stopping" { token.cancel() } })
             return nil
         } catch { return error }
@@ -443,6 +438,29 @@ private func checkMilestoneFullTest(_ project: ProjectBinding) {
     expect(run("returned") != nil && candidate.testedSHA == nil && git(["rev-parse", "HEAD"]) == sha, "moving HEAD and returning to the candidate still invalidates a run")
     expect(run("moved") != nil && candidate.testedSHA == nil && git(["rev-parse", "HEAD"]) != sha, "a successful test that moves HEAD issues no tested SHA")
     expect(run("pass") != nil && candidate.testedSHA == nil, "a candidate already behind HEAD cannot pass")
+    _ = git(["reset", "-q", "--hard", sha])
+    let room = UUID(), token = DebateCancellation(), done = DispatchSemaphore(value: 0)
+    let reviewed = candidate
+    DispatchQueue.global().async {
+        var pending = reviewed
+        defer { done.signal() }
+        let result: Void? = try? SubWork.testMilestone(project, tree, candidate: &pending, room: room, fullAuto: false, token: token,
+                                                       onLine: { expect($0 != "milestone-fixture-started", "an approval for an older SHA cannot launch the script") })
+        expect(result == nil && pending.testedSHA == nil, "approval cannot certify a candidate changed while waiting")
+    }
+    let limit = Date().addingTimeInterval(10)
+    while !ProjectCenter.shared.requests.contains(where: { $0.room == room }) && Date() < limit {
+        RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+    }
+    if let request = ProjectCenter.shared.requests.first(where: { $0.room == room }) {
+        expect(!ProjectWork.isHeld(tree.path), "approval does not hold the Goal work tree lease")
+        _ = git(["commit", "-q", "--allow-empty", "-m", "HEAD moved during approval"])
+        ProjectCenter.shared.decide(request.id, allow: true)
+    } else {
+        token.cancel()
+        expect(false, "manual testing asks for approval")
+    }
+    expect(done.wait(timeout: .now() + 10) == .success, "the approval attempt finishes")
     _ = git(["reset", "-q", "--hard", sha])
     _ = git(["reflog", "expire", "--expire=all", "HEAD", "refs/heads/" + tree.branch])
     expect(run("pass") != nil && candidate.testedSHA == nil, "without reflogs a return to the candidate could go undetected")

@@ -241,6 +241,12 @@ public enum SubWork {
     // TODO structure 10. The Milestone runner saves this candidate on the TODO when it returns.
     public static func testMilestone(_ binding: ProjectBinding, _ tree: Tree, candidate: inout TodoItem.MilestoneCandidate,
                                      room: UUID, fullAuto: Bool, token: DebateCancellation, onLine: ((String) -> Void)? = nil) throws {
+        try testMilestone(binding, tree, candidate: &candidate, room: room, fullAuto: fullAuto, token: token, extra: [:], onLine: onLine)
+    }
+
+    static func testMilestone(_ binding: ProjectBinding, _ tree: Tree, candidate: inout TodoItem.MilestoneCandidate,
+                              room: UUID, fullAuto: Bool, token: DebateCancellation, extra: [String: String],
+                              onLine: ((String) -> Void)? = nil) throws {
         candidate.clearTest()
         guard let sha = candidate.candidateSHA, candidate.reviewedSHA == sha else {
             throw fail("후보 SHA의 리뷰가 먼저 필요해요.", "Review the candidate SHA before running its full test.")
@@ -267,20 +273,20 @@ public enum SubWork {
         }
         let homeKey = "AI_ILLUMINATI_TEST_HOME"
         // Start with the suite's defaults, including no golden fixture writes to an inherited path.
-        let overrides = ProcessInfo.processInfo.environment.keys.filter {
+        let overrides = Set(ProcessInfo.processInfo.environment.keys).union(extra.keys).filter {
             ($0.hasPrefix("AI_ILLUMINATI_TEST_") && $0 != homeKey) || $0 == "AI_ILLUMINATI_WRITE_GOLDEN"
         }.sorted()
         let args = overrides.flatMap { ["-u", $0] } + ["/bin/zsh", "-f", StepTests.script]
-        try holding(tree) {
+        if !fullAuto {
             try checkTree()
-            if !fullAuto {
-                let request = ProjectApproval(room: room, run: UUID(), title: L("Milestone 전체 테스트", "Milestone full test"),
-                                              detail: L("리뷰한 후보의 스크립트를 사용자 권한으로 실행해요.", "Runs the reviewed candidate's script as your user.")
-                                              + "\n" + root + "\n" + sha + "\n/bin/zsh -f " + StepTests.script)
-                guard ProjectCenter.shared.approve(request, token: token, deadline: Date().addingTimeInterval(900)) else {
-                    throw fail("Milestone 전체 테스트 실행을 승인받지 못했어요.", "Running the Milestone's full test was not approved.")
-                }
+            let request = ProjectApproval(room: room, run: UUID(), title: L("Milestone 전체 테스트", "Milestone full test"),
+                                          detail: L("리뷰한 후보의 스크립트를 사용자 권한으로 실행해요.", "Runs the reviewed candidate's script as your user.")
+                                          + "\n" + root + "\n" + sha + "\n/bin/zsh -f " + StepTests.script)
+            guard ProjectCenter.shared.approve(request, token: token, deadline: Date().addingTimeInterval(900)) else {
+                throw fail("Milestone 전체 테스트 실행을 승인받지 못했어요.", "Running the Milestone's full test was not approved.")
             }
+        }
+        try holding(tree) {
             let deadline = Date().addingTimeInterval(2700)
             try ProjectWork.oneRun(root, until: deadline, token: token,
                                    waiting: { onLine?(L("이 저장소의 다른 명령이 끝나길 기다리는 중", "Waiting for another command in this repository")) }) {
@@ -289,8 +295,9 @@ public enum SubWork {
                 let home = FileManager.default.temporaryDirectory.appendingPathComponent("ai-milestone-" + UUID().uuidString)
                 try FileManager.default.createDirectory(at: home, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
                 defer { try? FileManager.default.removeItem(at: home) }
+                let environment = extra.merging([homeKey: home.path]) { _, isolated in isolated }
                 let result = try ProjectProcess.run("/usr/bin/env", args, cwd: root, token: token, deadline: deadline, guarded: true,
-                                                    extra: [homeKey: home.path], onLine: onLine)
+                                                    extra: environment, onLine: onLine)
                 guard result.status == 0 else {
                     throw fail("Milestone 전체 테스트 실패 (exit \(result.status))", "Milestone full test failed (exit \(result.status))")
                 }

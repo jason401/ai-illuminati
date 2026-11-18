@@ -70,21 +70,40 @@ import AIProjects
     candidate.setPhase(.test); verify.milestoneCandidate = candidate
     let testing = TodoGoalBoard([local, verify])
     precondition(testing.parts.last?.status == .testing && testing.stepsUntilPush == 0)
+    candidate.setPhase(.push); verify.milestoneCandidate = candidate
+    precondition(TodoGoalBoard([local, verify]).parts.last?.status == .pushing)
     precondition(TodoGoalBoard([part("Manual Done", .milestone, .done)]).parts.first?.status == nil)
     let manual = part("Manual Done", .step, .done)
     let cancelled = part("Cancelled Step", .step, .cancelled)
     let needsYou = part("Question", .step, .needsYou)
     let adjusted = TodoGoalBoard([local, manual, cancelled, needsYou, verify])
     precondition(adjusted.summary == L("Step 2/3 완료 · 다음 push까지 1 step · 확인 필요", "2/3 steps complete · 1 step until next push · Needs your attention"))
+    let review = part("Review result", .milestone, .review)
+    let attention = TodoGoalBoard([local, needsYou, review, verify])
+    precondition(attention.visibleParts(expanded: false).map(\.id) == [needsYou.id, review.id])
 
-    try! store.update { data in
-        data.lists = [list]
-        data.items = [goal] + parts + [plain]
+    func height(_ list: TodoList) -> CGFloat {
+        let view = TodoBoardView(discussion: discussion).listView(list).frame(width: 700)
+        return NSHostingView(rootView: view).fittingSize.height
     }
+    let plainList = TodoList(title: "Plain board", project: nil)
+    let onlyPlain = TodoItem(listID: plainList.id, title: "Plain TODO")
+    try! store.update { data in
+        data.lists = [list, plainList]
+        data.items = [goal, plain, onlyPlain]
+    }
+    let plainHeight = height(plainList)
+    let unplannedHeight = height(list)
+
+    try! store.update { $0.items += parts }
+    try! store.move(plain.id, before: nil)
     let data = store.snapshot
     let groups = TodoGoalBoard.groups(data, list: list.id)
     let ordered = data.ordered(list.id)
-    precondition(Set(TodoGoalBoard.rows(ordered, groups: groups, showDone: false).map(\.id)) == [goal.id, plain.id])
+    let rows = TodoGoalBoard.rows(ordered, groups: groups, showDone: false)
+    precondition(rows.map(\.id) == [goal.id, plain.id])
+    let numbers = TodoGoalBoard.numbers(rows, groups: groups)
+    precondition(numbers[goal.id] == "1" && numbers[plain.id] == "2" && numbers[waiting.id] == "1.5")
     precondition(groups[goal.id]?.parts.map(\.id) == parts.map(\.id))
     var finishedGoal = goal
     finishedGoal.state = .done
@@ -92,15 +111,16 @@ import AIProjects
     let finishedGroup = [goal.id: TodoGoalBoard([pushed, confirmed])]
     precondition(TodoGoalBoard.rows(finished, groups: finishedGroup, showDone: false).map(\.id) == [plain.id])
     precondition(TodoGoalBoard.rows(finished, groups: finishedGroup, showDone: true).map(\.id) == [goal.id, plain.id])
+    let collapsed = height(list)
+    precondition(collapsed > unplannedHeight, "the collapsed Goal renders its summary")
+    precondition(plainHeight > 0 && height(plainList) == plainHeight, "plain TODO layout stays the same")
     try! store.move(goal.id, before: nil)
     precondition(store.snapshot.ordered(list.id).map(\.id) == [plain.id, goal.id] + ordered.filter { $0.goal == goal.id }.map(\.id))
 
-    func height() -> CGFloat {
-        let view = TodoBoardView(discussion: discussion).listView(list).frame(width: 700)
-        return NSHostingView(rootView: view).fittingSize.height
-    }
-    let collapsed = height()
     TodoDraft.shared.expandedGoals.insert(goal.id)
-    precondition(collapsed > 0 && height() > collapsed + 100, "the Goal board renders more rows only when expanded")
+    precondition(height(list) > collapsed + 100, "expanding the Goal renders its plan")
+    TodoDraft.shared.expandedGoals.remove(goal.id)
+    try! store.update { $0.items.append(review) }
+    precondition(height(list) > collapsed + 22, "the collapsed Goal renders the action row and review card")
     print("PASS: TODO board Goal groups (collapsed, expanded, phase labels and progress)")
 }

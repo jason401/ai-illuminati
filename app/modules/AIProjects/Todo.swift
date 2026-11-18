@@ -2185,6 +2185,9 @@ public final class TodoScheduler: ObservableObject {
             if c.testedSHA != sha {
                 do { try SubWork.testMilestone(project, tree, candidate: &c, room: room ?? UUID(), fullAuto: fullAuto, token: token) }
                 catch { try? save(c); throw error }
+            }
+            if c.phase != .push, c.phase != .confirmation {
+                c.setPhase(.push)
                 try save(c)
             }
             do { _ = try store.pushMilestone(id, project, tree, token: token); return }

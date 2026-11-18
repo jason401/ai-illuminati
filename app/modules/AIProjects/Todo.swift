@@ -311,7 +311,7 @@ public struct TodoList: Codable, Identifiable, Equatable {
 }
 
 enum TodoError: LocalizedError, Equatable {
-    case cycle, notFound, busy, notEditable, cannotSplit, splitCount, save(String), attachment(String), locked(String)
+    case cycle, notFound, busy, notEditable, cannotSplit, splitCount, invalidSplit, save(String), attachment(String), locked(String)
     var errorDescription: String? {
         switch self {
         case .cycle: return L("순서가 돌고 돌아요: 서로 기다리는 TODO가 생겨요.", "That order goes in a circle: these TODOs would wait for each other.")
@@ -320,6 +320,7 @@ enum TodoError: LocalizedError, Equatable {
         case .notEditable: return L("AI가 이미 가져간 TODO는 고칠 수 없어요. 결과에 수정 요청이나 답으로 알려 주세요.", "The AI already took this TODO; tell it through a change request or an answer.")
         case .cannotSplit: return L("아직 나누지 않은 진행 중 TODO만 나눌 수 있어요. 거절한 TODO는 다시 나눌 수 없어요.", "Only a running TODO that has never been split or declined can be split.")
         case .splitCount: return L("마무리를 포함해 2~6개로 나눠야 해요.", "A split must have 2 to 6 pieces including the finish.")
+        case .invalidSplit: return L("예상 시간은 1분 이상이어야 하고 나누는 이유와 조각 제목이 필요해요.", "A split needs an estimate of at least one minute, a reason and a title for each step.")
         case .attachment(let why), .locked(let why): return why
         case .save(let why): return L("TODO를 저장하지 못했어요: ", "Could not save the TODOs: ") + why
         }
@@ -565,6 +566,10 @@ public final class TodoStore: ObservableObject {
     // The caller handles the running turn. The store saves the steps, finish and order together.
     func split(_ id: UUID, steps: [SplitStep], estimatedMinutes: Int, reason: String, finishFiles: [String]) throws {
         guard (1...5).contains(steps.count) else { throw TodoError.splitCount }
+        guard estimatedMinutes > 0, !reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              steps.allSatisfy({ !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else {
+            throw TodoError.invalidSplit
+        }
         try update { data in
             guard let i = data.items.firstIndex(where: { $0.id == id }) else { throw TodoError.notFound }
             var finish = data.items[i]
@@ -590,8 +595,19 @@ public final class TodoStore: ObservableObject {
             finish.splitRecord = .init(estimatedMinutes: estimatedMinutes, reason: reason, files: files)
             finish.after = after
             finish.state = .ready
+            // The finish starts a new attempt and keeps the original notes and clock totals.
+            finish.attempts = 0
+            finish.lastError = nil
+            finish.question = nil
             finish.report = nil
             finish.workers = nil
+            finish.interrupted = false
+            finish.unreported = false
+            finish.standIns = 0
+            finish.delegated = 0
+            finish.aiHelped = 0
+            finish.parked = nil
+            finish.wasParked = false
             data.items[i] = finish
         }
     }

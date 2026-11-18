@@ -167,7 +167,7 @@ func testTodoStore() {
 }
 
 private func testTodoSplitStorage() {
-    // The old reader recognizes the same lists and state values, and ignores the new item keys.
+    // This fixture decoder models the old item keys used for scheduling.
     struct OldItem: Decodable {
         let id: UUID
         let listID: UUID
@@ -198,15 +198,41 @@ private func testTodoSplitStorage() {
     let below = try! store.add(title: "below", project: project, projectName: "Split")
     store.startDrafts()
     try! store.change(before.id) { $0.state = .done }
-    let oldItem = TodoStore(url: url).current.item(original.id)!
+    // Pre-split todos.json keys and board order, independent of the current encoder.
+    let legacyURL = todoStoreFile("split-legacy")
+    let legacy = """
+        {
+          "version": 1,
+          "lists": [{"id":"\(original.listID)","title":"Split","mode":"aiThenPark","order":["\(before.id)","\(original.id)"]}],
+          "items": [
+            {"id":"\(original.id)","listID":"\(original.listID)","title":"original","state":"ready","after":["\(before.id)"],"createdAt":0,"updatedAt":1},
+            {"id":"\(before.id)","listID":"\(original.listID)","title":"before","state":"done","after":[],"createdAt":1,"updatedAt":2}
+          ]
+        }
+        """
+    try! legacy.write(to: legacyURL, atomically: true, encoding: .utf8)
+    let legacyStore = TodoStore(url: legacyURL)
+    let oldItem = legacyStore.current.item(original.id)!
     expect(oldItem.group == nil && oldItem.piece == nil && oldItem.byAI == nil && oldItem.splitDeclined == nil && oldItem.splitRecord == nil,
-           "a file without split fields reads as ordinary TODOs")
+           "pre-split JSON reads as ordinary TODOs")
+    expect(oldItem.after == [before.id] && legacyStore.current.ordered(original.listID).map(\.id) == [before.id, original.id],
+           "pre-split JSON preserves explicit dependencies and list order")
 
     try! store.change(original.id) {
         $0.state = .running
         $0.room = UUID()
         $0.workers = ["fixture"]
         $0.report = TodoReport(summary: "prior attempt")
+        $0.attempts = 2
+        $0.notes = [TodoNote(kind: .retry, text: "previous failure")]
+        $0.lastError = "previous failure"
+        $0.question = TodoQuestion(kind: .failed, reason: "previous failure")
+        $0.interrupted = true
+        $0.unreported = true
+        $0.standIns = 1
+        $0.delegated = 2
+        $0.aiHelped = 1
+        $0.wasParked = true
     }
     let running = store.current.item(original.id)!
     let steps: [TodoStore.SplitStep] = [
@@ -217,15 +243,22 @@ private func testTodoSplitStorage() {
     func split(_ store: TodoStore, _ id: UUID, with steps: [TodoStore.SplitStep]) throws {
         try store.split(id, steps: steps, estimatedMinutes: 90, reason: reason, finishFiles: ["tests.swift"])
     }
-    func refused(_ store: TodoStore, _ id: UUID, _ steps: [TodoStore.SplitStep], error: TodoError) {
+    func refused(_ store: TodoStore, _ id: UUID, _ steps: [TodoStore.SplitStep], minutes: Int = 90, reason: String = "Two dependent parts", error: TodoError) {
         let before = store.current
         let raw = try! Data(contentsOf: store.url)
-        do { try split(store, id, with: steps); expect(false, "invalid split was saved") }
+        do {
+            try store.split(id, steps: steps, estimatedMinutes: minutes, reason: reason, finishFiles: [])
+            expect(false, "invalid split was saved")
+        }
         catch let caught { expect(caught as? TodoError == error, "split refusal: \(caught)") }
         expect(store.current == before && store.snapshot == before && (try! Data(contentsOf: store.url)) == raw,
                "refused split leaves the original rows and file intact")
     }
 
+    refused(store, original.id, steps, minutes: 0, error: .invalidSplit)
+    refused(store, original.id, steps, minutes: -1, error: .invalidSplit)
+    refused(store, original.id, steps, reason: " \n", error: .invalidSplit)
+    refused(store, original.id, [.init(title: " \t", detail: steps[0].detail, files: [])], error: .invalidSplit)
     refused(store, original.id, [], error: .splitCount)
     refused(store, original.id, Array(repeating: steps[0], count: 6), error: .splitCount)
     try! store.change(original.id) { $0.splitDeclined = true }
@@ -246,6 +279,10 @@ private func testTodoSplitStorage() {
     expect(first.after == [before.id] && second.after == [first.id] && finish.after == [second.id], "explicit dependencies are chained")
     expect(finish.id == original.id && finish.detail == original.detail && finish.room == running.room && finish.originRoom == original.originRoom
            && finish.report == nil && finish.workers == nil, "finish preserves original identity and context and closes the old attempt's stored report")
+    expect(finish.attempts == 0 && finish.lastError == nil && finish.question == nil && !finish.unreported
+           && !finish.interrupted && !finish.wasParked && finish.standIns == 0 && finish.delegated == 0 && finish.aiHelped == 0,
+           "the first finish attempt starts with clean retry and question state")
+    expect(finish.notes == running.notes && TodoScheduler.retrying(finish) == nil, "the finish keeps history without showing the prior retry")
     let record = finish.splitRecord
     expect(record?.estimatedMinutes == 90 && record?.reason == reason && record?.files.map(\.id) == [first.id, second.id, finish.id]
            && record?.files.map(\.paths) == [["a.swift"], ["b.swift", "c.swift"], ["tests.swift"]], "the finish keeps the plan with each piece's files")
@@ -270,8 +307,10 @@ private func testTodoSplitStorage() {
     expect(chats.started.count == 1 && saved.current.item(first.id)?.state == .running && saved.current.item(finish.id)?.state == .ready,
            "the first step alone starts after recovery")
     refused(saved, first.id, steps, error: .cannotSplit)
-    try! store.change(finish.id) { $0.state = .running }
-    refused(store, finish.id, steps, error: .cannotSplit)
+    try! saved.change(first.id) { $0.state = .done }
+    try! saved.change(second.id) { $0.state = .done }
+    try! saved.change(finish.id) { $0.state = .running }
+    refused(saved, finish.id, steps, error: .cannotSplit)
 
     let maxURL = todoStoreFile("split-max")
     let maxStore = TodoStore(url: maxURL)

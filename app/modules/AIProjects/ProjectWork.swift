@@ -328,11 +328,13 @@ public enum ProjectWork {
         get { mutex.lock(); defer { mutex.unlock() }; return revoker }
         set { mutex.lock(); revoker = newValue; mutex.unlock() }
     }
-    // Another chat holds the repository (TodoScheduler.settle retries without counting an attempt).
-    public static let busyKorean = "다른 AI가 지금 이 프로젝트를 고치는 중이에요. 끝나면 다시 시켜 주세요. 회의(/m)나 의견(/a, /1)은 지금도 돼요."
-    public static let busyEnglish = "Another AI is changing this project now. Ask again when it finishes; a meeting (/m) or opinions (/a, /1) work now."
+    // Another chat holds the folder (TodoScheduler.settle retries without counting an attempt).
+    public static let busyKorean = "다른 AI가 지금 이 폴더를 고치는 중이에요. 끝나면 다시 시켜 주세요. 회의(/m)나 의견(/a, /1)은 지금도 돼요."
+    public static let busyEnglish = "Another AI is changing this folder now. Ask again when it finishes; a meeting (/m) or opinions (/a, /1) work now."
+    // Also the texts saved before the lock went per work tree (chat turns, todos.json errors).
+    private static let busyBefore = ["다른 AI가 지금 이 프로젝트를 고치는 중이에요.", "Another AI is changing this project now.", "Another AI is writing", "Repository is busy", "Folder is busy"]
     public static func isBusy(_ error: String) -> Bool {
-        error.contains(busyKorean) || error.contains(busyEnglish) || error.contains("Another AI is writing") || error.contains("Repository is busy")
+        error.contains(busyKorean) || error.contains(busyEnglish) || busyBefore.contains { error.contains($0) }
     }
     public static var active: Bool { mutex.lock(); defer { mutex.unlock() }; return !runs.isEmpty }
     static func get(_ id: UUID?) -> ProjectRun? { mutex.lock(); defer { mutex.unlock() }; return id.flatMap { runs[$0] } }
@@ -385,52 +387,65 @@ public enum ProjectWork {
         while !current.isEmpty && current != "/" { result.append(current); current = (current as NSString).deletingLastPathComponent }
         return result + ["/"]
     }
-    private static func lockFile(_ path: String, _ operation: Int32) throws -> Int32 {
+    // Lock files are named by the SHA-256 of their key: a folder's path (a documents folder, or a shared lock above a
+    // writer), "worktree:" + a Git work tree, "refs:" + a Git common dir; the prefixes keep the three apart.
+    private static func lockFile(_ key: String, _ operation: Int32, wait: TimeInterval = 0, token: DebateCancellation? = nil, busy: String = "Folder is busy in another app instance.") throws -> Int32 {
         let base = URL(fileURLWithPath: AccountStore.supportDir).appendingPathComponent("project-locks")
         try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
-        let name = SHA256.hash(data: Data(path.utf8)).map { String(format: "%02x", $0) }.joined()
+        let name = SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
         let fd = open(base.appendingPathComponent(name).path, O_CREAT | O_RDWR | O_CLOEXEC, S_IRUSR | S_IWUSR)
         guard fd >= 0 else { throw ProjectError.make("Could not create repository lock.") }
-        guard flock(fd, operation | LOCK_NB) == 0 else { close(fd); throw ProjectError.make("Repository is busy in another app instance.") }
+        let until = Date().addingTimeInterval(wait)
+        while flock(fd, operation | LOCK_NB) != 0 {
+            guard Date() < until, token?.isCancelled != true else { close(fd); throw ProjectError.make(busy) }
+            Thread.sleep(forTimeInterval: 0.05)
+        }
         return fd
+    }
+    private static func canonical(_ path: String) -> String { URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path }
+    // The Git work tree a folder belongs to (`--show-toplevel`): one writer each, so two work trees of one repository are
+    // written at the same time. nil: not in Git. Inside a `.git` folder (no top level) the folder itself.
+    static func workTree(_ path: String) -> String? {
+        if let top = try? ProjectProcess.git(["rev-parse", "--show-toplevel"], root: path), !top.isEmpty { return canonical(top) }
+        return commonDir(path) == nil ? nil : canonical(path)
+    }
+    static func commonDir(_ root: String) -> String? {
+        guard let path = try? ProjectProcess.git(["rev-parse", "--git-common-dir"], root: root) else { return nil }
+        return canonical(path.hasPrefix("/") ? path : URL(fileURLWithPath: root).appendingPathComponent(path).path)
     }
     public static func acquire(_ binding: WorkspaceBinding?) throws -> [String] {
         guard let binding else { return [] }
-        let support = URL(fileURLWithPath: AccountStore.supportDir).resolvingSymlinksInPath().standardizedFileURL.path
-        var common = Set<String>(), plain = Set<String>(), above: [String: String] = [:]   // above: Git common dir → its work tree
+        let support = canonical(AccountStore.supportDir)
+        var trees = Set<String>(), plain = Set<String>()
         for root in binding.roots where root.directory && (root.writable == true || binding.level != .view) {
-            if let path = try? ProjectProcess.git(["rev-parse", "--git-common-dir"], root: root.path) {
-                let dir = (path.hasPrefix("/") ? URL(fileURLWithPath: path) : URL(fileURLWithPath: root.path).appendingPathComponent(path)).resolvingSymlinksInPath().standardizedFileURL.path
-                common.insert(dir); above[dir] = URL(fileURLWithPath: root.path).resolvingSymlinksInPath().standardizedFileURL.path
-            } else {
-                let path = URL(fileURLWithPath: root.path).resolvingSymlinksInPath().standardizedFileURL.path
+            if let tree = workTree(root.path) { trees.insert(tree) }
+            else {
+                let path = canonical(root.path)
                 if path != support && !path.hasPrefix(support + "/") { plain.insert(path) }   // a chat's own folder overlaps nothing
             }
         }
         // A documents project has no Git: its folder is the lock.
         let documents = binding.project.flatMap { $0.isDocuments ? $0.root : nil }
-        if let documents { common.insert(documents); plain.remove(documents) }
+        if let documents { trees.insert(documents); plain.remove(documents) }
         let busy = ProjectError.make(L(busyKorean, busyEnglish))
         mutex.lock(); defer { mutex.unlock() }
         var acquired: [String] = [], files: [Int32] = []
         do {
-            for path in common.sorted() {
+            for path in trees.sorted() {
                 guard held[path] == nil else { throw busy }
-                let tree = above[path] ?? path
                 if path == documents {
-                    if held.keys.contains(where: { overlaps($0, path) || workTrees[$0].map { overlaps($0, path) } == true }) || plainHeld.keys.contains(where: { overlaps($0, path) }) { throw busy }
-                } else if documentsHeld.contains(where: { overlaps($0, tree) }) { throw busy }
-                held[path] = try lockFile(path, LOCK_EX); acquired.append(path)
+                    if held.keys.contains(where: { overlaps($0, path) }) || plainHeld.keys.contains(where: { overlaps($0, path) }) { throw busy }
+                } else if documentsHeld.contains(where: { overlaps($0, path) }) { throw busy }
+                held[path] = try lockFile(path == documents ? path : "worktree:" + path, LOCK_EX); acquired.append(path)
                 if path == documents { documentsHeld.insert(path) }
-                for folder in ancestors(tree) + (path == documents ? [] : [tree]) { files.append(try lockFile(folder, LOCK_SH)) }
-                if let tree = above[path] { workTrees[path] = tree }
+                for folder in ancestors(path) + (path == documents ? [] : [path]) { files.append(try lockFile(folder, LOCK_SH)) }
             }
             for path in plain.sorted() {
                 guard !documentsHeld.contains(where: { overlaps($0, path) }) else { throw busy }
                 for folder in [path] + ancestors(path) { files.append(try lockFile(folder, LOCK_SH)) }
             }
         } catch {
-            for path in acquired { if let fd = held.removeValue(forKey: path) { close(fd) }; documentsHeld.remove(path); workTrees.removeValue(forKey: path) }
+            for path in acquired { if let fd = held.removeValue(forKey: path) { close(fd) }; documentsHeld.remove(path) }
             for fd in files { close(fd) }
             throw error
         }
@@ -441,17 +456,41 @@ public enum ProjectWork {
         return acquired + [token]
     }
     static let leasePrefix = "lease:"
-    private static var workTrees: [String: String] = [:]   // held Git common dir → the work tree it was locked for
-    // A chat is writing this repository now (TODO work waits instead of failing on acquire).
+    // A chat is writing this folder's work tree now (TODO work waits instead of failing on acquire); another work tree of
+    // the same repository being written does not count.
     public static func isHeld(_ root: String) -> Bool {
-        guard let path = try? ProjectProcess.git(["rev-parse", "--git-common-dir"], root: root) else {
+        guard let tree = workTree(root) else {
             // No Git: a documents project's folder, or one inside or around it, or that folder being written by a plain chat.
             mutex.lock(); defer { mutex.unlock() }
             return documentsHeld.contains { overlaps($0, root) } || plainHeld.keys.contains { overlaps($0, root) } || held[root] != nil
         }
-        let common = (path.hasPrefix("/") ? URL(fileURLWithPath: path) : URL(fileURLWithPath: root).appendingPathComponent(path)).resolvingSymlinksInPath().standardizedFileURL.path
         mutex.lock(); defer { mutex.unlock() }
-        return held[common] != nil || documentsHeld.contains { overlaps($0, root) }
+        return held[tree] != nil || documentsHeld.contains { overlaps($0, root) }
+    }
+    // The short refs lock: the app's Git commands that change what every work tree of a repository shares (branches and
+    // switching, merges, fetch/pull/push, the work tree list) run one at a time per repository, also across app instances,
+    // each waiting up to `wait` seconds. Nobody holds it through a turn, so no turn waits on another and nothing is
+    // upgraded from shared to exclusive. Commits stay outside it: each work tree has its own index and HEAD, and Git locks
+    // each ref itself. Taken again on the thread that holds it, it is held already (a merge of several commands).
+    static func withRefs<T>(_ root: String, wait: TimeInterval = 60, token: DebateCancellation? = nil, _ body: () throws -> T) throws -> T {
+        guard let common = commonDir(root) else { return try body() }
+        let key = "refs:" + common, mine = Thread.current.threadDictionary
+        if mine[key] != nil { return try body() }
+        let fd = try lockFile(key, LOCK_EX, wait: wait, token: token,
+                              busy: L("다른 Git 작업(브랜치·push·pull)이 이 저장소에서 끝나지 않아 기다리다 멈췄어요. 잠시 뒤 다시 해 주세요.",
+                                      "Another Git action (branch, push, pull) on this repository did not finish in time; try again shortly."))
+        mine[key] = true
+        defer { mine.removeObject(forKey: key); close(fd) }
+        return try body()
+    }
+    static let refCommands: Set<String> = ["switch", "checkout", "branch", "merge", "fetch", "pull", "push", "worktree", "tag", "update-ref", "remote", "gc", "prune"]
+    // GitLink's one way to Git: a command that changes shared refs takes the refs lock while it runs; reads and commits do not.
+    static func git(_ args: [String], root: String, token: DebateCancellation? = nil, timeout: TimeInterval = 60) throws -> String {
+        guard let command = args.first, refCommands.contains(command), !args.contains("--show-current") else { return try ProjectProcess.git(args, root: root, token: token, timeout: timeout) }
+        let start = Date()
+        return try withRefs(root, wait: min(60, timeout), token: token) {
+            try ProjectProcess.git(args, root: root, token: token, timeout: max(1, timeout - Date().timeIntervalSince(start)))
+        }
     }
     // Another writer holds what this binding would write (in this app or another instance); tries the lock and gives it back.
     public static func busy(_ binding: WorkspaceBinding?) -> Bool {
@@ -464,7 +503,7 @@ public enum ProjectWork {
                 for fd in lease.files { close(fd) }
                 for folder in lease.plain { plainHeld[folder, default: 1] -= 1; if plainHeld[folder] == 0 { plainHeld.removeValue(forKey: folder) } }
             } else if let fd = held.removeValue(forKey: path) {
-                close(fd); documentsHeld.remove(path); workTrees.removeValue(forKey: path)
+                close(fd); documentsHeld.remove(path)
             }
         }
         mutex.unlock()
@@ -634,13 +673,13 @@ public final class GitLink: ToolProvider {
         let workspace = WorkspaceBinding(roots: [WorkspaceRoot(path: binding.root, directory: true, writable: true)], level: .execute, project: binding)
         let held = try ProjectWork.acquire(workspace)
         defer { ProjectWork.release(held) }
-        func git(_ argv: [String], timeout: TimeInterval = 30) throws -> String { try ProjectProcess.git(argv, root: binding.root, timeout: timeout) }
+        func git(_ argv: [String], timeout: TimeInterval = 30) throws -> String { try ProjectWork.git(argv, root: binding.root, timeout: timeout) }
         guard try git(["branch", "--show-current"]) == "main" else { throw ProjectError.make(L("main이 체크아웃되어 있지 않아 받지 않았어요.", "main is not checked out; nothing pulled.")) }
         guard try git(["status", "--porcelain"]).isEmpty else { throw ProjectError.make(L("커밋하지 않은 변경이 있어 받지 않았어요.", "There are uncommitted changes; nothing pulled.")) }
         return try git(["pull", "--ff-only", "--no-rebase", binding.remote, "main"], timeout: 180)
     }
     private func execute(_ name: String, _ args: [String: Any], _ run: ProjectRun, _ generation: Int, app: Bool = false) throws -> String {
-        func git(_ argv: [String], timeout: TimeInterval = 120) throws -> String { try run.validate(generation); return try ProjectProcess.git(argv, root: run.binding.root, token: run.attempt, timeout: min(timeout, run.deadline.timeIntervalSinceNow)) }
+        func git(_ argv: [String], timeout: TimeInterval = 120) throws -> String { try run.validate(generation); return try ProjectWork.git(argv, root: run.binding.root, token: run.attempt, timeout: min(timeout, run.deadline.timeIntervalSinceNow)) }
         func clean() throws { guard try git(["status", "--porcelain"]).isEmpty else { throw ProjectError.make("Working tree is not clean; preserve edits and do not pull/switch/stash.") } }
         func approve(_ title: String, _ detail: String) throws {
             run.beginApproval(); defer { run.endApproval() }
@@ -700,6 +739,8 @@ public final class GitLink: ToolProvider {
         case "git_branch", "git_switch":
             try clean()
             guard let branch = args["name"] as? String, !["stable", "HEAD", "master"].contains(branch), !branch.hasPrefix("-"), branch.count < 200 else { throw ProjectError.make("Invalid or protected branch.") }
+            // sub/… are the app's branches for a sub-room's work tree: only the app makes, merges and removes them.
+            guard !branch.hasPrefix("sub/") else { throw ProjectError.make("sub/ branches belong to the app's sub-rooms; this chat cannot create or switch to them.") }
             _ = try git(["check-ref-format", "--branch", branch])
             return try git(name == "git_branch" ? ["switch", "-c", branch] : ["switch", branch])
         case "project_run":

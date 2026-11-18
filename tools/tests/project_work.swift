@@ -1780,3 +1780,119 @@ func testOpinionDigest() {
     expect(copy?.digest == two?.digest && copy?.digestBy == two?.digestBy && copy?.answersOpen == true, "the summary and the fold travel with the turn")
     print("PASS: opinion digest (most usage left sums up, answers kept and folded, summary in the context, one answer / failure / off / members: as before, older turns, synced copy)")
 }
+
+// Two-layer locks (docs/SUBROOM_PLAN.md 2): one writer per work tree, so two work trees of one repository are written
+// at once; Git commands that change shared refs wait for the short refs lock, commits do not; another app instance's
+// lock files count; sub/ branches are the app's.
+func testWorkTreeLocks() {
+    let base = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("worktree-fixture-" + UUID().uuidString).resolvingSymlinksInPath()
+    let root = base.appendingPathComponent("repo"), origin = base.appendingPathComponent("origin.git"), other = base.appendingPathComponent("repo-two")
+    try! FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+    func git(_ args: [String], at folder: URL) -> String { try! ProjectProcess.git(args, root: folder.path) }
+    _ = git(["init", "--bare", origin.path], at: base); _ = git(["init", "-b", "main", root.path], at: base)
+    _ = git(["config", "user.name", "Fixture"], at: root); _ = git(["config", "user.email", "fixture@example.invalid"], at: root)
+    _ = git(["remote", "add", "origin", origin.path], at: root)
+    try! "First\n".write(to: root.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
+    try! FileManager.default.createDirectory(at: root.appendingPathComponent("src"), withIntermediateDirectories: true)
+    try! "x\n".write(to: root.appendingPathComponent("src/a.txt"), atomically: true, encoding: .utf8)
+    _ = git(["add", "."], at: root); _ = git(["commit", "-m", "Initial"], at: root); _ = git(["push", "-u", "origin", "main"], at: root)
+    _ = git(["worktree", "add", "-b", "feature/two", other.path], at: root)
+    func writing(_ folder: URL) -> WorkspaceBinding { WorkspaceBinding(roots: [WorkspaceRoot(path: folder.path, directory: true, writable: true)], level: .execute) }
+
+    // Work tree lock: the two work trees at once, a second writer of one refused (also through a folder inside it).
+    let first = try! ProjectWork.acquire(writing(root))
+    let second = try? ProjectWork.acquire(writing(other))
+    expect(second != nil, "another work tree of the same repository is written at the same time")
+    expect(ProjectWork.isHeld(root.path) && ProjectWork.isHeld(root.appendingPathComponent("src").path) && ProjectWork.isHeld(other.path), "each work tree is held")
+    do { _ = try ProjectWork.acquire(writing(root)); expect(false, "a second writer of the same work tree is refused") }
+    catch { expect(ProjectWork.isBusy(error.localizedDescription) && error.localizedDescription.contains(L("이 폴더", "this folder")), "refused with the folder busy text: \(error.localizedDescription)") }
+    do { _ = try ProjectWork.acquire(writing(root.appendingPathComponent("src"))); expect(false, "a folder inside a held work tree is refused") } catch {}
+    ProjectWork.release(second ?? [], notify: false)
+    expect(ProjectWork.isHeld(root.path) && !ProjectWork.isHeld(other.path), "a TODO waits only for its own work tree")
+    ProjectWork.release(first, notify: false)
+    expect(!ProjectWork.isHeld(root.path), "released")
+    expect(ProjectWork.isBusy("다른 AI가 지금 이 프로젝트를 고치는 중이에요. 끝나면 다시 시켜 주세요.") && ProjectWork.isBusy("Another AI is changing this project now. Ask again")
+           && ProjectWork.isBusy("Repository is busy in another app instance.") && !ProjectWork.isBusy("network down"), "older busy texts still read as busy")
+
+    // Refs lock: while it is held, push and pull wait and then go; a commit goes at once; a short wait gives up.
+    let bound = try! ProjectProcess.inspect(other.path)
+    let run = ProjectRun(room: UUID(), binding: bound, token: DebateCancellation())
+    ProjectWork.register(run); run.nextAttempt()
+    defer { ProjectWork.finish(run) }
+    let context = ToolContext(room: run.room, roots: [], projectRun: run.id, projectGeneration: run.generation)
+    func call(_ name: String, _ args: [String: Any] = [:]) -> [String: Any] { GitLink.shared.call(name, args, context: context) }
+    let holding = DispatchSemaphore(value: 0), letGo = DispatchSemaphore(value: 0), heldDone = DispatchSemaphore(value: 0)
+    var nested = false
+    DispatchQueue.global().async {
+        try? ProjectWork.withRefs(root.path) {
+            nested = (try? ProjectWork.withRefs(other.path, wait: 0) { true }) == true   // the same repository, the same thread
+            holding.signal(); _ = letGo.wait(timeout: .now() + 20)
+        }
+        heldDone.signal()
+    }
+    holding.wait()
+    expect(nested, "the thread holding the refs lock takes it again without waiting")
+    do { try ProjectWork.withRefs(other.path, wait: 0.2) {}; expect(false, "a short wait for the refs lock gives up") }
+    catch { expect(error.localizedDescription.contains(L("기다리다", "did not finish in time")), "told why: \(error.localizedDescription)") }
+    try! "two\n".write(to: other.appendingPathComponent("two.txt"), atomically: true, encoding: .utf8)
+    let commitStart = Date()
+    let commit = call("git_commit", ["message": "Two", "paths": ["two.txt"]])
+    expect(commit["isError"] as? Bool == false && Date().timeIntervalSince(commitStart) < 5, "a commit needs no refs lock: \(commit)")
+    let lock = NSLock()
+    var pushed: [String: Any]?, pulled: String?, pullError: String?
+    let mainBinding = try! ProjectProcess.inspect(root.path)
+    DispatchQueue.global().async { let r = call("git_push"); lock.lock(); pushed = r; lock.unlock() }
+    DispatchQueue.global().async {
+        do { let r = try GitLink.shared.pullMain(mainBinding); lock.lock(); pulled = r; lock.unlock() }
+        catch { lock.lock(); pullError = error.localizedDescription; lock.unlock() }
+    }
+    Thread.sleep(forTimeInterval: 0.8)
+    lock.lock(); let early = pushed == nil && pulled == nil && pullError == nil; lock.unlock()
+    expect(early, "push and pull wait while the refs lock is held")
+    expect((try? ProjectProcess.git(["ls-remote", "origin", "refs/heads/feature/two"], root: root.path)) == "", "nothing pushed yet")
+    letGo.signal(); heldDone.wait()
+    let until = Date().addingTimeInterval(20)
+    while Date() < until { lock.lock(); let done = pushed != nil && (pulled != nil || pullError != nil); lock.unlock(); if done { break }; Thread.sleep(forTimeInterval: 0.05) }
+    lock.lock(); let push = pushed, pull = pulled, pullFailed = pullError; lock.unlock()
+    expect(push?["isError"] as? Bool == false && pull != nil && pullFailed == nil, "after the release push and pull go: \(String(describing: push)) \(pullFailed ?? "")")
+    let head = git(["rev-parse", "HEAD"], at: other)
+    expect((try? ProjectProcess.git(["ls-remote", "origin", "refs/heads/feature/two"], root: root.path))?.hasPrefix(head) == true, "the push reached the remote")
+
+    // sub/ branches are the app's (sub-rooms): neither made nor switched to by a chat.
+    for name in ["git_branch", "git_switch"] {
+        let refused = call(name, ["name": "sub/split/1"])
+        expect(refused["isError"] as? Bool == true && "\(refused)".contains("sub/"), "\(name) refuses sub/: \(refused)")
+    }
+    expect(git(["branch", "--show-current"], at: other) == "feature/two", "the branch stays")
+
+    // Another app instance: its lock files count (a work tree at once, the refs lock after a short wait).
+    func otherInstance(_ key: String) -> Process {
+        let name = SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
+        let dir = URL(fileURLWithPath: AccountStore.supportDir).appendingPathComponent("project-locks")
+        try! FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let p = Process(), input = Pipe(), output = Pipe()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        p.arguments = ["-I", "-c", "import fcntl,sys\nf=open(sys.argv[1],'a')\nfcntl.flock(f,fcntl.LOCK_EX)\nprint('locked',flush=True)\nsys.stdin.read()", dir.appendingPathComponent(name).path]
+        p.standardInput = input; p.standardOutput = output
+        try! p.run()
+        _ = output.fileHandleForReading.availableData   // "locked"
+        return p
+    }
+    func stop(_ p: Process) { (p.standardInput as? Pipe)?.fileHandleForWriting.closeFile(); p.waitUntilExit() }
+    let instance = otherInstance("worktree:" + other.path)
+    do { _ = try ProjectWork.acquire(writing(other)); expect(false, "a work tree held by another app instance is refused") }
+    catch { expect(ProjectWork.isBusy(error.localizedDescription), "told as busy: \(error.localizedDescription)") }
+    let mine = try? ProjectWork.acquire(writing(root))
+    expect(mine != nil, "the other work tree is still free")
+    ProjectWork.release(mine ?? [], notify: false)
+    stop(instance)
+    let after = try? ProjectWork.acquire(writing(other))
+    expect(after != nil, "free once the other instance lets go")
+    ProjectWork.release(after ?? [], notify: false)
+    let refsInstance = otherInstance("refs:" + ProjectWork.commonDir(root.path)!)
+    do { try ProjectWork.withRefs(root.path, wait: 0.3) {}; expect(false, "the refs lock of another instance is waited for") } catch {}
+    DispatchQueue.global().asyncAfter(deadline: .now() + 0.3) { stop(refsInstance) }
+    expect((try? ProjectWork.withRefs(root.path, wait: 10) { true }) == true, "and taken once it lets go")
+    try? FileManager.default.removeItem(at: base)
+    print("PASS: work tree locks (two work trees at once, one writer per work tree, refs lock: push/pull wait, commit goes, short wait gives up, sub/ refused, another instance's lock files, older busy texts)")
+}

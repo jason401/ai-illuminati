@@ -47,6 +47,7 @@ public enum RemotePage {
             "updRestarting": L("재시작 중… 다시 연결하는 중", "Restarting… reconnecting"),
             "updLost": L("5분 동안 다시 연결되지 않았어요. 업데이트가 실패해 이전 버전으로 되돌아갔거나 Mac이 응답하지 않을 수 있어요. 계속 다시 연결해 볼게요.",
                          "Not back after 5 minutes. The update may have failed and gone back to the previous version, or the Mac is not answering. Still trying to reconnect."),
+            "updConfirming": L("새 버전이 켜졌어요 · 설치 확정을 기다리는 중…", "The new version is up · waiting for the install to be confirmed…"),
             "updDone": L("업데이트 완료 · {r}", "Updated · {r}"),
             "updRolledBack": L("새 버전이 제대로 켜지지 않아 이전 버전으로 돌아왔어요.", "The new version did not start properly; the previous version is back."),
             "updFailed": L("업데이트 실패", "Update failed"),
@@ -318,9 +319,13 @@ const folded = new Set(JSON.parse(localStorage.getItem('folded') || '[]'));
 function esc(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function withKey(url) { return url + (url.includes('?') ? '&' : '?') + 'k=' + encodeURIComponent(KEY); }
 function colorStyle(c) { return c && c.length === 2 ? ' style="--cl:' + esc(c[0]) + ';--cd:' + esc(c[1]) + '"' : ''; }
-async function api(path, body) {
-  const r = await fetch(path, body === undefined ? { headers: { 'X-Remote-Key': KEY }, cache: 'no-store' }
-    : { method: 'POST', headers: { 'X-Remote-Key': KEY, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+// `timeout` (ms): a request left hanging (the Mac restarting) fails instead of stopping the polling.
+async function api(path, body, timeout) {
+  const options = body === undefined ? { headers: { 'X-Remote-Key': KEY }, cache: 'no-store' }
+    : { method: 'POST', headers: { 'X-Remote-Key': KEY, 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
+  const abort = timeout ? new AbortController() : null, timer = abort && setTimeout(() => abort.abort(), timeout);
+  if (abort) options.signal = abort.signal;
+  const r = await fetch(path, options).finally(() => clearTimeout(timer));
   const data = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(data.error || r.status);
   return data;
@@ -504,10 +509,15 @@ function short(r) { return String(r || '').slice(0, 7); }
 function saveTrack() { track ? localStorage.setItem('updTrack', JSON.stringify(track)) : localStorage.removeItem('updTrack'); }
 async function loadUpdate() {
   try {
-    const s = await api('/api/update');
+    const s = await api('/api/update', undefined, 8000);
     upd = s;
     if (track) {
-      if (s.current && s.current !== track.from) { updNote = { ok: true, text: S.updDone.replace('{r}', short(s.current)) }; track = null; }
+      // The new app answers before it has acknowledged; only the installer's "installed" for this version is final.
+      if (s.current && s.current !== track.from) {
+        track.lostAt = null;
+        if (s.last && s.last.result === 'installed' && s.last.revision === s.current) { updNote = { ok: true, text: S.updDone.replace('{r}', short(s.current)) }; track = null; }
+        else track.confirming = true;
+      }
       else if (s.busy || s.waiting) track.lostAt = null;   // a short break while it was still testing or building
       else { updNote = { ok: false, text: track.lostAt ? S.updRolledBack : S.updFailed }; track = null; }
       saveTrack();
@@ -520,10 +530,10 @@ async function loadUpdate() {
   renderUpdate();
 }
 function renderUpdate() {
-  const s = upd || {}, offline = track && track.lostAt;
+  const s = upd || {}, offline = track && track.lostAt, confirming = track && !offline && track.confirming && s.current !== track.from;
   const shown = s.available || s.busy || s.waiting || track;
   $('updRow').classList.toggle('hidden', !shown || !!s.error && !track);
-  $('updRowText').textContent = offline ? S.updRestarting : s.progress ? s.progress.summary
+  $('updRowText').textContent = offline ? S.updRestarting : confirming ? S.updConfirming : s.progress ? s.progress.summary
     : s.waiting ? S.updWaitWork.replace('{n}', s.work || 0) : s.available ? S.updAvailable.replace('{a}', short(s.current)).replace('{b}', short(s.available)) : '';
   if (current !== 'update') return;
   let h = '<div class="upd">';
@@ -533,6 +543,8 @@ function renderUpdate() {
   if (offline) {
     const lost = Date.now() - track.lostAt > LOST_AFTER;
     h += '<div class="state">' + (lost ? '' : '<span class="spin"></span>') + '<div' + (lost ? ' class="fail"' : '') + '>' + esc(lost ? S.updLost : S.updRestarting) + '</div></div>';
+  } else if (confirming) {
+    h += '<div class="state"><span class="spin"></span><div>' + esc(S.updConfirming) + '</div></div>';
   } else if (s.progress) {
     h += '<div class="state">' + (s.progress.failed ? '' : '<span class="spin"></span>') + '<div>' + esc(s.progress.summary) +
       (s.progress.line ? '<div class="small">' + esc(s.progress.line) + '</div>' : '') + '</div></div>';

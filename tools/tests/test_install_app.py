@@ -9,6 +9,7 @@ from unittest.mock import patch
 spec = importlib.util.spec_from_file_location('installer', Path(__file__).resolve().parents[1] / 'install_app.py')
 m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
+real_stop_app = m.stop_app
 
 
 class InstallerTests(unittest.TestCase):
@@ -144,6 +145,32 @@ class InstallerTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 self.run_install()
         self.assertEqual(json.loads((self.support / 'update.json').read_text())['lastResult'], 'failed')
+    def test_hung_candidate_ignoring_sigterm_is_killed_then_restored(self):
+        # The new app hangs and ignores SIGTERM: SIGKILL ends it, the old app is put back and opened again.
+        sent, alive = [], {'pids': [4242]}
+        def kill(pid, sig):
+            sent.append(sig)
+            if sig == m.signal.SIGKILL:
+                alive['pids'] = []
+        opened = []
+        with patch.object(m, 'stop_app', real_stop_app), patch.object(m, 'app_pids', lambda _: list(alive['pids'])), \
+                patch.object(m.os, 'kill', kill), patch.object(m, 'ACK_SECONDS', 0.2), \
+                patch.object(m.time, 'sleep', lambda _: None), \
+                patch.object(m.subprocess, 'run', lambda args, **kw: opened.append(args)):
+            clock = iter(range(0, 10**6, 1))
+            with patch.object(m.time, 'monotonic', lambda: next(clock) * 0.5):
+                with self.assertRaises(TimeoutError):
+                    self.run_install()
+        self.assertEqual(sent, [m.signal.SIGTERM, m.signal.SIGKILL])
+        self.assertEqual((self.target / 'content').read_text(), 'old')
+        self.assertEqual(opened[-1], ['/usr/bin/open', '-n', str(self.current)])
+        self.assertEqual(json.loads((self.support / 'update.json').read_text())['lastResult'], 'rolled-back')
+
+    def test_success_clears_last_log(self):
+        with patch.object(m.subprocess, 'run', self.started):
+            self.run_install()
+        self.assertEqual(json.loads((self.support / 'update.json').read_text())['lastLog'], '')
+
 
 if __name__ == '__main__':
     unittest.main()

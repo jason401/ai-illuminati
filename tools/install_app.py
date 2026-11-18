@@ -89,13 +89,21 @@ def app_pids(app):
 
 
 def stop_app(app):
-    for pid in app_pids(app):
-        os.kill(pid, signal.SIGTERM)
-    deadline = time.monotonic() + 10
-    while app_pids(app):
-        if time.monotonic() > deadline:
-            raise RuntimeError('New app still running; backup preserved')
-        time.sleep(0.1)
+    # A hung candidate may ignore SIGTERM; nobody may be at the Mac to quit it, so it is killed before the restore.
+    for sig, seconds in [(signal.SIGTERM, 10), (signal.SIGKILL, 5)]:
+        for pid in app_pids(app):
+            try:
+                os.kill(pid, sig)
+            except ProcessLookupError:
+                pass
+        deadline = time.monotonic() + seconds
+        while app_pids(app):
+            if time.monotonic() > deadline:
+                break
+            time.sleep(0.1)
+        else:
+            return
+    raise RuntimeError('New app still running; backup preserved')
 
 
 def recover(support):
@@ -198,7 +206,7 @@ def install(staged, target, current, support, parent_pid, token, restore_login, 
             # Strings only: the app reads update.json as [String: String]. last* is kept by later checks.
             at = now()
             atomic_json(support / 'update.json', dict(status='updated', current=revision, previous=previous_revision, at=at,
-                        lastResult='installed', lastRevision=revision, lastAt=at, lastRemote='1' if remote else ''))
+                        lastResult='installed', lastRevision=revision, lastAt=at, lastRemote='1' if remote else '', lastLog=''))
             shutil.rmtree(work)
             journal.unlink()
         except Exception as error:

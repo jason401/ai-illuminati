@@ -386,7 +386,7 @@ final class Updater: ObservableObject {
         if let result = saved["lastResult"], !result.isEmpty {
             state["last"] = ["result": result, "detail": saved["lastDetail"] ?? "", "revision": saved["lastRevision"] ?? "",
                              "at": saved["lastAt"] ?? "", "remote": saved["lastRemote"] == "1",
-                             "log": saved["lastLog"].flatMap { $0.isEmpty ? nil : $0 } ?? lastLogLine() ?? ""]
+                             "log": saved["lastLog"] ?? ""]
         }
         return state
     }
@@ -407,18 +407,10 @@ final class Updater: ObservableObject {
         return nil
     }
 
-    private func lastLogLine() -> String? {
-        guard let handle = try? FileHandle(forReadingFrom: updates.appendingPathComponent("install.log")) else { return nil }
-        defer { try? handle.close() }
-        let end = (try? handle.seekToEnd()) ?? 0
-        try? handle.seek(toOffset: end > 4096 ? end - 4096 : 0)
-        return (try? handle.readToEnd()).flatMap { UpdateProgress.lastLine($0) }
-    }
-
     /// A failed Update Now, also kept as the last install's result.
     private func reportFailedInstall(_ detail: String, remote: Bool) {
         report(["status": "failed", "current": revision, "detail": detail, "lastResult": "failed", "lastDetail": detail,
-                "lastRevision": "", "lastAt": ISO8601DateFormatter().string(from: Date()), "lastRemote": remote ? "1" : ""])
+                "lastRevision": "", "lastAt": ISO8601DateFormatter().string(from: Date()), "lastRemote": remote ? "1" : "", "lastLog": ""])
     }
 
     @discardableResult

@@ -518,6 +518,10 @@ Public names and why (everything else stays internal: `ProjectError`, `ProjectTo
   `git`, `inspect`, `documents`, `Reply`), `ProjectCenter`, `ProjectApproval`, `ProjectRules` (`read`, `Part`),
   `ProjectInfoStore`, `ProjectCreator` (`prepare`, `create`, `createFolderless`, `folderlessBinding`, `summary`,
   `defaultLocation`, `Plan`): `runProjectSolo`, the menus, Project info, the review (`ProjectSnapshot`).
+- `ProjectApproval.command`/`same` and `ProjectCenter.preapproved` (sub-room P3): a project_run card carries its command line and
+  its `CommandIdentity` key (executable's real path, arguments, work tree, `.ai-illuminati.json` bytes, permission, script bytes),
+  so the chat can gather a sub-room's card in its main room and let the very same command through for that split; the hook is
+  asked before a card is shown.
 - `ProjectBinding.groupKey`: one project across its worktrees (`SidebarProjects.key` forwards to it).
 - C0, logic moved down from the chat's `extension Discussion` blocks: `ProjectWork.linking` (a chat links a project: the
   root writable, after the linked folders or first for documents), `ProjectWork.moving` (a chat moved into a project;
@@ -620,7 +624,8 @@ everything else, Discussion's state above all, stays internal):
   box is kept, the app's own `drafts.json`; tests leave it nil and keep boxes in memory; quitting writes them), `unreadFile` (2026-11-16: main.swift says where "Needs review" is kept, the app's own `unread.json`, this Mac only; tests leave it nil), `importingMaterials`, `fillSpaceLocks`, `runningRooms`/`stoppingRooms` and their
   publishers); what the app's screens show (TODO board: `conversations`, `conversation`, `currentID`, `label`, `openBoard`,
   `viewingBoard`, `boardProject`, `hover`/`hoverKey`, `model`; Project info: `listedConversations`, `showBoardTab`,
-  `disconnectProjectFolder`; approvals: `approvalChatName`, `viewingRemote`; `markTodoDone`: the board's and cards' [Mark as done],
+  `disconnectProjectFolder`; approvals: `approvalChatName`, `viewingRemote`, `approvalHome` (sub-room P3: a sub-room's request is answered and
+  noticed in its main room, ApprovalAlerts); `markTodoDone`: the board's and cards' [Mark as done],
   the same confirmation as the sidebar's ⋯); `TodoChats` (P0's seam, all its members);
   `Discussion.meets`/`autoPicked` (Settings' team picks).
 - The six tool providers (`shared`, `active`, `tools`, `call`; `MemoryLink.newestTurn` for ToolHub.register): ToolHub lists them

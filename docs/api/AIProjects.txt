@@ -16,12 +16,14 @@ PlanLink.tools() | func tools() -> [[String : Any]]
 PlanLink.tools(context:) | func tools(context: ToolContext) -> [[String : Any]]
 ProjectApproval | struct ProjectApproval
 ProjectApproval.alwaysAllow | var alwaysAllow: (() -> Void)?
+ProjectApproval.command | var command: String?
 ProjectApproval.created | var created: Date
 ProjectApproval.deadline | var deadline: Date?
 ProjectApproval.detail | var detail: String
 ProjectApproval.id | let id: UUID
 ProjectApproval.init(room:run:title:detail:created:deadline:alwaysAllow:) | init(room: UUID, run: UUID, title: String, detail: String, created: Date = Date(), deadline: Date? = nil, alwaysAllow: (() -> Void)? = nil)
 ProjectApproval.room | var room: UUID
+ProjectApproval.same | var same: String?
 ProjectApproval.title | var title: String
 ProjectCenter | final class ProjectCenter
 ProjectCenter.approve(_:token:deadline:) | func approve(_ request: ProjectApproval, token: DebateCancellation, deadline: Date) -> Bool
@@ -29,6 +31,7 @@ ProjectCenter.cancel(room:) | func cancel(room: UUID? = nil)
 ProjectCenter.decide(_:allow:) | func decide(_ id: UUID, allow: Bool)
 ProjectCenter.dismiss(_:) | func dismiss(_ id: UUID)
 ProjectCenter.expired | @Published var expired: [ProjectApproval] { get set }
+ProjectCenter.preapproved | var preapproved: ((ProjectApproval) -> Bool)?
 ProjectCenter.requests | @Published var requests: [ProjectApproval] { get set }
 ProjectCenter.resume() | func resume()
 ProjectCenter.shared | static let shared: ProjectCenter

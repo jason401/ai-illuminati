@@ -46,6 +46,14 @@ public final class Discussion: ObservableObject {
     // Sub-rooms (Delegate.swift) approved but not answering yet, in order: their places are kept from other chats and TODOs.
     var subWaiting: [(room: UUID, question: String)] = []
     var joinWaiting: Set<UUID> = []                  // main rooms whose join turn found no free place yet
+    // The splits as the cards and the sidebar show them (SubRoomViews.swift): read again on each SplitStore change, and
+    // a split waiting for the user's card by its approval request.
+    @Published var splitRecords: [UUID: [Split]] = [:]
+    @Published var splitPlans: [UUID: Split] = [:]
+    @Published var subRoomsOpen: Set<UUID> = []
+    @Published var subRoomsClosed: Set<UUID> = []
+    @Published var splitPlanShown: Set<String> = []   // approved split cards unfolded by the user
+    var splitWatch: NSObjectProtocol?
     weak var host: Discussion?
     private var workers: [UUID: Discussion] = [:]
     // For the open chat (a worker: always its own chat).
@@ -319,6 +327,7 @@ public final class Discussion: ObservableObject {
         linkChatTools()
         SidebarFold.shared.adoptPins(conversations)
         // Splits left from before (Delegate.swift): checked against Git and shown as cards, never continued by themselves.
+        watchSplits()
         if !SplitStore.shared.rooms().isEmpty {
             let known = Set(conversations.map(\.id))
             DispatchQueue.global(qos: .utility).async { [weak self] in self?.recoverSplits(known: known) }

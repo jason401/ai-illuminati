@@ -151,6 +151,10 @@ public struct ProjectApproval: Identifiable {
     public var created = Date()
     public var deadline: Date?
     public var alwaysAllow: (() -> Void)? = nil   // an outside MCP tool: the card also offers "Always allow"
+    // A project_run card: the command line, and its CommandIdentity key, so a sub-room's request for the very same command
+    // can be allowed once for its split (docs/SUBROOM_PLAN.md 7).
+    public var command: String? = nil
+    public var same: String? = nil
     public init(room: UUID, run: UUID, title: String, detail: String, created: Date = Date(), deadline: Date? = nil, alwaysAllow: (() -> Void)? = nil) {
         self.room = room; self.run = run; self.title = title; self.detail = detail; self.created = created; self.deadline = deadline; self.alwaysAllow = alwaysAllow
     }
@@ -169,9 +173,13 @@ public final class ProjectCenter: ObservableObject {
     private var approvalEpoch = 0
     public func resume() { lock.lock(); accepting = true; lock.unlock() }
     public func decide(_ id: UUID, allow: Bool) { guard requests.contains(where: { $0.id == id }) else { return }; lock.lock(); decisions[id] = allow; lock.unlock(); requests.removeAll { $0.id == id } }
+    // Asked on the requesting thread before a card is shown: true means the user already allowed this very request
+    // (a sub-room's command allowed for its split). No card then.
+    public var preapproved: ((ProjectApproval) -> Bool)?
     public func approve(_ request: ProjectApproval, token: DebateCancellation, deadline: Date) -> Bool {
-        lock.lock(); let enabled = accepting, epoch = approvalEpoch; lock.unlock()
+        lock.lock(); let enabled = accepting, epoch = approvalEpoch, given = preapproved; lock.unlock()
         guard enabled else { return false }
+        if let given, given(request) { return true }
         var request = request
         request.deadline = deadline
         DispatchQueue.main.async {
@@ -710,10 +718,12 @@ public final class GitLink: ToolProvider {
     private func execute(_ name: String, _ args: [String: Any], _ run: ProjectRun, _ generation: Int, app: Bool = false) throws -> String {
         func git(_ argv: [String], timeout: TimeInterval = 120) throws -> String { try run.validate(generation); return try ProjectWork.git(argv, root: run.binding.root, token: run.attempt, timeout: min(timeout, run.deadline.timeIntervalSinceNow)) }
         func clean() throws { guard try git(["status", "--porcelain"]).isEmpty else { throw ProjectError.make("Working tree is not clean; preserve edits and do not pull/switch/stash.") } }
-        func approve(_ title: String, _ detail: String) throws {
+        func approve(_ title: String, _ detail: String, command: String? = nil, same: String? = nil) throws {
             run.beginApproval(); defer { run.endApproval() }
             let deadline = min(run.deadline, Date().addingTimeInterval(900))
-            guard ProjectCenter.shared.approve(ProjectApproval(room: run.room, run: run.id, title: title, detail: detail), token: run.attempt, deadline: deadline) else {
+            var asked = ProjectApproval(room: run.room, run: run.id, title: title, detail: detail)
+            asked.command = command; asked.same = same
+            guard ProjectCenter.shared.approve(asked, token: run.attempt, deadline: deadline) else {
                 // 15 minutes unanswered counts as no: the user is away. The chat keeps a note with Ask again.
                 if Date() >= deadline, !run.attempt.isCancelled { throw ProjectError.make("Project approval timed out after 15 minutes; treated as refused. Stop and tell the user they can ask again.") }
                 throw ProjectError.make("Project approval refused or cancelled.")
@@ -805,7 +815,11 @@ public final class GitLink: ToolProvider {
             let status = run.binding.isDocuments ? "" : try git(["status", "--short"])
             let tree = try WorkspaceBackup.stamps([WorkspaceRoot(path: run.binding.root, directory: true)])
             if run.fullAuto { run.note("project_run (full auto): " + exe + " " + argv.joined(separator: " ")) }
-            else { try approve("프로젝트 실행 / Run project command", "Runs outside the AI sandbox as your user.\n" + run.binding.root + "\n" + exe + " " + argv.joined(separator: " ") + "\n" + status) }
+            else {
+                let line = exe + " " + argv.joined(separator: " ")
+                try approve("프로젝트 실행 / Run project command", "Runs outside the AI sandbox as your user.\n" + run.binding.root + "\n" + line + "\n" + status,
+                            command: selected + ": " + line, same: CommandIdentity.key(executable: exe, args: argv, tree: run.binding.root, config: data, permission: "user"))
+            }
             guard try Data(contentsOf: url) == data, try WorkspaceBackup.stamps([WorkspaceRoot(path: run.binding.root, directory: true)]) == tree else { throw ProjectError.make("Command changed after approval. Request it again.") }
             // "[n/m] name" lines show under the current step; their times go to project-timings for later estimates.
             let progress = RunProgress(command: selected) { text in if !run.setSub(text) { run.note(text) } }
@@ -824,6 +838,25 @@ public final class GitLink: ToolProvider {
             }
         default: throw ProjectError.make("Unknown project tool.")
         }
+    }
+}
+
+// "The same command" for an approval given once for a split (docs/SUBROOM_PLAN.md 7): the executable's real path, the
+// arguments, the work tree, the bytes of .ai-illuminati.json and the permission it runs with, not the command's name.
+// The executable and arguments that are files inside the work tree are hashed too, so an edited script asks again.
+enum CommandIdentity {
+    static func key(executable: String, args: [String], tree: String, config: Data, permission: String) -> String {
+        func sha(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
+        let root = URL(fileURLWithPath: tree).resolvingSymlinksInPath().standardizedFileURL.path
+        var parts = [URL(fileURLWithPath: executable).resolvingSymlinksInPath().path, root, permission, sha(config), String(args.count)] + args
+        for (i, arg) in ([executable] + args).enumerated() {
+            let path = URL(fileURLWithPath: arg.hasPrefix("/") ? arg : root + "/" + arg).resolvingSymlinksInPath().standardizedFileURL.path
+            var directory: ObjCBool = false
+            guard path.hasPrefix(root + "/"), FileManager.default.fileExists(atPath: path, isDirectory: &directory), !directory.boolValue,
+                  let data = FileManager.default.contents(atPath: path), data.count < 8_000_000 else { continue }
+            parts.append("\(i):" + sha(data))
+        }
+        return sha(Data(parts.joined(separator: "\u{0}").utf8))
     }
 }
 

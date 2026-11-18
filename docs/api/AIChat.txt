@@ -275,6 +275,7 @@ Discussion.answering | var answering: Set<UUID> { get }
 Discussion.answeringChanged | var answeringChanged: AnyPublisher<Void, Never> { get }
 Discussion.anyRunning | var anyRunning: Bool { get }
 Discussion.approvalChatName(_:) | func approvalChatName(_ room: UUID) -> String
+Discussion.approvalHome(_:) | func approvalHome(_ room: UUID) -> UUID
 Discussion.autoPicked(_:picks:) | static func autoPicked(_ account: Account, picks: [String : Bool]) -> Bool
 Discussion.boardProject | @Published var boardProject: String? { get set }
 Discussion.cancelAll() | func cancelAll()

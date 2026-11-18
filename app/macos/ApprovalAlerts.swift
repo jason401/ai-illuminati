@@ -55,7 +55,7 @@ final class ApprovalAlerts: NSObject, UNUserNotificationCenterDelegate {
         }
         for request in requests where !known.contains(request.id) {
             // Looking right at the card: nothing more to say.
-            let seen = NSApp.isActive && discussion.currentID == request.room && discussion.viewingRemote == nil
+            let seen = NSApp.isActive && discussion.currentID == discussion.approvalHome(request.room) && discussion.viewingRemote == nil
                 && NSApp.keyWindow?.title == L("AI Illuminati 채팅", "AI Illuminati Chat")
             if seen { lastPosted[request.id] = Date() } else {
                 post(request)
@@ -132,7 +132,7 @@ final class ApprovalAlerts: NSObject, UNUserNotificationCenterDelegate {
             content.subtitle = self.discussion.approvalChatName(request.room)
             content.body = request.title
             content.categoryIdentifier = Self.category
-            content.userInfo = ["request": request.id.uuidString, "room": request.room.uuidString]
+            content.userInfo = ["request": request.id.uuidString, "room": self.discussion.approvalHome(request.room).uuidString]
             content.interruptionLevel = .timeSensitive
             if ApprovalAlertSettings.sound { content.sound = .default }
             center.add(UNNotificationRequest(identifier: request.id.uuidString, content: content, trigger: nil))

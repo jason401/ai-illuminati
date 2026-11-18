@@ -463,6 +463,7 @@ module is that module's public function now; the block keeps only the chat's par
 | SidebarProjects:220 | a | `openBoard`/`showBoardTab`: the chat window's navigation state | C1: `BoardTab` is an app type |
 | Solo:96 | a | plain chat (members, instruction, state, Spaces in answers) | C1: still names app types (`Pictures`, `FaceLink`, `SidebarProjects.key`, …) |
 | Solo:1015 | a | a Space's lock and who may change it | — |
+| SubRoomViews:48 | a | sub-rooms on screen (2026-11-17, P3): the split records the cards read, badge, fold, a card's message/cancel, "allow during this split" | the command key is `CommandIdentity` (AIProjects), the hook `ProjectCenter.preapproved` |
 | SpaceView:39 | b | Space actions from a chat | the refine loop → `SpaceBuilder.refine` (AISpaces); stop and apply were Space-only, now `SpaceRefiner.stop`/`apply` (not Discussion); C1: `SpaceRefiner`, `SidebarFold`, `openBoard` are app names the shell still uses |
 | TodoChatsApp:10 | a | `Discussion: TodoChats` (P0's seam: crew, start, end) | — |
 | Vote:91 | a | the vote run | — |

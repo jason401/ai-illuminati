@@ -158,6 +158,7 @@ extension Discussion {
         // Project tools (todo_add, create_project, the TODO scheduler's locks) read the same chats, through ChatLink.
         ProjectChats.list = { ChatLink.shared.conversations().map(\.projectSummary) }
         DelegateLink.shared.host = self
+        ProjectCenter.shared.preapproved = { DelegateLink.shared.preapproved($0) }
         linkProjectMaker()
     }
 }

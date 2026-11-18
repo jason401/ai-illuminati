@@ -4,7 +4,7 @@ import AIChatRecords
 import AILocalization
 import AIRuntime
 import AIWorkspace
-import AIProjects
+@testable import AIProjects
 @testable import AIChat
 
 // Sub-rooms (docs/SUBROOM_PLAN.md, P2) with fake AIs: the main room's AI splits, the sub-rooms' AIs commit and report,
@@ -341,4 +341,112 @@ func testDelegate() {
     for id in [autoRoom, cardRoom, stopRoom, leftRoom, halfRoom, moved, rsRoom] { try? FileManager.default.removeItem(at: SplitStore.folder.appendingPathComponent(id.uuidString + ".json")) }
     try? FileManager.default.removeItem(at: base)
     print("PASS: sub-rooms (split → report → merge → push → cleanup, full auto approves at once and the card waits otherwise, overlapping files and a sub-room's split refused, join turn once, Stop goes down and Continue/Discard, restart cards, project_run in line)")
+}
+
+// Sub-room screens (docs/SUBROOM_PLAN.md 1, 7; P3): "the same command" for an approval given for a split, a sub-room's
+// requests gathered in its main room and allowed for the split, the sidebar's badge and fold, messages kept on the card.
+func testSubRoomScreens() {
+    func text(_ reply: [String: Any]) -> String { ((reply["content"] as? [[String: Any]])?.first?["text"] as? String) ?? "" }
+    @discardableResult func spin(_ seconds: TimeInterval, until done: () -> Bool) -> Bool {
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline && !done() { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
+        return done()
+    }
+    let base = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("subscreens-" + UUID().uuidString.prefix(8)).resolvingSymlinksInPath()
+    let fm = FileManager.default
+    try! fm.createDirectory(at: base.appendingPathComponent("tree/tools"), withIntermediateDirectories: true)
+    let tree = base.appendingPathComponent("tree").path, other = base.appendingPathComponent("other").path
+    try! fm.createDirectory(atPath: other, withIntermediateDirectories: true)
+    let config = Data("{\"version\":1,\"commands\":{\"test\":{\"executable\":\"/bin/zsh\",\"args\":[\"tools/t.sh\"]}}}".utf8)
+    try! "echo ok\n".write(toFile: tree + "/tools/t.sh", atomically: true, encoding: .utf8)
+    try! fm.createSymbolicLink(atPath: base.appendingPathComponent("zsh-link").path, withDestinationPath: "/bin/zsh")
+    func key(_ exe: String = "/bin/zsh", args: [String] = ["tools/t.sh"], tree root: String = tree, config data: Data = config, permission: String = "user") -> String {
+        CommandIdentity.key(executable: exe, args: args, tree: root, config: data, permission: permission)
+    }
+    let first = key()
+    expect(first == key() && first == key(base.appendingPathComponent("zsh-link").path), "the same command has the same key, also through a link to the executable")
+    expect(first != key("/bin/sh") && first != key(args: ["tools/t.sh", "-v"]) && first != key(tree: other) && first != key(config: Data("{}".utf8))
+           && first != key(permission: "guarded") && key(args: ["a", "b"]) != key(args: ["a b"]),
+           "another executable, argument, work tree, config or permission is another command")
+    try! "echo changed\n".write(toFile: tree + "/tools/t.sh", atomically: true, encoding: .utf8)
+    expect(key() != first && key(args: [tree + "/tools/t.sh"]) != key(args: [tree + "/tools/t.sh", "x"]), "an edited script is another command (asked again)")
+
+    // A sub-room's project_run in a chat without full auto: its card is gathered in the main room; "allow during this
+    // split" lets the same command through without a card, an edited script asks again.
+    let repo = base.appendingPathComponent("repo").path
+    func git(_ args: [String]) { _ = try! ProjectProcess.git(args, root: repo) }
+    try! fm.createDirectory(atPath: repo + "/tools", withIntermediateDirectories: true)
+    _ = try! ProjectProcess.git(["init", "-q", "-b", "main", repo], root: base.path)
+    git(["config", "user.name", "Fixture"]); git(["config", "user.email", "fixture@example.invalid"])
+    try! "{\"version\":1,\"commands\":{\"quick\":{\"executable\":\"/bin/zsh\",\"args\":[\"tools/q.sh\"]}}}".write(toFile: repo + "/.ai-illuminati.json", atomically: true, encoding: .utf8)
+    try! "echo quick\n".write(toFile: repo + "/tools/q.sh", atomically: true, encoding: .utf8)
+    git(["add", "-A"]); git(["commit", "-q", "-m", "Initial"])
+    _ = try! ProjectProcess.git(["init", "-q", "--bare", repo + ".git"], root: base.path); git(["remote", "add", "origin", repo + ".git"])
+    let binding = try! ProjectProcess.inspect(repo)
+    let chat = Discussion(model: AppModel())
+    var main = Conversation(); main.title = "main"; main.turns = [ChatTurn(question: "split it")]
+    let link = SubRoomLink(room: main.id, split: "scr", n: 1)
+    var sub = Conversation(); sub.title = "sub 1"; sub.subOf = link; sub.meetingOf = MeetingLink(room: main.id, turn: main.turns[0].id)
+    chat.conversations = [main, sub]
+    var part = Split.Part(n: 1, room: sub.id, goal: "Sidebar rows", owned: ["app/x.swift"], forbidden: [], interfaces: "", done: "tests pass")
+    part.state = .running; part.live = true; part.started = Date().addingTimeInterval(-12 * 60)
+    part.tree = SubWork.Tree(path: repo, branch: "sub/scr/1", base: "")
+    var two = Split.Part(n: 2, room: UUID(), goal: "Cards", owned: ["app/y.swift"], forbidden: [], interfaces: "", done: "tests pass")
+    two.state = .reported; two.sha = "abc1234def"
+    SplitStore.shared.update(main.id) { $0 = [Split(id: "scr", room: main.id, repo: repo, common: binding.common, auto: false, parts: [part, two])] }
+    spin(2) { chat.splitRecords[main.id]?.first?.parts.count == 2 }
+    expect(chat.splitBadge(main.id, requests: []) == .working(1), "a split with one sub-room answering shows \"1 working\": \(String(describing: chat.splitBadge(main.id, requests: [])))")
+    expect(chat.subRoomsShown(main.id) && chat.subRooms(of: main.id).map(\.id) == [sub.id], "an open split's sub-rooms show under the main room")
+    chat.toggleSubRooms(main.id)
+    expect(!chat.subRoomsShown(main.id), "the user folds them"); chat.toggleSubRooms(main.id)
+
+    let run = ProjectRun(room: sub.id, binding: binding, token: DebateCancellation())
+    run.isSubRoom = true
+    ProjectWork.register(run); run.nextAttempt(); DelegateLink.shared.register(run, link)
+    func runQuick() -> (wait: () -> String, done: () -> Bool) {
+        var reply: String?
+        let lock = NSLock()
+        DispatchQueue.global().async {
+            let r = text(GitLink.shared.call("project_run", ["name": "quick"], context: ToolContext(room: run.room, roots: [], projectRun: run.id, projectGeneration: run.generation)))
+            lock.lock(); reply = r; lock.unlock()
+        }
+        func current() -> String? { lock.lock(); defer { lock.unlock() }; return reply }
+        return ({ spin(20) { current() != nil }; return current() ?? "" }, { current() != nil })
+    }
+    func asked() -> ProjectApproval? { ProjectCenter.shared.requests.first { $0.room == sub.id } }
+    let once = runQuick()
+    spin(10) { asked() != nil }
+    let card = asked()
+    expect(card?.command == "quick: /bin/zsh tools/q.sh" && card?.same != nil && chat.gatheredApprovals(main.id, ProjectCenter.shared.requests).map(\.id) == card.map { [$0.id] }
+           && chat.splitBadge(main.id, requests: ProjectCenter.shared.requests) == .waiting && chat.approvalHome(sub.id) == main.id,
+           "a sub-room's command request is gathered in its main room with its command and key")
+    if let card { chat.allowForSplit(card) }
+    expect(once.wait().hasPrefix("exit=0") && SplitStore.shared.split(main.id, "scr")?.allowed == card?.same.map { [$0] }, "allowed for the split: it runs and the key is kept")
+    let again = runQuick()
+    expect(again.wait().hasPrefix("exit=0") && asked() == nil, "the same command again runs without a card")
+    try! "echo edited\n".write(toFile: repo + "/tools/q.sh", atomically: true, encoding: .utf8)
+    let edited = runQuick()
+    expect(spin(10) { asked() != nil } && !edited.done(), "an edited script asks again")
+    if let card = asked() { ProjectCenter.shared.decide(card.id, allow: false) }
+    expect(edited.wait().contains("refused"), "refused on its card")
+    DelegateLink.shared.unregister(run); ProjectWork.finish(run)
+    expect(!DelegateLink.shared.preapproved(ProjectApproval(room: sub.id, run: UUID(), title: "", detail: "")), "a request without a key is never allowed ahead")
+
+    // A message from the card is kept as "→ sent"; the badge says done once every part reported.
+    chat.runningRooms.insert(sub.id)
+    expect(chat.messageSub(link, "Use the name SubRoomRow", from: "[From the user] ") != nil
+           && SplitStore.shared.split(main.id, "scr")?.parts.first?.sent == ["Use the name SubRoomRow"], "a message to a sub-room is kept on the card")
+    chat.runningRooms.remove(sub.id)
+    SplitStore.shared.changePart(link) { $0.state = .reported; $0.live = false; $0.finished = Date() }
+    spin(2) { chat.splitRecords[main.id]?.first?.parts.first?.state == .reported }
+    expect(chat.splitBadge(main.id, requests: []) == .done && chat.splitRecords[main.id]?.first?.parts.allSatisfy(\.mergeable) == true, "every part reported: done, ready to merge 2/2")
+    SplitStore.shared.change(main.id, "scr") { $0.closed = true }
+    spin(2) { chat.openSplits(main.id).isEmpty }
+    expect(chat.subRoomsShown(main.id), "unfolded by the user, they stay")
+    chat.subRoomsOpen.remove(main.id)
+    expect(!chat.subRoomsShown(main.id), "an ended split folds into one row")
+
+    try? fm.removeItem(at: SplitStore.folder.appendingPathComponent(main.id.uuidString + ".json"))
+    try? fm.removeItem(at: base)
+    print("PASS: sub-room screens (same command key, gathered approvals allowed for the split, badge, fold, messages)")
 }

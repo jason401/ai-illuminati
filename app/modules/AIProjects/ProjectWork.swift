@@ -78,10 +78,14 @@ public enum ProjectProcess {
         return Reply(status: p.terminationStatus, output: String(text.prefix(60_000)))
     }
     public static func git(_ args: [String], root: String, token: DebateCancellation? = nil, timeout: TimeInterval = 60) throws -> String {
-        let reply = try run("/usr/bin/git", ["--literal-pathspecs", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "submodule.recurse=false"] + args,
-                            cwd: root, token: token, deadline: Date().addingTimeInterval(timeout))
+        let reply = try gitReply(args, root: root, token: token, timeout: timeout)
         guard reply.status == 0 else { throw ProjectError.make("git failed (\(reply.status)): \(reply.output)") }
         return reply.output.trimmingCharacters(in: .newlines)
+    }
+    // The same command with its exit status, for Git answers that use it (merge-tree's 1 = conflicts, is-ancestor's 1 = no).
+    static func gitReply(_ args: [String], root: String, token: DebateCancellation? = nil, timeout: TimeInterval = 60) throws -> Reply {
+        try run("/usr/bin/git", ["--literal-pathspecs", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "submodule.recurse=false"] + args,
+                cwd: root, token: token, deadline: Date().addingTimeInterval(timeout))
     }
     public static func inspect(_ path: String) throws -> ProjectBinding {
         let root = try git(["rev-parse", "--show-toplevel"], root: path)

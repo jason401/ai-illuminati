@@ -157,6 +157,22 @@ RunMode.auto | case auto
 RunMode.checkEach | case checkEach
 RunMode.init(rawValue:) | init?(rawValue: String)
 RunMode.stopOnIssue | case stopOnIssue
+SubWork | enum SubWork
+SubWork.Merge | struct Merge
+SubWork.Merge.conflicts | var conflicts: [String]
+SubWork.Merge.head | var head: String
+SubWork.Merge.merged | var merged: String?
+SubWork.Merge.outside | var outside: [String]
+SubWork.Tree | struct Tree
+SubWork.Tree.base | var base: String
+SubWork.Tree.branch | var branch: String
+SubWork.Tree.init(from:) | init(from decoder: any Decoder) throws
+SubWork.Tree.init(path:branch:base:) | init(path: String, branch: String, base: String)
+SubWork.Tree.path | var path: String
+SubWork.create(_:split:n:token:) | static func create(_ binding: ProjectBinding, split: String, n: Int, token: DebateCancellation? = nil) throws -> SubWork.Tree
+SubWork.merge(_:_:sha:owned:reported:token:) | static func merge(_ binding: ProjectBinding, _ tree: SubWork.Tree, sha asked: String, owned: [String], reported: Bool, token: DebateCancellation? = nil) throws -> SubWork.Merge
+SubWork.remove(_:_:token:) | static func remove(_ binding: ProjectBinding, _ tree: SubWork.Tree, token: DebateCancellation? = nil) throws
+SubWork.resync(_:_:token:) | static func resync(_ binding: ProjectBinding, _ tree: SubWork.Tree, token: DebateCancellation? = nil) throws -> [String]
 TaskLink | final class TaskLink
 TaskLink.active | var active: Bool { get }
 TaskLink.call(_:_:context:) | func call(_ name: String, _ arguments: [String : Any], context: ToolContext) -> [String : Any]

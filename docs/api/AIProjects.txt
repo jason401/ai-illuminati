@@ -182,6 +182,7 @@ SubWork.Tree.init(path:branch:base:) | init(path: String, branch: String, base: 
 SubWork.Tree.path | var path: String
 SubWork.create(_:split:n:token:) | static func create(_ binding: ProjectBinding, split: String, n: Int, token: DebateCancellation? = nil) throws -> SubWork.Tree
 SubWork.discard(_:_:token:) | static func discard(_ binding: ProjectBinding, _ tree: SubWork.Tree, token: DebateCancellation? = nil) throws -> String?
+SubWork.goal(_:goal:target:token:) | static func goal(_ binding: ProjectBinding, goal: UUID, target: String, token: DebateCancellation? = nil) throws -> SubWork.Tree
 SubWork.halfMerged(_:) | static func halfMerged(_ binding: ProjectBinding) -> Bool
 SubWork.leftover(_:split:n:) | static func leftover(_ binding: ProjectBinding, split: String, n: Int) throws -> SubWork.Leftover
 SubWork.merge(_:_:sha:owned:reported:token:) | static func merge(_ binding: ProjectBinding, _ tree: SubWork.Tree, sha asked: String, owned: [String], reported: Bool, token: DebateCancellation? = nil) throws -> SubWork.Merge

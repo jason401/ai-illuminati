@@ -2005,3 +2005,67 @@ func testSubTrees() {
     try? FileManager.default.removeItem(at: base)
     print("PASS: sub-room work trees (outside the repo under the test home, clean main, no sub/ push, merge-tree check against the current HEAD, conflicts listed and not merged, outside files warned, SHA after the start, resync markers, removed only when merged and pushed)")
 }
+
+// A TODO Goal's work tree: from the remote target branch as fetched now (a local main commit not pushed stays out),
+// the same tree again on every call (no state in memory, so also after a restart), a folder removed by hand comes back.
+func testGoalTrees() {
+    let base = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("goaltree-fixture-" + UUID().uuidString).resolvingSymlinksInPath()
+    let root = base.appendingPathComponent("repo"), origin = base.appendingPathComponent("origin.git"), other = base.appendingPathComponent("other")
+    try! FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+    func git(_ args: [String], at folder: String) -> String { try! ProjectProcess.git(args, root: folder) }
+    func write(_ text: String, _ name: String, in folder: String) { try! text.write(toFile: folder + "/" + name, atomically: true, encoding: .utf8) }
+    func commit(_ folder: String, _ message: String) { _ = git(["add", "-A"], at: folder); _ = git(["commit", "-q", "-m", message], at: folder) }
+    func failure(_ body: () throws -> Any) -> String? { do { _ = try body(); return nil } catch { return error.localizedDescription } }
+    _ = git(["init", "--bare", "-b", "main", origin.path], at: base.path); _ = git(["init", "-b", "main", root.path], at: base.path)
+    let main = root.path
+    _ = git(["config", "user.name", "Fixture"], at: main); _ = git(["config", "user.email", "fixture@example.invalid"], at: main)
+    _ = git(["remote", "add", "origin", origin.path], at: main)
+    write("first\n", "a.txt", in: main); commit(main, "First")
+    _ = git(["push", "-q", "-u", "origin", "main"], at: main)
+    // Pushed from elsewhere after main's last fetch: only a fetch finds it.
+    _ = git(["clone", "-q", origin.path, other.path], at: base.path)
+    _ = git(["config", "user.name", "Fixture"], at: other.path); _ = git(["config", "user.email", "fixture@example.invalid"], at: other.path)
+    write("remote\n", "remote.txt", in: other.path); commit(other.path, "Remote"); _ = git(["push", "-q", "origin", "main"], at: other.path)
+    let remote = git(["rev-parse", "HEAD"], at: other.path)
+    // A plain chat's commit on local main, not pushed, and an uncommitted change: neither goes into the Goal.
+    write("local only\n", "local.txt", in: main); commit(main, "Local, not pushed")
+    let local = git(["rev-parse", "HEAD"], at: main)
+    write("dirty\n", "a.txt", in: main)
+    let binding = try! ProjectProcess.inspect(main)
+    let id = UUID(), short = String(id.uuidString.lowercased().prefix(8))
+
+    expect(failure { try SubWork.goal(binding, goal: id, target: "-x") } != nil && failure { try SubWork.goal(binding, goal: id, target: "no..pe") } != nil, "the target branch name is checked")
+    let tree = try! SubWork.goal(binding, goal: id, target: "main")
+    let support = URL(fileURLWithPath: AccountStore.supportDir).resolvingSymlinksInPath().path
+    expect(tree.branch == "todo-goal/" + short && tree.path.hasPrefix(support + "/worktrees/") && tree.path.hasSuffix("/goal-" + short) && !tree.path.hasPrefix(main + "/"),
+           "branch todo-goal/<8>, the tree under the test home outside the repo: \(tree)")
+    expect(tree.base == remote && git(["rev-parse", "HEAD"], at: tree.path) == remote && git(["branch", "--show-current"], at: tree.path) == tree.branch,
+           "started from the fetched remote main, not the local HEAD")
+    expect((try? ProjectProcess.git(["merge-base", "--is-ancestor", local, "HEAD"], root: tree.path)) == nil && !FileManager.default.fileExists(atPath: tree.path + "/local.txt")
+           && FileManager.default.fileExists(atPath: tree.path + "/remote.txt") && (try! String(contentsOfFile: tree.path + "/a.txt", encoding: .utf8)) == "first\n",
+           "the unpushed local commit and main's uncommitted change are not in the Goal")
+    expect(git(["rev-parse", "HEAD"], at: main) == local && (try! String(contentsOfFile: main + "/a.txt", encoding: .utf8)) == "dirty\n", "main untouched")
+
+    // Called again (as after a restart: nothing kept in memory): the same tree, with its work, even once the remote moved on.
+    write("step\n", "step.txt", in: tree.path); commit(tree.path, "Step 1")
+    let step = git(["rev-parse", "HEAD"], at: tree.path)
+    write("later\n", "later.txt", in: other.path); commit(other.path, "Later"); _ = git(["push", "-q", "origin", "main"], at: other.path)
+    expect(try! SubWork.goal(binding, goal: id, target: "main") == tree && git(["rev-parse", "HEAD"], at: tree.path) == step, "the same Goal gets the same tree back")
+    expect(try! SubWork.goal(try! ProjectProcess.inspect(main), goal: id, target: "main") == tree, "and with a binding read again")
+
+    // A folder removed by hand: added again on the Goal's branch, its commits kept.
+    try! FileManager.default.removeItem(atPath: tree.path)
+    let again = try! SubWork.goal(binding, goal: id, target: "main")
+    expect(again == tree && git(["rev-parse", "HEAD"], at: again.path) == step, "a removed folder comes back on the branch: \(again)")
+
+    // Another Goal: its own tree; a branch of the same name not made for this Goal is refused.
+    let second = try! SubWork.goal(binding, goal: UUID(), target: "main")
+    expect(second.path != tree.path && second.branch != tree.branch && second.base == git(["rev-parse", "HEAD"], at: other.path), "another Goal, another tree from the newest remote")
+    let clash = UUID(uuidString: short + "-0000-4000-8000-000000000000")!
+    expect(clash != id && failure { try SubWork.goal(binding, goal: clash, target: "main") } != nil && git(["rev-parse", "HEAD"], at: tree.path) == step,
+           "the same 8 characters of another Goal are refused, the tree untouched")
+    _ = git(["branch", "todo-goal/abcdef12", local], at: main)
+    expect(failure { try SubWork.goal(binding, goal: UUID(uuidString: "ABCDEF12-0000-4000-8000-000000000000")!, target: "main") } != nil, "a branch the app did not make is not taken")
+    try? FileManager.default.removeItem(at: base)
+    print("PASS: Goal work trees (todo-goal/<8> from the fetched remote target, unpushed local commits and dirty main left out, same tree again, removed folder added back, other Goals apart)")
+}

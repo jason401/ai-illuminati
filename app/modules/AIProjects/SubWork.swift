@@ -24,10 +24,11 @@ public enum SubWork {
     }
     // …/AI Illuminati/worktrees/<repo hash>/<split>-<n>: outside the repository, so the main room's writable root never
     // contains a sub-room's files. Under a test home in tests (AccountStore.supportDir).
-    static func folder(common: String, split: String, n: Int) -> String {
+    static func folder(common: String, split: String, n: Int) -> String { folder(common: common, name: "\(split)-\(n)") }
+    static func folder(common: String, name: String) -> String {
         let hash = SHA256.hash(data: Data(common.utf8)).map { String(format: "%02x", $0) }.joined().prefix(16)
         return URL(fileURLWithPath: AccountStore.supportDir).appendingPathComponent("worktrees").appendingPathComponent(String(hash))
-            .appendingPathComponent("\(split)-\(n)").path
+            .appendingPathComponent(name).path
     }
     static func branch(split: String, n: Int) -> String { "sub/\(split)/\(n)" }
 
@@ -87,6 +88,50 @@ public enum SubWork {
             try FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
             _ = try git(["worktree", "add", "-b", name, path, base], binding.root, token, timeout: 300)
             return Tree(path: URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path, branch: name, base: base)
+        }
+    }
+
+    // A Goal's work tree (TODO Step/Milestone): branch todo-goal/<first 8 of the Goal id> in worktrees/<repo hash>/goal-<8>,
+    // started from the remote's `target` branch as fetched now, not the local HEAD: commits of plain chats not pushed yet
+    // stay out of the Goal. The same Goal gets the same tree back, also after a restart (the Goal id and start are kept in
+    // the branch's Git config); a folder removed by hand is added again on the branch. Main's own state does not matter.
+    public static func goal(_ binding: ProjectBinding, goal: UUID, target: String, token: DebateCancellation? = nil) throws -> Tree {
+        let common = try project(binding), id = goal.uuidString.lowercased(), short = String(id.prefix(8)), name = "todo-goal/" + short
+        let path = folder(common: common, name: "goal-" + short)
+        guard !binding.remote.isEmpty, !target.hasPrefix("-"), (try? git(["check-ref-format", "--branch", target], binding.root, token)) == target else {
+            throw ProjectError.make("A remote and a valid target branch are required for a Goal.")
+        }
+        let key = "branch." + name + "."
+        func config(_ field: String) -> String? { try? git(["config", "--get", key + field], binding.root, token) }
+        func resolved() -> String { URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path }
+        return try ProjectWork.withRefs(binding.root, token: token) {
+            if try reply(["rev-parse", "-q", "--verify", "refs/heads/" + name], binding.root, token).status == 0 {
+                guard config("todogoal") == id, let base = config("todogoalbase") else { throw ProjectError.make("The branch belongs to another Goal or was not made by the app: " + name) }
+                var listed: String?, current: String?
+                for field in paths(try git(["worktree", "list", "--porcelain", "-z"], binding.root, token)) {
+                    if field.hasPrefix("worktree ") { current = String(field.dropFirst(9)) }
+                    else if field == "branch refs/heads/" + name { listed = current }
+                }
+                if let listed, FileManager.default.fileExists(atPath: listed) {
+                    guard URL(fileURLWithPath: listed).resolvingSymlinksInPath().standardizedFileURL.path == resolved() else { throw ProjectError.make("The Goal's branch is checked out elsewhere: " + listed) }
+                    return Tree(path: resolved(), branch: name, base: base)
+                }
+                guard !FileManager.default.fileExists(atPath: path) else { throw ProjectError.make("The Goal's work tree folder exists but is not its work tree: " + path) }
+                _ = try git(["worktree", "prune"], binding.root, token)
+                try FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+                _ = try git(["worktree", "add", path, name], binding.root, token, timeout: 300)
+                return Tree(path: resolved(), branch: name, base: base)
+            }
+            guard !FileManager.default.fileExists(atPath: path) else { throw ProjectError.make("The Goal's work tree folder already exists: " + path) }
+            let remoteRef = "refs/remotes/\(binding.remote)/\(target)"
+            _ = try git(["fetch", "--no-tags", binding.remote, "+refs/heads/\(target):\(remoteRef)"], binding.root, token, timeout: 180)
+            let base = try git(["rev-parse", "--verify", remoteRef + "^{commit}"], binding.root, token)
+            // Kept before the branch exists: a branch without them is never taken for this Goal's.
+            _ = try git(["config", key + "todogoal", id], binding.root, token)
+            _ = try git(["config", key + "todogoalbase", base], binding.root, token)
+            try FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+            _ = try git(["worktree", "add", "--no-track", "-b", name, path, base], binding.root, token, timeout: 300)
+            return Tree(path: resolved(), branch: name, base: base)
         }
     }
 

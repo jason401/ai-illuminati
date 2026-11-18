@@ -40,6 +40,10 @@ public enum RemotePage {
             "usageClose": L("닫기", "Close"),
             "usageRefresh": L("새로고침", "Refresh"),
             "usageLoading": L("사용량 확인 중…", "Loading usage…"),
+            "usageChecking": L("확인 중…", "Checking…"),
+            "usageRefreshing": L("새 측정값을 기다리는 중…", "Waiting for new readings…"),
+            "usageWaiting": L("아직 새 측정값이 없어요. 자동으로 다시 확인해요.", "No new readings yet. The panel will check again automatically."),
+            "usageThrottled": L("최근에 새로고침을 요청했어요. 잠시 후 다시 눌러 주세요.", "Refresh was requested recently. Try again in a moment."),
             "usageEmpty": L("표시할 계정이 없어요.", "No accounts to show."),
             "usageNoReading": L("{device} 기준 · 측정 기록 없음", "{device} · No readings yet"),
             "usageAge": L("{device} 기준 · {n}분 전 측정", "{device} · Measured {n} min ago"),
@@ -510,8 +514,13 @@ $('list').addEventListener('click', e => {
   go('#c=' + encodeURIComponent(row.dataset.id));
 });
 $('compose').addEventListener('click', () => go('#new'));
-const usagePanel = $('usagePanel'), usageRefresh = $('usageRefresh');
-let usageTimer = null, usagePending = false, usageSnapshot = null;
+const usagePanel = $('usagePanel'), usageRefresh = $('usageRefresh'), usageStatus = $('usageStatus');
+let usageTimer = null, usagePending = false, usageSnapshot = null, usageBurst = null;
+
+function usageReadingTimes(data) {
+  // The footer shows the oldest reading, which can stay the same when one account is still cached.
+  return JSON.stringify(data.groups.map(group => group.accounts.map(account => account.checkedAt)));
+}
 
 function usageRefill(resetsAt, now) {
   if (resetsAt === null) return S.usageUnused;
@@ -544,6 +553,14 @@ function usageLimit(label, limit, duration, now) {
     '<span class="usageTime">' + esc(usageRefill(limit.resetsAt, now)) + '</span></div>';
 }
 
+function usageLimits(account, now) {
+  if (account.checkedAt === null && !account.fiveHour && !account.weekly && !account.note && !account.extras.length) {
+    return '<p class="usageSmall">' + esc(S.usageChecking) + '</p>';
+  }
+  return '<div class="usageLimits">' + usageLimit(S.usageFive, account.fiveHour, 5 * 60 * 60 * 1000, now) +
+    usageLimit(S.usageWeek, account.weekly, 7 * 24 * 60 * 60 * 1000, now) + '</div>';
+}
+
 function renderUsage(data) {
   const now = Date.now();
   const minutes = Math.max(0, Math.floor((now - data.checkedAt) / 60000));
@@ -553,8 +570,7 @@ function renderUsage(data) {
     esc(g.name) + '</h3>' + g.accounts.map(a =>
       '<div class="usageAccount"><h4 class="usageName">' + esc(a.name) +
       (a.plan ? '<span class="usageSmall usagePlan">' + esc(a.plan) + '</span>' : '') + '</h4>' +
-      '<div class="usageLimits">' + usageLimit(S.usageFive, a.fiveHour, 5 * 60 * 60 * 1000, now) +
-      usageLimit(S.usageWeek, a.weekly, 7 * 24 * 60 * 60 * 1000, now) + '</div>' +
+      usageLimits(a, now) +
       (a.needsLogin && g.provider !== 'ollama' ? '<p class="usageSmall usageLogin">' + esc(S.usageLogin) + '</p>' : '') +
       (a.note ? '<p class="usageSmall">' + esc(a.note) + '</p>' : '') +
       a.extras.map(extra => '<p class="usageSmall">' + esc(extra) + '</p>').join('') + '</div>'
@@ -564,22 +580,38 @@ function renderUsage(data) {
 async function loadUsage(refresh = false) {
   clearTimeout(usageTimer);
   if (!usagePanel.open || document.hidden || usagePending) return;
-  if (!KEY) { $('usageStatus').textContent = S.noKey; return; }
+  if (!KEY) { usageStatus.textContent = S.noKey; return; }
   usagePending = true;
   usageRefresh.disabled = true;
-  if (!usageSnapshot) $('usageStatus').textContent = S.usageLoading;
+  if (!usageSnapshot) usageStatus.textContent = S.usageLoading;
   try {
     usageSnapshot = await api(refresh ? '/api/usage/refresh' : '/api/usage', refresh ? {} : undefined, 8000);
-    if (usagePanel.open) {
-      renderUsage(usageSnapshot);
-      $('usageStatus').textContent = '';
+    if (!usagePanel.open) return;
+    renderUsage(usageSnapshot);
+    if (refresh && usageSnapshot.refreshStarted) {
+      usageBurst = { times: usageReadingTimes(usageSnapshot), deadline: performance.now() + 20000 };
+      usageStatus.textContent = S.usageRefreshing;
+    } else if (refresh) {
+      usageStatus.textContent = S.usageThrottled;
+    } else if (!usageBurst || usageReadingTimes(usageSnapshot) !== usageBurst.times) {
+      usageBurst = null;
+      usageStatus.textContent = '';
+    } else if (performance.now() >= usageBurst.deadline) {
+      usageBurst = null;
+      usageStatus.textContent = S.usageWaiting;
+    } else {
+      usageStatus.textContent = S.usageRefreshing;
     }
   } catch {
-    if (usagePanel.open) $('usageStatus').textContent = S.offline;
+    if (usageBurst && performance.now() >= usageBurst.deadline) usageBurst = null;
+    if (usagePanel.open) usageStatus.textContent = S.offline;
   } finally {
     usagePending = false;
-    usageRefresh.disabled = false;
-    if (usagePanel.open && !document.hidden) usageTimer = setTimeout(loadUsage, 45000);
+    usageRefresh.disabled = Boolean(usageBurst);
+    if (usagePanel.open && !document.hidden) {
+      const delay = usageBurst ? Math.min(3000, Math.max(0, usageBurst.deadline - performance.now())) : 45000;
+      usageTimer = setTimeout(loadUsage, delay);
+    }
   }
 }
 
@@ -593,7 +625,13 @@ $('usageTool').addEventListener('click', () => {
   loadUsage();
 });
 $('usageClose').addEventListener('click', () => usagePanel.close());
-usagePanel.addEventListener('close', () => { if (!usagePanel.open) clearTimeout(usageTimer); });
+usagePanel.addEventListener('close', () => {
+  if (usagePanel.open) return;
+  clearTimeout(usageTimer);
+  usageBurst = null;
+  usageRefresh.disabled = usagePending;
+  usageStatus.textContent = '';
+});
 usageRefresh.addEventListener('click', () => loadUsage(true));
 document.addEventListener('visibilitychange', () => loadUsage());
 

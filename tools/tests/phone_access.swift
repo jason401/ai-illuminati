@@ -183,7 +183,9 @@ func testPhoneUsage() {
            && groups.first?["color"] as? [String] == ["#008850", "#00bb80"]
            && codex.compactMap { $0["name"] as? String } == ["Personal", "Work"],
            "phone usage: groups ordered by first appearance, accounts in settings order")
-    expect(personalRow["plan"] as? String == "plus" && five?["left"] as? Double == 100
+    expect(personalRow["plan"] as? String == "plus"
+           && personalRow["checkedAt"] as? Double == (now.timeIntervalSince1970 - 30) * 1000
+           && five?["left"] as? Double == 100
            && five?["resetsAt"] as? Double == (now.timeIntervalSince1970 - 1) * 1000
            && week?["left"] as? Double == 21 && week?["resetsAt"] as? Double == (now.timeIntervalSince1970 + 3600) * 1000,
            "phone usage: plan and raw reset dates, expired limits display 100%")
@@ -191,22 +193,27 @@ func testPhoneUsage() {
            && schoolRow["needsLogin"] as? Bool == true
            && schoolRow["note"] as? String == "Sign in as … to continue"
            && schoolRow["extras"] as? [String] == ["Extra limit", "Account: …"]
-           && codex.last?["weekly"] is NSNull,
-           "phone usage: missing limits and readings are null; note, extras and login state are retained")
+           && schoolRow["checkedAt"] as? Double == data["checkedAt"] as? Double
+           && codex.last?["weekly"] is NSNull && codex.last?["checkedAt"] is NSNull,
+           "phone usage: checked accounts without limits are distinct from accounts without a reading")
     expect(localRow["fiveHour"] is NSNull && localRow["weekly"] is NSNull
            && localRow["extras"] as? [String] == [L("한도 없음", "No limit")],
            "phone usage: Ollama has no limits even when the status icon uses synthetic full bars")
     expect(!String(decoding: initial.body, as: UTF8.self).contains("@"), "phone usage: no email anywhere in the response")
     expect(call("GET", "/api/usage/refresh").status == 404 && call("POST", "/api/usage").status == 404 && fake.refreshes == 0,
            "phone usage: only POST refresh can start a measurement")
-    let started = call("POST", "/api/usage/refresh")
-    expect(started.status == 200 && object(started)["checkedAt"] as? Double == data["checkedAt"] as? Double && fake.refreshes == 1,
-           "phone usage: the first refresh returns the cached snapshot immediately")
-    let throttled = call("POST", "/api/usage/refresh", uptime: 159.99)
-    expect(throttled.status == 200 && object(throttled)["checkedAt"] is NSNull && fake.refreshes == 1,
-           "phone usage: an early repeat returns the latest snapshot without starting another measurement")
-    expect(call("POST", "/api/usage/refresh", uptime: 160).status == 200 && fake.refreshes == 2,
+    let started = call("POST", "/api/usage/refresh"), startedData = object(started)
+    expect(started.status == 200 && startedData["refreshStarted"] as? Bool == true
+           && startedData["checkedAt"] as? Double == data["checkedAt"] as? Double && fake.refreshes == 1,
+           "phone usage: the first refresh confirms it started and returns the cached snapshot immediately")
+    let throttled = call("POST", "/api/usage/refresh", uptime: 159.99), throttledData = object(throttled)
+    expect(throttled.status == 200 && throttledData["refreshStarted"] as? Bool == false
+           && throttledData["checkedAt"] is NSNull && fake.refreshes == 1,
+           "phone usage: an early repeat returns the latest snapshot and says it did not start")
+    let allowed = call("POST", "/api/usage/refresh", uptime: 160)
+    expect(allowed.status == 200 && object(allowed)["refreshStarted"] as? Bool == true && fake.refreshes == 2,
            "phone usage: refresh is accepted at the 60-second boundary")
+    expect(data["refreshStarted"] == nil, "phone usage: a GET does not report a refresh decision")
 
     let page = String(decoding: RemotePage.html(), as: UTF8.self)
     expect(page.contains("id=\"usagePanel\"") && page.contains("'/api/usage/refresh'") && page.contains("45000"),

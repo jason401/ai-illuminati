@@ -52,6 +52,9 @@
 | `splitDeclined: Bool?` | 나누기 카드를 거절함 → 다시 제안 안 함 |
 
 - `TodoStore.split`이 한 번에 저장(반쯤 저장 없음). 순서: ①.after = 원래 after, ②.after = [①], 마무리.after = [마지막 ②].
+- 보드 순서(`list.order`)에서 ①②는 **원래 TODO 바로 위**에 넣는다(`place(_, before: 원래)`). 그 아래 ready TODO는 지금처럼
+  바로 위 TODO(= 마무리)를 기다리므로 묶음 전체가 끝난 뒤 시작한다. 맨 뒤에 붙이면 ①이 아래 TODO를 기다리고 그 TODO는
+  마무리를 기다려 서로 기다리는 원이 생긴다(`hasCycle`).
 - 옛 앱이 읽어도 보통 TODO 몇 개로 보인다(마무리가 ②를 기다리므로 순서도 지켜짐).
 
 ## 4. AI 도구와 권한

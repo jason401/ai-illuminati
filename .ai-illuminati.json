@@ -11,7 +11,7 @@
     "test-failure-recovery": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_JOBS=1", "AI_ILLUMINATI_TEST_ONLY=testFailureRecovery,testTodoFailureRecovery", "/bin/zsh", "tools/tests/run_mode2.sh"]},
     "test-unread": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_JOBS=1", "AI_ILLUMINATI_TEST_ONLY=testUnreadChats,testRoomDrafts", "/bin/zsh", "tools/tests/run_mode2.sh"]},
     "test-token-stats": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_JOBS=1", "AI_ILLUMINATI_TEST_ONLY=testTokenStats,testRunConditions", "/bin/zsh", "tools/tests/run_mode2.sh"]},
-    "test-subtrees": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_ONLY=testSubTrees,testGoalTrees,testWorkTreeLocks,testProjectWork", "/bin/zsh", "tools/tests/run_mode2.sh"]},
+    "test-subtrees": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_ONLY=testSubTrees,testGoalTrees,testGoalIntegration,testWorkTreeLocks,testProjectWork", "/bin/zsh", "tools/tests/run_mode2.sh"]},
     "test-todo-store": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_ONLY=testTodoStore,testTodoPlan,testTodoOrder,testTodoScheduler", "/bin/zsh", "tools/tests/run_mode2.sh"]},
     "test-locks": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_ONLY=testWorkTreeLocks,testProjectWork,testDocumentsProject,testTodoScheduler,testTodoOrder", "/bin/zsh", "tools/tests/run_mode2.sh"]},
     "test-subrooms": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_ONLY=testDelegate,testSubRoomScreens,testChatSearch,testToolHub", "/bin/zsh", "tools/tests/run_mode2.sh"]},

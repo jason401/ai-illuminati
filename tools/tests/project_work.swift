@@ -2224,3 +2224,83 @@ func testGoalTrees() {
     try? FileManager.default.removeItem(at: base)
     print("PASS: Goal work trees (todo-goal/<8> from the fetched remote target, unpushed local commits and dirty main left out, same tree again, removed folder added back, other Goals apart)")
 }
+
+// A Milestone's push candidate: the newest remote target merged into the Goal's branch inside the Goal's tree (a merge,
+// so the Steps' SHAs stay); a conflict stays there with its files in the error; the user's main checkout never changes.
+func testGoalIntegration() {
+    let base = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("goalmerge-fixture-" + UUID().uuidString).resolvingSymlinksInPath()
+    let root = base.appendingPathComponent("repo"), origin = base.appendingPathComponent("origin.git"), other = base.appendingPathComponent("other")
+    try! FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+    func git(_ args: [String], at folder: String) -> String { try! ProjectProcess.git(args, root: folder) }
+    func write(_ text: String, _ name: String, in folder: String) { try! text.write(toFile: folder + "/" + name, atomically: true, encoding: .utf8) }
+    func read(_ path: String) -> String? { try? String(contentsOfFile: path, encoding: .utf8) }
+    func commit(_ folder: String, _ message: String) { _ = git(["add", "-A"], at: folder); _ = git(["commit", "-q", "-m", message], at: folder) }
+    func push(_ text: String, _ name: String, _ message: String) -> String {
+        write(text, name, in: other.path); commit(other.path, message); _ = git(["push", "-q", "origin", "main"], at: other.path)
+        return git(["rev-parse", "HEAD"], at: other.path)
+    }
+    _ = git(["init", "--bare", "-b", "main", origin.path], at: base.path); _ = git(["init", "-b", "main", root.path], at: base.path)
+    let main = root.path
+    _ = git(["config", "user.name", "Fixture"], at: main); _ = git(["config", "user.email", "fixture@example.invalid"], at: main)
+    _ = git(["remote", "add", "origin", origin.path], at: main)
+    write("first\n", "a.txt", in: main); write("shared\n", "shared.txt", in: main); commit(main, "First")
+    _ = git(["push", "-q", "-u", "origin", "main"], at: main)
+    _ = git(["clone", "-q", origin.path, other.path], at: base.path)
+    _ = git(["config", "user.name", "Fixture"], at: other.path); _ = git(["config", "user.email", "fixture@example.invalid"], at: other.path)
+    // The user's checkout: an unpushed commit and an uncommitted change, both must stay exactly as they are.
+    write("local only\n", "local.txt", in: main); commit(main, "Local, not pushed")
+    write("dirty\n", "a.txt", in: main)
+    let binding = try! ProjectProcess.inspect(main)
+    func mainState() -> String {
+        git(["rev-parse", "HEAD"], at: main) + "|" + git(["branch", "--show-current"], at: main) + "|" + git(["status", "--porcelain"], at: main)
+            + "|" + (read(main + "/a.txt") ?? "") + "|" + git(["rev-parse", "refs/heads/main"], at: main)
+    }
+    let before = mainState()
+    let tree = try! SubWork.goal(binding, goal: UUID(), target: "main")
+    write("step\n", "step.txt", in: tree.path); commit(tree.path, "Step 1")
+    let step = git(["rev-parse", "HEAD"], at: tree.path)
+
+    // Nothing new on the remote: the candidate is the Goal's HEAD as it is, nothing merged.
+    let same = try! SubWork.integrate(binding, tree, target: "main")
+    expect(same.base == tree.base && same.candidate == step, "up to date: the Step's HEAD is the candidate: \(same)")
+    // The remote moved on: fetched and merged in the Goal's tree; the Step's commit keeps its SHA.
+    let ahead = push("remote\n", "remote.txt", "Remote ahead")
+    let merged = try! SubWork.integrate(binding, tree, target: "main")
+    let parents = git(["rev-list", "--parents", "-n", "1", "HEAD"], at: tree.path).split(separator: " ").map(String.init)
+    expect(merged.base == ahead && merged.candidate == git(["rev-parse", "HEAD"], at: tree.path) && parents == [merged.candidate, step, ahead],
+           "the remote's SHA merged into the Goal (a merge commit over the Step and the remote): \(merged) / \(parents)")
+    expect(read(tree.path + "/remote.txt") == "remote\n" && read(tree.path + "/step.txt") == "step\n" && git(["status", "--porcelain"], at: tree.path).isEmpty,
+           "the candidate has both, the tree clean")
+    expect((try? ProjectProcess.git(["merge-base", "--is-ancestor", ahead, merged.candidate], root: main)) != nil, "the candidate descends from the remote SHA (fast-forward push)")
+    expect(mainState() == before, "main's HEAD, branch, file and status unchanged after integrating")
+
+    // Not clean: refused, nothing fetched into the tree.
+    write("wip\n", "wip.txt", in: tree.path)
+    expect((try? SubWork.integrate(binding, tree, target: "main")) == nil && git(["rev-parse", "HEAD"], at: tree.path) == merged.candidate, "an unclean Goal tree is refused")
+    try! FileManager.default.removeItem(atPath: tree.path + "/wip.txt")
+
+    // A conflict: the Step and the remote change the same line; the merge stays in the Goal's tree, the files in the error.
+    write("goal side\n", "shared.txt", in: tree.path); commit(tree.path, "Step 2")
+    let step2 = git(["rev-parse", "HEAD"], at: tree.path)
+    let clash = push("remote side\n", "shared.txt", "Remote clash")
+    var conflict: SubWork.Conflict?
+    do { _ = try SubWork.integrate(binding, tree, target: "main") } catch let c as SubWork.Conflict { conflict = c } catch { expect(false, "a conflict error: \(error)") }
+    expect(conflict?.files == ["shared.txt"] && conflict?.remote == clash && conflict?.localizedDescription.contains("shared.txt") == true, "the conflicted files come back: \(String(describing: conflict))")
+    expect(git(["rev-parse", "MERGE_HEAD"], at: tree.path) == clash && git(["rev-parse", "HEAD"], at: tree.path) == step2
+           && (read(tree.path + "/shared.txt") ?? "").contains("<<<<<<<") && git(["diff", "--name-only", "--diff-filter=U"], at: tree.path) == "shared.txt",
+           "the Goal's tree is left mid-merge with the markers")
+    // Called again: the same conflict, nothing new started or aborted.
+    var again: SubWork.Conflict?
+    do { _ = try SubWork.integrate(binding, tree, target: "main") } catch let c as SubWork.Conflict { again = c } catch {}
+    expect(again == conflict && git(["rev-parse", "MERGE_HEAD"], at: tree.path) == clash, "called again: the same conflict, the merge kept")
+    expect(mainState() == before && !FileManager.default.fileExists(atPath: main + "/.git/MERGE_HEAD") && read(main + "/shared.txt") == "shared\n",
+           "main untouched by the conflict")
+    // A Fix Step resolves and commits: the next call gives that merge as the candidate.
+    write("resolved\n", "shared.txt", in: tree.path); commit(tree.path, "Fix")
+    let fixed = try! SubWork.integrate(binding, tree, target: "main")
+    expect(fixed.base == clash && fixed.candidate == git(["rev-parse", "HEAD"], at: tree.path), "after the fix, the resolved merge is the candidate: \(fixed)")
+    expect((try? SubWork.integrate(binding, SubWork.Tree(path: main, branch: "main", base: tree.base), target: "main")) == nil, "the main checkout is not a Goal tree")
+    expect(mainState() == before, "main unchanged at the end")
+    try? FileManager.default.removeItem(at: base)
+    print("PASS: Goal integration (remote target fetched and merged into the Goal's tree, Steps' SHAs kept, conflict left in the tree with its files, main checkout untouched)")
+}

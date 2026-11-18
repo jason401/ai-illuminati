@@ -160,6 +160,64 @@ public enum SubWork {
         }
     }
 
+    // A Milestone's integration stopped on conflicts: the Goal's work tree is left mid-merge with the markers (a Fix Step
+    // resolves and commits them there), `files` the unmerged paths, `remote` the fetched SHA being merged in.
+    public struct Conflict: LocalizedError, Equatable {
+        public var files: [String], remote: String
+        public var errorDescription: String? {
+            L("원격 최신 커밋과 합치다 충돌이 났어요. Goal 작업 폴더에 충돌 상태로 남겨 뒀어요: ", "Merging the newest remote commit conflicted; the Goal's work tree is left in that state: ")
+                + files.joined(separator: ", ")
+        }
+    }
+
+    // A Milestone's push candidate (TODO structure 07): fetches the remote `target` branch and merges its SHA into the Goal's
+    // branch in the Goal's own work tree; the resulting HEAD is the candidate, `base` the remote SHA its review and push are
+    // measured from (base...candidate, then a fast-forward push). Merge, not rebase: the Steps' commits keep their SHAs (no
+    // rewritten history in the tree a Step may still name), a conflict stops once in one state a Fix Step resolves with one
+    // commit instead of once per replayed commit, and the candidate still descends from `base`. The main work tree and its
+    // branch are never touched. A conflict throws `Conflict` and leaves the merge as it is; called again then, it reports the
+    // same files without starting anything. Up to date already: HEAD as it is.
+    public static func integrate(_ binding: ProjectBinding, _ tree: Tree, target: String, token: DebateCancellation? = nil) throws -> (base: String, candidate: String) {
+        let common = try project(binding)
+        guard tree.branch.hasPrefix("todo-goal/") else { throw ProjectError.make("Not a Goal branch: " + tree.branch) }
+        guard !binding.remote.isEmpty, !target.hasPrefix("-"), (try? git(["check-ref-format", "--branch", target], binding.root, token)) == target else {
+            throw ProjectError.make("A remote and a valid target branch are required for a Goal.")
+        }
+        guard FileManager.default.fileExists(atPath: tree.path), ProjectWork.commonDir(tree.path) == common,
+              (try? git(["branch", "--show-current"], tree.path, token)) == tree.branch else {
+            throw ProjectError.make("The Goal's work tree is missing or not on " + tree.branch)
+        }
+        let held: [String]
+        do { held = try ProjectWork.acquire(WorkspaceBinding(roots: [WorkspaceRoot(path: tree.path, directory: true, writable: true)], level: .execute)) }
+        catch where ProjectWork.isBusy(error.localizedDescription) { throw fail("Step이 아직 Goal 작업 폴더를 쓰고 있어요. 끝난 뒤 다시 해 주세요.", "A Step is still writing the Goal's work tree; try again once it ends.") }
+        defer { ProjectWork.release(held, notify: false) }
+        return try ProjectWork.withRefs(binding.root, token: token) {
+            let remoteRef = "refs/remotes/\(binding.remote)/\(target)"
+            func unmerged() throws -> [String] { paths(try git(["diff", "-z", "--name-only", "--diff-filter=U"], tree.path, token)) }
+            if try merging(tree.path, token) {
+                // Left from an earlier conflict: the same state again, nothing new started.
+                let files = try unmerged(), head = (try? git(["rev-parse", "--verify", "MERGE_HEAD"], tree.path, token)) ?? ""
+                if !files.isEmpty { throw Conflict(files: files, remote: head) }
+                throw fail("Goal 작업 폴더의 충돌을 해결했지만 merge 커밋이 아직 없어요. 먼저 커밋해 주세요.", "The Goal's conflicts are resolved but the merge is not committed yet; commit it first.")
+            }
+            try clean(tree.path, token, "Goal 작업 폴더에 커밋하지 않은 변경이 있어 통합하지 않았어요. 먼저 커밋해 주세요.",
+                      "The Goal's work tree has uncommitted changes; commit them before integrating.")
+            _ = try git(["fetch", "--no-tags", binding.remote, "+refs/heads/\(target):\(remoteRef)"], binding.root, token, timeout: 180)
+            let remote = try git(["rev-parse", "--verify", remoteRef + "^{commit}"], binding.root, token)
+            if try !isAncestor(remote, "HEAD", tree.path, token) {
+                let message = "Merge \(binding.remote)/\(target) (\(remote.prefix(10))) into \(tree.branch)"
+                let result = try started(["merge", "--no-edit", "-m", message, remote], tree.path, token)
+                if result.status != 0 {
+                    let files = try unmerged()
+                    if !files.isEmpty { throw Conflict(files: files, remote: remote) }
+                    if try merging(tree.path, token) { _ = try? git(["merge", "--abort"], tree.path, token) }
+                    throw ProjectError.make(L("원격 최신 커밋과 합치다 예상과 달리 실패해 방금 시작한 merge만 되돌렸어요: ", "Merging the newest remote commit failed unexpectedly; only that merge was aborted: ") + result.output)
+                }
+            }
+            return (remote, try git(["rev-parse", "HEAD"], tree.path, token))
+        }
+    }
+
     // Removes the work tree and its branch, only once its work is in the main HEAD and pushed (the remote-tracking ref of the
     // main work tree's branch contains the branch's tip) and the tree has nothing uncommitted. Otherwise both stay.
     public static func remove(_ binding: ProjectBinding, _ tree: Tree, token: DebateCancellation? = nil) throws {

@@ -165,6 +165,10 @@ RunMode.checkEach | case checkEach
 RunMode.init(rawValue:) | init?(rawValue: String)
 RunMode.stopOnIssue | case stopOnIssue
 SubWork | enum SubWork
+SubWork.Conflict | struct Conflict
+SubWork.Conflict.errorDescription | var errorDescription: String? { get }
+SubWork.Conflict.files | var files: [String]
+SubWork.Conflict.remote | var remote: String
 SubWork.Leftover | struct Leftover
 SubWork.Leftover.branch | var branch: Bool
 SubWork.Leftover.exists | var exists: Bool
@@ -186,6 +190,7 @@ SubWork.create(_:split:n:token:) | static func create(_ binding: ProjectBinding,
 SubWork.discard(_:_:token:) | static func discard(_ binding: ProjectBinding, _ tree: SubWork.Tree, token: DebateCancellation? = nil) throws -> String?
 SubWork.goal(_:goal:target:token:) | static func goal(_ binding: ProjectBinding, goal: UUID, target: String, token: DebateCancellation? = nil) throws -> SubWork.Tree
 SubWork.halfMerged(_:) | static func halfMerged(_ binding: ProjectBinding) -> Bool
+SubWork.integrate(_:_:target:token:) | static func integrate(_ binding: ProjectBinding, _ tree: SubWork.Tree, target: String, token: DebateCancellation? = nil) throws -> (base: String, candidate: String)
 SubWork.leftover(_:split:n:) | static func leftover(_ binding: ProjectBinding, split: String, n: Int) throws -> SubWork.Leftover
 SubWork.merge(_:_:sha:owned:reported:token:) | static func merge(_ binding: ProjectBinding, _ tree: SubWork.Tree, sha asked: String, owned: [String], reported: Bool, token: DebateCancellation? = nil) throws -> SubWork.Merge
 SubWork.remove(_:_:token:) | static func remove(_ binding: ProjectBinding, _ tree: SubWork.Tree, token: DebateCancellation? = nil) throws

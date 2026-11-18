@@ -143,6 +143,7 @@ ProjectRun.setPlan(_:note:generation:tool:) | @discardableResult func setPlan(_ 
 ProjectRun.setPlan(todos:generation:) | @discardableResult func setPlan(todos: Any?, generation: Int) -> Bool
 ProjectRun.todoReviewBase() | func todoReviewBase() throws -> String?
 ProjectRun.todoWasSplit | var todoWasSplit: Bool { get }
+ProjectRun.usedSubRooms | var usedSubRooms: Bool { get set }
 ProjectRun.validate(_:) | func validate(_ generation: Int) throws
 ProjectWork | enum ProjectWork
 ProjectWork.acquire(_:) | static func acquire(_ binding: WorkspaceBinding?) throws -> [String]

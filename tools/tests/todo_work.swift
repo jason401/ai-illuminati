@@ -613,6 +613,9 @@ func testTodoSplitTool() {
         ("no done_when", plan([piece("A", done: nil), piece("", finish: true)]), "done_when"),
         ("blank done_when", plan([piece("A", done: "  "), piece("", finish: true)]), "done_when"),
         ("no estimate", ["pieces": [piece("A"), piece("", finish: true)], "reason": "r"], "estimated_minutes"),
+        ("a step without detail", plan([piece("A").merging(["detail": ""]) { $1 }, piece("", finish: true)]), "a detail"),
+        ("a finish without files", plan([piece("A"), piece("", finish: true).filter { $0.key != "files" }]), "needs files"),
+        ("files of the wrong type", plan([piece("A"), piece("", finish: true).merging(["files": "Screen.swift"]) { $1 }]), "needs files"),
     ]
     for (what, args, says) in cases {
         let reply = call("task_split", args, refuse.context)
@@ -626,6 +629,24 @@ func testTodoSplitTool() {
     _ = try! ProjectProcess.git(["add", "Changed.txt"], root: project.root); _ = try! ProjectProcess.git(["commit", "-m", "Changed"], root: project.root)
     expect(!call("task_split", good, refuse.context).ok, "a split after a commit is refused")
     try! store.change(refuse.id) { $0.state = .cancelled }
+    // A file already changed before the run, edited again (or staged): refused; untouched it may split.
+    try! "dirty".write(to: root.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
+    let dirty = todo("Dirty")
+    expect(names(dirty.context).contains("task_split"), "an earlier uncommitted change alone does not block the offer")
+    try! "dirty again".write(to: root.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
+    let edited = call("task_split", good, dirty.context)
+    expect(!edited.ok && edited.text.contains("changed"), "editing a file that was dirty before the run blocks the split: \(edited.text)")
+    try! "dirty".write(to: root.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
+    _ = try! ProjectProcess.git(["add", "README.md"], root: project.root)
+    expect(!call("task_split", good, dirty.context).ok, "staging it blocks the split too")
+    _ = try! ProjectProcess.git(["checkout", "HEAD", "--", "README.md"], root: project.root)
+    try! store.change(dirty.id) { $0.state = .cancelled }
+    // Sub-rooms first: no split.
+    let delegated = todo("Delegated")
+    ProjectWork.run(for: delegated.context)!.usedSubRooms = true
+    let both = call("task_split", good, delegated.context)
+    expect(!both.ok && both.text.contains("sub-rooms") && store.current.item(delegated.id)?.group == nil, "a TODO that used sub-rooms cannot split: \(both.text)")
+    try! store.change(delegated.id) { $0.state = .cancelled }
     // Not the first run (after an answer, an error or a restart).
     let again = todo("Again")
     try! store.change(again.id) { $0.state = .ready }
@@ -644,7 +665,7 @@ func testTodoSplitTool() {
            && steps.map(\.title) == ["Storage", "Behavior"] && steps.allSatisfy { $0.byAI == true && $0.detail.contains("Done when: Its test passes") },
            "full auto splits without a card: \(split.text)")
     expect(finish.splitRecord?.estimatedMinutes == 90 && finish.splitRecord?.reason == "Storage before behavior"
-           && finish.splitRecord?.files.map(\.paths) == [["Store.swift"], ["Run.swift"], ["Screen.swift"]]
+           && finish.splitRecord?.files.map(\.paths) == [["Store.swift"], ["Run.swift"], ["Screen.swift"]] && finish.splitRecord?.finishDone == "Full test passes"
            && TodoStore(url: store.url).current.item(auto.id)?.splitRecord == finish.splitRecord,
            "the estimate, reason and files of each piece are saved in the split record")
     // Twice: the old turn has no tools any more, and the store refuses too.
@@ -657,14 +678,14 @@ func testTodoSplitTool() {
     let firstNames = names(first)
     expect(firstNames.contains("task_pieces") && !firstNames.contains("task_split"), "a piece gets task_pieces, not task_split: \(firstNames)")
     let resplit = call("task_split", good, first)
-    expect(!resplit.ok && resplit.text.contains("cannot be split again") && store.current.items.count == steps.count + 5,
+    expect(!resplit.ok && resplit.text.contains("cannot be split again") && store.current.items.count == steps.count + 7,
            "a piece cannot be split again: \(resplit.text)")
     try! store.change(steps[0].id) { $0.state = .done; $0.result = "Storage report"; $0.files = ["Store.swift"] }
     let secondPiece = running(steps[1].id, auto: true)
     let before = store.current.items
     let read = call("task_pieces", [:], secondPiece)
     expect(read.ok && read.text.contains("Original TODO (the finish): Auto") && read.text.contains("Report: Storage report")
-           && read.text.contains("Behavior — running (yours)") && read.text.contains("Storage before behavior")
+           && read.text.contains("Behavior — running (yours)") && read.text.contains("Storage before behavior") && read.text.contains("Done when: Full test passes")
            && !read.text.contains("Unrelated") && !read.text.contains("Refuse"), "task_pieces shows the group and the earlier reports:\n\(read.text)")
     expect(store.current.items == before && store.current.item(other.id) != nil, "task_pieces only reads")
     let pieceNote = TodoScheduler.instruction(store.current.item(steps[1].id)!, split: true)

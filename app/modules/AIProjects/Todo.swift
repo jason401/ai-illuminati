@@ -94,6 +94,7 @@ public struct TodoItem: Codable, Identifiable, Equatable {
         let reason: String
         let files: [PieceFiles]
         var reviewBase: String? = nil  // Git HEAD before the first step, kept through retries and restarts
+        var finishDone: String? = nil  // the finish's done-when line (each step's is in its detail)
     }
 
     var group: UUID?                       // the original TODO's id, including on the finish itself
@@ -600,7 +601,7 @@ public final class TodoStore: ObservableObject {
     }
 
     // The caller handles the running turn. The store saves the steps, finish and order together.
-    func split(_ id: UUID, steps: [SplitStep], estimatedMinutes: Int, reason: String, finishFiles: [String], context: ToolContext? = nil) throws {
+    func split(_ id: UUID, steps: [SplitStep], estimatedMinutes: Int, reason: String, finishFiles: [String], finishDone: String? = nil, context: ToolContext? = nil) throws {
         guard (1...5).contains(steps.count) else { throw TodoError.splitCount }
         guard estimatedMinutes > 0, !reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               steps.allSatisfy({ !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else {
@@ -634,7 +635,7 @@ public final class TodoStore: ObservableObject {
             files.append(.init(id: id, paths: finishFiles))
             finish.group = id
             finish.piece = .finish
-            finish.splitRecord = .init(estimatedMinutes: estimatedMinutes, reason: reason, files: files, reviewBase: liveRun?.todoSplitBase)
+            finish.splitRecord = .init(estimatedMinutes: estimatedMinutes, reason: reason, files: files, reviewBase: liveRun?.todoSplitBase, finishDone: finishDone)
             finish.after = after
             finish.state = .ready
             // The finish starts a new attempt and keeps the original notes and clock totals.
@@ -1027,6 +1028,7 @@ public final class TaskLink: ToolProvider {
     func splitRefusal(_ item: TodoItem, _ run: ProjectRun, files: Bool) -> String? {
         guard Self.splitEnabled else { return "Splitting TODOs is off." }
         if run.binding.isDocuments || run.binding.isFolderless || run.isSubRoom { return "Only a TODO of a Git project can be split." }
+        if run.usedSubRooms { return "This TODO uses sub-rooms already; a TODO uses either sub-rooms or a split. Do it as one TODO." }
         if item.group != nil { return "This TODO is a piece of a split already; a piece cannot be split again." }
         if item.splitDeclined == true { return "The user declined splitting this TODO. Do it as one TODO; do not propose splitting again." }
         // The first run only: a later one (after an answer, an error or a restart) may build on changes made before.
@@ -1034,12 +1036,12 @@ public final class TaskLink: ToolProvider {
         guard files else { return nil }
         let changed = "Files were changed in this run already; split only before changing any file. Do it as one TODO."
         if run.committed { return changed }
-        guard let base = run.todoSplitBase,
+        // Also an edit of a file that was changed before the run: its content hash differs.
+        guard let base = run.todoSplitBase, let dirty = run.todoSplitDirty,
               let head = try? ProjectProcess.git(["rev-parse", "--verify", "HEAD"], root: run.binding.root, token: run.attempt), head == base,
-              let status = try? ProjectProcess.git(["status", "--porcelain", "-z", "--untracked-files=all"], root: run.binding.root, token: run.attempt)
+              ProjectRun.dirtyState(run.binding.root, token: run.attempt) == dirty
         else { return changed }
-        let dirty = status.split(separator: "\0").map { String($0.dropFirst(3)) }
-        return dirty.allSatisfy { path in run.initialDirty.contains { path == $0 || path.hasPrefix($0.hasSuffix("/") ? $0 : $0 + "/") } } ? nil : changed
+        return nil
     }
 
     public func tools(context: ToolContext) -> [[String: Any]] {
@@ -1134,11 +1136,12 @@ public final class TaskLink: ToolProvider {
         struct Planned { let title, detail, done: String; let files: [String] }
         var planned: [Planned] = []
         for (n, p) in raw.enumerated() {
-            let files = (p["files"] as? [String] ?? []).map { String($0.trimmingCharacters(in: .whitespacesAndNewlines).prefix(300)) }.filter { !$0.isEmpty }.prefix(30).map { $0 }
+            guard let given = p["files"] as? [String] else { return ProjectTools.failure("Piece \(n + 1) needs files: a list of the paths it changes (the finish may give an empty list). Nothing was split.") }
+            let files = given.map { String($0.trimmingCharacters(in: .whitespacesAndNewlines).prefix(300)) }.filter { !$0.isEmpty }.prefix(30).map { $0 }
             let piece = Planned(title: text(p["title"], 200), detail: text(p["detail"], 4000), done: text(p["done_when"], 500), files: files)
             let last = n == raw.count - 1
             guard !piece.done.isEmpty else { return ProjectTools.failure("Piece \(n + 1) has no done_when: name the tests that end it. Nothing was split.") }
-            guard last || (!piece.title.isEmpty && !piece.files.isEmpty) else { return ProjectTools.failure("Step \(n + 1) needs a title and its files. Nothing was split.") }
+            guard last || (!piece.title.isEmpty && !piece.detail.isEmpty && !piece.files.isEmpty) else { return ProjectTools.failure("Step \(n + 1) needs a title, a detail and its files. Nothing was split.") }
             planned.append(piece)
         }
         let minutes = (arguments["estimated_minutes"] as? NSNumber)?.intValue ?? 0, reason = text(arguments["reason"], 300)
@@ -1164,7 +1167,7 @@ public final class TaskLink: ToolProvider {
         do {
             try run.todoStore.split(item.id, steps: steps.map { p in
                 .init(title: p.title, detail: (p.detail.isEmpty ? "" : p.detail + "\n\n") + "Done when: " + p.done + "\nFiles: " + p.files.joined(separator: ", "), files: p.files)
-            }, estimatedMinutes: minutes, reason: reason, finishFiles: finish.files, context: context)
+            }, estimatedMinutes: minutes, reason: reason, finishFiles: finish.files, finishDone: finish.done, context: context)
         } catch { return ProjectTools.failure(error.localizedDescription) }
         run.note(L("TODO를 \(steps.count + 1)개로 나눴어요", "Split the TODO into \(steps.count + 1) pieces"))
         return ["content": [["type": "text", "text": "Split into \(steps.count) steps and the finish (this TODO). Stop now: change nothing more, do not call task_done, and end your reply with the plan in a few lines. The app runs the pieces one after another, then this TODO as the finish."]], "isError": false]
@@ -1184,6 +1187,7 @@ public final class TaskLink: ToolProvider {
             let files = planned.first { $0.id == piece.id }?.paths ?? []
             var line = "\(n + 1). \(piece.piece == .finish ? "[finish] " : "")\(piece.title) — \(piece.state.rawValue)\(piece.id == item.id ? " (yours)" : "")"
             if !files.isEmpty { line += "\n   Planned files: " + files.joined(separator: ", ") }
+            if piece.piece == .finish, let done = finish.splitRecord?.finishDone { line += "\n   Done when: " + done }
             if n < mine, piece.piece == .step {
                 line += "\n   Report: " + (piece.result ?? piece.report?.summary ?? "none")
                 if !piece.assumptions.isEmpty { line += "\n   Assumptions: " + piece.assumptions.joined(separator: "; ") }

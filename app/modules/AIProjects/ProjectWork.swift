@@ -225,6 +225,7 @@ public final class ProjectRun {
     let todoStore: TodoStore
     let todoAttempt: TodoItem?
     let todoSplitBase: String?
+    let todoSplitDirty: String?            // the uncommitted state at the start (ProjectRun.dirtyState), for task_split
     public var noPush: Bool { todoAttempt?.piece == .step }
     public var isTodoPiece: Bool { todoAttempt?.group != nil }
     public var todoWasSplit: Bool {
@@ -233,6 +234,26 @@ public final class ProjectRun {
         return replaced || todoStore.current.item(todoAttempt.id)?.piece == .finish
     }
     func rememberTodoSplit() { lifecycle.lock(); splitAccepted = true; lifecycle.unlock() }
+    // Set by the chat when delegate_plan opens sub-rooms: a TODO uses either sub-rooms or task_split, never both.
+    public var usedSubRooms: Bool {
+        get { lifecycle.lock(); defer { lifecycle.unlock() }; return subRoomsUsed }
+        set { lifecycle.lock(); subRoomsUsed = newValue; lifecycle.unlock() }
+    }
+    // Every uncommitted path with its status (staged or not) and its content's hash: equal means nothing changed.
+    static func dirtyState(_ root: String, token: DebateCancellation) -> String? {
+        guard let status = try? ProjectProcess.git(["status", "--porcelain", "-z", "--untracked-files=all"], root: root, token: token) else { return nil }
+        var paths: [String] = [], entries = status.split(separator: "\0", omittingEmptySubsequences: true).map(String.init)[...]
+        while let entry = entries.popFirst() {
+            guard entry.count > 3 else { continue }
+            if entry.first == "R" || entry.first == "C" { _ = entries.popFirst() }   // the old path of a rename or copy
+            let path = String(entry.dropFirst(3))
+            var directory: ObjCBool = false
+            if FileManager.default.fileExists(atPath: (root as NSString).appendingPathComponent(path), isDirectory: &directory), !directory.boolValue { paths.append(path) }
+        }
+        guard !paths.isEmpty else { return status }
+        guard let hashes = try? ProjectProcess.git(["hash-object", "--"] + paths, root: root, token: token) else { return nil }
+        return status + "\n" + hashes
+    }
 
     // Called while the chat owns the repository lock, before any step can change HEAD.
     public func todoReviewBase() throws -> String? {
@@ -262,7 +283,7 @@ public final class ProjectRun {
     public private(set) var generation = 0
     public var attempt = DebateCancellation()
     private let lifecycle = NSLock()
-    private var ended = false, splitAccepted = false
+    private var ended = false, splitAccepted = false, subRoomsUsed = false
     func stop() { lifecycle.lock(); ended = true; lifecycle.unlock(); attempt.cancel() }
     public var committed = false, pushed = false
     // A project turn pushes once, after the review and its fixes: git_push only asks for it, and the chat calls
@@ -324,6 +345,7 @@ public final class ProjectRun {
         todoAttempt = todo
         todoSplitBase = todo != nil && todo?.group == nil && !binding.isDocuments && !binding.isFolderless
             ? try? ProjectProcess.git(["rev-parse", "--verify", "HEAD"], root: binding.root, token: token) : nil
+        todoSplitDirty = todoSplitBase != nil ? Self.dirtyState(binding.root, token: token) : nil
         deadline = Date().addingTimeInterval(fullAuto ? 8 * 3600 + 600 : 3600)
         let status = binding.isDocuments ? "" : (try? ProjectProcess.git(["status", "--porcelain", "-z"], root: binding.root)) ?? ""
         initialDirty = Set(status.split(separator: "\0").map { String($0.dropFirst(3)) })

@@ -535,6 +535,8 @@ Public names and why (everything else stays internal: `ProjectError`, `ProjectTo
   delegation for the whole group, `todoWasSplit` ends the original turn before review/push, and `todoReviewBase()`
   returns the stored review base to the finish and records HEAD at the first step for splits without a base. The initializer's `todoSplitFullAuto`
   argument supplies the chat's approval mode to the TODO split decision.
+  `ProjectRun.usedSubRooms` is set by `Delegate.swift` when delegate_plan opens sub-rooms, so `task_split` refuses a TODO that already
+  uses sub-rooms (a TODO uses one of the two, docs/TODO_SPLIT_PLAN.md 1.5).
 - Sub-room P2 (AIChat's `Delegate.swift` uses them): `ProjectRun.isSubRoom` (set by the chat for a sub-room's turn: GitLink then lists and runs no git_pull/git_push/git_publish_stable/git_branch/git_switch),
   `ProjectWork.run(for:)` (another module's tool provider finds the live project turn of a tool call, with the same room/generation/cancel checks as GitLink),
   `SubWork.report` (sub_report: the work tree's HEAD only when everything is committed, and the files changed since the start),

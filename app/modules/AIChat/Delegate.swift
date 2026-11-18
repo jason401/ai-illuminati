@@ -658,6 +658,7 @@ public final class DelegateLink: ToolProvider {
     // hidden chats and their turns in line; the card on the main room says how it was approved.
     private func open(_ asked: [Split.Part], mine: String?, plan: String, run: ProjectRun, auto: Bool, main: UUID, turn: UUID?, host: Discussion) -> String {
         let id = String(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(8)).lowercased()
+        run.usedSubRooms = true   // no task_split for this TODO afterwards
         var split = Split(id: id, room: main, repo: run.binding.root, common: run.binding.common, auto: auto, parts: asked)
         split.mine = mine
         SplitStore.shared.update(main) { $0.append(split) }

@@ -332,6 +332,205 @@ private func testTodoSplitStorage() {
            "the largest valid split saves all six pieces")
 }
 
+func testTodoSplitExecution() {
+    let project = todoProject("todo-split-execution")
+    let root = URL(fileURLWithPath: project.root)
+    let origin = project.remoteURL
+    func git(_ args: [String], at path: String? = nil) -> String {
+        try! ProjectProcess.git(args, root: path ?? project.root)
+    }
+    _ = git(["init", "--bare", origin])
+    _ = git(["config", "core.logAllRefUpdates", "true"], at: origin)
+    _ = git(["push", "origin", "main"])
+    let initialHead = git(["rev-parse", "HEAD"])
+    func remoteHead() -> String { git(["rev-parse", "refs/heads/main"], at: origin) }
+    func write(_ name: String) { try! name.write(to: root.appendingPathComponent(name), atomically: true, encoding: .utf8) }
+    func failed(_ reply: [String: Any]) -> Bool { reply["isError"] as? Bool == true }
+    func names(_ tools: [[String: Any]]) -> Set<String> { Set(tools.compactMap { $0["name"] as? String }) }
+
+    let saved = TodoStore.shared, oldHost = DelegateLink.shared.host, delegateEnabled = DelegateLink.enabled
+    let store = TodoStore(url: todoStoreFile("split-execution"))
+    TodoStore.shared = store
+    UserDefaults.app.set(true, forKey: DelegateLink.enabledKey)
+    defer {
+        TodoStore.shared = saved
+        DelegateLink.shared.host = oldHost
+        UserDefaults.app.set(delegateEnabled, forKey: DelegateLink.enabledKey)
+    }
+
+    let model = AppModel()
+    model.accounts = [Account(id: "split-lead", provider: .claude, name: "Lead"), Account(id: "split-reviewer", provider: .codex, name: "Reviewer")]
+    for account in model.accounts {
+        var usage = AIUsage(name: account.name)
+        usage.fiveHour = UsageWindow(usedPercent: 10, resetsAt: nil)
+        usage.weekly = UsageWindow(usedPercent: 10, resetsAt: nil)
+        model.latestUsage[account.id] = usage
+    }
+    let chat = Discussion(model: model)
+    DelegateLink.shared.host = chat
+    let scheduler = TodoScheduler(discussion: chat, store: store)
+    let finish = try! store.add(title: "Finish", project: project, projectName: "Split", askFirst: true)
+    try! store.setList(finish.listID, mode: .checkEach)
+    let originalRoom = chat.addProjectChat(project, title: "Original", open: false)
+    chat.change(originalRoom) { $0.workspace?.fullAuto = false }
+    try! store.change(finish.id) { $0.room = originalRoom }
+    let attachment = store.url.deletingLastPathComponent().appendingPathComponent("split-attachment.txt")
+    try! "original attachment".write(to: attachment, atomically: true, encoding: .utf8)
+    try! store.attach(finish.id, files: [attachment])
+
+    let cut = DispatchSemaphore(value: 0), resume = DispatchSemaphore(value: 0)
+    var work: [String] = [], reviews: [String] = []
+    let gitRestricted: Set<String> = ["git_push", "git_pull", "git_branch", "git_switch", "git_publish_stable"]
+    let delegation: Set<String> = ["delegate_plan", "delegate_status", "delegate_result", "delegate_message",
+                                   "delegate_cancel", "delegate_resync", "git_merge_sub", "sub_report", "sub_blocked"]
+    chat.workspaceAnswer = { _, prompt, binding, _, _ in
+        if prompt.hasPrefix("[REVIEW]") {
+            reviews.append(prompt)
+            return .success("No issues")
+        }
+        let item = store.current.items.first { $0.state == .running }!
+        let context = ToolContext(room: item.room!, roots: binding.roots, projectRun: binding.projectRunID, projectGeneration: binding.projectGeneration)
+        let run = ProjectWork.run(for: context)!
+        func tool(_ name: String, _ args: [String: Any] = [:]) -> [String: Any] { GitLink.shared.call(name, args, context: context) }
+        func done(_ summary: String) -> [String: Any] { TaskLink.shared.call("task_done", ["summary": summary], context: context) }
+        if item.piece == nil {
+            expect(!run.todoSplitFullAuto && binding.isFullAuto && run.fullAuto && prompt.contains("ask with task_ask what is unclear"),
+                   "the split decision sees manual approval while ordinary TODO execution keeps its existing permissions")
+            expect(names(DelegateLink.shared.tools(context: context)).contains("delegate_plan"), "an ordinary TODO can still delegate")
+            // Even if a caller splits after an early commit, its changes must reach the finish review.
+            write("Early.txt")
+            expect(!failed(tool("git_commit", ["paths": ["Early.txt"], "message": "Early commit"])), "the original turn has a change to review")
+            expect(!failed(tool("git_push")) && remoteHead() == initialHead, "the original turn queued a push")
+            let live = TaskLink.shared.live(context)!
+            expect(live.id == item.id, "the report passed the live check before splitting")
+            try! store.split(item.id, steps: [
+                .init(title: "First", detail: "Check first file", files: ["First.txt"]),
+                .init(title: "Second", detail: "Check second file", files: ["Second.txt"])
+            ], estimatedMinutes: 75, reason: "Sequential changes", finishFiles: ["Finish.txt"], context: context)
+            do { try store.record(live.id, context: context) { $0.summary = "late done" }; expect(false, "stale task_done should fail inside the save") }
+            catch {}
+            do {
+                try store.record(live.id, context: context) { $0.question = TodoQuestion(kind: .approval, reason: "late ask") }
+                expect(false, "stale task_ask should fail inside the save")
+            } catch {}
+            expect(failed(done("late")) && failed(TaskLink.shared.call("task_ask", ["kind": "blocked", "reason": "late"], context: context)),
+                   "both late tool calls are refused")
+            expect(GitLink.shared.tools(context: context).isEmpty && failed(tool("git_branch"))
+                   && DelegateLink.shared.tools(context: context).isEmpty && failed(DelegateLink.shared.call("delegate_plan", [:], context: context)),
+                   "the superseded turn loses its Git and delegation tools")
+            cut.signal()
+            expect(resume.wait(timeout: .now() + 15) == .success, "the original fake AI can finish")
+            return .success("Split saved.")
+        }
+
+        work.append(item.title)
+        expect(names(DelegateLink.shared.tools(context: context)).isEmpty && delegation.allSatisfy {
+            failed(DelegateLink.shared.call($0, [:], context: context))
+        }, "every split piece has delegation tools disabled")
+        let gitTools = names(GitLink.shared.tools(context: context))
+        if item.piece == .step {
+            expect(run.todoSplitFullAuto && !prompt.contains("[Push at the end]") && prompt.contains("Run the tests for this step"),
+                   "steps see their automatic workspace and local test instructions")
+            expect(gitTools.isDisjoint(with: gitRestricted) && gitRestricted.allSatisfy { failed(tool($0)) },
+                   "the step cannot discover or call remote and branch tools")
+            expect(prompt.contains("split-attachment.txt"), "the original attachment reaches both steps")
+        } else {
+            expect(gitRestricted.isSubset(of: gitTools) && prompt.contains("Run the full test suite"), "the finish can push and gets full test instructions")
+        }
+        expect(remoteHead() == initialHead, "the group stays local until finish")
+        let name = item.title + ".txt"
+        write(name)
+        expect(!failed(tool("git_commit", ["paths": [name], "message": item.title])), "each piece can commit")
+        if item.piece == .finish {
+            expect(!failed(tool("git_push")) && remoteHead() == initialHead, "finish schedules its push after review")
+        }
+        expect(!failed(done(item.title + " report")), "the current piece can report completion")
+        return .success(item.title + " done.")
+    }
+    func spin(_ until: () -> Bool, tick: Bool = false) {
+        let deadline = Date().addingTimeInterval(60)
+        while Date() < deadline && !until() {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+            if tick { scheduler.tick() }
+        }
+    }
+    var notices: [String] = []
+    let watch = NotificationCenter.default.addObserver(forName: .todoNeedsUser, object: nil, queue: nil) {
+        if let title = $0.userInfo?["title"] as? String { notices.append(title) }
+    }
+    defer { NotificationCenter.default.removeObserver(watch) }
+
+    scheduler.startNow()
+    var hasSplit = false
+    spin { hasSplit = cut.wait(timeout: .now()) == .success; return hasSplit }
+    expect(hasSplit && store.current.item(finish.id)?.report == nil, "split clears and keeps out the old reports")
+    scheduler.held = { _ in false }
+    scheduler.tick()
+    expect(store.current.items.allSatisfy { $0.state == .ready }, "the first step waits for the original turn even without a repo lock")
+    scheduler.held = ProjectWork.isHeld
+    let restartURL = todoStoreFile("split-restarted")
+    try! FileManager.default.copyItem(at: store.url, to: restartURL)
+    let reopened = TodoStore(url: restartURL)
+    let restarted = TodoScheduler(chats: RaceChats(base: root), store: reopened)
+    restarted.recover()
+    let restored = reopened.current
+    expect(restored.eligible(held: { _ in false }).map(\.title) == ["First"]
+           && restored.item(finish.id)?.state == .ready && restored.item(finish.id)?.interrupted == false,
+           "after restart only the first piece is eligible and the original TODO has no recovery retry")
+    resume.signal()
+    spin { !chat.anyRunning }
+    let original = chat.conversation(originalRoom).turns.last
+    expect(!chat.anyRunning && original?.projectPushed == false && original?.peerNotes == nil && reviews.isEmpty,
+           "the old turn ends without its review or queued push")
+    spin({ store.current.item(finish.id)?.state == .review && !chat.anyRunning }, tick: true)
+    let pieces = store.current.ordered(finish.listID)
+    let results = pieces.map { "\($0.title)/\($0.state)/\($0.result ?? "-")/\($0.lastError ?? "-")" }
+    expect(work == ["First", "Second", "Finish"] && pieces.map(\.state) == [.done, .done, .review]
+           && pieces.map(\.result) == ["First report", "Second report", "Finish report"] && notices == ["Finish"],
+           "checkEach executes in order and only the finish asks for a check; work \(work), pieces \(results), notices \(notices), waiting \(scheduler.waiting ?? "-"), reviews \(reviews.count)")
+    expect(reviews.count == 1 && reviews[0].contains(String(initialHead.prefix(8)))
+           && ["Early.txt", "First.txt", "Second.txt", "Finish.txt"].allSatisfy { reviews[0].contains($0) },
+           "the single review covers every piece and the original turn's early commit")
+    expect(TodoStore(url: store.url).current.item(finish.id)?.splitRecord?.reviewBase == initialHead,
+           "the review base survives reopening the board")
+    let pushCount = Set(pieces.compactMap(\.room)).flatMap { chat.conversation($0).turns }.filter { $0.projectPushed == true }.count
+    expect(pushCount == 1 && remoteHead() == git(["rev-parse", "HEAD"])
+           && git(["reflog", "show", "--format=%H", "refs/heads/main"], at: origin).split(separator: "\n").count == 2,
+           "the fake remote changed only once after the initial push and has the final SHA")
+
+    let piecesStore = TodoStore(url: todoStoreFile("split-blockers"))
+    let blocked = try! piecesStore.add(title: "Blocked finish", project: project, projectName: "Split")
+    try! piecesStore.setList(blocked.listID, mode: .auto)
+    try! piecesStore.change(blocked.id) { $0.state = .running }
+    try! piecesStore.split(blocked.id, steps: [.init(title: "First", detail: "Test it", files: []),
+                                            .init(title: "Second", detail: "Test it", files: [])],
+                          estimatedMinutes: 60, reason: "Sequence", finishFiles: [])
+    let order = piecesStore.current.ordered(blocked.listID)
+    let question = TodoQuestion(kind: .approval, reason: "Blocked")
+    let blockedChats = RaceChats(base: root)
+    let blockedScheduler = TodoScheduler(chats: blockedChats, store: piecesStore)
+    blockedScheduler.held = { _ in false }
+    try! piecesStore.change(order[0].id) { $0.state = .needsYou; $0.question = TodoQuestion(kind: .failed, reason: "Tests failed") }
+    blockedScheduler.tick()
+    expect(piecesStore.current.item(order[0].id)?.isParked == true && blockedChats.questions.isEmpty,
+           "auto can park the blocked step, but the following pieces still wait")
+    try! piecesStore.change(order[0].id) { $0.state = .done }
+    try! piecesStore.cancel(order[1].id)
+    blockedScheduler.tick()
+    expect(piecesStore.current.item(blocked.id)?.state == .ready && blockedChats.questions.isEmpty && blockedScheduler.waiting != nil,
+           "a cancelled piece does not offer the finish a bypass")
+    for delegate in [false, true] {
+        try! piecesStore.change(blocked.id) { $0.state = .needsYou; $0.question = question }
+        if delegate { blockedScheduler.delegate(blocked.id) }
+        else { piecesStore.answer(blocked.id, "Continue") }
+        blockedScheduler.tick()
+        expect(piecesStore.current.item(blocked.id)?.after == [order[1].id]
+               && piecesStore.current.item(blocked.id)?.state == .ready && blockedChats.questions.isEmpty,
+               "answering or delegating the finish cannot drop its cancelled step")
+    }
+    print("PASS: TODO split execution (late reports, turn boundary, recover, tools, checkEach, group review and one push, cancellation, auto needsYou)")
+}
+
 func testTodoScheduler() {
     let project = todoProject("todo-project")
     let saved = TodoStore.shared

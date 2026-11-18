@@ -194,6 +194,8 @@ expect(!ProjectWork.isHeld(repo.path), "released")
 let documents = ProjectBinding(root: repo.path, common: repo.path, remote: "", remoteURL: "", kind: ProjectBinding.documentsKind)
 let todoRoom = store.current.item(c.id)!.room!
 try! store.change(c.id) { $0.state = .running }
+let savedShared = TodoStore.shared
+TodoStore.shared = store
 let run = ProjectRun(room: todoRoom, binding: documents, token: DebateCancellation())
 ProjectWork.register(run)
 var revoked: [UUID] = []
@@ -205,8 +207,6 @@ let context = ToolContext(room: todoRoom, roots: [], projectRun: run.id, project
 var stale = context; stale.projectGeneration = run.generation - 1
 var elsewhere = context; elsewhere.room = UUID()
 func names(_ p: ToolProvider, _ c: ToolContext) -> [String] { p.tools(context: c).compactMap { $0["name"] as? String } }
-let savedShared = TodoStore.shared
-TodoStore.shared = store
 expect(names(PlanLink.shared, context) == ["work_plan"] && names(TaskLink.shared, context) == ["task_done", "task_ask"] && names(GitLink.shared, context) == ["project_run"],
        "the live attempt gets its tools (documents: project_run only)")
 let scoped: [ToolProvider] = [PlanLink.shared, TaskLink.shared, GitLink.shared]

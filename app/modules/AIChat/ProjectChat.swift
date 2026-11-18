@@ -260,9 +260,11 @@ extension Discussion {
                         binding: WorkspaceBinding, fresh: String? = nil, keepState: Bool = false, note: String = "") {
         guard let selected = binding.project else { finish(id, index, error: "No project selected."); return }
         let fullAuto = binding.isFullAuto
-        let run = ProjectRun(room: id, binding: selected, token: cancellation, fullAuto: fullAuto)
+        // A split decision uses the chat's explicit setting, which soloBinding does not carry into project execution.
+        let run = ProjectRun(room: id, binding: selected, token: cancellation, fullAuto: fullAuto,
+                             todoSplitFullAuto: conversation(id).workspace?.isFullAuto)
         // Only the turn's final result goes to the remote, once, after the review and its fixes (TODOs and plain chats).
-        run.deferPush = !selected.isDocuments && !selected.isFolderless
+        run.deferPush = !selected.isDocuments && !selected.isFolderless && !run.noPush
         // A sub-room's turn (Delegate.swift) gets its part and the Git tools of a sub-room; a main room's, when to split.
         let sub = conversation(id).subOf
         let split = sub.flatMap { SplitStore.shared.split($0.room, $0.split) }, part = sub.flatMap { link in split?.parts.first { $0.n == link.n } }
@@ -273,7 +275,7 @@ extension Discussion {
         }
         defer { if sub != nil { DelegateLink.shared.unregister(run) } }
         let splitNote = part.flatMap { p in split.map { Self.subNote(p, split: $0) } }
-            ?? (sub == nil && run.deferPush && DelegateLink.enabled && DelegateLink.shared.host != nil ? Self.delegateNote(fullAuto: conversation(id).workspace?.isFullAuto != false) : "")
+            ?? (sub == nil && !run.isTodoPiece && run.deferPush && DelegateLink.enabled && DelegateLink.shared.host != nil ? Self.delegateNote(fullAuto: conversation(id).workspace?.isFullAuto != false) : "")
         let extraNote = (run.deferPush ? (note.isEmpty ? "" : note + "\n") + Self.deferredPushNote : note) + (splitNote.isEmpty ? "" : "\n" + splitNote)
         run.onNote = { [weak self] log in self?.changeTurn(id, index) { $0.projectLog = log; $0.lastActivityAt = Date() } }
         run.onPlan = { [weak self] steps, note in self?.changeTurn(id, index) { $0.plan = steps; $0.planNote = note; $0.lastActivityAt = Date() } }
@@ -312,6 +314,7 @@ extension Discussion {
             }
         }
         var backup: WorkspaceBackup?
+        let todoReviewBase: String?
         defer {
             if var saved = backup, (try? saved.finish()) != nil {
                 let changes = saved.changes
@@ -321,6 +324,7 @@ extension Discussion {
         var workspace = ProjectWork.workBinding(binding, project: selected, chatFolder: Self.chatFolder(id).path, run: run)
         do {
             try run.validate(run.generation)
+            todoReviewBase = try run.todoReviewBase()
             // Only back up writable directories; native/MCP write roots are limited to these same roots.
             let backed = WorkspaceBinding(roots: workspace.roots.filter { $0.writable == true }, level: .write)
             let saved = try WorkspaceBackup.begin(backed, room: id, runID: run.id)
@@ -341,7 +345,9 @@ extension Discussion {
         // Before the work starts: what the project looks like, so the review covers only this answer's changes
         // (also when another AI took over after a usage limit).
         let reviewRoot = selected.isFolderless ? Self.chatFolder(id).path : selected.root
-        let start = reviewers.isEmpty ? nil : selected.isDocuments ? backup.flatMap { ProjectSnapshot.documents(backup: $0, root: reviewRoot) } : ProjectSnapshot.take(root: reviewRoot)
+        var start = reviewers.isEmpty || run.noPush ? nil : selected.isDocuments
+            ? backup.flatMap { ProjectSnapshot.documents(backup: $0, root: reviewRoot) } : ProjectSnapshot.take(root: reviewRoot)
+        if let todoReviewBase { start?.head = todoReviewBase }
         while !cancellation.isCancelled && Date() < run.deadline && !run.activeExpired {
             let eligible = model.accounts.filter { [.claude, .codex].contains($0.provider) && !excluded.contains($0.id) && Enterprise.permits($0, lock: chatLock) && (workers?.contains($0.id) ?? true) }
             let account = preferred.flatMap { wanted in eligible.first { $0.id == wanted } }
@@ -392,6 +398,8 @@ extension Discussion {
             let result = attempt("", transcript: transcript, fresh: fresh, ran: ran)
             run.endAttempt() // All app commands and CLI descendants finish before another AI can write.
             if cancellation.isCancelled { break }
+            let splitThisTurn = run.todoWasSplit
+            if splitThisTurn, case .failure = result { end(); return }
             switch result {
             case .success(let raw):
                 let (tagless, mood) = ChatApp.face.extract(raw)
@@ -411,6 +419,7 @@ extension Discussion {
                     saved.lastSoloAccountID = account.id
                     conversation.configuration = saved
                 }
+                if splitThisTurn { end(); return }
                 // Members who review: when this answer changed the project, one of them reads the changes and the
                 // lead fixes what is right, once, in the same turn (with the same backup and project lock).
                 if let start, !cancellation.isCancelled {
@@ -455,7 +464,7 @@ extension Discussion {
                         }
                     }
                 }
-                for reviewerID in mentions.dropFirst() where reviewerID != account.id && !cancellation.isCancelled {
+                for reviewerID in mentions.dropFirst() where !run.noPush && reviewerID != account.id && !cancellation.isCancelled {
                     guard let reviewer = model.accounts.first(where: { $0.id == reviewerID }) else { continue }
                     run.nextAttempt()
                     var view = workspace

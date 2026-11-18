@@ -124,10 +124,12 @@ ProjectRun.deferPush | var deferPush: Bool
 ProjectRun.endAttempt() | func endAttempt()
 ProjectRun.generation | var generation: Int { get }
 ProjectRun.id | let id: UUID
-ProjectRun.init(room:binding:token:fullAuto:) | init(room: UUID, binding: ProjectBinding, token: DebateCancellation, fullAuto: Bool = false)
+ProjectRun.init(room:binding:token:fullAuto:todoSplitFullAuto:) | init(room: UUID, binding: ProjectBinding, token: DebateCancellation, fullAuto: Bool = false, todoSplitFullAuto: Bool? = nil)
 ProjectRun.isSubRoom | var isSubRoom: Bool
+ProjectRun.isTodoPiece | var isTodoPiece: Bool { get }
 ProjectRun.log | var log: [String] { get }
 ProjectRun.nextAttempt() | func nextAttempt()
+ProjectRun.noPush | var noPush: Bool { get }
 ProjectRun.note(_:) | func note(_ text: String)
 ProjectRun.onNote | var onNote: (([String]) -> Void)?
 ProjectRun.onPlan | var onPlan: (([WorkStep], String?) -> Void)?
@@ -139,6 +141,8 @@ ProjectRun.room | let room: UUID
 ProjectRun.setAppStep(_:_:_:) | func setAppStep(_ i: Int, _ text: String, _ status: WorkStep.Status)
 ProjectRun.setPlan(_:note:generation:tool:) | @discardableResult func setPlan(_ steps: [WorkStep], note: String?, generation: Int, tool: Bool) -> Bool
 ProjectRun.setPlan(todos:generation:) | @discardableResult func setPlan(todos: Any?, generation: Int) -> Bool
+ProjectRun.todoReviewBase() | func todoReviewBase() throws -> String?
+ProjectRun.todoWasSplit | var todoWasSplit: Bool { get }
 ProjectRun.validate(_:) | func validate(_ generation: Int) throws
 ProjectWork | enum ProjectWork
 ProjectWork.acquire(_:) | static func acquire(_ binding: WorkspaceBinding?) throws -> [String]

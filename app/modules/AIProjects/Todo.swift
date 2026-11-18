@@ -93,6 +93,7 @@ public struct TodoItem: Codable, Identifiable, Equatable {
         let estimatedMinutes: Int
         let reason: String
         let files: [PieceFiles]
+        var reviewBase: String? = nil  // Git HEAD before the first step, kept through retries and restarts
     }
 
     var group: UUID?                       // the original TODO's id, including on the finish itself
@@ -220,6 +221,11 @@ public struct TodoItem: Codable, Identifiable, Equatable {
     }
 
     // Parked for the question it waits on now (a newer question is not parked).
+    func matchesAttempt(_ attempt: TodoItem) -> Bool {
+        id == attempt.id && room == attempt.room && state == .running && stateSince == attempt.stateSince
+            && group == attempt.group && piece == attempt.piece
+    }
+
     public var isParked: Bool { state == .needsYou && parked != nil && parked?.questionID == question?.id }
 
     // The time so far: the stored sums plus the current state's open part.
@@ -370,6 +376,12 @@ public struct TodoData: Codable, Equatable {
     // parked or not: the user asked for that one.
     public func blockers(_ item: TodoItem) -> [UUID] {
         var ids = item.after
+        // The saved order keeps every earlier piece required even if an explicit link is edited.
+        if let group = item.group, let plan = self.item(group)?.splitRecord,
+           let position = plan.files.firstIndex(where: { $0.id == item.id }) {
+            let earlier = plan.files[..<position].map(\.id)
+            ids.append(contentsOf: earlier.filter { !item.after.contains($0) })
+        }
         let row = ordered(item.listID)
         let passed = { (t: TodoItem) in t.state == .cancelled || t.state == .draft || t.isParked }
         if let at = row.firstIndex(where: { $0.id == item.id }), let above = row[..<at].last(where: { !passed($0) }) {
@@ -381,7 +393,8 @@ public struct TodoData: Codable, Equatable {
     }
     // A TODO it waits for is far enough: done, or waiting for the user's check unless the list checks each one.
     public func satisfied(_ blocker: TodoItem, for item: TodoItem) -> Bool {
-        blocker.state == .done || (blocker.state == .review && (list(item.listID)?.mode ?? .aiThenPark) != .checkEach)
+        if let group = item.group, blocker.group == group { return blocker.state == .done }
+        return blocker.state == .done || (blocker.state == .review && (list(item.listID)?.mode ?? .aiThenPark) != .checkEach)
     }
     public func mode(_ item: TodoItem) -> RunMode { list(item.listID)?.mode ?? .aiThenPark }
     // What a TODO (`except`; nil for a new one) may be linked to wait for: the unfinished TODOs of its list in board order, then
@@ -428,8 +441,10 @@ public struct TodoData: Codable, Equatable {
         case .auto: return question.delegable ? nil : since
         }
     }
-    // "After" links to TODOs the user cancelled: the TODO cannot go on without the user (the answer drops the link).
-    func cancelledBlockers(_ item: TodoItem) -> [TodoItem] { item.after.compactMap(self.item).filter { $0.state == .cancelled } }
+    // The user can answer or delegate past a cancelled external dependency. Within the split the link stays.
+    func cancelledBlockers(_ item: TodoItem) -> [TodoItem] {
+        item.after.compactMap(self.item).filter { $0.state == .cancelled && (item.group == nil || $0.group != item.group) }
+    }
     // Held by the user: its list is paused, or it is below the list's stop point on the board.
     public func stopped(_ item: TodoItem) -> Bool {
         guard let list = list(item.listID) else { return false }
@@ -446,7 +461,9 @@ public struct TodoData: Codable, Equatable {
         let busy = Set(items.filter { $0.state == .running }.compactMap { list($0.listID)?.project?.root })
         return lists.flatMap { ordered($0.id) }.filter { item in
             guard item.state == .ready, !stopped(item), let root = list(item.listID)?.project?.root, !busy.contains(root), cancelledBlockers(item).isEmpty else { return false }
-            guard blockers(item).allSatisfy({ id in self.item(id).map { satisfied($0, for: item) } ?? true }) else { return false }
+            if let group = item.group, item.piece == .step, let finish = self.item(group),
+               finish.state == .done || finish.state == .cancelled { return false }
+            guard blockers(item).allSatisfy({ id in self.item(id).map { satisfied($0, for: item) } ?? (item.group == nil) }) else { return false }
             return !held(root)
         }
     }
@@ -518,6 +535,10 @@ public final class TodoStore: ObservableObject {
     // One change, saved at once. A change that makes TODOs wait for each other in a circle is refused.
     @discardableResult
     public func update<T>(_ edit: (inout TodoData) throws -> T) throws -> T {
+        try update(afterSave: { _ in }, edit)
+    }
+
+    private func update<T>(afterSave: (T) -> Void, _ edit: (inout TodoData) throws -> T) throws -> T {
         if let locked { throw TodoError.locked(locked) }
         lock.lock()
         var copy = data
@@ -546,6 +567,7 @@ public final class TodoStore: ObservableObject {
             throw why
         }
         data = copy
+        afterSave(result)
         lock.unlock()
         if Thread.isMainThread { snapshot = copy; saveError = nil } else { DispatchQueue.main.async { self.snapshot = self.current; self.saveError = nil } }
         return result
@@ -557,6 +579,19 @@ public final class TodoStore: ObservableObject {
         }
     }
 
+    // Recheck the run inside the same save lock that commits a split.
+    func record(_ id: UUID, context: ToolContext, _ edit: (inout TodoReport) -> Void) throws {
+        try change(id) { item in
+            guard let run = ProjectWork.run(for: context), run.todoStore === self,
+                  let attempt = run.todoAttempt, item.matchesAttempt(attempt) else {
+                throw ProjectError.make("No running TODO in this chat.")
+            }
+            var report = item.report ?? TodoReport()
+            edit(&report)
+            item.report = report
+        }
+    }
+
     struct SplitStep {
         let title: String
         let detail: String              // includes the step’s test condition
@@ -564,15 +599,21 @@ public final class TodoStore: ObservableObject {
     }
 
     // The caller handles the running turn. The store saves the steps, finish and order together.
-    func split(_ id: UUID, steps: [SplitStep], estimatedMinutes: Int, reason: String, finishFiles: [String]) throws {
+    func split(_ id: UUID, steps: [SplitStep], estimatedMinutes: Int, reason: String, finishFiles: [String], context: ToolContext? = nil) throws {
         guard (1...5).contains(steps.count) else { throw TodoError.splitCount }
         guard estimatedMinutes > 0, !reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               steps.allSatisfy({ !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else {
             throw TodoError.invalidSplit
         }
-        try update { data in
+        _ = try update(afterSave: { (run: ProjectRun?) in run?.rememberTodoSplit() }) { data in
             guard let i = data.items.firstIndex(where: { $0.id == id }) else { throw TodoError.notFound }
             var finish = data.items[i]
+            let liveRun: ProjectRun?
+            if let context {
+                guard let run = ProjectWork.run(for: context), run.todoStore === self,
+                      let attempt = run.todoAttempt, finish.matchesAttempt(attempt) else { throw TodoError.cannotSplit }
+                liveRun = run
+            } else { liveRun = nil }
             guard finish.state == .running, finish.group == nil, finish.piece == nil, finish.splitDeclined != true else {
                 throw TodoError.cannotSplit
             }
@@ -592,7 +633,7 @@ public final class TodoStore: ObservableObject {
             files.append(.init(id: id, paths: finishFiles))
             finish.group = id
             finish.piece = .finish
-            finish.splitRecord = .init(estimatedMinutes: estimatedMinutes, reason: reason, files: files)
+            finish.splitRecord = .init(estimatedMinutes: estimatedMinutes, reason: reason, files: files, reviewBase: liveRun?.todoSplitBase)
             finish.after = after
             finish.state = .ready
             // The finish starts a new attempt and keeps the original notes and clock totals.
@@ -609,6 +650,7 @@ public final class TodoStore: ObservableObject {
             finish.parked = nil
             finish.wasParked = false
             data.items[i] = finish
+            return liveRun
         }
     }
 
@@ -969,17 +1011,18 @@ public final class TaskLink: ToolProvider {
     public static let shared = TaskLink()
     public var active: Bool { ProjectWork.active }
     public func tools() -> [[String: Any]] { [] }
-    private func live(_ context: ToolContext) -> TodoItem? {
-        guard let run = ProjectWork.get(context.projectRun), run.room == context.room, context.projectGeneration == run.generation, !run.cancelled else { return nil }
-        return TodoStore.shared.current.items.first { $0.room == context.room && $0.state == .running }
+    func live(_ context: ToolContext) -> TodoItem? {
+        guard let run = ProjectWork.run(for: context), let attempt = run.todoAttempt,
+              let item = run.todoStore.current.item(attempt.id), item.matchesAttempt(attempt) else { return nil }
+        return item
     }
     public func tools(context: ToolContext) -> [[String: Any]] {
-        guard live(context) != nil else { return [] }
+        guard let item = live(context) else { return [] }
         let string: [String: Any] = ["type": "string"], strings: [String: Any] = ["type": "array", "items": string]
         let question: [String: Any] = ["type": "object", "properties": ["text": string, "options": strings, "recommended": string],
                                        "required": ["text"], "additionalProperties": false]
         return [["name": "task_done",
-                 "description": "Report that this TODO is finished (and tested where it can be). When this chat's work and review are over, the TODO waits for the user's check. Call it again after fixes to update the report. Then end your reply with a short report.",
+                 "description": "Report that this TODO is finished (and tested where it can be). \(item.piece == .step ? "This step is marked done when the chat ends." : "When this chat's work and review are over, the TODO waits for the user's check.") Call it again after fixes to update the report. Then end your reply with a short report.",
                  "inputSchema": ["type": "object", "properties": ["summary": string, "assumptions": strings, "files": strings],
                                  "required": ["summary"], "additionalProperties": false]],
                 ["name": "task_ask",
@@ -989,7 +1032,7 @@ public final class TaskLink: ToolProvider {
                                  "required": ["kind", "reason"], "additionalProperties": false]]]
     }
     public func call(_ name: String, _ arguments: [String: Any], context: ToolContext) -> [String: Any] {
-        guard let item = live(context) else { return ProjectTools.failure("No running TODO in this chat.") }
+        guard let item = live(context), let run = ProjectWork.run(for: context) else { return ProjectTools.failure("No running TODO in this chat.") }
         func text(_ key: String) -> String { (arguments[key] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
         func list(_ value: Any?) -> [String] { (value as? [String] ?? []).map { String($0.prefix(300)) }.filter { !$0.isEmpty }.prefix(30).map { $0 } }
         switch name {
@@ -998,13 +1041,12 @@ public final class TaskLink: ToolProvider {
             guard !summary.isEmpty else { return ProjectTools.failure("summary is required.") }
             // Kept with the attempt: the TODO waits for the check only once the review and its fixes are over (settle).
             do {
-                try TodoStore.shared.change(item.id) { t in
-                    var report = t.report ?? TodoReport()
+                try run.todoStore.record(item.id, context: context) { report in
                     report.summary = String(summary.prefix(4000)); report.assumptions = list(arguments["assumptions"]); report.files = list(arguments["files"])
-                    t.report = report
                 }
             } catch { return ProjectTools.failure(error.localizedDescription) }
-            return ["content": [["type": "text", "text": "Recorded. When this chat's work and review are over, the TODO waits for the user's check. End your reply with a short report of what you did and what to check."]], "isError": false]
+            let next = run.noPush ? "This step is marked done when the chat ends." : "When this chat's work and review are over, the TODO waits for the user's check."
+            return ["content": [["type": "text", "text": "Recorded. " + next + " End your reply with a short report of what you did and what to check."]], "isError": false]
         case "task_ask":
             let kind = text("kind"), reason = text("reason")
             let kinds: [String: TodoQuestion.Kind] = ["question": .choice, "approval": .approval, "missing_info": .missingInfo, "blocked": .approval]
@@ -1017,10 +1059,8 @@ public final class TaskLink: ToolProvider {
             }
             guard asked != .choice || !items.isEmpty else { return ProjectTools.failure("A question needs at least one question.") }
             do {
-                try TodoStore.shared.change(item.id) { t in
-                    var report = t.report ?? TodoReport()
+                try run.todoStore.record(item.id, context: context) { report in
                     report.question = TodoQuestion(kind: asked, reason: String(reason.prefix(2000)), items: items)
-                    t.report = report
                 }
             } catch { return ProjectTools.failure(error.localizedDescription) }
             return ["content": [["type": "text", "text": "Recorded. Stop working now: end your reply with the reason and the questions. The user answers on the TODO card or in this chat."]], "isError": false]
@@ -1457,6 +1497,10 @@ public final class TodoScheduler: ObservableObject {
             if item.id == editing { note = L("고치는 중인 TODO는 저장할 때까지 기다려요.", "The TODO being edited waits until it is saved."); continue }
             guard data.item(item.id)?.state == .ready, let list = data.list(item.listID), let project = list.project,
                   !data.items.contains(where: { $0.state == .running && data.list($0.listID)?.project?.root == project.root }) else { continue }
+            if let group = item.group, let room = data.item(group)?.room, chats.answering.contains(room) {
+                note = L("이전 TODO 실행이 끝날 때까지 기다려요.", "Waiting for the previous TODO turn to end.")
+                continue
+            }
             let lock = lock(for: item, list: list, project: project)
             guard let crew = crew(lock: lock, allowed: list.accounts) else {
                 // Picked AIs: only this project waits, the others may still start.
@@ -1472,8 +1516,16 @@ public final class TodoScheduler: ObservableObject {
                 DispatchQueue.main.asyncAfter(deadline: .now() + Self.retryDelay) { [weak self] in self?.wake() }
             } else { started += 1; retryAt[item.id] = nil }
         }
-        let ready = store.current.items.contains { $0.state == .ready }
-        waiting = started == 0 && ready ? note : nil
+        let data = store.current
+        let ready = data.items.filter { $0.state == .ready }
+        if started == 0, note == nil,
+           let item = ready.first(where: { item in
+               guard let group = item.group else { return false }
+               return data.blockers(item).contains { id in data.item(id).map { $0.group == group && $0.state == .cancelled } == true }
+           }) {
+            note = L("\(item.title): 취소된 앞 조각을 다시 시작해야 해요.", "\(item.title) is waiting for a cancelled step to be restarted.")
+        }
+        waiting = started == 0 && !ready.isEmpty ? note : nil
     }
 
     // The Enterprise lock a TODO's work keeps: its list's, else that of a locked chat on the project (the one it was
@@ -1517,7 +1569,8 @@ public final class TodoScheduler: ObservableObject {
         }
         guard let room else { return nil }
         if chats.answering.contains(room) { return L("TODO 채팅이 아직 답하는 중이라 기다려요.", "Waiting for the TODO's chat to finish answering.") }
-        chats.setCrew(room: room, members: [crew.lead.id] + (crew.reviewer.map { [$0.id] } ?? []), lead: crew.lead.id)
+        let reviewer = item.piece == .step ? nil : crew.reviewer
+        chats.setCrew(room: room, members: [crew.lead.id] + (reviewer.map { [$0.id] } ?? []), lead: crew.lead.id)
         // The attachments go into the chat's own folder (the AI reads them there); photos it has not seen yet also go with the message.
         let delivered: (paths: [String], photos: [TodoPhoto])
         do { delivered = try deliver(item, room: room) } catch {
@@ -1542,7 +1595,7 @@ public final class TodoScheduler: ObservableObject {
         } catch {
             return error.localizedDescription
         }
-        if let reason = chats.start(room: room, question: question, photos: delivered.photos, review: crew.reviewer != nil, extra: Self.instruction(item, documents: project.isDocuments)) {
+        if let reason = chats.start(room: room, question: question, photos: delivered.photos, review: reviewer != nil, extra: Self.instruction(item, documents: project.isDocuments)) {
             try? store.change(item.id) { $0.state = .ready; $0.lastError = reason }
             return reason
         }
@@ -1556,14 +1609,17 @@ public final class TodoScheduler: ObservableObject {
     // attachment's ID, so a retry in the same chat does not send it twice.
     static let attachmentFolder = "TODO attachments"
     func deliver(_ item: TodoItem, room: UUID) throws -> (paths: [String], photos: [TodoPhoto]) {
-        guard !item.attachments.isEmpty else { return ([], []) }
+        let original = item.piece == .step ? item.group.flatMap { store.current.item($0) } : nil
+        let attachments = (original.map { source in source.attachments.map { (source.id, $0) } } ?? [])
+            + item.attachments.map { (item.id, $0) }
+        guard !attachments.isEmpty else { return ([], []) }
         let target = chats.folder(room).appendingPathComponent(Self.attachmentFolder)
         let sent = chats.sentPhotos(room)
         var paths: [String] = [], photos: [TodoPhoto] = []
         do {
             try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-            for attachment in item.attachments {
-                let source = store.file(item.id, attachment)
+            for (owner, attachment) in attachments {
+                let source = store.file(owner, attachment)
                 let copy = target.appendingPathComponent(String(attachment.id.uuidString.prefix(8)) + "-" + attachment.name)
                 if !FileManager.default.fileExists(atPath: copy.path) { try FileManager.default.copyItem(at: source, to: copy) }
                 paths.append(copy.path)
@@ -1625,8 +1681,9 @@ public final class TodoScheduler: ObservableObject {
                 let unreviewed = turn.unreviewed
                 try? store.change(item.id) { t in
                     guard t.state == .running else { return }
-                    t.state = .review; t.result = summary; t.assumptions = report.assumptions; t.files = report.files; t.report = nil
-                    t.question = nil; t.unreported = true; t.delegated = 0
+                    t.state = t.piece == .step ? .done : .review
+                    t.result = summary; t.assumptions = report.assumptions; t.files = report.files; t.report = nil
+                    t.question = nil; t.unreported = t.state == .review; t.delegated = 0
                     t.lastError = unreviewed ? L("검수하지 못했어요. 채팅에서 이유를 확인해 주세요.", "The review could not be done. See the chat for why.") : nil
                 }
             } else {
@@ -1837,8 +1894,16 @@ public final class TodoScheduler: ObservableObject {
     }
 
     public static func instruction(_ item: TodoItem, documents: Bool = false) -> String {
-        let usual = documents ? "Work in this documents project as usual (plan, change the files, build or render and look at the result where you can)."
-            : "Work in this project as usual (plan, change, test, commit and push when the project rules say so)."
+        let usual: String
+        if documents {
+            usual = "Work in this documents project as usual (plan, change the files, build or render and look at the result where you can)."
+        } else if item.piece == .step {
+            usual = "Run the tests for this step and commit before reporting. The finish step runs the full suite, reviews the group's changes and pushes the commits."
+        } else if item.piece == .finish {
+            usual = "Run the full test suite and any required build. Commit your changes and request one push for the whole group after review."
+        } else {
+            usual = "Work in this project as usual (plan, change, test, commit and push when the project rules say so)."
+        }
         return """
         [TODO work] This is a TODO from the user's board, done while the user may be away. \(usual)
         When it is finished and \(documents ? "checked" : "tested"), call task_done with a summary, the assumptions you made and the files you changed\(documents ? " (and any steps left for the user)" : ""), then end with a short report.

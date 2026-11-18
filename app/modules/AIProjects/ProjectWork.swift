@@ -218,9 +218,38 @@ public final class ProjectRun {
     let started = Date()
     // Full auto runs while the user is away: up to 8 hours instead of 1 (45 minutes active).
     let fullAuto: Bool
+    let todoSplitFullAuto: Bool
     // A sub-room's turn (docs/SUBROOM_PLAN.md 4): it works on its own sub/ branch, so its Git tools leave out push, pull,
     // publish and branch changes; the app merges its reported commit.
     public var isSubRoom = false
+    let todoStore: TodoStore
+    let todoAttempt: TodoItem?
+    let todoSplitBase: String?
+    public var noPush: Bool { todoAttempt?.piece == .step }
+    public var isTodoPiece: Bool { todoAttempt?.group != nil }
+    public var todoWasSplit: Bool {
+        guard let todoAttempt, todoAttempt.group == nil else { return false }
+        lifecycle.lock(); let replaced = splitAccepted; lifecycle.unlock()
+        return replaced || todoStore.current.item(todoAttempt.id)?.piece == .finish
+    }
+    func rememberTodoSplit() { lifecycle.lock(); splitAccepted = true; lifecycle.unlock() }
+
+    // Called while the chat owns the repository lock, before any step can change HEAD.
+    public func todoReviewBase() throws -> String? {
+        guard let todoAttempt, let group = todoAttempt.group, !binding.isDocuments, !binding.isFolderless,
+              let plan = todoStore.current.item(group)?.splitRecord else { return nil }
+        if todoAttempt.piece == .finish {
+            guard let base = plan.reviewBase, [40, 64].contains(base.utf8.count), base.allSatisfy(\.isHexDigit) else { return nil }
+            return base
+        }
+        if plan.files.first?.id == todoAttempt.id, plan.reviewBase == nil {
+            let head = try ProjectProcess.git(["rev-parse", "--verify", "HEAD"], root: binding.root, token: attempt)
+            try todoStore.change(group) { finish in
+                if finish.splitRecord?.reviewBase == nil { finish.splitRecord?.reviewBase = head }
+            }
+        }
+        return nil
+    }
     public let deadline: Date
     var activeLimit: TimeInterval { fullAuto ? 8 * 3600 : 2700 }
     private let clock = NSLock()
@@ -233,7 +262,7 @@ public final class ProjectRun {
     public private(set) var generation = 0
     public var attempt = DebateCancellation()
     private let lifecycle = NSLock()
-    private var ended = false
+    private var ended = false, splitAccepted = false
     func stop() { lifecycle.lock(); ended = true; lifecycle.unlock(); attempt.cancel() }
     public var committed = false, pushed = false
     // A project turn pushes once, after the review and its fixes: git_push only asks for it, and the chat calls
@@ -286,8 +315,15 @@ public final class ProjectRun {
     }
     var initialDirty: Set<String> = []
     let operations = NSRecursiveLock()
-    public init(room: UUID, binding: ProjectBinding, token: DebateCancellation, fullAuto: Bool = false) {
+    public init(room: UUID, binding: ProjectBinding, token: DebateCancellation, fullAuto: Bool = false, todoSplitFullAuto: Bool? = nil) {
         self.room = room; self.binding = binding; self.outer = token; self.fullAuto = fullAuto
+        self.todoSplitFullAuto = todoSplitFullAuto ?? fullAuto
+        let todoStore = TodoStore.shared
+        self.todoStore = todoStore
+        let todo = todoStore.current.items.first { $0.room == room && $0.state == .running }
+        todoAttempt = todo
+        todoSplitBase = todo != nil && todo?.group == nil && !binding.isDocuments && !binding.isFolderless
+            ? try? ProjectProcess.git(["rev-parse", "--verify", "HEAD"], root: binding.root, token: token) : nil
         deadline = Date().addingTimeInterval(fullAuto ? 8 * 3600 + 600 : 3600)
         let status = binding.isDocuments ? "" : (try? ProjectProcess.git(["status", "--porcelain", "-z"], root: binding.root)) ?? ""
         initialDirty = Set(status.split(separator: "\0").map { String($0.dropFirst(3)) })
@@ -305,7 +341,7 @@ public final class ProjectRun {
     public func endAttempt() { attempt.cancel(); ProjectWork.revokeTools(id) }
     var cancelled: Bool { outer.isCancelled || attempt.isCancelled || Date() >= deadline || activeExpired }
     public func validate(_ generation: Int) throws {
-        guard !cancelled, generation == self.generation else { throw ProjectError.make("Project capability expired or operation cancelled.") }
+        guard !cancelled, generation == self.generation, !todoWasSplit else { throw ProjectError.make("Project capability expired or operation cancelled.") }
         guard try ProjectProcess.current(binding) == binding else { throw ProjectError.make("Project repository or remote changed. Reconnect it first.") }
     }
     public func checkpoint(_ note: String) -> String {
@@ -594,7 +630,7 @@ public final class PlanLink: ToolProvider {
     public var active: Bool { ProjectWork.active }
     public func tools() -> [[String: Any]] { [] }
     private func live(_ context: ToolContext) -> ProjectRun? {
-        guard let run = ProjectWork.get(context.projectRun), run.room == context.room, context.projectGeneration == run.generation, !run.cancelled else { return nil }
+        guard let run = ProjectWork.run(for: context), !run.todoWasSplit else { return nil }
         return run
     }
     public func tools(context: ToolContext) -> [[String: Any]] {
@@ -641,7 +677,7 @@ public final class GitLink: ToolProvider {
     public var active: Bool { ProjectWork.active }
     public func tools() -> [[String: Any]] { [] } // Scoped tools must never be exposed globally.
     public func tools(context: ToolContext) -> [[String: Any]] {
-        guard let run = ProjectWork.get(context.projectRun), run.room == context.room, context.projectGeneration == run.generation, !run.cancelled else { return [] }
+        guard let run = ProjectWork.run(for: context), !run.todoWasSplit else { return [] }
         let string: [String: Any] = ["type": "string"]
         func tool(_ name: String, _ description: String, _ props: [String: Any] = [:], _ required: [String] = []) -> [String: Any] {
             ["name": name, "description": description, "inputSchema": ["type": "object", "properties": props, "required": required, "additionalProperties": false]]
@@ -656,7 +692,7 @@ public final class GitLink: ToolProvider {
                 tool("git_publish_stable", "Publish an exact main SHA to stable after the user's approval card."),
                 tool("git_branch", "Create a new branch from a clean tree.", ["name": string], ["name"]), tool("git_switch", "Switch an existing branch with a clean tree.", ["name": string], ["name"]),
                 run_]
-        return run.isSubRoom ? all.filter { !Self.notInSubRooms.contains($0["name"] as? String ?? "") } : all
+        return run.isSubRoom || run.noPush ? all.filter { !Self.notInSubRooms.contains($0["name"] as? String ?? "") } : all
     }
     // A sub-room stays on its own branch and never reaches the remote (the main room pushes after merging).
     static let notInSubRooms: Set<String> = ["git_pull", "git_push", "git_publish_stable", "git_branch", "git_switch"]
@@ -675,7 +711,7 @@ public final class GitLink: ToolProvider {
     // The end of a project turn: the push its git_push asked for, with the same branch rules, on a fresh attempt (the
     // AI's attempts are over). nil: nothing was asked. Throws when the push fails; the commits stay local.
     public func pushDeferred(_ run: ProjectRun) throws -> String? {
-        guard run.deferPush, run.pushWanted else { return nil }
+        guard run.deferPush, run.pushWanted, !run.noPush, !run.todoWasSplit else { return nil }
         run.nextAttempt()
         defer { run.endAttempt() }
         run.operations.lock(); defer { run.operations.unlock() }
@@ -732,6 +768,9 @@ public final class GitLink: ToolProvider {
         }
         if run.binding.isDocuments && name != "project_run" { throw ProjectError.make("This is a documents project without Git; there are no git tools. The app backed the folder up before this answer.") }
         if run.isSubRoom && Self.notInSubRooms.contains(name) { throw ProjectError.make("A sub-room has no \(name): it commits on its own branch and reports with sub_report; the main room merges and pushes.") }
+        if run.noPush && Self.notInSubRooms.contains(name) {
+            throw ProjectError.make("A TODO step has no \(name): it commits locally, and the finish step pushes.")
+        }
         switch name {
         case "git_status": return try git(["status", "--short", "--branch"])
         case "git_log": return try git(["log", "-10", "--oneline"])

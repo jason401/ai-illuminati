@@ -531,6 +531,10 @@ Public names and why (everything else stays internal: `ProjectError`, `ProjectTo
   `names` as before): ToolHub lists them in its order.
 - Stable publish screen API: `GitLink.publishStable(_:room:onWaiting:)` is public so the App project screen can publish without an AI turn. It acquires the existing repository lock and reuses the Git tool's exact-SHA approval path; its waiting callback updates the screen. The shared publish path fetches first, preserves publishing the exact local main SHA, rejects divergent stable, and supports the first stable publish. `projects_contract` checks approval, refusal, exact SHA and lock release against a temporary local remote.
 - Pull main screen API: `GitLink.pullMain(_:)` is public so the App project screen can pull main when its refresh finds main behind origin/main. It holds the repository lock (no pull in the middle of an AI's work) and keeps `git_pull`'s rules: main checked out, clean tree, `pull --ff-only`, never stash/reset. `projects_contract` checks dirty, other branch, busy lock, fast-forward and diverged cases against a temporary local remote. No graph change.
+- TODO split execution (AIChat): `ProjectRun.noPush` skips step reviews and deferred pushes, `isTodoPiece` omits
+  delegation for the whole group, `todoWasSplit` ends the original turn before review/push, and `todoReviewBase()`
+  returns the stored review base to the finish and records HEAD at the first step for splits without a base. The initializer's `todoSplitFullAuto`
+  argument supplies the chat's approval mode to the TODO split decision.
 - Sub-room P2 (AIChat's `Delegate.swift` uses them): `ProjectRun.isSubRoom` (set by the chat for a sub-room's turn: GitLink then lists and runs no git_pull/git_push/git_publish_stable/git_branch/git_switch),
   `ProjectWork.run(for:)` (another module's tool provider finds the live project turn of a tool call, with the same room/generation/cancel checks as GitLink),
   `SubWork.report` (sub_report: the work tree's HEAD only when everything is committed, and the files changed since the start),

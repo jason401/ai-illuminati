@@ -803,6 +803,30 @@ public final class GitLink: ToolProvider {
         guard try git(["status", "--porcelain"]).isEmpty else { throw ProjectError.make(L("커밋하지 않은 변경이 있어 받지 않았어요.", "There are uncommitted changes; nothing pulled.")) }
         return try git(["pull", "--ff-only", "--no-rebase", binding.remote, "main"], timeout: 180)
     }
+    // TODO structure 11: a Goal's commits reach the remote only as the SHA its Milestone reviewed and fully tested. A plain
+    // chat that merged a todo-goal/ branch into its HEAD (a common commit not on the remote) or cherry-picked from it (the
+    // same patch, --cherry-mark) is refused unless HEAD is exactly that SHA for this branch. Branches without the app's
+    // Goal record are not Goals; no Goal branch: nothing changes.
+    static func goalGuard(_ binding: ProjectBinding, branch: String, head: String, git: ([String]) throws -> String,
+                          verified: (UUID, String) -> Set<String> = { goal, branch in
+                              Set(TodoStore.shared.current.items.compactMap { item in
+                                  item.role == .milestone && item.goal == goal && item.milestoneCandidate?.branch == branch ? item.milestoneCandidate?.verifiedSHA : nil
+                              })
+                          }) throws {
+        let goals = try git(["for-each-ref", "--format=%(refname:short)", "refs/heads/todo-goal/"]).split(separator: "\n").map(String.init)
+        guard !goals.isEmpty else { return }
+        let remote = ["--not", "--remotes=" + binding.remote]
+        for goal in goals {
+            guard let id = (try? git(["config", "--get", "branch." + goal + ".todogoal"])).flatMap(UUID.init(uuidString:)) else { continue }
+            let common = (try? git(["merge-base", "--all", head, "refs/heads/" + goal])) ?? ""
+            let merged = try common.split(separator: "\n").contains { try !git(["rev-list", "-n", "1", String($0)] + remote).isEmpty }
+            let picked = try !merged && git(["rev-list", "--cherry-mark", "--right-only", "--no-merges", "refs/heads/" + goal + "..." + head] + remote)
+                .split(separator: "\n").contains { $0.hasPrefix("=") }
+            guard merged || picked, !verified(id, branch).contains(head) else { continue }
+            throw ProjectError.make(L("\(goal)의 커밋이 push 범위에 있지만 이 HEAD는 그 Milestone이 리뷰와 전체 테스트를 통과한 SHA가 아니에요. Goal 커밋은 Milestone만 올릴 수 있으니 합친 커밋을 빼고 다시 push하세요.",
+                                      "Commits of \(goal) are in this push, but this HEAD is not the SHA its Milestone reviewed and fully tested. Only the Milestone pushes a Goal's commits; take the merged commits out and push again."))
+        }
+    }
     private func execute(_ name: String, _ args: [String: Any], _ run: ProjectRun, _ generation: Int, app: Bool = false) throws -> String {
         func git(_ argv: [String], timeout: TimeInterval = 120) throws -> String { try run.validate(generation); return try ProjectWork.git(argv, root: run.binding.root, token: run.attempt, timeout: min(timeout, run.deadline.timeIntervalSinceNow)) }
         func clean() throws { guard try git(["status", "--porcelain"]).isEmpty else { throw ProjectError.make("Working tree is not clean; preserve edits and do not pull/switch/stash.") } }
@@ -858,11 +882,12 @@ public final class GitLink: ToolProvider {
         case "git_push":
             let branch = try git(["branch", "--show-current"])
             guard branch == "main" || branch.hasPrefix("feature/") || branch.hasPrefix("codex/") || branch.hasPrefix("fix/") else { throw ProjectError.make("Push supports main or a feature/fix/codex branch. Use the publish tool for stable.") }
+            let sha = try git(["rev-parse", "HEAD"])
+            try Self.goalGuard(run.binding, branch: branch, head: sha, git: { try git($0) })
             if run.deferPush && !app {
                 run.pushWanted = true
                 return "Push requested. The app pushes HEAD of " + branch + " once, after the review and your fixes, when this turn ends; do not push any other way. Commit later fixes as usual; nothing else is needed for the push."
             }
-            let sha = try git(["rev-parse", "HEAD"])
             let result = try git(["push", run.binding.remote, sha + ":refs/heads/" + branch], timeout: 180)
             run.pushed = true; return result + "\nPushed " + sha
         case "git_publish_stable":

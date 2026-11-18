@@ -194,6 +194,7 @@ func testProjectWork() {
            && git(["rev-parse", "refs/heads/main"], at: origin) == finalHead, "the app pushes the final HEAD once")
     expect(!todoCall("git_status"), "the app's push ends the AI's tool sessions")
     checkProjectStep(selected, origin: origin)
+    checkGoalPushGuard(selected, origin: origin)
     print("PASS: plain-chat projects (repo locks, scoped tools, selective commits, push, dirty handoff, exact-SHA approval, named command approval, Stop and a TODO's one push)")
 }
 
@@ -307,6 +308,71 @@ private func checkProjectStep(_ project: ProjectBinding, origin: URL) {
     expect(chat.current.turns.last?.error != nil && answerers == [lead.id], "failed branch validation frees the lease before any AI runs")
     _ = git(["switch", tree.branch], at: tree.path)
     print("PASS: Goal Step isolation (read-only original checkout, branch and push restrictions, sandboxed commands, local commit, lease release)")
+}
+
+// TODO structure 11: a plain chat's push may not carry a Goal's commits (merged or cherry-picked) past its Milestone.
+private func checkGoalPushGuard(_ project: ProjectBinding, origin: URL) {
+    func git(_ args: [String], at root: String = project.root) -> String { try! ProjectProcess.git(args, root: root) }
+    func write(_ text: String, _ name: String, in folder: String = project.root) { try! text.write(toFile: folder + "/" + name, atomically: true, encoding: .utf8) }
+    func commit(_ folder: String, _ message: String) { _ = git(["add", "-A"], at: folder); _ = git(["commit", "-q", "-m", message], at: folder) }
+    let savedTodos = TodoStore.shared
+    let todos = TodoStore(url: URL(fileURLWithPath: AccountStore.home).appendingPathComponent("goal-push-todos-\(UUID().uuidString).json"))
+    TodoStore.shared = todos
+    defer { TodoStore.shared = savedTodos }
+    let goal = UUID(), tree = try! SubWork.goal(project, goal: goal, target: "main")
+    write("goal step\n", "goal.txt", in: tree.path); commit(tree.path, "Goal Step")
+    let stepSHA = git(["rev-parse", "HEAD"], at: tree.path)
+    let run = ProjectRun(room: UUID(), binding: project, token: DebateCancellation())
+    ProjectWork.register(run); run.nextAttempt()
+    defer { ProjectWork.finish(run) }
+    let context = ToolContext(room: run.room, roots: project.linkedRoots, projectRun: run.id, projectGeneration: run.generation)
+    func push() -> (ok: Bool, text: String) {
+        let reply = GitLink.shared.call("git_push", [:], context: context)
+        return (reply["isError"] as? Bool == false, (reply["content"] as? [[String: Any]])?.first?["text"] as? String ?? "")
+    }
+    func remoteMain() -> String { git(["rev-parse", "refs/heads/main"], at: origin.path) }
+    let refused = L("커밋이 push 범위에 있지만", "Commits of ")
+
+    // An ordinary commit pushes as before while a Goal branch with unpushed work exists.
+    write("plain\n", "plain.txt"); commit(project.root, "Plain chat work")
+    var reply = push()
+    expect(reply.ok && remoteMain() == git(["rev-parse", "HEAD"]), "a plain push with a Goal in progress still succeeds: \(reply.text)")
+
+    // Merged into main: refused, also when a TODO's push is only asked for, and the remote keeps its commit.
+    let before = git(["rev-parse", "HEAD"]), remoteBefore = remoteMain()
+    _ = git(["merge", "-q", "--no-ff", "-m", "Bypass merge", tree.branch])
+    reply = push()
+    expect(!reply.ok && reply.text.contains(refused) && reply.text.contains(tree.branch) && remoteMain() == remoteBefore, "a merged Goal is refused: \(reply.text)")
+    let todo = ProjectRun(room: UUID(), binding: project, token: DebateCancellation()); todo.deferPush = true
+    ProjectWork.register(todo); todo.nextAttempt()
+    let todoContext = ToolContext(room: todo.room, roots: project.linkedRoots, projectRun: todo.id, projectGeneration: todo.generation)
+    expect(GitLink.shared.call("git_push", [:], context: todoContext)["isError"] as? Bool == true && !todo.pushWanted, "a TODO's push request is refused too")
+    todo.pushWanted = true
+    expect((try? GitLink.shared.pushDeferred(todo)) == nil && !todo.pushed && remoteMain() == remoteBefore, "the app's push at the end of a turn is refused too")
+    ProjectWork.finish(todo)
+
+    // Cherry-picked (new SHA, same patch): refused.
+    _ = git(["reset", "-q", "--hard", before])
+    _ = git(["cherry-pick", stepSHA])
+    reply = push()
+    expect(!reply.ok && reply.text.contains(refused) && remoteMain() == remoteBefore, "a cherry-picked Goal commit is refused: \(reply.text)")
+
+    // Only the exact SHA its Milestone reviewed and fully tested for this branch goes.
+    _ = git(["reset", "-q", "--hard", before])
+    _ = git(["merge", "-q", "--no-ff", "-m", "Milestone candidate", tree.branch])
+    let candidate = git(["rev-parse", "HEAD"])
+    var milestone = TodoItem(listID: UUID(), title: "Milestone"); milestone.role = .milestone; milestone.goal = goal
+    milestone.milestoneCandidate = .init(branch: "main", baseSHA: remoteBefore, candidateSHA: candidate)
+    milestone.milestoneCandidate?.recordReview(for: candidate)
+    try! todos.update { $0.items.append(milestone) }
+    expect(!push().ok && remoteMain() == remoteBefore, "reviewed but not fully tested is refused")
+    try! todos.change(milestone.id) { $0.milestoneCandidate?.recordTest(for: candidate) }
+    write("extra\n", "extra.txt"); commit(project.root, "Unverified on top")
+    expect(!push().ok && remoteMain() == remoteBefore, "a verified SHA with more commits on top is refused")
+    _ = git(["reset", "-q", "--hard", candidate])
+    reply = push()
+    expect(reply.ok && remoteMain() == candidate, "the Milestone's verified SHA pushes: \(reply.text)")
+    print("PASS: Goal push guard (plain push unchanged, merged or cherry-picked Goal commits refused, only the Milestone's verified SHA)")
 }
 
 func testProjectHandoff() {

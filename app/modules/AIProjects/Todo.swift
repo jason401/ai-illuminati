@@ -114,6 +114,9 @@ public struct TodoItem: Codable, Identifiable, Equatable {
             self.candidateSHA = candidateSHA
         }
 
+        // Reviewed and fully tested: the only SHA its Goal's commits may reach the remote as (GitLink's push check).
+        var verifiedSHA: String? { candidateSHA != nil && reviewedSHA == candidateSHA && testedSHA == candidateSHA ? candidateSHA : nil }
+
         public mutating func recordReview(for sha: String) {
             if sha == candidateSHA { reviewedSHA = sha }
         }

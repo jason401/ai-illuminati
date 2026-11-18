@@ -26,6 +26,11 @@ struct Split: Codable, Equatable {
         var account: String?, name: String?
         var sha: String?, summary: String?, changed: [String]?, tests: String?, question: String?, error: String?, conflicts: [String]?
         var removed = false         // its work tree and branch are gone (merged and pushed, or discarded)
+        // For the cards (optional: older records lack them): when its latest turn started and ended, the messages sent to
+        // it, and files it changed outside its part (git_merge_sub's warning).
+        var started: Date?, finished: Date?
+        var sent: [String]?
+        var outside: [String]?
         var ended: Bool { ![.creating, .ready, .running].contains(state) }
     }
     var id: String
@@ -39,6 +44,8 @@ struct Split: Codable, Equatable {
     var paused = false              // stopped with the main room or by a restart: no join turn until it goes on
     var closed = false              // nothing left: every work tree removed
     var noticed: [String] = []      // the restart cards already shown
+    var mine: String?               // the main room's own part, for the card
+    var allowed: [String]?          // CommandIdentity keys allowed "for this split" on the gathered approval card
     var active: Bool { !closed && parts.contains { !$0.ended || $0.live } }
     var finished: Bool { parts.allSatisfy { $0.ended && !$0.live } }
 
@@ -108,6 +115,7 @@ struct Split: Codable, Equatable {
 // under one lock, so the tool threads, the workers and the main thread see the same record; waiters wake on each change.
 final class SplitStore {
     static let shared = SplitStore()
+    static let changed = Notification.Name("AIChat.splitChanged")   // userInfo "room": the cards and the sidebar read again
     private let condition = NSCondition()
     static var folder: URL { URL(fileURLWithPath: AccountStore.supportDir).appendingPathComponent("splits", isDirectory: true) }
     private func file(_ room: UUID) -> URL { Self.folder.appendingPathComponent(room.uuidString + ".json") }
@@ -133,6 +141,7 @@ final class SplitStore {
                 try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file(room).path)
             }
             condition.broadcast()
+            DispatchQueue.main.async { NotificationCenter.default.post(name: Self.changed, object: nil, userInfo: ["room": room]) }
         }
         return result
     }
@@ -204,7 +213,7 @@ extension Discussion {
             if let reason = startTurn(room: next.room, question: next.question, mentioned: account.map { [$0] } ?? [], forced: .work) {
                 SplitStore.shared.changePart(link) { $0.state = .failed; $0.error = reason; $0.live = false }
             } else {
-                SplitStore.shared.changePart(link) { $0.state = .running; $0.live = true; $0.question = nil; $0.error = nil }
+                SplitStore.shared.changePart(link) { $0.state = .running; $0.live = true; $0.question = nil; $0.error = nil; $0.started = Date(); $0.finished = nil }
             }
         }
     }
@@ -218,6 +227,7 @@ extension Discussion {
                 let error = conversation(room).turns.last?.error
                 SplitStore.shared.changePart(link) { part in
                     part.live = false
+                    part.finished = part.finished ?? Date()
                     if part.state == .running {
                         if stopped { part.state = .cancelled }
                         else { part.state = .failed; part.error = error ?? "The sub-room's turn ended without sub_report." }
@@ -451,9 +461,22 @@ public final class DelegateLink: ToolProvider {
     weak var host: Discussion?
     private let lock = NSLock()
     private var subs: [UUID: SubRoomLink] = [:]   // a sub-room's project run → its place
+    private var rooms: [UUID: SubRoomLink] = [:]  // the same by the sub-room's chat, for its approval requests
 
-    func register(_ run: ProjectRun, _ link: SubRoomLink) { lock.lock(); subs[run.id] = link; lock.unlock() }
-    func unregister(_ run: ProjectRun) { lock.lock(); subs[run.id] = nil; lock.unlock() }
+    func register(_ run: ProjectRun, _ link: SubRoomLink) { lock.lock(); subs[run.id] = link; rooms[run.room] = link; lock.unlock() }
+    func unregister(_ run: ProjectRun) {
+        lock.lock(); defer { lock.unlock() }
+        subs[run.id] = nil
+        if let link = rooms[run.room], !subs.values.contains(link) { rooms[run.room] = nil }
+    }
+    // ProjectCenter.preapproved: a sub-room's request for a command the user allowed for this split (same CommandIdentity
+    // key: path, arguments, work tree, config and script bytes, permission). Anything else gets its card.
+    func preapproved(_ request: ProjectApproval) -> Bool {
+        guard let same = request.same else { return false }
+        lock.lock(); let link = rooms[request.room]; lock.unlock()
+        guard let link, let split = SplitStore.shared.split(link.room, link.split), !split.closed else { return false }
+        return split.allowed?.contains(same) == true
+    }
     private func role(_ context: ToolContext) -> (run: ProjectRun, sub: SubRoomLink?)? {
         guard context.origin == .member, let run = ProjectWork.run(for: context), !run.binding.isDocuments, !run.binding.isFolderless else { return nil }
         lock.lock(); defer { lock.unlock() }
@@ -478,7 +501,7 @@ public final class DelegateLink: ToolProvider {
         let part: [String: Any] = ["type": "object", "properties": ["goal": string, "owned": strings, "forbidden": strings, "interfaces": string, "done": string],
                                    "required": ["goal", "owned", "done"], "additionalProperties": false]
         return [tool("delegate_plan", "Split this work into 1-\(Split.most) parts for sub-rooms (other AIs, own work trees). Needs a clean main work tree. Owned files must not overlap.",
-                     ["parts": ["type": "array", "items": part, "minItems": 1, "maxItems": Split.most], "why": string], ["parts"]),
+                     ["parts": ["type": "array", "items": part, "minItems": 1, "maxItems": Split.most], "mine": string, "why": string], ["parts"]),
                 tool("delegate_status", "Each sub-room's state now."),
                 tool("delegate_result", "Waits up to wait_seconds (max \(Self.maxWait)) until every sub-room has ended; their reports, questions and problems.",
                      ["wait_seconds": ["type": "integer", "minimum": 0, "maximum": Self.maxWait]]),
@@ -510,7 +533,7 @@ public final class DelegateLink: ToolProvider {
                     let given = string("sha")
                     guard given.isEmpty || sha.hasPrefix(given.lowercased()) else { return toolFailure("Your HEAD is \(sha), not \(given): report what is committed.") }
                     SplitStore.shared.changePart(sub) { p in
-                        p.state = .reported; p.sha = sha; p.changed = changed; p.summary = String(self.cut(string("summary"), 4000))
+                        p.state = .reported; p.sha = sha; p.changed = changed; p.summary = String(self.cut(string("summary"), 4000)); p.finished = Date()
                         p.tests = String(self.cut(string("tests"), 2000)); p.question = nil; p.error = nil; p.conflicts = nil
                     }
                     SplitStore.shared.change(sub.room, sub.split) { $0.delivered = false }
@@ -519,7 +542,7 @@ public final class DelegateLink: ToolProvider {
             case "sub_blocked":
                 let question = string("question")
                 guard !question.isEmpty else { return toolFailure("Write your question.") }
-                SplitStore.shared.changePart(sub) { $0.state = .blocked; $0.question = String(self.cut(question, 4000)) }
+                SplitStore.shared.changePart(sub) { $0.state = .blocked; $0.question = String(self.cut(question, 4000)); $0.finished = Date() }
                 SplitStore.shared.change(sub.room, sub.split) { $0.delivered = false }
                 return text("Your question goes to the main room. End your answer now; you get its answer in a new turn.")
             default: return toolFailure("Unknown tool: " + name)
@@ -547,6 +570,7 @@ public final class DelegateLink: ToolProvider {
             let team = onMain { host.subTeam(parts.count, asker: context.asker?.id, room: main).map { ($0.id, host.label($0)) } }
             guard !team.isEmpty else { return toolFailure("No Claude/Codex account with enough usage left can take a sub-room now. Do the work yourself.") }
             for i in parts.indices { parts[i].account = team[i % team.count].0; parts[i].name = team[i % team.count].1 }
+            let mine = string("mine").isEmpty ? nil : cut(string("mine"), 2000)
             let plan = parts.map { p in
                 "**\(L("하위방", "Sub-room")) \(p.n)** · \(p.name ?? "")\n\(p.goal)\n\(L("맡을 파일", "Owns")): \(p.owned.joined(separator: ", "))"
                 + (p.forbidden.isEmpty ? "" : "\n\(L("건드리지 않음", "Must not touch")): \(p.forbidden.joined(separator: ", "))")
@@ -558,11 +582,16 @@ public final class DelegateLink: ToolProvider {
                 let deadline = min(run.deadline, Date().addingTimeInterval(900))
                 let asked = ProjectApproval(room: main, run: run.id, title: "하위방으로 나누기 / Split into sub-rooms",
                                             detail: run.binding.root + "\n" + L("AI \(parts.count + 1)명이 동시에 일해요(사용량이 그만큼 더 들어요).", "\(parts.count + 1) AIs work at once (uses that much more).") + "\n\n" + plan)
+                // The main room shows it as the split card (SplitPlanCard) instead of the plain approval card.
+                var shown = Split(id: "", room: main, repo: run.binding.root, common: run.binding.common, auto: false, parts: parts)
+                shown.mine = mine
+                onMain { host.splitPlans[asked.id] = shown }
+                defer { DispatchQueue.main.async { host.splitPlans[asked.id] = nil } }
                 guard ProjectCenter.shared.approve(asked, token: run.attempt, deadline: deadline) else {
                     return toolFailure(Date() >= deadline ? "The split was not approved within 15 minutes; treated as refused. Do the work yourself or ask the user." : "The user refused the split. Do the work yourself.")
                 }
             }
-            return text(open(parts, plan: plan, run: run, auto: auto, main: main, turn: context.turn, host: host))
+            return text(open(parts, mine: mine, plan: plan, run: run, auto: auto, main: main, turn: context.turn, host: host))
         case "delegate_status":
             guard let current else { return text("No split in this chat.") }
             return text(current.report())
@@ -581,21 +610,12 @@ public final class DelegateLink: ToolProvider {
             case "delegate_message":
                 let message = string("text")
                 guard !message.isEmpty else { return toolFailure("Write the message.") }
-                guard part.tree != nil, !part.removed, part.state != .merged else { return toolFailure("Sub-room \(n) has no work left to steer.") }
-                let said = L("[메인방에서] ", "[From the main room] ") + message
-                let reply: String = onMain {
-                    if host.runningRooms.contains(part.room) { host.enqueue(QueuedMessage(text: said), room: part.room); return "Sent; sub-room \(n) reads it in its answer or its next turn." }
-                    SplitStore.shared.changePart(link) { $0.state = .ready; $0.question = nil }
-                    SplitStore.shared.change(main, current.id) { $0.paused = false; $0.delivered = false }
-                    host.queueSub(part.room, question: said)
-                    return "Sub-room \(n) starts again with your message."
+                guard let reply = onMain({ host.messageSub(link, message, from: L("[메인방에서] ", "[From the main room] ")) }) else {
+                    return toolFailure("Sub-room \(n) has no work left to steer.")
                 }
                 return text(reply)
             case "delegate_cancel":
-                onMain {
-                    host.stopSub(part.room)
-                    SplitStore.shared.changePart(link) { if !$0.ended { $0.state = .cancelled } }
-                }
+                onMain { host.cancelSub(link) }
                 return text("Sub-room \(n) is stopped; its work tree stays.")
             case "delegate_resync":
                 guard let tree = part.tree, !part.live, !onMain({ host.runningRooms.contains(part.room) }) else { return toolFailure("Sub-room \(n) is still answering; wait for it or cancel it first.") }
@@ -617,11 +637,11 @@ public final class DelegateLink: ToolProvider {
                     let merge = try SubWork.merge(run.binding, tree, sha: sha, owned: part.owned, reported: [.reported, .conflict, .merged].contains(part.state) && !part.live && !answering, token: run.attempt)
                     let warning = merge.outside.isEmpty ? "" : "\nWarning: it also changed files outside its part: " + merge.outside.joined(separator: ", ") + ". Check them; keep or fix them yourself."
                     guard let merged = merge.merged else {
-                        SplitStore.shared.changePart(link) { $0.state = .conflict; $0.conflicts = merge.conflicts }
+                        SplitStore.shared.changePart(link) { $0.state = .conflict; $0.conflicts = merge.conflicts; $0.outside = merge.outside.isEmpty ? nil : merge.outside }
                         return text("Not merged: sub-room \(n) conflicts with main (\(merge.head.prefix(10))) in " + merge.conflicts.joined(separator: ", ")
                                     + ". Use delegate_resync \(n) to let it resolve them, or merge it yourself." + warning)
                     }
-                    SplitStore.shared.changePart(link) { $0.state = .merged; $0.conflicts = nil }
+                    SplitStore.shared.changePart(link) { $0.state = .merged; $0.conflicts = nil; $0.outside = merge.outside.isEmpty ? nil : merge.outside }
                     run.note("git_merge_sub \(n) → " + String(merged.prefix(10)))
                     return text("Merged sub-room \(n) (\(sha.prefix(10))): main is now \(merged)." + warning + " Run the full test after the last merge, then git_push; the app removes merged work trees after the push.")
                 } catch { return toolFailure(error.localizedDescription) }
@@ -632,9 +652,10 @@ public final class DelegateLink: ToolProvider {
 
     // After approval (on the tool's thread): the record first ("creating"), then each work tree ("ready"), then the
     // hidden chats and their turns in line; the card on the main room says how it was approved.
-    private func open(_ asked: [Split.Part], plan: String, run: ProjectRun, auto: Bool, main: UUID, turn: UUID?, host: Discussion) -> String {
+    private func open(_ asked: [Split.Part], mine: String?, plan: String, run: ProjectRun, auto: Bool, main: UUID, turn: UUID?, host: Discussion) -> String {
         let id = String(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(8)).lowercased()
         var split = Split(id: id, room: main, repo: run.binding.root, common: run.binding.common, auto: auto, parts: asked)
+        split.mine = mine
         SplitStore.shared.update(main) { $0.append(split) }
         for part in asked {
             let link = SubRoomLink(room: main, split: id, n: part.n)

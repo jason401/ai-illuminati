@@ -12,7 +12,8 @@ struct ProjectApprovalView: View {
     @ObservedObject private var center = ProjectCenter.shared
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            ForEach(center.requests.filter { $0.room == room }) { request in
+            // A split waiting for approval has its own card (SplitPlanCard).
+            ForEach(center.requests.filter { $0.room == room && discussion?.splitPlans[$0.id] == nil }) { request in
                 VStack(alignment: .leading, spacing: 8) {
                     Text(request.title).font(.headline)
                     ScrollView { Text(request.detail).font(.system(size: 11, design: .monospaced)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }.frame(maxHeight: 120)
@@ -53,7 +54,7 @@ struct ApprovalBanner: View {
     @ObservedObject var discussion: Discussion
     @ObservedObject private var center = ProjectCenter.shared
     var body: some View {
-        let others = center.requests.filter { $0.room != discussion.currentID || discussion.viewingRemote != nil }
+        let others = center.requests.filter { discussion.approvalHome($0.room) != discussion.currentID || discussion.viewingRemote != nil }
         if !others.isEmpty {
             VStack(spacing: 4) {
                 ForEach(others) { request in
@@ -63,7 +64,7 @@ struct ApprovalBanner: View {
                         Text(request.title).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
                         Spacer(minLength: 4)
                         Button(L("거절", "Deny")) { center.decide(request.id, allow: false) }
-                        Button(L("열기", "Open")) { discussion.open(request.room) }.buttonStyle(.borderedProminent)
+                        Button(L("열기", "Open")) { discussion.open(discussion.approvalHome(request.room)) }.buttonStyle(.borderedProminent)
                     }
                     .controlSize(.small)
                     .padding(.horizontal, 10).padding(.vertical, 6)

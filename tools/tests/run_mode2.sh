@@ -182,7 +182,7 @@ assert hooked == [], hooked
 import glob, re
 expected = {'Attachments': 'aaa', 'ChatFind': 'a', 'ChatSearch': 'a', 'ChatTools': 'a', 'Collaboration': 'a', 'Debate': 'a', 'Delegate': 'b',
             'DeviceSync': 'a', 'Enterprise': 'ab', 'Meeting': 'ba', 'Peer': 'b', 'ProjectChat': 'b', 'ProjectCreate': 'b',
-            'RoomDocuments': 'a', 'Route': 'a', 'SidebarProjects': 'a', 'Solo': 'aa', 'SpaceView': 'b', 'TodoChatsApp': 'a', 'Vote': 'a'}
+            'RoomDocuments': 'a', 'Route': 'a', 'SidebarProjects': 'a', 'Solo': 'aa', 'SpaceView': 'b', 'SubRoomViews': 'a', 'TodoChatsApp': 'a', 'Vote': 'a'}
 def blocks(text):
     lines, out, i = text.split('\n'), [], 0
     while i < len(lines):
@@ -197,7 +197,7 @@ assert not [f for f in glob.glob('app/macos/*.swift') if blocks(Path(f).read_tex
 found = {Path(f).stem: blocks(Path(f).read_text()) for f in sorted(glob.glob('app/modules/AIChat/*.swift'))}
 found = {k: v for k, v in found.items() if v}
 assert {k: len(v) for k, v in found.items()} == {k: len(v) for k, v in expected.items()}, ({k: len(v) for k, v in found.items()}, 'classify new extension Discussion blocks in docs/MODULES.md')
-assert sum(len(v) for v in found.values()) == 25, 'the C0 table has 25 rows'
+assert sum(len(v) for v in found.values()) == 26, 'the C0 table has 26 rows'
 # The chat side calls none of these by name: the app connects them (ChatLinksApp.swift) or the module reads them.
 direct = re.compile(r'PlanLink|DeviceSync\b(?!\.swift)|NativeSessions\.purgeRoom|WorkspaceBackup\.purgeRoom|RoomDocuments\.directory')
 chat = Path('app/modules/AIChat/Discussion.swift').read_text()

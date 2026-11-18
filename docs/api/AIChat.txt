@@ -291,6 +291,7 @@ Discussion.draftsFile | static var draftsFile: URL?
 Discussion.ended(_:) | func ended(_ room: UUID) -> TodoTurnEnd
 Discussion.fillSpaceLocks() | func fillSpaceLocks()
 Discussion.folder(_:) | func folder(_ room: UUID) -> URL
+Discussion.fullAuto(_:) | func fullAuto(_ room: UUID?) -> Bool
 Discussion.hover(_:_:) | func hover(_ key: String, _ inside: Bool)
 Discussion.hoverKey | @Published var hoverKey: String? { get set }
 Discussion.importing | var importing: Bool { get }
@@ -301,10 +302,12 @@ Discussion.listedConversations | var listedConversations: [Conversation] { get }
 Discussion.markTodoDone(_:) | func markTodoDone(_ id: UUID)
 Discussion.maxAnswering | var maxAnswering: Int { get }
 Discussion.meets(_:) | static func meets(_ account: Account) -> Bool
+Discussion.members(_:) | func members(_ room: UUID) -> [String]
 Discussion.model | let model: any ChatSettings
 Discussion.noCrew(_:lock:) | func noCrew(_ allowed: [String], lock: EnterpriseLock?) -> String
 Discussion.open(_:) | func open(_ id: UUID)
 Discussion.openBoard(project:tab:) | func openBoard(project: String?, tab: BoardTab? = nil)
+Discussion.reviewMilestone(room:workers:allowed:project:tree:base:candidate:goal:token:) | func reviewMilestone(room: UUID?, workers: [String], allowed: [String], project: ProjectBinding, tree: SubWork.Tree, base: String, candidate: String, goal: String, token: DebateCancellation) -> TodoItem.MilestoneCandidate.Review
 Discussion.runningRooms | @Published var runningRooms: Set<UUID> { get set }
 Discussion.saveDrafts() | func saveDrafts()
 Discussion.sentPhotos(_:) | func sentPhotos(_ room: UUID) -> Set<UUID>
@@ -312,6 +315,7 @@ Discussion.setCrew(room:members:lead:) | func setCrew(room: UUID, members: [Stri
 Discussion.showBoardTab(_:) | func showBoardTab(_ tab: BoardTab)
 Discussion.standIn(room:brief:token:done:) | func standIn(room: UUID, brief: String, token: DebateCancellation, done: @escaping (TodoStandInReply) -> Void)
 Discussion.start(room:question:photos:review:extra:) | func start(room: UUID, question: String, photos: [TodoPhoto], review: Bool, extra: String) -> String?
+Discussion.start(room:question:photos:review:extra:step:) | func start(room: UUID, question: String, photos: [TodoPhoto], review: Bool, extra: String, step: SubWork.Tree?) -> String?
 Discussion.stop(_:) | func stop(_ room: UUID)
 Discussion.stoppingRooms | @Published var stoppingRooms: Set<UUID> { get set }
 Discussion.unreadFile | static var unreadFile: URL?

@@ -36,10 +36,24 @@ extension Discussion: TodoChats {
     public func folder(_ room: UUID) -> URL { Self.chatFolder(room) }
     public func sentPhotos(_ room: UUID) -> Set<UUID> { Set(conversation(room).turns.flatMap { $0.images ?? [] }.map(\.id)) }
     public func start(room: UUID, question: String, photos: [TodoPhoto], review: Bool, extra: String) -> String? {
+        start(room: room, question: question, photos: photos, review: review, extra: extra, step: nil)
+    }
+    // A goal's step runs its turn in the Goal's work tree (runProjectSolo's `step`).
+    public func start(room: UUID, question: String, photos: [TodoPhoto], review: Bool, extra: String, step: SubWork.Tree?) -> String? {
         let images = photos.compactMap { try? ImageStore.importImage(Data(contentsOf: $0.file), name: $0.name, conversationID: room, id: $0.id) }
-        let reason = startTurn(room: room, question: question, images: images, forced: review ? .work : nil, extra: extra)
+        let reason = startTurn(room: room, question: question, images: images, forced: review ? .work : nil, extra: extra, step: step)
         if reason != nil { for image in images { try? ImageStore.remove(image) } }
         return reason
+    }
+    public func members(_ room: UUID) -> [String] { configuration(of: room).memberIDs ?? [] }
+    public func fullAuto(_ room: UUID?) -> Bool { room.map { conversation($0).workspace?.isFullAuto ?? false } ?? false }
+    // The Goal's work tree read only: the reviewer reads the candidate as it is there (Peer.reviewMilestone).
+    public func reviewMilestone(room: UUID?, workers: [String], allowed: [String], project: ProjectBinding, tree: SubWork.Tree,
+                                base: String, candidate: String, goal: String, token: DebateCancellation) -> TodoItem.MilestoneCandidate.Review {
+        let reviewers = model.accounts.filter { [.claude, .codex].contains($0.provider) && (allowed.isEmpty || allowed.contains($0.id)) }.map(\.id)
+        let binding = WorkspaceBinding(roots: [WorkspaceRoot(path: tree.path, directory: true)], project: project)
+        return reviewMilestone(room: room ?? currentID, workers: workers, reviewers: reviewers, binding: binding, root: tree.path,
+                               base: base, candidate: candidate, goal: goal, token: token)
     }
     public func ended(_ room: UUID) -> TodoTurnEnd {
         let turn = conversation(room).turns.last

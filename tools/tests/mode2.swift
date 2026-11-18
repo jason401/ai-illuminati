@@ -6,7 +6,7 @@ import AILocalization
 import AISpaces
 @testable import AIRuntime
 @testable import AIWorkspace
-import AIProjects
+@testable import AIProjects
 @testable import AIChatRecords
 @testable import AIChat
 @testable import AIIntegrations
@@ -14,6 +14,10 @@ import AIProjects
 // stdout is a pipe (run_mode2 keeps a copy for its failure log): line by line, so a crash loses no line before it.
 setvbuf(stdout, nil, _IOLBF, 0)
 GoogleAuth.shared = GoogleAuth(store: MemoryGoogleStore())
+// The app runs new TODOs of Git projects as Goals (TODO structure 16). The older TODO tests check the plain path, which
+// documents, folderless and already started TODOs still take: off for them; the Goal tests turn it on (testGoalRun).
+let goalPathShipped = TodoData.goalPath
+TodoData.goalPath = false
 
 // A stuck test used to hang the whole run with only the last PASS line on screen: every check and test marks
 // progress, and after `stuckAfter` seconds without any the run names where it stopped and exits.
@@ -2804,6 +2808,7 @@ runTest("testTodoPause", testTodoPause)
 runTest("testTodoSteps", testTodoSteps)
 runTest("testTodoSplit", testTodoSplit)
 runTest("testMilestoneFailureFix", testMilestoneFailureFix)
+runTest("testGoalRun", testGoalRun)
 runTest("testTodoEdit", testTodoEdit)
 runTest("testTodoMixedOrder", testTodoMixedOrder)
 runTest("testTodoStartRace", testTodoStartRace)

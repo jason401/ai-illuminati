@@ -264,13 +264,17 @@ TodoChats.chats | var chats: [ProjectChatSummary] { get }
 TodoChats.crew(lock:allowed:) | func crew(lock: EnterpriseLock?, allowed: [String]) -> (lead: Account, reviewer: Account?)?
 TodoChats.ended(_:) | func ended(_ room: UUID) -> TodoTurnEnd
 TodoChats.folder(_:) | func folder(_ room: UUID) -> URL
+TodoChats.fullAuto(_:) | func fullAuto(_ room: UUID?) -> Bool
 TodoChats.importing | var importing: Bool { get }
 TodoChats.maxAnswering | var maxAnswering: Int { get }
+TodoChats.members(_:) | func members(_ room: UUID) -> [String]
 TodoChats.noCrew(_:lock:) | func noCrew(_ allowed: [String], lock: EnterpriseLock?) -> String
+TodoChats.reviewMilestone(room:workers:allowed:project:tree:base:candidate:goal:token:) | func reviewMilestone(room: UUID?, workers: [String], allowed: [String], project: ProjectBinding, tree: SubWork.Tree, base: String, candidate: String, goal: String, token: DebateCancellation) -> TodoItem.MilestoneCandidate.Review
 TodoChats.sentPhotos(_:) | func sentPhotos(_ room: UUID) -> Set<UUID>
 TodoChats.setCrew(room:members:lead:) | func setCrew(room: UUID, members: [String], lead: String)
 TodoChats.standIn(room:brief:token:done:) | func standIn(room: UUID, brief: String, token: DebateCancellation, done: @escaping (TodoStandInReply) -> Void)
 TodoChats.start(room:question:photos:review:extra:) | func start(room: UUID, question: String, photos: [TodoPhoto], review: Bool, extra: String) -> String?
+TodoChats.start(room:question:photos:review:extra:step:) | func start(room: UUID, question: String, photos: [TodoPhoto], review: Bool, extra: String, step: SubWork.Tree?) -> String?
 TodoChats.stop(_:) | func stop(_ room: UUID)
 TodoChats.userWrote(_:since:) | func userWrote(_ room: UUID, since: Date) -> Bool
 TodoData | struct TodoData
@@ -368,6 +372,7 @@ TodoItem.state | var state: TodoItem.State
 TodoItem.stateSince | var stateSince: Date?
 TodoItem.stepSHA | var stepSHA: String?
 TodoItem.stepTests | var stepTests: StepTestResult?
+TodoItem.target | var target: String?
 TodoItem.tests | var tests: [String]
 TodoItem.timeLine(at:) | func timeLine(at now: Date) -> String?
 TodoItem.title | var title: String

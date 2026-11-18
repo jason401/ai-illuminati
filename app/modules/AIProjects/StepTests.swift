@@ -4,7 +4,7 @@ import AILocalization
 import AIRuntime
 import AIWorkspace
 
-// A Step's picked tests (TODO structure 05; off until 16): when the Step's AI is done, the app itself runs
+// A Step's picked tests (TODO structure 05): when the Step's AI is done, the app itself runs
 // `AI_ILLUMINATI_TEST_ONLY=<the Step's tests> zsh tools/tests/run_mode2.sh` in the Goal's work tree, the project_run way
 // (one run per repository, its "[n/m]" lines and project-timings), and keeps the result on the TODO. Like the plain
 // test and the Milestone's full test it runs as the user, not in the Step sandbox: run_mode2's loopback servers, process

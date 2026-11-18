@@ -2382,11 +2382,20 @@ private final class GoalStepChats: TodoChats {
     func setCrew(room: UUID, members: [String], lead: String) { self.members[room] = members }
     func folder(_ room: UUID) -> URL { URL(fileURLWithPath: AccountStore.home).appendingPathComponent("step-chats/" + room.uuidString) }
     func sentPhotos(_ room: UUID) -> Set<UUID> { [] }
+    var trees: [UUID: SubWork.Tree] = [:]   // the Goal work tree a step's turn was given
     func start(room: UUID, question: String, photos: [TodoPhoto], review: Bool, extra: String) -> String? {
         started.append((room, question, review, extra)); answering.insert(room); ends[room] = TodoTurnEnd(); return nil
     }
+    func start(room: UUID, question: String, photos: [TodoPhoto], review: Bool, extra: String, step: SubWork.Tree?) -> String? {
+        if let step { trees[room] = step }
+        return start(room: room, question: question, photos: photos, review: review, extra: extra)
+    }
     func ended(_ room: UUID) -> TodoTurnEnd { ends[room] ?? TodoTurnEnd() }
     func stop(_ room: UUID) { answering.remove(room) }
+}
+// A Goal's work tree without Git (the scheduler's own is SubWork.goal, made off the main thread).
+private func fakeGoalTree(_ project: ProjectBinding, _ goal: UUID, _ target: String) -> SubWork.Tree {
+    SubWork.Tree(path: NSTemporaryDirectory(), branch: "todo-goal/" + goal.uuidString.prefix(8).lowercased(), base: "")
 }
 
 func testTodoSteps() {
@@ -2399,6 +2408,7 @@ func testTodoSteps() {
     let chats = GoalStepChats()
     var scheduler = TodoScheduler(chats: chats, store: store)
     scheduler.held = { _ in false }
+    scheduler.makeTree = fakeGoalTree
     let goal = try! store.add(title: "goal", project: project, projectName: "S")
     typealias Part = TodoPlan.Part
     let parts = try! store.savePlan(goal: goal.id, TodoPlan(parts: [Part(key: "a", role: .step, title: "A", tests: ["testA"]),
@@ -2424,6 +2434,7 @@ func testTodoSteps() {
     expect(state(a) == .running && chats.started.count == 1, "the first step runs")
     let first = chats.started[0]
     expect(!first.review && chats.members[first.room] == [chats.lead.id], "a step has no reviewer: \(chats.members[first.room] ?? [])")
+    expect(chats.trees[first.room]?.branch.hasPrefix("todo-goal/") == true, "the step's turn gets the Goal's work tree")
     expect(first.extra.contains("[TODO Step]") && first.extra.contains("git_diff") && first.extra.contains("testA") && !first.extra.contains("commit and push"),
            "the step's AI commits locally and reads its own diff: \(first.extra)")
     expect(first.question.contains("[Step]") && first.question.contains("Goal"), "the first step starts at the Goal's start: \(first.question)")
@@ -2477,6 +2488,7 @@ func testTodoSteps() {
     chats.answering = []
     scheduler = TodoScheduler(chats: chats, store: store)
     scheduler.held = { _ in false }
+    scheduler.makeTree = fakeGoalTree
     scheduler.recover()
     let cut = store.current.item(c)!
     expect(cut.state == .ready && cut.interrupted && cut.attempts == 1 && cut.stepTests == nil, "restart: the cut-off step is ready again, marked interrupted")
@@ -2498,10 +2510,15 @@ func testTodoSteps() {
     try! store.stop(after: c)
     scheduler.tick()
     expect(state(d) == .running && chats.started.last!.question.contains("ccc333"), "lifted: the next step goes on from the last commit")
+    let turns = chats.started.count
     finish(d, sha: "ddd444")
     scheduler.tick()
-    expect(state(d) == .done && state(m) == .ready && store.current.items.allSatisfy { $0.state != .running },
-           "the last step readies the milestone, which waits for the goal path (TODO structure 16)")
+    expect(state(d) == .done && state(m) == .running && chats.started.count == turns,
+           "the last step readies the milestone, which the app runs itself, with no chat turn")
+    let deadline = Date().addingTimeInterval(10)
+    while state(m) == .running && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
+    expect(state(m) == .ready && store.current.item(m)?.attempts == 0 && store.current.item(m)?.lastError != nil && chats.started.count == turns,
+           "a Milestone that cannot integrate (no Git here) waits to retry the same phase, no attempt counted: \(state(m)?.rawValue ?? "")")
     checkMilestoneDone()
     print("PASS: TODO steps (done on a tested local commit, next ready, pause/stop at a step's end, restart from the last step's commit)")
 }
@@ -2520,7 +2537,9 @@ func testTodoSplit() {
     let chats = GoalStepChats()
     let scheduler = TodoScheduler(chats: chats, store: store)
     scheduler.held = { _ in false }
-    func project(_ name: String) -> ProjectBinding { ProjectBinding(root: "/tmp/todo-split-" + name, common: "", remote: "", remoteURL: "") }
+    scheduler.makeTree = fakeGoalTree
+    // A Git project with a remote: only such a TODO is planned (a Milestone pushes).
+    func project(_ name: String) -> ProjectBinding { ProjectBinding(root: "/tmp/todo-split-" + name, common: "", remote: "origin", remoteURL: "") }
     func state(_ id: UUID) -> TodoItem.State? { store.current.item(id)?.state }
     func parts(_ goal: UUID) -> [TodoItem] { store.current.items.filter { $0.goal == goal } }
     func ok(_ r: [String: Any]) -> Bool { r["isError"] as? Bool == false }
@@ -2575,7 +2594,8 @@ func testTodoSplit() {
         let r = split(big.id, arguments)
         expect(!ok(r) && says(r).contains("call task_split again"), "refused and asked again: \(what): \(says(r))")
     }
-    expect(parts(big.id).isEmpty && store.current.item(big.id)?.role == .plain && state(big.id) == .running, "a refused plan saves nothing")
+    expect(parts(big.id).isEmpty && store.current.item(big.id)?.role == .goal && state(big.id) == .running,
+           "a refused plan saves nothing (the TODO is a goal since its planning turn started)")
 
     // Large: saved in one go in the order given, each part after the one before, below the goal on the board, only the first Step ready.
     let large: [String: Any] = ["parts": [["role": "step", "title": "A", "detail": "Do A.", "tests": ["testA"]], ["role": "step", "title": "B", "tests": ["testB", "testC"]],
@@ -2753,4 +2773,215 @@ func testMilestoneFailureFix() {
     try! store.change(m) { $0.state = .cancelled }
     expect((try? store.recoverMilestone(m, .transient("x"))) == nil && item(m)?.state == .cancelled, "a cancelled Milestone is left as it is")
     print("PASS: Milestone failure recovery (one Fix Step per code fault before the Milestone, none twice, transient retried in place)")
+}
+
+// TODO structure 16, end to end through the app (Discussion as TodoChats, fake AIs, real Git: a temporary repository and
+// a bare remote): a big TODO is planned into three Steps and a Milestone; each Step commits in the Goal's work tree and
+// nothing is pushed; a pause, a stop point and an app restart (Step 3 cut off) between Steps hold and resume; the review's
+// change requests get a Fix Step; a plain chat pushing main meanwhile is integrated again; a candidate that changed after
+// its review is reviewed and fully tested again; the push ends the Goal and opens the TODO waiting for it. Documents,
+// folderless, remote-less and already started TODOs stay on the plain path.
+func testGoalRun() {
+    expect(goalPathShipped, "the app runs new Git TODOs as Goals")
+    let before = TodoData.goalPath
+    TodoData.goalPath = true
+    defer { TodoData.goalPath = before }
+    let fm = FileManager.default
+    let base = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("goal-run-" + UUID().uuidString).resolvingSymlinksInPath()
+    let main = base.appendingPathComponent("repo").path, origin = base.appendingPathComponent("origin.git").path
+    let log = base.appendingPathComponent("tests.log").path
+    try! fm.createDirectory(at: base, withIntermediateDirectories: true)
+    func git(_ args: [String], at folder: String) -> String { try! ProjectProcess.git(args, root: folder) }
+    func write(_ text: String, _ name: String, in folder: String) {
+        let url = URL(fileURLWithPath: folder + "/" + name)
+        try! fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try! text.write(to: url, atomically: true, encoding: .utf8)
+    }
+    func commit(_ folder: String, _ message: String) { _ = git(["add", "-A"], at: folder); _ = git(["commit", "-q", "-m", message], at: folder) }
+    _ = git(["init", "--bare", "-b", "main", origin], at: base.path); _ = git(["init", "-b", "main", main], at: base.path)
+    _ = git(["config", "user.name", "Fixture"], at: main); _ = git(["config", "user.email", "fixture@example.invalid"], at: main)
+    _ = git(["remote", "add", "origin", origin], at: main)
+    // The project's tests: the picked ones (a Step's) and the full run (a Milestone's), each logged with the HEAD it ran on.
+    write("runTest(\"testOne\", testOne)\nrunTest(\"testTwo\", testTwo)\nrunTest(\"testThree\", testThree)\n", "tools/tests/mode2.swift", in: main)
+    write("""
+        if [[ -n ${AI_ILLUMINATI_TEST_ONLY-} ]]; then echo "step $AI_ILLUMINATI_TEST_ONLY $(/usr/bin/git rev-parse HEAD)" >> "\(log)"
+        else echo "full $(/usr/bin/git rev-parse HEAD)" >> "\(log)"; fi
+        echo "[1/2] Compile app tests"
+        echo "[2/2] Run app tests"
+        for n in ${(s:,:)AI_ILLUMINATI_TEST_ONLY-}; do echo "▶ $n"; done
+        echo "PASS: selected tests only (fixture)"
+        """, "tools/tests/run_mode2.sh", in: main)
+    write("Baseline\n", "README.md", in: main)
+    commit(main, "Fixture"); _ = git(["push", "-q", "-u", "origin", "main"], at: main)
+    func remoteMain() -> String { git(["rev-parse", "refs/heads/main"], at: origin) }
+    func logged(_ kind: String) -> [String] {
+        ((try? String(contentsOfFile: log, encoding: .utf8)) ?? "").split(separator: "\n").map(String.init).filter { $0.hasPrefix(kind + " ") }
+    }
+    let start = remoteMain()
+    let project = try! ProjectProcess.inspect(main)
+    let papersFolder = base.appendingPathComponent("papers").path
+    try! fm.createDirectory(atPath: papersFolder, withIntermediateDirectories: true)
+    let papers = ProjectBinding(root: papersFolder, common: papersFolder, remote: "", remoteURL: "", kind: ProjectBinding.documentsKind)
+
+    // Which TODOs stay plain: documents, folderless, no remote, and one that already ran as plain (running at the update,
+    // waiting for the check, asked again). A new TODO of a Git project with a remote plans.
+    let kinds = TodoStore(url: todoStoreFile("goal-kinds"))
+    let folderless = ProjectBinding(root: base.appendingPathComponent("loose").path, common: "", remote: "", remoteURL: "", kind: "folderless")
+    let local = ProjectBinding(root: base.appendingPathComponent("local").path, common: "", remote: "", remoteURL: "")
+    for (binding, what) in [(papers, "a documents project"), (folderless, "a folderless project"), (local, "a project without a remote")] {
+        let t = try! kinds.add(title: what, project: binding, projectName: what)
+        expect(!kinds.current.planning(t), "\(what)'s TODO stays on the plain path")
+    }
+    let fresh = try! kinds.add(title: "new", project: project, projectName: "P")
+    expect(kinds.current.planning(fresh), "a new Git TODO is planned as a Goal")
+    let old = try! kinds.add(title: "old", project: project, projectName: "P")
+    try! kinds.change(old.id) { $0.state = .review; $0.room = UUID(); $0.result = "did it the old way" }
+    try! kinds.requestingChanges(old.id, "one more thing")
+    expect(kinds.current.item(old.id)?.state == .ready && !kinds.current.planning(kinds.current.item(old.id)!),
+           "a TODO that waited for the check and is asked again stays plain")
+    try! kinds.change(fresh.id) { $0.state = .running; $0.room = UUID() }
+    TodoScheduler(chats: StepChats(), store: kinds).recover()
+    expect(kinds.current.item(fresh.id)?.state == .ready && !kinds.current.planning(kinds.current.item(fresh.id)!),
+           "a plain TODO running when the app updated goes on plain")
+
+    let saved = TodoStore.shared
+    let store = TodoStore(url: todoStoreFile("goal-run"))
+    TodoStore.shared = store
+    defer { TodoStore.shared = saved }
+    let model = AppModel()
+    let claude = Account(id: "goal-claude", provider: .claude, name: "Goal Claude"), codex = Account(id: "goal-codex", provider: .codex, name: "Goal Codex")
+    model.accounts = [claude, codex]
+    func left(_ percent: Double) -> AIUsage {
+        var u = AIUsage(name: "x"); u.fiveHour = UsageWindow(usedPercent: 100 - percent, resetsAt: nil); u.weekly = UsageWindow(usedPercent: 100 - percent, resetsAt: nil); return u
+    }
+    model.latestUsage[claude.id] = left(90); model.latestUsage[codex.id] = left(60)
+
+    let goal = try! store.add(title: "big feature", detail: "Add three files, one per Step.", project: project, projectName: "P")
+    let after = try! store.add(title: "after the goal", project: papers, projectName: "Papers", after: [goal.id])
+    func item(_ id: UUID) -> TodoItem { store.current.item(id)! }
+    func parts() -> [TodoItem] { store.current.items.filter { $0.goal == goal.id } }
+    func steps() -> [TodoItem] { parts().filter { $0.role == .step && $0.fixFor == nil } }
+    var reviewed: [String] = [], reviewers: [String] = [], replies = ["1. step1.txt: say why the file is there."], events: [String] = []
+    var chatPush: String?
+    var cutStep3: String?   // what the cut-off attempt of Step 3 left (resume point)
+    func answer(_ chat: Discussion) {
+        chat.workspaceAnswer = { account, prompt, binding, _, _ in
+            if prompt.hasPrefix("[REVIEW]") {
+                let sha = parts().first { $0.role == .milestone }?.milestoneCandidate?.candidateSHA ?? ""
+                let n = recording { reviewed.append(sha); reviewers.append(account.id); events.append("review"); return reviewed.count }
+                expect(prompt.contains(sha) && prompt.contains("Add three files"), "the Milestone review covers the candidate and the goal")
+                if n == 2 {
+                    // A plain chat works on main and pushes while the Milestone is under review.
+                    write("chat\n", "chat.txt", in: main); commit(main, "Plain chat on main"); _ = git(["push", "-q", "origin", "main"], at: main)
+                    recording { chatPush = git(["rev-parse", "HEAD"], at: main) }
+                }
+                return .success(recording { replies.isEmpty ? "No issues" : replies.removeFirst() })
+            }
+            let current = prompt.components(separatedBy: "[User]\n").last ?? ""
+            let title = String(current.split(separator: "\n").first.map(String.init)?.dropFirst("TODO: ".count) ?? "")
+            guard let t = store.current.items.first(where: { $0.state == .running && $0.title == title }), let room = t.room else { return .failure(.failed("no running TODO: \(title)")) }
+            let context = ToolContext(room: room, roots: binding.roots, projectRun: binding.projectRunID, projectGeneration: binding.projectGeneration)
+            recording { events.append(t.role.rawValue + " " + t.title) }
+            switch t.role {
+            case .goal:
+                expect(prompt.contains("[TODO plan]"), "the Goal's first turn plans")
+                let r = TaskLink.shared.call("task_split", ["parts": (1...3).map { ["role": "step", "title": "Step \($0)", "detail": "Add step\($0).txt.", "tests": [["testOne", "testTwo", "testThree"][$0 - 1]]] }
+                                                                     + [["role": "milestone", "title": "Milestone"]]], context: context)
+                expect(r["isError"] as? Bool == false, "task_split saves the plan: \(r)")
+            case .step:
+                guard let run = ProjectWork.run(for: context) else { return .failure(.failed("no Step run")) }
+                let tree = run.binding.root
+                expect(run.isStep && tree != main && git(["branch", "--show-current"], at: tree).hasPrefix("todo-goal/") && prompt.contains("[TODO Step]"),
+                       "a Step works in the Goal's work tree: \(tree)")
+                if t.title == "Step 3", let resume = recording({ cutStep3 }) {
+                    expect((current.contains("cut off") || current.contains("끊겼")) && current.contains(resume) && fm.fileExists(atPath: tree + "/step3-half.txt"),
+                           "after the restart Step 3 goes on from Step 2's commit and sees what the cut-off attempt left")
+                }
+                if t.fixFor != nil {
+                    expect(current.contains("step1.txt: say why"), "the Fix Step gets the review's findings")
+                    write("Step 1, because the goal asks for it\n", "step1.txt", in: tree)
+                } else { write(t.title + "\n", t.title.replacingOccurrences(of: "Step ", with: "step") + ".txt", in: tree) }
+                commit(tree, t.title)
+                _ = TaskLink.shared.call("task_done", ["summary": t.title + " done"], context: context)
+            default:
+                expect(store.current.item(goal.id)?.state == .done && prompt.contains("[TODO work]"), "the TODO after the Goal starts only once it is done, on the plain path")
+                _ = TaskLink.shared.call("task_done", ["summary": "after done"], context: context)
+            }
+            return .success("Done.")
+        }
+    }
+    var chat = Discussion(model: model)
+    answer(chat)
+    var scheduler = TodoScheduler(discussion: chat, store: store)
+    func states() -> String { store.current.items.map { "\($0.title)=\($0.state.rawValue)\($0.lastError.map { " (\($0))" } ?? "")" }.joined(separator: ", ") }
+    func settle(_ what: String, _ until: () -> Bool) {
+        let deadline = Date().addingTimeInterval(60)
+        while Date() < deadline && !until() { RunLoop.main.run(until: Date().addingTimeInterval(0.03)); scheduler.tick() }
+        expect(until(), "goal run: \(what): \(states())")
+    }
+    func stays(_ what: String, _ held: () -> Bool) {
+        for _ in 0..<20 { RunLoop.main.run(until: Date().addingTimeInterval(0.03)); scheduler.tick(); expect(held(), "goal run: \(what): \(states())") }
+    }
+
+    // Planned: three Steps and the Milestone; Step 1 runs. Paused meanwhile: Step 1 ends, Step 2 waits.
+    scheduler.startNow()
+    settle("Step 1 starts") { steps().first?.state == .running }
+    expect(item(goal.id).role == .goal && item(goal.id).target == "main" && parts().map(\.role) == [.step, .step, .step, .milestone] && item(after.id).state == .ready,
+           "the Goal is split into three Steps and a Milestone; the TODO after it waits")
+    try! store.pause(lists: [goal.listID])
+    settle("Step 1 ends") { steps()[0].state == .done }
+    stays("paused: Step 2 does not start") { steps()[1].state == .ready && !chat.anyRunning }
+    let tree = try! SubWork.goal(project, goal: goal.id, target: "main")
+    expect(steps()[0].stepSHA == git(["rev-parse", "HEAD"], at: tree.path) && remoteMain() == start, "Step 1 is done on its local commit; nothing pushed")
+    try! store.resume(lists: [goal.listID])
+    // A stop point after Step 2: Step 3 waits; then the app quits with Step 3 cut off midway, and starts again.
+    settle("Step 2 starts") { steps()[1].state == .running }
+    try! store.stop(after: steps()[1].id)
+    settle("Step 2 ends") { steps()[1].state == .done }
+    stays("stop point: Step 3 does not start") { steps()[2].state == .ready && !chat.anyRunning }
+    expect(remoteMain() == start && logged("step").count == 2, "two Steps, their picked tests each, no push: \(logged("step"))")
+    write("half\n", "step3-half.txt", in: tree.path)
+    let cutRoom = chat.addProjectChat(project, title: "TODO · Step 3", open: false)
+    try! store.change(steps()[2].id) { $0.state = .running; $0.room = cutRoom }
+    scheduler.closeClocks()
+    recording { cutStep3 = steps()[1].stepSHA }
+    chat = Discussion(model: model)
+    answer(chat)
+    scheduler = TodoScheduler(discussion: chat, store: store)
+    scheduler.recover()
+    stays("after the restart the stop point still holds Step 3") { steps()[2].state == .ready && steps()[2].interrupted }
+    try! store.stop(after: steps()[1].id)   // the same TODO again lifts the stop point
+    settle("Step 3 ends") { steps()[2].state == .done }
+    expect(logged("step").map { $0.split(separator: " ")[1] } == ["testOne", "testTwo", "testThree"] && remoteMain() == start
+           && (try? ProjectProcess.git(["rev-parse", "--verify", "refs/heads/" + tree.branch], root: origin)) == nil,
+           "every Step ran only its picked test, nothing was pushed, the Goal branch stays local: \(logged("step"))")
+
+    // The Milestone: the review asks for changes (a Fix Step), the fixed candidate is reviewed while a plain chat pushes
+    // main, so it is integrated, reviewed and fully tested again before the push; then the Goal is done.
+    settle("the Goal is done") { item(goal.id).state == .done }
+    let milestone = parts().first { $0.role == .milestone }!
+    let fix = parts().first { $0.fixFor != nil }
+    let (allReviewed, byWhom, pushedByChat) = recording { (reviewed, reviewers, chatPush) }
+    expect(fix?.state == .done && fix?.tests == ["testOne", "testTwo", "testThree"] && parts().map(\.role) == [.step, .step, .step, .step, .milestone],
+           "the review's change requests got one Fix Step before the Milestone, with the Steps' tests")
+    expect(allReviewed.count == 3 && Set(allReviewed).count == 3 && byWhom.allSatisfy { $0 == codex.id },
+           "each new candidate was reviewed again, by the AI that did none of the Steps: \(allReviewed) \(byWhom)")
+    expect(logged("full").map { String($0.dropFirst(5)) } == Array(allReviewed.dropFirst()),
+           "the full test ran on each approved candidate, again after the candidate changed: \(logged("full"))")
+    let landed = remoteMain()
+    expect(milestone.state == .done && milestone.milestoneCandidate?.candidateSHA == landed && landed == allReviewed.last && landed != start,
+           "only the last reviewed and tested candidate was pushed")
+    expect(pushedByChat.map { git(["merge-base", "--is-ancestor", $0, landed], at: main) } != nil
+           && ["step1.txt", "step2.txt", "step3.txt", "step3-half.txt", "chat.txt"].allSatisfy { !git(["ls-tree", landed, $0], at: main).isEmpty }
+           && git(["show", landed + ":step1.txt"], at: main).contains("because"),
+           "the push holds the Steps, the fix and the plain chat's commit")
+    expect(!fm.fileExists(atPath: tree.path) && (try? ProjectProcess.git(["rev-parse", "--verify", "refs/heads/" + tree.branch], root: main)) == nil,
+           "the done Goal's work tree and branch are gone")
+    // The TODO waiting for the Goal opens and runs on the plain path (a documents project).
+    settle("the TODO after the Goal") { item(after.id).state == .review }
+    let order = recording { events }
+    expect(order.first == "goal big feature" && order.last == "plain after the goal" && order.filter { $0.hasPrefix("step ") }.count == 4,
+           "plan, Steps, Fix Step, then the TODO after the Goal: \(order)")
+    try? fm.removeItem(at: base)
+    print("PASS: Goal run (planned into 3 Steps and a Milestone, no push per Step, pause/stop point/restart between Steps, Fix Step from the review, plain chat's push integrated, changed candidate reviewed and tested again, Goal done opens the TODO after it; documents, folderless and started TODOs plain)")
 }

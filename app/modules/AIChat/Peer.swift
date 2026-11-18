@@ -649,7 +649,7 @@ extension Discussion {
         return token.isCancelled ? nil : findings
     }
 
-    // A Milestone's independent review (TODO structure 09; off until 16): a member who did none of the Goal's work reads
+    // A Milestone's independent review (TODO structure 09): a member who did none of the Goal's work reads
     // the whole diff from the remote base to the candidate SHA, not one turn's changes. Only "No issues" approves that
     // SHA; the caller records the outcome on TodoItem.MilestoneCandidate. No chat card: the Milestone run shows it.
     func reviewMilestone(room: UUID, workers: [String], reviewers: [String], binding: WorkspaceBinding, root: String,

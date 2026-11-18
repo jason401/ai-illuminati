@@ -819,7 +819,7 @@ public final class GitLink: ToolProvider {
             L("Milestone push가 끝나지 않았어요. 후보와 기준이 그대로라 push부터 다시 해요: ", "The Milestone's push did not finish; the candidate and base are unchanged, so it retries from the push: ") + reason
         }
     }
-    // TODO structure 12 (off until 16): a Milestone's push. Only the candidate SHA its review and full test both passed, only
+    // TODO structure 12: a Milestone's push. Only the candidate SHA its review and full test both passed, only
     // while the remote target branch (never the Goal branch) is still the base they were measured from, as that exact SHA to
     // refs/heads/<target>: a fast-forward, never forced (no +, no --force*; a non-fast-forward is the remote's refusal). Unlike
     // the app's other Git commands the repository's pre-push hook runs as is (the candidate's .githooks, else its

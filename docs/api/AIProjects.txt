@@ -239,6 +239,12 @@ TodoData.standInDue(_:) | func standInDue(_ item: TodoItem) -> Date?
 TodoData.stopped(_:) | func stopped(_ item: TodoItem) -> Bool
 TodoData.workers(room:) | func workers(room: UUID) -> [String]?
 TodoItem | struct TodoItem
+TodoItem.Role | enum Role
+TodoItem.Role.goal | case goal
+TodoItem.Role.init(rawValue:) | init?(rawValue: String)
+TodoItem.Role.milestone | case milestone
+TodoItem.Role.plain | case plain
+TodoItem.Role.step | case step
 TodoItem.State | enum State
 TodoItem.State.cancelled | case cancelled
 TodoItem.State.done | case done
@@ -260,6 +266,7 @@ TodoItem.detail | var detail: String
 TodoItem.encode(to:) | func encode(to encoder: any Encoder) throws
 TodoItem.files | var files: [String]
 TodoItem.finishedAt | var finishedAt: Date?
+TodoItem.goal | var goal: UUID?
 TodoItem.id | var id: UUID
 TodoItem.init(from:) | init(from decoder: any Decoder) throws
 TodoItem.init(listID:title:detail:askFirst:after:originRoom:) | init(listID: UUID, title: String, detail: String = "", askFirst: Bool = false, after: [UUID] = [], originRoom: UUID? = nil)
@@ -273,6 +280,7 @@ TodoItem.parked | var parked: TodoPark?
 TodoItem.question | var question: TodoQuestion?
 TodoItem.report | var report: TodoReport?
 TodoItem.result | var result: String?
+TodoItem.role | var role: TodoItem.Role
 TodoItem.room | var room: UUID?
 TodoItem.standIns | var standIns: Int
 TodoItem.startedAt | var startedAt: Date?

@@ -495,7 +495,9 @@ Public names and why (everything else stays internal: `ProjectError`, `ProjectTo
   (saved fields; the card's parked badge and reason, todo_list's "(parked)"), `TodoNote` (`by`: who answered in the user's place),
   `TodoQuestion` (`id`: which asking a stand-in answer belongs to; older files get a new one; `Kind`/`kind`: what the app may settle,
   `delegable` for the card's 알아서 해 button, `blocked` kept in the file for older apps, so `encode(to:)` is written out),
-  `TodoItem.delegated` (a stored field: the re-ask guard after a delegation), `TodoReport`, `TodoAttachment`, `WorkStep` (a chat turn keeps the plan), `ProjectInfo`, `ProjectInfoData`,
+  `TodoItem.delegated` (a stored field: the re-ask guard after a delegation), `TodoItem.Role`/`role`/`goal` (saved fields:
+  plain, or a goal and its steps and milestones in `after`'s order, so the Goal/Step/Milestone runs, the board and the
+  tools tell them apart; an unknown role holds the file like an unknown state; nothing runs differently yet), `TodoReport`, `TodoAttachment`, `WorkStep` (a chat turn keeps the plan), `ProjectInfo`, `ProjectInfoData`,
   `ProjectFolder`, `ProjectLink`. Explicit public inits where Swift's memberwise ones are internal (`ProjectApproval`,
   `TodoReport`, `ProjectFolder`, `ProjectChatSummary`, `TodoTurnEnd`, `TodoPark`).
 - `TodoStore` (the board's actions, among them `setList(_:mode:accounts:)` for the mode menu, `setReady` and `move(_:before:)` for a row's draft/ready capsule and drag, `shared`, `snapshot`, `current`, `change`, `update`, `file`, `locked`, `url`): the board,

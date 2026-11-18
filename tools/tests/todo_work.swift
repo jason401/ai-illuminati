@@ -100,6 +100,33 @@ func testTodoStore() {
     try! old.write(to: oldURL, atomically: true, encoding: .utf8)
     let read = TodoStore(url: oldURL).current
     expect(read.lists.first?.mode == .aiThenPark && read.items.first?.state == .draft && read.version == 1, "older files: defaults for missing fields, unknown ones ignored")
+    expect(read.items.first?.role == .plain && read.items.first?.goal == nil, "an older TODO is plain, with no goal")
+    // Goal, step and milestone roles are saved and read back; order stays `after`; a plain TODO writes no role.
+    let roleURL = todoStoreFile("roles")
+    let roles = TodoStore(url: roleURL)
+    let goal = try! roles.add(title: "goal", project: a, projectName: "A")
+    let step = try! roles.add(title: "step", project: a, projectName: "A")
+    let milestone = try! roles.add(title: "milestone", project: a, projectName: "A", after: [step.id])
+    let plain = try! roles.add(title: "plain", project: a, projectName: "A")
+    try! roles.change(goal.id) { $0.role = .goal }
+    try! roles.change(step.id) { $0.role = .step; $0.goal = goal.id }
+    try! roles.change(milestone.id) { $0.role = .milestone; $0.goal = goal.id }
+    let rolesBack = TodoStore(url: roleURL).current
+    expect(rolesBack == roles.current, "roles read back as saved")
+    expect(rolesBack.item(goal.id)?.role == .goal && rolesBack.item(goal.id)?.goal == nil, "a goal has no goal above it")
+    expect(rolesBack.item(step.id)?.role == .step && rolesBack.item(step.id)?.goal == goal.id, "a step keeps its goal")
+    expect(rolesBack.item(milestone.id)?.role == .milestone && rolesBack.item(milestone.id)?.goal == goal.id && rolesBack.item(milestone.id)?.after == [step.id], "a milestone keeps its goal and its order")
+    expect(rolesBack.item(plain.id)?.role == .plain, "a TODO without a role is plain")
+    let plainJSON = String(data: try! JSONEncoder().encode(rolesBack.item(plain.id)!), encoding: .utf8)!
+    expect(!plainJSON.contains("\"role\"") && !plainJSON.contains("\"goal\""), "a plain TODO is saved as before: \(plainJSON)")
+    // A newer app's role is not run as plain: the file is held, not rewritten.
+    let newerURL = todoStoreFile("newer-role")
+    let newer = """
+        {"lists":[],"items":[{"id":"\(UUID().uuidString)","listID":"\(UUID().uuidString)","title":"t","role":"campaign"}]}
+        """
+    try! newer.write(to: newerURL, atomically: true, encoding: .utf8)
+    let newerStore = TodoStore(url: newerURL)
+    expect(newerStore.locked != nil && (try? String(contentsOf: newerURL, encoding: .utf8)) == newer, "an unknown role holds the file as it is")
     do { try store.delete(three.id) } catch { expect(false, "delete") }
     try! store.change(one.id) { $0.state = .running }
     do { try store.delete(one.id); expect(false, "a running TODO is not deleted") } catch {}

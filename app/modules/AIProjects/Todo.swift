@@ -84,6 +84,11 @@ public struct TodoItem: Codable, Identifiable, Equatable {
     // draft (not taken yet) → ready → running → review (the AI is done; waits for the user's check) → done.
     // needsYou: a question, or the work cannot go on; the user's answer makes it ready again, Stop cancels it.
     public enum State: String, Codable, CaseIterable { case draft, ready, running, review, done, needsYou, cancelled }
+    // How it runs. plain: one turn with full test, review and push (every TODO so far). A goal holds steps and milestones
+    // (goal = its id), in the order `after` gives: a step only tests what it picks and commits locally in the goal's
+    // worktree; a milestone reviews and fully tests the steps' sum since the remote and fast-forward pushes that exact SHA.
+    // Saved only; until the goal path is turned on every TODO still runs as plain.
+    public enum Role: String, Codable, CaseIterable { case plain, goal, step, milestone }
     public var id = UUID()
     public var listID: UUID
     public var title: String
@@ -92,6 +97,8 @@ public struct TodoItem: Codable, Identifiable, Equatable {
     public var askFirst = false            // ask before starting; otherwise assume, go on and list the assumptions
     public var state: State = .draft
     public var after: [UUID] = []          // TODOs that must be finished first (any list)
+    public var role: Role = .plain
+    public var goal: UUID?                 // a step's or milestone's goal
     public var room: UUID?                 // the TODO's own chat, made when it first starts
     public var originRoom: UUID?           // the chat it was written from: its report card shows there too
     public var notes: [TodoNote] = []      // the user's answers and change requests, retries; sent with the next attempt
@@ -132,7 +139,7 @@ public struct TodoItem: Codable, Identifiable, Equatable {
     // Older or newer files: unknown fields are ignored, missing ones get their defaults. A field that is there but
     // cannot be read fails the whole file, which TodoStore then keeps as it is (no default silently saved over it).
     private enum Keys: String, CodingKey {
-        case id, listID, title, detail, attachments, askFirst, state, after, room, originRoom, notes, question, attempts, lastError, result, assumptions, files, report, workers, interrupted, unreported, standIns, delegated, aiHelped, parked, wasParked, createdAt, updatedAt,
+        case id, listID, title, detail, attachments, askFirst, state, after, role, goal, room, originRoom, notes, question, attempts, lastError, result, assumptions, files, report, workers, interrupted, unreported, standIns, delegated, aiHelped, parked, wasParked, createdAt, updatedAt,
              workSeconds, waitSeconds, stateSince, startedAt, finishedAt
     }
     public init(from decoder: Decoder) throws {
@@ -149,6 +156,12 @@ public struct TodoItem: Codable, Identifiable, Equatable {
             state = known
         } else { state = .draft }
         after = (try c.decodeIfThere([UUID].self, forKey: .after)) ?? []
+        // Like the state: a newer app's role is not run as plain; the file is held.
+        if let raw = try c.decodeIfThere(String.self, forKey: .role) {
+            guard let known = Role(rawValue: raw) else { throw DecodingError.dataCorruptedError(forKey: .role, in: c, debugDescription: "Unknown role \(raw)") }
+            role = known
+        }
+        goal = try c.decodeIfPresent(UUID.self, forKey: .goal)
         room = try c.decodeIfPresent(UUID.self, forKey: .room)
         originRoom = try c.decodeIfPresent(UUID.self, forKey: .originRoom)
         notes = (try c.decodeIfThere([TodoNote].self, forKey: .notes)) ?? []
@@ -180,6 +193,8 @@ public struct TodoItem: Codable, Identifiable, Equatable {
         try c.encode(id, forKey: .id); try c.encode(listID, forKey: .listID); try c.encode(title, forKey: .title); try c.encode(detail, forKey: .detail)
         try c.encode(attachments, forKey: .attachments)
         try c.encode(askFirst, forKey: .askFirst); try c.encode(state.rawValue, forKey: .state); try c.encode(after, forKey: .after)
+        if role != .plain { try c.encode(role.rawValue, forKey: .role) }
+        try c.encodeIfPresent(goal, forKey: .goal)
         try c.encodeIfPresent(room, forKey: .room); try c.encodeIfPresent(originRoom, forKey: .originRoom); try c.encode(notes, forKey: .notes)
         try c.encodeIfPresent(question, forKey: .question); try c.encode(attempts, forKey: .attempts); try c.encodeIfPresent(lastError, forKey: .lastError)
         try c.encodeIfPresent(result, forKey: .result); try c.encode(assumptions, forKey: .assumptions); try c.encode(files, forKey: .files)

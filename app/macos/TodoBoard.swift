@@ -83,6 +83,7 @@ final class TodoDraft: ObservableObject {
     @Published var askFirst = false
     @Published var error: String?
     @Published var showDone = false
+    @Published var expandedGoals: Set<UUID> = []
     @Published var replies: [UUID: String] = [:]   // a card's answer or change request, by TODO
     // A chat card folded to one line, with what it showed then: a new state, question or result opens it again.
     struct Fold: Equatable { var state: TodoItem.State; var question: UUID?; var result: String? }
@@ -113,6 +114,102 @@ final class TodoDraft: ObservableObject {
         guard let id = editing, !editTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         do { try TodoStore.shared.edit(id, title: editTitle, detail: editDetail, askFirst: editAskFirst); error = nil; endEdit() }
         catch { self.error = error.localizedDescription }
+    }
+}
+
+struct TodoGoalBoard {
+    enum Status: Equatable {
+        case waiting, running, local, reviewing, testing, remote
+
+        var title: String {
+            switch self {
+            case .waiting: return L("대기", "Waiting")
+            case .running: return L("진행", "In progress")
+            case .local: return L("로컬 완료", "Local complete")
+            case .reviewing: return L("검증 중 · 리뷰", "Verifying · review")
+            case .testing: return L("검증 중 · 테스트", "Verifying · tests")
+            case .remote: return L("원격 반영", "On remote")
+            }
+        }
+
+        var color: Color {
+            switch self {
+            case .waiting: return .secondary
+            case .running: return .blue
+            case .local, .remote: return .green
+            case .reviewing, .testing: return .orange
+            }
+        }
+    }
+
+    struct Part: Identifiable {
+        let item: TodoItem
+        let status: Status?
+        var id: UUID { item.id }
+    }
+
+    let parts: [Part]
+    let completedSteps: Int
+    let totalSteps: Int
+    let stepsUntilPush: Int?
+
+    init(_ items: [TodoItem]) {
+        // Saved plan order includes Fix Steps inserted before the Milestone that needs them.
+        let confirmed = items.lastIndex { $0.role == .milestone && $0.milestoneCandidate?.phase == .confirmation }
+        let parts = items.enumerated().map { index, item in
+            let status: Status?
+            switch (item.role, item.state, item.milestoneCandidate?.phase) {
+            case (.milestone, _, .confirmation): status = .remote
+            case (.step, .done, _) where item.stepSHA != nil:
+                status = confirmed.map { index < $0 } == true ? .remote : .local
+            case (.milestone, .running, .review): status = .reviewing
+            case (.milestone, .running, .test): status = .testing
+            case (_, .running, _): status = .running
+            case (_, .draft, _), (_, .ready, _): status = .waiting
+            default: status = nil
+            }
+            return Part(item: item, status: status)
+        }
+        self.parts = parts
+        let steps = items.filter { $0.role == .step && $0.state != .cancelled }
+        completedSteps = steps.filter { $0.state == .done }.count
+        totalSteps = steps.count
+        let remaining = items.dropFirst(confirmed.map { $0 + 1 } ?? 0)
+        if let next = remaining.firstIndex(where: { $0.role == .milestone && Self.isOpen($0) }) {
+            stepsUntilPush = remaining[..<next].filter { $0.role == .step && Self.isOpen($0) }.count
+        } else {
+            stepsUntilPush = nil
+        }
+    }
+
+    var summary: String {
+        var labels = [L("Step \(completedSteps)/\(totalSteps) 완료", "\(completedSteps)/\(totalSteps) steps complete")]
+        if let count = stepsUntilPush {
+            labels.append(count == 1 ? L("다음 push까지 1 step", "1 step until next push")
+                : L("다음 push까지 \(count) step", "\(count) steps until next push"))
+        }
+        if parts.contains(where: { $0.item.state == .needsYou || $0.item.state == .review }) {
+            labels.append(L("확인 필요", "Needs your attention"))
+        }
+        return labels.joined(separator: " · ")
+    }
+
+    static func isOpen(_ item: TodoItem) -> Bool { item.state != .done && item.state != .cancelled }
+
+    static func groups(_ data: TodoData, list: UUID) -> [UUID: Self] {
+        let goals = Set(data.items.filter { $0.listID == list && $0.role == .goal }.map(\.id))
+        var parts: [UUID: [TodoItem]] = [:]
+        for item in data.items where item.listID == list && (item.role == .step || item.role == .milestone) {
+            if let goal = item.goal, goals.contains(goal) { parts[goal, default: []].append(item) }
+        }
+        return parts.mapValues { Self($0) }
+    }
+
+    static func rows(_ ordered: [TodoItem], groups: [UUID: Self], showDone: Bool) -> [TodoItem] {
+        let nested = Set(groups.values.flatMap { $0.parts.map(\.id) })
+        return ordered.filter { item in
+            !nested.contains(item.id) && (showDone || isOpen(item) || groups[item.id]?.parts.contains { isOpen($0.item) } == true)
+        }
     }
 }
 
@@ -178,8 +275,13 @@ struct TodoBoardView: View {
     // A list is shown with the name the user gave its project, else the name it was made with.
     private func title(_ list: TodoList) -> String { list.project.flatMap { projectInfo.names[SidebarProjects.key($0)] } ?? list.title }
 
-    private func listView(_ list: TodoList) -> some View {
-        let rows = store.snapshot.ordered(list.id).filter { draft.showDone || ($0.state != .done && $0.state != .cancelled) }
+    func listView(_ list: TodoList) -> some View {
+        let data = store.snapshot
+        let ordered = data.ordered(list.id)
+        let groups = TodoGoalBoard.groups(data, list: list.id)
+        let rows = TodoGoalBoard.rows(ordered, groups: groups, showDone: draft.showDone)
+        let numbered = ordered.filter { draft.showDone || TodoGoalBoard.isOpen($0) }
+        let numbers = Dictionary(uniqueKeysWithValues: numbered.enumerated().map { ($0.element.id, $0.offset + 1) })
         return VStack(alignment: .leading, spacing: 6) {
             // One line: a long project name gives way, the mode menu and pause keep their size.
             HStack(spacing: 10) {
@@ -189,7 +291,16 @@ struct TodoBoardView: View {
                 pauseControl(list)
             }
             if let scheduler = TodoScheduler.shared { TodoCrewRow(list: list, scheduler: scheduler, discussion: discussion, error: { draft.error = $0 }) }
-            ForEach(Array(rows.enumerated()), id: \.element.id) { index, item in row(item, index: index + 1, list: list) }
+            ForEach(rows) { item in
+                let group = groups[item.id]
+                row(item, list: list, index: numbers[item.id], goal: group)
+                if let group, draft.expandedGoals.contains(item.id) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(group.parts) { part in row(part.item, list: list, index: numbers[part.id], part: part) }
+                    }
+                    .padding(.leading, 24)
+                }
+            }
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -240,7 +351,8 @@ struct TodoBoardView: View {
         }
     }
 
-    private func row(_ item: TodoItem, index: Int, list: TodoList) -> some View {
+    private func row(_ item: TodoItem, list: TodoList, index: Int? = nil, goal: TodoGoalBoard? = nil,
+                     part: TodoGoalBoard.Part? = nil) -> some View {
         let data = store.snapshot
         // Once each: a link to the TODO just above is also the order's wait.
         let waits = data.blockers(item).reduce(into: [UUID]()) { if !$0.contains($1) { $0.append($1) } }
@@ -249,18 +361,31 @@ struct TodoBoardView: View {
         return VStack(alignment: .leading, spacing: 4) {
             if editing { editor(item) } else {
             HStack(spacing: 8) {
-                Image(systemName: "line.3.horizontal").font(.system(size: 11)).foregroundColor(.secondary).frame(width: 22, height: 22).contentShape(Rectangle())
-                    .help(L("끌어서 순서 바꾸기", "Drag to reorder"))
-                    .onDrag {
-                        draft.dragging = item.id
-                        let provider = NSItemProvider()
-                        provider.registerDataRepresentation(forTypeIdentifier: UTType.data.identifier, visibility: .all) { done in
-                            done(Data(item.id.uuidString.utf8), nil); return nil
+                if part == nil {
+                    Image(systemName: "line.3.horizontal").font(.system(size: 11)).foregroundColor(.secondary).frame(width: 22, height: 22).contentShape(Rectangle())
+                        .help(L("끌어서 순서 바꾸기", "Drag to reorder"))
+                        .onDrag {
+                            draft.dragging = item.id
+                            let provider = NSItemProvider()
+                            provider.registerDataRepresentation(forTypeIdentifier: UTType.data.identifier, visibility: .all) { done in
+                                done(Data(item.id.uuidString.utf8), nil); return nil
+                            }
+                            return provider
                         }
-                        return provider
+                }
+                let title = (index.map { "\($0). " } ?? "") + item.title
+                if let goal {
+                    goalTitle(item, title: title, group: goal)
+                } else if let part {
+                    let kind = part.item.role == .step ? L("Step", "Step") : L("Milestone", "Milestone")
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(kind).font(.system(size: 10)).foregroundColor(.secondary)
+                        Text(title).font(.system(size: 13, weight: .medium)).lineLimit(2)
                     }
-                Text("\(index). " + item.title).font(.system(size: 13, weight: .medium))
-                    .foregroundColor(item.state == .draft ? .secondary : .primary).lineLimit(2)
+                } else {
+                    Text(title).font(.system(size: 13, weight: .medium))
+                        .foregroundColor(item.state == .draft ? .secondary : .primary).lineLimit(2)
+                }
                 Spacer(minLength: 6)
                 if item.state == .ready, !waits.isEmpty {
                     let linked = waits.filter { item.after.contains($0.id) }, above = waits.filter { !item.after.contains($0.id) }
@@ -273,20 +398,21 @@ struct TodoBoardView: View {
                     Label(retry.label, systemImage: "arrow.clockwise").font(.system(size: 11)).foregroundColor(.orange).lineLimit(1).help(retry.why)
                 }
                 if !item.after.isEmpty { linkDropdown(item) }
-                let status = item.state.title + (item.state == .running ? runner(item) : "") + (item.state == .ready && data.stopped(item) ? L(" · 멈춤", " · paused") : "")
-                if item.state == .draft || item.state == .ready {
+                let status = (part?.status?.title ?? item.state.title) + (item.state == .running ? runner(item) : "") + (item.state == .ready && data.stopped(item) ? L(" · 멈춤", " · paused") : "")
+                let statusColor = part?.status?.color ?? item.state.color
+                if part == nil && (item.state == .draft || item.state == .ready) {
                     // One click: draft ↔ ready (the ⋯ menu has the same).
                     Button(action: { act { try store.setReady(item.id, item.state == .draft); if item.state == .draft { TodoScheduler.shared?.wake() } } }) {
-                        Text(status).font(.system(size: 12, weight: .medium)).foregroundColor(item.state.color).lineLimit(1)
+                        Text(status).font(.system(size: 12, weight: .medium)).foregroundColor(statusColor).lineLimit(1)
                             .padding(.horizontal, 8).frame(minHeight: 22)
-                            .background(item.state.color.opacity(0.12), in: Capsule())
-                            .overlay(Capsule().strokeBorder(item.state.color.opacity(0.35)))
+                            .background(statusColor.opacity(0.12), in: Capsule())
+                            .overlay(Capsule().strokeBorder(statusColor.opacity(0.35)))
                     }
                     .buttonStyle(.plainHit)
                     .help(item.state == .draft ? L("누르면 대기로: 차례가 오면 AI가 가져가요", "Click to make it ready: the AI takes it when its turn comes")
                                                : L("누르면 초안으로: AI가 가져가지 않아요 (순서대로 목록에서는 건너뛰어요)", "Click to make it a draft: the AI leaves it (an in-order list skips it)"))
                 } else {
-                    Text(status).font(.system(size: 12, weight: .medium)).foregroundColor(item.state.color)
+                    Text(status).font(.system(size: 12, weight: .medium)).foregroundColor(statusColor)
                 }
                 if item.state == .review {
                     Button(L("완료", "Done")) { store.accept(item.id) }.buttonStyle(.borderedProminent).controlSize(.small)
@@ -305,14 +431,16 @@ struct TodoBoardView: View {
                 }
                 Menu {
                     if TodoStore.editable(item) { Button(L("고치기…", "Edit…")) { draft.beginEdit(item) } }
-                    Button(L("위로", "Move up")) { act { try store.move(item.id, by: -1) } }
-                    Button(L("아래로", "Move down")) { act { try store.move(item.id, by: 1) } }
+                    if part == nil {
+                        Button(L("위로", "Move up")) { moveRow(item, by: -1) }
+                        Button(L("아래로", "Move down")) { moveRow(item, by: 1) }
+                    }
                     Menu(L("먼저 끝나야 할 TODO", "Must finish first")) { linkItems(item) }
                     if item.state != .running && item.state != .done && item.state != .cancelled {
                         Button(L("사진·파일 첨부…", "Attach photos or files…")) { let urls = Self.chooseFiles(); if !urls.isEmpty { act { try store.attach(item.id, files: urls) } } }
                     }
-                    if item.state == .draft { Button(L("대기로 (바로 가져가도 됨)", "Make ready")) { act { try store.setReady(item.id, true); TodoScheduler.shared?.wake() } } }
-                    if item.state == .ready { Button(L("초안으로 되돌리기", "Back to draft")) { act { try store.setReady(item.id, false) } } }
+                    if part == nil && item.state == .draft { Button(L("대기로 (바로 가져가도 됨)", "Make ready")) { act { try store.setReady(item.id, true); TodoScheduler.shared?.wake() } } }
+                    if part == nil && item.state == .ready { Button(L("초안으로 되돌리기", "Back to draft")) { act { try store.setReady(item.id, false) } } }
                     Button(list.stopAfter == item.id ? L("멈춤 지점 지우기", "Remove the stop point") : L("여기까지 하고 멈추기", "Stop after this one")) {
                         act { try store.stop(after: item.id); TodoScheduler.shared?.wake() }
                     }
@@ -361,17 +489,52 @@ struct TodoBoardView: View {
         // same list dragged by its handle goes above it (dragged up) or below it (dragged down).
         .onDrop(of: [UTType.fileURL, UTType.image, UTType.data, UTType.item],
                 delegate: TodoFileDrop(target: item.id, accepts: item.state != .running && item.state != .done && item.state != .cancelled,
-                                       reorder: { reorder(onto: item, in: list, probe: $0) }) { urls, folder in
+                                       reorder: { part == nil ? reorder(onto: item, in: list, probe: $0) : nil }) { urls, folder in
             defer { if let folder { try? FileManager.default.removeItem(at: folder) } }
             if urls.isEmpty { draft.error = L("파일을 첨부할 수 없어요.", "Could not attach the file."); return }
             act { try store.attach(item.id, files: urls) }
         })
     }
 
+    private func goalTitle(_ item: TodoItem, title: String, group: TodoGoalBoard) -> some View {
+        let expanded = draft.expandedGoals.contains(item.id)
+        let editingPart = group.parts.contains { $0.id == draft.editing && TodoStore.editable($0.item) }
+        let summary = group.summary
+        return Button {
+            if expanded { draft.expandedGoals.remove(item.id) } else { draft.expandedGoals.insert(item.id) }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 9, weight: .semibold)).foregroundColor(.secondary).frame(width: 10)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.system(size: 13, weight: .medium)).lineLimit(2)
+                    Text(summary).font(.system(size: 11)).foregroundColor(.secondary)
+                }
+            }
+        }
+        .buttonStyle(.plainHit)
+        .disabled(expanded && editingPart)
+        .accessibilityLabel(title + ", " + summary)
+        .accessibilityValue(expanded ? L("펼쳐짐", "Expanded") : L("접힘", "Collapsed"))
+        .help(expanded ? L("Goal 목록 접기", "Collapse Goal") : L("Goal 목록 펼치기", "Expand Goal"))
+    }
+
+    private func reorderRows(_ listID: UUID) -> [UUID] {
+        let data = store.snapshot
+        return TodoGoalBoard.rows(data.ordered(listID), groups: TodoGoalBoard.groups(data, list: listID), showDone: true).map(\.id)
+    }
+
+    private func moveRow(_ item: TodoItem, by step: Int) {
+        let order = reorderRows(item.listID)
+        guard let index = order.firstIndex(of: item.id), order.indices.contains(index + step) else { return }
+        let before = step < 0 ? order[index - 1] : order.dropFirst(index + 2).first
+        act { try store.move(item.id, before: before) }
+    }
+
     // Where the dragged TODO would go if dropped on `target`: below it when dragged down, above it when dragged up;
     // nil for one of another list. probe false: moves it there.
     private func reorder(onto target: TodoItem, in list: TodoList, probe: Bool) -> TodoDraft.Slot? {
-        let row = store.snapshot.ordered(list.id).map(\.id)
+        let row = reorderRows(list.id)
         guard let moving = draft.dragging, moving != target.id, let from = row.firstIndex(of: moving), let to = row.firstIndex(of: target.id) else { return nil }
         let below = from < to
         if !probe {

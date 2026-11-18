@@ -25,6 +25,7 @@
     "test-milestone-failure": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_ONLY=testMilestoneFailureFix,testTodoFailureRecovery,testTodoSteps,testTodoPlan,testTodoStore,testStepTests,testProjectWork,testGoalIntegration", "/bin/zsh", "tools/tests/run_mode2.sh"]},
     "test-todo-split": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_ONLY=testTodoSplit,testTodoSteps,testTodoPlan,testTodoScheduler,testTodoAddTool,testTodoOrder,testTodoChatMessage,testMilestoneFailureFix,testTodoStore", "/bin/zsh", "tools/tests/run_mode2.sh"]},
     "test-goal-trees": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_JOBS=1", "AI_ILLUMINATI_TEST_ONLY=testGoalTrees", "/bin/zsh", "tools/tests/run_mode2.sh"]},
-    "test-goal-run": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_ONLY=testGoalRun,testTodoSplit,testTodoScheduler,testTodoSteps,testStepTests", "/bin/zsh", "tools/tests/run_mode2.sh"]}
+    "test-goal-run": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_ONLY=testGoalRun,testTodoSplit,testTodoScheduler,testTodoSteps,testStepTests", "/bin/zsh", "tools/tests/run_mode2.sh"]},
+    "test-todo-board-goals": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_ONLY=testTodoUsageBar,testTodoTime,testTodoOrder,testTodoMixedOrder,testGoalRun", "/bin/zsh", "tools/tests/run_mode2.sh"]}
   }
 }

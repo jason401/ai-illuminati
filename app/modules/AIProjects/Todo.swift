@@ -825,10 +825,15 @@ public struct TodoData: Codable, Equatable {
     mutating func place(_ id: UUID, before: UUID?) throws {
         guard let item = item(id), let l = lists.firstIndex(where: { $0.id == item.listID }) else { throw TodoError.notFound }
         guard before != id else { return }
-        var order = ordered(item.listID).map(\.id)
+        let ordered = ordered(item.listID)
+        var order = ordered.map(\.id)
         if let before, !order.contains(before) { throw TodoError.notFound }
-        order.removeAll { $0 == id }
-        order.insert(id, at: before.flatMap { order.firstIndex(of: $0) } ?? order.endIndex)
+        // Moving a Goal also moves its parts so a stop after it still follows its last part.
+        let group = [id] + (item.role == .goal ? ordered.filter { $0.goal == id && $0.heldPart }.map(\.id) : [])
+        if let before, group.contains(before) { return }
+        let members = Set(group)
+        order.removeAll { members.contains($0) }
+        order.insert(contentsOf: group, at: before.flatMap { order.firstIndex(of: $0) } ?? order.endIndex)
         lists[l].order = order
     }
 

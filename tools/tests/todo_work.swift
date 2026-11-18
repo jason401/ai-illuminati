@@ -685,7 +685,10 @@ func testTodoScheduler() {
            "an Enterprise project's TODO keeps the lock: \(asked)")
     // A planning turn (goal path on): task_split scoped to its live attempt; once planned the goal waits.
     TodoData.goalPath = true
-    let planned = try! store.add(title: "plan", project: project, projectName: "P")
+    let planProject = todoProject("todo-plan-project")   // with the test entry, no locked chat: a reviewer is free
+    giveTestEntry(planProject.root)
+    model.latestUsage["todo-codex"] = left(80, 80)
+    let planned = try! store.add(title: "plan", project: planProject, projectName: "PP")
     scheduler.startNow()
     settle { store.current.items.contains { $0.goal == planned.id } && store.current.item(planned.id)?.state != .running }
     TodoData.goalPath = false
@@ -2376,7 +2379,8 @@ private final class GoalStepChats: TodoChats {
     var members: [UUID: [String]] = [:]
     var ends: [UUID: TodoTurnEnd] = [:]
     let lead = Account(id: "step-claude", provider: .claude, name: "Step Claude"), reviewer = Account(id: "step-codex", provider: .codex, name: "Step Codex")
-    func crew(lock: EnterpriseLock?, allowed: [String]) -> (lead: Account, reviewer: Account?)? { (lead, reviewer) }
+    var alone = false   // only one account may work: no independent reviewer for a Milestone
+    func crew(lock: EnterpriseLock?, allowed: [String]) -> (lead: Account, reviewer: Account?)? { (lead, alone ? nil : reviewer) }
     func noCrew(_ allowed: [String], lock: EnterpriseLock?) -> String { "nobody" }
     func addChat(_ project: ProjectBinding, title: String, lock: EnterpriseLock?) -> UUID { UUID() }
     func setCrew(room: UUID, members: [String], lead: String) { self.members[room] = members }
@@ -2392,6 +2396,13 @@ private final class GoalStepChats: TodoChats {
     }
     func ended(_ room: UUID) -> TodoTurnEnd { ends[room] ?? TodoTurnEnd() }
     func stop(_ room: UUID) { answering.remove(room) }
+}
+// The test entry the Goal path needs (StepTests.script and catalog): a project without it stays plain.
+private func giveTestEntry(_ root: String) {
+    try? FileManager.default.createDirectory(atPath: root + "/tools/tests", withIntermediateDirectories: true)
+    for name in [StepTests.script, StepTests.catalog] where !FileManager.default.fileExists(atPath: root + "/" + name) {
+        FileManager.default.createFile(atPath: root + "/" + name, contents: Data())
+    }
 }
 // A Goal's work tree without Git (the scheduler's own is SubWork.goal, made off the main thread).
 private func fakeGoalTree(_ project: ProjectBinding, _ goal: UUID, _ target: String) -> SubWork.Tree {
@@ -2539,7 +2550,11 @@ func testTodoSplit() {
     scheduler.held = { _ in false }
     scheduler.makeTree = fakeGoalTree
     // A Git project with a remote: only such a TODO is planned (a Milestone pushes).
-    func project(_ name: String) -> ProjectBinding { ProjectBinding(root: "/tmp/todo-split-" + name, common: "", remote: "origin", remoteURL: "") }
+    func project(_ name: String) -> ProjectBinding {
+        let root = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("todo-split-" + name).path
+        giveTestEntry(root)
+        return ProjectBinding(root: root, common: "", remote: "origin", remoteURL: "")
+    }
     func state(_ id: UUID) -> TodoItem.State? { store.current.item(id)?.state }
     func parts(_ goal: UUID) -> [TodoItem] { store.current.items.filter { $0.goal == goal } }
     func ok(_ r: [String: Any]) -> Bool { r["isError"] as? Bool == false }
@@ -2627,6 +2642,13 @@ func testTodoSplit() {
     end(lazy.id)
     expect(state(lazy.id) == .ready && parts(lazy.id).first.map { state($0.id) } == .running, "then its Step starts")
 
+    // No second account to review its Milestones: it runs plain rather than as a Goal stuck at the review.
+    chats.alone = true
+    let single = start("single")
+    expect(single.state == .running && single.role == .plain && chats.started.last!.extra.contains("[TODO work]") && !store.current.planning(single),
+           "with only one account free a TODO runs plain")
+    chats.alone = false
+    try! store.change(single.id) { $0.state = .cancelled }
     // Off: every TODO still runs as plain, with no planning turn.
     TodoData.goalPath = false
     let plain = start("plain")
@@ -2828,7 +2850,9 @@ func testGoalRun() {
     let kinds = TodoStore(url: todoStoreFile("goal-kinds"))
     let folderless = ProjectBinding(root: base.appendingPathComponent("loose").path, common: "", remote: "", remoteURL: "", kind: "folderless")
     let local = ProjectBinding(root: base.appendingPathComponent("local").path, common: "", remote: "", remoteURL: "")
-    for (binding, what) in [(papers, "a documents project"), (folderless, "a folderless project"), (local, "a project without a remote")] {
+    let untested = ProjectBinding(root: base.appendingPathComponent("untested").path, common: "", remote: "origin", remoteURL: "")
+    for (binding, what) in [(papers, "a documents project"), (folderless, "a folderless project"), (local, "a project without a remote"),
+                            (untested, "a project without tools/tests/run_mode2.sh")] {
         let t = try! kinds.add(title: what, project: binding, projectName: what)
         expect(!kinds.current.planning(t), "\(what)'s TODO stays on the plain path")
     }

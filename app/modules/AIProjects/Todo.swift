@@ -724,7 +724,12 @@ public struct TodoData: Codable, Equatable {
         TodoData.goalPath && item.goal == nil && (item.role == .goal || (item.role == .plain && item.room == nil))
             && list(item.listID)?.project.map(Self.goalProject) == true && !items.contains { $0.goal == item.id }
     }
-    static func goalProject(_ project: ProjectBinding) -> Bool { !project.isDocuments && !project.isFolderless && !project.remote.isEmpty }
+    // Also the test entry a Step's picked tests and a Milestone's full test run (StepTests): a Git project without it could
+    // never end a Step, so it stays plain.
+    static func goalProject(_ project: ProjectBinding) -> Bool {
+        !project.isDocuments && !project.isFolderless && !project.remote.isEmpty
+            && [StepTests.script, StepTests.catalog].allSatisfy { FileManager.default.fileExists(atPath: project.root + "/" + $0) }
+    }
     // Its plan is saved: its parts run in its place, the goal itself is never taken again (it is done with its last Milestone).
     // With the goal path off a goal still runs as plain.
     func planned(_ item: TodoItem) -> Bool { TodoData.goalPath && item.role == .goal && items.contains { $0.goal == item.id } }
@@ -1969,7 +1974,11 @@ public final class TodoScheduler: ObservableObject {
         if item.role == .milestone { return runMilestone(item, list: list, project: project) }
         // A new TODO's planning turn makes it a goal first, with the branch its Milestones push to: a retry after a failed
         // start or attempt plans again (TodoData.planning), and the target stays the one it was planned on.
-        if item.role == .plain, store.current.planning(item) {
+        // Its Milestones need a reviewer that did none of the Steps: with no second account free now (one picked for the
+        // list, the other out of usage) it runs plain, reviewed or not as plain TODOs are, instead of a Goal stuck at review.
+        var plainOnly = false
+        if item.role == .plain, store.current.planning(item), crew.reviewer == nil { plainOnly = true }
+        if item.role == .plain, !plainOnly, store.current.planning(item) {
             let target = Self.branch(project)
             do {
                 try store.change(item.id) { t in
@@ -1994,7 +2003,7 @@ public final class TodoScheduler: ObservableObject {
         if chats.answering.contains(room) { return L("TODO 채팅이 아직 답하는 중이라 기다려요.", "Waiting for the TODO's chat to finish answering.") }
         // A step has no reviewer: the AI checks its own diff and the app its picked tests (the milestone reviews the sum).
         // Nor a planning turn: it changes no files.
-        let planning = store.current.planning(item)
+        let planning = !plainOnly && store.current.planning(item)
         let reviewer = item.role == .step || planning ? nil : crew.reviewer
         chats.setCrew(room: room, members: [crew.lead.id] + (reviewer.map { [$0.id] } ?? []), lead: crew.lead.id)
         // The attachments go into the chat's own folder (the AI reads them there); photos it has not seen yet also go with the message.
@@ -2147,6 +2156,9 @@ public final class TodoScheduler: ObservableObject {
         for _ in 0..<3 {
             guard !token.isCancelled else { throw MilestoneStopped(failure: .transient(L("실행이 취소됐어요.", "The run was stopped."))) }
             var candidate = store.current.item(id)?.milestoneCandidate
+            // The Goal branch moved since its verdicts (by hand, a cut-off run): integrated again, so the new HEAD is reviewed and tested.
+            let head = try? ProjectProcess.git(["rev-parse", "HEAD"], root: tree.path)
+            if let sha = candidate?.candidateSHA, candidate?.phase != .confirmation, head != sha { candidate?.setPhase(.integration) }
             if candidate?.candidateSHA == nil || candidate?.phase == .integration {
                 let integrated = try SubWork.integrate(project, tree, target: target, token: token)
                 if candidate?.baseSHA != integrated.base || candidate?.branch != target {

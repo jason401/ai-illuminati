@@ -519,7 +519,7 @@ Public names and why (everything else stays internal: `ProjectError`, `ProjectTo
   `ProjectInfoStore`, `ProjectCreator` (`prepare`, `create`, `createFolderless`, `folderlessBinding`, `summary`,
   `defaultLocation`, `Plan`): `runProjectSolo`, the menus, Project info, the review (`ProjectSnapshot`).
 - `ProjectApproval.command`/`same` and `ProjectCenter.preapproved` (sub-room P3): a project_run card carries its command line and
-  its `CommandIdentity` key (executable's real path, arguments, work tree, `.ai-illuminati.json` bytes, permission, script bytes),
+  its `CommandIdentity` key (executable's real path, arguments, work tree, `.ai-illuminati.json` bytes, permission, and the bytes of every script in the tree and of the folders of the files it names),
   so the chat can gather a sub-room's card in its main room and let the very same command through for that split; the hook is
   asked before a card is shown.
 - `ProjectBinding.groupKey`: one project across its worktrees (`SidebarProjects.key` forwards to it).

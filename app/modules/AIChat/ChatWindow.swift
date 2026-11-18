@@ -655,10 +655,9 @@ struct ChatView<Model: ChatSettings>: View {
         let subs = discussion.subRooms(of: conversation.id)
         chatRow(conversation, meetings: meetings.count, shown: shown, depth: depth, todo: todo)
         if !subs.isEmpty {
+            SubRoomsFoldedRow(main: conversation.id, count: subs.count, discussion: discussion, depth: depth)
             if discussion.subRoomsShown(conversation.id) {
                 ForEach(subs) { SubRoomRow(room: $0, discussion: discussion, depth: depth) }
-            } else {
-                SubRoomsFoldedRow(main: conversation.id, count: subs.count, discussion: discussion, depth: depth)
             }
         }
         if shown {

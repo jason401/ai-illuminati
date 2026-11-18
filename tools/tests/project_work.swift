@@ -1945,7 +1945,7 @@ func testSubTrees() {
 
     // Two sub-rooms from the same start, no conflict; the second is checked against the HEAD after the first merge.
     write("one changed\n", "a.txt", in: one.path); commit(one.path, "Sub 1")
-    write("b changed\n", "b.txt", in: two.path); write("extra\n", "extra.txt", in: two.path); commit(two.path, "Sub 2")
+    write("b changed\n", "b.txt", in: two.path); write("extra\n", "extra.txt", in: two.path); write("odd\n", "odd\tname \"q\".txt", in: two.path); commit(two.path, "Sub 2")
     let sha1 = git(["rev-parse", "HEAD"], at: one.path), sha2 = git(["rev-parse", "HEAD"], at: two.path)
     expect(failure { try SubWork.merge(binding, one, sha: sha1, owned: ["a.txt"], reported: false) } != nil, "not reported: refused")
     expect(failure { try SubWork.merge(binding, one, sha: first, owned: ["a.txt"], reported: true) }?.contains(L("출발 커밋", "start")) == true, "an SHA not after the start is refused")
@@ -1960,9 +1960,9 @@ func testSubTrees() {
     let after1 = git(["rev-parse", "HEAD"], at: main)
     expect(m1.merged == after1 && m1.head == start && m1.conflicts.isEmpty && m1.outside.isEmpty, "merged without warnings: \(m1)")
     expect(git(["rev-list", "--parents", "-n", "1", "HEAD"], at: main).split(separator: " ").count == 3 && git(["log", "-1", "--format=%s"], at: main).contains("sub/S1/1"), "a --no-ff merge commit")
-    let m2 = try! SubWork.merge(binding, two, sha: sha2, owned: ["b.txt"], reported: true)
+    let m2 = try! SubWork.merge(binding, two, sha: sha2, owned: ["b.txt", "odd\tname \"q\".txt"], reported: true)
     expect(m2.head == after1 && m2.merged == git(["rev-parse", "HEAD"], at: main) && m2.outside == ["extra.txt"] && m2.conflicts.isEmpty,
-           "the second is checked against the HEAD after the first; a file outside its own is a warning, still merged: \(m2)")
+           "the second is checked against the HEAD after the first; a file outside its own is a warning (a tab or quote in a name read as it is), still merged: \(m2)")
     expect(try! SubWork.merge(binding, two, sha: sha2, owned: ["b.txt"], reported: true).merged == m2.merged, "merging it again changes nothing")
 
     // Two sub-rooms changing the same line: the first merges, the second's check against the new HEAD finds the conflict.

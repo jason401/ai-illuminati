@@ -78,6 +78,27 @@ func testTodoPlan() {
     expect(again.map(\.id) == made.map(\.id) && store.current == data, "the same plan again adds nothing")
     refused(TodoPlan(parts: [Part(key: "m", role: .milestone, title: "Other")]), "another plan for a planned goal")
     do { try store.savePlan(goal: made[0].id, TodoPlan(parts: [Part(key: "m", role: .milestone, title: "M")])); expect(false, "a step is not a goal") } catch {}
+    // Until the goal path is on, parts never run as plain TODOs: Start all and a row's Start leave them drafts, one made
+    // ready some other way is not taken, and none of them holds the TODOs below it on the board.
+    let free: (String) -> Bool = { _ in false }
+    store.startDrafts()
+    expect(made.allSatisfy { store.current.item($0.id)?.state == .draft }, "Start all leaves plan parts drafts")
+    try! store.setReady(made[0].id, true)
+    expect(store.current.item(made[0].id)?.state == .draft, "a row's Start leaves a plan part a draft")
+    try! store.change(made[0].id) { $0.state = .ready }
+    try! store.change(made[2].id) { $0.state = .ready }
+    let taken = store.current.eligible(held: free).map(\.id)
+    expect(!taken.contains(made[0].id) && !taken.contains(made[2].id), "a ready plan part is not taken: \(taken)")
+    expect(taken.contains(goal.id) || taken.contains(below.id), "the TODOs around the parts still go on: \(taken)")
+    // Moving independent steps on the board does not make a retry another plan: the same UUIDs come back.
+    let goal2 = try! store.add(title: "goal2", project: a, projectName: "A")
+    let twin = TodoPlan(parts: [Part(key: "x", role: .step, title: "X", tests: ["testX"]), Part(key: "y", role: .step, title: "Y", tests: ["testY"]),
+                                Part(key: "m", role: .milestone, title: "M2", after: ["x", "y"])])
+    let twins = try! store.savePlan(goal: goal2.id, twin)
+    try! store.move(twins[1].id, before: twins[0].id)
+    expect(store.current.ordered(goal2.listID).filter { $0.goal == goal2.id }.map(\.title) == ["Y", "X", "M2"], "steps swapped on the board")
+    let retried = try? store.savePlan(goal: goal2.id, twin)
+    expect(retried?.map(\.id) == twins.map(\.id), "a retry after a board move returns the same parts")
     // A plain TODO still saves as before: no tests key.
     let plainJSON = String(data: try! JSONEncoder().encode(data.item(below.id)!), encoding: .utf8)!
     expect(!plainJSON.contains("\"tests\""), "a plain TODO writes no tests")

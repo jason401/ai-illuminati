@@ -213,6 +213,10 @@ public struct TodoItem: Codable, Identifiable, Equatable {
         try c.encodeIfPresent(stateSince, forKey: .stateSince); try c.encodeIfPresent(startedAt, forKey: .startedAt); try c.encodeIfPresent(finishedAt, forKey: .finishedAt)
     }
 
+    // A step or milestone waits for the goal path (off until it is turned on): never taken as a plain TODO, never made
+    // ready, and passed in its list's order like a draft so the TODOs below it go on.
+    var heldPart: Bool { role == .step || role == .milestone }
+
     // Parked for the question it waits on now (a newer question is not parked).
     public var isParked: Bool { state == .needsYou && parked != nil && parked?.questionID == question?.id }
 
@@ -318,7 +322,7 @@ public struct TodoPlan: Equatable {
         }
         return run
     }
-    // The parts saved for it before (board order) are this plan: the same titles, roles, details, tests and links.
+    // The parts saved for it before (run order as saved) are this plan: the same titles, roles, details, tests and links.
     func same(_ saved: [TodoItem], as run: [Part]) -> Bool {
         guard saved.count == run.count else { return false }
         let ids = Dictionary(uniqueKeysWithValues: zip(run.map(\.key), saved.map(\.id)))
@@ -425,7 +429,7 @@ public struct TodoData: Codable, Equatable {
     public func blockers(_ item: TodoItem) -> [UUID] {
         var ids = item.after
         let row = ordered(item.listID)
-        let passed = { (t: TodoItem) in t.state == .cancelled || t.state == .draft || t.isParked }
+        let passed = { (t: TodoItem) in t.state == .cancelled || t.state == .draft || t.isParked || t.heldPart }
         if let at = row.firstIndex(where: { $0.id == item.id }), let above = row[..<at].last(where: { !passed($0) }) {
             ids.append(above.id)
             let through = { (t: TodoItem) in t.state == .done || t.state == .review }
@@ -499,7 +503,7 @@ public struct TodoData: Codable, Equatable {
     func eligible(held: (String) -> Bool) -> [TodoItem] {
         let busy = Set(items.filter { $0.state == .running }.compactMap { list($0.listID)?.project?.root })
         return lists.flatMap { ordered($0.id) }.filter { item in
-            guard item.state == .ready, !stopped(item), let root = list(item.listID)?.project?.root, !busy.contains(root), cancelledBlockers(item).isEmpty else { return false }
+            guard item.state == .ready, !item.heldPart, !stopped(item), let root = list(item.listID)?.project?.root, !busy.contains(root), cancelledBlockers(item).isEmpty else { return false }
             guard blockers(item).allSatisfy({ id in self.item(id).map { satisfied($0, for: item) } ?? true }) else { return false }
             return !held(root)
         }
@@ -656,9 +660,10 @@ public final class TodoStore: ObservableObject {
             guard let g = data.items.firstIndex(where: { $0.id == goal }) else { throw TodoError.notFound }
             let head = data.items[g]
             guard head.role == .plain || head.role == .goal, head.goal == nil else { throw TodoPlan.refuse("step이나 milestone은 Goal이 될 수 없어요.", "a step or milestone cannot be a goal.") }
-            let saved = data.ordered(head.listID).filter { $0.goal == goal }
-            if data.items.contains(where: { $0.goal == goal }) {
-                guard saved.count == data.items.filter({ $0.goal == goal }).count, plan.same(saved, as: run) else {
+            // Saved in run order and never reordered in `items` (the board's moves change only the list's order).
+            let saved = data.items.filter { $0.goal == goal }
+            if !saved.isEmpty {
+                guard saved.allSatisfy({ $0.listID == head.listID }), plan.same(saved, as: run) else {
                     throw TodoPlan.refuse("이 Goal에는 다른 계획이 이미 있어요.", "this goal already has another plan.")
                 }
                 return saved
@@ -686,7 +691,7 @@ public final class TodoStore: ObservableObject {
     // lists: only these (▶ on one project's board); nil = every list.
     public func startDrafts(lists: Set<UUID>? = nil) {
         try? update { data in
-            for i in data.items.indices where data.items[i].state == .draft && lists.map({ $0.contains(data.items[i].listID) }) ?? true { data.items[i].state = .ready }
+            for i in data.items.indices where data.items[i].state == .draft && !data.items[i].heldPart && lists.map({ $0.contains(data.items[i].listID) }) ?? true { data.items[i].state = .ready }
             for l in data.lists.indices where lists.map({ $0.contains(data.lists[l].id) }) ?? true { data.lists[l].paused = false; data.lists[l].stopAfter = nil }
         }
     }
@@ -709,7 +714,7 @@ public final class TodoStore: ObservableObject {
     public func setReady(_ id: UUID, _ ready: Bool) throws {
         try change(id) { item in
             guard item.state == .draft || item.state == .ready else { throw TodoError.notEditable }
-            item.state = ready ? .ready : .draft
+            item.state = ready && !item.heldPart ? .ready : .draft
         }
     }
     public func accept(_ id: UUID) { try? change(id) { guard $0.state == .review else { return }; $0.state = .done; $0.unreported = false; $0.aiHelped = 0 } }

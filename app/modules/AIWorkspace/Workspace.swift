@@ -226,7 +226,7 @@ public struct WorkspaceInvocation {
             if let i = result.firstIndex(of: "--allowedTools") { result.removeSubrange(i...i + 1) }
             let allowedEdit = level != .view && binding.projectRunID == nil ? ",Edit,Write" : own.map { ",Edit(/" + $0 + "/**)" }.joined()
             result += ["--restricted", "--setting-sources", "", "--disable-slash-commands", "--permission-mode", "dontAsk", "--allowedTools", "Read,Grep,Glob,mcp__illuminati__*" + allowedEdit + (level == .execute ? ",Bash" : "") + (web ? ",WebSearch,WebFetch" : "")]
-            if level == .execute {
+            if level == .execute || (level == .write && binding.project != nil) {
                 var settings: [String: Any] = ["sandbox": ["enabled": true, "autoAllowBashIfSandboxed": true, "allowUnsandboxedCommands": false,
                     "filesystem": ["allowWrite": executionFolders, "denyWrite": binding.project.map(\.protectedPaths) ?? []]]]
                 if let project = binding.project {

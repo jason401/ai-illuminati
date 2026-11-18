@@ -77,6 +77,33 @@ public enum ProjectProcess {
         lock.lock(); let text = String(decoding: captured, as: UTF8.self); lock.unlock()
         return Reply(status: p.terminationStatus, output: String(text.prefix(60_000)))
     }
+    // A named Step command may execute project code. Keep its descendants inside the same write boundary as the Step.
+    static func runStep(_ executable: String, _ args: [String], project: ProjectBinding, token: DebateCancellation,
+                        deadline: Date, onLine: @escaping (String) -> Void) throws -> Reply {
+        let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("ai-step-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        // Seatbelt matches physical paths, including the /private prefix skipped by Foundation for /tmp.
+        func physical(_ path: String) throws -> String {
+            guard let resolved = realpath(path, nil) else { throw ProjectError.make("Could not resolve Step sandbox path: " + path) }
+            defer { free(resolved) }
+            return String(cString: resolved)
+        }
+        let root = try physical(project.root), temp = try physical(scratch.path)
+        let gitFile = try physical(project.root + "/.git"), common = try physical(project.common)
+        let profile = """
+        (version 1)
+        (allow default)
+        (deny network* mach-lookup appleevent-send)
+        (deny file-write*
+            (require-not (require-any (subpath (param "STEP_ROOT")) (subpath (param "STEP_TEMP")) (literal "/dev/null"))))
+        (deny file-write* (subpath (param "STEP_GIT")) (subpath (param "STEP_COMMON")))
+        """
+        return try run("/usr/bin/sandbox-exec", ["-D", "STEP_ROOT=" + root, "-D", "STEP_TEMP=" + temp,
+                       "-D", "STEP_GIT=" + gitFile, "-D", "STEP_COMMON=" + common,
+                       "-p", profile, executable] + args, cwd: project.root, token: token, deadline: deadline,
+                       guarded: true, extra: ["TMPDIR": temp], onLine: onLine)
+    }
     public static func git(_ args: [String], root: String, token: DebateCancellation? = nil, timeout: TimeInterval = 60) throws -> String {
         let reply = try gitReply(args, root: root, token: token, timeout: timeout)
         guard reply.status == 0 else { throw ProjectError.make("git failed (\(reply.status)): \(reply.output)") }
@@ -238,7 +265,14 @@ public final class ProjectRun {
     public var committed = false, pushed = false
     // A project turn pushes once, after the review and its fixes: git_push only asks for it, and the chat calls
     // GitLink.pushDeferred when the turn ends well. Without a successful end the commits stay local (a TODO retries).
-    public var deferPush = false
+    private var defersPush = false
+    public var deferPush: Bool {
+        get { defersPush }
+        set { defersPush = newValue && !isStep }
+    }
+    public var isStep: Bool { stepBranch != nil }
+    private let stepBranch: String?
+    fileprivate var stepLease: [String] = []
     public internal(set) var pushWanted = false
     // Tool results for this turn's work log; the chat shows them under the reply, not above the chat.
     public var onNote: (([String]) -> Void)?
@@ -286,8 +320,11 @@ public final class ProjectRun {
     }
     var initialDirty: Set<String> = []
     let operations = NSRecursiveLock()
-    public init(room: UUID, binding: ProjectBinding, token: DebateCancellation, fullAuto: Bool = false) {
-        self.room = room; self.binding = binding; self.outer = token; self.fullAuto = fullAuto
+    public convenience init(room: UUID, binding: ProjectBinding, token: DebateCancellation, fullAuto: Bool = false) {
+        self.init(room: room, binding: binding, token: token, fullAuto: fullAuto, stepBranch: nil)
+    }
+    fileprivate init(room: UUID, binding: ProjectBinding, token: DebateCancellation, fullAuto: Bool, stepBranch: String?) {
+        self.room = room; self.binding = binding; self.outer = token; self.fullAuto = fullAuto; self.stepBranch = stepBranch
         deadline = Date().addingTimeInterval(fullAuto ? 8 * 3600 + 600 : 3600)
         let status = binding.isDocuments ? "" : (try? ProjectProcess.git(["status", "--porcelain", "-z"], root: binding.root)) ?? ""
         initialDirty = Set(status.split(separator: "\0").map { String($0.dropFirst(3)) })
@@ -307,6 +344,9 @@ public final class ProjectRun {
     public func validate(_ generation: Int) throws {
         guard !cancelled, generation == self.generation else { throw ProjectError.make("Project capability expired or operation cancelled.") }
         guard try ProjectProcess.current(binding) == binding else { throw ProjectError.make("Project repository or remote changed. Reconnect it first.") }
+        if let stepBranch, (try? ProjectProcess.git(["symbolic-ref", "--quiet", "HEAD"], root: binding.root, token: attempt)) != "refs/heads/" + stepBranch {
+            throw ProjectError.make(L("Step은 Goal 브랜치에서만 실행할 수 있어요.", "A Step can only run on its Goal branch."))
+        }
     }
     public func checkpoint(_ note: String) -> String {
         if binding.isFolderless {
@@ -366,6 +406,39 @@ public enum ProjectWork {
         workspace.projectRunID = run.id
         return workspace
     }
+    // The Goal runner supplies the tree from SubWork.goal. The Step owns its lease through finish().
+    public static func startStep(_ tree: SubWork.Tree, in binding: WorkspaceBinding, chatFolder: String,
+                                 room: UUID, token: DebateCancellation) throws -> (run: ProjectRun, workspace: WorkspaceBinding) {
+        guard let source = binding.project, !source.isDocuments else { throw ProjectError.make("A Step requires a Git project.") }
+        let project = try ProjectProcess.inspect(tree.path)
+        let chatPath = canonical(chatFolder)
+        guard project.common == source.common,
+              project.remote == source.remote, project.remoteURL == source.remoteURL,
+              tree.branch.range(of: "^todo-goal/[0-9a-f]{8}$", options: .regularExpression) != nil,
+              project.root == canonical(SubWork.folder(common: source.common, name: "goal-" + tree.branch.suffix(8))),
+              !overlaps(project.root, source.root), !overlaps(chatPath, source.root),
+              !overlaps(chatPath, project.root) else {
+            throw ProjectError.make(L("이 프로젝트의 Goal worktree가 필요해요.", "This project’s Goal worktree is required."))
+        }
+        let goalRoot = WorkspaceRoot(path: project.root, directory: true, writable: true)
+        let lease = try acquire(WorkspaceBinding(roots: [goalRoot], level: .write))
+        let run = ProjectRun(room: room, binding: project, token: token, fullAuto: binding.isFullAuto, stepBranch: tree.branch)
+        run.stepLease = lease
+        do { try run.validate(run.generation) }
+        catch { finish(run); throw error }
+
+        var workspace = binding
+        workspace.project = project
+        workspace.roots.removeAll { canonical($0.path) == project.root }
+        if !workspace.roots.contains(where: { canonical($0.path) == source.root }) {
+            workspace.roots.append(WorkspaceRoot(path: source.root, directory: true))
+        }
+        workspace.roots.append(goalRoot)
+        workspace = workBinding(workspace, project: project, chatFolder: chatFolder, run: run)
+        workspace.level = .write
+        workspace.fullAccess = false; workspace.fullAuto = false
+        return (run, workspace)
+    }
     // A chat linking `project` (the + menu): its root writable, added after the folders linked already (a code project) or
     // put first (`first`: a documents project, whose root then leads); the chat's other folders stay.
     public static func linking(_ workspace: WorkspaceBinding?, to project: ProjectBinding, first: Bool) -> WorkspaceBinding {
@@ -392,7 +465,15 @@ public enum ProjectWork {
         return binding
     }
     public static func register(_ run: ProjectRun) { mutex.lock(); runs[run.id] = run; mutex.unlock() }
-    public static func finish(_ run: ProjectRun) { run.stop(); run.operations.lock(); defer { run.operations.unlock() }; revokeTools(run.id); mutex.lock(); runs.removeValue(forKey: run.id); mutex.unlock() }
+    public static func finish(_ run: ProjectRun) {
+        run.stop()
+        run.operations.lock()
+        revokeTools(run.id)
+        mutex.lock(); runs.removeValue(forKey: run.id); mutex.unlock()
+        let lease = run.stepLease; run.stepLease = []
+        run.operations.unlock()
+        release(lease)
+    }
     // Writers of folders without Git (a documents project's folder, or a folder linked to a plain chat) must not overlap a
     // documents project: a documents folder is taken alone, with nothing inside or around it being written. Plain linked
     // folders may still be written by several chats at once, as before. Across app instances the same rule holds through
@@ -656,10 +737,10 @@ public final class GitLink: ToolProvider {
                 tool("git_publish_stable", "Publish an exact main SHA to stable after the user's approval card."),
                 tool("git_branch", "Create a new branch from a clean tree.", ["name": string], ["name"]), tool("git_switch", "Switch an existing branch with a clean tree.", ["name": string], ["name"]),
                 run_]
-        return run.isSubRoom ? all.filter { !Self.notInSubRooms.contains($0["name"] as? String ?? "") } : all
+        return run.isSubRoom || run.isStep ? all.filter { !Self.localOnlyDenied.contains($0["name"] as? String ?? "") } : all
     }
-    // A sub-room stays on its own branch and never reaches the remote (the main room pushes after merging).
-    static let notInSubRooms: Set<String> = ["git_pull", "git_push", "git_publish_stable", "git_branch", "git_switch"]
+    // Sub-rooms and Steps keep their commits on their assigned local branch.
+    private static let localOnlyDenied: Set<String> = ["git_pull", "git_push", "git_publish_stable", "git_branch", "git_switch"]
     public func call(_ name: String, _ arguments: [String: Any], context: ToolContext) -> [String: Any] {
         guard let run = ProjectWork.get(context.projectRun), run.room == context.room, let generation = context.projectGeneration else { return ProjectTools.failure("No project capability.") }
         run.operations.lock(); defer { run.operations.unlock() }
@@ -675,6 +756,7 @@ public final class GitLink: ToolProvider {
     // The end of a project turn: the push its git_push asked for, with the same branch rules, on a fresh attempt (the
     // AI's attempts are over). nil: nothing was asked. Throws when the push fails; the commits stay local.
     public func pushDeferred(_ run: ProjectRun) throws -> String? {
+        guard !run.isStep else { throw ProjectError.make(L("Step에서는 지연 push가 금지돼요.", "A Step cannot push at the end of its turn.")) }
         guard run.deferPush, run.pushWanted else { return nil }
         run.nextAttempt()
         defer { run.endAttempt() }
@@ -731,7 +813,10 @@ public final class GitLink: ToolProvider {
             try run.validate(generation)
         }
         if run.binding.isDocuments && name != "project_run" { throw ProjectError.make("This is a documents project without Git; there are no git tools. The app backed the folder up before this answer.") }
-        if run.isSubRoom && Self.notInSubRooms.contains(name) { throw ProjectError.make("A sub-room has no \(name): it commits on its own branch and reports with sub_report; the main room merges and pushes.") }
+        if run.isStep && Self.localOnlyDenied.contains(name) {
+            throw ProjectError.make(L("Step에서 \(name)은 사용할 수 없어요. Goal 브랜치에 로컬로 커밋하세요.", "\(name) is unavailable in a Step. Commit locally on the Goal branch."))
+        }
+        if run.isSubRoom && Self.localOnlyDenied.contains(name) { throw ProjectError.make("A sub-room has no \(name): it commits on its own branch and reports with sub_report; the main room merges and pushes.") }
         switch name {
         case "git_status": return try git(["status", "--short", "--branch"])
         case "git_log": return try git(["log", "-10", "--oneline"])
@@ -817,8 +902,9 @@ public final class GitLink: ToolProvider {
             if run.fullAuto { run.note("project_run (full auto): " + exe + " " + argv.joined(separator: " ")) }
             else {
                 let line = exe + " " + argv.joined(separator: " ")
-                try approve("프로젝트 실행 / Run project command", "Runs outside the AI sandbox as your user.\n" + run.binding.root + "\n" + line + "\n" + status,
-                            command: selected + ": " + line, same: CommandIdentity.key(executable: exe, args: argv, tree: run.binding.root, config: data, permission: "user"))
+                let scope = run.isStep ? "Runs in the Goal worktree sandbox." : "Runs outside the AI sandbox as your user."
+                try approve("프로젝트 실행 / Run project command", scope + "\n" + run.binding.root + "\n" + line + "\n" + status,
+                            command: selected + ": " + line, same: CommandIdentity.key(executable: exe, args: argv, tree: run.binding.root, config: data, permission: run.isStep ? "step" : "user"))
             }
             guard try Data(contentsOf: url) == data, try WorkspaceBackup.stamps([WorkspaceRoot(path: run.binding.root, directory: true)]) == tree else { throw ProjectError.make("Command changed after approval. Request it again.") }
             // "[n/m] name" lines show under the current step; their times go to project-timings for later estimates.
@@ -828,7 +914,11 @@ public final class GitLink: ToolProvider {
             do {
                 let reply = try ProjectWork.oneRun(run.binding.root, until: deadline, token: run.attempt,
                                                    waiting: { run.note(L("project_run: 이 저장소의 다른 명령이 끝나길 기다리는 중", "project_run: waiting for another command in this repository")) }) {
-                    try ProjectProcess.run(exe, argv, cwd: run.binding.root, token: run.attempt, deadline: deadline, guarded: run.fullAuto, onLine: progress.line)
+                    if run.isStep {
+                        try run.validate(generation)
+                        return try ProjectProcess.runStep(exe, argv, project: run.binding, token: run.attempt, deadline: deadline, onLine: progress.line)
+                    }
+                    return try ProjectProcess.run(exe, argv, cwd: run.binding.root, token: run.attempt, deadline: deadline, guarded: run.fullAuto, onLine: progress.line)
                 }
                 RunTimings.record(root: run.binding.root, command: selected, progress.finish(reply.status == 0 ? "ok" : "failed", exit: reply.status))
                 return "exit=\(reply.status)\n" + reply.output

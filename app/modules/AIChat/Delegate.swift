@@ -478,7 +478,7 @@ public final class DelegateLink: ToolProvider {
         return split.allowed?.contains(same) == true
     }
     private func role(_ context: ToolContext) -> (run: ProjectRun, sub: SubRoomLink?)? {
-        guard context.origin == .member, let run = ProjectWork.run(for: context), !run.binding.isDocuments, !run.binding.isFolderless else { return nil }
+        guard context.origin == .member, let run = ProjectWork.run(for: context), !run.isStep, !run.binding.isDocuments, !run.binding.isFolderless else { return nil }
         lock.lock(); defer { lock.unlock() }
         if run.isSubRoom { return subs[run.id].map { (run, $0) } }
         return (run, nil)

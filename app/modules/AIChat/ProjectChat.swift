@@ -257,14 +257,25 @@ extension Discussion {
 
     func runProjectSolo(question: String, history: [ChatTurn], rules: String, config: ChatConfiguration,
                         mentions: [String], reviewers: [String] = [], cancellation: DebateCancellation, id: UUID, index: Int,
-                        binding: WorkspaceBinding, fresh: String? = nil, keepState: Bool = false, note: String = "") {
-        guard let selected = binding.project else { finish(id, index, error: "No project selected."); return }
+                        binding: WorkspaceBinding, fresh: String? = nil, keepState: Bool = false, note: String = "",
+                        step: SubWork.Tree? = nil) {
+        guard let project = binding.project else { finish(id, index, error: "No project selected."); return }
         let fullAuto = binding.isFullAuto
-        let run = ProjectRun(room: id, binding: selected, token: cancellation, fullAuto: fullAuto)
-        // Only the turn's final result goes to the remote, once, after the review and its fixes (TODOs and plain chats).
-        run.deferPush = !selected.isDocuments && !selected.isFolderless
+        let chatFolder = Self.chatFolder(id).path
+        let run: ProjectRun
+        var workspace: WorkspaceBinding
+        if let step {
+            do { (run, workspace) = try ProjectWork.startStep(step, in: binding, chatFolder: chatFolder, room: id, token: cancellation) }
+            catch { finish(id, index, error: error.localizedDescription); return }
+        } else {
+            run = ProjectRun(room: id, binding: project, token: cancellation, fullAuto: fullAuto)
+            workspace = ProjectWork.workBinding(binding, project: project, chatFolder: chatFolder, run: run)
+            // The final result goes to the remote once, after the review and its fixes.
+            run.deferPush = !project.isDocuments && !project.isFolderless
+        }
+        let selected = run.binding
         // A sub-room's turn (Delegate.swift) gets its part and the Git tools of a sub-room; a main room's, when to split.
-        let sub = conversation(id).subOf
+        let sub = run.isStep ? nil : conversation(id).subOf
         let split = sub.flatMap { SplitStore.shared.split($0.room, $0.split) }, part = sub.flatMap { link in split?.parts.first { $0.n == link.n } }
         if let sub {
             run.isSubRoom = true
@@ -318,7 +329,6 @@ extension Discussion {
                 changeTurn(id, index, save: true) { $0.workspaceChanges = changes; $0.projectCommitted = run.committed; $0.projectPushed = run.pushed; $0.projectLog = run.log.isEmpty ? nil : run.log }
             }
         }
-        var workspace = ProjectWork.workBinding(binding, project: selected, chatFolder: Self.chatFolder(id).path, run: run)
         do {
             try run.validate(run.generation)
             // Only back up writable directories; native/MCP write roots are limited to these same roots.
@@ -341,7 +351,7 @@ extension Discussion {
         // Before the work starts: what the project looks like, so the review covers only this answer's changes
         // (also when another AI took over after a usage limit).
         let reviewRoot = selected.isFolderless ? Self.chatFolder(id).path : selected.root
-        let start = reviewers.isEmpty ? nil : selected.isDocuments ? backup.flatMap { ProjectSnapshot.documents(backup: $0, root: reviewRoot) } : ProjectSnapshot.take(root: reviewRoot)
+        let start = run.isStep || reviewers.isEmpty ? nil : selected.isDocuments ? backup.flatMap { ProjectSnapshot.documents(backup: $0, root: reviewRoot) } : ProjectSnapshot.take(root: reviewRoot)
         while !cancellation.isCancelled && Date() < run.deadline && !run.activeExpired {
             let eligible = model.accounts.filter { [.claude, .codex].contains($0.provider) && !excluded.contains($0.id) && Enterprise.permits($0, lock: chatLock) && (workers?.contains($0.id) ?? true) }
             let account = preferred.flatMap { wanted in eligible.first { $0.id == wanted } }
@@ -362,7 +372,7 @@ extension Discussion {
             changeTurn(id, index) { $0.status = working; $0.activity = nil; $0.lastActivityAt = Date() }
             func attempt(_ extra: String, transcript: String, fresh: String?, ran: AnswerModel = AnswerModel()) -> Result<String, Answerer.Failure> {
                 var instruction = soloInstruction(account, binding: workspace, helper: "",
-                                                  project: ProjectPart(root: selected.root, fullAuto: fullAuto, rules: projectRules, folderless: selected.isFolderless, documents: selected.isDocuments), chat: id)
+                                                  project: ProjectPart(root: selected.root, fullAuto: fullAuto, rules: projectRules, folderless: selected.isFolderless, documents: selected.isDocuments, step: run.isStep), chat: id)
                 if !extraNote.isEmpty { instruction += "\n" + extraNote }
                 if keepState { instruction += "\n" + Self.stateRule(current: Self.loadState(id)) }
                 instruction += "\n[Verified app checkpoint; do not repeat completed operations blindly]\n" + checkpoint + extra
@@ -455,7 +465,7 @@ extension Discussion {
                         }
                     }
                 }
-                for reviewerID in mentions.dropFirst() where reviewerID != account.id && !cancellation.isCancelled {
+                for reviewerID in mentions.dropFirst() where !run.isStep && reviewerID != account.id && !cancellation.isCancelled {
                     guard let reviewer = model.accounts.first(where: { $0.id == reviewerID }) else { continue }
                     run.nextAttempt()
                     var view = workspace

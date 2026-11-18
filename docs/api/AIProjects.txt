@@ -120,11 +120,12 @@ ProjectRun.binding | let binding: ProjectBinding
 ProjectRun.checkpoint(_:) | func checkpoint(_ note: String) -> String
 ProjectRun.committed | var committed: Bool
 ProjectRun.deadline | let deadline: Date
-ProjectRun.deferPush | var deferPush: Bool
+ProjectRun.deferPush | var deferPush: Bool { get set }
 ProjectRun.endAttempt() | func endAttempt()
 ProjectRun.generation | var generation: Int { get }
 ProjectRun.id | let id: UUID
-ProjectRun.init(room:binding:token:fullAuto:) | init(room: UUID, binding: ProjectBinding, token: DebateCancellation, fullAuto: Bool = false)
+ProjectRun.init(room:binding:token:fullAuto:) | convenience init(room: UUID, binding: ProjectBinding, token: DebateCancellation, fullAuto: Bool = false)
+ProjectRun.isStep | var isStep: Bool { get }
 ProjectRun.isSubRoom | var isSubRoom: Bool
 ProjectRun.log | var log: [String] { get }
 ProjectRun.nextAttempt() | func nextAttempt()
@@ -155,6 +156,7 @@ ProjectWork.register(_:) | static func register(_ run: ProjectRun)
 ProjectWork.release(_:notify:) | static func release(_ paths: [String], notify: Bool = true)
 ProjectWork.revokeTools | static var revokeTools: (UUID) -> Void { get set }
 ProjectWork.run(for:) | static func run(for context: ToolContext) -> ProjectRun?
+ProjectWork.startStep(_:in:chatFolder:room:token:) | static func startStep(_ tree: SubWork.Tree, in binding: WorkspaceBinding, chatFolder: String, room: UUID, token: DebateCancellation) throws -> (run: ProjectRun, workspace: WorkspaceBinding)
 ProjectWork.workBinding(_:project:chatFolder:run:) | static func workBinding(_ binding: WorkspaceBinding, project: ProjectBinding, chatFolder: String, run: ProjectRun) -> WorkspaceBinding
 RunMode | enum RunMode
 RunMode.aiThenPark | case aiThenPark

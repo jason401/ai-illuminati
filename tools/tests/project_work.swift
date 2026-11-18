@@ -193,7 +193,117 @@ func testProjectWork() {
     expect(((try? provider.pushDeferred(todo)) ?? nil)?.contains(finalHead) == true && todo.pushed
            && git(["rev-parse", "refs/heads/main"], at: origin) == finalHead, "the app pushes the final HEAD once")
     expect(!todoCall("git_status"), "the app's push ends the AI's tool sessions")
+    checkProjectStep(selected, origin: origin)
     print("PASS: plain-chat projects (repo locks, scoped tools, selective commits, push, dirty handoff, exact-SHA approval, named command approval, Stop and a TODO's one push)")
+}
+
+private func checkProjectStep(_ project: ProjectBinding, origin: URL) {
+    let tree = try! SubWork.goal(project, goal: UUID(), target: "main")
+    func git(_ args: [String], at root: String) -> String { try! ProjectProcess.git(args, root: root) }
+    let originalHead = git(["rev-parse", "HEAD"], at: project.root)
+    let originalStatus = git(["status", "--porcelain"], at: project.root)
+    let remoteRefs = git(["show-ref"], at: origin.path)
+    let model = AppModel()
+    let lead = Account(id: "step-claude", provider: .claude, name: "Fixture lead")
+    let reviewer = Account(id: "step-codex", provider: .codex, name: "Fixture reviewer")
+    model.accounts = [lead, reviewer]
+    let chat = Discussion(model: model)
+    let room = chat.currentID
+    chat.configure { $0.mode = 0; $0.soloAccountID = lead.id }
+    chat.change(room) { $0.workspace = WorkspaceBinding(roots: project.linkedRoots, project: project) }
+    var answerers: [String] = [], expired: ToolContext?
+    chat.workspaceAnswer = { account, prompt, workspace, _, _ in
+        answerers.append(account.id)
+        let context = ToolContext(room: room, roots: workspace.roots, projectRun: workspace.projectRunID, projectGeneration: workspace.projectGeneration)
+        expired = context
+        guard let run = ProjectWork.run(for: context) else { return .failure(.failed("Missing Step capability")) }
+        expect(run.isStep && run.binding.root == tree.path && workspace.project == run.binding && !workspace.fullAccessActive && workspace.level == .write,
+               "Step runs with a restricted workspace bound to the Goal work tree")
+        expect(workspace.roots.contains { $0.path == project.root && $0.writable != true }
+               && workspace.roots.contains { $0.path == tree.path && $0.writable == true }, "original checkout is linked read only")
+        expect(prompt.contains("[Goal Step]") && !prompt.contains("[Push at the end]"), "Step prompt asks for a local commit")
+        expect(ProjectWork.isHeld(tree.path), "Step holds the Goal work tree through the answer")
+        let competing = try? ProjectWork.acquire(WorkspaceBinding(roots: [WorkspaceRoot(path: tree.path, directory: true, writable: true)]))
+        expect(competing == nil, "a concurrent writer cannot acquire the Goal tree")
+        if let competing { ProjectWork.release(competing) }
+
+        let provider = GitLink.shared
+        let blocked = ["git_push", "git_switch", "git_branch", "git_pull", "git_publish_stable"]
+        let names = provider.tools(context: context).compactMap { $0["name"] as? String }
+        expect(blocked.allSatisfy { !names.contains($0) }, "Step tool list omits remote writes and branch changes")
+        for name in blocked {
+            let result = provider.call(name, ["name": "step-other"], context: context)
+            expect(result["isError"] as? Bool == true, "Step rejects direct \(name) calls")
+        }
+        run.deferPush = true
+        expect(!run.deferPush && !run.pushWanted && !run.pushed, "Step never enables or queues deferred push")
+        run.pushWanted = true // Even a stale request cannot reach the app's push path.
+        do {
+            _ = try provider.pushDeferred(run)
+            expect(false, "Step must refuse a deferred push")
+        } catch { expect(!run.pushed, "Step deferred push leaves the remote alone") }
+        run.pushWanted = false
+
+        // The named command runs in the Goal tree and cannot write the original checkout, even via an absolute path.
+        let script = """
+            import pathlib, subprocess, sys
+            pathlib.Path('step.txt').write_text('Goal edit')
+            for path in sys.argv[1:]:
+                try:
+                    pathlib.Path(path).write_text('escaped')
+                except PermissionError:
+                    continue
+                raise SystemExit('unexpected write: ' + path)
+            assert subprocess.run(['/usr/bin/git', 'push', 'origin', 'HEAD:refs/heads/step-escaped']).returncode != 0
+            assert subprocess.run(['/usr/bin/git', 'switch', '--detach', 'HEAD']).returncode != 0
+            print('Step command finished')
+            """
+        let config: [String: Any] = ["version": 1, "commands": ["selected": ["executable": "/usr/bin/python3",
+            "args": ["-c", script, project.root + "/step-escaped.txt", tree.path + "/.git", project.common + "/step-escaped"]]]]
+        try! JSONSerialization.data(withJSONObject: config).write(to: URL(fileURLWithPath: tree.path + "/.ai-illuminati.json"))
+        let selected = provider.call("project_run", ["name": "selected"], context: context)
+        let output = (selected["content"] as? [[String: Any]])?.first?["text"] as? String ?? ""
+        expect(selected["isError"] as? Bool == false && output.hasPrefix("exit=0\n") && output.contains("Step command finished"),
+               "named Step command runs within the Goal work tree sandbox: \(output)")
+        let commit = provider.call("git_commit", ["message": "Step change", "paths": ["step.txt"]], context: context)
+        expect(commit["isError"] as? Bool == false && run.committed, "Step commits its changes locally: \(commit)")
+        // A branch change by a separate Git client invalidates the live Step capability.
+        _ = git(["switch", "--detach", "HEAD"], at: tree.path)
+        let drifted = provider.call("git_status", [:], context: context)
+        expect(drifted["isError"] as? Bool == true, "Step tools reject a detached Goal worktree")
+        _ = git(["switch", tree.branch], at: tree.path)
+        return .success("Step done.")
+    }
+
+    expect(chat.startTurn(room: room, question: "Run the Step", mentioned: [lead.id, reviewer.id], forced: .work, step: tree) == nil,
+           "Step starts while the original checkout is already locked")
+    func waitForStep() {
+        let until = Date().addingTimeInterval(45)
+        while chat.anyRunning && Date() < until { RunLoop.main.run(until: Date().addingTimeInterval(0.03)) }
+        expect(!chat.anyRunning && !ProjectWork.isHeld(tree.path), "the Goal lease is free as soon as the Step ends")
+    }
+    waitForStep()
+    expect(answerers == [lead.id] && chat.current.turns.last?.error == nil && chat.current.turns.last?.projectCommitted == true,
+           "Step ends after the lead's local commit without a review")
+    expect(expired.map { GitLink.shared.call("git_status", [:], context: $0)["isError"] as? Bool == true } == true,
+           "the finished Step's tools are revoked")
+    expect(git(["branch", "--show-current"], at: tree.path) == tree.branch && git(["rev-parse", "HEAD"], at: tree.path) != tree.base
+           && git(["rev-parse", "HEAD"], at: project.root) == originalHead && git(["status", "--porcelain"], at: project.root) == originalStatus
+           && git(["show-ref"], at: origin.path) == remoteRefs, "Step changes only the local Goal branch")
+    chat.workspaceAnswer = { _, _, _, _, _ in .failure(.failed("Step fixture error")) }
+    expect(chat.startTurn(room: room, question: "Retry the Step", step: tree) == nil, "another Step can take the same Goal tree")
+    waitForStep()
+    expect(chat.current.turns.last?.error?.contains("Step fixture error") == true, "a failed Step also releases the Goal tree")
+    _ = git(["switch", "--detach", "HEAD"], at: tree.path)
+    chat.workspaceAnswer = { _, _, _, _, _ in
+        answerers.append("unexpected")
+        return .success("The Step should not start.")
+    }
+    expect(chat.startTurn(room: room, question: "Step off its branch", step: tree) == nil, "Step preflight runs on the worker")
+    waitForStep()
+    expect(chat.current.turns.last?.error != nil && answerers == [lead.id], "failed branch validation frees the lease before any AI runs")
+    _ = git(["switch", tree.branch], at: tree.path)
+    print("PASS: Goal Step isolation (read-only original checkout, branch and push restrictions, sandboxed commands, local commit, lease release)")
 }
 
 func testProjectHandoff() {

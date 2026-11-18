@@ -828,7 +828,7 @@ public final class Discussion: ObservableObject {
     // left as they are. On the main thread. Returns why nothing started, nil when the turn started.
     @discardableResult
     func startTurn(room id: UUID, question: String, mentioned: [String] = [], images: [ChatImage] = [],
-                   forced: RouteChoice? = nil, extra: String = "") -> String? {
+                   forced: RouteChoice? = nil, extra: String = "", step: SubWork.Tree? = nil) -> String? {
         guard host == nil, conversations.contains(where: { $0.id == id }) else { return L("대화를 찾지 못했어요.", "Chat not found.") }
         if runningRooms.contains(id) { return L("이 대화는 아직 답하는 중이에요.", "This chat is still answering.") }
         // Places kept for approved sub-rooms count for every other chat; a sub-room only needs a free place.
@@ -838,6 +838,9 @@ public final class Discussion: ObservableObject {
                      "Up to \(Self.maxRunning) chats can answer at once. Send when one finishes.")
         }
         let plain = Self.modernModes && configuration(of: id).mode == 0
+        if step != nil, !plain || conversation(id).workspace?.project?.isDocuments != false || conversation(id).subOf != nil {
+            return L("Step에는 Git 프로젝트의 단독 작업 채팅이 필요해요.", "A Step requires a solo Git project chat.")
+        }
         // Two or more members: in a plain chat they all answer every message (the lead first, the only one that may
         // change files); in a project chat the lead works and the others review (Peer.swift). @ replaces them for
         // this one message.
@@ -859,7 +862,7 @@ public final class Discussion: ObservableObject {
         // Route.asksViews), each with AIs the app picks (meetingTeam: two to four when that many can come). Not in a TODO's own run: its text is a task, not a way.
         let todoRun = TodoStore.shared.current.items.contains { $0.room == id && $0.state == .running }
         let autoMembers = plain && mentioned.isEmpty && memberIDs(room: id).isEmpty
-        let meeting = plain && (forced == .meeting || (forced == nil && !todoRun && Route.asksMeeting(question)))
+        let meeting = step == nil && plain && (forced == .meeting || (forced == nil && !todoRun && Route.asksMeeting(question)))
         // Asking several AIs in so many words ("2명 의견 줘") works in a plain chat too, with as many as asked for.
         let asked = !meeting && autoMembers && forced == nil && !todoRun ? Route.askedViewers(question) : nil
         let autoViews = !meeting && autoMembers && forced == nil && !todoRun && (asked != nil || (project && Route.found(Route.asksViews, question)))
@@ -909,6 +912,7 @@ public final class Discussion: ObservableObject {
         activeMaterials = chat.documents ?? []
         let solo = Self.modernModes && config.mode == 0
         activeWorkspace = solo ? soloBinding(id) : chat.workspace
+        if step != nil { activeWorkspace?.fullAuto = chat.workspace?.fullAuto }
         if !solo, var readOnly = activeWorkspace, readOnly.project != nil {
             readOnly.project = nil
             readOnly.level = .view
@@ -992,7 +996,10 @@ public final class Discussion: ObservableObject {
                 do { projectLocks = try ProjectWork.acquire(worker.activeWorkspace); return true }
                 catch { worker.finish(id, index, error: error.localizedDescription); return false }
             }
-            if meeting {
+            if let step {
+                worker.runSolo(question: question, history: history, rules: rules, config: config, mentions: doers,
+                               cancellation: cancellation, id: id, index: index, extra: extra, step: step)
+            } else if meeting {
                 worker.runMeeting(question: question, history: history, rules: rules, team: meetingTeam, room: meetingID,
                                   cancellation: cancellation, id: id, index: index)
             } else if pickedOpinion {

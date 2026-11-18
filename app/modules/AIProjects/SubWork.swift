@@ -38,7 +38,8 @@ public enum SubWork {
     private static func reply(_ args: [String], _ root: String, _ token: DebateCancellation?, timeout: TimeInterval = 120) throws -> ProjectProcess.Reply {
         try ProjectProcess.gitReply(["-c", "core.quotePath=false"] + args, root: root, token: token, timeout: timeout)
     }
-    private static func lines(_ text: String) -> [String] { text.split(separator: "\n").map(String.init).filter { !$0.isEmpty } }
+    // Paths from -z output: NUL apart, as they are (a tab, newline or quote in a name is not escaped).
+    private static func paths(_ text: String) -> [String] { text.split(separator: "\0").map(String.init).filter { !$0.isEmpty } }
     private static func isAncestor(_ a: String, _ b: String, _ root: String, _ token: DebateCancellation?) throws -> Bool {
         let r = try reply(["merge-base", "--is-ancestor", a, b], root, token)
         guard r.status <= 1 else { throw ProjectError.make("git merge-base failed: " + r.output) }
@@ -46,6 +47,12 @@ public enum SubWork {
     }
     private static func merging(_ root: String, _ token: DebateCancellation?) throws -> Bool {
         try reply(["rev-parse", "-q", "--verify", "MERGE_HEAD"], root, token).status == 0
+    }
+    // A merge the app starts (no merge was in progress: `clean` checked). Stopped or timed out midway, the merge it may have
+    // left is aborted without the token, which is cancelled by then; the error still goes back.
+    private static func started(_ args: [String], _ root: String, _ token: DebateCancellation?) throws -> ProjectProcess.Reply {
+        do { return try reply(args, root, token) }
+        catch { if (try? merging(root, nil)) == true { _ = try? git(["merge", "--abort"], root, nil) }; throw error }
     }
     private static func clean(_ root: String, _ token: DebateCancellation?, _ korean: String, _ english: String) throws {
         guard try git(["status", "--porcelain"], root, token).isEmpty, try !merging(root, token) else { throw fail(korean, english) }
@@ -132,18 +139,18 @@ public enum SubWork {
                           "The main work tree has uncommitted changes; commit them before merging.")
                 let head = try git(["rev-parse", "HEAD"], binding.root, token)
                 // Only the sub-room's own changes: from where it meets the main HEAD (after a resync, the main it took in).
-                let changed = lines(try git(["diff", "--name-only", "--no-renames", head + "..." + sha], binding.root, token))
+                let changed = paths(try git(["diff", "-z", "--name-only", "--no-renames", head + "..." + sha], binding.root, token))
                 let outside = changed.filter { path in !owned.contains { owns($0, path) } }
                 if try isAncestor(sha, head, binding.root, token) { return Merge(merged: head, conflicts: [], outside: outside, head: head) }
-                let check = try reply(["merge-tree", "--write-tree", "--name-only", "--no-messages", head, sha], binding.root, token)
+                let check = try reply(["merge-tree", "--write-tree", "-z", "--name-only", "--no-messages", head, sha], binding.root, token)
                 guard check.status <= 1 else { throw ProjectError.make("git merge-tree failed: " + check.output) }
                 if check.status == 1 {
                     var seen = Set<String>()
-                    let files = lines(check.output).dropFirst().filter { seen.insert($0).inserted }
+                    let files = paths(check.output).dropFirst().filter { seen.insert($0).inserted }
                     return Merge(merged: nil, conflicts: Array(files), outside: outside, head: head)
                 }
                 let message = "Merge \(tree.branch) (\(sha.prefix(10)))"
-                let result = try reply(["merge", "--no-ff", "--no-edit", "-m", message, sha], binding.root, token)
+                let result = try started(["merge", "--no-ff", "--no-edit", "-m", message, sha], binding.root, token)
                 if result.status != 0 {
                     // The check passed but Git did not: undo only the merge just started (no reset, no stash).
                     if try merging(binding.root, token) { _ = try? git(["merge", "--abort"], binding.root, token) }
@@ -171,9 +178,9 @@ public enum SubWork {
                           "The sub-room's work tree has uncommitted changes; main was not merged into it.")
                 guard try git(["branch", "--show-current"], tree.path, token) == tree.branch else { throw ProjectError.make("The sub-room's work tree is not on " + tree.branch) }
                 let main = try git(["rev-parse", "HEAD"], binding.root, token)
-                let result = try reply(["merge", "--no-ff", "--no-edit", "-m", "Merge main (\(main.prefix(10))) into \(tree.branch)", main], tree.path, token)
+                let result = try started(["merge", "--no-ff", "--no-edit", "-m", "Merge main (\(main.prefix(10))) into \(tree.branch)", main], tree.path, token)
                 if result.status == 0 { return [] }
-                let conflicts = lines(try git(["diff", "--name-only", "--diff-filter=U"], tree.path, token))
+                let conflicts = paths(try git(["diff", "-z", "--name-only", "--diff-filter=U"], tree.path, token))
                 if conflicts.isEmpty {
                     if try merging(tree.path, token) { _ = try? git(["merge", "--abort"], tree.path, token) }
                     throw ProjectError.make(L("최신 메인을 넣다가 예상과 달리 실패해 방금 시작한 merge만 되돌렸어요: ", "Merging main into the sub-room failed unexpectedly; only that merge was aborted: ") + result.output)

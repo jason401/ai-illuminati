@@ -1900,3 +1900,108 @@ func testWorkTreeLocks() {
     try? FileManager.default.removeItem(at: base)
     print("PASS: work tree locks (two work trees at once, one writer per work tree, refs lock: push/pull wait, commit goes, short wait gives up, sub/ refused, another instance's lock files, older busy texts)")
 }
+
+// Sub-room work trees (SUBROOM_PLAN 3, 5): made outside the repository under the test home, merged by the app with a
+// conflict check against the main HEAD as it is now, removed only once merged and pushed.
+func testSubTrees() {
+    let base = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("subtree-fixture-" + UUID().uuidString).resolvingSymlinksInPath()
+    let root = base.appendingPathComponent("repo"), origin = base.appendingPathComponent("origin.git")
+    try! FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+    func git(_ args: [String], at folder: String) -> String { try! ProjectProcess.git(args, root: folder) }
+    func write(_ text: String, _ name: String, in folder: String) { try! text.write(toFile: folder + "/" + name, atomically: true, encoding: .utf8) }
+    func commit(_ folder: String, _ message: String) { _ = git(["add", "-A"], at: folder); _ = git(["commit", "-q", "-m", message], at: folder) }
+    _ = git(["init", "--bare", origin.path], at: base.path); _ = git(["init", "-b", "main", root.path], at: base.path)
+    let main = root.path
+    _ = git(["config", "user.name", "Fixture"], at: main); _ = git(["config", "user.email", "fixture@example.invalid"], at: main)
+    _ = git(["remote", "add", "origin", origin.path], at: main)
+    write("first\n", "a.txt", in: main); commit(main, "First")
+    let first = git(["rev-parse", "HEAD"], at: main)
+    write("b\n", "b.txt", in: main); write("one\ntwo\nthree\n", "shared.txt", in: main); commit(main, "Second")
+    _ = git(["push", "-q", "-u", "origin", "main"], at: main)
+    let binding = try! ProjectProcess.inspect(main)
+    func failure(_ body: () throws -> Any) -> String? { do { _ = try body(); return nil } catch { return error.localizedDescription } }
+
+    // Made only from a clean main work tree; outside the repository, under the test home, never the real app data.
+    write("dirty\n", "a.txt", in: main)
+    expect(failure { try SubWork.create(binding, split: "S1", n: 1) } != nil, "no split while main has uncommitted changes")
+    _ = git(["checkout", "--", "a.txt"], at: main)
+    expect(failure { try SubWork.create(binding, split: "../x", n: 1) } != nil && failure { try SubWork.create(binding, split: "S1", n: 0) } != nil, "split id and number checked")
+    let start = git(["rev-parse", "HEAD"], at: main)
+    let one = try! SubWork.create(binding, split: "S1", n: 1), two = try! SubWork.create(binding, split: "S1", n: 2)
+    let support = URL(fileURLWithPath: AccountStore.supportDir).resolvingSymlinksInPath().path
+    let real = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support/AI Illuminati").resolvingSymlinksInPath().path
+    expect(one.path.hasPrefix(support + "/worktrees/") && one.path.hasSuffix("/S1-1") && !one.path.hasPrefix(main + "/") && support != real && !one.path.hasPrefix(real + "/"),
+           "the work tree is in the test home's app folder, outside the repository: \(one.path)")
+    expect(one.branch == "sub/S1/1" && two.branch == "sub/S1/2" && one.base == start && git(["branch", "--show-current"], at: one.path) == "sub/S1/1"
+           && git(["rev-parse", "HEAD"], at: two.path) == start, "branch sub/<split>/<n> from the main HEAD")
+    expect(failure { try SubWork.create(binding, split: "S1", n: 1) } != nil, "the same sub-room twice is refused")
+
+    // A sub-room cannot push: sub/ is outside the push list.
+    let subRun = ProjectRun(room: UUID(), binding: try! ProjectProcess.inspect(one.path), token: DebateCancellation())
+    ProjectWork.register(subRun); subRun.nextAttempt()
+    let pushed = GitLink.shared.call("git_push", [:], context: ToolContext(room: subRun.room, roots: [], projectRun: subRun.id, projectGeneration: subRun.generation))
+    ProjectWork.finish(subRun)
+    expect(pushed["isError"] as? Bool == true && "\(pushed)".contains("Push supports"), "a sub/ branch is not pushed: \(pushed)")
+
+    // Two sub-rooms from the same start, no conflict; the second is checked against the HEAD after the first merge.
+    write("one changed\n", "a.txt", in: one.path); commit(one.path, "Sub 1")
+    write("b changed\n", "b.txt", in: two.path); write("extra\n", "extra.txt", in: two.path); commit(two.path, "Sub 2")
+    let sha1 = git(["rev-parse", "HEAD"], at: one.path), sha2 = git(["rev-parse", "HEAD"], at: two.path)
+    expect(failure { try SubWork.merge(binding, one, sha: sha1, owned: ["a.txt"], reported: false) } != nil, "not reported: refused")
+    expect(failure { try SubWork.merge(binding, one, sha: first, owned: ["a.txt"], reported: true) }?.contains(L("출발 커밋", "start")) == true, "an SHA not after the start is refused")
+    expect(failure { try SubWork.merge(binding, one, sha: sha2, owned: ["a.txt"], reported: true) } != nil, "another sub-room's SHA is refused")
+    let writing = try! ProjectWork.acquire(WorkspaceBinding(roots: [WorkspaceRoot(path: one.path, directory: true, writable: true)], level: .execute))
+    expect(failure { try SubWork.merge(binding, one, sha: sha1, owned: ["a.txt"], reported: true) } != nil, "a sub-room still writing its tree is not merged")
+    ProjectWork.release(writing, notify: false)
+    write("main dirty\n", "b.txt", in: main)
+    expect(failure { try SubWork.merge(binding, one, sha: sha1, owned: ["a.txt"], reported: true) } != nil && git(["rev-parse", "HEAD"], at: main) == start, "a dirty main is not merged into")
+    _ = git(["checkout", "--", "b.txt"], at: main)
+    let m1 = try! SubWork.merge(binding, one, sha: sha1, owned: ["a.txt"], reported: true)
+    let after1 = git(["rev-parse", "HEAD"], at: main)
+    expect(m1.merged == after1 && m1.head == start && m1.conflicts.isEmpty && m1.outside.isEmpty, "merged without warnings: \(m1)")
+    expect(git(["rev-list", "--parents", "-n", "1", "HEAD"], at: main).split(separator: " ").count == 3 && git(["log", "-1", "--format=%s"], at: main).contains("sub/S1/1"), "a --no-ff merge commit")
+    let m2 = try! SubWork.merge(binding, two, sha: sha2, owned: ["b.txt"], reported: true)
+    expect(m2.head == after1 && m2.merged == git(["rev-parse", "HEAD"], at: main) && m2.outside == ["extra.txt"] && m2.conflicts.isEmpty,
+           "the second is checked against the HEAD after the first; a file outside its own is a warning, still merged: \(m2)")
+    expect(try! SubWork.merge(binding, two, sha: sha2, owned: ["b.txt"], reported: true).merged == m2.merged, "merging it again changes nothing")
+
+    // Two sub-rooms changing the same line: the first merges, the second's check against the new HEAD finds the conflict.
+    let three = try! SubWork.create(binding, split: "S2", n: 1), four = try! SubWork.create(binding, split: "S2", n: 2)
+    write("one\nTWO by three\nthree\n", "shared.txt", in: three.path); commit(three.path, "Sub 3")
+    write("one\ntwo by four\nthree\n", "shared.txt", in: four.path); write("four\n", "src-four.txt", in: four.path); commit(four.path, "Sub 4")
+    let sha3 = git(["rev-parse", "HEAD"], at: three.path), sha4 = git(["rev-parse", "HEAD"], at: four.path)
+    expect(try! SubWork.merge(binding, three, sha: sha3, owned: ["shared.txt"], reported: true).merged != nil, "the first of the two merges")
+    let before4 = git(["rev-parse", "HEAD"], at: main)
+    let m4 = try! SubWork.merge(binding, four, sha: sha4, owned: ["shared.txt", "src-*"], reported: true)
+    expect(m4.merged == nil && m4.conflicts == ["shared.txt"] && m4.head == before4 && m4.outside.isEmpty, "conflict: nothing merged, the files listed: \(m4)")
+    expect(git(["rev-parse", "HEAD"], at: main) == before4 && git(["status", "--porcelain"], at: main).isEmpty
+           && (try? ProjectProcess.git(["rev-parse", "-q", "--verify", "MERGE_HEAD"], root: main)) == nil, "main untouched by the check")
+
+    // delegate_resync: main goes into the sub-room's branch, the conflict markers stay for the sub-room.
+    let resync = try! SubWork.resync(binding, four)
+    expect(resync == ["shared.txt"] && (try! String(contentsOfFile: four.path + "/shared.txt", encoding: .utf8)).contains("<<<<<<<")
+           && (try? ProjectProcess.git(["rev-parse", "-q", "--verify", "MERGE_HEAD"], root: four.path)) != nil, "resync leaves the conflict: \(resync)")
+    write("one\nTWO by three and four\nthree\n", "shared.txt", in: four.path); commit(four.path, "Resolve")
+    let m4b = try! SubWork.merge(binding, four, sha: git(["rev-parse", "HEAD"], at: four.path), owned: ["shared.txt", "src-*"], reported: true)
+    expect(m4b.merged != nil && m4b.conflicts.isEmpty && m4b.outside.isEmpty, "after the resync it merges; main's own files are not counted as its: \(m4b)")
+    expect(try! SubWork.resync(binding, three).isEmpty, "a resync without conflicts merges cleanly")
+    expect(String(git(["show", "HEAD:shared.txt"], at: main)).contains("three and four"), "the resolved text is in main")
+
+    // Removed only once merged and pushed, with nothing uncommitted; failure leaves tree and branch.
+    expect(failure { try SubWork.remove(binding, one) } != nil && FileManager.default.fileExists(atPath: one.path), "not pushed yet: the tree stays")
+    _ = git(["push", "-q", "origin", "main"], at: main)
+    write("left\n", "left.txt", in: two.path)
+    expect(failure { try SubWork.remove(binding, two) } != nil && FileManager.default.fileExists(atPath: two.path + "/left.txt"), "an uncommitted file keeps the tree")
+    try! FileManager.default.removeItem(atPath: two.path + "/left.txt")
+    // three took main again in its resync after its merge: that tip is not in main, so it stays.
+    expect(failure { try SubWork.remove(binding, three) } != nil && FileManager.default.fileExists(atPath: three.path), "a tip not in the pushed main stays")
+    for tree in [one, two, four] { expect(failure { try SubWork.remove(binding, tree) } == nil, "removed \(tree.branch)") }
+    expect(!FileManager.default.fileExists(atPath: one.path) && !FileManager.default.fileExists(atPath: four.path), "folders gone")
+    let branches = git(["for-each-ref", "--format=%(refname:short)", "refs/heads/sub/"], at: main), trees = git(["worktree", "list", "--porcelain"], at: main)
+    expect(branches == "sub/S2/1" && !trees.contains(one.path) && !trees.contains(two.path) && !trees.contains(four.path) && trees.contains(three.path),
+           "branches and work trees gone, the unmerged one kept: \(branches) / \(trees)")
+    let hash = (one.path as NSString).deletingLastPathComponent
+    expect(!FileManager.default.fileExists(atPath: real + "/worktrees/" + (hash as NSString).lastPathComponent), "nothing in the real app data")
+    try? FileManager.default.removeItem(at: base)
+    print("PASS: sub-room work trees (outside the repo under the test home, clean main, no sub/ push, merge-tree check against the current HEAD, conflicts listed and not merged, outside files warned, SHA after the start, resync markers, removed only when merged and pushed)")
+}

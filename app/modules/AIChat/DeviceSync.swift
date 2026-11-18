@@ -165,12 +165,13 @@ public final class DeviceSync: ObservableObject {
     // MARK: This Mac's phone page for the other Macs
 
     // The app tells what its phone page offers now: an address while the page is on, nil when it is off.
-    // The same address again still writes: a remote.json taken down from outside comes back (writeConnection reads
-    // the file and leaves it alone when it matches). With the page off nothing is removed again, so a file written
-    // by hand stays.
+    // The same address again still writes while connecting is on: a remote.json taken down from outside comes back
+    // (writeConnection reads the file and leaves it alone when it matches). Otherwise only a change writes, so a file
+    // written by hand is not removed at every check.
     public func offerConnection(_ offered: RemoteConnection?) {
         onMain {
-            if offered == nil, self.connection == nil { return }
+            let same = offered.map { $0.sameTarget(self.connection) } ?? (self.connection == nil)
+            if same, offered == nil || !(self.settings.enabled && self.settings.sharesConnection) { return }
             self.connection = offered
             self.writeConnection()
         }

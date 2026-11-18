@@ -554,9 +554,11 @@ public struct TodoData: Codable, Equatable {
         }
         return ids
     }
-    // A TODO it waits for is far enough: done, or waiting for the user's check unless the list checks each one.
+    // A TODO it waits for is far enough: done, or waiting for the user's check unless the list checks each one. A Goal with
+    // parts only when done: its last Milestone is on the remote (finishMilestone), not before.
     public func satisfied(_ blocker: TodoItem, for item: TodoItem) -> Bool {
-        blocker.state == .done || (blocker.state == .review && (list(item.listID)?.mode ?? .aiThenPark) != .checkEach)
+        if blocker.role == .goal, items.contains(where: { $0.goal == blocker.id }) { return blocker.state == .done }
+        return blocker.state == .done || (blocker.state == .review && (list(item.listID)?.mode ?? .aiThenPark) != .checkEach)
     }
     public func mode(_ item: TodoItem) -> RunMode { list(item.listID)?.mode ?? .aiThenPark }
     // What a TODO (`except`; nil for a new one) may be linked to wait for: the unfinished TODOs of its list in board order, then
@@ -646,6 +648,24 @@ public struct TodoData: Codable, Equatable {
     mutating func readyParts(_ goal: UUID) {
         for i in items.indices where items[i].goal == goal && items[i].heldPart && items[i].state == .draft
             && items[i].after.allSatisfy({ item($0)?.state == .done }) { items[i].state = .ready }
+    }
+    // A Milestone whose candidate is on the remote (phase confirmation, TODO structure 13) is done and the next parts are
+    // ready. When it was the Goal's last part not done, the Goal is done too (TODOs waiting for it by `after` go on); true
+    // then. A candidate not confirmed is refused; a Milestone already done changes nothing.
+    @discardableResult
+    mutating func finishMilestone(_ id: UUID) throws -> Bool {
+        guard let i = items.firstIndex(where: { $0.id == id }), items[i].role == .milestone, let goal = items[i].goal else { throw TodoError.notFound }
+        let goalDone = { (data: TodoData) in data.item(goal)?.state == .done }
+        guard items[i].state != .done else { return goalDone(self) }
+        guard let c = items[i].milestoneCandidate, c.phase == .confirmation, c.verifiedSHA != nil else { throw TodoError.notEditable }
+        guard items[i].state != .cancelled else { throw TodoError.notEditable }
+        items[i].state = .done; items[i].question = nil; items[i].report = nil; items[i].lastError = nil; items[i].attempts = 0
+        items[i].interrupted = false; items[i].delegated = 0; items[i].aiHelped = 0
+        readyParts(goal)
+        guard let g = items.firstIndex(where: { $0.id == goal }), items[g].state != .cancelled,
+              items.allSatisfy({ $0.goal != goal || $0.state == .done }) else { return goalDone(self) }
+        items[g].state = .done; items[g].question = nil; items[g].report = nil; items[g].lastError = nil
+        return true
     }
 
     // A TODO put in front of `before` (nil: at the end) of its own list; `before` in another list is not found.
@@ -822,6 +842,24 @@ public final class TodoStore: ObservableObject {
             data.lists[l].order = order
             return made
         }
+    }
+    // TODO structure 13 (off until 16): a Milestone's push, judged by the remote and saved on the TODO whatever the outcome,
+    // so a run again after a lost reply, a timeout or a restart reads the remote first. On the remote: the Milestone is done
+    // and, as its Goal's last part, the Goal too, then the Goal's work tree and branch go (a cleanup that fails is done on
+    // the next run). Still at the base: MilestonePushPending, in the push phase. Moved on: MilestoneRemoteMoved, at integration.
+    @discardableResult
+    func pushMilestone(_ id: UUID, _ binding: ProjectBinding, _ tree: SubWork.Tree, token: DebateCancellation? = nil) throws -> String {
+        guard let item = current.item(id), item.role == .milestone, let saved = item.milestoneCandidate else { throw TodoError.notFound }
+        var candidate = saved
+        func keep(_ data: inout TodoData) {
+            if let i = data.items.firstIndex(where: { $0.id == id }), data.items[i].milestoneCandidate == saved { data.items[i].milestoneCandidate = candidate }
+        }
+        let reply: String
+        do { reply = try GitLink.pushMilestone(binding, tree, candidate: &candidate, token: token) }
+        catch { try? update { keep(&$0) }; throw error }
+        let goalDone = try update { data -> Bool in keep(&data); return try data.finishMilestone(id) }
+        if goalDone { try SubWork.removeGoal(binding, tree, target: candidate.branch, token: token) }
+        return reply
     }
     static func sameTitle(_ a: String, _ b: String) -> Bool {
         a.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(b.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame

@@ -197,6 +197,7 @@ func testProjectWork() {
     checkGoalPushGuard(selected, origin: origin)
     checkMilestoneFullTest(selected)
     checkMilestonePush(selected, origin: origin)
+    checkMilestonePushRecovery(selected, origin: origin)
     print("PASS: plain-chat projects (repo locks, scoped tools, selective commits, push, dirty handoff, exact-SHA approval, named command approval, Stop and a TODO's one push)")
 }
 
@@ -569,6 +570,97 @@ private func checkMilestonePush(_ project: ProjectBinding, origin: URL) {
     _ = git(["tag", "-d", "milestone-tag"])
     try? FileManager.default.removeItem(atPath: log)
     print("PASS: Milestone push (verified SHA only, Goal branch never the target, remote race back to integration, required pre-push hook, push URL checked, explicit fast-forward without tags)")
+}
+
+// TODO structure 13: a Milestone's push is judged by what the remote holds. Unreachable or refused with the remote still at
+// the base: the push phase again; moved on: back to integration; already on it (a lost reply, a restart): done without
+// pushing again, the Goal done with it, its work tree and branch gone, and the TODO waiting for the Goal goes on.
+private func checkMilestonePushRecovery(_ project: ProjectBinding, origin: URL) {
+    func git(_ args: [String], at root: String = project.root) -> String { try! ProjectProcess.git(args, root: root) }
+    func write(_ text: String, _ name: String, in folder: String) { try! text.write(toFile: folder + "/" + name, atomically: true, encoding: .utf8) }
+    func commit(_ folder: String, _ message: String) { _ = git(["add", "-A"], at: folder); _ = git(["commit", "-q", "-m", message], at: folder) }
+    func remoteMain() -> String { git(["rev-parse", "refs/heads/main"], at: origin.path) }
+    func failure(_ body: () throws -> Any) -> Error? { do { _ = try body(); return nil } catch { return error } }
+    let goalPathBefore = TodoData.goalPath
+    TodoData.goalPath = true
+    defer { TodoData.goalPath = goalPathBefore }
+    let common = git(["rev-parse", "--path-format=absolute", "--git-common-dir"])
+    let log = common + "/milestone-hook-log", stop = common + "/milestone-hook-fail"
+    defer { try? FileManager.default.removeItem(atPath: log); try? FileManager.default.removeItem(atPath: stop) }
+    func hookRuns() -> Int { ((try? String(contentsOfFile: log, encoding: .utf8)) ?? "").split(separator: "\n").count }
+    let todos = TodoStore(url: URL(fileURLWithPath: AccountStore.home).appendingPathComponent("milestone-recovery-\(UUID().uuidString).json"))
+    let goal = try! todos.add(title: "Goal", project: project, projectName: "P")
+    let parts = try! todos.savePlan(goal: goal.id, TodoPlan(parts: [TodoPlan.Part(key: "s", role: .step, title: "S", tests: ["testS"]),
+                                                                    TodoPlan.Part(key: "m", role: .milestone, title: "M", after: ["s"])]))
+    let (step, milestone) = (parts[0].id, parts[1].id)
+    let waiting = try! todos.add(title: "After the Goal", project: ProjectBinding(root: "/tmp/milestone-after", common: "", remote: "", remoteURL: ""),
+                                 projectName: "W", after: [goal.id])
+    try! todos.change(waiting.id) { $0.state = .ready }
+    func opens() -> Bool { todos.current.eligible(held: { _ in false }).contains { $0.id == waiting.id } }
+    func saved() -> TodoItem.MilestoneCandidate { todos.current.item(milestone)!.milestoneCandidate! }
+    // The Goal starts on the remote main of the last check, whose committed .githooks/pre-push logs and can refuse.
+    let tree = try! SubWork.goal(project, goal: goal.id, target: "main")
+    write("recovery\n", "recovery.txt", in: tree.path); commit(tree.path, "Goal Step to recover")
+    try! todos.update { data in
+        let i = data.items.firstIndex { $0.id == step }!
+        data.items[i].state = .done; data.items[i].stepSHA = git(["rev-parse", "HEAD"], at: tree.path); data.readyParts(goal.id)
+    }
+    func verify() -> (base: String, candidate: String) {
+        let integrated = try! SubWork.integrate(project, tree, target: "main")
+        var c = TodoItem.MilestoneCandidate(branch: "main", baseSHA: integrated.base, candidateSHA: integrated.candidate)
+        c.recordReview(for: integrated.candidate); c.recordTest(for: integrated.candidate); c.setPhase(.test)
+        try! todos.change(milestone) { $0.milestoneCandidate = c }
+        return integrated
+    }
+    var integrated = verify()
+    let start = remoteMain(), runs = hookRuns()
+
+    // Temporary failures with the candidate and base unchanged: the remote unreachable, then the push itself refused.
+    let away = origin.path + ".away"
+    try! FileManager.default.moveItem(atPath: origin.path, toPath: away)
+    let unreachable = failure { try todos.pushMilestone(milestone, project, tree) }
+    try! FileManager.default.moveItem(atPath: away, toPath: origin.path)
+    expect(unreachable is GitLink.MilestonePushPending && saved().phase == .push && saved().verifiedSHA == integrated.candidate
+           && todos.current.item(milestone)?.state == .ready && hookRuns() == runs,
+           "an unreachable remote keeps the verified candidate in the push phase: \(String(describing: unreachable))")
+    FileManager.default.createFile(atPath: stop, contents: Data())
+    let refused = failure { try todos.pushMilestone(milestone, project, tree) }
+    try! FileManager.default.removeItem(atPath: stop)
+    expect(refused is GitLink.MilestonePushPending && refused?.localizedDescription.contains("fixture hook refused") == true
+           && saved().phase == .push && saved().verifiedSHA == integrated.candidate && remoteMain() == start && !opens(),
+           "a failed push with the remote still at the base waits in the push phase: \(String(describing: refused))")
+
+    // The remote moved on meanwhile: back to integration on the new remote SHA, nothing pushed, the Milestone not done.
+    let other = origin.deletingLastPathComponent().appendingPathComponent("milestone-recovery-" + UUID().uuidString).path
+    defer { try? FileManager.default.removeItem(atPath: other) }
+    _ = git(["clone", "-q", origin.path, other], at: origin.deletingLastPathComponent().path)
+    _ = git(["config", "user.name", "Fixture"], at: other); _ = git(["config", "user.email", "fixture@example.invalid"], at: other)
+    write("ahead\n", "ahead.txt", in: other); commit(other, "Remote moved on before the retry"); _ = git(["push", "-q", "origin", "main"], at: other)
+    let raced = remoteMain()
+    let moved = failure { try todos.pushMilestone(milestone, project, tree) }
+    expect((moved as? GitLink.MilestoneRemoteMoved)?.remote == raced && saved().phase == .integration && saved().candidateSHA == nil
+           && saved().baseSHA == raced && remoteMain() == raced && todos.current.item(milestone)?.state == .ready && FileManager.default.fileExists(atPath: tree.path),
+           "a remote that moved on sends the saved candidate back to integration: \(String(describing: moved))")
+
+    // Already on the remote: pushed (here by hand, as a push whose reply was lost) and built on since. The next run only
+    // confirms it: no second push, the Milestone and its Goal done, the Goal's tree and branch gone, the waiting TODO open.
+    integrated = verify()
+    try! todos.change(milestone) { $0.milestoneCandidate?.setPhase(.push) }
+    _ = git(["push", "-q", "origin", integrated.candidate + ":refs/heads/main"])
+    _ = git(["pull", "-q", "--ff-only", "origin", "main"], at: other)
+    write("later\n", "later.txt", in: other); commit(other, "Built on the landed Milestone"); _ = git(["push", "-q", "origin", "main"], at: other)
+    let before = hookRuns()
+    let landed = Result { try todos.pushMilestone(milestone, project, tree) }
+    expect(((try? landed.get()) ?? "").contains("Already on") && hookRuns() == before && saved().phase == .confirmation,
+           "a candidate already in the remote branch is confirmed without pushing again: \(landed)")
+    expect(todos.current.item(milestone)?.state == .done && todos.current.item(goal.id)?.state == .done && opens(),
+           "the last Milestone on the remote ends the Goal and opens the TODO waiting for it")
+    expect(!FileManager.default.fileExists(atPath: tree.path)
+           && (try? ProjectProcess.git(["rev-parse", "--verify", "refs/heads/" + tree.branch], root: project.root)) == nil
+           && (try? ProjectProcess.git(["config", "--get", "branch." + tree.branch + ".todogoal"], root: project.root)) == nil,
+           "the done Goal's work tree, branch and branch config are cleaned up")
+    _ = git(["fetch", "-q", "origin"])
+    print("PASS: Milestone push recovery (judged by the remote: unreachable or refused at the base retries the push, moved on back to integration, already landed confirmed, Goal done and cleaned up)")
 }
 
 func testProjectHandoff() {

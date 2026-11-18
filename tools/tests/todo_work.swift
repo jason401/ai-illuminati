@@ -2472,5 +2472,48 @@ func testTodoSteps() {
     scheduler.tick()
     expect(state(d) == .done && state(m) == .ready && store.current.items.allSatisfy { $0.state != .running },
            "the last step readies the milestone, which waits for the goal path (TODO structure 16)")
+    checkMilestoneDone()
     print("PASS: TODO steps (done on a tested local commit, next ready, pause/stop at a step's end, restart from the last step's commit)")
+}
+
+// TODO structure 13: a Milestone is done only once its candidate is on the remote, its Goal only with its last Milestone,
+// and a TODO of another list waiting for the Goal by `after` goes on only then.
+private func checkMilestoneDone() {
+    let store = TodoStore(url: todoStoreFile("milestone-done"))
+    let project = ProjectBinding(root: "/tmp/todo-milestone-done", common: "", remote: "", remoteURL: "")
+    let elsewhere = ProjectBinding(root: "/tmp/todo-milestone-after", common: "", remote: "", remoteURL: "")
+    let goal = try! store.add(title: "goal", project: project, projectName: "G")
+    typealias Part = TodoPlan.Part
+    let parts = try! store.savePlan(goal: goal.id, TodoPlan(parts: [Part(key: "a", role: .step, title: "A", tests: ["testA"]),
+                                                                 Part(key: "m1", role: .milestone, title: "M1", after: ["a"]),
+                                                                 Part(key: "b", role: .step, title: "B", after: ["m1"], tests: ["testB"]),
+                                                                 Part(key: "m2", role: .milestone, title: "M2", after: ["b"])]))
+    let (a, m1, b, m2) = (parts[0].id, parts[1].id, parts[2].id, parts[3].id)
+    let waiting = try! store.add(title: "after the goal", project: elsewhere, projectName: "W", after: [goal.id])
+    try! store.change(waiting.id) { $0.state = .ready }
+    func state(_ id: UUID) -> TodoItem.State? { store.current.item(id)?.state }
+    func opens() -> Bool { store.current.eligible(held: { _ in false }).contains { $0.id == waiting.id } }
+    func candidate(_ sha: String, _ phase: TodoItem.MilestoneCandidate.Phase) -> TodoItem.MilestoneCandidate {
+        var c = TodoItem.MilestoneCandidate(branch: "main", baseSHA: String(repeating: "0", count: 40), candidateSHA: sha)
+        c.recordReview(for: sha); c.recordTest(for: sha); c.setPhase(phase); return c
+    }
+    try! store.update { data in
+        let i = data.items.firstIndex { $0.id == a }!
+        data.items[i].state = .done; data.items[i].stepSHA = "aaa111"; data.readyParts(goal.id)
+    }
+    // Pushed but not confirmed on the remote (a lost reply, a restart in the push phase): not done.
+    try! store.change(m1) { $0.milestoneCandidate = candidate(String(repeating: "1", count: 40), .push) }
+    expect((try? store.update { try $0.finishMilestone(m1) }) == nil && state(m1) == .ready && state(b) == .draft,
+           "a candidate not confirmed on the remote does not end its Milestone")
+    try! store.change(m1) { $0.milestoneCandidate?.setPhase(.confirmation) }
+    let first = try! store.update { try $0.finishMilestone(m1) }
+    expect(!first && state(m1) == .done && state(b) == .ready && state(goal.id) != .done && !opens(),
+           "a Milestone on the remote is done and the next part ready; with parts left the Goal stays open and so does what waits for it")
+    try! store.change(goal.id) { $0.state = .review }
+    expect(!opens(), "a Goal with parts is never passed by waiting for the check, only when done")
+    try! store.update { data in let i = data.items.firstIndex { $0.id == b }!; data.items[i].state = .done; data.items[i].stepSHA = "bbb222"; data.readyParts(goal.id) }
+    try! store.change(m2) { $0.milestoneCandidate = candidate(String(repeating: "2", count: 40), .confirmation) }
+    let last = try! store.update { try $0.finishMilestone(m2) }
+    expect(last && state(m2) == .done && state(goal.id) == .done && opens(), "the last Milestone on the remote ends the Goal and opens the TODO waiting for it")
+    expect((try? store.update { try $0.finishMilestone(m2) }) == true && state(goal.id) == .done, "a Milestone already done changes nothing")
 }

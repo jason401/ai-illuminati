@@ -811,12 +811,24 @@ public final class GitLink: ToolProvider {
             L("원격 대상 branch가 리뷰한 기준에서 앞서 나가 push하지 않았어요. 새 원격 커밋과 다시 통합해요: ", "The remote target branch moved past the reviewed base; nothing pushed. Integrating the new remote commit again: ") + remote
         }
     }
+    // The push did not go through (network, timeout, the hook) and the remote target branch is still the base: the candidate
+    // stays verified in the push phase, and the next run starts again from the push (TODO structure 13).
+    struct MilestonePushPending: LocalizedError, Equatable {
+        var reason: String
+        var errorDescription: String? {
+            L("Milestone push가 끝나지 않았어요. 후보와 기준이 그대로라 push부터 다시 해요: ", "The Milestone's push did not finish; the candidate and base are unchanged, so it retries from the push: ") + reason
+        }
+    }
     // TODO structure 12 (off until 16): a Milestone's push. Only the candidate SHA its review and full test both passed, only
     // while the remote target branch (never the Goal branch) is still the base they were measured from, as that exact SHA to
     // refs/heads/<target>: a fast-forward, never forced (no +, no --force*; a non-fast-forward is the remote's refusal). Unlike
     // the app's other Git commands the repository's pre-push hook runs as is (the candidate's .githooks, else its
     // core.hooksPath), from the Goal's tree so it checks the candidate itself. Throws MilestoneRemoteMoved after resetting the
     // candidate when the remote moved on; any other refusal leaves it as it was.
+    // TODO structure 13: the outcome is what the remote holds, not the push's reply. Before pushing and after any failure
+    // (a lost reply, a timeout, an app that quit mid-push and runs this again) the remote target branch is read again: one
+    // that contains the candidate is a push already done (phase confirmation), one still at the base retries from the push
+    // (MilestonePushPending), any other commit sends it back to integration (MilestoneRemoteMoved).
     static func pushMilestone(_ binding: ProjectBinding, _ tree: SubWork.Tree, candidate: inout TodoItem.MilestoneCandidate,
                               token: DebateCancellation? = nil) throws -> String {
         func refuse(_ korean: String, _ english: String) -> Error { ProjectError.make(L("Milestone push 거부: ", "Milestone push refused: ") + L(korean, english)) }
@@ -846,8 +858,10 @@ public final class GitLink: ToolProvider {
         let tracking = "refs/remotes/\(binding.remote)/\(target)"
         func remoteNow() throws -> String {
             try ProjectWork.withRefs(binding.root, token: token) {
-                guard try git(["fetch", "--no-tags", binding.remote, "+refs/heads/\(target):\(tracking)"], timeout: 180).status == 0 else {
-                    throw refuse("원격 대상 branch를 확인하지 못했어요.", "could not read the remote target branch.")
+                // Unreachable (network): nothing is known, so the candidate waits in the push phase for the next run.
+                let fetch = try git(["fetch", "--no-tags", binding.remote, "+refs/heads/\(target):\(tracking)"], timeout: 180)
+                guard fetch.status == 0 else {
+                    throw MilestonePushPending(reason: L("원격 대상 branch를 확인하지 못했어요: ", "could not read the remote target branch: ") + fetch.output)
                 }
                 let fetched = try value(["rev-parse", "--verify", tracking + "^{commit}"])
                 // A separate push URL (pushurl, pushInsteadOf) is where the branch moves: its SHA must be the one checked.
@@ -865,8 +879,10 @@ public final class GitLink: ToolProvider {
             candidate = TodoItem.MilestoneCandidate(branch: target, baseSHA: remote)
             return MilestoneRemoteMoved(remote: remote)
         }
+        // On the remote: the candidate itself or a later commit on top of it (pushed by someone after it landed).
+        func landed(_ remote: String) -> Bool { remote == sha || (try? git(["merge-base", "--is-ancestor", sha, remote]).status) == 0 }
         let remote = try remoteNow()
-        if remote == sha { candidate.setPhase(.confirmation); return "Already on \(binding.remote)/\(target): " + sha }   // an earlier push that was not recorded
+        if landed(remote) { candidate.setPhase(.confirmation); return "Already on \(binding.remote)/\(target): " + sha }   // an earlier push that was not recorded
         guard remote == candidate.baseSHA else { throw moved(remote) }
         guard try git(["merge-base", "--is-ancestor", remote, sha]).status == 0 else {
             throw refuse("후보가 원격 기준 SHA에서 fast-forward되지 않아요.", "the candidate is not a fast-forward of the remote base SHA.")
@@ -888,13 +904,20 @@ public final class GitLink: ToolProvider {
             hooks = ["-c", "core.hooksPath=.githooks"]
         }
         // Only the target branch: no tags (push.followTags) and no submodules go along.
-        let result = try ProjectProcess.run("/usr/bin/git", ["--literal-pathspecs", "-c", "core.fsmonitor=false", "-c", "submodule.recurse=false"] + hooks
+        let result: ProjectProcess.Reply
+        do {
+            result = try ProjectProcess.run("/usr/bin/git", ["--literal-pathspecs", "-c", "core.fsmonitor=false", "-c", "submodule.recurse=false"] + hooks
                                             + ["push", "--no-recurse-submodules", "--no-follow-tags", binding.remote, sha + ":refs/heads/" + target],
                                             cwd: tree.path, token: token, deadline: Date().addingTimeInterval(1800))
+        } catch { result = ProjectProcess.Reply(status: -1, output: error.localizedDescription) }   // stopped or timed out: maybe pushed
         guard result.status == 0 else {
-            // Refused: a remote that moved on in the meantime sends the candidate back; anything else (the hook) keeps it.
-            if let now = try? remoteNow(), now != candidate.baseSHA, now != sha { throw moved(now) }
-            throw ProjectError.make(L("Milestone push 실패 (exit \(result.status)): ", "Milestone push failed (exit \(result.status)): ") + result.output)
+            // Judged by the remote: landed after all (the reply was lost), moved on meanwhile (back to integration), or
+            // still the base or unreadable (the push phase again; the hook's refusal is one of those too).
+            let failed = "exit \(result.status): " + result.output
+            guard let now = try? remoteNow() else { throw MilestonePushPending(reason: failed) }
+            if landed(now) { candidate.setPhase(.confirmation); return result.output + "\nAlready on \(binding.remote)/\(target): " + sha }
+            if now != candidate.baseSHA { throw moved(now) }
+            throw MilestonePushPending(reason: failed)
         }
         candidate.setPhase(.confirmation)
         return result.output + "\nPushed " + sha + " to " + binding.remote + "/" + target

@@ -335,6 +335,32 @@ public enum SubWork {
         }
     }
 
+    // A Goal done (its last Milestone on the remote, TODO structure 13): its work tree, branch and branch config go, only
+    // when the branch's tip is in the remote `target` branch as last fetched (the Milestone's push check fetched it) and
+    // the tree has nothing uncommitted. Otherwise everything stays. Already gone: nothing to do.
+    static func removeGoal(_ binding: ProjectBinding, _ tree: Tree, target: String, token: DebateCancellation? = nil) throws {
+        let common = try project(binding)
+        guard tree.branch.hasPrefix("todo-goal/"), !binding.remote.isEmpty else { throw ProjectError.make("Not a Goal branch: " + tree.branch) }
+        try holding(tree) {
+            try ProjectWork.withRefs(binding.root, token: token) {
+                guard try reply(["rev-parse", "-q", "--verify", "refs/heads/" + tree.branch], binding.root, token).status == 0 else { return }
+                let tip = try git(["rev-parse", "--verify", "refs/heads/" + tree.branch + "^{commit}"], binding.root, token)
+                guard try isAncestor(tip, "refs/remotes/\(binding.remote)/\(target)", binding.root, token) else {
+                    throw fail("Goal의 커밋이 아직 원격에 없어 작업 폴더를 남겨 뒀어요.", "The Goal's commits are not on the remote yet; its work tree stays.")
+                }
+                if FileManager.default.fileExists(atPath: tree.path) {
+                    guard ownsGoalTree(tree, common: common, token: token) else { throw ProjectError.make("The Goal's work tree folder is not its work tree: " + tree.path) }
+                    try clean(tree.path, token, "Goal 작업 폴더에 커밋하지 않은 변경이 있어 남겨 뒀어요.", "The Goal's work tree has uncommitted changes; it stays.")
+                    _ = try git(["worktree", "remove", tree.path], binding.root, token)
+                } else { _ = try git(["worktree", "prune"], binding.root, token) }
+                // -D: merged into the remote branch (checked above), not necessarily into the main work tree's HEAD.
+                _ = try git(["branch", "-D", tree.branch], binding.root, token)
+                _ = try? git(["config", "--remove-section", "branch." + tree.branch], binding.root, token)
+                _ = rmdir((tree.path as NSString).deletingLastPathComponent)
+            }
+        }
+    }
+
     // Merges what a sub-room reported (`sha`, recorded at sub_report) into the main work tree. `reported`: the split record
     // says the sub-room reported and its turn ended. Refuses an SHA that does not descend from the tree's start or is not on
     // its branch, a sub-room still writing, a main work tree that is not clean. Checks conflicts against the main HEAD as it

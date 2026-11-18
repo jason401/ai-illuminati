@@ -518,6 +518,9 @@ Public names and why (everything else stays internal: `ProjectError`, `ProjectTo
   `TodoReport`, `ProjectFolder`, `ProjectChatSummary`, `TodoTurnEnd`, `TodoPark`).
 - `TodoStore` (the board's actions, among them `savePlan(goal:_:)` for a Goal's whole split plan in one checked, idempotent save, `setList(_:mode:accounts:)` for the mode menu, `setReady` and `move(_:before:)` for a row's draft/ready capsule and drag, `shared`, `snapshot`, `current`, `change`, `update`, `file`, `locked`, `url`): the board,
   the scheduler's users and `Discussion` (`workers(room:)`, delete and disconnect).
+- `TodoData.milestoneSlots(in:moving:)` supplies the board's future Step gaps. `TodoStore.placeMilestone(in:moving:after:)`
+  and the Milestone path in `delete` check the edited Goal plan and the board's dependency graph in one save (`testTodoEdit`).
+  Moving or deleting a Milestone reconnects its old prerequisites to the parts that depended on it.
 - `TodoScheduler` (`init(chats:store:)`, `start`, `startNow`, `wake`, `tick`, `recover`, `closeClocks`, `cancel`, `crew`, `lock`,
   `waiting`, `nextCheck`, `editing`, `standingIn` for the card's "another AI is answering" line, `retrying` for a ready row's
   "Retry 1 of 2" badge and its reason (since 2026-11-16), `question`, `instruction`, `threshold`, `maxAttempts`, `standInDelay`, `chatMessage` for a message

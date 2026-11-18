@@ -451,6 +451,11 @@ struct TodoBoardView: View {
                         Button(L("위로", "Move up")) { moveRow(item, by: -1) }
                         Button(L("아래로", "Move down")) { moveRow(item, by: 1) }
                     }
+                    if goal != nil {
+                        milestoneMenu(in: item.id, numbers: numbers)
+                    } else if item.role == .milestone, let goalID = item.goal {
+                        milestoneMenu(in: goalID, moving: item.id, numbers: numbers)
+                    }
                     Menu(L("먼저 끝나야 할 TODO", "Must finish first")) { linkItems(item, numbers: numbers) }
                     if item.state != .running && item.state != .done && item.state != .cancelled {
                         Button(L("사진·파일 첨부…", "Attach photos or files…")) { let urls = Self.chooseFiles(); if !urls.isEmpty { act { try store.attach(item.id, files: urls) } } }
@@ -463,7 +468,16 @@ struct TodoBoardView: View {
                     Divider()
                     if item.state != .done { Button(L("완료로 표시", "Mark as done")) { discussion.markTodoDone(item.id) } }
                     if item.state != .done && item.state != .cancelled { Button(L("그만 (취소)", "Stop (cancel)")) { TodoScheduler.shared?.cancel(item.id) } }
-                    Button(L("삭제", "Delete"), role: .destructive) { act { try store.delete(item.id) } }.disabled(item.state == .running)
+                    Button(item.role == .milestone ? L("Milestone 삭제", "Delete Milestone") : L("삭제", "Delete"), role: .destructive) {
+                        act {
+                            try store.delete(item.id)
+                            if item.role == .milestone {
+                                if draft.editing == item.id { draft.endEdit() }
+                                TodoScheduler.shared?.wake()
+                            }
+                        }
+                    }
+                    .disabled(item.state == .running)
                 } label: { Image(systemName: "ellipsis") }
                     .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
             }
@@ -583,6 +597,24 @@ struct TodoBoardView: View {
             .font(.system(size: 12)).controlSize(.small)
         }
         .onExitCommand { draft.endEdit() }
+    }
+
+    @ViewBuilder private func milestoneMenu(in goal: UUID, moving: UUID? = nil, numbers: [UUID: String]) -> some View {
+        let slots = store.snapshot.milestoneSlots(in: goal, moving: moving)
+        if !slots.isEmpty {
+            Menu(moving == nil ? L("Milestone 추가", "Add Milestone") : L("Milestone 이동", "Move Milestone")) {
+                ForEach(slots) { step in
+                    let label = (numbers[step.id].map { "\($0). " } ?? "") + step.title
+                    Button(L("「\(label)」 뒤에", "After \(label)")) {
+                        act {
+                            try store.placeMilestone(in: goal, moving: moving, after: step.id)
+                            draft.expandedGoals.insert(goal)
+                            TodoScheduler.shared?.wake()
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // The new TODO's links that count: only to TODOs of the list it goes to. The project can change without the picker (another

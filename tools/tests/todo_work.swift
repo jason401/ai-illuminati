@@ -1103,7 +1103,99 @@ func testTodoEdit() {
     scheduler.editing = nil
     scheduler.tick()
     expect(scheduler.waiting?.contains("edited") != true && scheduler.waiting?.contains("고치는") != true, "once the edit ends it may start: \(scheduler.waiting ?? "-")")
+    checkTodoMilestoneEdit()
     print("PASS: TODO edit (draft and ready only, trimmed, saved; refused once taken)")
+}
+
+private func checkTodoMilestoneEdit() {
+    let previousGoalPath = TodoData.goalPath
+    TodoData.goalPath = true
+    defer { TodoData.goalPath = previousGoalPath }
+    let url = todoStoreFile("milestone-edit")
+    let store = TodoStore(url: url)
+    let binding = ProjectBinding(root: "/tmp/todo-milestone-edit", common: "", remote: "", remoteURL: "")
+    let goal = try! store.add(title: "Goal", project: binding, projectName: "A")
+    let other = try! store.add(title: "Other", project: binding, projectName: "A")
+    typealias Part = TodoPlan.Part
+    let parts = try! store.savePlan(goal: goal.id, TodoPlan(parts: [
+        Part(key: "a", role: .step, title: "A", tests: ["testA"]),
+        Part(key: "b", role: .step, title: "B", tests: ["testB"]),
+        Part(key: "c", role: .step, title: "C", after: ["b"], tests: ["testC"]),
+        Part(key: "d", role: .step, title: "D", after: ["b"], tests: ["testD"]),
+        Part(key: "end", role: .milestone, title: "Final", after: ["a", "c", "d"])
+    ]), ready: true)
+    let a = parts[0].id, b = parts[1].id, c = parts[2].id, d = parts[3].id, end = parts[4].id
+    func row(_ id: UUID) -> TodoItem { store.current.item(id)! }
+    func checkOrder(_ ids: [UUID], _ label: String) {
+        expect(store.current.items.filter { $0.goal == goal.id }.map(\.id) == ids, "run order after \(label)")
+        expect(store.current.ordered(goal.listID).map(\.id) == [goal.id] + ids + [other.id], "board order after \(label)")
+        expect(TodoStore(url: url).current == store.current, "edit survives reload after \(label)")
+    }
+    func refuse(_ label: String, expected: TodoError? = nil, _ edit: () throws -> Void) {
+        let before = store.current
+        do { try edit(); expect(false, "refuse \(label)") }
+        catch { if let expected { expect(error as? TodoError == expected, "\(label) returned \(error)") } }
+        expect(store.current == before && TodoStore(url: url).current == before, "refusal is atomic for \(label)")
+    }
+
+    try! store.change(goal.id) { $0.state = .running }
+    refuse("editing before the planning turn settles", expected: .notEditable) { try store.placeMilestone(in: goal.id, after: b) }
+    try! store.change(goal.id) { $0.state = .ready }
+    try! store.placeMilestone(in: goal.id, after: b)
+    let checkpoint = store.current.items.first { $0.goal == goal.id && $0.role == .milestone && $0.id != end }!.id
+    checkOrder([a, b, checkpoint, c, d, end], "adding")
+    expect(Set(row(checkpoint).after) == [a, b], "the checkpoint waits for both independent preceding steps")
+    expect(row(c).after.contains(checkpoint) && row(d).after.contains(checkpoint), "both later branches wait for the checkpoint")
+
+    try! store.placeMilestone(in: goal.id, moving: checkpoint, after: a)
+    checkOrder([a, checkpoint, b, c, d, end], "moving earlier")
+    expect(row(checkpoint).after == [a] && row(b).after == [checkpoint] && row(b).state == .draft, "an already ready later step now waits")
+    try! store.placeMilestone(in: goal.id, moving: checkpoint, after: c)
+    checkOrder([a, b, c, checkpoint, d, end], "moving later")
+    expect(row(b).after == [a] && row(checkpoint).after.contains(c) && row(d).after.contains(checkpoint), "moving later reconnects the old successor to the preceding Step")
+
+    refuse("deleting the final Milestone") { try store.delete(end) }
+    refuse("moving the final Milestone") { try store.placeMilestone(in: goal.id, moving: end, after: a) }
+    refuse("inserting at the end") { try store.placeMilestone(in: goal.id, after: d) }
+    try! store.setAfter(other.id, [b])
+    try! store.setAfter(checkpoint, row(checkpoint).after + [other.id])
+    refuse("a cycle through another TODO", expected: .cycle) { try store.placeMilestone(in: goal.id, moving: checkpoint, after: a) }
+    try! store.setAfter(checkpoint, row(checkpoint).after.filter { $0 != other.id })
+    try! store.setAfter(other.id, [checkpoint])
+    refuse("deleting a Milestone another TODO depends on") { try store.delete(checkpoint) }
+    try! store.setAfter(other.id, [])
+
+    try! store.change(b) { $0.state = .done; $0.stepSHA = String(repeating: "a", count: 40) }
+    let committed = row(b)
+    refuse("moving before a locally committed Step") { try store.placeMilestone(in: goal.id, moving: checkpoint, after: a) }
+    refuse("inserting at the progress boundary") { try store.placeMilestone(in: goal.id, after: b) }
+    try! store.delete(checkpoint)
+    checkOrder([a, b, c, d, end], "deleting a future checkpoint")
+    expect(row(b) == committed && row(d).after.contains(c) && !row(d).after.contains(checkpoint), "deleting preserves the commit and reconnects later steps")
+    try! store.placeMilestone(in: goal.id, after: c)
+    let later = store.current.items.first { $0.goal == goal.id && $0.role == .milestone && $0.id != end }!.id
+    try! store.change(later) { $0.state = .running }
+    try! store.change(later) { $0.state = .ready }
+    refuse("deleting a previously started Milestone", expected: .notEditable) { try store.delete(later) }
+    refuse("inserting into the started segment") { try store.placeMilestone(in: goal.id, after: c) }
+
+    try! store.setAfter(d, row(d).after + [other.id])
+    for id in [a, c] { try! store.change(id) { $0.state = .done } }
+    let sha = String(repeating: "c", count: 40)
+    var candidate = TodoItem.MilestoneCandidate(branch: "main", baseSHA: String(repeating: "0", count: 40), candidateSHA: sha)
+    candidate.recordReview(for: sha); candidate.recordTest(for: sha); candidate.setPhase(.confirmation)
+    try! store.change(later) { $0.milestoneCandidate = candidate }
+    try! store.update { try $0.finishMilestone(later) }
+    expect(row(d).state == .ready && !store.current.eligible(held: { _ in false }).contains { $0.id == d },
+           "the next Step waits on its external link once the Milestone is confirmed")
+    try! store.change(other.id) { $0.state = .done }
+    expect(store.current.eligible(held: { _ in false }).contains { $0.id == d }, "the external completion releases the Step")
+
+    try! store.change(goal.id) { $0.state = .cancelled }
+    refuse("deleting the final Milestone from a cancelled Goal") { try store.delete(end) }
+    try! store.delete(goal.id)
+    try! store.delete(end)
+    expect(store.current.item(end) == nil, "an orphaned Milestone remains removable")
 }
 
 func testTodoAttachments() {

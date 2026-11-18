@@ -286,6 +286,7 @@ TodoData.item(_:) | func item(_ id: UUID) -> TodoItem?
 TodoData.items | var items: [TodoItem]
 TodoData.linkChoices(_:except:linked:showingDone:) | func linkChoices(_ listID: UUID?, except: UUID?, linked: [UUID], showingDone: Bool) -> [(item: TodoItem, number: Int?)]
 TodoData.lists | var lists: [TodoList]
+TodoData.milestoneSlots(in:moving:) | func milestoneSlots(in goal: UUID, moving: UUID? = nil) -> [TodoItem]
 TodoData.mode(_:) | func mode(_ item: TodoItem) -> RunMode
 TodoData.ordered(_:) | func ordered(_ listID: UUID) -> [TodoItem]
 TodoData.parkDue(_:) | func parkDue(_ item: TodoItem) -> Date?
@@ -512,6 +513,7 @@ TodoStore.maxAttachments | static let maxAttachments: Int
 TodoStore.move(_:before:) | func move(_ id: UUID, before: UUID?) throws
 TodoStore.move(_:by:) | func move(_ id: UUID, by step: Int) throws
 TodoStore.pause(lists:) | func pause(lists: Set<UUID>? = nil) throws
+TodoStore.placeMilestone(in:moving:after:) | func placeMilestone(in goal: UUID, moving: UUID? = nil, after step: UUID) throws
 TodoStore.recordStepTests(_:_:) | func recordStepTests(_ id: UUID, _ result: StepTestResult) throws
 TodoStore.recoverMilestone(_:_:) | @discardableResult func recoverMilestone(_ id: UUID, _ failure: MilestoneFailure) throws -> UUID?
 TodoStore.relink(_:to:) | func relink(_ ids: Set<UUID>, to project: ProjectBinding) throws

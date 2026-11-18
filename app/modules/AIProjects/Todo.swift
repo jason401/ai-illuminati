@@ -408,9 +408,9 @@ public struct TodoPlan: Equatable {
     // without tests or a milestone with some, a test name AI_ILLUMINATI_TEST_ONLY cannot carry, a part nothing comes
     // after that is not a milestone (a step's commits would never be reviewed and pushed), or a milestone that comes after
     // no step (nothing to review, and its Fix Step would have no tests to end on).
-    func checked() throws -> [Part] {
+    func checked(fixSteps: Int = 0) throws -> [Part] {
         guard !parts.isEmpty else { throw Self.refuse("항목이 없어요.", "it has no parts.") }
-        guard parts.count <= Self.maxParts else { throw Self.refuse("항목은 \(Self.maxParts)개까지예요.", "at most \(Self.maxParts) parts.") }
+        guard parts.count - fixSteps <= Self.maxParts else { throw Self.refuse("항목은 \(Self.maxParts)개까지예요.", "at most \(Self.maxParts) parts.") }
         let trim = { (s: String) in s.trimmingCharacters(in: .whitespacesAndNewlines) }
         var clean: [Part] = [], keys = Set<String>()
         for part in parts {
@@ -734,6 +734,125 @@ public struct TodoData: Codable, Equatable {
     // With the goal path off a goal still runs as plain.
     func planned(_ item: TodoItem) -> Bool { TodoData.goalPath && item.role == .goal && items.contains { $0.goal == item.id } }
 
+    private func milestoneParts(_ goal: UUID) -> [TodoItem] {
+        guard let head = item(goal), head.role == .goal, ![.running, .done, .cancelled].contains(head.state) else { return [] }
+        return items.filter { $0.goal == goal && $0.listID == head.listID && $0.heldPart }
+    }
+
+    private static func startedPart(_ item: TodoItem) -> Bool {
+        !TodoStore.editable(item) || item.startedAt != nil || item.room != nil || item.interrupted
+            || item.attempts > 0 || item.stepSHA != nil || item.stepTests != nil || item.milestoneCandidate != nil || item.fixFor != nil
+    }
+
+    private static func futureParts(_ parts: [TodoItem]) -> ArraySlice<TodoItem> {
+        parts.dropFirst(parts.lastIndex(where: startedPart).map { $0 + 1 } ?? 0)
+    }
+
+    // Show the gaps between future Steps, with the moving Milestone lifted out of the plan.
+    public func milestoneSlots(in goal: UUID, moving: UUID? = nil) -> [TodoItem] {
+        let parts = milestoneParts(goal)
+        guard parts.last?.role == .milestone else { return [] }
+        var future = Array(Self.futureParts(parts))
+        var oldAnchor: UUID?
+        if let moving {
+            guard let index = future.firstIndex(where: { $0.id == moving && $0.role == .milestone }),
+                  moving != parts.last?.id else { return [] }
+            if index > 0 { oldAnchor = future[index - 1].id }
+            future.remove(at: index)
+        }
+        return zip(future, future.dropFirst()).compactMap { left, right in
+            left.role == .step && right.role == .step && left.id != oldAnchor ? left : nil
+        }
+    }
+
+    mutating func editMilestone(in goal: UUID, moving: UUID?, after step: UUID?) throws {
+        let parts = milestoneParts(goal)
+        guard let final = parts.last, final.role == .milestone,
+              let listIndex = lists.firstIndex(where: { $0.id == final.listID }) else { throw TodoError.notEditable }
+        let future = Self.futureParts(parts)
+        var removed: TodoItem?
+        if let moving {
+            guard moving != final.id else {
+                throw TodoError.plan(L("최종 Milestone은 이동하거나 삭제할 수 없어요.", "The final Milestone cannot be moved or deleted."))
+            }
+            guard let milestone = future.first(where: { $0.id == moving && $0.role == .milestone }) else { throw TodoError.notEditable }
+            if step == nil, items.contains(where: { $0.goal != goal && $0.after.contains(moving) }) {
+                throw TodoError.plan(L("다른 TODO가 이 Milestone을 기다리고 있어요.", "Another TODO depends on this Milestone."))
+            }
+            removed = milestone
+        }
+        if let step, !milestoneSlots(in: goal, moving: moving).contains(where: { $0.id == step }) {
+            throw TodoError.plan(L("아직 시작하지 않은 두 Step 사이를 골라 주세요.", "Choose a gap between two Steps that have not started."))
+        }
+
+        var revised = parts.filter { $0.id != moving }
+        if let removed {
+            // Keep the old prerequisites at the old cut. An independent Milestone can have no direct successor.
+            let followers = revised.indices.filter { revised[$0].after.contains(removed.id) }
+            for i in followers.isEmpty ? [revised.count - 1] : followers {
+                guard future.contains(where: { $0.id == revised[i].id }) else { throw TodoError.notEditable }
+                revised[i].after.removeAll { $0 == removed.id }
+                for id in removed.after where !revised[i].after.contains(id) { revised[i].after.append(id) }
+            }
+        }
+
+        let original = Dictionary(uniqueKeysWithValues: parts.map { ($0.id, $0) })
+        var inserted: TodoItem?
+        var next: UUID?
+        if let step, let anchor = revised.firstIndex(where: { $0.id == step }) {
+            let cut = anchor + 1
+            next = revised[cut].id
+            let prefix = revised[..<cut], suffix = revised[cut...]
+            let superseded = Set(prefix.flatMap(\.after))
+            let suffixIDs = Set(suffix.map(\.id))
+            var milestone = removed ?? TodoItem(listID: final.listID, title: L("Milestone", "Milestone"))
+            milestone.role = .milestone; milestone.goal = goal
+            milestone.after = milestone.after.filter { original[$0] == nil }
+            // Wait for every branch before the cut, and hold every branch after it.
+            for leaf in prefix where !superseded.contains(leaf.id) { milestone.after.append(leaf.id) }
+            for i in suffix.indices where suffixIDs.isDisjoint(with: revised[i].after) { revised[i].after.append(milestone.id) }
+            revised.insert(milestone, at: cut)
+            inserted = milestone
+        }
+
+        let revisedIDs = Set(revised.map(\.id))
+        let plan = TodoPlan(parts: revised.map {
+            TodoPlan.Part(key: $0.id.uuidString, role: $0.role, title: $0.title, detail: $0.detail,
+                          after: $0.after.filter(revisedIDs.contains).map(\.uuidString), tests: $0.tests)
+        })
+        let checked = try plan.checked(fixSteps: revised.filter { $0.fixFor != nil }.count)
+        guard checked.map(\.key) == revised.map({ $0.id.uuidString }) else {
+            throw TodoError.plan(L("선행 링크와 충돌하는 위치예요.", "That position conflicts with the prerequisite links."))
+        }
+
+        // TodoStore.update also checks cycles involving other TODOs before it saves.
+        let changes = Dictionary(uniqueKeysWithValues: revised.map { ($0.id, $0) })
+        var order = ordered(final.listID).map(\.id)
+        if let moving {
+            items.removeAll { $0.id == moving }
+            order.removeAll { $0 == moving }
+        }
+        for i in items.indices {
+            if let change = changes[items[i].id] { items[i] = change }
+        }
+        if let inserted, let next {
+            guard let index = items.firstIndex(where: { $0.id == next }),
+                  let row = order.firstIndex(of: next) else { throw TodoError.notFound }
+            items.insert(inserted, at: index)
+            order.insert(inserted.id, at: row)
+        }
+        lists[listIndex].order = order
+        if let moving, inserted == nil, lists[listIndex].stopAfter == moving {
+            lists[listIndex].stopAfter = nil; lists[listIndex].paused = true
+        }
+
+        let active = parts.contains { $0.state == .ready || Self.startedPart($0) }
+        for i in items.indices where revisedIDs.contains(items[i].id) && original[items[i].id]?.after != items[i].after {
+            let ready = active && localPrerequisitesDone(items[i])
+            items[i].state = ready ? .ready : .draft
+        }
+    }
+
     // Where a goal's step goes on: the commit the last finished part before it left on the Goal branch (a step's tested
     // commit, a milestone's candidate); nil before the first, which starts at the Goal work tree's base.
     public func resumeSHA(_ step: TodoItem) -> String? {
@@ -749,11 +868,17 @@ public struct TodoData: Codable, Equatable {
         guard item.role == .step, let sha = item.stepTests?.sha, sha == resumeSHA(item) else { return nil }
         return L("이 Step의 commit이 없어요. Goal 브랜치에 로컬로 커밋해 주세요.", "This Step made no commit; commit it locally on the Goal branch.")
     }
-    // A goal's parts that may go now become ready: drafts whose `after` parts are all done (the first ones when the goal
-    // starts, the next one as soon as a step ends). A paused list or a stop point still holds them (stopped: eligible).
+    private func localPrerequisitesDone(_ part: TodoItem) -> Bool {
+        part.after.allSatisfy { id in
+            guard let blocker = item(id) else { return false }
+            return blocker.goal != part.goal || blocker.state == .done
+        }
+    }
+
+    // Draft parts become ready when their Goal prerequisites are done. Eligibility applies external links and pause/stop.
     mutating func readyParts(_ goal: UUID) {
         for i in items.indices where items[i].goal == goal && items[i].heldPart && items[i].state == .draft
-            && items[i].after.allSatisfy({ item($0)?.state == .done }) { items[i].state = .ready }
+            && localPrerequisitesDone(items[i]) { items[i].state = .ready }
     }
     // A Milestone whose candidate is on the remote (phase confirmation, TODO structure 13) is done and the next parts are
     // ready. When it was the Goal's last part not done, the Goal is done too (TODOs waiting for it by `after` go on); true
@@ -980,7 +1105,7 @@ public final class TodoStore: ObservableObject {
             guard let g = data.items.firstIndex(where: { $0.id == goal }) else { throw TodoError.notFound }
             let head = data.items[g]
             guard head.role == .plain || head.role == .goal, head.goal == nil else { throw TodoPlan.refuse("step이나 milestone은 Goal이 될 수 없어요.", "a step or milestone cannot be a goal.") }
-            // Saved in run order and never reordered in `items` (the board's moves change only the list's order).
+            // Saved in run order. Milestone edits update this order and the dependencies together.
             let saved = data.items.filter { $0.goal == goal && $0.fixFor == nil }   // Fix Steps came later, not from the plan
             if !saved.isEmpty {
                 guard saved.allSatisfy({ $0.listID == head.listID }), plan.same(saved, as: run) else {
@@ -1008,6 +1133,10 @@ public final class TodoStore: ObservableObject {
             return made.compactMap { data.item($0.id) }
         }
     }
+    public func placeMilestone(in goal: UUID, moving: UUID? = nil, after step: UUID) throws {
+        try update { try $0.editMilestone(in: goal, moving: moving, after: step) }
+    }
+
     // TODO structure 13: a Milestone's push, judged by the remote and saved on the TODO whatever the outcome,
     // so a run again after a lost reply, a timeout or a restart reads the remote first. On the remote: as its Goal's last
     // part, the Goal's work tree and branch go first, then the Milestone is done (and the Goal with it). A cleanup that
@@ -1199,6 +1328,10 @@ public final class TodoStore: ObservableObject {
     public func delete(_ id: UUID) throws {
         try update { data in
             guard let item = data.item(id) else { throw TodoError.notFound }
+            if item.role == .milestone, let goal = item.goal.flatMap(data.item), goal.role == .goal, goal.listID == item.listID {
+                try data.editMilestone(in: goal.id, moving: id, after: nil)
+                return
+            }
             guard item.state != .running else { throw TodoError.busy }
             data.items.removeAll { $0.id == id }
             // The stop point deleted: the list stays stopped (paused) rather than going on below it by itself.

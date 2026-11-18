@@ -657,11 +657,14 @@ func testTodoSplitTool() {
 
     // 10: full auto splits at once, without a card.
     let auto = todo("Auto")
+    var autoCards = 0   // any card at all for this run, also one shown and taken down again
+    let watch = ProjectCenter.shared.$requests.sink { autoCards += $0.filter { $0.run == auto.context.projectRun }.count }
     let split = call("task_split", good, auto.context)
     RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+    watch.cancel()
     let finish = store.current.item(auto.id)!
     let steps = store.current.ordered(finish.listID).filter { $0.group == auto.id && $0.piece == .step }
-    expect(split.ok && !ProjectCenter.shared.requests.contains { $0.run == auto.context.projectRun } && finish.piece == .finish && finish.state == .ready
+    expect(split.ok && autoCards == 0 && finish.piece == .finish && finish.state == .ready
            && steps.map(\.title) == ["Storage", "Behavior"] && steps.allSatisfy { $0.byAI == true && $0.detail.contains("Done when: Its test passes") },
            "full auto splits without a card: \(split.text)")
     expect(finish.splitRecord?.estimatedMinutes == 90 && finish.splitRecord?.reason == "Storage before behavior"
@@ -688,6 +691,20 @@ func testTodoSplitTool() {
            && read.text.contains("Behavior — running (yours)") && read.text.contains("Storage before behavior") && read.text.contains("Done when: Full test passes")
            && !read.text.contains("Unrelated") && !read.text.contains("Refuse"), "task_pieces shows the group and the earlier reports:\n\(read.text)")
     expect(store.current.items == before && store.current.item(other.id) != nil, "task_pieces only reads")
+    // The board's lines (TodoData.splitLine): "①" on a step; "마무리 · 1/3", the record, a stuck step and unpushed commits on the finish.
+    let lines = store.current
+    let firstLine = lines.splitLine(lines.item(steps[0].id)!), finishLine = lines.splitLine(lines.item(auto.id)!)
+    expect(firstLine?.number == 1 && firstLine?.isFinish == false && finishLine?.isFinish == true && finishLine?.number == 3
+           && finishLine?.done == 1 && finishLine?.pieces.count == 3 && finishLine?.pieces.last?.finish == true
+           && finishLine?.minutes == 90 && finishLine?.reason == "Storage before behavior" && finishLine?.finishDone == "Full test passes"
+           && finishLine?.pieces.map(\.files) == [["Store.swift"], ["Run.swift"], ["Screen.swift"]] && finishLine?.stuck == nil
+           && lines.splitLine(lines.item(other.id)!) == nil, "the board reads a split's place, progress and record: \(String(describing: finishLine))")
+    expect(TodoStore.unpushedPieceCommits(finishLine!) == 0, "no piece commit yet")
+    try! "piece".write(to: root.appendingPathComponent("Store.swift"), atomically: true, encoding: .utf8)
+    _ = try! ProjectProcess.git(["add", "Store.swift"], root: project.root); _ = try! ProjectProcess.git(["commit", "-m", "Piece 1"], root: project.root)
+    expect(TodoStore.unpushedPieceCommits(finishLine!) == 1, "a piece commit not on the remote is counted")
+    try! store.change(steps[1].id) { $0.state = .needsYou }
+    expect(store.current.splitLine(store.current.item(auto.id)!)?.stuck == 2, "a stuck step shows on the finish")
     let pieceNote = TodoScheduler.instruction(store.current.item(steps[1].id)!, split: true)
     expect(pieceNote.contains("task_pieces") && !pieceNote.contains("[Splitting]"), "a piece is told to read its group, not to split")
     try! store.change(steps[1].id) { $0.state = .cancelled }
@@ -706,7 +723,8 @@ func testTodoSplitTool() {
     }
     let manual = todo("Manual", auto: false)
     let declined = carded(manual.context, allow: false)
-    expect(!declined.ok && declined.detail.contains("Store.swift") && declined.detail.contains("Full test passes") && declined.detail.contains("90")
+    expect(!declined.ok && ["Storage", "Its test passes", "Store.swift", "Behavior", "Run.swift", "Screen.swift", "Full test passes", "90", "Storage before behavior"]
+               .allSatisfy(declined.detail.contains)
            && store.current.item(manual.id)?.splitDeclined == true && store.current.item(manual.id)?.state == .running
            && store.current.item(manual.id)?.group == nil, "a declined card leaves the TODO running as one: \(declined.text) / \(declined.detail)")
     expect(!names(manual.context).contains("task_split") && names(manual.context).contains("task_done")
@@ -717,7 +735,7 @@ func testTodoSplitTool() {
     let approved = todo("Approved", auto: false)
     let yes = carded(approved.context, allow: true)
     expect(yes.ok && store.current.item(approved.id)?.piece == .finish, "an approved card splits: \(yes.text)")
-    print("PASS: TODO split tools (switch off, refusals, changed files, first run only, full auto without a card, no resplit, task_pieces, declined card)")
+    print("PASS: TODO split tools (switch off, refusals, changed files, first run only, full auto without a card, no resplit, task_pieces, board lines, declined card)")
 }
 
 func testTodoScheduler() {

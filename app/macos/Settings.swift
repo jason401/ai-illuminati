@@ -7,6 +7,7 @@ import AIChatRecords
 import AILocalization
 import AIRuntime
 import AIWorkspace
+import AIProjects
 import AIChat
 import AIIntegrations
 
@@ -1240,6 +1241,7 @@ struct SortModelStatus: View {
 private struct CollabSettingsCard: View {
     @ObservedObject var model: AppModel
     @AppStorage(DelegateLink.enabledKey, store: .app) private var subRooms = false
+    @AppStorage(TaskLink.splitEnabledKey, store: .app) private var todoSplit = false   // off by default (docs/TODO_SPLIT_PLAN.md 9)
 
     var body: some View {
         SettingsCard(title: L("AI끼리 협업", "AIs working together"),
@@ -1255,6 +1257,12 @@ private struct CollabSettingsCard: View {
             }
             .help(L("프로젝트 작업에서 큰 일을 AI가 둘까지 나눠 다른 AI들에게 맡기고, 각자 따로 고친 것을 합쳐서 테스트한 뒤 push해요. 사용량이 그만큼 더 들어요.",
                     "In project work, the AI may split large work into up to two parts for other AIs, each in its own work tree, then merge, test and push. Uses more of your limits."))
+            Divider()
+            SettingsRow(title: L("큰 TODO를 AI가 나눠서 하기 (실험)", "Let the AI split large TODOs (experimental)")) {
+                Toggle(L("큰 TODO를 AI가 나눠서 하기", "Let the AI split large TODOs"), isOn: $todoSplit).labelsHidden().toggleStyle(.switch)
+            }
+            .help(L("TODO가 크면(1시간 넘게, 또는 \"나눠서\"라고 적으면) AI가 시작하기 전에 30분 안팎 조각으로 나눠 차례로 해요. 조각은 관련 테스트와 커밋만, 마무리에서 전체 테스트와 push를 한 번 해요. 완전 자동이 아니면 나누기 전에 확인 카드가 떠요. 꺼도 이미 나눈 묶음은 끝까지 가요.",
+                    "For a large TODO (over an hour, or one that says to split it) the AI first splits it into pieces of about 30 minutes done in order. Pieces run related tests and commit; the finish runs the full tests and pushes once. Outside full auto a card asks first. Switching it off lets splits already made finish."))
             Divider()
             Text(model.collaboration.summary)
                 .font(.system(size: 11)).foregroundStyle(.secondary)

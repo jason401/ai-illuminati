@@ -147,3 +147,19 @@ Stable publishing always asks approval for the exact main SHA and remote shown o
 and the card appears; without a request the AI only reports what is ready to publish.
 Ordinary push does not update stable. Undo is unavailable after commit or push; use Git to
 review and revert those changes. Google Drive permissions are separate from project work.
+
+### Splitting large TODOs (experimental, off by default)
+
+Settings → Chat → **Let the AI split large TODOs** (큰 TODO를 AI가 나눠서 하기). Off, TODOs run exactly as before.
+On, a TODO of a Git project that would take over an hour (or says "나눠서") may be split by its AI before it changes
+any file: pieces of about 30 minutes (2 to 6 in all) placed right above the TODO, which itself becomes the finish.
+The pieces run in order; each runs its related tests and commits without a push or a check card. The finish runs the
+full tests, gets the review and pushes once. Outside full auto a card shows the estimate, the reason and each piece's
+title, done-when line and files first; deny it and the TODO is done as one. In full auto there is no card.
+On the board a piece shows "① · AI가 나눔" and the finish "마무리 · AI가 나눔 · 1/3"; the finish unfolds the split record
+(estimate, reason, files of each piece). Switching it off lets splits already made finish.
+
+Try it first on a small project such as AI Face. Limits for now: a push from another chat of the same project before
+the finish also pushes the piece commits that are not checked yet (the finish shows "push 안 된 조각 커밋 n개");
+a stuck piece holds the rest ("② 조각이 막혀 멈춤") until you answer or fix it; pieces cannot be edited, added or
+re-split once made, and a TODO uses either a split or sub-rooms, not both.

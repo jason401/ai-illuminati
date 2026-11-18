@@ -16,7 +16,7 @@
 - 원칙
   - **보통 TODO를 그대로 쓴다.** 조각도 보통 TODO다. 새 상태(state)나 새 종류는 만들지 않는다.
   - 재사용: TODO 순서(`after`), 스케줄러, `task_done` 보고, 하위방의 push 막기(`isSubRoom` 방식).
-  - **스위치(기본 꺼짐)**: 설정 ▸ 채팅 ▸ "큰 TODO 자동 나누기 (실험)". 꺼져 있으면 지금과 똑같이 동작.
+  - **스위치(기본 꺼짐)**: 설정 ▸ 채팅 ▸ "큰 TODO를 AI가 나눠서 하기 (실험)". 꺼져 있으면 지금과 똑같이 동작.
   - **한 AI가 맡는다** (작성 + 리뷰만 다른 AI). 단계마다 전체 test + build + HANDOFF 기록.
 
 ## 1. 첫 안에서 바뀐 점 (회의 결과, 코드 확인함)
@@ -65,6 +65,9 @@
    (`startedAt == stateSince`), "파일 바꾸기 전"은 그 실행에서 커밋 없음 + HEAD가 시작 커밋 그대로 + 커밋 안 된 변경(경로·스테이징·내용 해시)이 시작 때와 같음.
    승인 카드는 일반 승인 카드(`ProjectApproval`), 거절이나 15분 무응답이면 `splitDeclined`. 마무리의 끝 조건은 `splitRecord.finishDone`에 저장해 `task_pieces`로 읽는다. 하위방을 쓴 TODO(`usedSubRooms`)는 나눌 수 없다.
 4. 화면: 보드 표시, 승인 카드, 스위치(기본 꺼짐). AI Face에서 실제 TODO 하나로 시험.
+   구현(2026-11-18): 스위치는 설정 ▸ 채팅 ▸ "AI끼리 협업"의 하위방 스위치 아래 "큰 TODO를 AI가 나눠서 하기 (실험)"(`TaskLink.splitEnabledKey`).
+   보드는 `TodoData.splitLine`만 읽는다(조각 번호, 끝난 수, 막힌 조각, 기록). push 안 된 조각 커밋은 `reviewBase..HEAD` 중 어느 원격에도 없는 커밋 수
+   (`TodoStore.unpushedPieceCommits`, 보드 변경 때 백그라운드). 그 사이 같은 프로젝트의 다른 채팅이 만든 커밋도 함께 센다.
 
 ## 2. 동작 (사용자가 보는 것)
 

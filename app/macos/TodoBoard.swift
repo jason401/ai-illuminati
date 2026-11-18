@@ -93,6 +93,7 @@ final class TodoDraft: ObservableObject {
     @Published var editTitle = ""
     @Published var editDetail = ""
     @Published var editAskFirst = false
+    @Published var splitOpen: Set<UUID> = []   // finish rows whose split record is unfolded
 
     func beginEdit(_ item: TodoItem) {
         // Another TODO open for editing: saved first (it would otherwise lose the text and start with the old one).
@@ -121,6 +122,7 @@ struct TodoBoardView: View {
     @ObservedObject private var store = TodoStore.shared
     @ObservedObject private var draft = TodoDraft.shared
     @ObservedObject private var projectInfo = ProjectInfoStore.shared
+    @ObservedObject private var splitCommits = TodoSplitCommits.shared
 
     // Projects to write TODOs for: every linked Git project of the chats (newest first); on one project's board
     // only its roots (a repository with several worktrees has one per root).
@@ -173,6 +175,8 @@ struct TodoBoardView: View {
             .frame(maxWidth: .infinity)
         }
         .onDisappear { draft.endEdit(); draft.endDrag() }   // an edit left open would hold the TODO back
+        .onAppear { splitCommits.refresh(store.snapshot) }
+        .onChange(of: store.snapshot) { splitCommits.refresh($0) }
     }
 
     // A list is shown with the name the user gave its project, else the name it was made with.
@@ -246,6 +250,7 @@ struct TodoBoardView: View {
         let waits = data.blockers(item).reduce(into: [UUID]()) { if !$0.contains($1) { $0.append($1) } }
             .compactMap(data.item).filter { !data.satisfied($0, for: item) && $0.state != .cancelled }
         let editing = draft.editing == item.id && TodoStore.editable(item)
+        let split = data.splitLine(item)
         return VStack(alignment: .leading, spacing: 4) {
             if editing { editor(item) } else {
             HStack(spacing: 8) {
@@ -261,6 +266,7 @@ struct TodoBoardView: View {
                     }
                 Text("\(index). " + item.title).font(.system(size: 13, weight: .medium))
                     .foregroundColor(item.state == .draft ? .secondary : .primary).lineLimit(2)
+                if let split { splitChip(split) }
                 Spacer(minLength: 6)
                 if item.state == .ready, !waits.isEmpty {
                     let linked = waits.filter { item.after.contains($0.id) }, above = waits.filter { !item.after.contains($0.id) }
@@ -326,6 +332,7 @@ struct TodoBoardView: View {
             // Right-click on the row: done from any state, without finding the ⋯.
             .contextMenu { if item.state != .done { Button(L("완료로 표시", "Mark as done")) { discussion.markTodoDone(item.id) } } }
             if !item.detail.isEmpty { Text(item.detail).font(.system(size: 12)).foregroundColor(.secondary).lineLimit(3) }
+            if let split, split.isFinish { splitFinish(split) }
             if item.startedAt != nil {
                 let live = item.state == .running || item.state == .review || item.state == .needsYou
                 TimelineView(.periodic(from: .now, by: live ? 30 : 3600)) { context in
@@ -366,6 +373,55 @@ struct TodoBoardView: View {
             if urls.isEmpty { draft.error = L("파일을 첨부할 수 없어요.", "Could not attach the file."); return }
             act { try store.attach(item.id, files: urls) }
         })
+    }
+
+    // A split's pieces (docs/TODO_SPLIT_PLAN.md 2): "① · AI가 나눔" on a step, "마무리 · AI가 나눔 · 1/3" on the finish.
+    static func circled(_ n: Int) -> String { (1...20).contains(n) ? String(UnicodeScalar(0x245F + n)!) : "(\(n))" }
+    private func splitChip(_ split: TodoSplitLine) -> some View {
+        let byAI = L("AI가 나눔", "split by AI")
+        let text = split.isFinish ? L("마무리", "Finish") + " · " + byAI + " · \(split.done)/\(split.pieces.count)" : Self.circled(split.number) + " · " + byAI
+        return Text(text).font(.system(size: 11, weight: .medium)).foregroundColor(.purple).lineLimit(1).fixedSize()
+            .padding(.horizontal, 6).frame(minHeight: 18)
+            .background(Color.purple.opacity(0.1), in: Capsule())
+            .help(split.isFinish ? L("AI가 이 TODO를 나눴어요. 앞 조각이 차례로 끝나면 이 TODO가 마무리로 전체 테스트와 push를 해요 (끝난 조각/전체).",
+                                     "The AI split this TODO. Once the pieces above are done in order, this TODO finishes: full tests and one push (pieces done/all).")
+                                 : L("AI가 나눈 조각이에요. 관련 테스트와 커밋까지만 하고, push는 마무리에서 해요.", "A piece the AI split off. It runs related tests and commits; the finish pushes."))
+    }
+
+    // Under the finish: a stuck piece, piece commits not pushed yet (stage 1 limit) and the split record to unfold.
+    @ViewBuilder private func splitFinish(_ split: TodoSplitLine) -> some View {
+        if let stuck = split.stuck {
+            Label(L("\(Self.circled(stuck)) 조각이 막혀 멈춤", "\(Self.circled(stuck)) piece is stuck; the rest waits"), systemImage: "exclamationmark.triangle")
+                .font(.system(size: 11, weight: .medium)).foregroundColor(.orange)
+                .help(L("그 조각에 답하거나 고치면 다음 조각과 마무리가 이어서 시작해요.", "Answer or fix that piece; the next pieces and the finish go on after it."))
+        }
+        if let count = splitCommits.unpushed[split.group], count > 0 {
+            Label(L("push 안 된 조각 커밋 \(count)개", "\(count) piece commit\(count == 1 ? "" : "s") not pushed"), systemImage: "arrow.up.circle")
+                .font(.system(size: 11)).foregroundColor(.orange)
+                .help(L("마무리가 전체 테스트 뒤에 한 번에 push해요. 그 전에 같은 프로젝트의 다른 채팅이 push하면 아직 검증 안 된 이 커밋들도 같이 올라가요.",
+                        "The finish pushes them once, after the full tests. A push from another chat of this project before that takes these unchecked commits along."))
+        }
+        let open = draft.splitOpen.contains(split.group)
+        Button(action: { if open { draft.splitOpen.remove(split.group) } else { draft.splitOpen.insert(split.group) } }) {
+            HStack(spacing: 4) {
+                Image(systemName: open ? "chevron.down" : "chevron.right").font(.system(size: 9, weight: .semibold)).frame(width: 12)
+                Text(L("나누기 기록", "Split record") + (split.minutes.map { L(" · 예상 약 \($0)분", " · about \($0) min") } ?? ""))
+            }
+            .font(.system(size: 11)).foregroundColor(.secondary).frame(minHeight: 22).contentShape(Rectangle())
+        }
+        .buttonStyle(.plainHit)
+        if open {
+            VStack(alignment: .leading, spacing: 3) {
+                if let reason = split.reason { Text(L("이유: ", "Why: ") + reason) }
+                ForEach(Array(split.pieces.enumerated()), id: \.element.id) { n, piece in
+                    Text((piece.finish ? L("마무리", "Finish") : Self.circled(n + 1) + " " + piece.title) + " — " + piece.state.title).foregroundColor(.primary)
+                    if piece.finish, let done = split.finishDone { Text("   " + L("끝 조건: ", "Done when: ") + done) }
+                    Text("   " + L("파일: ", "Files: ") + (piece.files.isEmpty ? L("없음", "none") : piece.files.joined(separator: ", ")))
+                }
+            }
+            .font(.system(size: 11)).foregroundColor(.secondary).textSelection(.enabled)
+            .padding(.leading, 16)
+        }
     }
 
     // Where the dragged TODO would go if dropped on `target`: below it when dragged down, above it when dragged up;
@@ -582,6 +638,31 @@ struct TodoBoardView: View {
 
     private func act(_ change: () throws -> Void) {
         do { try change(); draft.error = nil } catch { draft.error = error.localizedDescription }
+    }
+}
+
+// "push 안 된 조각 커밋 n개": counted with git off the main thread after each board change, for splits still going.
+final class TodoSplitCommits: ObservableObject {
+    static let shared = TodoSplitCommits()
+    @Published private(set) var unpushed: [UUID: Int] = [:]
+    private var busy = false, again = false
+    func refresh(_ data: TodoData) {
+        guard !busy else { again = true; return }
+        let lines = data.items.compactMap(data.splitLine).filter { line in
+            line.isFinish && line.pieces.last.map { ![.done, .cancelled].contains($0.state) } == true
+        }
+        guard !lines.isEmpty || !unpushed.isEmpty else { return }
+        busy = true
+        DispatchQueue.global(qos: .utility).async {
+            var counts: [UUID: Int] = [:]
+            for line in lines { if let n = TodoStore.unpushedPieceCommits(line), n > 0 { counts[line.group] = n } }
+            DispatchQueue.main.async {
+                // Set only on a change: a set redraws the board, whose onChange would ask again.
+                if self.unpushed != counts { self.unpushed = counts }
+                self.busy = false
+                if self.again { self.again = false; self.refresh(TodoStore.shared.snapshot) }
+            }
+        }
     }
 }
 

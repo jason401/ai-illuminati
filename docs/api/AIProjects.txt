@@ -197,6 +197,7 @@ TaskLink | final class TaskLink
 TaskLink.active | var active: Bool { get }
 TaskLink.call(_:_:context:) | func call(_ name: String, _ arguments: [String : Any], context: ToolContext) -> [String : Any]
 TaskLink.shared | static let shared: TaskLink
+TaskLink.splitEnabledKey | static let splitEnabledKey: String
 TaskLink.tools() | func tools() -> [[String : Any]]
 TaskLink.tools(context:) | func tools(context: ToolContext) -> [[String : Any]]
 TodoAddLink | final class TodoAddLink
@@ -240,6 +241,7 @@ TodoData.mode(_:) | func mode(_ item: TodoItem) -> RunMode
 TodoData.ordered(_:) | func ordered(_ listID: UUID) -> [TodoItem]
 TodoData.parkDue(_:) | func parkDue(_ item: TodoItem) -> Date?
 TodoData.satisfied(_:for:) | func satisfied(_ blocker: TodoItem, for item: TodoItem) -> Bool
+TodoData.splitLine(_:) | func splitLine(_ item: TodoItem) -> TodoSplitLine?
 TodoData.standInDue(_:) | func standInDue(_ item: TodoItem) -> Date?
 TodoData.stopped(_:) | func stopped(_ item: TodoItem) -> Bool
 TodoData.workers(room:) | func workers(room: UUID) -> [String]?
@@ -384,6 +386,22 @@ TodoScheduler.threshold | static let threshold: Double
 TodoScheduler.tick() | func tick()
 TodoScheduler.waiting | @Published var waiting: String? { get set }
 TodoScheduler.wake() | func wake()
+TodoSplitLine | struct TodoSplitLine
+TodoSplitLine.Piece | struct Piece
+TodoSplitLine.Piece.files | let files: [String]
+TodoSplitLine.Piece.finish | let finish: Bool
+TodoSplitLine.Piece.id | let id: UUID
+TodoSplitLine.Piece.state | let state: TodoItem.State
+TodoSplitLine.Piece.title | let title: String
+TodoSplitLine.done | let done: Int
+TodoSplitLine.finishDone | let finishDone: String?
+TodoSplitLine.group | let group: UUID
+TodoSplitLine.isFinish | let isFinish: Bool
+TodoSplitLine.minutes | let minutes: Int?
+TodoSplitLine.number | let number: Int
+TodoSplitLine.pieces | let pieces: [TodoSplitLine.Piece]
+TodoSplitLine.reason | let reason: String?
+TodoSplitLine.stuck | let stuck: Int?
 TodoStandInReply | struct TodoStandInReply
 TodoStandInReply.by | var by: String?
 TodoStandInReply.error | var error: String?
@@ -421,6 +439,7 @@ TodoStore.shared | static var shared: TodoStore
 TodoStore.snapshot | @Published var snapshot: TodoData { get set }
 TodoStore.startDrafts(lists:) | func startDrafts(lists: Set<UUID>? = nil)
 TodoStore.stop(after:) | func stop(after id: UUID) throws
+TodoStore.unpushedPieceCommits(_:) | static func unpushedPieceCommits(_ line: TodoSplitLine) -> Int?
 TodoStore.update(_:) | @discardableResult func update<T>(_ edit: (inout TodoData) throws -> T) throws -> T
 TodoStore.url | let url: URL
 TodoStore.waitingForUser | var waitingForUser: Int { get }

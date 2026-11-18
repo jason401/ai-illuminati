@@ -501,7 +501,9 @@ extension KeyedDecodingContainer {
 
 public struct TodoData: Codable, Equatable {
     static let currentVersion = 1
-    // The Goal path: ready steps are taken one at a time in their goal's order. Off until TODO structure 16 (tests turn it on).
+    // The Goal path: ready steps are taken one at a time in their goal's order and end on their tested commit (settle).
+    // Off until TODO structure 16, which also hands begin()'s chat the Goal's work tree; tests turn it on. Without that tree
+    // a step's turn runs no StepTests, so its report never passes stepUnfinished: it cannot end as done by mistake.
     static var goalPath = false
     var version = 1
     public var lists: [TodoList] = []
@@ -1797,7 +1799,7 @@ public final class TodoScheduler: ObservableObject {
                         t.question = TodoQuestion(kind: .failed, reason: L("판단을 위임받고도 다시 물었어요: ", "It asked again after the decision was handed to it: ") + question.reason, items: question.items)
                     } else { t.state = .needsYou; t.question = question; t.unreported = true; t.standIns = 0 }   // each question its own two steps
                 }
-            } else if let report, let summary = report.summary, item.role == .step {
+            } else if let report, let summary = report.summary, item.role == .step, TodoData.goalPath {
                 // A step's end (TODO structure 06): its tests passed on its own local commit, so it is done without the user's
                 // check or a review (the milestone has both), its commit is kept where the next part goes on, and that part is ready.
                 try? store.update { data in

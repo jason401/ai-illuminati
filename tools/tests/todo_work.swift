@@ -263,6 +263,13 @@ func testStepTests() {
         expect(item.state != .review && item.state != .done && item.lastError != nil && item.result == nil, "a step whose tests \(what) is not done: \(item.state)")
     }
     var both = passed; both.tests = ["testAlpha", "testBeta"]
+    // Until the goal path is on (TODO structure 16) a passing step ends the old way: it waits for the check.
+    let held = reported(both)
+    expect(held.state == .review && held.stepSHA == nil && store.current.items.first { $0.role == .milestone }?.state == .draft,
+           "with the goal path off a step's end is not the new one: \(held.state)")
+    let goalPathBefore = TodoData.goalPath
+    TodoData.goalPath = true
+    defer { TodoData.goalPath = goalPathBefore }
     let done = reported(both)
     expect(done.state == .done && done.result == "done" && done.stepTests == both && done.stepSHA == both.sha && done.stepSHA != nil,
            "a step with its own tests passed is done with its commit (no check: the milestone has it)")

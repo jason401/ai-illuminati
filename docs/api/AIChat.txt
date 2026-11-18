@@ -224,11 +224,18 @@ Conversation.pinned | var pinned: Bool?
 Conversation.projectSummary | var projectSummary: ProjectChatSummary { get }
 Conversation.queued | var queued: [QueuedMessage]?
 Conversation.shareToDevices | var shareToDevices: Bool?
+Conversation.subOf | var subOf: SubRoomLink?
 Conversation.summary | var summary: String
 Conversation.title | var title: String
 Conversation.turns | var turns: [ChatTurn]
 Conversation.updatedAt | var updatedAt: Date
 Conversation.workspace | var workspace: WorkspaceBinding?
+DelegateLink | final class DelegateLink
+DelegateLink.active | var active: Bool { get }
+DelegateLink.call(_:_:context:) | func call(_ name: String, _ arguments: [String : Any], context: ToolContext) -> [String : Any]
+DelegateLink.shared | static let shared: DelegateLink
+DelegateLink.tools() | func tools() -> [[String : Any]]
+DelegateLink.tools(context:) | func tools(context: ToolContext) -> [[String : Any]]
 DeviceSync | final class DeviceSync
 DeviceSync.ago(_:now:) | static func ago(_ date: Date, now: Date = Date()) -> String
 DeviceSync.chatLocked(_:) | func chatLocked(_ conversation: Conversation)
@@ -450,6 +457,12 @@ StorageLink.call(_:_:context:) | func call(_ name: String, _ arguments: [String 
 StorageLink.shared | static let shared: StorageLink
 StorageLink.tools() | func tools() -> [[String : Any]]
 StorageLink.tools(context:) | func tools(context: ToolContext) -> [[String : Any]]
+SubRoomLink | struct SubRoomLink
+SubRoomLink.init(from:) | init(from decoder: any Decoder) throws
+SubRoomLink.init(room:split:n:) | init(room: UUID, split: String, n: Int)
+SubRoomLink.n | var n: Int
+SubRoomLink.room | var room: UUID
+SubRoomLink.split | var split: String
 SyncSnapshot | struct SyncSnapshot
 SyncSnapshot.createdAt | var createdAt: Date
 SyncSnapshot.enterpriseLock | var enterpriseLock: EnterpriseLock?

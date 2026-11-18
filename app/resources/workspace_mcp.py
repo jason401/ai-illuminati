@@ -33,7 +33,7 @@ class Workspace:
                 value = float(os.environ.get('AI_ILLUMINATI_TEST_BRIDGE_TIMEOUT', '15'))
                 if name and math.isfinite(value) and value > 0: ordinary_timeout = value
             except ValueError: pass
-            timeout = 3610 if name.startswith('git_') or name in ('project_run', 'ask_ai', 'ask_peer', 'meeting_result', 'create_project') else 125 if name in getattr(self, 'slow', ()) else (65 if name.startswith('drive_') else ordinary_timeout)
+            timeout = 3610 if name.startswith(('git_', 'delegate_', 'sub_')) or name in ('project_run', 'ask_ai', 'ask_peer', 'meeting_result', 'create_project') else 125 if name in getattr(self, 'slow', ()) else (65 if name.startswith('drive_') else ordinary_timeout)
             s.settimeout(timeout); s.connect(self.hub)
             if self.tool_session: message = dict(message, session=self.tool_session)
             s.sendall(json.dumps(message).encode() + b'\n')

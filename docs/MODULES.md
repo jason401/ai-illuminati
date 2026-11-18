@@ -138,13 +138,14 @@ DriveLink.shared in an isolated test keeps working. The list is never dynamicall
 4. PlanLink
 5. PeerLink
 6. ConveneLink
-7. ChatLink
-8. MemoryLink
-9. ProjectMakerLink
-10. TaskLink
-11. TodoAddLink
-12. StorageLink
-13. ExternalMCP
+7. DelegateLink (sub-room P2: delegate_*, git_merge_sub, sub_report, sub_blocked; left out for consulted AIs like Peer and Convene)
+8. ChatLink
+9. MemoryLink
+10. ProjectMakerLink
+11. TaskLink
+12. TodoAddLink
+13. StorageLink
+14. ExternalMCP
 
 `shared` alone connects ProjectWork.revokeTools; a fixture hub cannot overwrite that hook.
 The clock defaults to Date(); tests inject time without waiting two hours. `available(context:legacy:)` holds the
@@ -154,9 +155,9 @@ These are app-internal seams: no new module or public symbol.
 
 | Promise | Consumer | Check |
 |---|---|---|
-| The exact 13 singleton identities and order; current replaceable Drive singleton | ToolHub.shared | run_mode2 stage 1 exact source list; testToolHub identity and Drive replacement |
+| The exact 14 singleton identities and order; current replaceable Drive singleton | ToolHub.shared | run_mode2 stage 1 exact source list; testToolHub identity and Drive replacement |
 | Tool listing preserves provider order and duplicate names; call uses the first active provider that lists the name in that context | CLI bridge | testToolHub duplicate fixtures, inactive/context-hidden list and call; baseline + A1/A2/A3 mutants |
-| member keeps the list; side has only Peer; consulted excludes Peer and Convene; legacy has only Face, before providers' own gates | workspace bridge, ask_ai, meetings, old Face bridge | testToolHub exact selected identities and side/legacy call refusals, A4 mutant; testAskAI, testMeetingTool, testChatThroughCLI |
+| member keeps the list; side has only Peer; consulted excludes Peer, Convene and Delegate; legacy has only Face, before providers' own gates | workspace bridge, ask_ai, meetings, old Face bridge | testToolHub exact selected identities and side/legacy call refusals, A4 mutant; testAskAI, testMeetingTool, testChatThroughCLI |
 | Unknown/expired sessions cannot list or call; project revocation removes only that project's sessions; unknown operations/names fail | all CLI calls, project turn end | testToolHub, injected-clock expiry, A5 mutant; testProjectHandoff |
 | Slow names are limited to tools actually exposed | workspace_mcp.py | testExternalMCP (nonempty exposed fake-server slow names); an excluded-slow-name negative case is not covered |
 | Each module follows its declared imports and allowed direction | every module/app build in run_mode2 | check_module_dependencies.py, DependencyRules temporary-tree falsifications, build_modules.sh visibility and cycle checks |
@@ -417,7 +418,7 @@ are AIProjects'; ToolHub and the Settings backup UI stay App. Providers live wit
 | Save format: a chat's `workspace` (`WorkspaceBinding`, `WorkspaceRoot`, `ProjectBinding`, levels, `ToolOrigin`) and a backup's `complete.json` keep their keys; absent fields left out; older ones read | Discussion (chats/*.json), Todo (lists), ProjectWork, every `load` | "a chat's workspace keeps its saved keys" (golden), "an older workspace reads", "an older backup reads", "complete.json is private" | mode2 "legacy decoding", testTodoStore (saved and read back) |
 | Errors: an NSError (domain `Materials`, code 1, the same texts) the callers show as they are | Solo, ProjectChat, Attachments (notes) | "the refusal names the backup" | mode2 conflict refusal |
 | Disk sizes: lstat blocks, links not followed, a hard link once across calls with one `seen` | ChatStorage (`report`), clean-up (`bytes`) | "a hard link counts once", "… not counted again across calls", "a missing path counts as unreadable" | mode2 "storage by chat, …, hard links once" |
-| Tool gateway's types: `ToolProvider.tools(context:)` defaults to `tools()`; `ToolContext` carries the room, roots, run, asker, turn, origin | ToolHub and the 13 providers (app files) | none (types) | mode2 tool tests (ask_ai, meetings, chat tools, memory, Drive, outside MCP) |
+| Tool gateway's types: `ToolProvider.tools(context:)` defaults to `tools()`; `ToolContext` carries the room, roots, run, asker, turn, origin | ToolHub and the 14 providers (app files) | none (types) | mode2 tool tests (ask_ai, meetings, chat tools, memory, Drive, outside MCP) |
 
 Public names and why (everything else stays internal: `AutoGuard` whole, `WorkspaceError`, `WorkspaceInvocation.prepare`/
 `readOnly`/`backupPath`/`executionFolders`, `WorkspaceBackup.run`/`survey`/`copyTree`/`trim`/`protect`/`chats`/`keepPerChat`/
@@ -464,7 +465,7 @@ Chat-side files are AIChat's since C1: `ProjectChat.swift` (approval views; `ext
 (Discussion as `TodoChats`, the crew by `AutoPick`/`Enterprise.permits`, `TodoScheduler.noCrew`, the photo import),
 `SidebarProjects.swift` and `ProjectSnapshot` (Peer.swift, the review).
 TODO usage bar: `AutoPick.need(window:kind:purpose:now:checkedAt:)` (Solo.swift) is the one rule for how much must be left. For `.todo` it lowers the weekly bar to min(10, max(3, 5 × days to the reset)) and the five-hour bar to 3 in its last hour; for `.chat` (plain and project chats, `Peer.pick`) it stays `AutoPick.threshold` (10); never above 10, and no reset time, a reset already past or a reading `staleAfter` (30 min) old gives 10. `AutoPick.surplus` (the smaller of the two left − bar) orders the TODO crew (`todoCrew`, a tie by weekly left); `choose` keeps its order by weekly left so chats pick as before; `todoBar` gives `TodoScheduler.noCrew` the lowest bar of the able accounts for the waiting text (Discussion's `noCrew`, also on the board). Tests: todo_work `testTodoUsageBar`, `testTodoCrew`; mode2 "plain chat (auto pick 10% …)". App keeps `TodoBoard.swift`, `ProjectInfoView.swift`,
-`GitBranches.swift`, `ApprovalAlerts.swift`, `ToolHub` with the 13 providers in their order.
+`GitBranches.swift`, `ApprovalAlerts.swift`, `ToolHub` with the 14 providers in their order.
 
 | Promise | Users (files) | Module test (`projects_contract.swift`) | User tests |
 |---|---|---|---|
@@ -476,7 +477,8 @@ TODO usage bar: `AutoPick.need(window:kind:purpose:now:checkedAt:)` (Solo.swift)
 | Save format: todos.json pretty with sorted keys, older files read, an unreadable or newer file held and never written over; project-info.json the same | TodoBoard, Todo tools, ProjectInfoView, Solo (rules) | "todos.json keeps its shape", "reads back", "an unreadable todos.json is held" | `testTodoStore` (held unreadable files, older files, failed save), `testProjectInfo` |
 | Repository lock, two layers: one writer per Git work tree (`--show-toplevel`; two work trees of one repository are written at once; `isHeld` is per work tree) and per documents folder, across app instances (lock files, refused at once), shared locks above; GitLink's commands that change shared refs (branch, switch, merge, fetch/pull, push, the turn's push, stable) take a short "refs:" lock per common dir while they run (waiting up to 60 s), commits do not; `git_branch`/`git_switch` refuse `sub/` branches; refusals say `busyKorean`/`busyEnglish` ("this folder"), and `isBusy` still knows the older texts | Discussion (every writing answer), TodoChatsApp | "a second writer is refused", "released" | `testProjectWork` (repo locks), `testWorkTreeLocks` (two work trees, refs waits, commits pass, another instance's lock file, sub/), `testDocumentsProject` (one writer per folder), `testTodoScheduler` (folder lock) |
 | Sub-room work trees (`SubWork`): made outside the repository (app folder `worktrees/`, a test home in tests) on `sub/<split>/<n>` from a clean main HEAD; merged only when reported, its tree not being written, the SHA after the start and on its branch, main clean; conflicts checked against the current HEAD with `merge-tree --write-tree` and returned without merging; files outside the owned ones only warned; `--no-ff`, only a merge it started is aborted; `resync` leaves conflict markers in the sub-room's tree; removed with its branch only once merged and pushed and clean; no stash/reset/force; `sub/` is never pushed | AIChat (P2: delegate tools, split record) | none | `testSubTrees` |
-| Scoped tools: `work_plan`, `task_done`/`task_ask`, Git tools only for the live attempt of the run's own chat; a new attempt or the run's end ends the earlier tool sessions (`revokeTools`); documents projects get `project_run` only | ToolHub (13 providers, order unchanged), ProjectChat | "the live attempt gets its tools", "an earlier attempt, another chat and the global list get none", "a new attempt ends the earlier attempt's tool sessions", "a finished run is gone" | `testProjectWork` (scoped tools), `testProjectHandoff` (old-token revocation), `testTodoScheduler` ("task tools only in the TODO's own chat") |
+| Sub-room turns (P2): `isSubRoom` runs list and run no git_pull/git_push/git_publish_stable/git_branch/git_switch; `report` only a clean tree's HEAD after the start; `leftover`/`halfMerged` read what a restart left; `discard` removes an unmerged tree and branch (the user's choice); `project_run` one at a time per repository, the others wait in line ("run:" lock file) | AIChat (`Delegate.swift`, ProjectChat) | none | `testDelegate` |
+| Scoped tools: `work_plan`, `task_done`/`task_ask`, Git tools only for the live attempt of the run's own chat; a new attempt or the run's end ends the earlier tool sessions (`revokeTools`); documents projects get `project_run` only | ToolHub (14 providers, order unchanged), ProjectChat | "the live attempt gets its tools", "an earlier attempt, another chat and the global list get none", "a new attempt ends the earlier attempt's tool sessions", "a finished run is gone" | `testProjectWork` (scoped tools), `testProjectHandoff` (old-token revocation), `testTodoScheduler` ("task tools only in the TODO's own chat") |
 | Git work: fixed argv, no hooks, explicit commit paths, push only main/feature/fix/codex, in a project chat (plain or TODO) one push by the app when the turn ends well (after the review and its fixes; a failed push is the turn's error, the commits stay local), stable only through the card with the exact SHA, `project_run` only registered commands, approved commands checked unchanged, AutoGuard's environment in full auto | ProjectChat (`runProjectSolo`) | none (needs a repository with a remote: app tests) | `testProjectWork`, `testFullAuto`, `testWorkTiming` |
 | The work binding: execute, writable only in the project's root and the chat's folder | ProjectChat | "work binding" | `run_conditions.swift` (ProjectChat's own run in the golden file) |
 | Approvals: one list for every place, a decision clears them all, 15 minutes unanswered is no and leaves a note | ProjectChat views, ApprovalAlerts, ExternalMCP, ProjectCreator | none | `testProjectWork` (expired, twice), render_chat |
@@ -525,6 +527,12 @@ Public names and why (everything else stays internal: `ProjectError`, `ProjectTo
   `names` as before): ToolHub lists them in its order.
 - Stable publish screen API: `GitLink.publishStable(_:room:onWaiting:)` is public so the App project screen can publish without an AI turn. It acquires the existing repository lock and reuses the Git tool's exact-SHA approval path; its waiting callback updates the screen. The shared publish path fetches first, preserves publishing the exact local main SHA, rejects divergent stable, and supports the first stable publish. `projects_contract` checks approval, refusal, exact SHA and lock release against a temporary local remote.
 - Pull main screen API: `GitLink.pullMain(_:)` is public so the App project screen can pull main when its refresh finds main behind origin/main. It holds the repository lock (no pull in the middle of an AI's work) and keeps `git_pull`'s rules: main checked out, clean tree, `pull --ff-only`, never stash/reset. `projects_contract` checks dirty, other branch, busy lock, fast-forward and diverged cases against a temporary local remote. No graph change.
+- Sub-room P2 (AIChat's `Delegate.swift` uses them): `ProjectRun.isSubRoom` (set by the chat for a sub-room's turn: GitLink then lists and runs no git_pull/git_push/git_publish_stable/git_branch/git_switch),
+  `ProjectWork.run(for:)` (another module's tool provider finds the live project turn of a tool call, with the same room/generation/cancel checks as GitLink),
+  `SubWork.report` (sub_report: the work tree's HEAD only when everything is committed, and the files changed since the start),
+  `SubWork.leftover`/`Leftover` and `SubWork.halfMerged` (the restart check: folder, listed work tree, branch, half-done merges),
+  `SubWork.discard` (the user's Discard: work tree and branch go also unmerged, its last SHA returned; the only forced Git step).
+  `project_run` waits in line per repository (a "run:" lock file per common dir) so tests in two work trees never run at once.
 - Sub-room Git work (SUBROOM_PLAN 3, 5; P2's split record and tools in AIChat call it): `SubWork` (`create`, `remove`, `merge`, `resync`), `SubWork.Tree` (`path`, `branch`, `base`, Codable: the split record saves it) and `SubWork.Merge` (`merged`, `conflicts`, `outside`, `head`: what git_merge_sub tells the main room). Work trees under the app folder's `worktrees/<repo hash>/<split>-<n>` on `sub/<split>/<n>` from a clean main HEAD; every step inside the refs lock and the sub-room's work tree lock; merge checks with `merge-tree --write-tree` against the current HEAD, `--no-ff`, aborts only a merge it started; removed only when merged and pushed. Test: `testSubTrees`.
 
 ### AIChat (`app/modules/AIChat/`: ChatRecords, SyncSnapshot; ChatValues went to AIChatRecords in T4), step C1a
@@ -600,7 +608,7 @@ What the chat gets from the app, set by the app (the chat side names none of the
   to `ChatApp.run`, so the chat's calls read as before.
 
 Stays in the app (what the user sees of other parts): Settings (all tabs, Memory/Rules/Storage windows), TodoBoard, ProjectInfoView,
-GitBranches, DriveUI/DriveLink/GoogleAuth, ExternalMCP/RemoteMCP, FaceLink, ToolHub (the 13 providers in their order, stage 1
+GitBranches, DriveUI/DriveLink/GoogleAuth, ExternalMCP/RemoteMCP, FaceLink, ToolHub (the 14 providers in their order, stage 1
 checks the list), ApprovalAlerts, MenuCards, main, Login, Updater, Icon, LocalModels, RunConditionsApp, ChatLinksApp,
 ChatScreensApp. Two app edits besides imports: `StorageListView.measured` (one string the compiler could no longer type-check
 inline once the names came from another module; same text) and the `AppModel` conformance line.
@@ -615,7 +623,10 @@ everything else, Discussion's state above all, stays internal):
   `disconnectProjectFolder`; approvals: `approvalChatName`, `viewingRemote`; `markTodoDone`: the board's and cards' [Mark as done],
   the same confirmation as the sidebar's ⋯); `TodoChats` (P0's seam, all its members);
   `Discussion.meets`/`autoPicked` (Settings' team picks).
-- The five tool providers (`shared`, `active`, `tools`, `call`; `MemoryLink.newestTurn` for ToolHub.register): ToolHub lists them.
+- The six tool providers (`shared`, `active`, `tools`, `call`; `MemoryLink.newestTurn` for ToolHub.register): ToolHub lists them
+  (`DelegateLink` since sub-room P2).
+- `Conversation.subOf` and `SubRoomLink` (`room`, `split`, `n`, one public init): a sub-room's chat record says which split it works
+  for, so it is saved with the chat like `meetingOf` (the chat window and synced copies read the record type).
 - Settings' tabs: `MemoryStore`/`MemoryItem`/`MemoryData`, `ChatStorage` (`report`, `items`, `format`, `Report`, `Room`, `Kind`; AIChatRecords since T4),
   `CollabMode`/`CollabLog` (AIChatRecords since T4), `RouteSorter`, `ApprovalAlertSettings`, `AIColors` (each AI's color: the color window changes what `Account.Provider.color` draws; `revisionKey` lets their views redraw), `AIColorWindow` (`show`, `menuTitle`: Appearance's "Change…" and the usage menu's "Change <AI> Color…" open the same window as a right-click on an AI's name in the chat), `DeviceSync` (settings, start, scan, the notes the links call; `deviceID` and `deviceName`: the Usage window puts this Mac's token ledger in the same folder under the same id and name, so a Mac is one Mac in both; `offerConnection`, `onlineHosts`, `checkOnline`, `RemoteConnection` (`init`) and the settings' `shareConnection`/`sharesConnection`: the app's phone page (PhoneAccess.swift) hands over its address and Tailscale's online Macs, which the module cannot read, for Other Macs → connect in MacConnect.swift),
   `ChatLink.conversations`; the board and Project info: `SidebarProjects` (`key`, `group`, `pickerName`), `ProjectGroup`,
@@ -630,7 +641,8 @@ everything else, Discussion's state above all, stays internal):
 | A meeting runs in its hidden chat with both members' CLIs and brings the result back as the answer | ChatWindow | `testChatThroughCLI`, testPickedRoute, testMeetingTool |
 | A work answer's change is reviewed once by the other member, read only, and fixed in the same turn | ChatWindow, TODOs | `testChatThroughCLI`, testPeerReview, testDocumentsProject |
 | A failure in the middle of an answer (the CLI killed, out of usage with nobody left, the network, a time-out, the app quitting) keeps the reply so far as the answer (`cutOff`) in chats/*.json, saved every few seconds while written and at quit (`cancelAll`); the chat stops showing it answering (at launch too, `recoverInterrupted`), says Try again, and Try again continues from it; the files it changed are listed for Undo, also after a quit (`finishLeftOpen`) | ChatWindow (Try again), TODOs, main (quit) | `failure_recovery.swift` `testFailureRecovery` (fake CLI, no answer hooks), `testTodoFailureRecovery` |
-| The 13 tool providers keep their order | ToolHub | run_mode2 stage 1 (the exact list) |
+| The 14 tool providers keep their order | ToolHub | run_mode2 stage 1 (the exact list) |
+| Sub-rooms (`Delegate.swift`, SUBROOM_PLAN 4, 6, 8): the split record `splits/<main room id>.json` is written before any work tree; at most two parts with owned files that do not overlap; a card unless full auto (then "approved automatically" on the card); a sub-room gets only sub_report/sub_blocked and no push, pull, switch, branch or publish, and cannot split again; places kept for approved sub-rooms (`subWaiting`) count against other chats and TODOs; the join turn once per split; the main room's Stop stops its sub-rooms and keeps their work trees (Continue/Discard); after a restart nothing goes on by itself and each leftover is a card once; merged work trees go after the push | ChatWindow (cards), TODOs (places), ToolHub | `testDelegate` (fake AIs: two parts → reports → merges → push → cleanup, card vs full auto, overlap and a sub-room's split refused, join turn once, Stop and Continue/Discard, restart cases, project_run in line), `testToolHub` |
 | The chat runs each AI with the app's run conditions and AI Face rules | Answerer | testRunConditions (golden), testRuntimeThroughApp, mode2 AI Face link |
 
 C1b falsification table: `docs/modules-history.md`.

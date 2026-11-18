@@ -12,7 +12,7 @@ import AIProjects
 extension Discussion: TodoChats {
     public var answering: Set<UUID> { runningRooms }
     public var answeringChanged: AnyPublisher<Void, Never> { $runningRooms.map { _ in () }.eraseToAnyPublisher() }
-    public var maxAnswering: Int { Self.maxRunning }
+    public var maxAnswering: Int { Self.maxRunning - subWaiting.count }   // places kept for sub-rooms are not a TODO's
     public var importing: Bool { importingMaterials }
     public var chats: [ProjectChatSummary] { conversations.map(\.projectSummary) }
 

@@ -210,6 +210,9 @@ public final class ProjectRun {
     let started = Date()
     // Full auto runs while the user is away: up to 8 hours instead of 1 (45 minutes active).
     let fullAuto: Bool
+    // A sub-room's turn (docs/SUBROOM_PLAN.md 4): it works on its own sub/ branch, so its Git tools leave out push, pull,
+    // publish and branch changes; the app merges its reported commit.
+    public var isSubRoom = false
     public let deadline: Date
     var activeLimit: TimeInterval { fullAuto ? 8 * 3600 : 2700 }
     private let clock = NSLock()
@@ -342,6 +345,11 @@ public enum ProjectWork {
     }
     public static var active: Bool { mutex.lock(); defer { mutex.unlock() }; return !runs.isEmpty }
     static func get(_ id: UUID?) -> ProjectRun? { mutex.lock(); defer { mutex.unlock() }; return id.flatMap { runs[$0] } }
+    // The project turn a tool call belongs to, while that AI's attempt is current (another module's tools: sub-rooms).
+    public static func run(for context: ToolContext) -> ProjectRun? {
+        guard let run = get(context.projectRun), run.room == context.room, context.projectGeneration == run.generation, !run.cancelled else { return nil }
+        return run
+    }
     // What the working AI gets: write and execute, writable only in the project's root and the chat's own folder.
     public static func workBinding(_ binding: WorkspaceBinding, project: ProjectBinding, chatFolder: String, run: ProjectRun) -> WorkspaceBinding {
         var workspace = binding
@@ -392,7 +400,7 @@ public enum ProjectWork {
         return result + ["/"]
     }
     // Lock files are named by the SHA-256 of their key: a folder's path (a documents folder, or a shared lock above a
-    // writer), "worktree:" + a Git work tree, "refs:" + a Git common dir; the prefixes keep the three apart.
+    // writer), "worktree:" + a Git work tree, "refs:" + a Git common dir, "run:" + a common dir (project_run); the prefixes keep them apart.
     private static func lockFile(_ key: String, _ operation: Int32, wait: TimeInterval = 0, token: DebateCancellation? = nil, busy: String = "Folder is busy in another app instance.") throws -> Int32 {
         let base = URL(fileURLWithPath: AccountStore.supportDir).appendingPathComponent("project-locks")
         try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
@@ -495,6 +503,20 @@ public enum ProjectWork {
         return try withRefs(root, wait: min(60, timeout), token: token) {
             try ProjectProcess.git(args, root: root, token: token, timeout: max(1, timeout - Date().timeIntervalSince(start)))
         }
+    }
+    // project_run runs one at a time per repository, across its work trees and app instances: tests of sub-rooms at once
+    // were slow and shared one test cache lock (test-cache.lock). The others wait in line until their deadline or a stop.
+    static func oneRun<T>(_ root: String, until deadline: Date, token: DebateCancellation?, waiting: () -> Void, _ body: () throws -> T) throws -> T {
+        guard let common = commonDir(root) else { return try body() }
+        let key = "run:" + common
+        let fd: Int32
+        if let free = try? lockFile(key, LOCK_EX) { fd = free } else {
+            waiting()
+            fd = try lockFile(key, LOCK_EX, wait: max(0, deadline.timeIntervalSinceNow), token: token,
+                              busy: L("이 저장소의 다른 project_run이 끝나지 않아 기다리다 멈췄어요.", "Another project_run in this repository did not finish in time."))
+        }
+        defer { close(fd) }
+        return try body()
     }
     // Another writer holds what this binding would write (in this app or another instance); tries the lock and gives it back.
     public static func busy(_ binding: WorkspaceBinding?) -> Bool {
@@ -619,14 +641,17 @@ public final class GitLink: ToolProvider {
         if run.binding.isFolderless { return [] }
         let run_ = tool("project_run", "Run a named command from .ai-illuminati.json after user approval. Never pass shell commands.", ["name": string], ["name"])
         if run.binding.isDocuments { return [run_] }   // no Git in a documents project
-        return [tool("git_status", "Read linked project status and branch."), tool("git_diff", "Read staged or unstaged diff; never executes external diff tools.", ["staged": ["type": "boolean"]]), tool("git_log", "Recent project commits."),
+        let all = [tool("git_status", "Read linked project status and branch."), tool("git_diff", "Read staged or unstaged diff; never executes external diff tools.", ["staged": ["type": "boolean"]]), tool("git_log", "Recent project commits."),
                 tool("git_pull", "Fast-forward only, clean worktree required. Never stash/reset."),
                 tool("git_commit", "Commit only explicit relative paths; existing user changes require approval.", ["message": string, "paths": ["type": "array", "items": string]], ["message", "paths"]),
                 tool("git_push", "Push current main/feature branch; never stable or force."),
                 tool("git_publish_stable", "Publish an exact main SHA to stable after the user's approval card."),
                 tool("git_branch", "Create a new branch from a clean tree.", ["name": string], ["name"]), tool("git_switch", "Switch an existing branch with a clean tree.", ["name": string], ["name"]),
                 run_]
+        return run.isSubRoom ? all.filter { !Self.notInSubRooms.contains($0["name"] as? String ?? "") } : all
     }
+    // A sub-room stays on its own branch and never reaches the remote (the main room pushes after merging).
+    static let notInSubRooms: Set<String> = ["git_pull", "git_push", "git_publish_stable", "git_branch", "git_switch"]
     public func call(_ name: String, _ arguments: [String: Any], context: ToolContext) -> [String: Any] {
         guard let run = ProjectWork.get(context.projectRun), run.room == context.room, let generation = context.projectGeneration else { return ProjectTools.failure("No project capability.") }
         run.operations.lock(); defer { run.operations.unlock() }
@@ -696,6 +721,7 @@ public final class GitLink: ToolProvider {
             try run.validate(generation)
         }
         if run.binding.isDocuments && name != "project_run" { throw ProjectError.make("This is a documents project without Git; there are no git tools. The app backed the folder up before this answer.") }
+        if run.isSubRoom && Self.notInSubRooms.contains(name) { throw ProjectError.make("A sub-room has no \(name): it commits on its own branch and reports with sub_report; the main room merges and pushes.") }
         switch name {
         case "git_status": return try git(["status", "--short", "--branch"])
         case "git_log": return try git(["log", "-10", "--oneline"])
@@ -771,8 +797,10 @@ public final class GitLink: ToolProvider {
             defer { run.setSub(nil) }
             let deadline = min(run.deadline, Date().addingTimeInterval(2700))
             do {
-                let reply = try ProjectProcess.run(exe, argv, cwd: run.binding.root, token: run.attempt, deadline: deadline, guarded: run.fullAuto,
-                                                   onLine: progress.line)
+                let reply = try ProjectWork.oneRun(run.binding.root, until: deadline, token: run.attempt,
+                                                   waiting: { run.note(L("project_run: 이 저장소의 다른 명령이 끝나길 기다리는 중", "project_run: waiting for another command in this repository")) }) {
+                    try ProjectProcess.run(exe, argv, cwd: run.binding.root, token: run.attempt, deadline: deadline, guarded: run.fullAuto, onLine: progress.line)
+                }
                 RunTimings.record(root: run.binding.root, command: selected, progress.finish(reply.status == 0 ? "ok" : "failed", exit: reply.status))
                 return "exit=\(reply.status)\n" + reply.output
             } catch {

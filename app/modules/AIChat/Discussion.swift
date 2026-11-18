@@ -43,6 +43,9 @@ public final class Discussion: ObservableObject {
     var steers: [UUID: SteerChannel] = [:]          // the host: each running chat's channel
     @Published var steering: [UUID: [(message: QueuedMessage, text: String)]] = [:]   // offered to the answer, not read yet
     private var sendAfterStop: Set<UUID> = []       // "Send now": the stopped answer's queue goes at once
+    // Sub-rooms (Delegate.swift) approved but not answering yet, in order: their places are kept from other chats and TODOs.
+    var subWaiting: [(room: UUID, question: String)] = []
+    var joinWaiting: Set<UUID> = []                  // main rooms whose join turn found no free place yet
     weak var host: Discussion?
     private var workers: [UUID: Discussion] = [:]
     // For the open chat (a worker: always its own chat).
@@ -315,6 +318,11 @@ public final class Discussion: ObservableObject {
         restoreDraft()
         linkChatTools()
         SidebarFold.shared.adoptPins(conversations)
+        // Splits left from before (Delegate.swift): checked against Git and shown as cards, never continued by themselves.
+        if !SplitStore.shared.rooms().isEmpty {
+            let known = Set(conversations.map(\.id))
+            DispatchQueue.global(qos: .utility).async { [weak self] in self?.recoverSplits(known: known) }
+        }
     }
 
     // A worker for one message in one chat: same accounts, sessions and test hooks, only that chat.
@@ -336,6 +344,7 @@ public final class Discussion: ObservableObject {
     // A worker finished (called on the main thread).
     private func runFinished(_ room: UUID) {
         let stopped = stoppingRooms.contains(room)
+        let cancelled = workers[room]?.runCancellation?.isCancelled == true   // also a TODO's stop, which marks no stopping
         runningRooms.remove(room)
         stoppingRooms.remove(room)
         workers[room] = nil
@@ -343,6 +352,7 @@ public final class Discussion: ObservableObject {
         ChatStore.links.finished(conversations.first { $0.id == room })
         noteFinished(room, stopped: stopped)
         afterRun(room, stopped: stopped)
+        splitTurnEnded(room, stopped: stopped || cancelled)
     }
 
     // An answer ended (main thread, right after its chat left runningRooms): what it did not read goes back to the front
@@ -812,7 +822,9 @@ public final class Discussion: ObservableObject {
                    forced: RouteChoice? = nil, extra: String = "") -> String? {
         guard host == nil, conversations.contains(where: { $0.id == id }) else { return L("대화를 찾지 못했어요.", "Chat not found.") }
         if runningRooms.contains(id) { return L("이 대화는 아직 답하는 중이에요.", "This chat is still answering.") }
-        guard runningRooms.count < Self.maxRunning, !importingMaterials else {
+        // Places kept for approved sub-rooms count for every other chat; a sub-room only needs a free place.
+        let kept = conversation(id).subOf == nil ? subWaiting.count : 0
+        guard runningRooms.count + kept < Self.maxRunning, !importingMaterials else {
             return L("동시에 \(Self.maxRunning)개 대화까지 답할 수 있어요. 하나가 끝나면 보낼 수 있어요.",
                      "Up to \(Self.maxRunning) chats can answer at once. Send when one finishes.")
         }
@@ -1473,6 +1485,7 @@ public final class Discussion: ObservableObject {
             self.model.onAccountsChange?()   // refresh the usage numbers after the discussion
             ChatStore.links.finished(self.conversations.first { $0.id == room })
             self.afterRun(room, stopped: stopped)
+            self.splitTurnEnded(room, stopped: stopped)
         }
     }
 

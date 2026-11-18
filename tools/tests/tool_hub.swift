@@ -21,7 +21,7 @@ private final class HubFixture: ToolProvider {
 
 func testToolHub() {
     let expected: [ToolProvider] = [FaceLink.shared, DriveLink.shared, GitLink.shared, PlanLink.shared, PeerLink.shared,
-        ConveneLink.shared, ChatLink.shared, MemoryLink.shared, ProjectMakerLink.shared, TaskLink.shared,
+        ConveneLink.shared, DelegateLink.shared, ChatLink.shared, MemoryLink.shared, ProjectMakerLink.shared, TaskLink.shared,
         TodoAddLink.shared, StorageLink.shared, ExternalMCP.shared]
     let actual = ToolHub.appProviders
     let appHub = ToolHub(providers: { ToolHub.appProviders })
@@ -29,13 +29,13 @@ func testToolHub() {
     var consultation = ordinary; consultation.origin = .consulted
     var sideAnswer = ordinary; sideAnswer.origin = .side
     let consultedProviders = appHub.available(context: consultation)
-    let expectedConsulted = expected.filter { $0 !== PeerLink.shared && $0 !== ConveneLink.shared }
+    let expectedConsulted = expected.filter { $0 !== PeerLink.shared && $0 !== ConveneLink.shared && $0 !== DelegateLink.shared }
     expect(consultedProviders.count == 11 && zip(consultedProviders, expectedConsulted).allSatisfy { $0 === $1 },
-           "consulted provider identities exclude Peer and Convene before their own gates")
+           "consulted provider identities exclude Peer, Convene and Delegate before their own gates")
     let sideProviders = appHub.available(context: sideAnswer), legacyProviders = appHub.available(context: ordinary, legacy: true)
     expect(sideProviders.count == 1 && sideProviders[0] === PeerLink.shared, "side provider identity is Peer only")
     expect(legacyProviders.count == 1 && legacyProviders[0] === FaceLink.shared, "legacy provider identity is Face only")
-    expect(actual.count == 13 && zip(actual, expected).allSatisfy { $0 === $1 }, "the app supplies all 13 providers in their original order")
+    expect(actual.count == 14 && zip(actual, expected).allSatisfy { $0 === $1 }, "the app supplies all 14 providers in their original order")
     // The explicit list must keep reading replaceable shared providers (Drive's fake backend).
     let previousDrive = DriveLink.shared
     let replacement = DriveLink(auth: .shared)

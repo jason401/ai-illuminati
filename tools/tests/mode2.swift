@@ -2774,6 +2774,7 @@ runTest("testDeviceSync", testDeviceSync)
 
 runTest("testProjectHandoff", testProjectHandoff)
 runTest("testDocumentsProject", testDocumentsProject)
+runTest("testWorkTreeLocks", testWorkTreeLocks)
 runTest("testDisconnectProjectFolder", testDisconnectProjectFolder)
 runTest("testStartTurn", testStartTurn)
 runTest("testQueuedMessages", testQueuedMessages)

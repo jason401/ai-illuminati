@@ -162,7 +162,135 @@ func testTodoStore() {
            "only the other list is left, and it no longer waits for a deleted TODO")
     expect(!FileManager.default.fileExists(atPath: gone.folder(first.id).path) && FileManager.default.fileExists(atPath: shot.path), "attachment copies go, the original stays")
     expect(TodoStore(url: gone.url).current == gone.current && (try! gone.deleteLists([])) == 0, "saved; nothing to delete is fine")
-    print("PASS: TODO store (held unreadable files, drafts, joining a running list, release wakes, order and folder, gate review/done, other lists, circles refused, move, cancelled link, saved and read back, older files, failed save)")
+    testTodoSplitStorage()
+    print("PASS: TODO store (held unreadable files, drafts, joining a running list, release wakes, order and folder, gate review/done, other lists, circles refused, move, cancelled link, saved and read back, older files, failed save, split storage and recovery)")
+}
+
+private func testTodoSplitStorage() {
+    // The old reader recognizes the same lists and state values, and ignores the new item keys.
+    struct OldItem: Decodable {
+        let id: UUID
+        let listID: UUID
+        let title: String
+        let state: TodoItem.State
+        let after: [UUID]
+        let createdAt: Date
+
+        var item: TodoItem {
+            var item = TodoItem(listID: listID, title: title, after: after)
+            item.id = id
+            item.state = state
+            item.createdAt = createdAt
+            return item
+        }
+    }
+    struct OldFile: Decodable {
+        let version: Int
+        let lists: [TodoList]
+        let items: [OldItem]
+    }
+
+    let project = ProjectBinding(root: "/tmp/todo-split", common: "", remote: "", remoteURL: "")
+    let url = todoStoreFile("split")
+    let store = TodoStore(url: url)
+    let before = try! store.add(title: "before", project: project, projectName: "Split")
+    let original = try! store.add(title: "original", detail: "Original details", project: project, projectName: "Split", after: [before.id], originRoom: UUID())
+    let below = try! store.add(title: "below", project: project, projectName: "Split")
+    store.startDrafts()
+    try! store.change(before.id) { $0.state = .done }
+    let oldItem = TodoStore(url: url).current.item(original.id)!
+    expect(oldItem.group == nil && oldItem.piece == nil && oldItem.byAI == nil && oldItem.splitDeclined == nil && oldItem.splitRecord == nil,
+           "a file without split fields reads as ordinary TODOs")
+
+    try! store.change(original.id) {
+        $0.state = .running
+        $0.room = UUID()
+        $0.workers = ["fixture"]
+        $0.report = TodoReport(summary: "prior attempt")
+    }
+    let running = store.current.item(original.id)!
+    let steps: [TodoStore.SplitStep] = [
+        .init(title: "first", detail: "First check", files: ["a.swift"]),
+        .init(title: "second", detail: "Second check", files: ["b.swift", "c.swift"])
+    ]
+    let reason = "Two dependent parts"
+    func split(_ store: TodoStore, _ id: UUID, with steps: [TodoStore.SplitStep]) throws {
+        try store.split(id, steps: steps, estimatedMinutes: 90, reason: reason, finishFiles: ["tests.swift"])
+    }
+    func refused(_ store: TodoStore, _ id: UUID, _ steps: [TodoStore.SplitStep], error: TodoError) {
+        let before = store.current
+        let raw = try! Data(contentsOf: store.url)
+        do { try split(store, id, with: steps); expect(false, "invalid split was saved") }
+        catch let caught { expect(caught as? TodoError == error, "split refusal: \(caught)") }
+        expect(store.current == before && store.snapshot == before && (try! Data(contentsOf: store.url)) == raw,
+               "refused split leaves the original rows and file intact")
+    }
+
+    refused(store, original.id, [], error: .splitCount)
+    refused(store, original.id, Array(repeating: steps[0], count: 6), error: .splitCount)
+    try! store.change(original.id) { $0.splitDeclined = true }
+    expect(TodoStore(url: url).current.item(original.id)?.splitDeclined == true, "a declined split is saved")
+    refused(store, original.id, steps, error: .cannotSplit)
+    try! store.change(original.id) { $0.splitDeclined = nil }
+
+    try! split(store, original.id, with: steps)
+    let saved = TodoStore(url: url)
+    expect(saved.current == store.current && saved.current.version == 1, "split round trips without changing the file version")
+    let rows = saved.current.ordered(original.listID)
+    expect(rows.map(\.title) == ["before", "first", "second", "original", "below"], "steps are inserted directly above the original")
+    let first = rows[1], second = rows[2], finish = rows[3]
+    let pieces = rows.filter { $0.group == original.id }
+    expect(pieces.map(\.piece) == [.step, .step, .finish] && pieces.allSatisfy { $0.state == .ready },
+           "one group has exactly one finish at the end, and every piece is ready")
+    expect(first.byAI == true && second.byAI == true && finish.byAI == original.byAI, "only the newly created steps are marked as AI-authored")
+    expect(first.after == [before.id] && second.after == [first.id] && finish.after == [second.id], "explicit dependencies are chained")
+    expect(finish.id == original.id && finish.detail == original.detail && finish.room == running.room && finish.originRoom == original.originRoom
+           && finish.report == nil && finish.workers == nil, "finish preserves original identity and context and closes the old attempt's stored report")
+    let record = finish.splitRecord
+    expect(record?.estimatedMinutes == 90 && record?.reason == reason && record?.files.map(\.id) == [first.id, second.id, finish.id]
+           && record?.files.map(\.paths) == [["a.swift"], ["b.swift", "c.swift"], ["tests.swift"]], "the finish keeps the plan with each piece's files")
+
+    let old = try! JSONDecoder().decode(OldFile.self, from: Data(contentsOf: url))
+    var oldData = TodoData()
+    oldData.lists = old.lists
+    oldData.items = old.items.map(\.item)
+    expect(old.version == 1 && oldData.ordered(original.listID).map(\.id) == rows.map(\.id) && !oldData.hasCycle,
+           "the old format keeps the same board order without cycles")
+    for id in [first.id, second.id, finish.id, below.id] {
+        expect(oldData.eligible(held: { _ in false }).map(\.id) == [id], "the old format can start only the next row")
+        oldData.items[oldData.items.firstIndex { $0.id == id }!].state = .done
+    }
+
+    let chats = DoneChats()
+    let scheduler = TodoScheduler(chats: chats, store: saved)
+    scheduler.held = { _ in false }
+    scheduler.recover()
+    expect(saved.current.item(finish.id) == finish, "restart does not recover the finish as an interrupted attempt")
+    scheduler.tick()
+    expect(chats.started.count == 1 && saved.current.item(first.id)?.state == .running && saved.current.item(finish.id)?.state == .ready,
+           "the first step alone starts after recovery")
+    refused(saved, first.id, steps, error: .cannotSplit)
+    try! store.change(finish.id) { $0.state = .running }
+    refused(store, finish.id, steps, error: .cannotSplit)
+
+    let maxURL = todoStoreFile("split-max")
+    let maxStore = TodoStore(url: maxURL)
+    let maxOriginal = try! maxStore.add(title: "max", project: project, projectName: "Split")
+    try! maxStore.change(maxOriginal.id) { $0.state = .running }
+    let maxSteps = Array(repeating: steps[0], count: 5)
+    let backupURL = todoStoreFile("split-backup")
+    try! FileManager.default.moveItem(at: maxURL, to: backupURL)
+    try! FileManager.default.createDirectory(at: maxURL, withIntermediateDirectories: false)
+    let unchanged = maxStore.current
+    do { try split(maxStore, maxOriginal.id, with: maxSteps); expect(false, "a failed split write must throw") }
+    catch { expect(maxStore.saveError != nil, "the split write error is published") }
+    expect(maxStore.current == unchanged && maxStore.snapshot == unchanged && TodoStore(url: backupURL).current == unchanged,
+           "a failed write does not publish any part of the split")
+    try! FileManager.default.removeItem(at: maxURL)
+    try! FileManager.default.moveItem(at: backupURL, to: maxURL)
+    try! split(maxStore, maxOriginal.id, with: maxSteps)
+    expect(TodoStore(url: maxURL).current.ordered(maxOriginal.listID).map(\.piece) == [.step, .step, .step, .step, .step, .finish],
+           "the largest valid split saves all six pieces")
 }
 
 func testTodoScheduler() {

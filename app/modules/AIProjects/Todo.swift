@@ -84,6 +84,22 @@ public struct TodoItem: Codable, Identifiable, Equatable {
     // draft (not taken yet) → ready → running → review (the AI is done; waits for the user's check) → done.
     // needsYou: a question, or the work cannot go on; the user's answer makes it ready again, Stop cancels it.
     public enum State: String, Codable, CaseIterable { case draft, ready, running, review, done, needsYou, cancelled }
+    enum Piece: String, Codable { case step, finish }
+    struct SplitRecord: Codable, Equatable {
+        struct PieceFiles: Codable, Equatable {
+            let id: UUID
+            let paths: [String]
+        }
+        let estimatedMinutes: Int
+        let reason: String
+        let files: [PieceFiles]
+    }
+
+    var group: UUID?                       // the original TODO's id, including on the finish itself
+    var piece: Piece?
+    var byAI: Bool?
+    var splitDeclined: Bool?
+    var splitRecord: SplitRecord?          // on the finish, in the planned order
     public var id = UUID()
     public var listID: UUID
     public var title: String
@@ -133,7 +149,7 @@ public struct TodoItem: Codable, Identifiable, Equatable {
     // cannot be read fails the whole file, which TodoStore then keeps as it is (no default silently saved over it).
     private enum Keys: String, CodingKey {
         case id, listID, title, detail, attachments, askFirst, state, after, room, originRoom, notes, question, attempts, lastError, result, assumptions, files, report, workers, interrupted, unreported, standIns, delegated, aiHelped, parked, wasParked, createdAt, updatedAt,
-             workSeconds, waitSeconds, stateSince, startedAt, finishedAt
+             workSeconds, waitSeconds, stateSince, startedAt, finishedAt, group, piece, byAI, splitDeclined, splitRecord
     }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
@@ -174,6 +190,11 @@ public struct TodoItem: Codable, Identifiable, Equatable {
         stateSince = try c.decodeIfPresent(Date.self, forKey: .stateSince)
         startedAt = try c.decodeIfPresent(Date.self, forKey: .startedAt)
         finishedAt = try c.decodeIfPresent(Date.self, forKey: .finishedAt)
+        group = try c.decodeIfPresent(UUID.self, forKey: .group)
+        piece = try c.decodeIfPresent(Piece.self, forKey: .piece)
+        byAI = try c.decodeIfPresent(Bool.self, forKey: .byAI)
+        splitDeclined = try c.decodeIfPresent(Bool.self, forKey: .splitDeclined)
+        splitRecord = try c.decodeIfPresent(SplitRecord.self, forKey: .splitRecord)
     }
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: Keys.self)
@@ -193,6 +214,9 @@ public struct TodoItem: Codable, Identifiable, Equatable {
         try c.encode(createdAt, forKey: .createdAt); try c.encode(updatedAt, forKey: .updatedAt)
         try c.encode(workSeconds, forKey: .workSeconds); try c.encode(waitSeconds, forKey: .waitSeconds)
         try c.encodeIfPresent(stateSince, forKey: .stateSince); try c.encodeIfPresent(startedAt, forKey: .startedAt); try c.encodeIfPresent(finishedAt, forKey: .finishedAt)
+        try c.encodeIfPresent(group, forKey: .group); try c.encodeIfPresent(piece, forKey: .piece)
+        try c.encodeIfPresent(byAI, forKey: .byAI); try c.encodeIfPresent(splitDeclined, forKey: .splitDeclined)
+        try c.encodeIfPresent(splitRecord, forKey: .splitRecord)
     }
 
     // Parked for the question it waits on now (a newer question is not parked).
@@ -287,13 +311,15 @@ public struct TodoList: Codable, Identifiable, Equatable {
 }
 
 enum TodoError: LocalizedError, Equatable {
-    case cycle, notFound, busy, notEditable, save(String), attachment(String), locked(String)
+    case cycle, notFound, busy, notEditable, cannotSplit, splitCount, save(String), attachment(String), locked(String)
     var errorDescription: String? {
         switch self {
         case .cycle: return L("순서가 돌고 돌아요: 서로 기다리는 TODO가 생겨요.", "That order goes in a circle: these TODOs would wait for each other.")
         case .notFound: return L("TODO를 찾지 못했어요.", "TODO not found.")
         case .busy: return L("진행 중인 TODO는 먼저 멈춰야 해요.", "Stop the running TODO first.")
         case .notEditable: return L("AI가 이미 가져간 TODO는 고칠 수 없어요. 결과에 수정 요청이나 답으로 알려 주세요.", "The AI already took this TODO; tell it through a change request or an answer.")
+        case .cannotSplit: return L("아직 나누지 않은 진행 중 TODO만 나눌 수 있어요. 거절한 TODO는 다시 나눌 수 없어요.", "Only a running TODO that has never been split or declined can be split.")
+        case .splitCount: return L("마무리를 포함해 2~6개로 나눠야 해요.", "A split must have 2 to 6 pieces including the finish.")
         case .attachment(let why), .locked(let why): return why
         case .save(let why): return L("TODO를 저장하지 못했어요: ", "Could not save the TODOs: ") + why
         }
@@ -527,6 +553,46 @@ public final class TodoStore: ObservableObject {
         try update { data in
             guard let i = data.items.firstIndex(where: { $0.id == id }) else { throw TodoError.notFound }
             try edit(&data.items[i])
+        }
+    }
+
+    struct SplitStep {
+        let title: String
+        let detail: String              // includes the step’s test condition
+        let files: [String]
+    }
+
+    // The caller handles the running turn. The store saves the steps, finish and order together.
+    func split(_ id: UUID, steps: [SplitStep], estimatedMinutes: Int, reason: String, finishFiles: [String]) throws {
+        guard (1...5).contains(steps.count) else { throw TodoError.splitCount }
+        try update { data in
+            guard let i = data.items.firstIndex(where: { $0.id == id }) else { throw TodoError.notFound }
+            var finish = data.items[i]
+            guard finish.state == .running, finish.group == nil, finish.piece == nil, finish.splitDeclined != true else {
+                throw TodoError.cannotSplit
+            }
+            var after = finish.after
+            var files: [TodoItem.SplitRecord.PieceFiles] = []
+            for step in steps {
+                var item = TodoItem(listID: finish.listID, title: step.title, detail: step.detail, after: after)
+                item.state = .ready
+                item.group = id
+                item.piece = .step
+                item.byAI = true
+                data.items.append(item)
+                try data.place(item.id, before: id)
+                after = [item.id]
+                files.append(.init(id: item.id, paths: step.files))
+            }
+            files.append(.init(id: id, paths: finishFiles))
+            finish.group = id
+            finish.piece = .finish
+            finish.splitRecord = .init(estimatedMinutes: estimatedMinutes, reason: reason, files: files)
+            finish.after = after
+            finish.state = .ready
+            finish.report = nil
+            finish.workers = nil
+            data.items[i] = finish
         }
     }
 

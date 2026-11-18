@@ -130,9 +130,15 @@ public struct TodoItem: Codable, Identifiable, Equatable {
         public mutating func record(_ review: Review) {
             switch review {
             case .approved(let sha): guard sha == candidateSHA else { return }; reviewedSHA = sha; findings = nil
-            case .changesRequested(let sha, let text): guard sha == candidateSHA else { return }; reviewedSHA = nil; findings = text
-            case .noReviewer, .failed: break
+            case .changesRequested(let sha, let text): guard sha == candidateSHA else { return }; unapprove(); findings = text
+            case .noReviewer, .failed: unapprove()   // a review that did not finish never stands as one, even after an earlier pass
             }
+        }
+
+        // No review pass: push and confirmation need one, so the run resumes at the review (as a saved copy would).
+        private mutating func unapprove() {
+            reviewedSHA = nil
+            if phase == .push || phase == .confirmation { phase = .review }
         }
 
         public mutating func recordTest(for sha: String) {

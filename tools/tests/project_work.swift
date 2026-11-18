@@ -977,7 +977,7 @@ func testMilestoneReview() {
     }
     let candidate = git(["rev-parse", "HEAD"])
     try! "Uncommitted\n".write(to: root.appendingPathComponent("loose.txt"), atomically: true, encoding: .utf8)
-    let material = ProjectSnapshot.milestone(root: root.path, base: base, candidate: candidate) ?? ""
+    let material = ProjectSnapshot.milestone(root: root.path, base: base, candidate: candidate)?.joined() ?? ""
     expect((1...3).allSatisfy { material.contains("+Step \($0) line") && material.contains("step\($0).txt") } && !material.contains("Baseline")
            && !material.contains("loose.txt"), "the Milestone's material holds all three Steps' diffs and nothing of the work tree")
     expect(ProjectSnapshot.milestone(root: root.path, base: candidate, candidate: base) == nil && ProjectSnapshot.milestone(root: root.path, base: base, candidate: base) == nil
@@ -1014,6 +1014,13 @@ func testMilestoneReview() {
     expect(c.findings == nil, "a new candidate drops the old findings")
     var approvedThenAsked = recorded(.approved(sha: candidate)); approvedThenAsked.record(.changesRequested(sha: candidate, findings: "x"))
     expect(approvedThenAsked.reviewedSHA == nil && recorded(.approved(sha: base)).reviewedSHA == nil, "change requests undo an approval; another SHA's approval does not count")
+    for undone in [TodoItem.MilestoneCandidate.Review.noReviewer, .failed("x"), .changesRequested(sha: candidate, findings: "y")] {
+        var again = recorded(.approved(sha: candidate)); again.recordTest(for: candidate); again.setPhase(.push)
+        again.record(undone)
+        let reread = try? JSONDecoder().decode(TodoItem.MilestoneCandidate.self, from: JSONEncoder().encode(again))
+        expect(again.reviewedSHA == nil && again.phase == .review && reread?.phase == .review && reread?.reviewedSHA == nil,
+               "a re-review that does not pass undoes an earlier approval and takes a push back to the review, the same after saving")
+    }
 
     asked = []
     outcome = review(reviewers: [claude.id])
@@ -1032,6 +1039,34 @@ func testMilestoneReview() {
     expect(recorded(outcome).reviewedSHA == nil, "a stopped review leaves the Milestone unreviewed")
     reply = .success("")
     if case .failed = review() {} else { expect(false, "an empty answer is a failure") }
+
+    // Past Peer.diffLimit the whole diff still reaches the reviewer, in parts; one part with findings: not approved.
+    let bigBase = candidate
+    for n in 4...6 {
+        // Step 6: one file past ProjectProcess's 60,000-character output.
+        let body = (0..<(n == 6 ? 7_000 : 2_000)).map { "Big step \(n) line \($0)" }.joined(separator: "\n") + "\nEND OF STEP \(n)\n"
+        try! body.write(to: root.appendingPathComponent("big\(n).txt"), atomically: true, encoding: .utf8)
+        _ = git(["add", "big\(n).txt"]); _ = git(["commit", "-m", "Big step \(n)"])
+    }
+    let bigHead = git(["rev-parse", "HEAD"])
+    let parts = ProjectSnapshot.milestone(root: root.path, base: bigBase, candidate: bigHead) ?? []
+    expect(parts.count > 1 && parts.allSatisfy { $0.count <= Peer.diffLimit + 2_000 && $0.contains("Big step 6") }
+           && (4...6).allSatisfy { n in parts.contains { $0.contains("+END OF STEP \(n)") } } && parts.joined().contains("+Big step 5 line 1999"),
+           "a diff past the limit is given whole, in parts that each carry the log")
+    prompts = []; asked = []
+    var answers = parts.indices.map { $0 == parts.count - 1 ? "1. big6.txt:2001 is wrong." : "No issues" }
+    chat.workspaceAnswer = { account, prompt, _, _, _ in asked.append(account.id); prompts.append(prompt); return .success(answers.isEmpty ? "No issues" : answers.removeFirst()) }
+    outcome = chat.reviewMilestone(room: room, workers: [claude.id], reviewers: [codex.id], binding: binding, root: root.path, base: bigBase, candidate: bigHead, goal: "Big.", token: DebateCancellation())
+    expect(prompts.count == parts.count && (4...6).allSatisfy { n in prompts.contains { $0.contains("+END OF STEP \(n)") } }
+           && outcome == .changesRequested(sha: bigHead, findings: "[Part \(parts.count) of \(parts.count)]\n1. big6.txt:2001 is wrong."),
+           "every part is reviewed; findings in the last part keep the Milestone unapproved")
+    let huge = (0..<(Peer.milestoneParts * Peer.diffLimit / 20 + 10)).map { "Line \($0) of filler" }.joined(separator: "\n")
+    try! huge.write(to: root.appendingPathComponent("huge.txt"), atomically: true, encoding: .utf8)
+    _ = git(["add", "huge.txt"]); _ = git(["commit", "-m", "Huge"])
+    asked = []
+    if case .failed = chat.reviewMilestone(room: room, workers: [claude.id], reviewers: [codex.id], binding: binding, root: root.path, base: bigBase,
+                                           candidate: git(["rev-parse", "HEAD"]), goal: "Huge.", token: DebateCancellation()) {} else { expect(false, "too many parts: not approved") }
+    expect(asked.isEmpty, "a diff too large for its parts is not sent at all")
     try? FileManager.default.removeItem(at: root)
     print("PASS: Milestone review (all Steps' diffs, independent reviewer, only No issues approves)")
 }

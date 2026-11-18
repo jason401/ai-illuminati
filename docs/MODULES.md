@@ -497,10 +497,12 @@ Public names and why (everything else stays internal: `ProjectError`, `ProjectTo
   `delegable` for the card's 알아서 해 button, `blocked` kept in the file for older apps, so `encode(to:)` is written out),
   `TodoItem.delegated` (a stored field: the re-ask guard after a delegation), `TodoItem.Role`/`role`/`goal` (saved fields:
   plain, or a goal and its steps and milestones in `after`'s order, so the Goal/Step/Milestone runs, the board and the
-  tools tell them apart; an unknown role holds the file like an unknown state; nothing runs differently yet), `TodoReport`, `TodoAttachment`, `WorkStep` (a chat turn keeps the plan), `ProjectInfo`, `ProjectInfoData`,
+  tools tell them apart; an unknown role holds the file like an unknown state; nothing runs differently yet), `TodoItem.tests` (saved field: a step's picked
+  test names for AI_ILLUMINATI_TEST_ONLY; written only when there are some), `TodoPlan`/`Part` (a Goal's split plan the planner hands
+  `TodoStore.savePlan` in one go: keys, roles, titles, `after` keys and a step's tests), `TodoReport`, `TodoAttachment`, `WorkStep` (a chat turn keeps the plan), `ProjectInfo`, `ProjectInfoData`,
   `ProjectFolder`, `ProjectLink`. Explicit public inits where Swift's memberwise ones are internal (`ProjectApproval`,
   `TodoReport`, `ProjectFolder`, `ProjectChatSummary`, `TodoTurnEnd`, `TodoPark`).
-- `TodoStore` (the board's actions, among them `setList(_:mode:accounts:)` for the mode menu, `setReady` and `move(_:before:)` for a row's draft/ready capsule and drag, `shared`, `snapshot`, `current`, `change`, `update`, `file`, `locked`, `url`): the board,
+- `TodoStore` (the board's actions, among them `savePlan(goal:_:)` for a Goal's whole split plan in one checked, idempotent save, `setList(_:mode:accounts:)` for the mode menu, `setReady` and `move(_:before:)` for a row's draft/ready capsule and drag, `shared`, `snapshot`, `current`, `change`, `update`, `file`, `locked`, `url`): the board,
   the scheduler's users and `Discussion` (`workers(room:)`, delete and disconnect).
 - `TodoScheduler` (`init(chats:store:)`, `start`, `startNow`, `wake`, `tick`, `recover`, `closeClocks`, `cancel`, `crew`, `lock`,
   `waiting`, `nextCheck`, `editing`, `standingIn` for the card's "another AI is answering" line, `retrying` for a ready row's

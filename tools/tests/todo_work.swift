@@ -28,6 +28,61 @@ private func todoStoreFile(_ name: String) -> URL {
     return url
 }
 
+// A goal's plan saved in one go: refused when it cannot run, nothing saved then; the same plan again makes no second copy.
+func testTodoPlan() {
+    let a = ProjectBinding(root: "/tmp/todo-plan", common: "", remote: "", remoteURL: "")
+    let url = todoStoreFile("plan")
+    let store = TodoStore(url: url)
+    let goal = try! store.add(title: "goal", project: a, projectName: "A")
+    let below = try! store.add(title: "below", project: a, projectName: "A")
+    typealias Part = TodoPlan.Part
+    func refused(_ plan: TodoPlan, _ what: String) {
+        let before = store.current
+        do { try store.savePlan(goal: goal.id, plan); expect(false, "refused: \(what)") } catch {
+            expect(error.localizedDescription.contains(":"), "\(what) says why: \(error.localizedDescription)")
+        }
+        expect(store.current == before, "nothing saved: \(what)")
+    }
+    refused(TodoPlan(parts: []), "an empty plan")
+    refused(TodoPlan(parts: [Part(key: "a", role: .step, title: "A", after: ["b"], tests: ["testA"]),
+                             Part(key: "b", role: .step, title: "B", after: ["a"], tests: ["testB"]),
+                             Part(key: "m", role: .milestone, title: "M", after: ["b"])]), "a circle")
+    refused(TodoPlan(parts: [Part(key: "a", role: .step, title: "A", after: ["a"], tests: ["testA"]),
+                             Part(key: "m", role: .milestone, title: "M", after: ["a"])]), "a part after itself")
+    refused(TodoPlan(parts: [Part(key: "a", role: .step, title: "A", after: ["ghost"], tests: ["testA"]),
+                             Part(key: "m", role: .milestone, title: "M", after: ["a"])]), "after a part that is not there")
+    refused(TodoPlan(parts: [Part(key: "m", role: .milestone, title: "M"),
+                             Part(key: "a", role: .step, title: "A", after: ["m"], tests: ["testA"])]), "ending with a step")
+    refused(TodoPlan(parts: [Part(key: "a", role: .step, title: "A", tests: ["testA"]),
+                             Part(key: "b", role: .step, title: "B", tests: ["testB"]),
+                             Part(key: "m", role: .milestone, title: "M", after: ["a"])]), "a step no milestone comes after")
+    refused(TodoPlan(parts: [Part(key: "a", role: .step, title: "A"), Part(key: "m", role: .milestone, title: "M", after: ["a"])]), "a step without tests")
+    refused(TodoPlan(parts: [Part(key: "a", role: .step, title: "A", tests: ["testA,testB"]), Part(key: "m", role: .milestone, title: "M", after: ["a"])]), "a test name with a comma")
+    refused(TodoPlan(parts: [Part(key: "m", role: .milestone, title: "M", tests: ["testA"])]), "a milestone with picked tests")
+    refused(TodoPlan(parts: [Part(key: "a", role: .step, title: "A", tests: ["testA"]), Part(key: "a", role: .milestone, title: "M", after: ["a"])]), "a key twice")
+    refused(TodoPlan(parts: [Part(key: "g", role: .goal, title: "G")]), "a goal inside a plan")
+    // Saved: drafts right below the goal in the order they run (b listed first but after a), linked by after.
+    let plan = TodoPlan(parts: [Part(key: "b", role: .step, title: "B", after: ["a"], tests: ["testB"]),
+                                Part(key: "a", role: .step, title: " A ", detail: "first", tests: ["testA", "testA"]),
+                                Part(key: "m", role: .milestone, title: "M", after: ["a", "b"])])
+    let made = try! store.savePlan(goal: goal.id, plan)
+    let data = store.current
+    expect(made.map(\.title) == ["A", "B", "M"] && made.allSatisfy { $0.goal == goal.id && $0.state == .draft }, "parts saved in run order: \(made.map(\.title))")
+    expect(data.ordered(goal.listID).map(\.id) == [goal.id] + made.map(\.id) + [below.id], "parts right below the goal")
+    expect(data.item(goal.id)?.role == .goal && made.map(\.role) == [.step, .step, .milestone], "roles saved")
+    expect(made[0].tests == ["testA"] && made[1].tests == ["testB"] && made[2].tests.isEmpty && made[0].detail == "first", "a step keeps its picked tests")
+    expect(made[0].after.isEmpty && made[1].after == [made[0].id] && Set(made[2].after) == [made[0].id, made[1].id], "order by after")
+    expect(TodoStore(url: url).current == data, "the plan reads back")
+    // Again for the same goal: the same parts, nothing new; another plan is refused.
+    let again = try! store.savePlan(goal: goal.id, plan)
+    expect(again.map(\.id) == made.map(\.id) && store.current == data, "the same plan again adds nothing")
+    refused(TodoPlan(parts: [Part(key: "m", role: .milestone, title: "Other")]), "another plan for a planned goal")
+    do { try store.savePlan(goal: made[0].id, TodoPlan(parts: [Part(key: "m", role: .milestone, title: "M")])); expect(false, "a step is not a goal") } catch {}
+    // A plain TODO still saves as before: no tests key.
+    let plainJSON = String(data: try! JSONEncoder().encode(data.item(below.id)!), encoding: .utf8)!
+    expect(!plainJSON.contains("\"tests\""), "a plain TODO writes no tests")
+}
+
 func testTodoStore() {
     let a = ProjectBinding(root: "/tmp/todo-a", common: "", remote: "", remoteURL: "")
     let b = ProjectBinding(root: "/tmp/todo-b", common: "", remote: "", remoteURL: "")

@@ -99,6 +99,7 @@ public struct TodoItem: Codable, Identifiable, Equatable {
     public var after: [UUID] = []          // TODOs that must be finished first (any list)
     public var role: Role = .plain
     public var goal: UUID?                 // a step's or milestone's goal
+    public var tests: [String] = []        // a step's picked tests (AI_ILLUMINATI_TEST_ONLY names); a milestone runs them all
     public var room: UUID?                 // the TODO's own chat, made when it first starts
     public var originRoom: UUID?           // the chat it was written from: its report card shows there too
     public var notes: [TodoNote] = []      // the user's answers and change requests, retries; sent with the next attempt
@@ -139,7 +140,7 @@ public struct TodoItem: Codable, Identifiable, Equatable {
     // Older or newer files: unknown fields are ignored, missing ones get their defaults. A field that is there but
     // cannot be read fails the whole file, which TodoStore then keeps as it is (no default silently saved over it).
     private enum Keys: String, CodingKey {
-        case id, listID, title, detail, attachments, askFirst, state, after, role, goal, room, originRoom, notes, question, attempts, lastError, result, assumptions, files, report, workers, interrupted, unreported, standIns, delegated, aiHelped, parked, wasParked, createdAt, updatedAt,
+        case id, listID, title, detail, attachments, askFirst, state, after, role, goal, tests, room, originRoom, notes, question, attempts, lastError, result, assumptions, files, report, workers, interrupted, unreported, standIns, delegated, aiHelped, parked, wasParked, createdAt, updatedAt,
              workSeconds, waitSeconds, stateSince, startedAt, finishedAt
     }
     public init(from decoder: Decoder) throws {
@@ -162,6 +163,7 @@ public struct TodoItem: Codable, Identifiable, Equatable {
             role = known
         }
         goal = try c.decodeIfPresent(UUID.self, forKey: .goal)
+        tests = (try c.decodeIfThere([String].self, forKey: .tests)) ?? []
         room = try c.decodeIfPresent(UUID.self, forKey: .room)
         originRoom = try c.decodeIfPresent(UUID.self, forKey: .originRoom)
         notes = (try c.decodeIfThere([TodoNote].self, forKey: .notes)) ?? []
@@ -195,6 +197,7 @@ public struct TodoItem: Codable, Identifiable, Equatable {
         try c.encode(askFirst, forKey: .askFirst); try c.encode(state.rawValue, forKey: .state); try c.encode(after, forKey: .after)
         if role != .plain { try c.encode(role.rawValue, forKey: .role) }
         try c.encodeIfPresent(goal, forKey: .goal)
+        if !tests.isEmpty { try c.encode(tests, forKey: .tests) }
         try c.encodeIfPresent(room, forKey: .room); try c.encodeIfPresent(originRoom, forKey: .originRoom); try c.encode(notes, forKey: .notes)
         try c.encodeIfPresent(question, forKey: .question); try c.encode(attempts, forKey: .attempts); try c.encodeIfPresent(lastError, forKey: .lastError)
         try c.encodeIfPresent(result, forKey: .result); try c.encode(assumptions, forKey: .assumptions); try c.encode(files, forKey: .files)
@@ -262,6 +265,69 @@ public struct TodoPark: Codable, Equatable {
 // no answer by 30 minutes, or stuck again after an AI's help: the TODO is parked and the list goes on.
 // auto: a failure is parked at once; a question gets another AI at 15 minutes and the app's delegation at 30
 // (at once when it asks again after an AI's answer); still stuck after the delegation: parked.
+// A goal's split plan, saved in one go by TodoStore.savePlan: steps and milestones that wait for each other by `after`
+// (other parts' keys, the plan's own names). A step names the tests it runs; a milestone runs the full test, so none.
+public struct TodoPlan: Equatable {
+    public struct Part: Equatable {
+        public var key: String
+        public var role: TodoItem.Role
+        public var title: String
+        public var detail: String
+        public var after: [String]
+        public var tests: [String]
+        public init(key: String, role: TodoItem.Role, title: String, detail: String = "", after: [String] = [], tests: [String] = []) {
+            self.key = key; self.role = role; self.title = title; self.detail = detail; self.after = after; self.tests = tests
+        }
+    }
+    public var parts: [Part]
+    public init(parts: [Part]) { self.parts = parts }
+    static let maxParts = 40
+
+    static func refuse(_ korean: String, _ english: String) -> TodoError { .plan(L("분할 계획을 저장하지 않았어요: ", "The plan was not saved: ") + L(korean, english)) }
+    // The parts trimmed, in the order they run (the plan's order where `after` leaves it free), or why the plan is refused:
+    // empty or too long, a key twice, a role that is not a step or milestone, an `after` to no part, a circle, a step
+    // without tests or a milestone with some, a test name AI_ILLUMINATI_TEST_ONLY cannot carry, or a part nothing comes
+    // after that is not a milestone (a step's commits would never be reviewed and pushed).
+    func checked() throws -> [Part] {
+        guard !parts.isEmpty else { throw Self.refuse("항목이 없어요.", "it has no parts.") }
+        guard parts.count <= Self.maxParts else { throw Self.refuse("항목은 \(Self.maxParts)개까지예요.", "at most \(Self.maxParts) parts.") }
+        let trim = { (s: String) in s.trimmingCharacters(in: .whitespacesAndNewlines) }
+        var clean: [Part] = [], keys = Set<String>()
+        for part in parts {
+            var p = part
+            p.key = trim(p.key); p.title = trim(p.title); p.detail = trim(p.detail)
+            p.after = p.after.map(trim).reduce(into: []) { if !$0.contains($1) { $0.append($1) } }
+            p.tests = p.tests.map(trim).reduce(into: []) { if !$0.contains($1) { $0.append($1) } }
+            guard !p.key.isEmpty, keys.insert(p.key).inserted else { throw Self.refuse("항목 이름이 비었거나 겹쳐요: \(p.key)", "a part's key is empty or used twice: \(p.key)") }
+            guard p.role == .step || p.role == .milestone else { throw Self.refuse("항목은 step이나 milestone이어야 해요: \(p.key)", "a part must be a step or a milestone: \(p.key)") }
+            guard !p.title.isEmpty else { throw Self.refuse("제목이 없어요: \(p.key)", "a part has no title: \(p.key)") }
+            if p.role == .step, p.tests.isEmpty { throw Self.refuse("step에 고른 테스트가 없어요: \(p.key)", "a step names no tests: \(p.key)") }
+            if p.role == .milestone, !p.tests.isEmpty { throw Self.refuse("milestone은 전체 테스트를 돌려서 테스트를 고르지 않아요: \(p.key)", "a milestone runs the full test and names none: \(p.key)") }
+            if let bad = p.tests.first(where: { $0.isEmpty || !$0.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_") } }) {
+                throw Self.refuse("테스트 이름이 이상해요: \(bad)", "not a test name: \(bad)")
+            }
+            clean.append(p)
+        }
+        for p in clean { if let missing = p.after.first(where: { !keys.contains($0) }) { throw Self.refuse("\(p.key)의 선행 항목이 없어요: \(missing)", "\(p.key) comes after a part that is not there: \(missing)") } }
+        // Kahn's order, taking the earliest free part each time; what is left waits in a circle.
+        var left = clean, run: [Part] = []
+        while let next = left.firstIndex(where: { p in p.after.allSatisfy { key in run.contains { $0.key == key } } }) { run.append(left.remove(at: next)) }
+        guard left.isEmpty else { throw Self.refuse("순서가 돌고 돌아요: \(left.map(\.key).joined(separator: ", "))", "the order goes in a circle: \(left.map(\.key).joined(separator: ", "))") }
+        if let open = run.first(where: { p in p.role != .milestone && !run.contains { $0.after.contains(p.key) } }) {
+            throw Self.refuse("마지막은 milestone이어야 해요: \(open.key)", "it must end with a milestone: \(open.key)")
+        }
+        return run
+    }
+    // The parts saved for it before (board order) are this plan: the same titles, roles, details, tests and links.
+    func same(_ saved: [TodoItem], as run: [Part]) -> Bool {
+        guard saved.count == run.count else { return false }
+        let ids = Dictionary(uniqueKeysWithValues: zip(run.map(\.key), saved.map(\.id)))
+        return zip(run, saved).allSatisfy { p, t in
+            t.title == p.title && t.detail == p.detail && t.role == p.role && t.tests == p.tests && Set(t.after) == Set(p.after.compactMap { ids[$0] })
+        }
+    }
+}
+
 public enum RunMode: String, Codable, CaseIterable { case checkEach, stopOnIssue, aiThenPark, auto }
 
 // One list per project, always in order: each TODO waits for the one above it, as its RunMode says.
@@ -302,14 +368,14 @@ public struct TodoList: Codable, Identifiable, Equatable {
 }
 
 enum TodoError: LocalizedError, Equatable {
-    case cycle, notFound, busy, notEditable, save(String), attachment(String), locked(String)
+    case cycle, notFound, busy, notEditable, save(String), attachment(String), locked(String), plan(String)
     var errorDescription: String? {
         switch self {
         case .cycle: return L("순서가 돌고 돌아요: 서로 기다리는 TODO가 생겨요.", "That order goes in a circle: these TODOs would wait for each other.")
         case .notFound: return L("TODO를 찾지 못했어요.", "TODO not found.")
         case .busy: return L("진행 중인 TODO는 먼저 멈춰야 해요.", "Stop the running TODO first.")
         case .notEditable: return L("AI가 이미 가져간 TODO는 고칠 수 없어요. 결과에 수정 요청이나 답으로 알려 주세요.", "The AI already took this TODO; tell it through a change request or an answer.")
-        case .attachment(let why), .locked(let why): return why
+        case .attachment(let why), .locked(let why), .plan(let why): return why
         case .save(let why): return L("TODO를 저장하지 못했어요: ", "Could not save the TODOs: ") + why
         }
     }
@@ -579,6 +645,39 @@ public final class TodoStore: ObservableObject {
             if let i = data.lists.firstIndex(where: { $0.id == listID }) { data.lists[i].order = data.ordered(listID).map(\.id) }
             return item
         } } catch { try? FileManager.default.removeItem(at: folder(id)); throw error }
+    }
+    // A goal's whole plan in one save (nothing runs it until the goal path is turned on): its steps and milestones as
+    // drafts right below the goal on the board, in the order they run, `after` linking them, the goal marked a goal.
+    // Asked again for the same goal: the same plan returns the parts already saved (nothing new); another plan is refused.
+    @discardableResult
+    public func savePlan(goal: UUID, _ plan: TodoPlan) throws -> [TodoItem] {
+        let run = try plan.checked()
+        return try update { data in
+            guard let g = data.items.firstIndex(where: { $0.id == goal }) else { throw TodoError.notFound }
+            let head = data.items[g]
+            guard head.role == .plain || head.role == .goal, head.goal == nil else { throw TodoPlan.refuse("step이나 milestone은 Goal이 될 수 없어요.", "a step or milestone cannot be a goal.") }
+            let saved = data.ordered(head.listID).filter { $0.goal == goal }
+            if data.items.contains(where: { $0.goal == goal }) {
+                guard saved.count == data.items.filter({ $0.goal == goal }).count, plan.same(saved, as: run) else {
+                    throw TodoPlan.refuse("이 Goal에는 다른 계획이 이미 있어요.", "this goal already has another plan.")
+                }
+                return saved
+            }
+            guard head.state != .done && head.state != .cancelled else { throw TodoError.notEditable }
+            guard let l = data.lists.firstIndex(where: { $0.id == head.listID }) else { throw TodoError.notFound }
+            data.items[g].role = .goal
+            let ids = Dictionary(uniqueKeysWithValues: run.map { ($0.key, UUID()) })
+            let made = run.map { p -> TodoItem in
+                var item = TodoItem(listID: head.listID, title: p.title, detail: p.detail, after: p.after.compactMap { ids[$0] })
+                item.id = ids[p.key]!; item.role = p.role; item.goal = goal; item.tests = p.tests
+                return item
+            }
+            var order = data.ordered(head.listID).map(\.id)
+            order.insert(contentsOf: made.map(\.id), at: order.firstIndex(of: goal).map { $0 + 1 } ?? order.endIndex)
+            data.items += made
+            data.lists[l].order = order
+            return made
+        }
     }
     static func sameTitle(_ a: String, _ b: String) -> Bool {
         a.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(b.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame

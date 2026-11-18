@@ -286,6 +286,7 @@ TodoItem.standIns | var standIns: Int
 TodoItem.startedAt | var startedAt: Date?
 TodoItem.state | var state: TodoItem.State
 TodoItem.stateSince | var stateSince: Date?
+TodoItem.tests | var tests: [String]
 TodoItem.timeLine(at:) | func timeLine(at now: Date) -> String?
 TodoItem.title | var title: String
 TodoItem.unreported | var unreported: Bool
@@ -328,6 +329,17 @@ TodoPhoto | struct TodoPhoto
 TodoPhoto.file | var file: URL
 TodoPhoto.id | var id: UUID
 TodoPhoto.name | var name: String
+TodoPlan | struct TodoPlan
+TodoPlan.Part | struct Part
+TodoPlan.Part.after | var after: [String]
+TodoPlan.Part.detail | var detail: String
+TodoPlan.Part.init(key:role:title:detail:after:tests:) | init(key: String, role: TodoItem.Role, title: String, detail: String = "", after: [String] = [], tests: [String] = [])
+TodoPlan.Part.key | var key: String
+TodoPlan.Part.role | var role: TodoItem.Role
+TodoPlan.Part.tests | var tests: [String]
+TodoPlan.Part.title | var title: String
+TodoPlan.init(parts:) | init(parts: [TodoPlan.Part])
+TodoPlan.parts | var parts: [TodoPlan.Part]
 TodoProject | struct TodoProject
 TodoProject.all(_:chats:names:) | static func all(_ data: TodoData, chats: [ProjectChatSummary], names: [String : String]) -> [TodoProject]
 TodoProject.binding | var binding: ProjectBinding
@@ -417,6 +429,7 @@ TodoStore.relink(_:to:) | func relink(_ ids: Set<UUID>, to project: ProjectBindi
 TodoStore.requestChanges(_:_:) | func requestChanges(_ id: UUID, _ text: String)
 TodoStore.resume(lists:) | func resume(lists: Set<UUID>? = nil) throws
 TodoStore.saveError | @Published var saveError: String? { get set }
+TodoStore.savePlan(goal:_:) | @discardableResult func savePlan(goal: UUID, _ plan: TodoPlan) throws -> [TodoItem]
 TodoStore.setAfter(_:_:) | func setAfter(_ id: UUID, _ after: [UUID]) throws
 TodoStore.setList(_:mode:accounts:) | func setList(_ listID: UUID, mode: RunMode? = nil, accounts: [String]? = nil) throws
 TodoStore.setReady(_:_:) | func setReady(_ id: UUID, _ ready: Bool) throws

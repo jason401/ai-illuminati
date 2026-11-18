@@ -1864,6 +1864,10 @@ func testWorkTreeLocks() {
         expect(refused["isError"] as? Bool == true && "\(refused)".contains("sub/"), "\(name) refuses sub/: \(refused)")
     }
     expect(git(["branch", "--show-current"], at: other) == "feature/two", "the branch stays")
+    // Not through "@{-1}" either: the name Git resolves is checked too.
+    _ = git(["switch", "-q", "-c", "sub/split/2"], at: other); _ = git(["switch", "-q", "feature/two"], at: other)
+    let previous = call("git_switch", ["name": "@{-1}"])
+    expect(previous["isError"] as? Bool == true && "\(previous)".contains("sub/") && git(["branch", "--show-current"], at: other) == "feature/two", "@{-1} to a sub/ branch is refused: \(previous)")
 
     // Another app instance: its lock files count (a work tree at once, the refs lock after a short wait).
     func otherInstance(_ key: String) -> Process {

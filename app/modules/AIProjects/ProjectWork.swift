@@ -738,10 +738,14 @@ public final class GitLink: ToolProvider {
             run.pushed = true; return result + "\nPublished " + sha
         case "git_branch", "git_switch":
             try clean()
-            guard let branch = args["name"] as? String, !["stable", "HEAD", "master"].contains(branch), !branch.hasPrefix("-"), branch.count < 200 else { throw ProjectError.make("Invalid or protected branch.") }
-            // sub/… are the app's branches for a sub-room's work tree: only the app makes, merges and removes them.
-            guard !branch.hasPrefix("sub/") else { throw ProjectError.make("sub/ branches belong to the app's sub-rooms; this chat cannot create or switch to them.") }
-            _ = try git(["check-ref-format", "--branch", branch])
+            guard let asked = args["name"] as? String, !asked.hasPrefix("-"), asked.count < 200 else { throw ProjectError.make("Invalid or protected branch.") }
+            // The rules hold for the name Git resolves too: "@{-1}" may be stable or a sub/ branch checked out before.
+            let branch = try git(["check-ref-format", "--branch", asked])
+            for candidate in [asked, branch] {
+                guard !["stable", "HEAD", "master"].contains(candidate), !candidate.hasPrefix("-") else { throw ProjectError.make("Invalid or protected branch.") }
+                // sub/… are the app's branches for a sub-room's work tree: only the app makes, merges and removes them.
+                guard !candidate.hasPrefix("sub/") else { throw ProjectError.make("sub/ branches belong to the app's sub-rooms; this chat cannot create or switch to them.") }
+            }
             return try git(name == "git_branch" ? ["switch", "-c", branch] : ["switch", branch])
         case "project_run":
             guard let selected = args["name"] as? String else { throw ProjectError.make("Choose a registered command name.") }

@@ -2,6 +2,7 @@ import Foundation
 import AppKit
 import CoreImage
 import AIAccounts
+import AILocalization
 import AIRemote
 @testable import AIRuntime
 @testable import AIProjects

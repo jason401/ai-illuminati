@@ -42,6 +42,8 @@ func testDelegate() {
     // Owned files: equal, a folder and a file in it, a glob and what it matches overlap; different files do not.
     func part(_ n: Int, _ owned: [String]) -> Split.Part { Split.Part(n: n, room: UUID(), goal: "g", owned: owned, forbidden: [], interfaces: "", done: "d") }
     expect(Split.overlap("src/", "src/b.txt") && Split.overlap("src", "src/b.txt") && Split.overlap("src/*.swift", "src/x.swift") && Split.overlap("a.txt", "./a.txt")
+           && Split.overlap("src/a.swift", "src/./a.swift") && Split.overlap("src//a.swift", "src/a.swift")
+           && Split.overlap("src/*/a.swift", "src/foo/") && Split.overlap("src/foo/", "src/*/a.swift")
            && !Split.overlap("a.txt", "a.txt2") && !Split.overlap("src/", "docs/") && !Split.overlap("src/*.swift", "docs/x.swift"), "owned paths overlap by file, folder and glob")
     expect(Split.refusal([part(1, ["a.txt"]), part(2, ["src/"])]) == nil && Split.refusal([part(1, ["src/"]), part(2, ["src/b.txt"])])?.contains("both own") == true
            && Split.refusal([part(1, ["a"]), part(2, ["b"]), part(3, ["c"])]) != nil && Split.refusal([part(1, ["../x"])]) != nil && Split.refusal([part(1, [])]) != nil,
@@ -291,6 +293,30 @@ func testDelegate() {
     expect(chat.recoverSplits(known: [leftRoom, halfRoom, moved]).isEmpty, "a second start shows no card twice")
     _ = try? ProjectProcess.git(["merge", "--abort"], root: half.root)
 
+    // A resync's conflict is resolved and committed with git_commit (a whole merge commit), then reported; a split whose
+    // tree was never saved (the app quit right after making it) is still discarded with its folder and branch.
+    let rs = fixture("resync"), rsRoom = mainRoom(rs, fullAuto: true)
+    let r1 = tree(rs, "rsy", 1), r2 = tree(rs, "rsy", 2)
+    write("one\nTWO by 1\n", "shared.txt", in: r1.path); _ = git(["commit", "-qam", "r1"], at: r1.path)
+    write("one\ntwo by 2\n", "shared.txt", in: r2.path); _ = git(["commit", "-qam", "r2"], at: r2.path)
+    _ = try! SubWork.merge(rs, r1, sha: git(["rev-parse", "HEAD"], at: r1.path), owned: ["shared.txt"], reported: true)
+    expect(try! SubWork.resync(rs, r2) == ["shared.txt"], "the resync leaves a conflict")
+    let subRun = ProjectRun(room: UUID(), binding: try! ProjectProcess.inspect(r2.path), token: DebateCancellation(), fullAuto: true)
+    subRun.isSubRoom = true; ProjectWork.register(subRun); subRun.nextAttempt()
+    let subContext = ToolContext(room: subRun.room, roots: [], projectRun: subRun.id, projectGeneration: subRun.generation)
+    let early = GitLink.shared.call("git_commit", ["message": "Resolve", "paths": ["shared.txt"]], context: subContext)
+    write("one\nTWO by 1 and 2\n", "shared.txt", in: r2.path)
+    let resolved = GitLink.shared.call("git_commit", ["message": "Resolve", "paths": ["shared.txt"]], context: subContext)
+    ProjectWork.finish(subRun)
+    expect(failed(early) && text(early).contains("still have conflicts") && !failed(resolved) && (try? SubWork.report(r2)) != nil
+           && git(["rev-list", "--parents", "-n", "1", "HEAD"], at: r2.path).split(separator: " ").count == 3,
+           "conflict markers are refused, the resolved merge commits whole and can be reported: \(early) / \(resolved)")
+    let lostTree = tree(rs, "nos", 1)
+    record("nos", rsRoom, rs, [recorded(1, nil, .creating)])
+    expect(chat.discardSplit(rsRoom, "nos").isEmpty && !FileManager.default.fileExists(atPath: lostTree.path)
+           && git(["for-each-ref", "refs/heads/sub/nos/"], at: rs.root).isEmpty && SplitStore.shared.split(rsRoom, "nos")?.closed == true,
+           "a work tree the record never got is discarded too")
+
     // project_run: one at a time per repository, across its work trees; the second waits in line.
     let queue = fixture("queue", commands: "{\"version\":1,\"commands\":{\"slow\":{\"executable\":\"/bin/sleep\",\"args\":[\"1\"]}}}")
     let qt = tree(queue, "que", 1)
@@ -312,7 +338,7 @@ func testDelegate() {
            "the second project_run waited for the first: \(took) s, \(exits)")
     for run in runs { ProjectWork.finish(run) }
 
-    for id in [autoRoom, cardRoom, stopRoom, leftRoom, halfRoom, moved] { try? FileManager.default.removeItem(at: SplitStore.folder.appendingPathComponent(id.uuidString + ".json")) }
+    for id in [autoRoom, cardRoom, stopRoom, leftRoom, halfRoom, moved, rsRoom] { try? FileManager.default.removeItem(at: SplitStore.folder.appendingPathComponent(id.uuidString + ".json")) }
     try? FileManager.default.removeItem(at: base)
     print("PASS: sub-rooms (split → report → merge → push → cleanup, full auto approves at once and the card waits otherwise, overlapping files and a sub-room's split refused, join turn once, Stop goes down and Continue/Discard, restart cards, project_run in line)")
 }

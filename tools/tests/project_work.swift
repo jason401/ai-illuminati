@@ -623,6 +623,17 @@ private func checkMilestonePushRecovery(_ project: ProjectBinding, origin: URL) 
     expect(unreachable is GitLink.MilestonePushPending && saved().phase == .push && saved().verifiedSHA == integrated.candidate
            && todos.current.item(milestone)?.state == .ready && hookRuns() == runs,
            "an unreachable remote keeps the verified candidate in the push phase: \(String(describing: unreachable))")
+    // The remote check stopped mid-fetch (as a timeout ends it): the same push phase, not the fetch's own error.
+    let slow = common + "/milestone-slow-upload-pack"
+    write("#!/bin/sh\nsleep 30\nexec git-upload-pack \"$@\"\n", "milestone-slow-upload-pack", in: common)
+    try! FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: slow)
+    _ = git(["config", "remote.origin.uploadpack", slow])
+    let token = DebateCancellation()
+    DispatchQueue.global().asyncAfter(deadline: .now() + 2) { token.cancel() }
+    let stopped = failure { try todos.pushMilestone(milestone, project, tree, token: token) }
+    _ = git(["config", "--unset", "remote.origin.uploadpack"]); try? FileManager.default.removeItem(atPath: slow)
+    expect(stopped is GitLink.MilestonePushPending && saved().phase == .push && saved().verifiedSHA == integrated.candidate && hookRuns() == runs,
+           "a remote check that throws keeps the verified candidate in the push phase: \(String(describing: stopped))")
     FileManager.default.createFile(atPath: stop, contents: Data())
     let refused = failure { try todos.pushMilestone(milestone, project, tree) }
     try! FileManager.default.removeItem(atPath: stop)
@@ -650,8 +661,17 @@ private func checkMilestonePushRecovery(_ project: ProjectBinding, origin: URL) 
     _ = git(["pull", "-q", "--ff-only", "origin", "main"], at: other)
     write("later\n", "later.txt", in: other); commit(other, "Built on the landed Milestone"); _ = git(["push", "-q", "origin", "main"], at: other)
     let before = hookRuns()
+    // The Goal's cleanup fails first (a file left in its tree): confirmed, but neither the Milestone nor the Goal done yet.
+    write("left\n", "left-behind.txt", in: tree.path)
+    let blocked = failure { try todos.pushMilestone(milestone, project, tree) }
+    expect(blocked != nil && hookRuns() == before && saved().phase == .confirmation && todos.current.item(milestone)?.state == .ready
+           && todos.current.item(goal.id)?.state != .done && !opens() && FileManager.default.fileExists(atPath: tree.path),
+           "a cleanup that fails leaves the confirmed Milestone to run again: \(String(describing: blocked))")
+    try! FileManager.default.removeItem(atPath: tree.path + "/left-behind.txt")
+    // Cut off after the tree went but before the branch and the save: the next run only finishes the cleanup.
+    _ = git(["worktree", "remove", tree.path])
     let landed = Result { try todos.pushMilestone(milestone, project, tree) }
-    expect(((try? landed.get()) ?? "").contains("Already on") && hookRuns() == before && saved().phase == .confirmation,
+    expect(((try? landed.get()) ?? "").contains("Confirmed earlier") && hookRuns() == before && saved().phase == .confirmation,
            "a candidate already in the remote branch is confirmed without pushing again: \(landed)")
     expect(todos.current.item(milestone)?.state == .done && todos.current.item(goal.id)?.state == .done && opens(),
            "the last Milestone on the remote ends the Goal and opens the TODO waiting for it")

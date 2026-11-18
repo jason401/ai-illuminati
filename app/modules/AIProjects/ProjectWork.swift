@@ -858,8 +858,11 @@ public final class GitLink: ToolProvider {
         let tracking = "refs/remotes/\(binding.remote)/\(target)"
         func remoteNow() throws -> String {
             try ProjectWork.withRefs(binding.root, token: token) {
-                // Unreachable (network): nothing is known, so the candidate waits in the push phase for the next run.
-                let fetch = try git(["fetch", "--no-tags", binding.remote, "+refs/heads/\(target):\(tracking)"], timeout: 180)
+                // Unreachable (network), timed out or stopped: nothing is known, so the candidate waits in the push phase
+                // for the next run, whether the fetch failed or threw.
+                let fetch: ProjectProcess.Reply
+                do { fetch = try git(["fetch", "--no-tags", binding.remote, "+refs/heads/\(target):\(tracking)"], timeout: 180) }
+                catch { throw MilestonePushPending(reason: error.localizedDescription) }
                 guard fetch.status == 0 else {
                     throw MilestonePushPending(reason: L("원격 대상 branch를 확인하지 못했어요: ", "could not read the remote target branch: ") + fetch.output)
                 }

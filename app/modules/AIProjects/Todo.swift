@@ -844,21 +844,30 @@ public final class TodoStore: ObservableObject {
         }
     }
     // TODO structure 13 (off until 16): a Milestone's push, judged by the remote and saved on the TODO whatever the outcome,
-    // so a run again after a lost reply, a timeout or a restart reads the remote first. On the remote: the Milestone is done
-    // and, as its Goal's last part, the Goal too, then the Goal's work tree and branch go (a cleanup that fails is done on
-    // the next run). Still at the base: MilestonePushPending, in the push phase. Moved on: MilestoneRemoteMoved, at integration.
+    // so a run again after a lost reply, a timeout or a restart reads the remote first. On the remote: as its Goal's last
+    // part, the Goal's work tree and branch go first, then the Milestone is done (and the Goal with it). A cleanup that
+    // fails or is cut off leaves the Milestone confirmed but not done, so the next run cleans up again (a tree already gone
+    // was confirmed before: it is not read again). Still at the base: MilestonePushPending, in the push phase. Moved on:
+    // MilestoneRemoteMoved, at integration.
     @discardableResult
     func pushMilestone(_ id: UUID, _ binding: ProjectBinding, _ tree: SubWork.Tree, token: DebateCancellation? = nil) throws -> String {
-        guard let item = current.item(id), item.role == .milestone, let saved = item.milestoneCandidate else { throw TodoError.notFound }
+        guard let item = current.item(id), item.role == .milestone, let goal = item.goal, let saved = item.milestoneCandidate else { throw TodoError.notFound }
+        let last = current.item(goal).map { $0.state != .cancelled } == true
+            && current.items.allSatisfy { $0.goal != goal || $0.id == id || $0.state == .done }
         var candidate = saved
         func keep(_ data: inout TodoData) {
             if let i = data.items.firstIndex(where: { $0.id == id }), data.items[i].milestoneCandidate == saved { data.items[i].milestoneCandidate = candidate }
         }
         let reply: String
-        do { reply = try GitLink.pushMilestone(binding, tree, candidate: &candidate, token: token) }
-        catch { try? update { keep(&$0) }; throw error }
-        let goalDone = try update { data -> Bool in keep(&data); return try data.finishMilestone(id) }
-        if goalDone { try SubWork.removeGoal(binding, tree, target: candidate.branch, token: token) }
+        if last, saved.phase == .confirmation, saved.verifiedSHA != nil, !FileManager.default.fileExists(atPath: tree.path) {
+            reply = "Confirmed earlier on \(binding.remote)/\(saved.branch): " + (saved.candidateSHA ?? "")
+        } else {
+            do { reply = try GitLink.pushMilestone(binding, tree, candidate: &candidate, token: token) }
+            catch { try? update { keep(&$0) }; throw error }
+            try update { keep(&$0) }
+        }
+        if last { try SubWork.removeGoal(binding, tree, target: candidate.branch, token: token) }
+        try update { try $0.finishMilestone(id) }
         return reply
     }
     static func sameTitle(_ a: String, _ b: String) -> Bool {

@@ -2517,3 +2517,91 @@ private func checkMilestoneDone() {
     expect(last && state(m2) == .done && state(goal.id) == .done && opens(), "the last Milestone on the remote ends the Goal and opens the TODO waiting for it")
     expect((try? store.update { try $0.finishMilestone(m2) }) == true && state(goal.id) == .done, "a Milestone already done changes nothing")
 }
+
+// TODO structure 14: a Milestone's code fault (full test, review, conflict) puts one Fix Step before it with what failed,
+// the Milestone then starts again at integration; the same failure again makes no second one; a transient failure none.
+func testMilestoneFailureFix() {
+    let store = TodoStore(url: todoStoreFile("milestone-failure"))
+    let project = ProjectBinding(root: "/tmp/todo-milestone-failure", common: "", remote: "", remoteURL: "")
+    let goal = try! store.add(title: "goal", project: project, projectName: "G")
+    typealias Part = TodoPlan.Part
+    let plan = TodoPlan(parts: [Part(key: "a", role: .step, title: "A", tests: ["testA"]), Part(key: "m", role: .milestone, title: "M", after: ["a"])])
+    let parts = try! store.savePlan(goal: goal.id, plan)
+    let (a, m) = (parts[0].id, parts[1].id)
+    let sha = String(repeating: "1", count: 40)
+    try! store.update { data in
+        let i = data.items.firstIndex { $0.id == a }!
+        data.items[i].state = .done; data.items[i].stepSHA = "aaa111"; data.readyParts(goal.id)
+    }
+    func item(_ id: UUID) -> TodoItem? { store.current.item(id) }
+    func fixes() -> [TodoItem] { store.current.items.filter { $0.goal == goal.id && $0.fixFor != nil } }
+    func verified(_ phase: TodoItem.MilestoneCandidate.Phase) {
+        try! store.change(m) { t in
+            var c = TodoItem.MilestoneCandidate(branch: "main", baseSHA: String(repeating: "0", count: 40), candidateSHA: sha)
+            c.recordReview(for: sha); c.recordTest(for: sha); c.setPhase(phase); t.milestoneCandidate = c; t.state = .running
+        }
+    }
+
+    // Classification: the typed test failure and conflict are code faults; no reviewer, a failed review, a network error
+    // and anything thrown by a stopped run are transient.
+    let thrown = SubWork.MilestoneTestFailed(sha: sha, status: 1, log: "FAIL: testA\nexpected 2, got 3")
+    expect(MilestoneFailure.of(thrown) == .testFailed(sha: sha, log: thrown.log), "a full test failure is a code fault with its log")
+    expect(MilestoneFailure.of(SubWork.Conflict(files: ["a.swift"], remote: "r1")) == .conflict(remote: "r1", files: ["a.swift"]), "a conflict is a code fault")
+    expect(MilestoneFailure.of(SubWork.Conflict(files: ["a.swift"], remote: "r1"), cancelled: true).key == nil, "a stopped run is never a code fault")
+    expect(MilestoneFailure.of(ProjectError.make("fatal: unable to access: Could not resolve host")).key == nil, "a network error is transient")
+    expect(MilestoneFailure.of(.noReviewer)?.key == nil && MilestoneFailure.of(.failed("out of usage"))?.key == nil
+           && MilestoneFailure.of(.approved(sha: sha)) == nil, "no reviewer or the reviewer's quota is transient, an approval no failure")
+    expect(MilestoneFailure.of(.changesRequested(sha: sha, findings: "x")) == .changesRequested(sha: sha, findings: "x"), "change requests are a code fault")
+
+    // A transient failure: no Fix Step, ready again in the same phase, no attempt counted.
+    verified(.push)
+    let attempts = item(m)?.attempts
+    let retried = try! store.recoverMilestone(m, .transient("network down"))
+    expect(retried == nil && fixes().isEmpty, "a transient failure makes no Fix Step")
+    expect(item(m)?.state == .ready && item(m)?.milestoneCandidate?.phase == .push && item(m)?.attempts == attempts
+           && item(m)?.notes.last?.kind == .retry, "a transient failure retries the same phase, no attempt counted")
+
+    // The full test failed: one Fix Step right before the Milestone, with the log; the Milestone waits, back at integration.
+    verified(.test)
+    let fix = try! store.recoverMilestone(m, .testFailed(sha: sha, log: thrown.log))!
+    let made = item(fix)
+    expect(fixes().count == 1 && made?.role == .step && made?.goal == goal.id && made?.tests == ["testA"] && made?.state == .ready,
+           "a full test failure makes one ready Fix Step with the Goal's Step tests: \(String(describing: made))")
+    expect(made?.detail.contains("expected 2, got 3") == true && made?.detail.contains(sha) == true, "the Fix Step's detail has the failure log and candidate")
+    let row = store.current.ordered(goal.listID).map(\.id), run = store.current.items.map(\.id)
+    expect(row.firstIndex(of: fix)! + 1 == row.firstIndex(of: m)! && run.firstIndex(of: fix)! + 1 == run.firstIndex(of: m)!,
+           "the Fix Step goes right before the Milestone on the board and in run order")
+    expect(item(m)?.state == .draft && item(m)?.after.contains(fix) == true && item(m)?.milestoneCandidate?.phase == .integration,
+           "the Milestone waits for its Fix Step and starts again at integration")
+    expect(!store.current.eligible(held: { _ in false }).contains { $0.id == m }, "the Milestone does not run before its Fix Step")
+
+    // The same failure again (same candidate, same cause): no second Fix Step.
+    verified(.test)
+    expect((try? store.recoverMilestone(m, .testFailed(sha: sha, log: "other run"))) == fix && fixes().count == 1 && item(m)?.state == .draft,
+           "the same failure again makes no second Fix Step")
+    // Reloaded from disk: still the one (fixFor is saved) and the same plan is still the same plan.
+    let reloaded = TodoStore(url: store.url)
+    expect(reloaded.current.item(fix)?.fixFor == made?.fixFor && (try? reloaded.recoverMilestone(m, .testFailed(sha: sha, log: ""))) == fix
+           && reloaded.current.items.filter { $0.fixFor != nil }.count == 1, "after a restart the same failure still finds its Fix Step")
+    expect((try? store.savePlan(goal: goal.id, plan))?.map(\.id) == [a, m], "a Fix Step does not make the same plan another plan")
+
+    // The Fix Step done: the Milestone is ready (from integration). The same failure after that reopens it, no new one.
+    try! store.update { data in
+        let i = data.items.firstIndex { $0.id == fix }!
+        data.items[i].state = .done; data.items[i].stepSHA = "fff111"; data.readyParts(goal.id)
+    }
+    expect(item(m)?.state == .ready, "the Fix Step done readies its Milestone")
+    expect((try? store.recoverMilestone(m, .testFailed(sha: sha, log: ""))) == fix && fixes().count == 1 && item(fix)?.state == .ready
+           && item(fix)?.stepSHA == nil && item(m)?.state == .draft, "the same failure after its Fix Step ended reopens that one")
+
+    // Another cause on the same candidate (review findings) or a conflict: their own Fix Step, with findings or files.
+    let review = try! store.recoverMilestone(m, .changesRequested(sha: sha, findings: "Rename foo to bar"))!
+    let conflict = try! store.recoverMilestone(m, .conflict(remote: "r2", files: ["app/x.swift", "docs/y.md"]))!
+    expect(Set([fix, review, conflict]).count == 3 && fixes().count == 3, "another cause makes its own Fix Step")
+    expect(item(review)?.detail.contains("Rename foo to bar") == true && item(conflict)?.detail.contains("app/x.swift") == true
+           && item(conflict)?.detail.contains("docs/y.md") == true, "the Fix Step's detail has the findings or the conflicted files")
+    expect(Set(item(m)?.after ?? []).isSuperset(of: [a, fix, review, conflict]), "the Milestone waits for every Fix Step")
+    try! store.change(m) { $0.state = .cancelled }
+    expect((try? store.recoverMilestone(m, .transient("x"))) == nil && item(m)?.state == .cancelled, "a cancelled Milestone is left as it is")
+    print("PASS: Milestone failure recovery (one Fix Step per code fault before the Milestone, none twice, transient retried in place)")
+}

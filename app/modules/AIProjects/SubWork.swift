@@ -238,6 +238,12 @@ public enum SubWork {
         }
     }
 
+    // The full test ran on the candidate and failed: a code fault, so a Fix Step gets `log` (the output's end) (TODO structure 14).
+    public struct MilestoneTestFailed: LocalizedError, Equatable {
+        public var sha: String, status: Int32, log: String
+        public var errorDescription: String? { L("Milestone 전체 테스트 실패 (exit \(status))", "Milestone full test failed (exit \(status))") }
+    }
+
     // TODO structure 10. The Milestone runner saves this candidate on the TODO when it returns.
     public static func testMilestone(_ binding: ProjectBinding, _ tree: Tree, candidate: inout TodoItem.MilestoneCandidate,
                                      room: UUID, fullAuto: Bool, token: DebateCancellation, onLine: ((String) -> Void)? = nil) throws {
@@ -299,7 +305,9 @@ public enum SubWork {
                 let result = try ProjectProcess.run("/usr/bin/env", args, cwd: root, token: token, deadline: deadline, guarded: true,
                                                     extra: environment, onLine: onLine)
                 guard result.status == 0 else {
-                    throw fail("Milestone 전체 테스트 실패 (exit \(result.status))", "Milestone full test failed (exit \(result.status))")
+                    // A stop is not the code's fault: no log, so it is retried (MilestoneFailure.of).
+                    guard !token.isCancelled else { throw fail("Milestone 전체 테스트가 취소됐어요.", "The Milestone's full test was stopped.") }
+                    throw MilestoneTestFailed(sha: sha, status: result.status, log: String(result.output.suffix(20000)))
                 }
                 try checkTree()
                 guard try reflogs() == logs, !token.isCancelled else {

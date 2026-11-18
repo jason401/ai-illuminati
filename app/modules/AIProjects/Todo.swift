@@ -184,12 +184,13 @@ public struct TodoItem: Codable, Identifiable, Equatable {
     public var state: State = .draft
     public var after: [UUID] = []          // TODOs that must be finished first (any list)
     public var role: Role = .plain {
-        didSet { if role != .milestone { milestoneCandidate = nil }; if role != .step { stepTests = nil; stepSHA = nil } }
+        didSet { if role != .milestone { milestoneCandidate = nil }; if role != .step { stepTests = nil; stepSHA = nil; fixFor = nil } }
     }
     public var goal: UUID?                 // a step's or milestone's goal
     public var tests: [String] = []        // a step's picked tests (AI_ILLUMINATI_TEST_ONLY names); a milestone runs them all
     public var stepTests: StepTestResult?  // a step's: the app's run of its tests this attempt (StepTests); cleared when it starts
     public var stepSHA: String?            // a done step's local commit on the Goal branch (its tests passed there): where the next step goes on
+    public var fixFor: String?             // a Fix Step's: the Milestone failure it repairs (MilestoneFailure.key), one Fix Step per failure
     public var milestoneCandidate: MilestoneCandidate? {
         didSet { if role != .milestone { milestoneCandidate = nil } }
     }
@@ -234,7 +235,7 @@ public struct TodoItem: Codable, Identifiable, Equatable {
     // cannot be read fails the whole file, which TodoStore then keeps as it is (no default silently saved over it).
     private enum Keys: String, CodingKey {
         case id, listID, title, detail, attachments, askFirst, state, after, role, goal, tests, room, originRoom, notes, question, attempts, lastError, result, assumptions, files, report, workers, interrupted, unreported, standIns, delegated, aiHelped, parked, wasParked, createdAt, updatedAt,
-             workSeconds, waitSeconds, stateSince, startedAt, finishedAt, milestoneCandidate, stepTests, stepSHA
+             workSeconds, waitSeconds, stateSince, startedAt, finishedAt, milestoneCandidate, stepTests, stepSHA, fixFor
     }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
@@ -263,6 +264,7 @@ public struct TodoItem: Codable, Identifiable, Equatable {
         if role == .step {
             stepTests = try c.decodeIfPresent(StepTestResult.self, forKey: .stepTests)
             stepSHA = try c.decodeIfPresent(String.self, forKey: .stepSHA)
+            fixFor = try c.decodeIfPresent(String.self, forKey: .fixFor)
         }
         room = try c.decodeIfPresent(UUID.self, forKey: .room)
         originRoom = try c.decodeIfPresent(UUID.self, forKey: .originRoom)
@@ -299,7 +301,7 @@ public struct TodoItem: Codable, Identifiable, Equatable {
         try c.encodeIfPresent(goal, forKey: .goal)
         if !tests.isEmpty { try c.encode(tests, forKey: .tests) }
         try c.encodeIfPresent(milestoneCandidate, forKey: .milestoneCandidate)
-        if role == .step { try c.encodeIfPresent(stepTests, forKey: .stepTests); try c.encodeIfPresent(stepSHA, forKey: .stepSHA) }
+        if role == .step { try c.encodeIfPresent(stepTests, forKey: .stepTests); try c.encodeIfPresent(stepSHA, forKey: .stepSHA); try c.encodeIfPresent(fixFor, forKey: .fixFor) }
         try c.encodeIfPresent(room, forKey: .room); try c.encodeIfPresent(originRoom, forKey: .originRoom); try c.encode(notes, forKey: .notes)
         try c.encodeIfPresent(question, forKey: .question); try c.encode(attempts, forKey: .attempts); try c.encodeIfPresent(lastError, forKey: .lastError)
         try c.encodeIfPresent(result, forKey: .result); try c.encode(assumptions, forKey: .assumptions); try c.encode(files, forKey: .files)
@@ -438,8 +440,75 @@ public struct TodoPlan: Equatable {
         guard saved.count == run.count else { return false }
         let ids = Dictionary(uniqueKeysWithValues: zip(run.map(\.key), saved.map(\.id)))
         return zip(run, saved).allSatisfy { p, t in
-            t.title == p.title && t.detail == p.detail && t.role == p.role && t.tests == p.tests && Set(t.after) == Set(p.after.compactMap { ids[$0] })
+            t.title == p.title && t.detail == p.detail && t.role == p.role && t.tests == p.tests && Set(t.after).intersection(saved.map(\.id)) == Set(p.after.compactMap { ids[$0] })
         }
+    }
+}
+
+// TODO structure 14: why a Milestone run stopped (TodoData.recoverMilestone). A code fault gets a Fix Step: the full test
+// failed (10), the review asked for changes (09), the integration conflicted (07). Anything else (network, the reviewer's
+// quota or no reviewer, a stop) is transient: the same phase runs again.
+public enum MilestoneFailure: Equatable {
+    case testFailed(sha: String, log: String)
+    case changesRequested(sha: String, findings: String)
+    case conflict(remote: String, files: [String])
+    case transient(String)
+
+    // The same candidate SHA (a conflict: the remote SHA merged in and its files) and the same cause: one Fix Step. nil: transient.
+    public var key: String? {
+        switch self {
+        case .testFailed(let sha, _): return "test:" + sha
+        case .changesRequested(let sha, _): return "review:" + sha
+        case .conflict(let remote, let files): return "conflict:" + remote + ":" + files.sorted().joined(separator: "\u{0}")
+        case .transient: return nil
+        }
+    }
+    public static func of(_ review: TodoItem.MilestoneCandidate.Review) -> MilestoneFailure? {
+        switch review {
+        case .approved: return nil
+        case .changesRequested(let sha, let findings): return .changesRequested(sha: sha, findings: findings)
+        case .noReviewer: return .transient(L("지금 리뷰할 수 있는 다른 계정이 없어요.", "No other account can review right now."))
+        case .failed(let why): return .transient(why)
+        }
+    }
+    // What integrate, testMilestone or the push threw. A stopped run is never a code fault, whatever it threw.
+    public static func of(_ error: Error, cancelled: Bool = false) -> MilestoneFailure {
+        if !cancelled, let c = error as? SubWork.Conflict { return .conflict(remote: c.remote, files: c.files) }
+        if !cancelled, let t = error as? SubWork.MilestoneTestFailed { return .testFailed(sha: t.sha, log: t.log) }
+        return .transient(cancelled ? L("실행이 취소됐어요.", "The run was stopped.") : error.localizedDescription)
+    }
+    var cause: String {
+        switch self {
+        case .testFailed: return L("전체 테스트 실패", "full test failed")
+        case .changesRequested: return L("리뷰 수정 요청", "review asked for changes")
+        case .conflict: return L("통합 충돌", "integration conflict")
+        case .transient: return L("일시 오류", "passing error")
+        }
+    }
+    var summary: String {
+        switch self {
+        case .testFailed(let sha, _): return cause + " (" + String(sha.prefix(10)) + ")"
+        case .changesRequested(let sha, _): return cause + " (" + String(sha.prefix(10)) + ")"
+        case .conflict(_, let files): return cause + ": " + files.joined(separator: ", ")
+        case .transient(let why): return why
+        }
+    }
+    // The Fix Step's detail: what failed, as it came (a long log's end, long findings' start), and how it ends.
+    func fixDetail(milestone: String) -> String {
+        let limit = 12000
+        var text = L("Milestone \"\(milestone)\"이(가) 실패했어요: ", "Milestone \"\(milestone)\" failed: ") + cause + "\n"
+        switch self {
+        case .testFailed(let sha, let log):
+            text += L("후보 SHA: ", "Candidate SHA: ") + sha + "\n" + L("실패 로그:", "Failure log:") + "\n" + (log.count > limit ? "…" + String(log.suffix(limit)) : log)
+        case .changesRequested(let sha, let findings):
+            text += L("후보 SHA: ", "Candidate SHA: ") + sha + "\n" + L("리뷰 findings:", "Review findings:") + "\n" + (findings.count > limit ? String(findings.prefix(limit)) + "…" : findings)
+        case .conflict(let remote, let files):
+            text += L("원격 SHA: ", "Remote SHA: ") + remote + "\n" + L("Goal 작업 폴더가 merge 중 충돌 상태예요. 충돌 파일:", "The Goal's work tree is mid-merge with conflicts in:") + "\n" + files.map { "- " + $0 }.joined(separator: "\n")
+                + "\n" + L("충돌을 해결하고 merge 커밋을 만들어 주세요.", "Resolve them and commit the merge.")
+        case .transient(let why): text += why
+        }
+        return text + "\n" + L("원인을 고쳐 Goal 브랜치에 로컬로 커밋해 주세요. 이 Step이 끝나면 Milestone이 통합부터 다시 해요.",
+                               "Fix the cause and commit it locally on the Goal branch. When this Step ends the Milestone starts again at integration.")
     }
 }
 
@@ -668,6 +737,52 @@ public struct TodoData: Codable, Equatable {
         return true
     }
 
+    // TODO structure 14 (off until 16): a Milestone run that stopped on `failure`. A code fault puts a Fix Step right before
+    // the Milestone (in run order and on the board) with the log, findings or conflicted files in its detail; the Milestone
+    // waits for it and then starts again at integration. The same failure again (MilestoneFailure.key) makes no second one:
+    // the Milestone waits for the one there, reopened when it ended without fixing it. A transient failure makes none: the
+    // Milestone is ready to run the same phase again, no attempt counted (no limit stops it). Returns the Fix Step, nil then.
+    @discardableResult
+    mutating func recoverMilestone(_ id: UUID, _ failure: MilestoneFailure) throws -> UUID? {
+        guard let m = items.firstIndex(where: { $0.id == id }), items[m].role == .milestone, let goal = items[m].goal else { throw TodoError.notFound }
+        guard items[m].state != .done, items[m].state != .cancelled else { throw TodoError.notEditable }
+        items[m].question = nil; items[m].report = nil; items[m].interrupted = false
+        guard let key = failure.key else {
+            items[m].state = .ready; items[m].lastError = failure.summary
+            items[m].notes.append(TodoNote(kind: .retry, text: L("일시 오류로 같은 단계부터 다시 해요: ", "Retrying the same phase after a passing error: ") + String(failure.summary.prefix(300))))
+            return nil
+        }
+        items[m].milestoneCandidate?.setPhase(.integration)
+        items[m].lastError = failure.summary
+        items[m].state = .draft   // readyParts makes it ready once its Fix Step is done
+        if let f = items.firstIndex(where: { $0.goal == goal && $0.fixFor == key }) {
+            if !items[m].after.contains(items[f].id) { items[m].after.append(items[f].id) }
+            if items[f].state == .done {
+                items[f].state = .draft; items[f].stepSHA = nil; items[f].stepTests = nil; items[f].finishedAt = nil
+                items[f].notes.append(TodoNote(kind: .retry, text: L("같은 실패가 다시 났어요. 다른 방법으로 고쳐 주세요.", "The same failure came again; fix it another way.")))
+            }
+            readyParts(goal)
+            return items[f].id
+        }
+        // The Steps' tests before it (all of the Goal's when none come before), so the Fix Step's own check covers what they did.
+        let parts = items.filter { $0.goal == goal && $0.role == .step }
+        let before = parts.filter { p in items[..<m].contains { $0.id == p.id } }
+        var tests: [String] = []
+        for t in (before.isEmpty ? parts : before).flatMap(\.tests) where !tests.contains(t) { tests.append(t) }
+        var fix = TodoItem(listID: items[m].listID, title: L("수정: ", "Fix: ") + items[m].title + " · " + failure.cause,
+                           detail: failure.fixDetail(milestone: items[m].title), after: items[m].after)
+        fix.role = .step; fix.goal = goal; fix.tests = tests; fix.fixFor = key
+        items[m].after.append(fix.id)
+        items.insert(fix, at: m)
+        if let l = lists.firstIndex(where: { $0.id == fix.listID }) {
+            var order = ordered(fix.listID).map(\.id).filter { $0 != fix.id }
+            order.insert(fix.id, at: order.firstIndex(of: id) ?? order.endIndex)
+            lists[l].order = order
+        }
+        readyParts(goal)
+        return fix.id
+    }
+
     // A TODO put in front of `before` (nil: at the end) of its own list; `before` in another list is not found.
     mutating func place(_ id: UUID, before: UUID?) throws {
         guard let item = item(id), let l = lists.firstIndex(where: { $0.id == item.listID }) else { throw TodoError.notFound }
@@ -820,7 +935,7 @@ public final class TodoStore: ObservableObject {
             let head = data.items[g]
             guard head.role == .plain || head.role == .goal, head.goal == nil else { throw TodoPlan.refuse("step이나 milestone은 Goal이 될 수 없어요.", "a step or milestone cannot be a goal.") }
             // Saved in run order and never reordered in `items` (the board's moves change only the list's order).
-            let saved = data.items.filter { $0.goal == goal }
+            let saved = data.items.filter { $0.goal == goal && $0.fixFor == nil }   // Fix Steps came later, not from the plan
             if !saved.isEmpty {
                 guard saved.allSatisfy({ $0.listID == head.listID }), plan.same(saved, as: run) else {
                     throw TodoPlan.refuse("이 Goal에는 다른 계획이 이미 있어요.", "this goal already has another plan.")
@@ -870,6 +985,9 @@ public final class TodoStore: ObservableObject {
         try update { try $0.finishMilestone(id) }
         return reply
     }
+    // TODO structure 14 (off until 16): a Milestone run's failure, in one save (TodoData.recoverMilestone).
+    @discardableResult
+    public func recoverMilestone(_ id: UUID, _ failure: MilestoneFailure) throws -> UUID? { try update { try $0.recoverMilestone(id, failure) } }
     static func sameTitle(_ a: String, _ b: String) -> Bool {
         a.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(b.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame
     }

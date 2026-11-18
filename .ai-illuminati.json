@@ -22,6 +22,7 @@
     "test-milestone-review": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_ONLY=testMilestoneReview,testPeerReview,testProjectSnapshot,testTodoStore,testChatThroughCLI,testDocumentsProject", "/bin/zsh", "tools/tests/run_mode2.sh"]},
     "test-step-end": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_ONLY=testTodoSteps,testTodoPause,testTodoScheduler,testTodoFailureRecovery,testStepTests,testTodoPlan,testTodoStore", "/bin/zsh", "tools/tests/run_mode2.sh"]},
     "test-milestone-confirm": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_ONLY=testProjectWork,testTodoSteps,testTodoStore,testGoalTrees,testGoalIntegration,testTodoScheduler", "/bin/zsh", "tools/tests/run_mode2.sh"]},
+    "test-milestone-failure": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_ONLY=testMilestoneFailureFix,testTodoFailureRecovery,testTodoSteps,testTodoPlan,testTodoStore,testStepTests,testProjectWork,testGoalIntegration", "/bin/zsh", "tools/tests/run_mode2.sh"]},
     "test-goal-trees": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_JOBS=1", "AI_ILLUMINATI_TEST_ONLY=testGoalTrees", "/bin/zsh", "tools/tests/run_mode2.sh"]}
   }
 }

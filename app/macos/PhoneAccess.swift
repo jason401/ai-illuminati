@@ -1,4 +1,5 @@
 import AppKit
+import Network
 import SwiftUI
 import CoreImage
 import AIAccounts
@@ -134,6 +135,16 @@ final class PhoneAccess: ObservableObject {
 // The phone page (turned on in the iPhone window, remembered across launches): AIRemote serves it, the chats answer
 // (AIChat's RemoteChats) and approvals are ProjectCenter's, so deciding on the phone clears the
 // Mac's card too. The key in the QR guards every /api/ call; a new key (the window's "New QR") locks out old phones.
+/// The phone page's update screen (Updater; tests give a stand-in). Only a person's tap on the page reaches it: no AI tool does.
+protocol PhoneUpdates: AnyObject {
+    func phoneState(at now: Date) -> [String: Any]
+    /// nil when started; otherwise why not (answered as 409).
+    func phoneCheck() -> String?
+    func phoneInstall() -> String?
+}
+
+extension Updater: PhoneUpdates {}
+
 final class PhoneServer: ObservableObject {
     static let shared = PhoneServer()
     static let port: UInt16 = 47380
@@ -142,6 +153,7 @@ final class PhoneServer: ObservableObject {
     @Published private(set) var running = false
     @Published private(set) var problem: String?
     weak var discussion: Discussion?   // set by start; tests set it directly
+    weak var updates: PhoneUpdates?    // set at app start; tests set a stand-in
     private var server: RemoteServer?
 
     @Published private(set) var enabled = UserDefaults.app.bool(forKey: PhoneServer.enabledKey)
@@ -215,6 +227,53 @@ final class PhoneServer: ObservableObject {
         }
     }
 
+    // After an update started from the phone page: true once this page answers its key on 127.0.0.1 and Tailscale
+    // runs and serves it, so the phone can reach the new app. Calls back on the main queue.
+    func reachable(_ done: @escaping (Bool) -> Void) {
+        guard enabled, running else { return done(false) }
+        Self.probe(port: Self.port, key: key) { ok in
+            guard ok else { return done(false) }
+            PhoneAccess.shared.refresh { status in done(status.state == .running && status.servesPhone) }
+        }
+    }
+
+    // One GET /api/update over TCP: true for a 200 within `timeout`. Calls back on the main queue.
+    static func probe(port: UInt16, key: String, timeout: TimeInterval = 5, done: @escaping (Bool) -> Void) {
+        guard let endpointPort = NWEndpoint.Port(rawValue: port) else { return done(false) }
+        let connection = NWConnection(host: "127.0.0.1", port: endpointPort, using: .tcp)
+        let queue = DispatchQueue(label: "PhoneServer.probe")
+        var finished = false
+        func finish(_ ok: Bool) {
+            guard !finished else { return }
+            finished = true
+            connection.cancel()
+            DispatchQueue.main.async { done(ok) }
+        }
+        func read(_ sofar: Data) {
+            connection.receive(minimumIncompleteLength: 1, maximumLength: 1 << 16) { chunk, _, end, error in
+                let data = sofar + (chunk ?? Data())
+                if let line = data.range(of: Data("\r\n".utf8)).map({ String(decoding: data[..<$0.lowerBound], as: UTF8.self) }) {
+                    return finish(line.hasPrefix("HTTP/1.1 200"))
+                }
+                if end || error != nil { return finish(false) }
+                read(data)
+            }
+        }
+        connection.stateUpdateHandler = { state in
+            switch state {
+            case .ready:
+                let request = "GET /api/update HTTP/1.1\r\nHost: 127.0.0.1\r\nX-Remote-Key: \(key)\r\nConnection: close\r\n\r\n"
+                connection.send(content: Data(request.utf8), completion: .contentProcessed { error in
+                    if error != nil { finish(false) } else { read(Data()) }
+                })
+            case .failed, .waiting: finish(false)
+            default: break
+            }
+        }
+        connection.start(queue: queue)
+        queue.asyncAfter(deadline: .now() + timeout) { finish(false) }
+    }
+
     private func serve(_ args: [String]) {
         guard let cli = PhoneAccess.cliPaths.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else { return }
         DispatchQueue.global(qos: .utility).async {
@@ -239,10 +298,12 @@ final class PhoneServer: ObservableObject {
     }
 
     // GET /api/chats, GET /api/search?q=, GET /api/chat/<id>[?open=1], GET /api/image/<chat>/<picture>,
-    // POST /api/chat/new {text, images, project?} → {id}, POST /api/chat/<id>/send, POST /api/approval/<id> {allow}.
+    // POST /api/chat/new {text, images, project?} → {id}, POST /api/chat/<id>/send, POST /api/approval/<id> {allow},
+    // GET /api/update, POST /api/update/check, POST /api/update/install (409 while an update step runs).
     func handle(_ request: RemoteRequest) -> RemoteResponse {
-        guard let discussion else { return .error(404, "not ready") }
         let parts = request.path.split(separator: "/").map(String.init)   // ["api", ...]
+        if parts.count > 1, parts[1] == "update" { return handleUpdate(request.method, Array(parts.dropFirst(2))) }
+        guard let discussion else { return .error(404, "not ready") }
         switch (request.method, parts.count > 1 ? parts[1] : "", parts.count) {
         case ("GET", "chats", 2):
             return .json(["sections": RemoteChats.list(discussion)])
@@ -275,6 +336,19 @@ final class PhoneServer: ObservableObject {
             }
             ProjectCenter.shared.decide(id, allow: allow)
             return .json(["ok": true])
+        default:
+            return .error(404, "not found")
+        }
+    }
+
+    private func handleUpdate(_ method: String, _ rest: [String]) -> RemoteResponse {
+        guard let updates else { return .error(404, "not ready") }
+        switch (method, rest) {
+        case ("GET", []):
+            return .json(updates.phoneState(at: Date()))
+        case ("POST", ["check"]), ("POST", ["install"]):
+            if let reason = rest == ["check"] ? updates.phoneCheck() : updates.phoneInstall() { return .error(409, reason) }
+            return .json(updates.phoneState(at: Date()))
         default:
             return .error(404, "not found")
         }

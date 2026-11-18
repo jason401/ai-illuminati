@@ -2,6 +2,7 @@ import Foundation
 import AppKit
 import CoreImage
 import AIAccounts
+import AILocalization
 import AIRemote
 @testable import AIProjects
 @testable import AIChat
@@ -116,4 +117,114 @@ func testPhoneServer() {
         let newList = call("GET", "/api/chats").1["sections"] as? [[String: Any]] ?? []
         expect(newList.contains { ($0["chats"] as? [[String: Any]] ?? []).contains { $0["id"] as? String == newRoom.uuidString } }, "phone server: the list has the new chat")
     }
+}
+
+/// Updating this Mac from the phone page: /api/update needs the key (401), shows the updater's state, refuses a second
+/// start while one runs (409); a remote install's new app acknowledges only once the phone page answers, and never
+/// after its deadline, so install_app.py puts the old app back (tools/tests/test_install_app.py covers that side).
+func testPhoneUpdates() {
+    final class FakeUpdates: PhoneUpdates {
+        var busy = false, checks = 0, installs = 0
+        func phoneState(at now: Date) -> [String: Any] {
+            ["current": "abc1234aaaa", "available": "def5678bbbb", "channel": "stable", "busy": busy, "waiting": false, "work": 2, "status": busy ? "testing" : "available"]
+        }
+        func phoneCheck() -> String? { if busy { return "busy" }; checks += 1; return nil }
+        func phoneInstall() -> String? { if busy { return "busy" }; installs += 1; busy = true; return nil }
+    }
+    let fake = FakeUpdates(), server = PhoneServer.shared, saved = server.updates
+    server.updates = fake
+    defer { server.updates = saved }
+    let key = RemoteHTTP.newKey()
+    var port: UInt16 = 0
+    var remote: RemoteServer?
+    for candidate in UInt16(47430)...UInt16(47460) {
+        let s = RemoteServer(port: candidate, key: key, page: { Data() }) { server.handle($0) }
+        if (try? s.start()) != nil { remote = s; port = candidate; break }
+    }
+    defer { remote?.stop() }
+    func call(_ method: String, _ path: String, key: String?) -> (Int, [String: Any]) {
+        var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)\(path)")!)
+        request.httpMethod = method
+        if let key { request.setValue(key, forHTTPHeaderField: "X-Remote-Key") }
+        if method == "POST" { request.httpBody = Data("{}".utf8) }
+        var result: (Int, [String: Any])?
+        URLSession.shared.dataTask(with: request) { data, response, _ in
+            result = ((response as? HTTPURLResponse)?.statusCode ?? 0, (data.flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any]) ?? [:])
+        }.resume()
+        let deadline = Date().addingTimeInterval(10)
+        while result == nil && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+        return result ?? (0, [:])
+    }
+    var first = call("GET", "/api/update", key: key)
+    for _ in 0..<20 where first.0 == 0 { first = call("GET", "/api/update", key: key) }
+    expect(first.0 == 200 && first.1["current"] as? String == "abc1234aaaa" && first.1["available"] as? String == "def5678bbbb"
+           && first.1["work"] as? Int == 2 && first.1["busy"] as? Bool == false, "phone updates: the state \(first)")
+    expect(call("GET", "/api/update", key: nil).0 == 401 && call("POST", "/api/update/install", key: "wrong").0 == 401 && fake.installs == 0,
+           "phone updates: no key, no state and no install")
+    expect(call("POST", "/api/update/check", key: key).0 == 200 && fake.checks == 1, "phone updates: a check")
+    let started = call("POST", "/api/update/install", key: key)
+    expect(started.0 == 200 && started.1["busy"] as? Bool == true && fake.installs == 1, "phone updates: the install starts and says so")
+    expect(call("POST", "/api/update/install", key: key).0 == 409 && call("POST", "/api/update/check", key: key).0 == 409 && fake.installs == 1,
+           "phone updates: a second start while one runs is 409")
+    expect(call("GET", "/api/update/elsewhere", key: key).0 == 404 && call("GET", "/api/update/install", key: key).0 == 404,
+           "phone updates: unknown update paths; install only by POST")
+    server.updates = nil
+    expect(call("GET", "/api/update", key: key).0 == 404, "phone updates: no updater, not ready")
+    server.updates = fake
+
+    // The new app's readiness check: a 200 from the page with its key; not with a wrong key, not with nothing listening.
+    func probe(_ port: UInt16, _ key: String) -> Bool? {
+        var ok: Bool?
+        PhoneServer.probe(port: port, key: key, timeout: 3) { ok = $0 }
+        let deadline = Date().addingTimeInterval(5)
+        while ok == nil && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+        return ok
+    }
+    expect(probe(port, key) == true, "phone updates: the page answers its key")
+    expect(probe(port, "wrong") == false, "phone updates: a wrong key is not ready")
+    remote?.stop()
+    expect(probe(port, key) == false, "phone updates: no listener is not ready")
+
+    // Acknowledging: right away once ready; never while the page does not come up, nor after the deadline.
+    let updates = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("phone-updates-" + UUID().uuidString)
+    try! FileManager.default.createDirectory(at: updates, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: updates) }
+    let record: [String: Any] = ["phase": "starting", "target": "/Applications/X.app", "revision": "r1", "token": UUID().uuidString, "remote": true]
+    expect(InstallAck.token(record, app: "/Applications/X.app", revision: "r1") != nil
+           && InstallAck.token(record, app: "/Applications/Y.app", revision: "r1") == nil
+           && InstallAck.token(record.merging(["phase": "failed"]) { $1 }, app: "/Applications/X.app", revision: "r1") == nil,
+           "phone updates: only the launch the transaction started acknowledges")
+    func waitAck(_ answers: [Bool], seconds: TimeInterval) -> (acked: Bool, asked: Int) {
+        let token = UUID().uuidString
+        var asked = 0, acked = false
+        InstallAck.whenReady({ done in
+            asked += 1
+            DispatchQueue.main.async { done(answers[min(asked - 1, answers.count - 1)]) }
+        }, every: 0.05, until: Date().addingTimeInterval(seconds)) {
+            InstallAck.write(token: token, revision: "r1", in: updates); acked = true
+        }
+        let end = Date().addingTimeInterval(seconds + 0.3)
+        while Date() < end { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+        let file = updates.appendingPathComponent(token + ".ack")
+        let written = (try? Data(contentsOf: file)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        expect(acked == (written?["revision"] as? String == "r1"), "phone updates: the ack file is the acknowledgement")
+        return (acked, asked)
+    }
+    let never = waitAck([false], seconds: 0.4)
+    expect(!never.acked && never.asked >= 3, "phone updates: a page that never comes up is never acknowledged (\(never.asked) asks)")
+    let later = waitAck([false, false, true], seconds: 1)
+    expect(later.acked && later.asked == 3, "phone updates: acknowledged once the page answers")
+    let late = waitAck([false], seconds: 0)
+    expect(!late.acked, "phone updates: nothing after the deadline")
+
+    let page = String(data: RemotePage.html(), encoding: .utf8) ?? ""
+    expect(page.contains("'/api/update/'") && page.contains("#update") && page.contains("updTrack"), "phone updates: the page has the update screen")
+
+    // The real updater: only a version a check found is installed from the phone; a rollback reads as one.
+    let updater = Updater()
+    if updater.available == nil { expect(updater.phoneInstall() != nil, "phone updates: no new version, no install") }
+    let state = updater.phoneState()
+    expect(state["current"] is String && state["busy"] as? Bool == false && state["channel"] as? String != nil, "phone updates: the updater's state")
+    expect(Updater.describe(["status": "failed", "detail": "x", "lastResult": "rolled-back", "lastDetail": "x"]).contains(L("되돌렸어요", "went back")),
+           "phone updates: a rollback says so")
 }

@@ -108,6 +108,42 @@ class InstallerTests(unittest.TestCase):
         record = json.loads((self.support / 'updates/transaction.json').read_text())
         self.assertTrue((Path(record['work']) / 'previous.app').exists())
 
+    def test_remote_install_waits_longer_and_records_it(self):
+        records = []
+        def started(*args, **kwargs):
+            records.append(json.loads((self.support / 'updates/transaction.json').read_text()))
+            self.started()
+        with patch.object(m.subprocess, 'run', started):
+            m.install(self.staged, self.target, self.current, self.support, 999, 'token', False, remote=True)
+        self.assertTrue(records[0]['remote'])
+        self.assertEqual(records[0]['ackSeconds'], m.REMOTE_ACK_SECONDS)
+        self.assertGreater(m.REMOTE_ACK_SECONDS, m.ACK_SECONDS)
+        state = json.loads((self.support / 'update.json').read_text())
+        self.assertEqual((state['lastResult'], state['lastRemote']), ('installed', '1'))
+        self.assertTrue(all(isinstance(value, str) for value in state.values()))
+
+    def test_remote_install_without_ack_rolls_back(self):
+        # The new app never writes the ack (its phone page did not come up): the old app comes back.
+        opened = []
+        (self.support / 'updates').mkdir(parents=True)
+        (self.support / 'updates/install.log').write_text('starting\nlast line here\n')
+        with patch.object(m, 'REMOTE_ACK_SECONDS', 0.3), patch.object(m.subprocess, 'run', lambda args, **kw: opened.append(args)):
+            with self.assertRaisesRegex(TimeoutError, 'phone page'):
+                m.install(self.staged, self.target, self.current, self.support, 999, 'token', False, remote=True)
+        self.assertEqual((self.target / 'content').read_text(), 'old')
+        self.assertEqual(opened[-1], ['/usr/bin/open', '-n', str(self.current)])
+        state = json.loads((self.support / 'update.json').read_text())
+        self.assertEqual((state['status'], state['lastResult'], state['lastRemote']), ('failed', 'rolled-back', '1'))
+        self.assertEqual(state['lastLog'], 'last line here')
+        self.assertTrue(all(isinstance(value, str) for value in state.values()))
+        self.assertEqual(json.loads((self.support / 'updates/transaction.json').read_text())['phase'], 'failed')
+
+    def test_first_install_failure_is_not_a_rollback(self):
+        m.shutil.rmtree(self.target)
+        with patch.object(m.subprocess, 'run', side_effect=RuntimeError('launch failed')):
+            with self.assertRaises(RuntimeError):
+                self.run_install()
+        self.assertEqual(json.loads((self.support / 'update.json').read_text())['lastResult'], 'failed')
 
 if __name__ == '__main__':
     unittest.main()

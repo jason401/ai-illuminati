@@ -17,6 +17,13 @@ func testDeviceSync() {
     let workLock = EnterpriseLock(organization: "work", name: "Work", lockedAt: Date())
     expect(DeviceSync.shared.settings.enabled == false, "chats from other Macs are off until turned on")
     expect(DeviceSync.hardwareID().count == 16 && DeviceSync.hardwareID() == DeviceSync.hardwareID(), "this Mac's ID is stable")
+    // Tests never reach the real iCloud Drive: DeviceSync.shared has this Mac's real ID, so with the default folder
+    // (settings put back to folder nil) it would write or take down the real devices/<id>/remote.json.
+    let realCloud = fm.homeDirectoryForCurrentUser.appendingPathComponent("Library/Mobile Documents").standardizedFileURL.path
+    let testHome = URL(fileURLWithPath: AccountStore.home).standardizedFileURL.path
+    let shared = DeviceSync.shared.connectionFile.standardizedFileURL.path
+    expect(DeviceSync.defaultFolder.standardizedFileURL.path.hasPrefix(testHome + "/") && !DeviceSync.defaultFolder.standardizedFileURL.path.hasPrefix(realCloud)
+           && shared.hasPrefix(testHome + "/") && !shared.hasPrefix(realCloud), "the default sync folder is under the test home, not the real iCloud Drive: \(shared)")
 
     // A chat with this Mac's paths, pictures and a reply still being written.
     var chat = Conversation()
@@ -213,6 +220,9 @@ func testMacConnection(folder: URL) {
     expect(!fm.fileExists(atPath: a.connectionFile.path), "connect: nothing goes up while ‘Let my other Macs connect’ is off")
     a.settings.sharesConnection = true; a.waitForWrites()
     expect(fm.fileExists(atPath: a.connectionFile.path), "connect: turned on, this Mac's address goes in its folder")
+    try? fm.removeItem(at: a.connectionFile)
+    a.offerConnection(offered); a.waitForWrites()
+    expect(fm.fileExists(atPath: a.connectionFile.path), "connect: a remote.json taken down from outside comes back at the next offer of the same address")
     let listed = b.scanNow().first { $0.id == "mac-c" }
     expect(listed?.name == "Studio" && listed?.connection?.url?.absoluteString == "https://studio.tail1.ts.net/?k=KEY", "connect: the other Mac lists it with its address")
     expect(listed.map(b.reach) == .unknown, "connect: unknown until Tailscale was checked")
@@ -225,6 +235,11 @@ func testMacConnection(folder: URL) {
     expect(bad.url == nil && plain.url == nil, "connect: only a tailnet https address of its own host is opened")
     a.offerConnection(nil); a.waitForWrites()
     expect(!fm.fileExists(atPath: a.connectionFile.path), "connect: the page turned off takes the address down")
+    let byHand = try! JSONEncoder().encode(RemoteConnection(address: "https://studio.tail1.ts.net/?k=HAND", host: "studio.tail1.ts.net", app: ""))
+    try? byHand.write(to: a.connectionFile)
+    a.offerConnection(nil); a.waitForWrites()
+    expect(fm.fileExists(atPath: a.connectionFile.path), "connect: with the page still off, a remote.json written by hand is not taken down again")
+    try? fm.removeItem(at: a.connectionFile)
     a.offerConnection(offered); a.waitForWrites()
     a.settings.sharesConnection = false; a.waitForWrites()
     expect(!fm.fileExists(atPath: a.connectionFile.path), "connect: turning connecting off takes the address down")

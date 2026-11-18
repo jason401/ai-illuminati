@@ -488,7 +488,8 @@ extension Discussion {
                 }
                 // A TODO's Step: the app runs the Step's picked tests on its commits; only a pass ends it (StepTests).
                 if run.isStep, !cancellation.isCancelled,
-                   let item = TodoStore.shared.current.items.first(where: { $0.room == id && $0.state == .running && $0.role == .step }) {
+                   let item = TodoStore.shared.current.items.first(where: { $0.room == id && $0.state == .running && $0.role == .step }),
+                   item.report?.summary != nil, item.report?.question == nil {   // task_ask waits for the user: nothing to test yet
                     let picked = L("고른 테스트: ", "Picked tests: ") + item.tests.joined(separator: ", ")
                     run.setAppStep(0, picked, .doing)
                     let result = StepTests.run(item.tests, in: run)

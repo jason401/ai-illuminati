@@ -9,6 +9,7 @@ import AIWorkspace
 // (one run per repository, its "[n/m]" lines and project-timings), and keeps the result on the TODO. Like the plain
 // test and the Milestone's full test it runs as the user, not in the Step sandbox: run_mode2's loopback servers, process
 // groups, compile cache and Foundation's temp folders all fail inside sandbox-exec. The AI's own project_run stays there.
+// The Step may have changed what runs, so outside full auto the user approves it each time (as a plain project_run).
 // Not `--affected`: tools/test_map.txt maps the chat and other wide folders to every test. Only `passed` lets a Step end:
 // no tests, a name no runTest in tools/tests/mode2.swift has, uncommitted work, a failure, Stop or a time out do not.
 public struct StepTestResult: Codable, Equatable {
@@ -33,6 +34,10 @@ public enum StepTests {
     // The app's own command, not one of .ai-illuminati.json: nothing is added there, and the space keeps its
     // project-timings key apart from any registered name the AI may choose.
     static let timingKey = "step tests"
+    // The user's card, as project_run's (15 minutes unanswered: no); tests answer it themselves.
+    static var approve: (ProjectApproval, ProjectRun) -> Bool = { asked, run in
+        ProjectCenter.shared.approve(asked, token: run.attempt, deadline: min(run.deadline, Date().addingTimeInterval(900)))
+    }
     static func command(_ tests: [String]) -> (executable: String, args: [String]) {
         ("/usr/bin/env", ["AI_ILLUMINATI_TEST_ONLY=" + tests.joined(separator: ","), "/bin/zsh", script])
     }
@@ -77,6 +82,15 @@ public enum StepTests {
             result.sha = try ProjectProcess.git(["rev-parse", "HEAD"], root: root, token: run.attempt)
         } catch { result.reason = error.localizedDescription; return result }
         let (exe, argv) = command(tests)
+        let line = exe + " " + argv.joined(separator: " ")
+        if run.fullAuto { run.note("Step tests (full auto): " + line) } else {
+            run.beginApproval(); defer { run.endApproval() }
+            let asked = ProjectApproval(room: run.room, run: run.id, title: "Step 테스트 실행 / Run Step tests",
+                                        detail: "Runs outside the Step sandbox as your user (the Step's commits may change what runs).\n" + root + "\n" + line)
+            guard approve(asked, run) else {
+                result.outcome = .refused; result.reason = L("Step 테스트 실행을 승인받지 못했어요.", "Running the Step's tests was not approved."); return result
+            }
+        }
         run.note(L("Step 테스트: ", "Step tests: ") + tests.joined(separator: ", "))
         let progress = RunProgress(command: timingKey) { text in if !run.setSub(text) { run.note(text) } }
         defer { run.setSub(nil) }
@@ -90,19 +104,25 @@ public enum StepTests {
                 return try ProjectProcess.run(exe, argv, cwd: root, token: run.attempt, deadline: deadline, guarded: true,
                                               onLine: { progress.line($0); clock.line($0) })
             }
-            RunTimings.record(root: root, command: timingKey, progress.finish(reply.status == 0 ? "ok" : "failed", exit: reply.status))
             clock.fill(&result)
             result.exit = Int(reply.status)
             let missed = tests.filter { !clock.ran.contains($0) }
-            let after = try? ProjectProcess.git(["rev-parse", "HEAD"], root: root)
-            if reply.status == 0, clock.passed, missed.isEmpty, after == result.sha { result.outcome = .passed; return result }
-            result.outcome = .failed
-            if reply.status == 0, after != result.sha {
-                result.reason = L("테스트 중에 Goal 브랜치의 HEAD가 바뀌었어요.", "The Goal branch's HEAD moved during the tests."); return result
+            // The tree must still be the commit it tested, unchanged, and nobody stopped the turn meanwhile.
+            let after = try? ProjectProcess.git(["rev-parse", "HEAD"], root: root, token: run.attempt)
+            let dirty = try? ProjectProcess.git(["status", "--porcelain"], root: root, token: run.attempt)
+            let stopped = run.outer.isCancelled || run.attempt.isCancelled
+            if reply.status == 0, clock.passed, missed.isEmpty, after == result.sha, dirty == "", !stopped { result.outcome = .passed }
+            else if stopped { result.outcome = .stopped; result.reason = L("테스트가 끝날 때 멈췄어요.", "Stopped as the tests ended.") }
+            else {
+                result.outcome = .failed
+                let fails = reply.output.split(separator: "\n").filter { $0.contains("FAIL") || $0.contains("Fatal error") }.suffix(5).joined(separator: "\n")
+                result.reason = reply.status != 0 ? "exit=\(reply.status)" + (fails.isEmpty ? "\n" + String(reply.output.suffix(800)) : "\n" + fails)
+                    : after != result.sha ? L("테스트 중에 Goal 브랜치의 HEAD가 바뀌었어요.", "The Goal branch's HEAD moved during the tests.")
+                    : dirty != "" ? L("테스트 중에 작업 트리가 바뀌었어요: ", "The work tree changed during the tests: ") + String((dirty ?? "?").prefix(300))
+                    : L("고른 테스트가 다 돌지 않았어요: ", "Not every picked test ran: ") + (missed.isEmpty ? "no PASS line" : missed.joined(separator: ", "))
             }
-            let fails = reply.output.split(separator: "\n").filter { $0.contains("FAIL") || $0.contains("Fatal error") }.suffix(5).joined(separator: "\n")
-            result.reason = reply.status != 0 ? "exit=\(reply.status)" + (fails.isEmpty ? "\n" + String(reply.output.suffix(800)) : "\n" + fails)
-                : L("고른 테스트가 다 돌지 않았어요: ", "Not every picked test ran: ") + (missed.isEmpty ? "no PASS line" : missed.joined(separator: ", "))
+            // project-timings says what the Step got, not just the exit code.
+            RunTimings.record(root: root, command: timingKey, progress.finish(result.passed ? "ok" : result.outcome == .stopped ? "stopped" : "failed", exit: reply.status))
         } catch {
             let timedOut = Date() >= deadline || run.activeExpired, stopped = run.outer.isCancelled || run.attempt.isCancelled
             RunTimings.record(root: root, command: timingKey, progress.finish(RunProgress.outcome(timedOut: timedOut, stopped: stopped), exit: nil))

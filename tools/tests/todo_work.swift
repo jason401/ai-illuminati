@@ -150,6 +150,7 @@ func testStepTests() {
         echo run >> runs.log
         echo "[1/2] Compile app tests"
         if [[ -f moves.flag ]]; then git commit -q --allow-empty -m "moved by the test run"; fi
+        if [[ -f dirties.flag ]]; then echo changed > dirties.flag; fi
         sleep 0.4
         echo "[2/2] Run app tests"
         for n in ${(s:,:)AI_ILLUMINATI_TEST_ONLY}; do echo "▶ $n"; done
@@ -164,9 +165,15 @@ func testStepTests() {
     let tree = try! SubWork.goal(project, goal: UUID(), target: "main")
     let chatFolder = base.appendingPathComponent("chat").path
     try! FileManager.default.createDirectory(atPath: chatFolder, withIntermediateDirectories: true)
-    let (run, _) = try! ProjectWork.startStep(tree, in: WorkspaceBinding(roots: project.linkedRoots, project: project), chatFolder: chatFolder,
-                                              room: UUID(), token: DebateCancellation())
+    var asking = WorkspaceBinding(roots: project.linkedRoots, project: project)
+    asking.fullAuto = false
+    var run = try! ProjectWork.startStep(tree, in: asking, chatFolder: chatFolder, room: UUID(), token: DebateCancellation()).run
     defer { ProjectWork.finish(run) }
+    // Outside full auto each run asks the user (it runs outside the Step sandbox); the test answers.
+    let before = StepTests.approve
+    var asked: [ProjectApproval] = [], allow = true
+    StepTests.approve = { request, _ in asked.append(request); return allow }
+    defer { StepTests.approve = before }
     func runs() -> Int { ((try? String(contentsOfFile: tree.path + "/runs.log", encoding: .utf8)) ?? "").split(separator: "\n").count }
 
     let empty = StepTests.run([], in: run)
@@ -182,6 +189,19 @@ func testStepTests() {
     let head = git(["rev-parse", "HEAD"], at: tree.path)
     let passed = StepTests.run(["testAlpha"], in: run)
     expect(passed.passed && passed.exit == 0 && passed.sha == head && runs() == 1, "the picked test passes on the Goal's HEAD: \(passed)")
+    expect(asked.count == 1 && asked[0].detail.contains("outside the Step sandbox") && asked[0].detail.contains("AI_ILLUMINATI_TEST_ONLY=testAlpha"),
+           "the user approves the run outside the sandbox: \(asked.map(\.detail))")
+    allow = false
+    let denied = StepTests.run(["testAlpha"], in: run)
+    expect(denied.outcome == .refused && runs() == 1, "a refused approval runs nothing: \(denied)")
+    allow = true
+    // Full auto (a TODO's usual mode): no card, as a plain project_run.
+    ProjectWork.finish(run)
+    let (auto, _) = try! ProjectWork.startStep(tree, in: WorkspaceBinding(roots: project.linkedRoots, project: project), chatFolder: chatFolder,
+                                               room: UUID(), token: DebateCancellation())
+    expect(StepTests.run(["testAlpha"], in: auto).passed && asked.count == 2 && runs() == 2, "full auto runs without asking")
+    ProjectWork.finish(auto)
+    run = try! ProjectWork.startStep(tree, in: asking, chatFolder: chatFolder, room: UUID(), token: DebateCancellation()).run
     expect((passed.buildSeconds ?? 0) >= 0.3 && (passed.testSeconds ?? 0) >= 0.2 && (passed.seconds ?? 0) >= (passed.buildSeconds ?? 0) + (passed.testSeconds ?? 0) - 0.1,
            "the shared build and the tests are timed apart: \(passed)")
     let timings = (try? Data(contentsOf: RunTimings.file(tree.path))).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
@@ -189,17 +209,26 @@ func testStepTests() {
 
     write("dirty\n", "notes.txt", in: tree.path)
     let dirty = StepTests.run(["testAlpha"], in: run)
-    expect(dirty.outcome == .refused && runs() == 1, "uncommitted work is not tested: \(dirty)")
+    expect(dirty.outcome == .refused && runs() == 2, "uncommitted work is not tested: \(dirty)")
     try! FileManager.default.removeItem(atPath: tree.path + "/notes.txt")
     write("x\n", "fail.flag", in: tree.path); commit(tree.path, "Breaks testBeta")
     let failed = StepTests.run(["testAlpha", "testBeta"], in: run)
-    expect(!failed.passed && failed.outcome == .failed && failed.exit == 1 && failed.reason?.contains("testBeta broke") == true && runs() == 2,
+    expect(!failed.passed && failed.outcome == .failed && failed.exit == 1 && failed.reason?.contains("testBeta broke") == true && runs() == 3,
            "a failing run does not pass: \(failed)")
 
     try! FileManager.default.removeItem(atPath: tree.path + "/fail.flag"); write("x\n", "moves.flag", in: tree.path); commit(tree.path, "Moves HEAD")
     let moved = StepTests.run(["testAlpha"], in: run)
-    expect(!moved.passed && moved.outcome == .failed && moved.sha != git(["rev-parse", "HEAD"], at: tree.path) && runs() == 3,
+    expect(!moved.passed && moved.outcome == .failed && moved.sha != git(["rev-parse", "HEAD"], at: tree.path) && runs() == 4,
            "a run that moves the Goal's HEAD does not pass: \(moved)")
+    func lastTiming() -> String? {
+        let all = (try? Data(contentsOf: RunTimings.file(tree.path))).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        return (all?[StepTests.timingKey] as? [[String: Any]])?.last?["outcome"] as? String
+    }
+    expect(moved.exit == 0 && lastTiming() == "failed", "project-timings keeps the Step's verdict, not the exit code")
+    try! FileManager.default.removeItem(atPath: tree.path + "/moves.flag"); write("x\n", "dirties.flag", in: tree.path); commit(tree.path, "Dirties the tree")
+    let dirtied = StepTests.run(["testAlpha"], in: run)
+    expect(!dirtied.passed && dirtied.outcome == .failed && dirtied.reason?.contains("dirties.flag") == true, "a tree changed by the run does not pass: \(dirtied)")
+    _ = git(["checkout", "--", "dirties.flag"], at: tree.path)
 
     // The board: a step's report without a passing run of its own tests goes back to ready with the reason.
     let store = TodoStore(url: todoStoreFile("step-tests"))

@@ -99,13 +99,17 @@ public struct GoogleKeychainStore: GoogleTokenStore {
         process.standardError = FileHandle.nullDevice
         let pipe = input == nil ? nil : Pipe()
         process.standardInput = pipe.map { $0.fileHandleForReading } ?? FileHandle.nullDevice
+        // Wait with a semaphore, never waitUntilExit: that runs the main run loop, and SwiftUI then drew the Drive
+        // sidebar again while DriveCenter.shared was still being made (crash "_dispatch_once_wait", 2026-11-16/18).
+        let exited = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in exited.signal() }
         do { try process.run() } catch { throw GoogleFailure(message: "Could not start macOS Keychain access.") }
         if let input, let pipe {
             pipe.fileHandleForWriting.write(input)
             pipe.fileHandleForWriting.closeFile()
         }
         let data = out.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
+        exited.wait()
         return (process.terminationStatus, data)
     }
     private func read(_ account: String) throws -> Data? {

@@ -403,8 +403,9 @@ public struct TodoPlan: Equatable {
     static func refuse(_ korean: String, _ english: String) -> TodoError { .plan(L("분할 계획을 저장하지 않았어요: ", "The plan was not saved: ") + L(korean, english)) }
     // The parts trimmed, in the order they run (the plan's order where `after` leaves it free), or why the plan is refused:
     // empty or too long, a key twice, a role that is not a step or milestone, an `after` to no part, a circle, a step
-    // without tests or a milestone with some, a test name AI_ILLUMINATI_TEST_ONLY cannot carry, or a part nothing comes
-    // after that is not a milestone (a step's commits would never be reviewed and pushed).
+    // without tests or a milestone with some, a test name AI_ILLUMINATI_TEST_ONLY cannot carry, a part nothing comes
+    // after that is not a milestone (a step's commits would never be reviewed and pushed), or a milestone that comes after
+    // no step (nothing to review, and its Fix Step would have no tests to end on).
     func checked() throws -> [Part] {
         guard !parts.isEmpty else { throw Self.refuse("항목이 없어요.", "it has no parts.") }
         guard parts.count <= Self.maxParts else { throw Self.refuse("항목은 \(Self.maxParts)개까지예요.", "at most \(Self.maxParts) parts.") }
@@ -433,6 +434,11 @@ public struct TodoPlan: Equatable {
         if let open = run.first(where: { p in p.role != .milestone && !run.contains { $0.after.contains(p.key) } }) {
             throw Self.refuse("마지막은 milestone이어야 해요: \(open.key)", "it must end with a milestone: \(open.key)")
         }
+        var stepped = Set<String>()   // parts that come after a step, directly or not (run is in order)
+        for p in run where p.after.contains(where: { k in stepped.contains(k) || run.contains { $0.key == k && $0.role == .step } }) { stepped.insert(p.key) }
+        if let bare = run.first(where: { $0.role == .milestone && !stepped.contains($0.key) }) {
+            throw Self.refuse("milestone 앞에 step이 없어요: \(bare.key)", "a milestone comes after no step: \(bare.key)")
+        }
         return run
     }
     // The parts saved for it before (run order as saved) are this plan: the same titles, roles, details, tests and links.
@@ -451,15 +457,18 @@ public struct TodoPlan: Equatable {
 public enum MilestoneFailure: Equatable {
     case testFailed(sha: String, log: String)
     case changesRequested(sha: String, findings: String)
-    case conflict(remote: String, files: [String])
+    case conflict(head: String, remote: String, files: [String])
+    case dirtyTree(head: String, reason: String)   // uncommitted changes or a resolved merge not committed: the same phase would only fail again
     case transient(String)
 
-    // The same candidate SHA (a conflict: the remote SHA merged in and its files) and the same cause: one Fix Step. nil: transient.
+    // The same candidate SHA (a conflict: the Goal's HEAD and the remote SHA merged in; a dirty tree: its HEAD) and the
+    // same cause: one Fix Step. Not the files still conflicted: resolving some would look like another failure. nil: transient.
     public var key: String? {
         switch self {
         case .testFailed(let sha, _): return "test:" + sha
         case .changesRequested(let sha, _): return "review:" + sha
-        case .conflict(let remote, let files): return "conflict:" + remote + ":" + files.sorted().joined(separator: "\u{0}")
+        case .conflict(let head, let remote, _): return "conflict:" + head + ":" + remote
+        case .dirtyTree(let head, _): return "dirty:" + head
         case .transient: return nil
         }
     }
@@ -473,7 +482,8 @@ public enum MilestoneFailure: Equatable {
     }
     // What integrate, testMilestone or the push threw. A stopped run is never a code fault, whatever it threw.
     public static func of(_ error: Error, cancelled: Bool = false) -> MilestoneFailure {
-        if !cancelled, let c = error as? SubWork.Conflict { return .conflict(remote: c.remote, files: c.files) }
+        if !cancelled, let c = error as? SubWork.Conflict { return .conflict(head: c.head, remote: c.remote, files: c.files) }
+        if !cancelled, let d = error as? SubWork.GoalTreeDirty { return .dirtyTree(head: d.head, reason: d.reason) }
         if !cancelled, let t = error as? SubWork.MilestoneTestFailed { return .testFailed(sha: t.sha, log: t.log) }
         return .transient(cancelled ? L("실행이 취소됐어요.", "The run was stopped.") : error.localizedDescription)
     }
@@ -482,6 +492,7 @@ public enum MilestoneFailure: Equatable {
         case .testFailed: return L("전체 테스트 실패", "full test failed")
         case .changesRequested: return L("리뷰 수정 요청", "review asked for changes")
         case .conflict: return L("통합 충돌", "integration conflict")
+        case .dirtyTree: return L("작업 폴더 정리 필요", "work tree not clean")
         case .transient: return L("일시 오류", "passing error")
         }
     }
@@ -489,7 +500,8 @@ public enum MilestoneFailure: Equatable {
         switch self {
         case .testFailed(let sha, _): return cause + " (" + String(sha.prefix(10)) + ")"
         case .changesRequested(let sha, _): return cause + " (" + String(sha.prefix(10)) + ")"
-        case .conflict(_, let files): return cause + ": " + files.joined(separator: ", ")
+        case .conflict(_, _, let files): return cause + ": " + files.joined(separator: ", ")
+        case .dirtyTree(_, let reason): return cause + ": " + reason
         case .transient(let why): return why
         }
     }
@@ -502,9 +514,13 @@ public enum MilestoneFailure: Equatable {
             text += L("후보 SHA: ", "Candidate SHA: ") + sha + "\n" + L("실패 로그:", "Failure log:") + "\n" + (log.count > limit ? "…" + String(log.suffix(limit)) : log)
         case .changesRequested(let sha, let findings):
             text += L("후보 SHA: ", "Candidate SHA: ") + sha + "\n" + L("리뷰 findings:", "Review findings:") + "\n" + (findings.count > limit ? String(findings.prefix(limit)) + "…" : findings)
-        case .conflict(let remote, let files):
-            text += L("원격 SHA: ", "Remote SHA: ") + remote + "\n" + L("Goal 작업 폴더가 merge 중 충돌 상태예요. 충돌 파일:", "The Goal's work tree is mid-merge with conflicts in:") + "\n" + files.map { "- " + $0 }.joined(separator: "\n")
+        case .conflict(let head, let remote, let files):
+            text += L("Goal HEAD: ", "Goal HEAD: ") + head + "\n" + L("원격 SHA: ", "Remote SHA: ") + remote + "\n" + L("Goal 작업 폴더가 merge 중 충돌 상태예요. 충돌 파일:", "The Goal's work tree is mid-merge with conflicts in:") + "\n" + files.map { "- " + $0 }.joined(separator: "\n")
                 + "\n" + L("충돌을 해결하고 merge 커밋을 만들어 주세요.", "Resolve them and commit the merge.")
+        case .dirtyTree(let head, let reason):
+            text += L("Goal HEAD: ", "Goal HEAD: ") + head + "\n" + reason + "\n"
+                + L("Goal 작업 폴더의 변경을 커밋하거나(필요 없는 것은 되돌리고) 해결한 merge를 커밋해서 깨끗하게 해 주세요.",
+                    "Commit the Goal work tree's changes (revert what is not needed) or commit the resolved merge, so the tree is clean.")
         case .transient(let why): text += why
         }
         return text + "\n" + L("원인을 고쳐 Goal 브랜치에 로컬로 커밋해 주세요. 이 Step이 끝나면 Milestone이 통합부터 다시 해요.",
@@ -757,6 +773,7 @@ public struct TodoData: Codable, Equatable {
         items[m].state = .draft   // readyParts makes it ready once its Fix Step is done
         if let f = items.firstIndex(where: { $0.goal == goal && $0.fixFor == key }) {
             if !items[m].after.contains(items[f].id) { items[m].after.append(items[f].id) }
+            items[f].detail = failure.fixDetail(milestone: items[m].title)   // the latest log or findings: what it fixes now
             if items[f].state == .done {
                 items[f].state = .draft; items[f].stepSHA = nil; items[f].stepTests = nil; items[f].finishedAt = nil
                 items[f].notes.append(TodoNote(kind: .retry, text: L("같은 실패가 다시 났어요. 다른 방법으로 고쳐 주세요.", "The same failure came again; fix it another way.")))

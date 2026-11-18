@@ -9,7 +9,8 @@ GitLink.tools() | func tools() -> [[String : Any]]
 GitLink.tools(context:) | func tools(context: ToolContext) -> [[String : Any]]
 MilestoneFailure | enum MilestoneFailure
 MilestoneFailure.changesRequested(sha:findings:) | case changesRequested(sha: String, findings: String)
-MilestoneFailure.conflict(remote:files:) | case conflict(remote: String, files: [String])
+MilestoneFailure.conflict(head:remote:files:) | case conflict(head: String, remote: String, files: [String])
+MilestoneFailure.dirtyTree(head:reason:) | case dirtyTree(head: String, reason: String)
 MilestoneFailure.key | var key: String? { get }
 MilestoneFailure.of(_:) | static func of(_ review: TodoItem.MilestoneCandidate.Review) -> MilestoneFailure?
 MilestoneFailure.of(_:cancelled:) | static func of(_ error: any Error, cancelled: Bool = false) -> MilestoneFailure
@@ -199,7 +200,12 @@ SubWork | enum SubWork
 SubWork.Conflict | struct Conflict
 SubWork.Conflict.errorDescription | var errorDescription: String? { get }
 SubWork.Conflict.files | var files: [String]
+SubWork.Conflict.head | var head: String
 SubWork.Conflict.remote | var remote: String
+SubWork.GoalTreeDirty | struct GoalTreeDirty
+SubWork.GoalTreeDirty.errorDescription | var errorDescription: String? { get }
+SubWork.GoalTreeDirty.head | var head: String
+SubWork.GoalTreeDirty.reason | var reason: String
 SubWork.Leftover | struct Leftover
 SubWork.Leftover.branch | var branch: Bool
 SubWork.Leftover.exists | var exists: Bool

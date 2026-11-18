@@ -60,6 +60,9 @@ func testTodoPlan() {
     refused(TodoPlan(parts: [Part(key: "a", role: .step, title: "A", tests: ["testA,testB"]), Part(key: "m", role: .milestone, title: "M", after: ["a"])]), "a test name with a comma")
     refused(TodoPlan(parts: [Part(key: "m", role: .milestone, title: "M", tests: ["testA"])]), "a milestone with picked tests")
     refused(TodoPlan(parts: [Part(key: "a", role: .step, title: "A", tests: ["testA"]), Part(key: "a", role: .milestone, title: "M", after: ["a"])]), "a key twice")
+    refused(TodoPlan(parts: [Part(key: "m", role: .milestone, title: "M")]), "a milestone after no step")
+    refused(TodoPlan(parts: [Part(key: "a", role: .step, title: "A", tests: ["testA"]), Part(key: "m0", role: .milestone, title: "M0"),
+                             Part(key: "m", role: .milestone, title: "M", after: ["a"])]), "one of the milestones after no step")
     refused(TodoPlan(parts: [Part(key: "g", role: .goal, title: "G")]), "a goal inside a plan")
     // Saved: drafts right below the goal in the order they run (b listed first but after a), linked by after.
     let plan = TodoPlan(parts: [Part(key: "b", role: .step, title: "B", after: ["a"], tests: ["testB"]),
@@ -76,8 +79,9 @@ func testTodoPlan() {
     // Again for the same goal: the same parts, nothing new; another plan is refused.
     let again = try! store.savePlan(goal: goal.id, plan)
     expect(again.map(\.id) == made.map(\.id) && store.current == data, "the same plan again adds nothing")
-    refused(TodoPlan(parts: [Part(key: "m", role: .milestone, title: "Other")]), "another plan for a planned goal")
-    do { try store.savePlan(goal: made[0].id, TodoPlan(parts: [Part(key: "m", role: .milestone, title: "M")])); expect(false, "a step is not a goal") } catch {}
+    let other = TodoPlan(parts: [Part(key: "x", role: .step, title: "X", tests: ["testX"]), Part(key: "m", role: .milestone, title: "Other", after: ["x"])])
+    refused(other, "another plan for a planned goal")
+    do { try store.savePlan(goal: made[0].id, other); expect(false, "a step is not a goal") } catch {}
     // Until the goal path is on, parts never run as plain TODOs: Start all and a row's Start leave them drafts, one made
     // ready some other way is not taken, and none of them holds the TODOs below it on the board.
     let free: (String) -> Bool = { _ in false }
@@ -2546,8 +2550,10 @@ func testMilestoneFailureFix() {
     // and anything thrown by a stopped run are transient.
     let thrown = SubWork.MilestoneTestFailed(sha: sha, status: 1, log: "FAIL: testA\nexpected 2, got 3")
     expect(MilestoneFailure.of(thrown) == .testFailed(sha: sha, log: thrown.log), "a full test failure is a code fault with its log")
-    expect(MilestoneFailure.of(SubWork.Conflict(files: ["a.swift"], remote: "r1")) == .conflict(remote: "r1", files: ["a.swift"]), "a conflict is a code fault")
-    expect(MilestoneFailure.of(SubWork.Conflict(files: ["a.swift"], remote: "r1"), cancelled: true).key == nil, "a stopped run is never a code fault")
+    expect(MilestoneFailure.of(SubWork.Conflict(files: ["a.swift"], remote: "r1", head: "h1")) == .conflict(head: "h1", remote: "r1", files: ["a.swift"]), "a conflict is a code fault")
+    expect(MilestoneFailure.of(SubWork.Conflict(files: ["a.swift"], remote: "r1", head: "h1"), cancelled: true).key == nil, "a stopped run is never a code fault")
+    expect(MilestoneFailure.of(SubWork.GoalTreeDirty(head: "h1", reason: "uncommitted")) == .dirtyTree(head: "h1", reason: "uncommitted"),
+           "an unclean Goal tree is not retried as it is: the same phase would fail again")
     expect(MilestoneFailure.of(ProjectError.make("fatal: unable to access: Could not resolve host")).key == nil, "a network error is transient")
     expect(MilestoneFailure.of(.noReviewer)?.key == nil && MilestoneFailure.of(.failed("out of usage"))?.key == nil
            && MilestoneFailure.of(.approved(sha: sha)) == nil, "no reviewer or the reviewer's quota is transient, an approval no failure")
@@ -2579,6 +2585,8 @@ func testMilestoneFailureFix() {
     verified(.test)
     expect((try? store.recoverMilestone(m, .testFailed(sha: sha, log: "other run"))) == fix && fixes().count == 1 && item(m)?.state == .draft,
            "the same failure again makes no second Fix Step")
+    expect(item(fix)?.detail.contains("other run") == true && item(fix)?.detail.contains("expected 2, got 3") == false,
+           "the Fix Step's detail follows the latest log of the same failure")
     // Reloaded from disk: still the one (fixFor is saved) and the same plan is still the same plan.
     let reloaded = TodoStore(url: store.url)
     expect(reloaded.current.item(fix)?.fixFor == made?.fixFor && (try? reloaded.recoverMilestone(m, .testFailed(sha: sha, log: ""))) == fix
@@ -2596,11 +2604,17 @@ func testMilestoneFailureFix() {
 
     // Another cause on the same candidate (review findings) or a conflict: their own Fix Step, with findings or files.
     let review = try! store.recoverMilestone(m, .changesRequested(sha: sha, findings: "Rename foo to bar"))!
-    let conflict = try! store.recoverMilestone(m, .conflict(remote: "r2", files: ["app/x.swift", "docs/y.md"]))!
-    expect(Set([fix, review, conflict]).count == 3 && fixes().count == 3, "another cause makes its own Fix Step")
+    let conflict = try! store.recoverMilestone(m, .conflict(head: "h2", remote: "r2", files: ["app/x.swift", "docs/y.md"]))!
+    expect((try? store.recoverMilestone(m, .conflict(head: "h2", remote: "r2", files: ["docs/y.md"]))) == conflict && item(conflict)?.detail.contains("app/x.swift") == false,
+           "the same merge with some files resolved is the same conflict, its detail the files left")
+    expect((try? store.recoverMilestone(m, .conflict(head: "h3", remote: "r2", files: ["docs/y.md"]))) != conflict, "another Goal HEAD is another conflict")
+    let dirty = try! store.recoverMilestone(m, .dirtyTree(head: "h3", reason: "uncommitted: notes.txt"))!
+    expect(item(dirty)?.detail.contains("notes.txt") == true && item(m)?.after.contains(dirty) == true, "an unclean tree gets a Fix Step that cleans it up")
+    try! store.recoverMilestone(m, .conflict(head: "h2", remote: "r2", files: ["app/x.swift", "docs/y.md"]))
+    expect(Set([fix, review, conflict, dirty]).count == 4 && fixes().count == 5, "another cause makes its own Fix Step")
     expect(item(review)?.detail.contains("Rename foo to bar") == true && item(conflict)?.detail.contains("app/x.swift") == true
            && item(conflict)?.detail.contains("docs/y.md") == true, "the Fix Step's detail has the findings or the conflicted files")
-    expect(Set(item(m)?.after ?? []).isSuperset(of: [a, fix, review, conflict]), "the Milestone waits for every Fix Step")
+    expect(Set(item(m)?.after ?? []).isSuperset(of: [a, fix, review, conflict, dirty]), "the Milestone waits for every Fix Step")
     try! store.change(m) { $0.state = .cancelled }
     expect((try? store.recoverMilestone(m, .transient("x"))) == nil && item(m)?.state == .cancelled, "a cancelled Milestone is left as it is")
     print("PASS: Milestone failure recovery (one Fix Step per code fault before the Milestone, none twice, transient retried in place)")

@@ -173,6 +173,7 @@ public enum SubWork {
     // resolves and commits them there), `files` the unmerged paths, `remote` the fetched SHA being merged in.
     public struct Conflict: LocalizedError, Equatable {
         public var files: [String], remote: String
+        public var head = ""   // the Goal's HEAD the remote is merged into (still HEAD mid-merge): with `remote`, which conflict it is
         public var errorDescription: String? {
             L("원격 최신 커밋과 합치다 충돌이 났어요. Goal 작업 폴더에 충돌 상태로 남겨 뒀어요: ", "Merging the newest remote commit conflicted; the Goal's work tree is left in that state: ")
                 + files.joined(separator: ", ")
@@ -211,12 +212,15 @@ public enum SubWork {
             }
             if try merging(tree.path, token) {
                 // Left from an earlier conflict: the same state again, nothing new started.
-                let files = try unmerged(), head = (try? git(["rev-parse", "--verify", "MERGE_HEAD"], tree.path, token)) ?? ""
-                if !files.isEmpty { throw Conflict(files: files, remote: head) }
-                throw fail("Goal 작업 폴더의 충돌을 해결했지만 merge 커밋이 아직 없어요. 먼저 커밋해 주세요.", "The Goal's conflicts are resolved but the merge is not committed yet; commit it first.")
+                let files = try unmerged(), merged = (try? git(["rev-parse", "--verify", "MERGE_HEAD"], tree.path, token)) ?? ""
+                let head = try git(["rev-parse", "HEAD"], tree.path, token)
+                if !files.isEmpty { throw Conflict(files: files, remote: merged, head: head) }
+                throw GoalTreeDirty(head: head, reason: L("Goal 작업 폴더의 충돌을 해결했지만 merge 커밋이 아직 없어요. 먼저 커밋해 주세요.", "The Goal's conflicts are resolved but the merge is not committed yet; commit it first."))
             }
-            try clean(tree.path, token, "Goal 작업 폴더에 커밋하지 않은 변경이 있어 통합하지 않았어요. 먼저 커밋해 주세요.",
-                      "The Goal's work tree has uncommitted changes; commit them before integrating.")
+            guard try git(["status", "--porcelain"], tree.path, token).isEmpty else {
+                throw GoalTreeDirty(head: try git(["rev-parse", "HEAD"], tree.path, token),
+                                    reason: L("Goal 작업 폴더에 커밋하지 않은 변경이 있어 통합하지 않았어요. 먼저 커밋해 주세요.", "The Goal's work tree has uncommitted changes; commit them before integrating."))
+            }
             _ = try git(["fetch", "--no-tags", binding.remote, "+refs/heads/\(target):\(remoteRef)"], binding.root, token, timeout: 180)
             let remote = try git(["rev-parse", "--verify", remoteRef + "^{commit}"], binding.root, token)
             if try !isAncestor(remote, "HEAD", tree.path, token) {
@@ -225,7 +229,7 @@ public enum SubWork {
                 let result = try started(["merge", "--ff", "--commit", "--no-squash", "--no-edit", "-m", message, remote], tree.path, token)
                 if result.status != 0 {
                     let files = try unmerged()
-                    if !files.isEmpty { throw Conflict(files: files, remote: remote) }
+                    if !files.isEmpty { throw Conflict(files: files, remote: remote, head: try git(["rev-parse", "HEAD"], tree.path, token)) }
                     if try merging(tree.path, token) { _ = try? git(["merge", "--abort"], tree.path, token) }
                     throw ProjectError.make(L("원격 최신 커밋과 합치다 예상과 달리 실패해 방금 시작한 merge만 되돌렸어요: ", "Merging the newest remote commit failed unexpectedly; only that merge was aborted: ") + result.output)
                 }
@@ -242,6 +246,13 @@ public enum SubWork {
     public struct MilestoneTestFailed: LocalizedError, Equatable {
         public var sha: String, status: Int32, log: String
         public var errorDescription: String? { L("Milestone 전체 테스트 실패 (exit \(status))", "Milestone full test failed (exit \(status))") }
+    }
+
+    // The Goal's work tree has uncommitted changes or a resolved merge not committed: running the phase again changes nothing,
+    // so a Fix Step cleans it up (TODO structure 14). `head`: the tree's HEAD then.
+    public struct GoalTreeDirty: LocalizedError, Equatable {
+        public var head: String, reason: String
+        public var errorDescription: String? { reason }
     }
 
     // TODO structure 10. The Milestone runner saves this candidate on the TODO when it returns.
@@ -266,7 +277,7 @@ public enum SubWork {
             }
             guard try git(["status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none"], root, token).isEmpty,
                   try !merging(root, token) else {
-                throw fail("Goal 작업 폴더에 커밋하지 않은 변경이 있어요.", "The Goal work tree has uncommitted changes.")
+                throw GoalTreeDirty(head: sha, reason: L("Goal 작업 폴더에 커밋하지 않은 변경이 있어요.", "The Goal work tree has uncommitted changes."))
             }
         }
         // The Goal's HEAD and branch logs also show recorded moves that end back on the candidate.

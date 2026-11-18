@@ -365,7 +365,7 @@ TodoScheduler.crew(lock:allowed:) | func crew(lock: EnterpriseLock? = nil, allow
 TodoScheduler.delegate(_:) | func delegate(_ id: UUID)
 TodoScheduler.editing | var editing: UUID? { get set }
 TodoScheduler.init(chats:store:) | init(chats: any TodoChats, store: TodoStore)
-TodoScheduler.instruction(_:documents:) | static func instruction(_ item: TodoItem, documents: Bool = false) -> String
+TodoScheduler.instruction(_:documents:split:) | static func instruction(_ item: TodoItem, documents: Bool = false, split: Bool = false) -> String
 TodoScheduler.lock(for:) | func lock(for list: TodoList) -> EnterpriseLock?
 TodoScheduler.lock(for:list:project:) | func lock(for item: TodoItem, list: TodoList, project: ProjectBinding) -> EnterpriseLock?
 TodoScheduler.markDone(_:) | func markDone(_ id: UUID) throws

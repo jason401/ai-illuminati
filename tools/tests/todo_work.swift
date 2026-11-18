@@ -547,6 +547,158 @@ func testTodoSplitExecution() {
     print("PASS: TODO split execution (late reports, exact turn boundary, recover, tools, checkEach, group review and one push, missing and cancelled steps, auto needsYou)")
 }
 
+// task_split / task_pieces (docs/TODO_SPLIT_PLAN.md 7: 8 tool part, 9 switch off, 10 full auto without a card).
+func testTodoSplitTool() {
+    let project = todoProject("todo-split-tool")
+    let root = URL(fileURLWithPath: project.root)
+    let saved = TodoStore.shared, wasOn = UserDefaults.app.object(forKey: TaskLink.splitEnabledKey)
+    let store = TodoStore(url: todoStoreFile("split-tool"))
+    TodoStore.shared = store
+    var runs: [ProjectRun] = []
+    defer {
+        runs.forEach(ProjectWork.finish)
+        TodoStore.shared = saved
+        UserDefaults.app.set(wasOn, forKey: TaskLink.splitEnabledKey)
+    }
+    ProjectCenter.shared.resume()
+    func names(_ context: ToolContext) -> Set<String> { Set(TaskLink.shared.tools(context: context).compactMap { $0["name"] as? String }) }
+    func call(_ name: String, _ args: [String: Any], _ context: ToolContext) -> (ok: Bool, text: String) {
+        let reply = TaskLink.shared.call(name, args, context: context)
+        return (reply["isError"] as? Bool != true, ((reply["content"] as? [[String: Any]])?.first?["text"] as? String) ?? "")
+    }
+    // A running TODO with its own project turn, as the scheduler starts one.
+    func running(_ id: UUID, auto: Bool) -> ToolContext {
+        let room = UUID()
+        try! store.change(id) { $0.room = room; $0.state = .running }
+        let run = ProjectRun(room: room, binding: project, token: DebateCancellation(), fullAuto: true, todoSplitFullAuto: auto)
+        ProjectWork.register(run); runs.append(run)
+        return ToolContext(room: room, roots: [], projectRun: run.id, projectGeneration: run.generation)
+    }
+    func todo(_ title: String, auto: Bool = true) -> (id: UUID, context: ToolContext) {
+        let item = try! store.add(title: title, project: project, projectName: "Split tool")
+        return (item.id, running(item.id, auto: auto))
+    }
+    func piece(_ title: String, finish: Bool = false, done: String? = "Its test passes", files: [String] = ["A.swift"]) -> [String: Any] {
+        var p: [String: Any] = ["title": title, "detail": title + " detail", "files": files]
+        if let done { p["done_when"] = done }
+        if finish { p["finish"] = true }
+        return p
+    }
+    func plan(_ pieces: [[String: Any]]) -> [String: Any] { ["pieces": pieces, "estimated_minutes": 90, "reason": "Storage before behavior"] }
+    let good = plan([piece("Storage", files: ["Store.swift"]), piece("Behavior", files: ["Run.swift"]), piece("", finish: true, done: "Full test passes", files: ["Screen.swift"])])
+
+    // 9: off by default, and off means no tool and no note.
+    UserDefaults.app.removeObject(forKey: TaskLink.splitEnabledKey)
+    let off = todo("Off")
+    expect(!TaskLink.splitEnabled && !names(off.context).contains("task_split") && !names(off.context).contains("task_pieces")
+           && !call("task_split", good, off.context).ok && store.current.item(off.id)?.group == nil,
+           "with the switch off there is no task_split and calling it splits nothing")
+    expect(!TodoScheduler.instruction(store.current.item(off.id)!).contains("[Splitting]"), "no splitting note while the switch is off")
+    UserDefaults.app.set(true, forKey: TaskLink.splitEnabledKey)
+    let note = TodoScheduler.instruction(store.current.item(off.id)!, split: true)
+    expect(note.contains("[Splitting]") && note.contains("60 minutes") && note.contains("나눠서") && note.contains("sub-rooms"),
+           "the splitting note gives the 1.5 rules")
+    try! store.change(off.id) { $0.state = .cancelled }
+
+    // 8: refused plans change nothing.
+    let refuse = todo("Refuse")
+    expect(names(refuse.context).contains("task_split") && !names(refuse.context).contains("task_pieces"), "a first run is offered task_split")
+    let seven = plan((1...6).map { piece("Step \($0)") } + [piece("", finish: true)])
+    let cases: [(String, [String: Any], String)] = [
+        ("more than 6 pieces", seven, "2 to 6"),
+        ("one piece", plan([piece("", finish: true)]), "2 to 6"),
+        ("no finish", plan([piece("A"), piece("B")]), "must be the finish"),
+        ("two finishes", plan([piece("A", finish: true), piece("", finish: true)]), "Only one piece"),
+        ("finish not last", plan([piece("", finish: true), piece("A")]), "must be the last"),
+        ("no done_when", plan([piece("A", done: nil), piece("", finish: true)]), "done_when"),
+        ("blank done_when", plan([piece("A", done: "  "), piece("", finish: true)]), "done_when"),
+        ("no estimate", ["pieces": [piece("A"), piece("", finish: true)], "reason": "r"], "estimated_minutes"),
+    ]
+    for (what, args, says) in cases {
+        let reply = call("task_split", args, refuse.context)
+        expect(!reply.ok && reply.text.contains(says) && store.current.item(refuse.id)?.group == nil
+               && store.current.items.count == 2, "\(what) is refused: \(reply.text)")
+    }
+    // After a file change in this run: refused, also once the file is committed.
+    try! "edit".write(to: root.appendingPathComponent("Changed.txt"), atomically: true, encoding: .utf8)
+    let changed = call("task_split", good, refuse.context)
+    expect(!changed.ok && changed.text.contains("changed") && store.current.item(refuse.id)?.group == nil, "a split after changing files is refused: \(changed.text)")
+    _ = try! ProjectProcess.git(["add", "Changed.txt"], root: project.root); _ = try! ProjectProcess.git(["commit", "-m", "Changed"], root: project.root)
+    expect(!call("task_split", good, refuse.context).ok, "a split after a commit is refused")
+    try! store.change(refuse.id) { $0.state = .cancelled }
+    // Not the first run (after an answer, an error or a restart).
+    let again = todo("Again")
+    try! store.change(again.id) { $0.state = .ready }
+    let second = running(again.id, auto: true)
+    expect(!names(second).contains("task_split") && call("task_split", good, second).text.contains("first run"),
+           "a later run of a TODO cannot split it")
+    try! store.change(again.id) { $0.state = .cancelled }
+
+    // 10: full auto splits at once, without a card.
+    let auto = todo("Auto")
+    let split = call("task_split", good, auto.context)
+    RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+    let finish = store.current.item(auto.id)!
+    let steps = store.current.ordered(finish.listID).filter { $0.group == auto.id && $0.piece == .step }
+    expect(split.ok && !ProjectCenter.shared.requests.contains { $0.run == auto.context.projectRun } && finish.piece == .finish && finish.state == .ready
+           && steps.map(\.title) == ["Storage", "Behavior"] && steps.allSatisfy { $0.byAI == true && $0.detail.contains("Done when: Its test passes") },
+           "full auto splits without a card: \(split.text)")
+    expect(finish.splitRecord?.estimatedMinutes == 90 && finish.splitRecord?.reason == "Storage before behavior"
+           && finish.splitRecord?.files.map(\.paths) == [["Store.swift"], ["Run.swift"], ["Screen.swift"]]
+           && TodoStore(url: store.url).current.item(auto.id)?.splitRecord == finish.splitRecord,
+           "the estimate, reason and files of each piece are saved in the split record")
+    // Twice: the old turn has no tools any more, and the store refuses too.
+    expect(!call("task_split", good, auto.context).ok && names(auto.context).isEmpty, "the split turn cannot split again")
+    do { try store.split(auto.id, steps: [.init(title: "X", detail: "", files: [])], estimatedMinutes: 9, reason: "r", finishFiles: []); expect(false, "a second split must throw") }
+    catch {}
+    // A piece cannot split again; it reads its own group only.
+    let other = try! store.add(title: "Unrelated", project: project, projectName: "Split tool")
+    let first = running(steps[0].id, auto: true)
+    let firstNames = names(first)
+    expect(firstNames.contains("task_pieces") && !firstNames.contains("task_split"), "a piece gets task_pieces, not task_split: \(firstNames)")
+    let resplit = call("task_split", good, first)
+    expect(!resplit.ok && resplit.text.contains("cannot be split again") && store.current.items.count == steps.count + 5,
+           "a piece cannot be split again: \(resplit.text)")
+    try! store.change(steps[0].id) { $0.state = .done; $0.result = "Storage report"; $0.files = ["Store.swift"] }
+    let secondPiece = running(steps[1].id, auto: true)
+    let before = store.current.items
+    let read = call("task_pieces", [:], secondPiece)
+    expect(read.ok && read.text.contains("Original TODO (the finish): Auto") && read.text.contains("Report: Storage report")
+           && read.text.contains("Behavior — running (yours)") && read.text.contains("Storage before behavior")
+           && !read.text.contains("Unrelated") && !read.text.contains("Refuse"), "task_pieces shows the group and the earlier reports:\n\(read.text)")
+    expect(store.current.items == before && store.current.item(other.id) != nil, "task_pieces only reads")
+    let pieceNote = TodoScheduler.instruction(store.current.item(steps[1].id)!, split: true)
+    expect(pieceNote.contains("task_pieces") && !pieceNote.contains("[Splitting]"), "a piece is told to read its group, not to split")
+    try! store.change(steps[1].id) { $0.state = .cancelled }
+    try! store.change(auto.id) { $0.state = .cancelled }
+
+    // Without full auto: a card. Declined, the TODO goes on as one and is never offered a split again.
+    func carded(_ context: ToolContext, allow: Bool) -> (ok: Bool, text: String, detail: String) {
+        var reply: (ok: Bool, text: String)?
+        DispatchQueue.global().async { let r = call("task_split", good, context); DispatchQueue.main.async { reply = r } }
+        let deadline = Date().addingTimeInterval(20)
+        var card: ProjectApproval?
+        while Date() < deadline, card == nil { RunLoop.main.run(until: Date().addingTimeInterval(0.02)); card = ProjectCenter.shared.requests.first { $0.run == context.projectRun } }
+        if let card { ProjectCenter.shared.decide(card.id, allow: allow) }
+        while Date() < deadline, reply == nil { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
+        return (reply?.ok == true, reply?.text ?? "no reply", card?.detail ?? "no card")
+    }
+    let manual = todo("Manual", auto: false)
+    let declined = carded(manual.context, allow: false)
+    expect(!declined.ok && declined.detail.contains("Store.swift") && declined.detail.contains("Full test passes") && declined.detail.contains("90")
+           && store.current.item(manual.id)?.splitDeclined == true && store.current.item(manual.id)?.state == .running
+           && store.current.item(manual.id)?.group == nil, "a declined card leaves the TODO running as one: \(declined.text) / \(declined.detail)")
+    expect(!names(manual.context).contains("task_split") && names(manual.context).contains("task_done")
+           && call("task_split", good, manual.context).text.contains("declined")
+           && !TodoScheduler.instruction(store.current.item(manual.id)!, split: true).contains("[Splitting]"),
+           "after declining, no new split is offered or accepted")
+    try! store.change(manual.id) { $0.state = .cancelled }
+    let approved = todo("Approved", auto: false)
+    let yes = carded(approved.context, allow: true)
+    expect(yes.ok && store.current.item(approved.id)?.piece == .finish, "an approved card splits: \(yes.text)")
+    print("PASS: TODO split tools (switch off, refusals, changed files, first run only, full auto without a card, no resplit, task_pieces, declined card)")
+}
+
 func testTodoScheduler() {
     let project = todoProject("todo-project")
     let saved = TodoStore.shared

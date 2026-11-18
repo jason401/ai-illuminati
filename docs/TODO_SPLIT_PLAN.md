@@ -61,6 +61,9 @@
 1. 저장 형식: 3절 필드, `TodoStore.split`(한 번에 저장, 원래 TODO 바로 위에 넣기), 옛 파일 읽기. 7절 테스트 4·8(저장 부분)·9.
 2. 실행 규칙: `noPush`·하위방 도구 빼기, 중간 `.done`/마무리 `.review`, 늦은 `task_done` 무시, 취소 우회 막기. 7절 1·2·3·5·6·7·11.
 3. AI 도구: `task_split`(1.5의 카드 내용 포함), `task_pieces`. 7절 8(도구 부분)·10.
+   구현(2026-11-18): 스위치 키 `todoSplitEnabled`(`TaskLink.splitEnabled`, 기본 꺼짐, 화면은 4). "첫 실행"은 처음 running이 된 그 실행
+   (`startedAt == stateSince`), "파일 바꾸기 전"은 그 실행에서 커밋 없음 + HEAD가 시작 커밋 그대로 + 처음에 없던 변경 파일 없음.
+   승인 카드는 일반 승인 카드(`ProjectApproval`), 거절이나 15분 무응답이면 `splitDeclined`. 마무리의 끝 조건은 카드에만 보이고 저장하지 않는다.
 4. 화면: 보드 표시, 승인 카드, 스위치(기본 꺼짐). AI Face에서 실제 TODO 하나로 시험.
 
 ## 2. 동작 (사용자가 보는 것)

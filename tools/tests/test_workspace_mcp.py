@@ -24,11 +24,6 @@ class WorkspaceTests(unittest.TestCase):
                 sock.settimeout.reset_mock()
                 self.ws.ask_hub({'name': 'git_status'})
                 sock.settimeout.assert_called_once_with(3610)
-                # Sub-room tools wait for an approval card, work trees or reports (delegate_result up to 300 s).
-                for name in ('delegate_plan', 'delegate_result', 'sub_report'):
-                    sock.settimeout.reset_mock()
-                    self.ws.ask_hub({'name': name})
-                    sock.settimeout.assert_called_once_with(3610)
     def test_inventory_is_lazy_even_for_1500_pages(self):
         for i in range(15): (self.folder/('%02d.pdf'%i)).write_bytes(b'not opened during link')
         self.assertEqual(len(self.ws.list_files()),15);self.assertFalse(self.cache.exists())

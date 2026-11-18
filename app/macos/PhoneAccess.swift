@@ -1,10 +1,8 @@
 import AppKit
-import Network
 import SwiftUI
 import CoreImage
 import AIAccounts
 import AILocalization
-import AIRuntime
 import AIChat
 import AIProjects
 import AIRemote
@@ -136,86 +134,6 @@ final class PhoneAccess: ObservableObject {
 // The phone page (turned on in the iPhone window, remembered across launches): AIRemote serves it, the chats answer
 // (AIChat's RemoteChats) and approvals are ProjectCenter's, so deciding on the phone clears the
 // Mac's card too. The key in the QR guards every /api/ call; a new key (the window's "New QR") locks out old phones.
-/// The phone page's update screen (Updater; tests give a stand-in). Only a person's tap on the page reaches it: no AI tool does.
-protocol PhoneUpdates: AnyObject {
-    func phoneState(at now: Date) -> [String: Any]
-    /// nil when started; otherwise why not (answered as 409).
-    func phoneCheck() -> String?
-    func phoneInstall() -> String?
-}
-
-extension Updater: PhoneUpdates {}
-
-protocol PhoneUsage: AnyObject {
-    func phoneUsageSnapshot() -> PhoneUsageSnapshot
-    func phoneRefreshUsage()
-}
-
-struct PhoneUsageSnapshot {
-    let device: String
-    let accounts: [Account]
-    let readings: [String: AIUsage]
-    let colors: [Account.Provider: [String]]
-
-    func json(at now: Date) -> [String: Any] {
-        // Account names and notes can contain user-supplied text, including email addresses.
-        func safe(_ text: String) -> String {
-            text.replacingOccurrences(of: #"\S*@\S*"#, with: "…", options: .regularExpression)
-        }
-        // All date values on the wire use Unix milliseconds for JavaScript.
-        func timestamp(_ date: Date?) -> Any {
-            guard let date else { return NSNull() }
-            return date.timeIntervalSince1970 * 1000
-        }
-        func window(_ usage: UsageWindow?) -> Any {
-            guard let usage else { return NSNull() }
-            return ["left": usage.left(now: now), "resetsAt": timestamp(usage.resetsAt)]
-        }
-        var providers: [Account.Provider] = []
-        var entries: [Account.Provider: [[String: Any]]] = [:]
-        for account in accounts {
-            if entries[account.provider] == nil { providers.append(account.provider) }
-            let usage = readings[account.id]
-            let plan = usage?.detail?.components(separatedBy: " · ").last
-            let isLocal = account.provider == .ollama
-            var extras = usage?.extras.map(safe) ?? []
-            // Ollama's synthetic full bars are only for the menu bar icon.
-            if isLocal, usage?.fiveHour != nil || usage?.weekly != nil {
-                extras.insert(L("한도 없음", "No limit"), at: 0)
-            }
-            entries[account.provider, default: []].append([
-                "name": safe(account.name),
-                "plan": plan.flatMap { $0.isEmpty || $0.contains("@") ? nil : $0 } as Any? ?? NSNull(),
-                "fiveHour": window(isLocal ? nil : usage?.fiveHour),
-                "weekly": window(isLocal ? nil : usage?.weekly),
-                "checkedAt": timestamp(usage?.checkedAt),
-                "extras": extras,
-                "note": usage?.note.map(safe) as Any? ?? NSNull(),
-                "needsLogin": usage?.needsLogin ?? false,
-            ])
-        }
-        let checkedAt = accounts.compactMap { readings[$0.id]?.checkedAt }.min()
-        let groups: [[String: Any]] = providers.map { provider in
-            ["provider": provider.rawValue, "name": provider.title,
-             "color": colors[provider] ?? [], "accounts": entries[provider] ?? []]
-        }
-        return ["device": safe(device), "checkedAt": timestamp(checkedAt), "groups": groups]
-    }
-
-    static func webColors(_ provider: Account.Provider) -> [String] {
-        let color = AIColors.color(provider, in: .app)
-        return [NSAppearance.Name.aqua, .darkAqua].map { name in
-            var hex = "#888888"
-            NSAppearance(named: name)?.performAsCurrentDrawingAppearance {
-                guard let rgb = color.usingColorSpace(.sRGB) else { return }
-                hex = String(format: "#%02x%02x%02x",
-                             Int(rgb.redComponent * 255), Int(rgb.greenComponent * 255), Int(rgb.blueComponent * 255))
-            }
-            return hex
-        }
-    }
-}
-
 final class PhoneServer: ObservableObject {
     static let shared = PhoneServer()
     static let port: UInt16 = 47380
@@ -224,17 +142,9 @@ final class PhoneServer: ObservableObject {
     @Published private(set) var running = false
     @Published private(set) var problem: String?
     weak var discussion: Discussion?   // set by start; tests set it directly
-    weak var updates: PhoneUpdates?    // set at app start; tests set a stand-in
-    weak var usage: PhoneUsage?        // set at app start; tests set a stand-in
-    private var lastUsageRefresh: TimeInterval?
     private var server: RemoteServer?
 
-    @Published private(set) var enabled: Bool
-
-    init(enabled: Bool = UserDefaults.app.bool(forKey: PhoneServer.enabledKey)) {
-        self.enabled = enabled
-    }
-
+    @Published private(set) var enabled = UserDefaults.app.bool(forKey: PhoneServer.enabledKey)
     var key: String {
         if let key = UserDefaults.app.string(forKey: Self.keyKey), !key.isEmpty { return key }
         let key = RemoteHTTP.newKey()
@@ -305,53 +215,6 @@ final class PhoneServer: ObservableObject {
         }
     }
 
-    // After an update started from the phone page: true once this page answers its key on 127.0.0.1 and Tailscale
-    // runs and serves it, so the phone can reach the new app. Calls back on the main queue.
-    func reachable(_ done: @escaping (Bool) -> Void) {
-        guard enabled, running else { return done(false) }
-        Self.probe(port: Self.port, key: key) { ok in
-            guard ok else { return done(false) }
-            PhoneAccess.shared.refresh { status in done(status.state == .running && status.servesPhone) }
-        }
-    }
-
-    // One GET /api/update over TCP: true for a 200 within `timeout`. Calls back on the main queue.
-    static func probe(port: UInt16, key: String, timeout: TimeInterval = 5, done: @escaping (Bool) -> Void) {
-        guard let endpointPort = NWEndpoint.Port(rawValue: port) else { return done(false) }
-        let connection = NWConnection(host: "127.0.0.1", port: endpointPort, using: .tcp)
-        let queue = DispatchQueue(label: "PhoneServer.probe")
-        var finished = false
-        func finish(_ ok: Bool) {
-            guard !finished else { return }
-            finished = true
-            connection.cancel()
-            DispatchQueue.main.async { done(ok) }
-        }
-        func read(_ sofar: Data) {
-            connection.receive(minimumIncompleteLength: 1, maximumLength: 1 << 16) { chunk, _, end, error in
-                let data = sofar + (chunk ?? Data())
-                if let line = data.range(of: Data("\r\n".utf8)).map({ String(decoding: data[..<$0.lowerBound], as: UTF8.self) }) {
-                    return finish(line.hasPrefix("HTTP/1.1 200"))
-                }
-                if end || error != nil { return finish(false) }
-                read(data)
-            }
-        }
-        connection.stateUpdateHandler = { state in
-            switch state {
-            case .ready:
-                let request = "GET /api/update HTTP/1.1\r\nHost: 127.0.0.1\r\nX-Remote-Key: \(key)\r\nConnection: close\r\n\r\n"
-                connection.send(content: Data(request.utf8), completion: .contentProcessed { error in
-                    if error != nil { finish(false) } else { read(Data()) }
-                })
-            case .failed, .waiting: finish(false)
-            default: break
-            }
-        }
-        connection.start(queue: queue)
-        queue.asyncAfter(deadline: .now() + timeout) { finish(false) }
-    }
-
     private func serve(_ args: [String]) {
         guard let cli = PhoneAccess.cliPaths.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else { return }
         DispatchQueue.global(qos: .utility).async {
@@ -376,17 +239,10 @@ final class PhoneServer: ObservableObject {
     }
 
     // GET /api/chats, GET /api/search?q=, GET /api/chat/<id>[?open=1], GET /api/image/<chat>/<picture>,
-    // POST /api/chat/new {text, images, project?} → {id}, POST /api/chat/<id>/send, POST /api/approval/<id> {allow},
-    // GET /api/update, POST /api/update/check, POST /api/update/install (409 while an update step runs).
-    // GET /api/usage, POST /api/usage/refresh (returns the cached reading immediately).
-    func handle(_ request: RemoteRequest, now: Date = Date(),
-                uptime: TimeInterval = ProcessInfo.processInfo.systemUptime) -> RemoteResponse {
-        let parts = request.path.split(separator: "/").map(String.init)   // ["api", ...]
-        if parts.count > 1, parts[1] == "update" { return handleUpdate(request.method, Array(parts.dropFirst(2))) }
-        if parts.count > 1, parts[1] == "usage" {
-            return handleUsage(request.method, Array(parts.dropFirst(2)), now: now, uptime: uptime)
-        }
+    // POST /api/chat/new {text, images, project?} → {id}, POST /api/chat/<id>/send, POST /api/approval/<id> {allow}.
+    func handle(_ request: RemoteRequest) -> RemoteResponse {
         guard let discussion else { return .error(404, "not ready") }
+        let parts = request.path.split(separator: "/").map(String.init)   // ["api", ...]
         switch (request.method, parts.count > 1 ? parts[1] : "", parts.count) {
         case ("GET", "chats", 2):
             return .json(["sections": RemoteChats.list(discussion)])
@@ -419,38 +275,6 @@ final class PhoneServer: ObservableObject {
             }
             ProjectCenter.shared.decide(id, allow: allow)
             return .json(["ok": true])
-        default:
-            return .error(404, "not found")
-        }
-    }
-
-    private func handleUsage(_ method: String, _ rest: [String], now: Date, uptime: TimeInterval) -> RemoteResponse {
-        guard let usage else { return .error(404, "not ready") }
-        switch (method, rest) {
-        case ("GET", []):
-            return .json(usage.phoneUsageSnapshot().json(at: now))
-        case ("POST", ["refresh"]):
-            let started = lastUsageRefresh.map { uptime - $0 >= 60 } ?? true
-            var response = usage.phoneUsageSnapshot().json(at: now)
-            response["refreshStarted"] = started
-            if started {
-                lastUsageRefresh = uptime
-                usage.phoneRefreshUsage()
-            }
-            return .json(response)
-        default:
-            return .error(404, "not found")
-        }
-    }
-
-    private func handleUpdate(_ method: String, _ rest: [String]) -> RemoteResponse {
-        guard let updates else { return .error(404, "not ready") }
-        switch (method, rest) {
-        case ("GET", []):
-            return .json(updates.phoneState(at: Date()))
-        case ("POST", ["check"]), ("POST", ["install"]):
-            if let reason = rest == ["check"] ? updates.phoneCheck() : updates.phoneInstall() { return .error(409, reason) }
-            return .json(updates.phoneState(at: Date()))
         default:
             return .error(404, "not found")
         }

@@ -14,7 +14,7 @@ extension FaceLink: @retroactive ToolProvider {
 // One app-side gateway. Per-answer capabilities keep other chat modes and arbitrary local
 // pointer paths out; these are not Google credentials and grant no network access to the CLI.
 final class ToolHub {
-    static var appProviders: [ToolProvider] { [FaceLink.shared, DriveLink.shared, GitLink.shared, PlanLink.shared, PeerLink.shared, ConveneLink.shared, DelegateLink.shared, ChatLink.shared, MemoryLink.shared, ProjectMakerLink.shared, TaskLink.shared, TodoAddLink.shared, StorageLink.shared, ExternalMCP.shared] }
+    static var appProviders: [ToolProvider] { [FaceLink.shared, DriveLink.shared, GitLink.shared, PlanLink.shared, PeerLink.shared, ConveneLink.shared, ChatLink.shared, MemoryLink.shared, ProjectMakerLink.shared, TaskLink.shared, TodoAddLink.shared, StorageLink.shared, ExternalMCP.shared] }
     static let shared: ToolHub = {
         let hub = ToolHub(providers: { appProviders })
         ProjectWork.revokeTools = { [weak hub] in hub?.revoke(project: $0) }
@@ -96,7 +96,7 @@ final class ToolHub {
     func available(context: ToolContext, legacy: Bool = false) -> [ToolProvider] {
         legacy ? [FaceLink.shared]
             : context.origin == .side ? [PeerLink.shared]
-            : context.origin == .consulted ? providers.filter { $0 !== PeerLink.shared && $0 !== ConveneLink.shared && $0 !== DelegateLink.shared } : providers
+            : context.origin == .consulted ? providers.filter { $0 !== PeerLink.shared && $0 !== ConveneLink.shared } : providers
     }
 
     private func listen(at path: String, legacy: Bool) {

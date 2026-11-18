@@ -116,10 +116,8 @@ public final class DeviceSync: ObservableObject {
 
     // MARK: Places
 
-    // Under AccountStore.home: the real iCloud Drive only in the app itself, a throwaway one in tests and previews
-    // (a test that set DeviceSync.shared back once took the real remote.json down).
     public static var iCloudDrive: URL {
-        URL(fileURLWithPath: AccountStore.home).appendingPathComponent("Library/Mobile Documents/com~apple~CloudDocs")
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Mobile Documents/com~apple~CloudDocs")
     }
     static var defaultFolder: URL { iCloudDrive.appendingPathComponent("AI Illuminati Sync") }
     public var folder: URL { settings.folder.map { URL(fileURLWithPath: $0) } ?? Self.defaultFolder }
@@ -165,13 +163,9 @@ public final class DeviceSync: ObservableObject {
     // MARK: This Mac's phone page for the other Macs
 
     // The app tells what its phone page offers now: an address while the page is on, nil when it is off.
-    // The same address again still writes while connecting is on: a remote.json taken down from outside comes back
-    // (writeConnection reads the file and leaves it alone when it matches). Otherwise only a change writes, so a file
-    // written by hand is not removed at every check.
     public func offerConnection(_ offered: RemoteConnection?) {
         onMain {
-            let same = offered.map { $0.sameTarget(self.connection) } ?? (self.connection == nil)
-            if same, offered == nil || !(self.settings.enabled && self.settings.sharesConnection) { return }
+            guard !(offered.map { $0.sameTarget(self.connection) } ?? (self.connection == nil)) else { return }
             self.connection = offered
             self.writeConnection()
         }

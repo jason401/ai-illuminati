@@ -224,18 +224,11 @@ Conversation.pinned | var pinned: Bool?
 Conversation.projectSummary | var projectSummary: ProjectChatSummary { get }
 Conversation.queued | var queued: [QueuedMessage]?
 Conversation.shareToDevices | var shareToDevices: Bool?
-Conversation.subOf | var subOf: SubRoomLink?
 Conversation.summary | var summary: String
 Conversation.title | var title: String
 Conversation.turns | var turns: [ChatTurn]
 Conversation.updatedAt | var updatedAt: Date
 Conversation.workspace | var workspace: WorkspaceBinding?
-DelegateLink | final class DelegateLink
-DelegateLink.active | var active: Bool { get }
-DelegateLink.call(_:_:context:) | func call(_ name: String, _ arguments: [String : Any], context: ToolContext) -> [String : Any]
-DelegateLink.shared | static let shared: DelegateLink
-DelegateLink.tools() | func tools() -> [[String : Any]]
-DelegateLink.tools(context:) | func tools(context: ToolContext) -> [[String : Any]]
 DeviceSync | final class DeviceSync
 DeviceSync.ago(_:now:) | static func ago(_ date: Date, now: Date = Date()) -> String
 DeviceSync.chatLocked(_:) | func chatLocked(_ conversation: Conversation)
@@ -275,7 +268,6 @@ Discussion.answering | var answering: Set<UUID> { get }
 Discussion.answeringChanged | var answeringChanged: AnyPublisher<Void, Never> { get }
 Discussion.anyRunning | var anyRunning: Bool { get }
 Discussion.approvalChatName(_:) | func approvalChatName(_ room: UUID) -> String
-Discussion.approvalHome(_:) | func approvalHome(_ room: UUID) -> UUID
 Discussion.autoPicked(_:picks:) | static func autoPicked(_ account: Account, picks: [String : Bool]) -> Bool
 Discussion.boardProject | @Published var boardProject: String? { get set }
 Discussion.cancelAll() | func cancelAll()
@@ -291,7 +283,6 @@ Discussion.draftsFile | static var draftsFile: URL?
 Discussion.ended(_:) | func ended(_ room: UUID) -> TodoTurnEnd
 Discussion.fillSpaceLocks() | func fillSpaceLocks()
 Discussion.folder(_:) | func folder(_ room: UUID) -> URL
-Discussion.fullAuto(_:) | func fullAuto(_ room: UUID?) -> Bool
 Discussion.hover(_:_:) | func hover(_ key: String, _ inside: Bool)
 Discussion.hoverKey | @Published var hoverKey: String? { get set }
 Discussion.importing | var importing: Bool { get }
@@ -302,12 +293,10 @@ Discussion.listedConversations | var listedConversations: [Conversation] { get }
 Discussion.markTodoDone(_:) | func markTodoDone(_ id: UUID)
 Discussion.maxAnswering | var maxAnswering: Int { get }
 Discussion.meets(_:) | static func meets(_ account: Account) -> Bool
-Discussion.members(_:) | func members(_ room: UUID) -> [String]
 Discussion.model | let model: any ChatSettings
 Discussion.noCrew(_:lock:) | func noCrew(_ allowed: [String], lock: EnterpriseLock?) -> String
 Discussion.open(_:) | func open(_ id: UUID)
 Discussion.openBoard(project:tab:) | func openBoard(project: String?, tab: BoardTab? = nil)
-Discussion.reviewMilestone(room:workers:allowed:project:tree:base:candidate:goal:token:) | func reviewMilestone(room: UUID?, workers: [String], allowed: [String], project: ProjectBinding, tree: SubWork.Tree, base: String, candidate: String, goal: String, token: DebateCancellation) -> TodoItem.MilestoneCandidate.Review
 Discussion.runningRooms | @Published var runningRooms: Set<UUID> { get set }
 Discussion.saveDrafts() | func saveDrafts()
 Discussion.sentPhotos(_:) | func sentPhotos(_ room: UUID) -> Set<UUID>
@@ -315,7 +304,6 @@ Discussion.setCrew(room:members:lead:) | func setCrew(room: UUID, members: [Stri
 Discussion.showBoardTab(_:) | func showBoardTab(_ tab: BoardTab)
 Discussion.standIn(room:brief:token:done:) | func standIn(room: UUID, brief: String, token: DebateCancellation, done: @escaping (TodoStandInReply) -> Void)
 Discussion.start(room:question:photos:review:extra:) | func start(room: UUID, question: String, photos: [TodoPhoto], review: Bool, extra: String) -> String?
-Discussion.start(room:question:photos:review:extra:step:) | func start(room: UUID, question: String, photos: [TodoPhoto], review: Bool, extra: String, step: SubWork.Tree?) -> String?
 Discussion.stop(_:) | func stop(_ room: UUID)
 Discussion.stoppingRooms | @Published var stoppingRooms: Set<UUID> { get set }
 Discussion.unreadFile | static var unreadFile: URL?
@@ -462,12 +450,6 @@ StorageLink.call(_:_:context:) | func call(_ name: String, _ arguments: [String 
 StorageLink.shared | static let shared: StorageLink
 StorageLink.tools() | func tools() -> [[String : Any]]
 StorageLink.tools(context:) | func tools(context: ToolContext) -> [[String : Any]]
-SubRoomLink | struct SubRoomLink
-SubRoomLink.init(from:) | init(from decoder: any Decoder) throws
-SubRoomLink.init(room:split:n:) | init(room: UUID, split: String, n: Int)
-SubRoomLink.n | var n: Int
-SubRoomLink.room | var room: UUID
-SubRoomLink.split | var split: String
 SyncSnapshot | struct SyncSnapshot
 SyncSnapshot.createdAt | var createdAt: Date
 SyncSnapshot.enterpriseLock | var enterpriseLock: EnterpriseLock?

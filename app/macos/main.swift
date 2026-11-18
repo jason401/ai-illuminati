@@ -12,7 +12,7 @@ import AIIntegrations
 // AI Illuminati: a menu bar gauge that shows how much of each AI subscription is left
 // (5-hour and weekly limits) and when each one resets, for any number of Claude and ChatGPT
 // accounts. Uses each tool's own login (subscription), never API keys.
-final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, PhoneUsage {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let menu = NSMenu()
     private let work = DispatchQueue(label: "usage")
@@ -89,10 +89,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, PhoneU
             guard let self else { return false }
             return self.discussion.anyRunning || self.discussion.importingMaterials
         }
-        model.updater.activeWork = { [weak self] in
-            guard let self else { return 0 }
-            return self.discussion.runningRooms.count + (self.discussion.importingMaterials ? 1 : 0)
-        }
         // Published values arrive before assignment; deliver on the main queue to read the new state.
         updateIdleObservation = Publishers.CombineLatest(discussion.$runningRooms, discussion.$importingMaterials)
             .receive(on: DispatchQueue.main)
@@ -147,10 +143,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, PhoneU
         approvals.start()
         approvalObservation = ProjectCenter.shared.$requests.map(\.count).removeDuplicates().receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.showPending(); self?.rebuildMenu() }
-        // The phone page's update screen; an update started there is acknowledged once that page answers again.
-        PhoneServer.shared.updates = model.updater
-        PhoneServer.shared.usage = self
-        model.updater.phoneReady = { PhoneServer.shared.reachable($0) }
         model.updater.start()
         // The bridge's tool socket and AI Face's older socket open first, then the link to AI Face (as before I).
         ToolHub.shared.start()
@@ -248,13 +240,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, PhoneU
         let projects = SidebarProjects.group(discussion.listedConversations.filter(\.hasContent), todo: TodoStore.shared.snapshot, pinned: []).projects
         GitBranchStore.shared.autoPull(projects.flatMap(\.bindings))
     }
-
-    func phoneUsageSnapshot() -> PhoneUsageSnapshot {
-        let colors = Dictionary(uniqueKeysWithValues: Set(accounts.map(\.provider)).map { ($0, PhoneUsageSnapshot.webColors($0)) })
-        return PhoneUsageSnapshot(device: DeviceSync.shared.deviceName, accounts: accounts, readings: model.latestUsage, colors: colors)
-    }
-
-    func phoneRefreshUsage() { refresh() }
 
     @objc private func refresh() {
         let list = accounts

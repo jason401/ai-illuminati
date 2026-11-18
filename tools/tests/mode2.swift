@@ -6,7 +6,7 @@ import AILocalization
 import AISpaces
 @testable import AIRuntime
 @testable import AIWorkspace
-@testable import AIProjects
+import AIProjects
 @testable import AIChatRecords
 @testable import AIChat
 @testable import AIIntegrations
@@ -14,10 +14,6 @@ import AISpaces
 // stdout is a pipe (run_mode2 keeps a copy for its failure log): line by line, so a crash loses no line before it.
 setvbuf(stdout, nil, _IOLBF, 0)
 GoogleAuth.shared = GoogleAuth(store: MemoryGoogleStore())
-// The app runs new TODOs of Git projects as Goals (TODO structure 16). The older TODO tests check the plain path, which
-// documents, folderless and already started TODOs still take: off for them; the Goal tests turn it on (testGoalRun).
-let goalPathShipped = TodoData.goalPath
-TodoData.goalPath = false
 
 // A stuck test used to hang the whole run with only the last PASS line on screen: every check and test marks
 // progress, and after `stuckAfter` seconds without any the run names where it stopped and exits.
@@ -2764,8 +2760,6 @@ runTest("testRuntimeThroughApp", testRuntimeThroughApp)
 runTest("testTokenStats", testTokenStats)
 runTest("testPhoneAccess", testPhoneAccess)
 runTest("testPhoneServer", testPhoneServer)
-runTest("testPhoneUpdates", testPhoneUpdates)
-runTest("testPhoneUsage", testPhoneUsage)
 runTest("testChatLinks", testChatLinks)
 runTest("testChatThroughCLI", testChatThroughCLI)
 runTest("testFailureRecovery", testFailureRecovery)
@@ -2780,20 +2774,12 @@ runTest("testDeviceSync", testDeviceSync)
 
 runTest("testProjectHandoff", testProjectHandoff)
 runTest("testDocumentsProject", testDocumentsProject)
-runTest("testWorkTreeLocks", testWorkTreeLocks)
-runTest("testSubTrees", testSubTrees)
-runTest("testGoalTrees", testGoalTrees)
-runTest("testGoalIntegration", testGoalIntegration)
-runTest("testDelegate", testDelegate)
-runTest("testSubRoomScreens", testSubRoomScreens)
 runTest("testDisconnectProjectFolder", testDisconnectProjectFolder)
 runTest("testStartTurn", testStartTurn)
 runTest("testQueuedMessages", testQueuedMessages)
 runTest("testRoomDrafts", testRoomDrafts)
 runTest("testUnreadChats", testUnreadChats)
 runTest("testTodoStore", testTodoStore)
-runTest("testTodoPlan", testTodoPlan)
-runTest("testStepTests", testStepTests)
 runTest("testTodoScheduler", testTodoScheduler)
 runTest("testTodoOrder", testTodoOrder)
 runTest("testSidebarProjects", testSidebarProjects)
@@ -2805,10 +2791,6 @@ runTest("testProjectInfo", testProjectInfo)
 runTest("testGitBranches", testGitBranches)
 runTest("testTodoAttachments", testTodoAttachments)
 runTest("testTodoPause", testTodoPause)
-runTest("testTodoSteps", testTodoSteps)
-runTest("testTodoSplit", testTodoSplit)
-runTest("testMilestoneFailureFix", testMilestoneFailureFix)
-runTest("testGoalRun", testGoalRun)
 runTest("testTodoEdit", testTodoEdit)
 runTest("testTodoMixedOrder", testTodoMixedOrder)
 runTest("testTodoStartRace", testTodoStartRace)
@@ -2824,7 +2806,6 @@ runTest("testTodoConcurrency", testTodoConcurrency)
 runTest("testTodoMarkDone", testTodoMarkDone)
 runTest("testTodoChatMessage", testTodoChatMessage)
 runTest("testProjectSnapshot", testProjectSnapshot)
-runTest("testMilestoneReview", testMilestoneReview)
 runTest("testFullAuto", testFullAuto)
 runTest("testWorkTiming", testWorkTiming)
 runTest("testPeerReview", testPeerReview)

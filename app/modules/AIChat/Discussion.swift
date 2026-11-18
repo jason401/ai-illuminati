@@ -43,17 +43,6 @@ public final class Discussion: ObservableObject {
     var steers: [UUID: SteerChannel] = [:]          // the host: each running chat's channel
     @Published var steering: [UUID: [(message: QueuedMessage, text: String)]] = [:]   // offered to the answer, not read yet
     private var sendAfterStop: Set<UUID> = []       // "Send now": the stopped answer's queue goes at once
-    // Sub-rooms (Delegate.swift) approved but not answering yet, in order: their places are kept from other chats and TODOs.
-    var subWaiting: [(room: UUID, question: String)] = []
-    var joinWaiting: Set<UUID> = []                  // main rooms whose join turn found no free place yet
-    // The splits as the cards and the sidebar show them (SubRoomViews.swift): read again on each SplitStore change, and
-    // a split waiting for the user's card by its approval request.
-    @Published var splitRecords: [UUID: [Split]] = [:]
-    @Published var splitPlans: [UUID: Split] = [:]
-    @Published var subRoomsOpen: Set<UUID> = []
-    @Published var subRoomsClosed: Set<UUID> = []
-    @Published var splitPlanShown: Set<String> = []   // approved split cards unfolded by the user
-    var splitWatch: NSObjectProtocol?
     weak var host: Discussion?
     private var workers: [UUID: Discussion] = [:]
     // For the open chat (a worker: always its own chat).
@@ -326,12 +315,6 @@ public final class Discussion: ObservableObject {
         restoreDraft()
         linkChatTools()
         SidebarFold.shared.adoptPins(conversations)
-        // Splits left from before (Delegate.swift): checked against Git and shown as cards, never continued by themselves.
-        watchSplits()
-        if !SplitStore.shared.rooms().isEmpty {
-            let known = Set(conversations.map(\.id))
-            DispatchQueue.global(qos: .utility).async { [weak self] in self?.recoverSplits(known: known) }
-        }
     }
 
     // A worker for one message in one chat: same accounts, sessions and test hooks, only that chat.
@@ -353,7 +336,6 @@ public final class Discussion: ObservableObject {
     // A worker finished (called on the main thread).
     private func runFinished(_ room: UUID) {
         let stopped = stoppingRooms.contains(room)
-        let cancelled = workers[room]?.runCancellation?.isCancelled == true   // also a TODO's stop, which marks no stopping
         runningRooms.remove(room)
         stoppingRooms.remove(room)
         workers[room] = nil
@@ -361,7 +343,6 @@ public final class Discussion: ObservableObject {
         ChatStore.links.finished(conversations.first { $0.id == room })
         noteFinished(room, stopped: stopped)
         afterRun(room, stopped: stopped)
-        splitTurnEnded(room, stopped: stopped || cancelled)
     }
 
     // An answer ended (main thread, right after its chat left runningRooms): what it did not read goes back to the front
@@ -828,19 +809,14 @@ public final class Discussion: ObservableObject {
     // left as they are. On the main thread. Returns why nothing started, nil when the turn started.
     @discardableResult
     func startTurn(room id: UUID, question: String, mentioned: [String] = [], images: [ChatImage] = [],
-                   forced: RouteChoice? = nil, extra: String = "", step: SubWork.Tree? = nil) -> String? {
+                   forced: RouteChoice? = nil, extra: String = "") -> String? {
         guard host == nil, conversations.contains(where: { $0.id == id }) else { return L("대화를 찾지 못했어요.", "Chat not found.") }
         if runningRooms.contains(id) { return L("이 대화는 아직 답하는 중이에요.", "This chat is still answering.") }
-        // Places kept for approved sub-rooms count for every other chat; a sub-room only needs a free place.
-        let kept = conversation(id).subOf == nil ? subWaiting.count : 0
-        guard runningRooms.count + kept < Self.maxRunning, !importingMaterials else {
+        guard runningRooms.count < Self.maxRunning, !importingMaterials else {
             return L("동시에 \(Self.maxRunning)개 대화까지 답할 수 있어요. 하나가 끝나면 보낼 수 있어요.",
                      "Up to \(Self.maxRunning) chats can answer at once. Send when one finishes.")
         }
         let plain = Self.modernModes && configuration(of: id).mode == 0
-        if step != nil, !plain || conversation(id).workspace?.project?.isDocuments != false || conversation(id).subOf != nil {
-            return L("Step에는 Git 프로젝트의 단독 작업 채팅이 필요해요.", "A Step requires a solo Git project chat.")
-        }
         // Two or more members: in a plain chat they all answer every message (the lead first, the only one that may
         // change files); in a project chat the lead works and the others review (Peer.swift). @ replaces them for
         // this one message.
@@ -862,7 +838,7 @@ public final class Discussion: ObservableObject {
         // Route.asksViews), each with AIs the app picks (meetingTeam: two to four when that many can come). Not in a TODO's own run: its text is a task, not a way.
         let todoRun = TodoStore.shared.current.items.contains { $0.room == id && $0.state == .running }
         let autoMembers = plain && mentioned.isEmpty && memberIDs(room: id).isEmpty
-        let meeting = step == nil && plain && (forced == .meeting || (forced == nil && !todoRun && Route.asksMeeting(question)))
+        let meeting = plain && (forced == .meeting || (forced == nil && !todoRun && Route.asksMeeting(question)))
         // Asking several AIs in so many words ("2명 의견 줘") works in a plain chat too, with as many as asked for.
         let asked = !meeting && autoMembers && forced == nil && !todoRun ? Route.askedViewers(question) : nil
         let autoViews = !meeting && autoMembers && forced == nil && !todoRun && (asked != nil || (project && Route.found(Route.asksViews, question)))
@@ -912,7 +888,6 @@ public final class Discussion: ObservableObject {
         activeMaterials = chat.documents ?? []
         let solo = Self.modernModes && config.mode == 0
         activeWorkspace = solo ? soloBinding(id) : chat.workspace
-        if step != nil { activeWorkspace?.fullAuto = chat.workspace?.fullAuto }
         if !solo, var readOnly = activeWorkspace, readOnly.project != nil {
             readOnly.project = nil
             readOnly.level = .view
@@ -996,10 +971,7 @@ public final class Discussion: ObservableObject {
                 do { projectLocks = try ProjectWork.acquire(worker.activeWorkspace); return true }
                 catch { worker.finish(id, index, error: error.localizedDescription); return false }
             }
-            if let step {
-                worker.runSolo(question: question, history: history, rules: rules, config: config, mentions: doers,
-                               cancellation: cancellation, id: id, index: index, extra: extra, step: step)
-            } else if meeting {
+            if meeting {
                 worker.runMeeting(question: question, history: history, rules: rules, team: meetingTeam, room: meetingID,
                                   cancellation: cancellation, id: id, index: index)
             } else if pickedOpinion {
@@ -1501,7 +1473,6 @@ public final class Discussion: ObservableObject {
             self.model.onAccountsChange?()   // refresh the usage numbers after the discussion
             ChatStore.links.finished(self.conversations.first { $0.id == room })
             self.afterRun(room, stopped: stopped)
-            self.splitTurnEnded(room, stopped: stopped)
         }
     }
 

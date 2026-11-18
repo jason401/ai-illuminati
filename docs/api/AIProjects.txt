@@ -7,15 +7,6 @@ GitLink.pushDeferred(_:) | func pushDeferred(_ run: ProjectRun) throws -> String
 GitLink.shared | static let shared: GitLink
 GitLink.tools() | func tools() -> [[String : Any]]
 GitLink.tools(context:) | func tools(context: ToolContext) -> [[String : Any]]
-MilestoneFailure | enum MilestoneFailure
-MilestoneFailure.changesRequested(sha:findings:) | case changesRequested(sha: String, findings: String)
-MilestoneFailure.conflict(head:remote:files:) | case conflict(head: String, remote: String, files: [String])
-MilestoneFailure.dirtyTree(head:reason:) | case dirtyTree(head: String, reason: String)
-MilestoneFailure.key | var key: String? { get }
-MilestoneFailure.of(_:) | static func of(_ review: TodoItem.MilestoneCandidate.Review) -> MilestoneFailure?
-MilestoneFailure.of(_:cancelled:) | static func of(_ error: any Error, cancelled: Bool = false) -> MilestoneFailure
-MilestoneFailure.testFailed(sha:log:) | case testFailed(sha: String, log: String)
-MilestoneFailure.transient(_:) | case transient(String)
 PlanLink | final class PlanLink
 PlanLink.active | var active: Bool { get }
 PlanLink.call(_:_:context:) | func call(_ name: String, _ arguments: [String : Any], context: ToolContext) -> [String : Any]
@@ -25,14 +16,12 @@ PlanLink.tools() | func tools() -> [[String : Any]]
 PlanLink.tools(context:) | func tools(context: ToolContext) -> [[String : Any]]
 ProjectApproval | struct ProjectApproval
 ProjectApproval.alwaysAllow | var alwaysAllow: (() -> Void)?
-ProjectApproval.command | var command: String?
 ProjectApproval.created | var created: Date
 ProjectApproval.deadline | var deadline: Date?
 ProjectApproval.detail | var detail: String
 ProjectApproval.id | let id: UUID
 ProjectApproval.init(room:run:title:detail:created:deadline:alwaysAllow:) | init(room: UUID, run: UUID, title: String, detail: String, created: Date = Date(), deadline: Date? = nil, alwaysAllow: (() -> Void)? = nil)
 ProjectApproval.room | var room: UUID
-ProjectApproval.same | var same: String?
 ProjectApproval.title | var title: String
 ProjectCenter | final class ProjectCenter
 ProjectCenter.approve(_:token:deadline:) | func approve(_ request: ProjectApproval, token: DebateCancellation, deadline: Date) -> Bool
@@ -40,7 +29,6 @@ ProjectCenter.cancel(room:) | func cancel(room: UUID? = nil)
 ProjectCenter.decide(_:allow:) | func decide(_ id: UUID, allow: Bool)
 ProjectCenter.dismiss(_:) | func dismiss(_ id: UUID)
 ProjectCenter.expired | @Published var expired: [ProjectApproval] { get set }
-ProjectCenter.preapproved | var preapproved: ((ProjectApproval) -> Bool)?
 ProjectCenter.requests | @Published var requests: [ProjectApproval] { get set }
 ProjectCenter.resume() | func resume()
 ProjectCenter.shared | static let shared: ProjectCenter
@@ -129,13 +117,11 @@ ProjectRun.binding | let binding: ProjectBinding
 ProjectRun.checkpoint(_:) | func checkpoint(_ note: String) -> String
 ProjectRun.committed | var committed: Bool
 ProjectRun.deadline | let deadline: Date
-ProjectRun.deferPush | var deferPush: Bool { get set }
+ProjectRun.deferPush | var deferPush: Bool
 ProjectRun.endAttempt() | func endAttempt()
 ProjectRun.generation | var generation: Int { get }
 ProjectRun.id | let id: UUID
-ProjectRun.init(room:binding:token:fullAuto:) | convenience init(room: UUID, binding: ProjectBinding, token: DebateCancellation, fullAuto: Bool = false)
-ProjectRun.isStep | var isStep: Bool { get }
-ProjectRun.isSubRoom | var isSubRoom: Bool
+ProjectRun.init(room:binding:token:fullAuto:) | init(room: UUID, binding: ProjectBinding, token: DebateCancellation, fullAuto: Bool = false)
 ProjectRun.log | var log: [String] { get }
 ProjectRun.nextAttempt() | func nextAttempt()
 ProjectRun.note(_:) | func note(_ text: String)
@@ -164,8 +150,6 @@ ProjectWork.moving(_:to:) | static func moving(_ workspace: WorkspaceBinding?, t
 ProjectWork.register(_:) | static func register(_ run: ProjectRun)
 ProjectWork.release(_:notify:) | static func release(_ paths: [String], notify: Bool = true)
 ProjectWork.revokeTools | static var revokeTools: (UUID) -> Void { get set }
-ProjectWork.run(for:) | static func run(for context: ToolContext) -> ProjectRun?
-ProjectWork.startStep(_:in:chatFolder:room:token:) | static func startStep(_ tree: SubWork.Tree, in binding: WorkspaceBinding, chatFolder: String, room: UUID, token: DebateCancellation) throws -> (run: ProjectRun, workspace: WorkspaceBinding)
 ProjectWork.workBinding(_:project:chatFolder:run:) | static func workBinding(_ binding: WorkspaceBinding, project: ProjectBinding, chatFolder: String, run: ProjectRun) -> WorkspaceBinding
 RunMode | enum RunMode
 RunMode.aiThenPark | case aiThenPark
@@ -173,72 +157,6 @@ RunMode.auto | case auto
 RunMode.checkEach | case checkEach
 RunMode.init(rawValue:) | init?(rawValue: String)
 RunMode.stopOnIssue | case stopOnIssue
-StepTestResult | struct StepTestResult
-StepTestResult.Outcome | enum Outcome
-StepTestResult.Outcome.error | case error
-StepTestResult.Outcome.failed | case failed
-StepTestResult.Outcome.init(rawValue:) | init?(rawValue: String)
-StepTestResult.Outcome.passed | case passed
-StepTestResult.Outcome.refused | case refused
-StepTestResult.Outcome.stopped | case stopped
-StepTestResult.Outcome.timeout | case timeout
-StepTestResult.at | var at: Date
-StepTestResult.buildSeconds | var buildSeconds: Double?
-StepTestResult.exit | var exit: Int?
-StepTestResult.init(from:) | init(from decoder: any Decoder) throws
-StepTestResult.outcome | var outcome: StepTestResult.Outcome
-StepTestResult.passed | var passed: Bool { get }
-StepTestResult.reason | var reason: String?
-StepTestResult.seconds | var seconds: Double?
-StepTestResult.sha | var sha: String?
-StepTestResult.testSeconds | var testSeconds: Double?
-StepTestResult.tests | var tests: [String]
-StepTests | enum StepTests
-StepTests.failure(_:) | static func failure(_ result: StepTestResult) -> String
-StepTests.run(_:in:since:) | static func run(_ tests: [String], in run: ProjectRun, since: String? = nil) -> StepTestResult
-SubWork | enum SubWork
-SubWork.Conflict | struct Conflict
-SubWork.Conflict.errorDescription | var errorDescription: String? { get }
-SubWork.Conflict.files | var files: [String]
-SubWork.Conflict.head | var head: String
-SubWork.Conflict.remote | var remote: String
-SubWork.GoalTreeDirty | struct GoalTreeDirty
-SubWork.GoalTreeDirty.errorDescription | var errorDescription: String? { get }
-SubWork.GoalTreeDirty.head | var head: String
-SubWork.GoalTreeDirty.reason | var reason: String
-SubWork.Leftover | struct Leftover
-SubWork.Leftover.branch | var branch: Bool
-SubWork.Leftover.exists | var exists: Bool
-SubWork.Leftover.listed | var listed: String?
-SubWork.Leftover.merging | var merging: Bool
-SubWork.Leftover.path | var path: String
-SubWork.Merge | struct Merge
-SubWork.Merge.conflicts | var conflicts: [String]
-SubWork.Merge.head | var head: String
-SubWork.Merge.merged | var merged: String?
-SubWork.Merge.outside | var outside: [String]
-SubWork.MilestoneTestFailed | struct MilestoneTestFailed
-SubWork.MilestoneTestFailed.errorDescription | var errorDescription: String? { get }
-SubWork.MilestoneTestFailed.log | var log: String
-SubWork.MilestoneTestFailed.sha | var sha: String
-SubWork.MilestoneTestFailed.status | var status: Int32
-SubWork.Tree | struct Tree
-SubWork.Tree.base | var base: String
-SubWork.Tree.branch | var branch: String
-SubWork.Tree.init(from:) | init(from decoder: any Decoder) throws
-SubWork.Tree.init(path:branch:base:) | init(path: String, branch: String, base: String)
-SubWork.Tree.path | var path: String
-SubWork.create(_:split:n:token:) | static func create(_ binding: ProjectBinding, split: String, n: Int, token: DebateCancellation? = nil) throws -> SubWork.Tree
-SubWork.discard(_:_:token:) | static func discard(_ binding: ProjectBinding, _ tree: SubWork.Tree, token: DebateCancellation? = nil) throws -> String?
-SubWork.goal(_:goal:target:token:) | static func goal(_ binding: ProjectBinding, goal: UUID, target: String, token: DebateCancellation? = nil) throws -> SubWork.Tree
-SubWork.halfMerged(_:) | static func halfMerged(_ binding: ProjectBinding) -> Bool
-SubWork.integrate(_:_:target:token:) | static func integrate(_ binding: ProjectBinding, _ tree: SubWork.Tree, target: String, token: DebateCancellation? = nil) throws -> (base: String, candidate: String)
-SubWork.leftover(_:split:n:) | static func leftover(_ binding: ProjectBinding, split: String, n: Int) throws -> SubWork.Leftover
-SubWork.merge(_:_:sha:owned:reported:token:) | static func merge(_ binding: ProjectBinding, _ tree: SubWork.Tree, sha asked: String, owned: [String], reported: Bool, token: DebateCancellation? = nil) throws -> SubWork.Merge
-SubWork.remove(_:_:token:) | static func remove(_ binding: ProjectBinding, _ tree: SubWork.Tree, token: DebateCancellation? = nil) throws
-SubWork.report(_:token:) | static func report(_ tree: SubWork.Tree, token: DebateCancellation? = nil) throws -> (sha: String, changed: [String])
-SubWork.resync(_:_:token:) | static func resync(_ binding: ProjectBinding, _ tree: SubWork.Tree, token: DebateCancellation? = nil) throws -> [String]
-SubWork.testMilestone(_:_:candidate:room:fullAuto:token:onLine:) | static func testMilestone(_ binding: ProjectBinding, _ tree: SubWork.Tree, candidate: inout TodoItem.MilestoneCandidate, room: UUID, fullAuto: Bool, token: DebateCancellation, onLine: ((String) -> Void)? = nil) throws
 TaskLink | final class TaskLink
 TaskLink.active | var active: Bool { get }
 TaskLink.call(_:_:context:) | func call(_ name: String, _ arguments: [String : Any], context: ToolContext) -> [String : Any]
@@ -264,17 +182,13 @@ TodoChats.chats | var chats: [ProjectChatSummary] { get }
 TodoChats.crew(lock:allowed:) | func crew(lock: EnterpriseLock?, allowed: [String]) -> (lead: Account, reviewer: Account?)?
 TodoChats.ended(_:) | func ended(_ room: UUID) -> TodoTurnEnd
 TodoChats.folder(_:) | func folder(_ room: UUID) -> URL
-TodoChats.fullAuto(_:) | func fullAuto(_ room: UUID?) -> Bool
 TodoChats.importing | var importing: Bool { get }
 TodoChats.maxAnswering | var maxAnswering: Int { get }
-TodoChats.members(_:) | func members(_ room: UUID) -> [String]
 TodoChats.noCrew(_:lock:) | func noCrew(_ allowed: [String], lock: EnterpriseLock?) -> String
-TodoChats.reviewMilestone(room:workers:allowed:project:tree:base:candidate:goal:token:) | func reviewMilestone(room: UUID?, workers: [String], allowed: [String], project: ProjectBinding, tree: SubWork.Tree, base: String, candidate: String, goal: String, token: DebateCancellation) -> TodoItem.MilestoneCandidate.Review
 TodoChats.sentPhotos(_:) | func sentPhotos(_ room: UUID) -> Set<UUID>
 TodoChats.setCrew(room:members:lead:) | func setCrew(room: UUID, members: [String], lead: String)
 TodoChats.standIn(room:brief:token:done:) | func standIn(room: UUID, brief: String, token: DebateCancellation, done: @escaping (TodoStandInReply) -> Void)
 TodoChats.start(room:question:photos:review:extra:) | func start(room: UUID, question: String, photos: [TodoPhoto], review: Bool, extra: String) -> String?
-TodoChats.start(room:question:photos:review:extra:step:) | func start(room: UUID, question: String, photos: [TodoPhoto], review: Bool, extra: String, step: SubWork.Tree?) -> String?
 TodoChats.stop(_:) | func stop(_ room: UUID)
 TodoChats.userWrote(_:since:) | func userWrote(_ room: UUID, since: Date) -> Bool
 TodoData | struct TodoData
@@ -286,48 +200,14 @@ TodoData.item(_:) | func item(_ id: UUID) -> TodoItem?
 TodoData.items | var items: [TodoItem]
 TodoData.linkChoices(_:except:linked:showingDone:) | func linkChoices(_ listID: UUID?, except: UUID?, linked: [UUID], showingDone: Bool) -> [(item: TodoItem, number: Int?)]
 TodoData.lists | var lists: [TodoList]
-TodoData.milestoneSlots(in:moving:) | func milestoneSlots(in goal: UUID, moving: UUID? = nil) -> [TodoItem]
 TodoData.mode(_:) | func mode(_ item: TodoItem) -> RunMode
 TodoData.ordered(_:) | func ordered(_ listID: UUID) -> [TodoItem]
 TodoData.parkDue(_:) | func parkDue(_ item: TodoItem) -> Date?
-TodoData.resumeSHA(_:) | func resumeSHA(_ step: TodoItem) -> String?
 TodoData.satisfied(_:for:) | func satisfied(_ blocker: TodoItem, for item: TodoItem) -> Bool
 TodoData.standInDue(_:) | func standInDue(_ item: TodoItem) -> Date?
 TodoData.stopped(_:) | func stopped(_ item: TodoItem) -> Bool
 TodoData.workers(room:) | func workers(room: UUID) -> [String]?
 TodoItem | struct TodoItem
-TodoItem.MilestoneCandidate | struct MilestoneCandidate
-TodoItem.MilestoneCandidate.Phase | enum Phase
-TodoItem.MilestoneCandidate.Phase.confirmation | case confirmation
-TodoItem.MilestoneCandidate.Phase.init(rawValue:) | init?(rawValue: String)
-TodoItem.MilestoneCandidate.Phase.integration | case integration
-TodoItem.MilestoneCandidate.Phase.push | case push
-TodoItem.MilestoneCandidate.Phase.review | case review
-TodoItem.MilestoneCandidate.Phase.test | case test
-TodoItem.MilestoneCandidate.Review | enum Review
-TodoItem.MilestoneCandidate.Review.approved(sha:) | case approved(sha: String)
-TodoItem.MilestoneCandidate.Review.changesRequested(sha:findings:) | case changesRequested(sha: String, findings: String)
-TodoItem.MilestoneCandidate.Review.failed(_:) | case failed(String)
-TodoItem.MilestoneCandidate.Review.noReviewer | case noReviewer
-TodoItem.MilestoneCandidate.baseSHA | let baseSHA: String
-TodoItem.MilestoneCandidate.branch | let branch: String
-TodoItem.MilestoneCandidate.candidateSHA | var candidateSHA: String? { get set }
-TodoItem.MilestoneCandidate.findings | var findings: String? { get }
-TodoItem.MilestoneCandidate.init(branch:baseSHA:candidateSHA:) | init(branch: String, baseSHA: String, candidateSHA: String? = nil)
-TodoItem.MilestoneCandidate.init(from:) | init(from decoder: any Decoder) throws
-TodoItem.MilestoneCandidate.phase | var phase: TodoItem.MilestoneCandidate.Phase { get }
-TodoItem.MilestoneCandidate.record(_:) | mutating func record(_ review: TodoItem.MilestoneCandidate.Review)
-TodoItem.MilestoneCandidate.recordReview(for:) | mutating func recordReview(for sha: String)
-TodoItem.MilestoneCandidate.recordTest(for:) | mutating func recordTest(for sha: String)
-TodoItem.MilestoneCandidate.reviewedSHA | var reviewedSHA: String? { get }
-TodoItem.MilestoneCandidate.setPhase(_:) | mutating func setPhase(_ phase: TodoItem.MilestoneCandidate.Phase)
-TodoItem.MilestoneCandidate.testedSHA | var testedSHA: String? { get }
-TodoItem.Role | enum Role
-TodoItem.Role.goal | case goal
-TodoItem.Role.init(rawValue:) | init?(rawValue: String)
-TodoItem.Role.milestone | case milestone
-TodoItem.Role.plain | case plain
-TodoItem.Role.step | case step
 TodoItem.State | enum State
 TodoItem.State.cancelled | case cancelled
 TodoItem.State.done | case done
@@ -349,8 +229,6 @@ TodoItem.detail | var detail: String
 TodoItem.encode(to:) | func encode(to encoder: any Encoder) throws
 TodoItem.files | var files: [String]
 TodoItem.finishedAt | var finishedAt: Date?
-TodoItem.fixFor | var fixFor: String?
-TodoItem.goal | var goal: UUID?
 TodoItem.id | var id: UUID
 TodoItem.init(from:) | init(from decoder: any Decoder) throws
 TodoItem.init(listID:title:detail:askFirst:after:originRoom:) | init(listID: UUID, title: String, detail: String = "", askFirst: Bool = false, after: [UUID] = [], originRoom: UUID? = nil)
@@ -358,23 +236,17 @@ TodoItem.interrupted | var interrupted: Bool
 TodoItem.isParked | var isParked: Bool { get }
 TodoItem.lastError | var lastError: String?
 TodoItem.listID | var listID: UUID
-TodoItem.milestoneCandidate | var milestoneCandidate: TodoItem.MilestoneCandidate? { get set }
 TodoItem.notes | var notes: [TodoNote]
 TodoItem.originRoom | var originRoom: UUID?
 TodoItem.parked | var parked: TodoPark?
 TodoItem.question | var question: TodoQuestion?
 TodoItem.report | var report: TodoReport?
 TodoItem.result | var result: String?
-TodoItem.role | var role: TodoItem.Role { get set }
 TodoItem.room | var room: UUID?
 TodoItem.standIns | var standIns: Int
 TodoItem.startedAt | var startedAt: Date?
 TodoItem.state | var state: TodoItem.State
 TodoItem.stateSince | var stateSince: Date?
-TodoItem.stepSHA | var stepSHA: String?
-TodoItem.stepTests | var stepTests: StepTestResult?
-TodoItem.target | var target: String?
-TodoItem.tests | var tests: [String]
 TodoItem.timeLine(at:) | func timeLine(at now: Date) -> String?
 TodoItem.title | var title: String
 TodoItem.unreported | var unreported: Bool
@@ -417,17 +289,6 @@ TodoPhoto | struct TodoPhoto
 TodoPhoto.file | var file: URL
 TodoPhoto.id | var id: UUID
 TodoPhoto.name | var name: String
-TodoPlan | struct TodoPlan
-TodoPlan.Part | struct Part
-TodoPlan.Part.after | var after: [String]
-TodoPlan.Part.detail | var detail: String
-TodoPlan.Part.init(key:role:title:detail:after:tests:) | init(key: String, role: TodoItem.Role, title: String, detail: String = "", after: [String] = [], tests: [String] = [])
-TodoPlan.Part.key | var key: String
-TodoPlan.Part.role | var role: TodoItem.Role
-TodoPlan.Part.tests | var tests: [String]
-TodoPlan.Part.title | var title: String
-TodoPlan.init(parts:) | init(parts: [TodoPlan.Part])
-TodoPlan.parts | var parts: [TodoPlan.Part]
 TodoProject | struct TodoProject
 TodoProject.all(_:chats:names:) | static func all(_ data: TodoData, chats: [ProjectChatSummary], names: [String : String]) -> [TodoProject]
 TodoProject.binding | var binding: ProjectBinding
@@ -475,7 +336,7 @@ TodoScheduler.lock(for:list:project:) | func lock(for item: TodoItem, list: Todo
 TodoScheduler.markDone(_:) | func markDone(_ id: UUID) throws
 TodoScheduler.maxAttempts | static let maxAttempts: Int
 TodoScheduler.nextCheck | @Published var nextCheck: Date? { get set }
-TodoScheduler.question(_:files:documents:resume:) | static func question(_ item: TodoItem, files: [String] = [], documents: Bool = false, resume: String? = nil) -> String
+TodoScheduler.question(_:files:documents:) | static func question(_ item: TodoItem, files: [String] = [], documents: Bool = false) -> String
 TodoScheduler.recover() | func recover()
 TodoScheduler.retrying(_:) | static func retrying(_ item: TodoItem) -> (label: String, why: String)?
 TodoScheduler.shared | static var shared: TodoScheduler?
@@ -513,14 +374,10 @@ TodoStore.maxAttachments | static let maxAttachments: Int
 TodoStore.move(_:before:) | func move(_ id: UUID, before: UUID?) throws
 TodoStore.move(_:by:) | func move(_ id: UUID, by step: Int) throws
 TodoStore.pause(lists:) | func pause(lists: Set<UUID>? = nil) throws
-TodoStore.placeMilestone(in:moving:after:) | func placeMilestone(in goal: UUID, moving: UUID? = nil, after step: UUID) throws
-TodoStore.recordStepTests(_:_:) | func recordStepTests(_ id: UUID, _ result: StepTestResult) throws
-TodoStore.recoverMilestone(_:_:) | @discardableResult func recoverMilestone(_ id: UUID, _ failure: MilestoneFailure) throws -> UUID?
 TodoStore.relink(_:to:) | func relink(_ ids: Set<UUID>, to project: ProjectBinding) throws
 TodoStore.requestChanges(_:_:) | func requestChanges(_ id: UUID, _ text: String)
 TodoStore.resume(lists:) | func resume(lists: Set<UUID>? = nil) throws
 TodoStore.saveError | @Published var saveError: String? { get set }
-TodoStore.savePlan(goal:_:) | @discardableResult func savePlan(goal: UUID, _ plan: TodoPlan) throws -> [TodoItem]
 TodoStore.setAfter(_:_:) | func setAfter(_ id: UUID, _ after: [UUID]) throws
 TodoStore.setList(_:mode:accounts:) | func setList(_ listID: UUID, mode: RunMode? = nil, accounts: [String]? = nil) throws
 TodoStore.setReady(_:_:) | func setReady(_ id: UUID, _ ready: Bool) throws

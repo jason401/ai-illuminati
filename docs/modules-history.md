@@ -449,7 +449,6 @@ module is that module's public function now; the block keeps only the chat's par
 | ChatTools:154 | a | `linkChatTools`: sets `ProjectChats.list` (P0 injection) | — |
 | Collaboration:65 | a | the collaboration run | — |
 | Debate:45 | a | the debate run, speakers, search notes | — |
-| Delegate:151 | b | sub-rooms (2026-11-17, P2): hidden chats, places, join turn, Stop, restart cards | the Git side is `SubWork` (AIProjects: create, report, merge, resync, remove, leftover, discard) |
 | DeviceSync:472 | a | chat state turn, `continueFromDevice`, `openRemote`, share toggle | reads another Mac's copy through `ChatStore.links.remote`; C1: the block leaves DeviceSync.swift, and `SyncSnapshot`/`RemoteChat` (they hold `ChatTurn`) need an owner |
 | Enterprise:72 | a | a chat's lock, `permits` (the gate), `lockEnterprise` | DeviceSync hears through `ChatStore.links.locked`; the `Enterprise` rules enum and badges stay app-side for C1 to place |
 | Enterprise:114 | b | locking a whole project | its TODO lists: `TodoStore.lockProject` (AIProjects); `SidebarProjects.key` → `groupKey` |
@@ -463,7 +462,6 @@ module is that module's public function now; the block keeps only the chat's par
 | SidebarProjects:220 | a | `openBoard`/`showBoardTab`: the chat window's navigation state | C1: `BoardTab` is an app type |
 | Solo:96 | a | plain chat (members, instruction, state, Spaces in answers) | C1: still names app types (`Pictures`, `FaceLink`, `SidebarProjects.key`, …) |
 | Solo:1015 | a | a Space's lock and who may change it | — |
-| SubRoomViews:48 | a | sub-rooms on screen (2026-11-17, P3): the split records the cards read, badge, fold, a card's message/cancel, "allow during this split" | the command key is `CommandIdentity` (AIProjects), the hook `ProjectCenter.preapproved` |
 | SpaceView:39 | b | Space actions from a chat | the refine loop → `SpaceBuilder.refine` (AISpaces); stop and apply were Space-only, now `SpaceRefiner.stop`/`apply` (not Discussion); C1: `SpaceRefiner`, `SidebarFold`, `openBoard` are app names the shell still uses |
 | TodoChatsApp:10 | a | `Discussion: TodoChats` (P0's seam: crew, start, end) | — |
 | Vote:91 | a | the vote run | — |

@@ -83,7 +83,6 @@ final class TodoDraft: ObservableObject {
     @Published var askFirst = false
     @Published var error: String?
     @Published var showDone = false
-    @Published var expandedGoals: Set<UUID> = []
     @Published var replies: [UUID: String] = [:]   // a card's answer or change request, by TODO
     // A chat card folded to one line, with what it showed then: a new state, question or result opens it again.
     struct Fold: Equatable { var state: TodoItem.State; var question: UUID?; var result: String? }
@@ -114,119 +113,6 @@ final class TodoDraft: ObservableObject {
         guard let id = editing, !editTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         do { try TodoStore.shared.edit(id, title: editTitle, detail: editDetail, askFirst: editAskFirst); error = nil; endEdit() }
         catch { self.error = error.localizedDescription }
-    }
-}
-
-struct TodoGoalBoard {
-    enum Status: Equatable {
-        case waiting, running, local, reviewing, testing, pushing, remote
-
-        var title: String {
-            switch self {
-            case .waiting: return L("대기", "Waiting")
-            case .running: return L("진행", "In progress")
-            case .local: return L("로컬 완료", "Local complete")
-            case .reviewing: return L("검증 중 · 리뷰", "Verifying · review")
-            case .testing: return L("검증 중 · 테스트", "Verifying · tests")
-            case .pushing: return L("원격 반영 중", "Pushing to remote")
-            case .remote: return L("원격 반영", "On remote")
-            }
-        }
-
-        var color: Color {
-            switch self {
-            case .waiting: return .secondary
-            case .running, .pushing: return .blue
-            case .local, .remote: return .green
-            case .reviewing, .testing: return .orange
-            }
-        }
-    }
-
-    struct Part: Identifiable {
-        let item: TodoItem
-        let status: Status?
-        var id: UUID { item.id }
-        var needsAttention: Bool { item.state == .needsYou || item.state == .review }
-    }
-
-    let parts: [Part]
-    let completedSteps: Int
-    let totalSteps: Int
-    let stepsUntilPush: Int?
-
-    init(_ items: [TodoItem]) {
-        // Saved plan order includes Fix Steps inserted before the Milestone that needs them.
-        let confirmed = items.lastIndex { $0.role == .milestone && $0.milestoneCandidate?.phase == .confirmation }
-        let parts = items.enumerated().map { index, item in
-            let status: Status?
-            switch (item.role, item.state, item.milestoneCandidate?.phase) {
-            case (.milestone, _, .confirmation): status = .remote
-            case (.step, .done, _) where item.stepSHA != nil:
-                status = confirmed.map { index < $0 } == true ? .remote : .local
-            case (.milestone, .running, .review): status = .reviewing
-            case (.milestone, .running, .test): status = .testing
-            case (.milestone, .running, .push): status = .pushing
-            case (_, .running, _): status = .running
-            case (_, .draft, _), (_, .ready, _): status = .waiting
-            default: status = nil
-            }
-            return Part(item: item, status: status)
-        }
-        self.parts = parts
-        let steps = items.filter { $0.role == .step && $0.state != .cancelled }
-        completedSteps = steps.filter { $0.state == .done }.count
-        totalSteps = steps.count
-        let remaining = items.dropFirst(confirmed.map { $0 + 1 } ?? 0)
-        if let next = remaining.firstIndex(where: { $0.role == .milestone && Self.isOpen($0) }) {
-            stepsUntilPush = remaining[..<next].filter { $0.role == .step && Self.isOpen($0) }.count
-        } else {
-            stepsUntilPush = nil
-        }
-    }
-
-    var summary: String {
-        var labels = [L("Step \(completedSteps)/\(totalSteps) 완료", "\(completedSteps)/\(totalSteps) steps complete")]
-        if let count = stepsUntilPush {
-            labels.append(count == 1 ? L("다음 push까지 1 step", "1 step until next push")
-                : L("다음 push까지 \(count) step", "\(count) steps until next push"))
-        }
-        if parts.contains(where: \.needsAttention) {
-            labels.append(L("확인 필요", "Needs your attention"))
-        }
-        return labels.joined(separator: " · ")
-    }
-
-    static func isOpen(_ item: TodoItem) -> Bool { item.state != .done && item.state != .cancelled }
-
-    static func groups(_ data: TodoData, list: UUID) -> [UUID: Self] {
-        let goals = Set(data.items.filter { $0.listID == list && $0.role == .goal }.map(\.id))
-        var parts: [UUID: [TodoItem]] = [:]
-        for item in data.items where item.listID == list && (item.role == .step || item.role == .milestone) {
-            if let goal = item.goal, goals.contains(goal) { parts[goal, default: []].append(item) }
-        }
-        return parts.mapValues { Self($0) }
-    }
-
-    static func rows(_ ordered: [TodoItem], groups: [UUID: Self], showDone: Bool) -> [TodoItem] {
-        let nested = Set(groups.values.flatMap { $0.parts.map(\.id) })
-        return ordered.filter { item in
-            !nested.contains(item.id) && (showDone || isOpen(item) || groups[item.id]?.parts.contains { isOpen($0.item) } == true)
-        }
-    }
-
-    func visibleParts(expanded: Bool) -> [Part] { expanded ? parts : parts.filter(\.needsAttention) }
-
-    static func numbers(_ rows: [TodoItem], groups: [UUID: Self]) -> [UUID: String] {
-        var numbers: [UUID: String] = [:]
-        for (index, row) in rows.enumerated() {
-            let number = "\(index + 1)"
-            numbers[row.id] = number
-            for (index, part) in (groups[row.id]?.parts ?? []).enumerated() {
-                numbers[part.id] = "\(number).\(index + 1)"
-            }
-        }
-        return numbers
     }
 }
 
@@ -292,12 +178,8 @@ struct TodoBoardView: View {
     // A list is shown with the name the user gave its project, else the name it was made with.
     private func title(_ list: TodoList) -> String { list.project.flatMap { projectInfo.names[SidebarProjects.key($0)] } ?? list.title }
 
-    func listView(_ list: TodoList) -> some View {
-        let data = store.snapshot
-        let ordered = data.ordered(list.id)
-        let groups = TodoGoalBoard.groups(data, list: list.id)
-        let rows = TodoGoalBoard.rows(ordered, groups: groups, showDone: draft.showDone)
-        let numbers = TodoGoalBoard.numbers(rows, groups: groups)
+    private func listView(_ list: TodoList) -> some View {
+        let rows = store.snapshot.ordered(list.id).filter { draft.showDone || ($0.state != .done && $0.state != .cancelled) }
         return VStack(alignment: .leading, spacing: 6) {
             // One line: a long project name gives way, the mode menu and pause keep their size.
             HStack(spacing: 10) {
@@ -307,16 +189,7 @@ struct TodoBoardView: View {
                 pauseControl(list)
             }
             if let scheduler = TodoScheduler.shared { TodoCrewRow(list: list, scheduler: scheduler, discussion: discussion, error: { draft.error = $0 }) }
-            ForEach(rows) { item in
-                let group = groups[item.id]
-                row(item, list: list, numbers: numbers, goal: group)
-                if let parts = group?.visibleParts(expanded: draft.expandedGoals.contains(item.id)), !parts.isEmpty {
-                    VStack(alignment: .leading, spacing: 4) {
-                        ForEach(parts) { part in row(part.item, list: list, numbers: numbers, part: part) }
-                    }
-                    .padding(.leading, 24)
-                }
-            }
+            ForEach(Array(rows.enumerated()), id: \.element.id) { index, item in row(item, index: index + 1, list: list) }
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -367,8 +240,7 @@ struct TodoBoardView: View {
         }
     }
 
-    private func row(_ item: TodoItem, list: TodoList, numbers: [UUID: String], goal: TodoGoalBoard? = nil,
-                     part: TodoGoalBoard.Part? = nil) -> some View {
+    private func row(_ item: TodoItem, index: Int, list: TodoList) -> some View {
         let data = store.snapshot
         // Once each: a link to the TODO just above is also the order's wait.
         let waits = data.blockers(item).reduce(into: [UUID]()) { if !$0.contains($1) { $0.append($1) } }
@@ -377,31 +249,18 @@ struct TodoBoardView: View {
         return VStack(alignment: .leading, spacing: 4) {
             if editing { editor(item) } else {
             HStack(spacing: 8) {
-                if part == nil {
-                    Image(systemName: "line.3.horizontal").font(.system(size: 11)).foregroundColor(.secondary).frame(width: 22, height: 22).contentShape(Rectangle())
-                        .help(L("끌어서 순서 바꾸기", "Drag to reorder"))
-                        .onDrag {
-                            draft.dragging = item.id
-                            let provider = NSItemProvider()
-                            provider.registerDataRepresentation(forTypeIdentifier: UTType.data.identifier, visibility: .all) { done in
-                                done(Data(item.id.uuidString.utf8), nil); return nil
-                            }
-                            return provider
+                Image(systemName: "line.3.horizontal").font(.system(size: 11)).foregroundColor(.secondary).frame(width: 22, height: 22).contentShape(Rectangle())
+                    .help(L("끌어서 순서 바꾸기", "Drag to reorder"))
+                    .onDrag {
+                        draft.dragging = item.id
+                        let provider = NSItemProvider()
+                        provider.registerDataRepresentation(forTypeIdentifier: UTType.data.identifier, visibility: .all) { done in
+                            done(Data(item.id.uuidString.utf8), nil); return nil
                         }
-                }
-                let title = (numbers[item.id].map { "\($0). " } ?? "") + item.title
-                if let goal {
-                    goalTitle(item, title: title, group: goal)
-                } else if let part {
-                    let kind = part.item.role == .step ? L("Step", "Step") : L("Milestone", "Milestone")
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(kind).font(.system(size: 10)).foregroundColor(.secondary)
-                        Text(title).font(.system(size: 13, weight: .medium)).lineLimit(2)
+                        return provider
                     }
-                } else {
-                    Text(title).font(.system(size: 13, weight: .medium))
-                        .foregroundColor(item.state == .draft ? .secondary : .primary).lineLimit(2)
-                }
+                Text("\(index). " + item.title).font(.system(size: 13, weight: .medium))
+                    .foregroundColor(item.state == .draft ? .secondary : .primary).lineLimit(2)
                 Spacer(minLength: 6)
                 if item.state == .ready, !waits.isEmpty {
                     let linked = waits.filter { item.after.contains($0.id) }, above = waits.filter { !item.after.contains($0.id) }
@@ -413,22 +272,21 @@ struct TodoBoardView: View {
                 if let retry = TodoScheduler.retrying(item) {
                     Label(retry.label, systemImage: "arrow.clockwise").font(.system(size: 11)).foregroundColor(.orange).lineLimit(1).help(retry.why)
                 }
-                if !item.after.isEmpty { linkDropdown(item, numbers: numbers) }
-                let status = (part?.status?.title ?? item.state.title) + (item.state == .running ? runner(item) : "") + (item.state == .ready && data.stopped(item) ? L(" · 멈춤", " · paused") : "")
-                let statusColor = part?.status?.color ?? item.state.color
-                if part == nil && (item.state == .draft || item.state == .ready) {
+                if !item.after.isEmpty { linkDropdown(item) }
+                let status = item.state.title + (item.state == .running ? runner(item) : "") + (item.state == .ready && data.stopped(item) ? L(" · 멈춤", " · paused") : "")
+                if item.state == .draft || item.state == .ready {
                     // One click: draft ↔ ready (the ⋯ menu has the same).
                     Button(action: { act { try store.setReady(item.id, item.state == .draft); if item.state == .draft { TodoScheduler.shared?.wake() } } }) {
-                        Text(status).font(.system(size: 12, weight: .medium)).foregroundColor(statusColor).lineLimit(1)
+                        Text(status).font(.system(size: 12, weight: .medium)).foregroundColor(item.state.color).lineLimit(1)
                             .padding(.horizontal, 8).frame(minHeight: 22)
-                            .background(statusColor.opacity(0.12), in: Capsule())
-                            .overlay(Capsule().strokeBorder(statusColor.opacity(0.35)))
+                            .background(item.state.color.opacity(0.12), in: Capsule())
+                            .overlay(Capsule().strokeBorder(item.state.color.opacity(0.35)))
                     }
                     .buttonStyle(.plainHit)
                     .help(item.state == .draft ? L("누르면 대기로: 차례가 오면 AI가 가져가요", "Click to make it ready: the AI takes it when its turn comes")
                                                : L("누르면 초안으로: AI가 가져가지 않아요 (순서대로 목록에서는 건너뛰어요)", "Click to make it a draft: the AI leaves it (an in-order list skips it)"))
                 } else {
-                    Text(status).font(.system(size: 12, weight: .medium)).foregroundColor(statusColor)
+                    Text(status).font(.system(size: 12, weight: .medium)).foregroundColor(item.state.color)
                 }
                 if item.state == .review {
                     Button(L("완료", "Done")) { store.accept(item.id) }.buttonStyle(.borderedProminent).controlSize(.small)
@@ -447,37 +305,21 @@ struct TodoBoardView: View {
                 }
                 Menu {
                     if TodoStore.editable(item) { Button(L("고치기…", "Edit…")) { draft.beginEdit(item) } }
-                    if part == nil {
-                        Button(L("위로", "Move up")) { moveRow(item, by: -1) }
-                        Button(L("아래로", "Move down")) { moveRow(item, by: 1) }
-                    }
-                    if goal != nil {
-                        milestoneMenu(in: item.id, numbers: numbers)
-                    } else if item.role == .milestone, let goalID = item.goal {
-                        milestoneMenu(in: goalID, moving: item.id, numbers: numbers)
-                    }
-                    Menu(L("먼저 끝나야 할 TODO", "Must finish first")) { linkItems(item, numbers: numbers) }
+                    Button(L("위로", "Move up")) { act { try store.move(item.id, by: -1) } }
+                    Button(L("아래로", "Move down")) { act { try store.move(item.id, by: 1) } }
+                    Menu(L("먼저 끝나야 할 TODO", "Must finish first")) { linkItems(item) }
                     if item.state != .running && item.state != .done && item.state != .cancelled {
                         Button(L("사진·파일 첨부…", "Attach photos or files…")) { let urls = Self.chooseFiles(); if !urls.isEmpty { act { try store.attach(item.id, files: urls) } } }
                     }
-                    if part == nil && item.state == .draft { Button(L("대기로 (바로 가져가도 됨)", "Make ready")) { act { try store.setReady(item.id, true); TodoScheduler.shared?.wake() } } }
-                    if part == nil && item.state == .ready { Button(L("초안으로 되돌리기", "Back to draft")) { act { try store.setReady(item.id, false) } } }
+                    if item.state == .draft { Button(L("대기로 (바로 가져가도 됨)", "Make ready")) { act { try store.setReady(item.id, true); TodoScheduler.shared?.wake() } } }
+                    if item.state == .ready { Button(L("초안으로 되돌리기", "Back to draft")) { act { try store.setReady(item.id, false) } } }
                     Button(list.stopAfter == item.id ? L("멈춤 지점 지우기", "Remove the stop point") : L("여기까지 하고 멈추기", "Stop after this one")) {
                         act { try store.stop(after: item.id); TodoScheduler.shared?.wake() }
                     }
                     Divider()
                     if item.state != .done { Button(L("완료로 표시", "Mark as done")) { discussion.markTodoDone(item.id) } }
                     if item.state != .done && item.state != .cancelled { Button(L("그만 (취소)", "Stop (cancel)")) { TodoScheduler.shared?.cancel(item.id) } }
-                    Button(item.role == .milestone ? L("Milestone 삭제", "Delete Milestone") : L("삭제", "Delete"), role: .destructive) {
-                        act {
-                            try store.delete(item.id)
-                            if item.role == .milestone {
-                                if draft.editing == item.id { draft.endEdit() }
-                                TodoScheduler.shared?.wake()
-                            }
-                        }
-                    }
-                    .disabled(item.state == .running)
+                    Button(L("삭제", "Delete"), role: .destructive) { act { try store.delete(item.id) } }.disabled(item.state == .running)
                 } label: { Image(systemName: "ellipsis") }
                     .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
             }
@@ -519,53 +361,17 @@ struct TodoBoardView: View {
         // same list dragged by its handle goes above it (dragged up) or below it (dragged down).
         .onDrop(of: [UTType.fileURL, UTType.image, UTType.data, UTType.item],
                 delegate: TodoFileDrop(target: item.id, accepts: item.state != .running && item.state != .done && item.state != .cancelled,
-                                       reorder: { part == nil ? reorder(onto: item, in: list, probe: $0) : nil }) { urls, folder in
+                                       reorder: { reorder(onto: item, in: list, probe: $0) }) { urls, folder in
             defer { if let folder { try? FileManager.default.removeItem(at: folder) } }
             if urls.isEmpty { draft.error = L("파일을 첨부할 수 없어요.", "Could not attach the file."); return }
             act { try store.attach(item.id, files: urls) }
         })
     }
 
-    private func goalTitle(_ item: TodoItem, title: String, group: TodoGoalBoard) -> some View {
-        let expanded = draft.expandedGoals.contains(item.id)
-        let editingPart = group.parts.contains { $0.id == draft.editing && TodoStore.editable($0.item) }
-        let summary = group.summary
-        return Button {
-            if expanded { draft.expandedGoals.remove(item.id) } else { draft.expandedGoals.insert(item.id) }
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                    .font(.system(size: 9, weight: .semibold)).foregroundColor(.secondary).frame(width: 10)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title).font(.system(size: 13, weight: .medium))
-                        .foregroundColor(item.state == .draft ? .secondary : .primary).lineLimit(2)
-                    Text(summary).font(.system(size: 11)).foregroundColor(.secondary)
-                }
-            }
-        }
-        .buttonStyle(.plainHit)
-        .disabled(expanded && editingPart)
-        .accessibilityLabel(title + ", " + summary)
-        .accessibilityValue(expanded ? L("펼쳐짐", "Expanded") : L("접힘", "Collapsed"))
-        .help(expanded ? L("Goal 목록 접기", "Collapse Goal") : L("Goal 목록 펼치기", "Expand Goal"))
-    }
-
-    private func reorderRows(_ listID: UUID) -> [UUID] {
-        let data = store.snapshot
-        return TodoGoalBoard.rows(data.ordered(listID), groups: TodoGoalBoard.groups(data, list: listID), showDone: true).map(\.id)
-    }
-
-    private func moveRow(_ item: TodoItem, by step: Int) {
-        let order = reorderRows(item.listID)
-        guard let index = order.firstIndex(of: item.id), order.indices.contains(index + step) else { return }
-        let before = step < 0 ? order[index - 1] : order.dropFirst(index + 2).first
-        act { try store.move(item.id, before: before) }
-    }
-
     // Where the dragged TODO would go if dropped on `target`: below it when dragged down, above it when dragged up;
     // nil for one of another list. probe false: moves it there.
     private func reorder(onto target: TodoItem, in list: TodoList, probe: Bool) -> TodoDraft.Slot? {
-        let row = reorderRows(list.id)
+        let row = store.snapshot.ordered(list.id).map(\.id)
         guard let moving = draft.dragging, moving != target.id, let from = row.firstIndex(of: moving), let to = row.firstIndex(of: target.id) else { return nil }
         let below = from < to
         if !probe {
@@ -599,24 +405,6 @@ struct TodoBoardView: View {
         .onExitCommand { draft.endEdit() }
     }
 
-    @ViewBuilder private func milestoneMenu(in goal: UUID, moving: UUID? = nil, numbers: [UUID: String]) -> some View {
-        let slots = store.snapshot.milestoneSlots(in: goal, moving: moving)
-        if !slots.isEmpty {
-            Menu(moving == nil ? L("Milestone 추가", "Add Milestone") : L("Milestone 이동", "Move Milestone")) {
-                ForEach(slots) { step in
-                    let label = (numbers[step.id].map { "\($0). " } ?? "") + step.title
-                    Button(L("「\(label)」 뒤에", "After \(label)")) {
-                        act {
-                            try store.placeMilestone(in: goal, moving: moving, after: step.id)
-                            draft.expandedGoals.insert(goal)
-                            TodoScheduler.shared?.wake()
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     // The new TODO's links that count: only to TODOs of the list it goes to. The project can change without the picker (another
     // project's board opened), so the menu, its count and the add all read this, never draft.after directly.
     private func draftLinks(_ root: String) -> [UUID] {
@@ -628,8 +416,8 @@ struct TodoBoardView: View {
     private func boardList(_ root: String) -> TodoList? { store.snapshot.lists.first { $0.project?.root == root } }
 
     // One "must finish first" line: ✓ when linked, the board's number, and why it no longer holds one back.
-    private func linkLine(_ other: TodoItem, number: String?, linked: Bool, for item: TodoItem?) -> String {
-        let data = store.snapshot
+    private func linkLine(_ choice: (item: TodoItem, number: Int?), linked: Bool, for item: TodoItem?) -> String {
+        let other = choice.item, data = store.snapshot
         let state: String
         switch other.state {
         case .done: state = L(" · 완료", " · done")
@@ -637,16 +425,16 @@ struct TodoBoardView: View {
         case .review where data.satisfied(other, for: item ?? other): state = L(" · 확인 대기 (통과)", " · waiting for check (passed)")
         default: state = item.map { other.listID != $0.listID } == true ? L(" · 다른 목록", " · other list") : ""
         }
-        return (linked ? "✓ " : "") + (number.map { "\($0). " } ?? "") + other.title + state
+        return (linked ? "✓ " : "") + (choice.number.map { "\($0). " } ?? "") + other.title + state
     }
 
     // The ⋯ menu's "must finish first" items and the row's dropdown: the same list. Links change only while the AI has not
     // taken the TODO (draft or ready); otherwise they are shown only.
-    @ViewBuilder private func linkItems(_ item: TodoItem, numbers: [UUID: String]) -> some View {
+    @ViewBuilder private func linkItems(_ item: TodoItem) -> some View {
         let open = item.state == .draft || item.state == .ready
         ForEach(store.snapshot.linkChoices(item.listID, except: item.id, linked: item.after, showingDone: draft.showDone), id: \.item.id) { choice in
             let on = item.after.contains(choice.item.id)
-            Button(linkLine(choice.item, number: numbers[choice.item.id], linked: on, for: item)) {
+            Button(linkLine(choice, linked: on, for: item)) {
                 act { try store.setAfter(item.id, on ? item.after.filter { $0 != choice.item.id } : item.after + [choice.item.id]) }
             }
             .disabled(!open)
@@ -655,11 +443,11 @@ struct TodoBoardView: View {
 
     // [먼저: n ▾] left of the state chip, only with links the user set (more are added from ⋯). Fixed size, so the title
     // keeps its room; dimmed once none of them holds the TODO back any more.
-    private func linkDropdown(_ item: TodoItem, numbers: [UUID: String]) -> some View {
+    private func linkDropdown(_ item: TodoItem) -> some View {
         let data = store.snapshot
         let linked = item.after.compactMap(data.item)
         let holding = linked.filter { !data.satisfied($0, for: item) }
-        return Menu { linkItems(item, numbers: numbers) } label: {
+        return Menu { linkItems(item) } label: {
             Text(L("먼저: \(linked.count)개", "First: \(linked.count)")).font(.system(size: 12)).foregroundColor(holding.isEmpty ? .secondary : .primary)
         }
         .menuStyle(.borderlessButton).fixedSize()
@@ -695,16 +483,11 @@ struct TodoBoardView: View {
             .help(L("사진이나 파일을 첨부해요 (여기나 TODO 줄 위에 끌어다 놓아도 돼요 · 사진 앱·스크린샷도)", "Attach photos or files (or drop them here or on a TODO, also from Photos or a screenshot)"))
             .fixedSize()
         let links = draftLinks(root)
-        let data = store.snapshot
-        let listID = boardList(root)?.id
-        let groups = listID.map { TodoGoalBoard.groups(data, list: $0) } ?? [:]
-        let rows = TodoGoalBoard.rows(listID.map(data.ordered) ?? [], groups: groups, showDone: draft.showDone)
-        let numbers = TodoGoalBoard.numbers(rows, groups: groups)
         Menu(links.isEmpty ? L("먼저 끝나야 할 TODO", "Must finish first") : L("먼저: \(links.count)개", "First: \(links.count)")) {
-            ForEach(data.linkChoices(listID, except: nil, linked: links, showingDone: draft.showDone), id: \.item.id) { choice in
+            ForEach(store.snapshot.linkChoices(boardList(root)?.id, except: nil, linked: links, showingDone: draft.showDone), id: \.item.id) { choice in
                 let on = links.contains(choice.item.id)
                 // From the shown links only: ones left from another project (another board open) go with the first change.
-                Button(linkLine(choice.item, number: numbers[choice.item.id], linked: on, for: nil)) { draft.after = Set(on ? links.filter { $0 != choice.item.id } : links + [choice.item.id]) }
+                Button(linkLine(choice, linked: on, for: nil)) { draft.after = Set(on ? links.filter { $0 != choice.item.id } : links + [choice.item.id]) }
             }
         }
         .fixedSize()

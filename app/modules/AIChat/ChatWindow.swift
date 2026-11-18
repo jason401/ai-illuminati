@@ -648,18 +648,10 @@ struct ChatView<Model: ChatSettings>: View {
 
     // A chat and, under it, the meetings held for it (Meeting.swift): the newest 5 until "show all".
     // depth 1: inside a project folder. todo: the state of the TODO this chat works on.
-    // Sub-rooms (SubRoomViews.swift) come first, indented, folding on their own; ended ones fold into one row.
     @ViewBuilder private func chatGroup(_ conversation: Conversation, depth: Int = 0, todo: TodoItem.State? = nil) -> some View {
-        let meetings = discussion.meetings(of: conversation.id).filter { $0.subOf == nil }
+        let meetings = discussion.meetings(of: conversation.id)
         let shown = !meetings.isEmpty && discussion.meetingsShown(conversation.id, meetings)
-        let subs = discussion.subRooms(of: conversation.id)
         chatRow(conversation, meetings: meetings.count, shown: shown, depth: depth, todo: todo)
-        if !subs.isEmpty {
-            SubRoomsFoldedRow(main: conversation.id, count: subs.count, discussion: discussion, depth: depth)
-            if discussion.subRoomsShown(conversation.id) {
-                ForEach(subs) { SubRoomRow(room: $0, discussion: discussion, depth: depth) }
-            }
-        }
         if shown {
             let all = discussion.meetingsAll.contains(conversation.id)
             // The open meeting stays listed even when it is older than the newest 5.
@@ -739,9 +731,7 @@ struct ChatView<Model: ChatSettings>: View {
                 LockBadge(lock: conversation.enterpriseLock)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            if let badge = discussion.splitBadge(conversation.id, requests: approvals.requests) {
-                SplitBadgeView(badge: badge)
-            } else if approvals.requests.contains(where: { $0.room == conversation.id }) {
+            if approvals.requests.contains(where: { $0.room == conversation.id }) {
                 Circle().fill(Color.orange).frame(width: 7, height: 7)
                     .help(L("허가를 기다려요", "Waiting for approval"))
             }
@@ -963,10 +953,6 @@ struct ChatView<Model: ChatSettings>: View {
                 transcript
                 // TODO report cards and approval cards sit right above the message box, where the user is looking.
                 ChatApp.screens.cards(discussion.currentID, discussion)
-                    .frame(maxWidth: 760)
-                    .padding(.horizontal, 28)
-                    .frame(maxWidth: .infinity)
-                SubRoomCards(discussion: discussion, room: discussion.currentID)
                     .frame(maxWidth: 760)
                     .padding(.horizontal, 28)
                     .frame(maxWidth: .infinity)

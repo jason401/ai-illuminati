@@ -308,8 +308,6 @@ public struct Conversation: Identifiable, Codable {
     public var enterpriseLock: EnterpriseLock?
     // A meeting's own chat (Meeting.swift): the message it was held for. Not listed, searched or synced; deleted with that chat.
     public var meetingOf: MeetingLink?
-    // A sub-room (Delegate.swift): the main room's split it works for. It is attached like a meeting (meetingOf) too.
-    public var subOf: SubRoomLink?
     // Messages sent while it answered, waiting for the answer to end (Discussion.flushQueue sends them together).
     public var queued: [QueuedMessage]?
 
@@ -332,14 +330,6 @@ public struct Conversation: Identifiable, Codable {
         self.enterpriseLock = enterpriseLock
         self.meetingOf = meetingOf
     }
-}
-
-// A sub-room's place (Delegate.swift): sub-room `n` of split `split` of main room `room`.
-public struct SubRoomLink: Codable, Equatable {
-    public var room: UUID
-    public var split: String
-    public var n: Int
-    public init(room: UUID, split: String, n: Int) { self.room = room; self.split = split; self.n = n }
 }
 
 // A message sent while its chat was answering, as it was typed: read again (its @ and /way) when it is sent.

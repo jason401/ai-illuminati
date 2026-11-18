@@ -12,8 +12,7 @@ struct ProjectApprovalView: View {
     @ObservedObject private var center = ProjectCenter.shared
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            // A split waiting for approval has its own card (SplitPlanCard).
-            ForEach(center.requests.filter { $0.room == room && discussion?.splitPlans[$0.id] == nil }) { request in
+            ForEach(center.requests.filter { $0.room == room }) { request in
                 VStack(alignment: .leading, spacing: 8) {
                     Text(request.title).font(.headline)
                     ScrollView { Text(request.detail).font(.system(size: 11, design: .monospaced)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }.frame(maxHeight: 120)
@@ -54,7 +53,7 @@ struct ApprovalBanner: View {
     @ObservedObject var discussion: Discussion
     @ObservedObject private var center = ProjectCenter.shared
     var body: some View {
-        let others = center.requests.filter { discussion.approvalHome($0.room) != discussion.currentID || discussion.viewingRemote != nil }
+        let others = center.requests.filter { $0.room != discussion.currentID || discussion.viewingRemote != nil }
         if !others.isEmpty {
             VStack(spacing: 4) {
                 ForEach(others) { request in
@@ -64,7 +63,7 @@ struct ApprovalBanner: View {
                         Text(request.title).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
                         Spacer(minLength: 4)
                         Button(L("거절", "Deny")) { center.decide(request.id, allow: false) }
-                        Button(L("열기", "Open")) { discussion.open(discussion.approvalHome(request.room)) }.buttonStyle(.borderedProminent)
+                        Button(L("열기", "Open")) { discussion.open(request.room) }.buttonStyle(.borderedProminent)
                     }
                     .controlSize(.small)
                     .padding(.horizontal, 10).padding(.vertical, 6)
@@ -257,35 +256,13 @@ extension Discussion {
 
     func runProjectSolo(question: String, history: [ChatTurn], rules: String, config: ChatConfiguration,
                         mentions: [String], reviewers: [String] = [], cancellation: DebateCancellation, id: UUID, index: Int,
-                        binding: WorkspaceBinding, fresh: String? = nil, keepState: Bool = false, note: String = "",
-                        step: SubWork.Tree? = nil) {
-        guard let project = binding.project else { finish(id, index, error: "No project selected."); return }
+                        binding: WorkspaceBinding, fresh: String? = nil, keepState: Bool = false, note: String = "") {
+        guard let selected = binding.project else { finish(id, index, error: "No project selected."); return }
         let fullAuto = binding.isFullAuto
-        let chatFolder = Self.chatFolder(id).path
-        let run: ProjectRun
-        var workspace: WorkspaceBinding
-        if let step {
-            do { (run, workspace) = try ProjectWork.startStep(step, in: binding, chatFolder: chatFolder, room: id, token: cancellation) }
-            catch { finish(id, index, error: error.localizedDescription); return }
-        } else {
-            run = ProjectRun(room: id, binding: project, token: cancellation, fullAuto: fullAuto)
-            workspace = ProjectWork.workBinding(binding, project: project, chatFolder: chatFolder, run: run)
-            // The final result goes to the remote once, after the review and its fixes.
-            run.deferPush = !project.isDocuments && !project.isFolderless
-        }
-        let selected = run.binding
-        // A sub-room's turn (Delegate.swift) gets its part and the Git tools of a sub-room; a main room's, when to split.
-        let sub = run.isStep ? nil : conversation(id).subOf
-        let split = sub.flatMap { SplitStore.shared.split($0.room, $0.split) }, part = sub.flatMap { link in split?.parts.first { $0.n == link.n } }
-        if let sub {
-            run.isSubRoom = true
-            DelegateLink.shared.register(run, sub)
-            SplitStore.shared.changePart(sub) { $0.live = true; if $0.state != .merged { $0.state = .running } }
-        }
-        defer { if sub != nil { DelegateLink.shared.unregister(run) } }
-        let splitNote = part.flatMap { p in split.map { Self.subNote(p, split: $0) } }
-            ?? (sub == nil && run.deferPush && DelegateLink.shared.host != nil ? Self.delegateNote(fullAuto: conversation(id).workspace?.isFullAuto != false) : "")
-        let extraNote = (run.deferPush ? (note.isEmpty ? "" : note + "\n") + Self.deferredPushNote : note) + (splitNote.isEmpty ? "" : "\n" + splitNote)
+        let run = ProjectRun(room: id, binding: selected, token: cancellation, fullAuto: fullAuto)
+        // Only the turn's final result goes to the remote, once, after the review and its fixes (TODOs and plain chats).
+        run.deferPush = !selected.isDocuments && !selected.isFolderless
+        let extraNote = run.deferPush ? (note.isEmpty ? "" : note + "\n") + Self.deferredPushNote : note
         run.onNote = { [weak self] log in self?.changeTurn(id, index) { $0.projectLog = log; $0.lastActivityAt = Date() } }
         run.onPlan = { [weak self] steps, note in self?.changeTurn(id, index) { $0.plan = steps; $0.planNote = note; $0.lastActivityAt = Date() } }
         run.onWaiting = { [weak self] waiting in self?.changeTurn(id, index) { $0.waitingApproval = waiting ? true : nil; $0.lastActivityAt = Date() } }
@@ -329,6 +306,7 @@ extension Discussion {
                 changeTurn(id, index, save: true) { $0.workspaceChanges = changes; $0.projectCommitted = run.committed; $0.projectPushed = run.pushed; $0.projectLog = run.log.isEmpty ? nil : run.log }
             }
         }
+        var workspace = ProjectWork.workBinding(binding, project: selected, chatFolder: Self.chatFolder(id).path, run: run)
         do {
             try run.validate(run.generation)
             // Only back up writable directories; native/MCP write roots are limited to these same roots.
@@ -351,8 +329,7 @@ extension Discussion {
         // Before the work starts: what the project looks like, so the review covers only this answer's changes
         // (also when another AI took over after a usage limit).
         let reviewRoot = selected.isFolderless ? Self.chatFolder(id).path : selected.root
-        // A Step has none: its AI reads its own diff, the app runs its picked tests, the Milestone reviews every Step's commits.
-        let start = run.isStep || reviewers.isEmpty ? nil : selected.isDocuments ? backup.flatMap { ProjectSnapshot.documents(backup: $0, root: reviewRoot) } : ProjectSnapshot.take(root: reviewRoot)
+        let start = reviewers.isEmpty ? nil : selected.isDocuments ? backup.flatMap { ProjectSnapshot.documents(backup: $0, root: reviewRoot) } : ProjectSnapshot.take(root: reviewRoot)
         while !cancellation.isCancelled && Date() < run.deadline && !run.activeExpired {
             let eligible = model.accounts.filter { [.claude, .codex].contains($0.provider) && !excluded.contains($0.id) && Enterprise.permits($0, lock: chatLock) && (workers?.contains($0.id) ?? true) }
             let account = preferred.flatMap { wanted in eligible.first { $0.id == wanted } }
@@ -373,7 +350,7 @@ extension Discussion {
             changeTurn(id, index) { $0.status = working; $0.activity = nil; $0.lastActivityAt = Date() }
             func attempt(_ extra: String, transcript: String, fresh: String?, ran: AnswerModel = AnswerModel()) -> Result<String, Answerer.Failure> {
                 var instruction = soloInstruction(account, binding: workspace, helper: "",
-                                                  project: ProjectPart(root: selected.root, fullAuto: fullAuto, rules: projectRules, folderless: selected.isFolderless, documents: selected.isDocuments, step: run.isStep), chat: id)
+                                                  project: ProjectPart(root: selected.root, fullAuto: fullAuto, rules: projectRules, folderless: selected.isFolderless, documents: selected.isDocuments), chat: id)
                 if !extraNote.isEmpty { instruction += "\n" + extraNote }
                 if keepState { instruction += "\n" + Self.stateRule(current: Self.loadState(id)) }
                 instruction += "\n[Verified app checkpoint; do not repeat completed operations blindly]\n" + checkpoint + extra
@@ -466,7 +443,7 @@ extension Discussion {
                         }
                     }
                 }
-                for reviewerID in mentions.dropFirst() where !run.isStep && reviewerID != account.id && !cancellation.isCancelled {
+                for reviewerID in mentions.dropFirst() where reviewerID != account.id && !cancellation.isCancelled {
                     guard let reviewer = model.accounts.first(where: { $0.id == reviewerID }) else { continue }
                     run.nextAttempt()
                     var view = workspace
@@ -487,24 +464,8 @@ extension Discussion {
                         turn.moreAnswers?.append(ChatTurn.Entry(round: 1, speaker: self.label(reviewer), text: reviewText, failed: failed, model: failed ? nil : reviewed.name))
                     }
                 }
-                // A TODO's Step: the app runs the Step's picked tests on its commits; only a pass ends it (StepTests).
-                if run.isStep, !cancellation.isCancelled,
-                   let item = TodoStore.shared.current.items.first(where: { $0.room == id && $0.state == .running && $0.role == .step }),
-                   item.report?.summary != nil, item.report?.question == nil {   // task_ask waits for the user: nothing to test yet
-                    let picked = L("고른 테스트: ", "Picked tests: ") + item.tests.joined(separator: ", ")
-                    run.setAppStep(0, picked, .doing)
-                    // Its commit goes on from the last finished Step's (or the Goal's base), so a restart resumes there.
-                    let result = StepTests.run(item.tests, in: run, since: TodoStore.shared.current.resumeSHA(item) ?? step?.base)
-                    try? TodoStore.shared.recordStepTests(item.id, result)
-                    run.setAppStep(0, picked, result.passed ? .done : .blocked)
-                    run.note(L("Step 테스트 ", "Step tests ") + result.outcome.rawValue + " · build \(result.buildSeconds ?? 0) s · tests \(result.testSeconds ?? 0) s")
-                    guard result.passed else { end(StepTests.failure(result)); return }
-                }
                 if run.pushWanted, !cancellation.isCancelled {
-                    do {
-                        _ = try GitLink.shared.pushDeferred(run); run.setAppStep(9, L("push (main에 한 번)", "Push (once)"), .done)
-                        if sub == nil && run.pushed { cleanupSplits(id, binding: selected) }   // merged sub-rooms' work trees go once pushed
-                    } catch {
+                    do { _ = try GitLink.shared.pushDeferred(run); run.setAppStep(9, L("push (main에 한 번)", "Push (once)"), .done) } catch {
                         run.setAppStep(9, L("push (main에 한 번)", "Push (once)"), .blocked)
                         end(L("작업과 검토는 끝났지만 push하지 못했어요. commit은 로컬에 남아 있어요: ", "The work and review are done, but the push failed. The commits stay local: ")
                             + error.localizedDescription); return

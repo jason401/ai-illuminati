@@ -11,22 +11,6 @@
     "test-failure-recovery": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_JOBS=1", "AI_ILLUMINATI_TEST_ONLY=testFailureRecovery,testTodoFailureRecovery", "/bin/zsh", "tools/tests/run_mode2.sh"]},
     "test-unread": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_JOBS=1", "AI_ILLUMINATI_TEST_ONLY=testUnreadChats,testRoomDrafts", "/bin/zsh", "tools/tests/run_mode2.sh"]},
     "test-token-stats": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_JOBS=1", "AI_ILLUMINATI_TEST_ONLY=testTokenStats,testRunConditions", "/bin/zsh", "tools/tests/run_mode2.sh"]},
-    "test-subtrees": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_ONLY=testSubTrees,testGoalTrees,testGoalIntegration,testWorkTreeLocks,testProjectWork", "/bin/zsh", "tools/tests/run_mode2.sh"]},
-    "test-step-tests": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_ONLY=testStepTests,testTodoPlan,testTodoScheduler,testProjectWork", "/bin/zsh", "tools/tests/run_mode2.sh"]},
-    "test-todo-store": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_ONLY=testTodoStore,testTodoPlan,testTodoOrder,testTodoScheduler", "/bin/zsh", "tools/tests/run_mode2.sh"]},
-    "test-locks": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_ONLY=testWorkTreeLocks,testProjectWork,testDocumentsProject,testTodoScheduler,testTodoOrder", "/bin/zsh", "tools/tests/run_mode2.sh"]},
-    "test-subrooms": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_ONLY=testDelegate,testSubRoomScreens,testChatSearch,testToolHub", "/bin/zsh", "tools/tests/run_mode2.sh"]},
-    "test-affected-phone-update": {"executable": "/bin/zsh", "args": ["tools/tests/run_mode2.sh", "--affected", "app/macos/Updater.swift", "app/macos/PhoneAccess.swift", "app/modules/AIRemote/RemotePage.swift", "tools/tests/phone_access.swift", "tools/install_app.py", "tools/tests/test_install_app.py"]},
-    "test-affected-backup": {"executable": "/bin/zsh", "args": ["tools/tests/run_mode2.sh", "--affected", "app/modules/AIWorkspace/WorkspaceBackup.swift"]},
-    "test-goal-push": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_ONLY=testProjectWork,testFullAuto,testTodoStore", "/bin/zsh", "tools/tests/run_mode2.sh"]},
-    "test-milestone-review": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_ONLY=testMilestoneReview,testPeerReview,testProjectSnapshot,testTodoStore,testChatThroughCLI,testDocumentsProject", "/bin/zsh", "tools/tests/run_mode2.sh"]},
-    "test-step-end": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_ONLY=testTodoSteps,testTodoPause,testTodoScheduler,testTodoFailureRecovery,testStepTests,testTodoPlan,testTodoStore", "/bin/zsh", "tools/tests/run_mode2.sh"]},
-    "test-milestone-confirm": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_ONLY=testProjectWork,testTodoSteps,testTodoStore,testGoalTrees,testGoalIntegration,testTodoScheduler", "/bin/zsh", "tools/tests/run_mode2.sh"]},
-    "test-milestone-failure": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_ONLY=testMilestoneFailureFix,testTodoFailureRecovery,testTodoSteps,testTodoPlan,testTodoStore,testStepTests,testProjectWork,testGoalIntegration", "/bin/zsh", "tools/tests/run_mode2.sh"]},
-    "test-todo-split": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_ONLY=testTodoSplit,testTodoSteps,testTodoPlan,testTodoScheduler,testTodoAddTool,testTodoOrder,testTodoChatMessage,testMilestoneFailureFix,testTodoStore", "/bin/zsh", "tools/tests/run_mode2.sh"]},
-    "test-goal-trees": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_JOBS=1", "AI_ILLUMINATI_TEST_ONLY=testGoalTrees", "/bin/zsh", "tools/tests/run_mode2.sh"]},
-    "test-goal-run": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_ONLY=testGoalRun,testTodoSplit,testTodoScheduler,testTodoSteps,testStepTests", "/bin/zsh", "tools/tests/run_mode2.sh"]},
-    "test-todo-board-goals": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_ONLY=testTodoUsageBar,testTodoTime,testTodoOrder,testTodoMixedOrder,testGoalRun", "/bin/zsh", "tools/tests/run_mode2.sh"]},
-    "test-todo-milestone-edit": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_ONLY=testTodoEdit,testTodoPlan,testTodoOrder,testMilestoneFailureFix,testGoalRun", "/bin/zsh", "tools/tests/run_mode2.sh"]}
+    "test-affected-backup": {"executable": "/bin/zsh", "args": ["tools/tests/run_mode2.sh", "--affected", "app/modules/AIWorkspace/WorkspaceBackup.swift"]}
   }
 }

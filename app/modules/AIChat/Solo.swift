@@ -263,13 +263,11 @@ extension Discussion {
         if linked?.project == nil, (try? FileManager.default.createDirectory(at: SpaceStore.root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])) != nil {
             roots.append(WorkspaceRoot(path: SpaceStore.root.path, directory: true, writable: true))
         }
-        // A sub-room (Delegate.swift) writes only its own work tree: shared folders and the main repository stay read only.
-        let sub = conversations.first(where: { $0.id == room })?.subOf != nil
         for path in model.activeSharedFolders where FileManager.default.fileExists(atPath: path) {
-            roots.append(WorkspaceRoot(path: path, directory: true, writable: !sub && model.writableSharedFolders.contains(path) ? true : nil))
+            roots.append(WorkspaceRoot(path: path, directory: true, writable: model.writableSharedFolders.contains(path) ? true : nil))
         }
         for root in conversations.first(where: { $0.id == room })?.workspace?.roots ?? [] where !roots.contains(where: { $0.path == root.path }) {
-            roots.append(WorkspaceRoot(path: root.path, directory: root.directory, writable: root.directory && (!sub || root.writable == true) ? true : nil))
+            roots.append(WorkspaceRoot(path: root.path, directory: root.directory, writable: root.directory ? true : nil))
         }
         // The project's own folders and files (Project info tab), read at every answer and read only. A path the
         // chat already has keeps the chat's access.
@@ -578,7 +576,7 @@ extension Discussion {
     // mentions: accounts called with @. They answer at the same time without seeing each other's replies;
     // nobody is picked automatically and the next message is automatic again.
     func runSolo(question: String, history: [ChatTurn], rules: String, config: ChatConfiguration, mentions: [String] = [],
-                 reviewers: [String] = [], cancellation: DebateCancellation, id: UUID, index: Int, extra: String = "", step: SubWork.Tree? = nil) {
+                 reviewers: [String] = [], cancellation: DebateCancellation, id: UUID, index: Int, extra: String = "") {
         let origin = conversations.first { $0.id == id }?.origin
         let previous = [Self.originNote(origin), Self.transcript(history)].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n\n")
         let asked = (previous.isEmpty ? "" : previous + "\n\n") + "[User]\n" + question
@@ -605,7 +603,7 @@ extension Discussion {
         let fresh = freshTranscript.map { Self.soloContext(rules: rules, transcript: $0) }
         let keepState = previous.count + question.count > Self.stateFrom
         var binding = activeWorkspace ?? soloBinding(id)
-        if binding.project != nil { return runProjectSolo(question: question, history: history, rules: rules, config: config, mentions: mentions, reviewers: reviewers, cancellation: cancellation, id: id, index: index, binding: binding, fresh: freshTranscript, keepState: keepState, note: extra, step: step) }
+        if binding.project != nil { return runProjectSolo(question: question, history: history, rules: rules, config: config, mentions: mentions, reviewers: reviewers, cancellation: cancellation, id: id, index: index, binding: binding, fresh: freshTranscript, keepState: keepState, note: extra) }
         let own = Self.chatFolder(id)
         let awake = binding.fullAccess == true ? ProcessInfo.processInfo.beginActivity(options: [.userInitiated, .idleSystemSleepDisabled], reason: "AI Illuminati full-access chat") : nil
         defer { if let awake { ProcessInfo.processInfo.endActivity(awake) } }
@@ -916,7 +914,6 @@ extension Discussion {
         var rules: String   // the project's AGENTS.md / CLAUDE.md
         var folderless = false
         var documents = false   // a documents project: no Git, papers/slides/figures (documentsNote)
-        var step = false
     }
 
     // One instruction for every plain chat. A linked Git project only adds its own part and drops the lines that
@@ -1016,13 +1013,6 @@ extension Discussion {
         } else if let project, project.documents {
             parts.append("[Documents project] Folder: \(project.root).\n" + Self.documentsNote)
             if project.fullAuto { parts.append(Self.documentsAutoNote) }
-        } else if let project, project.step {
-            parts.append("""
-                [Goal Step] Work in \(project.root). Use native file tools for edits and git_* for Git.
-                Commit the changed paths locally. No other AI reviews a Step: before you commit, read your own diff (git_diff) and fix what is wrong.
-                When you are done the app runs this Step's picked tests on your last commit; it ends only when they pass.
-                The original checkout is read only. Stay on the Goal branch. Review and push happen at the Milestone.
-                """)
         } else if let project {
             parts.append("""
                 [Project work] Project: \(project.root).

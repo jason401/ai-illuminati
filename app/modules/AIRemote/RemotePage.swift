@@ -36,47 +36,6 @@ public enum RemotePage {
             "toBottom": L("맨 아래로", "Scroll to bottom"),
             "photo": L("사진", "Photo"),
             "send": L("보내기", "Send"),
-            "usage": L("AI 사용량", "AI Usage"),
-            "usageClose": L("닫기", "Close"),
-            "usageRefresh": L("새로고침", "Refresh"),
-            "usageLoading": L("사용량 확인 중…", "Loading usage…"),
-            "usageChecking": L("확인 중…", "Checking…"),
-            "usageRefreshing": L("새 측정값을 기다리는 중…", "Waiting for new readings…"),
-            "usageWaiting": L("아직 새 측정값이 없어요. 자동으로 다시 확인해요.", "No new readings yet. The panel will check again automatically."),
-            "usageThrottled": L("최근에 새로고침을 요청했어요. 잠시 후 다시 눌러 주세요.", "Refresh was requested recently. Try again in a moment."),
-            "usageEmpty": L("표시할 계정이 없어요.", "No accounts to show."),
-            "usageNoReading": L("{device} 기준 · 측정 기록 없음", "{device} · No readings yet"),
-            "usageAge": L("{device} 기준 · {n}분 전 측정", "{device} · Measured {n} min ago"),
-            "usageRecent": L("{device} 기준 · 방금 측정", "{device} · Measured just now"),
-            "usageFive": L("5시간", "5h"),
-            "usageWeek": L("주간", "Week"),
-            "usageLogin": L("로그인 필요", "Sign-in required"),
-            "usageUnused": L("아직 안 씀", "Not used yet"),
-            "usageRefilled": L("충전됨", "Refilled"),
-            "usageRefills": L("{time} 후 충전", "Refills in {time}"),
-            "usageDays": L("{n}일", "{n}d"),
-            "usageHours": L("{n}시간", "{n}h"),
-            "usageMinutes": L("{n}분", "{n}m"),
-            "update": L("업데이트", "Update"),
-            "updCurrent": L("이 Mac의 버전", "This Mac's version"),
-            "updAvailable": L("업데이트 있음 {a} → {b}", "Update available {a} → {b}"),
-            "updInstall": L("지금 업데이트", "Update Now"),
-            "updCheck": L("업데이트 확인", "Check for Updates"),
-            "updConfirm": L("새 버전을 시험·빌드한 뒤 앱이 재시작돼요. 재시작하는 1~2분 동안 연결이 끊겨요. 실행 중인 작업 {n}개가 끝난 뒤 교체돼요. 업데이트할까요?",
-                            "The new version is tested and built, then the app restarts; the page is cut off for 1–2 minutes meanwhile. It is replaced after the {n} running tasks finish. Update now?"),
-            "updWaitWork": L("실행 중인 작업 {n}개가 끝나면 교체돼요", "Replaced once the {n} running tasks finish"),
-            "updRestarting": L("재시작 중… 다시 연결하는 중", "Restarting… reconnecting"),
-            "updLost": L("5분 동안 다시 연결되지 않았어요. 업데이트가 실패해 이전 버전으로 되돌아갔거나 Mac이 응답하지 않을 수 있어요. 계속 다시 연결해 볼게요.",
-                         "Not back after 5 minutes. The update may have failed and gone back to the previous version, or the Mac is not answering. Still trying to reconnect."),
-            "updConfirming": L("새 버전이 켜졌어요 · 설치 확정을 기다리는 중…", "The new version is up · waiting for the install to be confirmed…"),
-            "updDone": L("업데이트 완료 · {r}", "Updated · {r}"),
-            "updRolledBack": L("새 버전이 제대로 켜지지 않아 이전 버전으로 돌아왔어요.", "The new version did not start properly; the previous version is back."),
-            "updFailed": L("업데이트 실패", "Update failed"),
-            "updLast": L("마지막 설치", "Last install"),
-            "res-installed": L("성공", "Succeeded"),
-            "res-rolled-back": L("롤백됨", "Rolled back"),
-            "res-failed": L("실패", "Failed"),
-            "updRemote": L("원격", "remote"),
         ]
         let json = String(data: (try? JSONSerialization.data(withJSONObject: strings)) ?? Data("{}".utf8), encoding: .utf8) ?? "{}"
         return Data(template.replacingOccurrences(of: "__STRINGS__", with: json)
@@ -131,7 +90,7 @@ body.instant .view, body.instant #shade, body.dragging .view, body.dragging #sha
 .bar .mid { position:absolute; left:84px; right:84px; text-align:center; pointer-events:none; overflow:hidden; }
 .bar .mid b { display:block; font-size:16px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .bar .mid small { display:block; font-size:12px; color:var(--dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-#listTitle { left:106px; right:106px; opacity:0; transition:opacity .15s; } #listView .bar.under #listTitle { opacity:1; }
+#listTitle { opacity:0; transition:opacity .15s; } #listView .bar.under #listTitle { opacity:1; }
 .tool { width:44px; height:44px; border:0; background:none; color:var(--accent); display:flex; align-items:center; justify-content:center; border-radius:22px; }
 .tool:active { background:var(--press); }
 .back { border:0; background:none; color:var(--accent); display:flex; align-items:center; gap:2px; height:44px; padding:0 8px 0 4px; font-size:17px; }
@@ -231,54 +190,6 @@ mark { background:rgba(255,214,10,.45); color:inherit; border-radius:3px; paddin
 .approval button { flex:1; font-size:16px; font-weight:500; padding:10px; border-radius:12px; border:0; }
 .allow { background:var(--accent); color:#fff !important; } .deny { background:var(--fill); }
 .approval button:disabled { opacity:.5; }
-/* The update screen (#update) and the list's update row. */
-.upd { padding:8px 0 24px; line-height:1.5; }
-.upd .kv { display:flex; justify-content:space-between; gap:12px; padding:10px 0; border-bottom:1px solid var(--line); }
-.upd .kv span { color:var(--dim); } .upd .kv b { font:600 15px ui-monospace, Menlo, monospace; }
-.upd .state { display:flex; align-items:flex-start; gap:8px; margin:14px 0 4px; }
-.upd .state .spin { margin-top:5px; }
-.upd .small { color:var(--dim); font-size:13px; overflow-wrap:anywhere; }
-.upd .ok { color:#2e9d4b; font-weight:500; margin:12px 0; } .upd .fail { color:var(--red); font-weight:500; margin:12px 0; }
-.upd .avail { margin:16px 0 8px; font-weight:600; }
-.upd .buttons { display:flex; gap:10px; margin:14px 0; }
-.upd button { flex:1; font-size:16px; font-weight:500; padding:10px; border-radius:12px; border:0; }
-.upd button:disabled { opacity:.5; }
-.upd .last { margin-top:22px; padding-top:12px; border-top:1px solid var(--line); }
-.updrow { margin:4px 10px 0; background:var(--fill); }
-.updrow .name > div { white-space:normal !important; }
-
-#usagePanel { width:min(560px, calc(100% - 24px)); max-height:calc(100% - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 24px);
-  border:1px solid var(--line); border-radius:20px; padding:0; background:var(--bg); color:var(--text); }
-#usagePanel[open] { display:flex; flex-direction:column; }
-#usagePanel::backdrop { background:rgba(0,0,0,.44); }
-.usageHead, .usageFoot { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 14px; }
-.usageHead { border-bottom:1px solid var(--line); }
-.usageHead h2 { font-size:18px; margin:0; }
-.usageFoot { border-top:1px solid var(--line); font-size:13px; color:var(--dim); }
-.usageHead button, .usageFoot button { flex:none; min-height:44px; padding:6px 10px; border:0; border-radius:10px; background:var(--fill); color:var(--accent); }
-.usageFoot button:disabled { opacity:.5; }
-#usageAge, #usageAccounts { min-width:0; overflow-wrap:anywhere; }
-#usageAccounts { min-height:0; overflow:auto; overscroll-behavior:contain; padding:0 14px 14px; }
-#usageStatus { color:var(--dim); font-size:13px; padding:0 14px; margin:0; }
-#usageStatus:not(:empty) { padding-bottom:8px; }
-.usageGroup h3 { color:var(--cl, var(--text)); font-size:14px; margin:16px 0 6px; }
-@media (prefers-color-scheme: dark) { .usageGroup h3 { color:var(--cd, var(--text)); } }
-.usageAccount { padding:9px 0; border-top:1px solid var(--line); }
-.usageName { margin:0 0 6px; font-size:15px; }
-.usageSmall, .usageTime, .usageLabel { color:var(--dim); font-size:13px; }
-.usageSmall { margin:4px 0 0; font-weight:normal; }
-.usagePlan { margin-inline-start:8px; }
-.usageLogin { color:var(--warn); }
-.usageLimit { display:grid; grid-template-columns:3.25rem minmax(0, 1fr) 3rem; gap:2px 6px; align-items:center; margin:4px 0; }
-.usageTime { grid-column:2 / -1; }
-.usageLeft { text-align:right; font-size:14px; font-weight:600; font-variant-numeric:tabular-nums; color:var(--remaining, var(--text)); }
-.usageLow { --remaining:var(--warn); } .usageCritical { --remaining:var(--red); }
-.usageBar { position:relative; height:6px; border-radius:6px; background:var(--fill); }
-.usageBar i { display:block; height:100%; border-radius:inherit; background:var(--remaining, var(--text)); opacity:.8; }
-.usageBar b { position:absolute; top:-2px; width:1px; height:10px; background:var(--text); opacity:.55; }
-@media (min-width:520px) {
-  .usageLimits { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:16px; }
-}
 
 /* The message box: one rounded card, text on top, + on the left and send on the right (the Mac's composer). */
 footer { position:relative; padding:6px 10px calc(env(safe-area-inset-bottom) + 8px); background:var(--bg); }
@@ -313,8 +224,6 @@ footer { position:relative; padding:6px 10px calc(env(safe-area-inset-bottom) + 
 <div id="listView" class="view">
   <div class="bar" id="listBar">
     <div class="mid" id="listTitle"><b>AI Illuminati</b></div>
-    <button class="tool" id="usageTool" aria-haspopup="dialog"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.2 17a9 9 0 1 1 15.6 0H4.2ZM12 14l4-5"/><circle cx="12" cy="14" r="1"/></svg></button>
-    <button class="tool" id="updTool" aria-label="update"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v8M8.5 12.5 12 16l3.5-3.5"/></svg></button>
     <div class="spacer"></div>
     <button class="tool" id="compose" aria-label="new chat"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6"/><path d="M17.6 3.4a1.9 1.9 0 0 1 2.7 2.7L12 14.4l-3.6.9.9-3.6z"/></svg></button>
   </div>
@@ -325,7 +234,6 @@ footer { position:relative; padding:6px 10px calc(env(safe-area-inset-bottom) + 
         <input id="q" type="search" enterkeyhint="search" autocomplete="off" autocorrect="off"><button class="clear hidden" id="qClear" aria-label="clear">✕</button></label>
       <button class="cancel hidden" id="qCancel"></button>
     </div>
-    <a class="row updrow hidden" id="updRow" href="#update"><span class="mark"><span class="dot"></span></span><span class="name"><div id="updRowText"></div></span></a>
     <div id="list"></div>
   </div>
 </div>
@@ -353,12 +261,6 @@ footer { position:relative; padding:6px 10px calc(env(safe-area-inset-bottom) + 
   </footer>
 </div>
 <div id="viewer" class="hidden"><img alt=""></div>
-<dialog id="usagePanel" aria-labelledby="usageTitle">
-  <div class="usageHead"><h2 id="usageTitle"></h2><button id="usageClose" autofocus></button></div>
-  <div id="usageAccounts"></div>
-  <p id="usageStatus" role="status"></p>
-  <div class="usageFoot"><span id="usageAge"></span><button id="usageRefresh"></button></div>
-</dialog>
 <script>
 const S = __STRINGS__;
 const params = new URLSearchParams(location.search);
@@ -380,13 +282,9 @@ const folded = new Set(JSON.parse(localStorage.getItem('folded') || '[]'));
 function esc(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function withKey(url) { return url + (url.includes('?') ? '&' : '?') + 'k=' + encodeURIComponent(KEY); }
 function colorStyle(c) { return c && c.length === 2 ? ' style="--cl:' + esc(c[0]) + ';--cd:' + esc(c[1]) + '"' : ''; }
-// `timeout` (ms): a request left hanging (the Mac restarting) fails instead of stopping the polling.
-async function api(path, body, timeout) {
-  const options = body === undefined ? { headers: { 'X-Remote-Key': KEY }, cache: 'no-store' }
-    : { method: 'POST', headers: { 'X-Remote-Key': KEY, 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
-  const abort = timeout ? new AbortController() : null, timer = abort && setTimeout(() => abort.abort(), timeout);
-  if (abort) options.signal = abort.signal;
-  const r = await fetch(path, options).finally(() => clearTimeout(timer));
+async function api(path, body) {
+  const r = await fetch(path, body === undefined ? { headers: { 'X-Remote-Key': KEY }, cache: 'no-store' }
+    : { method: 'POST', headers: { 'X-Remote-Key': KEY, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   const data = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(data.error || r.status);
   return data;
@@ -464,10 +362,9 @@ function back() {
 function route() {
   const h = location.hash;
   let m, id = null, project = null, isNew = false;
-  const isUpdate = h === '#update';
   if ((m = h.match(/^#c=(.+)$/))) id = decodeURIComponent(m[1]);
   else if ((m = h.match(/^#new(?:=(.*))?$/))) { isNew = true; project = m[1] ? decodeURIComponent(m[1]) : null; }
-  const key = isUpdate ? 'update' : id || (isNew ? 'new:' + (project || '') : null);
+  const key = id || (isNew ? 'new:' + (project || '') : null);
   const animate = navAnimate; navAnimate = false;
   if (current !== null) drafts[current] = $('text').value;
   if (!key) pushed = false;
@@ -484,7 +381,6 @@ function route() {
     else if (!id) $('turns').innerHTML = '<div class="note">' + esc(S.askAnything) + '</div>';
     $('chatScroll').scrollTop = 1e9;
     if (isNew) setTimeout(() => $('text').focus(), animate ? 380 : 0);
-    if (isUpdate) { $('turns')._upd = ''; $('footer').classList.add('hidden'); $('chatTitle').textContent = S.update; $('chatSub').textContent = ''; renderUpdate(); }
   }
   current = key;
   if (!key) { chatId = null; document.activeElement && document.activeElement.blur && document.activeElement.blur(); }
@@ -494,8 +390,8 @@ function route() {
 function poll() {
   clearTimeout(timer);
   if (document.hidden) return;
-  const work = current === 'update' ? loadUpdate() : chatId && current ? loadChat() : !current ? loadList() : Promise.resolve();
-  work.finally(() => { timer = setTimeout(poll, current === 'update' ? 2000 : current ? 1500 : 4000); });
+  const work = chatId && current ? loadChat() : !current ? loadList() : Promise.resolve();
+  work.finally(() => { timer = setTimeout(poll, current ? 1500 : 4000); });
 }
 
 // The list, in the Mac sidebar's sections; a project's chats fold under its row (remembered on this phone).
@@ -530,7 +426,6 @@ function renderList(data) {
 async function loadList() {
   if (searching) return;
   if (!KEY) { $('list').innerHTML = '<div class="note">' + esc(S.noKey) + '</div>'; return; }
-  loadUpdate();
   try {
     const data = await api('/api/chats');
     if (searching) return;
@@ -558,208 +453,6 @@ $('list').addEventListener('click', e => {
   go('#c=' + encodeURIComponent(row.dataset.id));
 });
 $('compose').addEventListener('click', () => go('#new'));
-$('updTool').addEventListener('click', () => go('#update'));
-$('updRow').addEventListener('click', e => { e.preventDefault(); go('#update'); });
-
-const usagePanel = $('usagePanel'), usageRefresh = $('usageRefresh'), usageStatus = $('usageStatus');
-let usageTimer = null, usagePending = false, usageSnapshot = null, usageBurst = null;
-
-function usageReadingTimes(data) {
-  // The footer shows the oldest reading, which can stay the same when one account is still cached.
-  return JSON.stringify(data.groups.map(group => group.accounts.map(account => account.checkedAt)));
-}
-
-function usageRefill(resetsAt, now) {
-  if (resetsAt === null) return S.usageUnused;
-  if (resetsAt <= now) return S.usageRefilled;
-  const minutes = Math.floor((resetsAt - now) / 60000);
-  let time;
-  if (minutes < 60) {
-    time = S.usageMinutes.replace('{n}', Math.max(minutes, 1));
-  } else if (minutes < 1440) {
-    time = S.usageHours.replace('{n}', Math.floor(minutes / 60));
-    if (minutes % 60) time += ' ' + S.usageMinutes.replace('{n}', minutes % 60);
-  } else {
-    time = S.usageDays.replace('{n}', Math.floor(minutes / 1440));
-    const hours = Math.floor((minutes % 1440) / 60);
-    if (hours) time += ' ' + S.usageHours.replace('{n}', hours);
-  }
-  return S.usageRefills.replace('{time}', time);
-}
-
-function usageLimit(label, limit, duration, now) {
-  const title = '<span class="usageLabel">' + esc(label) + '</span>';
-  if (!limit) return '<div class="usageLimit">' + title + '<span class="usageSmall">—</span></div>';
-  const remaining = limit.resetsAt !== null && limit.resetsAt <= now ? 100 : limit.left;
-  const level = remaining < 10 ? ' usageCritical' : remaining < 30 ? ' usageLow' : '';
-  const tick = limit.resetsAt > now ? '<b style="left:clamp(0px,' +
-    Math.min(100, (limit.resetsAt - now) * 100 / duration) + '%,calc(100% - 1px))"></b>' : '';
-  return '<div class="usageLimit' + level + '">' + title +
-    '<span class="usageBar" aria-hidden="true"><i style="width:' + remaining + '%"></i>' + tick + '</span>' +
-    '<span class="usageLeft">' + Math.round(remaining) + '%</span>' +
-    '<span class="usageTime">' + esc(usageRefill(limit.resetsAt, now)) + '</span></div>';
-}
-
-function usageLimits(account, now) {
-  if (account.checkedAt === null && !account.fiveHour && !account.weekly && !account.note && !account.extras.length) {
-    return '<p class="usageSmall">' + esc(S.usageChecking) + '</p>';
-  }
-  return '<div class="usageLimits">' + usageLimit(S.usageFive, account.fiveHour, 5 * 60 * 60 * 1000, now) +
-    usageLimit(S.usageWeek, account.weekly, 7 * 24 * 60 * 60 * 1000, now) + '</div>';
-}
-
-function renderUsage(data) {
-  const now = Date.now();
-  const minutes = Math.max(0, Math.floor((now - data.checkedAt) / 60000));
-  const age = data.checkedAt === null ? S.usageNoReading : minutes > 0 ? S.usageAge : S.usageRecent;
-  $('usageAge').textContent = age.replace('{n}', minutes).replace('{device}', () => data.device);
-  $('usageAccounts').innerHTML = data.groups.map(g => '<section class="usageGroup"' + colorStyle(g.color) + '><h3>' +
-    esc(g.name) + '</h3>' + g.accounts.map(a =>
-      '<div class="usageAccount"><h4 class="usageName">' + esc(a.name) +
-      (a.plan ? '<span class="usageSmall usagePlan">' + esc(a.plan) + '</span>' : '') + '</h4>' +
-      usageLimits(a, now) +
-      (a.needsLogin && g.provider !== 'ollama' ? '<p class="usageSmall usageLogin">' + esc(S.usageLogin) + '</p>' : '') +
-      (a.note ? '<p class="usageSmall">' + esc(a.note) + '</p>' : '') +
-      a.extras.map(extra => '<p class="usageSmall">' + esc(extra) + '</p>').join('') + '</div>'
-    ).join('') + '</section>').join('') || '<p class="note">' + esc(S.usageEmpty) + '</p>';
-}
-
-async function loadUsage(refresh = false) {
-  clearTimeout(usageTimer);
-  if (!usagePanel.open || document.hidden || usagePending) return;
-  if (!KEY) { usageStatus.textContent = S.noKey; return; }
-  usagePending = true;
-  usageRefresh.disabled = true;
-  if (!usageSnapshot) usageStatus.textContent = S.usageLoading;
-  try {
-    usageSnapshot = await api(refresh ? '/api/usage/refresh' : '/api/usage', refresh ? {} : undefined, 8000);
-    if (!usagePanel.open) return;
-    renderUsage(usageSnapshot);
-    if (refresh && usageSnapshot.refreshStarted) {
-      usageBurst = { times: usageReadingTimes(usageSnapshot), deadline: performance.now() + 20000 };
-      usageStatus.textContent = S.usageRefreshing;
-    } else if (refresh) {
-      usageStatus.textContent = S.usageThrottled;
-    } else if (!usageBurst || usageReadingTimes(usageSnapshot) !== usageBurst.times) {
-      usageBurst = null;
-      usageStatus.textContent = '';
-    } else if (performance.now() >= usageBurst.deadline) {
-      usageBurst = null;
-      usageStatus.textContent = S.usageWaiting;
-    } else {
-      usageStatus.textContent = S.usageRefreshing;
-    }
-  } catch {
-    if (usageBurst && performance.now() >= usageBurst.deadline) usageBurst = null;
-    if (usagePanel.open) usageStatus.textContent = S.offline;
-  } finally {
-    usagePending = false;
-    usageRefresh.disabled = Boolean(usageBurst);
-    if (usagePanel.open && !document.hidden) {
-      const delay = usageBurst ? Math.min(3000, Math.max(0, usageBurst.deadline - performance.now())) : 45000;
-      usageTimer = setTimeout(loadUsage, delay);
-    }
-  }
-}
-
-$('usageTool').setAttribute('aria-label', S.usage);
-$('usageTitle').textContent = S.usage;
-$('usageClose').textContent = S.usageClose;
-usageRefresh.textContent = S.usageRefresh;
-$('usageTool').addEventListener('click', () => {
-  usagePanel.showModal();
-  if (usageSnapshot) renderUsage(usageSnapshot);
-  loadUsage();
-});
-$('usageClose').addEventListener('click', () => usagePanel.close());
-usagePanel.addEventListener('close', () => {
-  if (usagePanel.open) return;
-  clearTimeout(usageTimer);
-  usageBurst = null;
-  usageRefresh.disabled = usagePending;
-  usageStatus.textContent = '';
-});
-usageRefresh.addEventListener('click', () => loadUsage(true));
-document.addEventListener('visibilitychange', () => loadUsage());
-
-
-// Updating this Mac from the phone: Update Now restarts the app, so the page loses it for a while. `track` (kept on this
-// phone) says which version it left from; a new version answering means done, the old one answering again after the
-// break (or reporting a failure) means it failed or went back, and 5 minutes without an answer says it may have.
-let upd = null, updNote = null, track = JSON.parse(localStorage.getItem('updTrack') || 'null');
-const LOST_AFTER = 5 * 60 * 1000;
-function short(r) { return String(r || '').slice(0, 7); }
-function saveTrack() { track ? localStorage.setItem('updTrack', JSON.stringify(track)) : localStorage.removeItem('updTrack'); }
-async function loadUpdate() {
-  try {
-    const s = await api('/api/update', undefined, 8000);
-    upd = s;
-    if (track) {
-      // The new app answers before it has acknowledged; only the installer's "installed" for this version is final.
-      if (s.current && s.current !== track.from) {
-        track.lostAt = null;
-        if (s.last && s.last.result === 'installed' && s.last.revision === s.current) { updNote = { ok: true, text: S.updDone.replace('{r}', short(s.current)) }; track = null; }
-        else track.confirming = true;
-      }
-      else if (s.busy || s.waiting) track.lostAt = null;   // a short break while it was still testing or building
-      else { updNote = { ok: false, text: track.lostAt ? S.updRolledBack : S.updFailed }; track = null; }
-      saveTrack();
-    }
-  } catch (e) {
-    if (String(e.message) === '401') upd = { error: S.noKey };
-    else if (track) { if (!track.lostAt) { track.lostAt = Date.now(); saveTrack(); } }
-    else upd = Object.assign({}, upd, { error: e.message || S.offline });
-  }
-  renderUpdate();
-}
-function renderUpdate() {
-  const s = upd || {}, offline = track && track.lostAt, confirming = track && !offline && track.confirming && s.current !== track.from;
-  const shown = s.available || s.busy || s.waiting || track;
-  $('updRow').classList.toggle('hidden', !shown || !!s.error && !track);
-  $('updRowText').textContent = offline ? S.updRestarting : confirming ? S.updConfirming : s.progress ? s.progress.summary
-    : s.waiting ? S.updWaitWork.replace('{n}', s.work || 0) : s.available ? S.updAvailable.replace('{a}', short(s.current)).replace('{b}', short(s.available)) : '';
-  if (current !== 'update') return;
-  let h = '<div class="upd">';
-  if (s.error && !track) h += '<div class="fail">' + esc(s.error) + '</div>';
-  if (s.current !== undefined) h += '<div class="kv"><span>' + esc(S.updCurrent) + '</span><b>' + esc(short(s.current) || '?') + '</b></div>' +
-    '<div class="kv"><span>' + esc(S.update) + '</span><span>' + esc(s.channelLabel || '') + '</span></div>';
-  if (offline) {
-    const lost = Date.now() - track.lostAt > LOST_AFTER;
-    h += '<div class="state">' + (lost ? '' : '<span class="spin"></span>') + '<div' + (lost ? ' class="fail"' : '') + '>' + esc(lost ? S.updLost : S.updRestarting) + '</div></div>';
-  } else if (confirming) {
-    h += '<div class="state"><span class="spin"></span><div>' + esc(S.updConfirming) + '</div></div>';
-  } else if (s.progress) {
-    h += '<div class="state">' + (s.progress.failed ? '' : '<span class="spin"></span>') + '<div>' + esc(s.progress.summary) +
-      (s.progress.line ? '<div class="small">' + esc(s.progress.line) + '</div>' : '') + '</div></div>';
-  } else if (s.text) h += '<div class="state"><div>' + esc(s.text) + '</div></div>';
-  if (s.waiting) h += '<div class="small">' + esc(S.updWaitWork.replace('{n}', s.work || 0)) + '</div>';
-  if (updNote) h += '<div class="' + (updNote.ok ? 'ok' : 'fail') + '">' + esc(updNote.text) + '</div>';
-  const free = s.current !== undefined && !s.busy && !s.waiting && !track;
-  if (s.available && free) h += '<div class="avail">' + esc(S.updAvailable.replace('{a}', short(s.current)).replace('{b}', short(s.available))) + '</div>';
-  if (s.current !== undefined) h += '<div class="buttons"><button class="deny" data-upd="check"' + (free ? '' : ' disabled') + '>' + esc(S.updCheck) + '</button>' +
-    (s.available ? '<button class="allow" data-upd="install"' + (free ? '' : ' disabled') + '>' + esc(S.updInstall) + '</button>' : '') + '</div>';
-  if (s.last) {
-    const at = s.last.at ? new Date(s.last.at) : null;
-    h += '<div class="last"><div><b>' + esc(S.updLast) + '</b> · ' + esc(S['res-' + s.last.result] || s.last.result) + (s.last.remote ? ' · ' + esc(S.updRemote) : '') +
-      (s.last.revision ? ' · ' + esc(short(s.last.revision)) : '') + (at && !isNaN(at) ? ' · ' + esc(at.toLocaleString()) : '') + '</div>' +
-      (s.last.detail ? '<div class="small">' + esc(s.last.detail) + '</div>' : '') + (s.last.log ? '<div class="small">' + esc(s.last.log) + '</div>' : '') + '</div>';
-  }
-  h += '</div>';
-  if ($('turns')._upd !== h) { $('turns')._upd = h; $('turns').innerHTML = h; }
-}
-$('turns').addEventListener('click', async e => {
-  const b = e.target.closest('button[data-upd]'); if (!b || current !== 'update') return;
-  const install = b.dataset.upd === 'install';
-  if (install && !confirm(S.updConfirm.replace('{n}', (upd && upd.work) || 0))) return;
-  b.disabled = true;
-  updNote = null;
-  try {
-    const s = await api('/api/update/' + b.dataset.upd, {});
-    upd = s;
-    if (install) { track = { from: s.current, to: s.available || '', at: Date.now() }; saveTrack(); }
-  } catch (err) { alert(err.message); }
-  renderUpdate();
-});
 
 // Search like the Mac sidebar: titles, messages and answers; a result opens its chat at the turn it was found in.
 function highlight(text, words) {
@@ -1040,7 +733,7 @@ $('chatView').addEventListener('touchcancel', endDrag, { passive: true });
 // On a Mac (another Mac opens this page, or a desktop browser): Esc closes the photo or goes back; a two-finger swipe
 // to the right on the trackpad goes back too, except over rows that scroll sideways.
 document.addEventListener('keydown', e => {
-  if (e.key !== 'Escape' || e.isComposing || usagePanel.open) return;
+  if (e.key !== 'Escape' || e.isComposing) return;
   if (!$('viewer').classList.contains('hidden')) { $('viewer').classList.add('hidden'); return; }
   if (current) { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); setOpen(false, true); back(); }
 });

@@ -96,11 +96,8 @@ ProjectBinding:
 기존 연결 폴더 쓰기·shared writable root가 우회할 수 있다. 어떤 실행이든 repo를 쓰는 root가 있으면
 같은 registry를 거친다. 복수 root 확보는 정렬된 순서로 한 번에 처리해 교착을 피한다.
 
-잠금은 두 층이다(2026-11-17, `docs/SUBROOM_PLAN.md` 2절). 쓰기 잠금의 키는 symlink를 정규화한 worktree
-(`git rev-parse --show-toplevel`)라서, 한 worktree에는 한 명만 쓰고 같은 repo의 다른 worktree는 동시에 고칠 수 있다.
-그 대신 브랜치 만들기/전환, merge, fetch/pull, push, stable 공개처럼 worktree끼리 공유하는 ref를 바꾸는 앱 Git
-명령은 common Git directory마다 짧은 refs 잠금을 그 명령 동안만 배타로 잡는다(최대 60초 대기). 커밋은 refs 잠금
-없이 한다. 별도 앱 프로세스 간에도 같은 규칙을 advisory lock 파일로 지킨다. 다른 앱의 Claude Code/편집기까지 강제로
+repo 키는 symlink를 정규화한 common Git directory로 잡는다. 초기에는 worktree도 보수적으로 같은 repo로
+직렬화한다. 별도 앱 프로세스 간 advisory lock도 사용한다. 다른 앱의 Claude Code/편집기까지 강제로
 막지는 못하므로, 외부 변경은 각 Git/파일 작업 전 재검사하고 충돌하면 멈춘다.
 앱 재시작 시 이전 job/PID 기록을 점검한다. 남은 프로세스의 종료 여부가 불명확하면 자동 재개하지 않는다.
 
@@ -283,7 +280,7 @@ ToolContext에 선택적인 프로젝트 scope, turn/run ID, generation, 허용 
 - 승인 거절/timeout/Stop/해제/늦은 클릭/인계에서 job 한 번만 종료, 예전 요청 재사용 불가.
 - 명령 정의 변경 시 승인 무효, 임의 명령/cwd/환경 인자 거절, 출력 cap 및 stdin 종료.
 - 15초 이상 실행·승인 대기가 브리지 timeout으로 유실되지 않고 UI/job/CLI deadline과 일치.
-- 같은 worktree의 두 채팅·다른 AI·기존 일반 쓰기·다른 앱 인스턴스 직렬화. 같은 repo의 다른 worktree는 동시에 쓰고, ref를 바꾸는 Git 명령만 refs 잠금으로 직렬화.
+- 같은 repo의 두 채팅·다른 AI·기존 일반 쓰기·동일 commonDir worktree·다른 앱 인스턴스 직렬화.
 - 한도 소진 시 자식 writer 종료 확인 후 다음 AI 시작. uncommitted/untracked 보존, 불필요한 pull/중복
   build/commit/push 없음. 계정 전부 소진 시 변경 보존. 사용자 Stop은 자동 인계하지 않음.
 - commit/push 후 Undo 제한과 오래된 backup의 HEAD 충돌 거절.

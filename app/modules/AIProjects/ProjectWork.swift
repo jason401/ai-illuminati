@@ -815,7 +815,11 @@ public final class GitLink: ToolProvider {
                           }) throws {
         let goals = try git(["for-each-ref", "--format=%(refname:short)", "refs/heads/todo-goal/"]).split(separator: "\n").map(String.init)
         guard !goals.isEmpty else { return }
-        let remote = ["--not", "--remotes=" + binding.remote]
+        // Measured from the target branch as the remote has it now: a stale tracking ref or another branch's ref would
+        // hide or invent Goal commits. A branch not on the remote yet (or no answer): everything the remote is known to have.
+        let tracking = "refs/remotes/\(binding.remote)/\(branch)"
+        let fetched = (try? git(["fetch", "--no-tags", binding.remote, "+refs/heads/\(branch):\(tracking)"])) != nil
+        let remote = fetched ? ["--not", tracking] : ["--not", "--remotes=" + binding.remote]
         for goal in goals {
             guard let id = (try? git(["config", "--get", "branch." + goal + ".todogoal"])).flatMap(UUID.init(uuidString:)) else { continue }
             let common = (try? git(["merge-base", "--all", head, "refs/heads/" + goal])) ?? ""

@@ -372,6 +372,11 @@ private func checkGoalPushGuard(_ project: ProjectBinding, origin: URL) {
     _ = git(["reset", "-q", "--hard", candidate])
     reply = push()
     expect(reply.ok && remoteMain() == candidate, "the Milestone's verified SHA pushes: \(reply.text)")
+    // A stale origin/main (the Goal is already on the remote's main) does not make a later plain push look like a bypass.
+    _ = git(["update-ref", "refs/remotes/origin/main", remoteBefore])
+    write("after\n", "after.txt"); commit(project.root, "Plain work after the Milestone")
+    reply = push()
+    expect(reply.ok && remoteMain() == git(["rev-parse", "HEAD"]), "the check uses the remote's current main, not a stale tracking ref: \(reply.text)")
     print("PASS: Goal push guard (plain push unchanged, merged or cherry-picked Goal commits refused, only the Milestone's verified SHA)")
 }
 

@@ -103,35 +103,60 @@ public enum SubWork {
         }
         let key = "branch." + name + "."
         func config(_ field: String) -> String? { try? git(["config", "--get", key + field], binding.root, token) }
-        func resolved() -> String { URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path }
+        // The parent resolved, the last part as it is: the same text for a folder that is there and one that is gone.
+        func real(_ folder: String) -> String {
+            let url = URL(fileURLWithPath: folder)
+            return url.deletingLastPathComponent().resolvingSymlinksInPath().standardizedFileURL.appendingPathComponent(url.lastPathComponent).path
+        }
+        let mine = real(path)
         return try ProjectWork.withRefs(binding.root, token: token) {
             if try reply(["rev-parse", "-q", "--verify", "refs/heads/" + name], binding.root, token).status == 0 {
-                guard config("todogoal") == id, let base = config("todogoalbase") else { throw ProjectError.make("The branch belongs to another Goal or was not made by the app: " + name) }
+                guard config("todogoal") == id else { throw ProjectError.make("The branch belongs to another Goal or was not made by the app: " + name) }
+                var base = config("todogoalbase") ?? ""
+                if base.isEmpty {
+                    // Stopped between making the branch and recording it: taken only while the branch is still exactly the
+                    // start it was about to be made from (a branch made later by hand from elsewhere is not).
+                    guard let pending = config("todogoalpending"), (try? git(["rev-parse", "--verify", "refs/heads/" + name + "^{commit}"], binding.root, token)) == pending else {
+                        throw ProjectError.make("The branch belongs to another Goal or was not made by the app: " + name)
+                    }
+                    _ = try git(["config", key + "todogoalbase", pending], binding.root, token)
+                    _ = try? git(["config", "--unset", key + "todogoalpending"], binding.root, token)
+                    base = pending
+                }
                 var listed: String?, current: String?
                 for field in paths(try git(["worktree", "list", "--porcelain", "-z"], binding.root, token)) {
                     if field.hasPrefix("worktree ") { current = String(field.dropFirst(9)) }
                     else if field == "branch refs/heads/" + name { listed = current }
                 }
-                if let listed, FileManager.default.fileExists(atPath: listed) {
-                    guard URL(fileURLWithPath: listed).resolvingSymlinksInPath().standardizedFileURL.path == resolved() else { throw ProjectError.make("The Goal's branch is checked out elsewhere: " + listed) }
-                    return Tree(path: resolved(), branch: name, base: base)
+                if let listed, real(listed) != mine { throw ProjectError.make("The Goal's branch is checked out elsewhere: " + listed) }
+                if FileManager.default.fileExists(atPath: path) {
+                    // The folder must be this repository's work tree on the Goal's branch, not only a folder Git once listed.
+                    let top = try? git(["rev-parse", "--show-toplevel"], path, token)
+                    guard listed != nil, top.map(real) == mine, ProjectWork.commonDir(path) == common,
+                          (try? git(["branch", "--show-current"], path, token)) == name else {
+                        throw ProjectError.make("The Goal's work tree folder exists but is not its work tree: " + path)
+                    }
+                    return Tree(path: mine, branch: name, base: base)
                 }
-                guard !FileManager.default.fileExists(atPath: path) else { throw ProjectError.make("The Goal's work tree folder exists but is not its work tree: " + path) }
-                _ = try git(["worktree", "prune"], binding.root, token)
+                // Removed by hand: added again on the branch. Only this Goal's own entry is replaced (-f), no prune of others.
                 try FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
-                _ = try git(["worktree", "add", path, name], binding.root, token, timeout: 300)
-                return Tree(path: resolved(), branch: name, base: base)
+                _ = try git(["worktree", "add"] + (listed == nil ? [] : ["-f"]) + [mine, name], binding.root, token, timeout: 300)
+                return Tree(path: mine, branch: name, base: base)
             }
             guard !FileManager.default.fileExists(atPath: path) else { throw ProjectError.make("The Goal's work tree folder already exists: " + path) }
             let remoteRef = "refs/remotes/\(binding.remote)/\(target)"
             _ = try git(["fetch", "--no-tags", binding.remote, "+refs/heads/\(target):\(remoteRef)"], binding.root, token, timeout: 180)
             let base = try git(["rev-parse", "--verify", remoteRef + "^{commit}"], binding.root, token)
-            // Kept before the branch exists: a branch without them is never taken for this Goal's.
+            // The Goal id and the start it is about to be made from go first, the base only once the branch is there: a
+            // stop in between leaves no record that a branch made later from elsewhere could pass.
+            _ = try? git(["config", "--unset", key + "todogoalbase"], binding.root, token)
             _ = try git(["config", key + "todogoal", id], binding.root, token)
-            _ = try git(["config", key + "todogoalbase", base], binding.root, token)
+            _ = try git(["config", key + "todogoalpending", base], binding.root, token)
             try FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
-            _ = try git(["worktree", "add", "--no-track", "-b", name, path, base], binding.root, token, timeout: 300)
-            return Tree(path: resolved(), branch: name, base: base)
+            _ = try git(["worktree", "add", "--no-track", "-b", name, mine, base], binding.root, token, timeout: 300)
+            _ = try git(["config", key + "todogoalbase", base], binding.root, token)
+            _ = try? git(["config", "--unset", key + "todogoalpending"], binding.root, token)
+            return Tree(path: mine, branch: name, base: base)
         }
     }
 

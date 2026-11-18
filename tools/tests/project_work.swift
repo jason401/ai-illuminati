@@ -2057,10 +2057,35 @@ func testGoalTrees() {
     try! FileManager.default.removeItem(atPath: tree.path)
     let again = try! SubWork.goal(binding, goal: id, target: "main")
     expect(again == tree && git(["rev-parse", "HEAD"], at: again.path) == step, "a removed folder comes back on the branch: \(again)")
+    // A folder Git still lists whose .git link is gone is not taken as the Goal's tree.
+    try! FileManager.default.removeItem(atPath: tree.path + "/.git")
+    expect(failure { try SubWork.goal(binding, goal: id, target: "main") } != nil, "a folder without its .git link is refused")
+    try! FileManager.default.removeItem(atPath: tree.path)
 
     // Another Goal: its own tree; a branch of the same name not made for this Goal is refused.
     let second = try! SubWork.goal(binding, goal: UUID(), target: "main")
     expect(second.path != tree.path && second.branch != tree.branch && second.base == git(["rev-parse", "HEAD"], at: other.path), "another Goal, another tree from the newest remote")
+    // Bringing one Goal's folder back prunes no other work tree whose folder is away for now.
+    try! FileManager.default.removeItem(atPath: second.path)
+    expect(try! SubWork.goal(binding, goal: id, target: "main") == tree && git(["rev-parse", "HEAD"], at: tree.path) == step, "the first Goal's folder comes back")
+    let listing = git(["worktree", "list", "--porcelain"], at: main)
+    expect(listing.contains("branch refs/heads/" + second.branch), "the other Goal's entry is still listed: \(second.path) / \(listing)")
+    // Stopped after recording but before the branch: a branch made later by hand from local main is not this Goal's.
+    func stopped(_ goalID: UUID) -> String {
+        let n = "todo-goal/" + goalID.uuidString.lowercased().prefix(8)
+        _ = git(["config", "branch.\(n).todogoal", goalID.uuidString.lowercased()], at: main)
+        _ = git(["config", "branch.\(n).todogoalpending", remote], at: main)
+        return n
+    }
+    let early = UUID(uuidString: "0EA41111-0000-4000-8000-000000000000")!
+    _ = git(["branch", stopped(early), local], at: main)
+    expect(failure { try SubWork.goal(binding, goal: early, target: "main") } != nil, "a stale record does not own a branch made later from local main")
+    // Stopped after the branch was made, before the base was kept: the branch still at its start is taken up.
+    let late = UUID(uuidString: "1A7E2222-0000-4000-8000-000000000000")!
+    _ = git(["branch", stopped(late), remote], at: main)
+    let resumed = try! SubWork.goal(binding, goal: late, target: "main")
+    expect(resumed.base == remote && git(["rev-parse", "HEAD"], at: resumed.path) == remote && !FileManager.default.fileExists(atPath: resumed.path + "/local.txt"),
+           "a branch made just before a stop is taken up at its start: \(resumed)")
     let clash = UUID(uuidString: short + "-0000-4000-8000-000000000000")!
     expect(clash != id && failure { try SubWork.goal(binding, goal: clash, target: "main") } != nil && git(["rev-parse", "HEAD"], at: tree.path) == step,
            "the same 8 characters of another Goal are refused, the tree untouched")

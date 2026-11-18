@@ -263,11 +263,13 @@ extension Discussion {
         if linked?.project == nil, (try? FileManager.default.createDirectory(at: SpaceStore.root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])) != nil {
             roots.append(WorkspaceRoot(path: SpaceStore.root.path, directory: true, writable: true))
         }
+        // A sub-room (Delegate.swift) writes only its own work tree: shared folders and the main repository stay read only.
+        let sub = conversations.first(where: { $0.id == room })?.subOf != nil
         for path in model.activeSharedFolders where FileManager.default.fileExists(atPath: path) {
-            roots.append(WorkspaceRoot(path: path, directory: true, writable: model.writableSharedFolders.contains(path) ? true : nil))
+            roots.append(WorkspaceRoot(path: path, directory: true, writable: !sub && model.writableSharedFolders.contains(path) ? true : nil))
         }
         for root in conversations.first(where: { $0.id == room })?.workspace?.roots ?? [] where !roots.contains(where: { $0.path == root.path }) {
-            roots.append(WorkspaceRoot(path: root.path, directory: root.directory, writable: root.directory ? true : nil))
+            roots.append(WorkspaceRoot(path: root.path, directory: root.directory, writable: root.directory && (!sub || root.writable == true) ? true : nil))
         }
         // The project's own folders and files (Project info tab), read at every answer and read only. A path the
         // chat already has keeps the chat's access.

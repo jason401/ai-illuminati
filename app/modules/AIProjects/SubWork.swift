@@ -9,7 +9,7 @@ import AIWorkspace
 // A sub-room's Git work (docs/SUBROOM_PLAN.md 3 and 5): the app makes its work tree outside the repository, merges what
 // it reported into the main work tree and removes the tree once that is pushed. Every step that changes refs or the work
 // tree list runs inside the repository's refs lock. Never stash, reset or force: a step that cannot go safely stops and
-// says why, and only a merge the app itself has just started is aborted.
+// says why, and only a merge the app itself has just started is aborted. The one exception is the user's own Discard.
 public enum SubWork {
     // One sub-room's work tree: its folder, its local branch sub/<split>/<n> and the main HEAD it started from.
     public struct Tree: Codable, Equatable {
@@ -165,6 +165,56 @@ public enum SubWork {
         if pattern.isEmpty { return false }
         if pattern.hasSuffix("/") { return path.hasPrefix(pattern) }
         return path == pattern || path.hasPrefix(pattern + "/") || (pattern.contains("*") && fnmatch(pattern, path, 0) == 0)
+    }
+
+    // sub_report: what the sub-room reports is its work tree's HEAD, only when everything is committed (no merge left half
+    // done) on its own branch after its start. Returns that SHA and the files it changed since the start.
+    public static func report(_ tree: Tree, token: DebateCancellation? = nil) throws -> (sha: String, changed: [String]) {
+        try clean(tree.path, token, "커밋하지 않은 변경이 있어요. git_commit으로 먼저 커밋한 뒤 보고해 주세요.",
+                  "There are uncommitted changes; commit them with git_commit, then report.")
+        guard try git(["branch", "--show-current"], tree.path, token) == tree.branch else { throw ProjectError.make("The sub-room's work tree is not on " + tree.branch) }
+        let head = try git(["rev-parse", "HEAD"], tree.path, token)
+        guard head != tree.base, try isAncestor(tree.base, head, tree.path, token) else {
+            throw fail("출발 커밋 뒤에 새 커밋이 없어요. 먼저 커밋해 주세요.", "No commit after the start yet; commit first.")
+        }
+        return (head, paths(try git(["diff", "-z", "--name-only", "--no-renames", tree.base + "..." + head], tree.path, token)))
+    }
+
+    // What is left of sub-room n of a split, for the app's check after a restart: its folder, where Git lists a work tree on
+    // its branch (nil: none), whether the folder and the branch are there and a merge was left half done in it.
+    public struct Leftover: Equatable {
+        public var path: String, listed: String?, exists: Bool, branch: Bool, merging: Bool
+    }
+    public static func leftover(_ binding: ProjectBinding, split: String, n: Int) throws -> Leftover {
+        let common = try project(binding), name = branch(split: split, n: n)
+        let path = URL(fileURLWithPath: folder(common: common, split: split, n: n)).resolvingSymlinksInPath().standardizedFileURL.path
+        var listed: String?, current: String?
+        for field in paths(try git(["worktree", "list", "--porcelain", "-z"], binding.root, nil)) {
+            if field.hasPrefix("worktree ") { current = String(field.dropFirst(9)) }
+            else if field == "branch refs/heads/" + name { listed = current }
+        }
+        let exists = FileManager.default.fileExists(atPath: path)
+        let branch = try reply(["rev-parse", "-q", "--verify", "refs/heads/" + name], binding.root, nil).status == 0
+        return Leftover(path: path, listed: listed, exists: exists, branch: branch, merging: exists && (try? merging(path, nil)) == true)
+    }
+    // A merge left half done in the main work tree (MERGE_HEAD): the user finishes or aborts it, never the app on its own.
+    public static func halfMerged(_ binding: ProjectBinding) -> Bool { (try? merging(binding.root, nil)) == true }
+
+    // "Discard" on the user's card: the sub-room's work tree and branch go, also with work never merged (only when it is
+    // not being written). Its last commit is returned, so it can still be found (git branch <name> <sha>) until Git cleans up.
+    public static func discard(_ binding: ProjectBinding, _ tree: Tree, token: DebateCancellation? = nil) throws -> String? {
+        _ = try project(binding)
+        guard tree.branch.hasPrefix("sub/") else { throw ProjectError.make("Not a sub-room branch: " + tree.branch) }
+        return try holding(tree) {
+            try ProjectWork.withRefs(binding.root, token: token) {
+                let tip = try? git(["rev-parse", "--verify", "refs/heads/" + tree.branch + "^{commit}"], binding.root, token)
+                if FileManager.default.fileExists(atPath: tree.path) { _ = try git(["worktree", "remove", "--force", tree.path], binding.root, token) }
+                else { _ = try git(["worktree", "prune"], binding.root, token) }
+                if tip != nil { _ = try git(["branch", "-D", tree.branch], binding.root, token) }
+                _ = rmdir((tree.path as NSString).deletingLastPathComponent)
+                return tip
+            }
+        }
     }
 
     // delegate_resync: merges the main HEAD into the sub-room's branch in its work tree, so it can resolve conflicts itself

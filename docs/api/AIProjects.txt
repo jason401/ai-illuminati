@@ -122,6 +122,7 @@ ProjectRun.endAttempt() | func endAttempt()
 ProjectRun.generation | var generation: Int { get }
 ProjectRun.id | let id: UUID
 ProjectRun.init(room:binding:token:fullAuto:) | init(room: UUID, binding: ProjectBinding, token: DebateCancellation, fullAuto: Bool = false)
+ProjectRun.isSubRoom | var isSubRoom: Bool
 ProjectRun.log | var log: [String] { get }
 ProjectRun.nextAttempt() | func nextAttempt()
 ProjectRun.note(_:) | func note(_ text: String)
@@ -150,6 +151,7 @@ ProjectWork.moving(_:to:) | static func moving(_ workspace: WorkspaceBinding?, t
 ProjectWork.register(_:) | static func register(_ run: ProjectRun)
 ProjectWork.release(_:notify:) | static func release(_ paths: [String], notify: Bool = true)
 ProjectWork.revokeTools | static var revokeTools: (UUID) -> Void { get set }
+ProjectWork.run(for:) | static func run(for context: ToolContext) -> ProjectRun?
 ProjectWork.workBinding(_:project:chatFolder:run:) | static func workBinding(_ binding: WorkspaceBinding, project: ProjectBinding, chatFolder: String, run: ProjectRun) -> WorkspaceBinding
 RunMode | enum RunMode
 RunMode.aiThenPark | case aiThenPark
@@ -158,6 +160,12 @@ RunMode.checkEach | case checkEach
 RunMode.init(rawValue:) | init?(rawValue: String)
 RunMode.stopOnIssue | case stopOnIssue
 SubWork | enum SubWork
+SubWork.Leftover | struct Leftover
+SubWork.Leftover.branch | var branch: Bool
+SubWork.Leftover.exists | var exists: Bool
+SubWork.Leftover.listed | var listed: String?
+SubWork.Leftover.merging | var merging: Bool
+SubWork.Leftover.path | var path: String
 SubWork.Merge | struct Merge
 SubWork.Merge.conflicts | var conflicts: [String]
 SubWork.Merge.head | var head: String
@@ -170,8 +178,12 @@ SubWork.Tree.init(from:) | init(from decoder: any Decoder) throws
 SubWork.Tree.init(path:branch:base:) | init(path: String, branch: String, base: String)
 SubWork.Tree.path | var path: String
 SubWork.create(_:split:n:token:) | static func create(_ binding: ProjectBinding, split: String, n: Int, token: DebateCancellation? = nil) throws -> SubWork.Tree
+SubWork.discard(_:_:token:) | static func discard(_ binding: ProjectBinding, _ tree: SubWork.Tree, token: DebateCancellation? = nil) throws -> String?
+SubWork.halfMerged(_:) | static func halfMerged(_ binding: ProjectBinding) -> Bool
+SubWork.leftover(_:split:n:) | static func leftover(_ binding: ProjectBinding, split: String, n: Int) throws -> SubWork.Leftover
 SubWork.merge(_:_:sha:owned:reported:token:) | static func merge(_ binding: ProjectBinding, _ tree: SubWork.Tree, sha asked: String, owned: [String], reported: Bool, token: DebateCancellation? = nil) throws -> SubWork.Merge
 SubWork.remove(_:_:token:) | static func remove(_ binding: ProjectBinding, _ tree: SubWork.Tree, token: DebateCancellation? = nil) throws
+SubWork.report(_:token:) | static func report(_ tree: SubWork.Tree, token: DebateCancellation? = nil) throws -> (sha: String, changed: [String])
 SubWork.resync(_:_:token:) | static func resync(_ binding: ProjectBinding, _ tree: SubWork.Tree, token: DebateCancellation? = nil) throws -> [String]
 TaskLink | final class TaskLink
 TaskLink.active | var active: Bool { get }

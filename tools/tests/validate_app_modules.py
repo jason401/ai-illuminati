@@ -80,13 +80,13 @@ def falsify(base):
     print(run([folder / "run"], env=test_env(folder / "home")), end="", flush=True)
     mutations = [
         ("A1 provider order", "PeerLink.shared, ConveneLink.shared", "ConveneLink.shared, PeerLink.shared",
-         "the app supplies all 13 providers in their original order"),
+         "the app supplies all 14 providers in their original order"),
         ("A2 last duplicate wins", "available.first(where:", "available.last(where:",
          "a duplicate tool is called on the first eligible provider"),
         ("A3 inactive provider callable", "$0.active && $0.tools(context:", "$0.tools(context:",
          "inactive providers are absent from both listing and calls"),
         ("A4 consulted Convene filter removed", " && $0 !== ConveneLink.shared", "",
-         "consulted provider identities exclude Peer and Convene before their own gates"),
+         "consulted provider identities exclude Peer, Convene and Delegate before their own gates"),
         ("A5 expired sessions accepted", "session.1 > now()", "true",
          "expired sessions cannot list or call"),
     ]

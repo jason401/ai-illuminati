@@ -262,7 +262,18 @@ extension Discussion {
         let run = ProjectRun(room: id, binding: selected, token: cancellation, fullAuto: fullAuto)
         // Only the turn's final result goes to the remote, once, after the review and its fixes (TODOs and plain chats).
         run.deferPush = !selected.isDocuments && !selected.isFolderless
-        let extraNote = run.deferPush ? (note.isEmpty ? "" : note + "\n") + Self.deferredPushNote : note
+        // A sub-room's turn (Delegate.swift) gets its part and the Git tools of a sub-room; a main room's, when to split.
+        let sub = conversation(id).subOf
+        let split = sub.flatMap { SplitStore.shared.split($0.room, $0.split) }, part = sub.flatMap { link in split?.parts.first { $0.n == link.n } }
+        if let sub {
+            run.isSubRoom = true
+            DelegateLink.shared.register(run, sub)
+            SplitStore.shared.changePart(sub) { $0.live = true; if $0.state != .merged { $0.state = .running } }
+        }
+        defer { if sub != nil { DelegateLink.shared.unregister(run) } }
+        let splitNote = part.flatMap { p in split.map { Self.subNote(p, split: $0) } }
+            ?? (sub == nil && run.deferPush && DelegateLink.shared.host != nil ? Self.delegateNote(fullAuto: conversation(id).workspace?.isFullAuto != false) : "")
+        let extraNote = (run.deferPush ? (note.isEmpty ? "" : note + "\n") + Self.deferredPushNote : note) + (splitNote.isEmpty ? "" : "\n" + splitNote)
         run.onNote = { [weak self] log in self?.changeTurn(id, index) { $0.projectLog = log; $0.lastActivityAt = Date() } }
         run.onPlan = { [weak self] steps, note in self?.changeTurn(id, index) { $0.plan = steps; $0.planNote = note; $0.lastActivityAt = Date() } }
         run.onWaiting = { [weak self] waiting in self?.changeTurn(id, index) { $0.waitingApproval = waiting ? true : nil; $0.lastActivityAt = Date() } }
@@ -465,7 +476,10 @@ extension Discussion {
                     }
                 }
                 if run.pushWanted, !cancellation.isCancelled {
-                    do { _ = try GitLink.shared.pushDeferred(run); run.setAppStep(9, L("push (main에 한 번)", "Push (once)"), .done) } catch {
+                    do {
+                        _ = try GitLink.shared.pushDeferred(run); run.setAppStep(9, L("push (main에 한 번)", "Push (once)"), .done)
+                        if sub == nil && run.pushed { cleanupSplits(id, binding: selected) }   // merged sub-rooms' work trees go once pushed
+                    } catch {
                         run.setAppStep(9, L("push (main에 한 번)", "Push (once)"), .blocked)
                         end(L("작업과 검토는 끝났지만 push하지 못했어요. commit은 로컬에 남아 있어요: ", "The work and review are done, but the push failed. The commits stay local: ")
                             + error.localizedDescription); return

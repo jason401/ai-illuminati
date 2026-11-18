@@ -449,6 +449,7 @@ module is that module's public function now; the block keeps only the chat's par
 | ChatTools:154 | a | `linkChatTools`: sets `ProjectChats.list` (P0 injection) | — |
 | Collaboration:65 | a | the collaboration run | — |
 | Debate:45 | a | the debate run, speakers, search notes | — |
+| Delegate:151 | b | sub-rooms (2026-11-17, P2): hidden chats, places, join turn, Stop, restart cards | the Git side is `SubWork` (AIProjects: create, report, merge, resync, remove, leftover, discard) |
 | DeviceSync:472 | a | chat state turn, `continueFromDevice`, `openRemote`, share toggle | reads another Mac's copy through `ChatStore.links.remote`; C1: the block leaves DeviceSync.swift, and `SyncSnapshot`/`RemoteChat` (they hold `ChatTurn`) need an owner |
 | Enterprise:72 | a | a chat's lock, `permits` (the gate), `lockEnterprise` | DeviceSync hears through `ChatStore.links.locked`; the `Enterprise` rules enum and badges stay app-side for C1 to place |
 | Enterprise:114 | b | locking a whole project | its TODO lists: `TodoStore.lockProject` (AIProjects); `SidebarProjects.key` → `groupKey` |

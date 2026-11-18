@@ -180,7 +180,7 @@ assert hooked == [], hooked
 # C0: every `extension Discussion` is classified in docs/modules-history.md ("Chat, step C0"): a = Chat takes it whole, b = a shell
 # whose logic is another module's public function. A new block fails here until it gets its row (and the table).
 import glob, re
-expected = {'Attachments': 'aaa', 'ChatFind': 'a', 'ChatSearch': 'a', 'ChatTools': 'a', 'Collaboration': 'a', 'Debate': 'a',
+expected = {'Attachments': 'aaa', 'ChatFind': 'a', 'ChatSearch': 'a', 'ChatTools': 'a', 'Collaboration': 'a', 'Debate': 'a', 'Delegate': 'b',
             'DeviceSync': 'a', 'Enterprise': 'ab', 'Meeting': 'ba', 'Peer': 'b', 'ProjectChat': 'b', 'ProjectCreate': 'b',
             'RoomDocuments': 'a', 'Route': 'a', 'SidebarProjects': 'a', 'Solo': 'aa', 'SpaceView': 'b', 'TodoChatsApp': 'a', 'Vote': 'a'}
 def blocks(text):
@@ -197,7 +197,7 @@ assert not [f for f in glob.glob('app/macos/*.swift') if blocks(Path(f).read_tex
 found = {Path(f).stem: blocks(Path(f).read_text()) for f in sorted(glob.glob('app/modules/AIChat/*.swift'))}
 found = {k: v for k, v in found.items() if v}
 assert {k: len(v) for k, v in found.items()} == {k: len(v) for k, v in expected.items()}, ({k: len(v) for k, v in found.items()}, 'classify new extension Discussion blocks in docs/MODULES.md')
-assert sum(len(v) for v in found.values()) == 24, 'the C0 table has 24 rows'
+assert sum(len(v) for v in found.values()) == 25, 'the C0 table has 25 rows'
 # The chat side calls none of these by name: the app connects them (ChatLinksApp.swift) or the module reads them.
 direct = re.compile(r'PlanLink|DeviceSync\b(?!\.swift)|NativeSessions\.purgeRoom|WorkspaceBackup\.purgeRoom|RoomDocuments\.directory')
 chat = Path('app/modules/AIChat/Discussion.swift').read_text()
@@ -218,10 +218,10 @@ assert all(f'extension {n}: @retroactive ToolProvider' in Path('app/macos/' + f)
            [('FaceLink', 'ToolHub.swift'), ('DriveLink', 'DriveTools.swift'), ('ExternalMCP', 'ExternalMCPTools.swift')]), 'the app makes the three providers'
 # AI Face's link starts after the bridge's sockets (FaceLink no longer opens them itself).
 assert s.find('ToolHub.shared.start()') < s.find('ToolHub.shared.startLegacyFaceSocket(at: FaceLink.socketPath)') < s.find('FaceLink.shared.start()')
-# The 13 tool providers in their order (first(where:) picks by it): the app lists them, five are AIChat's since C1.
+# The 14 tool providers in their order (first(where:) picks by it): the app lists them, six are AIChat's (DelegateLink since sub-room P2).
 hub = Path('app/macos/ToolHub.swift').read_text()
 order = re.search(r'static var appProviders: \[ToolProvider\] \{ \[(.*?)\] \}', hub).group(1).replace(' ', '').split(',')
-assert order == ['FaceLink.shared', 'DriveLink.shared', 'GitLink.shared', 'PlanLink.shared', 'PeerLink.shared', 'ConveneLink.shared', 'ChatLink.shared',
+assert order == ['FaceLink.shared', 'DriveLink.shared', 'GitLink.shared', 'PlanLink.shared', 'PeerLink.shared', 'ConveneLink.shared', 'DelegateLink.shared', 'ChatLink.shared',
                  'MemoryLink.shared', 'ProjectMakerLink.shared', 'TaskLink.shared', 'TodoAddLink.shared', 'StorageLink.shared', 'ExternalMCP.shared'], order
 # App files see a module's public names only; @testable is for tests.
 assert subprocess.run(['grep', '-rl', '@testable', 'app'], capture_output=True, text=True).stdout.split() == [], 'no @testable import in app files'
@@ -377,7 +377,7 @@ late_start
 stage "[8/12] Compile app tests"
 limit 900 xcrun swiftc -swift-version 5 $J -module-cache-path "$CACHE" -I "$MODULES" -o "$TEST_DIR/run" "$MODULES"/lib*.a \
     app/macos/Login.swift \
-    app/macos/Settings.swift app/macos/TokenStats.swift app/macos/LocalModels.swift app/macos/ExternalMCPTools.swift app/macos/DriveUI.swift app/macos/ToolHub.swift app/macos/DriveTools.swift app/macos/RunConditionsApp.swift app/macos/Updater.swift app/macos/ChatLinksApp.swift app/macos/GitBranches.swift app/macos/PhoneAccess.swift tools/tests/space_build.swift tools/tests/phone_access.swift tools/tests/google_drive.swift tools/tests/device_sync.swift tools/tests/window_drag.swift tools/tests/project_work.swift tools/tests/ask_ai.swift tools/tests/collab_log.swift tools/tests/meeting_tool.swift tools/tests/todo_work.swift tools/tests/project_info.swift tools/tests/update_channel.swift tools/tests/chat_search.swift tools/tests/search_fixtures.swift tools/tests/run_conditions.swift tools/tests/runtime_app.swift tools/tests/token_stats.swift tools/tests/chat_links.swift tools/tests/chat_cli.swift tools/tests/failure_recovery.swift tools/tests/tool_hub.swift "$TEST_DIR/main.swift"
+    app/macos/Settings.swift app/macos/TokenStats.swift app/macos/LocalModels.swift app/macos/ExternalMCPTools.swift app/macos/DriveUI.swift app/macos/ToolHub.swift app/macos/DriveTools.swift app/macos/RunConditionsApp.swift app/macos/Updater.swift app/macos/ChatLinksApp.swift app/macos/GitBranches.swift app/macos/PhoneAccess.swift tools/tests/space_build.swift tools/tests/phone_access.swift tools/tests/google_drive.swift tools/tests/device_sync.swift tools/tests/window_drag.swift tools/tests/project_work.swift tools/tests/ask_ai.swift tools/tests/collab_log.swift tools/tests/meeting_tool.swift tools/tests/sub_rooms.swift tools/tests/todo_work.swift tools/tests/project_info.swift tools/tests/update_channel.swift tools/tests/chat_search.swift tools/tests/search_fixtures.swift tools/tests/run_conditions.swift tools/tests/runtime_app.swift tools/tests/token_stats.swift tools/tests/chat_links.swift tools/tests/chat_cli.swift tools/tests/failure_recovery.swift tools/tests/tool_hub.swift "$TEST_DIR/main.swift"
 stage "[9/12] Run app tests"
 # The tests also stop themselves after 120 s without progress (mode2.swift) and name the test.
 APP_ENV=(AI_ILLUMINATI_TEST_RESOURCES="$TEST_DIR/resources")

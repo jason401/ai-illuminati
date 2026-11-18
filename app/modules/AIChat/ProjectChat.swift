@@ -351,6 +351,7 @@ extension Discussion {
         // Before the work starts: what the project looks like, so the review covers only this answer's changes
         // (also when another AI took over after a usage limit).
         let reviewRoot = selected.isFolderless ? Self.chatFolder(id).path : selected.root
+        // A Step has none: its AI reads its own diff, the app runs its picked tests, the Milestone reviews every Step's commits.
         let start = run.isStep || reviewers.isEmpty ? nil : selected.isDocuments ? backup.flatMap { ProjectSnapshot.documents(backup: $0, root: reviewRoot) } : ProjectSnapshot.take(root: reviewRoot)
         while !cancellation.isCancelled && Date() < run.deadline && !run.activeExpired {
             let eligible = model.accounts.filter { [.claude, .codex].contains($0.provider) && !excluded.contains($0.id) && Enterprise.permits($0, lock: chatLock) && (workers?.contains($0.id) ?? true) }
@@ -492,7 +493,8 @@ extension Discussion {
                    item.report?.summary != nil, item.report?.question == nil {   // task_ask waits for the user: nothing to test yet
                     let picked = L("고른 테스트: ", "Picked tests: ") + item.tests.joined(separator: ", ")
                     run.setAppStep(0, picked, .doing)
-                    let result = StepTests.run(item.tests, in: run)
+                    // Its commit goes on from the last finished Step's (or the Goal's base), so a restart resumes there.
+                    let result = StepTests.run(item.tests, in: run, since: TodoStore.shared.current.resumeSHA(item) ?? step?.base)
                     try? TodoStore.shared.recordStepTests(item.id, result)
                     run.setAppStep(0, picked, result.passed ? .done : .blocked)
                     run.note(L("Step 테스트 ", "Step tests ") + result.outcome.rawValue + " · build \(result.buildSeconds ?? 0) s · tests \(result.testSeconds ?? 0) s")

@@ -229,6 +229,17 @@ func testStepTests() {
     let dirtied = StepTests.run(["testAlpha"], in: run)
     expect(!dirtied.passed && dirtied.outcome == .failed && dirtied.reason?.contains("dirties.flag") == true, "a tree changed by the run does not pass: \(dirtied)")
     _ = git(["checkout", "--", "dirties.flag"], at: tree.path)
+    // since: the Step must end on a new commit that goes on from where it started (TODO structure 06).
+    try! FileManager.default.removeItem(atPath: tree.path + "/dirties.flag"); commit(tree.path, "Clean up the flags")
+    let top = git(["rev-parse", "HEAD"], at: tree.path), parent = git(["rev-parse", "HEAD~1"], at: tree.path)
+    let none = StepTests.run(["testAlpha"], in: run, since: top)
+    expect(none.outcome == .refused && none.reason?.contains("commit") == true && runs() == 5, "no commit after the last Step's is refused before running: \(none)")
+    let elsewhere = StepTests.run(["testAlpha"], in: run, since: git(["rev-parse", "HEAD"], at: main))
+    let off = git(["commit-tree", "-m", "off", git(["rev-parse", "HEAD^{tree}"], at: tree.path)], at: tree.path)
+    let unrelated = StepTests.run(["testAlpha"], in: run, since: off)
+    expect(elsewhere.passed && unrelated.outcome == .refused && runs() == 6, "on top of the Goal's base it runs; a branch not going on from the last Step commit is refused: \(unrelated)")
+    let onTop = StepTests.run(["testAlpha"], in: run, since: parent)
+    expect(onTop.passed && onTop.sha == top && runs() == 7, "a new commit on the last Step's passes: \(onTop)")
 
     // The board: a step's report without a passing run of its own tests goes back to ready with the reason.
     let store = TodoStore(url: todoStoreFile("step-tests"))
@@ -253,7 +264,9 @@ func testStepTests() {
     }
     var both = passed; both.tests = ["testAlpha", "testBeta"]
     let done = reported(both)
-    expect(done.state == .review && done.result == "done" && done.stepTests == both, "a step with its own tests passed waits for the check")
+    expect(done.state == .done && done.result == "done" && done.stepTests == both && done.stepSHA == both.sha && done.stepSHA != nil,
+           "a step with its own tests passed is done with its commit (no check: the milestone has it)")
+    expect(store.current.items.first { $0.role == .milestone }?.state == .ready, "and the goal's next part is ready")
     let saved = try! JSONDecoder().decode(TodoItem.self, from: JSONEncoder().encode(done))
     expect(saved.stepTests == both && saved.stepTests?.buildSeconds == both.buildSeconds, "the run is saved with the step")
     try? store.recordStepTests(goal.id, both)
@@ -2311,4 +2324,146 @@ func testWorkingChats() {
     chats.runningRooms = []
     expect(working().isEmpty, "all finished: the section hides")
     print("PASS: working chats under Search (answering chats in start order, TODO and stopping marked, meeting through its parent, opens the chat, gone when done)")
+}
+
+// A Goal's Steps one after another (TODO structure 06): a step's report ends it only with its picked tests passed on a
+// new local commit, which it keeps (stepSHA); it is done without a check or a review and the next part is ready at once.
+// Pause and the stop point hold at a Step's end (never in it); a restart redoes only the cut-off Step, from the last Step's commit.
+private final class GoalStepChats: TodoChats {
+    var answering: Set<UUID> = []
+    var answeringChanged: AnyPublisher<Void, Never> { Empty().eraseToAnyPublisher() }
+    var maxAnswering = 8
+    var importing = false
+    var chats: [ProjectChatSummary] = []
+    var started: [(room: UUID, question: String, review: Bool, extra: String)] = []
+    var members: [UUID: [String]] = [:]
+    var ends: [UUID: TodoTurnEnd] = [:]
+    let lead = Account(id: "step-claude", provider: .claude, name: "Step Claude"), reviewer = Account(id: "step-codex", provider: .codex, name: "Step Codex")
+    func crew(lock: EnterpriseLock?, allowed: [String]) -> (lead: Account, reviewer: Account?)? { (lead, reviewer) }
+    func noCrew(_ allowed: [String], lock: EnterpriseLock?) -> String { "nobody" }
+    func addChat(_ project: ProjectBinding, title: String, lock: EnterpriseLock?) -> UUID { UUID() }
+    func setCrew(room: UUID, members: [String], lead: String) { self.members[room] = members }
+    func folder(_ room: UUID) -> URL { URL(fileURLWithPath: AccountStore.home).appendingPathComponent("step-chats/" + room.uuidString) }
+    func sentPhotos(_ room: UUID) -> Set<UUID> { [] }
+    func start(room: UUID, question: String, photos: [TodoPhoto], review: Bool, extra: String) -> String? {
+        started.append((room, question, review, extra)); answering.insert(room); ends[room] = TodoTurnEnd(); return nil
+    }
+    func ended(_ room: UUID) -> TodoTurnEnd { ends[room] ?? TodoTurnEnd() }
+    func stop(_ room: UUID) { answering.remove(room) }
+}
+
+func testTodoSteps() {
+    let before = TodoData.goalPath
+    TodoData.goalPath = true
+    defer { TodoData.goalPath = before }
+    let project = ProjectBinding(root: "/tmp/todo-steps", common: "", remote: "", remoteURL: "")
+    let url = todoStoreFile("steps")
+    var store = TodoStore(url: url)
+    let chats = GoalStepChats()
+    var scheduler = TodoScheduler(chats: chats, store: store)
+    scheduler.held = { _ in false }
+    let goal = try! store.add(title: "goal", project: project, projectName: "S")
+    typealias Part = TodoPlan.Part
+    let parts = try! store.savePlan(goal: goal.id, TodoPlan(parts: [Part(key: "a", role: .step, title: "A", tests: ["testA"]),
+                                                                 Part(key: "b", role: .step, title: "B", after: ["a"], tests: ["testB"]),
+                                                                 Part(key: "c", role: .step, title: "C", after: ["b"], tests: ["testC"]),
+                                                                 Part(key: "d", role: .step, title: "D", after: ["c"], tests: ["testD"]),
+                                                                 Part(key: "m", role: .milestone, title: "M", after: ["d"])]))
+    let (a, b, c, d, m) = (parts[0].id, parts[1].id, parts[2].id, parts[3].id, parts[4].id)
+    func state(_ id: UUID) -> TodoItem.State? { store.current.item(id)?.state }
+    // The AI of the running step reports; its picked tests ran on `sha` (passed or not); its chat stops answering.
+    func finish(_ id: UUID, sha: String, passed: Bool = true) {
+        let item = store.current.item(id)!
+        try! store.change(id) { $0.report = TodoReport(summary: "did " + item.title, files: [item.title + ".swift"]) }
+        var run = StepTestResult(outcome: passed ? .passed : .failed, tests: item.tests, reason: passed ? nil : "exit=1")
+        run.sha = sha
+        try! store.recordStepTests(id, run)
+        chats.answering.remove(item.room!)
+    }
+
+    try! store.update { $0.readyParts(goal.id) }
+    expect(state(a) == .ready && state(b) == .draft && state(m) == .draft, "the goal starts with its first step only")
+    scheduler.tick()
+    expect(state(a) == .running && chats.started.count == 1, "the first step runs")
+    let first = chats.started[0]
+    expect(!first.review && chats.members[first.room] == [chats.lead.id], "a step has no reviewer: \(chats.members[first.room] ?? [])")
+    expect(first.extra.contains("[TODO Step]") && first.extra.contains("git_diff") && first.extra.contains("testA") && !first.extra.contains("commit and push"),
+           "the step's AI commits locally and reads its own diff: \(first.extra)")
+    expect(first.question.contains("[Step]") && first.question.contains("Goal"), "the first step starts at the Goal's start: \(first.question)")
+
+    // Reported but its tests failed: not done, retried with the reason.
+    finish(a, sha: "a1", passed: false)
+    scheduler.tick()
+    expect(store.current.item(a)?.attempts == 1 && store.current.item(a)?.stepSHA == nil && state(b) == .draft,
+           "a step whose tests failed is retried, the next one waits: \(state(a)?.rawValue ?? "")")
+    scheduler.tick()
+    expect(state(a) == .running && chats.started.count == 2, "the step runs again")
+
+    // Two steps in a row: the passing one is done with its commit, the next is ready and starts in the same tick from that commit.
+    var notices = 0
+    let watcher = NotificationCenter.default.addObserver(forName: .todoNeedsUser, object: nil, queue: nil) { _ in notices += 1 }
+    defer { NotificationCenter.default.removeObserver(watcher) }
+    finish(a, sha: "aaa111")
+    scheduler.tick()
+    let doneA = store.current.item(a)!
+    expect(doneA.state == .done && doneA.stepSHA == "aaa111" && doneA.result == "did A" && doneA.attempts == 0 && notices == 0,
+           "a step whose tests passed is done at once, its commit kept, without the user's check: \(doneA.state.rawValue) \(doneA.stepSHA ?? "-")")
+    expect(state(b) == .running && store.current.resumeSHA(store.current.item(b)!) == "aaa111"
+           && chats.started.last!.question.contains("aaa111"), "the next step starts at once, from the last step's commit")
+    expect(TodoStore(url: url).current.item(a)?.stepSHA == "aaa111", "the step's commit is saved")
+
+    // No commit of its own (the tests ran on the last step's commit): not done.
+    finish(b, sha: "aaa111")
+    scheduler.tick()
+    // (Retried in the same tick, which clears lastError: the retry note keeps why.)
+    let retry = store.current.item(b)?.notes.last { $0.kind == .retry }?.text ?? ""
+    expect(store.current.item(b)?.attempts == 1 && store.current.item(b)?.stepSHA == nil && retry.contains("commit") && state(c) == .draft,
+           "a step without its own commit is not done: \(retry)")
+    scheduler.tick()
+    expect(state(b) == .running, "and runs again")
+
+    // Paused while a step runs: the step goes on to its end; the next is ready but does not start until the resume.
+    try! store.pause(lists: [goal.listID])
+    scheduler.tick()
+    expect(state(b) == .running && chats.answering.contains(store.current.item(b)!.room!), "a pause does not stop the running step")
+    finish(b, sha: "bbb222")
+    scheduler.tick()
+    expect(state(b) == .done && state(c) == .ready && store.current.item(b)?.stepSHA == "bbb222", "the paused list still ends the step and readies the next")
+    scheduler.tick()
+    expect(state(c) == .ready, "the pause holds at the step's end")
+    try! store.resume(lists: [goal.listID])
+    scheduler.tick()
+    expect(state(c) == .running && chats.started.last!.question.contains("bbb222"), "resume goes on with the next step from its commit")
+
+    // Restart while a step runs: only that step is cut off (interrupted) and done again, from the last finished step's commit.
+    store = TodoStore(url: url)
+    chats.answering = []
+    scheduler = TodoScheduler(chats: chats, store: store)
+    scheduler.held = { _ in false }
+    scheduler.recover()
+    let cut = store.current.item(c)!
+    expect(cut.state == .ready && cut.interrupted && cut.attempts == 1 && cut.stepTests == nil, "restart: the cut-off step is ready again, marked interrupted")
+    expect(state(a) == .done && state(b) == .done && store.current.item(b)?.stepSHA == "bbb222" && store.current.resumeSHA(cut) == "bbb222",
+           "the finished steps stay done; the cut-off one goes on from the last step's commit")
+    let restarted = chats.started.count
+    scheduler.tick()
+    let again = chats.started.last!
+    expect(chats.started.count == restarted + 1 && state(c) == .running && again.question.contains("bbb222") && (again.question.contains("cut off") || again.question.contains("끊겼")),
+           "only the cut-off step runs again, told where to go on from: \(again.question)")
+
+    // Stop after a step: the step ends, the next one is ready but held below the stop point; the same stop again lifts it.
+    try! store.stop(after: c)
+    finish(c, sha: "ccc333")
+    scheduler.tick()
+    expect(state(c) == .done && state(d) == .ready && store.current.stopped(store.current.item(d)!), "the stop point holds the next step at its end")
+    scheduler.tick()
+    expect(state(d) == .ready, "nothing below the stop point starts")
+    try! store.stop(after: c)
+    scheduler.tick()
+    expect(state(d) == .running && chats.started.last!.question.contains("ccc333"), "lifted: the next step goes on from the last commit")
+    finish(d, sha: "ddd444")
+    scheduler.tick()
+    expect(state(d) == .done && state(m) == .ready && store.current.items.allSatisfy { $0.state != .running },
+           "the last step readies the milestone, which waits for the goal path (TODO structure 16)")
+    print("PASS: TODO steps (done on a tested local commit, next ready, pause/stop at a step's end, restart from the last step's commit)")
 }

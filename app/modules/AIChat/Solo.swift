@@ -1019,7 +1019,8 @@ extension Discussion {
         } else if let project, project.step {
             parts.append("""
                 [Goal Step] Work in \(project.root). Use native file tools for edits and git_* for Git.
-                Commit the changed paths locally. When you are done the app runs this Step's picked tests on your commits; it ends only when they pass.
+                Commit the changed paths locally. No other AI reviews a Step: before you commit, read your own diff (git_diff) and fix what is wrong.
+                When you are done the app runs this Step's picked tests on your last commit; it ends only when they pass.
                 The original checkout is read only. Stay on the Goal branch. Review and push happen at the Milestone.
                 """)
         } else if let project {

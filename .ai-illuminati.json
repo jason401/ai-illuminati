@@ -20,6 +20,7 @@
     "test-affected-backup": {"executable": "/bin/zsh", "args": ["tools/tests/run_mode2.sh", "--affected", "app/modules/AIWorkspace/WorkspaceBackup.swift"]},
     "test-goal-push": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_ONLY=testProjectWork,testFullAuto,testTodoStore", "/bin/zsh", "tools/tests/run_mode2.sh"]},
     "test-milestone-review": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_ONLY=testMilestoneReview,testPeerReview,testProjectSnapshot,testTodoStore,testChatThroughCLI,testDocumentsProject", "/bin/zsh", "tools/tests/run_mode2.sh"]},
+    "test-step-end": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_ONLY=testTodoSteps,testTodoPause,testTodoScheduler,testTodoFailureRecovery,testStepTests,testTodoPlan,testTodoStore", "/bin/zsh", "tools/tests/run_mode2.sh"]},
     "test-goal-trees": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_JOBS=1", "AI_ILLUMINATI_TEST_ONLY=testGoalTrees", "/bin/zsh", "tools/tests/run_mode2.sh"]}
   }
 }

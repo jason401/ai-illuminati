@@ -186,7 +186,7 @@ StepTestResult.testSeconds | var testSeconds: Double?
 StepTestResult.tests | var tests: [String]
 StepTests | enum StepTests
 StepTests.failure(_:) | static func failure(_ result: StepTestResult) -> String
-StepTests.run(_:in:) | static func run(_ tests: [String], in run: ProjectRun) -> StepTestResult
+StepTests.run(_:in:since:) | static func run(_ tests: [String], in run: ProjectRun, since: String? = nil) -> StepTestResult
 SubWork | enum SubWork
 SubWork.Conflict | struct Conflict
 SubWork.Conflict.errorDescription | var errorDescription: String? { get }
@@ -265,6 +265,7 @@ TodoData.lists | var lists: [TodoList]
 TodoData.mode(_:) | func mode(_ item: TodoItem) -> RunMode
 TodoData.ordered(_:) | func ordered(_ listID: UUID) -> [TodoItem]
 TodoData.parkDue(_:) | func parkDue(_ item: TodoItem) -> Date?
+TodoData.resumeSHA(_:) | func resumeSHA(_ step: TodoItem) -> String?
 TodoData.satisfied(_:for:) | func satisfied(_ blocker: TodoItem, for item: TodoItem) -> Bool
 TodoData.standInDue(_:) | func standInDue(_ item: TodoItem) -> Date?
 TodoData.stopped(_:) | func stopped(_ item: TodoItem) -> Bool
@@ -344,6 +345,7 @@ TodoItem.standIns | var standIns: Int
 TodoItem.startedAt | var startedAt: Date?
 TodoItem.state | var state: TodoItem.State
 TodoItem.stateSince | var stateSince: Date?
+TodoItem.stepSHA | var stepSHA: String?
 TodoItem.stepTests | var stepTests: StepTestResult?
 TodoItem.tests | var tests: [String]
 TodoItem.timeLine(at:) | func timeLine(at now: Date) -> String?
@@ -446,7 +448,7 @@ TodoScheduler.lock(for:list:project:) | func lock(for item: TodoItem, list: Todo
 TodoScheduler.markDone(_:) | func markDone(_ id: UUID) throws
 TodoScheduler.maxAttempts | static let maxAttempts: Int
 TodoScheduler.nextCheck | @Published var nextCheck: Date? { get set }
-TodoScheduler.question(_:files:documents:) | static func question(_ item: TodoItem, files: [String] = [], documents: Bool = false) -> String
+TodoScheduler.question(_:files:documents:resume:) | static func question(_ item: TodoItem, files: [String] = [], documents: Bool = false, resume: String? = nil) -> String
 TodoScheduler.recover() | func recover()
 TodoScheduler.retrying(_:) | static func retrying(_ item: TodoItem) -> (label: String, why: String)?
 TodoScheduler.shared | static var shared: TodoScheduler?

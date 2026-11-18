@@ -61,7 +61,8 @@ public enum StepTests {
         return unknown.isEmpty ? nil : L("\(catalog)에 없는 테스트예요: ", "No such runTest in \(catalog): ") + unknown.joined(separator: ", ")
     }
     // Runs them on a fresh attempt (the AI's are over); a run that moved the Goal branch's HEAD does not pass.
-    public static func run(_ tests: [String], in run: ProjectRun) -> StepTestResult {
+    // since: where the Step went on from (the last Step's commit, or the Goal's base): HEAD must be a new commit after it.
+    public static func run(_ tests: [String], in run: ProjectRun, since: String? = nil) -> StepTestResult {
         guard run.isStep else { return StepTestResult(outcome: .refused, tests: tests, reason: "Not a Step.") }
         let root = run.binding.root
         if let why = refusal(tests, root: root) { return StepTestResult(outcome: .refused, tests: tests, reason: why) }
@@ -79,7 +80,19 @@ public enum StepTests {
                 result.reason = L("커밋하지 않은 변경이 있어요. Goal 브랜치에 커밋한 뒤 테스트해요: ", "Uncommitted changes; the tests run on the Goal branch's commits: ") + String(dirty.prefix(300))
                 return result
             }
-            result.sha = try ProjectProcess.git(["rev-parse", "HEAD"], root: root, token: run.attempt)
+            let sha = try ProjectProcess.git(["rev-parse", "HEAD"], root: root, token: run.attempt)
+            result.sha = sha
+            if let since, !since.isEmpty {
+                // A Step ends with its own local commit on top of where it went on: none, or a branch moved off it, is no Step.
+                let on = sha == since ? 1 : try ProjectProcess.gitReply(["merge-base", "--is-ancestor", since, sha], root: root, token: run.attempt).status
+                guard on == 0 else {
+                    result.outcome = .refused
+                    result.reason = sha == since ? L("이 Step의 commit이 없어요. Goal 브랜치에 로컬로 커밋해 주세요.", "This Step made no commit; commit it locally on the Goal branch.")
+                        : on == 1 ? L("Goal 브랜치가 마지막 Step commit \(since)에서 이어지지 않아요.", "The Goal branch does not go on from the last Step commit \(since).")
+                        : L("Step commit을 확인하지 못했어요.", "Could not check the Step's commit.")
+                    return result
+                }
+            }
         } catch { result.reason = error.localizedDescription; return result }
         let (exe, argv) = command(tests)
         let line = exe + " " + argv.joined(separator: " ")

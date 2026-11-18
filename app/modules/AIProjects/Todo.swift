@@ -179,11 +179,12 @@ public struct TodoItem: Codable, Identifiable, Equatable {
     public var state: State = .draft
     public var after: [UUID] = []          // TODOs that must be finished first (any list)
     public var role: Role = .plain {
-        didSet { if role != .milestone { milestoneCandidate = nil }; if role != .step { stepTests = nil } }
+        didSet { if role != .milestone { milestoneCandidate = nil }; if role != .step { stepTests = nil; stepSHA = nil } }
     }
     public var goal: UUID?                 // a step's or milestone's goal
     public var tests: [String] = []        // a step's picked tests (AI_ILLUMINATI_TEST_ONLY names); a milestone runs them all
     public var stepTests: StepTestResult?  // a step's: the app's run of its tests this attempt (StepTests); cleared when it starts
+    public var stepSHA: String?            // a done step's local commit on the Goal branch (its tests passed there): where the next step goes on
     public var milestoneCandidate: MilestoneCandidate? {
         didSet { if role != .milestone { milestoneCandidate = nil } }
     }
@@ -228,7 +229,7 @@ public struct TodoItem: Codable, Identifiable, Equatable {
     // cannot be read fails the whole file, which TodoStore then keeps as it is (no default silently saved over it).
     private enum Keys: String, CodingKey {
         case id, listID, title, detail, attachments, askFirst, state, after, role, goal, tests, room, originRoom, notes, question, attempts, lastError, result, assumptions, files, report, workers, interrupted, unreported, standIns, delegated, aiHelped, parked, wasParked, createdAt, updatedAt,
-             workSeconds, waitSeconds, stateSince, startedAt, finishedAt, milestoneCandidate, stepTests
+             workSeconds, waitSeconds, stateSince, startedAt, finishedAt, milestoneCandidate, stepTests, stepSHA
     }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
@@ -254,7 +255,10 @@ public struct TodoItem: Codable, Identifiable, Equatable {
         if role == .milestone {
             milestoneCandidate = try c.decodeIfPresent(MilestoneCandidate.self, forKey: .milestoneCandidate)
         }
-        if role == .step { stepTests = try c.decodeIfPresent(StepTestResult.self, forKey: .stepTests) }
+        if role == .step {
+            stepTests = try c.decodeIfPresent(StepTestResult.self, forKey: .stepTests)
+            stepSHA = try c.decodeIfPresent(String.self, forKey: .stepSHA)
+        }
         room = try c.decodeIfPresent(UUID.self, forKey: .room)
         originRoom = try c.decodeIfPresent(UUID.self, forKey: .originRoom)
         notes = (try c.decodeIfThere([TodoNote].self, forKey: .notes)) ?? []
@@ -290,7 +294,7 @@ public struct TodoItem: Codable, Identifiable, Equatable {
         try c.encodeIfPresent(goal, forKey: .goal)
         if !tests.isEmpty { try c.encode(tests, forKey: .tests) }
         try c.encodeIfPresent(milestoneCandidate, forKey: .milestoneCandidate)
-        if role == .step { try c.encodeIfPresent(stepTests, forKey: .stepTests) }
+        if role == .step { try c.encodeIfPresent(stepTests, forKey: .stepTests); try c.encodeIfPresent(stepSHA, forKey: .stepSHA) }
         try c.encodeIfPresent(room, forKey: .room); try c.encodeIfPresent(originRoom, forKey: .originRoom); try c.encode(notes, forKey: .notes)
         try c.encodeIfPresent(question, forKey: .question); try c.encode(attempts, forKey: .attempts); try c.encodeIfPresent(lastError, forKey: .lastError)
         try c.encodeIfPresent(result, forKey: .result); try c.encode(assumptions, forKey: .assumptions); try c.encode(files, forKey: .files)
@@ -309,6 +313,8 @@ public struct TodoItem: Codable, Identifiable, Equatable {
     // A step or milestone waits for the goal path (off until it is turned on): never taken as a plain TODO, never made
     // ready, and passed in its list's order like a draft so the TODOs below it go on.
     var heldPart: Bool { role == .step || role == .milestone }
+    // Not taken by the scheduler: a step only once the goal path is on (TodoData.goalPath), a milestone not yet.
+    var waitsForGoalPath: Bool { heldPart && !(TodoData.goalPath && role == .step) }
     // A step's report counts only with its own tests passed on this attempt; otherwise why not (nil: it may end).
     var stepUnfinished: String? {
         guard role == .step else { return nil }
@@ -495,6 +501,8 @@ extension KeyedDecodingContainer {
 
 public struct TodoData: Codable, Equatable {
     static let currentVersion = 1
+    // The Goal path: ready steps are taken one at a time in their goal's order. Off until TODO structure 16 (tests turn it on).
+    static var goalPath = false
     var version = 1
     public var lists: [TodoList] = []
     public var items: [TodoItem] = []
@@ -528,6 +536,8 @@ public struct TodoData: Codable, Equatable {
     // parked or not: the user asked for that one.
     public func blockers(_ item: TodoItem) -> [UUID] {
         var ids = item.after
+        // A goal's part waits for its own plan's parts only (`after`, as savePlan linked them), not for the goal above it.
+        if item.heldPart { return ids }
         let row = ordered(item.listID)
         let passed = { (t: TodoItem) in t.state == .cancelled || t.state == .draft || t.isParked || t.heldPart }
         if let at = row.firstIndex(where: { $0.id == item.id }), let above = row[..<at].last(where: { !passed($0) }) {
@@ -603,10 +613,32 @@ public struct TodoData: Codable, Equatable {
     func eligible(held: (String) -> Bool) -> [TodoItem] {
         let busy = Set(items.filter { $0.state == .running }.compactMap { list($0.listID)?.project?.root })
         return lists.flatMap { ordered($0.id) }.filter { item in
-            guard item.state == .ready, !item.heldPart, !stopped(item), let root = list(item.listID)?.project?.root, !busy.contains(root), cancelledBlockers(item).isEmpty else { return false }
+            guard item.state == .ready, !item.waitsForGoalPath, !stopped(item), let root = list(item.listID)?.project?.root, !busy.contains(root), cancelledBlockers(item).isEmpty else { return false }
             guard blockers(item).allSatisfy({ id in self.item(id).map { satisfied($0, for: item) } ?? true }) else { return false }
             return !held(root)
         }
+    }
+
+    // Where a goal's step goes on: the commit the last finished part before it left on the Goal branch (a step's tested
+    // commit, a milestone's candidate); nil before the first, which starts at the Goal work tree's base.
+    public func resumeSHA(_ step: TodoItem) -> String? {
+        guard step.role == .step, let goal = step.goal else { return nil }
+        let parts = items.filter { $0.goal == goal }   // saved in run order (savePlan)
+        guard let at = parts.firstIndex(where: { $0.id == step.id }) else { return nil }
+        return parts[..<at].reversed().lazy.compactMap { $0.state != .done ? nil : $0.role == .step ? $0.stepSHA : $0.milestoneCandidate?.candidateSHA }.first
+    }
+    // Why a step's report does not end it yet: its tests did not pass on this attempt, or they passed on the commit it
+    // started from (no commit of its own). nil: it is done.
+    func stepUnfinished(_ item: TodoItem) -> String? {
+        if let why = item.stepUnfinished { return why }
+        guard item.role == .step, let sha = item.stepTests?.sha, sha == resumeSHA(item) else { return nil }
+        return L("이 Step의 commit이 없어요. Goal 브랜치에 로컬로 커밋해 주세요.", "This Step made no commit; commit it locally on the Goal branch.")
+    }
+    // A goal's parts that may go now become ready: drafts whose `after` parts are all done (the first ones when the goal
+    // starts, the next one as soon as a step ends). A paused list or a stop point still holds them (stopped: eligible).
+    mutating func readyParts(_ goal: UUID) {
+        for i in items.indices where items[i].goal == goal && items[i].heldPart && items[i].state == .draft
+            && items[i].after.allSatisfy({ item($0)?.state == .done }) { items[i].state = .ready }
     }
 
     // A TODO put in front of `before` (nil: at the end) of its own list; `before` in another list is not found.
@@ -1658,14 +1690,16 @@ public final class TodoScheduler: ObservableObject {
         }
         guard let room else { return nil }
         if chats.answering.contains(room) { return L("TODO 채팅이 아직 답하는 중이라 기다려요.", "Waiting for the TODO's chat to finish answering.") }
-        chats.setCrew(room: room, members: [crew.lead.id] + (crew.reviewer.map { [$0.id] } ?? []), lead: crew.lead.id)
+        // A step has no reviewer: the AI checks its own diff and the app its picked tests (the milestone reviews the sum).
+        let reviewer = item.role == .step ? nil : crew.reviewer
+        chats.setCrew(room: room, members: [crew.lead.id] + (reviewer.map { [$0.id] } ?? []), lead: crew.lead.id)
         // The attachments go into the chat's own folder (the AI reads them there); photos it has not seen yet also go with the message.
         let delivered: (paths: [String], photos: [TodoPhoto])
         do { delivered = try deliver(item, room: room) } catch {
             try? store.change(item.id) { $0.room = room }   // the next try reuses this chat and the copies already made
             return error.localizedDescription
         }
-        var question = Self.question(item, files: delivered.paths, documents: project.isDocuments)
+        var question = Self.question(item, files: delivered.paths, documents: project.isDocuments, resume: store.current.resumeSHA(item))
         // Sent from its chat: the user's message first, as they wrote it, then the TODO it belongs to.
         let said = chatSaid[item.id].flatMap { said in item.notes.last?.text == said ? said : nil }
         if let said { question = said + "\n\n" + L("[이 채팅의 TODO]", "[This chat's TODO]") + "\n" + question }
@@ -1683,7 +1717,7 @@ public final class TodoScheduler: ObservableObject {
         } catch {
             return error.localizedDescription
         }
-        if let reason = chats.start(room: room, question: question, photos: delivered.photos, review: crew.reviewer != nil, extra: Self.instruction(item, documents: project.isDocuments)) {
+        if let reason = chats.start(room: room, question: question, photos: delivered.photos, review: reviewer != nil, extra: Self.instruction(item, documents: project.isDocuments)) {
             try? store.change(item.id) { $0.state = .ready; $0.lastError = reason }
             return reason
         }
@@ -1724,7 +1758,7 @@ public final class TodoScheduler: ObservableObject {
             var turn = chats.ended(room)
             let report = item.report
             // A step that reported without its tests passing is not done: it goes the way of an error (retried).
-            if turn.error == nil, report?.summary != nil, report?.question == nil, let unfinished = item.stepUnfinished { turn.error = unfinished }
+            if turn.error == nil, report?.summary != nil, report?.question == nil, let unfinished = store.current.stepUnfinished(item) { turn.error = unfinished }
             if let error = turn.error {
                 // Another chat writing the repository is not the TODO's fault: try again later.
                 let busy = ProjectWork.isBusy(error)
@@ -1762,6 +1796,18 @@ public final class TodoScheduler: ObservableObject {
                         t.state = .needsYou; t.unreported = true; t.delegated = 0
                         t.question = TodoQuestion(kind: .failed, reason: L("판단을 위임받고도 다시 물었어요: ", "It asked again after the decision was handed to it: ") + question.reason, items: question.items)
                     } else { t.state = .needsYou; t.question = question; t.unreported = true; t.standIns = 0 }   // each question its own two steps
+                }
+            } else if let report, let summary = report.summary, item.role == .step {
+                // A step's end (TODO structure 06): its tests passed on its own local commit, so it is done without the user's
+                // check or a review (the milestone has both), its commit is kept where the next part goes on, and that part is ready.
+                try? store.update { data in
+                    guard let i = data.items.firstIndex(where: { $0.id == item.id }), data.items[i].state == .running else { return }
+                    let sha = data.items[i].stepTests?.sha
+                    data.items[i].state = .done; data.items[i].stepSHA = sha; data.items[i].result = summary
+                    data.items[i].assumptions = report.assumptions; data.items[i].files = report.files; data.items[i].report = nil
+                    data.items[i].question = nil; data.items[i].lastError = nil; data.items[i].attempts = 0; data.items[i].interrupted = false
+                    data.items[i].delegated = 0; data.items[i].aiHelped = 0
+                    if let goal = data.items[i].goal { data.readyParts(goal) }
                 }
             } else if let report, let summary = report.summary {
                 // The review could not be done: the result still waits for the check, with that said on its card.
@@ -1956,7 +2002,8 @@ public final class TodoScheduler: ObservableObject {
 
     // What the AI is asked: the TODO, then everything the user said about it since.
     // files: where its attachments are for the AI (deliver).
-    public static func question(_ item: TodoItem, files: [String] = [], documents: Bool = false) -> String {
+    // resume: a step's TodoData.resumeSHA, where it goes on (nil: the Goal work tree's base).
+    public static func question(_ item: TodoItem, files: [String] = [], documents: Bool = false, resume: String? = nil) -> String {
         var text = "TODO: " + item.title
         if !item.detail.isEmpty { text += "\n\n" + item.detail }
         if !files.isEmpty { text += "\n\n" + L("[첨부 파일]", "[Attached files]") + "\n" + files.map { "- " + $0 }.joined(separator: "\n") }
@@ -1970,16 +2017,35 @@ public final class TodoScheduler: ObservableObject {
                     return head + note.text
                 }.joined(separator: "\n")
         }
-        if item.interrupted {
+        if item.role == .step {
+            let from = resume.map { L("마지막 Step commit \($0)", "the last Step commit \($0)") } ?? L("Goal 작업 폴더의 시작 commit", "the Goal work tree's start")
+            text += "\n\n" + L("[Step] Goal 브랜치의 \(from)부터 이어서 이 Step만 해.", "[Step] Go on from \(from) on the Goal branch and do this Step only.")
+            if item.interrupted, let resume {
+                text += "\n" + L("이전 시도가 중간에 끊겼어. \(resume) 뒤의 commit과 변경은 끊긴 시도의 것이야. git status와 \(resume)부터의 diff를 먼저 보고, 맞는 것은 살리고 이 Step만 마쳐.",
+                                  "The previous attempt was cut off: commits and changes after \(resume) are from it. Look at git status and the diff from \(resume) first, keep what is right and finish this Step only.")
+            } else if item.interrupted {
+                text += "\n" + L("이전 시도가 중간에 끊겼어. git status와 Goal 브랜치의 commit부터 확인하고 이 Step만 마쳐.", "The previous attempt was cut off. Check git status and the Goal branch's commits first and finish this Step only.")
+            }
+        }
+        if item.interrupted, item.role != .step {
             text += "\n\n" + (documents ? L("이전 시도가 중간에 끊겼어. 파일 상태부터 확인하고 남은 것만 이어서 해.", "The previous attempt was cut off. Check the files first and continue only what is left.")
                                         : L("이전 시도가 중간에 끊겼어. git status부터 확인하고 남은 것만 이어서 해.", "The previous attempt was cut off. Check git status first and continue only what is left."))
         }
-        else if item.attempts > 0, let error = item.lastError { text += "\n\n" + L("이전 시도가 오류로 끝났어: ", "The previous attempt ended with an error: ") + String(error.prefix(300)) }
+        else if !item.interrupted, item.attempts > 0, let error = item.lastError { text += "\n\n" + L("이전 시도가 오류로 끝났어: ", "The previous attempt ended with an error: ") + String(error.prefix(300)) }
         if item.wasParked { text += "\n\n" + landedMeanwhile }
         return text
     }
 
     public static func instruction(_ item: TodoItem, documents: Bool = false) -> String {
+        if item.role == .step {
+            return """
+            [TODO Step] One Step of a Goal, done while the user may be away: at most about 30 minutes of work. Change what this Step needs, commit it locally on the Goal branch and do not push (the Goal's Milestone reviews and pushes).
+            No other AI reviews a Step: before you commit, read your own diff (git_diff) and fix what is wrong.
+            Then call task_done with a summary, the assumptions you made and the files you changed. The app runs this Step's picked tests (\(item.tests.joined(separator: ", "))) on your last commit; the Step is done only when they pass, and the next Step goes on from that commit.
+            If you cannot go on (missing information, a decision only the user can give, contradicting requirements), call task_ask and stop. Where something is unclear, make a reasonable assumption and list it in task_done.
+            Never publish stable. Changes you did not make: leave them as they are and commit only your own files.
+            """
+        }
         let usual = documents ? "Work in this documents project as usual (plan, change the files, build or render and look at the result where you can)."
             : "Work in this project as usual (plan, change, test, commit and push when the project rules say so)."
         return """

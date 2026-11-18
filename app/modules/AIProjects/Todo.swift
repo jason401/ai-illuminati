@@ -101,12 +101,18 @@ public struct TodoItem: Codable, Identifiable, Equatable {
                 guard candidateSHA != oldValue else { return }
                 reviewedSHA = nil
                 testedSHA = nil
+                findings = nil
                 phase = .integration
             }
         }
         public private(set) var reviewedSHA: String?
         public private(set) var testedSHA: String?
         public private(set) var phase: Phase = .integration
+        public private(set) var findings: String?   // the last review's change requests for this candidate (a Fix Step's input, TODO structure 14)
+
+        // How the review of baseSHA...candidateSHA ended (Discussion.reviewMilestone). Only `approved` for the current
+        // candidate marks it reviewed: no reviewer, a failed or stopped run and change requests leave it unreviewed.
+        public enum Review: Equatable { case approved(sha: String), changesRequested(sha: String, findings: String), noReviewer, failed(String) }
 
         public init(branch: String, baseSHA: String, candidateSHA: String? = nil) {
             self.branch = branch
@@ -121,6 +127,14 @@ public struct TodoItem: Codable, Identifiable, Equatable {
             if sha == candidateSHA { reviewedSHA = sha }
         }
 
+        public mutating func record(_ review: Review) {
+            switch review {
+            case .approved(let sha): guard sha == candidateSHA else { return }; reviewedSHA = sha; findings = nil
+            case .changesRequested(let sha, let text): guard sha == candidateSHA else { return }; reviewedSHA = nil; findings = text
+            case .noReviewer, .failed: break
+            }
+        }
+
         public mutating func recordTest(for sha: String) {
             if sha == candidateSHA { testedSHA = sha }
         }
@@ -133,7 +147,7 @@ public struct TodoItem: Codable, Identifiable, Equatable {
             self.phase = phase
         }
 
-        private enum CodingKeys: String, CodingKey { case branch, baseSHA, candidateSHA, reviewedSHA, testedSHA, phase }
+        private enum CodingKeys: String, CodingKey { case branch, baseSHA, candidateSHA, reviewedSHA, testedSHA, phase, findings }
 
         public init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -146,6 +160,7 @@ public struct TodoItem: Codable, Identifiable, Equatable {
             if let savedReview { recordReview(for: savedReview) }
             if let savedTest { recordTest(for: savedTest) }
             if savedReview == reviewedSHA, savedTest == testedSHA { setPhase(savedPhase) }
+            if candidateSHA != nil { findings = try c.decodeIfPresent(String.self, forKey: .findings) }
         }
     }
 

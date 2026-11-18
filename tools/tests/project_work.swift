@@ -960,6 +960,82 @@ func testProjectSnapshot() {
     print("PASS: project snapshot (discarded user changes; committed ones are not)")
 }
 
+// A Milestone's review (TODO structure 09): the whole base...candidate diff of every Step, by an AI that did none of
+// them; only "No issues" for the candidate SHA marks it reviewed.
+func testMilestoneReview() {
+    let root = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("milestone-review-" + UUID().uuidString)
+    try! FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    func git(_ args: [String]) -> String { try! ProjectProcess.git(args, root: root.path) }
+    _ = git(["init", "-b", "main"]); _ = git(["config", "user.name", "Fixture"]); _ = git(["config", "user.email", "fixture@example.invalid"])
+    try! "Baseline\n".write(to: root.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
+    _ = git(["remote", "add", "origin", root.path + "/unused-origin"])
+    _ = git(["add", "README.md"]); _ = git(["commit", "-m", "Initial"])
+    let base = git(["rev-parse", "HEAD"])
+    for n in 1...3 {
+        try! "Step \(n) line\n".write(to: root.appendingPathComponent("step\(n).txt"), atomically: true, encoding: .utf8)
+        _ = git(["add", "step\(n).txt"]); _ = git(["commit", "-m", "Step \(n)"])
+    }
+    let candidate = git(["rev-parse", "HEAD"])
+    try! "Uncommitted\n".write(to: root.appendingPathComponent("loose.txt"), atomically: true, encoding: .utf8)
+    let material = ProjectSnapshot.milestone(root: root.path, base: base, candidate: candidate) ?? ""
+    expect((1...3).allSatisfy { material.contains("+Step \($0) line") && material.contains("step\($0).txt") } && !material.contains("Baseline")
+           && !material.contains("loose.txt"), "the Milestone's material holds all three Steps' diffs and nothing of the work tree")
+    expect(ProjectSnapshot.milestone(root: root.path, base: candidate, candidate: base) == nil && ProjectSnapshot.milestone(root: root.path, base: base, candidate: base) == nil
+           && ProjectSnapshot.milestone(root: root.path, base: "--all", candidate: candidate) == nil && ProjectSnapshot.milestone(root: root.path, base: String(repeating: "0", count: 40), candidate: candidate) == nil,
+           "no material for a reversed, empty, option-like or unknown range")
+
+    let claude = Account(id: "ms-claude", provider: .claude, name: "C"), codex = Account(id: "ms-codex", provider: .codex, name: "G")
+    let model = AppModel(); model.accounts = [claude, codex]
+    let chat = Discussion(model: model)
+    let room = chat.currentID
+    let binding = WorkspaceBinding(roots: [WorkspaceRoot(path: root.path, directory: true)], project: try! ProjectProcess.inspect(root.path))
+    var prompts: [String] = [], asked: [String] = [], reply: Result<String, Answerer.Failure> = .success("No issues")
+    chat.workspaceAnswer = { account, prompt, _, _, _ in asked.append(account.id); prompts.append(prompt); return reply }
+    func review(workers: [String] = [claude.id], reviewers: [String] = [claude.id, codex.id], token: DebateCancellation = DebateCancellation()) -> TodoItem.MilestoneCandidate.Review {
+        chat.reviewMilestone(room: room, workers: workers, reviewers: reviewers, binding: binding, root: root.path, base: base, candidate: candidate, goal: "Add three steps.", token: token)
+    }
+    func recorded(_ outcome: TodoItem.MilestoneCandidate.Review) -> TodoItem.MilestoneCandidate {
+        var c = TodoItem.MilestoneCandidate(branch: "main", baseSHA: base, candidateSHA: candidate); c.record(outcome); return c
+    }
+
+    var outcome = review()
+    expect(outcome == .approved(sha: candidate) && asked == [codex.id] && prompts.last.map { p in p.hasPrefix("[REVIEW]") && p.contains("Add three steps.")
+           && (1...3).allSatisfy { p.contains("+Step \($0) line") } } == true, "the other AI reviews all three Steps' diffs and approves the candidate")
+    expect(recorded(outcome).reviewedSHA == candidate, "an approval records the candidate as reviewed")
+
+    reply = .success("1. step2.txt:1 is wrong.")
+    outcome = review()
+    var c = recorded(outcome)
+    expect(outcome == .changesRequested(sha: candidate, findings: "1. step2.txt:1 is wrong.") && c.reviewedSHA == nil && c.findings == "1. step2.txt:1 is wrong.",
+           "change requests leave the Milestone unreviewed and keep the findings")
+    let saved = try? JSONDecoder().decode(TodoItem.MilestoneCandidate.self, from: JSONEncoder().encode(c))
+    expect(saved?.findings == c.findings && saved?.reviewedSHA == nil, "the findings are saved with the candidate")
+    c.candidateSHA = base
+    expect(c.findings == nil, "a new candidate drops the old findings")
+    var approvedThenAsked = recorded(.approved(sha: candidate)); approvedThenAsked.record(.changesRequested(sha: candidate, findings: "x"))
+    expect(approvedThenAsked.reviewedSHA == nil && recorded(.approved(sha: base)).reviewedSHA == nil, "change requests undo an approval; another SHA's approval does not count")
+
+    asked = []
+    outcome = review(reviewers: [claude.id])
+    expect(outcome == .noReviewer && asked.isEmpty && recorded(outcome).reviewedSHA == nil, "no reviewer but the worker: not reviewed")
+    outcome = review(workers: [claude.id, codex.id])
+    expect(outcome == .noReviewer && asked.isEmpty, "every Step's worker is left out as reviewer")
+
+    reply = .failure(.timedOut)
+    outcome = review()
+    if case .failed = outcome {} else { expect(false, "a failed review run is a failure") }
+    expect(recorded(outcome).reviewedSHA == nil, "a failed review run leaves the Milestone unreviewed")
+    reply = .success("No issues")
+    let stopped = DebateCancellation(); stopped.cancel()
+    outcome = review(token: stopped)
+    if case .failed = outcome {} else { expect(false, "a stopped review is a failure") }
+    expect(recorded(outcome).reviewedSHA == nil, "a stopped review leaves the Milestone unreviewed")
+    reply = .success("")
+    if case .failed = review() {} else { expect(false, "an empty answer is a failure") }
+    try? FileManager.default.removeItem(at: root)
+    print("PASS: Milestone review (all Steps' diffs, independent reviewer, only No issues approves)")
+}
+
 // Step times (A) and project_run's "[n/m] name" stages with their record (C).
 func testWorkTiming() {
     let t0 = Date(timeIntervalSince1970: 1000), t1 = t0.addingTimeInterval(60), t2 = t0.addingTimeInterval(130)

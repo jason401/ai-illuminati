@@ -707,11 +707,21 @@ public struct TodoData: Codable, Equatable {
     func eligible(held: (String) -> Bool) -> [TodoItem] {
         let busy = Set(items.filter { $0.state == .running }.compactMap { list($0.listID)?.project?.root })
         return lists.flatMap { ordered($0.id) }.filter { item in
-            guard item.state == .ready, !item.waitsForGoalPath, !stopped(item), let root = list(item.listID)?.project?.root, !busy.contains(root), cancelledBlockers(item).isEmpty else { return false }
+            guard item.state == .ready, !item.waitsForGoalPath, !planned(item), !stopped(item), let root = list(item.listID)?.project?.root, !busy.contains(root), cancelledBlockers(item).isEmpty else { return false }
             guard blockers(item).allSatisfy({ id in self.item(id).map { satisfied($0, for: item) } ?? true }) else { return false }
             return !held(root)
         }
     }
+
+    // TODO structure 15 (off until 16): with the goal path on, a TODO's first turn plans it (task_split) instead of working:
+    // a plain or goal TODO of a Git project (not documents, not folderless) that has no parts yet.
+    func planning(_ item: TodoItem) -> Bool {
+        TodoData.goalPath && (item.role == .plain || item.role == .goal) && item.goal == nil
+            && list(item.listID)?.project.map { !$0.isDocuments && !$0.isFolderless } == true && !items.contains { $0.goal == item.id }
+    }
+    // Its plan is saved: its parts run in its place, the goal itself is never taken again (it is done with its last Milestone).
+    // With the goal path off a goal still runs as plain.
+    func planned(_ item: TodoItem) -> Bool { TodoData.goalPath && item.role == .goal && items.contains { $0.goal == item.id } }
 
     // Where a goal's step goes on: the commit the last finished part before it left on the Goal branch (a step's tested
     // commit, a milestone's candidate); nil before the first, which starts at the Goal work tree's base.
@@ -945,7 +955,10 @@ public final class TodoStore: ObservableObject {
     // drafts right below the goal on the board, in the order they run, `after` linking them, the goal marked a goal.
     // Asked again for the same goal: the same plan returns the parts already saved (nothing new); another plan is refused.
     @discardableResult
-    public func savePlan(goal: UUID, _ plan: TodoPlan) throws -> [TodoItem] {
+    public func savePlan(goal: UUID, _ plan: TodoPlan) throws -> [TodoItem] { try savePlan(goal: goal, plan, ready: false) }
+    // ready (task_split, TODO structure 15): the parts that may go now become ready in the same save, so the first Step starts
+    // once the planning turn ends.
+    func savePlan(goal: UUID, _ plan: TodoPlan, ready: Bool) throws -> [TodoItem] {
         let run = try plan.checked()
         return try update { data in
             guard let g = data.items.firstIndex(where: { $0.id == goal }) else { throw TodoError.notFound }
@@ -957,7 +970,8 @@ public final class TodoStore: ObservableObject {
                 guard saved.allSatisfy({ $0.listID == head.listID }), plan.same(saved, as: run) else {
                     throw TodoPlan.refuse("이 Goal에는 다른 계획이 이미 있어요.", "this goal already has another plan.")
                 }
-                return saved
+                if ready { data.readyParts(goal) }
+                return saved.compactMap { data.item($0.id) }
             }
             guard head.state != .done && head.state != .cancelled else { throw TodoError.notEditable }
             guard let l = data.lists.firstIndex(where: { $0.id == head.listID }) else { throw TodoError.notFound }
@@ -972,7 +986,8 @@ public final class TodoStore: ObservableObject {
             order.insert(contentsOf: made.map(\.id), at: order.firstIndex(of: goal).map { $0 + 1 } ?? order.endIndex)
             data.items += made
             data.lists[l].order = order
-            return made
+            if ready { data.readyParts(goal) }
+            return made.compactMap { data.item($0.id) }
         }
     }
     // TODO structure 13 (off until 16): a Milestone's push, judged by the remote and saved on the TODO whatever the outcome,
@@ -1326,7 +1341,7 @@ public final class TodoStore: ObservableObject {
     public var waitingForUser: Int { snapshot.items.filter { $0.state == .needsYou || $0.state == .review }.count }
 }
 
-// task_done / task_ask: only for the live attempt of a TODO's own chat (like work_plan).
+// task_done / task_ask (and a goal's task_split): only for the live attempt of a TODO's own chat (like work_plan).
 public final class TaskLink: ToolProvider {
     public static let shared = TaskLink()
     public var active: Bool { ProjectWork.active }
@@ -1336,10 +1351,20 @@ public final class TaskLink: ToolProvider {
         return TodoStore.shared.current.items.first { $0.room == context.room && $0.state == .running }
     }
     public func tools(context: ToolContext) -> [[String: Any]] {
-        guard live(context) != nil else { return [] }
+        guard let item = live(context) else { return [] }
         let string: [String: Any] = ["type": "string"], strings: [String: Any] = ["type": "array", "items": string]
         let question: [String: Any] = ["type": "object", "properties": ["text": string, "options": strings, "recommended": string],
                                        "required": ["text"], "additionalProperties": false]
+        // A goal's planning turn (TODO structure 15): it plans, it does not report a finished TODO.
+        let split: [[String: Any]] = !TodoStore.shared.current.planning(item) ? [] : [[
+            "name": "task_split",
+            "description": "Submit the plan of this Goal TODO (this turn plans only: change no files). About 30 minutes of work or less, or a TODO the user already wrote as one small piece: give only tests; it becomes one Step and the final Milestone. Larger: give parts in the order they run, each after the one before: steps of about 30 minutes, each with the test functions it picks (never the full test), and a milestone after each group of steps that can be published on its own; the last part is a milestone, which names no tests. A refused plan says why: fix it and call again. Saved: the first Step starts after this turn; end your reply with a short report of the plan.",
+            "inputSchema": ["type": "object", "properties": [
+                "tests": strings,
+                "parts": ["type": "array", "maxItems": TodoPlan.maxParts, "items": ["type": "object", "properties": [
+                    "role": ["type": "string", "enum": ["step", "milestone"]], "title": string, "detail": string, "tests": strings],
+                    "required": ["role", "title"], "additionalProperties": false]]],
+                "additionalProperties": false]]]
         return [["name": "task_done",
                  "description": "Report that this TODO is finished (and tested where it can be). When this chat's work and review are over, the TODO waits for the user's check. Call it again after fixes to update the report. Then end your reply with a short report.",
                  "inputSchema": ["type": "object", "properties": ["summary": string, "assumptions": strings, "files": strings],
@@ -1348,7 +1373,7 @@ public final class TaskLink: ToolProvider {
                  "description": "This TODO cannot go on without the user: kind 'question' (at most 3 questions, with options and your recommendation), 'approval' (a step needs the user's OK), 'missing_info' (information only the user has) or 'blocked' (anything else, e.g. contradicting requirements). Then stop and end your reply.",
                  "inputSchema": ["type": "object", "properties": ["kind": ["type": "string", "enum": ["question", "approval", "missing_info", "blocked"]], "reason": string,
                                                                    "questions": ["type": "array", "items": question, "maxItems": 3]],
-                                 "required": ["kind", "reason"], "additionalProperties": false]]]
+                                 "required": ["kind", "reason"], "additionalProperties": false]]] + split
     }
     public func call(_ name: String, _ arguments: [String: Any], context: ToolContext) -> [String: Any] {
         guard let item = live(context) else { return ProjectTools.failure("No running TODO in this chat.") }
@@ -1386,7 +1411,40 @@ public final class TaskLink: ToolProvider {
                 }
             } catch { return ProjectTools.failure(error.localizedDescription) }
             return ["content": [["type": "text", "text": "Recorded. Stop working now: end your reply with the reason and the questions. The user answers on the TODO card or in this chat."]], "isError": false]
+        case "task_split": return split(item, arguments)
         default: return ProjectTools.failure("Unknown tool: " + name)
+        }
+    }
+
+    // task_split for the running goal `item`: the plan checked and saved in one go by savePlan (TodoPlan.checked says why one
+    // is refused), its first Step ready. Only tests: the TODO as written is one Step, then its final Milestone. The same plan
+    // again (a lost reply) returns what was saved.
+    func split(_ item: TodoItem, _ arguments: [String: Any]) -> [String: Any] {
+        let store = TodoStore.shared
+        guard store.current.planning(item) || store.current.planned(item) else { return ProjectTools.failure("This TODO is not planned with task_split.") }
+        func clip(_ value: Any?, _ limit: Int) -> String { String((value as? String ?? "").prefix(limit)) }
+        func names(_ value: Any?) -> [String] { (value as? [String] ?? []).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty } }
+        let raw = arguments["parts"] as? [[String: Any]] ?? [], tests = names(arguments["tests"])
+        var parts: [TodoPlan.Part] = []
+        if raw.isEmpty {
+            guard !tests.isEmpty else { return ProjectTools.failure("Give tests (one Step for the whole TODO) or parts. Nothing was saved; call task_split again.") }
+            parts = [TodoPlan.Part(key: "1", role: .step, title: item.title, detail: item.detail, tests: tests),
+                     TodoPlan.Part(key: "2", role: .milestone, title: "Milestone · " + item.title, after: ["1"])]
+        } else {
+            guard tests.isEmpty else { return ProjectTools.failure("Give tests or parts, not both (a step names its own tests). Nothing was saved; call task_split again.") }
+            for (n, p) in raw.enumerated() {
+                let role = (p["role"] as? String).flatMap(TodoItem.Role.init(rawValue:))
+                guard let role, role == .step || role == .milestone else { return ProjectTools.failure("Part \(n + 1): role must be step or milestone. Nothing was saved; call task_split again.") }
+                parts.append(TodoPlan.Part(key: String(n + 1), role: role, title: clip(p["title"], 200), detail: clip(p["detail"], 8000),
+                                           after: n == 0 ? [] : [String(n)], tests: names(p["tests"])))
+            }
+        }
+        do {
+            let made = try store.savePlan(goal: item.id, TodoPlan(parts: parts), ready: true)
+            let steps = made.filter { $0.role == .step }.count, milestones = made.count - steps
+            return ["content": [["type": "text", "text": "Saved: \(steps) Step(s) and \(milestones) Milestone(s). The first Step starts after this turn. Change no files; end your reply with a short report of the plan."]], "isError": false]
+        } catch {
+            return ProjectTools.failure(error.localizedDescription + " Fix the plan and call task_split again.")
         }
     }
 }
@@ -1880,7 +1938,9 @@ public final class TodoScheduler: ObservableObject {
         guard let room else { return nil }
         if chats.answering.contains(room) { return L("TODO 채팅이 아직 답하는 중이라 기다려요.", "Waiting for the TODO's chat to finish answering.") }
         // A step has no reviewer: the AI checks its own diff and the app its picked tests (the milestone reviews the sum).
-        let reviewer = item.role == .step ? nil : crew.reviewer
+        // Nor a planning turn: it changes no files.
+        let planning = store.current.planning(item)
+        let reviewer = item.role == .step || planning ? nil : crew.reviewer
         chats.setCrew(room: room, members: [crew.lead.id] + (reviewer.map { [$0.id] } ?? []), lead: crew.lead.id)
         // The attachments go into the chat's own folder (the AI reads them there); photos it has not seen yet also go with the message.
         let delivered: (paths: [String], photos: [TodoPhoto])
@@ -1906,7 +1966,7 @@ public final class TodoScheduler: ObservableObject {
         } catch {
             return error.localizedDescription
         }
-        if let reason = chats.start(room: room, question: question, photos: delivered.photos, review: reviewer != nil, extra: Self.instruction(item, documents: project.isDocuments)) {
+        if let reason = chats.start(room: room, question: question, photos: delivered.photos, review: reviewer != nil, extra: planning ? Self.planInstruction(item) : Self.instruction(item, documents: project.isDocuments)) {
             try? store.change(item.id) { $0.state = .ready; $0.lastError = reason }
             return reason
         }
@@ -1946,6 +2006,19 @@ public final class TodoScheduler: ObservableObject {
             guard let room = item.room, !chats.answering.contains(room) else { continue }
             var turn = chats.ended(room)
             let report = item.report
+            // A planning turn (TODO structure 15) that saved its plan: the goal waits while its parts run, whatever else the
+            // turn did (the plan is on disk). Without a plan it is an error, retried, unless it asked the user.
+            if let now = store.current.item(item.id), store.current.planned(now) {
+                try? store.change(item.id) { t in
+                    guard t.state == .running else { return }
+                    t.state = .ready; t.result = report?.summary ?? L("분할 계획을 저장했어요.", "The plan was saved."); t.report = nil; t.question = nil
+                    t.lastError = nil; t.attempts = 0; t.interrupted = false; t.delegated = 0; t.aiHelped = 0
+                }
+                continue
+            }
+            if turn.error == nil, report?.question == nil, store.current.planning(item) {
+                turn.error = L("분할 계획을 저장하지 않았어요. task_split으로 제출해 주세요.", "No plan was saved: submit it with task_split.")
+            }
             // A step that reported without its tests passing is not done: it goes the way of an error (retried).
             if turn.error == nil, report?.summary != nil, report?.question == nil, let unfinished = store.current.stepUnfinished(item) { turn.error = unfinished }
             if let error = turn.error {
@@ -2225,14 +2298,38 @@ public final class TodoScheduler: ObservableObject {
         return text
     }
 
+    // A goal's first turn (TODO structure 15): it reads the code, judges the size and submits Steps and Milestones with task_split.
+    static func planInstruction(_ item: TodoItem) -> String {
+        """
+        [TODO plan] The first turn of a TODO, done while the user may be away: plan it, do not build it. Change no files, commit nothing and push nothing.
+        Read the code you need and judge how much work it is, then submit the plan with task_split:
+        - About 30 minutes of work or less, or a TODO the user already wrote as one small piece: do not split it. Give only tests (the test functions that check it): it becomes one Step and the final Milestone.
+        - More than that: give parts in the order they run. Steps of about 30 minutes each, every Step with the test functions it picks (never the full test), and a Milestone after each group of Steps that can be published on its own as a working feature; the last part is a Milestone.
+        A Step's AI changes the code, runs only its picked tests and commits locally on the Goal branch without pushing; a Milestone reviews and fully tests the Steps since the remote and pushes them. Write each Step's detail so an AI that never saw this chat can start at once: what to change, where, and done when (keep every requirement of the TODO in some Step).
+        A refused plan says why: fix it and call task_split again. Once it is saved, end your reply with a short report of the plan; the first Step starts after this turn.
+        If you cannot plan it (missing information, a decision only the user can give, contradicting requirements), call task_ask and stop.
+        \(item.askFirst ? "Before planning, ask with task_ask what is unclear (at most 3 questions, with options and your recommendation). If nothing is unclear, go ahead."
+                       : "Where something is unclear, make a reasonable assumption and write it in the Step's detail.")
+        Never publish stable. Changes you did not make may belong to another TODO: leave them as they are.
+        """
+    }
+
     public static func instruction(_ item: TodoItem, documents: Bool = false) -> String {
         if item.role == .step {
             return """
             [TODO Step] One Step of a Goal, done while the user may be away: at most about 30 minutes of work. Change what this Step needs, commit it locally on the Goal branch and do not push (the Goal's Milestone reviews and pushes).
+            Run only this Step's picked tests (\(item.tests.joined(separator: ", "))), not the full test: the Milestone runs that.
             No other AI reviews a Step: before you commit, read your own diff (git_diff) and fix what is wrong.
             Then call task_done with a summary, the assumptions you made and the files you changed. The app runs this Step's picked tests (\(item.tests.joined(separator: ", "))) on your last commit; the Step is done only when they pass, and the next Step goes on from that commit.
             If you cannot go on (missing information, a decision only the user can give, contradicting requirements), call task_ask and stop. Where something is unclear, make a reasonable assumption and list it in task_done.
             Never publish stable. Changes you did not make: leave them as they are and commit only your own files.
+            """
+        }
+        if item.role == .milestone {
+            return """
+            [TODO Milestone] The end of a group of a Goal's Steps, done while the user may be away. The app merges the Goal branch with the remote, another AI reviews the whole diff since the remote, the full test runs on that exact commit, and only that reviewed and tested SHA is fast-forward pushed.
+            Do not push, and do not change code beyond what this Milestone is asked: a fault the review or the full test finds comes back as a Fix Step before it.
+            Then call task_done with a summary; if you cannot go on, call task_ask and stop. Never publish stable.
             """
         }
         let usual = documents ? "Work in this documents project as usual (plan, change the files, build or render and look at the result where you can)."

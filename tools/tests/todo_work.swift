@@ -2480,6 +2480,107 @@ func testTodoSteps() {
     print("PASS: TODO steps (done on a tested local commit, next ready, pause/stop at a step's end, restart from the last step's commit)")
 }
 
+// TODO structure 15: with the goal path on a TODO's first turn plans it with task_split: a small one is one Step and its final
+// Milestone, a large one is saved split with only its first Step ready, a wrong plan is refused and asked again, and a turn
+// that ends without a plan is retried. A planned goal is never taken again; its first Step starts when the turn ends.
+func testTodoSplit() {
+    let before = TodoData.goalPath
+    TodoData.goalPath = true
+    defer { TodoData.goalPath = before }
+    let saved = TodoStore.shared
+    let store = TodoStore(url: todoStoreFile("split"))
+    TodoStore.shared = store
+    defer { TodoStore.shared = saved }
+    let chats = GoalStepChats()
+    let scheduler = TodoScheduler(chats: chats, store: store)
+    scheduler.held = { _ in false }
+    func project(_ name: String) -> ProjectBinding { ProjectBinding(root: "/tmp/todo-split-" + name, common: "", remote: "", remoteURL: "") }
+    func state(_ id: UUID) -> TodoItem.State? { store.current.item(id)?.state }
+    func parts(_ goal: UUID) -> [TodoItem] { store.current.items.filter { $0.goal == goal } }
+    func ok(_ r: [String: Any]) -> Bool { r["isError"] as? Bool == false }
+    func says(_ r: [String: Any]) -> String { ((r["content"] as? [[String: Any]])?.first?["text"] as? String) ?? "" }
+    func split(_ id: UUID, _ arguments: [String: Any]) -> [String: Any] { TaskLink.shared.split(store.current.item(id)!, arguments) }
+    func start(_ title: String, detail: String = "") -> TodoItem {
+        let item = try! store.add(title: title, detail: detail, project: project(title), projectName: title)
+        store.startDrafts(lists: [item.listID])
+        scheduler.tick()
+        return store.current.item(item.id)!
+    }
+    func end(_ id: UUID) { chats.answering.remove(store.current.item(id)!.room!); scheduler.tick() }
+
+    // Small: only tests. The TODO as written is one Step, then its final Milestone; the turn plans, with no reviewer.
+    let small = start("small", detail: "Rename the label.")
+    expect(small.state == .running && store.current.planning(small) && chats.started.count == 1, "a new TODO's first turn plans it")
+    let plan = chats.started[0]
+    expect(!plan.review && plan.extra.contains("[TODO plan]") && plan.extra.contains("task_split") && plan.extra.contains("30 minutes") && !plan.extra.contains("[TODO work]"),
+           "the planning turn is told to judge the size and submit with task_split, with no reviewer: \(plan.extra)")
+    let one = split(small.id, ["tests": ["testTodoAddTool"]])
+    let sp = parts(small.id)
+    expect(ok(one) && sp.map(\.role) == [.step, .milestone] && sp[0].title == "small" && sp[0].detail == "Rename the label." && sp[0].tests == ["testTodoAddTool"]
+           && sp[1].tests.isEmpty && sp[1].after == [sp[0].id] && sp[0].state == .ready && sp[1].state == .draft, "a small TODO is one Step and its Milestone, the Step ready: \(says(one))")
+    expect(state(small.id) == .running && store.current.item(small.id)?.role == .goal, "the goal runs until its planning turn ends")
+    end(small.id)
+    expect(state(small.id) == .ready && store.current.item(small.id)?.result != nil && state(sp[0].id) == .running && chats.started.count == 2,
+           "the turn ends: the goal waits while its first Step starts")
+    let step = chats.started[1]
+    expect(step.extra.contains("[TODO Step]") && step.extra.contains("testTodoAddTool") && step.extra.contains("not the full test") && step.extra.contains("do not push") && !step.review,
+           "the Step is told its picked tests, a local commit and no push: \(step.extra)")
+    expect(!store.current.eligible(held: { _ in false }).contains { $0.id == small.id } && !store.current.planning(store.current.item(small.id)!),
+           "a planned goal is never taken or planned again")
+
+    // A wrong plan: refused with why, nothing saved, asked to call again.
+    let big = start("big")
+    let wrong: [(String, [String: Any])] = [
+        ("neither tests nor parts", [:]),
+        ("tests and parts", ["tests": ["testA"], "parts": [["role": "step", "title": "A", "tests": ["testA"]], ["role": "milestone", "title": "M"]]]),
+        ("no final milestone", ["parts": [["role": "step", "title": "A", "tests": ["testA"]], ["role": "step", "title": "B", "tests": ["testB"]]]]),
+        ("a step without tests", ["parts": [["role": "step", "title": "A"], ["role": "milestone", "title": "M"]]]),
+        ("a milestone with tests", ["parts": [["role": "step", "title": "A", "tests": ["testA"]], ["role": "milestone", "title": "M", "tests": ["testA"]]]]),
+        ("a milestone first", ["parts": [["role": "milestone", "title": "M"], ["role": "step", "title": "A", "tests": ["testA"]], ["role": "milestone", "title": "M2"]]]),
+        ("a goal part", ["parts": [["role": "goal", "title": "G"]]]),
+        ("a bad test name", ["parts": [["role": "step", "title": "A", "tests": ["testA,testB"]], ["role": "milestone", "title": "M"]]]),
+        ("an empty title", ["parts": [["role": "step", "title": " ", "tests": ["testA"]], ["role": "milestone", "title": "M"]]])]
+    for (what, arguments) in wrong {
+        let r = split(big.id, arguments)
+        expect(!ok(r) && says(r).contains("call task_split again"), "refused and asked again: \(what): \(says(r))")
+    }
+    expect(parts(big.id).isEmpty && store.current.item(big.id)?.role == .plain && state(big.id) == .running, "a refused plan saves nothing")
+
+    // Large: saved in one go in the order given, each part after the one before, below the goal on the board, only the first Step ready.
+    let large: [String: Any] = ["parts": [["role": "step", "title": "A", "detail": "Do A.", "tests": ["testA"]], ["role": "step", "title": "B", "tests": ["testB", "testC"]],
+                                          ["role": "milestone", "title": "M1"], ["role": "step", "title": "C", "tests": ["testC"]], ["role": "milestone", "title": "M2"]]]
+    let r = split(big.id, large)
+    let bp = parts(big.id)
+    expect(ok(r) && says(r).contains("3 Step(s) and 2 Milestone(s)") && bp.map(\.title) == ["A", "B", "M1", "C", "M2"]
+           && bp.map(\.role) == [.step, .step, .milestone, .step, .milestone] && bp[0].detail == "Do A." && bp[1].tests == ["testB", "testC"], "a large plan is saved split: \(says(r))")
+    expect(bp[0].after.isEmpty && (1..<5).allSatisfy { bp[$0].after == [bp[$0 - 1].id] } && bp[0].state == .ready && bp.dropFirst().allSatisfy { $0.state == .draft },
+           "each part waits for the one before; only the first Step is ready")
+    expect(store.current.ordered(big.listID).map(\.id) == [big.id] + bp.map(\.id), "the parts sit right below the goal on the board")
+    expect(ok(split(big.id, large)) && parts(big.id).count == 5, "the same plan again (a lost reply) saves nothing new")
+    expect(!ok(split(big.id, ["tests": ["testX"]])) && parts(big.id).count == 5, "another plan after it is refused")
+    end(big.id)
+    expect(state(big.id) == .ready && state(bp[0].id) == .running && state(bp[1].id) == .draft, "the large goal's first Step starts")
+
+    // Ended without a plan: an error, retried with why; the next attempt plans again.
+    let lazy = start("lazy")
+    end(lazy.id)
+    let retried = store.current.item(lazy.id)!
+    expect(retried.attempts == 1 && parts(lazy.id).isEmpty && retried.notes.last { $0.kind == .retry }?.text.contains("task_split") == true,
+           "a planning turn without a plan is retried: \(retried.state.rawValue)")
+    scheduler.tick()
+    expect(state(lazy.id) == .running && chats.started.last!.extra.contains("[TODO plan]"), "and plans again")
+    expect(ok(split(lazy.id, ["tests": ["testLazy"]])), "the retry's plan is saved")
+    end(lazy.id)
+    expect(state(lazy.id) == .ready && parts(lazy.id).first.map { state($0.id) } == .running, "then its Step starts")
+
+    // Off: every TODO still runs as plain, with no planning turn.
+    TodoData.goalPath = false
+    let plain = start("plain")
+    expect(plain.state == .running && !store.current.planning(plain) && chats.started.last!.extra.contains("[TODO work]") && chats.started.last!.review,
+           "with the goal path off a TODO runs as before")
+    print("PASS: TODO split (planning turn, small TODO one Step, large plan saved split with its first Step ready, wrong plan refused and asked again, no plan retried, off as before)")
+}
+
 // TODO structure 13: a Milestone is done only once its candidate is on the remote, its Goal only with its last Milestone,
 // and a TODO of another list waiting for the Goal by `after` goes on only then.
 private func checkMilestoneDone() {

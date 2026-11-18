@@ -697,8 +697,9 @@ public struct TodoData: Codable, Equatable {
         guard let list = list(item.listID) else { return false }
         if list.paused { return true }
         guard let stop = list.stopAfter else { return false }
-        let row = ordered(list.id).map(\.id)
-        guard let at = row.firstIndex(of: stop), let mine = row.firstIndex(of: item.id) else { return false }
+        let row = ordered(list.id)
+        // A goal's stop point is after its parts (they sit below it on the board): the goal ends with its last Milestone.
+        guard let at = row.lastIndex(where: { $0.id == stop || $0.goal == stop }), let mine = row.firstIndex(where: { $0.id == item.id }) else { return false }
         return mine > at
     }
 
@@ -980,6 +981,8 @@ public final class TodoStore: ObservableObject {
             let made = run.map { p -> TodoItem in
                 var item = TodoItem(listID: head.listID, title: p.title, detail: p.detail, after: p.after.compactMap { ids[$0] })
                 item.id = ids[p.key]!; item.role = p.role; item.goal = goal; item.tests = p.tests
+                // task_split's plan: the user's answers and change requests to the goal go with each step (its own chat asks them).
+                if ready, p.role == .step { item.notes = head.notes.filter { $0.kind == .answer || $0.kind == .feedback } }
                 return item
             }
             var order = data.ordered(head.listID).map(\.id)
@@ -1977,17 +1980,20 @@ public final class TodoScheduler: ObservableObject {
 
     // Copies the TODO's attachments into its chat's folder (kept when already there) and returns their paths, with
     // the photos not yet sent in that chat (at most 4 per message, like the message box). A photo carries its
-    // attachment's ID, so a retry in the same chat does not send it twice.
+    // attachment's ID, so a retry in the same chat does not send it twice. A goal's step also gets the goal's attachments
+    // (the user attached them to the TODO it was split from).
     static let attachmentFolder = "TODO attachments"
     func deliver(_ item: TodoItem, room: UUID) throws -> (paths: [String], photos: [TodoPhoto]) {
-        guard !item.attachments.isEmpty else { return ([], []) }
+        let goal = item.role == .step ? item.goal.flatMap(store.current.item) : nil
+        let all = item.attachments.map { (item.id, $0) } + (goal.map { g in g.attachments.map { (g.id, $0) } } ?? [])
+        guard !all.isEmpty else { return ([], []) }
         let target = chats.folder(room).appendingPathComponent(Self.attachmentFolder)
         let sent = chats.sentPhotos(room)
         var paths: [String] = [], photos: [TodoPhoto] = []
         do {
             try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-            for attachment in item.attachments {
-                let source = store.file(item.id, attachment)
+            for (owner, attachment) in all {
+                let source = store.file(owner, attachment)
                 let copy = target.appendingPathComponent(String(attachment.id.uuidString.prefix(8)) + "-" + attachment.name)
                 if !FileManager.default.fileExists(atPath: copy.path) { try FileManager.default.copyItem(at: source, to: copy) }
                 paths.append(copy.path)

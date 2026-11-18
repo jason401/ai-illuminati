@@ -564,6 +564,19 @@ func testTodoScheduler() {
             return .failure(.failed("review broke"))
         }
         if current.hasPrefix("TODO: secret") { _ = TaskLink.shared.call("task_done", ["summary": "Kept inside"], context: context); return .success("Done.") }
+        if current.hasPrefix("TODO: plan") {
+            // TODO structure 15: task_split only in the live attempt of the planning TODO's own chat.
+            var stale = context; stale.projectGeneration = (context.projectGeneration ?? 0) - 1
+            for (other, what) in [(elsewhere, "another chat"), (stale, "an earlier generation")] {
+                expect(!TaskLink.shared.tools(context: other).contains { $0["name"] as? String == "task_split" }
+                       && TaskLink.shared.call("task_split", ["tests": ["testA"]], context: other)["isError"] as? Bool == true, "task_split refused from \(what)")
+            }
+            expect(store.current.items.allSatisfy { $0.room != room || $0.goal == nil } && toolsSeen.contains("task_split"), "task_split is offered to the planning turn: \(toolsSeen)")
+            let r = TaskLink.shared.call("task_split", ["tests": ["testA"]], context: context)
+            expect(r["isError"] as? Bool == false, "task_split through the tool call: \(r)")
+            if let id = store.current.items.first(where: { $0.room == room })?.id { for part in store.current.items where part.goal == id { try? store.cancel(part.id) } }
+            return .success("Planned.")
+        }
         if current.hasPrefix("TODO: flaky") { return asked.filter { $0 == account.id }.count < 99 ? .failure(.failed("network down")) : .success("") }
         return .success("Ended without a report.")
     }
@@ -670,6 +683,19 @@ func testTodoScheduler() {
     let secretRoom = store.current.item(secret.id)?.room.map { chat.conversation($0) }
     expect(asked == ["todo-school"] && secretRoom?.enterpriseLock?.organization == "학교" && secretRoom?.configuration?.memberIDs == ["todo-school"],
            "an Enterprise project's TODO keeps the lock: \(asked)")
+    // A planning turn (goal path on): task_split scoped to its live attempt; once planned the goal waits.
+    TodoData.goalPath = true
+    let planned = try! store.add(title: "plan", project: project, projectName: "P")
+    scheduler.startNow()
+    settle { store.current.items.contains { $0.goal == planned.id } && store.current.item(planned.id)?.state != .running }
+    TodoData.goalPath = false
+    expect(store.current.item(planned.id)?.state == .ready && store.current.item(planned.id)?.role == .goal, "the planned goal waits for its parts")
+    let ended = store.current.item(planned.id)!
+    TodoData.goalPath = true
+    let afterEnd = TaskLink.shared.call("task_split", ["tests": ["testA"]], context: ToolContext(room: ended.room!, roots: []))
+    TodoData.goalPath = false
+    expect(afterEnd["isError"] as? Bool == true, "task_split refused once the attempt has ended")
+    try! store.cancel(planned.id)
     print("PASS: TODO scheduler (drafts wait, own chat, 10% rule, task_done/task_ask scoped, order gate, answer resent, no report, retries, one place free, folder lock, restart, report final at the end, busy chat waits, Enterprise lock)")
 }
 
@@ -2500,8 +2526,8 @@ func testTodoSplit() {
     func ok(_ r: [String: Any]) -> Bool { r["isError"] as? Bool == false }
     func says(_ r: [String: Any]) -> String { ((r["content"] as? [[String: Any]])?.first?["text"] as? String) ?? "" }
     func split(_ id: UUID, _ arguments: [String: Any]) -> [String: Any] { TaskLink.shared.split(store.current.item(id)!, arguments) }
-    func start(_ title: String, detail: String = "") -> TodoItem {
-        let item = try! store.add(title: title, detail: detail, project: project(title), projectName: title)
+    func start(_ title: String, detail: String = "", files: [URL] = []) -> TodoItem {
+        let item = try! store.add(title: title, detail: detail, files: files, project: project(title), projectName: title)
         store.startDrafts(lists: [item.listID])
         scheduler.tick()
         return store.current.item(item.id)!
@@ -2509,7 +2535,10 @@ func testTodoSplit() {
     func end(_ id: UUID) { chats.answering.remove(store.current.item(id)!.room!); scheduler.tick() }
 
     // Small: only tests. The TODO as written is one Step, then its final Milestone; the turn plans, with no reviewer.
-    let small = start("small", detail: "Rename the label.")
+    let note = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("split-mockup.txt")
+    try! "mockup".write(to: note, atomically: true, encoding: .utf8)
+    let small = start("small", detail: "Rename the label.", files: [note])
+    try! store.change(small.id) { $0.notes.append(TodoNote(kind: .answer, text: "use the blue one")) }   // asked while planning
     expect(small.state == .running && store.current.planning(small) && chats.started.count == 1, "a new TODO's first turn plans it")
     let plan = chats.started[0]
     expect(!plan.review && plan.extra.contains("[TODO plan]") && plan.extra.contains("task_split") && plan.extra.contains("30 minutes") && !plan.extra.contains("[TODO work]"),
@@ -2523,6 +2552,8 @@ func testTodoSplit() {
     expect(state(small.id) == .ready && store.current.item(small.id)?.result != nil && state(sp[0].id) == .running && chats.started.count == 2,
            "the turn ends: the goal waits while its first Step starts")
     let step = chats.started[1]
+    expect(sp[0].notes.map(\.text) == ["use the blue one"] && step.question.contains("use the blue one") && step.question.contains("split-mockup.txt"),
+           "the Step gets the goal's answers and attachments: \(step.question)")
     expect(step.extra.contains("[TODO Step]") && step.extra.contains("testTodoAddTool") && step.extra.contains("not the full test") && step.extra.contains("do not push") && !step.review,
            "the Step is told its picked tests, a local commit and no push: \(step.extra)")
     expect(!store.current.eligible(held: { _ in false }).contains { $0.id == small.id } && !store.current.planning(store.current.item(small.id)!),
@@ -2558,8 +2589,11 @@ func testTodoSplit() {
     expect(store.current.ordered(big.listID).map(\.id) == [big.id] + bp.map(\.id), "the parts sit right below the goal on the board")
     expect(ok(split(big.id, large)) && parts(big.id).count == 5, "the same plan again (a lost reply) saves nothing new")
     expect(!ok(split(big.id, ["tests": ["testX"]])) && parts(big.id).count == 5, "another plan after it is refused")
+    try! store.stop(after: big.id)
+    expect(!store.current.stopped(bp[0]) && !store.current.stopped(bp[4]), "a stop point on the goal holds after its last part, not its first Step")
     end(big.id)
     expect(state(big.id) == .ready && state(bp[0].id) == .running && state(bp[1].id) == .draft, "the large goal's first Step starts")
+    try! store.stop(after: big.id)
 
     // Ended without a plan: an error, retried with why; the next attempt plans again.
     let lazy = start("lazy")

@@ -344,8 +344,14 @@ public final class ProjectRun {
     public func validate(_ generation: Int) throws {
         guard !cancelled, generation == self.generation else { throw ProjectError.make("Project capability expired or operation cancelled.") }
         guard try ProjectProcess.current(binding) == binding else { throw ProjectError.make("Project repository or remote changed. Reconnect it first.") }
-        if let stepBranch, (try? ProjectProcess.git(["symbolic-ref", "--quiet", "HEAD"], root: binding.root, token: attempt)) != "refs/heads/" + stepBranch {
-            throw ProjectError.make(L("Step은 Goal 브랜치에서만 실행할 수 있어요.", "A Step can only run on its Goal branch."))
+        if let stepBranch {
+            let head = try ProjectProcess.gitReply(["symbolic-ref", "--quiet", "HEAD"], root: binding.root, token: attempt)
+            guard head.status == 0 || (head.status == 1 && head.output.isEmpty) else {
+                throw ProjectError.make(L("Step의 HEAD를 확인하지 못했어요.", "Could not read the Step's HEAD.") + "\n" + head.output)
+            }
+            guard head.status == 0, head.output.trimmingCharacters(in: .newlines) == "refs/heads/" + stepBranch else {
+                throw ProjectError.make(L("Step은 Goal 브랜치에서만 실행할 수 있어요.", "A Step can only run on its Goal branch."))
+            }
         }
     }
     public func checkpoint(_ note: String) -> String {

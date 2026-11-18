@@ -270,7 +270,10 @@ private func checkProjectStep(_ project: ProjectBinding, origin: URL) {
         // A branch change by a separate Git client invalidates the live Step capability.
         _ = git(["switch", "--detach", "HEAD"], at: tree.path)
         let drifted = provider.call("git_status", [:], context: context)
-        expect(drifted["isError"] as? Bool == true, "Step tools reject a detached Goal worktree")
+        let driftError = (drifted["content"] as? [[String: Any]])?.first?["text"] as? String
+        expect(drifted["isError"] as? Bool == true
+               && driftError == L("Step은 Goal 브랜치에서만 실행할 수 있어요.", "A Step can only run on its Goal branch."),
+               "Step tools report a detached Goal worktree as a branch mismatch")
         _ = git(["switch", tree.branch], at: tree.path)
         return .success("Step done.")
     }
@@ -492,6 +495,23 @@ func testFullAuto() {
     let codex = try! invocation.arguments(provider: .codex, original: ["exec", "-C", dir.path, "x"], directory: dir, web: false, tools: ToolHub.workspaceLink)
     expect(codex.contains("sandbox_mode=\"danger-full-access\"") && codex.contains("web_search=\"live\"") && !codex.contains { $0.contains("network_access=false") },
            "Codex full auto: full access with network")
+
+    // Write-only project settings belong to a scoped run; a plain .write binding keeps its existing CLI options.
+    var writeBinding = binding
+    writeBinding.level = .write; writeBinding.fullAuto = false
+    func writeArguments(_ workspace: WorkspaceBinding) -> [String] {
+        try! WorkspaceInvocation(binding: workspace, room: room, readOnly: false, backupPath: backup.directory)
+            .arguments(provider: .claude, original: ["--tools", ""], directory: dir, web: false, tools: { _ in nil })
+    }
+    let scopedWrite = writeArguments(writeBinding)
+    let settings = scopedWrite.firstIndex(of: "--settings").flatMap { index in
+        (try? JSONSerialization.jsonObject(with: Data(scopedWrite[index + 1].utf8))) as? [String: Any]
+    }
+    let sandbox = settings?["sandbox"] as? [String: Any]
+    let filesystem = sandbox?["filesystem"] as? [String: Any]
+    writeBinding.projectRunID = nil
+    expect(filesystem?["denyWrite"] as? [String] == selected.protectedPaths
+           && !writeArguments(writeBinding).contains("--settings"), "Claude protects Git in scoped project writes only")
 
     // No approval card for registered commands; stable publishing keeps its card.
     let run = ProjectRun(room: UUID(), binding: selected, token: DebateCancellation(), fullAuto: true)

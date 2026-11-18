@@ -273,7 +273,7 @@ extension Discussion {
         }
         defer { if sub != nil { DelegateLink.shared.unregister(run) } }
         let splitNote = part.flatMap { p in split.map { Self.subNote(p, split: $0) } }
-            ?? (sub == nil && run.deferPush && DelegateLink.shared.host != nil ? Self.delegateNote(fullAuto: conversation(id).workspace?.isFullAuto != false) : "")
+            ?? (sub == nil && run.deferPush && DelegateLink.enabled && DelegateLink.shared.host != nil ? Self.delegateNote(fullAuto: conversation(id).workspace?.isFullAuto != false) : "")
         let extraNote = (run.deferPush ? (note.isEmpty ? "" : note + "\n") + Self.deferredPushNote : note) + (splitNote.isEmpty ? "" : "\n" + splitNote)
         run.onNote = { [weak self] log in self?.changeTurn(id, index) { $0.projectLog = log; $0.lastActivityAt = Date() } }
         run.onPlan = { [weak self] steps, note in self?.changeTurn(id, index) { $0.plan = steps; $0.planNote = note; $0.lastActivityAt = Date() } }

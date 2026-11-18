@@ -630,6 +630,7 @@ everything else, Discussion's state above all, stays internal):
   `Discussion.meets`/`autoPicked` (Settings' team picks).
 - The six tool providers (`shared`, `active`, `tools`, `call`; `MemoryLink.newestTurn` for ToolHub.register): ToolHub lists them
   (`DelegateLink` since sub-room P2).
+  `DelegateLink.enabledKey`/`enabled`: Settings ▸ Chat's "Split into sub-rooms" switch (off by default) writes the key the module reads.
 - `Conversation.subOf` and `SubRoomLink` (`room`, `split`, `n`, one public init): a sub-room's chat record says which split it works
   for, so it is saved with the chat like `meetingOf` (the chat window and synced copies read the record type).
 - Settings' tabs: `MemoryStore`/`MemoryItem`/`MemoryData`, `ChatStorage` (`report`, `items`, `format`, `Report`, `Room`, `Kind`; AIChatRecords since T4),

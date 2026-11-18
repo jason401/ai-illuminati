@@ -457,6 +457,10 @@ extension SubRoomLink {
 // the main room's tools (one level only).
 public final class DelegateLink: ToolProvider {
     public static let shared = DelegateLink()
+    // Settings ▸ Chat ▸ "Split into sub-rooms" (experimental, off by default): off, a main room gets no delegate tools
+    // or note. Sub-rooms of a split already made keep theirs, so it can finish.
+    public static let enabledKey = "subRoomsEnabled"
+    public static var enabled: Bool { UserDefaults.app.bool(forKey: enabledKey) }
     static let maxWait = 300
     weak var host: Discussion?
     private let lock = NSLock()
@@ -481,7 +485,7 @@ public final class DelegateLink: ToolProvider {
         guard context.origin == .member, let run = ProjectWork.run(for: context), !run.binding.isDocuments, !run.binding.isFolderless else { return nil }
         lock.lock(); defer { lock.unlock() }
         if run.isSubRoom { return subs[run.id].map { (run, $0) } }
-        return (run, nil)
+        return Self.enabled ? (run, nil) : nil
     }
 
     public var active: Bool { host != nil && ProjectWork.active }

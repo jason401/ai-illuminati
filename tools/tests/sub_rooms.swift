@@ -11,6 +11,10 @@ import AIWorkspace
 // the main room merges and pushes and the app cleans up; approval by card or by full auto; refusals; the join turn once;
 // Stop going down to the sub-rooms; what a restart finds; project_run one at a time per repository.
 func testDelegate() {
+    // Sub-rooms are an experimental switch, off unless the user turns it on (Settings ▸ Chat).
+    expect(!DelegateLink.enabled, "sub-rooms are off by default")
+    UserDefaults.app.set(true, forKey: DelegateLink.enabledKey)
+    defer { UserDefaults.app.removeObject(forKey: DelegateLink.enabledKey) }
     func text(_ reply: [String: Any]) -> String { ((reply["content"] as? [[String: Any]])?.first?["text"] as? String) ?? "" }
     func failed(_ reply: [String: Any]) -> Bool { reply["isError"] as? Bool == true }
     func names(_ tools: [[String: Any]]) -> [String] { tools.compactMap { $0["name"] as? String } }

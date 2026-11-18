@@ -233,6 +233,8 @@ Conversation.workspace | var workspace: WorkspaceBinding?
 DelegateLink | final class DelegateLink
 DelegateLink.active | var active: Bool { get }
 DelegateLink.call(_:_:context:) | func call(_ name: String, _ arguments: [String : Any], context: ToolContext) -> [String : Any]
+DelegateLink.enabled | static var enabled: Bool { get }
+DelegateLink.enabledKey | static let enabledKey: String
 DelegateLink.shared | static let shared: DelegateLink
 DelegateLink.tools() | func tools() -> [[String : Any]]
 DelegateLink.tools(context:) | func tools(context: ToolContext) -> [[String : Any]]

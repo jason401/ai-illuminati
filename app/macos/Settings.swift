@@ -1239,6 +1239,7 @@ struct SortModelStatus: View {
 // AI-to-AI collaboration: off / show and go / on its own, and what the log counted in the last 30 days.
 private struct CollabSettingsCard: View {
     @ObservedObject var model: AppModel
+    @AppStorage(DelegateLink.enabledKey, store: .app) private var subRooms = false
 
     var body: some View {
         SettingsCard(title: L("AI끼리 협업", "AIs working together"),
@@ -1248,6 +1249,12 @@ private struct CollabSettingsCard: View {
                 SettingsMenu(options: CollabMode.allCases.map { ($0.title, $0) }, selection: $model.collaboration)
             }
             .help(model.collaboration.summary)
+            Divider()
+            SettingsRow(title: L("하위방으로 나누기 (실험)", "Split into sub-rooms (experimental)")) {
+                Toggle(L("하위방으로 나누기", "Split into sub-rooms"), isOn: $subRooms).labelsHidden().toggleStyle(.switch)
+            }
+            .help(L("프로젝트 작업에서 큰 일을 AI가 둘까지 나눠 다른 AI들에게 맡기고, 각자 따로 고친 것을 합쳐서 테스트한 뒤 push해요. 사용량이 그만큼 더 들어요.",
+                    "In project work, the AI may split large work into up to two parts for other AIs, each in its own work tree, then merge, test and push. Uses more of your limits."))
             Divider()
             Text(model.collaboration.summary)
                 .font(.system(size: 11)).foregroundStyle(.secondary)

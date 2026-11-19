@@ -24,6 +24,18 @@ public struct ProjectGroup: Identifiable, Equatable {
     }
 }
 
+struct TodoPieceGroup {
+    struct Row: Identifiable {
+        var id: UUID { chat.id }
+        let chat: Conversation
+        let state: TodoItem.State
+        let number: Int
+    }
+    let rows: [Row]
+    let total: Int
+    let done: Int
+}
+
 public enum SidebarProjects {
     public static func key(_ project: ProjectBinding) -> String { project.groupKey }
 
@@ -102,14 +114,44 @@ public enum SidebarProjects {
         return (going, finished)
     }
 
-    // A folder's rows with the chats answering now (its own or its TODOs') lifted to the top, in the folder's order;
-    // the rest keep their places (going TODO chats, its chats, finished TODO chats).
-    static func runningFirst(_ group: ProjectGroup, todo: TodoData, running: Set<UUID>)
-        -> (running: [Conversation], going: [Conversation], chats: [Conversation], finished: [Conversation]) {
+    static func splitPieces(_ rooms: [Conversation], todo: TodoData)
+        -> (top: [Conversation], pieces: [UUID: TodoPieceGroup]) {
+        let chats = Dictionary(uniqueKeysWithValues: rooms.map { ($0.id, $0) })
+        let linked = todo.items.filter { $0.room.flatMap { chats[$0] } != nil }
+        let byItem = Dictionary(uniqueKeysWithValues: linked.compactMap { item in
+            item.room.flatMap { chats[$0] }.map { (item.id, $0) }
+        })
+        var pieces: [UUID: TodoPieceGroup] = [:]
+        var nested: Set<UUID> = []
+        for item in linked {
+            guard let parent = byItem[item.id], let line = todo.splitLine(item), line.isFinish else { continue }
+            let planned = line.pieces.filter { !$0.finish }
+            let rows = planned.enumerated().compactMap { i, piece -> TodoPieceGroup.Row? in
+                guard let chat = byItem[piece.id], chat.id != parent.id else { return nil }
+                return TodoPieceGroup.Row(chat: chat, state: piece.state, number: i + 1)
+            }
+            guard !rows.isEmpty else { continue }
+            pieces[parent.id] = TodoPieceGroup(rows: rows, total: planned.count, done: planned.filter { $0.state == .done }.count)
+            nested.formUnion(rows.map(\.id))
+        }
+        return (rooms.filter { !nested.contains($0.id) }, pieces)
+    }
+
+    // A folder's answering chats come first. The Mac can also lift a finish when one of its nested pieces answers.
+    // The finished heading and delete menu still use the individual eligible chats.
+    static func runningFirst(_ group: ProjectGroup, todo: TodoData, running: Set<UUID>, groupPieces: Bool = false)
+        -> (running: [Conversation], going: [Conversation], chats: [Conversation], finished: [Conversation],
+            finishedChats: [Conversation], pieces: [UUID: TodoPieceGroup]) {
         let rooms = todoRooms(group.todoRooms, todo: todo)
-        let lifted = (rooms.going + group.chats + rooms.finished).filter { running.contains($0.id) }
-        let rest = { (rows: [Conversation]) in rows.filter { !running.contains($0.id) } }
-        return (lifted, rest(rooms.going), rest(group.chats), rest(rooms.finished))
+        let split = groupPieces ? splitPieces(group.todoRooms, todo: todo) : (top: group.todoRooms, pieces: [:])
+        let top = Set(split.top.map(\.id))
+        let going = rooms.going.filter { top.contains($0.id) }
+        let finished = rooms.finished.filter { top.contains($0.id) }
+        let answering = running.union(split.pieces.filter { $0.value.rows.contains { running.contains($0.id) } }.keys)
+        let lifted = (going + group.chats + finished).filter { answering.contains($0.id) }
+        let rest = { (rows: [Conversation]) in rows.filter { !answering.contains($0.id) } }
+        return (lifted, rest(going), rest(group.chats), rest(finished),
+                rooms.finished.filter { !running.contains($0.id) }, split.pieces)
     }
 
     // Finished TODO chats that may be deleted: every TODO of the chat done or cancelled, not pinned, not protected
@@ -135,6 +177,7 @@ public final class SidebarFold: ObservableObject {
     @Published private(set) var folded: Set<String>
     @Published private(set) var pinnedProjects: Set<String>
     @Published private(set) var openFinished: Set<String>   // projects whose "Finished TODOs" row is unfolded
+    @Published private var pieceVisibility: [UUID: Bool] = [:]
     @Published var dropProject: String?             // the project folder a dragged chat is over
     private static let foldedKey = "sidebar.folded", pinnedKey = "sidebar.pinnedProjects", openFinishedKey = "sidebar.openFinishedTodos", adoptedKey = "sidebar.pinsAdopted"
 
@@ -168,6 +211,9 @@ public final class SidebarFold: ObservableObject {
         if openFinished.contains(project) { openFinished.remove(project) } else { openFinished.insert(project) }
         defaults.set(openFinished.sorted(), forKey: Self.openFinishedKey)
     }
+
+    func piecesShown(_ parent: UUID, automatically: Bool) -> Bool { pieceVisibility[parent] ?? automatically }
+    func togglePieces(_ parent: UUID, automatically: Bool) { pieceVisibility[parent] = !piecesShown(parent, automatically: automatically) }
 
     public func isFolded(_ key: String) -> Bool { folded.contains(key) }
     func toggle(_ key: String) {

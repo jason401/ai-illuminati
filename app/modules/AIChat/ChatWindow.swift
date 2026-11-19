@@ -478,31 +478,62 @@ struct ChatView<Model: ChatSettings>: View {
         projectRow(group, open: open)
         if open {
             // Chats answering now come first, then TODO chats still going, so the work running now is in sight right away.
-            let rooms = SidebarProjects.runningFirst(group, todo: todos.snapshot, running: discussion.runningRooms)
+            let rooms = SidebarProjects.runningFirst(group, todo: todos.snapshot, running: discussion.runningRooms,
+                                                     groupPieces: !discussion.sidebarSearching)
             let todoIDs = Set(group.todoRooms.map(\.id))
             ForEach(rooms.running) { room in
-                if todoIDs.contains(room.id) { todoRoom(room) } else { chatGroup(room, depth: 1) }
+                if todoIDs.contains(room.id) { todoRoom(room, pieces: rooms.pieces[room.id]) } else { chatGroup(room, depth: 1) }
             }
-            ForEach(rooms.going) { todoRoom($0) }
+            ForEach(rooms.going) { todoRoom($0, pieces: rooms.pieces[$0.id]) }
             // Its own chats: pinned ones and the newest page (and the open chat); every match while searching.
             let key = "project-chats." + group.id, page = SidebarFold.projectPage
             let current = discussion.viewingRemote == nil && !discussion.viewingBoard ? discussion.current.meetingOf?.room ?? discussion.currentID : nil
             let chats = SidebarFold.listedChats(rooms.chats, limit: discussion.sidebarSearching ? .max : folds.limit(key, page: page), open: current)
             ForEach(chats.rows) { chatGroup($0, depth: 1) }
             if !discussion.sidebarSearching { moreRow(key, page: page, total: chats.unpinned, listed: chats.listed, indent: 22) }
-            if !rooms.finished.isEmpty {
+            if !rooms.finishedChats.isEmpty {
                 // Searching lists every match; folded, only the chat open now (or the one whose meeting is open) stays.
                 let unfolded = folds.openFinished.contains(group.id) || discussion.sidebarSearching
-                finishedRow(group, finished: rooms.finished, open: unfolded)
+                finishedRow(group, finished: rooms.finishedChats, open: unfolded)
                 ForEach(unfolded ? rooms.finished : rooms.finished.filter { room in
                     room.id == discussion.currentID || discussion.meetings(of: room.id).contains { $0.id == discussion.currentID }
-                }) { todoRoom($0) }
+                        || rooms.pieces[room.id]?.rows.contains { $0.id == openTodoChat } == true
+                }) { todoRoom($0, pieces: rooms.pieces[$0.id]) }
             }
         }
     }
 
-    private func todoRoom(_ room: Conversation) -> some View {
-        chatGroup(room, depth: 1, todo: todos.snapshot.items.first { $0.room == room.id }?.state)
+    private var openTodoChat: UUID? {
+        guard discussion.showingChat else { return nil }
+        return discussion.current.meetingOf?.room ?? discussion.current.subOf?.room ?? discussion.currentID
+    }
+
+    private func todoRoom(_ room: Conversation, pieces: TodoPieceGroup?) -> some View {
+        chatGroup(room, depth: 1, todo: todos.snapshot.items.first { $0.room == room.id }?.state, pieceNumber: nil) {
+            if let pieces { todoPieces(pieces, parent: room.id) }
+        }
+    }
+
+    @ViewBuilder private func todoPieces(_ pieces: TodoPieceGroup, parent: UUID) -> some View {
+        let current = openTodoChat
+        let automatic = pieces.rows.contains { $0.id == current || discussion.runningRooms.contains($0.id) }
+        let shown = folds.piecesShown(parent, automatically: automatic)
+        Button(action: { folds.togglePieces(parent, automatically: automatic) }) {
+            HStack(spacing: 5) {
+                Image(systemName: shown ? "chevron.down" : "chevron.right").font(.system(size: 8, weight: .semibold)).frame(width: 14)
+                Image(systemName: "list.number").font(.system(size: 10)).frame(width: 14)
+                Text(L("조각 \(pieces.total)개 · \(pieces.done)/\(pieces.total) 끝남",
+                       "\(pieces.total) pieces · \(pieces.done)/\(pieces.total) done"))
+                    .lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .font(.system(size: 12)).foregroundColor(.secondary)
+            .padding(.leading, 28).padding(.trailing, 10).frame(minHeight: 24).contentShape(Rectangle())
+        }
+        .buttonStyle(.plainHit)
+        .accessibilityValue(shown ? L("펼쳐짐", "Expanded") : L("접힘", "Collapsed"))
+        if shown {
+            ForEach(pieces.rows) { chatGroup($0.chat, depth: 2, todo: $0.state, pieceNumber: $0.number) }
+        }
     }
 
     // The fold row of a project's finished TODO chats.
@@ -649,11 +680,17 @@ struct ChatView<Model: ChatSettings>: View {
     // A chat and, under it, the meetings held for it (Meeting.swift): the newest 5 until "show all".
     // depth 1: inside a project folder. todo: the state of the TODO this chat works on.
     // Sub-rooms (SubRoomViews.swift) come first, indented, folding on their own; ended ones fold into one row.
-    @ViewBuilder private func chatGroup(_ conversation: Conversation, depth: Int = 0, todo: TodoItem.State? = nil) -> some View {
+    private func chatGroup(_ conversation: Conversation, depth: Int = 0, todo: TodoItem.State? = nil, pieceNumber: Int? = nil) -> some View {
+        chatGroup(conversation, depth: depth, todo: todo, pieceNumber: pieceNumber) { EmptyView() }
+    }
+
+    @ViewBuilder private func chatGroup<Below: View>(_ conversation: Conversation, depth: Int, todo: TodoItem.State?, pieceNumber: Int?,
+                                                     @ViewBuilder below: () -> Below) -> some View {
         let meetings = discussion.meetings(of: conversation.id).filter { $0.subOf == nil }
         let shown = !meetings.isEmpty && discussion.meetingsShown(conversation.id, meetings)
         let subs = discussion.subRooms(of: conversation.id)
-        chatRow(conversation, meetings: meetings.count, shown: shown, depth: depth, todo: todo)
+        chatRow(conversation, meetings: meetings.count, shown: shown, depth: depth, todo: todo, pieceNumber: pieceNumber)
+        below()
         if !subs.isEmpty {
             SubRoomsFoldedRow(main: conversation.id, count: subs.count, discussion: discussion, depth: depth)
             if discussion.subRoomsShown(conversation.id) {
@@ -710,10 +747,14 @@ struct ChatView<Model: ChatSettings>: View {
         return Account.Provider.of(speaker: turn.status) ?? turn.entries.last.flatMap { Account.Provider.of(speaker: $0.speaker) }
     }
 
-    private func chatRow(_ conversation: Conversation, meetings: Int = 0, shown: Bool = false, depth: Int = 0, todo: TodoItem.State? = nil) -> some View {
+    private func chatRow(_ conversation: Conversation, meetings: Int = 0, shown: Bool = false, depth: Int = 0, todo: TodoItem.State? = nil,
+                         pieceNumber: Int? = nil) -> some View {
         let selected = conversation.id == discussion.currentID && discussion.viewingRemote == nil && !discussion.viewingBoard && discussion.viewingSpace == nil
         let hovered = discussion.hoverKey == conversation.id.uuidString
         let todoPrefix = "TODO · "
+        let title = conversation.turns.isEmpty && todo == nil ? L("새 대화", "New chat")
+            : todo != nil && conversation.title.hasPrefix(todoPrefix) ? String(conversation.title.dropFirst(todoPrefix.count)) : conversation.title
+        let piecePrefix = pieceNumber.map { n in ((1...20).contains(n) ? String(UnicodeScalar(0x245F + n)!) : "(\(n))") + " " } ?? ""
         let running = discussion.runningRooms.contains(conversation.id)
         return HStack(spacing: 4) {
             // The leading slot: a ring in the answering AI's color while it answers, else the TODO or work chat
@@ -732,8 +773,7 @@ struct ChatView<Model: ChatSettings>: View {
             }
             HStack(spacing: 5) {
                 // Answering: the title turns a soft blue (same weight, so it does not change width or cut off elsewhere).
-                Text(conversation.turns.isEmpty && todo == nil ? L("새 대화", "New chat")
-                     : todo != nil && conversation.title.hasPrefix(todoPrefix) ? String(conversation.title.dropFirst(todoPrefix.count)) : conversation.title)
+                Text(piecePrefix + title)
                     .lineLimit(1).truncationMode(.tail)
                     .foregroundColor(running ? RunningRing.titleColor : nil)
                 LockBadge(lock: conversation.enterpriseLock)

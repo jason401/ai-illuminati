@@ -1077,11 +1077,61 @@ func testSidebarProjects() {
     expect(idle.running.isEmpty && idle.going.map(\.title) == split.going.map(\.title) && idle.chats.map(\.title) == ["p0", "p1"],
            "nothing answering: the folder looks as before")
 
+    let splitStore = TodoStore(url: todoStoreFile("sidebar-split"))
+    let finish = try! splitStore.add(title: "Finish", project: main, projectName: "Main repo")
+    let ordinary = try! splitStore.add(title: "Ordinary", project: main, projectName: "Main repo")
+    let parent = chat("Finish", main, minutes: 1), first = chat("First", main, minutes: 2)
+    let second = chat("Second", tree, minutes: 3), unsplit = chat("Ordinary", main, minutes: 4)
+    try! splitStore.change(finish.id) { $0.room = parent.id; $0.state = .running }
+    try! splitStore.change(ordinary.id) { $0.room = unsplit.id; $0.state = .ready }
+    try! splitStore.split(finish.id, steps: [.init(title: "First", detail: "First step", files: []),
+                                            .init(title: "Second", detail: "Second step", files: [])],
+                          estimatedMinutes: 60, reason: "Two steps", finishFiles: [])
+    let plan = splitStore.current.splitLine(splitStore.current.item(finish.id)!)!.pieces
+    try! splitStore.change(plan[0].id) { $0.room = first.id; $0.state = .done }
+    try! splitStore.change(plan[1].id) { $0.room = second.id; $0.state = .running }
+    let splitData = splitStore.current
+    let splitGroup = SidebarProjects.group([parent, first, second, unsplit], todo: splitData, pinned: []).projects[0]
+    let nested = SidebarProjects.splitPieces(splitGroup.todoRooms, todo: splitData)
+    let pieceRows = nested.pieces[parent.id]
+    expect(nested.top.map(\.id) == [unsplit.id, parent.id] && pieceRows?.rows.map(\.id) == [first.id, second.id]
+           && pieceRows?.rows.map(\.number) == [1, 2] && pieceRows?.rows.map(\.state) == [.done, .running]
+           && pieceRows?.total == 2 && pieceRows?.done == 1,
+           "only the finish and ordinary TODO stay at the top; pieces carry their planned order and progress")
+    let partial = SidebarProjects.splitPieces([parent, second], todo: splitData)
+    expect(partial.pieces[parent.id]?.rows.map(\.number) == [2] && partial.pieces[parent.id]?.total == 2,
+           "a missing piece chat leaves the plan count and remaining number intact")
+    let withoutParent = splitGroup.todoRooms.filter { $0.id != parent.id }
+    var withoutFinish = splitData
+    withoutFinish.items.removeAll { $0.id == finish.id }
+    expect(SidebarProjects.splitPieces(withoutParent, todo: splitData).top.map(\.id) == withoutParent.map(\.id)
+           && SidebarProjects.splitPieces(splitGroup.todoRooms, todo: withoutFinish).pieces.isEmpty,
+           "pieces stay flat when the parent chat or the finish TODO is missing")
+    let splitLifted = SidebarProjects.runningFirst(splitGroup, todo: splitData, running: [second.id], groupPieces: true)
+    expect(splitLifted.running.map(\.id) == [parent.id] && splitLifted.going.map(\.id) == [unsplit.id]
+           && splitLifted.finished.isEmpty && splitLifted.finishedChats.map(\.id) == [first.id],
+           "an answering piece lifts its parent once while the finished heading still counts the completed piece")
+    let flat = SidebarProjects.runningFirst(splitGroup, todo: splitData, running: [second.id], groupPieces: false)
+    expect(flat.running.map(\.id) == [second.id] && flat.finished.map(\.id) == [first.id] && flat.pieces.isEmpty,
+           "the flat list still shows pieces individually during search")
+    try! splitStore.change(plan[1].id) { $0.state = .done }
+    try! splitStore.change(finish.id) { $0.state = .done }
+    let finishedSplit = SidebarProjects.runningFirst(splitGroup, todo: splitStore.current, running: [], groupPieces: true)
+    expect(finishedSplit.finished.map(\.id) == [parent.id] && finishedSplit.finishedChats.map(\.id) == [second.id, first.id, parent.id]
+           && finishedSplit.pieces[parent.id]?.done == 2 && finishedSplit.going.map(\.id) == [unsplit.id],
+           "the finished section shows one parent but counts all three chats for the heading and delete menu")
+
     // Folds and pins are kept, in the test's own defaults; old pinned project chats pin their project once.
     let suite = "ai-illuminati-sidebar-test-\(UUID().uuidString)"
     let defaults = UserDefaults(suiteName: suite)!
     defer { defaults.removePersistentDomain(forName: suite) }
     let fold = SidebarFold(defaults: defaults)
+    expect(!fold.piecesShown(parent.id, automatically: false) && fold.piecesShown(parent.id, automatically: true),
+           "piece chats start folded and can open automatically")
+    fold.togglePieces(parent.id, automatically: true)
+    expect(!fold.piecesShown(parent.id, automatically: true), "a manual fold overrides automatic expansion")
+    fold.togglePieces(parent.id, automatically: true)
+    expect(fold.piecesShown(parent.id, automatically: false), "a manual expansion stays when automatic expansion ends")
     fold.toggle("recents"); fold.toggle("project." + common)
     fold.adoptPins(chats)
     expect(fold.pinnedProjects == [common], "a pinned project chat pins its project: \(fold.pinnedProjects)")
@@ -1091,6 +1141,7 @@ func testSidebarProjects() {
     expect(fold.openFinished.isEmpty, "finished TODO chats start folded")
     fold.toggleFinished(common)
     let again = SidebarFold(defaults: defaults)
+    expect(!again.piecesShown(parent.id, automatically: false), "piece folding stays in memory")
     expect(again.isFolded("recents") && again.isFolded("project." + common) && !again.isFolded("pinned") && again.pinnedProjects.isEmpty
            && again.openFinished == [common], "folds, pins and the unfolded finished row come back after a restart")
     // A deleted project's fold, pin, unfolded finished row and tab are forgotten; others stay.

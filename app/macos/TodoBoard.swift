@@ -174,8 +174,8 @@ struct TodoBoardView: View {
             .padding(.horizontal, 28).padding(.vertical, 16)
             .frame(maxWidth: .infinity)
         }
-        .onDisappear { draft.endEdit(); draft.endDrag() }   // an edit left open would hold the TODO back
-        .onAppear { splitCommits.refresh(store.snapshot) }
+        .onDisappear { draft.endEdit(); draft.endDrag(); splitCommits.watch(false) }   // an edit left open would hold the TODO back
+        .onAppear { splitCommits.watch(true) }
         .onChange(of: store.snapshot) { splitCommits.refresh($0) }
     }
 
@@ -641,15 +641,23 @@ struct TodoBoardView: View {
     }
 }
 
-// "push 안 된 조각 커밋 n개": counted with git off the main thread after each board change, for splits still going.
+// "push 안 된 조각 커밋 n개": counted with git off the main thread after each board change and every minute while the
+// board is open (another chat may push them without any TODO changing). A cancelled split keeps its warning while its
+// steps' commits are still local; a done one was pushed by its finish (or the user marked it done).
 final class TodoSplitCommits: ObservableObject {
     static let shared = TodoSplitCommits()
     @Published private(set) var unpushed: [UUID: Int] = [:]
-    private var busy = false, again = false
+    private var busy = false, again = false, timer: Timer?
+    func watch(_ on: Bool) {
+        timer?.invalidate(); timer = nil
+        guard on else { return }
+        refresh(TodoStore.shared.snapshot)
+        timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in self?.refresh(TodoStore.shared.snapshot) }
+    }
     func refresh(_ data: TodoData) {
         guard !busy else { again = true; return }
         let lines = data.items.compactMap(data.splitLine).filter { line in
-            line.isFinish && line.pieces.last.map { ![.done, .cancelled].contains($0.state) } == true
+            line.isFinish && line.pieces.last?.state != .done
         }
         guard !lines.isEmpty || !unpushed.isEmpty else { return }
         busy = true

@@ -66,8 +66,8 @@
    승인 카드는 일반 승인 카드(`ProjectApproval`), 거절이나 15분 무응답이면 `splitDeclined`. 마무리의 끝 조건은 `splitRecord.finishDone`에 저장해 `task_pieces`로 읽는다. 하위방을 쓴 TODO(`usedSubRooms`)는 나눌 수 없다.
 4. 화면: 보드 표시, 승인 카드, 스위치(기본 꺼짐). AI Face에서 실제 TODO 하나로 시험.
    구현(2026-11-18): 스위치는 설정 ▸ 채팅 ▸ "AI끼리 협업"의 하위방 스위치 아래 "큰 TODO를 AI가 나눠서 하기 (실험)"(`TaskLink.splitEnabledKey`).
-   보드는 `TodoData.splitLine`만 읽는다(조각 번호, 끝난 수, 막힌 조각, 기록). push 안 된 조각 커밋은 `reviewBase..HEAD` 중 어느 원격에도 없는 커밋 수
-   (`TodoStore.unpushedPieceCommits`, 보드 변경 때 백그라운드). 그 사이 같은 프로젝트의 다른 채팅이 만든 커밋도 함께 센다.
+   보드는 `TodoData.splitLine`만 읽는다(조각 번호, 끝난 수, 막힌 조각, 기록). push 안 된 조각 커밋은 각 조각 실행의 시작~끝 HEAD(저장소를 잡은 동안 기록, `pieceRuns`) 중 어느 원격에도 없는 커밋 수
+   (`TodoStore.unpushedPieceCommits`, 보드 변경 때와 보드가 열린 동안 1분마다 백그라운드). 조각 사이 다른 채팅의 커밋은 세지 않고, 마무리를 취소해도 남은 조각 커밋이 있으면 계속 보인다.
 
 ## 2. 동작 (사용자가 보는 것)
 

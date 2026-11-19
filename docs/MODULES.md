@@ -540,8 +540,10 @@ Public names and why (everything else stays internal: `ProjectError`, `ProjectTo
 - TODO split screens (App, docs/TODO_SPLIT_PLAN.md 1.5 step 4): `TaskLink.splitEnabledKey`, the key Settings ▸ Chat's "Let the AI
   split large TODOs" switch writes (off by default; the module reads it). `TodoData.splitLine` and `TodoSplitLine` (`Piece`):
   a board row's place in its split, the pieces done, a stuck step, and the plan's estimate, reason, finish done-when line and
-  files, read-only, so the board never sees the split fields themselves. `TodoStore.unpushedPieceCommits` counts the group's
-  commits since its review base that are on no remote (git, called off the main thread) for "push 안 된 조각 커밋 n개".
+  files, read-only, so the board never sees the split fields themselves. `TodoStore.unpushedPieceCommits` counts the steps'
+  own commits on no remote (git, called off the main thread) for "push 안 된 조각 커밋 n개": each step run's HEAD at its start
+  (`todoReviewBase`) to its end, which the chat records with `ProjectRun.todoPieceEnded` before it lets the repository go, so
+  another chat's commits between the pieces are not counted.
 - Sub-room P2 (AIChat's `Delegate.swift` uses them): `ProjectRun.isSubRoom` (set by the chat for a sub-room's turn: GitLink then lists and runs no git_pull/git_push/git_publish_stable/git_branch/git_switch),
   `ProjectWork.run(for:)` (another module's tool provider finds the live project turn of a tool call, with the same room/generation/cancel checks as GitLink),
   `SubWork.report` (sub_report: the work tree's HEAD only when everything is committed, and the files changed since the start),

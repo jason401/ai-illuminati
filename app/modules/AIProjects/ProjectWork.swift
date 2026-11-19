@@ -263,13 +263,29 @@ public final class ProjectRun {
             guard let base = plan.reviewBase, [40, 64].contains(base.utf8.count), base.allSatisfy(\.isHexDigit) else { return nil }
             return base
         }
+        let head = try ProjectProcess.git(["rev-parse", "--verify", "HEAD"], root: binding.root, token: attempt)
         if plan.files.first?.id == todoAttempt.id, plan.reviewBase == nil {
-            let head = try ProjectProcess.git(["rev-parse", "--verify", "HEAD"], root: binding.root, token: attempt)
             try todoStore.change(group) { finish in
                 if finish.splitRecord?.reviewBase == nil { finish.splitRecord?.reviewBase = head }
             }
         }
+        try todoStore.change(todoAttempt.id) { step in
+            guard step.matchesAttempt(todoAttempt) else { return }
+            step.pieceRuns = (step.pieceRuns ?? []) + [.init(start: head)]
+        }
+        lifecycle.lock(); pieceStart = head; lifecycle.unlock()
         return nil
+    }
+
+    // At the end of a step's turn, before the chat lets the repository go: the end of its own commits.
+    public func todoPieceEnded() {
+        lifecycle.lock(); let start = pieceStart; lifecycle.unlock()
+        guard let start, let todoAttempt, todoAttempt.piece == .step,
+              let head = try? ProjectProcess.git(["rev-parse", "--verify", "HEAD"], root: binding.root) else { return }
+        try? todoStore.change(todoAttempt.id) { step in
+            guard let last = step.pieceRuns?.indices.last, step.pieceRuns?[last].start == start, step.pieceRuns?[last].end == nil else { return }
+            step.pieceRuns?[last].end = head
+        }
     }
     public let deadline: Date
     var activeLimit: TimeInterval { fullAuto ? 8 * 3600 : 2700 }
@@ -284,6 +300,7 @@ public final class ProjectRun {
     public var attempt = DebateCancellation()
     private let lifecycle = NSLock()
     private var ended = false, splitAccepted = false, subRoomsUsed = false
+    private var pieceStart: String?   // HEAD at this step run's start (todoReviewBase), for todoPieceEnded
     func stop() { lifecycle.lock(); ended = true; lifecycle.unlock(); attempt.cancel() }
     public var committed = false, pushed = false
     // A project turn pushes once, after the review and its fixes: git_push only asks for it, and the chat calls

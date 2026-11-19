@@ -141,6 +141,7 @@ ProjectRun.room | let room: UUID
 ProjectRun.setAppStep(_:_:_:) | func setAppStep(_ i: Int, _ text: String, _ status: WorkStep.Status)
 ProjectRun.setPlan(_:note:generation:tool:) | @discardableResult func setPlan(_ steps: [WorkStep], note: String?, generation: Int, tool: Bool) -> Bool
 ProjectRun.setPlan(todos:generation:) | @discardableResult func setPlan(todos: Any?, generation: Int) -> Bool
+ProjectRun.todoPieceEnded() | func todoPieceEnded()
 ProjectRun.todoReviewBase() | func todoReviewBase() throws -> String?
 ProjectRun.todoWasSplit | var todoWasSplit: Bool { get }
 ProjectRun.usedSubRooms | var usedSubRooms: Bool { get set }
@@ -387,6 +388,7 @@ TodoScheduler.tick() | func tick()
 TodoScheduler.waiting | @Published var waiting: String? { get set }
 TodoScheduler.wake() | func wake()
 TodoSplitLine | struct TodoSplitLine
+TodoSplitLine.==(_:_:) | static func == (a: TodoSplitLine, b: TodoSplitLine) -> Bool
 TodoSplitLine.Piece | struct Piece
 TodoSplitLine.Piece.files | let files: [String]
 TodoSplitLine.Piece.finish | let finish: Bool

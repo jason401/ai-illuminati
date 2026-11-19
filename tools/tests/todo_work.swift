@@ -700,9 +700,21 @@ func testTodoSplitTool() {
            && finishLine?.pieces.map(\.files) == [["Store.swift"], ["Run.swift"], ["Screen.swift"]] && finishLine?.stuck == nil
            && lines.splitLine(lines.item(other.id)!) == nil, "the board reads a split's place, progress and record: \(String(describing: finishLine))")
     expect(TodoStore.unpushedPieceCommits(finishLine!) == 0, "no piece commit yet")
-    try! "piece".write(to: root.appendingPathComponent("Store.swift"), atomically: true, encoding: .utf8)
-    _ = try! ProjectProcess.git(["add", "Store.swift"], root: project.root); _ = try! ProjectProcess.git(["commit", "-m", "Piece 1"], root: project.root)
-    expect(TodoStore.unpushedPieceCommits(finishLine!) == 1, "a piece commit not on the remote is counted")
+    // Only the steps' own commits: HEAD at a step run's start and end (taken while its chat holds the repository).
+    func commit(_ name: String) { try! name.write(to: root.appendingPathComponent(name), atomically: true, encoding: .utf8)
+        _ = try! ProjectProcess.git(["add", name], root: project.root); _ = try! ProjectProcess.git(["commit", "-m", name], root: project.root) }
+    let pieceRun = ProjectWork.run(for: secondPiece)!
+    expect((try? pieceRun.todoReviewBase()) == .some(nil) && store.current.item(steps[1].id)?.pieceRuns?.count == 1, "a step run records its start")
+    commit("Run.swift")
+    expect(TodoStore.unpushedPieceCommits(store.current.splitLine(store.current.item(auto.id)!)!) == 1, "the running step's commit counts up to HEAD")
+    pieceRun.todoPieceEnded()
+    commit("Other.swift")   // another chat's commit between the pieces
+    let ended = store.current.splitLine(store.current.item(auto.id)!)!
+    expect(store.current.item(steps[1].id)?.pieceRuns?.last?.end != nil && TodoStore.unpushedPieceCommits(ended) == 1,
+           "another chat's commit between the pieces is not a piece commit")
+    try! store.change(auto.id) { $0.state = .cancelled }
+    expect(TodoStore.unpushedPieceCommits(store.current.splitLine(store.current.item(auto.id)!)!) == 1, "a cancelled split still counts its local step commits")
+    try! store.change(auto.id) { $0.state = .ready }
     try! store.change(steps[1].id) { $0.state = .needsYou }
     expect(store.current.splitLine(store.current.item(auto.id)!)?.stuck == 2, "a stuck step shows on the finish")
     let pieceNote = TodoScheduler.instruction(store.current.item(steps[1].id)!, split: true)

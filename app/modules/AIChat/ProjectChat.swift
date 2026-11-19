@@ -313,6 +313,8 @@ extension Discussion {
                 t.partial = nil; t.activity = nil; t.status = ""; t.waitingApproval = nil
             }
         }
+        // Before the turn lets the repository go (Discussion releases it after this function): a step's last commit.
+        defer { run.todoPieceEnded() }
         var backup: WorkspaceBackup?
         let todoReviewBase: String?
         defer {

@@ -102,6 +102,10 @@ public struct TodoItem: Codable, Identifiable, Equatable {
     var byAI: Bool?
     var splitDeclined: Bool?
     var splitRecord: SplitRecord?          // on the finish, in the planned order
+    // A step's runs as HEAD at the start and end, both taken while its chat holds the repository: its own commits
+    // (the board's "push 안 된 조각 커밋"), without another chat's made between the pieces.
+    struct PieceRun: Codable, Equatable { let start: String; var end: String? }
+    var pieceRuns: [PieceRun]?
     public var id = UUID()
     public var listID: UUID
     public var title: String
@@ -151,7 +155,7 @@ public struct TodoItem: Codable, Identifiable, Equatable {
     // cannot be read fails the whole file, which TodoStore then keeps as it is (no default silently saved over it).
     private enum Keys: String, CodingKey {
         case id, listID, title, detail, attachments, askFirst, state, after, room, originRoom, notes, question, attempts, lastError, result, assumptions, files, report, workers, interrupted, unreported, standIns, delegated, aiHelped, parked, wasParked, createdAt, updatedAt,
-             workSeconds, waitSeconds, stateSince, startedAt, finishedAt, group, piece, byAI, splitDeclined, splitRecord
+             workSeconds, waitSeconds, stateSince, startedAt, finishedAt, group, piece, byAI, splitDeclined, splitRecord, pieceRuns
     }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
@@ -197,6 +201,7 @@ public struct TodoItem: Codable, Identifiable, Equatable {
         byAI = try c.decodeIfPresent(Bool.self, forKey: .byAI)
         splitDeclined = try c.decodeIfPresent(Bool.self, forKey: .splitDeclined)
         splitRecord = try c.decodeIfPresent(SplitRecord.self, forKey: .splitRecord)
+        pieceRuns = try c.decodeIfPresent([PieceRun].self, forKey: .pieceRuns)
     }
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: Keys.self)
@@ -219,6 +224,7 @@ public struct TodoItem: Codable, Identifiable, Equatable {
         try c.encodeIfPresent(group, forKey: .group); try c.encodeIfPresent(piece, forKey: .piece)
         try c.encodeIfPresent(byAI, forKey: .byAI); try c.encodeIfPresent(splitDeclined, forKey: .splitDeclined)
         try c.encodeIfPresent(splitRecord, forKey: .splitRecord)
+        try c.encodeIfPresent(pieceRuns, forKey: .pieceRuns)
     }
 
     // Parked for the question it waits on now (a newer question is not parked).
@@ -362,6 +368,12 @@ public struct TodoSplitLine: Equatable {
     public let finishDone: String?
     let reviewBase: String?
     let root: String?
+    let pieceRanges: [(start: String, end: String?)]   // end nil: the step runs now (counted up to HEAD)
+    public static func == (a: TodoSplitLine, b: TodoSplitLine) -> Bool {
+        a.group == b.group && a.number == b.number && a.isFinish == b.isFinish && a.done == b.done && a.pieces == b.pieces && a.stuck == b.stuck
+            && a.minutes == b.minutes && a.reason == b.reason && a.finishDone == b.finishDone && a.reviewBase == b.reviewBase && a.root == b.root
+            && a.pieceRanges.map { [$0.start, $0.end ?? ""] } == b.pieceRanges.map { [$0.start, $0.end ?? ""] }
+    }
 }
 
 public struct TodoData: Codable, Equatable {
@@ -399,7 +411,10 @@ public struct TodoData: Codable, Equatable {
         let stuck = members.firstIndex { $0.piece == .step && $0.state == .needsYou }.map { $0 + 1 }
         return TodoSplitLine(group: group, number: place + 1, isFinish: item.piece == .finish, done: members.filter { $0.state == .done }.count,
                              pieces: pieces, stuck: stuck, minutes: record?.estimatedMinutes, reason: record?.reason,
-                             finishDone: record?.finishDone, reviewBase: record?.reviewBase, root: list(item.listID)?.project?.root)
+                             finishDone: record?.finishDone, reviewBase: record?.reviewBase, root: list(item.listID)?.project?.root,
+                             pieceRanges: members.filter { $0.piece == .step }.flatMap { m in
+                                 (m.pieceRuns ?? []).compactMap { r in r.end != nil || m.state == .running ? (r.start, r.end) : nil }
+                             })
     }
     // Who may work in a chat: the accounts a TODO running in it was given when it started; nil: not limited
     // (no TODO running there, or one whose list lets every Claude/Codex work).
@@ -1049,12 +1064,17 @@ public final class TodoStore: ObservableObject {
     }
 
     // Waiting for the user (the sidebar badge): a decision, or a result to check.
-    // Commits of a split that is still going and not on any remote yet (docs/TODO_SPLIT_PLAN.md 6, stage 1 limit: another
-    // chat's push of the project takes them along). Counted from the commit before the first step; runs git, so off the main thread.
+    // The steps' own commits not on any remote yet (docs/TODO_SPLIT_PLAN.md 6, stage 1 limit: another chat's push of the
+    // project takes them along). Each step run's start..end (a running one up to HEAD); runs git, so off the main thread.
     public static func unpushedPieceCommits(_ line: TodoSplitLine) -> Int? {
-        guard let base = line.reviewBase, let root = line.root,
-              let count = try? ProjectProcess.git(["rev-list", "--count", base + "..HEAD", "--not", "--remotes"], root: root, timeout: 10) else { return nil }
-        return Int(count.trimmingCharacters(in: .whitespacesAndNewlines))
+        guard let root = line.root else { return nil }
+        var total = 0
+        for range in line.pieceRanges {
+            guard let count = try? ProjectProcess.git(["rev-list", "--count", range.start + ".." + (range.end ?? "HEAD"), "--not", "--remotes"], root: root, timeout: 10),
+                  let n = Int(count.trimmingCharacters(in: .whitespacesAndNewlines)) else { continue }   // a commit gone (rewritten) counts nothing
+            total += n
+        }
+        return total
     }
     public var waitingForUser: Int { snapshot.items.filter { $0.state == .needsYou || $0.state == .review }.count }
 }

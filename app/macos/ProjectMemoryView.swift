@@ -24,11 +24,13 @@ final class ProjectMemoryDraft: ObservableObject {
 struct ProjectMemorySection: View {
     @ObservedObject var discussion: Discussion
     let project: String   // SidebarProjects.key
+    var full = false      // every note (its own window); Project info shows a short list per kind
+    @ObservedObject var draft = ProjectMemoryDraft.shared   // the window has its own, so editing there leaves the tab alone
     @ObservedObject private var memory = ProjectMemoryStore.shared
-    @ObservedObject private var draft = ProjectMemoryDraft.shared
     @ObservedObject private var todos = TodoStore.shared
 
     static let shownChanges = 100
+    static let shortList = 3   // notes per kind on Project info; the rest in the window
     private static let cleanupsBeforeSuggestion = 3
 
     var body: some View {
@@ -40,6 +42,10 @@ struct ProjectMemorySection: View {
             HStack {
                 Label(L("프로젝트 기억", "Project memory"), systemImage: "brain.head.profile").font(.system(size: 15, weight: .semibold))
                 Spacer(minLength: 6)
+                if !full && !notes.isEmpty {
+                    Button(L("새 창에서 보기", "Open in window")) { ProjectMemoryWindow.shared.show(discussion: discussion, project: project) }
+                        .controlSize(.small)
+                }
                 Button(L("지금 정리", "Clean up now")) { cleanNow() }
                     .controlSize(.small)
                     .disabled(discussion.anyRunning || discussion.importingMaterials || !discussion.stoppingRooms.isEmpty
@@ -73,10 +79,18 @@ struct ProjectMemorySection: View {
             }
             ForEach(ProjectMemoryNote.Kind.allCases, id: \.self) { kind in
                 let list = shown.filter { $0.kind == kind }
+                // A search shows every match; otherwise the tab keeps the pinned and newest few.
+                let short = full || !draft.query.isEmpty ? list : Array(list.prefix(Self.shortList))
                 if !list.isEmpty {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(Self.title(kind) + " \(list.count)").font(.system(size: 12, weight: .semibold)).foregroundColor(.secondary)
-                        ForEach(list) { row($0, all: notes) }
+                        ForEach(short) { row($0, all: notes) }
+                        if short.count < list.count {
+                            Button(L("\(list.count - short.count)개 더 보기 (새 창)", "\(list.count - short.count) more (in a window)")) {
+                                ProjectMemoryWindow.shared.show(discussion: discussion, project: project)
+                            }
+                            .buttonStyle(.link).font(.system(size: 12)).padding(.leading, 24)
+                        }
                     }
                 }
             }
@@ -169,7 +183,8 @@ struct ProjectMemorySection: View {
                 .frame(width: 18, height: 18)
             if draft.editing == note.id { editor(note) } else {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(note.text).font(.system(size: 13)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                    Text(note.text).font(.system(size: 13)).textSelection(.enabled).lineLimit(full ? nil : 2)
+                        .fixedSize(horizontal: false, vertical: true).help(full ? "" : note.text)
                     Text(meta(note, all: all)).font(.system(size: 11)).foregroundColor(.secondary)
                 }
                 Spacer(minLength: 6)
@@ -347,5 +362,36 @@ struct ProjectMemorySection: View {
             return L("되돌림 (\(lines)): ", "Undid (\(lines)): ") + change.notes.map(text).joined(separator: ", ")
         default: return change.action + ": " + text(change.note)
         }
+    }
+}
+
+// MARK: - The window
+
+// Every note of one project in a window of its own, so Project info can stay short as the notes grow.
+final class ProjectMemoryWindow {
+    static let shared = ProjectMemoryWindow()
+    private var windows: [String: NSWindow] = [:]   // by project key
+
+    func show(discussion: Discussion, project: String) {
+        if windows[project] == nil {
+            let view = ScrollView {
+                ProjectMemorySection(discussion: discussion, project: project, full: true, draft: ProjectMemoryDraft())
+                    .padding(20).frame(maxWidth: .infinity, alignment: .leading)
+            }
+            let host = NSHostingController(rootView: view)
+            host.sizingOptions = []
+            let w = NSWindow(contentViewController: host)
+            w.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+            let name = ProjectInfoStore.shared.names[project] ?? (project as NSString).lastPathComponent
+            w.title = L("프로젝트 기억 — ", "Project memory — ") + name
+            w.isReleasedWhenClosed = false
+            w.minSize = NSSize(width: 520, height: 400)
+            w.setContentSize(NSSize(width: 820, height: 720))
+            w.center()
+            w.setFrameAutosaveName("AIIlluminatiProjectMemoryWindow")
+            windows[project] = w
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        windows[project]?.makeKeyAndOrderFront(nil)
     }
 }

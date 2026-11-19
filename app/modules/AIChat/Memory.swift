@@ -205,16 +205,29 @@ public final class MemoryLink: ToolProvider {
     // The newest message of a chat now, for a tool session made for it (ToolHub.register).
     public func newestTurn(_ room: UUID) -> UUID? { chat(room)?.turns.last?.id }
 
+    // remember, and in a project chat the project memory tools (ProjectMemoryLink.swift) for the AI answering it.
     public func tools(context: ToolContext) -> [[String: Any]] {
-        guard context.asker != nil, let turn = context.turn, MemoryStore.mayRemember(store.snapshot, chat: chat(context.room), turn: turn) else { return [] }
-        return [["name": "remember",
-                 "description": "Save one short fact about the user to their long-term memory, which every AI in this app reads in later chats. One line, no secrets.",
-                 "inputSchema": ["type": "object", "properties": ["text": ["type": "string"]], "required": ["text"], "additionalProperties": false]]]
+        guard context.asker != nil else { return [] }
+        let found = chat(context.room)
+        var list: [[String: Any]] = []
+        if let turn = context.turn, MemoryStore.mayRemember(store.snapshot, chat: found, turn: turn) {
+            list.append(["name": "remember",
+                         "description": "Save one short fact about the user to their long-term memory, which every AI in this app reads in later chats. One line, no secrets.",
+                         "inputSchema": ["type": "object", "properties": ["text": ["type": "string"]], "required": ["text"], "additionalProperties": false]])
+        }
+        if context.origin == .member, ProjectMemory.project(found) != nil { list += ProjectMemory.tools(enterprise: found?.isEnterprise == true) }
+        return list
     }
 
     public func call(_ name: String, _ arguments: [String: Any], context: ToolContext) -> [String: Any] {
-        guard name == "remember" else { return toolFailure("Unknown tool: " + name) }
         let found = chat(context.room)
+        if ProjectMemory.toolNames.contains(name) {
+            guard context.asker != nil, context.origin == .member, let project = ProjectMemory.project(found) else {
+                return toolFailure("Project memory is only for an AI answering a project chat.")
+            }
+            return ProjectMemory.call(name, arguments, project: project, enterprise: found?.isEnterprise == true, context: context)
+        }
+        guard name == "remember" else { return toolFailure("Unknown tool: " + name) }
         guard context.asker != nil, let turn = context.turn, MemoryStore.mayRemember(store.snapshot, chat: found, turn: turn) else {
             return toolFailure("Memory saving is off for this answer.")
         }

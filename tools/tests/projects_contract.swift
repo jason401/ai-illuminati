@@ -351,5 +351,23 @@ do {
     catch { expect(try! git(["log", "-1", "--format=%s"], clone) == "local", "diverged: ff-only leaves main as it was") }
 } catch { fatalError("pull contract: \(error)") }
 
-print("PASS: Projects promises (TODO retry, busy repository, the user after retries, report on the check, next start after the lock's release, cancel, a free place, restart, todos.json, repository lock, scoped tools, work binding)")
+// Project memory: two AIs share one project's notes; replace archives (never edits), every change is a history line.
+do {
+    let memory = ProjectMemoryStore.shared, key = repo.path + "/memory"
+    guard case .saved(let first) = memory.add(ProjectMemoryNote(kind: .decision, text: "Keychain only", by: "Claude", account: "a"), project: key),
+          case .duplicate = memory.add(ProjectMemoryNote(kind: .decision, text: "keychain ONLY", by: "Codex", account: "b"), project: key),
+          case .saved(let second) = memory.replace(first.id, with: ProjectMemoryNote(kind: .decision, text: "Keychain only, checked", by: "Codex", account: "b", verified: true), project: key),
+          case .refused = memory.replace(first.id, with: ProjectMemoryNote(kind: .decision, text: "again"), project: key)
+    else { fatalError("FAIL: project memory add/replace") }
+    let notes = memory.notes(key)
+    expect(notes.count == 2 && notes[0].state == .archived && notes[0].text == "Keychain only" && notes[0].replacedBy == second.id
+           && notes[1].replaces == first.id && notes[1].state == .active, "replace archives the old note unchanged and links both")
+    expect(memory.history(key).map(\.action) == ["add", "archive", "replace"], "every change is one history line")
+    let saved = URL(fileURLWithPath: AccountStore.supportDir).appendingPathComponent("projects")
+    let folders = (try? fm.contentsOfDirectory(atPath: saved.path)) ?? []
+    expect(folders.count == 1 && fm.fileExists(atPath: saved.path + "/" + folders[0] + "/memory.json")
+           && fm.fileExists(atPath: saved.path + "/" + folders[0] + "/memory-history.jsonl"), "kept in projects/<id>/ under the test home")
+}
+
+print("PASS: Projects promises (TODO retry, busy repository, the user after retries, report on the check, next start after the lock's release, cancel, a free place, restart, todos.json, project memory, repository lock, scoped tools, work binding)")
 exit(0)

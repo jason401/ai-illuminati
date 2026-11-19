@@ -98,6 +98,50 @@ ProjectMakerLink.cancellation | var cancellation: (UUID) -> DebateCancellation?
 ProjectMakerLink.shared | static let shared: ProjectMakerLink
 ProjectMakerLink.tools() | func tools() -> [[String : Any]]
 ProjectMakerLink.tools(context:) | func tools(context: ToolContext) -> [[String : Any]]
+ProjectMemoryChange | struct ProjectMemoryChange
+ProjectMemoryChange.action | var action: String
+ProjectMemoryChange.at | var at: Date
+ProjectMemoryChange.init(from:) | init(from decoder: any Decoder) throws
+ProjectMemoryChange.note | var note: ProjectMemoryNote
+ProjectMemoryChange.old | var old: UUID?
+ProjectMemoryNote | struct ProjectMemoryNote
+ProjectMemoryNote.Kind | enum Kind
+ProjectMemoryNote.Kind.decision | case decision
+ProjectMemoryNote.Kind.init(rawValue:) | init?(rawValue: String)
+ProjectMemoryNote.Kind.log | case log
+ProjectMemoryNote.Kind.progress | case progress
+ProjectMemoryNote.State | enum State
+ProjectMemoryNote.State.active | case active
+ProjectMemoryNote.State.archived | case archived
+ProjectMemoryNote.State.init(rawValue:) | init?(rawValue: String)
+ProjectMemoryNote.account | var account: String?
+ProjectMemoryNote.archivedAt | var archivedAt: Date?
+ProjectMemoryNote.by | var by: String?
+ProjectMemoryNote.chat | var chat: UUID?
+ProjectMemoryNote.createdAt | var createdAt: Date
+ProjectMemoryNote.id | var id: UUID
+ProjectMemoryNote.init(from:) | init(from decoder: any Decoder) throws
+ProjectMemoryNote.init(kind:text:by:account:chat:message:verified:pinned:createdAt:) | init(kind: ProjectMemoryNote.Kind, text: String, by: String? = nil, account: String? = nil, chat: UUID? = nil, message: UUID? = nil, verified: Bool = false, pinned: Bool = false, createdAt: Date = Date())
+ProjectMemoryNote.kind | var kind: ProjectMemoryNote.Kind
+ProjectMemoryNote.message | var message: UUID?
+ProjectMemoryNote.pinned | var pinned: Bool
+ProjectMemoryNote.replacedBy | var replacedBy: UUID?
+ProjectMemoryNote.replaces | var replaces: UUID?
+ProjectMemoryNote.state | var state: ProjectMemoryNote.State
+ProjectMemoryNote.text | var text: String
+ProjectMemoryNote.verified | var verified: Bool
+ProjectMemoryStore | final class ProjectMemoryStore
+ProjectMemoryStore.Outcome | enum Outcome
+ProjectMemoryStore.Outcome.duplicate(_:) | case duplicate(ProjectMemoryNote)
+ProjectMemoryStore.Outcome.refused(_:) | case refused(String)
+ProjectMemoryStore.Outcome.saved(_:) | case saved(ProjectMemoryNote)
+ProjectMemoryStore.add(_:project:) | func add(_ note: ProjectMemoryNote, project: String) -> ProjectMemoryStore.Outcome
+ProjectMemoryStore.history(_:) | func history(_ project: String) -> [ProjectMemoryChange]
+ProjectMemoryStore.notes(_:) | func notes(_ project: String) -> [ProjectMemoryNote]
+ProjectMemoryStore.replace(_:with:project:) | func replace(_ old: UUID, with note: ProjectMemoryNote, project: String) -> ProjectMemoryStore.Outcome
+ProjectMemoryStore.revision | @Published var revision: Int { get set }
+ProjectMemoryStore.shared | static let shared: ProjectMemoryStore
+ProjectMemoryStore.textLimit | static let textLimit: Int
 ProjectProcess | enum ProjectProcess
 ProjectProcess.Reply | struct Reply
 ProjectProcess.Reply.output | var output: String

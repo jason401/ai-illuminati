@@ -2612,6 +2612,7 @@ private struct TurnView: View, Equatable {
                 .cornerRadius(10)
             }
             if turn.mode == 0 { RememberedLine(turnID: turn.id) }
+            if let project = discussion.linkedProject(discussion.currentID).map(SidebarProjects.key) { ProjectRememberedLine(turnID: turn.id, project: project) }
             if let note = turn.spaceDraft { SpaceDraftCard(note: note, turn: turn, discussion: discussion, busy: busy) }
             if let edits = turn.spaceEdits, !edits.isEmpty { SpaceEditsView(notes: edits, discussion: discussion) }
             ForEach(turn.mode == 0 && (turn.answerOrder?.count ?? 0) < 2 ? (turn.moreAnswers ?? []) : []) { answer in
@@ -3700,6 +3701,31 @@ private struct RememberedLine: View {
                         Button(L("취소", "Undo")) { memory.remove(item.id) }
                             .buttonStyle(.link)
                             .help(L("이 기억을 지워요.", "Removes this from memory."))
+                    }
+                    .font(.system(size: 11))
+                }
+            }
+        }
+    }
+}
+
+// What the AIs saved to project memory while answering this message (ProjectMemoryLink.swift). Changing or undoing
+// notes belongs to the project's info tab.
+private struct ProjectRememberedLine: View {
+    let turnID: UUID
+    let project: String
+    @ObservedObject var memory = ProjectMemoryStore.shared
+
+    var body: some View {
+        let _ = memory.revision
+        let saved = memory.notes(project).filter { $0.message == turnID }
+        if !saved.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(saved) { note in
+                    HStack(spacing: 6) {
+                        Image(systemName: "folder.badge.person.crop").foregroundColor(.secondary)
+                        Text(L("프로젝트 기억에 저장: ", "Saved to project memory: ") + note.text + (note.replaces != nil ? L(" (이전 메모 대체)", " (replaces an earlier note)") : ""))
+                            .foregroundColor(.secondary).lineLimit(2)
                     }
                     .font(.system(size: 11))
                 }

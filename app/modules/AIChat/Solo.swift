@@ -964,7 +964,7 @@ extension Discussion {
                                                          && binding.roots.contains { $0.path == SpaceStore.root.path && $0.writable == true },
                                                      allowed: { Enterprise.permits(account, lock: self.spaceLock($0)) }) : "",
                                 peer: peerInstruction(account, room: id, brief: !needs.peer),
-                                memory: memoryRule(account, chat: id),
+                                memory: [memoryRule(account, chat: id), projectMemoryRule(account, chat: id)].filter { !$0.isEmpty }.joined(separator: "\n"),
                                 linked: project == nil ? linkedProject(id) : nil, needs: needs)
     }
 
@@ -1006,6 +1006,16 @@ extension Discussion {
         let known = MemoryStore.rule(data, question: chat?.turns.last?.question ?? "")
         let save = account.provider == .ollama ? "" : MemoryStore.saveRule(data, chat: chat)
         return [known, save].filter { !$0.isEmpty }.joined(separator: "\n")
+    }
+
+    // The project memory block and its tool rule for a project chat (an opinion too); empty elsewhere.
+    func projectMemoryRule(_ account: Account, chat id: UUID?) -> String {
+        let read = { id.flatMap { room in (self.host ?? self).conversations.first { $0.id == room } ?? self.conversations.first { $0.id == room } } }
+        let chat = Thread.isMainThread ? read() : DispatchQueue.main.sync(execute: read)
+        guard let chat, let project = ProjectMemory.project(chat) else { return "" }
+        let known = ProjectMemory.rule(ProjectMemoryStore.shared.notes(project), question: chat.turns.last?.question ?? "")
+        let tools = account.provider == .ollama ? "" : ProjectMemory.toolRule(enterprise: chat.isEnterprise)
+        return [known, tools].filter { !$0.isEmpty }.joined(separator: "\n")
     }
 
     static func composeInstruction(name: String, provider: Account.Provider, folders: String, drive: String, fullAccess: Bool,

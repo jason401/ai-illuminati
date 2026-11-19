@@ -484,6 +484,7 @@ TODO usage bar: `AutoPick.need(window:kind:purpose:now:checkedAt:)` (Solo.swift)
 | The work binding: execute, writable only in the project's root and the chat's folder | ProjectChat | "work binding" | `run_conditions.swift` (ProjectChat's own run in the golden file) |
 | Approvals: one list for every place, a decision clears them all, 15 minutes unanswered is no and leaves a note | ProjectChat views, ApprovalAlerts, ExternalMCP, ProjectCreator | none | `testProjectWork` (expired, twice), render_chat |
 | New projects: card first, folder + first commit + GitHub + push, asking again continues the same plan; folderless and documents kinds | ProjectCreate (menus), ProjectMakerLink | none (needs a fake gh) | `testProjectCreate`, `testDocumentsProject` |
+| Project memory (ProjectMemory.swift): one note set per project (`groupKey`) in `projects/<id>/memory.json` under the support folder (a test home in tests); notes are added or replaced, never edited in place (the old one archived and linked both ways), a duplicate active note is not saved again, every change appends a line to `memory-history.jsonl` (a failed history write puts the notes back) | AIChat ProjectMemoryLink (tools, instruction), ChatWindow (the saved line) | "project memory" | testProjectMemory |
 
 Public names and why (everything else stays internal: `ProjectError`, `ProjectTools`, the lock tables and files, `RunProgress`,
 `RunTimings`, `TodoStore.encoder`/`decoder`/`copyIn`, `TodoData.eligible`/`hasCycle`, `TodoScheduler.begin`/`settle`/
@@ -524,6 +525,10 @@ Public names and why (everything else stays internal: `ProjectError`, `ProjectTo
   so the chat can gather a sub-room's card in its main room and let the very same command through for that split; the hook is
   asked before a card is shown.
 - `ProjectBinding.groupKey`: one project across its worktrees (`SidebarProjects.key` forwards to it).
+- Project memory (2026-11-19): `ProjectMemoryNote` (its stored fields, `Kind`, `State`, `init`), `ProjectMemoryChange` (a history
+  line), `ProjectMemoryStore` (`shared`, `notes`, `history`, `add`, `replace`, `Outcome`, `textLimit`, `revision` for the chat's
+  "saved to project memory" line): AIChat's three tools and the instruction read and write notes only through it, so the store
+  alone owns the files, the archive rule and the history (the info tab and the meeting cleanup will use the same names).
 - C0, logic moved down from the chat's `extension Discussion` blocks: `ProjectWork.linking` (a chat links a project: the
   root writable, after the linked folders or first for documents), `ProjectWork.moving` (a chat moved into a project;
   `SidebarProjects.moved` forwards), `ProjectRun.setPlan(todos:generation:)` (the stream's TodoWrite list read here, so the

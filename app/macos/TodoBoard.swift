@@ -319,6 +319,9 @@ struct TodoBoardView: View {
                     }
                     if item.state == .draft { Button(L("대기로 (바로 가져가도 됨)", "Make ready")) { act { try store.setReady(item.id, true); TodoScheduler.shared?.wake() } } }
                     if item.state == .ready { Button(L("초안으로 되돌리기", "Back to draft")) { act { try store.setReady(item.id, false) } } }
+                    if TodoStore.restartable(item, in: store.snapshot) {
+                        Button(L("다시 시작 (취소한 조각)", "Restart (cancelled step)")) { act { try store.restartStep(item.id); TodoScheduler.shared?.wake() } }
+                    }
                     Button(list.stopAfter == item.id ? L("멈춤 지점 지우기", "Remove the stop point") : L("여기까지 하고 멈추기", "Stop after this one")) {
                         act { try store.stop(after: item.id); TodoScheduler.shared?.wake() }
                     }

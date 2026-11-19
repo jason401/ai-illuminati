@@ -226,6 +226,7 @@ public final class ProjectRun {
     let todoAttempt: TodoItem?
     let todoSplitBase: String?
     let todoSplitDirty: String?            // the uncommitted state at the start (ProjectRun.dirtyState), for task_split
+    let todoStepDirty: [String: String]?   // a step's uncommitted paths at the start with their content hash, for task_done
     public var noPush: Bool { todoAttempt?.piece == .step }
     public var isTodoPiece: Bool { todoAttempt?.group != nil }
     public var todoWasSplit: Bool {
@@ -253,6 +254,33 @@ public final class ProjectRun {
         guard !paths.isEmpty else { return status }
         guard let hashes = try? ProjectProcess.git(["hash-object", "--"] + paths, root: root, token: token) else { return nil }
         return status + "\n" + hashes
+    }
+
+    // Uncommitted paths (staged or not) with their content hash ("-" for a removed file); nil when git cannot tell.
+    static func dirtyPaths(_ root: String, token: DebateCancellation) -> [String: String]? {
+        guard let status = try? ProjectProcess.git(["status", "--porcelain", "-z", "--untracked-files=all"], root: root, token: token) else { return nil }
+        var paths: [String] = [], entries = status.split(separator: "\0", omittingEmptySubsequences: true).map(String.init)[...]
+        while let entry = entries.popFirst() {
+            guard entry.count > 3 else { continue }
+            if entry.first == "R" || entry.first == "C" { _ = entries.popFirst() }
+            paths.append(String(entry.dropFirst(3)))
+        }
+        var result: [String: String] = [:]
+        for path in paths {
+            var directory: ObjCBool = false
+            let full = (root as NSString).appendingPathComponent(path)
+            if !FileManager.default.fileExists(atPath: full, isDirectory: &directory) { result[path] = "-"; continue }
+            if directory.boolValue { result[path] = "dir"; continue }
+            guard let hash = try? ProjectProcess.git(["hash-object", "--", path], root: root, token: token) else { return nil }
+            result[path] = hash.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return result
+    }
+    // A step's changes not committed yet: paths dirty now that were clean, or changed again, since the step started.
+    // Another chat's files that stayed as they were do not count.
+    func uncommittedStepChanges() -> [String]? {
+        guard let before = todoStepDirty, let now = Self.dirtyPaths(binding.root, token: attempt) else { return nil }
+        return now.filter { before[$0.key] != $0.value }.map(\.key).sorted()
     }
 
     // Called while the chat owns the repository lock, before any step can change HEAD.
@@ -363,6 +391,7 @@ public final class ProjectRun {
         todoSplitBase = todo != nil && todo?.group == nil && !binding.isDocuments && !binding.isFolderless
             ? try? ProjectProcess.git(["rev-parse", "--verify", "HEAD"], root: binding.root, token: token) : nil
         todoSplitDirty = todoSplitBase != nil ? Self.dirtyState(binding.root, token: token) : nil
+        todoStepDirty = todo?.piece == .step && !binding.isDocuments && !binding.isFolderless ? Self.dirtyPaths(binding.root, token: token) : nil
         deadline = Date().addingTimeInterval(fullAuto ? 8 * 3600 + 600 : 3600)
         let status = binding.isDocuments ? "" : (try? ProjectProcess.git(["status", "--porcelain", "-z"], root: binding.root)) ?? ""
         initialDirty = Set(status.split(separator: "\0").map { String($0.dropFirst(3)) })

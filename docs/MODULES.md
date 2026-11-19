@@ -544,6 +544,8 @@ Public names and why (everything else stays internal: `ProjectError`, `ProjectTo
   own commits on no remote (git, called off the main thread) for "push 안 된 조각 커밋 n개": each step run's HEAD at its start
   (`todoReviewBase`) to its end, which the chat records with `ProjectRun.todoPieceEnded` before it lets the repository go, so
   another chat's commits between the pieces are not counted.
+  `TodoStore.restartable` / `restartStep`: the board's "다시 시작" on a cancelled step of a split that is still open (ready
+  again, its finish goes on); `setReady` keeps refusing cancelled TODOs.
 - Sub-room P2 (AIChat's `Delegate.swift` uses them): `ProjectRun.isSubRoom` (set by the chat for a sub-room's turn: GitLink then lists and runs no git_pull/git_push/git_publish_stable/git_branch/git_switch),
   `ProjectWork.run(for:)` (another module's tool provider finds the live project turn of a tool call, with the same room/generation/cancel checks as GitLink),
   `SubWork.report` (sub_report: the work tree's HEAD only when everything is committed, and the files changed since the start),

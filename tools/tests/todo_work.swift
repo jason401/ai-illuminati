@@ -382,13 +382,16 @@ func testTodoSplitExecution() {
     try! store.attach(finish.id, files: [attachment])
 
     let cut = DispatchSemaphore(value: 0), resume = DispatchSemaphore(value: 0)
-    var work: [String] = [], reviews: [String] = []
+    var work: [String] = [], reviews: [String] = [], failReview = true, pushedAfterFailedReview = false
     let gitRestricted: Set<String> = ["git_push", "git_pull", "git_branch", "git_switch", "git_publish_stable"]
     let delegation: Set<String> = ["delegate_plan", "delegate_status", "delegate_result", "delegate_message",
                                    "delegate_cancel", "delegate_resync", "git_merge_sub", "sub_report", "sub_blocked"]
     chat.workspaceAnswer = { _, prompt, binding, _, _ in
         if prompt.hasPrefix("[REVIEW]") {
             reviews.append(prompt)
+            // The finish's first review fails: its push must wait for a review that goes through (on the retry).
+            if failReview { failReview = false; return .failure(.failed("reviewer crashed")) }
+            pushedAfterFailedReview = remoteHead() != initialHead
             return .success("No issues")
         }
         let item = store.current.items.first { $0.state == .running }!
@@ -443,7 +446,7 @@ func testTodoSplitExecution() {
                    "the finish keeps ask-first for unresolved questions and sees the earlier answer")
         }
         expect(remoteHead() == initialHead, "the group stays local until finish")
-        let name = item.title + ".txt"
+        let name = item.title + (work.filter { $0 == item.title }.count > 1 ? "2" : "") + ".txt"
         write(name)
         expect(!failed(tool("git_commit", ["paths": [name], "message": item.title])), "each piece can commit")
         if item.piece == .finish {
@@ -496,12 +499,12 @@ func testTodoSplitExecution() {
     spin({ store.current.item(finish.id)?.state == .review && !chat.anyRunning }, tick: true)
     let pieces = store.current.ordered(finish.listID)
     let results = pieces.map { "\($0.title)/\($0.state)/\($0.result ?? "-")/\($0.lastError ?? "-")" }
-    expect(work == ["First", "Second", "Finish"] && pieces.map(\.state) == [.done, .done, .review]
+    expect(work == ["First", "Second", "Finish", "Finish"] && pieces.map(\.state) == [.done, .done, .review] && !pushedAfterFailedReview
            && pieces.map(\.result) == ["First report", "Second report", "Finish report"] && notices == ["Finish"],
-           "checkEach executes in order and only the finish asks for a check; work \(work), pieces \(results), notices \(notices), waiting \(scheduler.waiting ?? "-"), reviews \(reviews.count)")
-    expect(reviews.count == 1 && reviews[0].contains(String(initialHead.prefix(8)))
-           && ["Early.txt", "First.txt", "Second.txt", "Finish.txt"].allSatisfy { reviews[0].contains($0) },
-           "the single review covers every piece and the original turn's early commit")
+           "checkEach executes in order, a failed group review pushes nothing and retries the finish, and only the finish asks for a check; work \(work), pieces \(results), notices \(notices), waiting \(scheduler.waiting ?? "-"), reviews \(reviews.count)")
+    expect(reviews.count == 2 && reviews[1].contains(String(initialHead.prefix(8)))
+           && ["Early.txt", "First.txt", "Second.txt", "Finish.txt", "Finish2.txt"].allSatisfy { reviews[1].contains($0) },
+           "the finish's review covers every piece and the original turn's early commit")
     expect(TodoStore(url: store.url).current.item(finish.id)?.splitRecord?.reviewBase == initialHead,
            "the review base survives reopening the board")
     let pushCount = Set(pieces.compactMap(\.room)).flatMap { chat.conversation($0).turns }.filter { $0.projectPushed == true }.count
@@ -539,11 +542,34 @@ func testTodoSplitExecution() {
                && piecesStore.current.item(blocked.id)?.state == .ready && blockedChats.questions.isEmpty,
                "answering or delegating the finish cannot drop its cancelled step")
     }
+    expect(TodoStore.restartable(piecesStore.current.item(order[1].id)!, in: piecesStore.current), "a cancelled step of an open split can be restarted")
+    try! piecesStore.restartStep(order[1].id)
+    expect(piecesStore.current.item(order[1].id)?.state == .ready && piecesStore.current.item(order[1].id)?.attempts == 0, "restarted, the step is ready again")
+    try! piecesStore.cancel(order[1].id)
     try! piecesStore.delete(order[1].id)
     blockedScheduler.tick()
     expect(piecesStore.current.item(blocked.id)?.state == .ready && blockedChats.questions.isEmpty
            && blockedScheduler.waiting == L("Blocked finish의 묶음에서 필요한 조각을 찾을 수 없어요.", "A required piece of the split for Blocked finish is missing."),
            "a deleted prerequisite keeps the finish blocked and explains why")
+    // The list's mode decides past a stuck step: parked (aiThenPark, auto), the TODOs below its group go on; not parked, they wait.
+    let modeStore = TodoStore(url: todoStoreFile("split-modes"))
+    let grouped = try! modeStore.add(title: "Grouped", project: project, projectName: "Split")
+    try! modeStore.change(grouped.id) { $0.state = .running }
+    try! modeStore.split(grouped.id, steps: [.init(title: "One", detail: "Test it", files: []), .init(title: "Two", detail: "Test it", files: [])],
+                         estimatedMinutes: 60, reason: "Sequence", finishFiles: [])
+    let below = try! modeStore.add(title: "Below", project: project, projectName: "Split")
+    try! modeStore.setReady(below.id, true)
+    let row = modeStore.current.ordered(grouped.listID)
+    let stuck = TodoQuestion(kind: .failed, reason: "Tests failed")
+    try! modeStore.change(row[0].id) { $0.state = .needsYou; $0.question = stuck }
+    expect(modeStore.current.eligible(held: { _ in false }).isEmpty, "a stuck step that is not parked holds the TODOs below its group")
+    try! modeStore.change(row[0].id) { $0.parked = TodoPark(questionID: stuck.id, at: Date(), reason: "parked") }
+    expect(modeStore.current.eligible(held: { _ in false }).map(\.title) == ["Below"], "a parked step lets the list go on past its group, the group itself waits")
+    // A done step deleted from the board: its committed work stays, so the next step and the finish do not wait for it.
+    try! modeStore.change(row[0].id) { $0.state = .done; $0.parked = nil; $0.question = nil }
+    try! modeStore.delete(row[0].id)
+    expect(modeStore.current.item(grouped.id)?.splitRecord?.files.map(\.id) == [row[1].id, grouped.id]
+           && modeStore.current.eligible(held: { _ in false }).map(\.title) == ["Two"], "deleting a done step does not stop its split")
     print("PASS: TODO split execution (late reports, exact turn boundary, recover, tools, checkEach, group review and one push, missing and cancelled steps, auto needsYou)")
 }
 
@@ -689,7 +715,7 @@ func testTodoSplitTool() {
     let read = call("task_pieces", [:], secondPiece)
     expect(read.ok && read.text.contains("Original TODO (the finish): Auto") && read.text.contains("Report: Storage report")
            && read.text.contains("Behavior — running (yours)") && read.text.contains("Storage before behavior") && read.text.contains("Done when: Full test passes")
-           && !read.text.contains("Unrelated") && !read.text.contains("Refuse"), "task_pieces shows the group and the earlier reports:\n\(read.text)")
+           && read.text.contains("Planned: detail") && !read.text.contains("Unrelated") && !read.text.contains("Refuse"), "task_pieces shows the group and the earlier reports:\n\(read.text)")
     expect(store.current.items == before && store.current.item(other.id) != nil, "task_pieces only reads")
     // The board's lines (TodoData.splitLine): "①" on a step; "마무리 · 1/3", the record, a stuck step and unpushed commits on the finish.
     let lines = store.current
@@ -712,6 +738,11 @@ func testTodoSplitTool() {
     let ended = store.current.splitLine(store.current.item(auto.id)!)!
     expect(store.current.item(steps[1].id)?.pieceRuns?.last?.end != nil && TodoStore.unpushedPieceCommits(ended) == 1,
            "another chat's commit between the pieces is not a piece commit")
+    // A step cannot report done with its changes left uncommitted (they would miss the finish's push).
+    try! "loose".write(to: root.appendingPathComponent("Loose.swift"), atomically: true, encoding: .utf8)
+    let loose = call("task_done", ["summary": "done"], secondPiece)
+    expect(!loose.ok && loose.text.contains("Loose.swift") && store.current.item(steps[1].id)?.report == nil, "an uncommitted step change blocks task_done: \(loose.text)")
+    commit("Loose.swift")
     try! store.change(auto.id) { $0.state = .cancelled }
     expect(TodoStore.unpushedPieceCommits(store.current.splitLine(store.current.item(auto.id)!)!) == 1, "a cancelled split still counts its local step commits")
     try! store.change(auto.id) { $0.state = .ready }
@@ -747,6 +778,11 @@ func testTodoSplitTool() {
     let approved = todo("Approved", auto: false)
     let yes = carded(approved.context, allow: true)
     expect(yes.ok && store.current.item(approved.id)?.piece == .finish, "an approved card splits: \(yes.text)")
+    // A board set to check each one asks even in full auto.
+    try! store.setList(store.current.item(approved.id)!.listID, mode: .checkEach)
+    let checked = todo("Checked", auto: true)
+    let asked = carded(checked.context, allow: true)
+    expect(asked.ok && asked.detail != "no card" && store.current.item(checked.id)?.piece == .finish, "checkEach shows the card in full auto: \(asked.text)")
     print("PASS: TODO split tools (switch off, refusals, changed files, first run only, full auto without a card, no resplit, task_pieces, board lines, declined card)")
 }
 

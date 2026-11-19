@@ -487,6 +487,11 @@ extension Discussion {
                         turn.moreAnswers?.append(ChatTurn.Entry(round: 1, speaker: self.label(reviewer), text: reviewText, failed: failed, model: failed ? nil : reviewed.name))
                     }
                 }
+                // A split's finish pushes every step's commits: only after the group's review and its fixes went through.
+                if run.pushWanted, run.isTodoPiece, let problem, !cancellation.isCancelled {
+                    run.setAppStep(9, L("push (main에 한 번)", "Push (once)"), .blocked)
+                    end(problem + " " + L("묶음 전체가 검토되지 않아 push하지 않았어요. commit은 로컬에 남아 있어요.", "The group was not fully reviewed, so nothing was pushed. The commits stay local.")); return
+                }
                 if run.pushWanted, !cancellation.isCancelled {
                     do {
                         _ = try GitLink.shared.pushDeferred(run); run.setAppStep(9, L("push (main에 한 번)", "Push (once)"), .done)

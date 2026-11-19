@@ -92,9 +92,10 @@ public struct TodoItem: Codable, Identifiable, Equatable {
         }
         let estimatedMinutes: Int
         let reason: String
-        let files: [PieceFiles]
+        var files: [PieceFiles]        // a done step deleted from the board leaves the plan (TodoStore.delete)
         var reviewBase: String? = nil  // Git HEAD before the first step, kept through retries and restarts
         var finishDone: String? = nil  // the finish's done-when line (each step's is in its detail)
+        var finishDetail: String? = nil // what task_split planned for the finish (task_pieces shows it)
     }
 
     var group: UUID?                       // the original TODO's id, including on the finish itself
@@ -443,7 +444,11 @@ public struct TodoData: Codable, Equatable {
             ids.append(contentsOf: earlier.filter { !item.after.contains($0) })
         }
         let row = ordered(item.listID)
-        let passed = { (t: TodoItem) in t.state == .cancelled || t.state == .draft || t.isParked }
+        // A parked step sets its whole group aside for the TODOs below it (parking follows the list's mode); inside the group it still holds.
+        let parkedGroups = Set(row.filter { $0.piece == .step && $0.isParked }.compactMap(\.group))
+        let passed = { (t: TodoItem) in
+            t.state == .cancelled || t.state == .draft || t.isParked || (t.group.map(parkedGroups.contains) == true && t.group != item.group)
+        }
         if let at = row.firstIndex(where: { $0.id == item.id }), let above = row[..<at].last(where: { !passed($0) }) {
             ids.append(above.id)
             let through = { (t: TodoItem) in t.state == .done || t.state == .review }
@@ -660,7 +665,7 @@ public final class TodoStore: ObservableObject {
     }
 
     // The caller handles the running turn. The store saves the steps, finish and order together.
-    func split(_ id: UUID, steps: [SplitStep], estimatedMinutes: Int, reason: String, finishFiles: [String], finishDone: String? = nil, context: ToolContext? = nil) throws {
+    func split(_ id: UUID, steps: [SplitStep], estimatedMinutes: Int, reason: String, finishFiles: [String], finishDone: String? = nil, finishDetail: String? = nil, context: ToolContext? = nil) throws {
         guard (1...5).contains(steps.count) else { throw TodoError.splitCount }
         guard estimatedMinutes > 0, !reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               steps.allSatisfy({ !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else {
@@ -694,7 +699,8 @@ public final class TodoStore: ObservableObject {
             files.append(.init(id: id, paths: finishFiles))
             finish.group = id
             finish.piece = .finish
-            finish.splitRecord = .init(estimatedMinutes: estimatedMinutes, reason: reason, files: files, reviewBase: liveRun?.todoSplitBase, finishDone: finishDone)
+            finish.splitRecord = .init(estimatedMinutes: estimatedMinutes, reason: reason, files: files, reviewBase: liveRun?.todoSplitBase, finishDone: finishDone,
+                                        finishDetail: finishDetail.flatMap { $0.isEmpty ? nil : $0 })
             finish.after = after
             finish.state = .ready
             // The finish starts a new attempt and keeps the original notes and clock totals.
@@ -781,6 +787,19 @@ public final class TodoStore: ObservableObject {
         try change(id) { item in
             guard item.state == .draft || item.state == .ready else { throw TodoError.notEditable }
             item.state = ready ? .ready : .draft
+        }
+    }
+    // A cancelled step of a split that is still open: ready again, so its finish can go on (the board's 다시 시작).
+    public static func restartable(_ item: TodoItem, in data: TodoData) -> Bool {
+        guard item.state == .cancelled, item.piece == .step, let group = item.group, let finish = data.item(group) else { return false }
+        return finish.state != .done && finish.state != .cancelled
+    }
+    public func restartStep(_ id: UUID) throws {
+        try update { data in
+            guard let i = data.items.firstIndex(where: { $0.id == id }) else { throw TodoError.notFound }
+            guard Self.restartable(data.items[i], in: data) else { throw TodoError.notEditable }
+            data.items[i].state = .ready; data.items[i].attempts = 0; data.items[i].lastError = nil; data.items[i].question = nil
+            data.items[i].standIns = 0; data.items[i].delegated = 0; data.items[i].aiHelped = 0
         }
     }
     public func accept(_ id: UUID) { try? change(id) { guard $0.state == .review else { return }; $0.state = .done; $0.unreported = false; $0.aiHelped = 0 } }
@@ -909,6 +928,10 @@ public final class TodoStore: ObservableObject {
             guard let item = data.item(id) else { throw TodoError.notFound }
             guard item.state != .running else { throw TodoError.busy }
             data.items.removeAll { $0.id == id }
+            // A done step's work is committed: its finish no longer waits for it. Any other step stays required (missing).
+            if item.piece == .step, item.state == .done, let group = item.group, let f = data.items.firstIndex(where: { $0.id == group }) {
+                data.items[f].splitRecord?.files.removeAll { $0.id == id }
+            }
             // The stop point deleted: the list stays stopped (paused) rather than going on below it by itself.
             for l in data.lists.indices where data.lists[l].stopAfter == id { data.lists[l].stopAfter = nil; data.lists[l].paused = true }
             for i in data.items.indices { data.items[i].after.removeAll { $0 == id } }
@@ -1133,7 +1156,7 @@ public final class TaskLink: ToolProvider {
                 "finish": ["type": "boolean", "description": "true only for the last piece: this TODO itself, which runs the full tests and pushes."]],
                                         "required": ["done_when", "files"], "additionalProperties": false]
             extra.append(["name": "task_split",
-                          "description": "Split this TODO, before changing any file, into 1-\(Self.mostPieces - 1) steps done in order and this TODO as the finish (the last piece, finish: true; 2-\(Self.mostPieces) pieces in all). Each piece needs done_when (which tests passing ends it) and its files; steps need a title. Once only; the user approves it on a card unless the chat is in full auto. A split group cannot use sub-rooms.",
+                          "description": "Split this TODO, before changing any file, into 1-\(Self.mostPieces - 1) steps done in order and this TODO as the finish (the last piece, finish: true; 2-\(Self.mostPieces) pieces in all). Each piece needs done_when (which tests passing ends it) and its files; steps need a title. Once only; the user approves it on a card unless the chat is in full auto (a board set to check each one always asks). A split group cannot use sub-rooms.",
                           "inputSchema": ["type": "object", "properties": [
                             "pieces": ["type": "array", "items": piece, "minItems": 2, "maxItems": Self.mostPieces],
                             "estimated_minutes": ["type": "integer", "minimum": 1, "description": "Your estimate for the whole TODO."],
@@ -1158,6 +1181,10 @@ public final class TaskLink: ToolProvider {
         case "task_done":
             let summary = text("summary")
             guard !summary.isEmpty else { return ProjectTools.failure("summary is required.") }
+            // A step's changes reach the push only through its commits: what it left uncommitted would be lost to the finish.
+            if run.noPush, let left = run.uncommittedStepChanges(), !left.isEmpty {
+                return ProjectTools.failure("Commit this step's changes before task_done (the finish pushes only commits): " + left.prefix(20).joined(separator: ", "))
+            }
             // Kept with the attempt: the TODO waits for the check only once the review and its fixes are over (settle).
             do {
                 try run.todoStore.record(item.id, context: context) { report in
@@ -1224,7 +1251,8 @@ public final class TaskLink: ToolProvider {
             "\(n + 1). \(p.title)\n   \(L("끝 조건", "Done when")): \(p.done)\n   \(L("바꿀 파일", "Files")): \(p.files.joined(separator: ", "))"
         }.joined(separator: "\n") + "\n\(steps.count + 1). \(L("마무리", "Finish")): \(item.title)\n   \(L("끝 조건", "Done when")): \(finish.done)"
             + "\n   \(L("바꿀 파일", "Files")): " + (finish.files.isEmpty ? L("없음", "none") : finish.files.joined(separator: ", "))
-        if !run.todoSplitFullAuto {
+        // A card unless the chat is in full auto; a list set to check each one always asks (the user wants to see it).
+        if !run.todoSplitFullAuto || run.todoStore.current.mode(item) == .checkEach {
             run.beginApproval(); defer { run.endApproval() }
             let card = ProjectApproval(room: run.room, run: run.id, title: L("TODO 나누기: ", "Split this TODO: ") + item.title,
                                        detail: L("예상 시간: 약 \(minutes)분", "Estimate: about \(minutes) min") + "\n" + L("이유: ", "Why: ") + reason + "\n\n" + plan
@@ -1241,7 +1269,7 @@ public final class TaskLink: ToolProvider {
         do {
             try run.todoStore.split(item.id, steps: steps.map { p in
                 .init(title: p.title, detail: (p.detail.isEmpty ? "" : p.detail + "\n\n") + "Done when: " + p.done + "\nFiles: " + p.files.joined(separator: ", "), files: p.files)
-            }, estimatedMinutes: minutes, reason: reason, finishFiles: finish.files, finishDone: finish.done, context: context)
+            }, estimatedMinutes: minutes, reason: reason, finishFiles: finish.files, finishDone: finish.done, finishDetail: finish.detail, context: context)
         } catch { return ProjectTools.failure(error.localizedDescription) }
         run.note(L("TODO를 \(steps.count + 1)개로 나눴어요", "Split the TODO into \(steps.count + 1) pieces"))
         return ["content": [["type": "text", "text": "Split into \(steps.count) steps and the finish (this TODO). Stop now: change nothing more, do not call task_done, and end your reply with the plan in a few lines. The app runs the pieces one after another, then this TODO as the finish."]], "isError": false]
@@ -1260,6 +1288,7 @@ public final class TaskLink: ToolProvider {
             let files = planned.first { $0.id == piece.id }?.paths ?? []
             var line = "\(n + 1). \(piece.piece == .finish ? "[finish] " : "")\(piece.title) — \(piece.state.rawValue)\(piece.id == item.id ? " (yours)" : "")"
             if !files.isEmpty { line += "\n   Planned files: " + files.joined(separator: ", ") }
+            if piece.piece == .finish, let plan = finish.splitRecord?.finishDetail { line += "\n   Planned: " + plan }
             if piece.piece == .finish, let done = finish.splitRecord?.finishDone { line += "\n   Done when: " + done }
             if n < mine, piece.piece == .step {
                 line += "\n   Report: " + (piece.result ?? piece.report?.summary ?? "none")
@@ -1734,7 +1763,7 @@ public final class TodoScheduler: ObservableObject {
                     break
                 }
                 if blockers.contains(where: { id in data.item(id).map { $0.group == group && $0.state == .cancelled } == true }) {
-                    note = L("\(item.title): 취소된 앞 조각을 다시 시작해야 해요.", "\(item.title) is waiting for a cancelled step to be restarted.")
+                    note = L("\(item.title): 취소된 앞 조각을 다시 시작해야 해요 (조각의 ⋯ ▸ 다시 시작).", "\(item.title) is waiting for a cancelled step to be restarted (the step's ⋯ ▸ Restart).")
                     break
                 }
             }
@@ -2130,7 +2159,7 @@ public final class TodoScheduler: ObservableObject {
             [Splitting] Before changing any file, decide whether to split this TODO with task_split. Split when the TODO says "나눠서" (split it), or when it takes 60 minutes or more \
             and has 2 or more parts that must be done in order (a later part needs an earlier one's result); otherwise do not split. Cut only where the app still builds and the \
             related tests pass; each piece names that test in done_when, and its files. 2-6 pieces including the finish (this TODO, last), about 30 minutes each, usually storage, \
-            then behavior, then screen. Unless the chat is in full auto the user approves it on a card; if not approved, do the whole TODO yourself. A split group cannot use \
+            then behavior, then screen. Unless the chat is in full auto (and the board does not check each one) the user approves it on a card; if not approved, do the whole TODO yourself. A split group cannot use \
             sub-rooms: decide on splitting first, and use only one of the two.
             """
         } else { splitting = "" }

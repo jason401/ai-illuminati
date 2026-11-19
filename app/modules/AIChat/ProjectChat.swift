@@ -363,6 +363,7 @@ extension Discussion {
                     ? L("이 Enterprise 방에서 작업할 \(chatLock?.name ?? "") Claude/Codex 계정이 필요해요. 파일 변경은 보존했어요.", "This Enterprise chat needs a \(chatLock?.name ?? "") Claude/Codex account to continue. Changes are preserved.")
                     : L("이어서 작업할 Claude/Codex 계정이 필요해요. 파일 변경은 보존했어요.", "No Claude/Codex account is available to continue. Changes are preserved.")); return
             }
+            if !conversation(id).isEnterprise { run.memoryWorkers.append(account.name) }
             run.nextAttempt(); workspace.projectGeneration = run.generation; activeWorkspace = workspace
             let speaker = label(account)
             let working = handedFrom.map { L("\($0) 한도 → \(speaker)가 이어받아 작업 중", "\($0) hit its limit → \(speaker) took over") }

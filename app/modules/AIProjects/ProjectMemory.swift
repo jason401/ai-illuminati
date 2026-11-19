@@ -26,6 +26,7 @@ public struct ProjectMemoryNote: Codable, Identifiable, Equatable {
     public var replacedBy: UUID?
     public var state = State.active
     public var archivedAt: Date?
+    public var commits: [String]?   // automatic log identity, kept after edits and deletion
 
     public init(kind: Kind, text: String, by: String? = nil, account: String? = nil, chat: UUID? = nil, message: UUID? = nil,
                 verified: Bool = false, pinned: Bool = false, createdAt: Date = Date()) {
@@ -122,12 +123,39 @@ public final class ProjectMemoryStore: ObservableObject {
             if let same = data.notes.first(where: { $0.state == .active && $0.kind == note.kind && $0.text.lowercased() == note.text.lowercased() }) {
                 return Edit(.duplicate(same))
             }
-            guard data.notes.filter({ $0.state == .active }).count < Self.maxActive else {
+            guard data.notes.filter({ $0.state == .active && $0.commits == nil }).count < Self.maxActive else {
                 return Edit(.refused("Project memory is full (\(Self.maxActive) active notes): replace outdated notes instead of adding."))
             }
             note.state = .active; note.replaces = nil; note.replacedBy = nil; note.archivedAt = nil
             data.notes.append(note)
             return Edit(.saved(note), [ProjectMemoryChange(at: note.createdAt, action: "add", note: note, by: by, batch: batch)])
+        }
+    }
+
+    // The app records committed work without an AI call. The history keeps hashes even after deletion.
+    func recordWork(_ commits: [(hash: String, title: String)], project: String, by: String, chat: UUID,
+                    now: Date = Date()) -> Outcome? {
+        guard !commits.isEmpty else { return nil }
+        return change(project) { data, history in
+            let seen = Set(history.flatMap { $0.notes.flatMap { $0.commits ?? [] } })
+            var fresh = Set<String>()
+            let pending = commits.filter { !seen.contains($0.hash) && fresh.insert($0.hash).inserted }
+            guard !pending.isEmpty else {
+                let existing = history.flatMap(\.notes).first { !Set($0.commits ?? []).isDisjoint(with: Set(commits.map(\.hash))) }
+                return Edit(existing.map { .duplicate($0) } ?? .refused("Work already recorded."))
+            }
+            let date = ISO8601DateFormatter().string(from: now)
+            let titles = pending.map { $0.title.split(whereSeparator: \.isWhitespace).joined(separator: " ") + " [" + $0.hash.prefix(10) + "]" }.joined(separator: "; ")
+            let prefix = date + " · " + String(by.prefix(80)) + " · "
+            let suffix = " · chat:" + chat.uuidString
+            let room = max(0, Self.textLimit - prefix.count - suffix.count)
+            let summary = titles.count > room ? String(titles.prefix(max(0, room - 1))) + "…" : titles
+            var note = ProjectMemoryNote(kind: .log, text: prefix + summary + suffix,
+                                         by: by, chat: chat, verified: true, createdAt: now)
+            note.commits = pending.map(\.hash)
+            // Logs accumulate until the cleanup meeting; the manual active-note cap must not drop them.
+            data.notes.append(note)
+            return Edit(.saved(note), [ProjectMemoryChange(at: now, action: "add", note: note)])
         }
     }
 

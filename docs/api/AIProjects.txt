@@ -129,6 +129,7 @@ ProjectMemoryNote.account | var account: String?
 ProjectMemoryNote.archivedAt | var archivedAt: Date?
 ProjectMemoryNote.by | var by: String?
 ProjectMemoryNote.chat | var chat: UUID?
+ProjectMemoryNote.commits | var commits: [String]?
 ProjectMemoryNote.createdAt | var createdAt: Date
 ProjectMemoryNote.id | var id: UUID
 ProjectMemoryNote.init(from:) | init(from decoder: any Decoder) throws
@@ -192,6 +193,7 @@ ProjectRun.init(room:binding:token:fullAuto:todoSplitFullAuto:) | init(room: UUI
 ProjectRun.isSubRoom | var isSubRoom: Bool
 ProjectRun.isTodoPiece | var isTodoPiece: Bool { get }
 ProjectRun.log | var log: [String] { get }
+ProjectRun.memoryWorkers | var memoryWorkers: [String]
 ProjectRun.nextAttempt() | func nextAttempt()
 ProjectRun.noPush | var noPush: Bool { get }
 ProjectRun.note(_:) | func note(_ text: String)

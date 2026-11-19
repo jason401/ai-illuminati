@@ -330,6 +330,36 @@ public final class ProjectRun {
     private var ended = false, splitAccepted = false, subRoomsUsed = false
     private var pieceStart: String?   // HEAD at this step run's start (todoReviewBase), for todoPieceEnded
     func stop() { lifecycle.lock(); ended = true; lifecycle.unlock(); attempt.cancel() }
+    private let memoryReflog: [String]
+    // Only the chat enables this, outside Enterprise rooms; handoffs retain every worker's name.
+    public var memoryWorkers: [String] = []
+    func recordWorkMemory() {
+        guard !memoryWorkers.isEmpty, !binding.isDocuments,
+              let log = try? ProjectProcess.git(["reflog", "show", "--format=%H%x09%gs", "HEAD"], root: binding.root) else { return }
+        let entries = log.split(separator: "\n").map(String.init)
+        // New reflog entries precede the old suffix. Pull, reset and checkout entries are never authored work.
+        guard entries.count >= memoryReflog.count, Array(entries.suffix(memoryReflog.count)) == memoryReflog else { return }
+        let created = entries.prefix(entries.count - memoryReflog.count).reversed().compactMap { row -> String? in
+            let parts = row.split(separator: "\t", maxSplits: 1)
+            guard parts.count == 2 else { return nil }
+            let action = String(parts[1])
+            guard action.hasPrefix("commit:") || action.hasPrefix("commit (") ||
+                    (action.hasPrefix("merge ") && action.contains("Merge made by")) else { return nil }
+            return String(parts[0])
+        }
+        // An amended or discarded commit is no longer part of the completed work.
+        let hashes = created.filter { (try? ProjectProcess.git(["merge-base", "--is-ancestor", $0, "HEAD"], root: binding.root)) != nil }
+        guard !hashes.isEmpty,
+              let rows = try? ProjectProcess.git(["show", "--no-patch", "--format=%H%x09%s"] + hashes, root: binding.root) else { return }
+        let commits = rows.split(separator: "\n").compactMap { row -> (hash: String, title: String)? in
+            let parts = row.split(separator: "\t", maxSplits: 1)
+            return parts.count == 2 ? (String(parts[0]), String(parts[1])) : nil
+        }
+        if case .refused(let why) = ProjectMemoryStore.shared.recordWork(commits, project: binding.groupKey,
+                    by: Array(Set(memoryWorkers)).sorted().joined(separator: ", "), chat: room) {
+            note(why)
+        }
+    }
     public var committed = false, pushed = false
     // A project turn pushes once, after the review and its fixes: git_push only asks for it, and the chat calls
     // GitLink.pushDeferred when the turn ends well. Without a successful end the commits stay local (a TODO retries).
@@ -382,6 +412,7 @@ public final class ProjectRun {
     var initialDirty: Set<String> = []
     let operations = NSRecursiveLock()
     public init(room: UUID, binding: ProjectBinding, token: DebateCancellation, fullAuto: Bool = false, todoSplitFullAuto: Bool? = nil) {
+        memoryReflog = binding.isDocuments ? [] : ((try? ProjectProcess.git(["reflog", "show", "--format=%H%x09%gs", "HEAD"], root: binding.root)) ?? "").split(separator: "\n").map(String.init)
         self.room = room; self.binding = binding; self.outer = token; self.fullAuto = fullAuto
         self.todoSplitFullAuto = todoSplitFullAuto ?? fullAuto
         let todoStore = TodoStore.shared
@@ -504,7 +535,7 @@ public enum ProjectWork {
         return binding
     }
     public static func register(_ run: ProjectRun) { mutex.lock(); runs[run.id] = run; mutex.unlock() }
-    public static func finish(_ run: ProjectRun) { run.stop(); run.operations.lock(); defer { run.operations.unlock() }; revokeTools(run.id); mutex.lock(); runs.removeValue(forKey: run.id); mutex.unlock() }
+    public static func finish(_ run: ProjectRun) { run.stop(); run.operations.lock(); defer { run.operations.unlock() }; run.recordWorkMemory(); revokeTools(run.id); mutex.lock(); runs.removeValue(forKey: run.id); mutex.unlock() }
     // Writers of folders without Git (a documents project's folder, or a folder linked to a plain chat) must not overlap a
     // documents project: a documents folder is taken alone, with nothing inside or around it being written. Plain linked
     // folders may still be written by several chats at once, as before. Across app instances the same rule holds through

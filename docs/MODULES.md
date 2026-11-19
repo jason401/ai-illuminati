@@ -529,6 +529,7 @@ Public names and why (everything else stays internal: `ProjectError`, `ProjectTo
   line), `ProjectMemoryStore` (`shared`, `notes`, `history`, `add`, `replace`, `Outcome`, `textLimit`, `revision` for the chat's
   "saved to project memory" line): AIChat's three tools and the instruction read and write notes only through it, so the store
   alone owns the files, the archive rule and the history (the info tab and the meeting cleanup will use the same names).
+- Project memory 3 (2026-11-19): `ProjectRun.memoryWorkers` lets AIChat enable automatic Git completion logs only outside Enterprise rooms; `ProjectMemoryNote.commits` stores full hashes for durable deduplication. `ProjectWork.finish` records new commit-creation entries from HEAD reflog (excluding pull/checkout/reset) as one log without an AI call, including local TODO piece commits. Log identities survive edit/archive/delete; automatic logs are sent for 14 days even when pinned. Tested by `testProjectMemory` through real fixture Git commits and completion, no-commit, repeated completion and reload/delete cases.
 - Project memory 2 (2026-11-19): `ProjectMemoryNote.State.deleted`, `ProjectMemoryChange` `by`/`batch`/`others`/`undoes`/`marks`/`who`/`notes`,
   `byUser`/`byMeeting`, `ProjectMemoryStore` `edit`, `setPinned`, `archive`, `restore`, `delete`, `undo(_:project:)`,
   `undo(batch:project:)`, `undone`, `mark`, and `add`/`replace`'s `by:`/`batch:`: Project info's memory section (App) shows the notes

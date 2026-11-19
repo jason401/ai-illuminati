@@ -123,6 +123,104 @@ func testProjectMemory() {
            && (try? Data(contentsOf: history)) == Data("garbage\n".utf8) + good, "a damaged history is never saved over")
     try! good.write(to: history); store.forget()
 
+    // Exercise the app's real Git completion path, including commits made without git_commit.
+    let repo = URL(fileURLWithPath: root)
+    try! FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: repo) }
+    func git(_ args: [String]) -> String { try! ProjectProcess.git(args, root: root) }
+    _ = git(["init", "-b", "main"])
+    _ = git(["config", "user.name", "Fixture"])
+    _ = git(["config", "user.email", "fixture@example.invalid"])
+    let unbornRun = ProjectRun(room: a.id, binding: binding, token: DebateCancellation())
+    unbornRun.memoryWorkers = ["Codex"]
+    _ = git(["commit", "--allow-empty", "-m", "Baseline"])
+    ProjectWork.finish(unbornRun)
+    expect(store.notes(key).last?.text.contains("Baseline") == true, "first root commit is recorded")
+    _ = git(["checkout", "-b", "other"])
+    _ = git(["commit", "--allow-empty", "-m", "Existing other branch"])
+    _ = git(["checkout", "main"])
+    func work() -> ProjectRun {
+        let run = ProjectRun(room: a.id, binding: binding, token: DebateCancellation())
+        run.memoryWorkers = ["Codex"]
+        return run
+    }
+    let beforeWork = store.history(key).count
+    let questionRun = work()
+    ProjectWork.finish(questionRun)
+    expect(store.history(key).count == beforeWork, "no commit: no automatic log")
+    let committedRun = work()
+    _ = git(["commit", "--allow-empty", "-m", "First change"])
+    let firstHash = git(["rev-parse", "HEAD"])
+    _ = git(["commit", "--allow-empty", "-m", "Second change"])
+    let secondHash = git(["rev-parse", "HEAD"])
+    ProjectWork.finish(committedRun)
+    let automatic = store.notes(key).last!
+    expect(store.history(key).count == beforeWork + 1 && automatic.commits == [firstHash, secondHash]
+           && automatic.text.contains("First change") && automatic.text.contains("Second change")
+           && automatic.chat == a.id && automatic.by == "Codex" && automatic.verified,
+           "completion groups new commits in one dated, attributed log with source chat")
+    ProjectWork.finish(committedRun)
+    expect(store.history(key).count == beforeWork + 1, "finishing twice does not duplicate hashes")
+    _ = store.edit(automatic.id, text: "User edited log", kind: .log, verified: true, project: key)
+    _ = store.archive(automatic.id, project: key)
+    store.forget()
+    let archivedCount = store.history(key).count
+    ProjectWork.finish(committedRun)
+    expect(store.history(key).count == archivedCount, "hash dedup survives edits, archives and disk reload")
+    _ = store.delete(automatic.id, project: key)
+    let deletedCount = store.history(key).count
+    ProjectWork.finish(committedRun)
+    expect(store.history(key).count == deletedCount, "deleted automatic log is never recreated")
+    var oldAutomatic = automatic
+    oldAutomatic.createdAt = Date().addingTimeInterval(-15 * 86_400); oldAutomatic.pinned = true
+    expect(!ProjectMemory.rule([oldAutomatic], question: "").contains("First change"),
+           "automatic logs older than 14 days are excluded even when pinned")
+    let enterpriseRun = ProjectRun(room: a.id, binding: binding, token: DebateCancellation())
+    _ = git(["commit", "--allow-empty", "-m", "Private work"])
+    ProjectWork.finish(enterpriseRun)
+    expect(store.history(key).count == deletedCount, "a run without shared-memory workers saves no private work")
+    let switchRun = work()
+    _ = git(["checkout", "other"])
+    ProjectWork.finish(switchRun)
+    expect(store.history(key).count == deletedCount, "checkout does not claim existing branch commits")
+    _ = git(["checkout", "main"])
+    let remoteRepo = repo.appendingPathComponent("remote.git")
+    _ = git(["init", "--bare", remoteRepo.path])
+    _ = git(["remote", "add", "origin", remoteRepo.path])
+    _ = git(["push", "origin", "main"])
+    let clone = repo.appendingPathComponent("clone")
+    _ = git(["clone", "-b", "main", remoteRepo.path, clone.path])
+    func remoteGit(_ args: [String]) { _ = try! ProjectProcess.git(args, root: clone.path) }
+    remoteGit(["config", "user.name", "Other"])
+    remoteGit(["config", "user.email", "other@example.invalid"])
+    remoteGit(["commit", "--allow-empty", "-m", "Remote work"])
+    remoteGit(["push", "origin", "main"])
+    let pullRun = work()
+    _ = git(["pull", "--ff-only", "origin", "main"])
+    ProjectWork.finish(pullRun)
+    expect(store.history(key).count == deletedCount, "pull does not claim remote commits")
+    let longRun = work()
+    _ = git(["commit", "--allow-empty", "-m", String(repeating: "Long title ", count: 100)])
+    ProjectWork.finish(longRun)
+    expect(store.notes(key).last!.text.count <= ProjectMemoryStore.textLimit && store.notes(key).last!.commits?.count == 1,
+           "long titles fit the editable note limit while full hashes remain stored")
+
+    let amendRun = work()
+    _ = git(["commit", "--allow-empty", "-m", "Before amend"])
+    let discarded = git(["rev-parse", "HEAD"])
+    _ = git(["commit", "--amend", "--allow-empty", "-m", "After amend"])
+    let amended = git(["rev-parse", "HEAD"])
+    ProjectWork.finish(amendRun)
+    expect(store.notes(key).last!.commits == [amended] && !store.notes(key).last!.text.contains("Before amend"),
+           "only the final amended commit is logged")
+    let resetRun = work()
+    let resetCount = store.history(key).count
+    _ = git(["commit", "--allow-empty", "-m", "Discarded work"])
+    _ = git(["reset", "--hard", amended])
+    ProjectWork.finish(resetRun)
+    expect(store.history(key).count == resetCount && !store.notes(key).contains { ($0.commits ?? []).contains(discarded) },
+           "commits discarded before completion are not logged")
+
     // The instruction: pinned, decisions, open progress, the last 14 days of log; archived notes never.
     let now = Date()
     func note(_ kind: ProjectMemoryNote.Kind, _ text: String, days: Double = 0, pinned: Bool = false) -> ProjectMemoryNote {

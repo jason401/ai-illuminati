@@ -34,8 +34,8 @@ enum ProjectMemory {
     // The block for the AI: pinned, decisions and facts, open progress, the last 14 days of work log. Over the
     // budget: pinned notes first, then those that match the message, then the newest, while they fit.
     static func rule(_ notes: [ProjectMemoryNote], question: String, now: Date = Date()) -> String {
-        let active = notes.filter { $0.state == .active }
         let since = now.addingTimeInterval(-Double(logDays) * 86_400)
+        let active = notes.filter { $0.state == .active && ($0.commits == nil || $0.createdAt >= since) }
         let sections: [(String, [ProjectMemoryNote])] = [
             ("Pinned", active.filter(\.pinned)),
             ("Decisions and facts", active.filter { !$0.pinned && $0.kind == .decision }),

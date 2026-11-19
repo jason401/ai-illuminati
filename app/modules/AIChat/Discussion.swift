@@ -350,6 +350,15 @@ public final class Discussion: ObservableObject {
         useClaude = host.useClaude; useCodex = host.useCodex; useGemini = host.useGemini
     }
 
+    // The app's hidden meeting takes a running slot and stops with the app's other workers.
+    func backgroundMeetingWorker(_ room: UUID, cancellation: DebateCancellation) -> Discussion {
+        let worker = Discussion(workerFor: self, room: room)
+        worker.runCancellation = cancellation
+        workers[room] = worker
+        runningRooms.insert(room)
+        return worker
+    }
+
     // A worker finished (called on the main thread).
     private func runFinished(_ room: UUID) {
         let stopped = stoppingRooms.contains(room)

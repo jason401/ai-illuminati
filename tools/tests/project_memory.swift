@@ -407,12 +407,12 @@ func testProjectMemoryUndo() {
            && !((try? String(contentsOf: ProjectMemoryStore.historyFile(key), encoding: .utf8)) ?? "지울").contains("지울 비밀"),
            "a copy that cannot be written is removed, so the deleted text is in no file")
     print("PASS: project memory undo (who changed what, undo any change or a meeting cleanup, undo of undo, archive/restore, delete for good leaves no text and blocks the same words)")
-    testProjectMemoryCleanup()
+    checkProjectMemoryCleanupStorage()
 }
 
 // A meeting cleanup's list of edits: only agreed edits resting on the material's evidence, never a deleted text, at
 // most 30, the app's weekly fold of old work logs, one batch undone as a whole, and when a cleanup is due.
-func testProjectMemoryCleanup() {
+private func checkProjectMemoryCleanupStorage() {
     let store = ProjectMemoryStore.shared
     let key = "/tmp/pmc-\(UUID().uuidString.prefix(8))"
     store.forget()
@@ -497,4 +497,134 @@ func testProjectMemoryCleanup() {
     expect(saved(store.undo(batch: fold, project: key)) != nil && id(w1).flatMap(current)?.state == .active && current(week!.id)?.state == .archived,
            "the fold is part of the cleanup's batch and undone with it")
     print("PASS: project memory cleanup (evidence and agreement checked, deleted texts stay gone, 30 at once, weekly fold, one batch undo, when due)")
+}
+
+func testProjectMemoryCleanup() {
+    guard let home = ProcessInfo.processInfo.environment["AI_ILLUMINATI_TEST_HOME"], AccountStore.home == home else {
+        expect(false, "cleanup fixture needs the isolated test home"); return
+    }
+    let root = URL(fileURLWithPath: home).appendingPathComponent("cleanup-\(UUID().uuidString)")
+    let repo = root.path
+    let binding = ProjectBinding(root: repo, common: repo + "/.git", remote: "", remoteURL: "")
+    let key = SidebarProjects.key(binding)
+    let todoStore = TodoStore.shared
+    defer {
+        TodoStore.shared = todoStore
+        try? FileManager.default.removeItem(at: root)
+        try? FileManager.default.removeItem(at: ProjectMemoryStore.folder(key))
+        ProjectMemoryStore.shared.forget()
+    }
+    TodoStore.shared = TodoStore(url: root.appendingPathComponent("todos.json"))
+    let now = Date()
+    func commit(_ title: String, daysAgo: Double) throws -> String {
+        let date = ISO8601DateFormatter().string(from: now.addingTimeInterval(-daysAgo * 86_400))
+        let reply = try ProjectProcess.run("/usr/bin/git", ["-c", "user.email=fixture@example.invalid", "-c", "user.name=Fixture",
+                                                           "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null",
+                                                           "commit", "--allow-empty", "-m", title], cwd: repo,
+                                           extra: ["GIT_COMMITTER_DATE": date, "GIT_AUTHOR_DATE": date])
+        expect(reply.status == 0, "fixture commit made: \(reply.output)")
+        return try ProjectProcess.git(["rev-parse", "HEAD"], root: repo)
+    }
+    do {
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        _ = try ProjectProcess.git(["init", "-q"], root: repo)
+        _ = try commit("old Git subject", daysAgo: 3)
+        let hash = try commit("recent Git subject", daysAgo: 1)
+        try "fixture HANDOFF".write(to: root.appendingPathComponent("HANDOFF.md"), atomically: true, encoding: .utf8)
+
+        let list = TodoList(title: "Cleanup fixture", project: binding)
+        var done = TodoItem(listID: list.id, title: "finished fixture TODO")
+        done.state = .done; done.result = "fixture completion report"
+        var unfinished = TodoItem(listID: list.id, title: "unfinished fixture TODO")
+        unfinished.state = .running
+        try TodoStore.shared.update { $0.lists = [list]; $0.items = [done, unfinished] }
+
+        let store = ProjectMemoryStore.shared
+        _ = ProjectMemoryCleanup.apply([], meeting: UUID(), attendees: [], chats: [], commits: [], project: key,
+                                       now: now.addingTimeInterval(-2 * 86_400))
+        _ = store.add(ProjectMemoryNote(kind: .progress, text: "active fixture note", pinned: true), project: key)
+        if case .saved(let archived) = store.add(ProjectMemoryNote(kind: .decision, text: "archived fixture note"), project: key) {
+            _ = store.archive(archived.id, project: key)
+        } else { expect(false, "archive fixture note saved") }
+
+        let claude = Account(id: "cleanup-claude", provider: .claude, name: "Claude fixture")
+        let codex = Account(id: "cleanup-codex", provider: .codex, name: "Codex fixture")
+        let model = AppModel()
+        model.accounts = [claude, codex]
+        let discussion = Discussion(model: model)
+        let workspace = WorkspaceBinding(roots: [], project: binding)
+        var turn = ChatTurn(question: "raw fixture question", final: "raw fixture reply")
+        turn.answeredAt = now.addingTimeInterval(-3_600)
+        let turns = (0..<5).map { _ in
+            var copy = turn; copy.id = UUID(); return copy
+        }
+        let room = Conversation(updatedAt: now, turns: Array(turns.prefix(4)), summary: "changed fixture summary", workspace: workspace)
+        let unchanged = Conversation(updatedAt: now.addingTimeInterval(-3 * 86_400), summary: "old fixture summary", workspace: workspace)
+        discussion.conversations = [room, unchanged]
+        discussion.currentID = room.id
+        let reply = """
+        ```json
+        [{"kind":"add","ids":[],"text":"applied fixture change","noteKind":"decision","evidence":["\(room.id)","\(hash)"],"agreed":true},
+         {"kind":"add","ids":[],"text":"deferred fixture change","evidence":["\(hash)"],"agreed":false},
+         {"kind":"add","ids":[],"text":"unseen fixture evidence","evidence":["\(unchanged.id)"],"agreed":true}]
+        ```
+        """
+        let promptLock = NSLock()
+        var prompts: [(String, String, WorkspaceBinding)] = []
+        discussion.workspaceAnswer = { account, prompt, view, _, _ in
+            promptLock.lock(); prompts.append((account.id, prompt, view)); promptLock.unlock()
+            if prompt.contains("[MEETING RESULT]") { return .success(reply) }
+            if prompt.contains("[MODE3 MODERATION]") { return .success(#"{"action":"finish","reason":"enough"}"#) }
+            return .success("Use the recent commit and chat summary as evidence.")
+        }
+        func start(manual: Bool = false) -> Bool {
+            ProjectMemoryCleanupLink.runIfIdle(in: discussion, project: key, manual: manual)
+        }
+        func waitForMeeting() {
+            let deadline = Date().addingTimeInterval(20)
+            while discussion.anyRunning && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
+            expect(!discussion.anyRunning, "background cleanup finished")
+        }
+        expect(!start(manual: true), "a running TODO blocks cleanup even when no chat is answering")
+        try TodoStore.shared.change(unfinished.id) { $0.state = .draft }
+        discussion.runningRooms.insert(room.id)
+        expect(!start(manual: true), "an answering chat blocks cleanup")
+        discussion.runningRooms.remove(room.id)
+        expect(!start(), "four completed answers are below the automatic threshold")
+        discussion.change(room.id) { $0.turns = turns }
+        model.accounts = [claude]
+        expect(!start(), "one available AI skips cleanup")
+        model.accounts = [claude, codex]
+        expect(start() && !start(manual: true), "five answers start one background cleanup per project")
+        waitForMeeting()
+
+        let record = ProjectMemoryCleanup.last(key)
+        let hidden = discussion.conversations.first { $0.id == record?.id }
+        expect(record?.added == 1 && record?.deferred.count == 1 && record?.dropped.count == 1
+               && Set(record?.attendees ?? []) == Set(model.accounts.map(discussion.label)),
+               "the decoded result is applied with actual attendees, agreement and evidence")
+        expect(store.notes(key).contains { $0.text == "applied fixture change" }, "one agreed note was added automatically")
+        expect(hidden?.meetingOf?.room == room.id && hidden?.turns.first?.answeredAt != nil && hidden?.shareToDevices == false
+               && discussion.listedConversations.count == 2 && discussion.currentID == room.id && discussion.current.turns.count == 5,
+               "the app creates a private hidden meeting without adding a user turn or changing the current chat")
+        let speeches = prompts.filter { $0.1.contains("[MODE3 SPEECH]") }
+        expect(Set(speeches.map(\.0)) == [claude.id, codex.id] && speeches.allSatisfy { _, prompt, view in
+            ["The app called", "[App agenda]", "active fixture note", "progress, pinned", "changed fixture summary", room.id.uuidString,
+             hash, "recent Git subject", "fixture HANDOFF", "finished fixture TODO", "fixture completion report"].allSatisfy(prompt.contains)
+                && ["[User]", "raw fixture", "old fixture summary", "old Git subject", "archived fixture note", "unfinished fixture TODO"]
+                    .allSatisfy { !prompt.contains($0) }
+                && view.project == nil && view.origin == .consulted && view.roots.allSatisfy { $0.writable != true }
+        }, "both fake AIs see only the requested material and have a read-only meeting workspace")
+        expect(!start(), "automatic cleanup does not immediately repeat")
+
+        discussion.workspaceAnswer = { _, prompt, _, _, _ in
+            if prompt.contains("[MEETING RESULT]") { return .success("malformed JSON") }
+            if prompt.contains("[MODE3 MODERATION]") { return .success(#"{"action":"finish","reason":"enough"}"#) }
+            return .success("No supported changes.")
+        }
+        expect(start(manual: true), "manual cleanup bypasses the automatic interval")
+        waitForMeeting()
+        expect(ProjectMemoryCleanup.last(key)?.id == record?.id, "invalid output never advances the cleanup record")
+        print("PASS: app project memory cleanup meeting (idle, materials, fake attendees, JSON application)")
+    } catch { expect(false, "cleanup fixture setup failed: \(error)") }
 }

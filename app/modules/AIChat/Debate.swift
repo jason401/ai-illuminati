@@ -121,16 +121,16 @@ extension Discussion {
             : "The AIs can search the web, except \(offline.joined(separator: ", ")) (no web search): give search or source checks only to the others."
     }
 
-    private func debateSpeech(_ account: Account, rules: String, focus: String, transcript: String, opening: Bool) -> String {
+    private func debateSpeech(_ account: Account, rules: String, focus: String, transcript: String, opening: Bool, cleanup: Bool) -> String {
         """
         \(Self.debateContext(rules: rules, transcript: transcript))
         [MODE3 SPEECH]
         You are \(label(account)). The AIs here are one team. The shared goal is the best possible answer to the
-        latest user question, not winning an argument.
+        \(cleanup ? "app's cleanup agenda" : "latest user question"), not winning an argument.
         Speak only as yourself. Never write, imagine, or quote a statement on another AI's behalf.
         \(SpeechLength.rule(activeSpeechLength)) (this overrides other length rules), in the language of the
-        latest user message unless they request another language.
-        \(account.provider == .ollama ? Self.localSearchRule : Self.searchRule)
+        \(cleanup ? "project material" : "latest user message unless they request another language").
+        \(cleanup ? "" : account.provider == .ollama ? Self.localSearchRule : Self.searchRule)
         \(activeAdversarial ? "This is a critical debate: identify the strongest opposing interpretation, concrete failure cases and missing controls in other claims. Defend claims with evidence, rebut ideas rigorously, never attack people or invent disagreement. Do not agree merely to end the discussion." : "")
         \(opening
             ? "This is the opening round: every AI answers at the same time without seeing the others. Give your best answer to the question with its main reason."
@@ -141,7 +141,7 @@ extension Discussion {
               When another AI is right, say so briefly and build on it. Change your own view freely if the discussion shows a better one.
               No attacks, no repeating, no separate summary.
               """)
-        \(account.provider == .ollama
+        \(cleanup ? "Use only the project material supplied above. Do not change files or run commands." : account.provider == .ollama
             ? (activeMeeting ? "This is a meeting: you may read the folders listed above (read only). Do not change files or run commands." : "Do not change files or run commands.")
             : activeMeeting ? "This is a meeting: you may read the folders listed above (read only) and search the web. Do not change files or run commands."
             : "Use only web search and reading web pages. Do not change files or run commands.")
@@ -157,12 +157,12 @@ extension Discussion {
     @discardableResult
     func runDebate(question: String, history: [ChatTurn], rules: String, team: [Account],
                    leader: Account.Provider, perAI: Int, cancellation: DebateCancellation, id: UUID, index: Int,
-                   meeting: String? = nil) -> (text: String, images: [ChatImage])? {
+                   meeting: String? = nil, cleanup: Bool = false) -> (text: String, images: [ChatImage], attendees: [String])? {
         let limit = perAI * team.count
         let previous = meeting ?? Self.transcript(history)
-        var outcome: (text: String, images: [ChatImage])?
+        var outcome: (text: String, images: [ChatImage], attendees: [String])?
         let prefix = previous.isEmpty ? "" : previous + "\n\n"
-        var transcript = prefix + "[User]\n" + question
+        var transcript = prefix + (cleanup ? "[App agenda]\n" : "[User]\n") + question
         // Keyed by account: two accounts of one kind may meet (a meeting, mode 3).
         var successful: Set<String> = []
         var used: [String: Int] = [:]     // turns attempted, failures included; at most perAI each
@@ -187,12 +187,12 @@ extension Discussion {
         var openingPictures: [String: [ChatImage]] = [:]
         let group = DispatchGroup()
         for account in team {
-            let prompt = debateSpeech(account, rules: rules, focus: "", transcript: opening, opening: true)
+            let prompt = debateSpeech(account, rules: rules, focus: "", transcript: opening, opening: true, cleanup: cleanup)
             group.enter()
             DispatchQueue.global().async {
                 let started = Date()
                 let ran = AnswerModel()
-                var result = self.requestDebate(account, prompt, 300, cancellation, web: true, progress: ran.watch())
+                var result = self.requestDebate(account, prompt, 300, cancellation, web: !cleanup, progress: ran.watch())
                 var pictures: [ChatImage] = []
                 if case .success(let text) = result {
                     let harvest = self.collectPictures(text, account: account, since: started, id: id, cancellation: cancellation)
@@ -240,10 +240,10 @@ extension Discussion {
             let prompt = """
             \(Self.debateContext(rules: rules, transcript: transcript))
             [MODE3 MODERATION]
-            You are the neutral moderator. The goal is the best possible answer to the latest user question.
+            You are the neutral moderator. The goal is the best possible answer to the \(cleanup ? "app's cleanup agenda" : "latest user question").
             Do not favor your own earlier statements.
             \(activeAdversarial ? "Critical debate: actively assign unresolved opposing hypotheses, rebuttals, stress tests and missing controls; resolve material disagreements with evidence. No personal attacks or fabricated objections." : "")
-            \(activeHeld ? "Quick meeting: if the opening views agree, finish now. Give a turn only to settle a real disagreement that changes the decision; then finish." : "")
+            \(activeHeld || cleanup ? "Quick meeting: if the opening views agree, finish now. Give a turn only to settle a real disagreement that changes the decision; then finish." : "")
             1. Update the board: what is agreed, what needs checking, and what is still open. A claim backed by a URL that no one has
                contradicted with another source counts as verified. Saying "unverified" without searching does not make it unverified.
             2. Find the most important thing the answer still lacks: missing evidence or data, an unchecked number, an unanswered part of
@@ -260,7 +260,7 @@ extension Discussion {
             Do not continue just to use up turns.
             Return ONLY JSON: {"action":"speak","speaker":"\(team.map(key).joined(separator: "|"))","focus":"task for that AI","board":"Agreed: … / Check: … / Open: …"}
             or {"action":"finish","reason":"why the answer is good enough","board":"…"}.
-            Write focus/reason/board in the language of the latest user message unless it requests another language.
+            Write focus/reason/board in the language of the \(cleanup ? "project material" : "latest user message unless it requests another language").
             Do not use tools, change files, or run commands.
             """
             let result = requestDebate(moderator, prompt, 180, cancellation)
@@ -293,7 +293,8 @@ extension Discussion {
             }
             let started = Date()
             let ran = AnswerModel()
-            let speech = requestDebate(account, debateSpeech(account, rules: rules, focus: focus, transcript: transcript, opening: false), 300, cancellation, web: true, progress: ran.watch())
+            let speech = requestDebate(account, debateSpeech(account, rules: rules, focus: focus, transcript: transcript, opening: false, cleanup: cleanup),
+                                       300, cancellation, web: !cleanup, progress: ran.watch())
             if cancellation.isCancelled { break }
             count += 1 // Failed attempts count too, so the loop is always bounded.
             used[account.id, default: 0] += 1
@@ -324,13 +325,14 @@ extension Discussion {
         }
         changeTurn(id, index, save: true) { t in t.endReason = ending; t.debateFocus = nil }
         // Stop never starts another request, including the final synthesis.
-        if !cancellation.isCancelled, let moderator, moderatorAnswered() {
+        if !cancellation.isCancelled, let moderator, moderatorAnswered(), !cleanup || successful.count >= 2 {
             changeTurn(id, index) { $0.status = L("대표가 최종 답을 정리하는 중…", "Moderator is writing the final answer…") }
             let finalStarted = Date()
             let ran = AnswerModel()
             let missing = team.filter { !successful.contains($0.id) }.map(label)
+            let final = cleanup ? ProjectMemoryCleanupLink.resultPrompt : Self.meetingFinal(missing: missing, caller: activeHeldBy)
             let result = meeting != nil ? requestDebate(moderator, Self.debateContext(rules: rules, transcript: transcript) + "\n"
-                + (board.isEmpty ? "" : "Moderator board:\n" + board + "\n") + "End reason: \(ending)\n" + Self.meetingFinal(missing: missing, caller: activeHeldBy)
+                + (board.isEmpty ? "" : "Moderator board:\n" + board + "\n") + "End reason: \(ending)\n" + final
                 + "\n\(pictureRule(moderator))\nDo not change files or execute commands.", 180, cancellation, progress: ran.watch()) : requestDebate(moderator, """
                 \(Self.debateContext(rules: rules, transcript: transcript))
                 [MODE3 FINAL]
@@ -353,7 +355,7 @@ extension Discussion {
                         $0.final = harvest.text; $0.finalBy = self.label(moderator); $0.finalModel = ran.name
                         $0.finalImages = harvest.images.isEmpty ? nil : harvest.images
                     }
-                    outcome = (harvest.text, harvest.images)
+                    outcome = (harvest.text, harvest.images, team.filter { successful.contains($0.id) }.map(label))
                 case .failure:
                     changeTurn(id, index, save: true) { $0.error = L("최종 정리에 실패했습니다. 위 발언은 저장됐습니다.", "Final synthesis failed. The contributions have been saved.") }
                 }

@@ -31,6 +31,10 @@ enum ProjectMemory {
             .compactMap { $0 }.joined(separator: ", ") + ")"
     }
 
+    static func cleanupLines(_ notes: [ProjectMemoryNote]) -> [String] {
+        notes.filter { $0.state == .active }.map { line($0) + " [\($0.kind.rawValue)\($0.pinned ? ", pinned" : "")]" }
+    }
+
     // The block for the AI: pinned, decisions and facts, open progress, the last 14 days of work log. Over the
     // budget: pinned notes first, then those that match the message, then the newest, while they fit.
     static func rule(_ notes: [ProjectMemoryNote], question: String, now: Date = Date()) -> String {

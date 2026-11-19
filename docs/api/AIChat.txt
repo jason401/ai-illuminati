@@ -388,6 +388,8 @@ ProjectGroup.todoRooms | var todoRooms: [Conversation]
 ProjectLockSection | @MainActor struct ProjectLockSection
 ProjectLockSection.body | @MainActor var body: some View { get }
 ProjectLockSection.init(discussion:group:) | @MainActor init(discussion: Discussion, group: ProjectGroup)
+ProjectMemoryCleanupLink | enum ProjectMemoryCleanupLink
+ProjectMemoryCleanupLink.runIfIdle(in:project:manual:) | @discardableResult static func runIfIdle(in discussion: Discussion, project: String? = nil, manual: Bool = false) -> Bool
 QueuedMessage | struct QueuedMessage
 QueuedMessage.id | var id: UUID
 QueuedMessage.images | var images: [ChatImage]?

@@ -674,11 +674,16 @@ everything else, Discussion's state above all, stays internal):
   DriveLink: `MaterialReader.read`, `RoomDocuments.directory` (AIChatRecords since T4); main: `ChatWindow`, `SpaceRefiner.watchLibrary`,
   `ApprovalListView`; everyone's views: `PlainHitButtonStyle`/`.plainHit`, `SidebarHeader`.
 - `ChatSettings`, `ChatApp` (and `Face`, `Screens`), `FolderSources`/`FolderSource`: the seams above.
+- `ProjectMemoryCleanupLink.runIfIdle(in:project:manual:)` lets the app's timer and Project info start a cleanup on the
+  main thread. It returns whether a hidden meeting started. Manual requests bypass the automatic due condition and
+  still require an idle app and two available accounts. The cleanup date marks the start of the evidence window for
+  the next meeting, so work completed during a cleanup can be considered next time.
 
 | Promise | Users | Test |
 |---|---|---|
 | ask_ai from an answering CLI reaches another kind of AI through the app's tool socket (ToolHub → PeerLink → Peer → Answerer), read only and unable to ask on; the reply goes back into the answer and shows as a card | ToolHub, the CLIs | `chat_cli.swift` `testChatThroughCLI` (fake claude/codex CLI, no answer hooks), testAskAI (whom: "a different kind first, even when…" added in C1) |
 | A meeting runs in its hidden chat with both members' CLIs and brings the result back as the answer | ChatWindow | `testChatThroughCLI`, testPickedRoute, testMeetingTool |
+| The idle app can start a hidden project memory cleanup meeting using the default team. It sends active notes, updated chat summaries, recent commit subjects and finished TODOs (at most 14 days of work), and HANDOFF.md. The meeting receives a read-only room and returns JSON to the project memory store for evidence and agreement checks. Enterprise projects keep read-only memory, and personal projects use only permitted accounts. | App timer, Project info | testProjectMemoryCleanup |
 | A work answer's change is reviewed once by the other member, read only, and fixed in the same turn | ChatWindow, TODOs | `testChatThroughCLI`, testPeerReview, testDocumentsProject |
 | A failure in the middle of an answer (the CLI killed, out of usage with nobody left, the network, a time-out, the app quitting) keeps the reply so far as the answer (`cutOff`) in chats/*.json, saved every few seconds while written and at quit (`cancelAll`); the chat stops showing it answering (at launch too, `recoverInterrupted`), says Try again, and Try again continues from it; the files it changed are listed for Undo, also after a quit (`finishLeftOpen`) | ChatWindow (Try again), TODOs, main (quit) | `failure_recovery.swift` `testFailureRecovery` (fake CLI, no answer hooks), `testTodoFailureRecovery` |
 | The 14 tool providers keep their order | ToolHub | run_mode2 stage 1 (the exact list) |

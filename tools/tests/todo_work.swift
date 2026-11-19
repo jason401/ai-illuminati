@@ -1171,6 +1171,29 @@ func testSidebarProjects() {
     let expected: [UUID] = [0, 1, 2, 3, 4, 5, 7].map { folder[$0].id }
     expect(paged.rows.map(\.id) == expected && paged.unpinned == 7 && paged.listed == 6,
            "a project folder lists its pinned chats, the newest page and the open chat")
+    var finishedRooms = (0..<12).map { _ in Conversation() }
+    let finishedPage = SidebarFold.listedFinished(finishedRooms, limit: 5, keep: { _ in false })
+    expect(finishedPage.rows.map(\.id) == finishedRooms.prefix(5).map(\.id)
+           && finishedPage.total == 12 && finishedPage.listed == 5, "finished TODOs show the newest page")
+    let keptPage = SidebarFold.listedFinished(finishedRooms, limit: 5, keep: { $0.id == finishedRooms[8].id })
+    let keptMore = SidebarFold.listedFinished(finishedRooms, limit: 10, keep: { $0.id == finishedRooms[8].id })
+    expect(keptPage.rows.map(\.id) == Array(finishedRooms.prefix(5)).map(\.id) + [finishedRooms[8].id]
+           && keptPage.listed == 6 && keptMore.listed == 10 && keptMore.rows.count > keptPage.rows.count,
+           "an older open finished TODO adds only itself and Show less still shortens")
+    finishedRooms[10].pinned = true
+    let pinnedFinished = SidebarFold.listedFinished(finishedRooms, limit: 5, keep: { _ in false })
+    expect(pinnedFinished.rows.map(\.id) == finishedRooms.prefix(5).map(\.id) + [finishedRooms[10].id]
+           && pinnedFinished.listed == 6 && pinnedFinished.total == 12, "older pinned finished TODOs stay once, in recency order")
+    let shortFinished = SidebarFold.listedFinished(Array(finishedRooms.prefix(3)), limit: 5, keep: { _ in false })
+    expect(shortFinished.rows.map(\.id) == finishedRooms.prefix(3).map(\.id)
+           && shortFinished.total == 3 && shortFinished.listed == 3, "short finished lists stay whole")
+    let finishedKey = "project-finished." + common
+    again.showMore(finishedKey, page: SidebarFold.projectPage)
+    expect(again.limit(finishedKey, page: SidebarFold.projectPage) == 10
+           && again.limit("project-chats." + common, page: SidebarFold.projectPage) == 5,
+           "finished TODO pagination is independent of project chats")
+    again.showLess(finishedKey)
+    expect(again.limit(finishedKey, page: SidebarFold.projectPage) == 5, "finished TODO Show less returns to five")
     again.showMore("recents", page: SidebarFold.recentsPage); again.showMore("recents", page: SidebarFold.recentsPage)
     expect(again.limit("recents", page: SidebarFold.recentsPage) == 30 && again.limit("device.x", page: SidebarFold.devicePage) == 5,
            "Show more adds a page to that list only")

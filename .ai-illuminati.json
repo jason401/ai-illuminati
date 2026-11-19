@@ -2,6 +2,7 @@
   "version": 1,
   "commands": {
     "test": {"executable": "/bin/zsh", "args": ["tools/tests/run_mode2.sh"]},
+    "test-affected-sidebar-finished": {"executable": "/bin/zsh", "args": ["tools/tests/run_mode2.sh", "--affected", "app/modules/AIChat/SidebarProjects.swift", "app/modules/AIChat/ChatWindow.swift", "tools/tests/todo_work.swift"]},
     "build": {"executable": "/bin/zsh", "args": ["tools/build_app.sh", "--stage"]},
     "check-signing": {"executable": "/usr/bin/python3", "args": ["tools/tests/check_signing.py"]},
     "validate-app-modules": {"executable": "/usr/bin/python3", "args": ["-B", "tools/tests/validate_app_modules.py"]},

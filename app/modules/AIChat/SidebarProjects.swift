@@ -105,7 +105,7 @@ public enum SidebarProjects {
     }
 
     // TODO chats in a folder: the ones still going (or waiting for the user) always listed; the finished ones
-    // (every TODO of the chat done or cancelled) go together under one "Finished TODOs" row, folded by default.
+    // (every TODO of the chat done or cancelled) go under "Finished TODOs", folded by default and paged when open.
     static func todoRooms(_ rooms: [Conversation], todo: TodoData) -> (going: [Conversation], finished: [Conversation]) {
         var going: [Conversation] = [], finished: [Conversation] = []
         for room in rooms {
@@ -193,7 +193,7 @@ public final class SidebarFold: ObservableObject {
 
     // Long lists (Recents, each Mac under Other Macs) show the newest page; "Show more" adds a page.
     // Kept in memory only: a restart starts short again.
-    // A project folder's own chats (not its TODO chats) too: pinned ones always, then the newest page.
+    // A project folder's own chats and finished TODOs too: pinned ones always, plus the newest page.
     static let recentsPage = 10, devicePage = 5, projectPage = 5
     @Published private(set) var listLimits: [String: Int] = [:]
     func limit(_ key: String, page: Int) -> Int { listLimits[key] ?? page }
@@ -208,6 +208,15 @@ public final class SidebarFold: ObservableObject {
         let pinned = chats.filter { $0.pinned == true }, rest = chats.filter { $0.pinned != true }
         let listed = Self.listed(rest, limit: limit, open: open)
         return (pinned + listed, rest.count, listed.count)
+    }
+
+    // Preserve recency order; older pinned/open rows add only themselves, so "Show less" still shortens.
+    static func listedFinished(_ rooms: [Conversation], limit: Int, keep: (Conversation) -> Bool)
+        -> (rows: [Conversation], total: Int, listed: Int) {
+        let rows = rooms.enumerated().filter {
+            $0.offset < limit || $0.element.pinned == true || keep($0.element)
+        }.map(\.element)
+        return (rows, rooms.count, rows.count)
     }
 
     func toggleFinished(_ project: String) {

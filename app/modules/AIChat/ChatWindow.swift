@@ -492,13 +492,21 @@ struct ChatView<Model: ChatSettings>: View {
             ForEach(chats.rows) { chatGroup($0, depth: 1) }
             if !discussion.sidebarSearching { moreRow(key, page: page, total: chats.unpinned, listed: chats.listed, indent: 22) }
             if !rooms.finished.isEmpty {
-                // Searching lists every match; folded, only the chat open now (or the one whose meeting is open) stays.
+                // Finished TODOs show a page; search shows every match, folding keeps only the open chat's group.
                 let unfolded = folds.openFinished.contains(group.id) || discussion.sidebarSearching
-                finishedRow(group, finished: rooms.finishedChats, open: unfolded)
-                ForEach(unfolded ? rooms.finished : rooms.finished.filter { room in
+                let keep: (Conversation) -> Bool = { room in
                     room.id == discussion.currentID || discussion.meetings(of: room.id).contains { $0.id == discussion.currentID }
                         || rooms.pieces[room.id]?.rows.contains { $0.id == openTodoChat } == true
-                }) { todoRoom($0, pieces: rooms.pieces[$0.id]) }
+                }
+                finishedRow(group, finished: rooms.finishedChats, open: unfolded)
+                if unfolded && !discussion.sidebarSearching {
+                    let key = "project-finished." + group.id
+                    let finished = SidebarFold.listedFinished(rooms.finished, limit: folds.limit(key, page: page), keep: keep)
+                    ForEach(finished.rows) { todoRoom($0, pieces: rooms.pieces[$0.id]) }
+                    moreRow(key, page: page, total: finished.total, listed: finished.listed, indent: 22)
+                } else {
+                    ForEach(unfolded ? rooms.finished : rooms.finished.filter(keep)) { todoRoom($0, pieces: rooms.pieces[$0.id]) }
+                }
             }
         }
     }

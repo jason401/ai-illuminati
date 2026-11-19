@@ -10,6 +10,12 @@ import AIIntegrations
 // none of them). Called once, before the first chat loads: main.swift and the tests (mode2.swift). The app's screens
 // inside the chat window are connected apart (ChatScreensApp.swift: main.swift only, the tests build no window).
 enum ChatLinksApp {
+    @discardableResult
+    static func cleanProjectMemory(in discussion: Discussion, project: String? = nil) -> Bool {
+        guard !discussion.importingMaterials, discussion.stoppingRooms.isEmpty else { return false }
+        return ProjectMemoryCleanupLink.runIfIdle(in: discussion, project: project, manual: project != nil)
+    }
+
     static func connect() {
         ChatStore.links = ChatStore.Links(
             // The same order and failures as before: sessions (exact IDs only, never an account folder), then backups.

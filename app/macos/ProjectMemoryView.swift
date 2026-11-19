@@ -26,8 +26,10 @@ struct ProjectMemorySection: View {
     let project: String   // SidebarProjects.key
     @ObservedObject private var memory = ProjectMemoryStore.shared
     @ObservedObject private var draft = ProjectMemoryDraft.shared
+    @ObservedObject private var todos = TodoStore.shared
 
     static let shownChanges = 100
+    private static let cleanupsBeforeSuggestion = 3
 
     var body: some View {
         let _ = memory.revision
@@ -35,10 +37,18 @@ struct ProjectMemorySection: View {
         let active = notes.filter { $0.state == .active }, archived = notes.filter { $0.state == .archived }
         let history = memory.history(project)
         VStack(alignment: .leading, spacing: 8) {
-            Label(L("프로젝트 기억", "Project memory"), systemImage: "brain.head.profile").font(.system(size: 15, weight: .semibold))
+            HStack {
+                Label(L("프로젝트 기억", "Project memory"), systemImage: "brain.head.profile").font(.system(size: 15, weight: .semibold))
+                Spacer(minLength: 6)
+                Button(L("지금 정리", "Clean up now")) { cleanNow() }
+                    .controlSize(.small)
+                    .disabled(discussion.anyRunning || discussion.importingMaterials || !discussion.stoppingRooms.isEmpty
+                              || todos.snapshot.items.contains { $0.state == .running })
+            }
             Text(L("이 프로젝트의 AI들이 함께 읽고 쓰는 메모예요. AI가 묻지 않고 추가·대체하니, 여기서 확인하고 고치거나 되돌리세요.",
                    "Notes every AI of this project reads and writes. The AIs add and replace them without asking: check them here, fix or undo."))
                 .font(.system(size: 12)).foregroundColor(.secondary)
+            cleanupSummary(active: active, history: history)
             HStack(spacing: 8) {
                 TextField(L("메모 검색", "Search notes"), text: $draft.query).textFieldStyle(.roundedBorder).frame(maxWidth: 240)
                 Picker("", selection: $draft.archive) {
@@ -92,6 +102,62 @@ struct ProjectMemorySection: View {
     static func day(_ date: Date) -> String {
         let f = DateFormatter(); f.locale = AppLanguage.current.locale; f.dateStyle = .medium; f.timeStyle = .short
         return f.string(from: date)
+    }
+
+    private func cleanNow() {
+        draft.message = ChatLinksApp.cleanProjectMemory(in: discussion, project: project) ? nil
+            : L("정리를 시작할 수 없어요. 앱이 쉬고 있고 이 프로젝트에 참여할 수 있는 AI가 두 명 이상이어야 해요.",
+                "Cleanup could not start. The app must be idle and at least two AIs must be able to join this project.")
+    }
+
+    @ViewBuilder private func cleanupSummary(active: [ProjectMemoryNote], history: [ProjectMemoryChange]) -> some View {
+        let records = ProjectMemoryCleanup.records(project)
+        let undone = ProjectMemoryStore.undone(history)
+        let batches = Dictionary(grouping: history.indices.compactMap { index in
+            history[index].batch.map { (id: $0, index: index) }
+        }, by: \.id).mapValues { $0.map(\.index) }
+        if let last = records.last {
+            let batch = batches[last.id, default: []]
+            let reverted = batch.filter(undone.contains).count
+            let counts = L("합침 \(last.merged) · 고침 \(last.fixed) · 보관 \(last.archived)",
+                           "Merged \(last.merged) · Fixed \(last.fixed) · Archived \(last.archived)")
+            HStack(alignment: .top, spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text([L("마지막 정리: ", "Last cleanup: ") + Self.day(last.at), last.attendees.joined(separator: ", ")]
+                        .filter { !$0.isEmpty }.joined(separator: " · "))
+                    Text(counts)
+                    if reverted > 0 {
+                        Text(reverted == batch.count ? L("되돌림", "Undone") : L("일부 되돌림", "Partially undone"))
+                    }
+                }
+                Spacer(minLength: 6)
+                if !batch.isEmpty && reverted == 0 {
+                    Button(L("되돌리기", "Undo")) { report(memory.undo(batch: last.id, project: project)) }
+                        .controlSize(.small)
+                }
+            }
+            .font(.system(size: 12)).foregroundColor(.secondary)
+        }
+        let completed = records.filter { record in
+            batches[record.id, default: []].allSatisfy { !undone.contains($0) }
+        }
+        if completed.count >= Self.cleanupsBeforeSuggestion {
+            let cutoff = completed[completed.count - Self.cleanupsBeforeSuggestion].at
+            let interrupted = Set(history.lazy.filter { $0.at >= cutoff }.flatMap(\.notes)
+                .filter { $0.state != .active || $0.kind != .decision || !$0.verified }.map(\.id))
+            let decisions = Self.filter(active.filter {
+                $0.kind == .decision && $0.verified && $0.createdAt < cutoff && !interrupted.contains($0.id)
+            }, "")
+            if !decisions.isEmpty {
+                DisclosureGroup(L("AGENTS.md 규칙으로 올릴까요?", "Promote to AGENTS.md rules?")) {
+                    ForEach(decisions) { note in
+                        Text(note.text).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                            .padding(.vertical, 2)
+                    }
+                }
+                .font(.system(size: 12))
+            }
+        }
     }
 
     // MARK: A note

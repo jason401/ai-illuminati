@@ -32,6 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, PhoneU
     private var usages: [AIUsage] = []
     private var timer: Timer?
     private var pullTimer: Timer?
+    private var memoryCleanupTimer: Timer?
     private var wakeObservation: NSObjectProtocol?
 
     private var markTimer: Timer?
@@ -124,6 +125,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, PhoneU
         rebuildMenu()
         refresh()
         timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in self?.refresh() }
+        memoryCleanupTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            ChatLinksApp.cleanProjectMemory(in: self.discussion)
+        }
         // Linked projects pull main by themselves: shortly after start, on wake (back from another device) and every 10 minutes.
         DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak self] in self?.autoPullProjects() }
         pullTimer = Timer.scheduledTimer(withTimeInterval: 600, repeats: true) { [weak self] _ in self?.autoPullProjects() }
@@ -178,6 +183,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, PhoneU
 
     func applicationWillTerminate(_ notification: Notification) {
         markTimer?.invalidate()
+        memoryCleanupTimer?.invalidate()
         if let motionObservation { NSWorkspace.shared.notificationCenter.removeObserver(motionObservation) }
         TodoScheduler.shared?.closeClocks()
         discussion.cancelAll()

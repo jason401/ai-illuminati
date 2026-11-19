@@ -3,22 +3,21 @@ import Foundation
 // Which per-feature rules one answer's instruction carries (composeInstruction). A rule the message has no use for is
 // left out so the ones that matter are not buried; when in doubt a rule stays in (a missing rule silently turns its
 // feature off). Always in, whatever the message: identity, project, folder rights, safety, web, face, chat state,
-// notes, memory. Spaces decide for themselves (Discussion.spaceRule).
+// notes, memory, Google Drive (its scope and write limits must hold in every turn, also a follow-up that does not
+// name Drive). Spaces decide for themselves (Discussion.spaceRule).
 struct InstructionNeeds: Equatable {
     var picture = true   // making pictures, and reading the attached ones
     var peer = true      // the full ask_ai / meeting rule (otherwise a one-line reminder that they exist)
-    var drive = true     // Google Drive tools
 
     static let all = InstructionNeeds()
 
     // `question`: the newest user message. `images`: pictures are attached or already in this chat.
-    // `project`: Git or documents project work (reviewers, designs and research live there). `files`: the folder list.
-    init(question: String, images: Bool = false, project: Bool = false, documents: Bool = false, files: String = "") {
+    // `project`: Git or documents project work (reviewers, designs and research live there).
+    init(question: String, images: Bool = false, project: Bool = false, documents: Bool = false) {
         let text = question.lowercased()
         func has(_ words: [String]) -> Bool { words.contains { text.contains($0) } }
         picture = images || documents || has(Self.pictureWords)
         peer = project || documents || text.count >= Self.longQuestion || has(Self.peerWords)
-        drive = documents || has(Self.driveWords) || [".gdoc", ".gsheet", ".gslides"].contains { files.contains($0) }
     }
     private init() {}
 
@@ -36,6 +35,4 @@ struct InstructionNeeds: Equatable {
                             "claude", "클로드", "codex", "코덱스", "fact", "source", "cite", "verify", "check", "compare", "recommend", "review",
                             "opinion", "research", "design", "plan", "decide", "decision", "meeting", "analy", "evaluat", "which", "should",
                             "choose", "pick", "better"]
-    static let driveWords = ["드라이브", "구글", "google", "drive", "docs", "doc ", "문서", "독스", "시트", "sheet", "슬라이드", "slide",
-                             "스프레드", "spreadsheet", "gdoc", "gsheet", "gslides"]
 }

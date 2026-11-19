@@ -943,8 +943,7 @@ extension Discussion {
         let folders = Self.soloFolders(binding, shared: model.activeSharedFolders, project: project?.root)
         pictureLock.lock(); let images = !activeImages.isEmpty || imageNumber > 0; pictureLock.unlock()
         let needs = InstructionNeeds(question: question, images: images, project: project != nil && project?.folderless != true,
-                                     documents: project?.documents == true || (project == nil && linkedProject(id)?.isDocuments == true),
-                                     files: folders)
+                                     documents: project?.documents == true || (project == nil && linkedProject(id)?.isDocuments == true))
         return Self.composeInstruction(name: label(account), provider: account.provider, folders: folders,
                                 drive: binding.face == true && [.claude, .codex].contains(account.provider) ? ChatApp.driveRule() ?? "" : "",
                                 fullAccess: binding.fullAccess == true, picture: pictureRule(account, chat: id), helper: helper,
@@ -1004,7 +1003,7 @@ extension Discussion {
                                    picture: String, helper: String, face: String, project: ProjectPart?, notes: String = "", space: String = "",
                                    peer: String = "", memory: String = "", linked: ProjectBinding? = nil, needs: InstructionNeeds = .all) -> String {
         // Three layers. Always: what stays the same for the whole chat (who it is, the project, folder rights, safety
-        // rules) goes to a session as its system prompt. Only when this message needs it (pictures, Drive, the full ask_ai
+        // rules) goes to a session as its system prompt. Only when this message needs it (pictures, the full ask_ai
         // rule: InstructionNeeds), and the file list: these change per message (with mode and notes) and follow the marker.
         // Lines appended by callers after this (checkpoints, TODO notes) belong to the turn part too.
         var parts: [String] = [], turn: [String] = []
@@ -1046,8 +1045,7 @@ extension Discussion {
             parts.append("Never change a folder marked read only.")
             parts.append("You can search the web. Cite what you used as [source: URL]; never invent a source.")
         }
-        // Drive changes with the message, so it stays out of the fixed part (a change there starts a new session).
-        if needs.drive { turn.append(drive) }
+        parts.append(drive)
         if project?.folderless == true {
             parts.append("[Folderless project] No core folder or Git repository is linked. Save artifacts in the chat folder. Project folders can be added later; listed read-only folders stay read only. Do not run Git or assume an internal project directory is an editable linked folder.")
             if project?.fullAuto == true { turn.append(Self.documentsAutoNote) }

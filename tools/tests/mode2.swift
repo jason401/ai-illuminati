@@ -3240,7 +3240,7 @@ func instructionSizes(files: Int = 400) -> (plain: Int, project: Int) {
     let plainFolders = Discussion.soloFolders(WorkspaceBinding(roots: [WorkspaceRoot(path: chat, directory: true, writable: true),
                                                                        WorkspaceRoot(path: shared, directory: true)]), shared: [shared])
     let question = "파이썬에서 리스트를 정렬하는 방법 알려줘"
-    let needs = InstructionNeeds(question: question, files: plainFolders)
+    let needs = InstructionNeeds(question: question)
     let plain = Discussion.composeInstruction(name: "Claude (학교)", provider: .claude, folders: plainFolders, drive: instructionDrive, fullAccess: false,
                                               picture: picture, helper: "", face: face, project: nil,
                                               peer: needs.peer ? Peer.rule(peers: names, meeting: names) : Peer.briefRule(peers: names, meeting: true),
@@ -3252,7 +3252,7 @@ func instructionSizes(files: Int = 400) -> (plain: Int, project: Int) {
                                                 picture: picture, helper: "", face: face,
                                                 project: .init(root: repo, fullAuto: true, rules: String(repeating: "Project rule line. ", count: 300)),
                                                 peer: Peer.rule(peers: names, reviewer: names[0], meeting: names),
-                                                needs: InstructionNeeds(question: "설정 창의 로그인 버튼이 눌리지 않는 버그를 고쳐 줘", project: true, files: projectFolders))
+                                                needs: InstructionNeeds(question: "설정 창의 로그인 버튼이 눌리지 않는 버그를 고쳐 줘", project: true))
     return (plain.count, project.count)
 }
 
@@ -3269,17 +3269,17 @@ func testInstructionLayers() {
     let face = Discussion.projectFaceRule(face: true, active: true, moods: ["happy"]), names = ["ChatGPT", "Gemini"]
     let picture = Pictures.rule(for: .claude, delegate: true), full = Peer.rule(peers: names, meeting: names)
     func compose(_ question: String, images: Bool = false, files: String = "[Folders]", project: Discussion.ProjectPart? = nil) -> String {
-        let needs = InstructionNeeds(question: question, images: images, project: project != nil, documents: project?.documents == true, files: files)
+        let needs = InstructionNeeds(question: question, images: images, project: project != nil, documents: project?.documents == true)
         return Discussion.composeInstruction(name: "Claude", provider: .claude, folders: files, drive: "[Drive rule]", fullAccess: false,
                                              picture: picture, helper: "", face: face, project: project, notes: "[User's notes]",
                                              peer: needs.peer ? full : Peer.briefRule(peers: names, meeting: true), memory: "[Memory]", needs: needs)
     }
     func fixed(_ text: String) -> String { text.components(separatedBy: NativeSessions.turnMarker)[0] }
     let plain = compose("파이썬 리스트 정렬하는 법 알려줘")
-    expect(!plain.contains("Pictures:") && !plain.contains("[Drive rule]") && !plain.contains("[Meetings]") && !plain.contains("Call it when:"),
-           "a plain question leaves out the picture, Drive and full ask_ai/meeting rules")
-    expect(plain.contains("search the web") && plain.contains("<face>MOOD</face>") && plain.contains("[User's notes]") && plain.contains("[Memory]")
-           && plain.contains("Never change a folder marked read only"), "web, face, notes, memory and folder rights are always in")
+    expect(!plain.contains("Pictures:") && !plain.contains("[Meetings]") && !plain.contains("Call it when:"),
+           "a plain question leaves out the picture and full ask_ai/meeting rules")
+    expect(plain.contains("search the web") && fixed(plain).contains("[Drive rule]") && plain.contains("<face>MOOD</face>") && plain.contains("[User's notes]") && plain.contains("[Memory]")
+           && plain.contains("Never change a folder marked read only"), "web, Drive (scope and write limits), face, notes, memory and folder rights are always in")
     expect(plain.contains("ask_ai asks other AIs on this Mac (ChatGPT, Gemini)") && plain.contains("convene_meeting") && plain.contains("<ai-taken>"),
            "without a use for them, ask_ai and meetings are still named in one line")
     // Pictures: asked for, attached or already in the chat, or a documents project.
@@ -3294,10 +3294,9 @@ func testInstructionLayers() {
         expect(text.contains("Call it when:") && text.contains("[Meetings]") && !text.contains("ask_ai asks other AIs"), "the full ask_ai and meeting rule: \(question.prefix(20))")
     }
     expect(compose("버튼 색 바꿔 줘", project: .init(root: "/repo", fullAuto: true, rules: "")).contains("Call it when:"), "project work keeps the full ask_ai rule")
-    // Drive: named, or Google files in the folders. It is a turn rule, so it never changes the session's fixed part.
+    // Drive stays in the fixed part: a follow-up ("그중 최신 것 열어서 요약해줘") keeps its scope and limits.
     let drive = compose("구글 드라이브에서 회의록 찾아줘")
-    expect(drive.contains("[Drive rule]") && !fixed(drive).contains("[Drive rule]"), "Drive questions get the Drive rule, after the marker")
-    expect(compose("이 파일 요약해 줘", files: "[Folders]\n[Some files, contents not read]\n/chat/plan.gdoc").contains("[Drive rule]"), "a Google file in the folders brings the Drive rule")
+    expect(fixed(compose("그중 최신 것 열어서 요약해줘")).contains("[Drive rule]"), "a Drive follow-up that does not name Drive keeps the Drive rule")
     expect(fixed(plain) == fixed(drive) && fixed(plain) == fixed(compose("고양이 그림 그려줘")) && fixed(plain) == fixed(compose("어느 쪽이 나아?")),
            "per-message rules never change the fixed part (the session goes on)")
     // Chat state (summary): added by the caller for long chats, whatever the message (InstructionNeeds has no say in it).
@@ -3326,7 +3325,7 @@ func testInstructionLayers() {
     let plainList = Discussion.soloFolders(WorkspaceBinding(roots: Array(roots.prefix(3))), shared: [shared])
     expect(plainList.contains("dropped.pdf") && plainList.contains("notes.md") && !plainList.contains("shared-file.txt") && plainList.contains("- \(shared) (shared folder"),
            "a plain chat lists its own folders' files; shared folders by name only")
-    print("PASS: instruction layers (always / when needed: pictures, ask_ai and meetings, Drive / file list), face, web, notes, memory and chat state kept")
+    print("PASS: instruction layers (always, with Drive / when needed: pictures, ask_ai and meetings / file list), face, web, notes, memory and chat state kept")
 }
 runTest("testInstructionLayers", testInstructionLayers)
 runTest("testInstructionSize", testInstructionSize)

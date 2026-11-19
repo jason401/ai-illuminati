@@ -255,6 +255,13 @@ extension Discussion {
         return true
     }
 
+    func projectWorkMemoryScope(room: UUID, project: String, _ allowed: (EnterpriseLock?) -> Bool) -> Bool {
+        guard let chat = (host ?? self).conversations.first(where: { $0.id == room }),
+              ProjectMemory.project(chat) == project else { return false }
+        let lock = chat.isEnterprise ? ProjectMemory.enterpriseLock(for: chat, in: memoryLock(project, todos: TodoStore.shared.current)) : nil
+        return (!chat.isEnterprise || lock != nil) && allowed(lock)
+    }
+
     func runProjectSolo(question: String, history: [ChatTurn], rules: String, config: ChatConfiguration,
                         mentions: [String], reviewers: [String] = [], cancellation: DebateCancellation, id: UUID, index: Int,
                         binding: WorkspaceBinding, fresh: String? = nil, keepState: Bool = false, note: String = "") {
@@ -306,6 +313,14 @@ extension Discussion {
         defer { if let awake { ProcessInfo.processInfo.endActivity(awake) } }
         ProjectWork.register(run)
         defer {
+            if !run.memoryWorkers.isEmpty {
+                let allowed = {
+                    self.projectWorkMemoryScope(room: id, project: selected.groupKey) {
+                        ProjectMemory.allowsSaving(selected.groupKey, lock: $0)
+                    }
+                }
+                if !(Thread.isMainThread ? allowed() : DispatchQueue.main.sync(execute: allowed)) { run.memoryWorkers.removeAll() }
+            }
             ProjectWork.finish(run)
             changeTurn(id, index) { t in
                 // Ended while writing (a failure, Stop, nobody left): the reply so far stays as the answer, cut off.
@@ -363,7 +378,12 @@ extension Discussion {
                     ? L("이 Enterprise 방에서 작업할 \(chatLock?.name ?? "") Claude/Codex 계정이 필요해요. 파일 변경은 보존했어요.", "This Enterprise chat needs a \(chatLock?.name ?? "") Claude/Codex account to continue. Changes are preserved.")
                     : L("이어서 작업할 Claude/Codex 계정이 필요해요. 파일 변경은 보존했어요.", "No Claude/Codex account is available to continue. Changes are preserved.")); return
             }
-            if !conversation(id).isEnterprise { run.memoryWorkers.append(account.name) }
+            let logWorker = {
+                self.projectWorkMemoryScope(room: id, project: selected.groupKey) { Enterprise.permits(account, lock: $0) }
+            }
+            if Thread.isMainThread ? logWorker() : DispatchQueue.main.sync(execute: logWorker) {
+                run.memoryWorkers.append(account.name)
+            }
             run.nextAttempt(); workspace.projectGeneration = run.generation; activeWorkspace = workspace
             let speaker = label(account)
             let working = handedFrom.map { L("\($0) 한도 → \(speaker)가 이어받아 작업 중", "\($0) hit its limit → \(speaker) took over") }

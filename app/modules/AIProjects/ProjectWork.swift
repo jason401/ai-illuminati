@@ -331,7 +331,7 @@ public final class ProjectRun {
     private var pieceStart: String?   // HEAD at this step run's start (todoReviewBase), for todoPieceEnded
     func stop() { lifecycle.lock(); ended = true; lifecycle.unlock(); attempt.cancel() }
     private let memoryReflog: [String]
-    // Only the chat enables this, outside Enterprise rooms; handoffs retain every worker's name.
+    // The chat enables this when it may write project memory; handoffs retain every worker's name.
     public var memoryWorkers: [String] = []
     func recordWorkMemory() {
         guard !memoryWorkers.isEmpty, !binding.isDocuments,

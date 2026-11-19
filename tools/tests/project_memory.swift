@@ -10,8 +10,12 @@ import AIChatRecords
 // each change one appended history line, kept only under the test home.
 func testProjectMemory() {
     let store = ProjectMemoryStore.shared
-    let root = "/tmp/pm-\(UUID().uuidString.prefix(8))"
-    let binding = ProjectBinding(root: root, common: root + "/.git", remote: "", remoteURL: "")
+    let fixture = URL(fileURLWithPath: AccountStore.home).resolvingSymlinksInPath()
+        .appendingPathComponent("pm-\(UUID().uuidString.prefix(8))")
+    let repo = fixture.appendingPathComponent("repo")
+    let remoteRepo = fixture.appendingPathComponent("remote.git")
+    let root = repo.path
+    let binding = ProjectBinding(root: root, common: root + "/.git", remote: "origin", remoteURL: remoteRepo.path)
     let key = SidebarProjects.key(binding)
     store.forget()
     let folder = ProjectMemoryStore.folder(key)
@@ -23,6 +27,7 @@ func testProjectMemory() {
     let m = AppModel()
     let claude = Account(id: "pm-claude", provider: .claude, name: "Claude", dir: nil, school: false)
     let codex = Account(id: "pm-codex", provider: .codex, name: "Codex", dir: nil, school: false)
+    let school = Account(id: "pm-school", provider: .codex, name: "ChatGPT (School)", school: true)
     let gemma = Account(id: "pm-gemma", provider: .ollama, name: "Gemma", dir: nil, school: false)
     m.accounts = [claude, codex]
     let chat = Discussion(model: m)
@@ -34,7 +39,7 @@ func testProjectMemory() {
     }
     let a = linked("A", "로그인 저장 방식 정하자"), b = linked("B", "로그인 어디에 저장하지?")
     var plain = Conversation(); plain.title = "Plain"; plain.turns = [ChatTurn(question: "안녕")]
-    var locked = linked("Locked", "회사 일"); locked.enterpriseLock = EnterpriseLock(organization: "school", name: "School", lockedAt: Date())
+    var locked = linked("Locked", "회사 일"); locked.enterpriseLock = Enterprise.organizations([school]).first
     chat.conversations = [a, b, plain, locked]; chat.currentID = a.id
     let link = MemoryLink.shared
     func session(_ room: UUID, _ who: Account, _ origin: ToolOrigin = .member) -> ToolContext {
@@ -46,7 +51,7 @@ func testProjectMemory() {
 
     let all: Set = ["project_memory_add", "project_memory_replace", "project_memory_search"]
     expect(all.isSubset(of: names(session(a.id, claude))) && names(session(plain.id, claude)).isDisjoint(with: all)
-           && names(session(a.id, claude, .consulted)).isDisjoint(with: all) && names(session(locked.id, claude)) == ["project_memory_search"],
+           && names(session(a.id, claude, .consulted)).isDisjoint(with: all) && names(session(locked.id, school)) == ["project_memory_search"],
            "the tools in a project chat only, for the AI answering it; an Enterprise chat only searches")
     expect(chat.projectMemoryRule(claude, chat: plain.id).isEmpty && chat.projectMemoryRule(claude, chat: a.id).contains("project_memory_replace"),
            "no notes yet: a project chat gets only the tool rule, a plain chat nothing")
@@ -64,7 +69,7 @@ func testProjectMemory() {
     expect(!ok(link.call("project_memory_add", ["kind": "decision", "text": "API key sk-abcdefghijklmnopqrstuvwx"], context: session(b.id, codex)))
            && !ok(link.call("project_memory_add", ["kind": "idea", "text": "x"], context: session(b.id, codex)))
            && !ok(link.call("project_memory_add", ["kind": "log", "text": String(repeating: "a", count: 600)], context: session(b.id, codex)))
-           && !ok(link.call("project_memory_add", ["kind": "log", "text": "회사 메모"], context: session(locked.id, claude)))
+           && !ok(link.call("project_memory_add", ["kind": "log", "text": "회사 메모"], context: session(locked.id, school)))
            && store.history(key).count == 1, "secrets, unknown kinds, long text and Enterprise chats are refused, and leave no history")
 
     let ruleB = chat.projectMemoryRule(codex, chat: b.id)
@@ -87,7 +92,7 @@ func testProjectMemory() {
     let found = said(link.call("project_memory_search", ["query": "Keychain 로그인"], context: session(a.id, claude)))
     expect(ruleA.contains("Keychain에만") && !ruleA.contains("파일 저장 안 함") && found.contains("Keychain에만") && found.contains("archived"),
            "the first AI sees the replacement; search finds the archived note too")
-    expect(said(link.call("project_memory_search", [:], context: session(locked.id, claude))).contains("Keychain에만"), "Enterprise chats may search")
+    expect(said(link.call("project_memory_search", [:], context: session(locked.id, school))).contains("Keychain에만"), "Enterprise chats may search")
     expect(chat.projectMemoryRule(gemma, chat: a.id).contains("Keychain에만") && !chat.projectMemoryRule(gemma, chat: a.id).contains("project_memory_add"),
            "a model without tools reads notes but gets no tool rule")
 
@@ -124,9 +129,8 @@ func testProjectMemory() {
     try! good.write(to: history); store.forget()
 
     // Exercise the app's real Git completion path, including commits made without git_commit.
-    let repo = URL(fileURLWithPath: root)
     try! FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
-    defer { try? FileManager.default.removeItem(at: repo) }
+    defer { try? FileManager.default.removeItem(at: fixture) }
     func git(_ args: [String]) -> String { try! ProjectProcess.git(args, root: root) }
     _ = git(["init", "-b", "main"])
     _ = git(["config", "user.name", "Fixture"])
@@ -183,20 +187,15 @@ func testProjectMemory() {
     localDate.dateFormat = "yyyy-MM-dd"
     expect(automatic.text.hasPrefix(localDate.string(from: automatic.createdAt) + " · "),
            "work log uses the local calendar date")
-    let enterpriseRun = ProjectRun(room: a.id, binding: binding, token: DebateCancellation())
-    _ = git(["commit", "--allow-empty", "-m", "Private work"])
-    ProjectWork.finish(enterpriseRun)
-    expect(store.history(key).count == deletedCount, "a run without shared-memory workers saves no private work")
     let switchRun = work()
     _ = git(["checkout", "other"])
     ProjectWork.finish(switchRun)
     expect(store.history(key).count == deletedCount, "checkout does not claim existing branch commits")
     _ = git(["checkout", "main"])
-    let remoteRepo = repo.appendingPathComponent("remote.git")
     _ = git(["init", "--bare", remoteRepo.path])
     _ = git(["remote", "add", "origin", remoteRepo.path])
     _ = git(["push", "origin", "main"])
-    let clone = repo.appendingPathComponent("clone")
+    let clone = fixture.appendingPathComponent("clone")
     _ = git(["clone", "-b", "main", remoteRepo.path, clone.path])
     func remoteGit(_ args: [String]) { _ = try! ProjectProcess.git(args, root: clone.path) }
     remoteGit(["config", "user.name", "Other"])
@@ -267,6 +266,84 @@ func testProjectMemory() {
     ProjectWork.finish(syncRun)
     expect(store.history(key).count == syncCount, "sub-room synchronization merges are not authored work")
 
+    let todos = TodoStore.shared
+    TodoStore.shared = TodoStore(url: fixture.appendingPathComponent("todos.json"))
+    let modes = Discussion.availableModes, modern = Discussion.modernModes
+    Discussion.availableModes = [0]; Discussion.modernModes = true
+    defer { TodoStore.shared = todos; Discussion.availableModes = modes; Discussion.modernModes = modern }
+    let schoolLock = locked.enterpriseLock!
+    let otherOrg = EnterpriseLock(organization: "other", name: "Other", lockedAt: Date())
+    m.accounts = [claude, codex, school]
+    chat.configure(room: locked.id) { $0.mode = 0; $0.modeVersion = 2 }
+    func enterpriseWork(_ subject: String) {
+        chat.workspaceAnswer = { account, _, _, _, _ in
+            expect(account.id == school.id, "the Enterprise organization handles the project turn")
+            _ = git(["commit", "--allow-empty", "-m", subject])
+            return .success("Fixture work complete.")
+        }
+        expect(chat.startTurn(room: locked.id, question: "Commit fixture work", mentioned: [school.id], forced: .work) == nil,
+               "the fixture starts a normal Enterprise project turn")
+        let deadline = Date().addingTimeInterval(20)
+        while chat.anyRunning && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
+        let turn = chat.conversation(locked.id).turns.last
+        let head = git(["log", "-1", "--format=%s"]).trimmingCharacters(in: .whitespacesAndNewlines)
+        expect(!chat.anyRunning && turn?.final == "Fixture work complete." && head == subject,
+               "the fixture turn finished and committed \(subject); HEAD: \(head); reply: \(turn?.final ?? "-"); error: \(turn?.error ?? "-")")
+    }
+    enterpriseWork("Work from a mixed project")
+    expect(store.history(key).count == syncCount, "a partially locked project never logs Enterprise work")
+
+    expect(chat.lockProject(key, name: "Fixture", organization: schoolLock) == nil, "lock the entire fixture project")
+    expect(chat.memoryLock(key, todos: TodoStore.shared.current)?.organization == schoolLock.organization, "all chats and TODO lists share the organization")
+    let badMeeting = chat.openMeeting(for: a.id, topic: "Mismatched meeting", appLock: otherOrg)
+    expect(chat.memoryLock(key, todos: TodoStore.shared.current) == nil, "a meeting of another organization prevents Enterprise writes")
+    chat.removeMeetings(of: a.id)
+    expect(!chat.conversations.contains { $0.id == badMeeting }, "remove the mismatched meeting")
+    let unlockedList = TodoList(title: "Unlocked fixture list", project: binding)
+    try! TodoStore.shared.update { $0.lists.append(unlockedList) }
+    expect(chat.memoryLock(key, todos: TodoStore.shared.current) == nil, "an unlocked TODO list prevents Enterprise writes")
+    try! TodoStore.shared.update { $0.lists.removeAll { $0.id == unlockedList.id } }
+    chat.change(locked.id) { $0.turns.append(ChatTurn(question: "Remember this lasting decision")) }
+    let schoolSession = session(locked.id, school)
+    let enterpriseRule = chat.projectMemoryRule(school, chat: locked.id)
+    expect(all.isSubset(of: names(schoolSession)) && enterpriseRule.contains("project_memory_add") && enterpriseRule.contains("School"),
+           "the matching Enterprise AI receives both write tools and the organization rule")
+    expect(!names(schoolSession).contains("remember") && !ok(link.call("remember", ["text": "Private fixture fact"], context: schoolSession)),
+           "global memory stays read-only")
+    let saved = link.call("project_memory_add", ["kind": "decision", "text": "Enterprise fixture decision"], context: schoolSession)
+    let firstEnterprise = store.notes(key).last!
+    expect(ok(saved) && firstEnterprise.account == school.id && firstEnterprise.text == "Enterprise fixture decision",
+           "the Enterprise AI can add to this project's memory")
+    expect(ok(link.call("project_memory_replace", ["id": ProjectMemory.short(firstEnterprise.id), "text": "Enterprise fixture correction"],
+                        context: schoolSession)) && store.notes(key).last?.replaces == firstEnterprise.id,
+           "the Enterprise AI can replace a note")
+    let foreign = Account(id: "pm-other", provider: .codex, name: "ChatGPT (Other)", school: true)
+    expect(names(session(locked.id, foreign)).isDisjoint(with: all)
+           && chat.projectMemoryRule(foreign, chat: locked.id).isEmpty, "another organization gets none of the protected memory")
+    expect(chat.projectMemoryRule(gemma, chat: locked.id).contains("Enterprise fixture correction"), "local models may read protected memory in the locked chat")
+    enterpriseWork("Work from a fully locked project")
+    expect(store.notes(key).last?.text.contains("Work from a fully locked project") == true && store.notes(key).last?.by == school.name,
+           "the full Enterprise project logs commits from its normal work entry point")
+
+    // Sidebar Link a folder uses addProjectChat without a lock.
+    chat.change(locked.id) { $0.turns.append(ChatTurn(question: "Write another project note")) }
+    let beforeRelinking = session(locked.id, school)
+    expect(all.isSubset(of: names(beforeRelinking)), "writes are offered before the unlocked room is linked")
+    let reopened = chat.addProjectChat(binding, title: "Linked again", open: false)
+    chat.change(reopened) { $0.turns = [ChatTurn(question: "Find project notes")] }
+    expect(chat.conversation(reopened).enterpriseLock == nil && chat.memoryLock(key, todos: TodoStore.shared.current) == nil,
+           "linking the same folder from an open chat makes the project partly locked")
+    expect(names(beforeRelinking) == ["project_memory_search"]
+           && !ok(link.call("project_memory_add", ["kind": "decision", "text": "Blocked after linking"], context: beforeRelinking)),
+           "the Enterprise chat returns to read-only when a newly linked room is open")
+    chat.conversations = [chat.conversation(reopened)]
+    try! TodoStore.shared.update { $0.lists = [] }
+    store.forget()
+    let reopenedSession = session(reopened, codex)
+    expect(names(reopenedSession).isDisjoint(with: all) && chat.projectMemoryRule(codex, chat: reopened).isEmpty
+           && !ok(link.call("project_memory_search", [:], context: reopenedSession)),
+           "protected notes stay private after removing all locked rooms and lists and reloading")
+
     // The instruction: pinned, decisions, open progress, the last 14 days of log; archived notes never.
     let now = Date()
     func note(_ kind: ProjectMemoryNote.Kind, _ text: String, days: Double = 0, pinned: Bool = false) -> ProjectMemoryNote {
@@ -287,7 +364,7 @@ func testProjectMemory() {
     let cut = ProjectMemory.rule(many, question: "트랜스듀서 공진 주파수?", now: now)
     expect(cut.contains("2 MHz") && cut.contains("고정된 규칙") && cut.contains("others left out") && cut.count < ProjectMemory.budget + 600,
            "over the budget: pinned and matching notes kept, about 6,000 characters")
-    print("PASS: project memory (per project under the test home, two AIs add/read/replace, archive kept and searchable, history of every change, no secrets, Enterprise search only, 14-day log, budget)")
+    print("PASS: project memory (add/read/replace, archive, history, Enterprise scopes, Git work log, prompt budget)")
 }
 
 // The info tab's changes: the user edits, pins, archives and undoes any change or a whole meeting cleanup; a note
@@ -366,7 +443,7 @@ func testProjectMemoryUndo() {
            && current(g.id) == nil, "a delete is never undone, and no undo brings the deleted note back")
     let root = "/tmp/pmu-tool"
     let context = ToolContext(room: UUID(), roots: [WorkspaceRoot(path: root, directory: true)], asker: Account(id: "x", provider: .claude, name: "Claude", dir: nil, school: false), turn: UUID())
-    let reply = ProjectMemory.call("project_memory_add", ["kind": "decision", "text": secret], project: key, enterprise: false, writes: true, context: context)
+    let reply = ProjectMemory.call("project_memory_add", ["kind": "decision", "text": secret], project: key, enterpriseReadOnly: false, writes: true, context: context)
     expect(reply["isError"] as? Bool == true && "\(reply)".contains("deleted"), "an AI's tool call is refused with the reason")
     expect(saved(store.add(ProjectMemoryNote(kind: .decision, text: "고객사 이름은 비공개로 둠"), project: key)) != nil, "other words are still saved")
 
@@ -662,6 +739,33 @@ func testProjectMemoryCleanup() {
         expect(ProjectMemoryCleanup.last(key)?.deferred.isEmpty == true && carried?.note.text == "deferred fixture change"
                && Set(carried?.evidence ?? []) == [hash, room.id.uuidString],
                "the proposal and its revalidated older evidence carry into the next cleanup")
+
+        let schoolClaude = Account(id: "cleanup-school-claude", provider: .claude, name: "Claude (School)", school: true)
+        let schoolCodex = Account(id: "cleanup-school-codex", provider: .codex, name: "ChatGPT (School)", school: true)
+        let otherOrg = Account(id: "cleanup-other", provider: .codex, name: "ChatGPT (Other)", school: true)
+        let schoolLock = Enterprise.organizations([schoolClaude]).first!
+        model.accounts = [claude, codex, schoolClaude, schoolCodex, otherOrg]
+        discussion.change(room.id) { $0.enterpriseLock = schoolLock }
+        expect(!start(manual: true), "a partially locked project skips cleanup")
+        expect(discussion.lockProject(key, name: "Cleanup fixture", organization: schoolLock) == nil, "lock the entire cleanup project")
+        let otherLock = Enterprise.organizations([otherOrg]).first!
+        discussion.change(unchanged.id) { $0.enterpriseLock = otherLock }
+        expect(!start(manual: true), "a mixed-organization project skips cleanup")
+        discussion.change(unchanged.id) { $0.enterpriseLock = schoolLock }
+        var enterpriseSpeakers = Set<String>()
+        discussion.workspaceAnswer = { account, prompt, _, _, _ in
+            promptLock.lock(); enterpriseSpeakers.insert(account.id); promptLock.unlock()
+            if prompt.contains("[MEETING RESULT]") { return .success("[]") }
+            if prompt.contains("[MODE3 MODERATION]") { return .success(#"{"action":"finish","reason":"enough"}"#) }
+            return .success("Keep the current notes.")
+        }
+        expect(start(manual: true), "a fully locked project starts cleanup")
+        expect(discussion.conversations.first { $0.id == $0.meetingOf?.room }?.enterpriseLock?.organization == schoolLock.organization,
+               "the hidden cleanup meeting opens with the shared Enterprise lock")
+        waitForMeeting()
+        expect(enterpriseSpeakers == [schoolClaude.id, schoolCodex.id]
+               && Set(ProjectMemoryCleanup.last(key)?.attendees ?? []) == Set([schoolClaude, schoolCodex].map(discussion.label)),
+               "only the locked organization's accounts receive the cleanup prompts")
         print("PASS: app project memory cleanup meeting (idle, materials, fake attendees, JSON application)")
     } catch { expect(false, "cleanup fixture setup failed: \(error)") }
 }

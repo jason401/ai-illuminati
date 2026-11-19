@@ -200,6 +200,7 @@ ProjectMemoryStore.Outcome | enum Outcome
 ProjectMemoryStore.Outcome.duplicate(_:) | case duplicate(ProjectMemoryNote)
 ProjectMemoryStore.Outcome.refused(_:) | case refused(String)
 ProjectMemoryStore.Outcome.saved(_:) | case saved(ProjectMemoryNote)
+ProjectMemoryStore.accessLock(_:protecting:) | func accessLock(_ project: String, protecting proposed: EnterpriseLock? = nil) throws -> EnterpriseLock?
 ProjectMemoryStore.add(_:project:by:batch:) | func add(_ note: ProjectMemoryNote, project: String, by: String? = nil, batch: UUID? = nil) -> ProjectMemoryStore.Outcome
 ProjectMemoryStore.archive(_:project:) | func archive(_ id: UUID, project: String) -> ProjectMemoryStore.Outcome
 ProjectMemoryStore.budget | static let budget: Int

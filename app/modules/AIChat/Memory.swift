@@ -1,5 +1,7 @@
 import Foundation
 import AIAccounts
+import AILocalization
+import AIProjects
 import AIWorkspace
 
 // Long-term memory (note 8): what every AI should know about the user, kept on this Mac and put into every
@@ -207,7 +209,12 @@ public final class MemoryLink: ToolProvider {
 
     // remember, and in a project chat the project memory tools (ProjectMemoryLink.swift) for the AI answering it.
     public func tools(context: ToolContext) -> [[String: Any]] {
-        guard context.asker != nil else { return [] }
+        guard let account = context.asker else { return [] }
+        let read = { self.sessionTools(context, account: account) }
+        return Thread.isMainThread ? read() : DispatchQueue.main.sync(execute: read)
+    }
+
+    private func sessionTools(_ context: ToolContext, account: Account) -> [[String: Any]] {
         let found = chat(context.room)
         var list: [[String: Any]] = []
         if let turn = context.turn, MemoryStore.mayRemember(store.snapshot, chat: found, turn: turn) {
@@ -215,19 +222,44 @@ public final class MemoryLink: ToolProvider {
                          "description": "Save one short fact about the user to their long-term memory, which every AI in this app reads in later chats. One line, no secrets.",
                          "inputSchema": ["type": "object", "properties": ["text": ["type": "string"]], "required": ["text"], "additionalProperties": false]])
         }
-        if context.origin == .member, ProjectMemory.project(found) != nil { list += ProjectMemory.tools(writes: ProjectMemory.mayWrite(found, context: context)) }
+        if context.origin == .member, let found, let project = ProjectMemory.project(found),
+           ProjectMemory.permits(account, chat: found, project: project) {
+            let lock = memoryLock(found, project: project, account: account)
+            let readOnly = found.isEnterprise && lock == nil
+            list += ProjectMemory.tools(writes: ProjectMemory.mayWrite(found, enterpriseReadOnly: readOnly, context: context))
+        }
         return list
     }
 
+    private func memoryLock(_ chat: Conversation, project: String, account: Account) -> EnterpriseLock? {
+        guard chat.isEnterprise, Enterprise.permits(account, lock: chat.enterpriseLock) else { return nil }
+        return ProjectMemory.enterpriseLock(for: chat, in: ChatLink.shared.projectMemoryLock(project, TodoStore.shared.current))
+    }
+
     public func call(_ name: String, _ arguments: [String: Any], context: ToolContext) -> [String: Any] {
-        let found = chat(context.room)
         if ProjectMemory.toolNames.contains(name) {
-            guard context.asker != nil, context.origin == .member, let project = ProjectMemory.project(found) else {
-                return toolFailure("Project memory is only for an AI answering a project chat.")
+            // Keep the live membership check and the memory operation together on the main thread.
+            let call = {
+                guard let account = context.asker, context.origin == .member, let found = self.chat(context.room),
+                      let project = ProjectMemory.project(found) else {
+                    return toolFailure("Project memory is only for an AI answering a project chat.")
+                }
+                guard ProjectMemory.permits(account, chat: found, project: project) else {
+                    return toolFailure(L("이 프로젝트 메모리는 잠긴 조직의 대화에서만 열 수 있어요.",
+                                         "Project memory is available only in chats locked to its Enterprise organization."))
+                }
+                let lock = self.memoryLock(found, project: project, account: account)
+                let readOnly = found.isEnterprise && lock == nil
+                let writes = ProjectMemory.mayWrite(found, enterpriseReadOnly: readOnly, context: context)
+                if name != "project_memory_search", writes, !ProjectMemory.allowsSaving(project, lock: lock) {
+                    return toolFailure(L("이 조직으로 프로젝트 메모리 접근을 제한하지 못했어요.",
+                                         "Could not restrict project memory to this organization."))
+                }
+                return ProjectMemory.call(name, arguments, project: project, enterpriseReadOnly: readOnly, writes: writes, context: context)
             }
-            return ProjectMemory.call(name, arguments, project: project, enterprise: found?.isEnterprise == true,
-                                      writes: ProjectMemory.mayWrite(found, context: context), context: context)
+            return Thread.isMainThread ? call() : DispatchQueue.main.sync(execute: call)
         }
+        let found = chat(context.room)
         guard name == "remember" else { return toolFailure("Unknown tool: " + name) }
         guard context.asker != nil, let turn = context.turn, MemoryStore.mayRemember(store.snapshot, chat: found, turn: turn) else {
             return toolFailure("Memory saving is off for this answer.")

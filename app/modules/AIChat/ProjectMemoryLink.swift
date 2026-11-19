@@ -1,12 +1,14 @@
 import Foundation
 import AIAccounts
+import AILocalization
 import AIWorkspace
 import AIProjects
 
 // Project memory in a chat (store: AIProjects ProjectMemory.swift). Every AI answering a project chat gets the
 // project's notes in its instruction (rule) and, unless it runs without tools, three tools offered with remember
 // (MemoryLink): add, replace (the old note is archived) and search (archive too). Opinions keep them: the notes are
-// app data, not project files. Enterprise chats read and search only, so nothing of theirs reaches other chats.
+// app data, not project files. Enterprise chats may write when the entire project has their organization's lock.
+// A memory that accepts Enterprise content keeps that audience even if the project's rooms or TODO lists change.
 enum ProjectMemory {
     static let budget = ProjectMemoryStore.budget   // characters of notes in an instruction
     static let logDays = 14       // work log notes sent: the last two weeks
@@ -15,11 +17,30 @@ enum ProjectMemory {
     // The project of a chat, also while an opinion runs without it.
     static func project(_ chat: Conversation?) -> String? { chat?.workspace?.project.map(SidebarProjects.key) }
 
+    static func enterpriseLock(for chat: Conversation, in projectLock: EnterpriseLock?) -> EnterpriseLock? {
+        guard chat.isEnterprise, let projectLock, chat.enterpriseLock?.organization == projectLock.organization else { return nil }
+        return projectLock
+    }
+
+    static func permits(_ account: Account, chat: Conversation, project: String) -> Bool {
+        do {
+            guard let lock = try ProjectMemoryStore.shared.accessLock(project) else { return true }
+            return chat.enterpriseLock?.organization == lock.organization && Enterprise.permits(account, lock: lock)
+        } catch { return false }
+    }
+
+    // Save the audience before writing any Enterprise content, including the output of a cleanup meeting.
+    static func allowsSaving(_ project: String, lock: EnterpriseLock?) -> Bool {
+        do {
+            return try ProjectMemoryStore.shared.accessLock(project, protecting: lock)?.organization == lock?.organization
+        } catch { return false }
+    }
+
     // May this tool session add or replace: it was made for the chat's newest message, still being answered, and for
     // the project the chat is linked to now (its folder is among the session's), so an older session never writes
     // and a chat linked to another project never gets the earlier project's notes. Folderless projects have no folder.
-    static func mayWrite(_ chat: Conversation?, context: ToolContext) -> Bool {
-        guard let chat, !chat.isEnterprise, let binding = chat.workspace?.project, let last = chat.turns.last,
+    static func mayWrite(_ chat: Conversation, enterpriseReadOnly: Bool, context: ToolContext) -> Bool {
+        guard !enterpriseReadOnly, let binding = chat.workspace?.project, let last = chat.turns.last,
               last.answeredAt == nil, context.turn == last.id else { return false }
         return binding.isFolderless || context.roots.contains { $0.path == binding.root }
     }
@@ -75,15 +96,20 @@ enum ProjectMemory {
         return lines.joined(separator: "\n")
     }
 
-    static func toolRule(enterprise: Bool) -> String {
-        enterprise
-            ? "This is an Enterprise chat: you may search project memory (project_memory_search) but not add to it."
-            : """
+    static func toolRule(enterpriseReadOnly: Bool, lock: EnterpriseLock?) -> String {
+        if enterpriseReadOnly {
+            return L("이 Enterprise 대화에서는 프로젝트 메모리를 검색(project_memory_search)할 수 있어요.",
+                     "In this Enterprise chat, project memory is read-only (project_memory_search).")
+        }
+        let rule = """
             Project memory tools: project_memory_add saves a lasting decision or fact, open progress, or work done, one line
             each, in the user's language (verified=true only when you checked it). When a note is wrong, outdated or done,
             use project_memory_replace with its [id] instead of adding a contradicting one (resolved progress: replace it with
             a log note). project_memory_search also finds archived notes. Never save secrets, passing details or file contents.
             """
+        guard let lock else { return rule }
+        return rule + "\n" + L("이 프로젝트 메모리는 \(lock.name) 계정과 이 Mac 모델만 읽을 수 있어요.",
+                               "Only \(lock.name) accounts and models on this Mac can read this project memory.")
     }
 
     static func tools(writes: Bool) -> [[String: Any]] {
@@ -108,11 +134,14 @@ enum ProjectMemory {
             search]
     }
 
-    static func call(_ name: String, _ arguments: [String: Any], project: String, enterprise: Bool, writes: Bool, context: ToolContext,
+    static func call(_ name: String, _ arguments: [String: Any], project: String, enterpriseReadOnly: Bool, writes: Bool, context: ToolContext,
                      store: ProjectMemoryStore = .shared) -> [String: Any] {
         func text(_ s: String) -> [String: Any] { ["content": [["type": "text", "text": s]], "isError": false] }
         if name == "project_memory_search" { return text(search(store.notes(project), query: arguments["query"] as? String ?? "")) }
-        guard !enterprise else { return toolFailure("This is an Enterprise chat: nothing from it is saved to project memory.") }
+        guard !enterpriseReadOnly else {
+            return toolFailure(L("이 Enterprise 대화에서는 프로젝트 메모리를 검색만 할 수 있어요.",
+                                 "This Enterprise chat can only search project memory."))
+        }
         guard writes else { return toolFailure("Project memory saving is off for this tool session (an earlier answer, or the chat's project changed).") }
         let words = (arguments["text"] as? String ?? "")
         guard !MemoryStore.looksSecret(words) else { return toolFailure("Not saved: passwords, keys, tokens and similar secrets are never kept in memory.") }

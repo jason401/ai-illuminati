@@ -18,6 +18,7 @@ public final class ChatLink: ToolProvider {
 
     // The chats as the app has them now (set by the app's Discussion; read on the main thread).
     public var conversations: () -> [Conversation] = { [] }
+    var projectMemoryLock: (String, TodoData) -> EnterpriseLock? = { _, _ in nil }
 
     public var active: Bool { true }
     public func tools() -> [[String: Any]] { [] }
@@ -155,6 +156,7 @@ extension Discussion {
     // The app's chats for search_chats / read_chat.
     func linkChatTools() {
         ChatLink.shared.conversations = { [weak self] in self?.conversations ?? [] }
+        ChatLink.shared.projectMemoryLock = { [weak self] key, todo in self?.memoryLock(key, todos: todo) }
         // Project tools (todo_add, create_project, the TODO scheduler's locks) read the same chats, through ChatLink.
         ProjectChats.list = { ChatLink.shared.conversations().map(\.projectSummary) }
         DelegateLink.shared.host = self

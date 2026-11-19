@@ -22,9 +22,12 @@ public enum ProjectMemoryCleanupLink {
             let lists = todo.lists.filter { group.lists.contains($0.id) }
             let chats = group.chats + group.todoRooms
             let locks = lists.compactMap(\.lock) + chats.compactMap(\.enterpriseLock)
-            // Shared memory is read-only in Enterprise projects. Personal projects may only use their own accounts.
-            guard !locks.contains(where: { !$0.isPersonal }) else { continue }
-            let lock = locks.first
+            let (_, rooms, projectLists) = discussion.projectParts(group.id, todos: todo)
+            let hasEnterprise = rooms.contains(where: \.isEnterprise) || projectLists.contains { $0.lock?.isPersonal == false }
+            // Enterprise cleanup can see the entire project only when all its parts share the same lock.
+            let enterpriseLock = hasEnterprise ? discussion.memoryLock(group.id, todos: todo) : nil
+            guard !hasEnterprise || enterpriseLock != nil else { continue }
+            let lock = enterpriseLock ?? locks.first
             let team = Discussion.meetingTeam(discussion.model.accounts, usage: discussion.model.latestUsage,
                                               picks: discussion.model.autoTeamPicks) {
                 ($0.provider != .ollama || discussion.model.localEnabled) && Enterprise.permits($0, lock: lock)
@@ -38,6 +41,7 @@ public enum ProjectMemoryCleanupLink {
             }
             guard ProjectMemoryCleanup.due(group.id, answers: answers, manual: manual, now: now,
                                            size: { ProjectMemory.line($0).count }) else { continue }
+            guard ProjectMemory.allowsSaving(group.id, lock: enterpriseLock) else { continue }
             guard ProjectMemoryCleanup.recordAttempt(group.id, at: now) else { continue }
             let tasks = todo.items.filter { group.lists.contains($0.listID) }
             start(in: discussion, group: group, chats: chats, tasks: tasks, lock: lock, team: team,
@@ -56,12 +60,13 @@ public enum ProjectMemoryCleanupLink {
         worker.prepareMeeting(room: room, binding: WorkspaceBinding(roots: []), appCalled: true)
         let rules = discussion.model.chatRules.trimmingCharacters(in: .whitespacesAndNewlines)
         let leader = team.first { [.claude, .codex].contains($0.provider) }?.provider ?? team[0].provider
+        let notes = ProjectMemory.cleanupLines(ProjectMemoryStore.shared.notes(group.id))
         DispatchQueue.global(qos: .utility).async {
             var applied = false
             defer {
                 if !applied { _ = ProjectMemoryCleanup.recordAttempt(group.id, at: Date()) }
             }
-            let input = material(group: group, chats: chats, tasks: tasks, since: since, now: now, token: token)
+            let input = material(group: group, notes: notes, chats: chats, tasks: tasks, since: since, now: now, token: token)
             guard !token.isCancelled else { worker.finish(room, 0); return }
             let brief = Discussion.meetingBrief(state: "", history: [], source: "", brief: input.text, appCalled: true)
             let result = worker.runDebate(question: topic, history: [], rules: rules, team: team, leader: leader,
@@ -88,9 +93,8 @@ public enum ProjectMemoryCleanupLink {
         turn.final != nil && turn.error == nil && turn.cutOff != true && (turn.answeredAt ?? turn.askedAt ?? fallback) > since
     }
 
-    private static func material(group: ProjectGroup, chats: [Conversation], tasks: [TodoItem], since: Date, now: Date,
+    private static func material(group: ProjectGroup, notes: [String], chats: [Conversation], tasks: [TodoItem], since: Date, now: Date,
                                  token: DebateCancellation) -> (text: String, chats: Set<UUID>, commits: [String]) {
-        let notes = ProjectMemory.cleanupLines(ProjectMemoryStore.shared.notes(group.id))
         let pending = ProjectMemoryCleanup.pending(group.id)
         let previousEvidence = Set(pending.flatMap(\.evidence))
         let oldChats = Set(previousEvidence.compactMap(UUID.init(uuidString:)))

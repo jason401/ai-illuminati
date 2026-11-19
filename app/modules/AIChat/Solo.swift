@@ -1010,12 +1010,15 @@ extension Discussion {
 
     // The project memory block and its tool rule for a project chat (an opinion too); empty elsewhere.
     func projectMemoryRule(_ account: Account, chat id: UUID?) -> String {
-        let read = { id.flatMap { room in (self.host ?? self).conversations.first { $0.id == room } ?? self.conversations.first { $0.id == room } } }
-        let chat = Thread.isMainThread ? read() : DispatchQueue.main.sync(execute: read)
-        guard let chat, let project = ProjectMemory.project(chat) else { return "" }
-        let known = ProjectMemory.rule(ProjectMemoryStore.shared.notes(project), question: chat.turns.last?.question ?? "")
-        let tools = account.provider == .ollama ? "" : ProjectMemory.toolRule(enterprise: chat.isEnterprise)
-        return [known, tools].filter { !$0.isEmpty }.joined(separator: "\n")
+        let read = { () -> String in
+            guard let id, let chat = (self.host ?? self).conversations.first(where: { $0.id == id }),
+                  let project = ProjectMemory.project(chat), ProjectMemory.permits(account, chat: chat, project: project) else { return "" }
+            let lock = chat.isEnterprise ? ProjectMemory.enterpriseLock(for: chat, in: self.memoryLock(project, todos: TodoStore.shared.current)) : nil
+            let known = ProjectMemory.rule(ProjectMemoryStore.shared.notes(project), question: chat.turns.last?.question ?? "")
+            let tools = account.provider == .ollama ? "" : ProjectMemory.toolRule(enterpriseReadOnly: chat.isEnterprise && lock == nil, lock: lock)
+            return [known, tools].filter { !$0.isEmpty }.joined(separator: "\n")
+        }
+        return Thread.isMainThread ? read() : DispatchQueue.main.sync(execute: read)
     }
 
     static func composeInstruction(name: String, provider: Account.Provider, folders: String, drive: String, fullAccess: Bool,

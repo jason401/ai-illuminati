@@ -142,6 +142,16 @@ extension Discussion {
         return (chats, chats.flatMap { [$0] + meetings(of: $0.id) }, todos.lists.filter { $0.project?.groupKey == key })
     }
 
+    // Project memory can accept Enterprise content only when all of its rooms and TODO lists agree.
+    func memoryLock(_ key: String, todos: TodoData) -> EnterpriseLock? {
+        guard TodoStore.shared.locked == nil else { return nil }
+        let (_, rooms, lists) = (host ?? self).projectParts(key, todos: todos)
+        let locks = rooms.map(\.enterpriseLock) + lists.map(\.lock)
+        guard let lock = locks.compactMap({ $0 }).first, !lock.isPersonal, !lock.organization.isEmpty,
+              locks.allSatisfy({ $0?.organization == lock.organization }) else { return nil }
+        return lock
+    }
+
     // How many of a project's chats (meetings too) and TODO lists have no lock yet: a project whose one chat was locked
     // shows as locked, and locking it again with that lock locks the rest.
     func unlockedParts(_ key: String, todos: TodoData) -> (chats: Int, lists: Int) {

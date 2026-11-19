@@ -81,6 +81,21 @@ public final class ProjectMemoryStore: ObservableObject {
     static func file(_ project: String) -> URL { folder(project).appendingPathComponent("memory.json") }
     static func historyFile(_ project: String) -> URL { folder(project).appendingPathComponent("memory-history.jsonl") }
 
+    // Keep the memory's audience even if the project is deleted and its folder is linked again.
+    public func accessLock(_ project: String, protecting proposed: EnterpriseLock? = nil) throws -> EnterpriseLock? {
+        lock.lock(); defer { lock.unlock() }
+        let file = Self.folder(project).appendingPathComponent("memory-lock.json")
+        do {
+            return try Self.decoder.decode(EnterpriseLock.self, from: Data(contentsOf: file))
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+            guard let proposed else { return nil }
+            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true,
+                                                    attributes: [.posixPermissions: 0o700])
+            try Self.write(Self.encoder.encode(proposed), to: file)
+            return proposed
+        }
+    }
+
     // What a deleted text leaves behind: a hash of it with case, runs of spaces and the closing punctuation aside, so
     // the same words saved again are recognized without keeping them. Signs and points inside stay ("+5 V" is not
     // "-5 V", "1.5 MHz" not "15 MHz").

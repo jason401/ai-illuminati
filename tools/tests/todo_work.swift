@@ -1096,7 +1096,7 @@ func testSidebarProjects() {
     let pieceRows = nested.pieces[parent.id]
     expect(nested.top.map(\.id) == [unsplit.id, parent.id] && pieceRows?.rows.map(\.id) == [first.id, second.id]
            && pieceRows?.rows.map(\.number) == [1, 2] && pieceRows?.rows.map(\.state) == [.done, .running]
-           && pieceRows?.total == 2 && pieceRows?.done == 1,
+           && pieceRows?.total == 2 && pieceRows?.finished == 1,
            "only the finish and ordinary TODO stay at the top; pieces carry their planned order and progress")
     let partial = SidebarProjects.splitPieces([parent, second], todo: splitData)
     expect(partial.pieces[parent.id]?.rows.map(\.number) == [2] && partial.pieces[parent.id]?.total == 2,
@@ -1107,19 +1107,27 @@ func testSidebarProjects() {
     expect(SidebarProjects.splitPieces(withoutParent, todo: splitData).top.map(\.id) == withoutParent.map(\.id)
            && SidebarProjects.splitPieces(splitGroup.todoRooms, todo: withoutFinish).pieces.isEmpty,
            "pieces stay flat when the parent chat or the finish TODO is missing")
+    let splitGoing = SidebarProjects.runningFirst(splitGroup, todo: splitData, running: [], groupPieces: true)
+    expect(splitGoing.going.map(\.id) == [unsplit.id, parent.id] && splitGoing.finishedChats.isEmpty,
+           "a completed piece stays under its going finish and only counts in that group")
     let splitLifted = SidebarProjects.runningFirst(splitGroup, todo: splitData, running: [second.id], groupPieces: true)
     expect(splitLifted.running.map(\.id) == [parent.id] && splitLifted.going.map(\.id) == [unsplit.id]
-           && splitLifted.finished.isEmpty && splitLifted.finishedChats.map(\.id) == [first.id],
-           "an answering piece lifts its parent once while the finished heading still counts the completed piece")
+           && splitLifted.finished.isEmpty && splitLifted.finishedChats.isEmpty,
+           "an answering piece lifts its parent once without leaving an empty finished section")
     let flat = SidebarProjects.runningFirst(splitGroup, todo: splitData, running: [second.id], groupPieces: false)
     expect(flat.running.map(\.id) == [second.id] && flat.finished.map(\.id) == [first.id] && flat.pieces.isEmpty,
            "the flat list still shows pieces individually during search")
-    try! splitStore.change(plan[1].id) { $0.state = .done }
+    try! splitStore.change(plan[1].id) { $0.state = .cancelled }
     try! splitStore.change(finish.id) { $0.state = .done }
-    let finishedSplit = SidebarProjects.runningFirst(splitGroup, todo: splitStore.current, running: [], groupPieces: true)
-    expect(finishedSplit.finished.map(\.id) == [parent.id] && finishedSplit.finishedChats.map(\.id) == [second.id, first.id, parent.id]
-           && finishedSplit.pieces[parent.id]?.done == 2 && finishedSplit.going.map(\.id) == [unsplit.id],
-           "the finished section shows one parent but counts all three chats for the heading and delete menu")
+    let finishedData = splitStore.current
+    let finishedSplit = SidebarProjects.runningFirst(splitGroup, todo: finishedData, running: [], groupPieces: true)
+    expect(finishedSplit.finished.map(\.id) == [parent.id] && finishedSplit.finishedChats.map(\.id) == [parent.id, first.id, second.id]
+           && finishedSplit.pieces[parent.id]?.finished == 2 && finishedSplit.pieces[parent.id]?.rows.last?.state == .cancelled
+           && finishedSplit.going.map(\.id) == [unsplit.id],
+           "the finished section counts all three chats and progress counts a cancelled piece without changing its status")
+    let liftedFinished = SidebarProjects.runningFirst(splitGroup, todo: finishedData, running: [first.id], groupPieces: true)
+    expect(liftedFinished.running.map(\.id) == [parent.id] && liftedFinished.finished.isEmpty && liftedFinished.finishedChats.isEmpty,
+           "when a piece answers again, its entire finished group leaves the finished heading and cleanup list")
 
     // Folds and pins are kept, in the test's own defaults; old pinned project chats pin their project once.
     let suite = "ai-illuminati-sidebar-test-\(UUID().uuidString)"

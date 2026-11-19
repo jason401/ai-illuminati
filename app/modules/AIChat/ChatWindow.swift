@@ -491,7 +491,7 @@ struct ChatView<Model: ChatSettings>: View {
             let chats = SidebarFold.listedChats(rooms.chats, limit: discussion.sidebarSearching ? .max : folds.limit(key, page: page), open: current)
             ForEach(chats.rows) { chatGroup($0, depth: 1) }
             if !discussion.sidebarSearching { moreRow(key, page: page, total: chats.unpinned, listed: chats.listed, indent: 22) }
-            if !rooms.finishedChats.isEmpty {
+            if !rooms.finished.isEmpty {
                 // Searching lists every match; folded, only the chat open now (or the one whose meeting is open) stays.
                 let unfolded = folds.openFinished.contains(group.id) || discussion.sidebarSearching
                 finishedRow(group, finished: rooms.finishedChats, open: unfolded)
@@ -522,8 +522,8 @@ struct ChatView<Model: ChatSettings>: View {
             HStack(spacing: 5) {
                 Image(systemName: shown ? "chevron.down" : "chevron.right").font(.system(size: 8, weight: .semibold)).frame(width: 14)
                 Image(systemName: "list.number").font(.system(size: 10)).frame(width: 14)
-                Text(L("조각 \(pieces.total)개 · \(pieces.done)/\(pieces.total) 끝남",
-                       "\(pieces.total) pieces · \(pieces.done)/\(pieces.total) done"))
+                Text(L("조각 \(pieces.total)개 · \(pieces.finished)/\(pieces.total) 끝남",
+                       "\(pieces.total) pieces · \(pieces.finished)/\(pieces.total) done"))
                     .lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
             }
             .font(.system(size: 12)).foregroundColor(.secondary)

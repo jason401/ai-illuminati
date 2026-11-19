@@ -33,10 +33,12 @@ struct TodoPieceGroup {
     }
     let rows: [Row]
     let total: Int
-    let done: Int
+    let finished: Int
 }
 
 public enum SidebarProjects {
+    private static let finishedStates: Set<TodoItem.State> = [.done, .cancelled]
+
     public static func key(_ project: ProjectBinding) -> String { project.groupKey }
 
     // A Git project (code), not a documents or folderless one: its folder gets the branch badge.
@@ -105,7 +107,6 @@ public enum SidebarProjects {
     // TODO chats in a folder: the ones still going (or waiting for the user) always listed; the finished ones
     // (every TODO of the chat done or cancelled) go together under one "Finished TODOs" row, folded by default.
     static func todoRooms(_ rooms: [Conversation], todo: TodoData) -> (going: [Conversation], finished: [Conversation]) {
-        let finishedStates: Set<TodoItem.State> = [.done, .cancelled]
         var going: [Conversation] = [], finished: [Conversation] = []
         for room in rooms {
             let states = todo.items.filter { $0.room == room.id }.map(\.state)
@@ -131,14 +132,15 @@ public enum SidebarProjects {
                 return TodoPieceGroup.Row(chat: chat, state: piece.state, number: i + 1)
             }
             guard !rows.isEmpty else { continue }
-            pieces[parent.id] = TodoPieceGroup(rows: rows, total: planned.count, done: planned.filter { $0.state == .done }.count)
+            pieces[parent.id] = TodoPieceGroup(rows: rows, total: planned.count,
+                                               finished: planned.filter { finishedStates.contains($0.state) }.count)
             nested.formUnion(rows.map(\.id))
         }
         return (rooms.filter { !nested.contains($0.id) }, pieces)
     }
 
     // A folder's answering chats come first. The Mac can also lift a finish when one of its nested pieces answers.
-    // The finished heading and delete menu still use the individual eligible chats.
+    // The finished heading and delete menu use the individual chats in the finished section.
     static func runningFirst(_ group: ProjectGroup, todo: TodoData, running: Set<UUID>, groupPieces: Bool = false)
         -> (running: [Conversation], going: [Conversation], chats: [Conversation], finished: [Conversation],
             finishedChats: [Conversation], pieces: [UUID: TodoPieceGroup]) {
@@ -150,8 +152,9 @@ public enum SidebarProjects {
         let answering = running.union(split.pieces.filter { $0.value.rows.contains { running.contains($0.id) } }.keys)
         let lifted = (going + group.chats + finished).filter { answering.contains($0.id) }
         let rest = { (rows: [Conversation]) in rows.filter { !answering.contains($0.id) } }
-        return (lifted, rest(going), rest(group.chats), rest(finished),
-                rooms.finished.filter { !running.contains($0.id) }, split.pieces)
+        let finishedRows = rest(finished)
+        let finishedChats = finishedRows.flatMap { room in [room] + (split.pieces[room.id]?.rows.map(\.chat) ?? []) }
+        return (lifted, rest(going), rest(group.chats), finishedRows, finishedChats, split.pieces)
     }
 
     // Finished TODO chats that may be deleted: every TODO of the chat done or cancelled, not pinned, not protected

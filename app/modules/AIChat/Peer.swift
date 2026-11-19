@@ -120,6 +120,15 @@ enum Peer {
         return text
     }
 
+    // The reminder a message with no clear use for other AIs gets instead of `rule` (InstructionNeeds.peer), so the
+    // tools are still known.
+    static func briefRule(peers: [String], meeting: Bool = false) -> String {
+        "[Asking other AIs] ask_ai asks other AIs on this Mac (\(peers.joined(separator: ", "))) for their view"
+            + (meeting ? "; convene_meeting holds a short meeting of several AIs for a decision" : "")
+            + ". Use them only when you are not sure, facts or numbers are the core of the answer, or the user asks for another AI's view."
+            + " After asking, add on its own line a tag the user does not see: <ai-taken>1=yes, 2=partly, 3=no</ai-taken>"
+    }
+
     // What the lead of project work is told when collaboration is off (Settings → Chat): the ask_peer tool as it was
     // before ask_ai, for a second opinion from its reviewer.
     static func legacyRule(peer: String) -> String {
@@ -565,7 +574,8 @@ extension Discussion {
 
     // What ask_ai adds to an answering AI's instruction: who it may ask (nothing when nobody else is available, or for
     // Gemini and Gemma, which get no tools), and who reviews its project changes.
-    func peerInstruction(_ account: Account, room: UUID? = nil) -> String {
+    // `brief`: the one-line reminder (Peer.briefRule) instead of the full rule; ask_peer and reviews keep their full rule.
+    func peerInstruction(_ account: Account, room: UUID? = nil, brief: Bool = false) -> String {
         guard let session = activePeerSession, [.claude, .codex].contains(account.provider) else { return "" }
         if session.legacy {
             return peerAccount(for: account, reviewers: session.members.filter { $0 != account.id }, room: session.room).map { Peer.legacyRule(peer: label($0)) } ?? ""
@@ -574,7 +584,9 @@ extension Discussion {
                               usage: model.latestUsage, lock: lock(of: room ?? session.room), label: label).accounts
         guard !peers.isEmpty else { return "" }
         let reviewer = session.review ? peerAccount(for: account, reviewers: session.members.filter { $0 != account.id }, room: session.room).map(label) : nil
-        return Peer.rule(peers: peers.map(label), reviewer: reviewer, meeting: session.convene == nil ? [] : session.meetable(account).map(label))
+        let meeting = session.convene == nil ? [] : session.meetable(account).map(label)
+        if brief && reviewer == nil { return Peer.briefRule(peers: peers.map(label), meeting: meeting.count >= 2) }
+        return Peer.rule(peers: peers.map(label), reviewer: reviewer, meeting: meeting)
     }
 
     // After the lead's answer in a project chat with reviewers: when it changed the project, a reviewer (another

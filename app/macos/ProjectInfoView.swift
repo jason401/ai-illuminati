@@ -39,6 +39,7 @@ struct ProjectInfoView: View {
                 header(group)
                 if let why = draft.error ?? store.saveError { Text(why).font(.system(size: 12)).foregroundColor(.red) }
                 if let group, group.bindings.first?.isFolderless != true { repository(group); rules(group) }
+                ProjectMemorySection(discussion: discussion, project: project)
                 folders
                 links
                 if let group { chatOnly(group); ProjectLockSection(discussion: discussion, group: group) }

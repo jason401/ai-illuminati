@@ -145,3 +145,85 @@ func testProjectMemory() {
            "over the budget: pinned and matching notes kept, about 6,000 characters")
     print("PASS: project memory (per project under the test home, two AIs add/read/replace, archive kept and searchable, history of every change, no secrets, Enterprise search only, 14-day log, budget)")
 }
+
+// The info tab's changes: the user edits, pins, archives and undoes any change or a whole meeting cleanup; a note
+// deleted for good leaves no text in any file and its words are refused when an AI or a meeting adds them again.
+func testProjectMemoryUndo() {
+    let store = ProjectMemoryStore.shared
+    let key = "/tmp/pmu-\(UUID().uuidString.prefix(8))"
+    store.forget()
+    defer { try? FileManager.default.removeItem(at: ProjectMemoryStore.folder(key)); store.forget() }
+    func saved(_ o: ProjectMemoryStore.Outcome) -> ProjectMemoryNote? { if case .saved(let n) = o { return n }; return nil }
+    func refused(_ o: ProjectMemoryStore.Outcome) -> Bool { if case .refused = o { return true }; return false }
+    func current(_ id: UUID) -> ProjectMemoryNote? { store.notes(key).first { $0.id == id } }
+
+    // Undo a replace: the old note comes back, the new one goes to the archive; a later change blocks it until undone.
+    guard let a = saved(store.add(ProjectMemoryNote(kind: .decision, text: "빌드는 --stage로만", by: "Claude"), project: key)),
+          let b = saved(store.replace(a.id, with: ProjectMemoryNote(kind: .decision, text: "빌드는 --stage, 설치는 사용자가", by: "Codex"), project: key))
+    else { expect(false, "notes saved"); return }
+    expect(saved(store.setPinned(b.id, true, project: key))?.pinned == true
+           && saved(store.edit(b.id, text: "빌드는 --stage만, 설치는 사용자가", kind: .decision, verified: true, project: key))?.verified == true,
+           "the user pins and edits a note in place")
+    var history = store.history(key)
+    expect(history.map(\.action) == ["add", "replace", "pin", "edit"] && history.map { $0.who } == ["Claude", "Codex", "user", "user"],
+           "every change says who made it")
+    expect(refused(store.undo([1], project: key)) && current(b.id)?.state == .active, "a replace with later changes to its note is not undone first")
+    expect(saved(store.undo([3], project: key)) != nil && current(b.id)?.text == "빌드는 --stage, 설치는 사용자가" && current(b.id)?.verified == false,
+           "undoing the edit gives back the AI's text")
+    expect(refused(store.undo([3], project: key)), "a change is undone only once")
+    expect(saved(store.undo([4], project: key)) != nil && current(b.id)?.text == "빌드는 --stage만, 설치는 사용자가"
+           && ProjectMemoryStore.undone(store.history(key)) == [4], "an undo can be undone too")
+    _ = store.undo([5], project: key); _ = store.undo([2], project: key)
+    history = store.history(key)
+    expect(saved(store.undo([1], project: key)) != nil && current(a.id)?.state == .active && current(a.id)?.replacedBy == nil
+           && current(b.id)?.state == .archived, "with the later changes undone, the replace is undone: the old note is back, the new one archived")
+    store.forget()
+    expect(current(a.id)?.state == .active && current(b.id)?.state == .archived, "undo is a history line: it survives a restart")
+
+    // Archive and restore; undo of an add archives the note.
+    guard let c = saved(store.add(ProjectMemoryNote(kind: .progress, text: "재로그인 검증 남음", by: "Gemini"), project: key)) else { return }
+    expect(saved(store.archive(c.id, project: key))?.state == .archived && !ProjectMemory.rule(store.notes(key), question: "").contains("재로그인")
+           && saved(store.restore(c.id, project: key))?.state == .active, "an archived note leaves the instruction and can be restored")
+    let addLine = store.history(key).lastIndex { $0.action == "add" && $0.note.id == c.id }!
+    _ = store.undo([store.history(key).count - 1], project: key); _ = store.undo([store.history(key).count - 3], project: key)
+    expect(saved(store.undo([addLine], project: key)) != nil && current(c.id)?.state == .archived, "undoing an AI's add archives the note")
+
+    // A meeting cleanup is one batch: undone as a whole.
+    let cleanup = UUID()
+    guard let d = saved(store.add(ProjectMemoryNote(kind: .log, text: "작업 기록 하나"), project: key)) else { return }
+    let e = saved(store.replace(d.id, with: ProjectMemoryNote(kind: .log, text: "작업 기록 합침"), project: key, by: ProjectMemoryChange.byMeeting, batch: cleanup))
+    let f = saved(store.add(ProjectMemoryNote(kind: .decision, text: "회의가 정한 규칙"), project: key, by: ProjectMemoryChange.byMeeting, batch: cleanup))
+    expect(e != nil && f != nil && store.history(key).suffix(2).allSatisfy { $0.who == "meeting" && $0.batch == cleanup }, "a cleanup's lines say meeting and share a batch")
+    expect(saved(store.undo(batch: cleanup, project: key)) != nil && current(d.id)?.state == .active
+           && current(e!.id)?.state == .archived && current(f!.id)?.state == .archived, "undoing the cleanup takes back all of it")
+
+    // Delete for good: every copy of the text gone from both files, the words refused again however written.
+    let secret = "고객사 이름은 아크메"
+    guard let g = saved(store.add(ProjectMemoryNote(kind: .decision, text: secret, by: "Claude"), project: key)),
+          let h = saved(store.replace(g.id, with: ProjectMemoryNote(kind: .decision, text: "고객사 이름은 비공개", by: "Codex"), project: key)),
+          let copy = saved(store.add(ProjectMemoryNote(kind: .log, text: secret + "!", by: "Codex"), project: key))
+    else { expect(false, "notes to delete saved"); return }
+    let lines = store.history(key).count
+    expect(saved(store.delete(g.id, project: key)) != nil && current(g.id) == nil && current(copy.id) == nil && current(h.id)?.state == .active,
+           "delete removes the note and every note with the same words, not the one that replaced it")
+    let files = [ProjectMemoryStore.historyFile(key), ProjectMemoryStore.file(key)].compactMap { try? String(contentsOf: $0, encoding: .utf8) }
+    expect(files.count == 2 && files.allSatisfy { !$0.contains("아크메") } && store.history(key).count == lines + 1
+           && store.history(key).last?.action == "delete" && store.history(key).last?.marks?.isEmpty == false,
+           "the text is in neither file; the history keeps its lines, blanked, and one delete line with the marks")
+    store.forget()
+    expect(refused(store.add(ProjectMemoryNote(kind: .decision, text: "고객사 이름은 아크메", by: "Gemini"), project: key))
+           && refused(store.add(ProjectMemoryNote(kind: .log, text: "  고객사  이름은 아크메.", by: "Gemini"), project: key))
+           && refused(store.replace(h.id, with: ProjectMemoryNote(kind: .decision, text: secret), project: key))
+           && refused(store.add(ProjectMemoryNote(kind: .decision, text: secret), project: key, by: ProjectMemoryChange.byMeeting, batch: UUID())),
+           "after a restart the deleted words are refused: added again, written differently, as a replacement, by a meeting")
+    let deleteLine = store.history(key).count - 1
+    let addG = store.history(key).firstIndex { $0.note.id == g.id }!
+    expect(refused(store.undo([deleteLine], project: key)) && refused(store.undo([addG], project: key)) && refused(store.undo([addG + 1], project: key))
+           && current(g.id) == nil, "a delete is never undone, and no undo brings the deleted note back")
+    let root = "/tmp/pmu-tool"
+    let context = ToolContext(room: UUID(), roots: [WorkspaceRoot(path: root, directory: true)], asker: Account(id: "x", provider: .claude, name: "Claude", dir: nil, school: false), turn: UUID())
+    let reply = ProjectMemory.call("project_memory_add", ["kind": "decision", "text": secret], project: key, enterprise: false, writes: true, context: context)
+    expect(reply["isError"] as? Bool == true && "\(reply)".contains("deleted"), "an AI's tool call is refused with the reason")
+    expect(saved(store.add(ProjectMemoryNote(kind: .decision, text: "고객사 이름은 비공개로 둠"), project: key)) != nil, "other words are still saved")
+    print("PASS: project memory undo (who changed what, undo any change or a meeting cleanup, undo of undo, archive/restore, delete for good leaves no text and blocks the same words)")
+}

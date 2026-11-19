@@ -20,5 +20,6 @@ ExternalMCPTools.swift connects modules: outside MCP servers (AIIntegrations) of
 DriveUI.swift screen: Google Drive in the chat sidebar
 GitBranches.swift screen: Project info's read-only branch view (later move candidate: ref parsing)
 ProjectInfoView.swift screen: the Project info tab
+ProjectMemoryView.swift screen: Project info's project memory section (view, edit, archive, delete, undo; saving in AIProjects)
 TodoBoard.swift screen: the TODO board and its report cards
 PhoneAccess.swift screen + connects modules: the Connect iPhone window (Tailscale address QR, iPhones on the tailnet, the phone page switch) and PhoneServer, which hands AIRemote's /api/ calls to AIChat and ProjectCenter

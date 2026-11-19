@@ -17,7 +17,7 @@
     "test-subrooms": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_ONLY=testDelegate,testSubRoomScreens,testChatSearch,testToolHub", "/bin/zsh", "tools/tests/run_mode2.sh"]},
     "test-todo-split": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_ONLY=testTodoStore,testTodoSplitExecution,testTodoSplitTool,testTodoScheduler,testTodoRunModes,testTodoOrder", "/bin/zsh", "tools/tests/run_mode2.sh"]},
     "test-affected-phone-update": {"executable": "/bin/zsh", "args": ["tools/tests/run_mode2.sh", "--affected", "app/macos/Updater.swift", "app/macos/PhoneAccess.swift", "app/modules/AIRemote/RemotePage.swift", "tools/tests/phone_access.swift", "tools/install_app.py", "tools/tests/test_install_app.py"]},
-    "test-project-memory": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_ONLY=testProjectMemory,testMemory,testToolHub,testInstructionSize,testInstructionLayers", "/bin/zsh", "tools/tests/run_mode2.sh"]},
+    "test-project-memory": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_ONLY=testProjectMemory,testProjectMemoryUndo,testMemory,testToolHub,testInstructionSize,testInstructionLayers", "/bin/zsh", "tools/tests/run_mode2.sh"]},
     "test-instruction": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_ONLY=testInstructionSize,testInstructionLayers,testChatNotes,testOpinionInstructionOpening,testFullAuto", "/bin/zsh", "tools/tests/run_mode2.sh"]},
     "test-affected-backup": {"executable": "/bin/zsh", "args": ["tools/tests/run_mode2.sh", "--affected", "app/modules/AIWorkspace/WorkspaceBackup.swift"]}
   }

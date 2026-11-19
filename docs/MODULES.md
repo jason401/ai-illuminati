@@ -484,7 +484,7 @@ TODO usage bar: `AutoPick.need(window:kind:purpose:now:checkedAt:)` (Solo.swift)
 | The work binding: execute, writable only in the project's root and the chat's folder | ProjectChat | "work binding" | `run_conditions.swift` (ProjectChat's own run in the golden file) |
 | Approvals: one list for every place, a decision clears them all, 15 minutes unanswered is no and leaves a note | ProjectChat views, ApprovalAlerts, ExternalMCP, ProjectCreator | none | `testProjectWork` (expired, twice), render_chat |
 | New projects: card first, folder + first commit + GitHub + push, asking again continues the same plan; folderless and documents kinds | ProjectCreate (menus), ProjectMakerLink | none (needs a fake gh) | `testProjectCreate`, `testDocumentsProject` |
-| Project memory (ProjectMemory.swift): one note set per project (`groupKey`) in `projects/<id>/memory.json` under the support folder (a test home in tests); notes are added or replaced, never edited in place (the old one archived and linked both ways), a duplicate active note is not saved again, every change is one line appended to `memory-history.jsonl`, which is the record (the notes are its lines replayed, memory.json a copy; a line cut off by a crash is dropped, a damaged history refuses every save) | AIChat ProjectMemoryLink (tools, instruction), ChatWindow (the saved line) | "project memory" | testProjectMemory |
+| Project memory (ProjectMemory.swift): one note set per project (`groupKey`) in `projects/<id>/memory.json` under the support folder (a test home in tests); notes are added or replaced, never edited in place (the old one archived and linked both ways), a duplicate active note is not saved again, every change is one line appended to `memory-history.jsonl`, which is the record (the notes are its lines replayed, memory.json a copy; a line cut off by a crash is dropped, a damaged history refuses every save); the user edits, pins, archives, restores and undoes any change or a whole meeting cleanup (`batch`; refused when the note changed since), each one more history line; only the user deletes for good, which blanks the text in both files and keeps a hash `mark` that refuses the same words from an AI or a meeting | AIChat ProjectMemoryLink (tools, instruction), ChatWindow (the saved line), App ProjectMemoryView (Project info) | "project memory" | testProjectMemory, testProjectMemoryUndo |
 
 Public names and why (everything else stays internal: `ProjectError`, `ProjectTools`, the lock tables and files, `RunProgress`,
 `RunTimings`, `TodoStore.encoder`/`decoder`/`copyIn`, `TodoData.eligible`/`hasCycle`, `TodoScheduler.begin`/`settle`/
@@ -529,6 +529,10 @@ Public names and why (everything else stays internal: `ProjectError`, `ProjectTo
   line), `ProjectMemoryStore` (`shared`, `notes`, `history`, `add`, `replace`, `Outcome`, `textLimit`, `revision` for the chat's
   "saved to project memory" line): AIChat's three tools and the instruction read and write notes only through it, so the store
   alone owns the files, the archive rule and the history (the info tab and the meeting cleanup will use the same names).
+- Project memory 2 (2026-11-19): `ProjectMemoryNote.State.deleted`, `ProjectMemoryChange` `by`/`batch`/`others`/`undoes`/`marks`/`who`/`notes`,
+  `byUser`/`byMeeting`, `ProjectMemoryStore` `edit`, `setPinned`, `archive`, `restore`, `delete`, `undo(_:project:)`,
+  `undo(batch:project:)`, `undone`, `mark`, and `add`/`replace`'s `by:`/`batch:`: Project info's memory section (App) shows the notes
+  and history and changes them only through the store, so undo, delete and the deleted-text marks stay in one place.
 - C0, logic moved down from the chat's `extension Discussion` blocks: `ProjectWork.linking` (a chat links a project: the
   root writable, after the linked folders or first for documents), `ProjectWork.moving` (a chat moved into a project;
   `SidebarProjects.moved` forwards), `ProjectRun.setPlan(todos:generation:)` (the stream's TodoWrite list read here, so the
@@ -645,7 +649,7 @@ everything else, Discussion's state above all, stays internal):
   box is kept, the app's own `drafts.json`; tests leave it nil and keep boxes in memory; quitting writes them), `unreadFile` (2026-11-16: main.swift says where "Needs review" is kept, the app's own `unread.json`, this Mac only; tests leave it nil), `importingMaterials`, `fillSpaceLocks`, `runningRooms`/`stoppingRooms` and their
   publishers); what the app's screens show (TODO board: `conversations`, `conversation`, `currentID`, `label`, `openBoard`,
   `viewingBoard`, `boardProject`, `hover`/`hoverKey`, `model`; Project info: `listedConversations`, `showBoardTab`,
-  `disconnectProjectFolder`; approvals: `approvalChatName`, `viewingRemote`, `approvalHome` (sub-room P3: a sub-room's request is answered and
+  `disconnectProjectFolder`, `openTurn` (2026-11-19: a project memory note opens the chat and message it was written in); approvals: `approvalChatName`, `viewingRemote`, `approvalHome` (sub-room P3: a sub-room's request is answered and
   noticed in its main room, ApprovalAlerts); `markTodoDone`: the board's and cards' [Mark as done],
   the same confirmation as the sidebar's ⋯); `TodoChats` (P0's seam, all its members);
   `Discussion.meets`/`autoPicked` (Settings' team picks).

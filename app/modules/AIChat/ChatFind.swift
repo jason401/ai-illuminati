@@ -56,6 +56,15 @@ struct FindHighlight: Equatable {
 }
 
 extension Discussion {
+    // Opens a chat at one of its messages (Project info's memory notes link to where they were written); false when
+    // the chat is gone.
+    @discardableResult public func openTurn(_ room: UUID, turn: UUID?) -> Bool {
+        guard conversations.contains(where: { $0.id == room }) else { return false }
+        open(room)
+        if let turn { jump(to: turn) }
+        return true
+    }
+
     // Shows a turn of the open chat: draws enough earlier turns, then the transcript scrolls to it.
     func jump(to turn: UUID) {
         guard let index = current.turns.firstIndex(where: { $0.id == turn }) else { return }

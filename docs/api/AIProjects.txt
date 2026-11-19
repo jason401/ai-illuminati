@@ -102,9 +102,18 @@ ProjectMemoryChange | struct ProjectMemoryChange
 ProjectMemoryChange.action | var action: String
 ProjectMemoryChange.archived | var archived: ProjectMemoryNote?
 ProjectMemoryChange.at | var at: Date
+ProjectMemoryChange.batch | var batch: UUID?
+ProjectMemoryChange.by | var by: String?
+ProjectMemoryChange.byMeeting | static let byMeeting: String
+ProjectMemoryChange.byUser | static let byUser: String
 ProjectMemoryChange.init(from:) | init(from decoder: any Decoder) throws
+ProjectMemoryChange.marks | var marks: [String]?
 ProjectMemoryChange.note | var note: ProjectMemoryNote
+ProjectMemoryChange.notes | var notes: [ProjectMemoryNote] { get }
 ProjectMemoryChange.old | var old: UUID?
+ProjectMemoryChange.others | var others: [ProjectMemoryNote]?
+ProjectMemoryChange.undoes | var undoes: [Int]?
+ProjectMemoryChange.who | var who: String? { get }
 ProjectMemoryNote | struct ProjectMemoryNote
 ProjectMemoryNote.Kind | enum Kind
 ProjectMemoryNote.Kind.decision | case decision
@@ -114,6 +123,7 @@ ProjectMemoryNote.Kind.progress | case progress
 ProjectMemoryNote.State | enum State
 ProjectMemoryNote.State.active | case active
 ProjectMemoryNote.State.archived | case archived
+ProjectMemoryNote.State.deleted | case deleted
 ProjectMemoryNote.State.init(rawValue:) | init?(rawValue: String)
 ProjectMemoryNote.account | var account: String?
 ProjectMemoryNote.archivedAt | var archivedAt: Date?
@@ -136,13 +146,22 @@ ProjectMemoryStore.Outcome | enum Outcome
 ProjectMemoryStore.Outcome.duplicate(_:) | case duplicate(ProjectMemoryNote)
 ProjectMemoryStore.Outcome.refused(_:) | case refused(String)
 ProjectMemoryStore.Outcome.saved(_:) | case saved(ProjectMemoryNote)
-ProjectMemoryStore.add(_:project:) | func add(_ note: ProjectMemoryNote, project: String) -> ProjectMemoryStore.Outcome
+ProjectMemoryStore.add(_:project:by:batch:) | func add(_ note: ProjectMemoryNote, project: String, by: String? = nil, batch: UUID? = nil) -> ProjectMemoryStore.Outcome
+ProjectMemoryStore.archive(_:project:) | func archive(_ id: UUID, project: String) -> ProjectMemoryStore.Outcome
+ProjectMemoryStore.delete(_:project:) | func delete(_ id: UUID, project: String) -> ProjectMemoryStore.Outcome
+ProjectMemoryStore.edit(_:text:kind:verified:project:) | func edit(_ id: UUID, text: String, kind: ProjectMemoryNote.Kind, verified: Bool, project: String) -> ProjectMemoryStore.Outcome
 ProjectMemoryStore.history(_:) | func history(_ project: String) -> [ProjectMemoryChange]
+ProjectMemoryStore.mark(_:) | static func mark(_ text: String) -> String
 ProjectMemoryStore.notes(_:) | func notes(_ project: String) -> [ProjectMemoryNote]
-ProjectMemoryStore.replace(_:with:project:) | func replace(_ old: UUID, with note: ProjectMemoryNote, project: String) -> ProjectMemoryStore.Outcome
+ProjectMemoryStore.replace(_:with:project:by:batch:) | func replace(_ old: UUID, with note: ProjectMemoryNote, project: String, by: String? = nil, batch: UUID? = nil) -> ProjectMemoryStore.Outcome
+ProjectMemoryStore.restore(_:project:) | func restore(_ id: UUID, project: String) -> ProjectMemoryStore.Outcome
 ProjectMemoryStore.revision | @Published var revision: Int { get set }
+ProjectMemoryStore.setPinned(_:_:project:) | func setPinned(_ id: UUID, _ pinned: Bool, project: String) -> ProjectMemoryStore.Outcome
 ProjectMemoryStore.shared | static let shared: ProjectMemoryStore
 ProjectMemoryStore.textLimit | static let textLimit: Int
+ProjectMemoryStore.undo(_:project:) | func undo(_ numbers: [Int], project: String) -> ProjectMemoryStore.Outcome
+ProjectMemoryStore.undo(batch:project:) | func undo(batch: UUID, project: String) -> ProjectMemoryStore.Outcome
+ProjectMemoryStore.undone(_:) | static func undone(_ history: [ProjectMemoryChange]) -> Set<Int>
 ProjectProcess | enum ProjectProcess
 ProjectProcess.Reply | struct Reply
 ProjectProcess.Reply.output | var output: String

@@ -307,6 +307,7 @@ Discussion.model | let model: any ChatSettings
 Discussion.noCrew(_:lock:) | func noCrew(_ allowed: [String], lock: EnterpriseLock?) -> String
 Discussion.open(_:) | func open(_ id: UUID)
 Discussion.openBoard(project:tab:) | func openBoard(project: String?, tab: BoardTab? = nil)
+Discussion.openTurn(_:turn:) | @discardableResult func openTurn(_ room: UUID, turn: UUID?) -> Bool
 Discussion.runningRooms | @Published var runningRooms: Set<UUID> { get set }
 Discussion.saveDrafts() | func saveDrafts()
 Discussion.sentPhotos(_:) | func sentPhotos(_ room: UUID) -> Set<UUID>

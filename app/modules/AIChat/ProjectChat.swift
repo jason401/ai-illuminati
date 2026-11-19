@@ -334,7 +334,7 @@ extension Discussion {
             changeTurn(id, index, save: true) { $0.backupPath = saved.directory }
         } catch { end(error.localizedDescription); return }
         let projectRules = ProjectRules.read(root: selected.root).prompt
-        let transcript = Self.transcript(history) + "\n[User]\n" + question
+        let transcript = Self.soloAsked(previous: Self.soloPrevious(origin: conversations.first { $0.id == id }?.origin, history: history), question: question)
         let chatLock = self.lock(of: id)
         var excluded = Set<String>(), checkpoint = run.checkpoint("Project turn started")
         // Picked by hand (@ or one account checked): that one. Otherwise the same rule as a plain chat: the last

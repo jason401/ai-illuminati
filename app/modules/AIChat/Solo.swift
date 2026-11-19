@@ -571,6 +571,15 @@ extension Discussion {
         return ["youtube", "youtu.be", "유튜브"].contains { lower.contains($0) }
     }
 
+    // Plain and project turns build the transcript the same way: a resumed session keeps going only while each
+    // turn's context starts with the previous one (NativeSessions.ask), so one different separator starts a new session.
+    static func soloPrevious(origin: SyncOrigin?, history: [ChatTurn]) -> String {
+        [originNote(origin), transcript(history)].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n\n")
+    }
+    static func soloAsked(previous: String, question: String) -> String {
+        (previous.isEmpty ? "" : previous + "\n\n") + "[User]\n" + question
+    }
+
     // Same shape as the debate context, so a resumed session gets only what is new.
     static func soloContext(rules: String, transcript: String) -> String {
         """
@@ -595,8 +604,8 @@ extension Discussion {
     func runSolo(question: String, history: [ChatTurn], rules: String, config: ChatConfiguration, mentions: [String] = [],
                  reviewers: [String] = [], cancellation: DebateCancellation, id: UUID, index: Int, extra: String = "") {
         let origin = conversations.first { $0.id == id }?.origin
-        let previous = [Self.originNote(origin), Self.transcript(history)].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n\n")
-        let asked = (previous.isEmpty ? "" : previous + "\n\n") + "[User]\n" + question
+        let previous = Self.soloPrevious(origin: origin, history: history)
+        let asked = Self.soloAsked(previous: previous, question: question)
         let context = Self.soloContext(rules: rules, transcript: asked)
         let state = Self.loadState(id)
         var freshTranscript: String?

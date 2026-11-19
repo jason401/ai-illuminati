@@ -3217,6 +3217,25 @@ func testOpinionInstructionOpening() {
 }
 runTest("testOpinionInstructionOpening", testOpinionInstructionOpening)
 
+// A resumed session keeps going only while each turn's context starts with the last one (NativeSessions.ask).
+// Project turns once joined the question with "\n[User]\n" and plain turns with "\n\n", so almost every
+// session was dropped after one or two turns (docs/PERF_BASELINE.md).
+func testSoloContextGrows() {
+    func context(_ turns: [ChatTurn], _ question: String) -> String {
+        let asked = Discussion.soloAsked(previous: Discussion.soloPrevious(origin: nil, history: turns), question: question)
+        return Discussion.soloContext(rules: "r", transcript: asked).trimmingCharacters(in: .newlines)
+    }
+    var turns: [ChatTurn] = [], last = ""
+    for i in 0..<4 {
+        let now = context(turns, "q\(i)")
+        expect(now.hasPrefix(last), "turn \(i): the context starts with the previous turn's context")
+        var t = ChatTurn(question: "q\(i)"); t.mode = 0; t.modeVersion = 2; t.final = "a\(i)"; t.finalBy = "Claude"
+        turns.append(t); last = now
+    }
+    print("PASS: plain and project turns grow the same context, so sessions resume")
+}
+runTest("testSoloContextGrows", testSoloContextGrows)
+
 // Instruction size for a plain question and a project TODO turn, with the real rule texts (docs/PERF_BASELINE.md §7).
 let instructionMoods = "happy, excited, playful, laughing, proud, content, triumph, singing, greeting, cheering, farewell, affectionate, shy, love, smitten, grateful, touched, sympathy, pleading, surprised, curious, awe, eager, idea, realization, shocked, confused, thinking, focused, listening, talking, processing, on_it, reading, determined, serious, skeptical, agree, disagree, apologetic, flustered, awkward, cringe, facepalm, shrug, calm, sleepy, bored, relieved, goodnight, sleeping, waking, dazed, sad, crying, disappointed, lonely, rueful, sulky, exhausted, nostalgic, afraid, worried, nervous, hopeful, terrified, angry, furious, annoyed, disgusted, contempt, jealous, sick, dizzy, cold, hot, hungry, knocked_out".components(separatedBy: ", ")
 let instructionDrive = """

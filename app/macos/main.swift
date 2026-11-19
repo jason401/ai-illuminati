@@ -210,7 +210,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, PhoneU
     // windows when an Edit/Window menu exists. This one is never visible; it just carries the shortcuts.
     private func keyboardMenu() -> NSMenu {
         let main = NSMenu()
-        func submenu(_ title: String, _ items: [(String, Selector, String, NSEvent.ModifierFlags)]) {
+        @discardableResult
+        func submenu(_ title: String, _ items: [(String, Selector, String, NSEvent.ModifierFlags)]) -> NSMenu {
             let holder = NSMenuItem()
             let sub = NSMenu(title: title)
             for (name, selector, key, modifiers) in items {
@@ -221,6 +222,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, PhoneU
             }
             holder.submenu = sub
             main.addItem(holder)
+            return sub
         }
         submenu("AI Illuminati", [(L("설정…", "Settings…"), #selector(openSettings), ",", .command),
                                   (L("채팅창 열기…", "Open Chat…"), #selector(openChat), "n", .command),
@@ -231,8 +233,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, PhoneU
                        (L("복사하기", "Copy"), #selector(NSText.copy(_:)), "c", .command),
                        (L("붙여넣기", "Paste"), #selector(NSText.paste(_:)), "v", .command),
                        (L("모두 선택", "Select All"), #selector(NSText.selectAll(_:)), "a", .command)])
-        submenu(L("윈도우", "Window"), [(L("닫기", "Close"), #selector(NSWindow.performClose(_:)), "w", .command),
-                        (L("최소화", "Minimize"), #selector(NSWindow.performMiniaturize(_:)), "m", .command)])
+        let window = submenu(L("윈도우", "Window"), [(L("닫기", "Close"), #selector(NSWindow.performClose(_:)), "w", .command),
+                        (L("최소화", "Minimize"), #selector(NSWindow.performMiniaturize(_:)), "m", .command),
+                        (L("확대/축소", "Zoom"), #selector(NSWindow.performZoom(_:)), "", [])])
+        window.addItem(.separator())
+        window.addItem(NSMenuItem(title: L("모두 앞으로 가져오기", "Bring All to Front"),
+                                  action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: ""))
+        // Registering it as the Window menu lets macOS add Fill, Center, Move & Resize (left/right halves,
+        // quarters) with their shortcuts, plus the open-window list, the same as in other apps.
+        NSApp.windowsMenu = window
         return main
     }
 

@@ -57,6 +57,26 @@ public enum RemotePage {
             "usageDays": L("{n}일", "{n}d"),
             "usageHours": L("{n}시간", "{n}h"),
             "usageMinutes": L("{n}분", "{n}m"),
+            "update": L("업데이트", "Update"),
+            "updCurrent": L("이 Mac의 버전", "This Mac's version"),
+            "updAvailable": L("업데이트 있음 {a} → {b}", "Update available {a} → {b}"),
+            "updInstall": L("지금 업데이트", "Update Now"),
+            "updCheck": L("업데이트 확인", "Check for Updates"),
+            "updConfirm": L("새 버전을 시험·빌드한 뒤 앱이 재시작돼요. 재시작하는 1~2분 동안 연결이 끊겨요. 실행 중인 작업 {n}개가 끝난 뒤 교체돼요. 업데이트할까요?",
+                            "The new version is tested and built, then the app restarts; the page is cut off for 1–2 minutes meanwhile. It is replaced after the {n} running tasks finish. Update now?"),
+            "updWaitWork": L("실행 중인 작업 {n}개가 끝나면 교체돼요", "Replaced once the {n} running tasks finish"),
+            "updRestarting": L("재시작 중… 다시 연결하는 중", "Restarting… reconnecting"),
+            "updLost": L("5분 동안 다시 연결되지 않았어요. 업데이트가 실패해 이전 버전으로 되돌아갔거나 Mac이 응답하지 않을 수 있어요. 계속 다시 연결해 볼게요.",
+                         "Not back after 5 minutes. The update may have failed and gone back to the previous version, or the Mac is not answering. Still trying to reconnect."),
+            "updConfirming": L("새 버전이 켜졌어요 · 설치 확정을 기다리는 중…", "The new version is up · waiting for the install to be confirmed…"),
+            "updDone": L("업데이트 완료 · {r}", "Updated · {r}"),
+            "updRolledBack": L("새 버전이 제대로 켜지지 않아 이전 버전으로 돌아왔어요.", "The new version did not start properly; the previous version is back."),
+            "updFailed": L("업데이트 실패", "Update failed"),
+            "updLast": L("마지막 설치", "Last install"),
+            "res-installed": L("성공", "Succeeded"),
+            "res-rolled-back": L("롤백됨", "Rolled back"),
+            "res-failed": L("실패", "Failed"),
+            "updRemote": L("원격", "remote"),
         ]
         let json = String(data: (try? JSONSerialization.data(withJSONObject: strings)) ?? Data("{}".utf8), encoding: .utf8) ?? "{}"
         return Data(template.replacingOccurrences(of: "__STRINGS__", with: json)
@@ -211,6 +231,21 @@ mark { background:rgba(255,214,10,.45); color:inherit; border-radius:3px; paddin
 .approval button { flex:1; font-size:16px; font-weight:500; padding:10px; border-radius:12px; border:0; }
 .allow { background:var(--accent); color:#fff !important; } .deny { background:var(--fill); }
 .approval button:disabled { opacity:.5; }
+/* The update screen (#update) and the list's update row. */
+.upd { padding:8px 0 24px; line-height:1.5; }
+.upd .kv { display:flex; justify-content:space-between; gap:12px; padding:10px 0; border-bottom:1px solid var(--line); }
+.upd .kv span { color:var(--dim); } .upd .kv b { font:600 15px ui-monospace, Menlo, monospace; }
+.upd .state { display:flex; align-items:flex-start; gap:8px; margin:14px 0 4px; }
+.upd .state .spin { margin-top:5px; }
+.upd .small { color:var(--dim); font-size:13px; overflow-wrap:anywhere; }
+.upd .ok { color:#2e9d4b; font-weight:500; margin:12px 0; } .upd .fail { color:var(--red); font-weight:500; margin:12px 0; }
+.upd .avail { margin:16px 0 8px; font-weight:600; }
+.upd .buttons { display:flex; gap:10px; margin:14px 0; }
+.upd button { flex:1; font-size:16px; font-weight:500; padding:10px; border-radius:12px; border:0; }
+.upd button:disabled { opacity:.5; }
+.upd .last { margin-top:22px; padding-top:12px; border-top:1px solid var(--line); }
+.updrow { margin:4px 10px 0; background:var(--fill); }
+.updrow .name > div { white-space:normal !important; }
 
 #usagePanel { width:min(560px, calc(100% - 24px)); max-height:calc(100% - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 24px);
   border:1px solid var(--line); border-radius:20px; padding:0; background:var(--bg); color:var(--text); }
@@ -279,6 +314,7 @@ footer { position:relative; padding:6px 10px calc(env(safe-area-inset-bottom) + 
   <div class="bar" id="listBar">
     <div class="mid" id="listTitle"><b>AI Illuminati</b></div>
     <button class="tool" id="usageTool" aria-haspopup="dialog"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.2 17a9 9 0 1 1 15.6 0H4.2ZM12 14l4-5"/><circle cx="12" cy="14" r="1"/></svg></button>
+    <button class="tool" id="updTool" aria-label="update"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v8M8.5 12.5 12 16l3.5-3.5"/></svg></button>
     <div class="spacer"></div>
     <button class="tool" id="compose" aria-label="new chat"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6"/><path d="M17.6 3.4a1.9 1.9 0 0 1 2.7 2.7L12 14.4l-3.6.9.9-3.6z"/></svg></button>
   </div>
@@ -289,6 +325,7 @@ footer { position:relative; padding:6px 10px calc(env(safe-area-inset-bottom) + 
         <input id="q" type="search" enterkeyhint="search" autocomplete="off" autocorrect="off"><button class="clear hidden" id="qClear" aria-label="clear">✕</button></label>
       <button class="cancel hidden" id="qCancel"></button>
     </div>
+    <a class="row updrow hidden" id="updRow" href="#update"><span class="mark"><span class="dot"></span></span><span class="name"><div id="updRowText"></div></span></a>
     <div id="list"></div>
   </div>
 </div>
@@ -343,9 +380,13 @@ const folded = new Set(JSON.parse(localStorage.getItem('folded') || '[]'));
 function esc(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function withKey(url) { return url + (url.includes('?') ? '&' : '?') + 'k=' + encodeURIComponent(KEY); }
 function colorStyle(c) { return c && c.length === 2 ? ' style="--cl:' + esc(c[0]) + ';--cd:' + esc(c[1]) + '"' : ''; }
-async function api(path, body) {
-  const r = await fetch(path, body === undefined ? { headers: { 'X-Remote-Key': KEY }, cache: 'no-store' }
-    : { method: 'POST', headers: { 'X-Remote-Key': KEY, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+// `timeout` (ms): a request left hanging (the Mac restarting) fails instead of stopping the polling.
+async function api(path, body, timeout) {
+  const options = body === undefined ? { headers: { 'X-Remote-Key': KEY }, cache: 'no-store' }
+    : { method: 'POST', headers: { 'X-Remote-Key': KEY, 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
+  const abort = timeout ? new AbortController() : null, timer = abort && setTimeout(() => abort.abort(), timeout);
+  if (abort) options.signal = abort.signal;
+  const r = await fetch(path, options).finally(() => clearTimeout(timer));
   const data = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(data.error || r.status);
   return data;
@@ -423,9 +464,10 @@ function back() {
 function route() {
   const h = location.hash;
   let m, id = null, project = null, isNew = false;
+  const isUpdate = h === '#update';
   if ((m = h.match(/^#c=(.+)$/))) id = decodeURIComponent(m[1]);
   else if ((m = h.match(/^#new(?:=(.*))?$/))) { isNew = true; project = m[1] ? decodeURIComponent(m[1]) : null; }
-  const key = id || (isNew ? 'new:' + (project || '') : null);
+  const key = isUpdate ? 'update' : id || (isNew ? 'new:' + (project || '') : null);
   const animate = navAnimate; navAnimate = false;
   if (current !== null) drafts[current] = $('text').value;
   if (!key) pushed = false;
@@ -442,6 +484,7 @@ function route() {
     else if (!id) $('turns').innerHTML = '<div class="note">' + esc(S.askAnything) + '</div>';
     $('chatScroll').scrollTop = 1e9;
     if (isNew) setTimeout(() => $('text').focus(), animate ? 380 : 0);
+    if (isUpdate) { $('turns')._upd = ''; $('footer').classList.add('hidden'); $('chatTitle').textContent = S.update; $('chatSub').textContent = ''; renderUpdate(); }
   }
   current = key;
   if (!key) { chatId = null; document.activeElement && document.activeElement.blur && document.activeElement.blur(); }
@@ -451,8 +494,8 @@ function route() {
 function poll() {
   clearTimeout(timer);
   if (document.hidden) return;
-  const work = chatId && current ? loadChat() : !current ? loadList() : Promise.resolve();
-  work.finally(() => { timer = setTimeout(poll, current ? 1500 : 4000); });
+  const work = current === 'update' ? loadUpdate() : chatId && current ? loadChat() : !current ? loadList() : Promise.resolve();
+  work.finally(() => { timer = setTimeout(poll, current === 'update' ? 2000 : current ? 1500 : 4000); });
 }
 
 // The list, in the Mac sidebar's sections; a project's chats fold under its row (remembered on this phone).
@@ -487,6 +530,7 @@ function renderList(data) {
 async function loadList() {
   if (searching) return;
   if (!KEY) { $('list').innerHTML = '<div class="note">' + esc(S.noKey) + '</div>'; return; }
+  loadUpdate();
   try {
     const data = await api('/api/chats');
     if (searching) return;
@@ -634,8 +678,86 @@ usagePanel.addEventListener('close', () => {
 });
 usageRefresh.addEventListener('click', () => loadUsage(true));
 document.addEventListener('visibilitychange', () => loadUsage());
+$('updTool').addEventListener('click', () => go('#update'));
+$('updRow').addEventListener('click', e => { e.preventDefault(); go('#update'); });
 
-
+// Updating this Mac from the phone: Update Now restarts the app, so the page loses it for a while. `track` (kept on this
+// phone) says which version it left from; a new version answering means done, the old one answering again after the
+// break (or reporting a failure) means it failed or went back, and 5 minutes without an answer says it may have.
+let upd = null, updNote = null, track = JSON.parse(localStorage.getItem('updTrack') || 'null');
+const LOST_AFTER = 5 * 60 * 1000;
+function short(r) { return String(r || '').slice(0, 7); }
+function saveTrack() { track ? localStorage.setItem('updTrack', JSON.stringify(track)) : localStorage.removeItem('updTrack'); }
+async function loadUpdate() {
+  try {
+    const s = await api('/api/update', undefined, 8000);
+    upd = s;
+    if (track) {
+      // The new app answers before it has acknowledged; only the installer's "installed" for this version is final.
+      if (s.current && s.current !== track.from) {
+        track.lostAt = null;
+        if (s.last && s.last.result === 'installed' && s.last.revision === s.current) { updNote = { ok: true, text: S.updDone.replace('{r}', short(s.current)) }; track = null; }
+        else track.confirming = true;
+      }
+      else if (s.busy || s.waiting) track.lostAt = null;   // a short break while it was still testing or building
+      else { updNote = { ok: false, text: track.lostAt ? S.updRolledBack : S.updFailed }; track = null; }
+      saveTrack();
+    }
+  } catch (e) {
+    if (String(e.message) === '401') upd = { error: S.noKey };
+    else if (track) { if (!track.lostAt) { track.lostAt = Date.now(); saveTrack(); } }
+    else upd = Object.assign({}, upd, { error: e.message || S.offline });
+  }
+  renderUpdate();
+}
+function renderUpdate() {
+  const s = upd || {}, offline = track && track.lostAt, confirming = track && !offline && track.confirming && s.current !== track.from;
+  const shown = s.available || s.busy || s.waiting || track;
+  $('updRow').classList.toggle('hidden', !shown || !!s.error && !track);
+  $('updRowText').textContent = offline ? S.updRestarting : confirming ? S.updConfirming : s.progress ? s.progress.summary
+    : s.waiting ? S.updWaitWork.replace('{n}', s.work || 0) : s.available ? S.updAvailable.replace('{a}', short(s.current)).replace('{b}', short(s.available)) : '';
+  if (current !== 'update') return;
+  let h = '<div class="upd">';
+  if (s.error && !track) h += '<div class="fail">' + esc(s.error) + '</div>';
+  if (s.current !== undefined) h += '<div class="kv"><span>' + esc(S.updCurrent) + '</span><b>' + esc(short(s.current) || '?') + '</b></div>' +
+    '<div class="kv"><span>' + esc(S.update) + '</span><span>' + esc(s.channelLabel || '') + '</span></div>';
+  if (offline) {
+    const lost = Date.now() - track.lostAt > LOST_AFTER;
+    h += '<div class="state">' + (lost ? '' : '<span class="spin"></span>') + '<div' + (lost ? ' class="fail"' : '') + '>' + esc(lost ? S.updLost : S.updRestarting) + '</div></div>';
+  } else if (confirming) {
+    h += '<div class="state"><span class="spin"></span><div>' + esc(S.updConfirming) + '</div></div>';
+  } else if (s.progress) {
+    h += '<div class="state">' + (s.progress.failed ? '' : '<span class="spin"></span>') + '<div>' + esc(s.progress.summary) +
+      (s.progress.line ? '<div class="small">' + esc(s.progress.line) + '</div>' : '') + '</div></div>';
+  } else if (s.text) h += '<div class="state"><div>' + esc(s.text) + '</div></div>';
+  if (s.waiting) h += '<div class="small">' + esc(S.updWaitWork.replace('{n}', s.work || 0)) + '</div>';
+  if (updNote) h += '<div class="' + (updNote.ok ? 'ok' : 'fail') + '">' + esc(updNote.text) + '</div>';
+  const free = s.current !== undefined && !s.busy && !s.waiting && !track;
+  if (s.available && free) h += '<div class="avail">' + esc(S.updAvailable.replace('{a}', short(s.current)).replace('{b}', short(s.available))) + '</div>';
+  if (s.current !== undefined) h += '<div class="buttons"><button class="deny" data-upd="check"' + (free ? '' : ' disabled') + '>' + esc(S.updCheck) + '</button>' +
+    (s.available ? '<button class="allow" data-upd="install"' + (free ? '' : ' disabled') + '>' + esc(S.updInstall) + '</button>' : '') + '</div>';
+  if (s.last) {
+    const at = s.last.at ? new Date(s.last.at) : null;
+    h += '<div class="last"><div><b>' + esc(S.updLast) + '</b> · ' + esc(S['res-' + s.last.result] || s.last.result) + (s.last.remote ? ' · ' + esc(S.updRemote) : '') +
+      (s.last.revision ? ' · ' + esc(short(s.last.revision)) : '') + (at && !isNaN(at) ? ' · ' + esc(at.toLocaleString()) : '') + '</div>' +
+      (s.last.detail ? '<div class="small">' + esc(s.last.detail) + '</div>' : '') + (s.last.log ? '<div class="small">' + esc(s.last.log) + '</div>' : '') + '</div>';
+  }
+  h += '</div>';
+  if ($('turns')._upd !== h) { $('turns')._upd = h; $('turns').innerHTML = h; }
+}
+$('turns').addEventListener('click', async e => {
+  const b = e.target.closest('button[data-upd]'); if (!b || current !== 'update') return;
+  const install = b.dataset.upd === 'install';
+  if (install && !confirm(S.updConfirm.replace('{n}', (upd && upd.work) || 0))) return;
+  b.disabled = true;
+  updNote = null;
+  try {
+    const s = await api('/api/update/' + b.dataset.upd, {});
+    upd = s;
+    if (install) { track = { from: s.current, to: s.available || '', at: Date.now() }; saveTrack(); }
+  } catch (err) { alert(err.message); }
+  renderUpdate();
+});
 
 // Search like the Mac sidebar: titles, messages and answers; a result opens its chat at the turn it was found in.
 function highlight(text, words) {

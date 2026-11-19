@@ -89,6 +89,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, PhoneU
             guard let self else { return false }
             return self.discussion.anyRunning || self.discussion.importingMaterials
         }
+        model.updater.activeWork = { [weak self] in
+            guard let self else { return 0 }
+            return self.discussion.runningRooms.count + (self.discussion.importingMaterials ? 1 : 0)
+        }
         // Published values arrive before assignment; deliver on the main queue to read the new state.
         updateIdleObservation = Publishers.CombineLatest(discussion.$runningRooms, discussion.$importingMaterials)
             .receive(on: DispatchQueue.main)
@@ -144,6 +148,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, PhoneU
         approvalObservation = ProjectCenter.shared.$requests.map(\.count).removeDuplicates().receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.showPending(); self?.rebuildMenu() }
         PhoneServer.shared.usage = self
+        // The phone page's update screen; an update started there is acknowledged once that page answers again.
+        PhoneServer.shared.updates = model.updater
+        model.updater.phoneReady = { PhoneServer.shared.reachable($0) }
         model.updater.start()
         // The bridge's tool socket and AI Face's older socket open first, then the link to AI Face (as before I).
         ToolHub.shared.start()

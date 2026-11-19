@@ -9,6 +9,7 @@ from unittest.mock import patch
 spec = importlib.util.spec_from_file_location('installer', Path(__file__).resolve().parents[1] / 'install_app.py')
 m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
+real_stop_app = m.stop_app
 
 
 class InstallerTests(unittest.TestCase):
@@ -107,6 +108,68 @@ class InstallerTests(unittest.TestCase):
                     self.run_install()
         record = json.loads((self.support / 'updates/transaction.json').read_text())
         self.assertTrue((Path(record['work']) / 'previous.app').exists())
+
+    def test_remote_install_waits_longer_and_records_it(self):
+        records = []
+        def started(*args, **kwargs):
+            records.append(json.loads((self.support / 'updates/transaction.json').read_text()))
+            self.started()
+        with patch.object(m.subprocess, 'run', started):
+            m.install(self.staged, self.target, self.current, self.support, 999, 'token', False, remote=True)
+        self.assertTrue(records[0]['remote'])
+        self.assertEqual(records[0]['ackSeconds'], m.REMOTE_ACK_SECONDS)
+        self.assertGreater(m.REMOTE_ACK_SECONDS, m.ACK_SECONDS)
+        state = json.loads((self.support / 'update.json').read_text())
+        self.assertEqual((state['lastResult'], state['lastRemote']), ('installed', '1'))
+        self.assertTrue(all(isinstance(value, str) for value in state.values()))
+
+    def test_remote_install_without_ack_rolls_back(self):
+        # The new app never writes the ack (its phone page did not come up): the old app comes back.
+        opened = []
+        (self.support / 'updates').mkdir(parents=True)
+        (self.support / 'updates/install.log').write_text('starting\nlast line here\n')
+        with patch.object(m, 'REMOTE_ACK_SECONDS', 0.3), patch.object(m.subprocess, 'run', lambda args, **kw: opened.append(args)):
+            with self.assertRaisesRegex(TimeoutError, 'phone page'):
+                m.install(self.staged, self.target, self.current, self.support, 999, 'token', False, remote=True)
+        self.assertEqual((self.target / 'content').read_text(), 'old')
+        self.assertEqual(opened[-1], ['/usr/bin/open', '-n', str(self.current)])
+        state = json.loads((self.support / 'update.json').read_text())
+        self.assertEqual((state['status'], state['lastResult'], state['lastRemote']), ('failed', 'rolled-back', '1'))
+        self.assertEqual(state['lastLog'], 'last line here')
+        self.assertTrue(all(isinstance(value, str) for value in state.values()))
+        self.assertEqual(json.loads((self.support / 'updates/transaction.json').read_text())['phase'], 'failed')
+
+    def test_first_install_failure_is_not_a_rollback(self):
+        m.shutil.rmtree(self.target)
+        with patch.object(m.subprocess, 'run', side_effect=RuntimeError('launch failed')):
+            with self.assertRaises(RuntimeError):
+                self.run_install()
+        self.assertEqual(json.loads((self.support / 'update.json').read_text())['lastResult'], 'failed')
+    def test_hung_candidate_ignoring_sigterm_is_killed_then_restored(self):
+        # The new app hangs and ignores SIGTERM: SIGKILL ends it, the old app is put back and opened again.
+        sent, alive = [], {'pids': [4242]}
+        def kill(pid, sig):
+            sent.append(sig)
+            if sig == m.signal.SIGKILL:
+                alive['pids'] = []
+        opened = []
+        with patch.object(m, 'stop_app', real_stop_app), patch.object(m, 'app_pids', lambda _: list(alive['pids'])), \
+                patch.object(m.os, 'kill', kill), patch.object(m, 'ACK_SECONDS', 0.2), \
+                patch.object(m.time, 'sleep', lambda _: None), \
+                patch.object(m.subprocess, 'run', lambda args, **kw: opened.append(args)):
+            clock = iter(range(0, 10**6, 1))
+            with patch.object(m.time, 'monotonic', lambda: next(clock) * 0.5):
+                with self.assertRaises(TimeoutError):
+                    self.run_install()
+        self.assertEqual(sent, [m.signal.SIGTERM, m.signal.SIGKILL])
+        self.assertEqual((self.target / 'content').read_text(), 'old')
+        self.assertEqual(opened[-1], ['/usr/bin/open', '-n', str(self.current)])
+        self.assertEqual(json.loads((self.support / 'update.json').read_text())['lastResult'], 'rolled-back')
+
+    def test_success_clears_last_log(self):
+        with patch.object(m.subprocess, 'run', self.started):
+            self.run_install()
+        self.assertEqual(json.loads((self.support / 'update.json').read_text())['lastLog'], '')
 
 
 if __name__ == '__main__':

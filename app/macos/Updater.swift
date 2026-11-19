@@ -20,6 +20,11 @@ final class Updater: ObservableObject {
     /// The branch updates come from: "stable" (default) or "main" (beta).
     @Published private(set) var channel = UpdateChannel.current
     var isBusy: () -> Bool = { false }
+    /// How many chats and imports are running, for the phone page's "replaced after n tasks" (isBusy is whether any is).
+    var activeWork: () -> Int = { 0 }
+    /// After an update started from the phone page: calls back true once that page answers again here
+    /// (PhoneServer.reachable). Until then the new app does not acknowledge, so the installer brings the old one back.
+    var phoneReady: (@escaping (Bool) -> Void) -> Void = { $0(false) }
     var onAvailableChange: () -> Void = {}
 
     static let every: TimeInterval = 3 * 3600, retry: TimeInterval = 10, first: TimeInterval = 60
@@ -43,11 +48,16 @@ final class Updater: ObservableObject {
     private var timer: Timer?
     private var waitingChannel: String?
     private var waitTask: DispatchWorkItem?
+    /// The install in progress was started from the phone page (kept while it waits for idle).
+    private var remoteInstall = false
+    /// The last state reported, saved or not (the phone page reads "testing", "building"… from it).
+    private var reported: [String: String] = [:]
     private var stateFile: URL { URL(fileURLWithPath: AccountStore.supportDir).appendingPathComponent("update.json") }
 
     init() {
         enabled = UserDefaults.app.object(forKey: "autoUpdate") as? Bool ?? true
         let state = loadState()
+        reported = state
         status = Self.describe(state)
         if state["status"] == "available", let next = state["next"], next != revision { available = next }
     }
@@ -113,8 +123,10 @@ final class Updater: ObservableObject {
     }
 
     /// Runs only after the user asks: tests, builds and installs the chosen channel's version.
-    func install() {
+    /// `remote`: asked from the phone page; the new app then acknowledges only once that page answers again.
+    func install(remote: Bool = false) {
         guard !checking, !installing else { return }
+        remoteInstall = remote
         let branch = channel
         cancelWaiting()
         progress = UpdateProgress(estimates: UpdateProgress.saved)
@@ -150,7 +162,7 @@ final class Updater: ObservableObject {
                 }
             } catch {
                 self.update { $0.failed = true }
-                if self.still(branch) { self.report(["status": "failed", "current": self.revision, "detail": String(describing: error)]) }
+                if self.still(branch) { self.reportFailedInstall(String(describing: error), remote: remote) }
             }
         }
     }
@@ -241,6 +253,7 @@ final class Updater: ObservableObject {
                             "--target", target.path, "--support", AccountStore.supportDir,
                             "--pid", String(ProcessInfo.processInfo.processIdentifier), "--token", token]
                 if SMAppService.mainApp.status == .enabled { args.append("--restore-login") }
+                if remoteInstall { args.append("--remote") }
                 process.arguments = args
                 process.currentDirectoryURL = URL(fileURLWithPath: "/")
                 process.environment = cleanEnvironment()
@@ -256,7 +269,7 @@ final class Updater: ObservableObject {
                 waitForInstaller(process, token: token, next: next, channel: channel, deadline: Date().addingTimeInterval(120))
             } catch {
                 update { $0.failed = true }
-                report(["status": "failed", "detail": String(describing: error)])
+                reportFailedInstall(String(describing: error), remote: remoteInstall)
             }
         }
     }
@@ -297,7 +310,7 @@ final class Updater: ObservableObject {
                 if process.isRunning { process.terminate() }
                 self.installing = false
                 self.update { $0.failed = true }
-                self.report(["status": "failed", "detail": L("설치 준비 실패: updates/install.log를 확인해 주세요", "Installer preparation failed; see updates/install.log")])
+                self.reportFailedInstall(L("설치 준비 실패: updates/install.log를 확인해 주세요", "Installer preparation failed; see updates/install.log"), remote: self.remoteInstall)
             } else { self.waitForInstaller(process, token: token, next: next, channel: channel, deadline: deadline) }
         }
     }
@@ -310,7 +323,7 @@ final class Updater: ObservableObject {
         if isBusy() { waitForIdle(branch); return }
         cancelWaiting()
         report(["status": "resuming"], save: false)
-        install()
+        install(remote: remoteInstall)
         update { $0.show(L("작업 완료 확인 · 준비된 업데이트를 적용해요", "Work finished · applying prepared update")) }
     }
 
@@ -337,24 +350,68 @@ final class Updater: ObservableObject {
         let journal = updates.appendingPathComponent("transaction.json")
         guard let data = try? Data(contentsOf: journal),
               let record = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
-        if record["phase"] as? String == "starting",
-           record["target"] as? String == Bundle.main.bundleURL.path,
-           record["revision"] as? String == revision, let token = record["token"] as? String,
-           UUID(uuidString: token) != nil {
+        if let token = InstallAck.token(record, app: Bundle.main.bundleURL.path, revision: revision) {
             if record["restoreLogin"] as? Bool == true {
                 do { try SMAppService.mainApp.register() }
                 catch { report(["status": "failed", "detail": "Login item registration failed: \(error)"]) }
             }
-            let confirmation: [String: Any] = ["revision": revision, "pid": ProcessInfo.processInfo.processIdentifier]
-            if let ack = try? JSONSerialization.data(withJSONObject: confirmation) {
-                try? ack.write(to: updates.appendingPathComponent(token + ".ack"), options: .atomic)
-            }
+            let updates = updates, revision = revision
+            let ack = { InstallAck.write(token: token, revision: revision, in: updates) }
+            guard record["remote"] as? Bool == true else { return ack() }
+            // Started from the phone page: only a page that answers again counts as started; stop asking a little
+            // before the installer gives up, so no late acknowledgement is left behind.
+            let seconds = (record["ackSeconds"] as? Double ?? 180) - 10
+            InstallAck.whenReady(phoneReady, until: Date().addingTimeInterval(seconds), then: ack)
         } else if record["phase"] as? String == "failed", record["restoreLogin"] as? Bool == true {
             try? SMAppService.mainApp.register()
         }
     }
 
     struct Failure: Error, CustomStringConvertible { let description: String }
+
+    // MARK: Phone page (PhoneServer: GET /api/update, POST /api/update/check, POST /api/update/install)
+
+    /// What the phone page's update screen shows. `last` is the last install's result, kept across checks.
+    func phoneState(at now: Date = Date()) -> [String: Any] {
+        var state: [String: Any] = ["current": revision, "channel": channel, "channelLabel": UpdateChannel.label(channel),
+                                    "status": reported["status"] ?? "", "text": status, "busy": checking || installing,
+                                    "waiting": waitingChannel != nil, "work": activeWork()]
+        if let available { state["available"] = available }
+        if let next = reported["next"] { state["next"] = next }
+        if let p = progress {
+            state["progress"] = ["stage": p.stage + 1, "count": UpdateProgress.count, "summary": p.summary(at: now),
+                                 "line": p.line, "failed": p.failed, "waiting": p.waiting]
+        }
+        let saved = loadState()
+        if let result = saved["lastResult"], !result.isEmpty {
+            state["last"] = ["result": result, "detail": saved["lastDetail"] ?? "", "revision": saved["lastRevision"] ?? "",
+                             "at": saved["lastAt"] ?? "", "remote": saved["lastRemote"] == "1",
+                             "log": saved["lastLog"] ?? ""]
+        }
+        return state
+    }
+
+    /// nil when a check started; otherwise why not.
+    func phoneCheck() -> String? {
+        guard !checking, !installing, waitingChannel == nil else { return L("이미 업데이트 작업 중이에요.", "An update step is already running.") }
+        check()
+        return nil
+    }
+
+    /// nil when the install started; otherwise why not. Only a version a check found is installed from the phone.
+    func phoneInstall() -> String? {
+        guard !checking, !installing else { return L("이미 업데이트 작업 중이에요.", "An update step is already running.") }
+        guard waitingChannel == nil else { return L("업데이트가 준비돼 작업이 끝나길 기다리는 중이에요.", "The update is prepared and waits for running work to finish.") }
+        guard available != nil else { return L("설치할 새 버전이 없어요. 먼저 확인해 주세요.", "No new version to install. Check first.") }
+        install(remote: true)
+        return nil
+    }
+
+    /// A failed Update Now, also kept as the last install's result.
+    private func reportFailedInstall(_ detail: String, remote: Bool) {
+        report(["status": "failed", "current": revision, "detail": detail, "lastResult": "failed", "lastDetail": detail,
+                "lastRevision": "", "lastAt": ISO8601DateFormatter().string(from: Date()), "lastRemote": remote ? "1" : "", "lastLog": ""])
+    }
 
     @discardableResult
     private func git(_ arguments: String..., timeout: TimeInterval = 60) throws -> String {
@@ -430,13 +487,15 @@ final class Updater: ObservableObject {
         var state = state
         state["at"] = ISO8601DateFormatter().string(from: Date())
         if save {
+            // The last install's result stays until the next install replaces it.
+            for (key, value) in loadState() where key.hasPrefix("last") && state[key] == nil { state[key] = value }
             try? FileManager.default.createDirectory(atPath: AccountStore.supportDir, withIntermediateDirectories: true)
             if let data = try? JSONSerialization.data(withJSONObject: state, options: [.prettyPrinted, .sortedKeys]) {
                 try? data.write(to: stateFile, options: .atomic)
             }
         }
         let text = Self.describe(state)
-        DispatchQueue.main.async { self.status = text }
+        DispatchQueue.main.async { self.reported = state; self.status = text }
     }
 
     static func describe(_ s: [String: String]) -> String {
@@ -474,8 +533,39 @@ final class Updater: ObservableObject {
             return L("이 맥의 앱이 \(label)보다 새 버전이에요. \(label)이 따라잡으면 업데이트돼요",
                      "This Mac already runs a newer version than \(label); it updates once \(label) catches up") + when
         case "unavailable": return L("업데이트 소스를 준비하지 못했어요", "Update source is unavailable")
+        case "failed" where s["lastResult"] == "rolled-back" && s["lastDetail"] == s["detail"]:
+            return L("새 버전이 제대로 켜지지 않아 이전 버전으로 되돌렸어요: ", "The new version did not start properly; went back to the previous one: ") + (s["detail"] ?? "") + when
         case "failed": return L("업데이트 실패, 지금 버전을 그대로 써요: ", "Update failed; keeping this version: ") + (s["detail"] ?? "") + when
         default: return ""
+        }
+    }
+}
+
+/// The new app's "I started" for install_app.py (`<token>.ack`). Without it in time the installer puts the previous app back.
+enum InstallAck {
+    /// The token to acknowledge when this launch is the one the transaction started; nil otherwise.
+    static func token(_ record: [String: Any], app: String, revision: String) -> String? {
+        guard record["phase"] as? String == "starting", record["target"] as? String == app,
+              record["revision"] as? String == revision, let token = record["token"] as? String,
+              UUID(uuidString: token) != nil else { return nil }
+        return token
+    }
+
+    static func write(token: String, revision: String, in updates: URL) {
+        let confirmation: [String: Any] = ["revision": revision, "pid": ProcessInfo.processInfo.processIdentifier]
+        if let ack = try? JSONSerialization.data(withJSONObject: confirmation) {
+            try? ack.write(to: updates.appendingPathComponent(token + ".ack"), options: .atomic)
+        }
+    }
+
+    /// Asks `ready` every `every` seconds and acknowledges the first time it says yes; after `deadline` it stops
+    /// asking and never acknowledges. `ready` calls back on the main queue.
+    static func whenReady(_ ready: @escaping (@escaping (Bool) -> Void) -> Void, every: TimeInterval = 2, until deadline: Date,
+                          then ack: @escaping () -> Void) {
+        ready { ok in
+            guard Date() < deadline else { return }
+            if ok { return ack() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + every) { whenReady(ready, every: every, until: deadline, then: ack) }
         }
     }
 }

@@ -14,6 +14,25 @@ import subprocess
 import tempfile
 import time
 
+# Seconds the new app has to acknowledge its start. An install started from the phone page waits longer: the new app
+# acknowledges only once that page answers again (otherwise nobody away from the Mac could bring it back).
+ACK_SECONDS, REMOTE_ACK_SECONDS = 60, 180
+
+
+def now():
+    return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+
+def last_log_line(updates):
+    try:
+        with (updates / 'install.log').open('rb') as stream:
+            stream.seek(0, os.SEEK_END)
+            stream.seek(max(0, stream.tell() - 4096))
+            lines = [line.strip() for line in stream.read().decode('utf-8', 'replace').splitlines() if line.strip()]
+        return lines[-1][:160] if lines else ''
+    except OSError:
+        return ''
+
 
 def atomic_json(path, value):
     path = Path(path)
@@ -70,13 +89,21 @@ def app_pids(app):
 
 
 def stop_app(app):
-    for pid in app_pids(app):
-        os.kill(pid, signal.SIGTERM)
-    deadline = time.monotonic() + 10
-    while app_pids(app):
-        if time.monotonic() > deadline:
-            raise RuntimeError('New app still running; backup preserved')
-        time.sleep(0.1)
+    # A hung candidate may ignore SIGTERM; nobody may be at the Mac to quit it, so it is killed before the restore.
+    for sig, seconds in [(signal.SIGTERM, 10), (signal.SIGKILL, 5)]:
+        for pid in app_pids(app):
+            try:
+                os.kill(pid, sig)
+            except ProcessLookupError:
+                pass
+        deadline = time.monotonic() + seconds
+        while app_pids(app):
+            if time.monotonic() > deadline:
+                break
+            time.sleep(0.1)
+        else:
+            return
+    raise RuntimeError('New app still running; backup preserved')
 
 
 def recover(support):
@@ -108,7 +135,7 @@ def recover(support):
         return record
 
 
-def install(staged, target, current, support, parent_pid, token, restore_login, quit_parent=False):
+def install(staged, target, current, support, parent_pid, token, restore_login, quit_parent=False, remote=False):
     support.mkdir(parents=True, exist_ok=True, mode=0o700)
     updates = support / 'updates'
     updates.mkdir(exist_ok=True, mode=0o700)
@@ -140,6 +167,8 @@ def install(staged, target, current, support, parent_pid, token, restore_login, 
         record = dict(token=token, target=str(target), current=str(current),
                       work=str(work), revision=revision, restoreLogin=restore_login,
                       parentPID=parent_pid, phase='prepared')
+        if remote:
+            record.update(remote=True, ackSeconds=REMOTE_ACK_SECONDS)
         replaced = False
         try:
             shutil.copytree(staged, prepared, symlinks=True)
@@ -162,10 +191,11 @@ def install(staged, target, current, support, parent_pid, token, restore_login, 
             record['phase'] = 'starting'
             atomic_json(journal, record)
             subprocess.run(['/usr/bin/open', '-n', str(target)], check=True, cwd='/')
-            deadline = time.monotonic() + 60
+            deadline = time.monotonic() + (REMOTE_ACK_SECONDS if remote else ACK_SECONDS)
             while not ack.exists():
                 if time.monotonic() > deadline:
-                    raise TimeoutError('New app did not acknowledge startup')
+                    raise TimeoutError('New app did not acknowledge startup'
+                                       + (' (phone page not reachable)' if remote else ''))
                 time.sleep(0.2)
             # Only the expected bundle/revision writes this transaction-specific acknowledgement.
             confirmation = json.loads(ack.read_text())
@@ -173,8 +203,10 @@ def install(staged, target, current, support, parent_pid, token, restore_login, 
                 raise ValueError('Wrong startup acknowledgement')
             record['phase'] = 'complete'
             atomic_json(journal, record)
-            atomic_json(support / 'update.json', dict(status='updated', current=revision, previous=previous_revision,
-                        at=datetime.datetime.now(datetime.timezone.utc).isoformat()))
+            # Strings only: the app reads update.json as [String: String]. last* is kept by later checks.
+            at = now()
+            atomic_json(support / 'update.json', dict(status='updated', current=revision, previous=previous_revision, at=at,
+                        lastResult='installed', lastRevision=revision, lastAt=at, lastRemote='1' if remote else '', lastLog=''))
             shutil.rmtree(work)
             journal.unlink()
         except Exception as error:
@@ -182,6 +214,7 @@ def install(staged, target, current, support, parent_pid, token, restore_login, 
             # path before restoring the bundle; never overwrite a running candidate.
             if replaced:
                 stop_app(target)
+            rolled_back = replaced and backup.exists()
             if backup.exists():
                 if target.exists():
                     shutil.rmtree(target)
@@ -193,8 +226,11 @@ def install(staged, target, current, support, parent_pid, token, restore_login, 
             atomic_json(journal, record)
             # The app cancels before swapping when a chat or game starts; it records "waiting" itself.
             if not (isinstance(error, InterruptedError) and not replaced):
-                atomic_json(support / 'update.json', dict(status='failed', detail=str(error),
-                            at=datetime.datetime.now(datetime.timezone.utc).isoformat()))
+                at = now()
+                atomic_json(support / 'update.json', dict(status='failed', detail=str(error), at=at,
+                            lastResult='rolled-back' if rolled_back else 'failed', lastDetail=str(error),
+                            lastRevision=revision, lastAt=at, lastRemote='1' if remote else '',
+                            lastLog=last_log_line(updates)))
             if not alive(parent_pid):
                 subprocess.run(['/usr/bin/open', '-n', str(current)], cwd='/', check=False)
             if work.exists() and not backup.exists():
@@ -219,6 +255,7 @@ def main():
     parser.add_argument('--pid', type=int)
     parser.add_argument('--restore-login', action='store_true')
     parser.add_argument('--legacy', action='store_true')
+    parser.add_argument('--remote', action='store_true')
     args = parser.parse_args()
     def cancelled(signum, frame):
         raise InterruptedError('Installation cancelled before completion')
@@ -231,7 +268,7 @@ def main():
     if args.pid is None:
         parser.error('--pid is required without --legacy')
     install(Path(args.staged).resolve(), Path(args.target).absolute(), Path(args.current).resolve(),
-            Path(args.support).resolve(), args.pid, args.token, args.restore_login, args.legacy)
+            Path(args.support).resolve(), args.pid, args.token, args.restore_login, args.legacy, args.remote)
 
 
 if __name__ == '__main__':

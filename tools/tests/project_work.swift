@@ -430,7 +430,9 @@ func testFullAuto() {
     let parts = projectText.components(separatedBy: "\n" + NativeSessions.turnMarker + "\n")
     expect(parts.count == 2 && parts[0].contains("/repo (linked Git project") && parts[0].contains("git_status") && parts[0].contains("Tabs.")
             && !parts[0].contains("[Some files") && !parts[0].contains(Discussion.fullAutoNote) && !parts[0].contains("[Picture rule]")
-            && parts[1].contains("[Some files, contents not read]") && parts[1].contains(Discussion.fullAutoNote) && parts[1].contains("[Picture rule]"),
+            && parts[1].contains("[Some files, contents not read]") && parts[1].contains(Discussion.fullAutoNote) && parts[1].contains("[Picture rule]")
+            && !parts[0].contains("approves the exact command") && !parts[0].contains("sandbox has no network") && !parts[1].contains("approves the exact command")
+            && compose(.init(root: "/repo", fullAuto: false, rules: "")).components(separatedBy: NativeSessions.turnMarker).last!.contains("the user approves the exact command"),
            "fixed rules (identity, folders, project, safety) come before the turn marker; files, mode and notes after it")
     print("PASS: full auto (no cards for commands, 8 hours, stable still asks, no Git credentials, git push blocked, rm to Trash outside temp)")
 }

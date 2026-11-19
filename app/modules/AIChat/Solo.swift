@@ -1045,15 +1045,19 @@ extension Discussion {
                 [Project work] Project: \(project.root).
                 Use native file tools to inspect/edit, but use git_* for all Git actions and project_run for named privileged test/build commands.
                 Start with git_status. Pull only if clean, never pull/stash/reset during dirty handoff. Preserve existing user changes.
-                Your sandbox has no network, Keychain, pseudo-terminals or writes outside the project, so tests/builds that need them fail there.
                 If a needed test/build command is not in .ai-illuminati.json, add it yourself, e.g. {"version":1,"commands":{"test":{"executable":"/bin/zsh","args":["tools/test.sh"]}}}
-                (absolute executable, args array, commands from the project's CLAUDE.md/AGENTS.md/README), then call project_run; the user approves the exact command.
+                (absolute executable, args array, commands from the project's CLAUDE.md/AGENTS.md/README), then call project_run.
                 Run relevant tests before commit/push. If tests could not pass (including sandbox-only failures), do not push; report and ask.
                 Commit explicit changed paths, then push main/current feature branch when complete.
                 If the work has 3 or more steps, first show your steps with work_plan and update it whenever a step starts or ends; mark a test step done only after the tests pass.
                 Publish stable only if the user requested it; an app approval card is mandatory. Do not bypass approvals via scripts.
                 """)
-            if project.fullAuto { turn.append(Self.fullAutoNote) }
+            // How commands run and who approves them depends on the mode, so it stays with the turn: a fixed
+            // "needs approval" line would outrank FULL AUTO's "no approval needed" as the system prompt.
+            turn.append(project.fullAuto ? Self.fullAutoNote : """
+                Your sandbox has no network, Keychain, pseudo-terminals or writes outside the project, so tests/builds that need them fail there.
+                project_run: the user approves the exact command.
+                """)
             parts.append("""
                 Approvals may wait; the user sees the card in this chat. If refused, stop that action and explain.
                 Use process foreground commands, never leave background writers.

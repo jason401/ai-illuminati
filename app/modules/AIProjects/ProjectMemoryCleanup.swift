@@ -54,6 +54,9 @@ public enum ProjectMemoryCleanup {
     public enum Outcome: Equatable { case applied(ProjectMemoryCleanupRecord), refused(String) }
 
     static func file(_ project: String) -> URL { ProjectMemoryStore.folder(project).appendingPathComponent("memory-cleanups.json") }
+    private static func attemptFile(_ project: String) -> URL {
+        ProjectMemoryStore.folder(project).appendingPathComponent("memory-cleanup-attempt.json")
+    }
     private static let lock = NSLock()
     private static let encoder: JSONEncoder = {
         let e = JSONEncoder(); e.dateEncodingStrategy = .iso8601; e.outputFormatting = [.sortedKeys, .prettyPrinted]; return e
@@ -67,6 +70,27 @@ public enum ProjectMemoryCleanup {
     }
     public static func last(_ project: String) -> ProjectMemoryCleanupRecord? { records(project).last }
 
+    // Save before calling any AI. An interrupted or failed meeting still counts as an attempt.
+    public static func recordAttempt(_ project: String, at: Date) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        do {
+            let file = attemptFile(project)
+            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true,
+                                                    attributes: [.posixPermissions: 0o700])
+            try encoder.encode(at).write(to: file, options: .atomic)
+            return true
+        } catch { return false }
+    }
+
+    public static func pending(_ project: String) -> [ProjectMemoryEdit] {
+        let edits = last(project)?.deferred ?? []
+        let history = ProjectMemoryStore.shared.history(project)
+        let marks = ProjectMemoryStore.deleted(history)
+        return edits.filter { edit in
+            edit.text.map { $0.count <= ProjectMemoryStore.textLimit && !containsDeletedText($0, marks: marks) } ?? true
+        }
+    }
+
     private static func read(_ project: String) -> [ProjectMemoryCleanupRecord] {
         (try? Data(contentsOf: file(project))).flatMap { try? decoder.decode([ProjectMemoryCleanupRecord].self, from: $0) } ?? []
     }
@@ -77,8 +101,13 @@ public enum ProjectMemoryCleanup {
     public static func due(_ project: String, answers: Int, manual: Bool = false, now: Date = Date(),
                            size: (ProjectMemoryNote) -> Int = { $0.text.count + 40 }) -> Bool {
         if manual { return true }
-        let since = last(project).map { now.timeIntervalSince($0.at) } ?? .infinity
-        if since >= interval && answers >= minAnswers { return true }
+        lock.lock()
+        let last = read(project).last?.at
+        let attempt = (try? Data(contentsOf: attemptFile(project))).flatMap { try? decoder.decode(Date.self, from: $0) }
+        lock.unlock()
+        if let last, now.timeIntervalSince(last) < interval { return false }
+        if let attempt, last.map({ attempt > $0 }) ?? true, now.timeIntervalSince(attempt) < 3_600 { return false }
+        if answers >= minAnswers { return true }
         let used = ProjectMemoryStore.shared.notes(project).filter { $0.state == .active }.reduce(0) { $0 + size($1) + 1 }
         return Double(used) > Double(ProjectMemoryStore.budget) * fullShare
     }
@@ -119,10 +148,8 @@ public enum ProjectMemoryCleanup {
             }
             for edit in edits {
                 func drop(_ reason: String) { record.dropped.append(.init(edit: edit, reason: reason)) }
-                guard edit.agreed else { record.deferred.append(edit); continue }
                 let evidence = Array(Set(edit.evidence.compactMap(found))).sorted()
                 guard !evidence.isEmpty else { drop("no evidence from the material"); continue }
-                guard applied < maxEdits else { record.deferred.append(edit); continue }
                 let picked = edit.ids.map(index)
                 guard !picked.contains(nil) else { drop("no such note"); continue }
                 var targets: [Int] = []
@@ -131,8 +158,17 @@ public enum ProjectMemoryCleanup {
                 var text = edit.text?.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespacesAndNewlines)
                 if [.merge, .fix, .shorten, .add].contains(edit.kind) {
                     guard let t = text, !t.isEmpty, t.count <= ProjectMemoryStore.textLimit else { drop("no text, or over the limit"); continue }
-                    guard !marks.contains(ProjectMemoryStore.mark(t)) else { drop("brings back a deleted text"); continue }
+                    if containsDeletedText(t, marks: marks) {
+                        var redacted = edit; redacted.text = nil
+                        record.dropped.append(.init(edit: redacted, reason: "brings back a deleted text"))
+                        continue
+                    }
                     text = t
+                }
+                if !edit.agreed || applied >= maxEdits {
+                    var deferred = edit; deferred.evidence = evidence
+                    if !record.deferred.contains(deferred) { record.deferred.append(deferred) }
+                    continue
                 }
                 func fresh(_ kind: ProjectMemoryNote.Kind, verified: Bool, pinned: Bool, replaces: UUID?) -> ProjectMemoryNote {
                     var n = ProjectMemoryNote(kind: kind, text: text ?? "", by: ProjectMemoryChange.byMeeting, verified: verified,
@@ -185,7 +221,7 @@ public enum ProjectMemoryCleanup {
                 }
                 applied += 1
             }
-            fold(&notes, now: now, record: &record, line: { action, note, others in line(action, note, others: others) })
+            fold(&notes, now: now, marks: marks, record: &record, line: { action, note, others in line(action, note, others: others) })
             return lines
         }
         if let failure { return .refused(failure) }
@@ -202,7 +238,19 @@ public enum ProjectMemoryCleanup {
 
     // The app's rule: committed work logs older than `logDays` become one line per ISO week (a week's line made
     // before joins them), and weekly lines older than `weekDays` (a week whose newest work is) go to the archive.
-    static func fold(_ notes: inout [ProjectMemoryNote], now: Date, record: inout ProjectMemoryCleanupRecord,
+    private static func containsDeletedText(_ text: String, marks: Set<String>) -> Bool {
+        guard !marks.isEmpty else { return false }
+        let words = text.split(whereSeparator: \.isWhitespace)
+        for start in words.indices {
+            for end in start..<words.count {
+                let passage = text[words[start].startIndex..<words[end].endIndex]
+                if marks.contains(ProjectMemoryStore.mark(String(passage))) { return true }
+            }
+        }
+        return false
+    }
+
+    static func fold(_ notes: inout [ProjectMemoryNote], now: Date, marks: Set<String>, record: inout ProjectMemoryCleanupRecord,
                      line: (String, ProjectMemoryNote, [ProjectMemoryNote]) -> Void) {
         var calendar = Calendar(identifier: .iso8601); calendar.timeZone = .current
         func week(_ date: Date) -> String {
@@ -224,7 +272,9 @@ public enum ProjectMemoryCleanup {
             let prefix = key + " · work log · "
             let joined = members.map { work(notes[$0].text) }.filter { !$0.isEmpty }.joined(separator: "; ")
             let room = ProjectMemoryStore.textLimit - prefix.count
-            var note = ProjectMemoryNote(kind: .log, text: prefix + (joined.count > room ? String(joined.prefix(room - 1)) + "…" : joined),
+            let text = prefix + (joined.count > room ? String(joined.prefix(room - 1)) + "…" : joined)
+            guard !containsDeletedText(text, marks: marks) else { continue }
+            var note = ProjectMemoryNote(kind: .log, text: text,
                                          verified: members.allSatisfy { notes[$0].verified }, pinned: members.contains { notes[$0].pinned },
                                          createdAt: newest)
             var seen = Set<String>()

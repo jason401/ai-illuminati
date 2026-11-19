@@ -438,6 +438,7 @@ private func checkProjectMemoryCleanupStorage() {
         ProjectMemoryEdit(kind: .add, text: "근거 없는 새 규칙", evidence: [], agreed: true),
         ProjectMemoryEdit(kind: .add, text: "자료에 없는 근거", evidence: [UUID().uuidString, "1234567"], agreed: true),
         ProjectMemoryEdit(kind: .add, text: "고객사 이름은 아크메.", evidence: [chat.uuidString], agreed: true),
+        ProjectMemoryEdit(kind: .add, text: "참고 사항: 고객사 이름은 아크메. 다음 작업도 검토한다.", evidence: [chat.uuidString], agreed: true),
         ProjectMemoryEdit(kind: .archive, ids: [UUID().uuidString], evidence: [hash], agreed: true),
         ProjectMemoryEdit(kind: .verify, ids: [a.id.uuidString], verified: true, evidence: [hash], agreed: true),
         ProjectMemoryEdit(kind: .add, text: "의견이 갈린 규칙", evidence: [hash], agreed: false),
@@ -445,12 +446,14 @@ private func checkProjectMemoryCleanupStorage() {
     guard let first = applied(ProjectMemoryCleanup.apply(edits, meeting: meeting, attendees: ["Claude", "Codex"], chats: [chat], commits: [hash], project: key, now: now))
     else { expect(false, "cleanup applied"); return }
     let merged = store.notes(key).first { $0.state == .active && $0.text == "빌드는 --stage, 설치는 사용자가" }
-    expect(first.merged == 1 && first.fixed == 1 && first.added == 0 && first.archived == 0 && first.dropped.count == 5
+    expect(first.merged == 1 && first.fixed == 1 && first.added == 0 && first.archived == 0 && first.dropped.count == 6
            && first.deferred.map(\.text) == ["의견이 갈린 규칙"] && merged != nil && current(a.id)?.state == .archived
            && current(a.id)?.replacedBy == merged?.id && current(c.id)?.state == .archived,
            "agreed edits with evidence apply; no evidence, evidence not in the material, a missing or archived note are dropped; a split one waits")
     expect(!store.notes(key).contains { $0.text.contains("아크메") || $0.text.contains("근거") }
-           && first.dropped.contains { $0.reason.contains("deleted") }, "a text the user deleted is not brought back by a meeting")
+           && first.dropped.filter { $0.reason.contains("deleted") }.count == 2
+           && first.dropped.allSatisfy { $0.edit.text?.contains("아크메") != true },
+           "a deleted text is blocked alone and inside a longer note without storing either rejected text")
     let lines = store.history(key).filter { $0.batch == meeting }
     expect(lines.count == 2 && lines.allSatisfy { $0.who == ProjectMemoryChange.byMeeting && $0.evidence?.isEmpty == false }
            && lines.first?.evidence == [chat.uuidString] && lines.last?.evidence == [hash],
@@ -473,7 +476,14 @@ private func checkProjectMemoryCleanupStorage() {
            && ProjectMemoryCleanup.due(key, answers: 5, now: now.addingTimeInterval(25 * 3_600))
            && !ProjectMemoryCleanup.due(key, answers: 4, now: now.addingTimeInterval(25 * 3_600)), "a day and 5 answers since the last cleanup")
     for i in 0..<8 { _ = store.add(ProjectMemoryNote(kind: .decision, text: "긴 메모 \(i) " + String(repeating: "가", count: 440)), project: key) }
-    expect(ProjectMemoryCleanup.due(key, answers: 0, now: now.addingTimeInterval(60)), "notes over 80% of the budget: due at once")
+    let tomorrow = now.addingTimeInterval(25 * 3_600)
+    expect(!ProjectMemoryCleanup.due(key, answers: 0, now: now.addingTimeInterval(60))
+           && ProjectMemoryCleanup.due(key, answers: 0, now: tomorrow), "over-budget memory still respects the successful cleanup interval")
+    expect(ProjectMemoryCleanup.recordAttempt(key, at: tomorrow)
+           && !ProjectMemoryCleanup.due(key, answers: 10, now: tomorrow.addingTimeInterval(300))
+           && ProjectMemoryCleanup.due(key, answers: 10, manual: true, now: tomorrow.addingTimeInterval(300))
+           && ProjectMemoryCleanup.due(key, answers: 0, now: tomorrow.addingTimeInterval(3_601)),
+           "a failed or interrupted attempt backs off for an hour; manual cleanup can retry")
 
     // The app's rule: committed logs older than 14 days fold into one line per ISO week; a week older than 30 days is archived.
     let day = 86_400.0
@@ -559,15 +569,18 @@ func testProjectMemoryCleanup() {
             var copy = turn; copy.id = UUID(); return copy
         }
         let room = Conversation(updatedAt: now, turns: Array(turns.prefix(4)), summary: "changed fixture summary", workspace: workspace)
-        let unchanged = Conversation(updatedAt: now.addingTimeInterval(-3 * 86_400), summary: "old fixture summary", workspace: workspace)
+        let unchanged = Conversation(updatedAt: now, summary: "renamed but no recent answer", workspace: workspace)
+        let withoutSummary = Conversation(turns: [turn], workspace: workspace)
         discussion.conversations = [room, unchanged]
         discussion.currentID = room.id
         let reply = """
+        Here is the result [with sources].
         ```json
         [{"kind":"add","ids":[],"text":"applied fixture change","noteKind":"decision","evidence":["\(room.id)","\(hash)"],"agreed":true},
-         {"kind":"add","ids":[],"text":"deferred fixture change","evidence":["\(hash)"],"agreed":false},
+         {"kind":"add","ids":[],"text":"deferred fixture change","evidence":["\(hash)","\(room.id)"],"agreed":false},
          {"kind":"add","ids":[],"text":"unseen fixture evidence","evidence":["\(unchanged.id)"],"agreed":true}]
         ```
+        These were the agreed and deferred changes.
         """
         let promptLock = NSLock()
         var prompts: [(String, String, WorkspaceBinding)] = []
@@ -592,6 +605,7 @@ func testProjectMemoryCleanup() {
         discussion.runningRooms.remove(room.id)
         expect(!start(), "four completed answers are below the automatic threshold")
         discussion.change(room.id) { $0.turns = turns }
+        discussion.conversations.append(withoutSummary)
         model.accounts = [claude]
         expect(!start(), "one available AI skips cleanup")
         model.accounts = [claude, codex]
@@ -604,14 +618,15 @@ func testProjectMemoryCleanup() {
                && Set(record?.attendees ?? []) == Set(model.accounts.map(discussion.label)),
                "the decoded result is applied with actual attendees, agreement and evidence")
         expect(store.notes(key).contains { $0.text == "applied fixture change" }, "one agreed note was added automatically")
-        expect(hidden?.meetingOf?.room == room.id && hidden?.turns.first?.answeredAt != nil && hidden?.shareToDevices == false
-               && discussion.listedConversations.count == 2 && discussion.currentID == room.id && discussion.current.turns.count == 5,
-               "the app creates a private hidden meeting without adding a user turn or changing the current chat")
+        expect(hidden == nil && discussion.listedConversations.count == 3 && discussion.currentID == room.id
+               && discussion.current.turns.count == 5,
+               "the app discards its private meeting without adding a user turn or changing the current chat")
         let speeches = prompts.filter { $0.1.contains("[MODE3 SPEECH]") }
         expect(Set(speeches.map(\.0)) == [claude.id, codex.id] && speeches.allSatisfy { _, prompt, view in
             ["The app called", "[App agenda]", "active fixture note", "progress, pinned", "changed fixture summary", room.id.uuidString,
-             hash, "recent Git subject", "fixture HANDOFF", "finished fixture TODO", "fixture completion report"].allSatisfy(prompt.contains)
-                && ["[User]", "raw fixture", "old fixture summary", "old Git subject", "archived fixture note", "unfinished fixture TODO"]
+             hash, "recent Git subject", "fixture HANDOFF", "finished fixture TODO", "fixture completion report",
+             "1 recently answered chats have no saved summary"].allSatisfy(prompt.contains)
+                && ["[User]", "raw fixture", "renamed but no recent answer", "old Git subject", "archived fixture note", "unfinished fixture TODO"]
                     .allSatisfy { !prompt.contains($0) }
                 && view.project == nil && view.origin == .consulted && view.roots.allSatisfy { $0.writable != true }
         }, "both fake AIs see only the requested material and have a read-only meeting workspace")
@@ -625,6 +640,28 @@ func testProjectMemoryCleanup() {
         expect(start(manual: true), "manual cleanup bypasses the automatic interval")
         waitForMeeting()
         expect(ProjectMemoryCleanup.last(key)?.id == record?.id, "invalid output never advances the cleanup record")
+        expect(!start(), "a failed manual run does not make automatic cleanup eligible")
+
+        discussion.workspaceAnswer = { _, prompt, _, _, _ in
+            if prompt.contains("[MEETING RESULT]") {
+                guard prompt.contains("[Deferred from last cleanup]"), prompt.contains("deferred fixture change"),
+                      prompt.contains("recent Git subject"), prompt.contains("changed fixture summary") else {
+                    return .success("missing deferred evidence")
+                }
+                return .success("""
+                Agreed changes:
+                [{"kind":"add","ids":[],"text":"deferred fixture change","evidence":["\(hash)","\(room.id)"],"agreed":true}]
+                """)
+            }
+            if prompt.contains("[MODE3 MODERATION]") { return .success(#"{"action":"finish","reason":"enough"}"#) }
+            return .success("The previous proposal is now supported.")
+        }
+        expect(start(manual: true), "the next manual meeting reconsiders pending proposals")
+        waitForMeeting()
+        let carried = store.history(key).last
+        expect(ProjectMemoryCleanup.last(key)?.deferred.isEmpty == true && carried?.note.text == "deferred fixture change"
+               && Set(carried?.evidence ?? []) == [hash, room.id.uuidString],
+               "the proposal and its revalidated older evidence carry into the next cleanup")
         print("PASS: app project memory cleanup meeting (idle, materials, fake attendees, JSON application)")
     } catch { expect(false, "cleanup fixture setup failed: \(error)") }
 }

@@ -128,8 +128,8 @@ extension Discussion {
         You are \(label(account)). The AIs here are one team. The shared goal is the best possible answer to the
         \(cleanup ? "app's cleanup agenda" : "latest user question"), not winning an argument.
         Speak only as yourself. Never write, imagine, or quote a statement on another AI's behalf.
-        \(SpeechLength.rule(activeSpeechLength)) (this overrides other length rules), in the language of the
-        \(cleanup ? "project material" : "latest user message unless they request another language").
+        \(SpeechLength.rule(activeSpeechLength)) (this overrides other length rules).
+        Speak in \(cleanup ? L("Korean", "English") : "the language of the latest user message unless they request another language").
         \(cleanup ? "" : account.provider == .ollama ? Self.localSearchRule : Self.searchRule)
         \(activeAdversarial ? "This is a critical debate: identify the strongest opposing interpretation, concrete failure cases and missing controls in other claims. Defend claims with evidence, rebut ideas rigorously, never attack people or invent disagreement. Do not agree merely to end the discussion." : "")
         \(opening
@@ -145,7 +145,7 @@ extension Discussion {
             ? (activeMeeting ? "This is a meeting: you may read the folders listed above (read only). Do not change files or run commands." : "Do not change files or run commands.")
             : activeMeeting ? "This is a meeting: you may read the folders listed above (read only) and search the web. Do not change files or run commands."
             : "Use only web search and reading web pages. Do not change files or run commands.")
-        \(pictureRule(account))
+        \(cleanup ? "" : pictureRule(account))
         \(Self.headlineRule)
         [Moderator focus]
         \(focus.isEmpty ? "Give your initial contribution." : focus)
@@ -194,7 +194,7 @@ extension Discussion {
                 let ran = AnswerModel()
                 var result = self.requestDebate(account, prompt, 300, cancellation, web: !cleanup, progress: ran.watch())
                 var pictures: [ChatImage] = []
-                if case .success(let text) = result {
+                if !cleanup, case .success(let text) = result {
                     let harvest = self.collectPictures(text, account: account, since: started, id: id, cancellation: cancellation)
                     result = .success(harvest.text); pictures = harvest.images
                 }
@@ -260,7 +260,7 @@ extension Discussion {
             Do not continue just to use up turns.
             Return ONLY JSON: {"action":"speak","speaker":"\(team.map(key).joined(separator: "|"))","focus":"task for that AI","board":"Agreed: … / Check: … / Open: …"}
             or {"action":"finish","reason":"why the answer is good enough","board":"…"}.
-            Write focus/reason/board in the language of the \(cleanup ? "project material" : "latest user message unless it requests another language").
+            Write focus/reason/board in \(cleanup ? L("Korean", "English") : "the language of the latest user message unless it requests another language").
             Do not use tools, change files, or run commands.
             """
             let result = requestDebate(moderator, prompt, 180, cancellation)
@@ -302,7 +302,8 @@ extension Discussion {
             switch speech {
             case .success(let text):
                 successful.insert(account.id)
-                let harvest = collectPictures(text, account: account, since: started, id: id, cancellation: cancellation)
+                let harvest = cleanup ? Pictures.Harvest(text: text, images: [])
+                    : collectPictures(text, account: account, since: started, id: id, cancellation: cancellation)
                 entry = .reply(round: 1, speaker: label(account), text: harvest.text)
                 entry.images = harvest.images.isEmpty ? nil : harvest.images
                 entry.model = ran.name
@@ -333,7 +334,7 @@ extension Discussion {
             let final = cleanup ? ProjectMemoryCleanupLink.resultPrompt : Self.meetingFinal(missing: missing, caller: activeHeldBy)
             let result = meeting != nil ? requestDebate(moderator, Self.debateContext(rules: rules, transcript: transcript) + "\n"
                 + (board.isEmpty ? "" : "Moderator board:\n" + board + "\n") + "End reason: \(ending)\n" + final
-                + "\n\(pictureRule(moderator))\nDo not change files or execute commands.", 180, cancellation, progress: ran.watch()) : requestDebate(moderator, """
+                + "\n\(cleanup ? "" : pictureRule(moderator))\nDo not change files or execute commands.", 180, cancellation, progress: ran.watch()) : requestDebate(moderator, """
                 \(Self.debateContext(rules: rules, transcript: transcript))
                 [MODE3 FINAL]
                 Write the final answer to the latest user question, using the best of what the team found.
@@ -350,7 +351,8 @@ extension Discussion {
             if !cancellation.isCancelled {
                 switch result {
                 case .success(let text):
-                    let harvest = collectPictures(text, account: moderator, since: finalStarted, id: id, index: index, cancellation: cancellation)
+                    let harvest = cleanup ? Pictures.Harvest(text: text, images: [])
+                        : collectPictures(text, account: moderator, since: finalStarted, id: id, index: index, cancellation: cancellation)
                     changeTurn(id, index, save: true) {
                         $0.final = harvest.text; $0.finalBy = self.label(moderator); $0.finalModel = ran.name
                         $0.finalImages = harvest.images.isEmpty ? nil : harvest.images

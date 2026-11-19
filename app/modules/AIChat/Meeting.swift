@@ -75,14 +75,15 @@ extension Discussion {
     // Makes the meeting's hidden chat for `turn` of chat `id` (on the main thread), with the chat's lock and the
     // whole chat so far in its folder. Returns its id.
     // `topic`: a meeting an answering AI convened (holdMeeting): its agenda is the first message, the user's message the context.
-    func openMeeting(for id: UUID, turn: ChatTurn? = nil, history: [ChatTurn] = [], topic: String? = nil,
+    func openMeeting(for id: UUID? = nil, turn: ChatTurn? = nil, history: [ChatTurn] = [], topic: String? = nil,
                      appLock: EnterpriseLock? = nil) -> UUID {
-        let chat = conversation(id)
         var room = Conversation()
+        let chat = id.map { conversation($0) }
         let agenda = topic ?? turn?.question ?? ""
         room.title = L("회의: ", "Meeting: ") + String(agenda.prefix(40))
-        room.meetingOf = MeetingLink(room: id, turn: turn?.id ?? UUID())
-        room.enterpriseLock = turn == nil ? appLock : chat.enterpriseLock
+        // An app cleanup has no parent chat. It points to itself so it stays hidden and can be discarded on its own.
+        room.meetingOf = MeetingLink(room: id ?? room.id, turn: turn?.id ?? UUID())
+        room.enterpriseLock = turn == nil ? appLock : chat?.enterpriseLock
         if turn == nil { room.shareToDevices = false }
         var config = ChatConfiguration()
         config.mode = 1; config.modeVersion = 2; config.turnsPerAI = Self.meetingTurnsPerAI
@@ -92,7 +93,7 @@ extension Discussion {
         first.images = turn?.images
         room.turns = [first]
         let source: String
-        if let turn {
+        if let turn, let chat {
             source = "# \(chat.title)\n\n" + Self.transcript(history)
                 + (topic.map { "\n\n[User — the message being answered]\n" + turn.question + "\n\n[The meeting's agenda]\n" + $0 }
                    ?? "\n\n[User — the meeting's topic]\n" + turn.question) + "\n"
@@ -102,7 +103,7 @@ extension Discussion {
         Self.saveText(source, to: Self.chatFolder(room.id).appendingPathComponent(Self.meetingSource))
         conversations.append(room)
         ChatStore.save(room)
-        meetingsClosed.remove(id)
+        if let id { meetingsClosed.remove(id) }
         return room.id
     }
 

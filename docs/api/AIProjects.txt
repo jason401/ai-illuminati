@@ -127,6 +127,8 @@ ProjectMemoryCleanup.last(_:) | static func last(_ project: String) -> ProjectMe
 ProjectMemoryCleanup.logDays | static let logDays: Int
 ProjectMemoryCleanup.maxEdits | static let maxEdits: Int
 ProjectMemoryCleanup.minAnswers | static let minAnswers: Int
+ProjectMemoryCleanup.pending(_:) | static func pending(_ project: String) -> [ProjectMemoryEdit]
+ProjectMemoryCleanup.recordAttempt(_:at:) | static func recordAttempt(_ project: String, at: Date) -> Bool
 ProjectMemoryCleanup.records(_:) | static func records(_ project: String) -> [ProjectMemoryCleanupRecord]
 ProjectMemoryCleanup.weekDays | static let weekDays: Int
 ProjectMemoryCleanupRecord | struct ProjectMemoryCleanupRecord

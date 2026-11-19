@@ -367,7 +367,11 @@ public final class Discussion: ObservableObject {
         stoppingRooms.remove(room)
         workers[room] = nil
         model.onAccountsChange?()   // refresh the usage numbers after the answer
-        ChatStore.links.finished(conversations.first { $0.id == room })
+        if conversations.first(where: { $0.id == room })?.meetingOf?.room == room {
+            removeMeetings(of: room)
+        } else {
+            ChatStore.links.finished(conversations.first { $0.id == room })
+        }
         noteFinished(room, stopped: stopped)
         afterRun(room, stopped: stopped)
         splitTurnEnded(room, stopped: stopped || cancelled)

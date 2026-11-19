@@ -427,6 +427,11 @@ func testFullAuto() {
             && !projectText.contains("Markdown file in the chat folder") && !plain.contains("git_status") && plain.contains("Do not run commands"),
            "only project work adds the Git steps; plain-only lines stay out of it")
     expect(projectText.hasSuffix("[Face rule]") && !projectText.contains("\n\n"), "the face rule ends the instruction, without blank lines")
+    let parts = projectText.components(separatedBy: "\n" + NativeSessions.turnMarker + "\n")
+    expect(parts.count == 2 && parts[0].contains("/repo (linked Git project") && parts[0].contains("git_status") && parts[0].contains("Tabs.")
+            && !parts[0].contains("[Some files") && !parts[0].contains(Discussion.fullAutoNote) && !parts[0].contains("[Picture rule]")
+            && parts[1].contains("[Some files, contents not read]") && parts[1].contains(Discussion.fullAutoNote) && parts[1].contains("[Picture rule]"),
+           "fixed rules (identity, folders, project, safety) come before the turn marker; files, mode and notes after it")
     print("PASS: full auto (no cards for commands, 8 hours, stable still asks, no Git credentials, git push blocked, rm to Trash outside temp)")
 }
 

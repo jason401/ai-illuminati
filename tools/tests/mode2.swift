@@ -564,7 +564,7 @@ do {
 }
 
 // Persistent session transport: source images once, delta text, separate moderator,
-// cold bootstrap after compaction, no retries on Stop/quota.
+// the session kept after compaction, no retries on Stop/quota.
 do {
     let sessions = NativeSessions(), room = UUID(), sid = UUID().uuidString
     let account = Account(id: "session-test", provider: .claude, name: "Claude", dir: AccountStore.accountsDir + "/session-test")
@@ -589,7 +589,7 @@ do {
     expect(!requests[2].2 && requests[2].1 == [image], "moderator must have a separate session")
     request("source\n\n[Claude]\nanswer\n\n[Other]\nnew\nnext", compact: true)
     request("source\n\n[Claude]\nanswer\n\n[Other]\nnew\nnext\nlast")
-    expect(!requests.last!.2 && requests.last!.1 == [image], "compaction must bootstrap original images")
+    expect(requests.last!.2 && requests.last!.1.isEmpty, "compaction keeps the session: resumed, images not resent")
     expect(!NativeSessions.eligible(Account(id: "personal", provider: .codex, name: "personal", dir: nil)), "personal default home must stay stateless")
     try! sessions.reset(room)
     let source = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("source.txt")
@@ -602,7 +602,7 @@ do {
     conversation.configuration?.keepSessions = true
     ChatStore.save(conversation)
     expect(ChatStore.loadAll().contains { $0.id == conversation.id && $0.documents?.first?.text == "value 247" && $0.configuration?.keepSessions == true }, "empty room materials / toggle not persisted")
-    print("PASS: session delta, image reuse, role separation, compaction bootstrap and material persistence")
+    print("PASS: session delta, image reuse, role separation, session kept after compaction and material persistence")
 }
 
 // New mode semantics, large Office import, all-account collaboration and artifacts.

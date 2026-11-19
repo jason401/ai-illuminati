@@ -148,3 +148,25 @@
   claude -p "Say ok" --resume $id                        # 압축 후, 플래그 없이 → 사라짐 예상
   claude -p "Say ok" --resume $id --append-system-prompt "End every answer with BANANA."   # 유지 예상
   ```
+
+## 6. 3단계 뒤 (b) 다시 재기 (2026-11-18)
+
+3단계에서 바꾼 것: 지시문의 고정 부분(나는 누구인지, 프로젝트, 폴더 권한, 안전 규칙, 프로젝트 규칙)은
+`NativeSessions.turnMarker` 앞에 두고, 세션 호출마다 시스템 프롬프트로 넘긴다(Claude `--append-system-prompt`,
+Codex `-c developer_instructions=`). 대화 글에는 이번 턴 부분(파일 목록, 모드, 그림·메모 규칙, 체크포인트)만 간다.
+CLI 압축만으로는 세션을 버리지 않는다. 고정 부분이 바뀌면(폴더 권한, 프로젝트 규칙 변경) 새 세션으로 시작한다.
+
+| 지표 (§5 방법, 읽기만) | 0단계 기준 | 지금 (코드 변경 직후) | 테스트로 확인한 새 동작 |
+|---|---|---|---|
+| 방 기록 / 버려짐 / 성공 후 교체 | 404 / 166 / 148 | 406 / 166 / 148 | — |
+| 앱 Claude 세션 압축 (`claude-1792083351`, `claude-1792083157`) | 0, 0 | 0 (356개), 0 (25개) | 압축된 세션도 다음 호출에서 같은 id로 이어짐 (`runtime_contract` "after compaction the same session id is resumed", mode2 "session kept after compaction") |
+| 압축 감지로 버린 수 | 0 | 0 | 이제 생기지 않음 (압축 뒤에도 `valid=true`) |
+| 이어 쓰기 호출 글에 고정 지시문 | 매번 들어감 | — | 안 들어감, 시스템 프롬프트로만 감 (`runtime_contract` "the session text has the turn part, not the fixed one") |
+
+- **실데이터 숫자가 그대로인 이유:** 설치된 앱(stable)은 아직 예전 코드로 돈다. 이 측정 자체도 예전 코드 실행이다.
+  stable에 올린 뒤 며칠 써 보고 §5의 세 지표(사용자 턴 중간값, 줄바꿈만 다른 교체, 압축 감지)를 다시 센다.
+- **아직 남은 큰 원인:** 교체된 기록 148개 대부분은 줄바꿈 차이(§1 (c), `ProjectChat.swift`의 `"\n[User]\n"`)라
+  이번 단계로는 줄지 않는다. 고정 지시문이 빠져 세션이 덜 빨리 차는 효과는 그 문제가 고쳐져야 실제 숫자로 보인다.
+- §2 ①(압축 전후 규칙 유지)은 여전히 실행 확인을 못 했다(격리된 로그인 홈 없음). 문서대로 "매 호출 같은 플래그를
+  넘기면 압축 뒤에도 유지"를 전제로 했고, 그래서 플래그를 이어 쓰기 때도 매번 넘긴다. Codex `exec resume`에
+  `developer_instructions`를 다시 넘길 때 중복으로 쌓이는지도 아직 확인하지 않았다.

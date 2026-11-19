@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import AIAccounts
 import AILocalization
 
@@ -8,11 +9,14 @@ public final class NativeSessionCall {
     let id: String
     let resume: Bool
     let directory: URL
+    // The fixed instructions, given as the system prompt on every call (Claude --append-system-prompt,
+    // Codex developer_instructions) so they survive the CLI's own compaction instead of fading with old messages.
+    var system: String?
     var nativeID: String?
     var compacted = false
     var completed = false
-    init(id: String, resume: Bool, directory: URL) {
-        self.id = id; self.resume = resume; self.directory = directory
+    init(id: String, resume: Bool, directory: URL, system: String? = nil) {
+        self.id = id; self.resume = resume; self.directory = directory; self.system = system
     }
     func observe(_ output: String) {
         for line in output.split(separator: "\n") {
@@ -62,7 +66,11 @@ public final class NativeSessions {
         var ownBlock = ""
         var images: [String] = []
         var valid = true
+        // SHA-256 of the system prompt the session started with; absent for sessions without one (older files too).
+        var system: String?
     }
+    // Instructions before this line in a turn's instruction are fixed for the chat; the rest changes per message.
+    public static let turnMarker = "[This turn]"
     private let lock = NSLock()
     public init() {}
     public static func directory(_ room: UUID) -> URL {
@@ -150,6 +158,19 @@ public final class NativeSessions {
         try FileManager.default.moveItem(at: dir, to: archive.appendingPathComponent(room.uuidString + "-" + UUID().uuidString))
     }
 
+    // Fixed instructions (before turnMarker) and the turn's own part (the role marker line, then the rest).
+    // Without the marker everything is the turn's part, as before.
+    static func splitInstruction(_ instruction: String) -> (system: String?, turn: String) {
+        guard let marker = instruction.range(of: "\n" + turnMarker) else { return (nil, instruction) }
+        let head = instruction[..<marker.lowerBound]
+        let roleLine = head.firstIndex(of: "\n").map { head[..<$0] } ?? head
+        let system = head.dropFirst(roleLine.count).trimmingCharacters(in: .newlines)
+        return (system.isEmpty ? nil : system, String(roleLine) + instruction[marker.lowerBound...])
+    }
+    static func digest(_ text: String?) -> String? {
+        text.map { SHA256.hash(data: Data($0.utf8)).map { String(format: "%02x", $0) }.joined() }
+    }
+
     // The context prefix is canonical app history. Role instructions are always resent.
     // Reordered/edited history cannot be delta-delivered safely and starts a new session.
     static func split(_ prompt: String) -> (String, String, String)? {
@@ -167,7 +188,7 @@ public final class NativeSessions {
              token: DebateCancellation, web: Bool, speaker: String, appendContext: Bool = false, fresh: String? = nil,
              invoke: (String, [URL], NativeSessionCall?) -> Result<String, Answerer.Failure>,
              note: (String) -> Void) -> Result<String, Answerer.Failure> {
-        guard Self.eligible(account), let (incomingContext, instruction, role) = Self.split(prompt) else {
+        guard Self.eligible(account), let (incomingContext, fullInstruction, role) = Self.split(prompt) else {
             note(L("\(account.provider.title): 전체 자료 전달 (전용 계정 세션 미지원)", "\(account.provider.title): full context (dedicated session unavailable)"))
             return invoke(fresh ?? prompt, images, nil)
         }
@@ -175,11 +196,15 @@ public final class NativeSessions {
         var records = load(room)
         let index = records.lastIndex { $0.accountID == account.id && $0.role == role && $0.valid }
         var record = index.map { records[$0] } ?? Record(accountID: account.id, provider: account.provider, role: role)
+        let (system, instruction) = Self.splitInstruction(fullInstruction)
+        let systemDigest = Self.digest(system)
         var context = incomingContext
         if appendContext, record.nativeID != nil {
             context = record.context + "\n\n[Next task context]\n" + incomingContext
         }
-        if !context.hasPrefix(record.context) {
+        // Edited or deleted history, or changed fixed instructions (folders, project rules): a new session.
+        // Claude keeps a session's first system prompt until compaction, so a change would not be seen otherwise.
+        if !context.hasPrefix(record.context) || (record.nativeID != nil && record.system != systemDigest) {
             if let index { records[index].valid = false }
             record = Record(accountID: account.id, provider: account.provider, role: role)
         }
@@ -199,10 +224,11 @@ public final class NativeSessions {
             return invoke(fresh ?? prompt, images, nil)
         }
         lock.unlock()
-        let call = NativeSessionCall(id: record.nativeID ?? record.id.uuidString, resume: resumed, directory: directory)
+        let call = NativeSessionCall(id: record.nativeID ?? record.id.uuidString, resume: resumed, directory: directory, system: system)
         // A new session that was given a short version (summary + recent turns) still records the full context,
-        // so later turns resume with only what is new.
-        let result = invoke(!resumed && fresh != nil ? fresh! : delta + "\n" + instruction, newImages, call)
+        // so later turns resume with only what is new. The fixed instructions go as the system prompt, not as text.
+        let shortStart = fresh.map { text in Self.split(text).map { $0.0 + "\n" + instruction } ?? text }
+        let result = invoke(!resumed && shortStart != nil ? shortStart! : delta + "\n" + instruction, newImages, call)
         lock.lock()
         records = load(room)
         record.nativeID = call.nativeID ?? record.nativeID
@@ -211,7 +237,10 @@ public final class NativeSessions {
             record.images = appendContext && resumed ? Array(Set(record.images + images.map(\.path))).sorted() : images.map(\.path)
             let body = ReplyHeadline.split(text).text
             record.ownBlock = role == "speaker" ? "[\(speaker)]\n" + body : ""
-            record.valid = !call.compacted
+            record.system = systemDigest
+            // The CLI's own compaction keeps the session (same id, fixed instructions resent as the system prompt);
+            // only edited history, a failed or stopped answer, or a missing session start over.
+            record.valid = true
         } else { record.valid = false }
         records.removeAll { $0.id == record.id }; records.append(record)
         do { try save(records, room) } catch { record.valid = false; try? resetWithoutLock(room) }
@@ -219,7 +248,7 @@ public final class NativeSessions {
         if case .failure = result {
             note(L("\(account.provider.title): 세션 호출 실패, 다음 질문에서 재구성", "\(account.provider.title): session failed; next question rebuilds context"))
         } else { note(call.compacted
-             ? L("압축 감지: 다음 호출에서 원본 자료로 재구성", "Compaction detected: context will be rebuilt")
+             ? L("\(account.provider.title): 세션 압축됨, 같은 세션으로 이어감", "\(account.provider.title): session compacted; continuing the same session")
              : L("\(account.provider.title): \(resumed ? "세션 이어짐" : "새 세션")", "\(account.provider.title): \(resumed ? "session resumed" : "new session")")) }
         // Only an explicitly missing session may be retried, once, using stateless full context.
         // Never retry quota/auth/permissions, timeout, arbitrary failure, or user Stop.

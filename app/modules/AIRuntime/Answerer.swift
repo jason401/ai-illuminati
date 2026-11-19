@@ -126,7 +126,7 @@ public enum Answerer {
             if answerNow { return .failure(.failed("자료 요청을 멈추고 답하라고 했는데도 계속 요청해서 중단했습니다.")) }
             let signature = String(data: (try? JSONSerialization.data(withJSONObject: requests, options: [.sortedKeys])) ?? Data(), encoding: .utf8) ?? ""
             let resumable = call?.nativeID != nil
-            if let previous = call, let sid = previous.nativeID { call = NativeSessionCall(id: sid, resume: true, directory: previous.directory) }
+            if let previous = call, let sid = previous.nativeID { call = NativeSessionCall(id: sid, resume: true, directory: previous.directory, system: previous.system) }
             func reply(_ note: String) {
                 current = resumable ? note : prompt + "\n" + instruction + evidence(delivered.joined(separator: "\n\n"), note: note)
                 currentImages = resumable ? [] : readImages
@@ -162,6 +162,12 @@ public enum Answerer {
                 reply("\n[Reading failed: \(error.localizedDescription)]\nFix the paths (absolute paths inside the linked folders) and request again, or answer with the data already sent.")
             }
         }
+    }
+
+    // A TOML basic string: JSON's escapes are valid TOML except "\/", which JSON leaves out with this option.
+    static func tomlString(_ text: String) -> String {
+        let data = (try? JSONSerialization.data(withJSONObject: [text], options: [.withoutEscapingSlashes])) ?? Data("[\"\"]".utf8)
+        return String(String(decoding: data, as: UTF8.self).dropFirst().dropLast())
     }
 
     private static func askOnce(_ account: Account, prompt: String, timeout: TimeInterval = 240, cancellation: DebateCancellation? = nil,
@@ -204,6 +210,8 @@ public enum Answerer {
                 arguments.removeAll { $0 == "--no-session-persistence" }
                 arguments += [session.resume ? "--resume" : "--session-id", session.id,
                               "--output-format", "stream-json", "--verbose", "--permission-mode", "dontAsk"]
+                // Every call, resumed or not: after a compaction Claude rebuilds the system prompt from this flag.
+                if let system = session.system { arguments += ["--append-system-prompt", system] }
             }
         case .codex:
             binary = CodexUsage.binary
@@ -212,7 +220,9 @@ public enum Answerer {
                          "--color", "never", "-C", chatDir, "-o", outFile, prompt]
             if let session {
                 arguments = ["-c", "sandbox_mode=\"read-only\"", "-c", "approval_policy=\"never\"",
-                             "-c", web ? "web_search=\"live\"" : "web_search=\"disabled\"", "exec"]
+                             "-c", web ? "web_search=\"live\"" : "web_search=\"disabled\""]
+                if let system = session.system { arguments += ["-c", "developer_instructions=" + tomlString(system)] }
+                arguments.append("exec")
                 if session.resume { arguments += ["resume"] }
                 arguments += ["--json", "--skip-git-repo-check", "-o", outFile]
                 if session.resume { arguments.append(session.id) }

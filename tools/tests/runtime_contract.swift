@@ -42,6 +42,8 @@ case "$FAKE_MODE" in
   codex) cat "$FAKE_DIR/stream.jsonl"; printf 'codex answer' > "$out" ;;
   session) [ "$sid" = "" ] && sid="$FAKE_SID"
            printf '{"type":"result","session_id":"%s","is_error":false,"result":"TL;DR: short\\n\\nanswer %s"}\n' "$sid" "$FAKE_TURN" ;;
+  sessioncompact) [ "$sid" = "" ] && sid="$FAKE_SID"; echo '{"type":"system","subtype":"compact_boundary"}'
+           printf '{"type":"result","session_id":"%s","is_error":false,"result":"TL;DR: short\\n\\nanswer %s"}\n' "$sid" "$FAKE_TURN" ;;
   codexsession) echo "{\"type\":\"thread.started\",\"thread_id\":\"$FAKE_SID\"}"; echo '{"type":"turn.completed"}'; printf 'codex session answer' > "$out" ;;
 esac
 """#.write(to: script, atomically: true, encoding: .utf8)
@@ -309,6 +311,37 @@ var calls = 0
 _ = sessions.ask(claude, room: room, prompt: "source\n\nnew part\n\nmore\n[SOLO TURN]\nanswer", images: [], timeout: 30, token: stop, web: false, speaker: "Claude",
                  invoke: { text, images, call in calls += 1; stop.cancel(); return Answerer.ask(claude, prompt: text, cancellation: stop, session: call, run: run("session")) }, note: { _ in })
 expect(calls == 1 && records().last?["valid"] as? Bool == false, "a stopped session answer is not retried and the session is rebuilt next time")
+// Fixed instructions (before the turn marker) go as the system prompt on every call, never in the text; the CLI's own
+// compaction keeps the same session; changed fixed instructions start a new one.
+do {
+    let fixedRoom = UUID(), fixedSID = UUID().uuidString
+    func fixedAsk(_ context: String, fixed: String = "FIXED RULES 9137", turnPart: String, mode: String = "session", provider: Account = claude) -> [String] {
+        clear()
+        let prompt = context + "\n[SOLO TURN]\n" + fixed + "\n" + NativeSessions.turnMarker + "\n" + turnPart
+        _ = sessions.ask(provider, room: fixedRoom, prompt: prompt, images: [], timeout: 30, token: DebateCancellation(), web: false, speaker: "Claude",
+                         invoke: { text, images, call in
+            expect(!text.contains(fixed) && text.contains("[SOLO TURN]") && text.contains(turnPart), "the session text has the turn part, not the fixed one: \(text)")
+            return Answerer.ask(provider, prompt: text, timeout: 30, images: images, session: call, run: run(mode, sid: fixedSID, turn: "f"))
+        }, note: { _ in })
+        return read("args").split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+    }
+    func ledger() -> [[String: Any]] {
+        (try? JSONSerialization.jsonObject(with: Data(contentsOf: NativeSessions.directory(fixedRoom).appendingPathComponent("ownership.json")))) as? [[String: Any]] ?? []
+    }
+    let a1 = fixedAsk("chat", turnPart: "files A", mode: "sessioncompact")
+    let started = a1.firstIndex(of: "--session-id").map { a1[$0 + 1] }
+    expect(a1.firstIndex(of: "--append-system-prompt").map { a1[$0 + 1] } == "FIXED RULES 9137", "a new session gets the fixed part as its system prompt: \(a1)")
+    expect(!read("stdin").contains("FIXED RULES") && !a1.contains { $0.contains("FIXED RULES") && $0 != "FIXED RULES 9137" }, "the fixed part is not in the message")
+    expect(ledger().last?["valid"] as? Bool == true && (ledger().last?["system"] as? String)?.count == 64, "a compacted session stays valid and keeps its system digest: \(ledger())")
+    let a2 = fixedAsk("chat\n\nmore", turnPart: "files B")
+    expect(a2.firstIndex(of: "--resume").map { a2[$0 + 1] } == started && started != nil, "after compaction the same session id is resumed: \(a2)")
+    expect(a2.firstIndex(of: "--append-system-prompt").map { a2[$0 + 1] } == "FIXED RULES 9137", "a resumed call passes the system prompt again")
+    let a3 = fixedAsk("chat\n\nmore\n\nnext", fixed: "FIXED RULES 2", turnPart: "files C")
+    expect(a3.contains("--session-id") && !a3.contains("--resume"), "changed fixed instructions start a new session: \(a3)")
+    let c1 = fixedAsk("codex chat", fixed: "FIXED \"R\" /x", turnPart: "files", mode: "codexsession", provider: codex)
+    let toml = "developer_instructions=\"FIXED \\\"R\\\" /x\""
+    expect(c1.firstIndex(of: toml).map { c1[$0 - 1] == "-c" && $0 < c1.firstIndex(of: "exec")! } == true, "Codex gets the fixed part as developer_instructions: \(c1)")
+}
 // Steering: a fake Claude that speaks stream-json. Messages go in only while a tool runs; one it reads (replayed) is
 // told once and belongs to the answer; one never written, or written but not read before the result, comes back from close().
 try! #"""

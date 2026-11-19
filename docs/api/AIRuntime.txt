@@ -134,6 +134,7 @@ NativeSessions.init() | init()
 NativeSessions.pinnedAccount(_:room:) | func pinnedAccount(_ provider: Account.Provider, room: UUID) -> String?
 NativeSessions.purgeRoom(_:accounts:) | static func purgeRoom(_ room: UUID, accounts: [Account]) throws
 NativeSessions.reset(_:) | func reset(_ room: UUID) throws
+NativeSessions.turnMarker | static let turnMarker: String
 ReplyHeadline | enum ReplyHeadline
 ReplyHeadline.split(_:) | static func split(_ text: String) -> (headline: String?, text: String)
 RunConditions | struct RunConditions

@@ -337,13 +337,21 @@ public final class ProjectRun {
         guard !memoryWorkers.isEmpty, !binding.isDocuments,
               let log = try? ProjectProcess.git(["reflog", "show", "--format=%H%x09%gs", "HEAD"], root: binding.root) else { return }
         let entries = log.split(separator: "\n").map(String.init)
-        // New reflog entries precede the old suffix. Pull, reset and checkout entries are never authored work.
-        guard entries.count >= memoryReflog.count, Array(entries.suffix(memoryReflog.count)) == memoryReflog else { return }
-        let created = entries.prefix(entries.count - memoryReflog.count).reversed().compactMap { row -> String? in
+        // Anchor at the newest starting entry; expiry of older entries must not hide work.
+        let boundary: Int
+        if let anchor = memoryReflog.first {
+            guard let index = entries.firstIndex(of: anchor) else {
+                note(L("Git 시작 기록이 없어 작업을 자동 기록하지 못했어요.", "Automatic work log skipped: starting Git reflog entry is missing.")); return
+            }
+            boundary = index
+        } else { boundary = entries.count }
+        let created = entries.prefix(boundary).reversed().compactMap { row -> String? in
             let parts = row.split(separator: "\t", maxSplits: 1)
             guard parts.count == 2 else { return nil }
             let action = String(parts[1])
             guard action.hasPrefix("commit:") || action.hasPrefix("commit (") ||
+                    action.hasPrefix("revert:") || action.hasPrefix("cherry-pick:") ||
+                    ["pick", "reword", "squash", "fixup"].contains(where: { action.hasPrefix("rebase (" + $0 + "):") }) ||
                     (action.hasPrefix("merge ") && action.contains("Merge made by")) else { return nil }
             return String(parts[0])
         }
@@ -353,7 +361,9 @@ public final class ProjectRun {
               let rows = try? ProjectProcess.git(["show", "--no-patch", "--format=%H%x09%s"] + hashes, root: binding.root) else { return }
         let commits = rows.split(separator: "\n").compactMap { row -> (hash: String, title: String)? in
             let parts = row.split(separator: "\t", maxSplits: 1)
-            return parts.count == 2 ? (String(parts[0]), String(parts[1])) : nil
+            guard parts.count == 2 else { return nil }
+            if isSubRoom && parts[1].hasPrefix("Merge main (") { return nil }
+            return (String(parts[0]), String(parts[1]))
         }
         if case .refused(let why) = ProjectMemoryStore.shared.recordWork(commits, project: binding.groupKey,
                     by: Array(Set(memoryWorkers)).sorted().joined(separator: ", "), chat: room) {

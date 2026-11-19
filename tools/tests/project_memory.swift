@@ -175,6 +175,14 @@ func testProjectMemory() {
     oldAutomatic.createdAt = Date().addingTimeInterval(-15 * 86_400); oldAutomatic.pinned = true
     expect(!ProjectMemory.rule([oldAutomatic], question: "").contains("First change"),
            "automatic logs older than 14 days are excluded even when pinned")
+    oldAutomatic.kind = .decision
+    expect(ProjectMemory.rule([oldAutomatic], question: "").contains("First change"),
+           "an automatic log converted to a decision is not aged out")
+    let localDate = DateFormatter()
+    localDate.locale = Locale(identifier: "en_US_POSIX"); localDate.timeZone = .current
+    localDate.dateFormat = "yyyy-MM-dd"
+    expect(automatic.text.hasPrefix(localDate.string(from: automatic.createdAt) + " · "),
+           "work log uses the local calendar date")
     let enterpriseRun = ProjectRun(room: a.id, binding: binding, token: DebateCancellation())
     _ = git(["commit", "--allow-empty", "-m", "Private work"])
     ProjectWork.finish(enterpriseRun)
@@ -220,6 +228,44 @@ func testProjectMemory() {
     ProjectWork.finish(resetRun)
     expect(store.history(key).count == resetCount && !store.notes(key).contains { ($0.commits ?? []).contains(discarded) },
            "commits discarded before completion are not logged")
+
+    let expireRun = work()
+    _ = git(["reflog", "delete", "HEAD@{2}"])
+    _ = git(["commit", "--allow-empty", "-m", "After reflog expiry"])
+    let expiryHash = git(["rev-parse", "HEAD"])
+    ProjectWork.finish(expireRun)
+    expect(store.notes(key).last!.commits == [expiryHash], "older reflog expiry does not hide new commits")
+
+    // Real changes ensure revert and cherry-pick create new commits.
+    let file = repo.appendingPathComponent("change.txt")
+    try! "change".write(to: file, atomically: true, encoding: .utf8)
+    _ = git(["add", "change.txt"])
+    _ = git(["commit", "-m", "Change to revert"])
+    let source = git(["rev-parse", "HEAD"])
+    let revertRun = work()
+    _ = git(["revert", "--no-edit", source])
+    let reverted = git(["rev-parse", "HEAD"])
+    ProjectWork.finish(revertRun)
+    expect(store.notes(key).last!.commits == [reverted], "revert commits are recorded")
+    let cherryRun = work()
+    _ = git(["cherry-pick", source])
+    let picked = git(["rev-parse", "HEAD"])
+    ProjectWork.finish(cherryRun)
+    expect(store.notes(key).last!.commits == [picked], "cherry-pick commits are recorded")
+
+    let rebaseRun = work()
+    _ = git(["commit", "--allow-empty", "-m", "Before rebase"])
+    _ = git(["rebase", "--force-rebase", "--keep-empty", "HEAD~2"])
+    let rebased = git(["rev-parse", "HEAD"])
+    ProjectWork.finish(rebaseRun)
+    expect(store.notes(key).last!.commits?.contains(rebased) == true, "rewritten rebase commits are recorded")
+
+    let syncRun = work()
+    syncRun.isSubRoom = true
+    _ = git(["merge", "--no-ff", "-m", "Merge main (fixture) into sub", "other"])
+    let syncCount = store.history(key).count
+    ProjectWork.finish(syncRun)
+    expect(store.history(key).count == syncCount, "sub-room synchronization merges are not authored work")
 
     // The instruction: pinned, decisions, open progress, the last 14 days of log; archived notes never.
     let now = Date()

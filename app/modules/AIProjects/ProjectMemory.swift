@@ -123,7 +123,7 @@ public final class ProjectMemoryStore: ObservableObject {
             if let same = data.notes.first(where: { $0.state == .active && $0.kind == note.kind && $0.text.lowercased() == note.text.lowercased() }) {
                 return Edit(.duplicate(same))
             }
-            guard data.notes.filter({ $0.state == .active && $0.commits == nil }).count < Self.maxActive else {
+            guard data.notes.filter({ $0.state == .active && !($0.kind == .log && $0.commits != nil) }).count < Self.maxActive else {
                 return Edit(.refused("Project memory is full (\(Self.maxActive) active notes): replace outdated notes instead of adding."))
             }
             note.state = .active; note.replaces = nil; note.replacedBy = nil; note.archivedAt = nil
@@ -144,7 +144,10 @@ public final class ProjectMemoryStore: ObservableObject {
                 let existing = history.flatMap(\.notes).first { !Set($0.commits ?? []).isDisjoint(with: Set(commits.map(\.hash))) }
                 return Edit(existing.map { .duplicate($0) } ?? .refused("Work already recorded."))
             }
-            let date = ISO8601DateFormatter().string(from: now)
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX"); formatter.timeZone = .current
+            formatter.dateFormat = "yyyy-MM-dd"
+            let date = formatter.string(from: now)
             let titles = pending.map { $0.title.split(whereSeparator: \.isWhitespace).joined(separator: " ") + " [" + $0.hash.prefix(10) + "]" }.joined(separator: "; ")
             let prefix = date + " · " + String(by.prefix(80)) + " · "
             let suffix = " · chat:" + chat.uuidString

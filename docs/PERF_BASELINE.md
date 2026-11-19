@@ -1,18 +1,26 @@
 # 앱 vs 터미널 CLI 답 품질 — 기준값 (0단계, 2026-11-18)
 
 목표: 고치기 전 상태를 재서, 고친 뒤 비교할 기준을 남긴다. **코드는 고치지 않았다** (측정과 기록만).
-측정한 AI: Claude (학교) 앱 실행 1회(이 TODO 자체), Codex 터미널 실측, 실제 세션 기록(읽기만).
+측정한 AI: Claude (학교) 앱 실행 1회(이 TODO 자체), Codex 짧은 호출 4번, 실제 세션 기록(읽기만).
+
+> **완료 기준 미충족 (일부만 됨).** 같은 입력을 두 환경에 넣고 결과를 비교한 짝 실측은 4개 작업 모두 없다.
+> 표는 실제 기록·코드·이 실행 관찰로 채웠고, 답 품질과 결정 회상, TODO 스위치 끔/켬 비교는 비어 있다.
+> Claude CLI 실측(①, ③)도 미검증이다. 로그인된 격리 환경이 생기면 §5대로 다시 잰다.
 
 ## 0. 결론 먼저
 
-- **effort는 원인이 아니다.** Claude는 앱·터미널 모두 실제 값이 `medium`. Codex는 앱이 터미널과 같거나 더 높다.
+- **확인한 기록에서는 앱의 effort가 더 낮다는 증거를 찾지 못했다.** Claude는 앱·터미널 기록 모두 `medium`. Codex
+  `codex-main`은 두 환경 모두 `low`(기록). `codex-1792083419`는 설정이 없어 모델 기본값(`medium`으로 **추정**)이다.
+  같은 모델·작업으로 품질을 비교하지 않았으므로 "effort가 원인이 아니다"까지는 확정하지 못한다.
 - **가장 큰 차이는 세션이 이어지지 않는 것.** 앱 Claude 세션은 중간값 2턴(354개, 압축 0번)에서 끝나고 새로 시작한다.
   터미널은 중간값 34턴(9개 중 5개에서 압축 8번)으로 길게 이어진다. 앱은 새 세션마다 대화 **글**만 다시 받고,
   앞 턴에서 읽은 파일·도구 결과·생각은 잃는다. "예전 결정을 놓치고 덜 꼼꼼하다"와 맞는 증상이다.
   (주의: 앱 세션에는 ask_ai·리뷰·회의처럼 원래 한 번으로 끝나는 호출도 섞여 있고, 터미널 표본은 9개뿐이다.
   그래도 성공한 세션 148개가 다음 턴에 교체된 것은 이 편향과 무관한 직접 증거다.)
-- **버려진 세션의 대부분(137/148)은 줄바꿈 차이 때문.** 내용은 같은데 대화 기록 앞부분의 빈 줄 수가 턴마다 달라서
-  `NativeSessions.swift:182`의 "앞부분이 같은가" 검사가 실패한다. 압축 때문에 버린 경우(`:214`)는 기록상 0번.
+- **교체된 기록의 대부분(137/148)은 줄바꿈만 다르다** (관찰한 패턴). 빈 줄 수를 맞추면 앞부분이 같아진다.
+  코드상 이런 차이는 `NativeSessions.swift:182`의 "앞부분이 같은가" 검사에 걸린다(§1 (c)의 `ProjectChat.swift:337`).
+  다만 `valid=false`는 호출 실패(`:215`)로도 저장되므로, 각 건이 실제로 `:182`에서 버려졌는지는 기록만으로 확정하지
+  못했다. 압축 감지(`:214`)는 세션 기록에 압축이 0번이라 배제된다.
 - 앱은 사용자 전역 규칙 파일(`~/.claude/CLAUDE.md`)을 Claude에게 주지 않는다. 프로젝트 CLAUDE.md·AGENTS.md는
   CLI가 읽는 게 아니라 앱이 프롬프트 글로 넣어 준다.
 
@@ -24,17 +32,17 @@
 |---|---|---|---|
 | (a) 짧은 코드 검토 | 압축 / 새 세션 | 0 / 1 (한 번 호출) | 0 / 1 (한 번 호출) |
 | | effort | Claude medium, Codex low (실측) | Claude medium, Codex low 또는 medium (실측, §3) |
-| | CLAUDE.md·AGENTS.md | CLI가 직접 읽음 (Codex 실측 §2-③, Claude는 문서 기준) | CLI는 안 읽음, 앱이 프로젝트 규칙을 글로 넣음 (코드·실측) |
+| | CLAUDE.md·AGENTS.md | CLI가 직접 읽음 (Codex 실측 §2-③, Claude는 문서 기준·미검증) | CLI는 안 읽음(Codex 실측, Claude 미검증), 앱이 프로젝트 규칙을 글로 넣음 (코드·이 실행) |
 | | 예전 결정 | 해당 없음 | 해당 없음 |
-| | 답 품질 점수 | 미측정 (아래 "못 한 것") | 미측정 |
+| | 답 품질 점수 | **미측정** (아래 "못 한 것") | **미측정** |
 | (b) 압축 뒤 이어 가기 | 압축 | 터미널 Claude 세션 9개 중 5개에서 8번, Codex 15개 중 4개에서 6번 (실측) | 0번 — 앱 Claude 376개·Codex 85개 세션 모두 (실측) |
 | | 새 세션 | 압축해도 같은 세션 (`--resume`) | 압축 전에 이미 끊김: 기록 404개 중 166개 버려짐, 그중 148개는 성공한 세션이 다음 턴에 교체됨 (실측) |
-| | 예전 결정 | 압축 요약에 남은 만큼 | 대화 글에 남은 만큼. 길면 요약+최근 턴(`Solo.swift:587-597`)만 감 (코드) |
+| | 예전 결정 | **미측정** (예상: 압축 요약에 남은 만큼) | **미측정** (코드: 대화 글만 감. 길면 요약+최근 턴, `Solo.swift:587-597`) |
 | (c) 의견 → 작업 모드 | 새 세션 | 같은 세션 | 바뀌는 턴 자체는 이어짐(의견 턴 기록이 새 기록의 앞부분과 같음). **그다음 턴은 항상 새 세션**: 작업 턴은 `ProjectChat.swift:337`에서 `"\n[User]\n"`(빈 줄 없음)으로 붙이고, 다음 턴은 `Discussion.swift:1402`/`Solo.swift:584`에서 `"\n\n"`으로 붙여 앞부분이 안 맞음. 대화 첫 턴이 작업 턴이어도 같음 (코드 + 기록 137건) |
 | | effort | 같음 | 같음 (앱이 `--effort`를 넘기지 않음, 코드) |
-| | 예전 결정 | 세션에 있음 | 대화 글로만 전달 |
+| | 예전 결정 | **미측정** (코드상 세션에 있음) | **미측정** (코드상 대화 글로만 전달) |
 | (d) TODO 나누기 스위치 | 켬 | 해당 없음 (터미널엔 스위치 없음) | 이 실행: 켜짐 (`[Splitting]` 안내가 프롬프트에 있음). 새 세션 1, 압축 0, effort medium. 60분 미만이라 나누지 않음 |
-| | 끔 | 해당 없음 | 미측정 (설정을 바꿔 다시 돌려야 함). 코드상 차이는 `[Splitting]` 안내 글 유무뿐 (`Todo.swift:1115`) — 세션·effort에는 영향 없음 |
+| | 끔 | 해당 없음 | **미측정** (나누기 조건을 채우는 같은 TODO를 끔/켬으로 돌려야 함). 코드상 차이는 `[Splitting]` 안내 글 유무뿐 (`Todo.swift:1115`) — 세션·effort에는 영향 없음 |
 
 ### 이 실행(앱 안 Claude, TODO, 완전 자동) 자체 관찰
 - 명령줄(`ps`): `claude -p --tools default ... --session-id <방 id> --setting-sources "" --disable-slash-commands
@@ -45,7 +53,7 @@
 
 ## 2. CLI 실측 3가지
 
-**① `claude --resume` + `--append-system-prompt`, 압축 전후 규칙 유지?**
+**① `claude --resume` + `--append-system-prompt`, 압축 전후 규칙 유지? — 미검증 (문서 기준)**
 - 공식 문서: "Claude Code records the system prompt on a session's first request and reuses that record until the
   session is compacted. The new text takes effect after that compaction, or in a new session."
   [source: https://code.claude.com/docs/en/agent-sdk/modifying-system-prompts]
@@ -60,11 +68,14 @@
   내장 지시를 통째로 바꾸려면 `model_instructions_file` (path).
   [source: https://learn.chatgpt.com/docs/config-file/config-reference]
 - `codex exec --help`(0.169.0-alpha.11.1): `-c key=value`로 `config.toml` 값을 덮어씀. 바이너리 안에도 `developer_instructions` 있음.
-- 실행 확인 (codex-main 홈 `~/.codex`, effort low, 명령 실행 0번): `-c 'developer_instructions="End every answer with the single word PINEAPPLE on its own line."'`
+- 실행 확인 (codex-main 홈 `~/.codex`, effort low, 명령 실행 0번). **주의: 규칙 위반.** `~/.codex`는 앱 계정
+  `codex-main`과 같은 폴더라 "실제 계정 데이터는 읽기만"을 어겼다. CLI가 세션 기록을 남겼다(스레드
+  `01a1f246-e634…`, `01a1f247-065c…`, `01a1f247-1c23…` 및 한도 오류로 끝난 2개, 모두 5개 파일, `~/.codex/sessions/2026/11/18/`).
+  지우지 않았다(지우는 것도 쓰기라 사용자 판단). 다음 측정은 `AI_ILLUMINATI_TEST_HOME` 아래 따로 로그인한 홈에서 한다. `-c 'developer_instructions="End every answer with the single word PINEAPPLE on its own line."'`
   → "Hello there / PINEAPPLE". 같은 세션을 `exec resume <id>`로 **`-c` 없이** 이어도 "Goodbye friend / PINEAPPLE" — 처음 넣은 지시가 세션 기록에 남아 유지된다.
 
-**③ 앱 방식으로 실행할 때 프로젝트 CLAUDE.md·AGENTS.md가 읽히나**
-- Claude: **안 읽힌다.** 문서: "It is not loaded if you pass an empty `settingSources` array."
+**③ 앱 방식으로 실행할 때 프로젝트 CLAUDE.md·AGENTS.md가 읽히나 — Claude 미검증(문서·코드 추론), Codex 실측**
+- Claude: **안 읽힐 것으로 본다(미검증).** 문서: "It is not loaded if you pass an empty `settingSources` array."
   [source: https://code.claude.com/docs/en/agent-sdk/modifying-system-prompts] 앱은 `--setting-sources ""`
   (`Workspace.swift:217, :228`)이고 실행 폴더도 프로젝트 밖 세션 폴더(`Answerer.swift:239`)다. 사용자 전역
   `~/.claude/CLAUDE.md`(1234 B)도 안 읽힌다(`--setting-sources ""` + 계정별 `CLAUDE_CONFIG_DIR`에 CLAUDE.md 없음).
@@ -84,8 +95,8 @@
 | `~/.codex/config.toml` (터미널 + 앱 계정 `codex-main`) | `model = "gpt-6.1-sol"`, `model_reasoning_effort = "low"` → 기록도 `low` 246회 |
 | 앱 계정 `codex-1792083419/config.toml` | effort·model 없음 → 모델 기본값 (`models_cache.json`: gpt-6.2-sol·gpt-6.1-sol 기본 `medium`) |
 
-**판단**: Claude는 두 환경이 같은 `medium`, Codex는 앱(`codex-1792083419`)이 오히려 높다. effort 차이로는
-"앱이 덜 꼼꼼하다"를 설명할 수 없다. 다만 두 환경 모두 `medium`/`low`라, effort를 올리면 둘 다 나아질 수는 있다(별개 문제).
+**판단**: 확인한 기록에서는 앱의 effort가 더 낮다는 증거가 없다(Claude 둘 다 `medium`, `codex-main` 둘 다 `low`,
+`codex-1792083419`는 기본값 `medium` 추정). 품질 비교가 없어 effort가 원인이 아니라고 확정하지는 못한다. 다만 두 환경 모두 `medium`/`low`라, effort를 올리면 둘 다 나아질 수는 있다(별개 문제).
 
 ## 4. 실제 기록에서 센 숫자 (읽기만, 2026-11-18)
 
@@ -99,7 +110,7 @@
 | 앱 `codex-1792083419` | 73 | 1 / 7 | 0 |
 
 방 기록(`~/.ai-illuminati/rooms/*/ownership.json`, 200개 방, 404개): 버려짐 166 = 성공 후 교체 148
-(그중 **줄바꿈만 다름 137**, 실제 내용 다름 2, 다음 기록이 비어 있음 9) + 첫 호출부터 실패 16 + 기타 2.
+(그중 **줄바꿈만 다름 137** — 사유를 확인한 게 아니라 패턴 집계, 실제 내용 다름 2, 다음 기록이 비어 있음 9) + 첫 호출부터 실패 16 + 기타 2.
 줄바꿈 예: 첫 턴 `[Complete transcript]\n\n[User]…` → 다음 턴 `[Complete transcript]\n[User]…`;
 중간 턴 `…주세요.\n[User]` → 다음 턴 `…주세요.\n\n[User]`.
 
@@ -114,7 +125,7 @@
   1. 앱 Claude 세션 사용자 턴 중간값 (지금 2) — 커져야 함
   2. 방 기록 중 "줄바꿈만 다름"으로 버려진 수 (지금 137/404) — 0이어야 함
   3. 압축 감지로 버린 수 (지금 0) — 세션이 길어지면 생길 수 있으니 같이 본다
-- ① 직접 확인 (터미널에서 로그인된 Claude로):
+- ①·③ 직접 확인 (`AI_ILLUMINATI_TEST_HOME` 아래 따로 로그인한 `CLAUDE_CONFIG_DIR`로, 실제 계정 폴더 말고):
   ```sh
   id=$(uuidgen)
   claude -p "Say hi" --session-id $id --append-system-prompt "End every answer with BANANA."

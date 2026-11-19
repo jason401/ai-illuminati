@@ -49,6 +49,7 @@ public struct ProjectMemoryChange: Codable, Equatable {
     public var others: [ProjectMemoryNote]?   // undo, delete: the further notes it changed
     public var undoes: [Int]?       // undo: the lines (0 = first) it took back
     public var marks: [String]?     // delete: ProjectMemoryStore.mark of each deleted text
+    public var evidence: [String]?  // a meeting cleanup's change: the chat ids and commit hashes it rests on
 
     public var who: String? { by ?? note.by }
     public var notes: [ProjectMemoryNote] { (archived.map { [$0] } ?? []) + (others ?? []) + [note] }
@@ -62,6 +63,7 @@ struct ProjectMemoryData: Codable {
 public final class ProjectMemoryStore: ObservableObject {
     public static let shared = ProjectMemoryStore()
     public static let textLimit = 500
+    public static let budget = 6_000     // characters of notes sent in an instruction (about 1,500 tokens)
     static let maxActive = 400
 
     @Published public private(set) var revision = 0   // bumped on every save, for the chat's "saved" lines and the info tab
@@ -180,6 +182,19 @@ public final class ProjectMemoryStore: ObservableObject {
             data.notes.append(note)
             return Edit(.saved(note), [ProjectMemoryChange(at: note.createdAt, action: "replace", note: note, old: old, archived: data.notes[i], by: by, batch: batch)])
         }
+    }
+
+    // A meeting cleanup (ProjectMemoryCleanup.swift): `build` changes the notes, given the history, and returns its
+    // lines, all written at once so a crash or another AI's change never lands in the middle. nil when saved (or
+    // nothing to save), else why not.
+    func batch(_ project: String, _ build: (inout [ProjectMemoryNote], [ProjectMemoryChange]) -> [ProjectMemoryChange]) -> String? {
+        let outcome = change(project) { data, history in
+            let lines = build(&data.notes, history)
+            guard let last = lines.last else { return Edit(.duplicate(ProjectMemoryNote(kind: .log, text: ""))) }
+            return Edit(.saved(last.note), lines)
+        }
+        if case .refused(let why) = outcome { return why }
+        return nil
     }
 
     // MARK: The user's changes (the info tab)

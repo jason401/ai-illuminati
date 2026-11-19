@@ -8,7 +8,7 @@ import AIProjects
 // (MemoryLink): add, replace (the old note is archived) and search (archive too). Opinions keep them: the notes are
 // app data, not project files. Enterprise chats read and search only, so nothing of theirs reaches other chats.
 enum ProjectMemory {
-    static let budget = 6_000     // characters of notes in an instruction (about 1,500 tokens)
+    static let budget = ProjectMemoryStore.budget   // characters of notes in an instruction
     static let logDays = 14       // work log notes sent: the last two weeks
     static let toolNames = ["project_memory_add", "project_memory_replace", "project_memory_search"]
 

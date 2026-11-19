@@ -106,6 +106,7 @@ ProjectMemoryChange.batch | var batch: UUID?
 ProjectMemoryChange.by | var by: String?
 ProjectMemoryChange.byMeeting | static let byMeeting: String
 ProjectMemoryChange.byUser | static let byUser: String
+ProjectMemoryChange.evidence | var evidence: [String]?
 ProjectMemoryChange.init(from:) | init(from decoder: any Decoder) throws
 ProjectMemoryChange.marks | var marks: [String]?
 ProjectMemoryChange.note | var note: ProjectMemoryNote
@@ -114,6 +115,56 @@ ProjectMemoryChange.old | var old: UUID?
 ProjectMemoryChange.others | var others: [ProjectMemoryNote]?
 ProjectMemoryChange.undoes | var undoes: [Int]?
 ProjectMemoryChange.who | var who: String? { get }
+ProjectMemoryCleanup | enum ProjectMemoryCleanup
+ProjectMemoryCleanup.Outcome | enum Outcome
+ProjectMemoryCleanup.Outcome.applied(_:) | case applied(ProjectMemoryCleanupRecord)
+ProjectMemoryCleanup.Outcome.refused(_:) | case refused(String)
+ProjectMemoryCleanup.apply(_:meeting:attendees:chats:commits:project:manual:now:) | static func apply(_ edits: [ProjectMemoryEdit], meeting: UUID, attendees: [String], chats: Set<UUID>, commits: [String], project: String, manual: Bool = false, now: Date = Date()) -> ProjectMemoryCleanup.Outcome
+ProjectMemoryCleanup.due(_:answers:manual:now:size:) | static func due(_ project: String, answers: Int, manual: Bool = false, now: Date = Date(), size: (ProjectMemoryNote) -> Int = { $0.text.count + 40 }) -> Bool
+ProjectMemoryCleanup.fullShare | static let fullShare: Double
+ProjectMemoryCleanup.interval | static let interval: TimeInterval
+ProjectMemoryCleanup.last(_:) | static func last(_ project: String) -> ProjectMemoryCleanupRecord?
+ProjectMemoryCleanup.logDays | static let logDays: Int
+ProjectMemoryCleanup.maxEdits | static let maxEdits: Int
+ProjectMemoryCleanup.minAnswers | static let minAnswers: Int
+ProjectMemoryCleanup.records(_:) | static func records(_ project: String) -> [ProjectMemoryCleanupRecord]
+ProjectMemoryCleanup.weekDays | static let weekDays: Int
+ProjectMemoryCleanupRecord | struct ProjectMemoryCleanupRecord
+ProjectMemoryCleanupRecord.Dropped | struct Dropped
+ProjectMemoryCleanupRecord.Dropped.edit | var edit: ProjectMemoryEdit
+ProjectMemoryCleanupRecord.Dropped.init(from:) | init(from decoder: any Decoder) throws
+ProjectMemoryCleanupRecord.Dropped.reason | var reason: String
+ProjectMemoryCleanupRecord.added | var added: Int
+ProjectMemoryCleanupRecord.archived | var archived: Int
+ProjectMemoryCleanupRecord.at | var at: Date
+ProjectMemoryCleanupRecord.attendees | var attendees: [String]
+ProjectMemoryCleanupRecord.deferred | var deferred: [ProjectMemoryEdit]
+ProjectMemoryCleanupRecord.dropped | var dropped: [ProjectMemoryCleanupRecord.Dropped]
+ProjectMemoryCleanupRecord.fixed | var fixed: Int
+ProjectMemoryCleanupRecord.id | var id: UUID
+ProjectMemoryCleanupRecord.init(from:) | init(from decoder: any Decoder) throws
+ProjectMemoryCleanupRecord.manual | var manual: Bool
+ProjectMemoryCleanupRecord.merged | var merged: Int
+ProjectMemoryEdit | struct ProjectMemoryEdit
+ProjectMemoryEdit.Kind | enum Kind
+ProjectMemoryEdit.Kind.add | case add
+ProjectMemoryEdit.Kind.archive | case archive
+ProjectMemoryEdit.Kind.fix | case fix
+ProjectMemoryEdit.Kind.init(rawValue:) | init?(rawValue: String)
+ProjectMemoryEdit.Kind.merge | case merge
+ProjectMemoryEdit.Kind.resolve | case resolve
+ProjectMemoryEdit.Kind.shorten | case shorten
+ProjectMemoryEdit.Kind.verify | case verify
+ProjectMemoryEdit.agreed | var agreed: Bool
+ProjectMemoryEdit.evidence | var evidence: [String]
+ProjectMemoryEdit.ids | var ids: [String]
+ProjectMemoryEdit.init(from:) | init(from decoder: any Decoder) throws
+ProjectMemoryEdit.init(kind:ids:keep:text:noteKind:verified:evidence:agreed:) | init(kind: ProjectMemoryEdit.Kind, ids: [String] = [], keep: String? = nil, text: String? = nil, noteKind: ProjectMemoryNote.Kind? = nil, verified: Bool? = nil, evidence: [String], agreed: Bool)
+ProjectMemoryEdit.keep | var keep: String?
+ProjectMemoryEdit.kind | var kind: ProjectMemoryEdit.Kind
+ProjectMemoryEdit.noteKind | var noteKind: ProjectMemoryNote.Kind?
+ProjectMemoryEdit.text | var text: String?
+ProjectMemoryEdit.verified | var verified: Bool?
 ProjectMemoryNote | struct ProjectMemoryNote
 ProjectMemoryNote.Kind | enum Kind
 ProjectMemoryNote.Kind.decision | case decision
@@ -149,6 +200,7 @@ ProjectMemoryStore.Outcome.refused(_:) | case refused(String)
 ProjectMemoryStore.Outcome.saved(_:) | case saved(ProjectMemoryNote)
 ProjectMemoryStore.add(_:project:by:batch:) | func add(_ note: ProjectMemoryNote, project: String, by: String? = nil, batch: UUID? = nil) -> ProjectMemoryStore.Outcome
 ProjectMemoryStore.archive(_:project:) | func archive(_ id: UUID, project: String) -> ProjectMemoryStore.Outcome
+ProjectMemoryStore.budget | static let budget: Int
 ProjectMemoryStore.delete(_:project:) | func delete(_ id: UUID, project: String) -> ProjectMemoryStore.Outcome
 ProjectMemoryStore.edit(_:text:kind:verified:project:) | func edit(_ id: UUID, text: String, kind: ProjectMemoryNote.Kind, verified: Bool, project: String) -> ProjectMemoryStore.Outcome
 ProjectMemoryStore.history(_:) | func history(_ project: String) -> [ProjectMemoryChange]

@@ -407,4 +407,94 @@ func testProjectMemoryUndo() {
            && !((try? String(contentsOf: ProjectMemoryStore.historyFile(key), encoding: .utf8)) ?? "지울").contains("지울 비밀"),
            "a copy that cannot be written is removed, so the deleted text is in no file")
     print("PASS: project memory undo (who changed what, undo any change or a meeting cleanup, undo of undo, archive/restore, delete for good leaves no text and blocks the same words)")
+    testProjectMemoryCleanup()
+}
+
+// A meeting cleanup's list of edits: only agreed edits resting on the material's evidence, never a deleted text, at
+// most 30, the app's weekly fold of old work logs, one batch undone as a whole, and when a cleanup is due.
+func testProjectMemoryCleanup() {
+    let store = ProjectMemoryStore.shared
+    let key = "/tmp/pmc-\(UUID().uuidString.prefix(8))"
+    store.forget()
+    defer { try? FileManager.default.removeItem(at: ProjectMemoryStore.folder(key)); store.forget() }
+    func saved(_ o: ProjectMemoryStore.Outcome) -> ProjectMemoryNote? { if case .saved(let n) = o { return n }; return nil }
+    func current(_ id: UUID) -> ProjectMemoryNote? { store.notes(key).first { $0.id == id } }
+    func applied(_ o: ProjectMemoryCleanup.Outcome) -> ProjectMemoryCleanupRecord? { if case .applied(let r) = o { return r }; return nil }
+    let chat = UUID(), hash = "abcdef1234567890abcdef1234567890abcdef12", now = Date()
+    expect(ProjectMemoryCleanup.due(key, answers: 5, now: now) && !ProjectMemoryCleanup.due(key, answers: 4, now: now)
+           && ProjectMemoryCleanup.due(key, answers: 0, manual: true, now: now), "never cleaned: due after 5 answers, or by hand")
+
+    guard let a = saved(store.add(ProjectMemoryNote(kind: .decision, text: "빌드는 --stage로만", by: "Claude"), project: key)),
+          let b = saved(store.add(ProjectMemoryNote(kind: .decision, text: "설치는 사용자가 직접", by: "Codex"), project: key)),
+          let c = saved(store.add(ProjectMemoryNote(kind: .progress, text: "재로그인 검증 남음 (오래된 설명)", by: "Gemini"), project: key)),
+          let d = saved(store.add(ProjectMemoryNote(kind: .decision, text: "고객사 이름은 아크메", by: "Claude"), project: key))
+    else { expect(false, "notes saved"); return }
+    _ = store.delete(d.id, project: key)
+    let meeting = UUID()
+    let edits = [
+        ProjectMemoryEdit(kind: .merge, ids: [String(a.id.uuidString.prefix(8)).lowercased(), b.id.uuidString], text: "빌드는 --stage, 설치는 사용자가",
+                          evidence: [chat.uuidString], agreed: true),
+        ProjectMemoryEdit(kind: .shorten, ids: [c.id.uuidString], text: "재로그인 검증 남음", evidence: ["ABCDEF1"], agreed: true),
+        ProjectMemoryEdit(kind: .add, text: "근거 없는 새 규칙", evidence: [], agreed: true),
+        ProjectMemoryEdit(kind: .add, text: "자료에 없는 근거", evidence: [UUID().uuidString, "1234567"], agreed: true),
+        ProjectMemoryEdit(kind: .add, text: "고객사 이름은 아크메.", evidence: [chat.uuidString], agreed: true),
+        ProjectMemoryEdit(kind: .archive, ids: [UUID().uuidString], evidence: [hash], agreed: true),
+        ProjectMemoryEdit(kind: .verify, ids: [a.id.uuidString], verified: true, evidence: [hash], agreed: true),
+        ProjectMemoryEdit(kind: .add, text: "의견이 갈린 규칙", evidence: [hash], agreed: false),
+    ]
+    guard let first = applied(ProjectMemoryCleanup.apply(edits, meeting: meeting, attendees: ["Claude", "Codex"], chats: [chat], commits: [hash], project: key, now: now))
+    else { expect(false, "cleanup applied"); return }
+    let merged = store.notes(key).first { $0.state == .active && $0.text == "빌드는 --stage, 설치는 사용자가" }
+    expect(first.merged == 1 && first.fixed == 1 && first.added == 0 && first.archived == 0 && first.dropped.count == 5
+           && first.deferred.map(\.text) == ["의견이 갈린 규칙"] && merged != nil && current(a.id)?.state == .archived
+           && current(a.id)?.replacedBy == merged?.id && current(c.id)?.state == .archived,
+           "agreed edits with evidence apply; no evidence, evidence not in the material, a missing or archived note are dropped; a split one waits")
+    expect(!store.notes(key).contains { $0.text.contains("아크메") || $0.text.contains("근거") }
+           && first.dropped.contains { $0.reason.contains("deleted") }, "a text the user deleted is not brought back by a meeting")
+    let lines = store.history(key).filter { $0.batch == meeting }
+    expect(lines.count == 2 && lines.allSatisfy { $0.who == ProjectMemoryChange.byMeeting && $0.evidence?.isEmpty == false }
+           && lines.first?.evidence == [chat.uuidString] && lines.last?.evidence == [hash],
+           "each change is a meeting line of the batch with its evidence")
+    expect(ProjectMemoryCleanup.last(key)?.id == meeting && ProjectMemoryCleanup.last(key)?.deferred == first.deferred && FileManager.default.fileExists(atPath: ProjectMemoryCleanup.file(key).path)
+           && ProjectMemoryCleanup.last(key)?.attendees == ["Claude", "Codex"], "the cleanup is recorded in memory-cleanups.json")
+    expect(applied(ProjectMemoryCleanup.apply([], meeting: meeting, attendees: [], chats: [], commits: [], project: key)) == nil,
+           "one meeting is applied once")
+    expect(saved(store.undo(batch: meeting, project: key)) != nil && current(a.id)?.state == .active && current(b.id)?.state == .active
+           && current(c.id)?.state == .active && current(merged!.id)?.state == .archived, "the whole cleanup is undone at once")
+
+    // At most 30 edits at once; the rest wait.
+    let many = (0..<35).map { ProjectMemoryEdit(kind: .add, text: "할 일 \($0)", noteKind: .progress, evidence: [hash], agreed: true) }
+    let capped = applied(ProjectMemoryCleanup.apply(many, meeting: UUID(), attendees: ["Claude", "Gemini"], chats: [], commits: [hash], project: key, now: now))
+    expect(capped?.added == 30 && capped?.deferred.count == 5 && capped?.deferred.first?.text == "할 일 30"
+           && store.notes(key).filter { $0.text.hasPrefix("할 일 ") }.count == 30, "30 edits applied, 5 left for the next cleanup")
+
+    // Due: a day after the last cleanup with 5 answers, or the notes over 80% of the budget.
+    expect(!ProjectMemoryCleanup.due(key, answers: 10, now: now.addingTimeInterval(3_600))
+           && ProjectMemoryCleanup.due(key, answers: 5, now: now.addingTimeInterval(25 * 3_600))
+           && !ProjectMemoryCleanup.due(key, answers: 4, now: now.addingTimeInterval(25 * 3_600)), "a day and 5 answers since the last cleanup")
+    for i in 0..<8 { _ = store.add(ProjectMemoryNote(kind: .decision, text: "긴 메모 \(i) " + String(repeating: "가", count: 440)), project: key) }
+    expect(ProjectMemoryCleanup.due(key, answers: 0, now: now.addingTimeInterval(60)), "notes over 80% of the budget: due at once")
+
+    // The app's rule: committed logs older than 14 days fold into one line per ISO week; a week older than 30 days is archived.
+    let day = 86_400.0
+    var calendar = Calendar(identifier: .iso8601); calendar.timeZone = .current
+    let monday = calendar.dateInterval(of: .weekOfYear, for: now.addingTimeInterval(-21 * day))!.start.addingTimeInterval(3_600)
+    let w1 = store.recordWork([("1111111111aaaaaaaaaa1111111111aaaaaaaaaa", "로그인 고침")], project: key, by: "Claude", chat: chat, now: monday)
+    let w2 = store.recordWork([("2222222222bbbbbbbbbb2222222222bbbbbbbbbb", "테스트 추가")], project: key, by: "Codex", chat: chat, now: monday.addingTimeInterval(day))
+    let w3 = store.recordWork([("3333333333cccccccccc3333333333cccccccccc", "옛날 작업")], project: key, by: "Codex", chat: chat, now: now.addingTimeInterval(-40 * day))
+    let w4 = store.recordWork([("4444444444dddddddddd4444444444dddddddddd", "어제 작업")], project: key, by: "Codex", chat: chat, now: now.addingTimeInterval(-day))
+    let fold = UUID()
+    let folded = applied(ProjectMemoryCleanup.apply([], meeting: fold, attendees: ["Claude", "Codex"], chats: [], commits: [], project: key, now: now))
+    let week = store.notes(key).first { $0.state == .active && ProjectMemoryCleanup.weekly($0.text) != nil }
+    func id(_ o: ProjectMemoryStore.Outcome?) -> UUID? { o.flatMap(saved)?.id }
+    expect(folded?.merged == 1 && folded?.archived == 1 && week?.commits?.count == 2 && week?.text.contains("로그인 고침") == true
+           && week?.text.contains("테스트 추가") == true && !(week?.text.contains("chat:") ?? true)
+           && id(w1).flatMap(current)?.state == .archived && id(w2).flatMap(current)?.state == .archived
+           && id(w3).flatMap(current)?.state == .archived && id(w4).flatMap(current)?.state == .active,
+           "two-week-old logs of one week become one line; a 40-day-old one is archived; yesterday's stays")
+    expect(store.recordWork([("1111111111aaaaaaaaaa1111111111aaaaaaaaaa", "로그인 고침")], project: key, by: "Claude", chat: chat).flatMap(saved) == nil,
+           "a folded commit is not logged again")
+    expect(saved(store.undo(batch: fold, project: key)) != nil && id(w1).flatMap(current)?.state == .active && current(week!.id)?.state == .archived,
+           "the fold is part of the cleanup's batch and undone with it")
+    print("PASS: project memory cleanup (evidence and agreement checked, deleted texts stay gone, 30 at once, weekly fold, one batch undo, when due)")
 }

@@ -100,6 +100,7 @@ ProjectMakerLink.tools() | func tools() -> [[String : Any]]
 ProjectMakerLink.tools(context:) | func tools(context: ToolContext) -> [[String : Any]]
 ProjectMemoryChange | struct ProjectMemoryChange
 ProjectMemoryChange.action | var action: String
+ProjectMemoryChange.archived | var archived: ProjectMemoryNote?
 ProjectMemoryChange.at | var at: Date
 ProjectMemoryChange.init(from:) | init(from decoder: any Decoder) throws
 ProjectMemoryChange.note | var note: ProjectMemoryNote

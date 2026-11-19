@@ -4,8 +4,8 @@ import AIAccounts
 
 // Project memory: notes every AI of one project shares (Claude, Codex, Gemini, the local model), unlike the app's
 // memory of the user (AIChat Memory.swift). Kept per project (ProjectBinding.groupKey, so its worktrees share it) in
-// <support>/projects/<id>/memory.json; every change also appends one line per changed note to memory-history.jsonl,
-// so each can be undone later. An AI never edits a note in place: it adds one, or replaces one (the old note is
+// <support>/projects/<id>/: memory-history.jsonl gets one line per change (the record; memory.json is a copy of
+// the notes for people), so each can be undone later. An AI never edits a note in place: it adds one, or replaces one (the old note is
 // archived and both keep the link). Archived notes stay searchable; only the user deletes.
 public struct ProjectMemoryNote: Codable, Identifiable, Equatable {
     public enum Kind: String, Codable, CaseIterable { case decision, progress, log }   // decision/fact, open progress, work log
@@ -32,12 +32,14 @@ public struct ProjectMemoryNote: Codable, Identifiable, Equatable {
     }
 }
 
-// One line of memory-history.jsonl: a note as it is after the change.
+// One line of memory-history.jsonl, one per change: the notes as they are after it. A replace is one line (the new
+// note and the archived one), so a crash never leaves half of it.
 public struct ProjectMemoryChange: Codable, Equatable {
     public var at: Date
-    public var action: String       // "add", "replace" (note is the new one, old the archived), "archive"
+    public var action: String       // "add", "replace"
     public var note: ProjectMemoryNote
-    public var old: UUID?
+    public var old: UUID?           // replace: the note it archived
+    public var archived: ProjectMemoryNote?   // replace: that note, archived
 }
 
 struct ProjectMemoryData: Codable {
@@ -72,7 +74,7 @@ public final class ProjectMemoryStore: ObservableObject {
     // Every note of the project, archived ones too, oldest first (any thread).
     public func notes(_ project: String) -> [ProjectMemoryNote] {
         lock.lock(); defer { lock.unlock() }
-        return load(project).notes
+        return load(project)?.notes ?? []
     }
 
     // Read again from disk on the next use (tests that clear the folder).
@@ -115,8 +117,7 @@ public final class ProjectMemoryStore: ObservableObject {
             note.pinned = note.pinned || data.notes[i].pinned
             data.notes[i].state = .archived; data.notes[i].replacedBy = note.id; data.notes[i].archivedAt = note.createdAt
             data.notes.append(note)
-            return (.saved(note), [ProjectMemoryChange(at: note.createdAt, action: "archive", note: data.notes[i], old: nil),
-                                   ProjectMemoryChange(at: note.createdAt, action: "replace", note: note, old: old)])
+            return (.saved(note), [ProjectMemoryChange(at: note.createdAt, action: "replace", note: note, old: old, archived: data.notes[i])])
         }
     }
 
@@ -128,36 +129,49 @@ public final class ProjectMemoryStore: ObservableObject {
         return nil
     }
 
-    private func load(_ project: String) -> ProjectMemoryData {
+    // The history is the record: the notes are its lines replayed (each line holds a note as it is after the change),
+    // so a change is real once its line is written and memory.json is only a copy for people. A line cut off by a
+    // crash at the end was never applied and is skipped; anything else unreadable gives nil, and nothing is saved
+    // over it (a damaged file never turns into an empty memory).
+    private func load(_ project: String) -> ProjectMemoryData? {
         if let data = cache[project] { return data }
-        let data = (try? Data(contentsOf: Self.file(project))).flatMap { try? Self.decoder.decode(ProjectMemoryData.self, from: $0) }
-            ?? ProjectMemoryData(project: project)
+        let fm = FileManager.default, history = Self.historyFile(project), file = Self.file(project)
+        var data = ProjectMemoryData(project: project)
+        if fm.fileExists(atPath: history.path) {
+            guard let text = try? String(contentsOf: history, encoding: .utf8) else { return nil }
+            var lines = text.components(separatedBy: "\n")
+            lines.removeLast()   // "" after the last newline, else a line cut off before its newline (append drops it)
+            var index: [UUID: Int] = [:]
+            func put(_ note: ProjectMemoryNote) {
+                if let i = index[note.id] { data.notes[i] = note } else { index[note.id] = data.notes.count; data.notes.append(note) }
+            }
+            for line in lines where !line.isEmpty {
+                guard let change = try? Self.decoder.decode(ProjectMemoryChange.self, from: Data(line.utf8)) else { return nil }
+                if let archived = change.archived { put(archived) }
+                put(change.note)
+            }
+        } else if fm.fileExists(atPath: file.path) {
+            guard let saved = (try? Data(contentsOf: file)).flatMap({ try? Self.decoder.decode(ProjectMemoryData.self, from: $0) }) else { return nil }
+            data = saved
+        }
         cache[project] = data
         return data
     }
 
-    // Saves the notes, then the history lines; when the history cannot be written the notes go back as they were,
-    // so no change is left out of the history.
+    // Writes the history lines first (that is the change), then the copy in memory.json.
     private func change(_ project: String, _ edit: (inout ProjectMemoryData) -> (Outcome, [ProjectMemoryChange])) -> Outcome {
         lock.lock()
-        let before = load(project)
-        var next = before
+        guard var next = load(project) else {
+            lock.unlock(); return .refused("Project memory on this Mac could not be read, so nothing was saved over it. Ask the user to check it.")
+        }
         next.project = project
         let (outcome, lines) = edit(&next)
         guard !lines.isEmpty else { lock.unlock(); return outcome }
-        let failed = Outcome.refused("Project memory could not be saved on this Mac.")
-        let folder = Self.folder(project), file = Self.file(project)
-        let previous = try? Data(contentsOf: file)
         do {
-            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-            try Self.write(Self.encoder.encode(next), to: file)
-        } catch { lock.unlock(); return failed }
-        do {
+            try FileManager.default.createDirectory(at: Self.folder(project), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
             try Self.append(lines.map { try Self.encoder.encode($0) }, to: Self.historyFile(project))
-        } catch {
-            if let previous { try? Self.write(previous, to: file) } else { try? FileManager.default.removeItem(at: file) }
-            lock.unlock(); return failed
-        }
+        } catch { lock.unlock(); return .refused("Project memory could not be saved on this Mac.") }
+        try? Self.write(Self.encoder.encode(next), to: Self.file(project))
         cache[project] = next
         lock.unlock()
         let bump = { self.revision += 1 }
@@ -176,9 +190,20 @@ public final class ProjectMemoryStore: ObservableObject {
                 throw CocoaError(.fileWriteUnknown)
             }
         }
-        let handle = try FileHandle(forWritingTo: file)
+        let handle = try FileHandle(forUpdating: file)
         defer { try? handle.close() }
-        try handle.seekToEnd()
+        // A line cut off by a crash (no newline after it) was never part of the record: write over it.
+        let end = try handle.seekToEnd()
+        if end > 0 {
+            let back = min(end, 64 * 1024)
+            try handle.seek(toOffset: end - back)
+            let tail = try handle.readToEnd() ?? Data()
+            if tail.last != 0x0A {
+                let keep = tail.lastIndex(of: 0x0A).map { end - back + UInt64($0 - tail.startIndex) + 1 } ?? (back == end ? 0 : end)
+                try handle.truncate(atOffset: keep)
+            }
+            try handle.seek(toOffset: try handle.seekToEnd())
+        }
         try handle.write(contentsOf: lines.reduce(into: Data()) { $0.append($1); $0.append(0x0A) })
     }
 }

@@ -15,6 +15,15 @@ enum ProjectMemory {
     // The project of a chat, also while an opinion runs without it.
     static func project(_ chat: Conversation?) -> String? { chat?.workspace?.project.map(SidebarProjects.key) }
 
+    // May this tool session add or replace: it was made for the chat's newest message, still being answered, and for
+    // the project the chat is linked to now (its folder is among the session's), so an older session never writes
+    // and a chat linked to another project never gets the earlier project's notes. Folderless projects have no folder.
+    static func mayWrite(_ chat: Conversation?, context: ToolContext) -> Bool {
+        guard let chat, !chat.isEnterprise, let binding = chat.workspace?.project, let last = chat.turns.last,
+              last.answeredAt == nil, context.turn == last.id else { return false }
+        return binding.isFolderless || context.roots.contains { $0.path == binding.root }
+    }
+
     static func short(_ id: UUID) -> String { String(id.uuidString.prefix(8)).lowercased() }
 
     static func line(_ note: ProjectMemoryNote) -> String {
@@ -73,14 +82,14 @@ enum ProjectMemory {
             """
     }
 
-    static func tools(enterprise: Bool) -> [[String: Any]] {
+    static func tools(writes: Bool) -> [[String: Any]] {
         let kinds = ["type": "string", "enum": ["decision", "progress", "log"],
                      "description": "decision: a decision or fact that lasts; progress: open work or a failed try; log: work done"] as [String: Any]
         let search: [String: Any] = [
             "name": "project_memory_search",
             "description": "Search this project's shared memory, archived notes too. Empty query: the newest notes.",
             "inputSchema": ["type": "object", "properties": ["query": ["type": "string"]], "additionalProperties": false]]
-        if enterprise { return [search] }
+        if !writes { return [search] }
         return [
             ["name": "project_memory_add",
              "description": "Add one note to this project's memory, which every AI of the project reads. One line, no secrets.",
@@ -95,11 +104,12 @@ enum ProjectMemory {
             search]
     }
 
-    static func call(_ name: String, _ arguments: [String: Any], project: String, enterprise: Bool, context: ToolContext,
+    static func call(_ name: String, _ arguments: [String: Any], project: String, enterprise: Bool, writes: Bool, context: ToolContext,
                      store: ProjectMemoryStore = .shared) -> [String: Any] {
         func text(_ s: String) -> [String: Any] { ["content": [["type": "text", "text": s]], "isError": false] }
         if name == "project_memory_search" { return text(search(store.notes(project), query: arguments["query"] as? String ?? "")) }
         guard !enterprise else { return toolFailure("This is an Enterprise chat: nothing from it is saved to project memory.") }
+        guard writes else { return toolFailure("Project memory saving is off for this tool session (an earlier answer, or the chat's project changed).") }
         let words = (arguments["text"] as? String ?? "")
         guard !MemoryStore.looksSecret(words) else { return toolFailure("Not saved: passwords, keys, tokens and similar secrets are never kept in memory.") }
         let kind = (arguments["kind"] as? String).flatMap(ProjectMemoryNote.Kind.init(rawValue:))

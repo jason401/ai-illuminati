@@ -38,7 +38,7 @@ func testProjectMemory() {
     chat.conversations = [a, b, plain, locked]; chat.currentID = a.id
     let link = MemoryLink.shared
     func session(_ room: UUID, _ who: Account, _ origin: ToolOrigin = .member) -> ToolContext {
-        ToolContext(room: room, roots: [], asker: who, turn: link.newestTurn(room), origin: origin)
+        ToolContext(room: room, roots: [WorkspaceRoot(path: root, directory: true)], asker: who, turn: link.newestTurn(room), origin: origin)
     }
     func names(_ c: ToolContext) -> Set<String> { Set(link.tools(context: c).compactMap { $0["name"] as? String }) }
     func ok(_ reply: [String: Any]) -> Bool { reply["isError"] as? Bool == false }
@@ -78,8 +78,8 @@ func testProjectMemory() {
     expect(ok(replaced) && new?.by == "Codex" && new?.kind == .decision && notes.first { $0.id == old.id }?.state == .archived
            && notes.first { $0.id == old.id }?.replacedBy == new?.id && notes.first { $0.id == old.id }?.text == old.text,
            "replace archives the old note unchanged and links both")
-    expect(store.history(key).map(\.action) == ["add", "archive", "replace"] && store.history(key).last?.old == old.id,
-           "every change is in the history")
+    expect(store.history(key).map(\.action) == ["add", "replace"] && store.history(key).last?.old == old.id
+           && store.history(key).last?.archived?.state == .archived, "every change is one history line (a replace too)")
     expect(!ok(link.call("project_memory_replace", ["id": short, "text": "또 바꿈"], context: session(a.id, claude)))
            && !ok(link.call("project_memory_replace", ["id": "abc", "text": "짧은 id"], context: session(a.id, claude))),
            "an archived note or an unclear id cannot be replaced")
@@ -90,6 +90,38 @@ func testProjectMemory() {
     expect(said(link.call("project_memory_search", [:], context: session(locked.id, claude))).contains("Keychain에만"), "Enterprise chats may search")
     expect(chat.projectMemoryRule(gemma, chat: a.id).contains("Keychain에만") && !chat.projectMemoryRule(gemma, chat: a.id).contains("project_memory_add"),
            "a model without tools reads notes but gets no tool rule")
+
+    // Only the session of the message being answered, for the project the chat is linked to now, writes.
+    let earlier = session(a.id, claude)
+    chat.change(a.id) { $0.turns.append(ChatTurn(question: "다음")) }
+    expect(!ok(link.call("project_memory_add", ["kind": "log", "text": "옛 세션 기록"], context: earlier)) && !names(earlier).contains("project_memory_add")
+           && names(earlier).contains("project_memory_search"), "an earlier answer's session only searches")
+    let other = ProjectBinding(root: root + "-other", common: root + "-other/.git", remote: "", remoteURL: "")
+    let before = session(b.id, codex)
+    chat.change(b.id) { $0.workspace?.project = other }
+    expect(!ok(link.call("project_memory_add", ["kind": "log", "text": "다른 프로젝트로"], context: before))
+           && store.notes(SidebarProjects.key(other)).isEmpty, "a session made before the chat moved to another project writes nowhere")
+    chat.change(b.id) { $0.workspace?.project = binding }
+    chat.change(a.id) { $0.turns[$0.turns.count - 1].answeredAt = Date() }
+    expect(!names(session(a.id, claude)).contains("project_memory_add"), "once the answer is done, no more saving")
+
+    // The history is the record: a crash after it was written, a cut-off last line, a damaged file.
+    let count = store.notes(key).count
+    try? FileManager.default.removeItem(at: ProjectMemoryStore.file(key)); store.forget()
+    expect(store.notes(key).count == count && store.notes(key).last?.text.contains("Keychain에만") == true, "memory.json lost: the notes come back from the history")
+    let history = ProjectMemoryStore.historyFile(key)
+    if let h = try? FileHandle(forWritingTo: history) { h.seekToEndOfFile(); h.write(Data("{\"at\":\"2026".utf8)); h.closeFile() }
+    store.forget()
+    expect(store.notes(key).count == count, "a line cut off by a crash is skipped")
+    chat.change(b.id) { $0.turns.append(ChatTurn(question: "기록 남겨")) }
+    expect(ok(link.call("project_memory_add", ["kind": "log", "text": "잘린 줄 뒤 기록"], context: session(b.id, codex))), "saving after a cut-off line works")
+    store.forget()
+    expect(store.notes(key).count == count + 1 && store.history(key).count == 3, "the cut-off line was written over, the new one kept")
+    let good = try! Data(contentsOf: history)
+    try! (Data("garbage\n".utf8) + good).write(to: history); store.forget()
+    expect(!ok(link.call("project_memory_add", ["kind": "log", "text": "손상 뒤 기록"], context: session(b.id, codex)))
+           && (try? Data(contentsOf: history)) == Data("garbage\n".utf8) + good, "a damaged history is never saved over")
+    try! good.write(to: history); store.forget()
 
     // The instruction: pinned, decisions, open progress, the last 14 days of log; archived notes never.
     let now = Date()

@@ -362,7 +362,7 @@ do {
     let notes = memory.notes(key)
     expect(notes.count == 2 && notes[0].state == .archived && notes[0].text == "Keychain only" && notes[0].replacedBy == second.id
            && notes[1].replaces == first.id && notes[1].state == .active, "replace archives the old note unchanged and links both")
-    expect(memory.history(key).map(\.action) == ["add", "archive", "replace"], "every change is one history line")
+    expect(memory.history(key).map(\.action) == ["add", "replace"] && memory.history(key)[1].archived?.id == first.id, "every change is one history line")
     let saved = URL(fileURLWithPath: AccountStore.supportDir).appendingPathComponent("projects")
     let folders = (try? fm.contentsOfDirectory(atPath: saved.path)) ?? []
     expect(folders.count == 1 && fm.fileExists(atPath: saved.path + "/" + folders[0] + "/memory.json")

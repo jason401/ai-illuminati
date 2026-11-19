@@ -215,7 +215,7 @@ public final class MemoryLink: ToolProvider {
                          "description": "Save one short fact about the user to their long-term memory, which every AI in this app reads in later chats. One line, no secrets.",
                          "inputSchema": ["type": "object", "properties": ["text": ["type": "string"]], "required": ["text"], "additionalProperties": false]])
         }
-        if context.origin == .member, ProjectMemory.project(found) != nil { list += ProjectMemory.tools(enterprise: found?.isEnterprise == true) }
+        if context.origin == .member, ProjectMemory.project(found) != nil { list += ProjectMemory.tools(writes: ProjectMemory.mayWrite(found, context: context)) }
         return list
     }
 
@@ -225,7 +225,8 @@ public final class MemoryLink: ToolProvider {
             guard context.asker != nil, context.origin == .member, let project = ProjectMemory.project(found) else {
                 return toolFailure("Project memory is only for an AI answering a project chat.")
             }
-            return ProjectMemory.call(name, arguments, project: project, enterprise: found?.isEnterprise == true, context: context)
+            return ProjectMemory.call(name, arguments, project: project, enterprise: found?.isEnterprise == true,
+                                      writes: ProjectMemory.mayWrite(found, context: context), context: context)
         }
         guard name == "remember" else { return toolFailure("Unknown tool: " + name) }
         guard context.asker != nil, let turn = context.turn, MemoryStore.mayRemember(store.snapshot, chat: found, turn: turn) else {

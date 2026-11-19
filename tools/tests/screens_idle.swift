@@ -9,6 +9,43 @@ import AIProjects
 // Hosted for 2 seconds with nothing changing, a card must use almost no CPU; with the loop the run loop never
 // returned, so the stage's time limit catches that too.
 @main struct ScreensIdle { static func main() {
+    let list = UUID(), other = UUID()
+    var ordered: [TodoItem] = []
+    for n in 0..<25 {
+        var item = TodoItem(listID: list, title: "Finished \(n)")
+        item.state = n % 2 == 0 ? .done : .cancelled
+        item.updatedAt = Date(timeIntervalSince1970: Double(n))
+        item.finishedAt = n == 24 ? nil : item.updatedAt
+        ordered.append(item)
+    }
+    // A newer edit must not override an existing completion time.
+    ordered[0].updatedAt = Date(timeIntervalSince1970: 1000)
+    let active = [TodoItem.State.draft, .ready, .running, .review, .needsYou].map { state -> TodoItem in
+        var item = TodoItem(listID: list, title: "Active"); item.state = state; return item
+    }
+    ordered.insert(contentsOf: active, at: 12)
+    func check(_ limit: Int, count: Int, hidden: Int) {
+        let shown = TodoDraft.shownRows(ordered, showDone: true, doneLimit: limit)
+        let expected = ordered.filter { active.map(\.id).contains($0.id) || ($0.finishedAt ?? $0.updatedAt) >= Date(timeIntervalSince1970: Double(25 - count)) && $0.id != ordered[0].id }
+        precondition(shown.rows.map(\.id) == expected.map(\.id) && shown.hiddenDone == hidden)
+    }
+    check(10, count: 10, hidden: 15)
+    check(20, count: 20, hidden: 5)
+    let all = TodoDraft.shownRows(ordered, showDone: true, doneLimit: 30)
+    precondition(all.rows.map(\.id) == ordered.map(\.id) && all.hiddenDone == 0)
+    precondition(TodoDraft.shownRows(ordered, showDone: false, doneLimit: 30).rows.map(\.id) == active.map(\.id))
+    precondition(TodoDraft.shownRows([], showDone: true, doneLimit: 10).hiddenDone == 0)
+    let tied = Array(ordered.prefix(2)).map { item -> TodoItem in
+        var copy = item; copy.finishedAt = Date(timeIntervalSince1970: 1); return copy
+    }
+    precondition(TodoDraft.shownRows(tied, showDone: true, doneLimit: 1).rows.first?.id == tied.first?.id)
+    let draft = TodoDraft()
+    draft.showDone = true; draft.showMoreDone(list); draft.showMoreDone(list)
+    precondition(draft.doneLimit(list) == 30 && draft.doneLimit(other) == 10)
+    draft.showLessDone(list); precondition(draft.doneLimit(list) == 10)
+    draft.showMoreDone(list); draft.showDone = false; draft.showDone = true
+    precondition(draft.doneLimits.isEmpty && draft.doneLimit(list) == 10)
+    print("PASS: TODO finished rows page by recency and preserve board order")
     let app = NSApplication.shared
     app.setActivationPolicy(.prohibited)
     func cpu() -> Double { var u = rusage(); getrusage(RUSAGE_SELF, &u); return Double(u.ru_utime.tv_sec) + Double(u.ru_utime.tv_usec) / 1e6 }

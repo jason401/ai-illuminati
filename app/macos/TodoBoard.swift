@@ -82,7 +82,24 @@ final class TodoDraft: ObservableObject {
     @Published var after: Set<UUID> = []
     @Published var askFirst = false
     @Published var error: String?
-    @Published var showDone = false
+    @Published var showDone = false { didSet { if !showDone { doneLimits.removeAll() } } }
+    static let donePage = 10
+    @Published private(set) var doneLimits: [UUID: Int] = [:]
+    func doneLimit(_ list: UUID) -> Int { doneLimits[list] ?? Self.donePage }
+    func showMoreDone(_ list: UUID) { doneLimits[list] = doneLimit(list) + Self.donePage }
+    func showLessDone(_ list: UUID) { doneLimits[list] = nil }
+
+    // Choose by completion time, then keep board order (including ties).
+    static func shownRows(_ ordered: [TodoItem], showDone: Bool, doneLimit: Int) -> (rows: [TodoItem], hiddenDone: Int) {
+        let done = ordered.enumerated().filter { $0.element.state == .done || $0.element.state == .cancelled }
+        let recent = showDone ? done.sorted {
+            let a = $0.element.finishedAt ?? $0.element.updatedAt, b = $1.element.finishedAt ?? $1.element.updatedAt
+            return a == b ? $0.offset < $1.offset : a > b
+        }.prefix(max(0, doneLimit)).map { $0.element.id } : []
+        let selected = Set(recent)
+        return (ordered.filter { ($0.state != .done && $0.state != .cancelled) || selected.contains($0.id) },
+                showDone ? done.count - selected.count : 0)
+    }
     @Published var replies: [UUID: String] = [:]   // a card's answer or change request, by TODO
     // A chat card folded to one line, with what it showed then: a new state, question or result opens it again.
     struct Fold: Equatable { var state: TodoItem.State; var question: UUID?; var result: String? }
@@ -183,7 +200,9 @@ struct TodoBoardView: View {
     private func title(_ list: TodoList) -> String { list.project.flatMap { projectInfo.names[SidebarProjects.key($0)] } ?? list.title }
 
     private func listView(_ list: TodoList) -> some View {
-        let rows = store.snapshot.ordered(list.id).filter { draft.showDone || ($0.state != .done && $0.state != .cancelled) }
+        let limit = draft.doneLimit(list.id)
+        let shown = TodoDraft.shownRows(store.snapshot.ordered(list.id), showDone: draft.showDone, doneLimit: limit)
+        let rows = shown.rows
         return VStack(alignment: .leading, spacing: 6) {
             // One line: a long project name gives way, the mode menu and pause keep their size.
             HStack(spacing: 10) {
@@ -194,6 +213,15 @@ struct TodoBoardView: View {
             }
             if let scheduler = TodoScheduler.shared { TodoCrewRow(list: list, scheduler: scheduler, discussion: discussion, error: { draft.error = $0 }) }
             ForEach(Array(rows.enumerated()), id: \.element.id) { index, item in row(item, index: index + 1, list: list) }
+            if draft.showDone && (shown.hiddenDone > 0 || limit > TodoDraft.donePage) {
+                HStack(spacing: 12) {
+                    if shown.hiddenDone > 0 {
+                        Button(L("더 보기 (\(shown.hiddenDone))", "Show more (\(shown.hiddenDone))")) { draft.showMoreDone(list.id) }
+                    }
+                    if limit > TodoDraft.donePage { Button(L("접기", "Show less")) { draft.showLessDone(list.id) } }
+                }
+                .buttonStyle(.link).font(.system(size: 11)).frame(height: 22)
+            }
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)

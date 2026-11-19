@@ -196,6 +196,8 @@ struct ProjectMemorySection: View {
     // The store explains refusals in English for the AIs; the user gets them in their language.
     static func refusal(_ why: String) -> String {
         let known: [(String, String, String)] = [
+            ("could not be cleaned", "기록에서는 지웠지만 사본 파일(memory.json)을 정리하지 못했어요. 다음에 메모가 바뀔 때 다시 써져요.",
+             "Deleted from the history, but the copy (memory.json) could not be cleaned; it is written again with the next change."),
             ("later change", "뒤에 같은 메모를 바꾼 변경이 있어요. 그 변경부터 되돌리세요.", "A later change touched the same note: undo that one first."),
             ("already undone", "이미 되돌린 변경이에요.", "That change was already undone."),
             ("cannot be undone", "완전 삭제는 되돌릴 수 없어요.", "A delete for good cannot be undone."),

@@ -78,10 +78,12 @@ public final class ProjectMemoryStore: ObservableObject {
     static func file(_ project: String) -> URL { folder(project).appendingPathComponent("memory.json") }
     static func historyFile(_ project: String) -> URL { folder(project).appendingPathComponent("memory-history.jsonl") }
 
-    // What a deleted text leaves behind: a hash of its letters and digits only (case, spaces and punctuation aside),
-    // so the same words saved again are recognized without keeping them.
+    // What a deleted text leaves behind: a hash of it with case, runs of spaces and the closing punctuation aside, so
+    // the same words saved again are recognized without keeping them. Signs and points inside stay ("+5 V" is not
+    // "-5 V", "1.5 MHz" not "15 MHz").
     public static func mark(_ text: String) -> String {
-        let kept = String(String.UnicodeScalarView(text.lowercased().unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) }))
+        var kept = text.lowercased().split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        while let last = kept.last, ".!?。！？…,;:".contains(last) || last == " " { kept.removeLast() }
         return SHA256.hash(data: Data(kept.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 
@@ -224,7 +226,7 @@ public final class ProjectMemoryStore: ObservableObject {
     public func undo(_ numbers: [Int], project: String) -> Outcome {
         change(project) { data, history in
             let picked = Set(numbers)
-            guard let first = picked.min(), picked.allSatisfy({ $0 >= 0 && $0 < history.count }) else { return Edit(.refused("No such change.")) }
+            guard !picked.isEmpty, picked.allSatisfy({ $0 >= 0 && $0 < history.count }) else { return Edit(.refused("No such change.")) }
             if picked.contains(where: { history[$0].action == "delete" }) { return Edit(.refused("A delete for good cannot be undone.")) }
             if !picked.isDisjoint(with: Self.undone(history)) { return Edit(.refused("That change was already undone.")) }
             // Each note as these lines left it must still be as it is now, else a later change counts (undo that first).
@@ -234,8 +236,18 @@ public final class ProjectMemoryStore: ObservableObject {
             if touched.contains(where: { id in data.notes.first { $0.id == id } != left[id] }) {
                 return Edit(.refused("A later change touched the same note: undo that one first."))
             }
+            // Each note goes back to before the first picked line that touched it, so a change by someone else before
+            // that stays; one between two picked lines on the same note refuses (it would be lost).
             var before: [UUID: ProjectMemoryNote] = [:]
-            for n in Self.replay(Array(history[..<first])) where touched.contains(n.id) { before[n.id] = n }
+            for id in touched {
+                let on = history.indices.filter { history[$0].notes.contains { $0.id == id } }
+                let mine = on.filter(picked.contains)
+                guard let start = mine.first, let end = mine.last else { continue }
+                if on.contains(where: { $0 > start && $0 < end && !picked.contains($0) }) {
+                    return Edit(.refused("A later change touched the same note: undo that one first."))
+                }
+                if let n = Self.replay(Array(history[..<start])).first(where: { $0.id == id }) { before[id] = n }
+            }
             let now = Date(), marks = Self.deleted(history)
             var restored: [ProjectMemoryNote] = []
             for id in touched.sorted(by: { $0.uuidString < $1.uuidString }) {
@@ -343,14 +355,22 @@ public final class ProjectMemoryStore: ObservableObject {
         } catch { lock.unlock(); return .refused("Project memory could not be saved on this Mac.") }
         history += done.lines
         var copy = next; copy.notes = next.notes.filter { $0.state != .deleted }
-        try? Self.write(Self.encoder.encode(copy), to: Self.file(project))
+        var outcome = done.outcome
+        if (try? Self.write(Self.encoder.encode(copy), to: Self.file(project))) == nil, done.earlier != nil {
+            // A delete must not leave the text in the copy: without a fresh copy, none (the history rebuilds it).
+            if FileManager.default.fileExists(atPath: Self.file(project).path), (try? FileManager.default.removeItem(at: Self.file(project))) == nil {
+                outcome = .refused(Self.staleCopy)
+            }
+        }
         cache[project] = next
         lines[project] = history
         lock.unlock()
         let bump = { self.revision += 1 }
         if Thread.isMainThread { bump() } else { DispatchQueue.main.async(execute: bump) }
-        return done.outcome
+        return outcome
     }
+
+    static let staleCopy = "Deleted from the history, but the copy memory.json could not be cleaned: it is written again with the next change."
 
     private static func write(_ data: Data, to file: URL) throws {
         try data.write(to: file, options: .atomic)

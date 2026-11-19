@@ -225,5 +225,42 @@ func testProjectMemoryUndo() {
     let reply = ProjectMemory.call("project_memory_add", ["kind": "decision", "text": secret], project: key, enterprise: false, writes: true, context: context)
     expect(reply["isError"] as? Bool == true && "\(reply)".contains("deleted"), "an AI's tool call is refused with the reason")
     expect(saved(store.add(ProjectMemoryNote(kind: .decision, text: "고객사 이름은 비공개로 둠"), project: key)) != nil, "other words are still saved")
+
+    // Signs and points are part of the words: deleting one value never takes another with it.
+    guard let plus = saved(store.add(ProjectMemoryNote(kind: .decision, text: "구동 전압 +5 V"), project: key)),
+          let mhz = saved(store.add(ProjectMemoryNote(kind: .decision, text: "공진 1.5 MHz"), project: key)) else { return }
+    let minus = saved(store.add(ProjectMemoryNote(kind: .decision, text: "구동 전압 -5 V"), project: key))
+    _ = store.delete(plus.id, project: key); _ = store.delete(mhz.id, project: key)
+    expect(minus != nil && current(minus!.id)?.state == .active && saved(store.add(ProjectMemoryNote(kind: .decision, text: "공진 15 MHz"), project: key)) != nil
+           && refused(store.add(ProjectMemoryNote(kind: .decision, text: "구동 전압 +5 V."), project: key)),
+           "+5 V and -5 V, 1.5 MHz and 15 MHz are different notes")
+
+    // A cleanup with a user's change in between: the user's change stays; one between two cleanup lines on the same note refuses.
+    let run = UUID()
+    guard let p = saved(store.add(ProjectMemoryNote(kind: .progress, text: "정리 전 메모 P"), project: key)),
+          let q = saved(store.add(ProjectMemoryNote(kind: .progress, text: "정리 전 메모 Q"), project: key)) else { return }
+    let p2 = saved(store.replace(p.id, with: ProjectMemoryNote(kind: .progress, text: "회의가 고친 P"), project: key, by: ProjectMemoryChange.byMeeting, batch: run))
+    _ = store.edit(q.id, text: "사용자가 고친 Q", kind: .progress, verified: true, project: key)
+    let q2 = saved(store.replace(q.id, with: ProjectMemoryNote(kind: .progress, text: "회의가 고친 Q"), project: key, by: ProjectMemoryChange.byMeeting, batch: run))
+    expect(p2 != nil && q2 != nil && saved(store.undo(batch: run, project: key)) != nil && current(p.id)?.state == .active
+           && current(q.id)?.text == "사용자가 고친 Q" && current(q.id)?.state == .active && current(q2!.id)?.state == .archived,
+           "undoing a cleanup keeps the user's edit made in the middle of it")
+    let run2 = UUID()
+    guard let r = saved(store.add(ProjectMemoryNote(kind: .progress, text: "메모 R"), project: key, by: ProjectMemoryChange.byMeeting, batch: run2)) else { return }
+    _ = store.edit(r.id, text: "사용자가 고친 R", kind: .progress, verified: false, project: key)
+    _ = store.setPinned(r.id, true, project: key)
+    let rLines = store.history(key).indices.filter { store.history(key)[$0].note.id == r.id }
+    expect(refused(store.undo([rLines[0], rLines[2]], project: key)) && current(r.id)?.text == "사용자가 고친 R",
+           "a user's change between two picked lines on the same note refuses the undo")
+
+    // A delete whose copy cannot be written removes the copy instead: the text stays in no file.
+    guard let s = saved(store.add(ProjectMemoryNote(kind: .decision, text: "지울 비밀 메모"), project: key)) else { return }
+    let copyFile = ProjectMemoryStore.file(key)
+    try? FileManager.default.removeItem(at: copyFile)
+    try? FileManager.default.createDirectory(at: copyFile, withIntermediateDirectories: true)
+    try? Data("지울 비밀 메모".utf8).write(to: copyFile.appendingPathComponent("old"))
+    expect(saved(store.delete(s.id, project: key)) != nil && !FileManager.default.fileExists(atPath: copyFile.path)
+           && !((try? String(contentsOf: ProjectMemoryStore.historyFile(key), encoding: .utf8)) ?? "지울").contains("지울 비밀"),
+           "a copy that cannot be written is removed, so the deleted text is in no file")
     print("PASS: project memory undo (who changed what, undo any change or a meeting cleanup, undo of undo, archive/restore, delete for good leaves no text and blocks the same words)")
 }

@@ -147,8 +147,8 @@ extension Discussion {
         guard TodoStore.shared.locked == nil else { return nil }
         let (_, rooms, lists) = (host ?? self).projectParts(key, todos: todos)
         let locks = rooms.map(\.enterpriseLock) + lists.map(\.lock)
-        guard let lock = locks.compactMap({ $0 }).first, !lock.isPersonal, !lock.organization.isEmpty,
-              locks.allSatisfy({ $0?.organization == lock.organization }) else { return nil }
+        guard let lock = locks.first ?? nil, !lock.organization.isEmpty,
+              locks.allSatisfy({ $0?.isPersonal == false && $0?.organization == lock.organization }) else { return nil }
         return lock
     }
 

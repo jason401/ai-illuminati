@@ -64,6 +64,16 @@ func testProjectMemory() {
            "saved with its AI, account, chat and message")
     expect(FileManager.default.fileExists(atPath: ProjectMemoryStore.file(key).path) && store.history(key).map(\.action) == ["add"],
            "memory.json and one history line")
+    let worker = Discussion(workerFor: chat, room: a.id)
+    let rooms = chat.conversations
+    chat.conversations.removeAll { $0.id == a.id }
+    let workerRule = worker.projectMemoryRule(claude, chat: a.id)
+    chat.conversations = rooms
+    expect(workerRule.contains("Keychain에 저장") && workerRule.contains("project_memory_replace"),
+           "a project room held only by a worker still gets its project memory rule")
+    let readOnlyRule = chat.projectMemoryRule(school, chat: locked.id)
+    expect(readOnlyRule.contains("read-only") && readOnlyRule.contains("project_memory_search")
+           && !readOnlyRule.contains("project_memory_add"), "the AI is explicitly told that project memory is read-only")
     expect(ok(link.call("project_memory_add", ["kind": "decision", "text": "로그인은 keychain에 저장, 파일 저장 안 함"], context: session(b.id, codex)))
            && store.notes(key).count == 1 && store.history(key).count == 1, "the same note is not saved twice")
     expect(!ok(link.call("project_memory_add", ["kind": "decision", "text": "API key sk-abcdefghijklmnopqrstuvwx"], context: session(b.id, codex)))

@@ -98,8 +98,7 @@ enum ProjectMemory {
 
     static func toolRule(enterpriseReadOnly: Bool, lock: EnterpriseLock?) -> String {
         if enterpriseReadOnly {
-            return L("이 Enterprise 대화에서는 프로젝트 메모리를 검색(project_memory_search)할 수 있어요.",
-                     "In this Enterprise chat, project memory is read-only (project_memory_search).")
+            return "In this Enterprise chat, project memory is read-only. Use project_memory_search to find notes."
         }
         let rule = """
             Project memory tools: project_memory_add saves a lasting decision or fact, open progress, or work done, one line
@@ -108,8 +107,7 @@ enum ProjectMemory {
             a log note). project_memory_search also finds archived notes. Never save secrets, passing details or file contents.
             """
         guard let lock else { return rule }
-        return rule + "\n" + L("이 프로젝트 메모리는 \(lock.name) 계정과 이 Mac 모델만 읽을 수 있어요.",
-                               "Only \(lock.name) accounts and models on this Mac can read this project memory.")
+        return rule + "\nOnly \(lock.name) accounts and models on this Mac can read this project memory."
     }
 
     static func tools(writes: Bool) -> [[String: Any]] {

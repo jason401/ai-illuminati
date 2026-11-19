@@ -21,13 +21,16 @@ public enum ProjectMemoryCleanupLink {
         for group in groups where project == nil || group.id == project {
             let lists = todo.lists.filter { group.lists.contains($0.id) }
             let chats = group.chats + group.todoRooms
-            let locks = lists.compactMap(\.lock) + chats.compactMap(\.enterpriseLock)
+            let locks = lists.map(\.lock) + chats.map(\.enterpriseLock)
             let (_, rooms, projectLists) = discussion.projectParts(group.id, todos: todo)
-            let hasEnterprise = rooms.contains(where: \.isEnterprise) || projectLists.contains { $0.lock?.isPersonal == false }
+            let hasEnterprise = locks.contains { $0?.isPersonal == false }
+                || rooms.contains(where: \.isEnterprise) || projectLists.contains { $0.lock?.isPersonal == false }
             // Enterprise cleanup can see the entire project only when all its parts share the same lock.
             let enterpriseLock = hasEnterprise ? discussion.memoryLock(group.id, todos: todo) : nil
-            guard !hasEnterprise || enterpriseLock != nil else { continue }
-            let lock = enterpriseLock ?? locks.first
+            if hasEnterprise {
+                guard let enterpriseLock, locks.allSatisfy({ $0?.organization == enterpriseLock.organization }) else { continue }
+            }
+            let lock = enterpriseLock ?? locks.compactMap { $0 }.first
             let team = Discussion.meetingTeam(discussion.model.accounts, usage: discussion.model.latestUsage,
                                               picks: discussion.model.autoTeamPicks) {
                 ($0.provider != .ollama || discussion.model.localEnabled) && Enterprise.permits($0, lock: lock)

@@ -1011,7 +1011,8 @@ extension Discussion {
     // The project memory block and its tool rule for a project chat (an opinion too); empty elsewhere.
     func projectMemoryRule(_ account: Account, chat id: UUID?) -> String {
         let read = { () -> String in
-            guard let id, let chat = (self.host ?? self).conversations.first(where: { $0.id == id }),
+            guard let id, let chat = (self.host ?? self).conversations.first(where: { $0.id == id })
+                    ?? self.conversations.first(where: { $0.id == id }),
                   let project = ProjectMemory.project(chat), ProjectMemory.permits(account, chat: chat, project: project) else { return "" }
             let lock = chat.isEnterprise ? ProjectMemory.enterpriseLock(for: chat, in: self.memoryLock(project, todos: TodoStore.shared.current)) : nil
             let known = ProjectMemory.rule(ProjectMemoryStore.shared.notes(project), question: chat.turns.last?.question ?? "")

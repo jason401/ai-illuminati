@@ -3192,6 +3192,29 @@ func testChatNotes() {
     print("PASS: chat notes are the user's, saved per chat, read by the AI")
 }
 runTest("testChatNotes", testChatNotes)
+
+func testOpinionInstructionOpening() {
+    // An opinion in a project chat has no project part (Route.opinionView) but must still open as a Git project chat.
+    let compose = { (linked: ProjectBinding?) in
+        Discussion.composeInstruction(name: "Claude", provider: .claude, folders: "[Folders]", drive: "", fullAccess: false,
+                                      picture: "", helper: "", face: "", project: nil, linked: linked)
+    }
+    let git = compose(ProjectBinding(root: "/tmp/repo", common: "/tmp/repo/.git", remote: "origin", remoteURL: ""))
+    expect(git.hasPrefix("You are Claude, working with the user in a desktop chat app. This chat is linked to a Git project"),
+           "an opinion in a Git project chat opens with the Git project sentence")
+    expect(!git.contains("not code"), "an opinion in a Git project chat is not told it is a documents app")
+    let docs = compose(ProjectBinding(root: "/tmp/docs", common: "", remote: "", remoteURL: "", kind: ProjectBinding.documentsKind))
+    expect(docs.contains("linked to a documents project"), "an opinion in a documents project chat opens as a documents project")
+    expect(compose(nil).contains("(documents, papers, research and\nsummaries, not code)"), "a plain chat keeps its own opening")
+    let note = Discussion.historyNote("/tmp/history.md", project: false)
+    expect(note.contains("/tmp/history.md") && note.contains("search that file first") && !note.contains("search_chats"),
+           "a new session is told to search the full record first")
+    let project = Discussion.historyNote("/tmp/history.md", project: true)
+    expect(project.contains("search_chats") && project.contains("read_chat") && project.contains("this chat is never among their results"),
+           "a project chat is told where its other chats are")
+    print("PASS: opinion instructions open by the linked project; new sessions search the record first")
+}
+runTest("testOpinionInstructionOpening", testOpinionInstructionOpening)
 runTest("testSpace", testSpace)
 runTest("testSpaceLibrary", testSpaceLibrary)
 runTest("testSpaceEnterpriseLock", testSpaceEnterpriseLock)

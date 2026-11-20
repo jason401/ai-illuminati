@@ -280,7 +280,7 @@ final class HeldMeeting {
 
 extension Discussion {
     // Who meets for `asker`: the AIs it names (that may meet here, signed in), else the app's pick as for automatic
-    // meetings (meetingTeam). The caller meets too only with `join`. At most `meetingMost`.
+    // meetings (meetingTeam), at most `meetingMost`; with `join` (the tool's default) the caller meets too, last.
     func heldTeam(asker: Account?, members: [String], join: Bool, room: UUID) -> (team: [Account], note: String?) {
         let others = model.accounts.filter { $0.id != asker?.id }
         var team: [Account] = [], unknown: [String] = []
@@ -294,11 +294,13 @@ extension Discussion {
             } else { unknown.append(wanted) }
         }
         if members.isEmpty {
-            team = Self.meetingTeam(others, usage: model.latestUsage, most: Self.meetingMost - (join ? 1 : 0), picks: model.autoTeamPicks) { self.autoAllowed($0, room: room) }
+            team = Self.meetingTeam(others, usage: model.latestUsage, most: Self.meetingMost, picks: model.autoTeamPicks) { self.autoAllowed($0, room: room) }
         }
-        if join, let asker, Self.meets(asker) || asker.provider == .ollama, permits(asker, room: room) { team.insert(asker, at: 0) }
+        team = Array(team.prefix(Self.meetingMost))
+        // Last, so the host (the first Claude/Codex) and the speaking order stay as without the caller.
+        if join, let asker, Self.meets(asker) || asker.provider == .ollama, permits(asker, room: room) { team.append(asker) }
         let note = unknown.isEmpty ? nil : "Not available here (unknown, signed out or outside this chat's organization): \(unknown.joined(separator: ", "))."
-        return (Array(team.prefix(Self.meetingMost)), note)
+        return (team, note)
     }
 
     // convene_meeting, on the answer's own worker (from the tool's thread). Opens the hidden chat and a separate worker
@@ -395,7 +397,7 @@ public final class ConveneLink: ToolProvider {
                     "brief": ["type": "string", "description": "Self-contained context: what you know, your draft or options, files"],
                     "decision_needed": ["type": "string", "description": "What the meeting must decide"],
                     "members": ["type": "array", "items": ["type": "string"], "description": "AI names (default: the app picks)"],
-                    "join": ["type": "boolean", "description": "Take part yourself (default false)"]],
+                    "join": ["type": "boolean", "description": "Take part yourself (default true)"]],
                     "required": ["agenda", "brief", "decision_needed"], "additionalProperties": false]],
                 ["name": "meeting_result",
                  "description": "The result of a meeting you convened in this answer: waits up to wait_seconds (max \(Self.maxWait)) and says when it is still running.",
@@ -415,7 +417,7 @@ public final class ConveneLink: ToolProvider {
             guard !agenda.isEmpty else { return toolFailure("Write the agenda.") }
             let members = (arguments["members"] as? [String]) ?? string("members").split(separator: ",").map(String.init)
             let request = HeldMeeting.Request(agenda: String(agenda.prefix(2000)), brief: string("brief"), decision: String(string("decision_needed").prefix(2000)),
-                                              members: members, join: arguments["join"] as? Bool ?? false)
+                                              members: members, join: arguments["join"] as? Bool ?? true)
             guard PeerLink.shared.reserveMeeting(session, asker: asker.id) else {
                 return text("You already convened \(Peer.maxMeetings) meeting in this answer (the limit), or the answer has ended. Continue on your own.")
             }

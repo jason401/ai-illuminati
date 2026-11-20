@@ -101,7 +101,16 @@ func testMeetingTool() {
     expect(card?.meeting == held?.id && card?.headline == L("회의 끝남 · ", "Meeting done · ") + "A or B?" && card?.text.contains("A or B?") == true
            && card?.text.contains("결론") == false, "the user sees a card with the agenda, not the result")
     let joined = direct.heldTeam(asker: claude, members: ["G"], join: true, room: room)
-    expect(joined.team.map(\.id) == [claude.id, codex.id] && joined.note == nil, "named members, and the caller with join")
+    expect(joined.team.map(\.id) == [codex.id, claude.id] && joined.note == nil, "named members, and the caller last with join")
+    let picked = direct.heldTeam(asker: claude, members: [], join: false, room: room).team.map(\.id)
+    let along = direct.heldTeam(asker: claude, members: [], join: true, room: room).team.map(\.id)
+    expect(!picked.isEmpty && along == picked + [claude.id], "the app's pick with join: the same other AIs, the caller one more, last: \(picked) / \(along)")
+    // Four named members and join: nobody named is left out for the caller.
+    let crowd = AppModel()
+    let claude2 = Account(id: "meet-claude2", provider: .claude, name: "C2"), codex2 = Account(id: "meet-codex2", provider: .codex, name: "G2")
+    crowd.accounts = [claude, codex, gemini, claude2, codex2]
+    let full = Discussion(model: crowd).heldTeam(asker: claude, members: ["G", "Gem", "C2", "G2"], join: true, room: room)
+    expect(full.team.map(\.id) == [codex.id, gemini.id, claude2.id, codex2.id, claude.id], "four named and the caller: five: \(full.team.map(\.id))")
     let unknown = direct.heldTeam(asker: claude, members: ["Nobody"], join: false, room: room)
     expect(unknown.team.isEmpty && unknown.note?.contains("Nobody") == true
            && direct.holdMeeting(HeldMeeting.Request(agenda: "x", brief: "", decision: "", members: ["Nobody"], join: false), asker: claude, id: room, index: 0,
@@ -119,7 +128,7 @@ func testMeetingTool() {
     let chat = Discussion(model: model)
     chat.configure { $0.mode = 0 }
     var tools: [String] = [], instruction = "", steps: [String] = [], running: [Int] = [], gateway: [ToolOrigin: [String]] = [:]
-    var second = "", other = "", foreign = "", stopped = "", stopToken: DebateCancellation?
+    var joinNote = "", second = "", other = "", foreign = "", stopped = "", stopToken: DebateCancellation?
     chat.workspaceAnswer = { account, prompt, binding, token, _ in
         if let reply = meetingReply(account, prompt, binding, token) { return reply }
         let context = ToolContext(room: chat.currentID, roots: binding.roots, asker: account, origin: binding.origin ?? .member)
@@ -130,7 +139,9 @@ func testMeetingTool() {
             return .success("stopped")
         }
         instruction = prompt
-        tools = ConveneLink.shared.tools(context: context).compactMap { $0["name"] as? String }
+        let offered = ConveneLink.shared.tools(context: context)
+        tools = offered.compactMap { $0["name"] as? String }
+        joinNote = (((offered.first?["inputSchema"] as? [String: Any])?["properties"] as? [String: Any])?["join"] as? [String: Any])?["description"] as? String ?? ""
         for origin in [ToolOrigin.member, .side, .consulted] {
             let key = ToolHub.shared.register(room: chat.currentID, roots: [], asker: account, origin: origin)
             gateway[origin] = (ToolHub.shared.handle(["session": key, "op": "tools"])["tools"] as? [[String: Any]] ?? []).compactMap { $0["name"] as? String }
@@ -152,6 +163,7 @@ func testMeetingTool() {
     let last = chat.current.turns.last
     expect(tools == ["convene_meeting", "meeting_result"] && instruction.contains("[Meetings]") && instruction.contains("convene_meeting"),
            "the answering AI has both tools and is told when to use them")
+    expect(joinNote.contains("default true"), "the caller takes part by default: \(joinNote)")
     expect(gateway[.member]?.contains("convene_meeting") == true && gateway[.side] == ["ask_ai"]
            && gateway[.consulted]?.contains("convene_meeting") == false && gateway[.consulted]?.contains("meeting_result") == false
            && gateway[.consulted]?.contains("ask_ai") == false, "depth 1 at the gateway: no meeting tools for side answers or consulted AIs")

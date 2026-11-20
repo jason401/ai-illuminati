@@ -20,6 +20,7 @@
     "test-project-memory": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_ONLY=testProjectMemory,testProjectMemoryUndo,testMemory,testToolHub,testInstructionSize,testInstructionLayers", "/bin/zsh", "tools/tests/run_mode2.sh"]},
     "test-project-memory-cleanup": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_ONLY=testProjectMemoryCleanup,testProjectMemory,testProjectMemoryUndo,testMeetingTool,testAutoMeeting", "/bin/zsh", "tools/tests/run_mode2.sh"]},
     "test-instruction": {"executable": "/usr/bin/env", "args": ["AI_ILLUMINATI_TEST_ONLY=testInstructionSize,testInstructionLayers,testChatNotes,testOpinionInstructionOpening,testFullAuto", "/bin/zsh", "tools/tests/run_mode2.sh"]},
+    "test-affected-meeting": {"executable": "/bin/zsh", "args": ["tools/tests/run_mode2.sh", "--affected", "app/modules/AIChat/Meeting.swift", "tools/tests/meeting_tool.swift"]},
     "test-affected-backup": {"executable": "/bin/zsh", "args": ["tools/tests/run_mode2.sh", "--affected", "app/modules/AIWorkspace/WorkspaceBackup.swift"]}
   }
 }

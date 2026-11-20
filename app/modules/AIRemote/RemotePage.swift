@@ -887,7 +887,7 @@ function keepPictures(el, fresh) {
   if (!waiting.length) return;
   fresh.style.minHeight = height + 'px';
   let left = waiting.length;
-  const release = () => { fresh.style.minHeight = ''; };
+  const release = () => { fresh.style.minHeight = ''; holdEnd(); };
   waiting.forEach(i => { const done = () => { if (--left === 0) release(); }; i.addEventListener('load', done, { once: true }); i.addEventListener('error', done, { once: true }); });
   setTimeout(release, 4000);
 }
@@ -952,7 +952,15 @@ function bottomButton() {
   $('toBottom').classList.toggle('gone', box.scrollHeight - box.scrollTop - box.clientHeight < 200);
 }
 function barLine(scroll, bar) { $(bar).classList.toggle('under', $(scroll).scrollTop > 6); }
-$('chatScroll').addEventListener('scroll', () => { bottomButton(); barLine('chatScroll', 'chatBar'); }, { passive: true });
+// Whether the user is at the end, kept from their last scroll: a picture that loads later (or a released height)
+// changes the height without a scroll, and the view then stays at the end instead of being left above it.
+let pinned = true;
+function holdEnd() { const box = $('chatScroll'); if (pinned) box.scrollTop = box.scrollHeight; }
+$('turns').addEventListener('load', e => { if (e.target.tagName === 'IMG') holdEnd(); }, true);
+$('chatScroll').addEventListener('scroll', () => {
+  const box = $('chatScroll'); pinned = box.scrollHeight - box.scrollTop - box.clientHeight < 90;
+  bottomButton(); barLine('chatScroll', 'chatBar');
+}, { passive: true });
 $('listScroll').addEventListener('scroll', () => barLine('listScroll', 'listBar'), { passive: true });
 $('toBottom').addEventListener('click', () => $('chatScroll').scrollTo({ top: 1e9, behavior: 'smooth' }));
 

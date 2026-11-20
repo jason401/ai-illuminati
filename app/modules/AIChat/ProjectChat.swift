@@ -165,8 +165,8 @@ extension Discussion {
         panel.message = L("Git 프로젝트 최상위 폴더를 선택하세요.", "Choose the top-level Git project folder.")
         guard panel.runModal() == .OK, let folder = panel.url else { return }
         do {
-            let project = try ProjectProcess.inspect(folder.path)
-            guard Self.allowProjectWork(project) else { return }
+            let found = try ProjectProcess.inspect(folder.path)
+            guard Self.allowProjectWork(found), let project = identify(found, ask: true) else { return }
             change(currentID, save: true) { $0.workspace = ProjectWork.linking($0.workspace, to: project, first: false) }
         } catch { attachmentError = error.localizedDescription }
     }
@@ -182,13 +182,13 @@ extension Discussion {
                           "Pick or create the folder of one paper or talk (a Google Drive folder works too). No Git is used.")
         guard panel.runModal() == .OK, let folder = panel.url else { return }
         do {
-            let project = try ProjectProcess.documents(folder.path)
+            let found = try ProjectProcess.documents(folder.path)
             let alert = NSAlert()
             alert.messageText = L("문서 프로젝트로 연결", "Link as a documents project")
-            alert.informativeText = project.root + "\n\n" + L("AI가 이 폴더의 글·그림·슬라이드를 고칠 수 있어요 (완전 자동: 명령 실행·인터넷 사용). 답할 때마다 폴더를 먼저 백업해서 되돌릴 수 있어요. 클라우드에만 있는 파일과 Google 문서에서 고친 것은 백업에 없어요 (Google 버전 기록으로 되돌려요).\n\n왼쪽 목록에 프로젝트 폴더가 생기고 할 일 보드를 쓸 수 있어요.",
+            alert.informativeText = found.root + "\n\n" + L("AI가 이 폴더의 글·그림·슬라이드를 고칠 수 있어요 (완전 자동: 명령 실행·인터넷 사용). 답할 때마다 폴더를 먼저 백업해서 되돌릴 수 있어요. 클라우드에만 있는 파일과 Google 문서에서 고친 것은 백업에 없어요 (Google 버전 기록으로 되돌려요).\n\n왼쪽 목록에 프로젝트 폴더가 생기고 할 일 보드를 쓸 수 있어요.",
                                                                 "The AI may change the text, figures and slides in this folder (full auto: runs commands, uses the network). The folder is backed up before each answer, so it can be undone. Files only in the cloud and edits in Google Docs are not in the backup (use Google's version history).\n\nThe project gets its own folder in the sidebar and a TODO board.")
             alert.addButton(withTitle: L("연결", "Link")); alert.addButton(withTitle: L("취소", "Cancel"))
-            guard alert.runModal() == .alertFirstButtonReturn else { return }
+            guard alert.runModal() == .alertFirstButtonReturn, let project = identify(found, ask: true) else { return }
             try nativeSessions.reset(currentID)
             change(currentID, save: true) { $0.workspace = ProjectWork.linking($0.workspace, to: project, first: true) }
             attachmentError = nil
@@ -207,19 +207,20 @@ extension Discussion {
                           "Pick the project folder. A Git repository becomes a code project; any other folder a documents project (no Git).")
         guard panel.runModal() == .OK, let folder = panel.url?.resolvingSymlinksInPath() else { return }
         do {
-            let project: ProjectBinding
+            let found: ProjectBinding
             if let git = try? ProjectProcess.inspect(folder.path) {
                 guard Self.allowProjectWork(git) else { return }
-                project = git
+                found = git
             } else {
-                project = try ProjectProcess.documents(folder.path)
+                found = try ProjectProcess.documents(folder.path)
                 let alert = NSAlert()
                 alert.messageText = L("문서 프로젝트로 연결", "Link as a documents project")
-                alert.informativeText = project.root + "\n\n" + L("Git 저장소가 아니라서 문서 프로젝트로 연결해요. AI가 이 폴더의 파일을 고칠 수 있어요 (완전 자동: 명령 실행·인터넷 사용). 신뢰하는 폴더만 연결하세요. 답할 때마다 폴더를 먼저 백업해서 되돌릴 수 있어요.",
+                alert.informativeText = found.root + "\n\n" + L("Git 저장소가 아니라서 문서 프로젝트로 연결해요. AI가 이 폴더의 파일을 고칠 수 있어요 (완전 자동: 명령 실행·인터넷 사용). 신뢰하는 폴더만 연결하세요. 답할 때마다 폴더를 먼저 백업해서 되돌릴 수 있어요.",
                                                                     "This is not a Git repository, so it is linked as a documents project. The AI may change the files in this folder (full auto: runs commands, uses the network). Only link folders you trust. The folder is backed up before each answer, so it can be undone.")
                 alert.addButton(withTitle: L("연결", "Link")); alert.addButton(withTitle: L("취소", "Cancel"))
                 guard alert.runModal() == .alertFirstButtonReturn else { return }
             }
+            guard let project = identify(found, ask: true) else { return }
             attachmentError = nil
             _ = addProjectChat(project, title: L("새 대화", "New chat"), open: true)
             sessionNote = project.isDocuments

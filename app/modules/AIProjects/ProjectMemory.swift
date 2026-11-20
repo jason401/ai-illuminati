@@ -116,6 +116,23 @@ public final class ProjectMemoryStore: ObservableObject {
         return (load(project)?.notes ?? []).filter { $0.state != .deleted }
     }
 
+    // A project that moves to a new key (its work folder disconnected): notes, history, cleanups and the Enterprise
+    // audience go along as one folder rename. Nothing is merged: refused when the new key already has memory.
+    public func move(from old: String, to new: String) throws {
+        lock.lock()
+        let fm = FileManager.default, source = Self.folder(old), target = Self.folder(new)
+        guard old != new, fm.fileExists(atPath: source.path) else { lock.unlock(); return }
+        do {
+            guard !fm.fileExists(atPath: target.path) else { throw CocoaError(.fileWriteFileExists) }
+            try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            try fm.moveItem(at: source, to: target)
+        } catch { lock.unlock(); throw error }
+        for key in [old, new] { cache[key] = nil; lines[key] = nil }
+        lock.unlock()
+        let bump = { self.revision += 1 }
+        if Thread.isMainThread { bump() } else { DispatchQueue.main.async(execute: bump) }
+    }
+
     // Read again from disk on the next use (tests that clear the folder).
     func forget() { lock.lock(); cache = [:]; lines = [:]; lock.unlock() }
 

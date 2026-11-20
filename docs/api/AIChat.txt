@@ -446,6 +446,7 @@ SidebarProjects | enum SidebarProjects
 SidebarProjects.group(_:todo:pinned:withLists:names:) | static func group(_ chats: [Conversation], todo: TodoData, pinned: Set<String>, withLists: Bool = true, names: [String : String] = [:]) -> (projects: [ProjectGroup], loose: [Conversation])
 SidebarProjects.key(_:) | static func key(_ project: ProjectBinding) -> String
 SidebarProjects.pickerName(_:among:board:) | static func pickerName(_ option: (name: String, binding: ProjectBinding), among options: [(name: String, binding: ProjectBinding)], board: String?) -> String
+SidebarProjects.slot(_:) | static func slot(_ project: ProjectBinding) -> String
 SpaceRefiner | final class SpaceRefiner
 SpaceRefiner.watchLibrary() | static func watchLibrary()
 SpeechLength | enum SpeechLength

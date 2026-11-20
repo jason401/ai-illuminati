@@ -152,9 +152,9 @@ struct TodoBoardView: View {
         store.snapshot.lists.filter { list in discussion.boardProject.map { list.project.map(SidebarProjects.key) == $0 } ?? true }
     }
 
-    // The root a new TODO goes to: the one picked, if it is on this board, else the newest.
+    // The root a new TODO goes to (SidebarProjects.slot): the one picked, if it is on this board, else the newest.
     private func pickedRoot(_ options: [(name: String, binding: ProjectBinding)]) -> String {
-        options.contains { $0.binding.root == draft.projectRoot } ? draft.projectRoot : options.first?.binding.root ?? ""
+        options.contains { SidebarProjects.slot($0.binding) == draft.projectRoot } ? draft.projectRoot : options.first.map { SidebarProjects.slot($0.binding) } ?? ""
     }
 
     var body: some View {
@@ -499,8 +499,8 @@ struct TodoBoardView: View {
         return store.snapshot.ordered(id).map(\.id).filter(draft.after.contains)
     }
 
-    // The list a new TODO for `root` goes to (nil until its first TODO).
-    private func boardList(_ root: String) -> TodoList? { store.snapshot.lists.first { $0.project?.root == root } }
+    // The list a new TODO for `root` (a slot) goes to (nil until its first TODO).
+    private func boardList(_ root: String) -> TodoList? { store.snapshot.lists.first { $0.project.map(SidebarProjects.slot) == root } }
 
     // One "must finish first" line: ✓ when linked, the board's number, and why it no longer holds one back.
     private func linkLine(_ choice: (item: TodoItem, number: Int?), linked: Bool, for item: TodoItem?) -> String {
@@ -557,8 +557,8 @@ struct TodoBoardView: View {
                 let mine = Set(store.snapshot.ordered(boardList(value)?.id ?? UUID()).map(\.id))
                 draft.projectRoot = value; draft.after = draft.after.filter(mine.contains)
             })) {
-                ForEach(options, id: \.binding.root) { option in
-                    Text(SidebarProjects.pickerName(option, among: options, board: discussion.boardProject)).tag(option.binding.root)
+                ForEach(options.map { (slot: SidebarProjects.slot($0.binding), option: $0) }, id: \.slot) { entry in
+                    Text(SidebarProjects.pickerName(entry.option, among: options, board: discussion.boardProject)).tag(entry.slot)
                 }
             }
             .fixedSize()
@@ -652,11 +652,11 @@ struct TodoBoardView: View {
         let text = draft.title.trimmingCharacters(in: .whitespacesAndNewlines)
         let options = projects
         let root = pickedRoot(options)
-        guard !text.isEmpty, let project = options.first(where: { $0.binding.root == root }) else { return }
+        guard !text.isEmpty, let project = options.first(where: { SidebarProjects.slot($0.binding) == root }) else { return }
         // The chat open before the board, when it works on the same project, gets the report card too.
-        let origin = discussion.current.workspace?.project?.root == root && !store.snapshot.items.contains { $0.room == discussion.currentID } ? discussion.currentID : nil
+        let origin = discussion.current.workspace?.project.map(SidebarProjects.slot) == root && !store.snapshot.items.contains { $0.room == discussion.currentID } ? discussion.currentID : nil
         // Written for a locked project (or one worked on in a locked chat): its TODOs keep that lock.
-        let lock = (discussion.current.workspace?.project?.root == root ? discussion.current.enterpriseLock : nil)
+        let lock = (discussion.current.workspace?.project.map(SidebarProjects.slot) == root ? discussion.current.enterpriseLock : nil)
             ?? discussion.conversations.first { $0.workspace?.project.map(SidebarProjects.key) == SidebarProjects.key(project.binding) && $0.enterpriseLock != nil }?.enterpriseLock
         act {
             try store.add(title: text, detail: draft.detail.trimmingCharacters(in: .whitespacesAndNewlines), files: draft.files.map(\.url), project: project.binding, projectName: project.name,

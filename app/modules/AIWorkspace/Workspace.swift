@@ -34,9 +34,13 @@ public struct ProjectBinding: Codable, Equatable {
     // nil: a Git project (code). "documents": a plain folder of papers, slides, figures and data, without Git:
     // every answer backs it up first (Undo), and the review compares with that backup.
     public var kind: String? = nil
-    public init(root: String, common: String, remote: String, remoteURL: String, kind: String? = nil) {
-        self.root = root; self.common = common; self.remote = remote; self.remoteURL = remoteURL; self.kind = kind
+    // The project itself, so one folder can serve several projects. nil: a project linked before ids, told apart by its
+    // folder as before (its notes, TODO lists and name stay where they are; nothing is moved).
+    public var id: String? = nil
+    public init(root: String, common: String, remote: String, remoteURL: String, kind: String? = nil, id: String? = nil) {
+        self.root = root; self.common = common; self.remote = remote; self.remoteURL = remoteURL; self.kind = kind; self.id = id
     }
+    public static func newID() -> String { "project-" + UUID().uuidString }
     public var isFolderless: Bool { kind == "folderless" }
     public var isDocuments: Bool { kind == Self.documentsKind || isFolderless }
     public var linkedRoots: [WorkspaceRoot] { isFolderless ? [] : [WorkspaceRoot(path: root, directory: true, writable: true)] }

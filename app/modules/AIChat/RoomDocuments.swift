@@ -27,10 +27,12 @@ extension Discussion {
                 guard info.isDirectory == true || info.isRegularFile == true else { throw MaterialReader.error("일반 파일이나 폴더를 선택하세요.") }
                 return WorkspaceRoot(path: path.path, directory: info.isDirectory == true)
             }
-            try nativeSessions.reset(currentID)
             // One "Link folder": a top-level Git folder with a remote becomes project work (Git tools, push);
             // any other folder gets the same full access with the Undo backup. Both are full auto unless turned off.
-            let project = folder && configuration.mode == 0 ? roots.first.flatMap { try? ProjectProcess.inspect($0.path) } : nil
+            let found = folder && configuration.mode == 0 ? roots.first.flatMap { try? ProjectProcess.inspect($0.path) } : nil
+            let project = found.flatMap { identify($0, ask: true) }
+            if found != nil && project == nil { return }
+            try nativeSessions.reset(currentID)
             change(currentID, save: true) { conversation in
                 var binding = WorkspaceBinding(roots: project.map { [WorkspaceRoot(path: $0.root, directory: true, writable: true)] } ?? roots)
                 binding.project = project

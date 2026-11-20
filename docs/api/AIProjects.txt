@@ -208,6 +208,7 @@ ProjectMemoryStore.delete(_:project:) | func delete(_ id: UUID, project: String)
 ProjectMemoryStore.edit(_:text:kind:verified:project:) | func edit(_ id: UUID, text: String, kind: ProjectMemoryNote.Kind, verified: Bool, project: String) -> ProjectMemoryStore.Outcome
 ProjectMemoryStore.history(_:) | func history(_ project: String) -> [ProjectMemoryChange]
 ProjectMemoryStore.mark(_:) | static func mark(_ text: String) -> String
+ProjectMemoryStore.move(from:to:) | func move(from old: String, to new: String) throws
 ProjectMemoryStore.notes(_:) | func notes(_ project: String) -> [ProjectMemoryNote]
 ProjectMemoryStore.replace(_:with:project:by:batch:) | func replace(_ old: UUID, with note: ProjectMemoryNote, project: String, by: String? = nil, batch: UUID? = nil) -> ProjectMemoryStore.Outcome
 ProjectMemoryStore.restore(_:project:) | func restore(_ id: UUID, project: String) -> ProjectMemoryStore.Outcome

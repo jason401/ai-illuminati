@@ -1640,6 +1640,8 @@ func testDisconnectProjectFolder() {
     expect(chat.disconnectRefusal(key) != nil, "refused while a TODO of the project runs")
     try! todos.change(item.id) { $0.state = .ready }
 
+    let note = ProjectMemoryNote(kind: .decision, text: "Disconnect keeps this note")
+    if case .saved = ProjectMemoryStore.shared.add(note, project: key) {} else { expect(false, "a memory note is saved before disconnecting") }
     chat.boardProject = key
     let project = try! chat.disconnectFolder(key, name: "repo", keepReadOnly: false)
     let new = SidebarProjects.key(project)
@@ -1660,6 +1662,8 @@ func testDisconnectProjectFolder() {
            "the sidebar shows one folderless project under its old name")
     expect(FileManager.default.fileExists(atPath: main.appendingPathComponent("a.txt").path), "the folder on disk stays")
     expect(chat.disconnectRefusal(new) != nil, "a folderless project has nothing to disconnect")
+    expect(ProjectMemoryStore.shared.notes(new).map(\.text) == ["Disconnect keeps this note"] && ProjectMemoryStore.shared.notes(key).isEmpty,
+           "project memory moves with the project, so the folder linked again starts with none")
 
     // Keeping the old folder as a read-only shared folder (opt-in); refused, with nothing moved, when it would not fit.
     let third = ProjectBinding(root: tree.path, common: tree.path, remote: "", remoteURL: "", kind: ProjectBinding.documentsKind)
@@ -1674,7 +1678,30 @@ func testDisconnectProjectFolder() {
     let kept = try! chat.disconnectFolder(SidebarProjects.key(third), name: "tree", keepReadOnly: true)
     expect(ProjectInfoStore.shared.info(SidebarProjects.key(kept)).folders.map(\.path) == [tree.path], "the old folder can stay as a read-only shared folder")
     SidebarFold.shared.togglePin(new)
-    print("PASS: disconnect work folder (folderless with a new key, chats, TODO lists, info, pin and tab kept, worktree roots removed, refusals, keep read only)")
+
+    // Projects are told apart by id: a folder another project uses can make a second project with its own key, name and
+    // TODO list; the check before each tool call keeps the id; a locked project's folder joins that project.
+    let same = base.appendingPathComponent("same")
+    try! FileManager.default.createDirectory(at: same, withIntermediateDirectories: true)
+    let found = try! ProjectProcess.documents(same.path)
+    let firstSame = chat.identify(found, ask: false)!
+    let firstRoom = chat.addProjectChat(firstSame, title: "S1", open: false)
+    let secondSame = chat.identify(found, ask: false)!
+    let secondRoom = chat.addProjectChat(secondSame, title: "S2", open: false)
+    expect(firstSame.id != nil && secondSame.id != nil && SidebarProjects.key(firstSame) != SidebarProjects.key(secondSame) && firstSame.root == secondSame.root,
+           "the same folder makes two projects with their own ids")
+    expect((try? ProjectProcess.current(secondSame)) == secondSame, "the check before each tool call keeps the project's id")
+    let sameGroups = SidebarProjects.group(chat.listedConversations, todo: todos.current, pinned: [], names: ProjectInfoStore.shared.names).projects.filter { $0.bindings.first?.root == found.root }
+    expect(sameGroups.count == 2 && Set(sameGroups.map(\.name)) == ["same", "same 2"],
+           "the sidebar shows both, the second one numbered")
+    let todoA = try! todos.add(title: "in first", project: firstSame, projectName: "S1"), todoB = try! todos.add(title: "in second", project: secondSame, projectName: "S2")
+    expect(todoA.listID != todoB.listID, "each project of one folder has its own TODO list")
+    expect(SidebarProjects.slot(firstSame) != SidebarProjects.slot(secondSame), "the TODO board tells the two apart")
+    chat.lockEnterprise(firstRoom, organization: EnterpriseLock(organization: "school.example", name: "School", lockedAt: Date()))
+    let joined = chat.identify(found, ask: false)!
+    expect(joined.id == firstSame.id, "a folder with a locked project joins a project instead of leaving its lock behind")
+    _ = secondRoom
+    print("PASS: disconnect work folder (folderless with a new key, chats, TODO lists, info, memory, pin and tab kept, worktree roots removed, refusals, keep read only; project ids for one folder)")
 }
 
 // Opinion mode, several answers summed up (Route.swift, digestOpinions): the answerer with the most usage left writes one summary,

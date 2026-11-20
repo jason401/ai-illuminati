@@ -15,8 +15,9 @@ enum ProjectTools {
     static func failure(_ text: String) -> [String: Any] { ["content": [["type": "text", "text": text]], "isError": true] }
 }
 extension ProjectBinding {
-    // One project across its worktrees (the Git common folder; else the root): the sidebar folder, TODO locks, project info.
-    public var groupKey: String { common.isEmpty ? root : common }
+    // One project across its worktrees: its id, else (linked before ids) the Git common folder or the root. The sidebar
+    // folder, TODO locks, project info and project memory.
+    public var groupKey: String { id ?? (common.isEmpty ? root : common) }
 }
 
 // All privileged commands use fixed argv, closed stdin, bounded output and a cancellable process group.
@@ -138,7 +139,9 @@ public enum ProjectProcess {
             }
             return binding
         }
-        return binding.isDocuments ? try documents(binding.root) : try inspect(binding.root)
+        var fresh = binding.isDocuments ? try documents(binding.root) : try inspect(binding.root)
+        fresh.id = binding.id   // the folder on disk says nothing about which project uses it
+        return fresh
     }
 }
 

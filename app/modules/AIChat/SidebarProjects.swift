@@ -40,6 +40,8 @@ public enum SidebarProjects {
     private static let finishedStates: Set<TodoItem.State> = [.done, .cancelled]
 
     public static func key(_ project: ProjectBinding) -> String { project.groupKey }
+    // One root of one project (two projects may share a folder): what the TODO board's project picker tells apart.
+    public static func slot(_ project: ProjectBinding) -> String { project.groupKey + "\n" + project.root }
 
     // A Git project (code), not a documents or folderless one: its folder gets the branch badge.
     static func isGit(_ group: ProjectGroup) -> Bool { group.bindings.contains { !$0.isDocuments } }

@@ -180,8 +180,9 @@ extension Discussion {
     // A hidden chat for part `part` of split `split` (on the main thread): attached to the main room like a meeting, with
     // the main room's lock and full auto setting; it writes only its own work tree, the main repository is read only.
     func openSubRoom(_ part: Split.Part, split: Split, turn: UUID) {
-        guard let tree = part.tree, let project = try? ProjectProcess.inspect(tree.path) else { return }
+        guard let tree = part.tree, var project = try? ProjectProcess.inspect(tree.path) else { return }
         let main = conversation(split.room)
+        project.id = main.workspace?.project?.id   // the work tree belongs to the main room's project
         var room = Conversation(id: part.room)
         room.title = L("하위방 \(part.n): ", "Sub-room \(part.n): ") + String(part.goal.prefix(40))
         room.meetingOf = MeetingLink(room: split.room, turn: turn)

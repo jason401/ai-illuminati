@@ -8,7 +8,10 @@ import AIProjects
 extension Discussion {
     func linkProjectMaker() {
         ProjectMakerLink.shared.cancellation = { [weak self] room in self?.runToken(room) }
-        ProjectMakerLink.shared.addChat = { [weak self] project, title in self?.addProjectChat(project, title: title, open: false); return title }
+        ProjectMakerLink.shared.addChat = { [weak self] project, title in
+            guard let self else { return title }
+            self.addProjectChat(self.identify(project, ask: false) ?? project, title: title, open: false); return title
+        }
     }
 
     // A chat linked to a new project, as "Link folder" makes it (full auto unless turned off).
@@ -22,6 +25,44 @@ extension Discussion {
         ChatStore.save(chat)
         if open { self.open(chat.id); focusRequest += 1 }
         return chat.id
+    }
+
+    // Projects are told apart by their id, so one folder may serve several. A folder being linked joins a project already
+    // in it only when the user picks that (ask) or that project is locked (a new one would leave its lock behind); else
+    // it becomes a new project with its own id. nil: cancelled. A folderless project's folder is its own already.
+    func identify(_ found: ProjectBinding, ask: Bool) -> ProjectBinding? {
+        guard !found.isFolderless else { return found }
+        let todo = TodoStore.shared.current
+        var using: [ProjectBinding] = []
+        let bindings = conversations.filter { $0.meetingOf == nil }.sorted { $0.updatedAt > $1.updatedAt }.compactMap(\.workspace?.project)
+            + todo.lists.compactMap(\.project)
+        for p in bindings where (p.root == found.root || p.groupKey == found.groupKey) && !using.contains(where: { $0.groupKey == p.groupKey }) { using.append(p) }
+        func joining(_ p: ProjectBinding) -> ProjectBinding { var joined = found; joined.id = p.id; return joined }
+        if let locked = using.first(where: { p in
+            let parts = projectParts(p.groupKey, todos: todo)
+            return parts.rooms.contains { $0.enterpriseLock != nil } || parts.lists.contains { $0.lock != nil }
+        }) { return joining(locked) }
+        var fresh = found
+        fresh.id = ProjectBinding.newID()
+        guard let existing = using.first else { return fresh }
+        if ask {
+            let name = ProjectInfoStore.shared.names[existing.groupKey] ?? SidebarProjects.folderName(existing)
+            let alert = NSAlert()
+            alert.messageText = L("이 폴더를 쓰는 프로젝트가 이미 있어요", "A project already uses this folder")
+            alert.informativeText = found.root + "\n\n" + L("같은 폴더로 새 프로젝트를 따로 만들거나, ‘\(name)’에 새 대화를 추가할 수 있어요. 새 프로젝트는 TODO·메모리·이름을 따로 가져요. 이 폴더에서는 한 번에 한 프로젝트만 일해요.",
+                                                             "Make a separate new project on the same folder, or add a new chat to “\(name)”. A new project has its own TODOs, memory and name. Only one project works in this folder at a time.")
+            alert.addButton(withTitle: L("새 프로젝트", "New project"))
+            alert.addButton(withTitle: L("‘\(name)’에 추가", "Add to “\(name)”"))
+            alert.addButton(withTitle: L("취소", "Cancel"))
+            switch alert.runModal() {
+            case .alertFirstButtonReturn: break
+            case .alertSecondButtonReturn: return joining(existing)
+            default: return nil
+            }
+        }
+        // The sidebar tells the projects of one folder apart by a number after the folder's name.
+        try? ProjectInfoStore.shared.rename(fresh.groupKey, to: SidebarProjects.folderName(found) + " \(using.count + 1)")
+        return fresh
     }
 
     // The project row's new-chat button (and its menu): opens the project's blank chat when it has one, so pressing it
@@ -66,7 +107,7 @@ extension Discussion {
         } catch { attachmentError = error.localizedDescription }
     }
 
-    // Project info / sidebar → Disconnect work folder…: the project keeps its chats, TODOs, name, folders, links and
+    // Project info / sidebar → Disconnect work folder…: the project keeps its chats, TODOs, name, memory, folders, links and
     // pin, but no longer works in its Git or documents folder (every worktree of it). The files on disk stay.
     // Refused while any of it runs; checked again after asking.
     public func disconnectProjectFolder(_ key: String, name: String) {
@@ -80,8 +121,8 @@ extension Discussion {
         let alert = NSAlert()
         alert.messageText = L("‘\(name)’의 작업 폴더 연결을 끊을까요?", "Disconnect the work folder of “\(name)”?")
         alert.informativeText = roots.joined(separator: "\n") + "\n\n"
-            + L("폴더 없는 프로젝트가 돼요. 채팅·TODO·이름·공통 폴더·링크는 그대로이고, 디스크의 폴더·파일·Git 기록도 그대로예요. 이 프로젝트의 AI는 더 이상 이 폴더를 고치거나 Git을 쓰지 않고, 결과는 채팅 폴더에 저장해요. 나중에 폴더를 다시 연결하면 새 프로젝트로 시작해요.",
-                "It becomes a folderless project. Its chats, TODOs, name, shared folders and links stay, and so do the folder, its files and its Git history on disk. Its AI no longer edits this folder or uses Git; results go to the chat folder. Linking the folder again later starts a new project.")
+            + L("폴더 없는 프로젝트가 돼요. 채팅·TODO·이름·프로젝트 메모리·공통 폴더·링크는 그대로이고, 디스크의 폴더·파일·Git 기록도 그대로예요. 이 프로젝트의 AI는 더 이상 이 폴더를 고치거나 Git을 쓰지 않고, 결과는 채팅 폴더에 저장해요. 나중에 폴더를 다시 연결하면 새 프로젝트로 시작해요.",
+                "It becomes a folderless project. Its chats, TODOs, name, project memory, shared folders and links stay, and so do the folder, its files and its Git history on disk. Its AI no longer edits this folder or uses Git; results go to the chat folder. Linking the folder again later starts a new project.")
         let keep = NSButton(checkboxWithTitle: L("이 폴더를 읽기 전용 공통 폴더로 남기기", "Keep this folder as a read-only shared folder"), target: nil, action: nil)
         keep.state = .off
         alert.accessoryView = keep
@@ -128,8 +169,15 @@ extension Discussion {
             try? FileManager.default.removeItem(atPath: project.root)
             throw error
         }
+        // The project's memory goes with it, so the folder linked again later starts with none.
+        do { try ProjectMemoryStore.shared.move(from: key, to: new) } catch {
+            try? ProjectInfoStore.shared.forget(new)
+            try? FileManager.default.removeItem(atPath: project.root)
+            throw error
+        }
         let lists = Set(TodoStore.shared.current.lists.filter { $0.project?.groupKey == key }.map(\.id))
         do { try TodoStore.shared.relink(lists, to: project) } catch {
+            try? ProjectMemoryStore.shared.move(from: new, to: key)
             try? ProjectInfoStore.shared.forget(new)
             throw error
         }

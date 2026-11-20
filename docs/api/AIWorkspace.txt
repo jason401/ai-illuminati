@@ -15,12 +15,14 @@ FullAutoGuard.environment(_:) | static func environment(_ base: [String : String
 ProjectBinding | struct ProjectBinding
 ProjectBinding.common | var common: String
 ProjectBinding.documentsKind | static let documentsKind: String
+ProjectBinding.id | var id: String?
 ProjectBinding.init(from:) | init(from decoder: any Decoder) throws
-ProjectBinding.init(root:common:remote:remoteURL:kind:) | init(root: String, common: String, remote: String, remoteURL: String, kind: String? = nil)
+ProjectBinding.init(root:common:remote:remoteURL:kind:id:) | init(root: String, common: String, remote: String, remoteURL: String, kind: String? = nil, id: String? = nil)
 ProjectBinding.isDocuments | var isDocuments: Bool { get }
 ProjectBinding.isFolderless | var isFolderless: Bool { get }
 ProjectBinding.kind | var kind: String?
 ProjectBinding.linkedRoots | var linkedRoots: [WorkspaceRoot] { get }
+ProjectBinding.newID() | static func newID() -> String
 ProjectBinding.protectedPaths | var protectedPaths: [String] { get }
 ProjectBinding.remote | var remote: String
 ProjectBinding.remoteURL | var remoteURL: String

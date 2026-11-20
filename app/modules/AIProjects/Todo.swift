@@ -735,7 +735,7 @@ public final class TodoStore: ObservableObject {
         let attachments = try copyIn(files, to: id, already: 0)
         do { return try update { data in
             let listID: UUID
-            if let l = data.lists.firstIndex(where: { $0.project?.root == project.root }) {
+            if let l = data.lists.firstIndex(where: { $0.project?.root == project.root && $0.project?.groupKey == project.groupKey }) {
                 listID = data.lists[l].id
                 if fromAI, let held = data.lists[l].lock, held.organization != lock?.organization { throw TodoError.locked(L("이 채팅에서는 그 프로젝트에 TODO를 적을 수 없어요 (Enterprise).", "This chat cannot add TODOs to that project (Enterprise).")) }
                 if fromAI, let same = data.ordered(listID).first(where: { ![.done, .cancelled].contains($0.state) && Self.sameTitle($0.title, title) }) { return same }
@@ -1332,9 +1332,10 @@ public struct TodoProject {
             return data.lists.first { $0.project?.groupKey == key && $0.lock != nil }?.lock
                 ?? chats.first { $0.project?.groupKey == key && $0.lock != nil }?.lock
         }
-        for list in data.lists { if let p = list.project, seen.insert(p.root).inserted { result.append(TodoProject(name: names[p.groupKey] ?? list.title, binding: p, lock: lock(p))) } }
+        // One entry per root of each project (two projects may share a folder).
+        for list in data.lists { if let p = list.project, seen.insert(p.groupKey + "\n" + p.root).inserted { result.append(TodoProject(name: names[p.groupKey] ?? list.title, binding: p, lock: lock(p))) } }
         for chat in chats.sorted(by: { $0.updatedAt > $1.updatedAt }) {
-            if let p = chat.project, seen.insert(p.root).inserted { result.append(TodoProject(name: names[p.groupKey] ?? (p.root as NSString).lastPathComponent, binding: p, lock: lock(p))) }
+            if let p = chat.project, seen.insert(p.groupKey + "\n" + p.root).inserted { result.append(TodoProject(name: names[p.groupKey] ?? (p.root as NSString).lastPathComponent, binding: p, lock: lock(p))) }
         }
         return result
     }
@@ -1372,7 +1373,7 @@ public final class TodoAddLink: ToolProvider {
     public func tools(context: ToolContext) -> [[String: Any]] {
         guard let (chat, projects) = scope(context), !projects.isEmpty else { return [] }
         let string: [String: Any] = ["type": "string"]
-        let here = chat.project.flatMap { p in projects.first { $0.binding.root == p.root } }
+        let here = chat.project.flatMap { p in projects.first { $0.binding.root == p.root && $0.binding.groupKey == p.groupKey } }
         return [["name": "todo_add",
                  "description": "Add a TODO to the user's TODO board for a project, from any chat, when the user asks to add or note one (or clearly agrees to your suggestion). Never on your own. It is added as a draft: it runs only when the user presses Start on the board. title: one short line in the user's language; detail: write it so an AI that never saw this chat can start at once (no \"as discussed\"): the goal or problem and why; the steps; done when (how to check). When relevant, add: the files or places involved, what you checked versus guessed, and what not to touch. Before adding, check todo_list; if a TODO already covers it, offer to merge with todo_edit instead. after: ids from todo_list of TODOs on the same board that must finish first, only when order matters. project: a name or folder from the list\(here.map { "; leave it out for this chat's project \($0.name)" } ?? ""). One TODO per call. Projects: " + Self.describe(projects),
                  "inputSchema": ["type": "object", "properties": ["title": string, "detail": string, "project": string, "ask_first": ["type": "boolean"], "after": ["type": "array", "items": string]],
@@ -1390,7 +1391,7 @@ public final class TodoAddLink: ToolProvider {
     // The TODOs this chat may see, in board order with their place in their list: in lists of its projects (one project when given).
     private func visible(_ projects: [TodoProject], in data: TodoData) -> [(project: TodoProject, place: Int, item: TodoItem)] {
         data.lists.flatMap { list -> [(project: TodoProject, place: Int, item: TodoItem)] in
-            guard let root = list.project?.root, let p = projects.first(where: { $0.binding.root == root }) else { return [] }
+            guard let lp = list.project, let p = projects.first(where: { $0.binding.root == lp.root && $0.binding.groupKey == lp.groupKey }) else { return [] }
             return data.ordered(list.id).enumerated().map { (p, $0.offset + 1, $0.element) }
         }
     }
@@ -1425,7 +1426,7 @@ public final class TodoAddLink: ToolProvider {
                 let (found, why) = Self.pick(text("project"), in: projects)
                 guard let found else { return ProjectTools.failure(why ?? "No such project.") }
                 shown = [found]
-            } else if let p = chat.project, let found = projects.first(where: { $0.binding.root == p.root }) { shown = [found] }
+            } else if let p = chat.project, let found = projects.first(where: { $0.binding.root == p.root && $0.binding.groupKey == p.groupKey }) { shown = [found] }
             let data = store.current
             let all = arguments["include_done"] as? Bool == true
             let list = visible(shown, in: data).filter { all || ($0.item.state != .done && $0.item.state != .cancelled) }
@@ -1495,7 +1496,7 @@ public final class TodoAddLink: ToolProvider {
             let (found, why) = Self.pick(text("project"), in: projects)
             guard let found else { return ProjectTools.failure(why ?? "No such project.") }
             target = found
-        } else if let p = chat.project, let found = projects.first(where: { $0.binding.root == p.root }) {
+        } else if let p = chat.project, let found = projects.first(where: { $0.binding.root == p.root && $0.binding.groupKey == p.groupKey }) {
             target = found
         } else {
             return ProjectTools.failure("This chat is not linked to a project: ask the user which one, then give project. Projects: " + Self.describe(projects) + ".")
@@ -1506,7 +1507,7 @@ public final class TodoAddLink: ToolProvider {
         var after: [UUID] = []
         if let raw = arguments["after"] {
             let data = store.current
-            let board = data.lists.first { $0.project?.root == target.binding.root }?.id
+            let board = data.lists.first { $0.project?.root == target.binding.root && $0.project?.groupKey == target.binding.groupKey }?.id
             for value in raw as? [Any] ?? [raw] {
                 let s = (value as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
                 guard let id = UUID(uuidString: s), let other = data.item(id), other.listID == board, ![.done, .cancelled].contains(other.state) else {

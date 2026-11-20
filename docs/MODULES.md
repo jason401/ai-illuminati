@@ -524,7 +524,12 @@ Public names and why (everything else stays internal: `ProjectError`, `ProjectTo
   its `CommandIdentity` key (executable's real path, arguments, work tree, `.ai-illuminati.json` bytes, permission, and the bytes of every script in the tree and of the folders of the files it names),
   so the chat can gather a sub-room's card in its main room and let the very same command through for that split; the hook is
   asked before a card is shown.
-- `ProjectBinding.groupKey`: one project across its worktrees (`SidebarProjects.key` forwards to it).
+- `ProjectBinding.groupKey`: one project across its worktrees (`SidebarProjects.key` forwards to it). It is the binding's `id`
+  when it has one, else the Git common folder or root as before.
+- Project ids (2026-11-19): `ProjectBinding.id`/`newID` (AIWorkspace, stored with the binding in chats and TODO lists, so
+  one folder can serve several projects; nil = a project linked before ids, keyed by its folder, nothing moved),
+  `ProjectMemoryStore.move` (AIChat's disconnect takes the project's memory to its new key), `SidebarProjects.slot` (the
+  App's TODO board picks one root of one project). AIChat's `identify` decides the id when a folder is linked.
 - Project memory (2026-11-19): `ProjectMemoryNote` (its stored fields, `Kind`, `State`, `init`), `ProjectMemoryChange` (a history
   line), `ProjectMemoryStore` (`shared`, `notes`, `history`, `add`, `replace`, `Outcome`, `textLimit`, `revision` for the chat's
   "saved to project memory" line): AIChat's three tools and the instruction read and write notes only through it, so the store

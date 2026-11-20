@@ -1738,6 +1738,32 @@ func testDisconnectProjectFolder() {
            "the sidebar shows one project with its name, its chat and its TODO list")
     expect(ProjectMemoryStore.shared.notes(loadedOld.map(SidebarProjects.key) ?? "").map(\.text) == ["Old memory stays"], "its memory is found under the same key")
     expect((try? todos.add(title: "another", project: loadedOld!, projectName: "Old Papers"))?.listID == oldTodo.listID, "a new TODO from the updated chat joins the old list")
+
+    // Work folders: the old project adds another folder and switches to it, keeping its id, name, memory and TODO list;
+    // the old folder stays in the list to switch back. Refused while it answers, and for a folder with another lock.
+    let newDocs = base.appendingPathComponent("new-docs")
+    try! FileManager.default.createDirectory(at: newDocs, withIntermediateDirectories: true)
+    let newRoot = newDocs.resolvingSymlinksInPath().path
+    try! reopened.addWorkFolder(oldKey, path: newDocs.path)
+    expect(reopened.workFolders(oldKey).active == oldBinding.root && reopened.workFolders(oldKey).others == [newRoot], "an added work folder waits in the list")
+    expect((try? reopened.addWorkFolder(oldKey, path: same.path)) == nil && reopened.workFolders(oldKey).others == [newRoot], "a folder with another project's lock is refused")
+    reopened.runningRooms.insert(oldChat.id)
+    expect(reopened.switchRefusal(oldKey) != nil && (try? reopened.switchWorkFolder(oldKey, to: newRoot)) == nil, "no switch while a chat of the project answers")
+    reopened.runningRooms.remove(oldChat.id)
+    let switched = try! reopened.switchWorkFolder(oldKey, to: newRoot)
+    let movedChat = reopened.conversation(oldChat.id).workspace
+    expect(switched.id == oldKey && switched.root == newRoot && movedChat?.project == switched && movedChat?.roots.first?.path == newRoot
+           && movedChat?.roots.contains { $0.path == oldBinding.root } == false && (try? ProjectProcess.current(switched)) == switched,
+           "the chat works in the new folder under the same project id")
+    expect(todos.current.lists.first { $0.id == oldTodo.listID }?.project?.root == newRoot && reopened.workFolders(oldKey).active == newRoot && reopened.workFolders(oldKey).others == [oldBinding.root],
+           "the TODO list follows; the old folder stays in the list")
+    let switchedGroup = SidebarProjects.group(reopened.listedConversations, todo: todos.current, pinned: [], names: ProjectInfoStore.shared.names).projects.filter { $0.id == oldKey }
+    expect(switchedGroup.count == 1 && switchedGroup[0].name == "Old Papers" && ProjectMemoryStore.shared.notes(oldKey).map(\.text) == ["Old memory stays"],
+           "name and memory stay with the project")
+    let fresh = reopened.identify(try! ProjectProcess.documents(oldDocs.path), ask: false)!.project
+    expect(fresh.id != oldKey && ProjectInfoStore.shared.info(SidebarProjects.key(fresh)).name == nil, "the old folder linked again is another project, not one sharing it")
+    try! reopened.switchWorkFolder(oldKey, to: oldBinding.root)
+    expect(reopened.conversation(oldChat.id).workspace?.project?.root == oldBinding.root && reopened.workFolders(oldKey).others == [newRoot], "switching back works")
     print("PASS: disconnect work folder (folderless, keeps its key as id, chats, TODO lists, info, memory, pin and tab kept, worktree roots removed, refusals, keep read only; project ids for one folder)")
 }
 

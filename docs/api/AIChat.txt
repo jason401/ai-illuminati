@@ -273,6 +273,7 @@ DeviceSyncSettings.shareConnection | var shareConnection: Bool?
 DeviceSyncSettings.sharesConnection | var sharesConnection: Bool { get set }
 Discussion | final class Discussion
 Discussion.addChat(_:title:lock:) | func addChat(_ project: ProjectBinding, title: String, lock: EnterpriseLock?) -> UUID
+Discussion.addWorkFolder(_:path:) | func addWorkFolder(_ key: String, path: String) throws
 Discussion.answering | var answering: Set<UUID> { get }
 Discussion.answeringChanged | var answeringChanged: AnyPublisher<Void, Never> { get }
 Discussion.anyRunning | var anyRunning: Bool { get }
@@ -308,6 +309,7 @@ Discussion.noCrew(_:lock:) | func noCrew(_ allowed: [String], lock: EnterpriseLo
 Discussion.open(_:) | func open(_ id: UUID)
 Discussion.openBoard(project:tab:) | func openBoard(project: String?, tab: BoardTab? = nil)
 Discussion.openTurn(_:turn:) | @discardableResult func openTurn(_ room: UUID, turn: UUID?) -> Bool
+Discussion.removeWorkFolder(_:path:) | func removeWorkFolder(_ key: String, path: String) throws
 Discussion.runningRooms | @Published var runningRooms: Set<UUID> { get set }
 Discussion.saveDrafts() | func saveDrafts()
 Discussion.sentPhotos(_:) | func sentPhotos(_ room: UUID) -> Set<UUID>
@@ -318,9 +320,11 @@ Discussion.start(room:question:photos:review:extra:) | func start(room: UUID, qu
 Discussion.stop(_:) | func stop(_ room: UUID)
 Discussion.stoppingRooms | @Published var stoppingRooms: Set<UUID> { get set }
 Discussion.unreadFile | static var unreadFile: URL?
+Discussion.useWorkFolder(_:path:name:) | func useWorkFolder(_ key: String, path: String, name: String)
 Discussion.userWrote(_:since:) | func userWrote(_ room: UUID, since: Date) -> Bool
 Discussion.viewingBoard | @Published var viewingBoard: Bool { get set }
 Discussion.viewingRemote | @Published var viewingRemote: RemoteViewing? { get set }
+Discussion.workFolders(_:) | func workFolders(_ key: String) -> (active: String?, others: [String])
 Enterprise | enum Enterprise
 Enterprise.permits(_:lock:) | static func permits(_ account: Account, lock: EnterpriseLock?) -> Bool
 FolderSource | struct FolderSource

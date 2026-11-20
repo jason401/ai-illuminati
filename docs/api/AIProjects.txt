@@ -56,10 +56,12 @@ ProjectFolder.init(from:) | init(from decoder: any Decoder) throws
 ProjectFolder.init(path:directory:) | init(path: String, directory: Bool)
 ProjectFolder.path | var path: String
 ProjectInfo | struct ProjectInfo
+ProjectInfo.encode(to:) | func encode(to encoder: any Encoder) throws
 ProjectInfo.folders | var folders: [ProjectFolder]
 ProjectInfo.init() | init()
 ProjectInfo.init(from:) | init(from decoder: any Decoder) throws
 ProjectInfo.links | var links: [ProjectLink]
+ProjectInfo.workFolders | var workFolders: [String]
 ProjectInfoData | struct ProjectInfoData
 ProjectInfoData.encode(to:) | func encode(to encoder: any Encoder) throws
 ProjectInfoData.init() | init()
@@ -82,6 +84,7 @@ ProjectInfoStore.removeFolder(_:from:) | func removeFolder(_ path: String, from 
 ProjectInfoStore.removeLink(_:from:) | func removeLink(_ id: UUID, from project: String) throws
 ProjectInfoStore.rename(_:to:) | func rename(_ project: String, to name: String) throws
 ProjectInfoStore.saveError | @Published var saveError: String? { get set }
+ProjectInfoStore.setWorkFolders(_:of:) | func setWorkFolders(_ paths: [String], of project: String) throws
 ProjectInfoStore.shared | static var shared: ProjectInfoStore
 ProjectInfoStore.snapshot | @Published var snapshot: ProjectInfoData { get set }
 ProjectInfoStore.webURL(_:) | static func webURL(_ remote: String) -> URL?

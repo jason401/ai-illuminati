@@ -38,15 +38,10 @@ extension Discussion {
         // A folderless project (its folder disconnected) may still carry the folder's old key as its id: it is not in the folder.
         let bindings = (conversations.filter { $0.meetingOf == nil }.sorted { $0.updatedAt > $1.updatedAt }.compactMap(\.workspace?.project)
             + todo.lists.compactMap(\.project)).filter { !$0.isFolderless }
-        var using: [ProjectBinding] = [], locks: [EnterpriseLock] = []
-        for p in bindings where (p.root == found.root || p.groupKey == found.groupKey) && !using.contains(where: { $0.groupKey == p.groupKey }) { using.append(p) }
-        func overlaps(_ a: String, _ b: String) -> Bool { a == b || a.hasPrefix(b + "/") || b.hasPrefix(a + "/") }
-        var seen = Set<String>()
-        for p in bindings where overlaps(p.root, found.root) && seen.insert(p.groupKey).inserted {
-            let parts = projectParts(p.groupKey, todos: todo)
-            if let lock = (parts.rooms.compactMap(\.enterpriseLock) + parts.lists.compactMap(\.lock)).first,
-               !locks.contains(where: { $0.organization == lock.organization }) { locks.append(lock) }
-        }
+        var using: [ProjectBinding] = []
+        // The same folder, or another work tree of the same Git repository (a key can outlive its folder once a project switches).
+        for p in bindings where (p.root == found.root || (!found.isDocuments && !p.isDocuments && p.common == found.common)) && !using.contains(where: { $0.groupKey == p.groupKey }) { using.append(p) }
+        let locks = folderLocks(found.root)
         guard locks.count <= 1 else {
             attachmentError = L("이 폴더를 서로 다른 잠금의 프로젝트들이 쓰고 있어서 연결하지 않았어요.", "Projects with different locks use this folder, so it was not linked.")
             return nil
@@ -165,6 +160,14 @@ extension Discussion {
     }
 
     func disconnectRefusal(_ key: String) -> String? {
+        if let why = busyRefusal(key) { return why }
+        let bindings = projectBindings(key)
+        if bindings.isEmpty || bindings.contains(where: \.isFolderless) { return L("이 프로젝트에는 연결된 작업 폴더가 없어요.", "This project has no linked work folder.") }
+        return nil
+    }
+
+    // Why the project's chats and TODO lists cannot be moved now (nil: they can).
+    func busyRefusal(_ key: String) -> String? {
         let chats = conversations.filter { $0.workspace?.project?.groupKey == key }
         let rooms = chats.flatMap { [$0.id] + meetings(of: $0.id).map(\.id) }
         if !runningRooms.isDisjoint(with: rooms) { return L("이 프로젝트의 채팅이 답하는 중이에요. 끝난 뒤 다시 해 주세요.", "A chat of this project is answering. Try again when it is done.") }
@@ -175,9 +178,12 @@ extension Discussion {
         }
         if let locked = TodoStore.shared.locked { return locked }
         if ProjectInfoStore.shared.isLocked { return L("project-info.json을 읽지 못해서 바꾸지 않았어요. 파일을 확인해 주세요.", "project-info.json could not be read, so nothing was changed. Please check the file.") }
-        let bindings = chats.compactMap(\.workspace?.project) + todo.lists.filter { lists.contains($0.id) }.compactMap(\.project)
-        if bindings.isEmpty || bindings.contains(where: \.isFolderless) { return L("이 프로젝트에는 연결된 작업 폴더가 없어요.", "This project has no linked work folder.") }
         return nil
+    }
+
+    // Every binding of the project: its chats' (meetings too) and its TODO lists'.
+    func projectBindings(_ key: String) -> [ProjectBinding] {
+        (conversations.compactMap(\.workspace?.project) + TodoStore.shared.current.lists.compactMap(\.project)).filter { $0.groupKey == key }
     }
 
     // The move itself (on the main thread, so nothing starts in between). A fresh folderless binding keeps the project's
@@ -258,5 +264,110 @@ extension Discussion {
                 }
             }
         }
+    }
+
+    // A project's work folders: it works in one at a time (the root of its chats and TODO lists, the active one); the
+    // others wait in its project info until the user switches. Switching keeps the project's id, so its name, memory,
+    // TODOs and locks stay; it is refused while any of it runs, and the lock follows the folder as when linking.
+    // The locks of the other projects working in `root` or in a folder inside or around it.
+    func folderLocks(_ root: String, except key: String? = nil) -> [EnterpriseLock] {
+        let todo = TodoStore.shared.current
+        let bindings = (conversations.filter { $0.meetingOf == nil }.compactMap(\.workspace?.project) + todo.lists.compactMap(\.project)).filter { !$0.isFolderless }
+        func overlaps(_ a: String, _ b: String) -> Bool { a == b || a.hasPrefix(b + "/") || b.hasPrefix(a + "/") }
+        var seen = Set<String>(), locks: [EnterpriseLock] = []
+        for p in bindings where p.groupKey != key && overlaps(p.root, root) && seen.insert(p.groupKey).inserted {
+            if let lock = projectLock(p.groupKey, todos: todo), !locks.contains(where: { $0.organization == lock.organization }) { locks.append(lock) }
+        }
+        return locks
+    }
+    func projectLock(_ key: String, todos: TodoData) -> EnterpriseLock? {
+        let parts = projectParts(key, todos: todos)
+        return (parts.rooms.compactMap(\.enterpriseLock) + parts.lists.compactMap(\.lock)).first
+    }
+
+    // The active work folder (nil: folderless) and the others to switch to.
+    public func workFolders(_ key: String) -> (active: String?, others: [String]) {
+        let active = projectBindings(key).first { !$0.isFolderless }?.root
+        return (active, ProjectInfoStore.shared.info(key).workFolders.filter { $0 != active })
+    }
+
+    // `path` as the project's work folder: a top-level Git folder with a remote, else a documents folder; the folder's
+    // lock (another project's in it) must be the project's own.
+    func workBinding(_ key: String, _ path: String) throws -> ProjectBinding {
+        var project = try (try? ProjectProcess.inspect(path)) ?? ProjectProcess.documents(path)
+        project.id = key
+        let locks = folderLocks(project.root, except: key), mine = projectLock(key, todos: TodoStore.shared.current)
+        if locks.count > 1 || locks.first.map({ $0.organization != mine?.organization }) == true {
+            throw MaterialReader.error(L("이 폴더는 잠금이 다른 프로젝트가 써서 이 프로젝트의 작업 폴더가 될 수 없어요.",
+                                         "A project with another lock uses this folder, so it cannot be this project's work folder."))
+        }
+        return project
+    }
+
+    public func addWorkFolder(_ key: String, path: String) throws {
+        let project = try workBinding(key, path)
+        let (active, others) = workFolders(key)
+        guard project.root != active else { return }
+        try ProjectInfoStore.shared.setWorkFolders(others + [project.root], of: key)
+    }
+    public func removeWorkFolder(_ key: String, path: String) throws {
+        try ProjectInfoStore.shared.setWorkFolders(workFolders(key).others.filter { $0 != path }, of: key)
+    }
+
+    func switchRefusal(_ key: String) -> String? {
+        if let why = busyRefusal(key) { return why }
+        if projectBindings(key).isEmpty { return L("이 프로젝트에는 채팅이나 TODO가 없어요.", "This project has no chats or TODOs.") }
+        if projectRoots(key).count > 1 {
+            return L("이 프로젝트는 작업 트리 여러 개에서 일하고 있어서 바꿀 수 없어요. 하위 작업이 끝난 뒤 다시 해 주세요.", "This project works in several work trees, so it cannot switch. Try again when the sub-work is done.")
+        }
+        return nil
+    }
+
+    // The switch itself (on the main thread, so nothing starts in between). The old work folder stays in the list.
+    @discardableResult
+    func switchWorkFolder(_ key: String, to path: String) throws -> ProjectBinding {
+        if let why = switchRefusal(key) { throw MaterialReader.error(why) }
+        let project = try workBinding(key, path)
+        let roots = projectRoots(key)
+        let (active, others) = workFolders(key)
+        guard project.root != active else { return project }
+        try ProjectInfoStore.shared.setWorkFolders(others.filter { $0 != project.root } + (active.map { [$0] } ?? []), of: key)
+        let lists = Set(TodoStore.shared.current.lists.filter { $0.project?.groupKey == key }.map(\.id))
+        do { try TodoStore.shared.relink(lists, to: project) } catch {
+            try? ProjectInfoStore.shared.setWorkFolders(others, of: key)
+            throw error
+        }
+        for i in conversations.indices {
+            guard var binding = conversations[i].workspace, let old = binding.project, SidebarProjects.key(old) == key else { continue }
+            binding.roots.removeAll { roots.contains($0.path) || $0.path == project.root }
+            binding.roots.insert(contentsOf: project.linkedRoots, at: 0)
+            binding.project = project
+            binding.projectRunID = nil; binding.projectGeneration = nil
+            conversations[i].workspace = binding
+            try? nativeSessions.reset(conversations[i].id)   // the AI's earlier sessions knew the old folder
+            ChatStore.save(conversations[i])
+        }
+        sessionNote = L("작업 폴더를 바꿨어요: ", "Work folder switched: ") + (project.root as NSString).lastPathComponent
+        return project
+    }
+
+    // Project info → Use as work folder: asks first (the AI then works there, full auto), then switches or says why not.
+    public func useWorkFolder(_ key: String, path: String, name: String) {
+        func tell(_ text: String) {
+            let alert = NSAlert(); alert.messageText = L("작업 폴더를 바꾸지 못했어요", "Could not switch the work folder"); alert.informativeText = text; alert.runModal()
+        }
+        if let why = switchRefusal(key) { tell(why); return }
+        let project: ProjectBinding
+        do { project = try workBinding(key, path) } catch { tell(error.localizedDescription); return }
+        if !project.isDocuments { guard Self.allowProjectWork(project) else { return } }
+        else {
+            let alert = NSAlert()
+            alert.messageText = L("‘\(name)’의 작업 폴더를 바꿀까요?", "Switch the work folder of “\(name)”?")
+            alert.informativeText = project.root + "\n\n" + L("이 프로젝트의 채팅과 TODO가 이 폴더에서 일해요 (완전 자동, 답할 때마다 백업). 이름·메모리·TODO는 그대로이고, 지금 폴더는 목록에 남아서 다시 바꿀 수 있어요.",
+                                                               "This project's chats and TODOs work in this folder (full auto, backed up before each answer). Name, memory and TODOs stay; the current folder stays in the list to switch back.")
+            alert.addButton(withTitle: L("바꾸기", "Switch")); alert.addButton(withTitle: L("취소", "Cancel"))
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+        }
+        do { try switchWorkFolder(key, to: path) } catch { tell(error.localizedDescription) }
     }
 }

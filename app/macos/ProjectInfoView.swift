@@ -39,6 +39,7 @@ struct ProjectInfoView: View {
                 header(group)
                 if let why = draft.error ?? store.saveError { Text(why).font(.system(size: 12)).foregroundColor(.red) }
                 if let group, group.bindings.first?.isFolderless != true { repository(group); rules(group) }
+                if let group { workFolders(group) }
                 ProjectMemorySection(discussion: discussion, project: project)
                 folders
                 links
@@ -134,6 +135,38 @@ struct ProjectInfoView: View {
                 Button(L("작업 폴더 연결 끊기…", "Disconnect work folder…")) { discussion.disconnectProjectFolder(group.id, name: group.name) }
                 Text(L("채팅·TODO는 남기고 폴더 없는 프로젝트로 바꿔요 (파일은 그대로)", "Keeps the chats and TODOs as a folderless project (the files stay)"))
                     .font(.system(size: 11)).foregroundColor(.secondary)
+            }
+        }
+    }
+
+    // MARK: Work folders
+
+    // The project works in one folder at a time; others wait here to switch to (name, memory and TODOs stay).
+    private func workFolders(_ group: ProjectGroup) -> some View {
+        let (active, others) = discussion.workFolders(group.id)
+        return section(L("작업 폴더", "Work folders"), systemImage: "folder.badge.gearshape") {
+            Text(L("프로젝트는 한 번에 한 작업 폴더에서 일해요. 다른 폴더를 추가해 두면 바꿀 수 있어요 (이름·메모리·TODO는 그대로).",
+                   "The project works in one folder at a time. Add other folders to switch to them (name, memory and TODOs stay)."))
+                .font(.system(size: 12)).foregroundColor(.secondary)
+            if let active { pathRow(active, directory: true, note: L("지금 작업 폴더", "Current")) { EmptyView() } }
+            ForEach(others, id: \.self) { path in
+                pathRow(path, directory: true, note: nil) {
+                    Button(L("작업 폴더로", "Use")) { discussion.useWorkFolder(group.id, path: path, name: group.name) }.controlSize(.small)
+                    Button(action: { act { try discussion.removeWorkFolder(group.id, path: path) } }) {
+                        Image(systemName: "xmark").font(.system(size: 10, weight: .semibold)).frame(width: 22, height: 22)
+                    }
+                    .buttonStyle(.plainHit).foregroundColor(.secondary)
+                    .help(L("목록에서 빼기 (폴더는 그대로)", "Remove from the list (the folder stays)"))
+                }
+            }
+            Button(L("작업 폴더 추가…", "Add work folder…")) {
+                let panel = NSOpenPanel()
+                panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.canCreateDirectories = true
+                panel.prompt = L("추가", "Add")
+                panel.message = L("이 프로젝트가 쓸 작업 폴더를 고르세요. Git 저장소면 코드, 아니면 문서 폴더(Git 없음)로 써요.",
+                                  "Pick a work folder for this project. A Git repository is used as code; any other folder as documents (no Git).")
+                guard panel.runModal() == .OK, let url = panel.url?.resolvingSymlinksInPath() else { return }
+                act { try discussion.addWorkFolder(group.id, path: url.path) }
             }
         }
     }

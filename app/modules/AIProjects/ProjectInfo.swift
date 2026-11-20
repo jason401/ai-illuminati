@@ -24,16 +24,25 @@ public struct ProjectInfo: Codable, Equatable {
     var name: String?                  // the name the user gave the project folder; nil: its TODO list or folder name
     public var folders: [ProjectFolder] = []
     public var links: [ProjectLink] = []
+    // The project's other work folders: it works in one folder at a time (its chats' and TODO lists' root), and these
+    // wait here until the user switches to one. An older app leaves the key out when it saves.
+    public var workFolders: [String] = []
     public init() {}
-    private enum Keys: String, CodingKey { case name, folders, links }
+    private enum Keys: String, CodingKey { case name, folders, links, workFolders }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
         // A missing list is empty; a broken one fails the whole file, so it is held instead of saved over.
         name = try c.decodeIfPresent(String.self, forKey: .name)
         folders = try c.decodeIfPresent([ProjectFolder].self, forKey: .folders) ?? []
         links = try c.decodeIfPresent([ProjectLink].self, forKey: .links) ?? []
+        workFolders = try c.decodeIfPresent([String].self, forKey: .workFolders) ?? []
     }
-    var isEmpty: Bool { name == nil && folders.isEmpty && links.isEmpty }
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: Keys.self)
+        try c.encodeIfPresent(name, forKey: .name); try c.encode(folders, forKey: .folders); try c.encode(links, forKey: .links)
+        if !workFolders.isEmpty { try c.encode(workFolders, forKey: .workFolders) }   // the file stays as before until one is added
+    }
+    var isEmpty: Bool { name == nil && folders.isEmpty && links.isEmpty && workFolders.isEmpty }
 }
 
 public struct ProjectInfoData: Codable, Equatable {
@@ -182,6 +191,13 @@ public final class ProjectInfoStore: ObservableObject {
     }
     public func removeFolder(_ path: String, from project: String) throws {
         try update(project) { $0.folders.removeAll { $0.path == path } }
+    }
+
+    // Work folders to switch to, at most maxFolders (the checks that a folder may be one are the chat's: Git or documents, locks).
+    public func setWorkFolders(_ paths: [String], of project: String) throws {
+        var kept: [String] = []
+        for path in paths where !kept.contains(path) { kept.append(path) }
+        try update(project) { $0.workFolders = Array(kept.prefix(Self.maxFolders)) }
     }
 
     @discardableResult

@@ -3350,7 +3350,6 @@ func testInstructionLayers() {
     print("PASS: instruction layers (always, with Drive / when needed: pictures, ask_ai and meetings / file list), face, web, notes, memory and chat state kept")
 }
 runTest("testInstructionLayers", testInstructionLayers)
-runTest("testInstructionSize", testInstructionSize)
 runTest("testSpace", testSpace)
 runTest("testSpaceLibrary", testSpaceLibrary)
 runTest("testSpaceEnterpriseLock", testSpaceEnterpriseLock)

@@ -533,6 +533,10 @@ Public names and why (everything else stays internal: `ProjectError`, `ProjectTo
   AIChat's `identify` decides the id when a folder is linked; the lock follows the folder (a locked project's folder makes
   new projects with that lock, different locks refuse). Disconnecting keeps the id. `ProjectMakerLink.addChat` returns nil
   when that refuses.
+- Work folders (2026-11-19): `ProjectInfo.workFolders`, `ProjectInfoStore.setWorkFolders` (a project's other work folders,
+  saved in project-info.json, the key left out while empty), AIChat's `Discussion.workFolders`/`addWorkFolder`/`removeWorkFolder`/
+  `useWorkFolder` (the Project info tab lists, adds and switches; the checks, locks and the move of chats and TODO lists stay in
+  AIChat). A switch keeps the project's id, so nothing keyed by it moves.
 - Project memory (2026-11-19): `ProjectMemoryNote` (its stored fields, `Kind`, `State`, `init`), `ProjectMemoryChange` (a history
   line), `ProjectMemoryStore` (`shared`, `notes`, `history`, `add`, `replace`, `Outcome`, `textLimit`, `revision` for the chat's
   "saved to project memory" line): AIChat's three tools and the instruction read and write notes only through it, so the store

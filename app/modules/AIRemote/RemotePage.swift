@@ -378,6 +378,11 @@ let navAnimate = false, pushed = false, searching = false, searchTimer = null, j
 const folded = new Set(JSON.parse(localStorage.getItem('folded') || '[]'));
 
 function esc(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+// The same content gives the same text whatever order its keys came in: what "did it change" is compared with.
+function stable(v) {
+  return JSON.stringify(v, (k, x) => x && typeof x === 'object' && !Array.isArray(x)
+    ? Object.fromEntries(Object.keys(x).sort().map(n => [n, x[n]])) : x);
+}
 function withKey(url) { return url + (url.includes('?') ? '&' : '?') + 'k=' + encodeURIComponent(KEY); }
 function colorStyle(c) { return c && c.length === 2 ? ' style="--cl:' + esc(c[0]) + ';--cd:' + esc(c[1]) + '"' : ''; }
 // `timeout` (ms): a request left hanging (the Mac restarting) fails instead of stopping the polling.
@@ -534,7 +539,7 @@ async function loadList() {
   try {
     const data = await api('/api/chats');
     if (searching) return;
-    const text = JSON.stringify(data);
+    const text = stable(data);
     if (text === lastList) return;
     lastList = text;
     renderList(data);
@@ -563,7 +568,7 @@ let usageTimer = null, usagePending = false, usageSnapshot = null, usageBurst = 
 
 function usageReadingTimes(data) {
   // The footer shows the oldest reading, which can stay the same when one account is still cached.
-  return JSON.stringify(data.groups.map(group => group.accounts.map(account => account.checkedAt)));
+  return stable(data.groups.map(group => group.accounts.map(account => account.checkedAt)));
 }
 
 function usageRefill(resetsAt, now) {
@@ -831,7 +836,7 @@ function tick() {
 }
 setInterval(tick, 15000);
 function renderChat(data, first) {
-  const box = $('chatScroll'), atEnd = first || box.scrollHeight - box.scrollTop - box.clientHeight < 90;
+  const box = $('chatScroll'), atEnd = first || box.scrollHeight - box.scrollTop - box.clientHeight < 90, height = box.scrollHeight;
   $('chatTitle').textContent = data.title;
   $('chatSub').textContent = data.project || '';
   $('box').classList.toggle('hidden', !!data.readOnly);
@@ -845,9 +850,9 @@ function renderChat(data, first) {
     [...list.children].forEach(e => { if (!e.dataset.key) e.remove(); });
     let prev = null;
     for (const t of data.turns) {
-      const sig = JSON.stringify(t);
+      const sig = stable(t);
       let el = old.get(t.key);
-      if (!el || el._sig !== sig) { const fresh = renderTurn(t); fresh._sig = sig; if (el) el.replaceWith(fresh); el = fresh; }
+      if (!el || el._sig !== sig) { const fresh = renderTurn(t); fresh._sig = sig; if (el) { keepPictures(el, fresh); el.replaceWith(fresh); } el = fresh; }
       old.delete(t.key);
       const want = prev ? prev.nextSibling : list.firstChild;
       if (el !== want) list.insertBefore(el, want);
@@ -855,7 +860,7 @@ function renderChat(data, first) {
     }
     old.forEach(e => e.remove());
   }
-  const cards = JSON.stringify(data.approvals);
+  const cards = stable(data.approvals);
   if ($('approvals')._sig !== cards) {
     $('approvals')._sig = cards;
     $('approvals').innerHTML = data.approvals.map(a => '<div class="approval"><b>' + esc(a.title) + '</b>' +
@@ -865,8 +870,26 @@ function renderChat(data, first) {
   }
   tick();
   if (jump && showFound()) return;
-  if (atEnd) box.scrollTop = box.scrollHeight;
+  // Only when the height changed: a redraw of the same height leaves the place alone.
+  if (atEnd && (first || box.scrollHeight !== height)) box.scrollTop = box.scrollHeight;
   bottomButton();
+}
+// A redrawn message takes over the old one's loaded pictures, so they do not load again from zero height; while any
+// new picture is still loading, the message keeps its old height (released when they are in, or after a few seconds).
+function keepPictures(el, fresh) {
+  const height = el.offsetHeight;   // before its pictures move over
+  const loaded = new Map([...el.querySelectorAll('.pics img')].filter(i => i.complete && i.naturalHeight).map(i => [i.getAttribute('src'), i]));
+  const waiting = [];
+  fresh.querySelectorAll('.pics img').forEach(i => {
+    const o = loaded.get(i.getAttribute('src'));
+    if (o) { loaded.delete(i.getAttribute('src')); i.replaceWith(o); } else waiting.push(i);
+  });
+  if (!waiting.length) return;
+  fresh.style.minHeight = height + 'px';
+  let left = waiting.length;
+  const release = () => { fresh.style.minHeight = ''; };
+  waiting.forEach(i => { const done = () => { if (--left === 0) release(); }; i.addEventListener('load', done, { once: true }); i.addEventListener('error', done, { once: true }); });
+  setTimeout(release, 4000);
 }
 // A search result's turn: scrolled into view with its words marked.
 function showFound() {
@@ -896,7 +919,7 @@ async function loadChat() {
     const first = !opened && !cache[id];
     opened = true;
     cache[id] = data;
-    const text = JSON.stringify(data);
+    const text = stable(data);
     if (text === lastChat) return;
     lastChat = text;
     renderChat(data, first);

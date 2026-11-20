@@ -19,6 +19,18 @@ if case .bad(400) = RemoteHTTP.parse(Data("NOPE\r\n\r\n".utf8)) {} else { expect
 if case .bad(400) = RemoteHTTP.parse(Data("POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n".utf8)) {} else { expect(false, "chunked bodies are refused") }
 if case .bad(413) = RemoteHTTP.parse(Data("POST / HTTP/1.1\r\nContent-Length: \(RemoteHTTP.maxBody + 1)\r\n\r\n".utf8)) {} else { expect(false, "too big is refused before reading it") }
 
+// The same content is the same bytes, whatever order its dictionaries were built in, so the polling page does not
+// redraw (and flicker) when nothing changed.
+var built: [String: Any] = [:]
+built.reserveCapacity(64)
+for (k, v) in [("time", "9:00"), ("text", "hi"), ("mine", true), ("key", "t1"), ("images", ["/p/1"]), ("day", "")] as [(String, Any)] { built[k] = v }
+let turn: [String: Any] = ["day": "", "images": ["/p/1"], "key": "t1", "mine": true, "text": "hi", "time": "9:00"]
+let one = RemoteResponse.json(["turns": [built], "title": "T", "working": false]).body
+let two = RemoteResponse.json(["working": false, "title": "T", "turns": [turn]]).body
+expect(one == two && RemoteResponse.json(["turns": [turn], "working": false, "title": "T"]).body == one, "the same content gives the same bytes")
+expect(String(decoding: one, as: UTF8.self) == #"{"title":"T","turns":[{"day":"","images":["\/p\/1"],"key":"t1","mine":true,"text":"hi","time":"9:00"}],"working":false}"#,
+       "keys are sorted at every level")
+
 // The key: by header or `k`, the whole of it, never an empty one.
 let key = RemoteHTTP.newKey()
 expect(key.count == 48 && key != RemoteHTTP.newKey(), "keys are long and new each time")

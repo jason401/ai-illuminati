@@ -25,9 +25,11 @@ public struct RemoteResponse {
     public var type: String
     public var body: Data
     public init(status: Int = 200, type: String, body: Data) { self.status = status; self.type = type; self.body = body }
+    // Sorted keys: the same content is the same bytes, so the polling page sees no change (and does not redraw) when
+    // nothing changed. Unsorted, a Swift dictionary's key order differed between answers.
     public static func json(_ object: Any, status: Int = 200) -> RemoteResponse {
         RemoteResponse(status: status, type: "application/json; charset=utf-8",
-                       body: (try? JSONSerialization.data(withJSONObject: object)) ?? Data("{}".utf8))
+                       body: (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])) ?? Data("{}".utf8))
     }
     public static func error(_ status: Int, _ message: String) -> RemoteResponse { json(["error": message], status: status) }
 

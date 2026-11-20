@@ -1605,7 +1605,7 @@ func testDocumentsProject() {
     print("PASS: documents project (plain folder, not Git, one writer per folder, no git tools, documents instruction, review against the backup, Undo, TODO text, create, empty project)")
 }
 
-// Disconnecting a project's work folder: a folderless project with a new key keeps the chats, TODO lists, name,
+// Disconnecting a project's work folder: a folderless project with the same key keeps the chats, TODO lists, name,
 // shared folders, links, pin and tab; every worktree root leaves the chats; the folder on disk stays.
 func testDisconnectProjectFolder() {
     let base = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("disconnect-fixture-" + UUID().uuidString)
@@ -1646,7 +1646,7 @@ func testDisconnectProjectFolder() {
     let project = try! chat.disconnectFolder(key, name: "repo", keepReadOnly: false)
     let new = SidebarProjects.key(project)
     let chatA = chat.conversation(a), chatB = chat.conversation(b)
-    expect(project.isFolderless && new != key && (try? ProjectProcess.current(project)) == project, "the project becomes a valid folderless one with a new key")
+    expect(project.isFolderless && new == key && project.id == key && (try? ProjectProcess.current(project)) == project, "the project becomes a valid folderless one that keeps its key as its id")
     expect(chatA.workspace?.project == project && chatB.workspace?.project == project
            && chatA.workspace?.roots.map(\.path) == [other.path] && chatB.workspace?.roots.isEmpty == true && chatA.workspace?.projectRunID == nil,
            "every worktree root leaves the chats; other linked folders stay")
@@ -1654,16 +1654,18 @@ func testDisconnectProjectFolder() {
     expect(todos.current.lists.first { $0.id == item.listID }?.project == project, "the TODO list moves to the folderless project")
     let info = ProjectInfoStore.shared.info(new)
     expect(info.name == "repo" && info.folders.map(\.path) == [shared.resolvingSymlinksInPath().path] && info.links.map(\.title) == ["Docs"]
-           && ProjectInfoStore.shared.info(key).isEmpty, "name, shared folders and links move to the new key")
-    expect(SidebarFold.shared.isPinned(new) && !SidebarFold.shared.isPinned(key) && BoardTab.saved(new) == .todo && chat.boardProject == new,
+           , "name, shared folders and links stay under the key")
+    expect(SidebarFold.shared.isPinned(new) && BoardTab.saved(new) == .todo && chat.boardProject == new,
            "pin, tab and open board follow the project")
     let grouped = SidebarProjects.group(chat.listedConversations, todo: todos.current, pinned: [], names: ProjectInfoStore.shared.names).projects
-    expect(grouped.filter { $0.id == new }.count == 1 && !grouped.contains { $0.id == key } && grouped.first { $0.id == new }?.name == "repo",
+    expect(grouped.filter { $0.id == new }.count == 1 && grouped.first { $0.id == new }?.bindings.allSatisfy(\.isFolderless) == true && grouped.first { $0.id == new }?.name == "repo",
            "the sidebar shows one folderless project under its old name")
     expect(FileManager.default.fileExists(atPath: main.appendingPathComponent("a.txt").path), "the folder on disk stays")
     expect(chat.disconnectRefusal(new) != nil, "a folderless project has nothing to disconnect")
-    expect(ProjectMemoryStore.shared.notes(new).map(\.text) == ["Disconnect keeps this note"] && ProjectMemoryStore.shared.notes(key).isEmpty,
-           "project memory moves with the project, so the folder linked again starts with none")
+    expect(ProjectMemoryStore.shared.notes(new).map(\.text) == ["Disconnect keeps this note"], "project memory stays with the project")
+    let relinked = chat.identify(ProjectBinding(root: main.path, common: common, remote: "origin", remoteURL: "https://github.com/x/repo.git"), ask: false)!.project
+    expect(relinked.id != key && ProjectMemoryStore.shared.notes(SidebarProjects.key(relinked)).isEmpty,
+           "the folder linked again is a new project that starts with no memory")
 
     // Keeping the old folder as a read-only shared folder (opt-in); refused, with nothing moved, when it would not fit.
     let third = ProjectBinding(root: tree.path, common: tree.path, remote: "", remoteURL: "", kind: ProjectBinding.documentsKind)
@@ -1684,9 +1686,9 @@ func testDisconnectProjectFolder() {
     let same = base.appendingPathComponent("same")
     try! FileManager.default.createDirectory(at: same, withIntermediateDirectories: true)
     let found = try! ProjectProcess.documents(same.path)
-    let firstSame = chat.identify(found, ask: false)!
+    let firstSame = chat.identify(found, ask: false)!.project
     let firstRoom = chat.addProjectChat(firstSame, title: "S1", open: false)
-    let secondSame = chat.identify(found, ask: false)!
+    let secondSame = chat.identify(found, ask: false)!.project
     let secondRoom = chat.addProjectChat(secondSame, title: "S2", open: false)
     expect(firstSame.id != nil && secondSame.id != nil && SidebarProjects.key(firstSame) != SidebarProjects.key(secondSame) && firstSame.root == secondSame.root,
            "the same folder makes two projects with their own ids")
@@ -1698,10 +1700,21 @@ func testDisconnectProjectFolder() {
     expect(todoA.listID != todoB.listID, "each project of one folder has its own TODO list")
     expect(SidebarProjects.slot(firstSame) != SidebarProjects.slot(secondSame), "the TODO board tells the two apart")
     chat.lockEnterprise(firstRoom, organization: EnterpriseLock(organization: "school.example", name: "School", lockedAt: Date()))
-    let joined = chat.identify(found, ask: false)!
-    expect(joined.id == firstSame.id, "a folder with a locked project joins a project instead of leaving its lock behind")
-    _ = secondRoom
-    print("PASS: disconnect work folder (folderless with a new key, chats, TODO lists, info, memory, pin and tab kept, worktree roots removed, refusals, keep read only; project ids for one folder)")
+    let locked = chat.identify(found, ask: false)
+    expect(locked?.lock?.organization == "school.example" && locked?.project.id != firstSame.id && locked?.project.id != secondSame.id,
+           "a locked project's folder can make another project, which gets the same lock")
+    let inside = base.appendingPathComponent("same/sub")
+    try! FileManager.default.createDirectory(at: inside, withIntermediateDirectories: true)
+    expect(chat.identify(try! ProjectProcess.documents(inside.path), ask: false)?.lock?.organization == "school.example", "a folder inside a locked one carries its lock")
+    chat.lockEnterprise(secondRoom, organization: EnterpriseLock(organization: "other.example", name: "Other", lockedAt: Date()))
+    expect(chat.identify(found, ask: false) == nil && chat.attachmentError != nil, "projects with different locks on one folder refuse another")
+    chat.attachmentError = nil
+
+    // Projects saved before ids keep their key as their id when read: the same project, nothing moved.
+    let legacy = ProjectBinding(root: "/tmp/legacy-repo", common: "/tmp/legacy-repo/.git", remote: "origin", remoteURL: "")
+    expect(ProjectWork.identified(legacy).id == SidebarProjects.key(legacy) && SidebarProjects.key(ProjectWork.identified(legacy)) == SidebarProjects.key(legacy)
+           && ProjectWork.identified(secondSame) == secondSame, "an old binding gets its key as its id; one with an id stays")
+    print("PASS: disconnect work folder (folderless, keeps its key as id, chats, TODO lists, info, memory, pin and tab kept, worktree roots removed, refusals, keep read only; project ids for one folder)")
 }
 
 // Opinion mode, several answers summed up (Route.swift, digestOpinions): the answerer with the most usage left writes one summary,

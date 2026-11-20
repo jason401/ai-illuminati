@@ -9,8 +9,8 @@ extension Discussion {
     func linkProjectMaker() {
         ProjectMakerLink.shared.cancellation = { [weak self] room in self?.runToken(room) }
         ProjectMakerLink.shared.addChat = { [weak self] project, title in
-            guard let self else { return title }
-            self.addProjectChat(self.identify(project, ask: false) ?? project, title: title, open: false); return title
+            guard let self, let picked = self.identify(project, ask: false) else { return nil }
+            self.addProjectChat(picked.project, title: title, open: false, lock: picked.lock); return title
         }
     }
 
@@ -28,29 +28,41 @@ extension Discussion {
     }
 
     // Projects are told apart by their id, so one folder may serve several. A folder being linked joins a project already
-    // in it only when the user picks that (ask) or that project is locked (a new one would leave its lock behind); else
-    // it becomes a new project with its own id. nil: cancelled. A folderless project's folder is its own already.
-    func identify(_ found: ProjectBinding, ask: Bool) -> ProjectBinding? {
-        guard !found.isFolderless else { return found }
+    // in it only when the user picks that (ask); else it becomes a new project with its own id. The lock follows the
+    // folder: when a locked project works in it (or in a folder inside or around it), the new chat gets that lock, and
+    // projects with different locks there refuse it (attachmentError). nil: cancelled or refused. A folderless
+    // project's folder is its own already.
+    func identify(_ found: ProjectBinding, ask: Bool) -> (project: ProjectBinding, lock: EnterpriseLock?)? {
+        guard !found.isFolderless else { return (found, nil) }
         let todo = TodoStore.shared.current
-        var using: [ProjectBinding] = []
-        let bindings = conversations.filter { $0.meetingOf == nil }.sorted { $0.updatedAt > $1.updatedAt }.compactMap(\.workspace?.project)
-            + todo.lists.compactMap(\.project)
+        // A folderless project (its folder disconnected) may still carry the folder's old key as its id: it is not in the folder.
+        let bindings = (conversations.filter { $0.meetingOf == nil }.sorted { $0.updatedAt > $1.updatedAt }.compactMap(\.workspace?.project)
+            + todo.lists.compactMap(\.project)).filter { !$0.isFolderless }
+        var using: [ProjectBinding] = [], locks: [EnterpriseLock] = []
         for p in bindings where (p.root == found.root || p.groupKey == found.groupKey) && !using.contains(where: { $0.groupKey == p.groupKey }) { using.append(p) }
-        func joining(_ p: ProjectBinding) -> ProjectBinding { var joined = found; joined.id = p.id; return joined }
-        if let locked = using.first(where: { p in
+        func overlaps(_ a: String, _ b: String) -> Bool { a == b || a.hasPrefix(b + "/") || b.hasPrefix(a + "/") }
+        var seen = Set<String>()
+        for p in bindings where overlaps(p.root, found.root) && seen.insert(p.groupKey).inserted {
             let parts = projectParts(p.groupKey, todos: todo)
-            return parts.rooms.contains { $0.enterpriseLock != nil } || parts.lists.contains { $0.lock != nil }
-        }) { return joining(locked) }
+            if let lock = (parts.rooms.compactMap(\.enterpriseLock) + parts.lists.compactMap(\.lock)).first,
+               !locks.contains(where: { $0.organization == lock.organization }) { locks.append(lock) }
+        }
+        guard locks.count <= 1 else {
+            attachmentError = L("이 폴더를 서로 다른 잠금의 프로젝트들이 쓰고 있어서 연결하지 않았어요.", "Projects with different locks use this folder, so it was not linked.")
+            return nil
+        }
+        let lock = locks.first
+        func joining(_ p: ProjectBinding) -> (project: ProjectBinding, lock: EnterpriseLock?) { var joined = found; joined.id = p.id; return (joined, lock) }
         var fresh = found
         fresh.id = ProjectBinding.newID()
-        guard let existing = using.first else { return fresh }
+        guard let existing = using.first else { return (fresh, lock) }
         if ask {
             let name = ProjectInfoStore.shared.names[existing.groupKey] ?? SidebarProjects.folderName(existing)
             let alert = NSAlert()
             alert.messageText = L("이 폴더를 쓰는 프로젝트가 이미 있어요", "A project already uses this folder")
             alert.informativeText = found.root + "\n\n" + L("같은 폴더로 새 프로젝트를 따로 만들거나, ‘\(name)’에 새 대화를 추가할 수 있어요. 새 프로젝트는 TODO·메모리·이름을 따로 가져요. 이 폴더에서는 한 번에 한 프로젝트만 일해요.",
                                                              "Make a separate new project on the same folder, or add a new chat to “\(name)”. A new project has its own TODOs, memory and name. Only one project works in this folder at a time.")
+                + (lock.map { "\n\n" + L("이 폴더는 ‘\($0.name)’ 잠금이라 새 프로젝트도 같은 잠금이 돼요.", "This folder is locked to “\($0.name)”, so a new project gets the same lock.") } ?? "")
             alert.addButton(withTitle: L("새 프로젝트", "New project"))
             alert.addButton(withTitle: L("‘\(name)’에 추가", "Add to “\(name)”"))
             alert.addButton(withTitle: L("취소", "Cancel"))
@@ -62,7 +74,19 @@ extension Discussion {
         }
         // The sidebar tells the projects of one folder apart by a number after the folder's name.
         try? ProjectInfoStore.shared.rename(fresh.groupKey, to: SidebarProjects.folderName(found) + " \(using.count + 1)")
-        return fresh
+        return (fresh, lock)
+    }
+
+    // The same for the open chat linking a folder: a lock the folder carries must be the chat's own (a chat is never
+    // locked behind the user's back).
+    func identifyHere(_ found: ProjectBinding) -> ProjectBinding? {
+        guard let picked = identify(found, ask: true) else { return nil }
+        if let lock = picked.lock, current.enterpriseLock?.organization != lock.organization {
+            attachmentError = L("이 폴더는 ‘\(lock.name)’ 잠금 프로젝트가 써요. 사이드바 프로젝트의 + → 폴더 연결로 새 대화에서 연결하세요.",
+                                "A project locked to “\(lock.name)” uses this folder. Link it in a new chat with + → Link a folder in the sidebar's projects.")
+            return nil
+        }
+        return picked.project
     }
 
     // The project row's new-chat button (and its menu): opens the project's blank chat when it has one, so pressing it
@@ -156,29 +180,24 @@ extension Discussion {
         return nil
     }
 
-    // The move itself (on the main thread, so nothing starts in between). A fresh folderless binding gets a new key;
-    // the project info is copied first and the old entry forgotten last, so a failure on the way loses nothing.
+    // The move itself (on the main thread, so nothing starts in between). A fresh folderless binding keeps the project's
+    // key as its id, so nothing keyed by it moves; a failure on the way takes back what was added.
     @discardableResult
     func disconnectFolder(_ key: String, name: String, keepReadOnly: Bool = false) throws -> ProjectBinding {
         if let why = disconnectRefusal(key) { throw MaterialReader.error(why) }
         let roots = projectRoots(key)
-        let project = try ProjectCreator.folderlessBinding()
-        let new = SidebarProjects.key(project)
+        var project = try ProjectCreator.folderlessBinding()
+        project.id = key   // the same project: its name, memory, TODO lists, pin and tab stay under its key
         let kept = keepReadOnly ? roots.filter { FileManager.default.fileExists(atPath: $0) }.map { ProjectFolder(path: $0, directory: true) } : []
-        do { try ProjectInfoStore.shared.copy(from: key, to: new, name: name, folders: kept) } catch {
-            try? FileManager.default.removeItem(atPath: project.root)
-            throw error
-        }
-        // The project's memory goes with it, so the folder linked again later starts with none.
-        do { try ProjectMemoryStore.shared.move(from: key, to: new) } catch {
-            try? ProjectInfoStore.shared.forget(new)
+        let had = Set(ProjectInfoStore.shared.info(key).folders.map(\.path))
+        do { try ProjectInfoStore.shared.copy(from: key, to: key, name: name, folders: kept) } catch {
             try? FileManager.default.removeItem(atPath: project.root)
             throw error
         }
         let lists = Set(TodoStore.shared.current.lists.filter { $0.project?.groupKey == key }.map(\.id))
         do { try TodoStore.shared.relink(lists, to: project) } catch {
-            try? ProjectMemoryStore.shared.move(from: new, to: key)
-            try? ProjectInfoStore.shared.forget(new)
+            for folder in kept where !had.contains(folder.path) { try? ProjectInfoStore.shared.removeFolder(folder.path, from: key) }
+            try? FileManager.default.removeItem(atPath: project.root)
             throw error
         }
         for i in conversations.indices {
@@ -189,9 +208,6 @@ extension Discussion {
             conversations[i].workspace = binding
             ChatStore.save(conversations[i])
         }
-        try? ProjectInfoStore.shared.forget(key)
-        SidebarFold.shared.rekey(key, to: new)
-        if boardProject == key { boardProject = new }
         sessionNote = L("작업 폴더 연결을 끊었어요 · 폴더 없는 프로젝트", "Work folder disconnected · folderless project")
         return project
     }

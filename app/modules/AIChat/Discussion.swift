@@ -312,7 +312,11 @@ public final class Discussion: ObservableObject {
         // The newest blank chat (settings only) becomes the new chat, so its settings are kept;
         // older blank ones hold nothing and are removed.
         // A blank chat with an unsent message box stays, also one never saved (a new chat typed into before quitting).
-        let loaded = ChatStore.loadAll().map(Self.recoverInterrupted)
+        let loaded = ChatStore.loadAll().map(Self.recoverInterrupted).map { chat -> Conversation in
+            var chat = chat
+            if let project = chat.workspace?.project { chat.workspace?.project = ProjectWork.identified(project) }
+            return chat
+        }
         let saved = Self.loadDrafts(known: Set(loaded.map(\.id)))
         let blanks = loaded.filter { !$0.hasContent && saved[$0.id] == nil }
         for old in blanks.dropFirst() { try? ChatStore.delete(old) }

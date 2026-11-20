@@ -166,7 +166,7 @@ extension Discussion {
         guard panel.runModal() == .OK, let folder = panel.url else { return }
         do {
             let found = try ProjectProcess.inspect(folder.path)
-            guard Self.allowProjectWork(found), let project = identify(found, ask: true) else { return }
+            guard Self.allowProjectWork(found), let project = identifyHere(found) else { return }
             change(currentID, save: true) { $0.workspace = ProjectWork.linking($0.workspace, to: project, first: false) }
         } catch { attachmentError = error.localizedDescription }
     }
@@ -188,7 +188,7 @@ extension Discussion {
             alert.informativeText = found.root + "\n\n" + L("AI가 이 폴더의 글·그림·슬라이드를 고칠 수 있어요 (완전 자동: 명령 실행·인터넷 사용). 답할 때마다 폴더를 먼저 백업해서 되돌릴 수 있어요. 클라우드에만 있는 파일과 Google 문서에서 고친 것은 백업에 없어요 (Google 버전 기록으로 되돌려요).\n\n왼쪽 목록에 프로젝트 폴더가 생기고 할 일 보드를 쓸 수 있어요.",
                                                                 "The AI may change the text, figures and slides in this folder (full auto: runs commands, uses the network). The folder is backed up before each answer, so it can be undone. Files only in the cloud and edits in Google Docs are not in the backup (use Google's version history).\n\nThe project gets its own folder in the sidebar and a TODO board.")
             alert.addButton(withTitle: L("연결", "Link")); alert.addButton(withTitle: L("취소", "Cancel"))
-            guard alert.runModal() == .alertFirstButtonReturn, let project = identify(found, ask: true) else { return }
+            guard alert.runModal() == .alertFirstButtonReturn, let project = identifyHere(found) else { return }
             try nativeSessions.reset(currentID)
             change(currentID, save: true) { $0.workspace = ProjectWork.linking($0.workspace, to: project, first: true) }
             attachmentError = nil
@@ -220,9 +220,9 @@ extension Discussion {
                 alert.addButton(withTitle: L("연결", "Link")); alert.addButton(withTitle: L("취소", "Cancel"))
                 guard alert.runModal() == .alertFirstButtonReturn else { return }
             }
-            guard let project = identify(found, ask: true) else { return }
+            guard let (project, lock) = identify(found, ask: true) else { return }
             attachmentError = nil
-            _ = addProjectChat(project, title: L("새 대화", "New chat"), open: true)
+            _ = addProjectChat(project, title: L("새 대화", "New chat"), open: true, lock: lock)
             sessionNote = project.isDocuments
                 ? L("문서 프로젝트 연결됨 · 완전 자동 (답할 때마다 백업, Undo 가능)", "Documents project linked · full auto (backed up before each answer, Undo available)")
                 : L("Git 프로젝트 연결됨 · 완전 자동 (stable 배포만 허용 카드)", "Git project linked · full auto (only stable publishing asks)")

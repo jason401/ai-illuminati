@@ -238,9 +238,10 @@ public enum ProjectCreator {
 // Nothing is made before the user allows the card in that chat.
 public final class ProjectMakerLink: ToolProvider {
     public static let shared = ProjectMakerLink()
-    // Set by the app's Discussion (main thread): the chat's stop button, and adding the new linked chat (its title).
+    // Set by the app's Discussion (main thread): the chat's stop button, and adding the new linked chat (its title; nil:
+    // refused, the folder's projects have different Enterprise locks).
     public var cancellation: (UUID) -> DebateCancellation? = { _ in nil }
-    public var addChat: (ProjectBinding, String) -> String = { _, title in title }
+    public var addChat: (ProjectBinding, String) -> String? = { _, title in title }
 
     public var active: Bool { true }
     public func tools() -> [[String: Any]] { [] }
@@ -273,6 +274,7 @@ public final class ProjectMakerLink: ToolProvider {
             }
             let project = try ProjectCreator.create(plan, token: token)
             let title = main { addChat(project, plan.repo) }
+            guard let title else { return ProjectTools.failure("The folder is used by projects with different Enterprise locks, so no chat was linked to it. Tell the user.") }
             return ["content": [["type": "text", "text": "Created \(plan.folder) and \(plan.url) (\(plan.isPrivate ? "private" : "public")); main is pushed. A new chat \"\(title)\" linked to this project is at the top of the chat list (full auto). Tell the user to open it and ask for the work there; this chat is not linked to the project."]], "isError": false]
         } catch { return ProjectTools.failure(error.localizedDescription) }
     }
@@ -289,7 +291,7 @@ extension ProjectMakerLink {
         }
         do {
             let project = try ProjectCreator.createFolderless(name: title)
-            let chat = main { addChat(project, title) }
+            let chat = main { addChat(project, title) } ?? title
             return ["content": [["type": "text", "text": "Created folderless project \(title) and chat \(chat). No user folder, Git or GitHub repository was created or linked. Add folders later in Project info."]], "isError": false]
         } catch { return ProjectTools.failure(error.localizedDescription) }
     }
@@ -310,6 +312,7 @@ extension ProjectMakerLink {
             }
             let project = try ProjectCreator.createDocuments(folder)
             let title = main { addChat(project, (folder as NSString).lastPathComponent) }
+            guard let title else { return ProjectTools.failure("The folder is used by projects with different Enterprise locks, so no chat was linked to it. Tell the user.") }
             return ["content": [["type": "text", "text": "Linked \(project.root) as a documents project (no Git). A new chat \"\(title)\" linked to it is at the top of the chat list (full auto, backed up before each answer). Tell the user to open it, or its TODO board, and ask for the work there; this chat is not linked to the project."]], "isError": false]
         } catch { return ProjectTools.failure(error.localizedDescription) }
     }

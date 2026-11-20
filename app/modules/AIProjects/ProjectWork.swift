@@ -482,6 +482,14 @@ public final class ProjectRun {
 }
 
 public enum ProjectWork {
+    // A binding saved before project ids gets its key as its id when it is read, so it stays the same project when its
+    // work folder changes later. The key does not change, so nothing (name, memory, TODOs, locks) moves or is written.
+    public static func identified(_ project: ProjectBinding) -> ProjectBinding {
+        guard project.id == nil else { return project }
+        var named = project
+        named.id = project.groupKey
+        return named
+    }
     private static let mutex = NSLock()
     private static var held: [String: Int32] = [:]
     private static var runs: [UUID: ProjectRun] = [:]

@@ -30,7 +30,7 @@ extension Discussion {
             // One "Link folder": a top-level Git folder with a remote becomes project work (Git tools, push);
             // any other folder gets the same full access with the Undo backup. Both are full auto unless turned off.
             let found = folder && configuration.mode == 0 ? roots.first.flatMap { try? ProjectProcess.inspect($0.path) } : nil
-            let project = found.flatMap { identify($0, ask: true) }
+            let project = found.flatMap { identifyHere($0) }
             if found != nil && project == nil { return }
             try nativeSessions.reset(currentID)
             change(currentID, save: true) { conversation in

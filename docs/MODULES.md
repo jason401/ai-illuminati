@@ -528,8 +528,11 @@ Public names and why (everything else stays internal: `ProjectError`, `ProjectTo
   when it has one, else the Git common folder or root as before.
 - Project ids (2026-11-19): `ProjectBinding.id`/`newID` (AIWorkspace, stored with the binding in chats and TODO lists, so
   one folder can serve several projects; nil = a project linked before ids, keyed by its folder, nothing moved),
-  `ProjectMemoryStore.move` (AIChat's disconnect takes the project's memory to its new key), `SidebarProjects.slot` (the
-  App's TODO board picks one root of one project). AIChat's `identify` decides the id when a folder is linked.
+  `ProjectWork.identified` (a chat's binding saved before ids gets its key as its id when chats are read; the key does
+  not change, so nothing moves; TODO lists keep theirs as saved and match by key), `SidebarProjects.slot` (the App's TODO board picks one root of one project).
+  AIChat's `identify` decides the id when a folder is linked; the lock follows the folder (a locked project's folder makes
+  new projects with that lock, different locks refuse). Disconnecting keeps the id. `ProjectMakerLink.addChat` returns nil
+  when that refuses.
 - Project memory (2026-11-19): `ProjectMemoryNote` (its stored fields, `Kind`, `State`, `init`), `ProjectMemoryChange` (a history
   line), `ProjectMemoryStore` (`shared`, `notes`, `history`, `add`, `replace`, `Outcome`, `textLimit`, `revision` for the chat's
   "saved to project memory" line): AIChat's three tools and the instruction read and write notes only through it, so the store

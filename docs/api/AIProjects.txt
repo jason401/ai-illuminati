@@ -92,7 +92,7 @@ ProjectLink.title | var title: String
 ProjectLink.url | var url: String
 ProjectMakerLink | final class ProjectMakerLink
 ProjectMakerLink.active | var active: Bool { get }
-ProjectMakerLink.addChat | var addChat: (ProjectBinding, String) -> String
+ProjectMakerLink.addChat | var addChat: (ProjectBinding, String) -> String?
 ProjectMakerLink.call(_:_:context:) | func call(_ name: String, _ arguments: [String : Any], context: ToolContext) -> [String : Any]
 ProjectMakerLink.cancellation | var cancellation: (UUID) -> DebateCancellation?
 ProjectMakerLink.shared | static let shared: ProjectMakerLink
@@ -208,7 +208,6 @@ ProjectMemoryStore.delete(_:project:) | func delete(_ id: UUID, project: String)
 ProjectMemoryStore.edit(_:text:kind:verified:project:) | func edit(_ id: UUID, text: String, kind: ProjectMemoryNote.Kind, verified: Bool, project: String) -> ProjectMemoryStore.Outcome
 ProjectMemoryStore.history(_:) | func history(_ project: String) -> [ProjectMemoryChange]
 ProjectMemoryStore.mark(_:) | static func mark(_ text: String) -> String
-ProjectMemoryStore.move(from:to:) | func move(from old: String, to new: String) throws
 ProjectMemoryStore.notes(_:) | func notes(_ project: String) -> [ProjectMemoryNote]
 ProjectMemoryStore.replace(_:with:project:by:batch:) | func replace(_ old: UUID, with note: ProjectMemoryNote, project: String, by: String? = nil, batch: UUID? = nil) -> ProjectMemoryStore.Outcome
 ProjectMemoryStore.restore(_:project:) | func restore(_ id: UUID, project: String) -> ProjectMemoryStore.Outcome
@@ -275,6 +274,7 @@ ProjectWork.busy(_:) | static func busy(_ binding: WorkspaceBinding?) -> Bool
 ProjectWork.busyEnglish | static let busyEnglish: String
 ProjectWork.busyKorean | static let busyKorean: String
 ProjectWork.finish(_:) | static func finish(_ run: ProjectRun)
+ProjectWork.identified(_:) | static func identified(_ project: ProjectBinding) -> ProjectBinding
 ProjectWork.isBusy(_:) | static func isBusy(_ error: String) -> Bool
 ProjectWork.isHeld(_:) | static func isHeld(_ root: String) -> Bool
 ProjectWork.linking(_:to:first:) | static func linking(_ workspace: WorkspaceBinding?, to project: ProjectBinding, first: Bool) -> WorkspaceBinding

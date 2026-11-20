@@ -1714,6 +1714,30 @@ func testDisconnectProjectFolder() {
     let legacy = ProjectBinding(root: "/tmp/legacy-repo", common: "/tmp/legacy-repo/.git", remote: "origin", remoteURL: "")
     expect(ProjectWork.identified(legacy).id == SidebarProjects.key(legacy) && SidebarProjects.key(ProjectWork.identified(legacy)) == SidebarProjects.key(legacy)
            && ProjectWork.identified(secondSame) == secondSame, "an old binding gets its key as its id; one with an id stays")
+
+    // An update over an older app's data: a chat saved without an id, its name, memory and TODO list under the folder key.
+    let oldDocs = base.appendingPathComponent("old-docs")
+    try! FileManager.default.createDirectory(at: oldDocs, withIntermediateDirectories: true)
+    let oldBinding = try! ProjectProcess.documents(oldDocs.path), oldKey = SidebarProjects.key(oldBinding)
+    var oldChat = Conversation()
+    oldChat.title = "Old project chat"
+    oldChat.workspace = WorkspaceBinding(roots: oldBinding.linkedRoots, project: oldBinding)
+    ChatStore.save(oldChat)
+    let saved = try! JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: ChatStore.dir + "/\(oldChat.id.uuidString).json"))) as! [String: Any]
+    let savedProject = (saved["workspace"] as? [String: Any])?["project"] as? [String: Any]
+    expect(savedProject?["root"] as? String == oldBinding.root && savedProject?["id"] == nil, "a binding without an id is saved as before (an older app reads it the same)")
+    try! ProjectInfoStore.shared.rename(oldKey, to: "Old Papers")
+    _ = ProjectMemoryStore.shared.add(ProjectMemoryNote(kind: .decision, text: "Old memory stays"), project: oldKey)
+    let oldTodo = try! todos.add(title: "old todo", project: oldBinding, projectName: "Old Papers")
+    let reopened = Discussion(model: AppModel())
+    let loadedOld = reopened.conversation(oldChat.id).workspace?.project
+    expect(loadedOld?.id == oldKey && loadedOld.map(SidebarProjects.key) == oldKey && (try? ProjectProcess.current(loadedOld!)) == loadedOld,
+           "after the update the old chat's project keeps its key, now as its id, and passes the check before each tool call")
+    let oldGroup = SidebarProjects.group(reopened.listedConversations, todo: todos.current, pinned: [], names: ProjectInfoStore.shared.names).projects.filter { $0.id == oldKey }
+    expect(oldGroup.count == 1 && oldGroup[0].name == "Old Papers" && oldGroup[0].lists == [oldTodo.listID] && oldGroup[0].chats.contains { $0.id == oldChat.id },
+           "the sidebar shows one project with its name, its chat and its TODO list")
+    expect(ProjectMemoryStore.shared.notes(loadedOld.map(SidebarProjects.key) ?? "").map(\.text) == ["Old memory stays"], "its memory is found under the same key")
+    expect((try? todos.add(title: "another", project: loadedOld!, projectName: "Old Papers"))?.listID == oldTodo.listID, "a new TODO from the updated chat joins the old list")
     print("PASS: disconnect work folder (folderless, keeps its key as id, chats, TODO lists, info, memory, pin and tab kept, worktree roots removed, refusals, keep read only; project ids for one folder)")
 }
 

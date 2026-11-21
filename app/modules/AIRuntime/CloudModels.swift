@@ -102,6 +102,7 @@ public enum CloudModels {
         let ids = Set(events.compactMap { event -> String? in
             if provider == .codex, event["type"] as? String == "thread.started" { return event["thread_id"] as? String }
             if provider == .gemini, ["system", "result"].contains(event["type"] as? String ?? "") { return event["session_id"] as? String }
+            if provider == .gemini { return GeminiEvents.conversation(event) }
             return nil
         })
         guard ids.count == 1, let id = ids.first, UUID(uuidString: id) != nil else { return nil }

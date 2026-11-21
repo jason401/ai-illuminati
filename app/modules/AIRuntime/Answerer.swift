@@ -13,6 +13,23 @@ public enum ToolHome {
 // in an empty folder (~/.ai-illuminati/chat).
 // Gemini (agy) reads web pages only with an allow rule in its own settings; the app adds it (RunConditionsApp.swift:
 // `GeminiLinks.allowWeb`, through `RunConditions.beforeStart`). Here only what the AI is told.
+// agy (1.5.13+, maybe earlier) ends its stream-json with {"event":"result","result":{"status","response","error"}},
+// not Claude's {"type":"result"}: unread, every Gemini answer became "Could not respond". Read as Claude's shape.
+enum GeminiEvents {
+    static func result(_ json: [String: Any]) -> [String: Any]? {
+        guard json["event"] as? String == "result", let body = json["result"] as? [String: Any] else { return nil }
+        let ok = body["status"] as? String == "SUCCESS"
+        let text = ok ? body["response"] : (body["error"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? body["status"]
+        return ["type": "result", "is_error": !ok, "result": text as? String ?? "", "session_id": body["conversation_id"] ?? ""]
+    }
+
+    // The conversation this process started: its init line, or the result.
+    static func conversation(_ json: [String: Any]) -> String? {
+        if json["event"] as? String == "init" { return json["conversation_id"] as? String }
+        return result(json)?["session_id"] as? String
+    }
+}
+
 public enum GeminiLinks {
     public static let toolNote = """
     [도구 안내] 웹 검색(search_web)과 웹 페이지 읽기(read_url)를 쓸 수 있어요. 터미널 명령과 파일 수정은 \
@@ -397,9 +414,9 @@ public enum Answerer {
         if account.provider == .codex, let file = try? String(contentsOfFile: outFile, encoding: .utf8) { text = file }
         if (account.provider == .claude || account.provider == .gemini) && arguments.contains("--output-format") {
             let results = text.split(separator: "\n").compactMap { line -> [String: Any]? in
-                guard let data = String(line).data(using: .utf8), let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      json["type"] as? String == "result" else { return nil }
-                return json
+                guard let data = String(line).data(using: .utf8), let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+                if json["type"] as? String == "result" { return json }
+                return account.provider == .gemini ? GeminiEvents.result(json) : nil
             }
             // With steering the answer is the result that ended the turn: the first one, or after background agents
             // the last one they woke (anything after it was a late message, ended above).

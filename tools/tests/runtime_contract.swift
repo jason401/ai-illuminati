@@ -235,9 +235,15 @@ else:
         write(root / sid / ".system_generated/logs/transcript.jsonl",
               [{"type":"PLANNER_RESPONSE", "model":"gemini-early"},
                {"type":"PLANNER_RESPONSE", "model":"gemini-actual"}])
-    print(json.dumps({"type":"system", "subtype":"init", "session_id":sid, "model":"selected-alias"}))
-    print(json.dumps({"type":"result", "session_id":sid, "is_error":scenario == "fail",
-                      "result":"gemini model answer"}))
+    if scenario.startswith("agy"):  # agy's own stream-json: {"event": ...}
+        print(json.dumps({"event":"init", "conversation_id":sid, "init":{"cwd":"x"}}))
+        ok = scenario == "agy"
+        print(json.dumps({"event":"result", "result":{"conversation_id":sid, "status":"SUCCESS" if ok else "ERROR",
+                          "response":"gemini model answer" if ok else "", "error":"" if ok else "print timeout after 2s"}}))
+    else:
+        print(json.dumps({"type":"system", "subtype":"init", "session_id":sid, "model":"selected-alias"}))
+        print(json.dumps({"type":"result", "session_id":sid, "is_error":scenario == "fail",
+                          "result":"gemini model answer"}))
 """#.write(to: fake.appendingPathComponent("models.py"), atomically: true, encoding: .utf8)
 let geminiAccount = Account(id: "gemini-rt", provider: .gemini, name: "Gemini")
 func modelAnswer(_ account: Account, scenario: String = "") -> (String?, [String]) {
@@ -259,6 +265,11 @@ expect(read("args").contains("--output-format\nstream-json"), "Gemini requests m
 expect(modelAnswer(geminiAccount, scenario: "missing").1 == [""], "Gemini init pick never substitutes for a missing actual model")
 let failedG = modelAnswer(geminiAccount, scenario: "fail")
 expect(failedG.0 == nil && failedG.1.isEmpty, "failed Gemini result emits no successful model")
+let agyG = modelAnswer(geminiAccount, scenario: "agy")
+expect(agyG.0 == "gemini model answer" && agyG.1 == ["gemini-actual"], "agy's own event stream is decoded with its model: \(agyG)")
+let agyFailed = Answerer.ask(geminiAccount, prompt: "hi", run: run("modelgemini", turn: "agyfail")) { _ in }
+if case .failure(.failed(let why)) = agyFailed { expect(why.contains("print timeout"), "agy's error reaches the user: \(why)") }
+else { expect(false, "agy ERROR status is a failure: \(agyFailed)") }
 
 // Sessions: a new session is saved in the room's ownership.json (the format older app versions wrote and read),
 // the next call resumes it with only what is new, and a file from an older version is read as it is.

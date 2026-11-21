@@ -72,6 +72,9 @@ final class SteerLink {
     private var inputOpen = true
     private(set) var answered = false    // the first result came
     private(set) var cutOff = false      // ended by us after the result: a message written too late was not read
+    private(set) var results = 0         // results seen; the answer is the one that set `answered`
+    private var background = 0           // background agents or commands still running (their end wakes Claude again)
+    private var waiting = false          // a result came while they ran: the answer comes after they end
     var end: () -> Void = {}
 
     init(channel: SteerChannel, input: FileHandle) { self.channel = channel; self.input = input }
@@ -97,6 +100,12 @@ final class SteerLink {
     func saw(_ json: [String: Any]) {
         guard !answered, json["parent_tool_use_id"] == nil || json["parent_tool_use_id"] is NSNull else { return }
         let content = (json["message"] as? [String: Any])?["content"]
+        if json["type"] as? String == "system", json["subtype"] as? String == "background_tasks_changed" {
+            background = (json["tasks"] as? [Any])?.count ?? 0
+            return
+        }
+        // Between a result and the end of the background work Claude only reports on it: nothing is written in.
+        if waiting && json["type"] as? String != "result" { return }
         switch json["type"] as? String {
         case "assistant":
             let started = (content as? [[String: Any]] ?? []).filter { $0["type"] as? String == "tool_use" }.compactMap { $0["id"] as? String }
@@ -114,11 +123,15 @@ final class SteerLink {
             }
             if running.isEmpty { channel.tools(nil) }
         case "result":
+            results += 1
+            channel.tools(nil)
+            // Background agents still run: Claude wakes when each ends and writes again, the last result is the answer.
+            // Ending the call now would stop them; a message not read yet goes back to the caller (detach).
+            if background > 0 { waiting = true; closeInput(); return }
             // The answer is done. A message written but not read would become a second answer: end the call instead,
             // so it goes back to the caller (detach) and is sent as the next message.
             answered = true
-            channel.tools(nil)
-            if channel.unread { cutOff = true; closeInput(); end() } else { closeInput() }
+            if channel.unread && !waiting { cutOff = true; closeInput(); end() } else { closeInput() }
         default: break
         }
     }

@@ -359,6 +359,17 @@ streams `LocalStream`/`PullStream`, `LocalModel.ask` and the Ollama requests):
   Visible stateless Codex answers omit --ephemeral so the CLI retains its model log; auxiliary calls keep it.
   Log attribution is read only, ID-bound and bounded to 4 MiB plus the first metadata line; ambiguous or missing logs
   never reuse another call. Checked by testCloudModels fixtures and runtime_contract fake subprocesses (including Gemini).
+- `AnswerProgress.agent(AgentProgress)`: Claude subagent activity grouped by each Agent (or Task) call's
+  `toolUseID`, including nested calls. Chat consumers can read the `kind` (started, text, tool, finished), launch
+  metadata (`description`, `subagentType`, `prompt`), `text` (assistant text, tool input summary, or result preview),
+  `toolName`, and `failed`. Foreground results and background launch errors finish from the matching caller's
+  tool result. Background runs finish from a correlated `task_notification` on the same stream, with its summary
+  as the preview and stopped runs marked unsuccessful. If the CLI closes the stream or omits that notification
+  or its correlation IDs, no finished event is emitted for the running background agent.
+  Streamed Claude calls request complete subagent text via `CLAUDE_CODE_FORWARD_SUBAGENT_TEXT`. Forwarded
+  messages increase the raw stdout buffered per call, the amount scanned by downstream parsers, and the size of
+  `last-call.jsonl` when runtime call logs are enabled. `testClaudeAgentStream` checks lifecycle routing and
+  isolation from main text, activity, and TodoWrite.
 - `RunConditions` (all seven fields, `init()`) and `RunConditions.Folders` (an explicit `init`): the app builds them
   (`RunConditionsApp.swift`); the fields are what the caller decides. `steering` is set by the chat (`Discussion.steered`)
   for the one AI answering alone.
@@ -684,6 +695,9 @@ everything else, Discussion's state above all, stays internal):
   `DelegateLink.enabledKey`/`enabled`: Settings ▸ Chat's "Split into sub-rooms" switch (off by default) writes the key the module reads.
 - `Conversation.subOf` and `SubRoomLink` (`room`, `split`, `n`, one public init): a sub-room's chat record says which split it works
   for, so it is saved with the chat like `meetingOf` (the chat window and synced copies read the record type).
+- `Conversation.agentOf` and `AgentRoomLink` (`room`, `turn`, `toolUseID`, `description`, `type`, `running`, `failed`,
+  `lastTool`, `endedAt`, one public init): a Claude subagent's read-only record (AgentRooms.swift) is saved with the chat like
+  `meetingOf`, so the record type stays in the saved chat.
 - Settings' tabs: `MemoryStore`/`MemoryItem`/`MemoryData`, `ChatStorage` (`report`, `items`, `format`, `Report`, `Room`, `Kind`; AIChatRecords since T4),
   `CollabMode`/`CollabLog` (AIChatRecords since T4), `RouteSorter`, `ApprovalAlertSettings`, `AIColors` (each AI's color: the color window changes what `Account.Provider.color` draws; `revisionKey` lets their views redraw), `AIColorWindow` (`show`, `menuTitle`: Appearance's "Change…" and the usage menu's "Change <AI> Color…" open the same window as a right-click on an AI's name in the chat), `DeviceSync` (settings, start, scan, the notes the links call; `deviceID` and `deviceName`: the Usage window puts this Mac's token ledger in the same folder under the same id and name, so a Mac is one Mac in both; `offerConnection`, `onlineHosts`, `checkOnline`, `RemoteConnection` (`init`) and the settings' `shareConnection`/`sharesConnection`: the app's phone page (PhoneAccess.swift) hands over its address and Tailscale's online Macs, which the module cannot read, for Other Macs → connect in MacConnect.swift),
   `ChatLink.conversations`; the board and Project info: `SidebarProjects` (`key`, `group`, `pickerName`), `ProjectGroup`,

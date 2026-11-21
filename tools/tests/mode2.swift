@@ -1956,6 +1956,144 @@ do {
 }
 
 
+// Claude subagent records (AgentRooms.swift): one hidden read-only room per Agent call under the chat, filled from its
+// events, ended by its result; a repeated start makes no second room; deleting the chat deletes them.
+func testAgentRooms() {
+    let chats = Discussion(model: AppModel())
+    var chat = Conversation(title: "agents")
+    chat.turns = [ChatTurn(question: "review")]
+    chats.conversations.append(chat)
+    ChatStore.save(chat)
+    let start = AgentProgress(toolUseID: "toolu_a", kind: .started, description: "Review solvers", subagentType: "general-purpose", prompt: "Read the solver.")
+    chats.agentProgress(start, room: chat.id, index: 0)
+    chats.agentProgress(start, room: chat.id, index: 0)
+    chats.agentProgress(AgentProgress(toolUseID: "toolu_a", kind: .text, text: "Reading."), room: chat.id, index: 0)
+    chats.agentProgress(AgentProgress(toolUseID: "toolu_a", kind: .tool, text: "sed -n 1,9p a.m", toolName: "Bash"), room: chat.id, index: 0)
+    var records = chats.agentRooms(of: chat.id)
+    expect(records.count == 1, "one record per Agent call, also when its start comes twice: \(records.count)")
+    guard let record = records.first else { return }
+    expect(record.meetingOf?.room == chat.id && record.agentOf?.turn == chat.turns[0].id && record.turns.first?.question == "Read the solver.",
+           "the record hangs under the chat's turn like a meeting and its message is the agent's task")
+    expect(record.agentOf?.running == true && record.agentOf?.lastTool?.hasPrefix("Bash") == true
+           && record.turns[0].final?.contains("Reading.") == true && record.turns[0].final?.contains("`Bash`") == true,
+           "what the agent says and runs goes into its record: \(record.turns[0].final ?? "")")
+    expect(chats.meetings(of: chat.id).filter { $0.agentOf == nil }.isEmpty, "records are not listed as meetings")
+    chats.agentProgress(AgentProgress(toolUseID: "toolu_a", kind: .finished, text: "Found 2 bugs."), room: chat.id, index: 0)
+    chats.agentProgress(AgentProgress(toolUseID: "toolu_a", kind: .text, text: "late"), room: chat.id, index: 0)
+    records = chats.agentRooms(of: chat.id)
+    expect(records.first?.agentOf?.running == false && records.first?.agentOf?.failed == false && records.first?.turns[0].answeredAt != nil
+           && records.first?.turns[0].final?.hasSuffix("Found 2 bugs.") == true && records.first?.turns[0].final?.contains("late") == false,
+           "its result ends the record; nothing is added after: \(records.first?.turns[0].final ?? "")")
+    expect(!chats.agentRunning(records[0]), "an ended record is not running")
+    chats.agentProgress(AgentProgress(toolUseID: "toolu_b", kind: .text, text: "orphan"), room: chat.id, index: 0)
+    expect(chats.agentRooms(of: chat.id).count == 1, "events of an agent never started make no record")
+    let saved = ChatStore.loadAll().first { $0.id == records[0].id }
+    expect(saved?.agentOf?.toolUseID == "toolu_a" && saved?.agentOf?.running == false, "the ended record is saved with its link")
+    expect(chats.removeMeetings(of: chat.id) == 0 && chats.agentRooms(of: chat.id).isEmpty, "the chat's records go with it")
+    try? ChatStore.delete(chat)
+}
+
+func testClaudeAgentStream() {
+    // Include parent-tagged partials to test isolation if a CLI forwards them.
+    let jsonl = #"""
+{"type":"stream_event","parent_tool_use_id":null,"event":{"type":"message_start"}}
+{"type":"stream_event","parent_tool_use_id":null,"event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"Main "}}}
+{"type":"stream_event","parent_tool_use_id":null,"event":{"type":"content_block_start","content_block":{"type":"tool_use","id":"toolu_agent","name":"Agent","input":{}}}}
+{"type":"assistant","parent_tool_use_id":null,"message":{"content":[{"type":"tool_use","id":"toolu_agent","name":"Agent","input":{"description":"Inspect files","subagent_type":"Explore","prompt":"Find the fixture."}}]}}
+{"type":"stream_event","parent_tool_use_id":"toolu_agent","event":{"type":"message_start"}}
+{"type":"stream_event","parent_tool_use_id":"toolu_agent","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"Unexpected child partial"}}}
+{"type":"stream_event","parent_tool_use_id":"toolu_agent","event":{"type":"content_block_start","content_block":{"type":"tool_use","id":"toolu_bash","name":"Bash","input":{}}}}
+{"type":"stream_event","parent_tool_use_id":"toolu_agent","event":{"type":"message_stop"}}
+{"type":"assistant","parent_tool_use_id":"toolu_agent","message":{"content":[{"type":"text","text":"Inspecting fixture."}]}}
+{"type":"assistant","parent_tool_use_id":null,"message":{"content":[{"type":"tool_use","id":"toolu_task","name":"Task","input":{"description":"Check tests"}}]}}
+{"type":"assistant","parent_tool_use_id":"toolu_task","message":{"content":[{"type":"text","text":"Looking for tests."}]}}
+{"type":"user","parent_tool_use_id":"toolu_agent","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_agent","content":"Child result"}]}}
+{"type":"assistant","parent_tool_use_id":"toolu_agent","message":{"content":[{"type":"tool_use","id":"toolu_bash","name":"Bash","input":{"command":"echo fixture-fixture-fixture-fixture-fixture-fixture-fixture-fixture-fixture-fixture-fixture-fixture-fixture-fixture-fixture-fixture-"}},{"type":"tool_use","id":"toolu_todos","name":"TodoWrite","input":{"todos":[{"content":"Child plan"}]}}]}}
+{"type":"assistant","parent_tool_use_id":"toolu_task","message":{"content":[{"type":"tool_use","id":"toolu_read","name":"Read","input":{"file_path":"/tmp/fixture.txt"}}]}}
+{"type":"assistant","parent_tool_use_id":"toolu_unknown","message":{"content":[{"type":"text","text":"An untracked child."}]}}
+{"type":"assistant","parent_tool_use_id":"","message":{"content":[{"type":"tool_use","id":"toolu_ignored_todos","name":"TodoWrite","input":{"todos":[{"content":"Ignored plan"}]}}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_main_todos","name":"TodoWrite","input":{"todos":[{"content":"Main plan"}]}}]}}
+{"type":"user","parent_tool_use_id":null,"message":{"content":[{"type":"tool_result","tool_use_id":"toolu_main_todos","content":"Plan updated"},{"type":"tool_result","tool_use_id":"toolu_agent","content":[{"type":"text","text":"Found the fixture."}]}]}}
+{"type":"user","parent_tool_use_id":null,"message":{"content":[{"type":"tool_result","tool_use_id":"toolu_task","is_error":true,"content":"Could not read tests."}]}}
+{"type":"stream_event","parent_tool_use_id":"","event":{"type":"message_start"}}
+{"type":"stream_event","parent_tool_use_id":"","event":{"type":"content_block_start","content_block":{"type":"tool_use","name":"Read"}}}
+{"type":"stream_event","parent_tool_use_id":"","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"Ignored partial."}}}
+{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"reply."}}}
+{"type":"stream_event","parent_tool_use_id":null,"event":{"type":"message_stop"}}
+"""#
+    var agents: [AgentProgress] = [], texts: [String] = [], activities: [String] = [], plans: [String] = []
+    let parser = StreamParser(provider: .claude) { update in
+        switch update {
+        case .agent(let agent): agents.append(agent)
+        case .text(let text): texts.append(text)
+        case .activity(let activity): activities.append(activity)
+        case .todos(let todos): plans += (todos as? [[String: Any]] ?? []).compactMap { $0["content"] as? String }
+        case .model: break
+        }
+    }
+    parser.feed(Data((jsonl + "\n").utf8))
+
+    expect(agents.map(\.kind) == [.started, .text, .started, .text, .tool, .tool, .tool, .finished, .finished],
+           "Claude emits each Agent/Task lifecycle in stream order")
+    expect(agents.map(\.toolUseID) == [
+        "toolu_agent", "toolu_agent", "toolu_task", "toolu_task", "toolu_agent", "toolu_agent", "toolu_task", "toolu_agent", "toolu_task"
+    ], "interleaved Claude subagents keep their own tool-use IDs")
+    if agents.count == 9 {
+        expect(agents[0].description == "Inspect files" && agents[0].subagentType == "Explore" && agents[0].prompt == "Find the fixture.",
+               "the Agent tool input supplies its progress metadata")
+        expect(agents[1].text == "Inspecting fixture." && agents[3].text == "Looking for tests.", "complete assistant text reaches its agent")
+        expect(agents[4].toolName == "Bash" && agents[4].text == String(("echo " + String(repeating: "fixture-", count: 16)).prefix(120)),
+               "Bash progress includes the first 120 characters of the command")
+        expect(agents[5].toolName == "TodoWrite" && agents[6].toolName == "Read" && agents[6].text == "/tmp/fixture.txt",
+               "subagent TodoWrite and Read arrive as tool progress")
+        expect(!agents[7].failed && agents[7].text == "Found the fixture." && agents[8].failed && agents[8].text == "Could not read tests.",
+               "matching main tool results supply the result preview and error status")
+    }
+    expect(texts.first == "Main " && texts.last == "Main reply." && texts.allSatisfy { "Main reply.".hasPrefix($0) },
+           "child partials and complete messages cannot reset or pollute the main text")
+    expect(activities == [StreamParser.activity(tool: "Agent")], "only the main tool start supplies chat activity")
+    expect(plans == ["Main plan"], "only main TodoWrite updates the plan")
+    agents.removeAll()
+    let nested = #"""
+{"type":"assistant","parent_tool_use_id":null,"message":{"content":[{"type":"tool_use","id":"outer","name":"Agent","input":{}}]}}
+{"type":"assistant","parent_tool_use_id":"outer","message":{"content":[{"type":"tool_use","id":"inner","name":"Task","input":{"description":"Nested review"}}]}}
+{"type":"assistant","parent_tool_use_id":"inner","message":{"content":[{"type":"text","text":"Reviewing."},{"type":"tool_use","id":"background","name":"Agent","input":{"run_in_background":true}}]}}
+{"type":"system","subtype":"task_started","task_id":"agent-task","tool_use_id":"background"}
+{"type":"user","parent_tool_use_id":"inner","message":{"content":[{"type":"tool_result","tool_use_id":"background","content":"Agent launched asynchronously."}]}}
+{"type":"user","parent_tool_use_id":"","message":{"content":[{"type":"tool_result","tool_use_id":"outer","content":"Wrong parent"}]}}
+{"type":"user","parent_tool_use_id":"outer","message":{"content":[{"type":"tool_result","tool_use_id":"inner","content":[{"type":"text","text":"Review done."}]}]}}
+{"type":"assistant","parent_tool_use_id":"background","message":{"content":[{"type":"text","text":"Running after the launch response."},{"type":"tool_use","id":"bg_read","name":"Read","input":{"file_path":"/tmp/nested.txt"}}]}}
+{"type":"system","subtype":"task_notification","task_id":"unrelated-task","status":"failed","summary":"Ignore this."}
+{"type":"system","subtype":"task_notification","task_id":"agent-task","status":"completed","summary":"Background review done."}
+{"type":"system","subtype":"task_notification","task_id":"agent-task","tool_use_id":"background","status":"completed","summary":"Duplicate terminal event."}
+{"type":"assistant","parent_tool_use_id":"outer","message":{"content":[{"type":"tool_use","id":"failed_launch","name":"Agent","input":{"run_in_background":true}},{"type":"tool_use","id":"stopped","name":"Agent","input":{"run_in_background":true}}]}}
+{"type":"user","parent_tool_use_id":"outer","message":{"content":[{"type":"tool_result","tool_use_id":"failed_launch","is_error":true,"content":"Launch denied."}]}}
+{"type":"system","subtype":"task_notification","task_id":"stopped-task","tool_use_id":"stopped","status":"stopped","summary":"Agent stopped."}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"outer","content":"Outer review done."}]}}
+"""#
+    parser.feed(Data((nested + "\n").utf8))
+
+    expect(agents.map(\.kind) == [
+        .started, .tool, .started, .text, .tool, .started, .finished, .text, .tool, .finished,
+        .tool, .started, .tool, .started, .finished, .finished, .finished
+    ], "nested agents start and finish in order, with background progress after the launch acknowledgement")
+    expect(agents.map(\.toolUseID) == [
+        "outer", "outer", "inner", "inner", "inner", "background", "inner", "background", "background", "background",
+        "outer", "failed_launch", "outer", "stopped", "failed_launch", "stopped", "outer"
+    ], "nested tool results and background notifications reach the matching tool-use ID once")
+    expect(agents.first { $0.toolUseID == "inner" && $0.kind == .started }?.description == "Nested review",
+           "nested launches report metadata")
+    expect(agents.filter { $0.kind == .text }.compactMap(\.text) == ["Reviewing.", "Running after the launch response."],
+           "nested and background assistant text reaches progress")
+    expect(agents.first { $0.toolUseID == "background" && $0.kind == .tool }?.text == "/tmp/nested.txt",
+           "background tools still reach progress after launch")
+    let finished = agents.filter { $0.kind == .finished }
+    expect(finished.compactMap(\.text) == ["Review done.", "Background review done.", "Launch denied.", "Agent stopped.", "Outer review done."],
+           "finished previews use the nested result, terminal notification, or launch error")
+    expect(finished.filter(\.failed).map(\.toolUseID) == ["failed_launch", "stopped"],
+           "background launch errors and stopped tasks report unsuccessful completion")
+}
+
 // Plain chat, part 2: replies stream in as they are written, a long chat is handed over as the chat state
 // plus the recent turns, and a reply cut off by a usage limit is continued by the next account.
 do {
@@ -2000,6 +2138,7 @@ do {
         case .activity: return "activity"
         case .todos(let todos): return "todos:" + (PlanLink.todos(todos)?.map(\.text).joined(separator: ",") ?? "none")
         case .model(let name): return "model:" + name
+        case .agent: return "agent"
         }
     }
     expect(order == ["text:Plan ", "todos:One", "todos:none", "activity", "text:Plan "], "TodoWrite lists come raw, each one, between the text and the tool start: \(order)")
@@ -2775,6 +2914,8 @@ runTest("testProjectCreate", testProjectCreate)
 runTest("testUpdateChannels", testUpdateChannels)
 runTest("testDeviceSync", testDeviceSync)
 
+runTest("testClaudeAgentStream", testClaudeAgentStream)
+runTest("testAgentRooms", testAgentRooms)
 runTest("testProjectHandoff", testProjectHandoff)
 runTest("testDocumentsProject", testDocumentsProject)
 runTest("testWorkTreeLocks", testWorkTreeLocks)

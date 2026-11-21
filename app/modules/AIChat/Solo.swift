@@ -734,6 +734,7 @@ extension Discussion {
                             t.partial = shown; t.partialBy = speaker
                         }
                     case .activity(let what): self.changeTurn(id, index) { $0.activity = what }
+                    case .agent(let event): self.agentProgress(event, room: id, index: index)
                     case .todos, .model: break
                     }
                 }
@@ -865,6 +866,7 @@ extension Discussion {
                     self.changeWriting(id, index) { $0.partial = shown; $0.partialBy = speaker }
                 case .activity(let what):
                     self.changeTurn(id, index) { $0.activity = what }
+                case .agent(let event): self.agentProgress(event, room: id, index: index)
                 case .todos, .model: break
                 }
             }

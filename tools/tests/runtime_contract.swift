@@ -159,6 +159,7 @@ func events(_ account: Account, _ lines: [String], mode: String) -> ([String], S
         case .activity(let text): seen.append("activity:" + text)
         case .todos(let todos): seen.append("todos:" + String(describing: (todos as? [[String: Any]])?.compactMap { $0["content"] as? String } ?? ["not a list"]))
         case .model(let name): seen.append("model:" + name)
+        case .agent: seen.append("agent")
         }
     }).get()
     expect(!main, "progress comes on a background thread")
@@ -372,6 +373,17 @@ if mode in ("steer-tool", "steer-cutoff"):
     else: time.sleep(1)
     out({"type": "user", "parent_tool_use_id": None, "message": {"content": [{"type": "tool_result", "tool_use_id": "t1"}]}})
     if read: replay(read)
+elif mode == "steer-background":
+    # Claude ends its turn while a background agent runs, then wakes when it ends and writes the real answer.
+    out({"type": "assistant", "parent_tool_use_id": None, "message": {"content": [{"type": "tool_use", "id": "a1", "name": "Agent", "input": {"run_in_background": True, "description": "review"}}]}})
+    out({"type": "system", "subtype": "background_tasks_changed", "tasks": [{"task_id": "k1"}]})
+    out({"type": "user", "parent_tool_use_id": None, "message": {"content": [{"type": "tool_result", "tool_use_id": "a1", "content": "launched"}]}})
+    out({"type": "result", "is_error": False, "result": "agents running"})
+    time.sleep(1)
+    out({"type": "system", "subtype": "task_notification", "task_id": "k1", "tool_use_id": "a1", "status": "completed", "summary": "found 2"})
+    out({"type": "system", "subtype": "background_tasks_changed", "tasks": []})
+    out({"type": "result", "is_error": False, "result": "final review", "origin": {"kind": "task-notification"}})
+    sys.exit(0)
 else:
     out({"type": "stream_event", "event": {"type": "message_start"}})
     out({"type": "stream_event", "event": {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "wri"}}})
@@ -413,6 +425,9 @@ expect(took < 10, "after the result the input closes and the call ends")
 (answer, reads, left, took) = steered("steer-cutoff", offerOn: isTool)
 expect(answer == "first" && reads.isEmpty && left == ["change course"] && took < 10,
        "a message written but not read before the result ends the call (no second answer) and comes back: \(String(describing: answer)) \(left) \(took)")
+(answer, reads, left, took) = steered("steer-background", offerOn: { _ in false })
+expect(answer == "final review" && left.isEmpty,
+       "with a background agent running at the first result, the answer is the result written after it ends: \(String(describing: answer))")
 
 // Token counts from the CLIs' own logs (TokenLedger), everything in the test home: a Claude message counts once with
 // each field at its highest (a later line that grew adds only the rise, to the hour of its first line); one seen in

@@ -180,7 +180,7 @@ assert hooked == [], hooked
 # C0: every `extension Discussion` is classified in docs/modules-history.md ("Chat, step C0"): a = Chat takes it whole, b = a shell
 # whose logic is another module's public function. A new block fails here until it gets its row (and the table).
 import glob, re
-expected = {'Attachments': 'aaa', 'ChatFind': 'a', 'ChatSearch': 'a', 'ChatTools': 'a', 'Collaboration': 'a', 'Debate': 'a', 'Delegate': 'b',
+expected = {'AgentRooms': 'a', 'Attachments': 'aaa', 'ChatFind': 'a', 'ChatSearch': 'a', 'ChatTools': 'a', 'Collaboration': 'a', 'Debate': 'a', 'Delegate': 'b',
             'DeviceSync': 'a', 'Enterprise': 'ab', 'Meeting': 'ba', 'Peer': 'b', 'ProjectChat': 'b', 'ProjectCreate': 'b',
             'RoomDocuments': 'a', 'Route': 'a', 'SidebarProjects': 'a', 'Solo': 'aa', 'SpaceView': 'b', 'SubRoomViews': 'a', 'TodoChatsApp': 'a', 'Vote': 'a'}
 def blocks(text):
@@ -197,7 +197,7 @@ assert not [f for f in glob.glob('app/macos/*.swift') if blocks(Path(f).read_tex
 found = {Path(f).stem: blocks(Path(f).read_text()) for f in sorted(glob.glob('app/modules/AIChat/*.swift'))}
 found = {k: v for k, v in found.items() if v}
 assert {k: len(v) for k, v in found.items()} == {k: len(v) for k, v in expected.items()}, ({k: len(v) for k, v in found.items()}, 'classify new extension Discussion blocks in docs/MODULES.md')
-assert sum(len(v) for v in found.values()) == 26, 'the C0 table has 26 rows'
+assert sum(len(v) for v in found.values()) == 27, 'the C0 table has 27 rows'
 # The chat side calls none of these by name: the app connects them (ChatLinksApp.swift) or the module reads them.
 direct = re.compile(r'PlanLink|DeviceSync\b(?!\.swift)|NativeSessions\.purgeRoom|WorkspaceBackup\.purgeRoom|RoomDocuments\.directory')
 chat = Path('app/modules/AIChat/Discussion.swift').read_text()

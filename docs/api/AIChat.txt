@@ -14,6 +14,18 @@ AIColors.saved(_:in:) | static func saved(_ provider: Account.Provider, in defau
 AIColors.set(_:for:in:) | static func set(_ value: String?, for provider: Account.Provider, in defaults: UserDefaults = .standard)
 AIColors.set(custom:for:in:) | static func set(custom color: NSColor, for provider: Account.Provider, in defaults: UserDefaults = .standard)
 AIColors.sharing(_:besides:in:) | static func sharing(_ value: String, besides provider: Account.Provider, in defaults: UserDefaults = .standard) -> [Account.Provider]
+AgentRoomLink | struct AgentRoomLink
+AgentRoomLink.description | var description: String?
+AgentRoomLink.endedAt | var endedAt: Date?
+AgentRoomLink.failed | var failed: Bool?
+AgentRoomLink.init(from:) | init(from decoder: any Decoder) throws
+AgentRoomLink.init(room:turn:toolUseID:description:type:running:) | init(room: UUID, turn: UUID, toolUseID: String, description: String? = nil, type: String? = nil, running: Bool = true)
+AgentRoomLink.lastTool | var lastTool: String?
+AgentRoomLink.room | var room: UUID
+AgentRoomLink.running | var running: Bool
+AgentRoomLink.toolUseID | var toolUseID: String
+AgentRoomLink.turn | var turn: UUID
+AgentRoomLink.type | var type: String?
 ApprovalAlertSettings | enum ApprovalAlertSettings
 ApprovalAlertSettings.notify | static var notify: Bool { get }
 ApprovalAlertSettings.notifyKey | static let notifyKey: String
@@ -209,6 +221,7 @@ ConveneLink.shared | static let shared: ConveneLink
 ConveneLink.tools() | func tools() -> [[String : Any]]
 ConveneLink.tools(context:) | func tools(context: ToolContext) -> [[String : Any]]
 Conversation | struct Conversation
+Conversation.agentOf | var agentOf: AgentRoomLink?
 Conversation.configuration | var configuration: ChatConfiguration?
 Conversation.createdAt | var createdAt: Date
 Conversation.documents | var documents: [RoomDocument]?

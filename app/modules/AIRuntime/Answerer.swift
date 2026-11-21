@@ -295,7 +295,11 @@ public enum Answerer {
             process.executableURL = URL(fileURLWithPath: binary)
             process.arguments = arguments
         }
-        let executionEnvironment = run.environment(account.environment)
+        var executionEnvironment = run.environment(account.environment)
+        if streamed && account.provider == .claude {
+            // Older CLIs can ignore the environment option without rejecting an unknown flag.
+            executionEnvironment["CLAUDE_CODE_FORWARD_SUBAGENT_TEXT"] = "1"
+        }
         process.environment = executionEnvironment
         process.currentDirectoryURL = executionDirectory
         if let launchForTests {
@@ -397,8 +401,9 @@ public enum Answerer {
                       json["type"] as? String == "result" else { return nil }
                 return json
             }
-            // With steering the first result is this answer (anything after it was a late message, ended above).
-            let result = steer != nil ? results.first : results.last
+            // With steering the answer is the result that ended the turn: the first one, or after background agents
+            // the last one they woke (anything after it was a late message, ended above).
+            let result = steer.map { results.indices.contains($0.results - 1) ? results[$0.results - 1] : results.first } ?? results.last
             // JSON asked only for the usage, and the tool answered in plain text: that text is the answer.
             if result == nil && askedJSON && process.terminationStatus == 0 {
                 text = output
@@ -449,6 +454,32 @@ public enum AnswerProgress {
     case activity(String)  // what the AI is doing now, e.g. reading files or searching the web
     case todos(Any?)       // Claude's own TodoWrite list as it came (its "todos" input); project work turns it into its plan
     case model(String)     // actual CLI model; empty = checked but unknown. Once, before a successful result.
+    case agent(AgentProgress)
+}
+
+public struct AgentProgress {
+    public enum Kind: Equatable { case started, text, tool, finished }
+
+    public let toolUseID: String
+    public let kind: Kind
+    public let description: String?
+    public let subagentType: String?
+    public let prompt: String?
+    public let text: String?   // assistant text, tool input summary, or result preview, depending on kind
+    public let toolName: String?
+    public let failed: Bool
+
+    init(toolUseID: String, kind: Kind, description: String? = nil, subagentType: String? = nil,
+         prompt: String? = nil, text: String? = nil, toolName: String? = nil, failed: Bool = false) {
+        self.toolUseID = toolUseID
+        self.kind = kind
+        self.description = description
+        self.subagentType = subagentType
+        self.prompt = prompt
+        self.text = text
+        self.toolName = toolName
+        self.failed = failed
+    }
 }
 
 // Turns a CLI's JSON lines into progress. Claude: text deltas within the current message (a new message,
@@ -460,6 +491,12 @@ final class StreamParser {
     private var pending = Data()
     private var text = ""
     private var lastSent = Date.distantPast
+    private struct ClaudeAgent {
+        let parent: String?
+        let background: Bool
+        var taskID: String?
+    }
+    private var activeAgents: [String: ClaudeAgent] = [:]
     var observe: (([String: Any]) -> Void)?   // every event, before it is read for progress (steering)
 
     init(provider: Account.Provider, report: @escaping (AnswerProgress) -> Void) {
@@ -484,17 +521,121 @@ final class StreamParser {
         return L("작업 중…", "Working…") + " (" + tool + ")"
     }
 
+    private func handleClaudeAssistant(_ content: [[String: Any]], parent: String?) {
+        if let parent {
+            guard activeAgents[parent] != nil else { return }
+            // Complete assistant messages carry the subagent text and tool inputs.
+            var messageText = ""
+            for block in content {
+                switch block["type"] as? String {
+                case "text":
+                    messageText += block["text"] as? String ?? ""
+                case "tool_use":
+                    guard let name = block["name"] as? String else { continue }
+                    if !messageText.isEmpty {
+                        report(.agent(.init(toolUseID: parent, kind: .text, text: messageText)))
+                        messageText = ""
+                    }
+                    let input = block["input"] as? [String: Any] ?? [:]
+                    let summary = Self.claudeToolSummary(input)
+                    report(.agent(.init(toolUseID: parent, kind: .tool, text: summary, toolName: name)))
+                    if name == "Agent" || name == "Task" {
+                        startClaudeAgent(block, input: input, parent: parent)
+                    }
+                default: break
+                }
+            }
+            if !messageText.isEmpty {
+                report(.agent(.init(toolUseID: parent, kind: .text, text: messageText)))
+            }
+            return
+        }
+
+        for block in content where block["type"] as? String == "tool_use" {
+            let input = block["input"] as? [String: Any]
+            switch block["name"] as? String {
+            case "TodoWrite":
+                report(.todos(input?["todos"]))
+            case "Agent", "Task":
+                startClaudeAgent(block, input: input ?? [:], parent: nil)
+            default: break
+            }
+        }
+    }
+
+    private func startClaudeAgent(_ block: [String: Any], input: [String: Any], parent: String?) {
+        guard let id = block["id"] as? String, !id.isEmpty, activeAgents[id] == nil else { return }
+        activeAgents[id] = ClaudeAgent(parent: parent, background: input["run_in_background"] as? Bool == true)
+        report(.agent(.init(toolUseID: id, kind: .started, description: input["description"] as? String,
+                            subagentType: input["subagent_type"] as? String, prompt: input["prompt"] as? String)))
+    }
+
+    private static func claudeToolSummary(_ input: [String: Any]) -> String? {
+        for key in ["command", "file_path", "path", "pattern", "query"] {
+            if let value = input[key] as? String { return String(value.prefix(120)) }
+        }
+        guard !input.isEmpty, let data = try? JSONSerialization.data(withJSONObject: input, options: [.sortedKeys]) else { return nil }
+        return String(String(decoding: data, as: UTF8.self).prefix(120))
+    }
+
+    private func finishClaudeAgents(_ content: [[String: Any]], parent: String?) {
+        for block in content where block["type"] as? String == "tool_result" {
+            guard let id = block["tool_use_id"] as? String, let agent = activeAgents[id], agent.parent == parent else { continue }
+            let failed = block["is_error"] as? Bool == true
+            // A successful background tool result only acknowledges launch.
+            guard !agent.background || failed else { continue }
+            let result = block["content"] as? String ?? (block["content"] as? [[String: Any]])?
+                .compactMap { $0["type"] as? String == "text" ? $0["text"] as? String : nil }
+                .joined(separator: "\n")
+            finishClaudeAgent(id, text: result, failed: failed)
+        }
+    }
+
+    private func finishClaudeAgent(_ id: String, text: String?, failed: Bool) {
+        guard activeAgents.removeValue(forKey: id) != nil else { return }
+        report(.agent(.init(toolUseID: id, kind: .finished, text: text.map { String($0.prefix(300)) }, failed: failed)))
+    }
+
+    private func handleClaudeTask(_ json: [String: Any]) {
+        let toolUseID = json["tool_use_id"] as? String
+        switch json["subtype"] as? String {
+        case "task_started":
+            guard let id = toolUseID, activeAgents[id]?.background == true,
+                  let taskID = json["task_id"] as? String, !taskID.isEmpty else { return }
+            activeAgents[id]?.taskID = taskID
+        case "task_notification":
+            guard let status = json["status"] as? String, ["completed", "failed", "stopped"].contains(status) else { return }
+            let id = toolUseID ?? (json["task_id"] as? String).flatMap { taskID in
+                activeAgents.first { $0.value.taskID == taskID }?.key
+            }
+            guard let id, activeAgents[id]?.background == true else { return }
+            finishClaudeAgent(id, text: json["summary"] as? String, failed: status != "completed")
+        default: break
+        }
+    }
+
     private func handle(_ json: [String: Any]) {
         switch provider {
         case .claude:
-            // A whole assistant message: its TodoWrite input arrives complete here, not in pieces.
-            if json["type"] as? String == "assistant", let content = (json["message"] as? [String: Any])?["content"] as? [[String: Any]] {
-                for block in content where block["type"] as? String == "tool_use" && block["name"] as? String == "TodoWrite" {
-                    report(.todos((block["input"] as? [String: Any])?["todos"]))
+            let type = json["type"] as? String
+            let rawParent = json["parent_tool_use_id"]
+            let isMain = rawParent == nil || rawParent is NSNull
+            let parent = rawParent as? String
+            guard isMain || parent?.isEmpty == false else { return }
+            if type == "system" {
+                handleClaudeTask(json)
+                return
+            }
+            if type == "assistant" || type == "user" {
+                guard let content = (json["message"] as? [String: Any])?["content"] as? [[String: Any]] else { return }
+                if type == "assistant" {
+                    handleClaudeAssistant(content, parent: parent)
+                } else {
+                    finishClaudeAgents(content, parent: parent)
                 }
                 return
             }
-            guard json["type"] as? String == "stream_event", let event = json["event"] as? [String: Any] else { return }
+            guard isMain, type == "stream_event", let event = json["event"] as? [String: Any] else { return }
             switch event["type"] as? String {
             case "message_start":
                 text = ""

@@ -310,6 +310,8 @@ public struct Conversation: Identifiable, Codable {
     public var meetingOf: MeetingLink?
     // A sub-room (Delegate.swift): the main room's split it works for. It is attached like a meeting (meetingOf) too.
     public var subOf: SubRoomLink?
+    // A Claude subagent's record (AgentRooms.swift): attached like a meeting (meetingOf) too, read only.
+    public var agentOf: AgentRoomLink?
     // Messages sent while it answered, waiting for the answer to end (Discussion.flushQueue sends them together).
     public var queued: [QueuedMessage]?
 
@@ -340,6 +342,22 @@ public struct SubRoomLink: Codable, Equatable {
     public var split: String
     public var n: Int
     public init(room: UUID, split: String, n: Int) { self.room = room; self.split = split; self.n = n }
+}
+
+// A subagent's record (AgentRooms.swift): the Agent call `toolUseID` made in the answer to turn `turn` of chat `room`.
+public struct AgentRoomLink: Codable, Equatable {
+    public var room: UUID
+    public var turn: UUID
+    public var toolUseID: String
+    public var description: String?
+    public var type: String?
+    public var running: Bool
+    public var failed: Bool?
+    public var lastTool: String?   // what it does now, for the sidebar row
+    public var endedAt: Date?
+    public init(room: UUID, turn: UUID, toolUseID: String, description: String? = nil, type: String? = nil, running: Bool = true) {
+        self.room = room; self.turn = turn; self.toolUseID = toolUseID; self.description = description; self.type = type; self.running = running
+    }
 }
 
 // A message sent while its chat was answering, as it was typed: read again (its @ and /way) when it is sent.

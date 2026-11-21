@@ -405,6 +405,7 @@ extension Discussion {
                     case .activity(let text): self.changeTurn(id, index) { $0.activity = text; $0.lastActivityAt = Date() }
                     case .todos(let todos): run.setPlan(todos: todos, generation: generation)
                     case .model: ran.note(update)
+                    case .agent(let event): self.agentProgress(event, room: id, index: index)
                     }
                 }
                 guard permits(account, room: id) else { return .failure(Enterprise.blocked(account)) }

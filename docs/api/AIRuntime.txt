@@ -9,8 +9,23 @@ AIUsage.name | let name: String
 AIUsage.needsLogin | var needsLogin: Bool
 AIUsage.note | var note: String?
 AIUsage.weekly | var weekly: UsageWindow?
+AgentProgress | struct AgentProgress
+AgentProgress.Kind | enum Kind
+AgentProgress.Kind.finished | case finished
+AgentProgress.Kind.started | case started
+AgentProgress.Kind.text | case text
+AgentProgress.Kind.tool | case tool
+AgentProgress.description | let description: String?
+AgentProgress.failed | let failed: Bool
+AgentProgress.kind | let kind: AgentProgress.Kind
+AgentProgress.prompt | let prompt: String?
+AgentProgress.subagentType | let subagentType: String?
+AgentProgress.text | let text: String?
+AgentProgress.toolName | let toolName: String?
+AgentProgress.toolUseID | let toolUseID: String
 AnswerProgress | enum AnswerProgress
 AnswerProgress.activity(_:) | case activity(String)
+AnswerProgress.agent(_:) | case agent(AgentProgress)
 AnswerProgress.model(_:) | case model(String)
 AnswerProgress.text(_:) | case text(String)
 AnswerProgress.todos(_:) | case todos(Any?)

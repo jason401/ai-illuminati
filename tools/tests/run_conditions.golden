@@ -501,6 +501,7 @@ arg: "$TEST_HOME/run-conditions-project-claude-false"
 dir: $TEST_HOME/.ai-illuminati/rooms/<uuid>/stateless-<uuid>
 group: true
 env+: AI_ILLUMINATI_PROJECT_PROCESS="1"
+env+: CLAUDE_CODE_FORWARD_SUBAGENT_TEXT="1"
 env+: GH_CONFIG_DIR="$TEST_HOME/Library/Application Support/AI Illuminati/auto-guard/gh-empty"
 env-: GH_TOKEN
 env+: GIT_ASKPASS="/usr/bin/false"
@@ -545,6 +546,7 @@ arg: "$TEST_HOME/run-conditions-project-claude-true"
 dir: $TEST_HOME/.ai-illuminati/rooms/<uuid>/stateless-<uuid>
 group: true
 env+: AI_ILLUMINATI_PROJECT_PROCESS="1"
+env+: CLAUDE_CODE_FORWARD_SUBAGENT_TEXT="1"
 env+: GH_CONFIG_DIR="$TEST_HOME/Library/Application Support/AI Illuminati/auto-guard/gh-empty"
 env-: GH_TOKEN
 env+: GIT_ASKPASS="/usr/bin/false"

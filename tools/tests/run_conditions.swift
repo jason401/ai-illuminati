@@ -34,7 +34,9 @@ func runConditionsCapture() -> String {
     // The same starting environment wherever the test runs (also inside a project run, which already has the guards):
     // no Git, GitHub or SSH settings, a plain PATH, and two credentials the guard must take away.
     let saved = ProcessInfo.processInfo.environment
-    let guarded = saved.keys.filter { ["GIT_", "GH_", "GITHUB_", "SSH_", "AI_ILLUMINATI_PROJECT"].contains(where: $0.hasPrefix) }
+    let guarded = saved.keys.filter {
+        $0 == "CLAUDE_CODE_FORWARD_SUBAGENT_TEXT" || ["GIT_", "GH_", "GITHUB_", "SSH_", "AI_ILLUMINATI_PROJECT"].contains(where: $0.hasPrefix)
+    }
     for key in guarded { unsetenv(key) }
     setenv("PATH", "/usr/bin:/bin", 1); setenv("GH_TOKEN", "test-token", 1); setenv("SSH_AUTH_SOCK", "/tmp/test-agent", 1)
     defer {

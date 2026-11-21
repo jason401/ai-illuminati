@@ -51,6 +51,9 @@ public final class Discussion: ObservableObject {
     @Published var splitRecords: [UUID: [Split]] = [:]
     @Published var splitPlans: [UUID: Split] = [:]
     @Published var subRoomsOpen: Set<UUID> = []
+    @Published var agentsOpen: Set<UUID> = []     // subagent records unfolded / folded by the user (AgentRooms.swift)
+    @Published var agentsClosed: Set<UUID> = []
+    var agentSavedAt: [UUID: Date] = [:]
     @Published var subRoomsClosed: Set<UUID> = []
     @Published var splitPlanShown: Set<String> = []   // approved split cards unfolded by the user
     var splitWatch: NSObjectProtocol?

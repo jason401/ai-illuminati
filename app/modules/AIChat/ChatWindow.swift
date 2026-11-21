@@ -694,7 +694,8 @@ struct ChatView<Model: ChatSettings>: View {
 
     @ViewBuilder private func chatGroup<Below: View>(_ conversation: Conversation, depth: Int, todo: TodoItem.State?, pieceNumber: Int?,
                                                      @ViewBuilder below: () -> Below) -> some View {
-        let meetings = discussion.meetings(of: conversation.id).filter { $0.subOf == nil }
+        let meetings = discussion.meetings(of: conversation.id).filter { $0.subOf == nil && $0.agentOf == nil }
+        let agents = discussion.agentRooms(of: conversation.id)
         let shown = !meetings.isEmpty && discussion.meetingsShown(conversation.id, meetings)
         let subs = discussion.subRooms(of: conversation.id)
         chatRow(conversation, meetings: meetings.count, shown: shown, depth: depth, todo: todo, pieceNumber: pieceNumber)
@@ -703,6 +704,15 @@ struct ChatView<Model: ChatSettings>: View {
             SubRoomsFoldedRow(main: conversation.id, count: subs.count, discussion: discussion, depth: depth)
             if discussion.subRoomsShown(conversation.id) {
                 ForEach(subs) { SubRoomRow(room: $0, discussion: discussion, depth: depth) }
+            }
+        }
+        if !agents.isEmpty {
+            AgentRoomsFoldedRow(main: conversation.id, records: agents, discussion: discussion, depth: depth)
+            if discussion.agentsShown(conversation.id, agents) {
+                // The open one stays listed even when it is older than the newest 8.
+                ForEach(agents.enumerated().filter { $0.offset < 8 || $0.element.id == discussion.currentID }.map(\.element)) {
+                    AgentRoomRow(room: $0, discussion: discussion, depth: depth)
+                }
             }
         }
         if shown {
@@ -1357,7 +1367,8 @@ struct ChatView<Model: ChatSettings>: View {
     private func meetingBar(_ link: MeetingLink) -> some View {
         HStack(spacing: 10) {
             Image(systemName: "person.3").foregroundColor(.secondary)
-            Text(L("회의 기록 · 읽기 전용", "Meeting record · read only")).font(.system(size: 13)).foregroundColor(.secondary)
+            Text(discussion.current.agentOf != nil ? L("에이전트 기록 · 읽기 전용", "Agent record · read only")
+                 : L("회의 기록 · 읽기 전용", "Meeting record · read only")).font(.system(size: 13)).foregroundColor(.secondary)
             Spacer()
             if discussion.conversations.contains(where: { $0.id == link.room }) {
                 Button(L("← 원래 채팅으로", "← Back to the chat")) {

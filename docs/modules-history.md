@@ -441,6 +441,7 @@ module is that module's public function now; the block keeps only the chat's par
 
 | File:line | Kind | What it is | C0 change / note for C1 |
 |---|---|---|---|
+| AgentRooms:11 | a | Claude subagent records (2026-11-21): hidden read-only rooms from `AnswerProgress.agent`, fold state | the events come from `StreamParser` (AIRuntime) |
 | Attachments:48 | a | pictures in the message box, `canSend`, `request`/`requestDebate` (the Enterprise gate before each send) | — |
 | Attachments:209 | a | `setWorkspaceLevel` (session reset + the chat's binding) | — |
 | Attachments:219 | a | `undoWorkspace`: the turn's Undo state; the restore itself is already `WorkspaceBackup` (AIWorkspace) | — |

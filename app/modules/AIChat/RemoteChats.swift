@@ -9,7 +9,13 @@ import AIProjects
 // JSON (strings, numbers, arrays), so the page and the server need no chat type.
 public enum RemoteChats {
     // Working, Needs review, Pinned, Projects (each folder with its newest chats), Recents, like ChatView's sidebar.
-    public static func list(_ d: Discussion) -> [[String: Any]] {
+    // Long lists start at the sidebar's page; `limits` (the phone's "Show more") lengthens one by its key. A shortened
+    // list carries "more": its key, page, how many it has and how many are left out.
+    public static func list(_ d: Discussion, limits: [String: Int] = [:]) -> [[String: Any]] {
+        func limit(_ key: String, _ page: Int) -> Int { max(limits[key] ?? page, page) }
+        func more(_ key: String, page: Int, total: Int, listed: Int) -> [String: Any]? {
+            total > page ? ["key": key, "page": page, "total": total, "hidden": total - listed] : nil
+        }
         let todo = TodoStore.shared.snapshot, names = ProjectInfoStore.shared.names
         let waiting = Dictionary(grouping: ProjectCenter.shared.requests, by: \.room).mapValues(\.count)
         func row(_ chat: Conversation, depth: Int = 0, detail: String? = nil) -> [String: Any] {
@@ -22,22 +28,34 @@ public enum RemoteChats {
             return row
         }
         var sections: [[String: Any]] = []
-        func add(_ title: String, _ rows: [[String: Any]]) { if !rows.isEmpty { sections.append(["title": title, "chats": rows]) } }
+        func add(_ title: String, _ rows: [[String: Any]], more: [String: Any]? = nil) {
+            guard !rows.isEmpty else { return }
+            var section: [String: Any] = ["title": title, "chats": rows]
+            if let more { section["more"] = more }
+            sections.append(section)
+        }
         add(L("작업 중", "Working"), WorkingChats.list(conversations: d.conversations, running: d.runningRooms, stopping: d.stoppingRooms,
                                                      todo: todo, names: names).map { row($0.conversation, detail: $0.project) })
-        add(L("확인 필요", "Needs review"), UnreadChats.list(conversations: d.conversations, unread: d.unreadRooms, running: d.runningRooms,
-                                                         todo: todo, names: names).map { row($0.conversation, detail: $0.project) })
+        let unread = UnreadChats.list(conversations: d.conversations, unread: d.unreadRooms, running: d.runningRooms, todo: todo, names: names)
+        let unreadListed = unread.prefix(limit("unread", SidebarFold.projectPage))
+        add(L("확인 필요", "Needs review"), unreadListed.map { row($0.conversation, detail: $0.project) },
+            more: more("unread", page: SidebarFold.projectPage, total: unread.count, listed: unreadListed.count))
         let grouped = SidebarProjects.group(d.listedConversations.filter(\.hasContent), todo: todo, pinned: SidebarFold.shared.pinnedProjects, names: names)
         add(L("고정됨", "Pinned"), grouped.loose.filter { $0.pinned == true }.map { row($0) })
         add(L("프로젝트", "Projects"), grouped.projects.flatMap { group -> [[String: Any]] in
             let rooms = SidebarProjects.runningFirst(group, todo: todo, running: d.runningRooms)
-            let chats = rooms.running + rooms.going + SidebarFold.listedChats(rooms.chats, limit: SidebarFold.projectPage * 2, open: nil).rows
-            var folder: [String: Any] = ["folder": group.name, "id": "project." + group.id, "project": group.id]
+            let key = "project." + group.id, page = SidebarFold.projectPage
+            let listed = SidebarFold.listedChats(rooms.chats, limit: limit(key, page), open: nil)
+            let chats = rooms.running + rooms.going + listed.rows
+            var folder: [String: Any] = ["folder": group.name, "id": key, "project": group.id]
+            if let more = more(key, page: page, total: listed.unpinned, listed: listed.listed) { folder["more"] = more }
             let count = group.chats.reduce(0) { $0 + (waiting[$1.id] ?? 0) }
             if count > 0 { folder["approvals"] = count }
             return [folder] + chats.map { row($0, depth: 1) }
         })
-        add(L("최근", "Recents"), grouped.loose.filter { $0.pinned != true }.prefix(SidebarFold.recentsPage * 3).map { row($0) })
+        let recents = grouped.loose.filter { $0.pinned != true }, recentsListed = recents.prefix(limit("recents", SidebarFold.recentsPage))
+        add(L("최근", "Recents"), recentsListed.map { row($0) },
+            more: more("recents", page: SidebarFold.recentsPage, total: recents.count, listed: recentsListed.count))
         return sections
     }
 

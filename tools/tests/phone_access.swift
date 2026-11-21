@@ -118,6 +118,24 @@ func testPhoneServer() {
         let newList = call("GET", "/api/chats").1["sections"] as? [[String: Any]] ?? []
         expect(newList.contains { ($0["chats"] as? [[String: Any]] ?? []).contains { $0["id"] as? String == newRoom.uuidString } }, "phone server: the list has the new chat")
     }
+
+    // Long lists start at the sidebar's page, "Show more" (?n.<key>=) lengthens one; pinned chats are never cut.
+    for i in 0..<14 { var c = Conversation(); c.title = "older \(i)"; c.turns = [ChatTurn(question: "q")]; chat.conversations.append(c) }
+    var pinned = Conversation(); pinned.title = "pinned"; pinned.turns = [ChatTurn(question: "q")]; pinned.pinned = true
+    chat.conversations.append(pinned)
+    func recents(_ path: String) -> (rows: Int, more: [String: Any]?, pinned: Bool) {
+        let sections = call("GET", path).1["sections"] as? [[String: Any]] ?? []
+        let section = sections.first { $0["title"] as? String == L("최근", "Recents") }
+        let pins = sections.contains { ($0["chats"] as? [[String: Any]] ?? []).contains { $0["id"] as? String == pinned.id.uuidString } }
+        return ((section?["chats"] as? [Any])?.count ?? 0, section?["more"] as? [String: Any], pins)
+    }
+    let total = chat.listedConversations.filter { $0.pinned != true && $0.hasContent }.count
+    let short = recents("/api/chats"), long = recents("/api/chats?n.recents=20"), all = recents("/api/chats?n.recents=1000")
+    expect(total > 15 && short.rows == SidebarFold.recentsPage && short.more?["hidden"] as? Int == total - SidebarFold.recentsPage
+           && short.more?["key"] as? String == "recents" && short.pinned, "phone server: recents start at one page, the rest counted, pinned kept \(short)")
+    expect(long.rows == min(total, 20) && long.more?["hidden"] as? Int == total - min(total, 20), "phone server: show more lengthens the list \(long)")
+    expect(all.rows == total && all.more?["hidden"] as? Int == 0, "phone server: everything shown, show less still offered \(all)")
+    expect(recents("/api/chats?n.recents=1").rows == SidebarFold.recentsPage, "phone server: never shorter than one page")
 }
 
 func testPhoneUsage() {

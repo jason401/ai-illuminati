@@ -375,7 +375,7 @@ final class PhoneServer: ObservableObject {
         }
     }
 
-    // GET /api/chats, GET /api/search?q=, GET /api/chat/<id>[?open=1], GET /api/image/<chat>/<picture>,
+    // GET /api/chats[?n.<list>=<rows>], GET /api/search?q=, GET /api/chat/<id>[?open=1], GET /api/image/<chat>/<picture>,
     // POST /api/chat/new {text, images, project?} → {id}, POST /api/chat/<id>/send, POST /api/approval/<id> {allow},
     // GET /api/usage, POST /api/usage/refresh (returns the cached reading immediately),
     // GET /api/update, POST /api/update/check, POST /api/update/install (409 while an update step runs).
@@ -389,7 +389,11 @@ final class PhoneServer: ObservableObject {
         guard let discussion else { return .error(404, "not ready") }
         switch (request.method, parts.count > 1 ? parts[1] : "", parts.count) {
         case ("GET", "chats", 2):
-            return .json(["sections": RemoteChats.list(discussion)])
+            // ?n.<list key>=<rows>: the lists the phone lengthened with "Show more".
+            let limits = request.query.reduce(into: [String: Int]()) { out, item in
+                if item.key.hasPrefix("n."), let n = Int(item.value) { out[String(item.key.dropFirst(2))] = min(n, 1000) }
+            }
+            return .json(["sections": RemoteChats.list(discussion, limits: limits)])
         case ("GET", "search", 2):
             return .json(["results": RemoteChats.search(discussion, request.query["q"] ?? "")])
         case ("POST", "chat", 3) where parts[2] == "new":

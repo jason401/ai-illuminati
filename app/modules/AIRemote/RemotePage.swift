@@ -23,6 +23,8 @@ public enum RemotePage {
             "details": L("자세히", "Details"),
             "newChat": L("새 대화", "New chat"),
             "newIn": L("이 프로젝트에 새 대화", "New chat in this project"),
+            "showMore": L("더 보기 ({n})", "Show more ({n})"),
+            "showLess": L("접기", "Show less"),
             "search": L("대화 검색", "Search chats"),
             "cancel": L("취소", "Cancel"),
             "results": L("검색 결과", "Results"),
@@ -165,6 +167,9 @@ h1 { font-size:30px; font-weight:700; margin:4px 12px 10px; letter-spacing:-.3px
 .folder .ficon { color:var(--dim); flex:none; }
 .folder .tool { width:36px; height:36px; margin:-6px -8px -6px 0; color:var(--dim); }
 .children.folded { display:none; }
+.more { display:flex; gap:18px; padding:6px 12px 8px 34px; }
+.children .more { padding-left:56px; }
+.more button { border:0; background:none; color:var(--accent); font:14px -apple-system, system-ui; padding:4px 0; }
 .dot { width:8px; height:8px; border-radius:50%; background:var(--accent); }
 .ring { width:11px; height:11px; border-radius:50%; border:2px solid var(--c, var(--dim)); border-right-color:transparent; animation:spin 1s linear infinite; }
 .ring, .aidot { --c:var(--cl, var(--dim)); }
@@ -387,6 +392,19 @@ const drafts = {}, cache = {}, titles = {}, projects = {};
 let current = null, chatId = null, newProject = null, opened = false, timer = null, lastList = '', lastChat = '', photos = [], sending = false;
 let navAnimate = false, pushed = false, searching = false, searchTimer = null, jump = null;
 const folded = new Set(JSON.parse(localStorage.getItem('folded') || '[]'));
+const limits = {};   // lists lengthened with "Show more", like the Mac sidebar: in memory only, a reload starts short
+function listPath() {
+  return '/api/chats' + Object.keys(limits).map((k, i) => (i ? '&' : '?') + 'n.' + encodeURIComponent(k) + '=' + limits[k]).join('');
+}
+// "Show more (n)" under a shortened list, and "Show less" once it was lengthened.
+function moreRow(m) {
+  if (!m) return '';
+  const expanded = (limits[m.key] || m.page) > m.page;
+  if (!m.hidden && !expanded) return '';
+  return '<div class="more" data-key="' + esc(m.key) + '" data-page="' + m.page + '">' +
+    (m.hidden ? '<button data-more="1">' + esc(S.showMore.replace('{n}', m.hidden)) + '</button>' : '') +
+    (expanded ? '<button data-less="1">' + esc(S.showLess) + '</button>' : '') + '</div>';
+}
 
 function esc(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 // The same content gives the same text whatever order its keys came in: what "did it change" is compared with.
@@ -526,22 +544,24 @@ function chatRow(c, child) {
 function renderList(data) {
   if (!data.sections.length) { $('list').innerHTML = '<div class="note">' + esc(S.empty) + '</div>'; return; }
   $('list').innerHTML = data.sections.map(s => {
-    let out = '<div class="section">' + esc(s.title) + '</div>', open = false;
+    let out = '<div class="section">' + esc(s.title) + '</div>', open = false, folderMore = null;
+    const close = () => { out += moreRow(folderMore) + '</div>'; open = false; folderMore = null; };
     for (const c of s.chats) {
       if (c.folder) {
-        if (open) out += '</div>';
+        if (open) close();
         projects[c.project] = c.folder;
         const f = folded.has(c.project) ? ' folded' : '';
         out += '<div class="row folder' + f + '" data-project="' + esc(c.project) + '"><span class="mark">' + ICON_CHEV + '</span><span class="ficon">' + ICON_FOLDER + '</span>' +
           '<span class="name"><div>' + esc(c.folder) + '</div></span>' + (c.approvals ? '<span class="badge">' + c.approvals + '</span>' : '') +
           '<button class="tool" data-new="' + esc(c.project) + '" aria-label="' + esc(S.newIn) + '">' + ICON_NEW + '</button></div><div class="children' + f + '">';
-        open = true;
+        open = true; folderMore = c.more || null;
       } else {
-        if (open && !c.depth) { out += '</div>'; open = false; }
+        if (open && !c.depth) close();
         out += chatRow(c, open);
       }
     }
-    return out + (open ? '</div>' : '');
+    if (open) close();
+    return out + moreRow(s.more);
   }).join('');
 }
 async function loadList() {
@@ -549,7 +569,7 @@ async function loadList() {
   if (!KEY) { $('list').innerHTML = '<div class="note">' + esc(S.noKey) + '</div>'; return; }
   loadUpdate();
   try {
-    const data = await api('/api/chats');
+    const data = await api(listPath());
     if (searching) return;
     const text = stable(data);
     if (text === lastList) return;
@@ -558,6 +578,14 @@ async function loadList() {
   } catch (e) { $('list').innerHTML = '<div class="note">' + esc(String(e.message) === '401' ? S.noKey : (e.message || S.offline)) + '</div>'; lastList = ''; }
 }
 $('list').addEventListener('click', e => {
+  const more = e.target.closest('.more button');
+  if (more) {
+    e.preventDefault();
+    const box = more.parentElement, key = box.dataset.key, page = Number(box.dataset.page);
+    if (more.dataset.more) limits[key] = (limits[key] || page) + page; else delete limits[key];
+    lastList = ''; loadList();
+    return;
+  }
   const add = e.target.closest('[data-new]');
   if (add) { e.preventDefault(); go('#new=' + encodeURIComponent(add.dataset.new)); return; }
   const folder = e.target.closest('.folder');

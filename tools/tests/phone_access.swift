@@ -222,6 +222,8 @@ func testPhoneUsage() {
     expect(page.contains("class=\"usageCols\"") && page.contains("class=\"usageRow\"") && page.contains("function usageShort(")
            && page.contains("aria-expanded") && !page.contains("function usageLimit("),
            "phone usage: like the menu bar, one row per account under a 5h/Week header, tapped open for details")
+    expect(page.contains("$('box').classList.remove('hidden');\n    grow();"),
+           "phone page: the message box is sized after it shows again, so leaving the update screen does not shrink it to nothing")
 }
 
 /// Updating this Mac from the phone page: /api/update needs the key (401), shows the updater's state, refuses a second

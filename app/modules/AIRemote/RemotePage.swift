@@ -489,12 +489,13 @@ function route() {
   if (!key) pushed = false;
   if (key && key !== current) {
     chatId = id; newProject = project; opened = false; lastChat = ''; photos = []; renderThumbs();
-    $('text').value = drafts[key] || ''; grow();
+    $('text').value = drafts[key] || '';
     $('turns').innerHTML = ''; $('approvals').innerHTML = '';
     const known = id ? titles[id] : null;
     $('chatTitle').textContent = id ? (known ? known.title : '') : S.newChat;
     $('chatSub').textContent = id ? (known && known.detail || '') : (project && projects[project] || '');
     $('footer').classList.remove('hidden'); $('readOnly').classList.add('hidden'); $('box').classList.remove('hidden');
+    grow();   // after the box shows again: measured while hidden (the update screen), it would shrink to nothing
     $('hint').textContent = '';
     if (id && cache[id]) renderChat(cache[id], true);
     else if (!id) $('turns').innerHTML = '<div class="note">' + esc(S.askAnything) + '</div>';

@@ -219,6 +219,9 @@ func testPhoneUsage() {
     let page = String(decoding: RemotePage.html(), as: UTF8.self)
     expect(page.contains("id=\"usagePanel\"") && page.contains("'/api/usage/refresh'") && page.contains("45000"),
            "phone usage: the page has the usage panel, refresh route and polling timer")
+    expect(page.contains("class=\"usageCols\"") && page.contains("class=\"usageRow\"") && page.contains("function usageShort(")
+           && page.contains("aria-expanded") && !page.contains("function usageLimit("),
+           "phone usage: like the menu bar, one row per account under a 5h/Week header, tapped open for details")
 }
 
 /// Updating this Mac from the phone page: /api/update needs the key (401), shows the updater's state, refuses a second

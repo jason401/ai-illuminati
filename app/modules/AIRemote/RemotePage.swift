@@ -50,6 +50,9 @@ public enum RemotePage {
             "usageRecent": L("{device} 기준 · 방금 측정", "{device} · Measured just now"),
             "usageFive": L("5시간", "5h"),
             "usageWeek": L("주간", "Week"),
+            "usageAccountCol": L("계정", "Account"),
+            "usageDetailLine": L("{label}: {n}% 남음 · {time}", "{label}: {n}% left · {time}"),
+            "usageSoon": L("곧", "now"),
             "usageLogin": L("로그인 필요", "Sign-in required"),
             "usageUnused": L("아직 안 씀", "Not used yet"),
             "usageRefilled": L("충전됨", "Refilled"),
@@ -261,23 +264,31 @@ mark { background:rgba(255,214,10,.45); color:inherit; border-radius:3px; paddin
 #usageAccounts { min-height:0; overflow:auto; overscroll-behavior:contain; padding:0 14px 14px; }
 #usageStatus { color:var(--dim); font-size:13px; padding:0 14px; margin:0; }
 #usageStatus:not(:empty) { padding-bottom:8px; }
-.usageGroup h3 { color:var(--cl, var(--text)); font-size:14px; margin:16px 0 6px; }
+/* Like the menu bar: a header, then per AI one row per account (bar, % left, time to refill); tap a row for its details. */
+.usageCols, .usageRow { display:grid; grid-template-columns:minmax(0, 1fr) 7.4rem 7.4rem; gap:6px; align-items:center; }
+.usageCols { color:var(--dim); font-size:12px; font-weight:500; padding:10px 0 0; }
+.usageGroup h3 { color:var(--cl, var(--text)); font-size:13px; margin:12px 0 2px; }
 @media (prefers-color-scheme: dark) { .usageGroup h3 { color:var(--cd, var(--text)); } }
-.usageAccount { padding:9px 0; border-top:1px solid var(--line); }
-.usageName { margin:0 0 6px; font-size:15px; }
-.usageSmall, .usageTime, .usageLabel { color:var(--dim); font-size:13px; }
-.usageSmall { margin:4px 0 0; font-weight:normal; }
-.usagePlan { margin-inline-start:8px; }
+.usageRow { width:100%; min-height:36px; padding:4px 0; border:0; background:none; color:var(--text); font:inherit; text-align:start; }
+.usageName { display:flex; align-items:baseline; gap:4px; min-width:0; font-size:15px; }
+.usageName > span:first-child { flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.usageMark { flex:none; color:var(--dim); font-size:13px; } .usageMark.usageWarn { color:var(--warn); }
+.usageSmall, .usageTime { color:var(--dim); font-size:13px; }
+.usagePlan { flex:0 100 auto; min-width:0; max-width:2.6em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.usageSpan { grid-column:2 / -1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .usageLogin { color:var(--warn); }
-.usageLimit { display:grid; grid-template-columns:3.25rem minmax(0, 1fr) 3rem; gap:2px 6px; align-items:center; margin:4px 0; }
-.usageTime { grid-column:2 / -1; }
-.usageLeft { text-align:right; font-size:14px; font-weight:600; font-variant-numeric:tabular-nums; color:var(--remaining, var(--text)); }
+.usageCell { display:flex; align-items:center; gap:5px; min-width:0; white-space:nowrap; }
+.usageLeft { width:2.5em; text-align:right; font-size:14px; font-weight:600; font-variant-numeric:tabular-nums; color:var(--remaining, var(--text)); }
+.usageTime { font-variant-numeric:tabular-nums; overflow:hidden; text-overflow:ellipsis; }
 .usageLow { --remaining:var(--warn); } .usageCritical { --remaining:var(--red); }
-.usageBar { position:relative; height:6px; border-radius:6px; background:var(--fill); }
+.usageBar { flex:none; width:22px; height:5px; border-radius:5px; background:var(--fill); }
 .usageBar i { display:block; height:100%; border-radius:inherit; background:var(--remaining, var(--text)); opacity:.8; }
-.usageBar b { position:absolute; top:-2px; width:1px; height:10px; background:var(--text); opacity:.55; }
-@media (min-width:520px) {
-  .usageLimits { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:16px; }
+.usageDetail { margin:2px 0 6px; padding:8px 12px; border-radius:10px; background:var(--fill); }
+.usageDetail p { margin:2px 0; overflow-wrap:anywhere; }
+/* Narrow phones: the menu bar's compact style, numbers only. */
+@media (max-width:359px) {
+  .usageCols, .usageRow { grid-template-columns:minmax(0, 1fr) 5.6rem 5.6rem; }
+  .usageBar { display:none; }
 }
 
 /* The message box: one rounded card, text on top, + on the left and send on the right (the Mac's composer). */
@@ -589,25 +600,67 @@ function usageRefill(resetsAt, now) {
   return S.usageRefills.replace('{time}', time);
 }
 
-function usageLimit(label, limit, duration, now) {
-  const title = '<span class="usageLabel">' + esc(label) + '</span>';
-  if (!limit) return '<div class="usageLimit">' + title + '<span class="usageSmall">—</span></div>';
-  const remaining = limit.resetsAt !== null && limit.resetsAt <= now ? 100 : limit.left;
-  const level = remaining < 10 ? ' usageCritical' : remaining < 30 ? ' usageLow' : '';
-  const tick = limit.resetsAt > now ? '<b style="left:clamp(0px,' +
-    Math.min(100, (limit.resetsAt - now) * 100 / duration) + '%,calc(100% - 1px))"></b>' : '';
-  return '<div class="usageLimit' + level + '">' + title +
-    '<span class="usageBar" aria-hidden="true"><i style="width:' + remaining + '%"></i>' + tick + '</span>' +
-    '<span class="usageLeft">' + Math.round(remaining) + '%</span>' +
-    '<span class="usageTime">' + esc(usageRefill(limit.resetsAt, now)) + '</span></div>';
+// The menu bar's short time to refill: "2h 36m", "2d 19h".
+function usageShort(resetsAt, now) {
+  if (resetsAt === null) return '—';
+  const minutes = Math.max(0, Math.ceil((resetsAt - now) / 60000));
+  if (minutes === 0) return S.usageSoon;
+  if (minutes < 60) return S.usageMinutes.replace('{n}', minutes);
+  const [big, small, size, rest] = minutes < 1440
+    ? [S.usageHours, S.usageMinutes, 60, minutes % 60]
+    : [S.usageDays, S.usageHours, 1440, Math.floor((minutes % 1440) / 60)];
+  const head = big.replace('{n}', Math.floor(minutes / size));
+  return rest ? head + ' ' + small.replace('{n}', rest) : head;
 }
 
-function usageLimits(account, now) {
-  if (account.checkedAt === null && !account.fiveHour && !account.weekly && !account.note && !account.extras.length) {
-    return '<p class="usageSmall">' + esc(S.usageChecking) + '</p>';
+function usageRemaining(limit, now) { return limit.resetsAt !== null && limit.resetsAt <= now ? 100 : limit.left; }
+function usageLevel(remaining) { return remaining < 10 ? ' usageCritical' : remaining < 30 ? ' usageLow' : ''; }
+
+function usageCell(limit, now) {
+  if (!limit) return '<span class="usageCell usageSmall">—</span>';
+  const remaining = usageRemaining(limit, now);
+  return '<span class="usageCell' + usageLevel(remaining) + '">' +
+    '<span class="usageBar" aria-hidden="true"><i style="width:' + remaining + '%"></i></span>' +
+    '<span class="usageLeft">' + Math.round(remaining) + '%</span>' +
+    '<span class="usageTime">' + esc(usageShort(limit.resetsAt, now)) + '</span></span>';
+}
+
+// "Claude (개인)" under the Claude title reads "개인", as in the menu bar.
+function usageShortName(name, group) {
+  if (!name.startsWith(group)) return name;
+  const rest = name.slice(group.length).trim();
+  return /^\(.*\)$/.test(rest) ? rest.slice(1, -1) : rest || name;
+}
+
+const usageOpen = new Set();   // rows the user opened stay open across the 45-second refreshes
+
+function usageRow(g, a, now) {
+  const key = g.provider + '\n' + a.name;
+  const login = a.needsLogin && g.provider !== 'ollama';
+  const more = Boolean(a.note || a.extras.length || login);
+  const mark = login ? '<span class="usageMark usageWarn" aria-hidden="true">!</span>'
+    : more ? '<span class="usageMark" aria-hidden="true">ⓘ</span>' : '';
+  let cells;
+  if (a.checkedAt === null && !a.fiveHour && !a.weekly && !a.note && !a.extras.length) {
+    cells = '<span class="usageSpan usageSmall">' + esc(S.usageChecking) + '</span>';
+  } else if (!a.fiveHour && !a.weekly && (login || a.extras.length)) {
+    cells = login ? '<span class="usageSpan usageSmall usageLogin">' + esc(S.usageLogin) + '</span>'
+      : '<span class="usageSpan usageSmall">' + esc(a.extras[0]) + '</span>';
+  } else {
+    cells = usageCell(a.fiveHour, now) + usageCell(a.weekly, now);
   }
-  return '<div class="usageLimits">' + usageLimit(S.usageFive, account.fiveHour, 5 * 60 * 60 * 1000, now) +
-    usageLimit(S.usageWeek, account.weekly, 7 * 24 * 60 * 60 * 1000, now) + '</div>';
+  const open = usageOpen.has(key);
+  const line = (label, limit) => limit ? '<p>' + esc(S.usageDetailLine.replace('{label}', label)
+    .replace('{n}', Math.round(usageRemaining(limit, now))).replace('{time}', () => usageRefill(limit.resetsAt, now))) + '</p>' : '';
+  const detail = !open ? '' : '<div class="usageDetail usageSmall">' +
+    (a.plan ? '<p>' + esc(a.plan) + '</p>' : '') + line(S.usageFive, a.fiveHour) + line(S.usageWeek, a.weekly) +
+    a.extras.map(extra => '<p>' + esc(extra) + '</p>').join('') +
+    (a.note ? '<p>' + esc(a.note) + '</p>' : '') +
+    (login ? '<p class="usageLogin">' + esc(S.usageLogin) + '</p>' : '') + '</div>';
+  return '<button class="usageRow" type="button" aria-expanded="' + open + '" data-key="' + esc(key) + '">' +
+    '<span class="usageName"><span>' + esc(usageShortName(a.name, g.name)) + '</span>' +
+    (a.plan ? '<span class="usageSmall usagePlan">' + esc(a.plan) + '</span>' : '') + mark + '</span>' +
+    cells + '</button>' + detail;
 }
 
 function renderUsage(data) {
@@ -615,16 +668,21 @@ function renderUsage(data) {
   const minutes = Math.max(0, Math.floor((now - data.checkedAt) / 60000));
   const age = data.checkedAt === null ? S.usageNoReading : minutes > 0 ? S.usageAge : S.usageRecent;
   $('usageAge').textContent = age.replace('{n}', minutes).replace('{device}', () => data.device);
-  $('usageAccounts').innerHTML = data.groups.map(g => '<section class="usageGroup"' + colorStyle(g.color) + '><h3>' +
-    esc(g.name) + '</h3>' + g.accounts.map(a =>
-      '<div class="usageAccount"><h4 class="usageName">' + esc(a.name) +
-      (a.plan ? '<span class="usageSmall usagePlan">' + esc(a.plan) + '</span>' : '') + '</h4>' +
-      usageLimits(a, now) +
-      (a.needsLogin && g.provider !== 'ollama' ? '<p class="usageSmall usageLogin">' + esc(S.usageLogin) + '</p>' : '') +
-      (a.note ? '<p class="usageSmall">' + esc(a.note) + '</p>' : '') +
-      a.extras.map(extra => '<p class="usageSmall">' + esc(extra) + '</p>').join('') + '</div>'
-    ).join('') + '</section>').join('') || '<p class="note">' + esc(S.usageEmpty) + '</p>';
+  const groups = data.groups.filter(g => g.accounts.length);
+  $('usageAccounts').innerHTML = !groups.length ? '<p class="note">' + esc(S.usageEmpty) + '</p>' :
+    '<div class="usageCols" aria-hidden="true"><span>' + esc(S.usageAccountCol) + '</span><span>' + esc(S.usageFive) +
+    '</span><span>' + esc(S.usageWeek) + '</span></div>' +
+    groups.map(g => '<section class="usageGroup"' + colorStyle(g.color) + '><h3>' + esc(g.name) + '</h3>' +
+      g.accounts.map(a => usageRow(g, a, now)).join('') + '</section>').join('');
 }
+
+$('usageAccounts').addEventListener('click', e => {
+  const row = e.target.closest('.usageRow');
+  if (!row || !usageSnapshot) return;
+  const key = row.dataset.key;
+  usageOpen.has(key) ? usageOpen.delete(key) : usageOpen.add(key);
+  renderUsage(usageSnapshot);
+});
 
 async function loadUsage(refresh = false) {
   clearTimeout(usageTimer);

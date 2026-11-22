@@ -369,7 +369,7 @@ extension Discussion {
         while !cancellation.isCancelled && Date() < run.deadline && !run.activeExpired {
             let eligible = model.accounts.filter { [.claude, .codex].contains($0.provider) && !excluded.contains($0.id) && Enterprise.permits($0, lock: chatLock) && (workers?.contains($0.id) ?? true) }
             let account = preferred.flatMap { wanted in eligible.first { $0.id == wanted } }
-                ?? AutoPick.choose(eligible, usage: model.latestUsage, lock: chatLock, current: config.lastSoloAccountID)
+                ?? AutoPick.choose(workers == nil ? eligible.filter { !autoOff.contains($0.id) } : eligible, usage: model.latestUsage, lock: chatLock, current: config.lastSoloAccountID)
             guard let account else {
                 end(workers != nil
                     ? L("이 TODO에 고른 AI 중 이어서 작업할 계정이 없어요. 파일 변경은 보존했어요.", "None of the AIs picked for this TODO can continue. Changes are preserved.")

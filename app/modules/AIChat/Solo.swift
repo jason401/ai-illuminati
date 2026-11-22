@@ -85,12 +85,12 @@ public enum AutoPick {
         return (shown == shown.rounded() ? "\(Int(shown))%" : String(format: "%.1f%%", shown), note)
     }
 
-    // Claude and ChatGPT accounts that may work in this chat. Gemini (YouTube helper) and Gemma on this Mac
-    // answer only when called with @ or checked in the chat's menu; Gemma is also the last resort (see runSolo). In an Enterprise chat (`lock`)
-    // only accounts of its organization.
+    // Claude, ChatGPT and Gemini accounts that may work in this chat. Gemma on this Mac answers only when called with @
+    // or checked in the chat's menu, and is the last resort (see runSolo). In an Enterprise chat (`lock`) only accounts of
+    // its organization. Accounts switched off in Settings → Chat come in as `excluded` (Discussion.autoOff).
     static func candidates(_ accounts: [Account], usage: [String: AIUsage], lock: EnterpriseLock?, excluded: Set<String> = []) -> [Account] {
         accounts.filter { account in
-            account.provider != .gemini && account.provider != .ollama && !excluded.contains(account.id) && usage[account.id]?.needsLogin != true
+            account.provider != .ollama && !excluded.contains(account.id) && usage[account.id]?.needsLogin != true
             && Enterprise.permits(account, lock: lock)
         }
     }
@@ -172,7 +172,9 @@ extension Discussion {
     func soloNext(room: UUID) -> Account? {
         let config = configuration(of: room), lock = conversation(room).enterpriseLock
         if let id = config.soloAccountID, let chosen = model.accounts.first(where: { $0.id == id }), Enterprise.permits(chosen, lock: lock) { return chosen }
-        return AutoPick.choose(model.accounts, usage: model.latestUsage, lock: lock, current: config.lastSoloAccountID)
+        // Every cloud AI switched off in Settings: Gemma on this Mac, as when they are all out of usage.
+        return AutoPick.choose(model.accounts, usage: model.latestUsage, lock: lock, current: config.lastSoloAccountID, excluded: autoOff)
+            ?? (autoOff.isEmpty ? nil : lastResort(usage: model.latestUsage, excluded: []))
     }
 
     // The chat's members, in order: memberIDs, else what an older chat picked (see migratedMembers).
@@ -207,6 +209,9 @@ extension Discussion {
             c.peerReview = nil; c.peerAccountID = nil; c.pendingReview = nil; c.nextReviewAt = nil; c.lastReviewSHA = nil; c.lastReviewAt = nil
         }
     }
+
+    // Accounts the app may not pick by itself (Settings → Chat, "AIs picked automatically"); picking one by hand still works.
+    var autoOff: Set<String> { Set(model.accounts.filter { !Self.autoPicked($0, picks: model.autoTeamPicks) }.map(\.id)) }
 
     // Members who take part in the next message: only when two or more are checked, skipping accounts that need
     // sign-in or have no usage left (if fewer than two remain, the usual single answer runs).
@@ -670,6 +675,7 @@ extension Discussion {
 
         var helper = ""
         if Self.asksAboutYouTube(question), let gemini = model.accounts.first(where: { $0.provider == .gemini }), !mentions.contains(gemini.id),
+           mentions.isEmpty ? soloNext(room: id)?.id != gemini.id : true,   // Gemini answering itself searches on its own
            model.latestUsage[gemini.id]?.needsLogin != true, permits(gemini, room: id) {
             changeTurn(id, index) { $0.status = L("Gemini가 유튜브를 찾는 중…", "Gemini is searching YouTube…") }
             let result = debateAnswer(gemini, """
@@ -812,7 +818,7 @@ extension Discussion {
             let account: Account
             if let id = manual, let chosen = model.accounts.first(where: { $0.id == id }), !excluded.contains(id), Enterprise.permits(chosen, lock: chatLock) {
                 account = chosen
-            } else if let chosen = AutoPick.choose(model.accounts, usage: usage, lock: chatLock, current: last, excluded: excluded) {
+            } else if let chosen = AutoPick.choose(model.accounts, usage: usage, lock: chatLock, current: last, excluded: excluded.union(autoOff)) {
                 account = chosen
             } else if let local = lastResort(usage: usage, excluded: excluded) {
                 // Every cloud account is out: Gemma on this Mac answers (its data never leaves the Mac,

@@ -53,17 +53,18 @@ enum Peer {
     }
 
     // Whom one ask_ai call asks. `to`: an account name, "different_kind" (the default) or "any". A name that is not
-    // available falls back to the default, with a note for the asker. The chat's members first, then the most usage
+    // available falls back to the default, with a note for the asker. `off`: switched off in Settings, asked only by name. The chat's members first, then the most usage
     // left; another kind of AI before another account of the same kind, and one of each kind before a second one.
     static func pick(asker: Account?, to: String?, count: Int, members: [String], accounts: [Account], usage: [String: AIUsage],
-                     lock: EnterpriseLock?, label: (Account) -> String) -> (accounts: [Account], note: String?) {
-        let able = available(asker: asker, accounts: accounts, usage: usage, lock: lock)
+                     off: Set<String> = [], lock: EnterpriseLock?, label: (Account) -> String) -> (accounts: [Account], note: String?) {
+        let named = available(asker: asker, accounts: accounts, usage: usage, lock: lock)
+        let able = named.filter { !off.contains($0.id) }
         let count = min(max(count, 1), maxAtOnce)
         let wanted = (to ?? "").trimmingCharacters(in: .whitespacesAndNewlines), key = wanted.lowercased()
         var chosen: [Account] = [], note: String?
         if !["", "different_kind", "any"].contains(key) {
-            if let hit = able.first(where: { label($0).lowercased() == key || $0.name.lowercased() == key })
-                ?? able.first(where: { label($0).lowercased().contains(key) || $0.provider.title.lowercased() == key }) {
+            if let hit = named.first(where: { label($0).lowercased() == key || $0.name.lowercased() == key })
+                ?? named.first(where: { label($0).lowercased().contains(key) || $0.provider.title.lowercased() == key }) {
                 chosen = [hit]
             } else {
                 note = "\(wanted) is not available here (unknown, signed out, low on usage or outside this chat's organization), so a different kind of AI was asked instead."
@@ -473,7 +474,7 @@ extension Discussion {
             let picked = mode == .off
                 ? (accounts: self.peerAccount(for: asker, reviewers: members.filter { $0 != asker?.id }, room: id).map { [$0] } ?? [], note: nil)
                 : Peer.pick(asker: asker, to: request.to, count: request.count, members: members, accounts: self.model.accounts,
-                            usage: self.model.latestUsage, lock: self.lock(of: id), label: self.label)
+                            usage: self.model.latestUsage, off: self.autoOff, lock: self.lock(of: id), label: self.label)
             let note = picked.note.map { "[\($0)]\n" } ?? ""
             guard !picked.accounts.isEmpty, !cancellation.isCancelled else { return note + "No other AI is available. Continue on your own." }
             let askerName = asker.map(self.label) ?? "The AI"
@@ -581,7 +582,7 @@ extension Discussion {
             return peerAccount(for: account, reviewers: session.members.filter { $0 != account.id }, room: session.room).map { Peer.legacyRule(peer: label($0)) } ?? ""
         }
         let peers = Peer.pick(asker: account, to: nil, count: Peer.maxAtOnce, members: session.members, accounts: model.accounts,
-                              usage: model.latestUsage, lock: lock(of: room ?? session.room), label: label).accounts
+                              usage: model.latestUsage, off: autoOff, lock: lock(of: room ?? session.room), label: label).accounts
         guard !peers.isEmpty else { return "" }
         let reviewer = session.review ? peerAccount(for: account, reviewers: session.members.filter { $0 != account.id }, room: session.room).map(label) : nil
         let meeting = session.convene == nil ? [] : session.meetable(account).map(label)

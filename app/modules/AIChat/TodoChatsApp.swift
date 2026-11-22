@@ -18,7 +18,7 @@ extension Discussion: TodoChats {
 
     // Claude/Codex accounts with enough usage left for a TODO (AutoPick.need: lower near a reset), the most surplus first.
     public func crew(lock: EnterpriseLock?, allowed: [String]) -> (lead: Account, reviewer: Account?)? {
-        AutoPick.todoCrew(model.accounts, usage: model.latestUsage, lock: lock, allowed: allowed)
+        AutoPick.todoCrew(allowed.isEmpty ? model.accounts.filter { !autoOff.contains($0.id) } : model.accounts, usage: model.latestUsage, lock: lock, allowed: allowed)
     }
     // The bar shown is the lowest one any of the accounts that could take the TODO has now.
     public func noCrew(_ allowed: [String], lock: EnterpriseLock?) -> String {
@@ -52,8 +52,8 @@ extension Discussion: TodoChats {
     // usage left) reads the chat's folders like ask_ai (read only) and answers in the user's place.
     public func standIn(room: UUID, brief: String, token: DebateCancellation, done: @escaping (TodoStandInReply) -> Void) {
         let lead = conversation(room).configuration?.leadID.flatMap { id in model.accounts.first { $0.id == id } }
-        let picked = Peer.pick(asker: lead, to: nil, count: 1, members: [], accounts: model.accounts.filter { $0.provider != .gemini },
-                               usage: model.latestUsage, lock: lock(of: room), label: label)
+        let picked = Peer.pick(asker: lead, to: nil, count: 1, members: [], accounts: model.accounts,
+                               usage: model.latestUsage, off: autoOff, lock: lock(of: room), label: label)
         guard let peer = picked.accounts.first else { done(TodoStandInReply(error: L("대신 답할 AI가 없어요.", "No AI is free to answer."))); return }
         let name = label(peer), view = Self.peerView(soloBinding(room))
         let prompt = """

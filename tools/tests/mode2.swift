@@ -1651,7 +1651,7 @@ do {
     let personalCodex = Account(id: "solo-p-codex", provider: .codex, name: "ChatGPT", dir: nil)
     let schoolCodex = Account(id: "solo-s-codex", provider: .codex, name: "ChatGPT (School)", dir: nil, school: true)
     let schoolLock = Enterprise.organizations([schoolClaude, schoolCodex])[0]
-    let personalOnly: Set<String> = ["solo-s-claude", "solo-s-codex"]
+    let personalOnly: Set<String> = ["solo-s-claude", "solo-s-codex", "solo-gemini"]
     let gemini = Account(id: "solo-gemini", provider: .gemini, name: "Gemini", dir: nil)
     let all = [personalClaude, schoolClaude, personalCodex, schoolCodex, gemini]
     expect(schoolClaude.isSchool && schoolCodex.isSchool && !personalClaude.isSchool && !personalCodex.isSchool, "school accounts: by name or by the setting")
@@ -1665,7 +1665,8 @@ do {
     levels["solo-p-codex"] = usage(40, 8)
     expect(AutoPick.choose(all, usage: levels, lock: nil, current: nil, excluded: personalOnly)?.id == "solo-p-claude", "nobody has enough: the one with the most left (smaller of the two limits) still answers")
     expect(AutoPick.choose(all, usage: levels, lock: schoolLock, current: nil)?.id == "solo-s-claude", "Enterprise chats: accounts of the organization only (5-hour of the other is under 10%)")
-    expect(!AutoPick.candidates(all, usage: levels, lock: nil).contains { $0.provider == .gemini }, "Gemini never answers a plain chat")
+    expect(AutoPick.candidates(all, usage: levels, lock: nil).contains { $0.provider == .gemini }, "Gemini answers a plain chat like Claude and ChatGPT")
+    expect(AutoPick.choose(all, usage: ["solo-gemini": usage(90, 95)], lock: nil, current: nil, excluded: ["solo-p-claude", "solo-s-claude", "solo-p-codex", "solo-s-codex"])?.id == "solo-gemini", "Gemini is picked when it has the most left")
     // Close levels: Enterprise first; a clear lead still wins.
     let close: [String: AIUsage] = ["solo-p-codex": usage(90, 70), "solo-s-codex": usage(90, 63)]
     expect(AutoPick.choose(all, usage: close, lock: nil, current: nil, excluded: ["solo-p-claude", "solo-s-claude"])?.id == "solo-s-codex", "about the same left: the Enterprise account goes first")
@@ -1680,9 +1681,13 @@ do {
     try! FileManager.default.createDirectory(at: shared, withIntermediateDirectories: true)
     try! "measured 3.2 MHz".write(to: shared.appendingPathComponent("data.txt"), atomically: true, encoding: .utf8)
     m.sharedFolders = [shared.path]
-    m.latestUsage = ["solo-p-claude": usage(80, 40), "solo-p-codex": usage(90, 70), "solo-s-claude": usage(90, nil), "solo-s-codex": usage(90, 90)]
+    m.latestUsage = ["solo-p-claude": usage(80, 40), "solo-p-codex": usage(90, 70), "solo-s-claude": usage(90, nil), "solo-s-codex": usage(90, 90), "solo-gemini": usage(90, 20)]
     let chat = Discussion(model: m)
     expect(chat.configuration.mode == 0, "new chat is a plain chat")
+    let autoFirst = chat.soloNext?.id
+    m.autoTeamPicks = [autoFirst ?? "": false]
+    expect(autoFirst != nil && chat.soloNext?.id != autoFirst && chat.autoOff.contains(autoFirst!), "an AI switched off in Settings is not picked automatically")
+    m.autoTeamPicks = [:]
     let lock = NSLock()
     var asked: [(String, String, WorkspaceBinding)] = []
     var limitHit: Set<String> = ["solo-p-codex"]
@@ -1810,7 +1815,7 @@ do {
     let codexArgs = try! invocation.arguments(provider: .codex, original: ["exec", "-C", "/tmp", "x"], directory: dir, web: false, tools: ToolHub.workspaceLink)
     expect(codexArgs.contains("mcp_servers.illuminati.default_tools_approval_mode=\"approve\"") && codexArgs.contains("sandbox_mode=\"workspace-write\"")
            && codexArgs.contains("sandbox_workspace_write.writable_roots=[\"" + own + "\",\"" + SpaceStore.root.path + "\",\"" + linkedDir.path + "\"]"), "Codex may write the chat folder, the Spaces folder and the linked folder only")
-    print("PASS: plain chat (auto pick 10% / weekly, Gemini out, Enterprise sides, limit handoff, YouTube via Gemini, chat and linked folders writable with backup and undo, shared read only)")
+    print("PASS: plain chat (auto pick 10% / weekly, Gemini in, Settings switches, Enterprise sides, limit handoff, YouTube via Gemini, chat and linked folders writable with backup and undo, shared read only)")
 
     // AI Face: the app is its one MCP client ("illuminati"); a model reaches it only through the bridge.
     let face = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("Library/Application Support/AI Face")

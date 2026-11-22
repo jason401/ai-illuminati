@@ -1278,7 +1278,8 @@ private struct CollabSettingsCard: View {
     }
 }
 
-// Which AIs the app may call by itself when a chat's members are automatic: a meeting, or several views asked for.
+// Which AIs the app may call by itself: who answers an automatic chat, meetings and several views, ask_ai, and who works
+// on a project or TODO when nobody was picked. Picking one by hand in a chat still works.
 private struct AutoTeamSettingsCard: View {
     @ObservedObject var model: AppModel
 
@@ -1286,8 +1287,8 @@ private struct AutoTeamSettingsCard: View {
         let accounts = model.accounts.filter { Discussion.meets($0) || $0.provider == .ollama }
         if !accounts.isEmpty {
             SettingsCard(title: L("자동으로 부를 AI", "AIs picked automatically"),
-                         help: L("참여 AI를 고르지 않은 채팅에서 회의나 여러 의견을 부탁하면, 켜 둔 AI 중에서 사용량이 많이 남은 AI를 종류별로 먼저 최대 4명 불러요. 기본은 Claude·ChatGPT·Gemini예요.",
-                                 "In a chat without picked members, a meeting or several views call up to four of the AIs switched on here, one of each kind first, most usage left first. Default: Claude, ChatGPT and Gemini.")) {
+                         help: L("앱이 스스로 AI를 고를 때 켜 둔 AI만 써요: 자동으로 답할 AI, 회의·여러 의견(종류별로 먼저 최대 4명), ask_ai, 고른 AI가 없는 프로젝트·TODO 작업. 꺼 둔 AI도 채팅에서 직접 고르거나 @로 부르면 답해요. 프로젝트 작업과 검수는 Claude·ChatGPT만 해요. 기본은 Claude·ChatGPT·Gemini예요.",
+                                 "The app picks only the AIs switched on here: who answers an automatic chat, meetings and several views (one of each kind first, up to four), ask_ai, and project or TODO work nobody was picked for. An AI switched off still answers when picked in a chat or called with @. Project work and review are Claude and ChatGPT only. Default: Claude, ChatGPT and Gemini.")) {
                 ForEach(accounts, id: \.id) { account in
                     let off = account.provider == .ollama && !model.localEnabled
                     SettingsRow(title: account.name) {

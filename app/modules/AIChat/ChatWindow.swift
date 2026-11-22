@@ -1527,7 +1527,7 @@ struct ChatView<Model: ChatSettings>: View {
                         Circle().fill(account.provider.color).frame(width: 7, height: 7)
                         Text(discussion.label(account)).font(.system(size: 13))
                         Spacer()
-                        Text(account.provider == .gemini ? L("@로만 답해요", "answers only when called") : AutoPick.describe(usage))
+                        Text(AutoPick.describe(usage))
                             .font(.system(size: 11)).foregroundColor(.secondary)
                     }
                     .padding(.horizontal, 8).frame(height: 28)
@@ -2036,7 +2036,7 @@ struct ChatView<Model: ChatSettings>: View {
             Divider()
             Text(project ? L("여러 명 체크: 한 명이 작업하고 나머지가 검수해요", "Check several: one works, the others review")
                          : L("여러 명 체크: 모두 함께 답해요", "Check several: they all answer"))
-            // Gemini never answers automatically, but may be checked here like any account.
+            // Accounts switched off in Settings are not picked automatically, but may be checked here.
             ForEach(discussion.model.accounts, id: \.id) { account in
                 Button((members.contains(account.id) ? "✓ " : "") + discussion.label(account) + " · "
                        + AutoPick.describe(discussion.model.latestUsage[account.id])) {

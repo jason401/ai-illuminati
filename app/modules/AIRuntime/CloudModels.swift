@@ -228,3 +228,42 @@ public enum CloudModels {
         }
     }
 }
+
+// How hard a cloud account thinks (Settings by AI, the Thinking column). Nothing saved is "Auto": medium for chats,
+// high for important work (`RunConditions.thinkHard`: project work and TODOs, review, meetings, several views, votes,
+// ask_ai). Low is never used (user decision 2026-11-22).
+// Medium is passed even where the CLI's default is it: Codex reads low from a config file or a model's default.
+public enum CloudEffort {
+    static let key = "cloudEfforts"   // [account id: level]
+    public static let levels = ["medium", "high"]
+
+    public static func picked(_ account: Account, defaults: UserDefaults = .app) -> String? {
+        guard account.provider != .ollama, let level = (defaults.dictionary(forKey: key) as? [String: String])?[account.id],
+              levels.contains(level) else { return nil }
+        return level
+    }
+
+    public static func set(_ level: String?, for account: Account, defaults: UserDefaults = .app) {
+        var all = defaults.dictionary(forKey: key) as? [String: String] ?? [:]
+        all[account.id] = level.flatMap { levels.contains($0) ? $0 : nil }
+        defaults.set(all, forKey: key)
+    }
+
+    // The level a call is given; none for local models and for Gemini with a picked model (see apply).
+    public static func level(_ account: Account, hard: Bool, defaults: UserDefaults = .app) -> String? {
+        guard account.provider != .ollama, account.provider != .gemini || CloudModels.model(account, defaults: defaults) == nil else { return nil }
+        return picked(account, defaults: defaults) ?? (hard ? "high" : "medium")
+    }
+
+    // Like CloudModels.apply, on the finished command line. agy refuses --effort next to a picked model, whose name
+    // already holds its level ("gemini-3.8-flash-low") or which has none (Orchestrator): the model decides then.
+    static func apply(_ arguments: [String], provider: Account.Provider, level: String?, model: String?) -> [String] {
+        guard let level, levels.contains(level) else { return arguments }
+        switch provider {
+        case .claude: return arguments + ["--effort", level]
+        case .codex: return ["-c", "model_reasoning_effort=\"\(level)\""] + arguments
+        case .gemini: return model == nil ? arguments + ["--effort", level] : arguments
+        case .ollama: return arguments
+        }
+    }
+}

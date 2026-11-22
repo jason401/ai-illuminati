@@ -750,7 +750,7 @@ extension Discussion {
                     defer { group.leave() }
                     let started = Date()
                     let result = self.requestDebate(account, Self.soloContext(rules: rules, transcript: asked) + "\n[SOLO TURN]\n" + instruction,
-                                                    binding.fullAccess == true ? 8 * 3600 : Self.soloTimeout, cancellation, web: true,
+                                                    binding.fullAccess == true ? 8 * 3600 : Self.soloTimeout, cancellation, hard: called.count > 1, web: true,
                                                     fresh: freshTranscript.map { Self.soloContext(rules: rules, transcript: $0) + "\n[SOLO TURN]\n" + instruction },
                                                     workspace: k > 0 && called.count > 1 ? Self.sideView(binding) : nil,
                                                     steering: called.count == 1 ? self.steer : nil, progress: ran.watch(progress))

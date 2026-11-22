@@ -39,6 +39,11 @@ Answerer.toolForTests | static var toolForTests: String?
 ClaudeUsage | enum ClaudeUsage
 ClaudeUsage.forget(_:) | static func forget(_ account: Account)
 ClaudeUsage.read(_:) | static func read(_ account: Account) -> AIUsage
+CloudEffort | enum CloudEffort
+CloudEffort.level(_:hard:defaults:) | static func level(_ account: Account, hard: Bool, defaults: UserDefaults = .app) -> String?
+CloudEffort.levels | static let levels: [String]
+CloudEffort.picked(_:defaults:) | static func picked(_ account: Account, defaults: UserDefaults = .app) -> String?
+CloudEffort.set(_:for:defaults:) | static func set(_ level: String?, for account: Account, defaults: UserDefaults = .app)
 CloudModels | enum CloudModels
 CloudModels.Choice | struct Choice
 CloudModels.Choice.id | let id: String
@@ -163,6 +168,8 @@ RunConditions.prefix | var prefix: [String]
 RunConditions.processGroup | var processGroup: Bool
 RunConditions.steering | var steering: SteerChannel?
 RunConditions.tagged(_:) | func tagged(_ kind: String) -> RunConditions
+RunConditions.thinkHard | var thinkHard: Bool
+RunConditions.thinkingHard(_:) | func thinkingHard(_ on: Bool = true) -> RunConditions
 RunConditions.usageKind | var usageKind: String?
 RunConditions.wrapper | var wrapper: [String]?
 SteerChannel | final class SteerChannel

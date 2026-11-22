@@ -192,7 +192,7 @@ extension Discussion {
             DispatchQueue.global().async {
                 let started = Date()
                 let ran = AnswerModel()
-                var result = self.requestDebate(account, prompt, 300, cancellation, web: !cleanup, progress: ran.watch())
+                var result = self.requestDebate(account, prompt, 300, cancellation, hard: true, web: !cleanup, progress: ran.watch())
                 var pictures: [ChatImage] = []
                 if !cleanup, case .success(let text) = result {
                     let harvest = self.collectPictures(text, account: account, since: started, id: id, cancellation: cancellation)
@@ -263,7 +263,7 @@ extension Discussion {
             Write focus/reason/board in \(cleanup ? L("Korean", "English") : "the language of the latest user message unless it requests another language").
             Do not use tools, change files, or run commands.
             """
-            let result = requestDebate(moderator, prompt, 180, cancellation)
+            let result = requestDebate(moderator, prompt, 180, cancellation, hard: true)
             if cancellation.isCancelled { break }
             guard case .success(let text) = result, let decision = DebateDecision.parse(text, team: team) else {
                 reason = L("대표의 진행 판단을 받지 못해 토론을 종료했습니다.", "Moderator decision failed. Debate ended."); break
@@ -294,7 +294,7 @@ extension Discussion {
             let started = Date()
             let ran = AnswerModel()
             let speech = requestDebate(account, debateSpeech(account, rules: rules, focus: focus, transcript: transcript, opening: false, cleanup: cleanup),
-                                       300, cancellation, web: !cleanup, progress: ran.watch())
+                                       300, cancellation, hard: true, web: !cleanup, progress: ran.watch())
             if cancellation.isCancelled { break }
             count += 1 // Failed attempts count too, so the loop is always bounded.
             used[account.id, default: 0] += 1
@@ -334,7 +334,7 @@ extension Discussion {
             let final = cleanup ? ProjectMemoryCleanupLink.resultPrompt : Self.meetingFinal(missing: missing, caller: activeHeldBy)
             let result = meeting != nil ? requestDebate(moderator, Self.debateContext(rules: rules, transcript: transcript) + "\n"
                 + (board.isEmpty ? "" : "Moderator board:\n" + board + "\n") + "End reason: \(ending)\n" + final
-                + "\n\(cleanup ? "" : pictureRule(moderator))\nDo not change files or execute commands.", 180, cancellation, progress: ran.watch()) : requestDebate(moderator, """
+                + "\n\(cleanup ? "" : pictureRule(moderator))\nDo not change files or execute commands.", 180, cancellation, hard: true, progress: ran.watch()) : requestDebate(moderator, """
                 \(Self.debateContext(rules: rules, transcript: transcript))
                 [MODE3 FINAL]
                 Write the final answer to the latest user question, using the best of what the team found.
@@ -347,7 +347,7 @@ extension Discussion {
                 (e.g. [그림 2] / [Picture 2]) and say why in one line; make a new one only if the team made none.
                 \(pictureRule(moderator))
                 Do not change files or execute commands.
-                """, 180, cancellation, progress: ran.watch())
+                """, 180, cancellation, hard: true, progress: ran.watch())
             if !cancellation.isCancelled {
                 switch result {
                 case .success(let text):

@@ -77,7 +77,7 @@ public final class Discussion: ObservableObject {
     var debateCancellation: DebateCancellation? { host == nil ? workers[currentID]?.runCancellation : runCancellation }
     var collaborationAnswer: ((Account, String, [URL], DebateCancellation) -> Result<String, Answerer.Failure>)?
     var debateAnswer: (Account, String, TimeInterval, DebateCancellation, Bool) -> Result<String, Answerer.Failure> = {
-        Answerer.ask($0, prompt: $1, timeout: $2, cancellation: $3, web: $4, run: .app($0).tagged("meeting"))
+        Answerer.ask($0, prompt: $1, timeout: $2, cancellation: $3, web: $4, run: .app($0).tagged("meeting").thinkingHard(Discussion.thinkingHardHere))
     }
     // The open chat's message box; every other chat's unsent box waits in roomDrafts (RoomDrafts below).
     @Published var draft = "" { didSet { if draft != oldValue { draftsChanged() } } }
@@ -448,6 +448,27 @@ public final class Discussion: ObservableObject {
 
     // A call's run conditions with the turn's channel (requestDebate, project work); the runtime uses it only for Claude.
     static func steered(_ run: RunConditions, _ channel: SteerChannel?) -> RunConditions { var run = run; run.steering = channel; return run }
+
+    // The saved model also names the thinking level the call was given ("gpt-6.1-sol · high"), read when it starts;
+    // the chat shows it beside the model (TurnView.named). Unknown models ("") stay unknown.
+    static func notingEffort(_ progress: ((AnswerProgress) -> Void)?, _ account: Account, hard: Bool) -> ((AnswerProgress) -> Void)? {
+        guard let progress, let level = CloudEffort.level(account, hard: hard) else { return progress }
+        return { update in
+            if case .model(let name) = update, !name.isEmpty { progress(.model(name + effortMark + level)) } else { progress(update) }
+        }
+    }
+    static let effortMark = " · "
+
+    // Meetings, votes and several views think hard (CloudEffort). They reach debateAnswer, a hook tests replace, so
+    // instead of a new parameter the asking thread is marked while it waits; the default hook reads the mark.
+    private static let hardKey = "AIIlluminati.thinkHard"
+    static var thinkingHardHere: Bool { Thread.current.threadDictionary[hardKey] as? Bool ?? false }
+    static func thinkingHard<T>(_ on: Bool, _ body: () -> T) -> T {
+        let dictionary = Thread.current.threadDictionary, before = dictionary[hardKey]
+        if on { dictionary[hardKey] = true }
+        defer { dictionary[hardKey] = before }
+        return body()
+    }
 
     // Starts the next batch of a chat's queue. Returns why nothing started (the queue stays), nil when it started or was empty.
     @discardableResult

@@ -97,6 +97,17 @@ func runConditionsCapture() -> String {
             for launch in launches { out += describe(launch, account) }
         }
     }
+    // Meetings, votes and several views ask with hard: true, through the plain hook (debateAnswer) or a folder.
+    for account in accounts where account.provider == .claude {
+        for binding in [nil, WorkspaceBinding(roots: folder)] {
+            var launches: [Answerer.Launch] = []
+            Answerer.launchForTests = { launch in launches.append(launch); return .success("captured") }
+            _ = chat.requestDebate(account, "Say hi.", 60, DebateCancellation(), hard: true, workspace: binding)
+            _ = chat.requestDebate(account, "Say hi.", 60, DebateCancellation(), workspace: binding)
+            let levels = launches.map { launch in launch.arguments.firstIndex(of: "--effort").map { launch.arguments[$0 + 1] } ?? "none" }
+            expect(levels == ["high", "medium"], "requestDebate hard: high, then medium again (\(binding == nil ? "plain" : "folder")): \(levels)")
+        }
+    }
     // Project work the way ProjectChat starts it (write and execute, its own backup, a session), Claude and Codex
     // (the only project workers), the chat's full auto off and on. The tool answers at once; nothing else runs.
     // Found 2026-11-11, before R0 too: soloBinding rebuilds the binding without `fullAuto`, so "off" still runs full
@@ -176,6 +187,17 @@ func testRunConditions() {
     expect(block("codex project-on").contains("sandbox_mode=\\\"danger-full-access\\\"") && block("codex project-off").contains("sandbox_mode=\\\"read-only\\\""),
            "codex: full access on and off give their own sandbox")
     expect(blocks.filter { $0.hasPrefix("ollama ") }.allSatisfy { !$0.contains("exec:") }, "the local model starts no command line tool")
+    // Thinking on Auto: project work and its runs think hard, every other call medium.
+    for (provider, high, medium) in [("claude", "arg: \"--effort\"\narg: \"high\"", "arg: \"--effort\"\narg: \"medium\""),
+                                     ("codex", "arg: \"model_reasoning_effort=\\\"high\\\"\"", "arg: \"model_reasoning_effort=\\\"medium\\\"\""),
+                                     ("gemini", "arg: \"--effort\"\narg: \"high\"", "arg: \"--effort\"\narg: \"medium\"")] {
+        for (kind, work) in [("plain", false), ("folder", false), ("folder-full", false), ("project-off", true), ("project-on", true),
+                             ("project-chat-off", true), ("project-chat-on", true)] where !block(provider + " " + kind).isEmpty {
+            let text = block(provider + " " + kind)
+            expect(text.contains(work ? high : medium) && !text.contains(work ? medium : high),
+                   "\(provider) \(kind): Auto thinks \(work ? "high" : "medium")")
+        }
+    }
     // Then everything else, byte for byte.
     let golden = (try? String(contentsOfFile: "tools/tests/run_conditions.golden", encoding: .utf8)) ?? "(missing)"
     if captured != golden {

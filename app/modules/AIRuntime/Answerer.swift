@@ -53,6 +53,7 @@ public struct RunConditions {
     public var beforeStart: (() -> Void)? = nil   // the caller's own preparation (agy's web rule), just before the arguments
     public var steering: SteerChannel? = nil       // Claude with progress: messages sent while it answers go into the answer
     public var usageKind: String? = nil            // what the call is for, kept with its tokens when it leaves no log (TokenLedger)
+    public var thinkHard = false                   // important work (project work, review, meetings, views, ask_ai): Auto is high (CloudEffort)
     public struct Folders {
         var directory: URL                  // the room's folder: runs without a session and read results go below it
         var arguments: ([String], URL, Bool) throws -> [String]   // (the tool's arguments, run folder, web) → with the folders
@@ -64,6 +65,7 @@ public struct RunConditions {
     }
     public init() {}
     public func tagged(_ kind: String) -> RunConditions { var r = self; r.usageKind = kind; return r }
+    public func thinkingHard(_ on: Bool = true) -> RunConditions { var r = self; r.thinkHard = r.thinkHard || on; return r }
 }
 
 public enum Answerer {
@@ -91,8 +93,8 @@ public enum Answerer {
                     images: [URL] = [], web: Bool = false, session: NativeSessionCall? = nil, run: RunConditions,
                     progress: ((AnswerProgress) -> Void)? = nil) -> Result<String, Failure> {
         // Read once, so a change in Settings never switches models in the middle of one answer.
-        let model = CloudModels.model(account)
-        guard let folders = run.folders else { return askOnce(account, prompt: prompt, timeout: timeout, cancellation: cancellation, images: images, web: web, session: session, run: run, model: model, progress: progress) }
+        let model = CloudModels.model(account), effort = CloudEffort.level(account, hard: run.thinkHard)
+        guard let folders = run.folders else { return askOnce(account, prompt: prompt, timeout: timeout, cancellation: cancellation, images: images, web: web, session: session, run: run, model: model, effort: effort, progress: progress) }
         let instruction = """
         If native workspace read tools are unavailable because of managed policy, request data from the host instead of guessing.
         Return ONLY JSON {"workspace_reads":[{"path":"absolute linked file path","start":1,"end":5,"images":false}]} and wait.
@@ -129,7 +131,7 @@ public enum Answerer {
                 if case .model(let name) = update { modelLock.lock(); ranOn = name; modelLock.unlock(); return }
                 report(update)
             } }
-            let result = replyForTests?(current) ?? askOnce(account, prompt: current, timeout: timeout, cancellation: cancellation, images: currentImages, web: web, session: call, run: run, model: model, progress: shown)
+            let result = replyForTests?(current) ?? askOnce(account, prompt: current, timeout: timeout, cancellation: cancellation, images: currentImages, web: web, session: call, run: run, model: model, effort: effort, progress: shown)
             if let session, let call { session.nativeID = call.nativeID; session.completed = call.completed; session.compacted = session.compacted || call.compacted }
             guard case .success(let text) = result,
                   let start = text.firstIndex(of: "{"), let end = text.lastIndex(of: "}"), start < end,
@@ -189,7 +191,7 @@ public enum Answerer {
 
     private static func askOnce(_ account: Account, prompt: String, timeout: TimeInterval = 240, cancellation: DebateCancellation? = nil,
                     images: [URL] = [], web: Bool = false, session: NativeSessionCall? = nil, run: RunConditions,
-                    model: String? = nil, progress: ((AnswerProgress) -> Void)? = nil) -> Result<String, Failure> {
+                    model: String? = nil, effort: String? = nil, progress: ((AnswerProgress) -> Void)? = nil) -> Result<String, Failure> {
         if cancellation?.isCancelled == true { return .failure(.failed("Cancelled")) }
         let outFile = chatDir + "/answer-\(UUID().uuidString).txt"
         defer { try? FileManager.default.removeItem(atPath: outFile) }
@@ -302,6 +304,7 @@ public enum Answerer {
         if askedJSON { arguments += ["--output-format", "json"] }
         if unlogged && account.provider == .codex && !arguments.contains("--json"), let exec = arguments.firstIndex(of: "exec") { arguments.insert("--json", at: exec + 1) }
         arguments = CloudModels.apply(arguments, provider: account.provider, model: model)
+        arguments = CloudEffort.apply(arguments, provider: account.provider, level: effort, model: model)
         guard let binary = toolForTests ?? binary ?? (launchForTests == nil ? nil : "<cli>") else { return .failure(.missingTool) }
 
         let process = Process()

@@ -12,6 +12,8 @@ arg: "{\"mcpServers\":{}}"
 arg: "--no-chrome"
 arg: "--output-format"
 arg: "json"
+arg: "--effort"
+arg: "medium"
 dir: $TEST_HOME/.ai-illuminati/chat
 group: false
 == claude folder
@@ -37,6 +39,8 @@ arg: "--add-dir"
 arg: "$TEST_HOME/run-conditions-root"
 arg: "--output-format"
 arg: "json"
+arg: "--effort"
+arg: "medium"
 dir: $TEST_HOME/.ai-illuminati/rooms/<uuid>/stateless-<uuid>
 group: false
 == claude folder-full
@@ -61,6 +65,8 @@ arg: "--add-dir"
 arg: "$TEST_HOME/run-conditions-root"
 arg: "--output-format"
 arg: "json"
+arg: "--effort"
+arg: "medium"
 dir: $TEST_HOME/.ai-illuminati/rooms/<uuid>/stateless-<uuid>
 group: false
 env+: GH_CONFIG_DIR="$TEST_HOME/Library/Application Support/AI Illuminati/auto-guard/gh-empty"
@@ -101,6 +107,8 @@ arg: "--add-dir"
 arg: "$TEST_HOME/run-conditions-root"
 arg: "--output-format"
 arg: "json"
+arg: "--effort"
+arg: "high"
 dir: $TEST_HOME/.ai-illuminati/rooms/<uuid>/stateless-<uuid>
 group: true
 env+: AI_ILLUMINATI_PROJECT_PROCESS="1"
@@ -128,6 +136,8 @@ arg: "--add-dir"
 arg: "$TEST_HOME/run-conditions-root"
 arg: "--output-format"
 arg: "json"
+arg: "--effort"
+arg: "high"
 dir: $TEST_HOME/.ai-illuminati/rooms/<uuid>/stateless-<uuid>
 group: true
 env+: AI_ILLUMINATI_PROJECT_PROCESS="1"
@@ -148,6 +158,8 @@ env-: SSH_AUTH_SOCK
 result: captured
 exec: <cli>
 arg: "-c"
+arg: "model_reasoning_effort=\"medium\""
+arg: "-c"
 arg: "mcp_servers.gpt.enabled=false"
 arg: "exec"
 arg: "--json"
@@ -167,6 +179,8 @@ group: false
 == codex folder
 result: captured
 exec: <cli>
+arg: "-c"
+arg: "model_reasoning_effort=\"medium\""
 arg: "-c"
 arg: "sandbox_mode=\"read-only\""
 arg: "-c"
@@ -213,6 +227,8 @@ group: false
 == codex folder-full
 result: captured
 exec: <cli>
+arg: "-c"
+arg: "model_reasoning_effort=\"medium\""
 arg: "-c"
 arg: "sandbox_mode=\"danger-full-access\""
 arg: "-c"
@@ -267,6 +283,8 @@ exec: /usr/bin/python3
 arg: "$RESOURCES/project_process.py"
 arg: "<cli>"
 arg: "-c"
+arg: "model_reasoning_effort=\"high\""
+arg: "-c"
 arg: "sandbox_mode=\"read-only\""
 arg: "-c"
 arg: "approval_policy=\"never\""
@@ -315,6 +333,8 @@ result: captured
 exec: /usr/bin/python3
 arg: "$RESOURCES/project_process.py"
 arg: "<cli>"
+arg: "-c"
+arg: "model_reasoning_effort=\"high\""
 arg: "-c"
 arg: "sandbox_mode=\"danger-full-access\""
 arg: "-c"
@@ -378,6 +398,8 @@ arg: "--mode"
 arg: "plan"
 arg: "--add-dir"
 arg: "$TEST_HOME/run-conditions-root"
+arg: "--effort"
+arg: "medium"
 dir: $TEST_HOME/.ai-illuminati/rooms/<uuid>/stateless-<uuid>
 group: false
 == gemini folder-full
@@ -394,6 +416,8 @@ arg: "--mode"
 arg: "plan"
 arg: "--add-dir"
 arg: "$TEST_HOME/run-conditions-root"
+arg: "--effort"
+arg: "medium"
 dir: $TEST_HOME/.ai-illuminati/rooms/<uuid>/stateless-<uuid>
 group: false
 env+: GH_CONFIG_DIR="$TEST_HOME/Library/Application Support/AI Illuminati/auto-guard/gh-empty"
@@ -425,6 +449,8 @@ arg: "--mode"
 arg: "plan"
 arg: "--add-dir"
 arg: "$TEST_HOME/run-conditions-root"
+arg: "--effort"
+arg: "high"
 dir: $TEST_HOME/.ai-illuminati/rooms/<uuid>/stateless-<uuid>
 group: true
 env+: AI_ILLUMINATI_PROJECT_PROCESS="1"
@@ -444,6 +470,8 @@ arg: "--mode"
 arg: "plan"
 arg: "--add-dir"
 arg: "$TEST_HOME/run-conditions-root"
+arg: "--effort"
+arg: "high"
 dir: $TEST_HOME/.ai-illuminati/rooms/<uuid>/stateless-<uuid>
 group: true
 env+: AI_ILLUMINATI_PROJECT_PROCESS="1"
@@ -498,6 +526,8 @@ arg: "--add-dir"
 arg: "$TEST_HOME/Library/Application Support/AI Illuminati/chats/<uuid>.work/files"
 arg: "--add-dir"
 arg: "$TEST_HOME/run-conditions-project-claude-false"
+arg: "--effort"
+arg: "high"
 dir: $TEST_HOME/.ai-illuminati/rooms/<uuid>/stateless-<uuid>
 group: true
 env+: AI_ILLUMINATI_PROJECT_PROCESS="1"
@@ -543,6 +573,8 @@ arg: "--add-dir"
 arg: "$TEST_HOME/Library/Application Support/AI Illuminati/chats/<uuid>.work/files"
 arg: "--add-dir"
 arg: "$TEST_HOME/run-conditions-project-claude-true"
+arg: "--effort"
+arg: "high"
 dir: $TEST_HOME/.ai-illuminati/rooms/<uuid>/stateless-<uuid>
 group: true
 env+: AI_ILLUMINATI_PROJECT_PROCESS="1"
@@ -565,6 +597,8 @@ result: captured
 exec: /usr/bin/python3
 arg: "$RESOURCES/project_process.py"
 arg: "<cli>"
+arg: "-c"
+arg: "model_reasoning_effort=\"high\""
 arg: "-c"
 arg: "sandbox_mode=\"danger-full-access\""
 arg: "-c"
@@ -619,6 +653,8 @@ result: captured
 exec: /usr/bin/python3
 arg: "$RESOURCES/project_process.py"
 arg: "<cli>"
+arg: "-c"
+arg: "model_reasoning_effort=\"high\""
 arg: "-c"
 arg: "sandbox_mode=\"danger-full-access\""
 arg: "-c"

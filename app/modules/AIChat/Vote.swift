@@ -104,7 +104,7 @@ extension Discussion {
                 \(language)
                 Return ONLY JSON: {"options":["…","…"]}
                 Do not use tools, change files, or run commands.
-                """, 180, cancellation)
+                """, 180, cancellation, hard: true)
             if cancellation.isCancelled { return endVote(id, index, stopped: true) }
             if case .success(let text) = result { options = VoteCount.parseOptions(text) }
             guard !options.isEmpty else {
@@ -141,7 +141,7 @@ extension Discussion {
             group.enter()
             DispatchQueue.global().async {
                 let ran = AnswerModel()
-                let result = self.requestDebate(account, prompt, 300, cancellation, web: true, progress: ran.watch())
+                let result = self.requestDebate(account, prompt, 300, cancellation, hard: true, web: true, progress: ran.watch())
                 defer { group.leave() }
                 guard !cancellation.isCancelled else { return }
                 var entry: ChatTurn.Entry

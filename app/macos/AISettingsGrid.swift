@@ -3,6 +3,7 @@ import SwiftUI
 import AIAccounts
 import AILocalization
 import AIChat
+import AIRuntime
 
 // Every AI's chat settings in one window: AIs down the side (models on this Mac too), settings across.
 // It only shows and switches the settings that already live in AppModel; a cell that does not apply shows a dash.
@@ -31,11 +32,12 @@ struct AISettingsGrid: View {
     @ObservedObject var model: AppModel
 
     private enum Column: CaseIterable {
-        case model, auto, enterprise, pictures, menuBar, local
+        case model, effort, auto, enterprise, pictures, menuBar, local
 
         var title: String {
             switch self {
             case .model: return L("모델", "Model")
+            case .effort: return L("생각 깊이", "Thinking")
             case .auto: return L("자동으로 부르기", "Picked automatically")
             case .enterprise: return L("엔터프라이즈", "Enterprise")
             case .pictures: return L("그림 담당", "Picture maker")
@@ -46,6 +48,8 @@ struct AISettingsGrid: View {
         var help: String {
             switch self {
             case .model: return L("이 AI가 답할 때 쓰는 모델. 자동은 그 CLI의 기본값이에요.", "The model this AI answers with. Auto is the CLI's default.")
+            case .effort: return L("답하기 전에 얼마나 생각할지. 자동은 보통 중간, 프로젝트·TODO 작업과 검수는 높음이에요. 깊을수록 사용량과 시간이 늘어요. Gemini에서 모델을 고르면 그 모델 이름의 깊이를 따라요.",
+                                   "How much this AI thinks before answering. Auto is medium, and high for project or TODO work and review. Deeper uses more usage and time. A Gemini model you pick keeps the level in its name.")
             case .auto: return L("앱이 스스로 AI를 고를 때 후보가 돼요: 자동으로 답할 AI, 회의·여러 의견, ask_ai, 맡을 AI를 정하지 않은 프로젝트·TODO 작업. 꺼도 채팅에서 직접 고르거나 @로 부르면 답해요. 프로젝트 작업·검수는 Claude·ChatGPT만 해요.",
                                  "A candidate when the app picks by itself: who answers an automatic chat, meetings and several views, ask_ai, project or TODO work nobody was picked for. Off: still answers when picked in a chat or called with @. Project work and review are Claude and ChatGPT only.")
             case .enterprise: return L("엔터프라이즈(학교·회사) 계정: 직접 잠근 Enterprise 방에는 이름이 같은 엔터프라이즈 계정과 내 Mac 모델만 참여해요.",
@@ -66,7 +70,7 @@ struct AISettingsGrid: View {
 
     private func applies(_ column: Column, _ account: Account) -> Bool {
         switch column {
-        case .model, .enterprise: return account.provider != .ollama
+        case .model, .effort, .enterprise: return account.provider != .ollama
         case .auto: return Discussion.meets(account) || account.provider == .ollama
         case .pictures: return account.provider == .codex
         case .menuBar: return true
@@ -143,6 +147,8 @@ struct AISettingsGrid: View {
             switch column {
             case .model:
                 CloudModelMenu(account: account)
+            case .effort:
+                CloudEffortMenu(account: account).help(column.help)
             case .auto:
                 let off = account.provider == .ollama && !model.localEnabled
                 toggle(column, account, Binding(get: { Discussion.autoPicked(account, picks: model.autoTeamPicks) },
@@ -168,4 +174,36 @@ struct AISettingsGrid: View {
         Toggle(account.name + " · " + column.title, isOn: isOn)
             .labelsHidden().toggleStyle(.switch).controlSize(.small)
     }
+}
+
+// The Thinking column: Auto (nothing saved), Medium or High; never Low (user decision 2026-11-22).
+private struct CloudEffortMenu: View {
+    let account: Account
+    @StateObject private var state = CloudEffortPick()   // @State needs a macro plugin the command line build lacks
+
+    private static func title(_ level: String?) -> String {
+        switch level {
+        case "medium": return L("중간", "Medium")
+        case "high": return L("높음", "High")
+        default: return L("자동", "Auto")
+        }
+    }
+
+    var body: some View {
+        Menu {
+            Picker(L("생각 깊이", "Thinking"), selection: Binding(get: { state.picked ?? "" }, set: { value in
+                state.picked = value.isEmpty ? nil : value
+                CloudEffort.set(state.picked, for: account)
+            })) {
+                ForEach([""] + CloudEffort.levels, id: \.self) { Text(Self.title($0.isEmpty ? nil : $0)).tag($0) }
+            }
+            .pickerStyle(.inline).labelsHidden()
+        } label: { Text(Self.title(state.picked)).lineLimit(1) }
+        .menuStyle(.borderlessButton).fixedSize().controlSize(.small)
+        .onAppear { state.picked = CloudEffort.picked(account) }
+    }
+}
+
+private final class CloudEffortPick: ObservableObject {
+    @Published var picked: String?
 }

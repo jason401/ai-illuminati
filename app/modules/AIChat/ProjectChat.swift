@@ -415,7 +415,7 @@ extension Discussion {
                                           invoke: { text, images, session in
                     Answerer.ask(account, prompt: text, timeout: run.deadline.timeIntervalSinceNow, cancellation: run.attempt,
                                  images: images, web: true, session: session,
-                                 run: Discussion.steered(.app(account, WorkspaceInvocation(binding: workspace, room: id, readOnly: false, backupPath: self.activeWorkspaceBackupPath)), self.steer), progress: progress)
+                                 run: Discussion.steered(.app(account, WorkspaceInvocation(binding: workspace, room: id, readOnly: false, backupPath: self.activeWorkspaceBackupPath)), self.steer), progress: Discussion.notingEffort(progress, account, hard: true))
                 }, note: { text in DispatchQueue.main.async { self.sessionNote = text } })
             }
             let started = Date()
@@ -498,7 +498,7 @@ extension Discussion {
                     let reviewPrompt = Self.soloContext(rules: rules, transcript: transcript + "\n[Writer result]\n" + text) + "\n[SOLO TURN]\nReview the linked project read-only. Do not edit the project or run Git writes.\n" + run.checkpoint("Read-only review")
                     let reviewed = AnswerModel()
                     let reviewResult = !permits(reviewer, room: id) ? .failure(Enterprise.blocked(reviewer))
-                        : workspaceAnswer?(reviewer, reviewPrompt, view, run.attempt, reviewed.watch()) ?? Answerer.ask(reviewer, prompt: reviewPrompt, timeout: min(900, run.deadline.timeIntervalSinceNow), cancellation: run.attempt, run: .app(reviewer, WorkspaceInvocation(binding: view, room: id)), progress: reviewed.watch())
+                        : workspaceAnswer?(reviewer, reviewPrompt, view, run.attempt, reviewed.watch()) ?? Answerer.ask(reviewer, prompt: reviewPrompt, timeout: min(900, run.deadline.timeIntervalSinceNow), cancellation: run.attempt, run: .app(reviewer, WorkspaceInvocation(binding: view, room: id)).thinkingHard(), progress: Discussion.notingEffort(reviewed.watch(), reviewer, hard: true))
                     run.attempt.cancel()
                     let reviewText: String, failed: Bool
                     switch reviewResult {

@@ -3554,6 +3554,25 @@ func testCloudModels() {
         expect(CloudModels.apply(args, provider: .claude, model: bad) == args, "an invalid name is never passed: \(bad)")
     }
     expect(CloudModels.valid("opus[1m]") && CloudModels.valid("claude-sonnet-4-6"), "real names are allowed")
+    // Thinking: Auto is medium, high for project work; a pick holds for both. agy takes no --effort beside a model.
+    expect(CloudEffort.picked(claude, defaults: defaults) == nil && CloudEffort.level(claude, hard: false, defaults: defaults) == "medium"
+           && CloudEffort.level(claude, hard: true, defaults: defaults) == "high", "Auto: medium, high for work")
+    CloudEffort.set("high", for: codex, defaults: defaults)
+    CloudEffort.set("low", for: claude, defaults: defaults)
+    expect(CloudEffort.level(codex, hard: false, defaults: defaults) == "high" && CloudEffort.picked(claude, defaults: defaults) == nil, "a pick holds; low is never kept")
+    CloudEffort.set("medium", for: codex, defaults: defaults)
+    expect(CloudEffort.level(codex, hard: true, defaults: defaults) == "medium", "a picked medium stays medium for work too")
+    expect(CloudEffort.level(Account(id: "o", provider: .ollama, name: "O", model: "m"), hard: true, defaults: defaults) == nil, "local models: none")
+    expect(CloudEffort.apply(args, provider: .claude, level: "high", model: "opus") == args + ["--effort", "high"], "Claude: --effort")
+    expect(CloudEffort.apply(["exec", "-"], provider: .codex, level: "medium", model: nil) == ["-c", "model_reasoning_effort=\"medium\"", "exec", "-"], "Codex: -c model_reasoning_effort")
+    expect(CloudEffort.apply(["-p", "q"], provider: .gemini, level: "high", model: nil) == ["-p", "q", "--effort", "high"]
+           && CloudEffort.apply(["-p", "q"], provider: .gemini, level: "high", model: "gemini-3.8-flash-low") == ["-p", "q"], "Gemini: --effort only on Auto model")
+    expect(CloudEffort.apply(args, provider: .claude, level: "max", model: nil) == args && CloudEffort.apply(args, provider: .claude, level: nil, model: nil) == args, "unknown level: nothing")
+    var noted: [String] = []
+    let note = Discussion.notingEffort({ if case .model(let name) = $0 { noted.append(name) } }, Account(id: "effort-note", provider: .claude, name: "E"), hard: true)
+    note?(.model("claude-opus-5-5")); note?(.model(""))
+    expect(noted == ["claude-opus-5-5 · high", ""], "the saved model names its thinking level; unknown stays unknown: \(noted)")
+    expect(Discussion.notingEffort(nil, claude, hard: true) == nil, "no progress: nothing to note")
     CloudModels.set("  ", for: claude, defaults: defaults)
     expect(CloudModels.model(claude, defaults: defaults) == nil && CloudModels.model(codex, defaults: defaults) == "gpt-6.1-sol", "empty goes back to Auto, others stay")
     let cache = #"{"models":[{"slug":"gpt-6.1-sol","display_name":"GPT-6.1-Sol","visibility":"list"},{"slug":"gpt-reserve","visibility":"hide"},{"slug":"gpt-6-luna"}]}"#

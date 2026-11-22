@@ -22,6 +22,7 @@ extension RunConditions {
         if project {
             run.wrapper = ["/usr/bin/python3", WorkspaceInvocation.resources.appendingPathComponent("project_process.py").path]
             run.processGroup = true
+            run.thinkHard = true
         }
         run.environment = { base in
             var environment = base

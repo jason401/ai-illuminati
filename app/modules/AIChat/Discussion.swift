@@ -451,8 +451,8 @@ public final class Discussion: ObservableObject {
 
     // The saved model also names the thinking level the call was given ("gpt-6.1-sol · high"), read when it starts;
     // the chat shows it beside the model (TurnView.named). Unknown models ("") stay unknown.
-    static func notingEffort(_ progress: ((AnswerProgress) -> Void)?, _ account: Account, hard: Bool) -> ((AnswerProgress) -> Void)? {
-        guard let progress, let level = CloudEffort.level(account, hard: hard) else { return progress }
+    static func notingEffort(_ progress: ((AnswerProgress) -> Void)?, _ account: Account, hard: Bool, harder: Bool = false) -> ((AnswerProgress) -> Void)? {
+        guard let progress, let level = CloudEffort.level(account, hard: hard, harder: harder) else { return progress }
         return { update in
             if case .model(let name) = update, !name.isEmpty { progress(.model(name + effortMark + level)) } else { progress(update) }
         }

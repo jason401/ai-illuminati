@@ -54,6 +54,7 @@ public struct RunConditions {
     public var steering: SteerChannel? = nil       // Claude with progress: messages sent while it answers go into the answer
     public var usageKind: String? = nil            // what the call is for, kept with its tokens when it leaves no log (TokenLedger)
     public var thinkHard = false                   // important work (project work, review, meetings, views, ask_ai): Auto is high (CloudEffort)
+    public var thinkHarder = false                 // big work (a TODO retried, helped or an hour-long split's finish): Auto is xhigh
     public struct Folders {
         var directory: URL                  // the room's folder: runs without a session and read results go below it
         var arguments: ([String], URL, Bool) throws -> [String]   // (the tool's arguments, run folder, web) → with the folders
@@ -66,6 +67,7 @@ public struct RunConditions {
     public init() {}
     public func tagged(_ kind: String) -> RunConditions { var r = self; r.usageKind = kind; return r }
     public func thinkingHard(_ on: Bool = true) -> RunConditions { var r = self; r.thinkHard = r.thinkHard || on; return r }
+    public func thinkingHarder(_ on: Bool = true) -> RunConditions { var r = thinkingHard(on); r.thinkHarder = r.thinkHarder || on; return r }
 }
 
 public enum Answerer {
@@ -93,7 +95,7 @@ public enum Answerer {
                     images: [URL] = [], web: Bool = false, session: NativeSessionCall? = nil, run: RunConditions,
                     progress: ((AnswerProgress) -> Void)? = nil) -> Result<String, Failure> {
         // Read once, so a change in Settings never switches models in the middle of one answer.
-        let model = CloudModels.model(account), effort = CloudEffort.level(account, hard: run.thinkHard)
+        let model = CloudModels.model(account), effort = CloudEffort.level(account, hard: run.thinkHard, harder: run.thinkHarder)
         guard let folders = run.folders else { return askOnce(account, prompt: prompt, timeout: timeout, cancellation: cancellation, images: images, web: web, session: session, run: run, model: model, effort: effort, progress: progress) }
         let instruction = """
         If native workspace read tools are unavailable because of managed policy, request data from the host instead of guessing.

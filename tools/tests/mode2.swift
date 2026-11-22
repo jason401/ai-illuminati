@@ -3561,7 +3561,28 @@ func testCloudModels() {
     CloudEffort.set("low", for: claude, defaults: defaults)
     expect(CloudEffort.level(codex, hard: false, defaults: defaults) == "high" && CloudEffort.level(claude, hard: true, defaults: defaults) == "low", "a pick holds, low too")
     CloudEffort.set("max", for: claude, defaults: defaults)
-    expect(CloudEffort.picked(claude, defaults: defaults) == nil, "a level not every model takes is never kept")
+    expect(CloudEffort.level(claude, hard: false, defaults: defaults) == "max", "Claude takes max")
+    CloudEffort.set("bogus", for: claude, defaults: defaults)
+    expect(CloudEffort.picked(claude, defaults: defaults) == nil && CloudEffort.level(claude, hard: true, harder: true, defaults: defaults) == "xhigh",
+           "an unknown level is never kept; Auto for big work is xhigh")
+    expect(CloudEffort.levels(for: claude, defaults: defaults) == ["low", "medium", "high", "xhigh", "max"], "Claude: five levels")
+    let geminiAccount = Account(id: "m-gemini", provider: .gemini, name: "G")
+    CloudEffort.set("max", for: geminiAccount, defaults: defaults)
+    expect(CloudEffort.levels(for: geminiAccount, defaults: defaults).last == "xhigh" && CloudEffort.level(geminiAccount, hard: false, defaults: defaults) == "xhigh",
+           "agy's default model has no max: lowered to xhigh")
+    CloudModels.set("gemini-3.8-flash-low", for: geminiAccount, defaults: defaults)
+    expect(CloudEffort.levels(for: geminiAccount, defaults: defaults).isEmpty && CloudEffort.level(geminiAccount, hard: true, defaults: defaults) == nil, "a Gemini model by name keeps its level")
+    // Codex: the levels of the picked model, else of the config file's model, from Codex's own cache.
+    let levelCache = #"{"models":[{"slug":"gpt-6-luna","supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"},{"effort":"xhigh"},{"effort":"max"}]},{"slug":"gpt-6.1-sol","supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"},{"effort":"xhigh"},{"effort":"max"},{"effort":"ultra"}]}]}"#
+    try! Data(levelCache.utf8).write(to: folder.appendingPathComponent("models_cache.json"))
+    try! "model = \"gpt-6-luna\"\nmodel_reasoning_effort = \"low\"\n[profiles.x]\nmodel = \"gpt-6.1-sol\"\n".write(to: folder.appendingPathComponent("config.toml"), atomically: true, encoding: .utf8)
+    let plainCodex = Account(id: "m-codex-auto", provider: .codex, name: "Y", dir: folder.path)
+    CloudEffort.set("ultra", for: plainCodex, defaults: defaults)
+    expect(CloudEffort.levels(for: plainCodex, defaults: defaults).last == "max" && CloudEffort.level(plainCodex, hard: false, defaults: defaults) == "max",
+           "Codex on its config model (luna): no ultra, lowered to max")
+    expect(CloudEffort.levels(for: codex, defaults: defaults).last == "ultra", "Codex on a picked model that has ultra")
+    try? FileManager.default.removeItem(at: folder.appendingPathComponent("models_cache.json"))
+    try? FileManager.default.removeItem(at: folder.appendingPathComponent("config.toml"))
     CloudEffort.set("medium", for: codex, defaults: defaults)
     expect(CloudEffort.level(codex, hard: true, defaults: defaults) == "medium", "a picked medium stays medium for work too")
     expect(CloudEffort.level(Account(id: "o", provider: .ollama, name: "O", model: "m"), hard: true, defaults: defaults) == nil, "local models: none")
@@ -3569,7 +3590,7 @@ func testCloudModels() {
     expect(CloudEffort.apply(["exec", "-"], provider: .codex, level: "medium", model: nil) == ["-c", "model_reasoning_effort=\"medium\"", "exec", "-"], "Codex: -c model_reasoning_effort")
     expect(CloudEffort.apply(["-p", "q"], provider: .gemini, level: "high", model: nil) == ["-p", "q", "--effort", "high"]
            && CloudEffort.apply(["-p", "q"], provider: .gemini, level: "high", model: "gemini-3.8-flash-low") == ["-p", "q"], "Gemini: --effort only on Auto model")
-    expect(CloudEffort.apply(args, provider: .claude, level: "max", model: nil) == args && CloudEffort.apply(args, provider: .claude, level: nil, model: nil) == args, "unknown level: nothing")
+    expect(CloudEffort.apply(args, provider: .claude, level: "huge", model: nil) == args && CloudEffort.apply(args, provider: .claude, level: nil, model: nil) == args, "unknown level: nothing")
     var noted: [String] = []
     let note = Discussion.notingEffort({ if case .model(let name) = $0 { noted.append(name) } }, Account(id: "effort-note", provider: .claude, name: "E"), hard: true)
     note?(.model("claude-opus-5-5")); note?(.model(""))

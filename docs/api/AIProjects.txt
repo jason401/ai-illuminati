@@ -239,6 +239,7 @@ ProjectRules.read(root:) | static func read(root: String) -> (prompt: String, pa
 ProjectRun | final class ProjectRun
 ProjectRun.activeExpired | var activeExpired: Bool { get }
 ProjectRun.attempt | var attempt: DebateCancellation
+ProjectRun.bigWork | var bigWork: Bool { get }
 ProjectRun.binding | let binding: ProjectBinding
 ProjectRun.checkpoint(_:) | func checkpoint(_ note: String) -> String
 ProjectRun.committed | var committed: Bool

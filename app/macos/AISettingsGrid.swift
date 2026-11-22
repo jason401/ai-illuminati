@@ -48,8 +48,8 @@ struct AISettingsGrid: View {
         var help: String {
             switch self {
             case .model: return L("이 AI가 답할 때 쓰는 모델. 자동은 그 CLI의 기본값이에요.", "The model this AI answers with. Auto is the CLI's default.")
-            case .effort: return L("답하기 전에 얼마나 생각할지. 자동은 보통 중간, 프로젝트·TODO 작업·검수·회의·여러 의견·ask_ai는 높음이에요. 깊을수록 사용량과 시간이 늘어요. Gemini에서 모델을 고르면 그 모델 이름의 깊이를 따라요.",
-                                   "How much this AI thinks before answering. Auto is medium, and high for project or TODO work, review, meetings, several views and ask_ai. Deeper uses more usage and time. A Gemini model you pick keeps the level in its name.")
+            case .effort: return L("답하기 전에 얼마나 생각할지. 자동은 보통 중간, 프로젝트·TODO 작업·검수·회의·여러 의견·ask_ai는 높음, 다시 시도하거나 다른 AI가 도운 TODO와 1시간 넘게 잡고 나눈 TODO의 마무리는 아주 높음이에요. 목록은 이 AI의 모델이 받는 단계뿐이에요. 깊을수록 사용량과 시간이 늘어요. Gemini에서 모델을 고르면 그 모델 이름의 깊이를 따라요.",
+                                   "How much this AI thinks before answering. Auto is medium; high for project or TODO work, review, meetings, several views and ask_ai; extra high for a TODO retried or helped by another AI and for the finish of a split planned at an hour or more. The list holds only the levels this AI's model takes. Deeper uses more usage and time. A Gemini model you pick keeps the level in its name.")
             case .auto: return L("앱이 스스로 AI를 고를 때 후보가 돼요: 자동으로 답할 AI, 회의·여러 의견, ask_ai, 맡을 AI를 정하지 않은 프로젝트·TODO 작업. 꺼도 채팅에서 직접 고르거나 @로 부르면 답해요. 프로젝트 작업·검수는 Claude·ChatGPT만 해요.",
                                  "A candidate when the app picks by itself: who answers an automatic chat, meetings and several views, ask_ai, project or TODO work nobody was picked for. Off: still answers when picked in a chat or called with @. Project work and review are Claude and ChatGPT only.")
             case .enterprise: return L("엔터프라이즈(학교·회사) 계정: 직접 잠근 Enterprise 방에는 이름이 같은 엔터프라이즈 계정과 내 Mac 모델만 참여해요.",
@@ -176,35 +176,58 @@ struct AISettingsGrid: View {
     }
 }
 
-// The Thinking column: Auto (nothing saved: medium, high for important work), Low, Medium or High.
+// The Thinking column: Auto (nothing saved) or any level this account's model takes (CloudEffort.levels(for:)).
 private struct CloudEffortMenu: View {
     let account: Account
     @StateObject private var state = CloudEffortPick()   // @State needs a macro plugin the command line build lacks
 
-    private static func title(_ level: String?) -> String {
+    static func title(_ level: String?) -> String {
         switch level {
         case "low": return L("낮음", "Low")
         case "medium": return L("중간", "Medium")
         case "high": return L("높음", "High")
+        case "xhigh": return L("아주 높음", "Extra high")
+        case "max": return L("최대", "Max")
+        case "ultra": return L("울트라", "Ultra")
         default: return L("자동", "Auto")
         }
     }
 
     var body: some View {
-        Menu {
-            Picker(L("생각 깊이", "Thinking"), selection: Binding(get: { state.picked ?? "" }, set: { value in
-                state.picked = value.isEmpty ? nil : value
-                CloudEffort.set(state.picked, for: account)
-            })) {
-                ForEach([""] + CloudEffort.levels, id: \.self) { Text(Self.title($0.isEmpty ? nil : $0)).tag($0) }
+        Group {
+            if state.offered.isEmpty {
+                // A Gemini model picked by name ("… (High)") holds its own level.
+                Text(L("모델대로", "By model")).font(.system(size: 11)).foregroundStyle(.secondary)
+            } else {
+                Menu {
+                    Picker(L("생각 깊이", "Thinking"), selection: Binding(get: { state.picked ?? "" }, set: { value in
+                        state.picked = value.isEmpty ? nil : value
+                        CloudEffort.set(state.picked, for: account)
+                    })) {
+                        ForEach([""] + state.offered, id: \.self) { Text(Self.title($0.isEmpty ? nil : $0)).tag($0) }
+                    }
+                    .pickerStyle(.inline).labelsHidden()
+                } label: {
+                    // A pick the model no longer takes runs lowered (CloudEffort.level): show what runs.
+                    let runs = state.picked.flatMap { _ in CloudEffort.level(account, hard: false) }
+                    Text(Self.title(state.picked) + (runs != nil && runs != state.picked ? " → " + Self.title(runs) : "")).lineLimit(1)
+                }
+                .menuStyle(.borderlessButton).fixedSize().controlSize(.small)
             }
-            .pickerStyle(.inline).labelsHidden()
-        } label: { Text(Self.title(state.picked)).lineLimit(1) }
-        .menuStyle(.borderlessButton).fixedSize().controlSize(.small)
-        .onAppear { state.picked = CloudEffort.picked(account) }
+        }
+        .onAppear(perform: read)
+        // Picking another model in the Model column changes the levels offered.
+        .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification).receive(on: RunLoop.main)) { _ in read() }
+    }
+
+    private func read() {
+        let picked = CloudEffort.picked(account), offered = CloudEffort.levels(for: account)
+        if picked != state.picked { state.picked = picked }
+        if offered != state.offered { state.offered = offered }
     }
 }
 
 private final class CloudEffortPick: ObservableObject {
     @Published var picked: String?
+    @Published var offered: [String] = []
 }

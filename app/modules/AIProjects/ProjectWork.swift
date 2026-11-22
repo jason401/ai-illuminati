@@ -232,6 +232,13 @@ public final class ProjectRun {
     let todoStepDirty: [String: String]?   // a step's uncommitted paths at the start with their content hash, for task_done
     public var noPush: Bool { todoAttempt?.piece == .step }
     public var isTodoPiece: Bool { todoAttempt?.group != nil }
+    // Big or hard work thinks harder (CloudEffort): a TODO retried after an error or helped by another AI, or the finish
+    // of a split planned at an hour or more (its integration and final review).
+    public var bigWork: Bool {
+        guard let todoAttempt else { return false }
+        let item = todoStore.current.item(todoAttempt.id) ?? todoAttempt
+        return item.attempts > 0 || item.aiHelped > 0 || (item.piece == .finish && (item.splitRecord?.estimatedMinutes ?? 0) >= 60)
+    }
     public var todoWasSplit: Bool {
         guard let todoAttempt, todoAttempt.group == nil else { return false }
         lifecycle.lock(); let replaced = splitAccepted; lifecycle.unlock()

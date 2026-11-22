@@ -231,35 +231,81 @@ public enum CloudModels {
 
 // How hard a cloud account thinks (Settings by AI, the Thinking column). Nothing saved is "Auto": medium for chats,
 // high for important work (`RunConditions.thinkHard`: project work and TODOs, review, meetings, several views, votes,
-// ask_ai). Auto never picks low; a pick may (user decisions 2026-11-22). Only the levels every CLI and model here
-// takes: Claude and agy also know xhigh and max, Codex some models ultra, but not all of them.
+// ask_ai) and xhigh for big work (`thinkHarder`: a TODO retried, helped, or the finish of an hour-long split). Auto
+// never picks low (user decisions 2026-11-22). A pick may be any level the account's model takes (`levels(for:)`).
 // Medium is passed even where the CLI's default is it: Codex reads low from a config file or a model's default.
 public enum CloudEffort {
     static let key = "cloudEfforts"   // [account id: level]
-    public static let levels = ["low", "medium", "high"]
+    public static let all = ["low", "medium", "high", "xhigh", "max", "ultra"]   // lowest first
 
     public static func picked(_ account: Account, defaults: UserDefaults = .app) -> String? {
         guard account.provider != .ollama, let level = (defaults.dictionary(forKey: key) as? [String: String])?[account.id],
-              levels.contains(level) else { return nil }
+              all.contains(level) else { return nil }
         return level
     }
 
     public static func set(_ level: String?, for account: Account, defaults: UserDefaults = .app) {
-        var all = defaults.dictionary(forKey: key) as? [String: String] ?? [:]
-        all[account.id] = level.flatMap { levels.contains($0) ? $0 : nil }
-        defaults.set(all, forKey: key)
+        var saved = defaults.dictionary(forKey: key) as? [String: String] ?? [:]
+        saved[account.id] = level.flatMap { all.contains($0) ? $0 : nil }
+        defaults.set(saved, forKey: key)
     }
 
-    // The level a call is given; none for local models and for Gemini with a picked model (see apply).
-    public static func level(_ account: Account, hard: Bool, defaults: UserDefaults = .app) -> String? {
-        guard account.provider != .ollama, account.provider != .gemini || CloudModels.model(account, defaults: defaults) == nil else { return nil }
-        return picked(account, defaults: defaults) ?? (hard ? "high" : "medium")
+    // What this account's model takes, checked 2026-11-22: Claude Code takes all five on every model (the server may
+    // lower xhigh and max); agy's default model (Gemini 4 Neon) refuses max; Codex lists each model's levels in its
+    // cache (some add ultra). A Gemini model picked by name holds its own level: none.
+    public static func levels(for account: Account, defaults: UserDefaults = .app) -> [String] {
+        switch account.provider {
+        case .claude: return Array(all.prefix(5))
+        case .gemini: return CloudModels.model(account, defaults: defaults) == nil ? Array(all.prefix(4)) : []
+        case .codex:
+            let listed = codexLevels(account)
+            let model = CloudModels.model(account, defaults: defaults) ?? codexConfigModel(account)
+            let known = model.flatMap { listed[$0] } ?? Array(Set(listed.values.flatMap { $0 }))
+            return known.isEmpty ? Array(all.prefix(5)) : all.filter(known.contains)
+        case .ollama: return []
+        }
+    }
+
+    // The level a call is given: the pick or Auto's, lowered to the highest the model takes (a level it lacks fails
+    // the answer). None for local models and for Gemini with a picked model (see apply).
+    public static func level(_ account: Account, hard: Bool, harder: Bool = false, defaults: UserDefaults = .app) -> String? {
+        let offered = levels(for: account, defaults: defaults)
+        guard !offered.isEmpty else { return nil }
+        let wanted = picked(account, defaults: defaults) ?? (harder ? "xhigh" : hard ? "high" : "medium")
+        let rank = all.firstIndex(of: wanted) ?? 1
+        return offered.last { all.firstIndex(of: $0)! <= rank } ?? offered.first
+    }
+
+    // Codex's models cache: slug → its reasoning levels.
+    static func codexLevels(_ account: Account) -> [String: [String]] {
+        guard let data = FileManager.default.contents(atPath: account.codexHome + "/models_cache.json"),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let models = object["models"] as? [[String: Any]] else { return [:] }
+        var levels: [String: [String]] = [:]
+        for model in models {
+            guard let slug = model["slug"] as? String, let list = model["supported_reasoning_levels"] as? [Any] else { continue }
+            levels[slug] = list.compactMap { ($0 as? [String: Any])?["effort"] as? String ?? $0 as? String }
+        }
+        return levels
+    }
+
+    // The model Codex runs on Auto: its config file's top-level `model = "…"`, when there is one.
+    static func codexConfigModel(_ account: Account) -> String? {
+        guard let text = try? String(contentsOfFile: account.codexHome + "/config.toml", encoding: .utf8) else { return nil }
+        for line in text.split(separator: "\n") {
+            let line = line.trimmingCharacters(in: .whitespaces)
+            if line.hasPrefix("[") { return nil }   // tables start: no top-level model
+            guard let match = line.range(of: #"^model\s*=\s*"([^"]+)"$"#, options: .regularExpression) else { continue }
+            let name = line[match].split(separator: "\"").dropFirst().first.map(String.init)
+            return name.flatMap { CloudModels.valid($0) ? $0 : nil }
+        }
+        return nil
     }
 
     // Like CloudModels.apply, on the finished command line. agy refuses --effort next to a picked model, whose name
     // already holds its level ("gemini-3.8-flash-low") or which has none (Orchestrator): the model decides then.
     static func apply(_ arguments: [String], provider: Account.Provider, level: String?, model: String?) -> [String] {
-        guard let level, levels.contains(level) else { return arguments }
+        guard let level, all.contains(level) else { return arguments }
         switch provider {
         case .claude: return arguments + ["--effort", level]
         case .codex: return ["-c", "model_reasoning_effort=\"\(level)\""] + arguments

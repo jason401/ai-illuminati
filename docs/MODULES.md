@@ -391,9 +391,10 @@ streams `LocalStream`/`PullStream`, `LocalModel.ask` and the Ollama requests):
   rule just before the tool starts, so the runtime changes no permission itself (review, 2026-11-11).
 - `CloudModels` (`model`, `set`, `valid`, `Choice`, `claudeChoices`, `codexChoices`, `loadGemini`, `seenKey`, `seenTitle`):
   the Settings model menus. `versionTitle`: formats Claude versions in Settings; chat replies preserve the exact ID.
-- `CloudEffort` (`levels`, `picked`, `set`): the Settings by AI Thinking column (Auto = medium, high for important work).
-  `RunConditions.thinkHard`/`thinkingHard(_:)`: the chat side marks important work (project work, review, meetings,
-  several views, votes, ask_ai) without the runtime knowing those features.
+- `CloudEffort` (`all`, `levels(for:)`, `picked`, `set`, `level`): the Settings by AI Thinking column (the levels each
+  account's model takes) and the chat's label beside the model (Auto = medium, high for important work, xhigh for big work).
+  `RunConditions.thinkHard`/`thinkingHard(_:)`, `thinkHarder`/`thinkingHarder(_:)`: the chat side marks important work
+  (project work, review, meetings, several views, votes, ask_ai) and big work without the runtime knowing those features.
 - `LocalModel` (63 names: variants, the catalog and its entries, fit by memory, Ollama's library, installed/loaded
   models, pull, delete, keep-alive, the gate, `server` for mode2's fake server) and `LocalUsage.read`: the Settings
   Ollama section, the Ollama window, the menu and the Route sorter use all of them. It is the largest public part:
@@ -530,7 +531,7 @@ Public names and why (everything else stays internal: `ProjectError`, `ProjectTo
   `recover`, `maxAttempts`, `startDrafts`, `url` and TodoItem's `attempts`/`notes`/`report`/`interrupted` are public also so the
   contract can watch the state changes from outside (nothing else of the module was opened for a test).
 - `ProjectRun` (the turn's capability: `init`, `nextAttempt`, `endAttempt`, `validate`, `checkpoint`, `setPlan`, `setAppStep`,
-  `note`, `log`, the `on…` callbacks, `generation`, `attempt`, `deadline`, `committed`/`pushed`; `deferPush`/`pushWanted`: a project chat (plain or TODO) sets `deferPush`, git_push only asks, and the chat reads `pushWanted` at the turn's end), `ProjectProcess` (`run`,
+  `note`, `log`, the `on…` callbacks, `generation`, `attempt`, `deadline`, `committed`/`pushed`; `bigWork`: a retried, helped or hour-long split TODO, which the chat runs at a higher thinking level; `deferPush`/`pushWanted`: a project chat (plain or TODO) sets `deferPush`, git_push only asks, and the chat reads `pushWanted` at the turn's end), `ProjectProcess` (`run`,
   `git`, `inspect`, `documents`, `Reply`), `ProjectCenter`, `ProjectApproval`, `ProjectRules` (`read`, `Part`),
   `ProjectInfoStore`, `ProjectCreator` (`prepare`, `create`, `createFolderless`, `folderlessBinding`, `summary`,
   `defaultLocation`, `Plan`): `runProjectSolo`, the menus, Project info, the review (`ProjectSnapshot`).

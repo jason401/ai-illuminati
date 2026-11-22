@@ -1072,10 +1072,10 @@ struct ChatSettingsTab: View {
     var body: some View {
         SettingsPage {
             SettingsCard(title: L("AI별 설정", "Settings by AI"),
-                         help: L("AI마다 정하는 설정은 모두 이 표에 있어요(내 Mac 모델 포함): 모델, 자동으로 부르기, 엔터프라이즈, 그림 담당, 메뉴바, Ollama 쓰기.",
-                                 "Every per-AI setting lives in this table (models on this Mac too): model, picked automatically, Enterprise, picture maker, menu bar, use Ollama.")) {
+                         help: L("AI와 관련된 설정은 모두 이 창에 있어요: AI마다 정하는 표(모델, 자동으로 부르기, 엔터프라이즈, 그림 담당, 메뉴바, Ollama 쓰기)와 모든 AI 공통 설정(메시지 판정, AI끼리 협업, 의견 자동 정리).",
+                                 "Every AI setting lives in this window: the per-AI table (model, picked automatically, Enterprise, picture maker, menu bar, use Ollama) and the settings for all AIs (message sorting, AIs working together, sum up views).")) {
                 SettingsRow(title: L("\(model.accounts.count)개 AI", "\(model.accounts.count) AIs")) {
-                    SettingsAction(title: L("표로 보기…", "Open table…")) { AISettingsWindow.shared.show(model: model) }
+                    SettingsAction(title: L("열기…", "Open…")) { AISettingsWindow.shared.show(model: model) }
                 }
             }
             SettingsCard(title: L("채팅 규칙", "Chat rules"),
@@ -1092,28 +1092,6 @@ struct ChatSettingsTab: View {
                     .padding(.horizontal, 10).padding(.vertical, 6)
             }
             MemorySettingsCard()
-            SettingsCard(title: L("메시지 판정", "Message sorting"),
-                         help: L("프로젝트 채팅에서 메시지마다 한 명이 답할지, 모두 답할지, 작업할지 정해요. 고른 모델을 받아 두지 않았거나 Ollama를 껐으면 참여한 AI가 판정해요.",
-                                 "Decides for each project-chat message: one answer, everyone, or work. Model not downloaded or Ollama off: a member AI judges.")) {
-                SettingsRow(title: L("내 Mac 모델", "Model on this Mac")) {
-                    SettingsMenu(options: RouteSorter.allCases.map { ($0.title, $0) }, selection: $model.routeSorter)
-                }
-                .help(model.routeSorter.summary)
-                .onChange(of: model.routeSorter) { SortModelStatus.offer($0, model: model) }
-                if model.routeSorter != .off {
-                    Divider()
-                    SortModelStatus(model: model, store: .shared)
-                }
-            }
-            CollabSettingsCard(model: model)
-            SettingsCard(title: L("의견 자동 정리", "Sum up views"),
-                         help: L("여러 AI가 의견을 내면, 답한 AI 중 사용량이 가장 많이 남은 AI가 결론·합의·갈린 점·결정할 것으로 정리해요. 개별 답변은 그 아래에 접혀요. 정리하지 못하면 개별 답변만 보여요.",
-                                 "When several AIs give views, the one with the most usage left sums them up: conclusion, agreements, disagreements, what to decide. The answers fold under it. If it cannot, the answers show as before.")) {
-                SettingsRow(title: L("자동 정리", "Sum up")) {
-                    Spacer()
-                    Toggle(L("의견 자동 정리", "Sum up views"), isOn: $model.opinionDigest).labelsHidden().toggleStyle(.switch)
-                }
-            }
             SettingsCard(title: L("main 자동으로 받기", "Pull main by itself"),
                          help: L("연결된 Git 프로젝트마다 앱을 켤 때, Mac이 잠에서 깰 때, 그리고 10분마다 origin/main의 새 커밋을 받아요. main이 체크아웃되어 있고, 커밋하지 않은 변경과 올리지 않은 커밋이 없을 때만 받아요(fast-forward). AI가 그 프로젝트에서 작업 중이면 다음에 받아요.",
                                  "For each linked Git project, pulls new commits of origin/main when the app starts, when the Mac wakes and every 10 minutes. Only when main is checked out with no uncommitted changes and nothing unpushed (fast-forward). If an AI is working in the project, it waits for the next round.")) {
@@ -1209,6 +1187,40 @@ struct SortModelStatus: View {
 // In the Chat tab: long-term memory (Memory.swift). Only the switch until it is on; then whether the AI saves
 // on its own, and the saved profile and facts in their own window.
 // AI-to-AI collaboration: off / show and go / on its own, and what the log counted in the last 30 days.
+// The settings that apply to every AI alike, shown under the table in Settings by AI (AISettingsGrid.swift).
+struct AICommonSettings: View {
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SettingsCard(title: L("메시지 판정", "Message sorting"),
+                         help: L("프로젝트 채팅에서 메시지마다 한 명이 답할지, 모두 답할지, 작업할지 정해요. 고른 모델을 받아 두지 않았거나 Ollama를 껐으면 참여한 AI가 판정해요.",
+                                 "Decides for each project-chat message: one answer, everyone, or work. Model not downloaded or Ollama off: a member AI judges.")) {
+                SettingsRow(title: L("내 Mac 모델", "Model on this Mac")) {
+                    SettingsMenu(options: RouteSorter.allCases.map { ($0.title, $0) }, selection: $model.routeSorter)
+                }
+                .help(model.routeSorter.summary)
+                .onChange(of: model.routeSorter) { SortModelStatus.offer($0, model: model) }
+                if model.routeSorter != .off {
+                    Divider()
+                    SortModelStatus(model: model, store: .shared)
+                }
+            }
+            CollabSettingsCard(model: model)
+            SettingsCard(title: L("의견 자동 정리", "Sum up views"),
+                         help: L("여러 AI가 의견을 내면, 답한 AI 중 사용량이 가장 많이 남은 AI가 결론·합의·갈린 점·결정할 것으로 정리해요. 개별 답변은 그 아래에 접혀요. 정리하지 못하면 개별 답변만 보여요.",
+                                 "When several AIs give views, the one with the most usage left sums them up: conclusion, agreements, disagreements, what to decide. The answers fold under it. If it cannot, the answers show as before.")) {
+                SettingsRow(title: L("자동 정리", "Sum up")) {
+                    Spacer()
+                    Toggle(L("의견 자동 정리", "Sum up views"), isOn: $model.opinionDigest).labelsHidden().toggleStyle(.switch)
+                }
+            }
+        }
+        .font(.system(size: 12))
+        .controlSize(.small)
+    }
+}
+
 private struct CollabSettingsCard: View {
     @ObservedObject var model: AppModel
     @AppStorage(DelegateLink.enabledKey, store: .app) private var subRooms = false

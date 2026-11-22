@@ -13,11 +13,11 @@ final class AISettingsWindow {
     func show(model: AppModel) {
         if window == nil {
             let host = NSHostingController(rootView: AISettingsGrid(model: model)
-                .frame(minWidth: 640, idealWidth: 900, minHeight: 300, idealHeight: 460))
+                .frame(minWidth: 640, idealWidth: 900, minHeight: 360, idealHeight: 760))
             let w = NSWindow(contentViewController: host)
             w.styleMask = [.titled, .closable, .miniaturizable, .resizable]
             w.title = L("AI별 설정", "Settings by AI")
-            w.setContentSize(NSSize(width: 900, height: 460))
+            w.setContentSize(NSSize(width: 900, height: 760))
             w.isReleasedWhenClosed = false
             w.center()
             window = w
@@ -75,6 +75,10 @@ struct AISettingsGrid: View {
     }
 
     var body: some View {
+        ScrollView(.vertical) { content.padding(14) }
+    }
+
+    private var content: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(L("AI마다 채팅에서 어떻게 쓸지 한 곳에서 켜고 꺼요. 바꾸면 바로 저장돼요. 열 제목에 마우스를 올리면 설명이 나와요.",
                    "Switch how each AI is used in chats, all in one place. Changes save at once. Hover a column title for what it does."))
@@ -84,7 +88,7 @@ struct AISettingsGrid: View {
                 Text(L("계정이 없어요. 설정 → 계정에서 추가하세요.", "No accounts. Add one in Settings → Accounts."))
                     .foregroundStyle(.secondary).padding(16)
             } else {
-                ScrollView([.vertical, .horizontal]) {
+                ScrollView(.horizontal) {
                     Grid(alignment: .center, horizontalSpacing: 18, verticalSpacing: 8) {
                         GridRow {
                             Text(L("AI", "AI")).font(.system(size: 11, weight: .semibold)).gridColumnAlignment(.leading)
@@ -126,8 +130,10 @@ struct AISettingsGrid: View {
                         .controlSize(.small)
                 }
             }
+            Divider().padding(.vertical, 4)
+            Text(L("모든 AI 공통", "For all AIs")).font(.system(size: 13, weight: .semibold))
+            AICommonSettings(model: model).frame(maxWidth: 560, alignment: .leading)
         }
-        .padding(14)
     }
 
     @ViewBuilder private func cell(_ column: Column, _ account: Account) -> some View {

@@ -217,7 +217,7 @@ struct LocalModelsView: View {
                     vision: item.capabilities?.contains("vision")) {
                     if LocalModel.sortOnly(item.name) {
                         Text(L("메시지 판정용", "Sorts messages")).font(.system(size: 11)).foregroundStyle(.secondary)
-                            .help(L("설정 → 채팅 → 메시지 판정에서 써요", "Used in Settings → Chat → Message sorting"))
+                            .help(L("설정 → 채팅 → AI별 설정의 메시지 판정에서 써요", "Used in Message sorting, Settings → Chat → Settings by AI"))
                     } else if model.hasLocal(item.name) {
                         Image(systemName: "checkmark").foregroundStyle(.green).help(L("계정 목록에 있어요", "In the account list"))
                     } else {

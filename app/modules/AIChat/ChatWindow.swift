@@ -2036,7 +2036,8 @@ struct ChatView<Model: ChatSettings>: View {
             Divider()
             Text(project ? L("여러 명 체크: 한 명이 작업하고 나머지가 검수해요", "Check several: one works, the others review")
                          : L("여러 명 체크: 모두 함께 답해요", "Check several: they all answer"))
-            ForEach(discussion.model.accounts.filter { $0.provider != .gemini }, id: \.id) { account in
+            // Gemini never answers automatically, but may be checked here like any account.
+            ForEach(discussion.model.accounts, id: \.id) { account in
                 Button((members.contains(account.id) ? "✓ " : "") + discussion.label(account) + " · "
                        + AutoPick.describe(discussion.model.latestUsage[account.id])) {
                     discussion.toggleMember(account.id)

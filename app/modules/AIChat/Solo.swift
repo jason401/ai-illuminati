@@ -86,7 +86,7 @@ public enum AutoPick {
     }
 
     // Claude and ChatGPT accounts that may work in this chat. Gemini (YouTube helper) and Gemma on this Mac
-    // answer only when called with @; Gemma is also the last resort (see runSolo). In an Enterprise chat (`lock`)
+    // answer only when called with @ or checked in the chat's menu; Gemma is also the last resort (see runSolo). In an Enterprise chat (`lock`)
     // only accounts of its organization.
     static func candidates(_ accounts: [Account], usage: [String: AIUsage], lock: EnterpriseLock?, excluded: Set<String> = []) -> [Account] {
         accounts.filter { account in

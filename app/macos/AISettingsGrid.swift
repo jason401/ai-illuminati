@@ -48,8 +48,8 @@ struct AISettingsGrid: View {
         var help: String {
             switch self {
             case .model: return L("이 AI가 답할 때 쓰는 모델. 자동은 그 CLI의 기본값이에요.", "The model this AI answers with. Auto is the CLI's default.")
-            case .effort: return L("답하기 전에 얼마나 생각할지. 자동은 보통 중간, 프로젝트·TODO 작업과 검수는 높음이에요. 깊을수록 사용량과 시간이 늘어요. Gemini에서 모델을 고르면 그 모델 이름의 깊이를 따라요.",
-                                   "How much this AI thinks before answering. Auto is medium, and high for project or TODO work and review. Deeper uses more usage and time. A Gemini model you pick keeps the level in its name.")
+            case .effort: return L("답하기 전에 얼마나 생각할지. 자동은 보통 중간, 프로젝트·TODO 작업·검수·회의·여러 의견·ask_ai는 높음이에요. 깊을수록 사용량과 시간이 늘어요. Gemini에서 모델을 고르면 그 모델 이름의 깊이를 따라요.",
+                                   "How much this AI thinks before answering. Auto is medium, and high for project or TODO work, review, meetings, several views and ask_ai. Deeper uses more usage and time. A Gemini model you pick keeps the level in its name.")
             case .auto: return L("앱이 스스로 AI를 고를 때 후보가 돼요: 자동으로 답할 AI, 회의·여러 의견, ask_ai, 맡을 AI를 정하지 않은 프로젝트·TODO 작업. 꺼도 채팅에서 직접 고르거나 @로 부르면 답해요. 프로젝트 작업·검수는 Claude·ChatGPT만 해요.",
                                  "A candidate when the app picks by itself: who answers an automatic chat, meetings and several views, ask_ai, project or TODO work nobody was picked for. Off: still answers when picked in a chat or called with @. Project work and review are Claude and ChatGPT only.")
             case .enterprise: return L("엔터프라이즈(학교·회사) 계정: 직접 잠근 Enterprise 방에는 이름이 같은 엔터프라이즈 계정과 내 Mac 모델만 참여해요.",
@@ -176,13 +176,14 @@ struct AISettingsGrid: View {
     }
 }
 
-// The Thinking column: Auto (nothing saved), Medium or High; never Low (user decision 2026-11-22).
+// The Thinking column: Auto (nothing saved: medium, high for important work), Low, Medium or High.
 private struct CloudEffortMenu: View {
     let account: Account
     @StateObject private var state = CloudEffortPick()   // @State needs a macro plugin the command line build lacks
 
     private static func title(_ level: String?) -> String {
         switch level {
+        case "low": return L("낮음", "Low")
         case "medium": return L("중간", "Medium")
         case "high": return L("높음", "High")
         default: return L("자동", "Auto")

@@ -231,11 +231,12 @@ public enum CloudModels {
 
 // How hard a cloud account thinks (Settings by AI, the Thinking column). Nothing saved is "Auto": medium for chats,
 // high for important work (`RunConditions.thinkHard`: project work and TODOs, review, meetings, several views, votes,
-// ask_ai). Low is never used (user decision 2026-11-22).
+// ask_ai). Auto never picks low; a pick may (user decisions 2026-11-22). Only the levels every CLI and model here
+// takes: Claude and agy also know xhigh and max, Codex some models ultra, but not all of them.
 // Medium is passed even where the CLI's default is it: Codex reads low from a config file or a model's default.
 public enum CloudEffort {
     static let key = "cloudEfforts"   // [account id: level]
-    public static let levels = ["medium", "high"]
+    public static let levels = ["low", "medium", "high"]
 
     public static func picked(_ account: Account, defaults: UserDefaults = .app) -> String? {
         guard account.provider != .ollama, let level = (defaults.dictionary(forKey: key) as? [String: String])?[account.id],

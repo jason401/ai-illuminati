@@ -2836,7 +2836,7 @@ private struct TurnView: View, Equatable {
         var title = model.isEmpty ? L("모델 확인 불가", "Model unavailable") : model
         if let mark = model.range(of: Discussion.effortMark, options: .backwards) {
             let level = String(model[mark.upperBound...])
-            let word = level == "high" ? L("생각 높음", "high effort") : level == "medium" ? L("생각 중간", "medium effort") : level
+            let word = ["low": L("생각 낮음", "low effort"), "medium": L("생각 중간", "medium effort"), "high": L("생각 높음", "high effort")][level] ?? level
             title = String(model[..<mark.lowerBound]) + Discussion.effortMark + word
         }
         let tag = Text(verbatim: " · " + title).font(.system(size: 10.5)).foregroundColor(.secondary.opacity(0.7))

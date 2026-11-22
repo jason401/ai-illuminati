@@ -4,6 +4,7 @@
 # (S3 warns when app/macos grows over 10% above the baseline; raise it only when the growth is App work.)
 main.swift app start: menu, AppDelegate, the real data folder, connects the modules
 Settings.swift AppModel and the Settings window (account list, options)
+AISettingsGrid.swift screen: Settings by AI, one window with every AI's chat switches (AIs down, settings across)
 MenuCards.swift screen: the menu's account cards
 Icon.swift screen: the menu bar icon and its animation
 Login.swift app start: Terminal login and install scripts for each CLI (later move candidate: LocalModel.install)

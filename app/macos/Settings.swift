@@ -892,6 +892,11 @@ struct AccountsSettingsTab: View {
                 Spacer()
                 // Token statistics live in their own window: this page manages accounts.
                 // Icons, not words: two labelled buttons pushed the title onto two lines in a narrow window.
+                Button { AISettingsWindow.shared.show(model: model) } label: {
+                    Image(systemName: "tablecells").frame(width: 22, height: 18)
+                }.fixedSize()
+                    .help(L("AI별 설정: 모든 AI의 채팅 설정을 표 하나에서", "Settings by AI: every AI's chat settings in one table"))
+                    .accessibilityLabel(L("AI별 설정", "Settings by AI"))
                 Button { TokenStatsWindow.shared.show(model: model) } label: {
                     Image(systemName: "chart.bar").frame(width: 22, height: 18)
                 }.fixedSize()
@@ -961,7 +966,7 @@ private final class CloudModelPick: ObservableObject {
     @Published var seen: [String: String] = [:]   // pick ("" = Auto): model id it last ran on
 }
 
-private struct CloudModelMenu: View {
+struct CloudModelMenu: View {
     let account: Account
     @StateObject private var state = CloudModelPick()
     private var gemini: [CloudModels.Choice] { state.gemini }
@@ -1088,6 +1093,13 @@ struct ChatSettingsTab: View {
 
     var body: some View {
         SettingsPage {
+            SettingsCard(title: L("AI별 설정", "Settings by AI"),
+                         help: L("모든 AI(내 Mac 모델 포함)의 채팅 설정을 큰 창 하나에서 표로 켜고 꺼요: 자동으로 부르기, 엔터프라이즈, 그림 담당, 모델, 메뉴바.",
+                                 "Every AI's chat settings (models on this Mac too) as one table in a large window: picked automatically, Enterprise, picture makers, model, menu bar.")) {
+                SettingsRow(title: L("\(model.accounts.count)개 AI", "\(model.accounts.count) AIs")) {
+                    SettingsAction(title: L("표로 보기…", "Open table…")) { AISettingsWindow.shared.show(model: model) }
+                }
+            }
             SettingsCard(title: L("채팅 규칙", "Chat rules"),
                          help: L("모든 AI 요청에 적용할 말투와 응답 규칙이에요. 답변 길이는 채팅창에서 선택해요.",
                                  "Style and instructions for every AI request. Choose response length in the chat window.")) {

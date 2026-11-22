@@ -60,7 +60,7 @@ public enum LocalModel {
     static var catalogURL = URL(string: "https://raw.githubusercontent.com/jason401/ai-illuminati/stable/app/resources/local_models.json")!
     static let context = 32768   // Ollama's default (4K) is too short for a chat with files
 
-    // Set from the menu bar (on/off) and Settings → Accounts (how long it stays in memory after a reply).
+    // Set from the menu bar or Settings by AI (on/off) and Settings → Accounts (how long it stays in memory after a reply).
     public static var enabled: Bool { UserDefaults.app.object(forKey: "localEnabled") as? Bool ?? true }
     public static let keepAliveChoices = [0, 2, 5, 10]   // minutes; 0 = unload right after the reply
     public static var keepAlive: Int {
@@ -435,7 +435,7 @@ public enum LocalModel {
     static func ask(_ variant: Variant = legacy[0], prompt: String, images: [URL], timeout: TimeInterval, cancellation: DebateCancellation?,
                     progress: ((AnswerProgress) -> Void)?) -> Result<String, Answerer.Failure> {
         guard enabled else {
-            return .failure(.failed(L("Ollama 모델이 꺼져 있어요. 설정 → 계정에서 켤 수 있어요.", "Ollama models are turned off. Turn them on in Settings → Accounts.")))
+            return .failure(.failed(L("Ollama 모델이 꺼져 있어요. 메뉴 막대나 설정 → 채팅 → AI별 설정에서 켤 수 있어요.", "Ollama models are turned off. Turn them on from the menu bar or Settings → Chat → Settings by AI.")))
         }
         guard ensureServer() else {
             return .failure(.failed(binary == nil ? L("Ollama가 설치돼 있지 않아요. 설정 → 계정 → 계정 추가 → Ollama 모델에서 설치하세요.", "Ollama is not installed. Install a model in Settings → Accounts → Add account → Ollama models.")

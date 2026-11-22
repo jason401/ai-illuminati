@@ -50,8 +50,8 @@ struct AISettingsGrid: View {
                                  "A candidate when the app picks by itself: who answers an automatic chat, meetings and several views, ask_ai, project or TODO work nobody was picked for. Off: still answers when picked in a chat or called with @. Project work and review are Claude and ChatGPT only.")
             case .enterprise: return L("엔터프라이즈(학교·회사) 계정: 직접 잠근 Enterprise 방에는 이름이 같은 엔터프라이즈 계정과 내 Mac 모델만 참여해요.",
                                        "Enterprise (school or work) account: a chat you lock as Enterprise is answered only by Enterprise accounts of the same name and models on this Mac.")
-            case .pictures: return L("켜 둔 ChatGPT 계정이 다른 AI 대신 그림을 그려요. 숫자가 정확해야 하는 그래프는 각 AI가 직접 그려요.",
-                                     "Checked ChatGPT accounts draw pictures for the other AIs. Charts that must be exact are drawn by each AI.")
+            case .pictures: return L("켜 둔 ChatGPT 계정이 다른 AI 대신 그림을 그려요. 엔터프라이즈 AI는 엔터프라이즈 ChatGPT에게, 개인 AI는 개인 ChatGPT에게 맡겨요. 숫자가 정확해야 하는 그래프는 각 AI가 직접 그려요.",
+                                     "Checked ChatGPT accounts draw pictures for the other AIs: Enterprise AIs ask Enterprise ChatGPT, personal AIs personal ChatGPT. Charts that must be exact are drawn by each AI.")
             case .menuBar: return L("메뉴바 사용량 표시에 이 계정을 보여요.", "Shows this account in the menu bar usage.")
             case .local: return L("내 Mac의 Ollama 모델 전체에 한 번에 적용돼요. 끄면 @·투표·대타에서 빠지고 메모리에서 내려요.",
                                   "Applies to every Ollama model on this Mac at once. Off: no @, votes or stand-in, and unloaded.")

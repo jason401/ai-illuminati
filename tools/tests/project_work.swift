@@ -1352,7 +1352,7 @@ func testAutoMeeting() {
     model.autoTeamPicks = Dictionary(uniqueKeysWithValues: all.map { ($0.id, false) })
     viewAsked = []
     let nobody = hold(views, "2명 의견 들려줘: A냐 B냐")
-    expect(nobody?.error?.contains("자동으로 부를 AI") == true || nobody?.error?.contains("AIs picked automatically") == true, "views: nobody picked, a note")
+    expect(nobody?.error?.contains("자동으로 부르기") == true || nobody?.error?.contains("Picked automatically") == true, "views: nobody picked, a note")
     expect(viewAsked.isEmpty, "views: nobody picked, no AI called: \(viewAsked.map(\.0))")
     model.autoTeamPicks = [:]
 

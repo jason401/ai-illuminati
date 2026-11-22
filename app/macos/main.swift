@@ -413,7 +413,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, PhoneU
         menu.addItem(action(L("채팅창 열기…", "Open Chat…"), #selector(openChat), key: "n"))
         if model.hasLocal {
             // The Ollama model on this Mac, only while it is in memory: how much and until when, with Unload now.
-            // (Its on/off switch is in Settings → Accounts.)
+            // (Its on/off switch is also in Settings by AI.)
             if let loaded = localLoaded {
                 menu.addItem(.separator())
                 let size = String(format: "%.1f", Double(loaded.bytes) / 1_073_741_824)

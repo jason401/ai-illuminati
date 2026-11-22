@@ -166,7 +166,7 @@ final class AppModel: ObservableObject {
         didSet { defaults.set(writableSharedFolders.sorted(), forKey: "writableSharedFolders") }
     }
     // A school chat is continued only by school accounts, a personal chat only by personal ones.
-    // Ollama models on this Mac: on/off (Settings → Accounts) and how long it stays in memory after a reply (Settings → Accounts).
+    // Ollama models on this Mac: on/off (Settings by AI, menu bar) and how long it stays in memory after a reply (Settings → Accounts).
     @Published var localEnabled: Bool {
         didSet {
             defaults.set(localEnabled, forKey: "localEnabled")
@@ -648,20 +648,6 @@ struct AppearanceSettingsTab: View {
                 }
             }
             AIColorsSettingsCard()
-            if !model.accounts.isEmpty {
-                SettingsCard(title: L("메뉴바에 보일 계정", "Accounts in the menu bar")) {
-                    ForEach(model.accounts, id: \.id) { account in
-                        if account.id != model.accounts.first?.id { Divider() }
-                        SettingsRow(title: account.name) {
-                            Spacer()
-                            Toggle(account.name, isOn: Binding(
-                                get: { !model.menuBarHidden.contains(account.id) },
-                                set: { on in if on { model.menuBarHidden.remove(account.id) } else { model.menuBarHidden.insert(account.id) } }))
-                                .labelsHidden().toggleStyle(.switch)
-                        }
-                    }
-                }
-            }
             SettingsCard(title: L("사용량 메뉴", "Usage menu")) {
                 SettingsRow(title: L("모양", "Style")) {
                     SettingsMenu(options: menuOptions, selection: $model.usageMenuStyle)
@@ -935,7 +921,7 @@ struct AccountsSettingsTab: View {
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(0.07)))
             .onDisappear { model.draggingAccount = nil }
-            Text(L("이름을 눌러 수정 · 오른쪽에서 모델 선택 · 끌어서 순서 변경 · ⋯에서 로그인, 폴더, 엔터프라이즈", "Edit names directly · Pick each model on the right · Drag to reorder · ⋯ for sign-in, folders and Enterprise"))
+            Text(L("이름을 눌러 수정 · 끌어서 순서 변경 · ⋯에서 로그인, 폴더 · 모델·엔터프라이즈·자동으로 부르기는 표 아이콘(AI별 설정)에서", "Edit names directly · Drag to reorder · ⋯ for sign-in and folders · Model, Enterprise and auto picks in the table icon (Settings by AI)"))
                 .font(.system(size: 11)).foregroundStyle(.secondary)
             Text(L("계정을 추가하면 브라우저 로그인을 위해 터미널이 열려요. 같은 ChatGPT 계정을 중복 추가하지 마세요.",
                    "Adding opens Terminal for browser sign-in. Add each ChatGPT account only once."))
@@ -945,14 +931,6 @@ struct AccountsSettingsTab: View {
                 SettingsCard(title: L("Ollama (내 Mac)", "Ollama (this Mac)")) {
                     SettingsRow(title: L("모델", "Models")) {
                         SettingsAction(title: L("고르기·받기·지우기…", "Pick, download, delete…")) { LocalModelsWindow.shared.show(model: model) }
-                    }
-                    SettingsRow(title: L("쓰기", "Use")) {
-                        Text(L("끄면 @·투표·대타에서 빠져요", "Off: no @, votes or stand-in"))
-                            .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
-                            .help(L("끄면 @ 목록, 투표, 클라우드 계정이 다 바닥났을 때의 대타에서 빠지고 메모리에서 내려요.",
-                                    "Off: left out of @, votes and the last resort when every cloud account is out, and unloaded."))
-                        Spacer()
-                        Toggle(L("Ollama 모델 쓰기", "Use Ollama models"), isOn: $model.localEnabled).labelsHidden().toggleStyle(.switch)
                     }
                 }
             }
@@ -1094,8 +1072,8 @@ struct ChatSettingsTab: View {
     var body: some View {
         SettingsPage {
             SettingsCard(title: L("AI별 설정", "Settings by AI"),
-                         help: L("모든 AI(내 Mac 모델 포함)의 채팅 설정을 큰 창 하나에서 표로 켜고 꺼요: 자동으로 부르기, 엔터프라이즈, 그림 담당, 모델, 메뉴바.",
-                                 "Every AI's chat settings (models on this Mac too) as one table in a large window: picked automatically, Enterprise, picture makers, model, menu bar.")) {
+                         help: L("AI마다 정하는 설정은 모두 이 표에 있어요(내 Mac 모델 포함): 모델, 자동으로 부르기, 엔터프라이즈, 그림 담당, 메뉴바, Ollama 쓰기.",
+                                 "Every per-AI setting lives in this table (models on this Mac too): model, picked automatically, Enterprise, picture maker, menu bar, use Ollama.")) {
                 SettingsRow(title: L("\(model.accounts.count)개 AI", "\(model.accounts.count) AIs")) {
                     SettingsAction(title: L("표로 보기…", "Open table…")) { AISettingsWindow.shared.show(model: model) }
                 }
@@ -1128,7 +1106,6 @@ struct ChatSettingsTab: View {
                 }
             }
             CollabSettingsCard(model: model)
-            AutoTeamSettingsCard(model: model)
             SettingsCard(title: L("의견 자동 정리", "Sum up views"),
                          help: L("여러 AI가 의견을 내면, 답한 AI 중 사용량이 가장 많이 남은 AI가 결론·합의·갈린 점·결정할 것으로 정리해요. 개별 답변은 그 아래에 접혀요. 정리하지 못하면 개별 답변만 보여요.",
                                  "When several AIs give views, the one with the most usage left sums them up: conclusion, agreements, disagreements, what to decide. The answers fold under it. If it cannot, the answers show as before.")) {
@@ -1143,24 +1120,6 @@ struct ChatSettingsTab: View {
                 SettingsRow(title: L("자동으로 받기", "Pull by itself")) {
                     Spacer()
                     Toggle(L("main 자동으로 받기", "Pull main by itself"), isOn: $model.autoPullMain).labelsHidden().toggleStyle(.switch)
-                }
-            }
-            let makers = model.accounts.filter { $0.provider == .codex }
-            if !makers.isEmpty {
-                SettingsCard(title: L("그림 담당", "Picture makers"),
-                             help: L("켜 둔 ChatGPT 계정이 다른 AI 대신 모든 그림을 그려요. 위 설정이 켜져 있으면 엔터프라이즈 AI는 엔터프라이즈 ChatGPT에게, 개인 AI는 개인 ChatGPT에게만 맡겨요. 숫자가 정확해야 하는 그래프와 도표는 각 AI가 직접 그려요.",
-                                     "Checked ChatGPT accounts draw every picture for the other AIs. With the setting above on, Enterprise AIs ask only Enterprise ChatGPT and personal AIs only personal ChatGPT. Charts and diagrams that must be exact are still drawn by each AI.")) {
-                    ForEach(makers, id: \.id) { account in
-                        SettingsRow(title: account.name) {
-                            Text(account.isSchool ? L("엔터프라이즈", "Enterprise") : L("개인", "Personal"))
-                                .font(.system(size: 11)).foregroundStyle(.secondary)
-                            Spacer()
-                            Toggle(account.name, isOn: Binding(
-                                get: { !model.pictureMakersOff.contains(account.id) },
-                                set: { on in if on { model.pictureMakersOff.remove(account.id) } else { model.pictureMakersOff.insert(account.id) } }))
-                                .labelsHidden().toggleStyle(.switch)
-                        }
-                    }
                 }
             }
             StorageSettingsCard()
@@ -1226,8 +1185,8 @@ struct SortModelStatus: View {
                 line(L("Ollama \(version)이라 쓸 수 없어요 · \(model.routeSorter.minimumOllama ?? "") 이상으로 업데이트해 주세요",
                        "Ollama \(version) cannot run it · update to \(model.routeSorter.minimumOllama ?? "") or later"), warn: true)
             case .localOff:
-                line(L("받아 뒀지만 Ollama 모델이 꺼져 있어요 · 메뉴 막대나 설정 → 계정에서 켜요",
-                       "Downloaded, but Ollama models are off · turn them on from the menu bar or Settings → Accounts"), warn: true)
+                line(L("받아 뒀지만 Ollama 모델이 꺼져 있어요 · 메뉴 막대나 설정 → 채팅 → AI별 설정에서 켜요",
+                       "Downloaded, but Ollama models are off · turn them on from the menu bar or Settings → Chat → Settings by AI"), warn: true)
             }
         }
         .padding(.horizontal, 10).padding(.vertical, 6)
@@ -1286,40 +1245,6 @@ private struct CollabSettingsCard: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 10).padding(.bottom, 6)
-        }
-    }
-}
-
-// Which AIs the app may call by itself: who answers an automatic chat, meetings and several views, ask_ai, and who works
-// on a project or TODO when nobody was picked. Picking one by hand in a chat still works.
-private struct AutoTeamSettingsCard: View {
-    @ObservedObject var model: AppModel
-
-    var body: some View {
-        let accounts = model.accounts.filter { Discussion.meets($0) || $0.provider == .ollama }
-        if !accounts.isEmpty {
-            SettingsCard(title: L("자동으로 부를 AI", "AIs picked automatically"),
-                         help: L("앱이 스스로 AI를 고를 때 켜 둔 AI만 써요: 자동으로 답할 AI, 회의·여러 의견(종류별로 먼저 최대 4명), ask_ai, 고른 AI가 없는 프로젝트·TODO 작업. 꺼 둔 AI도 채팅에서 직접 고르거나 @로 부르면 답해요. 프로젝트 작업과 검수는 Claude·ChatGPT만 해요. 기본은 Claude·ChatGPT·Gemini예요.",
-                                 "The app picks only the AIs switched on here: who answers an automatic chat, meetings and several views (one of each kind first, up to four), ask_ai, and project or TODO work nobody was picked for. An AI switched off still answers when picked in a chat or called with @. Project work and review are Claude and ChatGPT only. Default: Claude, ChatGPT and Gemini.")) {
-                ForEach(accounts, id: \.id) { account in
-                    let off = account.provider == .ollama && !model.localEnabled
-                    SettingsRow(title: account.name) {
-                        Text(off ? L("Ollama 꺼짐", "Ollama off") : account.provider == .ollama ? L("내 Mac", "This Mac") : account.provider.title)
-                            .font(.system(size: 11)).foregroundStyle(.secondary)
-                        Spacer()
-                        Toggle(account.name, isOn: Binding(
-                            get: { Discussion.autoPicked(account, picks: model.autoTeamPicks) },
-                            set: { model.autoTeamPicks[account.id] = $0 }))
-                            .labelsHidden().toggleStyle(.switch).disabled(off)
-                    }
-                }
-                if !model.autoTeamPicks.isEmpty {
-                    Divider()
-                    SettingsRow(title: L("직접 고침", "Custom")) {
-                        SettingsAction(title: L("기본값으로", "Use default")) { model.autoTeamPicks = [:] }
-                    }
-                }
-            }
         }
     }
 }
@@ -2093,7 +2018,7 @@ private struct AccountRow: View {
                     status
                     Text(account.provider.title).foregroundStyle(.secondary)
                     // Only Enterprise accounts get a mark, here so the name keeps the whole first line;
-                    // the switch itself sits in the ⋯ menu.
+                    // the switch itself sits in Settings by AI.
                     if isSchool {
                         Text(L("엔터프라이즈", "Enterprise"))
                             .font(.system(size: 9, weight: .medium)).foregroundStyle(Color.accentColor)
@@ -2120,7 +2045,6 @@ private struct AccountRow: View {
                 }.font(.system(size: 10)).lineLimit(1)
             }
             Spacer(minLength: 4)
-            if account.provider != .ollama { CloudModelMenu(account: account) }
             Image(systemName: "line.3.horizontal")
                 .foregroundStyle(.secondary)
                 .frame(width: 22, height: 24)
@@ -2129,12 +2053,6 @@ private struct AccountRow: View {
                 Button(account.provider == .ollama ? L("다시 받기·업데이트", "Download again or update") : L("로그인…", "Sign in…")) { model.login(account) }
                 if let dir = account.dir {
                     Button(L("Finder에서 폴더 열기", "Show folder in Finder")) { DataFolders.open(dir) }
-                }
-                if account.provider != .ollama {
-                    Divider()
-                    Toggle(L("엔터프라이즈 계정", "Enterprise account"), isOn: Binding(
-                        get: { isSchool }, set: { model.setSchool(account.id, $0) }))
-                        .help(enterpriseHelp)
                 }
                 Divider()
                 Button(L("목록에서 빼기…", "Remove from list…")) { model.remove(account) }

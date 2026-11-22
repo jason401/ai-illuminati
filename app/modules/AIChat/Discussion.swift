@@ -116,7 +116,7 @@ public final class Discussion: ObservableObject {
     let pictureLock = NSLock()
     var nextPicture = 1
 
-    // The ChatGPT accounts that draw for `account` (Settings → Chat → Picture makers), best first. Empty when
+    // The ChatGPT accounts that draw for `account` (Settings by AI, picture maker), best first. Empty when
     // none is checked or `account` is one of them (it draws itself). In an Enterprise chat only makers of its organization.
     func pictureMakers(for account: Account, chat id: UUID, excluded: Set<String> = []) -> [Account] {
         let makers = model.pictureMakers
@@ -904,8 +904,8 @@ public final class Discussion: ObservableObject {
         let meetingTeam = meeting ? meetingMembers(room: id, mentioned: mentioned, fallback: team) : []
         if meeting && meetingTeam.isEmpty {
             return autoMembers && mentioned.isEmpty
-                ? L("회의할 수 있는 AI가 없어요. 설정 → 채팅 → \"자동으로 부를 AI\"에서 로그인된 AI를 켜 주세요.",
-                    "No AI can meet. Turn on a signed-in AI in Settings → Chat → \"AIs picked automatically\".")
+                ? L("회의할 수 있는 AI가 없어요. 설정 → 채팅 → AI별 설정의 \"자동으로 부르기\"에서 로그인된 AI를 켜 주세요.",
+                    "No AI can meet. Turn on a signed-in AI under \"Picked automatically\" in Settings → Chat → Settings by AI.")
                 : L("회의할 수 있는 AI가 없어요. Claude·ChatGPT·Gemini 중 로그인된 AI를 참여시켜 주세요.", "No AI can meet. Add a signed-in Claude, ChatGPT or Gemini.")
         }
         var turn = ChatTurn(question: question)
@@ -1049,8 +1049,8 @@ public final class Discussion: ObservableObject {
                 let picked = route == .all && opinionMembers.count < 2 && autoAsked
                 if picked && autoTeam.isEmpty {
                     worker.changeTurn(id, index, save: true) {
-                        $0.error = L("의견을 줄 AI가 없어요. 설정 → 채팅 → \"자동으로 부를 AI\"에서 로그인된 AI를 켜 주세요.",
-                                     "No AI can give a view. Turn on a signed-in AI in Settings → Chat → \"AIs picked automatically\".")
+                        $0.error = L("의견을 줄 AI가 없어요. 설정 → 채팅 → AI별 설정의 \"자동으로 부르기\"에서 로그인된 AI를 켜 주세요.",
+                                     "No AI can give a view. Turn on a signed-in AI under \"Picked automatically\" in Settings → Chat → Settings by AI.")
                     }
                     return worker.endSolo(id, index, stopped: false)
                 }

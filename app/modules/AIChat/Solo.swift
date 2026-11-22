@@ -210,7 +210,7 @@ extension Discussion {
         }
     }
 
-    // Accounts the app may not pick by itself (Settings → Chat, "AIs picked automatically"); picking one by hand still works.
+    // Accounts the app may not pick by itself (Settings by AI, "Picked automatically"); picking one by hand still works.
     var autoOff: Set<String> { Set(model.accounts.filter { !Self.autoPicked($0, picks: model.autoTeamPicks) }.map(\.id)) }
 
     // Members who take part in the next message: only when two or more are checked, skipping accounts that need

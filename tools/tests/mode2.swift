@@ -1360,6 +1360,59 @@ do {
     print("PASS: picture makers draw requested pictures, only of the organization in an Enterprise chat")
 }
 
+// Any AI can be a picture maker: ChatGPT and Gemini start checked and paint with their image tool (Gemini's files are
+// found in agy's conversation folders, not its scratch), Claude and Ollama start unchecked and draw SVG.
+do {
+    let savedModes = Discussion.availableModes
+    Discussion.availableModes = [0, 1, 2, 3, 4]
+    defer { Discussion.availableModes = savedModes }
+    let m = AppModel()
+    m.accounts = [Account(id: "pm-claude", provider: .claude, name: "Claude", dir: nil, school: false),
+                  Account(id: "pm-claude2", provider: .claude, name: "Claude 2", dir: nil, school: false),
+                  Account(id: "pm-gemini", provider: .gemini, name: "Gemini", dir: nil, school: false),
+                  Account(id: "pm-codex", provider: .codex, name: "ChatGPT", dir: AccountStore.home + "/pm-codex", school: false)]
+    m.pictureMakersOff = ["pm-codex"]; m.pictureMakersOn = []
+    expect(m.isPictureMaker(m.accounts[2]) && !m.isPictureMaker(m.accounts[1]) && m.pictureMakers.map(\.id) == ["pm-gemini"],
+           "Gemini starts as a picture maker, Claude does not")
+    var u = AIUsage(name: "u"); u.fiveHour = UsageWindow(usedPercent: 10, resetsAt: nil); u.weekly = UsageWindow(usedPercent: 20, resetsAt: nil)
+    m.latestUsage = Dictionary(uniqueKeysWithValues: m.accounts.map { ($0.id, u) })
+    let chat = Discussion(model: m)
+    chat.newConversation()
+    chat.configure { $0.mode = 0; $0.soloAccountID = "pm-claude" }
+    expect(chat.pictureRule(m.accounts[2]).contains("image generation tool") && chat.pictureRule(m.accounts[0]).contains("do not draw it yourself"),
+           "a Gemini maker paints itself; the others ask it")
+    let png = Pictures.render(svg: "<svg viewBox='0 0 10 10'><rect width='10' height='10' fill='green'/></svg>")!
+    var makers: [String] = [], makerPrompts: [String] = []
+    let writer: Result<String, Answerer.Failure> = .success("그림이에요.\n```picture\nA transducer and its focus, label 'focus'\n```")
+    chat.workspaceAnswer = { _, _, _, _, _ in writer }
+    chat.debateAnswer = { account, prompt, _, _, _ in
+        guard prompt.contains("[PICTURE REQUEST]") else { return writer }
+        makers.append(account.id); makerPrompts.append(prompt)
+        if account.provider == .gemini {
+            let conversation = Pictures.geminiBrain.appendingPathComponent("conv-\(makers.count)")
+            try? FileManager.default.createDirectory(at: conversation.appendingPathComponent("scratch"), withIntermediateDirectories: true)
+            try? png.write(to: conversation.appendingPathComponent("scratch/not-a-picture.png"))
+            try? png.write(to: conversation.appendingPathComponent("focus_123.jpg"))
+            return .success("Generated it.")
+        }
+        return .success("```svg\n<svg viewBox='0 0 10 10'><circle cx='5' cy='5' r='4' fill='red'/></svg>\n```")
+    }
+    chat.draft = "그려줘"; chat.send(); waitFor(chat)
+    var turn = chat.current.turns[0]
+    expect(makers == ["pm-gemini"] && makerPrompts.last?.contains("image generation tool") == true, "Gemini draws with its image tool: \(makers) \(chat.current.turns.map { "\($0.mode) \($0.final ?? "-")" })")
+    expect(turn.finalImages?.count == 1 && turn.final?.contains("```picture") == false, "Gemini's image replaces the request (scratch ignored): \(turn.final ?? "nil")")
+
+    m.setPictureMaker(m.accounts[2], false); m.setPictureMaker(m.accounts[1], true); makers.removeAll()
+    expect(m.pictureMakersOff.contains("pm-gemini") && m.pictureMakersOn == ["pm-claude2"], "the switches go to the right sets")
+    chat.draft = "또"; chat.send(); waitFor(chat)
+    turn = chat.current.turns[1]
+    expect(makers == ["pm-claude2"] && makerPrompts.last?.contains("```svg") == true, "a checked Claude draws SVG: \(makers)")
+    expect(turn.finalImages?.count == 1 && turn.final?.contains("```picture") == false && turn.final?.contains("<svg") == false,
+           "Claude's SVG becomes the picture: \(turn.final ?? "nil")")
+    expect(!chat.pictureRule(m.accounts[2]).contains("image generation tool"), "a Gemini that is not a maker draws SVG")
+    print("PASS: any AI can be a picture maker; Gemini paints, Claude draws SVG")
+}
+
 // Space pictures from a chat: a ChatGPT account draws each <space-picture> request, a redraw gets the kept picture
 // attached, one the page does not use is skipped, and a failed drawer hands it to the next.
 do {

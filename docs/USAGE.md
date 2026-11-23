@@ -48,7 +48,7 @@ Sessions are always kept for app-specific Claude/Codex accounts, so each AI rece
 
 Attach pictures using +, paste, or drag and drop. Image generation and sharing differ by provider; do not assume all tools provide the same capabilities.
 
-Picture makers (Settings → Chat): checked ChatGPT accounts draw every picture the other AIs (Claude, Gemini, Gemma) need, in plain chats, team modes and project chats. The AI writes a picture request and the drawn image takes its place. In an Enterprise chat only makers of its organization draw; if every one of them fails, the request is shown instead. Charts of real data and diagrams that must be exact are still drawn by each AI. Uncheck all makers to have each AI draw for itself again.
+Picture makers (Settings by AI): checked AIs draw every picture the other AIs need, in plain chats, team modes and project chats. ChatGPT and Gemini start checked and paint with their image tool (Gemini through agy, whose images are saved in `~/.gemini/antigravity-cli/brain/`); Claude and models on this Mac can be checked too and draw SVG. The checked AI with the most usage left draws; one that fails hands the picture to the next. Space pictures go only to ChatGPT and Gemini. The AI writes a picture request and the drawn image takes its place. In an Enterprise chat only makers of its organization draw; if every one of them fails, the request is shown instead. Charts of real data and diagrams that must be exact are still drawn by each AI. Uncheck all makers to have each AI draw for itself again.
 
 ## Materials and file permissions
 

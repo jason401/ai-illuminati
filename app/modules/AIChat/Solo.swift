@@ -408,10 +408,12 @@ extension Discussion {
         changeTurn(room, index, save: true) { $0.spaceEdits = ($0.spaceEdits ?? []) + notes }
     }
 
-    // The ChatGPT accounts that draw a chat's Space pictures, best first: the picture makers (Settings → Chat), else any
-    // ChatGPT account; those whose usage is not known yet last. In an Enterprise chat only those of its organization.
+    // The accounts that paint a chat's Space pictures, best first: the picture makers with an image tool (ChatGPT, Gemini;
+    // Settings by AI), else any ChatGPT account; those whose usage is not known yet last. In an Enterprise chat only those
+    // of its organization.
     func spaceDrawers(chat id: UUID, excluded: Set<String> = []) -> [Account] {
-        let makers = model.pictureMakers.isEmpty ? model.accounts.filter { $0.provider == .codex } : model.pictureMakers
+        let painters = model.pictureMakers.filter { Pictures.paints($0.provider) }
+        let makers = painters.isEmpty ? model.accounts.filter { $0.provider == .codex } : painters
         let chatLock = lock(of: id)
         var left = makers.filter { !excluded.contains($0.id) && Enterprise.permits($0, lock: chatLock) }, ordered: [Account] = []
         while let best = AutoPick.choose(left, usage: model.latestUsage, lock: nil, current: nil) {
@@ -446,12 +448,12 @@ extension Discussion {
                 let answer = reference.map { file in
                     pictureAnswer?(drawer, prompt, [file], 600, token, false) ?? Answerer.ask(drawer, prompt: prompt, timeout: 600, cancellation: token, images: [file], run: .app(drawer).tagged("picture"))
                 } ?? debateAnswer(drawer, prompt, 600, token, false)
-                if case .success = answer { picture = Pictures.newCodexImages(drawer, since: started).first.flatMap { Pictures.spaceDataURL($0) } }
+                if case .success = answer { picture = Pictures.newImages(drawer, since: started).first.flatMap { Pictures.spaceDataURL($0) } }
             }
             guard let picture else {
                 return .failure(SpaceBad(reason: token.isCancelled ? L("취소했어요", "Cancelled")
-                    : L("Space 그림 \(request.n)을 그리지 못했어요 (그릴 수 있는 ChatGPT 계정이 없거나 실패했어요)",
-                        "Could not draw Space picture \(request.n) (no ChatGPT account could draw it)")))
+                    : L("Space 그림 \(request.n)을 그리지 못했어요 (그릴 수 있는 ChatGPT·Gemini가 없거나 실패했어요)",
+                        "Could not draw Space picture \(request.n) (no ChatGPT or Gemini could draw it)")))
             }
             made.append(picture)
         }

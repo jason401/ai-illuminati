@@ -181,10 +181,14 @@ final class AppModel: ObservableObject {
     @Published var routeSorter: RouteSorter {
         didSet { defaults.set(routeSorter.rawValue, forKey: "routeSorter") }
     }
-    // ChatGPT accounts unchecked as picture makers (Settings → Chat). The others draw every picture the
-    // other AIs need; a new ChatGPT account starts checked.
+    // Picture makers (Settings by AI) draw every picture the other AIs need. ChatGPT and Gemini have an image tool and
+    // start checked (`pictureMakersOff` holds the unchecked ones); Claude and models on this Mac draw SVG and start
+    // unchecked (`pictureMakersOn` holds the checked ones).
     @Published var pictureMakersOff: Set<String> {
         didSet { defaults.set(pictureMakersOff.sorted(), forKey: "pictureMakersOff") }
+    }
+    @Published var pictureMakersOn: Set<String> {
+        didSet { defaults.set(pictureMakersOn.sorted(), forKey: "pictureMakersOn") }
     }
     // Which AIs the app may pick when a chat's members are automatic (meetings, several views; Meeting.swift autoPicked):
     // only the switches changed in Settings → Chat; the others follow the default (cloud AIs on, models on this Mac off).
@@ -203,7 +207,15 @@ final class AppModel: ObservableObject {
     @Published var autoPullMain: Bool {
         didSet { defaults.set(autoPullMain, forKey: "autoPullMain") }
     }
-    var pictureMakers: [Account] { accounts.filter { $0.provider == .codex && !pictureMakersOff.contains($0.id) } }
+    var pictureMakers: [Account] { accounts.filter { isPictureMaker($0) && ($0.provider != .ollama || localEnabled) } }
+    func isPictureMaker(_ account: Account) -> Bool {
+        [.codex, .gemini].contains(account.provider) ? !pictureMakersOff.contains(account.id) : pictureMakersOn.contains(account.id)
+    }
+    func setPictureMaker(_ account: Account, _ on: Bool) {
+        if [.codex, .gemini].contains(account.provider) {
+            if on { pictureMakersOff.remove(account.id) } else { pictureMakersOff.insert(account.id) }
+        } else if on { pictureMakersOn.insert(account.id) } else { pictureMakersOn.remove(account.id) }
+    }
     var onAccountsChange: (() -> Void)?
     var onDisplayChange: (() -> Void)?
     var onPreviewUsageMenu: (() -> Void)?
@@ -236,6 +248,7 @@ final class AppModel: ObservableObject {
         pausedSharedFolders = Set(defaults.stringArray(forKey: "pausedSharedFolders") ?? [])
         writableSharedFolders = Set(defaults.stringArray(forKey: "writableSharedFolders") ?? [])
         pictureMakersOff = Set(defaults.stringArray(forKey: "pictureMakersOff") ?? [])
+        pictureMakersOn = Set(defaults.stringArray(forKey: "pictureMakersOn") ?? [])
         autoTeamPicks = defaults.dictionary(forKey: "autoTeamPicks") as? [String: Bool] ?? [:]
         collaboration = defaults.string(forKey: "aiCollaboration").flatMap(CollabMode.init(rawValue:)) ?? .notify
         opinionDigest = defaults.object(forKey: "opinionDigest") as? Bool ?? true

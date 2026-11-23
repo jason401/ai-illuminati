@@ -54,8 +54,8 @@ struct AISettingsGrid: View {
                                  "A candidate when the app picks by itself: who answers an automatic chat, meetings and several views, ask_ai, project or TODO work nobody was picked for. Off: still answers when picked in a chat or called with @. Project work and review are Claude and ChatGPT only.")
             case .enterprise: return L("엔터프라이즈(학교·회사) 계정: 직접 잠근 Enterprise 방에는 이름이 같은 엔터프라이즈 계정과 내 Mac 모델만 참여해요.",
                                        "Enterprise (school or work) account: a chat you lock as Enterprise is answered only by Enterprise accounts of the same name and models on this Mac.")
-            case .pictures: return L("켜 둔 ChatGPT 계정이 다른 AI 대신 그림을 그려요. 엔터프라이즈 AI는 엔터프라이즈 ChatGPT에게, 개인 AI는 개인 ChatGPT에게 맡겨요. 숫자가 정확해야 하는 그래프는 각 AI가 직접 그려요.",
-                                     "Checked ChatGPT accounts draw pictures for the other AIs: Enterprise AIs ask Enterprise ChatGPT, personal AIs personal ChatGPT. Charts that must be exact are drawn by each AI.")
+            case .pictures: return L("켜 둔 AI가 다른 AI 대신 그림을 그려요. ChatGPT·Gemini는 이미지 생성 도구로 그리고(처음엔 켜져 있어요), Claude·내 Mac 모델은 SVG로 그려요(처음엔 꺼져 있어요). 켜 둔 AI 중 사용량이 가장 많이 남은 쪽이 맡고, 엔터프라이즈 방은 같은 조직의 AI에게만 맡겨요. 숫자가 정확해야 하는 그래프는 각 AI가 직접 그려요.",
+                                     "Checked AIs draw pictures for the other AIs. ChatGPT and Gemini use their image tool (checked at first); Claude and models on this Mac draw SVG (unchecked at first). The checked AI with the most usage left draws, and in an Enterprise chat only one of its organization. Charts that must be exact are drawn by each AI.")
             case .menuBar: return L("메뉴바 사용량 표시에 이 계정을 보여요.", "Shows this account in the menu bar usage.")
             case .local: return L("내 Mac의 Ollama 모델 전체에 한 번에 적용돼요. 끄면 @·투표·대타에서 빠지고 메모리에서 내려요.",
                                   "Applies to every Ollama model on this Mac at once. Off: no @, votes or stand-in, and unloaded.")
@@ -72,7 +72,7 @@ struct AISettingsGrid: View {
         switch column {
         case .model, .effort, .enterprise: return account.provider != .ollama
         case .auto: return Discussion.meets(account) || account.provider == .ollama
-        case .pictures: return account.provider == .codex
+        case .pictures: return true
         case .menuBar: return true
         case .local: return account.provider == .ollama
         }
@@ -159,8 +159,10 @@ struct AISettingsGrid: View {
                 toggle(column, account, Binding(get: { model.accounts.first { $0.id == account.id }?.isSchool ?? false },
                                                 set: { model.setSchool(account.id, $0) }))
             case .pictures:
-                toggle(column, account, Binding(get: { !model.pictureMakersOff.contains(account.id) },
-                                                set: { on in if on { model.pictureMakersOff.remove(account.id) } else { model.pictureMakersOff.insert(account.id) } }))
+                let off = account.provider == .ollama && !model.localEnabled
+                toggle(column, account, Binding(get: { model.isPictureMaker(account) }, set: { model.setPictureMaker(account, $0) }))
+                    .disabled(off)
+                    .help(off ? L("Ollama가 꺼져 있어요", "Ollama is off") : column.help)
             case .menuBar:
                 toggle(column, account, Binding(get: { !model.menuBarHidden.contains(account.id) },
                                                 set: { on in if on { model.menuBarHidden.remove(account.id) } else { model.menuBarHidden.insert(account.id) } }))

@@ -116,7 +116,7 @@ public final class Discussion: ObservableObject {
     let pictureLock = NSLock()
     var nextPicture = 1
 
-    // The ChatGPT accounts that draw for `account` (Settings by AI, picture maker), best first. Empty when
+    // The picture makers that draw for `account` (Settings by AI), best first. Empty when
     // none is checked or `account` is one of them (it draws itself). In an Enterprise chat only makers of its organization.
     func pictureMakers(for account: Account, chat id: UUID, excluded: Set<String> = []) -> [Account] {
         let makers = model.pictureMakers
@@ -131,7 +131,12 @@ public final class Discussion: ObservableObject {
 
     // How `account` makes pictures in this chat (draws itself, or asks a picture maker).
     func pictureRule(_ account: Account, chat id: UUID? = nil) -> String {
-        Pictures.rule(for: account.provider, delegate: !pictureMakers(for: account, chat: id ?? currentID).isEmpty)
+        Pictures.rule(for: account.provider, delegate: !pictureMakers(for: account, chat: id ?? currentID).isEmpty, paints: paints(account))
+    }
+
+    // `account` draws with its image tool: ChatGPT always, Gemini while it is a picture maker.
+    func paints(_ account: Account) -> Bool {
+        account.provider == .codex || (account.provider == .gemini && model.pictureMakers.contains { $0.id == account.id })
     }
 
     // Collects the pictures in one AI reply (numbered in order, stored with the chat). Each ```picture request
@@ -149,9 +154,9 @@ public final class Discussion: ObservableObject {
                     if let index { changeTurn(id, index) { $0.status = L("\(self.label(maker))가 그림 그리는 중…", "\(self.label(maker)) is drawing…") } }
                     let started = Date()
                     guard permits(maker, room: id) else { excluded.insert(maker.id); continue }
-                    switch debateAnswer(maker, Pictures.makerPrompt(block.request), 600, token, false) {
-                    case .success:
-                        let made = Pictures.newCodexImages(maker, since: started).compactMap { try? Data(contentsOf: $0) }
+                    switch debateAnswer(maker, Pictures.makerPrompt(block.request, paints: Pictures.paints(maker.provider)), 600, token, false) {
+                    case .success(let reply):
+                        let made = Pictures.made(by: maker, reply: reply, since: started)
                         if made.isEmpty { excluded.insert(maker.id) } else { files = made }
                     case .failure:
                         excluded.insert(maker.id)
@@ -161,7 +166,8 @@ public final class Discussion: ObservableObject {
             }
         }
         pictureLock.lock(); defer { pictureLock.unlock() }
-        let harvest = Pictures.harvest(text, account: account, since: since, conversationID: id, number: nextPicture, drawn: drawn)
+        let harvest = Pictures.harvest(text, account: account, since: since, conversationID: id, number: nextPicture, drawn: drawn,
+                                       paints: paints(account))
         nextPicture += harvest.images.count
         return harvest
     }

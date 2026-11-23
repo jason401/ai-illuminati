@@ -92,7 +92,8 @@ public enum MacControl {
             ["pid": running.processIdentifier, "name": running.localizedName ?? "", "bundle_id": running.bundleIdentifier ?? ""]
         }
         let workspace = NSWorkspace.shared
-        let listed: [[String: Any]] = windows.map { window in
+        // Hidden untitled windows are app internals (about 290 of 316 on a real Mac, ~27k characters): list only what a person could pick.
+        let listed: [[String: Any]] = windows.filter { $0.isOnScreen || !($0.title ?? "").isEmpty }.map { window in
             ["window_id": window.windowID, "title": window.title ?? "", "app": window.owningApplication?.applicationName ?? "",
              "pid": window.owningApplication?.processID ?? 0, "on_screen": window.isOnScreen]
         }

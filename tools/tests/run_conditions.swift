@@ -110,8 +110,7 @@ func runConditionsCapture() -> String {
     }
     // Project work the way ProjectChat starts it (write and execute, its own backup, a session), Claude and Codex
     // (the only project workers), the chat's full auto off and on. The tool answers at once; nothing else runs.
-    // Found 2026-11-11, before R0 too: soloBinding rebuilds the binding without `fullAuto`, so "off" still runs full
-    // auto here. The golden file keeps what the app does; changing it is a separate decision.
+    // soloBinding carries the chat's switch (it dropped it until 2026-11-23, so "off" still ran full auto).
     for account in accounts where account.provider == .claude || account.provider == .codex {
         for fullAuto in [false, true] {
             let root = URL(fileURLWithPath: home).appendingPathComponent("run-conditions-project-\(account.provider.rawValue)-\(fullAuto)")
@@ -174,9 +173,9 @@ func testRunConditions() {
         for kind in ["project-chat-off", "project-chat-on"] {
             let work = block(provider + " " + kind)
             expect(work.contains("exec: /usr/bin/python3\narg: \"$RESOURCES/project_process.py\"\narg: \"<cli>\"") && work.contains("group: true")
-                   && work.contains("env+: AI_ILLUMINATI_PROJECT_PROCESS=\"1\"") && work.contains("env-: GH_TOKEN")
+                   && work.contains("env+: AI_ILLUMINATI_PROJECT_PROCESS=\"1\"") && work.contains("env-: GH_TOKEN") == kind.hasSuffix("on")
                    && (provider == "codex" || work.contains("arg: \"$TEST_HOME/run-conditions-project-claude-\(kind.hasSuffix("on"))\"")),
-                   "\(provider) \(kind): ProjectChat's run is wrapped, guarded and gets its project (Codex full access names no folder)")
+                   "\(provider) \(kind): ProjectChat's run is wrapped, guarded only when on, and gets its project (Codex full access names no folder)")
         }
     }
     for kind in ["plain", "folder", "project-on"] {
@@ -186,6 +185,13 @@ func testRunConditions() {
            && !block("claude project-off").contains("bypassPermissions"), "claude: full access on and off give their own permissions")
     expect(block("codex project-on").contains("sandbox_mode=\\\"danger-full-access\\\"") && block("codex project-off").contains("sandbox_mode=\\\"read-only\\\""),
            "codex: full access on and off give their own sandbox")
+    // The chat's full auto switch reaches project work: off = the limited tool, no AutoGuard; on = as before.
+    let chatOff = block("claude project-chat-off"), chatOn = block("claude project-chat-on")
+    expect(chatOff.contains("arg: \"--restricted\"") && !chatOff.contains("bypassPermissions") && !chatOff.contains("auto-guard")
+           && chatOn.contains("arg: \"bypassPermissions\"") && chatOn.contains("auto-guard"), "claude: the project chat's full auto off and on give their own permissions")
+    let codexChatOff = block("codex project-chat-off"), codexChatOn = block("codex project-chat-on")
+    expect(!codexChatOff.contains("danger-full-access") && codexChatOff.contains("sandbox_mode=\\\"workspace-write\\\"") && !codexChatOff.contains("auto-guard")
+           && codexChatOn.contains("sandbox_mode=\\\"danger-full-access\\\"") && codexChatOn.contains("auto-guard"), "codex: the project chat's full auto off and on give their own sandbox")
     expect(blocks.filter { $0.hasPrefix("ollama ") }.allSatisfy { !$0.contains("exec:") }, "the local model starts no command line tool")
     // Thinking on Auto: project work and its runs think hard, every other call medium.
     for (provider, high, medium) in [("claude", "arg: \"--effort\"\narg: \"high\"", "arg: \"--effort\"\narg: \"medium\""),

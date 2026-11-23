@@ -581,7 +581,7 @@ public final class DelegateLink: ToolProvider {
                 + (p.forbidden.isEmpty ? "" : "\n\(L("건드리지 않음", "Must not touch")): \(p.forbidden.joined(separator: ", "))")
                 + (p.interfaces.isEmpty ? "" : "\n\(L("맞물리는 곳", "Meets at")): \(p.interfaces)") + "\n\(L("끝 조건", "Done when")): \(p.done)"
             }.joined(separator: "\n\n") + (string("why").isEmpty ? "" : "\n\n" + L("이유", "Why") + ": " + string("why"))
-            // The chat's own full auto switch (a TODO's chat: on). The run's binding does not carry it (run_conditions.swift).
+            // The chat's own full auto switch (a TODO's chat: on), read from the chat itself, not from the run's binding.
             let auto = onMain { host.conversation(main).workspace?.isFullAuto == true }
             if !auto {
                 let deadline = min(run.deadline, Date().addingTimeInterval(900))

@@ -283,7 +283,8 @@ extension Discussion {
                 roots.append(WorkspaceRoot(path: folder.path, directory: folder.directory))
             }
         }
-        var binding = WorkspaceBinding(roots: roots, level: .view, project: linked?.project, face: true)
+        // Project work keeps the chat's full auto switch (off = approval cards, the restricted CLI, no AutoGuard run).
+        var binding = WorkspaceBinding(roots: roots, level: .view, project: linked?.project, fullAuto: linked?.project == nil ? nil : linked?.fullAuto, face: true)
         // A folder linked to this chat (not Git project work) gets full access too, unless turned off.
         if linked?.project == nil, linked?.isFullAuto == true { binding.fullAccess = true }
         return binding

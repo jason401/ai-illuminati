@@ -436,7 +436,7 @@ extension Discussion {
                         binding: WorkspaceBinding, fresh: String? = nil, keepState: Bool = false, note: String = "") {
         guard let selected = binding.project else { finish(id, index, error: "No project selected."); return }
         let fullAuto = binding.isFullAuto
-        // A split decision uses the chat's explicit setting, which soloBinding does not carry into project execution.
+        // A split decision reads the chat's own setting (soloBinding carries the same switch into the run).
         let run = ProjectRun(room: id, binding: selected, token: cancellation, fullAuto: fullAuto,
                              todoSplitFullAuto: conversation(id).workspace?.isFullAuto)
         // Only the turn's final result goes to the remote, once, after the review and its fixes (TODOs and plain chats).

@@ -400,8 +400,8 @@ func testTodoSplitExecution() {
         func tool(_ name: String, _ args: [String: Any] = [:]) -> [String: Any] { GitLink.shared.call(name, args, context: context) }
         func done(_ summary: String) -> [String: Any] { TaskLink.shared.call("task_done", ["summary": summary], context: context) }
         if item.piece == nil {
-            expect(!run.todoSplitFullAuto && binding.isFullAuto && run.fullAuto && prompt.contains("ask with task_ask what is unclear"),
-                   "the split decision sees manual approval while ordinary TODO execution keeps its existing permissions")
+            expect(!run.todoSplitFullAuto && !binding.isFullAuto && !run.fullAuto && !binding.fullAccessActive && prompt.contains("ask with task_ask what is unclear"),
+                   "the chat's full auto off reaches both the split decision and the TODO's own run")
             expect(names(DelegateLink.shared.tools(context: context)).contains("delegate_plan"), "an ordinary TODO can still delegate")
             // Even if a caller splits after an early commit, its changes must reach the finish review.
             write("Early.txt")

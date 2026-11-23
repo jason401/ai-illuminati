@@ -18,8 +18,8 @@ public enum MacControl {
           "description": "View the primary display or one window from mac_windows. The image and its screen-coordinate scale are returned. AI Illuminati windows are excluded.",
           "inputSchema": ["type": "object", "properties": ["window_id": ["type": "integer", "minimum": 1]], "additionalProperties": false]],
          ["name": "mac_windows",
-          "description": "List running apps, the frontmost app, and shareable windows with IDs for mac_screenshot.",
-          "inputSchema": ["type": "object", "properties": [:], "additionalProperties": false]]]
+          "description": "List running apps, the frontmost app, and shareable windows with IDs for mac_screenshot. Hidden untitled windows are left out unless all is true.",
+          "inputSchema": ["type": "object", "properties": ["all": ["type": "boolean"]], "additionalProperties": false]]]
     }
 
     @MainActor public static func perform(_ name: String, _ arguments: [String: Any]) async -> [String: Any] {
@@ -48,7 +48,7 @@ public enum MacControl {
             }
             switch name {
             case "mac_windows":
-                return try windowList(windows)
+                return try windowList(windows, all: arguments["all"] as? Bool == true)
             case "mac_screenshot":
                 guard #available(macOS 14.0, *) else {
                     return failure(L("스크린샷은 macOS 14 이상에서 쓸 수 있어요.", "Screenshots require macOS 14 or later."))
@@ -87,13 +87,14 @@ public enum MacControl {
         }
     }
 
-    @MainActor private static func windowList(_ windows: [SCWindow]) throws -> [String: Any] {
+    @MainActor private static func windowList(_ windows: [SCWindow], all: Bool) throws -> [String: Any] {
         func app(_ running: NSRunningApplication) -> [String: Any] {
             ["pid": running.processIdentifier, "name": running.localizedName ?? "", "bundle_id": running.bundleIdentifier ?? ""]
         }
         let workspace = NSWorkspace.shared
-        // Hidden untitled windows are app internals (about 290 of 316 on a real Mac, ~27k characters): list only what a person could pick.
-        let listed: [[String: Any]] = windows.filter { $0.isOnScreen || !($0.title ?? "").isEmpty }.map { window in
+        // Hidden untitled windows are app internals (about 290 of 316 on a real Mac, ~27k characters): list only what a person could pick, unless asked for all
+        // (an untitled window on another Space).
+        let listed: [[String: Any]] = windows.filter { all || $0.isOnScreen || !($0.title ?? "").isEmpty }.map { window in
             ["window_id": window.windowID, "title": window.title ?? "", "app": window.owningApplication?.applicationName ?? "",
              "pid": window.owningApplication?.processID ?? 0, "on_screen": window.isOnScreen]
         }

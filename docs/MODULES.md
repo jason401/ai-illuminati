@@ -440,6 +440,7 @@ are AIProjects'; ToolHub and the Settings backup UI stay App. Providers live wit
 | Errors: an NSError (domain `Materials`, code 1, the same texts) the callers show as they are | Solo, ProjectChat, Attachments (notes) | "the refusal names the backup" | mode2 conflict refusal |
 | Disk sizes: lstat blocks, links not followed, a hard link once across calls with one `seen` | ChatStorage (`report`), clean-up (`bytes`) | "a hard link counts once", "… not counted again across calls", "a missing path counts as unreadable" | mode2 "storage by chat, …, hard links once" |
 | Tool gateway's types: `ToolProvider.tools(context:)` defaults to `tools()`; `ToolContext` carries the room, roots, run, asker, turn, origin | ToolHub and the 14 providers (app files) | none (types) | mode2 tool tests (ask_ai, meetings, chat tools, memory, Drive, outside MCP) |
+| Screen viewing: the plain bridge exposes only the app's two screen tools. Linked folders retain their file tools. The screen grant ends with the answer, and runs with the grant bypass native transcript and raw CLI log storage. | RunConditionsApp, ToolHub, Answerer | `test_workspace_mcp.py` (image and scale relay, refused file call) | `testRunConditions` (account rule, launch arguments, workspace manifest, expiry) |
 
 Public names and why (everything else stays internal: `AutoGuard` whole, `WorkspaceError`, `WorkspaceInvocation.prepare`/
 `readOnly`/`backupPath`/`executionFolders`, `WorkspaceBackup.run`/`survey`/`copyTree`/`trim`/`protect`/`chats`/`keepPerChat`/
@@ -784,6 +785,15 @@ No tool provider in the module (stage 1: no `ToolProvider`, `ToolHub` or `ToolCo
 - New `ExternalMCPTools.swift` `extension ExternalMCP: ToolProvider`: the Enterprise rule in both the list and the call (before anything
   is passed on), the approval card (`approve`, `isEnterprise`, tests replace them as before); the module's `call(name, arguments, approve:)`
   keeps block/ask/allow, the two-minute limit with the approval counted, the refusal text with `approvalWait`, and the remote-data note.
+
+The app also connects `MacControl` to the per-answer screen grant in `ToolHub.swift`. Its public `enabled` checks the account
+at launch and when listing or calling tools, `tools` supplies the two MCP definitions, and `perform` reads the window list
+or returns an in-memory PNG and a line mapping image pixels to screen points. The app calls it on the main actor.
+`WorkspaceToolLink.screenArguments` builds the screen-only CLI bridge for the app. The optional `screenTools` callback on
+`WorkspaceInvocation.arguments` lets the app add that scope to a linked chat without granting its other app-side tools.
+`ChatApp.run` takes the chat's screen opt-in so only regular replies and project workers can request a grant.
+`RunConditions.screenTools` and its `ScreenTools` initializer let the app supply the arguments and end the grant in Answerer.
+`NativeSessions.ask(persist:)` lets AIChat send context for that answer without saving a provider transcript.
 
 Injected so tests need no real Keychain, network or socket (the defaults do what the app always did):
 - Keychain: `GoogleKeychainStore(run:)` (already) and `MCPKeychain(run:)` (new), both the `/usr/bin/security` runner; `GoogleAuth(store:)`.

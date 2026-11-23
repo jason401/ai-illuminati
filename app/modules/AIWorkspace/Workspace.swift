@@ -58,6 +58,33 @@ public struct WorkspaceToolLink { var socket: String; var session: String; var f
     public init(socket: String, session: String, face: String? = nil) {
         self.socket = socket; self.session = session; self.face = face
     }
+
+    public func screenArguments(provider: Account.Provider, original: [String], directory: URL) throws -> [String] {
+        let (command, args) = try WorkspaceInvocation.bridge(in: directory, manifest: [
+            "roots": [], "cache": "", "appToolsOnly": true, "tools": socket, "toolSession": session
+        ])
+        var result = original
+        switch provider {
+        case .claude:
+            result.removeAll { $0 == "--safe-mode" }
+            if let i = result.firstIndex(of: "--mcp-config") {
+                let config = ["mcpServers": ["illuminati": ["command": command, "args": args]]]
+                result[i + 1] = String(decoding: try JSONSerialization.data(withJSONObject: config), as: UTF8.self)
+            }
+            if !result.contains("--permission-mode") { result += ["--permission-mode", "dontAsk"] }
+            let allowed = "mcp__illuminati__mac_*"
+            if let i = result.firstIndex(of: "--allowedTools") { result[i + 1] += "," + allowed }
+            else { result += ["--allowedTools", allowed] }
+            return result + ["--restricted", "--setting-sources", "", "--disable-slash-commands"]
+        case .codex:
+            return ["-c", "mcp_servers.illuminati.command=" + WorkspaceInvocation.jsonArgument(command),
+                    "-c", "mcp_servers.illuminati.args=" + WorkspaceInvocation.jsonArgument(args),
+                    "-c", "mcp_servers.illuminati.required=true",
+                    "-c", "mcp_servers.illuminati.default_tools_approval_mode=\"approve\""] + result
+        case .gemini, .ollama:
+            return result
+        }
+    }
 }
 public typealias WorkspaceTools = (WorkspaceInvocation) -> WorkspaceToolLink?
 public struct WorkspaceBinding: Codable {
@@ -118,11 +145,10 @@ public struct WorkspaceInvocation {
            Bundle.main.bundleIdentifier != "local.aiilluminati" { return URL(fileURLWithPath: path) }
         return Bundle.main.resourceURL ?? Bundle.main.bundleURL.appendingPathComponent("Contents/Resources")
     }
-    func prepare(in directory: URL, tools: WorkspaceTools) throws -> (String, [String]) {
+    func prepare(in directory: URL, tools: WorkspaceTools, screenTools: WorkspaceTools = { _ in nil }) throws -> (String, [String]) {
         if level != .view {
             guard let backupPath, let backup = try? WorkspaceBackup.load(backupPath), backup.roots == (binding.projectRunID == nil ? binding.roots : binding.roots.filter { $0.writable == true }), !backup.restored else { throw WorkspaceError.make("자동 백업 완료 전에는 쓰기를 시작할 수 없습니다.") }
         }
-        let manifest = directory.appendingPathComponent("workspace-\(UUID().uuidString).json")
         let roots: [[String: Any]] = binding.roots.map { root in
             var entry: [String: Any] = ["path": root.path, "directory": root.directory]
             if root.writable == true { entry["writable"] = true }
@@ -132,11 +158,16 @@ public struct WorkspaceInvocation {
                                       "cache": NativeSessions.directory(room).appendingPathComponent("document-cache").path,
                                       "extractor": Self.resources.appendingPathComponent("WorkspaceDocument").path]
         object["project"] = binding.projectRunID != nil
-        if binding.face == true || binding.projectRunID != nil || binding.origin == .side, let link = tools(self) {
+        let link = (binding.face == true || binding.projectRunID != nil || binding.origin == .side ? tools : screenTools)(self)
+        if let link {
             object["tools"] = link.socket
             object["toolSession"] = link.session
             if let face = link.face { object["face"] = face } // legacy manifests
         }
+        return try Self.bridge(in: directory, manifest: object)
+    }
+    static func bridge(in directory: URL, manifest object: [String: Any]) throws -> (String, [String]) {
+        let manifest = directory.appendingPathComponent("workspace-\(UUID().uuidString).json")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         try JSONSerialization.data(withJSONObject: object).write(to: manifest, options: .atomic)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: manifest.path)
@@ -196,12 +227,15 @@ public struct WorkspaceInvocation {
         }
     }
 
-    public func arguments(provider: Account.Provider, original: [String], directory: URL, web: Bool, tools: WorkspaceTools) throws -> [String] {
-        let (command, args) = try prepare(in: directory, tools: tools)
-        func json(_ object: Any) -> String {
-            let data = try! JSONSerialization.data(withJSONObject: [object], options: [.fragmentsAllowed, .sortedKeys, .withoutEscapingSlashes])
-            return String(data: data, encoding: .utf8)!.dropFirst().dropLast().description
-        }
+    static func jsonArgument(_ object: Any) -> String {
+        let data = try! JSONSerialization.data(withJSONObject: [object], options: [.fragmentsAllowed, .sortedKeys, .withoutEscapingSlashes])
+        return String(decoding: data, as: UTF8.self).dropFirst().dropLast().description
+    }
+
+    public func arguments(provider: Account.Provider, original: [String], directory: URL, web: Bool,
+                          tools: WorkspaceTools, screenTools: WorkspaceTools = { _ in nil }) throws -> [String] {
+        let (command, args) = try prepare(in: directory, tools: tools, screenTools: screenTools)
+        let json = Self.jsonArgument
         let terminalAllowed = account.map { AICapabilities.rule($0, .terminal) != .off } ?? true
         let webAllowed = account.map { AICapabilities.rule($0, .web) != .off } ?? true
         let web = web && webAllowed

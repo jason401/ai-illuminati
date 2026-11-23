@@ -9,11 +9,22 @@ import AIIntegrations
 // folder rules (`arguments`, `readRequests`, with the app's tool gateway), whether it is project work
 // (`projectRunID`) and whether full access is on (`fullAccessActive`).
 extension RunConditions {
-    static func app(_ account: Account, _ workspace: WorkspaceInvocation? = nil) -> RunConditions {
+    static func app(_ account: Account, _ workspace: WorkspaceInvocation? = nil, screen: Bool = false) -> RunConditions {
         var run = RunConditions()
         // The face goes through the app as "illuminati", never through Codex's own AI Face server ("gpt").
         if account.provider == .codex { run.prefix = FaceLink.codexOff(account) }
+        let screenScope = screen && MacControl.enabled(account) && (workspace?.binding.origin ?? .member) == .member ? UUID() : nil
+        if let scope = screenScope {
+            run.screenTools = RunConditions.ScreenTools { ToolHub.shared.revoke(screen: scope) }
+        }
         guard let workspace else {
+            if let scope = screenScope {
+                let plain = WorkspaceInvocation(binding: WorkspaceBinding(roots: []), room: UUID(), account: account)
+                run.screenTools = RunConditions.ScreenTools(arguments: { original, directory in
+                    guard let link = ToolHub.link(plain, screenScope: scope, screenOnly: true) else { return original }
+                    return try link.screenArguments(provider: account.provider, original: original, directory: directory)
+                }, finish: { ToolHub.shared.revoke(screen: scope) })
+            }
             if account.provider == .gemini, AICapabilities.rule(account, .web) != .off {
                 run.beforeStart = GeminiLinks.allowWeb
             }
@@ -42,7 +53,9 @@ extension RunConditions {
             answering.binding.fullAccess = false
         }
         run.folders = RunConditions.Folders(directory: NativeSessions.directory(workspace.room),
-            arguments: { try answering.arguments(provider: account.provider, original: $0, directory: $1, web: $2, tools: ToolHub.workspaceLink) },
+            arguments: { try answering.arguments(provider: account.provider, original: $0, directory: $1, web: $2,
+                tools: { ToolHub.link($0, screenScope: screenScope) },
+                screenTools: { invocation in screenScope.flatMap { ToolHub.link(invocation, screenScope: $0, screenOnly: true) } }) },
             read: { try workspace.readRequests($0, directory: $1, token: $2, tools: ToolHub.workspaceLink) })
         return run
     }

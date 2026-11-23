@@ -586,12 +586,14 @@ extension Discussion {
                 }
                 guard permits(account, room: id) else { return .failure(Enterprise.blocked(account)) }
                 if let workspaceAnswer { return workspaceAnswer(account, prompt, workspace, run.attempt, progress) }
+                let invocation = WorkspaceInvocation(binding: workspace, room: id, readOnly: false, backupPath: activeWorkspaceBackupPath)
+                let conditions = Discussion.steered(.app(account, invocation, screen: true), steer).thinkingHarder(run.bigWork)
                 return nativeSessions.ask(account, room: id, prompt: prompt, images: activeImages,
                                           timeout: run.deadline.timeIntervalSinceNow, token: run.attempt, web: true, speaker: speaker, fresh: freshPrompt,
-                                          invoke: { text, images, session in
+                                          persist: conditions.screenTools == nil, invoke: { text, images, session in
                     Answerer.ask(account, prompt: text, timeout: run.deadline.timeIntervalSinceNow, cancellation: run.attempt,
                                  images: images, web: true, session: session,
-                                 run: Discussion.steered(.app(account, WorkspaceInvocation(binding: workspace, room: id, readOnly: false, backupPath: self.activeWorkspaceBackupPath)), self.steer).thinkingHarder(run.bigWork), progress: Discussion.notingEffort(progress, account, hard: true, harder: run.bigWork))
+                                 run: conditions, progress: Discussion.notingEffort(progress, account, hard: true, harder: run.bigWork))
                 }, note: { text in DispatchQueue.main.async { self.sessionNote = text } })
             }
             let started = Date()

@@ -80,11 +80,19 @@ public struct RunConditions {
     public var environment: ([String: String]) -> [String: String] = { $0 }   // the account's environment → the tool's
     public var processGroup = false                // the wrapper made a group: stop all of it when the call ends
     public var folders: Folders? = nil
+    public var screenTools: ScreenTools? = nil    // one answer, with no provider transcript or raw CLI log
     public var beforeStart: (() -> Void)? = nil   // the caller's own preparation (agy's web rule), just before the arguments
     public var steering: SteerChannel? = nil       // Claude with progress: messages sent while it answers go into the answer
     public var usageKind: String? = nil            // what the call is for, kept with its tokens when it leaves no log (TokenLedger)
     public var thinkHard = false                   // important work (project work, review, meetings, views, ask_ai): Auto is high (CloudEffort)
     public var thinkHarder = false                 // big work (a TODO retried, helped or an hour-long split's finish): Auto is xhigh
+    public struct ScreenTools {
+        var arguments: (([String], URL) throws -> [String])?   // plain chats only; folders already have a bridge
+        var finish: () -> Void
+        public init(arguments: (([String], URL) throws -> [String])? = nil, finish: @escaping () -> Void) {
+            self.arguments = arguments; self.finish = finish
+        }
+    }
     public struct Folders {
         var directory: URL                  // the room's folder: runs without a session and read results go below it
         var arguments: ([String], URL, Bool) throws -> [String]   // (the tool's arguments, run folder, web) → with the folders
@@ -124,6 +132,7 @@ public enum Answerer {
     public static func ask(_ account: Account, prompt: String, timeout: TimeInterval = 240, cancellation: DebateCancellation? = nil,
                     images: [URL] = [], web: Bool = false, session: NativeSessionCall? = nil, run: RunConditions,
                     progress: ((AnswerProgress) -> Void)? = nil) -> Result<String, Failure> {
+        defer { run.screenTools?.finish() }
         // Read once, so a change in Settings never switches models in the middle of one answer.
         let model = CloudModels.model(account), effort = CloudEffort.level(account, hard: run.thinkHard, harder: run.thinkHarder)
         guard let folders = run.folders else { return askOnce(account, prompt: prompt, timeout: timeout, cancellation: cancellation, images: images, web: web, session: session, run: run, model: model, effort: effort, progress: progress) }
@@ -272,7 +281,7 @@ public enum Answerer {
             // --search belongs before "exec" (it is a top-level option).
             let search = web ? ["--search"] : []
             let disabledSearch = webAllowed ? [] : ["-c", "web_search=\"disabled\""]
-            let disabledShell = terminalAllowed ? [] : ["-c", "features.shell_tool=false"]
+            let disabledShell = terminalAllowed && run.screenTools?.arguments == nil ? [] : ["-c", "features.shell_tool=false"]
             arguments = disabledShell + disabledSearch + search + ["exec", "--skip-git-repo-check", "--sandbox", "read-only", "--ephemeral",
                          "--color", "never", "-C", chatDir, "-o", outFile, prompt]
             if let session {
@@ -304,6 +313,8 @@ public enum Answerer {
             arguments.insert("--json", at: exec + 1)
         }
         let chatDirectory = URL(fileURLWithPath: chatDir)
+        let screenDirectory = run.screenTools?.arguments == nil ? nil : chatDirectory.appendingPathComponent("screen-\(UUID().uuidString)")
+        defer { if let screenDirectory { try? FileManager.default.removeItem(at: screenDirectory) } }
         // Never put a launch-specific rule in a shared workspace or the user's agy settings.
         let restrictedGemini = account.provider == .gemini && (!terminalAllowed || !webAllowed)
         let geminiDirectory = restrictedGemini
@@ -320,6 +331,9 @@ public enum Answerer {
             }
             if let geminiPictures { arguments += ["--add-dir", geminiPictures.path] }
             if let folders = run.folders { arguments = try folders.arguments(arguments, executionDirectory, web) }
+            if let screenDirectory, let setup = run.screenTools?.arguments {
+                arguments = try setup(arguments, screenDirectory)
+            }
         } catch { return .failure(.failed("Workspace setup failed: " + error.localizedDescription)) }
         // Steering: the input stays open (stream-json) and Claude says which messages it read (replayed).
         let steering = account.provider == .claude && streamed && launchForTests == nil ? run.steering : nil
@@ -348,7 +362,7 @@ public enum Answerer {
         // A call that leaves no session log returns its usage as JSON, recorded below (TokenLedger.recordApp).
         // Codex JSON events omit the model; visible answers need its turn_context log.
         // Auxiliary calls without progress keep their ephemeral usage-recording behavior.
-        if account.provider == .codex && progress != nil { arguments.removeAll { $0 == "--ephemeral" } }
+        if account.provider == .codex && progress != nil && run.screenTools == nil { arguments.removeAll { $0 == "--ephemeral" } }
         let unlogged = account.provider == .claude ? arguments.contains("--no-session-persistence") : account.provider == .codex && arguments.contains("--ephemeral")
         let askedJSON = unlogged && account.provider == .claude && !arguments.contains("--output-format")
         if askedJSON { arguments += ["--output-format", "json"] }
@@ -366,6 +380,13 @@ public enum Answerer {
             process.arguments = arguments
         }
         var executionEnvironment = run.environment(account.environment)
+        if account.provider == .claude, run.screenTools != nil {
+            executionEnvironment["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] = "1"
+            if run.folders == nil {
+                executionEnvironment["CLAUDE_CODE_DISABLE_CLAUDE_MDS"] = "1"
+                executionEnvironment["CLAUDE_CODE_DISABLE_FILE_MENTIONS"] = "1"
+            }
+        }
         if streamed && account.provider == .claude {
             // Older CLIs can ignore the environment option without rejecting an unknown flag.
             executionEnvironment["CLAUDE_CODE_FORWARD_SUBAGENT_TEXT"] = "1"
@@ -446,7 +467,7 @@ public enum Answerer {
         }
         process.waitUntilExit()
 
-        if run.folders != nil {
+        if run.folders != nil && run.screenTools == nil {
             for (name, data) in [("last-call.jsonl", stdout), ("last-error.log", stderr)] {
                 let file = executionDirectory.appendingPathComponent(name)
                 try? data.write(to: file, options: .atomic)

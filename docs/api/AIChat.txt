@@ -66,7 +66,7 @@ ChatApp.Screens.projectInfo | var projectInfo: (Discussion, String) -> AnyView
 ChatApp.Screens.renameProject | var renameProject: (String, String) -> Void
 ChatApp.driveRule | static var driveRule: () -> String?
 ChatApp.face | static var face: ChatApp.Face
-ChatApp.run | static var run: (Account, WorkspaceInvocation?) -> RunConditions
+ChatApp.run | static var run: (Account, WorkspaceInvocation?, Bool) -> RunConditions
 ChatApp.screens | static var screens: ChatApp.Screens
 ChatConfiguration | struct ChatConfiguration
 ChatConfiguration.accountIDs | var accountIDs: [String]?

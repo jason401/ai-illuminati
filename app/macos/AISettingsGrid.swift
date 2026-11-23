@@ -197,7 +197,8 @@ struct AISettingsGrid: View {
         switch capability {
         case .terminal: return L("실행이 허용된 채팅에서 AI가 터미널 명령을 써요.", "Lets the AI use terminal commands in chats that allow execution.")
         case .web: return L("AI의 웹 검색과 웹페이지 읽기 도구를 써요.", "Lets the AI use its web search and page reading tools.")
-        case .screen: return L("이 Mac의 화면이나 창을 봐요.", "Views the screen or a window on this Mac.")
+        case .screen: return L("이 Mac의 화면이나 창을 봐요. 지금은 ‘켬’에서만 쓸 수 있어요. ‘물어보기’는 준비 중이에요.",
+                               "Views the screen or a window on this Mac. Available with On. Ask is coming later.")
         case .input: return L("이 Mac에서 마우스와 키보드를 써요.", "Uses the mouse and keyboard on this Mac.")
         case .apps: return L("이 Mac에서 앱을 열어요.", "Opens apps on this Mac.")
         case .chrome: return L("Claude in Chrome 확장으로 크롬을 써요.", "Uses Chrome through the Claude in Chrome extension.")

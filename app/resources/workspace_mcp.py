@@ -18,6 +18,7 @@ class Workspace:
         self.tool_session = manifest.get('toolSession')
         self.hub_tools = []
         self.slow = set()   # tools of outside MCP servers (the app's list): they may take minutes
+        self.app_tools_only = manifest.get('appToolsOnly', False)
         if self.hub:
             try:
                 listed = self.ask_hub({'op': 'tools'})
@@ -277,6 +278,8 @@ class Workspace:
         return {'deleted':str(p)}
 
     def tools(self):
+        if self.app_tools_only:
+            return self.hub_tools
         def tool(name,description,properties,required=[]):
             return {'name':name,'description':description,'inputSchema':{'type':'object','properties':properties,'required':required}}
         integer={'type':'integer'}; string={'type':'string'}
@@ -290,6 +293,8 @@ class Workspace:
         return tools + self.hub_tools
 
     def call(self,name,args):
+        if self.app_tools_only:
+            raise ValueError('Tool unavailable in this session')
         if name=='list_files': return [{'type':'text','text':json.dumps(self.list_files(**args),ensure_ascii=False)}]
         if name=='read_document': return self.read_document(**args)
         if name=='search_files': return [{'type':'text','text':json.dumps(self.search_files(**args),ensure_ascii=False)}]

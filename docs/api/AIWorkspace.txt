@@ -105,7 +105,7 @@ WorkspaceChange.kind | var kind: String
 WorkspaceChange.path | var path: String
 WorkspaceInvocation | struct WorkspaceInvocation
 WorkspaceInvocation.account | var account: Account?
-WorkspaceInvocation.arguments(provider:original:directory:web:tools:) | func arguments(provider: Account.Provider, original: [String], directory: URL, web: Bool, tools: WorkspaceTools) throws -> [String]
+WorkspaceInvocation.arguments(provider:original:directory:web:tools:screenTools:) | func arguments(provider: Account.Provider, original: [String], directory: URL, web: Bool, tools: WorkspaceTools, screenTools: WorkspaceTools = { _ in nil }) throws -> [String]
 WorkspaceInvocation.binding | var binding: WorkspaceBinding
 WorkspaceInvocation.init(binding:room:readOnly:backupPath:account:) | init(binding: WorkspaceBinding, room: UUID, readOnly: Bool = true, backupPath: String? = nil, account: Account? = nil)
 WorkspaceInvocation.readRequests(_:directory:token:tools:) | func readRequests(_ requests: [[String : Any]], directory: URL, token: DebateCancellation?, tools: WorkspaceTools) throws -> (String, [URL])
@@ -126,4 +126,5 @@ WorkspaceRoot.path | var path: String
 WorkspaceRoot.writable | var writable: Bool?
 WorkspaceToolLink | struct WorkspaceToolLink
 WorkspaceToolLink.init(socket:session:face:) | init(socket: String, session: String, face: String? = nil)
+WorkspaceToolLink.screenArguments(provider:original:directory:) | func screenArguments(provider: Account.Provider, original: [String], directory: URL) throws -> [String]
 WorkspaceTools | typealias WorkspaceTools = (WorkspaceInvocation) -> WorkspaceToolLink?

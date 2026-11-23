@@ -148,7 +148,7 @@ LocalUsage | enum LocalUsage
 LocalUsage.read(_:) | static func read(_ account: Account) -> AIUsage
 NativeSessionCall | final class NativeSessionCall
 NativeSessions | final class NativeSessions
-NativeSessions.ask(_:room:prompt:images:timeout:token:web:speaker:appendContext:fresh:invoke:note:) | func ask(_ account: Account, room: UUID, prompt: String, images: [URL], timeout: TimeInterval, token: DebateCancellation, web: Bool, speaker: String, appendContext: Bool = false, fresh: String? = nil, invoke: (String, [URL], NativeSessionCall?) -> Result<String, Answerer.Failure>, note: (String) -> Void) -> Result<String, Answerer.Failure>
+NativeSessions.ask(_:room:prompt:images:timeout:token:web:speaker:appendContext:fresh:persist:invoke:note:) | func ask(_ account: Account, room: UUID, prompt: String, images: [URL], timeout: TimeInterval, token: DebateCancellation, web: Bool, speaker: String, appendContext: Bool = false, fresh: String? = nil, persist: Bool = true, invoke: (String, [URL], NativeSessionCall?) -> Result<String, Answerer.Failure>, note: (String) -> Void) -> Result<String, Answerer.Failure>
 NativeSessions.directory(_:) | static func directory(_ room: UUID) -> URL
 NativeSessions.eligible(_:) | static func eligible(_ account: Account) -> Bool
 NativeSessions.init() | init()
@@ -161,12 +161,15 @@ ReplyHeadline.split(_:) | static func split(_ text: String) -> (headline: String
 RunConditions | struct RunConditions
 RunConditions.Folders | struct Folders
 RunConditions.Folders.init(directory:arguments:read:) | init(directory: URL, arguments: @escaping ([String], URL, Bool) throws -> [String], read: @escaping ([[String : Any]], URL, DebateCancellation?) throws -> (String, [URL]))
+RunConditions.ScreenTools | struct ScreenTools
+RunConditions.ScreenTools.init(arguments:finish:) | init(arguments: (([String], URL) throws -> [String])? = nil, finish: @escaping () -> Void)
 RunConditions.beforeStart | var beforeStart: (() -> Void)?
 RunConditions.environment | var environment: ([String : String]) -> [String : String]
 RunConditions.folders | var folders: RunConditions.Folders?
 RunConditions.init() | init()
 RunConditions.prefix | var prefix: [String]
 RunConditions.processGroup | var processGroup: Bool
+RunConditions.screenTools | var screenTools: RunConditions.ScreenTools?
 RunConditions.steering | var steering: SteerChannel?
 RunConditions.tagged(_:) | func tagged(_ kind: String) -> RunConditions
 RunConditions.thinkHard | var thinkHard: Bool

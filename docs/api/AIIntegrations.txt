@@ -172,6 +172,10 @@ MCPToolRule.allow | case allow
 MCPToolRule.ask | case ask
 MCPToolRule.block | case block
 MCPToolRule.init(rawValue:) | init?(rawValue: String)
+MacControl | enum MacControl
+MacControl.enabled(_:) | static func enabled(_ account: Account?) -> Bool
+MacControl.perform(_:_:) | @MainActor static func perform(_ name: String, _ arguments: [String : Any]) async -> [String : Any]
+MacControl.tools() | static func tools() -> [[String : Any]]
 OAuthCallback | protocol OAuthCallback : AnyObject
 OAuthCallback.cancel() | func cancel()
 OAuthCallback.redirect | var redirect: String { get }

@@ -1,6 +1,7 @@
 import Foundation
 import Darwin
 import AIAccounts
+import AILocalization
 import AIWorkspace
 import AIProjects
 import AIChat
@@ -9,6 +10,30 @@ import AIIntegrations
 extension FaceLink: @retroactive ToolProvider {
     public var active: Bool { Self.active() != nil }
     public func call(_ name: String, _ arguments: [String: Any], context: ToolContext) -> [String: Any] { call(name, arguments) }
+}
+
+private final class ScreenTools: ToolProvider {
+    static let shared = ScreenTools()
+    let active = true
+    func tools() -> [[String: Any]] { [] }
+    func tools(context: ToolContext) -> [[String: Any]] {
+        MacControl.enabled(context.asker) ? MacControl.tools() : []
+    }
+    func call(_ name: String, _ arguments: [String: Any], context: ToolContext) -> [String: Any] {
+        // Socket calls run on a worker; AppKit reads the app list on the main actor.
+        let finished = DispatchSemaphore(value: 0)
+        var result: [String: Any] = [:]
+        let capture = Task { @MainActor in
+            defer { finished.signal() }
+            guard !Task.isCancelled, MacControl.enabled(context.asker) else { return }
+            result = await MacControl.perform(name, arguments)
+        }
+        guard finished.wait(timeout: .now() + 12) == .success else {
+            capture.cancel()
+            return ToolHub.failure(L("화면 도구가 시간 안에 응답하지 않았어요.", "The screen tool timed out."))
+        }
+        return result
+    }
 }
 
 // One app-side gateway. Per-answer capabilities keep other chat modes and arbitrary local
@@ -28,33 +53,49 @@ final class ToolHub {
     var active: Bool { providers.contains { $0.active } }
     private let lock = NSLock()
     private var sockets: Set<String> = []
-    private var sessions: [String: (ToolContext, Date)] = [:]
+    private struct Session {
+        let context: ToolContext
+        let expires: Date
+        var screenScope: UUID?
+        let screenOnly: Bool
+    }
+    private var sessions: [String: Session] = [:]
     // The app supplies one fixed list; no dynamic registration.
     init(providers: @escaping () -> [ToolProvider], now: @escaping () -> Date = { Date() }, listenOnRegister: Bool = true) {
         self.providerList = providers; self.now = now; self.listenOnRegister = listenOnRegister
     }
 
     func register(room: UUID, roots: [WorkspaceRoot], projectRun: UUID? = nil, generation: Int? = nil, asker: Account? = nil,
-                  origin: ToolOrigin = .member) -> String {
+                  origin: ToolOrigin = .member, screenScope: UUID? = nil, screenOnly: Bool = false) -> String {
         if listenOnRegister { start() }
-        let turn = asker == nil ? nil : MemoryLink.shared.newestTurn(room)   // read before taking the lock (it may wait for the main thread)
+        let turn = asker == nil || screenOnly ? nil : MemoryLink.shared.newestTurn(room)   // read before taking the lock (it may wait for the main thread)
         lock.lock(); defer { lock.unlock() }
-        sessions = sessions.filter { $0.value.1 > now() }
+        sessions = sessions.filter { $0.value.expires > now() }
         let key = UUID().uuidString
-        sessions[key] = (ToolContext(room: room, roots: roots, projectRun: projectRun, projectGeneration: generation, asker: asker, turn: turn, origin: origin), now().addingTimeInterval(7200))
+        let context = ToolContext(room: room, roots: roots, projectRun: projectRun, projectGeneration: generation, asker: asker, turn: turn, origin: origin)
+        sessions[key] = Session(context: context, expires: now().addingTimeInterval(7200), screenScope: screenScope, screenOnly: screenOnly)
         return key
     }
 
     // What the workspace bridge gets for one call (Workspace.swift asks only when its chat offers tools).
-    static let workspaceLink: WorkspaceTools = { invocation in
-        guard shared.active else { return nil }
+    static let workspaceLink: WorkspaceTools = { link($0) }
+    static func link(_ invocation: WorkspaceInvocation, screenScope: UUID? = nil, screenOnly: Bool = false) -> WorkspaceToolLink? {
+        guard screenScope != nil || shared.active else { return nil }
         let binding = invocation.binding
         let session = shared.register(room: invocation.room, roots: binding.roots, projectRun: binding.projectRunID, generation: binding.projectGeneration,
-                                      asker: invocation.account, origin: binding.origin ?? .member)
-        return WorkspaceToolLink(socket: socketPath, session: session, face: FaceLink.active() != nil ? FaceLink.socketPath : nil)
+                                      asker: invocation.account, origin: binding.origin ?? .member, screenScope: screenScope, screenOnly: screenOnly)
+        return WorkspaceToolLink(socket: socketPath, session: session, face: !screenOnly && FaceLink.active() != nil ? FaceLink.socketPath : nil)
     }
 
-    func revoke(project: UUID) { lock.lock(); sessions = sessions.filter { $0.value.0.projectRun != project }; lock.unlock() }
+    func revoke(project: UUID) { lock.lock(); sessions = sessions.filter { $0.value.context.projectRun != project }; lock.unlock() }
+
+    func revoke(screen scope: UUID) {
+        lock.lock(); defer { lock.unlock() }
+        for key in Array(sessions.keys) where sessions[key]?.screenScope == scope {
+            if sessions[key]?.screenOnly == true { sessions.removeValue(forKey: key) }
+            else { sessions[key]?.screenScope = nil }
+        }
+    }
 
     func start() { listen(at: Self.socketPath, legacy: false) }
     // One release of compatibility for already prepared face-only manifests.
@@ -66,16 +107,22 @@ final class ToolHub {
 
     func handle(_ message: [String: Any], legacy: Bool = false) -> [String: Any] {
         let context: ToolContext
+        var scope: UUID?
+        var screenOnly = false
+        let key = message["session"] as? String ?? ""
         if legacy {
             context = ToolContext(room: UUID(), roots: [])
         } else {
             lock.lock()
-            let session = sessions[message["session"] as? String ?? ""]
+            let session = sessions[key]
             lock.unlock()
-            guard let session, session.1 > now() else { return Self.failure("This tool session has expired or is unavailable.") }
-            context = session.0
+            guard let session, session.expires > now() else { return Self.failure("This tool session has expired or is unavailable.") }
+            context = session.context
+            scope = session.screenScope
+            screenOnly = session.screenOnly
         }
-        let available = available(context: context, legacy: legacy)
+        var available = screenOnly ? [] : available(context: context, legacy: legacy)
+        if scope != nil && context.origin == .member { available.append(ScreenTools.shared) }
         switch message["op"] as? String {
         case "tools":
             let tools = available.filter { $0.active }.flatMap { $0.tools(context: context) }
@@ -87,7 +134,16 @@ final class ToolHub {
             guard let provider = available.first(where: { $0.active && $0.tools(context: context).contains { $0["name"] as? String == name } }) else {
                 return Self.failure("Tool is disconnected, switched off or unavailable: " + name)
             }
-            return provider.call(name, message["arguments"] as? [String: Any] ?? [:], context: context)
+            let result = provider.call(name, message["arguments"] as? [String: Any] ?? [:], context: context)
+            if provider === ScreenTools.shared {
+                lock.lock()
+                let current = sessions[key]?.screenScope
+                lock.unlock()
+                guard current == scope, MacControl.enabled(context.asker), !result.isEmpty else {
+                    return Self.failure(L("이 답의 화면 보기 권한이 끝났어요.", "Screen access for this answer has ended."))
+                }
+            }
+            return result
         default: return Self.failure("Unknown tool request")
         }
     }

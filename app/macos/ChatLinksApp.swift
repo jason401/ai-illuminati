@@ -27,7 +27,7 @@ enum ChatLinksApp {
             locked: { DeviceSync.shared.chatLocked($0) },
             remote: { DeviceSync.load($0) })
         // C1: what the chat (AIChat) gets from the app's other parts, the same calls it made by name before.
-        ChatApp.run = { RunConditions.app($0, $1) }
+        ChatApp.run = { RunConditions.app($0, $1, screen: $2) }
         var face = ChatApp.Face()
         face.extract = { FaceLink.extract($0) }
         face.show = { FaceLink.shared.show($0) }

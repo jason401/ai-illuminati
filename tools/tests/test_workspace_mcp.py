@@ -1,4 +1,4 @@
-import importlib.util, json, pathlib, tempfile, unittest, os, zipfile
+import importlib.util, io, json, pathlib, tempfile, unittest, os, zipfile
 from unittest.mock import patch
 spec=importlib.util.spec_from_file_location('workspace_mcp',pathlib.Path(__file__).parents[2]/'app/resources/workspace_mcp.py')
 module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
@@ -76,6 +76,23 @@ class WorkspaceTests(unittest.TestCase):
     def test_view_exposes_no_mutations(self):
         self.assertEqual([t['name'] for t in self.ws.tools()],['list_files','search_files','read_document'])
         with self.assertRaises(PermissionError):self.ws.call('write_file',{'path':'notes.txt','content':'bad'})
+    def test_screen_only_bridge_relays_image_and_refuses_file_calls(self):
+        screenshot = {'content': [{'type': 'image', 'mimeType': 'image/png', 'data': 'aW1hZ2U='},
+                                  {'type': 'text', 'text': 'scale'}]}
+        tool = {'name': 'mac_screenshot'}
+        calls = [{'id': 1, 'method': 'tools/list'},
+                 {'id': 2, 'method': 'tools/call', 'params': {'name': 'mac_screenshot'}},
+                 {'id': 3, 'method': 'tools/call', 'params': {'name': 'list_files'}}]
+        with patch.object(module.Workspace, 'ask_hub', side_effect=[{'tools': [tool]}, screenshot]) as hub:
+            ws = module.Workspace(dict(self.ws.manifest, tools='fixture.sock', appToolsOnly=True))
+            with patch.object(module.sys, 'stdin', io.StringIO('\n'.join(map(json.dumps, calls)))), \
+                 patch.object(module.sys, 'stdout', io.StringIO()) as output:
+                module.serve(ws)
+                listed, image, rejected = [json.loads(line)['result'] for line in output.getvalue().splitlines()]
+        self.assertEqual(listed, {'tools': [tool]})
+        self.assertEqual(image, screenshot)
+        self.assertTrue(rejected['isError'])
+        self.assertEqual(hub.call_count, 2)
     def test_writes_require_backup_and_restore_boundary(self):
         self.ws.manifest['level']='write'
         with self.assertRaises(PermissionError): self.ws.write_file('edit.txt',content='bad')

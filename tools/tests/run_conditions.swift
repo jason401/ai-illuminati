@@ -227,7 +227,8 @@ private func testCapabilityLaunches() {
         args.firstIndex(of: option).map { args[$0 + 1] } ?? ""
     }
     func capture(_ account: Account, _ workspace: WorkspaceInvocation? = nil, web: Bool = true,
-                 session: NativeSessionCall? = nil, inspect: @escaping (Answerer.Launch) -> Void = { _ in }) -> [String] {
+                 session: NativeSessionCall? = nil, screen: Bool = false,
+                 inspect: @escaping (Answerer.Launch) -> Void = { _ in }) -> [String] {
         var args: [String] = []
         Answerer.launchForTests = { started in
             args = started.arguments
@@ -235,13 +236,82 @@ private func testCapabilityLaunches() {
             return .success("captured")
         }
         defer { Answerer.launchForTests = nil }
-        let result = Answerer.ask(account, prompt: "Say hi.", web: web, session: session, run: .app(account, workspace))
+        let result = Answerer.ask(account, prompt: "Say hi.", web: web, session: session, run: .app(account, workspace, screen: screen))
         if case .failure(let error) = result { expect(false, "capability launch failed: \(error)") }
         return args
     }
     for provider in [Account.Provider.claude, .codex] {
         let account = Account(id: "rc-capability-\(provider)-\(UUID())", provider: provider, name: "Capabilities", dir: root.path)
         let control = Account(id: "rc-control-\(provider)-\(UUID())", provider: provider, name: "Control", dir: root.path)
+        let screenNames: Set<String> = ["mac_windows", "mac_screenshot"]
+        func screenManifest(_ args: [String]) -> [String: Any] {
+            let paths: [String]
+            if provider == .claude {
+                let config = (try? JSONSerialization.jsonObject(with: Data(value(args, "--mcp-config").utf8))) as? [String: Any]
+                let servers = config?["mcpServers"] as? [String: [String: Any]]
+                paths = servers?["illuminati"]?["args"] as? [String] ?? []
+            } else {
+                let prefix = "mcp_servers.illuminati.args="
+                let list = args.first { $0.hasPrefix(prefix) }.map { String($0.dropFirst(prefix.count)) } ?? "[]"
+                paths = (try? JSONDecoder().decode([String].self, from: Data(list.utf8))) ?? []
+            }
+            guard let path = paths.last, let bytes = FileManager.default.contents(atPath: path) else { return [:] }
+            return (try? JSONSerialization.jsonObject(with: bytes) as? [String: Any]) ?? [:]
+        }
+        func listed(_ manifest: [String: Any]) -> Set<String> {
+            guard let session = manifest["toolSession"] as? String else { return [] }
+            let result = ToolHub.shared.handle(["session": session, "op": "tools"])
+            let tools = result["tools"] as? [[String: Any]] ?? []
+            return Set(tools.compactMap { $0["name"] as? String })
+        }
+        for rule in [CapabilityRule.off, .ask, .on] {
+            AICapabilities.set(rule, for: account, .screen)
+            var plain: [String: Any] = [:]
+            _ = capture(account, web: false, screen: true) { launch in
+                plain = screenManifest(launch.arguments)
+                expect(listed(plain) == (rule == .on ? screenNames : []), "\(provider): plain tools with screen \(rule)")
+                guard rule == .on else {
+                    expect(plain.isEmpty, "\(provider): no plain bridge with screen \(rule)")
+                    return
+                }
+                expect(plain["appToolsOnly"] as? Bool == true, "plain screen bridge has no file tools")
+                if provider == .claude {
+                    expect(value(launch.arguments, "--allowedTools") == "mcp__illuminati__mac_*"
+                           && value(launch.arguments, "--tools").isEmpty && launch.arguments.contains("--strict-mcp-config")
+                           && launch.arguments.contains("--no-session-persistence")
+                           && launch.environment["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] == "1",
+                           "Claude plain launch allows only screen tools and disables auto memory")
+                } else {
+                    expect(value(launch.arguments, "--sandbox") == "read-only" && launch.arguments.contains("--ephemeral")
+                           && launch.arguments.contains("features.shell_tool=false"),
+                           "Codex plain screen launch stays read-only and ephemeral with no shell")
+                }
+            }
+            expect(listed(plain).isEmpty, "plain screen access expires when the answer returns")
+            for workspace in [WorkspaceInvocation(binding: WorkspaceBinding(roots: roots), room: room), invocation] {
+                _ = capture(account, workspace, screen: true) { launch in
+                    let manifest = screenManifest(launch.arguments)
+                    expect(listed(manifest).intersection(screenNames) == (rule == .on ? screenNames : []),
+                           "\(provider): workspace tools with screen \(rule)")
+                    expect(manifest["appToolsOnly"] == nil, "workspace bridge retains its linked file tools")
+                }
+            }
+        }
+        expect(RunConditions.app(account).screenTools == nil && RunConditions.app(account, invocation).screenTools == nil,
+               "\(provider): background calls have no screen access even when the account enables it")
+        let chat = Discussion(model: AppModel())
+        let own = WorkspaceRoot(path: Discussion.chatFolder(chat.currentID).path, directory: true, writable: true)
+        let builtIn = WorkspaceBinding(roots: [own], face: true)
+        var capturedPlain = false
+        Answerer.launchForTests = { launch in
+            let manifest = screenManifest(launch.arguments)
+            capturedPlain = manifest["appToolsOnly"] as? Bool == true && listed(manifest) == screenNames
+            return .success("captured")
+        }
+        _ = chat.requestDebate(account, "Say hi.", 60, DebateCancellation(), workspace: builtIn, screen: true)
+        Answerer.launchForTests = nil
+        expect(capturedPlain, "\(provider): a normal chat with only its built-in folder launches the screen-only bridge")
+        AICapabilities.set(.off, for: account, .screen)
         for terminal in [true, false] {
             for web in [true, false] {
                 AICapabilities.set(terminal ? .on : .off, for: account, .terminal)

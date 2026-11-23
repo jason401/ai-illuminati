@@ -158,6 +158,7 @@ public struct ProjectApproval: Identifiable {
     // can be allowed once for its split (docs/SUBROOM_PLAN.md 7).
     public var command: String? = nil
     public var same: String? = nil
+    public var allowLabel: String? = nil   // the Allow button's words when it allows less than "Allow" says (a Mac control card)
     public init(room: UUID, run: UUID, title: String, detail: String, created: Date = Date(), deadline: Date? = nil, alwaysAllow: (() -> Void)? = nil) {
         self.room = room; self.run = run; self.title = title; self.detail = detail; self.created = created; self.deadline = deadline; self.alwaysAllow = alwaysAllow
     }

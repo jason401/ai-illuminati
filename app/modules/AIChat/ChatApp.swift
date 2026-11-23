@@ -31,7 +31,17 @@ public protocol ChatSettings: ObservableObject {
 public enum ChatApp {
     // How each AI's tool starts (RunConditions.app in RunConditionsApp.swift: AI Face off for Codex, project work's
     // process group, AutoGuard in full access, the folder rules and whether this answer can use the screen).
-    public static var run: (Account, WorkspaceInvocation?, Bool) -> RunConditions = { _, _, _ in RunConditions() }
+    // The third value is set when this answer may use the Mac (screen, mouse, keys): see ScreenAnswer.
+    public static var run: (Account, WorkspaceInvocation?, ScreenAnswer?) -> RunConditions = { _, _, _ in RunConditions() }
+
+    // The answer a Mac control grant belongs to: its chat (approval cards), who answers (the cards, the band, the
+    // lock's refusal), how Esc stops it, and its action log under the reply (ChatTurn.macLog).
+    public struct ScreenAnswer {
+        public let room: UUID
+        public let speaker: String
+        public let stop: () -> Void
+        public let note: (String) -> Void
+    }
 
     // AI Face (FaceLink): the hidden <face>mood</face> tag taken off a reply, the face shown, and the rule an AI gets.
     public struct Face {
@@ -88,7 +98,7 @@ public final class FolderSources: ObservableObject {
 
 extension RunConditions {
     // The chat's calls read as before (`.app(account, invocation)`); the app's rules come in through ChatApp.run.
-    static func app(_ account: Account, _ workspace: WorkspaceInvocation? = nil, screen: Bool = false) -> RunConditions {
+    static func app(_ account: Account, _ workspace: WorkspaceInvocation? = nil, screen: ChatApp.ScreenAnswer? = nil) -> RunConditions {
         ChatApp.run(account, workspace, screen)
     }
 }

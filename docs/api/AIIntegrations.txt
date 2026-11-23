@@ -173,9 +173,20 @@ MCPToolRule.ask | case ask
 MCPToolRule.block | case block
 MCPToolRule.init(rawValue:) | init?(rawValue: String)
 MacControl | enum MacControl
+MacControl.Approval | struct Approval
+MacControl.Approval.detail | let detail: String
+MacControl.Approval.room | let room: UUID?
+MacControl.Approval.title | let title: String
+MacControl.Session | final class Session
+MacControl.Session.init(account:room:speaker:stop:note:) | init(account: Account, room: UUID?, speaker: String, stop: @escaping () -> Void = {}, note: @escaping (String) -> Void = { _ in })
+MacControl.approvalWait | static var approvalWait: TimeInterval
+MacControl.approve | static var approve: (MacControl.Approval) -> Bool
+MacControl.begin(_:_:) | static func begin(_ scope: UUID, _ session: MacControl.Session)
 MacControl.enabled(_:) | static func enabled(_ account: Account?) -> Bool
-MacControl.perform(_:_:) | @MainActor static func perform(_ name: String, _ arguments: [String : Any]) async -> [String : Any]
-MacControl.tools() | static func tools() -> [[String : Any]]
+MacControl.end(_:) | static func end(_ scope: UUID)
+MacControl.handNames | static let handNames: Set<String>
+MacControl.perform(_:_:scope:) | @MainActor static func perform(_ name: String, _ arguments: [String : Any], scope: UUID? = nil) async -> [String : Any]
+MacControl.tools(_:) | static func tools(_ account: Account?) -> [[String : Any]]
 OAuthCallback | protocol OAuthCallback : AnyObject
 OAuthCallback.cancel() | func cancel()
 OAuthCallback.redirect | var redirect: String { get }

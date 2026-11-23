@@ -278,7 +278,7 @@ private func testCapabilityLaunches() {
                 expect(plain["appToolsOnly"] as? Bool == true, "plain screen bridge has no file tools")
                 if provider == .claude {
                     expect(Set(value(launch.arguments, "--allowedTools").split(separator: ",")) ==
-                           ["mcp__illuminati__mac_screenshot", "mcp__illuminati__mac_windows"]
+                           Set(["screenshot", "windows", "click", "drag", "scroll", "type", "key", "open"].map { Substring("mcp__illuminati__mac_" + $0) })
                            && value(launch.arguments, "--tools").isEmpty && launch.arguments.contains("--strict-mcp-config")
                            && launch.arguments.contains("--no-session-persistence")
                            && launch.environment["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] == "1",
@@ -313,7 +313,7 @@ private func testCapabilityLaunches() {
             keptBuiltIn = Set(writable) == [own.path, spaces.path] && screenNames.isSubset(of: listed(manifest))
             return .success("captured")
         }
-        _ = chat.requestDebate(account, "Say hi.", 60, DebateCancellation(), workspace: builtIn, screen: true)
+        _ = chat.requestDebate(account, "Say hi.", 60, DebateCancellation(), workspace: builtIn, screen: chat.screenAnswer(account, room: chat.currentID, index: 0))
         expect(keptBuiltIn, "\(provider): screen viewing keeps the chat and Spaces folders writable")
 
         let image = root.appendingPathComponent("screen-attachment.png")
@@ -330,7 +330,7 @@ private func testCapabilityLaunches() {
             attached = hasImage && listed(screenManifest(args)) == screenNames
             return .success("captured")
         }
-        _ = chat.requestDebate(account, "Look at the attachment.", 60, DebateCancellation(), screen: true)
+        _ = chat.requestDebate(account, "Look at the attachment.", 60, DebateCancellation(), screen: chat.screenAnswer(account, room: chat.currentID, index: 0))
         Answerer.launchForTests = nil
         expect(attached, "\(provider): an attached picture can be sent with the screen-only bridge")
         AICapabilities.set(.off, for: account, .screen)

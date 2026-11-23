@@ -31,7 +31,7 @@ struct ProjectApprovalView: View {
                         if let always = request.alwaysAllow {
                             Button(L("항상 허용", "Always Allow")) { always(); center.decide(request.id, allow: true) }
                         }
-                        Button(L("허용", "Allow")) { center.decide(request.id, allow: true) }.buttonStyle(.borderedProminent)
+                        Button(request.allowLabel ?? L("허용", "Allow")) { center.decide(request.id, allow: true) }.buttonStyle(.borderedProminent)
                     }
                 }.padding(12).background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
             }
@@ -280,7 +280,7 @@ public struct ApprovalListView: View {
                 Button(L("거절", "Deny")) { center.decide(request.id, allow: false) }
                 Button(L("채팅 열기", "Open chat")) { openChat(request.room) }
                 Spacer()
-                Button(L("허용", "Allow")) { center.decide(request.id, allow: true) }.buttonStyle(.borderedProminent)
+                Button(request.allowLabel ?? L("허용", "Allow")) { center.decide(request.id, allow: true) }.buttonStyle(.borderedProminent)
             }
         }.padding(12).background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
     }
@@ -587,7 +587,7 @@ extension Discussion {
                 guard permits(account, room: id) else { return .failure(Enterprise.blocked(account)) }
                 if let workspaceAnswer { return workspaceAnswer(account, prompt, workspace, run.attempt, progress) }
                 let invocation = WorkspaceInvocation(binding: workspace, room: id, readOnly: false, backupPath: activeWorkspaceBackupPath)
-                let conditions = Discussion.steered(.app(account, invocation, screen: true), steer).thinkingHarder(run.bigWork)
+                let conditions = Discussion.steered(.app(account, invocation, screen: screenAnswer(account, room: id, index: index)), steer).thinkingHarder(run.bigWork)
                 return nativeSessions.ask(account, room: id, prompt: prompt, images: activeImages,
                                           timeout: run.deadline.timeIntervalSinceNow, token: run.attempt, web: true, speaker: speaker, fresh: freshPrompt,
                                           persist: conditions.screenTools == nil, invoke: { text, images, session in

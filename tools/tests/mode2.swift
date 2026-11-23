@@ -3016,6 +3016,7 @@ runTest("testGoogleDrive", testGoogleDrive)
 runTest("testWindowDrag", testWindowDrag)
 
 runTest("testRunConditions", testRunConditions)
+runTest("testMacHands", testMacHands)
 runTest("testRuntimeThroughApp", testRuntimeThroughApp)
 runTest("testTokenStats", testTokenStats)
 runTest("testPhoneAccess", testPhoneAccess)

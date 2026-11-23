@@ -757,7 +757,7 @@ extension Discussion {
                                                     binding.fullAccess == true ? 8 * 3600 : Self.soloTimeout, cancellation, hard: called.count > 1, web: true,
                                                     fresh: freshTranscript.map { Self.soloContext(rules: rules, transcript: $0) + "\n[SOLO TURN]\n" + instruction },
                                                     workspace: k > 0 && called.count > 1 ? Self.sideView(binding) : nil,
-                                                    screen: true, steering: called.count == 1 ? self.steer : nil, progress: ran.watch(progress))
+                                                    screen: self.screenAnswer(account, room: id, index: index), steering: called.count == 1 ? self.steer : nil, progress: ran.watch(progress))
                     doneLock.lock(); done.insert(accountID); doneLock.unlock()
                     if cancellation.isCancelled { return }
                     var entry: ChatTurn.Entry
@@ -886,7 +886,7 @@ extension Discussion {
             let ran = AnswerModel()
             // Full access works on its own for long (tests, builds): the same 8 hours as a called AI, not 15 minutes.
             let result = requestDebate(account, prompt, binding.fullAccess == true ? 8 * 3600 : Self.soloTimeout, cancellation, web: true,
-                                       fresh: fresh.map { $0 + "\n[SOLO TURN]\n" + instruction }, screen: true, steering: steer, progress: ran.watch(progress))
+                                       fresh: fresh.map { $0 + "\n[SOLO TURN]\n" + instruction }, screen: screenAnswer(account, room: id, index: index), steering: steer, progress: ran.watch(progress))
             if cancellation.isCancelled { break }
             switch result {
             case .success(let raw):

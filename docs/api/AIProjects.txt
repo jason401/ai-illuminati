@@ -15,6 +15,7 @@ PlanLink.todos(_:) | static func todos(_ value: Any?) -> [WorkStep]?
 PlanLink.tools() | func tools() -> [[String : Any]]
 PlanLink.tools(context:) | func tools(context: ToolContext) -> [[String : Any]]
 ProjectApproval | struct ProjectApproval
+ProjectApproval.allowLabel | var allowLabel: String?
 ProjectApproval.alwaysAllow | var alwaysAllow: (() -> Void)?
 ProjectApproval.command | var command: String?
 ProjectApproval.created | var created: Date

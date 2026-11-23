@@ -1208,6 +1208,19 @@ public final class Discussion: ObservableObject {
         account.name.hasPrefix(account.provider.title) ? account.name : "\(account.provider.title) (\(account.name))"
     }
 
+    // Turn `index` of chat `room` as a Mac control grant sees it: Esc stops the chat's run, actions go under the reply.
+    func screenAnswer(_ account: Account, room: UUID, index: Int) -> ChatApp.ScreenAnswer {
+        ChatApp.ScreenAnswer(room: room, speaker: label(account),
+                             stop: { [weak self] in
+                                 DispatchQueue.main.async {
+                                     // Answers run in a worker; its host keeps the room's run (as the Stop button does).
+                                     guard let owner = self.map({ $0.host ?? $0 }), let token = owner.runToken(room) else { return }
+                                     owner.stoppingRooms.insert(room); token.cancel()
+                                 }
+                             },
+                             note: { [weak self] line in self?.changeTurn(room, index, save: true) { $0.macLog = ($0.macLog ?? []) + [line] } })
+    }
+
     // Changes a conversation (on the main thread), saves it and moves it to the top of the list.
     func change(_ id: UUID, save: Bool = false, _ edit: @escaping (inout Conversation) -> Void) {
         if let host { return host.change(id, save: save, edit) }

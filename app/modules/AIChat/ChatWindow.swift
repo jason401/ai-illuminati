@@ -2732,6 +2732,17 @@ private struct TurnView: View, Equatable {
                 }
                 .font(.callout)
             }
+            if turn.mode == 0, let log = turn.macLog, !log.isEmpty {
+                DisclosureGroup(L("맥 조작 \(log.count)개", "\(log.count) Mac actions")) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(Array(log.enumerated()), id: \.offset) { _, line in
+                            Text(line).font(.system(size: 11, design: .monospaced)).foregroundColor(.secondary)
+                                .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                }
+                .font(.callout)
+            }
             if turn.mode == 0, let changes = turn.workspaceChanges {
                 changesView(changes, title: L("이 대화 폴더의 파일 \(changes.count)개", "\(changes.count) files in this chat's folder"))
                     .font(.callout)

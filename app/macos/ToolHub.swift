@@ -4,6 +4,7 @@ import AIAccounts
 import AILocalization
 import AIWorkspace
 import AIProjects
+import AIRuntime
 import AIChat
 import AIIntegrations
 
@@ -23,8 +24,8 @@ private final class ScreenTools: ToolProvider {
             finished.signal()
         }
 
-        func wait() -> [String: Any]? {
-            guard finished.wait(timeout: .now() + 12) == .success else { return nil }
+        func wait(_ seconds: Double) -> [String: Any]? {
+            guard finished.wait(timeout: .now() + seconds) == .success else { return nil }
             return lock.withLock { result }
         }
     }
@@ -33,20 +34,30 @@ private final class ScreenTools: ToolProvider {
     let active = true
     func tools() -> [[String: Any]] { [] }
     func tools(context: ToolContext) -> [[String: Any]] {
-        MacControl.enabled(context.asker) ? MacControl.tools() : []
+        MacControl.enabled(context.asker) ? MacControl.tools(context.asker) : []
     }
-    func call(_ name: String, _ arguments: [String: Any], context: ToolContext) -> [String: Any] {
+    func call(_ name: String, _ arguments: [String: Any], context: ToolContext) -> [String: Any] { call(name, arguments, context: context, scope: nil) }
+    func call(_ name: String, _ arguments: [String: Any], context: ToolContext, scope: UUID?) -> [String: Any] {
         // Socket calls run on a worker; AppKit reads the app list on the main actor.
         let reply = Reply()
         let capture = Task { @MainActor in
             guard !Task.isCancelled, MacControl.enabled(context.asker) else { reply.complete([:]); return }
-            reply.complete(await MacControl.perform(name, arguments))
+            reply.complete(await MacControl.perform(name, arguments, scope: scope))
         }
-        guard let result = reply.wait() else {
+        // Hands may wait for a card (60 s) and for the user's own input to settle (30 s at most); the bridge waits 125 s for them.
+        guard let result = reply.wait(MacControl.handNames.contains(name) ? MacControl.approvalWait + 50 : 12) else {
             capture.cancel()
             return ToolHub.failure(L("화면 도구가 시간 안에 응답하지 않았어요.", "The screen tool timed out."))
         }
         return result
+    }
+
+    // A Mac control card (MacControl "ask"): the chat's approval card, so it shows in the chat, the 🔴 strip, the inbox and
+    // the Dock; 60 seconds without an answer is no. Tests replace MacControl.approve.
+    static func approve(_ card: MacControl.Approval) -> Bool {
+        var request = ProjectApproval(room: card.room ?? UUID(), run: UUID(), title: card.title, detail: card.detail)
+        request.allowLabel = L("이번 답에서 허용", "Allow for this answer")
+        return ProjectCenter.shared.approve(request, token: DebateCancellation(), deadline: Date().addingTimeInterval(MacControl.approvalWait))
     }
 }
 
@@ -56,6 +67,7 @@ final class ToolHub {
     static var appProviders: [ToolProvider] { [FaceLink.shared, DriveLink.shared, GitLink.shared, PlanLink.shared, PeerLink.shared, ConveneLink.shared, DelegateLink.shared, ChatLink.shared, MemoryLink.shared, ProjectMakerLink.shared, TaskLink.shared, TodoAddLink.shared, StorageLink.shared, ExternalMCP.shared] }
     static let shared: ToolHub = {
         let hub = ToolHub(providers: { appProviders })
+        MacControl.approve = ScreenTools.approve
         ProjectWork.revokeTools = { [weak hub] in hub?.revoke(project: $0) }
         return hub
     }()
@@ -140,15 +152,17 @@ final class ToolHub {
         switch message["op"] as? String {
         case "tools":
             let tools = available.filter { $0.active }.flatMap { $0.tools(context: context) }
-            // Outside servers' tools may take minutes; the bridge waits longer for exactly these names.
-            let slow = Set(ExternalMCP.shared.slowTools)
+            // Outside servers' tools may take minutes and Mac hands may wait for a card; the bridge waits longer for exactly these names.
+            let slow = Set(ExternalMCP.shared.slowTools).union(MacControl.handNames)
             return ["tools": tools, "slow": tools.compactMap { $0["name"] as? String }.filter(slow.contains)]
         case "call":
             let name = message["name"] as? String ?? ""
             guard let provider = available.first(where: { $0.active && $0.tools(context: context).contains { $0["name"] as? String == name } }) else {
                 return Self.failure("Tool is disconnected, switched off or unavailable: " + name)
             }
-            let result = provider.call(name, message["arguments"] as? [String: Any] ?? [:], context: context)
+            let arguments = message["arguments"] as? [String: Any] ?? [:]
+            let result = provider === ScreenTools.shared ? ScreenTools.shared.call(name, arguments, context: context, scope: scope)
+                : provider.call(name, arguments, context: context)
             if provider === ScreenTools.shared {
                 lock.lock()
                 let current = sessions[key]?.screenScope

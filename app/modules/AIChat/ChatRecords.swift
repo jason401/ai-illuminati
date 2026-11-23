@@ -60,6 +60,7 @@ public struct ChatTurn: Identifiable, Codable, Equatable {
     public var backupPath: String?
     public var workspaceChanges: [WorkspaceChange]?
     public var projectLog: [String]?   // project tools this turn used, e.g. "git_push → …", newest last
+    public var macLog: [String]?       // Mac control this turn did or was refused, e.g. "Click (412, 300) · Finder", newest last
     public var undone: Bool?
     public var sessionTranscript: String?
     public var debateFocus: String?

@@ -72,7 +72,8 @@ public struct WorkspaceToolLink { var socket: String; var session: String; var f
                 result[i + 1] = String(decoding: try JSONSerialization.data(withJSONObject: config), as: UTF8.self)
             }
             if !result.contains("--permission-mode") { result += ["--permission-mode", "dontAsk"] }
-            let allowed = "mcp__illuminati__mac_screenshot,mcp__illuminati__mac_windows"
+            // Every Mac tool by name; the app's gateway offers only those this AI's settings allow.
+            let allowed = ["screenshot", "windows", "click", "drag", "scroll", "type", "key", "open"].map { "mcp__illuminati__mac_" + $0 }.joined(separator: ",")
             if let i = result.firstIndex(of: "--allowedTools") { result[i + 1] += "," + allowed }
             else { result += ["--allowedTools", allowed] }
             return result + ["--restricted", "--setting-sources", "", "--disable-slash-commands"]

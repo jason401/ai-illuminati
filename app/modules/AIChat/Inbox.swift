@@ -180,7 +180,7 @@ struct InboxPanel: View {
                 }
                 Spacer()
                 Button(L("거절", "Deny")) { center.decide(request.id, allow: false) }
-                Button(L("허용", "Allow")) { center.decide(request.id, allow: true) }.buttonStyle(.borderedProminent)
+                Button(request.allowLabel ?? L("허용", "Allow")) { center.decide(request.id, allow: true) }.buttonStyle(.borderedProminent)
             }
             .font(.system(size: 12)).controlSize(.small)
         }

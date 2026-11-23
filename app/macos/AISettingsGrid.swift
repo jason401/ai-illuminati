@@ -199,8 +199,10 @@ struct AISettingsGrid: View {
         case .web: return L("AI의 웹 검색과 웹페이지 읽기 도구를 써요.", "Lets the AI use its web search and page reading tools.")
         case .screen: return L("이 Mac의 화면이나 창을 봐요. ‘켬’이면 화면을 볼 수 있는 답은 CLI 세션 기록을 남기지 않아요. ‘물어보기’는 준비 중이에요.",
                                "Views the screen or a window on this Mac. With On, replies that can view the screen skip CLI session history. Ask is coming later.")
-        case .input: return L("이 Mac에서 마우스와 키보드를 써요.", "Uses the mouse and keyboard on this Mac.")
-        case .apps: return L("이 Mac에서 앱을 열어요.", "Opens apps on this Mac.")
+        case .input: return L("이 Mac에서 마우스와 키보드를 써요. ‘물어보기’는 답마다 앱별로 처음 한 번 카드로 물어요. 시스템 설정·키체인·터미널·IDE는 늘 물어보고, AI Illuminati 창과 비밀번호 칸은 늘 막아요. Esc로 멈춰요.",
+                              "Uses the mouse and keyboard on this Mac. Ask shows a card the first time per app in each answer. Settings, Keychain, terminals and IDEs are always asked; AI Illuminati's windows and password fields are always refused. Press Esc to stop.")
+        case .apps: return L("이 Mac에서 앱이나 웹 주소를 열어요. ‘물어보기’는 답마다 앱별로 처음 한 번 물어요.",
+                             "Opens apps or web addresses on this Mac. Ask asks the first time per app in each answer.")
         case .chrome: return L("Claude in Chrome 확장으로 크롬을 써요.", "Uses Chrome through the Claude in Chrome extension.")
         }
     }

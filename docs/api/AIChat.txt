@@ -53,6 +53,11 @@ ChatApp.Face.init() | init()
 ChatApp.Face.moods | var moods: () -> [String]
 ChatApp.Face.rule | var rule: ([String]) -> String
 ChatApp.Face.show | var show: (String) -> Void
+ChatApp.ScreenAnswer | struct ScreenAnswer
+ChatApp.ScreenAnswer.note | let note: (String) -> Void
+ChatApp.ScreenAnswer.room | let room: UUID
+ChatApp.ScreenAnswer.speaker | let speaker: String
+ChatApp.ScreenAnswer.stop | let stop: () -> Void
 ChatApp.Screens | struct Screens
 ChatApp.Screens.approvals | var approvals: () -> Void
 ChatApp.Screens.board | var board: (Discussion) -> AnyView
@@ -66,7 +71,7 @@ ChatApp.Screens.projectInfo | var projectInfo: (Discussion, String) -> AnyView
 ChatApp.Screens.renameProject | var renameProject: (String, String) -> Void
 ChatApp.driveRule | static var driveRule: () -> String?
 ChatApp.face | static var face: ChatApp.Face
-ChatApp.run | static var run: (Account, WorkspaceInvocation?, Bool) -> RunConditions
+ChatApp.run | static var run: (Account, WorkspaceInvocation?, ChatApp.ScreenAnswer?) -> RunConditions
 ChatApp.screens | static var screens: ChatApp.Screens
 ChatConfiguration | struct ChatConfiguration
 ChatConfiguration.accountIDs | var accountIDs: [String]?
@@ -183,6 +188,7 @@ ChatTurn.images | var images: [ChatImage]?
 ChatTurn.init(from:) | init(from decoder: any Decoder) throws
 ChatTurn.init(id:question:images:status:entries:final:finalImages:finalBy:error:mode:orderNote:endReason:modeVersion:tasks:artifact:projectCommitted:projectPushed:backupPath:workspaceChanges:projectLog:undone:sessionTranscript:debateFocus:maxTurns:turnsPerAI:mentions:moreAnswers:partial:partialBy:answerOrder:answerNames:partials:finalAccountID:activity:voteOptions:votes:askedAt:answeredAt:peerNotes:peerFolded:route:routeNote:routeOne:meetingRoom:plan:planNote:lastActivityAt:waitingApproval:spaceDraft:spaceEdits:) | init(id: UUID = UUID(), question: String, images: [ChatImage]? = nil, status: String = "", entries: [ChatTurn.Entry] = [], final: String? = nil, finalImages: [ChatImage]? = nil, finalBy: String? = nil, error: String? = nil, mode: Int? = nil, orderNote: String? = nil, endReason: String? = nil, modeVersion: Int? = nil, tasks: [CollaborationTask]? = nil, artifact: String? = nil, projectCommitted: Bool? = nil, projectPushed: Bool? = nil, backupPath: String? = nil, workspaceChanges: [WorkspaceChange]? = nil, projectLog: [String]? = nil, undone: Bool? = nil, sessionTranscript: String? = nil, debateFocus: String? = nil, maxTurns: Int? = nil, turnsPerAI: Int? = nil, mentions: [String]? = nil, moreAnswers: [ChatTurn.Entry]? = nil, partial: String? = nil, partialBy: String? = nil, answerOrder: [String]? = nil, answerNames: [String]? = nil, partials: [String : String]? = nil, finalAccountID: String? = nil, activity: String? = nil, voteOptions: [String]? = nil, votes: [VoteBallot]? = nil, askedAt: Date? = nil, answeredAt: Date? = nil, peerNotes: [ChatTurn.Entry]? = nil, peerFolded: Bool? = nil, route: ChatRoute? = nil, routeNote: String? = nil, routeOne: Bool? = nil, meetingRoom: UUID? = nil, plan: [WorkStep]? = nil, planNote: String? = nil, lastActivityAt: Date? = nil, waitingApproval: Bool? = nil, spaceDraft: SpaceDraftNote? = nil, spaceEdits: [SpaceSyncNote]? = nil)
 ChatTurn.lastActivityAt | var lastActivityAt: Date?
+ChatTurn.macLog | var macLog: [String]?
 ChatTurn.maxTurns | var maxTurns: Int?
 ChatTurn.meetingRoom | var meetingRoom: UUID?
 ChatTurn.mentions | var mentions: [String]?

@@ -795,6 +795,18 @@ or returns an in-memory PNG and a line mapping image pixels to screen points. Th
 `RunConditions.screenTools` and its `ScreenTools` initializer let the app supply the arguments and end the grant in Answerer.
 `NativeSessions.ask(persist:)` lets AIChat send context for that answer without saving a provider transcript.
 
+Mac hands (stage 4, 2026-11-23): `MacControl.tools(_:)` now lists per account (screen on; click, drag, scroll, type and
+key with mouse & keyboard on or ask; `mac_open` with open apps on or ask), so `enabled` is any of them. `handNames` lets
+ToolHub give those calls a longer wait (a card and the user's own input) and mark them slow for the bridge.
+`perform(_:_:scope:)` takes the answer's grant so the newest screenshot's mapping, the apps allowed on a card, the
+one-answer lock and Esc belong to that answer. `Session` (`init`) and `begin`/`end` are made by RunConditionsApp with the
+chat's `ChatApp.ScreenAnswer` (its room for the cards, the speaker's name, `stop` = the room's run token as the Stop
+button does, `note` = a line in `ChatTurn.macLog`) and ended with the grant. `Approval`, `approve` and `approvalWait`:
+the card is the chat's `ProjectCenter.approve` (AIProjects, which this module cannot import), set by ToolHub; tests
+replace it. `ProjectApproval.allowLabel` makes that card say "Allow for this answer". The rules themselves (always refused:
+AI Illuminati's own windows, password fields; always asked: settings, keychain, terminals, IDEs), the coordinate
+mapping, the lock, the band, Esc and the pause while the user moves stay internal (`testMacHands`, mac_hands.swift).
+
 Injected so tests need no real Keychain, network or socket (the defaults do what the app always did):
 - Keychain: `GoogleKeychainStore(run:)` (already) and `MCPKeychain(run:)` (new), both the `/usr/bin/security` runner; `GoogleAuth(store:)`.
 - Network: `GoogleHTTP.transport` and `MCPHTTP.transport` (default `live`: no redirects, nothing kept, size and time limits, SSE as it

@@ -81,7 +81,7 @@ extension Discussion {
 
     // fresh: a shorter prompt (summary + recent turns) for an AI that starts without a session it can resume.
     func requestDebate(_ account: Account, _ prompt: String, _ timeout: TimeInterval, _ token: DebateCancellation, hard: Bool = false, web: Bool = false,
-                       fresh: String? = nil, workspace: WorkspaceBinding? = nil, screen: Bool = false, steering: SteerChannel? = nil,
+                       fresh: String? = nil, workspace: WorkspaceBinding? = nil, screen: ChatApp.ScreenAnswer? = nil, steering: SteerChannel? = nil,
                        progress: ((AnswerProgress) -> Void)? = nil) -> Result<String, Answerer.Failure> {
         // `workspace` replaces the chat's folders for this one request (a read-only view for a second AI).
         let activeWorkspace = workspace ?? self.activeWorkspace

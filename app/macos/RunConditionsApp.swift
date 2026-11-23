@@ -3,19 +3,24 @@ import AIAccounts
 import AIRuntime
 import AIWorkspace
 import AIIntegrations
+import AIChat
 
 // What Answerer starts each tool with (RunConditions), put together by the app: Answerer knows nothing about
 // folders, project work, AI Face or AutoGuard, and Workspace (Workspace.swift) gives only what this needs: the
 // folder rules (`arguments`, `readRequests`, with the app's tool gateway), whether it is project work
 // (`projectRunID`) and whether full access is on (`fullAccessActive`).
 extension RunConditions {
-    static func app(_ account: Account, _ workspace: WorkspaceInvocation? = nil, screen: Bool = false) -> RunConditions {
+    static func app(_ account: Account, _ workspace: WorkspaceInvocation? = nil, screen: Bool = false, answer: ChatApp.ScreenAnswer? = nil) -> RunConditions {
         var run = RunConditions()
         // The face goes through the app as "illuminati", never through Codex's own AI Face server ("gpt").
         if account.provider == .codex { run.prefix = FaceLink.codexOff(account) }
-        let screenScope = screen && MacControl.enabled(account) && (workspace?.binding.origin ?? .member) == .member ? UUID() : nil
+        let screenScope = (screen || answer != nil) && MacControl.enabled(account) && (workspace?.binding.origin ?? .member) == .member ? UUID() : nil
         if let scope = screenScope {
-            run.screenTools = RunConditions.ScreenTools { ToolHub.shared.revoke(screen: scope) }
+            // The Mac control session lives as long as the grant: its cards go to the answer's chat, Esc stops that answer.
+            let name = account.name.hasPrefix(account.provider.title) ? account.name : "\(account.provider.title) (\(account.name))"
+            MacControl.begin(scope, MacControl.Session(account: account, room: answer?.room ?? workspace?.room, speaker: answer?.speaker ?? name,
+                                                       stop: answer?.stop ?? {}, note: answer?.note ?? { _ in }))
+            run.screenTools = RunConditions.ScreenTools { ToolHub.shared.revoke(screen: scope); MacControl.end(scope) }
         }
         guard let workspace else {
             if let scope = screenScope {
@@ -23,7 +28,7 @@ extension RunConditions {
                 run.screenTools = RunConditions.ScreenTools(arguments: { original, directory in
                     guard let link = ToolHub.link(plain, screenScope: scope, screenOnly: true) else { return original }
                     return try link.screenArguments(provider: account.provider, original: original, directory: directory)
-                }, finish: { ToolHub.shared.revoke(screen: scope) })
+                }, finish: { ToolHub.shared.revoke(screen: scope); MacControl.end(scope) })
             }
             if account.provider == .gemini, AICapabilities.rule(account, .web) != .off {
                 run.beforeStart = GeminiLinks.allowWeb

@@ -231,7 +231,7 @@ public final class DeviceSync: ObservableObject {
             t.images = nil; t.finalImages = nil
             t.entries = t.entries.map { var e = $0; e.images = nil; return e }
             t.moreAnswers = t.moreAnswers?.map { var e = $0; e.images = nil; return e }
-            t.backupPath = nil; t.workspaceChanges = nil; t.projectLog = nil; t.artifact = nil
+            t.backupPath = nil; t.workspaceChanges = nil; t.projectLog = nil; t.macLog = nil; t.artifact = nil
             t.tasks = t.tasks?.map { var task = $0; task.output = nil; task.expectedFiles = nil; return task }
             t.partial = nil; t.partialBy = nil; t.partials = nil; t.activity = nil; t.status = ""
             return t

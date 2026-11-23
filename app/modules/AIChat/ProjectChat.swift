@@ -15,7 +15,15 @@ struct ProjectApprovalView: View {
             // A split waiting for approval has its own card (SplitPlanCard).
             ForEach(center.requests.filter { $0.room == room && discussion?.splitPlans[$0.id] == nil }) { request in
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(request.title).font(.headline)
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(request.title).font(.headline)
+                        Spacer(minLength: 4)
+                        if request.deadline != nil {
+                            TimelineView(.periodic(from: .now, by: request.alwaysAllow != nil ? 1 : 15)) { context in
+                                Text(ApprovalBanner.approvalLeft(request, now: context.date)).font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
                     ScrollView { Text(request.detail).font(.system(size: 11, design: .monospaced)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }.frame(maxHeight: 120)
                     HStack {
                         Button(L("거절", "Deny")) { center.decide(request.id, allow: false) }
@@ -76,44 +84,51 @@ struct ApprovalBanner: View {
     @StateObject private var fold = BannerFold()
     var body: some View {
         let items = shown
-        if !items.isEmpty {
-            // Seconds count down only while an outside MCP tool waits (60 seconds); minutes otherwise.
-            let seconds = items.contains { if case .approval(let r) = $0 { return r.alwaysAllow != nil }; return false }
-            TimelineView(.periodic(from: .now, by: seconds ? 1 : 15)) { context in
-                VStack(spacing: 4) {
-                    if items.count == 1 || fold.unfolded {
-                        ForEach(items) { row($0, now: context.date) }
-                        if items.count > 1 {
-                            strip(Color.secondary) {
-                                Spacer()
-                                Button(L("접기", "Fold")) { fold.unfolded = false }
-                            }
+        // Folded again once everything but one is handled, so the next pile starts as one line.
+        VStack(spacing: 0) { if !items.isEmpty { strips(items) } }
+            .onChange(of: items.count) { if $0 <= 1 { fold.unfolded = false } }
+    }
+
+    private func strips(_ items: [BlockedItem]) -> some View {
+        // Seconds count down only while an outside MCP tool waits (60 seconds); minutes otherwise.
+        let seconds = items.contains { if case .approval(let r) = $0 { return r.alwaysAllow != nil }; return false }
+        return TimelineView(.periodic(from: .now, by: seconds ? 1 : 15)) { context in
+            VStack(spacing: 4) {
+                if items.count == 1 || fold.unfolded {
+                    ForEach(items) { row($0, now: context.date) }
+                    if items.count > 1 {
+                        strip(Color.secondary) {
+                            Spacer()
+                            Button(L("접기", "Fold")) { fold.unfolded = false }
                         }
-                    } else {
-                        strip(Color.red) {
-                            Text(summary(items)).font(.system(size: 12, weight: .semibold)).lineLimit(1)
-                            if let soonest = soonest(items, now: context.date) {
-                                Text(soonest).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
-                            }
-                            Spacer(minLength: 4)
-                            Button(L("보기", "Show")) { fold.unfolded = true }.buttonStyle(.borderedProminent)
+                    }
+                } else {
+                    strip(Color.red) {
+                        Text(summary(items)).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                        if let soonest = soonest(items, now: context.date) {
+                            Text(soonest).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
                         }
+                        Spacer(minLength: 4)
+                        Button(L("보기", "Show")) { fold.unfolded = true }.buttonStyle(.borderedProminent)
                     }
                 }
             }
-            .padding(.horizontal, 12).padding(.bottom, 4)
         }
+        .padding(.horizontal, 12).padding(.bottom, 4)
     }
 
-    // Not the open chat's own: its card is right there (a TODO's question in its chat, an approval in its main room).
+    // Hidden while only the open chat's own items wait: their cards are right there (a TODO's question in its chat, an
+    // approval in its main room). Once anything else waits, all of them, so the line counts every 🔴 item.
     private var shown: [BlockedItem] {
-        BlockedItem.all(requests: center.requests, expired: center.expired, todos: todos.snapshot).filter { item in
-            if discussion.viewingRemote != nil { return true }
+        let all = BlockedItem.all(requests: center.requests, expired: center.expired, todos: todos.snapshot)
+        if discussion.viewingRemote != nil { return all }
+        let elsewhere = all.contains { item in
             switch item {
             case .approval(let r), .expired(let r): return discussion.approvalHome(r.room) != discussion.currentID
             case .todo(let t): return t.room != discussion.currentID
             }
         }
+        return elsewhere ? all : []
     }
 
     private func summary(_ items: [BlockedItem]) -> String {
@@ -139,6 +154,13 @@ struct ApprovalBanner: View {
 
     @ViewBuilder private func row(_ item: BlockedItem, now: Date) -> some View {
         switch item {
+        case .approval(let request) where request.alwaysAllow != nil:
+            // An outside MCP tool: its macOS notification is the main way to answer; the strip only counts down.
+            strip(Color.orange) {
+                Text(L("외부 도구 허가", "Outside tool approval")).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                Spacer(minLength: 4)
+                Text(Self.approvalLeft(request, now: now)).font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary).lineLimit(1).fixedSize()
+            }
         case .approval(let request):
             strip(Color.orange) {
                 Text(discussion.approvalChatName(request.room)).font(.system(size: 12, weight: .semibold)).lineLimit(1)

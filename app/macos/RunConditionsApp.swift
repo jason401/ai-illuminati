@@ -37,7 +37,7 @@ extension RunConditions {
         var answering = workspace
         answering.account = account
         if workspace.binding.fullAccessActive && !guarded {
-            // A preference change during launch must never open full access without AutoGuard.
+            // Keep this launch isolated when the terminal is off, even if it is enabled before arguments are built.
             answering.binding.fullAuto = false
             answering.binding.fullAccess = false
         }

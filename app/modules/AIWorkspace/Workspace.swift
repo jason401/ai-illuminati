@@ -297,12 +297,13 @@ public struct WorkspaceInvocation {
             let folder = directory.appendingPathComponent(".agents")
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
             try Data("{\"mcpServers\":{}}".utf8).write(to: folder.appendingPathComponent("mcp_config.json"), options: .atomic)
-            // Existing command auto-grants cannot guarantee write-without-execution.
+            // Existing command auto-grants cannot guarantee a view or write-only workspace.
+            // Execute runs with terminal off get an explicit command deny from Answerer.
             let settingsURL = URL(fileURLWithPath: AccountStore.home + "/.gemini/antigravity-cli/settings.json")
             let settings = (try? Data(contentsOf: settingsURL)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
             let allow = (settings["permissions"] as? [String: Any])?["allow"] as? [String] ?? []
             let auto = settings["toolPermission"] as? String ?? "request-review"
-            if !shell && (allow.contains(where: { $0.hasPrefix("command(") || $0.hasPrefix("unsandboxed(") }) || ["always-proceed", "proceed-in-sandbox"].contains(auto)) {
+            if level != .execute && (allow.contains(where: { $0.hasPrefix("command(") || $0.hasPrefix("unsandboxed(") }) || ["always-proceed", "proceed-in-sandbox"].contains(auto)) {
                 throw WorkspaceError.make("agy 개인 설정에 명령 자동 허용이 있어 이 권한 단계를 보장할 수 없습니다. 개인 설정은 바꾸지 않았습니다. 다른 AI를 선택하세요.")
             }
             // Headless agy ends the whole answer at the first denied tool (it tried `ls` for a plain question),

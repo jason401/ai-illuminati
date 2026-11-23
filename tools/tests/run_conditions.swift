@@ -227,15 +227,16 @@ private func testCapabilityLaunches() {
         args.firstIndex(of: option).map { args[$0 + 1] } ?? ""
     }
     func capture(_ account: Account, _ workspace: WorkspaceInvocation? = nil, web: Bool = true,
-                 session: NativeSessionCall? = nil, inspect: (Answerer.Launch) -> Void = { _ in }) -> [String] {
-        var args: [String] = [], launch: Answerer.Launch?
-        Answerer.launchForTests = { started in launch = started; return .success("captured") }
+                 session: NativeSessionCall? = nil, inspect: @escaping (Answerer.Launch) -> Void = { _ in }) -> [String] {
+        var args: [String] = []
+        Answerer.launchForTests = { started in
+            args = started.arguments
+            inspect(started)
+            return .success("captured")
+        }
         defer { Answerer.launchForTests = nil }
         let result = Answerer.ask(account, prompt: "Say hi.", web: web, session: session, run: .app(account, workspace))
         if case .failure(let error) = result { expect(false, "capability launch failed: \(error)") }
-        if let launch { args = launch.arguments }
-        // Only workspace launches keep their working folders after Answerer returns.
-        if let launch { inspect(launch) }
         return args
     }
     for provider in [Account.Provider.claude, .codex] {
@@ -305,17 +306,38 @@ private func testCapabilityLaunches() {
     AICapabilities.set(.off, for: gemini, .web)
     AICapabilities.set(.off, for: gemini, .terminal)
     expect(RunConditions.app(gemini).beforeStart == nil, "Gemini: web off skips writing the global allow rule")
+    let settingsURL = URL(fileURLWithPath: AccountStore.home + "/.gemini/antigravity-cli/settings.json")
+    let existing = try? Data(contentsOf: settingsURL)
+    let settings = Data(#"{"toolPermission":"always-proceed","permissions":{"allow":["command(ls)"],"deny":["write_file(/example)"]}}"#.utf8)
+    try! FileManager.default.createDirectory(at: settingsURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try! settings.write(to: settingsURL, options: .atomic)
+    defer {
+        if let existing { try? existing.write(to: settingsURL, options: .atomic) }
+        else { try? FileManager.default.removeItem(at: settingsURL) }
+    }
     let args = capture(gemini, invocation) { launch in
         let file = launch.directory.appendingPathComponent(".agents/hooks.json")
         let data = try! Data(contentsOf: file)
         let hooks = try! JSONSerialization.jsonObject(with: data) as! [String: [String: [[String: Any]]]]
         let preTool = hooks["illuminati-capabilities"]?["PreToolUse"]?.first
         let matcher = preTool?["matcher"] as? String ?? ""
+        let handlers = preTool?["hooks"] as? [[String: String]]
+        expect(value(launch.arguments, "--add-dir") == launch.directory.path && handlers?.first?["type"] == "command",
+               "Gemini: the declared workspace root contains the command hook")
         expect(["search_web", "read_url_content", "run_command"].allSatisfy { matcher.split(separator: "|").contains(Substring($0)) },
                "Gemini: the per-run hook denies search, URL reads and commands")
     }
-    expect(value(args, "--settings").contains("command(*)") && value(args, "--settings").contains("read_url(*)")
-           && args.contains("--add-dir"), "Gemini: the CLI receives session-only deny rules and the hook directory")
+    let override = Data(value(args, "--settings").utf8)
+    let object = (try? JSONSerialization.jsonObject(with: override)) as? [String: [String: [String]]]
+    let deny = object?["permissions"]?["deny"] ?? []
+    expect(["command(*)", "read_url(*)", "write_file(/example)"].allSatisfy { deny.contains($0) }
+           && object?["permissions"]?["allow"] == ["command(ls)"] && (try? Data(contentsOf: settingsURL)) == settings,
+           "Gemini: an account with pre-approved commands can launch with session-only deny rules")
+    _ = capture(gemini) { launch in
+        let dirs = zip(launch.arguments, launch.arguments.dropFirst()).compactMap { $0 == "--add-dir" ? $1 : nil }
+        expect(dirs == [launch.directory.path, Answerer.chatDir],
+               "Gemini: plain chat keeps its previous workspace next to the hook root")
+    }
     expect(value(args, "-p").contains("웹 검색과 웹 페이지 읽기는 이 실행에서 꺼져 있어요.")
            && value(args, "-p").contains("터미널 명령(run_command)은 이 실행에서 막혀 있고"),
            "Gemini: tool guidance reflects both account switches")

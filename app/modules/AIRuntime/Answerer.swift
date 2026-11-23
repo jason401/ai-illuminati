@@ -51,7 +51,7 @@ public enum GeminiLinks {
             deny += ["read_url(*)", "execute_url(*)"]
         }
         let hook: [String: Any] = ["matcher": blocked.joined(separator: "|"), "hooks": [
-            ["command": #"/usr/bin/printf '%s\n' '{"decision":"deny","reason":"This tool is disabled for this AI account."}'"#]
+            ["type": "command", "command": #"/usr/bin/printf '%s\n' '{"decision":"deny","reason":"This tool is disabled for this AI account."}'"#]
         ]]
         let folder = directory.appendingPathComponent(".agents", isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
@@ -290,7 +290,6 @@ public enum Answerer {
             let note = webAllowed ? GeminiLinks.toolNote : "[도구 안내] 웹 검색과 웹 페이지 읽기, 터미널 명령과 파일 수정은 이 실행에서 꺼져 있어요.\n\n"
             arguments = ["-p", pictureNote + (run.folders == nil ? note : "") + prompt, "--sandbox", "--disable-slash-commands",
                          "--print-timeout", "\(Int(timeout) - 10)s", "--output-format", "stream-json"]
-            if let geminiPictures { arguments += ["--add-dir", geminiPictures.path] }
         case .ollama:
             return .failure(.missingTool)   // answered above, without a CLI
         }
@@ -314,10 +313,13 @@ public enum Answerer {
         var executionDirectory = geminiDirectory ?? session?.directory ?? run.folders.map { $0.directory.appendingPathComponent("stateless-\(UUID().uuidString)") } ?? chatDirectory
         if let geminiPictures, geminiDirectory == nil, session == nil, run.folders == nil { executionDirectory = geminiPictures }
         do {
-            if let folders = run.folders { arguments = try folders.arguments(arguments, executionDirectory, web) }
             if let geminiDirectory {
+                // Register the hook root before linked folders. Keep the previous plain chat root available.
                 arguments += try GeminiLinks.restrictedArguments(in: geminiDirectory, terminal: terminalAllowed, web: webAllowed)
+                if run.folders == nil && geminiPictures == nil { arguments += ["--add-dir", chatDirectory.path] }
             }
+            if let geminiPictures { arguments += ["--add-dir", geminiPictures.path] }
+            if let folders = run.folders { arguments = try folders.arguments(arguments, executionDirectory, web) }
         } catch { return .failure(.failed("Workspace setup failed: " + error.localizedDescription)) }
         // Steering: the input stays open (stream-json) and Claude says which messages it read (replayed).
         let steering = account.provider == .claude && streamed && launchForTests == nil ? run.steering : nil

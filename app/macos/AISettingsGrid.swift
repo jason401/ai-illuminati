@@ -153,7 +153,8 @@ struct AISettingsGrid: View {
     }
 
     private var capabilities: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        let columns = AICapability.allCases.filter { capability in model.accounts.contains { applies(capability, $0) } }
+        return VStack(alignment: .leading, spacing: 6) {
             Text(L("AI가 쓸 수 있는 기능", "What AIs can use")).font(.system(size: 13, weight: .semibold))
             Text(L("선택한 값은 저장되며, 기능이 연결되면 적용돼요.",
                    "Choices are saved and take effect when the features are connected."))
@@ -162,7 +163,7 @@ struct AISettingsGrid: View {
                 Grid(alignment: .center, horizontalSpacing: 18, verticalSpacing: 8) {
                     GridRow {
                         Text(L("AI", "AI")).font(.system(size: 11, weight: .semibold)).gridColumnAlignment(.leading)
-                        ForEach(AICapability.allCases, id: \.self) { capability in
+                        ForEach(columns, id: \.self) { capability in
                             Text(capabilityTitle(capability)).font(.system(size: 11, weight: .semibold))
                                 .help(capabilityHelp(capability))
                         }
@@ -171,7 +172,7 @@ struct AISettingsGrid: View {
                     ForEach(model.accounts, id: \.id) { account in
                         GridRow {
                             accountLabel(account)
-                            ForEach(AICapability.allCases, id: \.self) { capability in
+                            ForEach(columns, id: \.self) { capability in
                                 capabilityCell(capability, account)
                             }
                         }
@@ -214,15 +215,27 @@ struct AISettingsGrid: View {
 
     @ViewBuilder private func capabilityCell(_ capability: AICapability, _ account: Account) -> some View {
         if applies(capability, account) {
-            let warning = capability == .screen && account.isSchool
-                ? "\n" + L("화면 내용이 학교·회사 계정으로 보내져요.", "Screen content is sent to your school or work account.")
-                : ""
             CapabilityMenu(account: account, capability: capability, title: capabilityTitle(capability))
-                .help(capabilityHelp(capability) + warning)
+                .help(capabilityHelp(capability) + enterpriseWarning(capability, account))
         } else {
             Text("—").foregroundStyle(.tertiary)
                 .accessibilityLabel(L("해당 없음", "Not applicable"))
                 .help(unavailableHelp(capability, account))
+        }
+    }
+
+    private func enterpriseWarning(_ capability: AICapability, _ account: Account) -> String {
+        guard account.isSchool else { return "" }
+        switch capability {
+        case .screen:
+            return "\n" + L("화면 내용이 학교·회사 계정으로 보내져요.", "Screen content is sent to your school or work account.")
+        case .input:
+            return "\n" + L("화면을 보며 조작할 때 화면 내용이 학교·회사 계정으로 보내져요.",
+                            "When the AI views your screen to control it, screen content is sent to your school or work account.")
+        case .chrome:
+            return "\n" + L("크롬에서 읽은 페이지 내용이 학교·회사 계정으로 보내져요.",
+                            "Page content read in Chrome is sent to your school or work account.")
+        case .terminal, .web, .apps: return ""
         }
     }
 
@@ -237,10 +250,15 @@ struct AISettingsGrid: View {
 
     private var permissionRows: some View {
         VStack(alignment: .leading, spacing: 6) {
-            permissionRow(L("화면 기록", "Screen Recording"), granted: permissions.screen, pane: "Privacy_ScreenCapture") {
-                _ = CGRequestScreenCaptureAccess()
-            }
+            permissionRow(L("화면 기록", "Screen Recording"), granted: permissions.screen, pane: "Privacy_ScreenCapture",
+                          request: permissions.didRequestScreen ? nil : permissions.requestScreen)
             permissionRow(L("손쉬운 사용", "Accessibility"), granted: permissions.accessibility, pane: "Privacy_Accessibility")
+            if !permissions.screen {
+                Text(L("화면 기록을 허용한 뒤 앱을 다시 시작해야 할 수 있어요.",
+                       "You may need to restart the app after granting Screen Recording access."))
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .onAppear(perform: permissions.refresh)
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in permissions.refresh() }
@@ -252,13 +270,17 @@ struct AISettingsGrid: View {
             Text(title).fontWeight(.semibold)
             Text(granted ? L("허용됨", "Allowed") : L("허용 안 됨", "Not allowed")).foregroundStyle(.secondary)
             if !granted {
+                if let request {
+                    let requestTitle = L("권한 요청", "Request access")
+                    Button(requestTitle, action: request)
+                        .controlSize(.small)
+                        .accessibilityLabel(title + " · " + requestTitle)
+                }
                 let buttonTitle = L("시스템 설정 열기", "Open System Settings")
                 Button(buttonTitle) {
-                    request?()
                     if let url = URL(string: "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?\(pane)") {
                         NSWorkspace.shared.open(url)
                     }
-                    permissions.refresh()
                 }
                 .controlSize(.small)
                 .accessibilityLabel(title + " · " + buttonTitle)
@@ -308,6 +330,13 @@ struct AISettingsGrid: View {
 private final class MacPermissionStatus: ObservableObject {
     @Published private(set) var screen = false
     @Published private(set) var accessibility = false
+    @Published private(set) var didRequestScreen = false
+
+    func requestScreen() {
+        didRequestScreen = true
+        _ = CGRequestScreenCaptureAccess()
+        refresh()
+    }
 
     func refresh() {
         screen = CGPreflightScreenCaptureAccess()

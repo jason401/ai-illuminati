@@ -212,4 +212,111 @@ func testRunConditions() {
         expect(false, "launches differ from run_conditions.golden at line \(first + 1): got \(mine.indices.contains(first) ? mine[first] : "(end)") / golden \(theirs.indices.contains(first) ? theirs[first] : "(end)")")
     }
     print("PASS: launches per provider and folder kind match the golden file (arguments, environment, process group); each guard checked alone")
+    testCapabilityLaunches()
+}
+
+private func testCapabilityLaunches() {
+    let root = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("capability-run-root")
+    try! FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let room = UUID(), runID = UUID()
+    let roots = [WorkspaceRoot(path: root.path, directory: true, writable: true)]
+    let binding = WorkspaceBinding(roots: roots, level: .execute, projectRunID: runID)
+    let backup = try! WorkspaceBackup.begin(binding, room: room, runID: runID)
+    let invocation = WorkspaceInvocation(binding: binding, room: room, readOnly: false, backupPath: backup.directory)
+    func value(_ args: [String], _ option: String) -> String {
+        args.firstIndex(of: option).map { args[$0 + 1] } ?? ""
+    }
+    func capture(_ account: Account, _ workspace: WorkspaceInvocation? = nil, web: Bool = true,
+                 session: NativeSessionCall? = nil, inspect: (Answerer.Launch) -> Void = { _ in }) -> [String] {
+        var args: [String] = [], launch: Answerer.Launch?
+        Answerer.launchForTests = { started in launch = started; return .success("captured") }
+        defer { Answerer.launchForTests = nil }
+        let result = Answerer.ask(account, prompt: "Say hi.", web: web, session: session, run: .app(account, workspace))
+        if case .failure(let error) = result { expect(false, "capability launch failed: \(error)") }
+        if let launch { args = launch.arguments }
+        // Only workspace launches keep their working folders after Answerer returns.
+        if let launch { inspect(launch) }
+        return args
+    }
+    for provider in [Account.Provider.claude, .codex] {
+        let account = Account(id: "rc-capability-\(provider)-\(UUID())", provider: provider, name: "Capabilities", dir: root.path)
+        let control = Account(id: "rc-control-\(provider)-\(UUID())", provider: provider, name: "Control", dir: root.path)
+        for terminal in [true, false] {
+            for web in [true, false] {
+                AICapabilities.set(terminal ? .on : .off, for: account, .terminal)
+                AICapabilities.set(web ? .on : .off, for: account, .web)
+                let label = "\(provider), terminal \(terminal), web \(web)"
+                let args = capture(account, invocation) { launch in
+                    expect(launch.processGroup && launch.environment["AI_ILLUMINATI_PROJECT_PROCESS"] == "1",
+                           "\(label): project process stays cancellable")
+                    expect((launch.environment["GH_CONFIG_DIR"] == AccountStore.supportDir + "/auto-guard/gh-empty") == terminal,
+                           "\(label): AutoGuard goes with full native access")
+                }
+                if provider == .claude {
+                    let tools = value(args, "--tools").split(separator: ",")
+                    let allowed = value(args, "--allowedTools").split(separator: ",")
+                    let denied = value(args, "--disallowedTools").split(separator: ",")
+                    expect(args.contains("bypassPermissions") == terminal && args.contains("--restricted") == !terminal,
+                           "\(label): account selects Claude's access mode")
+                    expect((tools.contains("default") || tools.contains("Bash")) == terminal && !allowed.contains("Bash"),
+                           "\(label): Bash is absent even from the limited execute run")
+                    for name: Substring in ["WebSearch", "WebFetch"] {
+                        expect(terminal ? denied.contains(name) == !web : tools.contains(name) == web && allowed.contains(name) == web,
+                               "\(label): Claude web tool \(name) follows the account")
+                    }
+                } else {
+                    let sandbox = terminal ? "danger-full-access" : "workspace-write"
+                    expect(args.contains("sandbox_mode=\"\(sandbox)\"") && args.contains("features.shell_tool=\(terminal)"),
+                           "\(label): Codex sandbox and shell follow the account")
+                    expect(args.contains("web_search=\"\(web ? "live" : "disabled")\"") && args.contains("--search") == web,
+                           "\(label): Codex web setting and global search flag agree")
+                }
+            }
+        }
+        let plain = capture(account)
+        let session = NativeSessionCall(id: UUID().uuidString, resume: true, directory: root)
+        let resumed = capture(account, session: session)
+        if provider == .claude {
+            expect([plain, resumed].allSatisfy { value($0, "--tools").isEmpty && !$0.contains("WebSearch,WebFetch") },
+                   "Claude: web off also reaches plain and resumed calls")
+        } else {
+            expect([plain, resumed].allSatisfy { $0.contains("features.shell_tool=false") && $0.contains("web_search=\"disabled\"") && !$0.contains("--search") },
+                   "Codex: terminal and web off also reach plain and resumed calls")
+        }
+
+        AICapabilities.set(.ask, for: account, .terminal)
+        AICapabilities.set(.ask, for: account, .web)
+        let asked = capture(account, invocation)
+        let enabled = capture(control, invocation)
+        if provider == .claude {
+            expect([asked, enabled].allSatisfy { $0.contains("bypassPermissions") && !value($0, "--disallowedTools").contains("WebSearch") },
+                   "Claude: Ask acts like On and a second account keeps the default")
+        } else {
+            expect([asked, enabled].allSatisfy { $0.contains("sandbox_mode=\"danger-full-access\"") && $0.contains("web_search=\"live\"") },
+                   "Codex: Ask acts like On and a second account keeps the default")
+        }
+        let view = capture(account, WorkspaceInvocation(binding: WorkspaceBinding(roots: roots), room: room))
+        expect(provider == .claude ? !value(view, "--tools").contains("Bash") && !view.contains("bypassPermissions")
+               : view.contains("features.shell_tool=false") && !view.contains("sandbox_mode=\"danger-full-access\""),
+               "\(provider): account setting adds no terminal to a plain view")
+    }
+
+    let gemini = Account(id: "rc-gemini-capability-\(UUID())", provider: .gemini, name: "Gemini")
+    AICapabilities.set(.off, for: gemini, .web)
+    AICapabilities.set(.off, for: gemini, .terminal)
+    expect(RunConditions.app(gemini).beforeStart == nil, "Gemini: web off skips writing the global allow rule")
+    let args = capture(gemini, invocation) { launch in
+        let file = launch.directory.appendingPathComponent(".agents/hooks.json")
+        let data = try! Data(contentsOf: file)
+        let hooks = try! JSONSerialization.jsonObject(with: data) as! [String: [String: [[String: Any]]]]
+        let preTool = hooks["illuminati-capabilities"]?["PreToolUse"]?.first
+        let matcher = preTool?["matcher"] as? String ?? ""
+        expect(["search_web", "read_url_content", "run_command"].allSatisfy { matcher.split(separator: "|").contains(Substring($0)) },
+               "Gemini: the per-run hook denies search, URL reads and commands")
+    }
+    expect(value(args, "--settings").contains("command(*)") && value(args, "--settings").contains("read_url(*)")
+           && args.contains("--add-dir"), "Gemini: the CLI receives session-only deny rules and the hook directory")
+    expect(value(args, "-p").contains("웹 검색과 웹 페이지 읽기는 이 실행에서 꺼져 있어요.")
+           && value(args, "-p").contains("터미널 명령(run_command)은 이 실행에서 막혀 있고"),
+           "Gemini: tool guidance reflects both account switches")
 }

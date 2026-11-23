@@ -14,10 +14,13 @@ extension RunConditions {
         // The face goes through the app as "illuminati", never through Codex's own AI Face server ("gpt").
         if account.provider == .codex { run.prefix = FaceLink.codexOff(account) }
         guard let workspace else {
-            if account.provider == .gemini { run.beforeStart = GeminiLinks.allowWeb }
+            if account.provider == .gemini, AICapabilities.rule(account, .web) != .off {
+                run.beforeStart = GeminiLinks.allowWeb
+            }
             return run
         }
-        let project = workspace.binding.projectRunID != nil, guarded = workspace.binding.fullAccessActive
+        let project = workspace.binding.projectRunID != nil
+        let guarded = workspace.binding.fullAccessActive && AICapabilities.rule(account, .terminal) != .off
         // Project work: one cancellable process group (project_process.py), stopped as a whole at the end.
         if project {
             run.wrapper = ["/usr/bin/python3", WorkspaceInvocation.resources.appendingPathComponent("project_process.py").path]
@@ -33,6 +36,11 @@ extension RunConditions {
         // The arguments know who answers (the chat tools ask for it); file requests are read as before, without it.
         var answering = workspace
         answering.account = account
+        if workspace.binding.fullAccessActive && !guarded {
+            // A preference change during launch must never open full access without AutoGuard.
+            answering.binding.fullAuto = false
+            answering.binding.fullAccess = false
+        }
         run.folders = RunConditions.Folders(directory: NativeSessions.directory(workspace.room),
             arguments: { try answering.arguments(provider: account.provider, original: $0, directory: $1, web: $2, tools: ToolHub.workspaceLink) },
             read: { try workspace.readRequests($0, directory: $1, token: $2, tools: ToolHub.workspaceLink) })

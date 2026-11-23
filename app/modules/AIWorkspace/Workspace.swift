@@ -202,6 +202,10 @@ public struct WorkspaceInvocation {
             let data = try! JSONSerialization.data(withJSONObject: [object], options: [.fragmentsAllowed, .sortedKeys, .withoutEscapingSlashes])
             return String(data: data, encoding: .utf8)!.dropFirst().dropLast().description
         }
+        let terminalAllowed = account.map { AICapabilities.rule($0, .terminal) != .off } ?? true
+        let webAllowed = account.map { AICapabilities.rule($0, .web) != .off } ?? true
+        let web = web && webAllowed
+        let shell = level == .execute && terminalAllowed
         var result = original
         switch provider {
         case .claude:
@@ -213,25 +217,26 @@ public struct WorkspaceInvocation {
             let mcp = ["mcpServers": ["illuminati": server]]
             let config = String(data: try JSONSerialization.data(withJSONObject: mcp), encoding: .utf8)!
             if let i = result.firstIndex(of: "--mcp-config") { result[i + 1] = config }
-            if binding.fullAccessActive {
+            if binding.fullAccessActive && terminalAllowed {
                 // Full auto: every tool, no prompts, no sandbox (network on), like Claude Code run by the user.
                 // AutoGuard's environment removes Git credentials and turns rm into the Trash.
                 if let i = result.firstIndex(of: "--tools") { result[i + 1] = "default" }
                 if let i = result.firstIndex(of: "--allowedTools") { result.removeSubrange(i...i + 1) }
+                let denied = AutoGuard.claudeDenied + (webAllowed ? [] : ["WebSearch", "WebFetch"])
                 result += ["--setting-sources", "", "--disable-slash-commands", "--permission-mode", "bypassPermissions",
-                           "--disallowedTools", AutoGuard.claudeDenied.joined(separator: ",")]
+                           "--disallowedTools", denied.joined(separator: ",")]
                 for root in binding.roots where root.directory { result += ["--add-dir", root.path] }
                 break
             }
             // In view, only the writable roots may change: an Edit(//absolute/**) rule covers Edit and Write.
             let own = level == .view || binding.projectRunID != nil ? ownFolders : []
             let edit = level != .view || !own.isEmpty
-            if let i = result.firstIndex(of: "--tools") { result[i + 1] = "Read,Grep,Glob" + (edit ? ",Edit,Write" : "") + (level == .execute ? ",Bash" : "") + (web ? ",WebSearch,WebFetch" : "") }
+            if let i = result.firstIndex(of: "--tools") { result[i + 1] = "Read,Grep,Glob" + (edit ? ",Edit,Write" : "") + (shell ? ",Bash" : "") + (web ? ",WebSearch,WebFetch" : "") }
             if let i = result.firstIndex(of: "--allowedTools") { result.removeSubrange(i...i + 1) }
             let allowedEdit = level != .view && binding.projectRunID == nil ? ",Edit,Write" : own.map { ",Edit(/" + $0 + "/**)" }.joined()
-            result += ["--restricted", "--setting-sources", "", "--disable-slash-commands", "--permission-mode", "dontAsk", "--allowedTools", "Read,Grep,Glob,mcp__illuminati__*" + allowedEdit + (level == .execute ? ",Bash" : "") + (web ? ",WebSearch,WebFetch" : "")]
+            result += ["--restricted", "--setting-sources", "", "--disable-slash-commands", "--permission-mode", "dontAsk", "--allowedTools", "Read,Grep,Glob,mcp__illuminati__*" + allowedEdit + (shell ? ",Bash" : "") + (web ? ",WebSearch,WebFetch" : "")]
             if level == .execute {
-                var settings: [String: Any] = ["sandbox": ["enabled": true, "autoAllowBashIfSandboxed": true, "allowUnsandboxedCommands": false,
+                var settings: [String: Any] = ["sandbox": ["enabled": true, "autoAllowBashIfSandboxed": shell, "allowUnsandboxedCommands": false,
                     "filesystem": ["allowWrite": executionFolders, "denyWrite": binding.project.map(\.protectedPaths) ?? []]]]
                 if let project = binding.project {
                     let protected = project.protectedPaths
@@ -248,22 +253,23 @@ public struct WorkspaceInvocation {
             var base = original
             var i = 0
             while i < base.count {
-                if base[i] == "-c", i + 1 < base.count, ["sandbox_mode=", "approval_policy=", "web_search="].contains(where: { base[i + 1].hasPrefix($0) }) { base.removeSubrange(i...i + 1); continue }
+                if base[i] == "-c", i + 1 < base.count, ["sandbox_mode=", "approval_policy=", "web_search=", "features.shell_tool="].contains(where: { base[i + 1].hasPrefix($0) }) { base.removeSubrange(i...i + 1); continue }
+                if !webAllowed, i < base.count - 1, base[i] == "--search" { base.remove(at: i); continue }
                 if base[i] == "--sandbox", i + 1 < base.count { base.removeSubrange(i...i + 1); continue }
                 if base[i] == "-C", i + 1 < base.count { base[i + 1] = directory.path }
                 i += 1
             }
             let own = level == .view || binding.projectRunID != nil ? ownFolders : []
-            if binding.fullAccessActive, codexFullAccessAllowed {
+            if binding.fullAccessActive, terminalAllowed, codexFullAccessAllowed {
                 // Sub-agents like Claude's Agent tool; they run in this process with the same guarded environment.
                 result = ["-c", "sandbox_mode=\"danger-full-access\"", "-c", "approval_policy=\"never\"", "-c", "features.shell_tool=true",
-                          "-c", "features.multi_agent=true", "-c", "web_search=\"live\"",
+                          "-c", "features.multi_agent=true", "-c", "web_search=" + json(webAllowed ? "live" : "disabled"),
                           "-c", "mcp_servers.illuminati.command=" + json(command), "-c", "mcp_servers.illuminati.args=" + json(args),
                           "-c", "mcp_servers.illuminati.required=true", "-c", "mcp_servers.illuminati.default_tools_approval_mode=\"approve\"",
                           "-c", "mcp_servers.illuminati.tool_timeout_sec=3610"] + base
                 break
             }
-            result = ["-c", "sandbox_mode=" + json(level == .view && own.isEmpty ? "read-only" : "workspace-write"), "-c", "approval_policy=\"never\"", "-c", "features.shell_tool=" + (level == .execute ? "true" : "false"),
+            result = ["-c", "sandbox_mode=" + json(level == .view && own.isEmpty ? "read-only" : "workspace-write"), "-c", "approval_policy=\"never\"", "-c", "features.shell_tool=" + (shell ? "true" : "false"),
                       "-c", "features.multi_agent=false", "-c", "sandbox_workspace_write.writable_roots=" + json(level == .view ? own : executionFolders),
                       "-c", "sandbox_workspace_write.exclude_slash_tmp=true", "-c", "sandbox_workspace_write.exclude_tmpdir_env_var=true",
                       "-c", "sandbox_workspace_write.network_access=false", "-c", "web_search=" + json(web ? "live" : "disabled"),
@@ -275,7 +281,7 @@ public struct WorkspaceInvocation {
             result += ["-c", "mcp_servers.illuminati.tool_timeout_sec=3610"]
             // /tmp and $TMPDIR stay closed; commands get a temp folder inside the chat folder instead,
             // or mktemp, swiftc and pip fail there while Claude's sandbox gives them one.
-            if level == .execute, let own = ownFolders.first {
+            if shell, let own = ownFolders.first {
                 let tmp = own + "/.tmp"
                 try FileManager.default.createDirectory(atPath: tmp, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
                 result += ["-c", "shell_environment_policy.set.TMPDIR=" + json(tmp)]
@@ -296,13 +302,14 @@ public struct WorkspaceInvocation {
             let settings = (try? Data(contentsOf: settingsURL)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
             let allow = (settings["permissions"] as? [String: Any])?["allow"] as? [String] ?? []
             let auto = settings["toolPermission"] as? String ?? "request-review"
-            if level != .execute && (allow.contains(where: { $0.hasPrefix("command(") || $0.hasPrefix("unsandboxed(") }) || ["always-proceed", "proceed-in-sandbox"].contains(auto)) {
+            if !shell && (allow.contains(where: { $0.hasPrefix("command(") || $0.hasPrefix("unsandboxed(") }) || ["always-proceed", "proceed-in-sandbox"].contains(auto)) {
                 throw WorkspaceError.make("agy 개인 설정에 명령 자동 허용이 있어 이 권한 단계를 보장할 수 없습니다. 개인 설정은 바꾸지 않았습니다. 다른 AI를 선택하세요.")
             }
             // Headless agy ends the whole answer at the first denied tool (it tried `ls` for a plain question),
             // so the prompt says which tools this mode blocks.
             if let i = result.firstIndex(of: "-p"), i + 1 < result.count {
-                result[i + 1] = GeminiLinks.workspaceNote(level: level, readsPages: allow.contains("read_url(*)")) + result[i + 1]
+                result[i + 1] = GeminiLinks.workspaceNote(level: level, runsCommands: shell, searchesWeb: webAllowed,
+                                                        readsPages: allow.contains("read_url(*)")) + result[i + 1]
             }
             result += ["--mode", level == .view ? "plan" : "accept-edits"]
             for root in binding.roots where root.directory { result += ["--add-dir", root.path] }
@@ -313,15 +320,17 @@ public struct WorkspaceInvocation {
 
 extension GeminiLinks {
     // Linked folders: personal agy permissions are not broadened, so only describe what this mode allows.
-    static func workspaceNote(level: WorkspaceLevel, readsPages: Bool) -> String {
-        let commands = level == .execute
+    static func workspaceNote(level: WorkspaceLevel, runsCommands: Bool, searchesWeb: Bool, readsPages: Bool) -> String {
+        let commands = runsCommands
             ? "터미널 명령(run_command)은 개인 설정에서 허락된 명령만 실행되고, 허락되지 않은 명령을 시도하면 답 전체가 실패해요. 꼭 필요할 때만 쓰세요."
             : "터미널 명령(run_command)은 이 실행에서 막혀 있고, 한 번이라도 시도하면 답 전체가 실패해요. ls, cat, find 같은 명령도 쓰지 마세요."
         let files = level == .view
             ? "폴더와 파일은 터미널 없이 파일 읽기 도구로 보세요. 파일은 만들거나 고칠 수 없어요."
             : "폴더와 파일은 터미널 없이 파일 읽기·수정 도구로 다루세요."
-        let pages = readsPages ? "웹 검색(search_web)과 웹 페이지 읽기(read_url_content)를 쓸 수 있어요."
-            : "웹 검색(search_web)은 쓸 수 있지만 웹 페이지 열기(read_url_content)는 막혀 있어요."
+        let pages: String
+        if !searchesWeb { pages = "웹 검색과 웹 페이지 읽기는 이 실행에서 꺼져 있어요." }
+        else if readsPages { pages = "웹 검색(search_web)과 웹 페이지 읽기(read_url_content)를 쓸 수 있어요." }
+        else { pages = "웹 검색(search_web)은 쓸 수 있지만 웹 페이지 열기(read_url_content)는 막혀 있어요." }
         return "[도구 안내] \(commands) \(files) \(pages) 질문에 폴더나 파일이 필요 없으면 도구 없이 바로 답하세요.\n\n"
     }
 }

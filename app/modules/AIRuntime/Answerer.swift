@@ -39,6 +39,36 @@ public enum GeminiLinks {
 
     """
 
+    // agy's permission list covers URL reads but has no search action. A workspace hook can deny both.
+    static func restrictedArguments(in directory: URL, terminal: Bool, web: Bool) throws -> [String] {
+        var blocked: [String] = [], deny: [String] = []
+        if !terminal {
+            blocked += ["run_command", "send_command_input"]
+            deny += ["command(*)", "unsandboxed(*)"]
+        }
+        if !web {
+            blocked += ["search_web", "read_url_content", "read_url", "browser_.*", "open_browser_url"]
+            deny += ["read_url(*)", "execute_url(*)"]
+        }
+        let hook: [String: Any] = ["matcher": blocked.joined(separator: "|"), "hooks": [
+            ["command": #"/usr/bin/printf '%s\n' '{"decision":"deny","reason":"This tool is disabled for this AI account."}'"#]
+        ]]
+        let folder = directory.appendingPathComponent(".agents", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let data = try JSONSerialization.data(withJSONObject: ["illuminati-capabilities": ["PreToolUse": [hook]]])
+        try data.write(to: folder.appendingPathComponent("hooks.json"), options: .atomic)
+
+        // Keep the user's permission lists when supplying a session-only override.
+        let settingsURL = URL(fileURLWithPath: AccountStore.home + "/.gemini/antigravity-cli/settings.json")
+        var permissions: [String: Any] = [:]
+        if FileManager.default.fileExists(atPath: settingsURL.path),
+           let settings = try JSONSerialization.jsonObject(with: Data(contentsOf: settingsURL)) as? [String: Any] {
+            permissions = settings["permissions"] as? [String: Any] ?? [:]
+        }
+        permissions["deny"] = (permissions["deny"] as? [String] ?? []) + deny
+        let settings = try JSONSerialization.data(withJSONObject: ["permissions": permissions])
+        return ["--add-dir", directory.path, "--settings", String(decoding: settings, as: UTF8.self)]
+    }
 }
 
 // How one call is started, decided by the caller (chat, project work) and only applied here: what goes before the
@@ -220,6 +250,9 @@ public enum Answerer {
                 pictureNote = "[Attached images] Open and look at these image files, in order (Image 1, Image 2, …): " + paths.joined(separator: ", ") + "\n\n"
             } catch { return .failure(.failed("Could not prepare images for Gemini.")) }
         }
+        let terminalAllowed = AICapabilities.rule(account, .terminal) != .off
+        let webAllowed = AICapabilities.rule(account, .web) != .off
+        let web = web && webAllowed
         run.beforeStart?()
         switch account.provider {
         case .claude:
@@ -237,10 +270,13 @@ public enum Answerer {
         case .codex:
             binary = CodexUsage.binary
             // --search belongs before "exec" (it is a top-level option).
-            arguments = (web ? ["--search"] : []) + ["exec", "--skip-git-repo-check", "--sandbox", "read-only", "--ephemeral",
+            let search = web ? ["--search"] : []
+            let disabledSearch = webAllowed ? [] : ["-c", "web_search=\"disabled\""]
+            let disabledShell = terminalAllowed ? [] : ["-c", "features.shell_tool=false"]
+            arguments = disabledShell + disabledSearch + search + ["exec", "--skip-git-repo-check", "--sandbox", "read-only", "--ephemeral",
                          "--color", "never", "-C", chatDir, "-o", outFile, prompt]
             if let session {
-                arguments = ["-c", "sandbox_mode=\"read-only\"", "-c", "approval_policy=\"never\"",
+                arguments = disabledShell + ["-c", "sandbox_mode=\"read-only\"", "-c", "approval_policy=\"never\"",
                              "-c", web ? "web_search=\"live\"" : "web_search=\"disabled\""]
                 if let system = session.system { arguments += ["-c", "developer_instructions=" + tomlString(system)] }
                 arguments.append("exec")
@@ -251,7 +287,8 @@ public enum Answerer {
             }
         case .gemini:
             binary = ToolHome.agyInstalled ? ToolHome.path + "/.local/bin/agy" : nil
-            arguments = ["-p", pictureNote + (run.folders == nil ? GeminiLinks.toolNote : "") + prompt, "--sandbox", "--disable-slash-commands",
+            let note = webAllowed ? GeminiLinks.toolNote : "[도구 안내] 웹 검색과 웹 페이지 읽기, 터미널 명령과 파일 수정은 이 실행에서 꺼져 있어요.\n\n"
+            arguments = ["-p", pictureNote + (run.folders == nil ? note : "") + prompt, "--sandbox", "--disable-slash-commands",
                          "--print-timeout", "\(Int(timeout) - 10)s", "--output-format", "stream-json"]
             if let geminiPictures { arguments += ["--add-dir", geminiPictures.path] }
         case .ollama:
@@ -267,12 +304,21 @@ public enum Answerer {
         if streamed && account.provider == .codex && !arguments.contains("--json"), let exec = arguments.firstIndex(of: "exec") {
             arguments.insert("--json", at: exec + 1)
         }
-        var executionDirectory = session?.directory ?? run.folders.map { $0.directory.appendingPathComponent("stateless-\(UUID().uuidString)") } ?? URL(fileURLWithPath: chatDir)
-        if let geminiPictures, session == nil, run.folders == nil { executionDirectory = geminiPictures }
-        if let folders = run.folders {
-            do { arguments = try folders.arguments(arguments, executionDirectory, web) }
-            catch { return .failure(.failed("Workspace setup failed: " + error.localizedDescription)) }
-        }
+        let chatDirectory = URL(fileURLWithPath: chatDir)
+        // Never put a launch-specific rule in a shared workspace or the user's agy settings.
+        let restrictedGemini = account.provider == .gemini && (!terminalAllowed || !webAllowed)
+        let geminiDirectory = restrictedGemini
+            ? (run.folders?.directory ?? chatDirectory).appendingPathComponent("stateless-\(UUID().uuidString)")
+            : nil
+        defer { if let geminiDirectory, run.folders == nil { try? FileManager.default.removeItem(at: geminiDirectory) } }
+        var executionDirectory = geminiDirectory ?? session?.directory ?? run.folders.map { $0.directory.appendingPathComponent("stateless-\(UUID().uuidString)") } ?? chatDirectory
+        if let geminiPictures, geminiDirectory == nil, session == nil, run.folders == nil { executionDirectory = geminiPictures }
+        do {
+            if let folders = run.folders { arguments = try folders.arguments(arguments, executionDirectory, web) }
+            if let geminiDirectory {
+                arguments += try GeminiLinks.restrictedArguments(in: geminiDirectory, terminal: terminalAllowed, web: webAllowed)
+            }
+        } catch { return .failure(.failed("Workspace setup failed: " + error.localizedDescription)) }
         // Steering: the input stays open (stream-json) and Claude says which messages it read (replayed).
         let steering = account.provider == .claude && streamed && launchForTests == nil ? run.steering : nil
         if !images.isEmpty || steering != nil {

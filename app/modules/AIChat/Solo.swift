@@ -679,7 +679,8 @@ extension Discussion {
         var helper = ""
         if Self.asksAboutYouTube(question), let gemini = model.accounts.first(where: { $0.provider == .gemini }), !mentions.contains(gemini.id),
            mentions.isEmpty ? soloNext(room: id)?.id != gemini.id : true,   // Gemini answering itself searches on its own
-           model.latestUsage[gemini.id]?.needsLogin != true, permits(gemini, room: id) {
+           model.latestUsage[gemini.id]?.needsLogin != true, permits(gemini, room: id),
+           AICapabilities.rule(gemini, .web) != .off {
             changeTurn(id, index) { $0.status = L("Gemini가 유튜브를 찾는 중…", "Gemini is searching YouTube…") }
             let result = debateAnswer(gemini, """
                 \(GeminiLinks.toolNote)Find YouTube videos for the user's request below. For each useful one give the title, channel, link,
@@ -977,6 +978,7 @@ extension Discussion {
         return Self.composeInstruction(name: label(account), provider: account.provider, folders: folders,
                                 drive: binding.face == true && [.claude, .codex].contains(account.provider) ? ChatApp.driveRule() ?? "" : "",
                                 fullAccess: binding.fullAccess == true, picture: pictureRule(account, chat: id), helper: helper,
+                                terminalAllowed: AICapabilities.rule(account, .terminal) != .off, webAllowed: AICapabilities.rule(account, .web) != .off,
                                 face: Self.projectFaceRule(face: binding.face == true), project: project,
                                 notes: id.map { ChatNotes.rule(ChatNotes.current($0)) } ?? "",
                                 space: spaceRule
@@ -1044,7 +1046,8 @@ extension Discussion {
     }
 
     static func composeInstruction(name: String, provider: Account.Provider, folders: String, drive: String, fullAccess: Bool,
-                                   picture: String, helper: String, face: String, project: ProjectPart?, notes: String = "", space: String = "",
+                                   picture: String, helper: String, terminalAllowed: Bool = true, webAllowed: Bool = true,
+                                   face: String, project: ProjectPart?, notes: String = "", space: String = "",
                                    peer: String = "", memory: String = "", linked: ProjectBinding? = nil, needs: InstructionNeeds = .all) -> String {
         // Three layers. Always: what stays the same for the whole chat (who it is, the project, folder rights, safety
         // rules) goes to a session as its system prompt. Only when this message needs it (pictures, the full ask_ai
@@ -1087,15 +1090,18 @@ extension Discussion {
                     """)
             }
             parts.append("Never change a folder marked read only.")
-            parts.append("You can search the web. Cite what you used as [source: URL]; never invent a source.")
+            parts.append(webAllowed ? "You can search the web. Cite what you used as [source: URL]; never invent a source."
+                         : "Web search and web page tools are disabled for this AI account.")
         }
         parts.append(drive)
+        let documentsAutoNote = terminalAllowed ? Self.documentsAutoNote
+            : "[FULL AUTO] The user may be away. Follow the project rules and finish without asking where possible. List your decisions at the end."
         if project?.folderless == true {
             parts.append("[Folderless project] No core folder or Git repository is linked. Save artifacts in the chat folder. Project folders can be added later; listed read-only folders stay read only. Do not run Git or assume an internal project directory is an editable linked folder.")
-            if project?.fullAuto == true { turn.append(Self.documentsAutoNote) }
+            if project?.fullAuto == true { turn.append(documentsAutoNote) }
         } else if let project, project.documents {
             parts.append("[Documents project] Folder: \(project.root).\n" + Self.documentsNote)
-            if project.fullAuto { turn.append(Self.documentsAutoNote) }
+            if project.fullAuto { turn.append(documentsAutoNote) }
         } else if let project {
             parts.append("""
                 [Project work] Project: \(project.root).
@@ -1110,17 +1116,26 @@ extension Discussion {
                 """)
             // How commands run and who approves them depends on the mode, so it stays with the turn: a fixed
             // "needs approval" line would outrank FULL AUTO's "no approval needed" as the system prompt.
-            turn.append(project.fullAuto ? Self.fullAutoNote : """
-                Your sandbox has no network, Keychain, pseudo-terminals or writes outside the project, so tests/builds that need them fail there.
-                project_run: the user approves the exact command.
-                """)
+            if project.fullAuto {
+                turn.append(terminalAllowed ? Self.fullAutoNote : """
+                    [FULL AUTO] The user may be away. Work to completion and list your decisions at the end.
+                    Use the app's project_run for registered test/build commands. Push only with git_push.
+                    Stable still needs the user's card. Publish only when the user explicitly asks.
+                    """)
+            } else {
+                turn.append("""
+                    Your sandbox has no network, Keychain, pseudo-terminals or writes outside the project, so tests/builds that need them fail there.
+                    project_run: the user approves the exact command.
+                    """)
+            }
             parts.append("""
                 Approvals may wait; the user sees the card in this chat. If refused, stop that action and explain.
                 Use process foreground commands, never leave background writers.
                 """)
         } else {
-            turn.append(fullAccess ? Self.fullAccessNote : "Do not run commands.")
+            turn.append(fullAccess && terminalAllowed ? Self.fullAccessNote : "Do not run commands.")
         }
+        if !terminalAllowed { turn.append("This AI account has the native terminal tool disabled.") }
         parts.append("Reply in the language of the user's latest message unless they ask for another.")
         if let project, !project.rules.isEmpty { parts.append(project.rules.trimmingCharacters(in: .newlines)) }
         if needs.picture { turn.append(picture) }

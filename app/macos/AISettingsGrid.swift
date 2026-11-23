@@ -195,8 +195,8 @@ struct AISettingsGrid: View {
 
     private func capabilityHelp(_ capability: AICapability) -> String {
         switch capability {
-        case .terminal: return L("터미널 명령을 실행해요.", "Runs terminal commands.")
-        case .web: return L("인터넷에서 검색하고 웹페이지를 읽어요.", "Searches the web and reads web pages.")
+        case .terminal: return L("실행이 허용된 채팅에서 AI가 터미널 명령을 써요.", "Lets the AI use terminal commands in chats that allow execution.")
+        case .web: return L("AI의 웹 검색과 웹페이지 읽기 도구를 써요.", "Lets the AI use its web search and page reading tools.")
         case .screen: return L("이 Mac의 화면이나 창을 봐요.", "Views the screen or a window on this Mac.")
         case .input: return L("이 Mac에서 마우스와 키보드를 써요.", "Uses the mouse and keyboard on this Mac.")
         case .apps: return L("이 Mac에서 앱을 열어요.", "Opens apps on this Mac.")
@@ -349,10 +349,15 @@ private struct CapabilityMenu: View {
     let capability: AICapability
     let title: String
     @StateObject private var state: CapabilityPick
+    private var choices: [CapabilityRule] {
+        capability == .terminal || capability == .web ? [.off, .on] : CapabilityRule.allCases
+    }
 
     init(account: Account, capability: AICapability, title: String) {
         self.account = account; self.capability = capability; self.title = title
-        _state = StateObject(wrappedValue: CapabilityPick(AICapabilities.rule(account, capability)))
+        let rule = AICapabilities.rule(account, capability)
+        let onOff = capability == .terminal || capability == .web
+        _state = StateObject(wrappedValue: CapabilityPick(onOff && rule == .ask ? .on : rule))
     }
 
     var body: some View {
@@ -361,7 +366,7 @@ private struct CapabilityMenu: View {
                 AICapabilities.set(rule, for: account, capability)
                 state.rule = rule
             })) {
-                ForEach(CapabilityRule.allCases, id: \.self) { Text(ruleTitle($0)).tag($0) }
+                ForEach(choices, id: \.self) { Text(ruleTitle($0)).tag($0) }
             }
             .pickerStyle(.inline).labelsHidden()
         } label: {

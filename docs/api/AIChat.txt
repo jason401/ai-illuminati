@@ -39,6 +39,8 @@ ApprovalListView.init(discussion:openChat:) | @MainActor init(discussion: Discus
 AutoPick | enum AutoPick
 AutoPick.fiveHour(_:) | static func fiveHour(_ usage: AIUsage?) -> Double
 AutoPick.weekly(_:) | static func weekly(_ usage: AIUsage?) -> Double
+Blocked | enum Blocked
+Blocked.count(requests:expired:todos:) | static func count(requests: [ProjectApproval], expired: [ProjectApproval], todos: TodoData) -> Int
 BoardTab | enum BoardTab
 BoardTab.info | case info
 BoardTab.init(rawValue:) | init?(rawValue: String)

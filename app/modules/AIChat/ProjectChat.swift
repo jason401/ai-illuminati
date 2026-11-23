@@ -48,31 +48,176 @@ struct ProjectApprovalView: View {
     }
 }
 
-// Shown above any other chat while a chat waits for approval, so a card in a chat you are not looking at
-// is not missed. Allow only where the details are shown (the card or the approval window).
+// The inbox's 🔴: what waits on the user before work can go on, worked out from the current state each time (nothing
+// saved): approvals waiting, approvals that ran out of time (Ask again) and TODOs that need a decision, parked or not.
+enum BlockedItem: Identifiable {
+    case approval(ProjectApproval), expired(ProjectApproval), todo(TodoItem)
+    var id: UUID { switch self { case .approval(let r), .expired(let r): return r.id; case .todo(let t): return t.id } }
+    static func all(requests: [ProjectApproval], expired: [ProjectApproval], todos: TodoData) -> [BlockedItem] {
+        requests.map(BlockedItem.approval) + expired.map(BlockedItem.expired) + todos.items.filter { $0.state == .needsYou }.map(BlockedItem.todo)
+    }
+}
+// The Dock badge counts the same 🔴 items as the banner (ApprovalAlerts; the values its publishers just sent).
+public enum Blocked {
+    public static func count(requests: [ProjectApproval], expired: [ProjectApproval], todos: TodoData) -> Int {
+        BlockedItem.all(requests: requests, expired: expired, todos: todos).count
+    }
+}
+
+// Shown above any other chat while something waits on the user (BlockedItem), so a card in a chat you are not looking
+// at is not missed: one item as it is, more folded into one line ("허가 2건 · TODO 결정 1건 · 보기") that opens the list.
+// Allow only where the details are shown (the card or the approval window). Handled items leave by themselves.
+// (Unfolded in an ObservableObject: this Mac's Command Line Tools cannot build SwiftUI's @State macro.)
+private final class BannerFold: ObservableObject { @Published var unfolded = false }
 struct ApprovalBanner: View {
     @ObservedObject var discussion: Discussion
     @ObservedObject private var center = ProjectCenter.shared
+    @ObservedObject private var todos = TodoStore.shared
+    @StateObject private var fold = BannerFold()
     var body: some View {
-        let others = center.requests.filter { discussion.approvalHome($0.room) != discussion.currentID || discussion.viewingRemote != nil }
-        if !others.isEmpty {
-            VStack(spacing: 4) {
-                ForEach(others) { request in
-                    HStack(spacing: 8) {
-                        Circle().fill(Color.orange).frame(width: 8, height: 8)
-                        Text(discussion.approvalChatName(request.room)).font(.system(size: 12, weight: .semibold)).lineLimit(1)
-                        Text(request.title).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
-                        Spacer(minLength: 4)
-                        Button(L("거절", "Deny")) { center.decide(request.id, allow: false) }
-                        Button(L("열기", "Open")) { discussion.open(discussion.approvalHome(request.room)) }.buttonStyle(.borderedProminent)
+        let items = shown
+        if !items.isEmpty {
+            // Seconds count down only while an outside MCP tool waits (60 seconds); minutes otherwise.
+            let seconds = items.contains { if case .approval(let r) = $0 { return r.alwaysAllow != nil }; return false }
+            TimelineView(.periodic(from: .now, by: seconds ? 1 : 15)) { context in
+                VStack(spacing: 4) {
+                    if items.count == 1 || fold.unfolded {
+                        ForEach(items) { row($0, now: context.date) }
+                        if items.count > 1 {
+                            strip(Color.secondary) {
+                                Spacer()
+                                Button(L("접기", "Fold")) { fold.unfolded = false }
+                            }
+                        }
+                    } else {
+                        strip(Color.red) {
+                            Text(summary(items)).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                            if let soonest = soonest(items, now: context.date) {
+                                Text(soonest).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+                            }
+                            Spacer(minLength: 4)
+                            Button(L("보기", "Show")) { fold.unfolded = true }.buttonStyle(.borderedProminent)
+                        }
                     }
-                    .controlSize(.small)
-                    .padding(.horizontal, 10).padding(.vertical, 6)
-                    .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
                 }
             }
             .padding(.horizontal, 12).padding(.bottom, 4)
         }
+    }
+
+    // Not the open chat's own: its card is right there (a TODO's question in its chat, an approval in its main room).
+    private var shown: [BlockedItem] {
+        BlockedItem.all(requests: center.requests, expired: center.expired, todos: todos.snapshot).filter { item in
+            if discussion.viewingRemote != nil { return true }
+            switch item {
+            case .approval(let r), .expired(let r): return discussion.approvalHome(r.room) != discussion.currentID
+            case .todo(let t): return t.room != discussion.currentID
+            }
+        }
+    }
+
+    private func summary(_ items: [BlockedItem]) -> String {
+        var approvals = 0, expired = 0, todo = 0
+        for item in items { switch item { case .approval: approvals += 1; case .expired: expired += 1; case .todo: todo += 1 } }
+        var parts: [String] = []
+        if approvals > 0 { parts.append(L("허가 \(approvals)건", "\(approvals) approval\(approvals == 1 ? "" : "s")")) }
+        if todo > 0 { parts.append(L("TODO 결정 \(todo)건", "\(todo) TODO decision\(todo == 1 ? "" : "s")")) }
+        if expired > 0 { parts.append(L("기한 지난 허가 \(expired)건", "\(expired) timed out")) }
+        return parts.joined(separator: " · ")
+    }
+
+    // The nearest deadline among the folded items, so the line says how soon something happens without the user.
+    private func soonest(_ items: [BlockedItem], now: Date) -> String? {
+        items.compactMap { item -> (Date, String)? in
+            switch item {
+            case .approval(let r): return r.deadline.map { ($0, Self.approvalLeft(r, now: now)) }
+            case .todo(let t): return todoDue(t).map { ($0.at, Self.todoLeft($0, now: now)) }
+            case .expired: return nil
+            }
+        }.min { $0.0 < $1.0 }.map { L("· 가장 빠른 것 ", "· soonest ") + $0.1 }
+    }
+
+    @ViewBuilder private func row(_ item: BlockedItem, now: Date) -> some View {
+        switch item {
+        case .approval(let request):
+            strip(Color.orange) {
+                Text(discussion.approvalChatName(request.room)).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                Text(request.title).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+                Spacer(minLength: 4)
+                if request.deadline != nil {
+                    Text(Self.approvalLeft(request, now: now)).font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary).lineLimit(1).fixedSize()
+                }
+                Button(L("거절", "Deny")) { center.decide(request.id, allow: false) }
+                Button(L("열기", "Open")) { discussion.open(discussion.approvalHome(request.room)) }.buttonStyle(.borderedProminent)
+            }
+        case .expired(let request):
+            strip(Color.orange) {
+                Image(systemName: "clock.badge.xmark").foregroundStyle(.orange)
+                Text(L("허가 기한 지남", "Approval timed out")).font(.system(size: 12, weight: .semibold)).lineLimit(1).fixedSize()
+                Text(discussion.approvalChatName(request.room) + " · " + request.title).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+                Spacer(minLength: 4)
+                Button(L("닫기", "Dismiss")) { center.dismiss(request.id) }
+                Button(L("다시 요청", "Ask again")) { discussion.askAgain(request) }
+                    .buttonStyle(.borderedProminent).disabled(discussion.runningRooms.contains(request.room))
+            }
+        case .todo(let item):
+            strip(Color.red) {
+                Text(item.isParked ? L("TODO 결정 필요 · 보류됨", "TODO needs you · parked") : L("TODO 결정 필요", "TODO needs you"))
+                    .font(.system(size: 12, weight: .semibold)).lineLimit(1).fixedSize()
+                Text(item.title).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+                Spacer(minLength: 4)
+                if TodoScheduler.shared?.standingIn.contains(item.id) == true {
+                    Text(L("다른 AI가 대신 답하는 중", "Another AI is answering")).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1).fixedSize()
+                } else if let due = todoDue(item) {
+                    Text(Self.todoLeft(due, now: now)).font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary).lineLimit(1).fixedSize()
+                }
+                Button(L("열기", "Open")) { openTodo(item) }.buttonStyle(.borderedProminent)
+            }
+        }
+    }
+
+    private func strip<Content: View>(_ color: Color, @ViewBuilder _ content: () -> Content) -> some View {
+        HStack(spacing: 8) {
+            Circle().fill(color).frame(width: 8, height: 8)
+            content()
+        }
+        .controlSize(.small)
+        .padding(.horizontal, 10).padding(.vertical, 6)
+        .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    // An approval is refused when its time runs out: 15 minutes, less when the work's own time ends first (ProjectRun.deadline),
+    // 60 seconds for an outside MCP tool (its macOS notification stays the main way to hear of it).
+    static func approvalLeft(_ request: ProjectApproval, now: Date) -> String {
+        let left = max(0, (request.deadline ?? now).timeIntervalSince(now))
+        if request.alwaysAllow != nil || left < 60 { return L("\(Int(left.rounded(.up)))초 뒤 거절", "denied in \(Int(left.rounded(.up)))s") }
+        let minutes = Int((left / 60).rounded(.up))
+        return L("\(minutes)분 뒤 자동 거절", "auto-denied in \(minutes) min")
+    }
+
+    // What happens to a waiting TODO without the user, by its list's mode (TodoData.standInDue, autoAnswerDue, parkDue):
+    // another AI answers in the user's place, the app hands the decision to the AI, or it is parked so the list goes on.
+    // Nothing while the user wrote in its chat (TodoScheduler.standIn), and nothing for a parked one or checkEach/stopOnIssue.
+    struct TodoDue { let at: Date; let parks: Bool }
+    private func todoDue(_ item: TodoItem) -> TodoDue? {
+        let data = todos.snapshot
+        if let room = item.room, let since = item.stateSince, discussion.userWrote(room, since: since) { return nil }
+        let decide = [data.standInDue(item), data.autoAnswerDue(item)].compactMap { $0 }.min()
+        let park = data.parkDue(item)
+        if let decide, park.map({ decide <= $0 }) ?? true { return TodoDue(at: decide, parks: false) }
+        return park.map { TodoDue(at: $0, parks: true) }
+    }
+    static func todoLeft(_ due: TodoDue, now: Date) -> String {
+        let minutes = max(0, Int((due.at.timeIntervalSince(now) / 60).rounded(.up)))
+        if minutes == 0 { return due.parks ? L("곧 보류하고 다음으로", "parking soon") : L("곧 AI가 대신 결정", "AI decides soon") }
+        return due.parks ? L("\(minutes)분 뒤 보류하고 다음으로", "parked in \(minutes) min")
+                         : L("\(minutes)분 뒤 AI가 대신 결정", "AI decides in \(minutes) min")
+    }
+
+    // Its chat, where the question card is; one that never had a chat opens its project's board.
+    private func openTodo(_ item: TodoItem) {
+        if let room = item.room, discussion.conversations.contains(where: { $0.id == room }) { discussion.open(room); return }
+        discussion.openBoard(project: todos.snapshot.lists.first { $0.id == item.listID }?.project.map(SidebarProjects.key), tab: .todo)
     }
 }
 

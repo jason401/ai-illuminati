@@ -16,6 +16,7 @@ final class ApprovalAlerts: NSObject, UNUserNotificationCenterDelegate {
     private let openChatWindow: (UUID?) -> Void
     private var window: NSWindow?
     private var watching: AnyCancellable?
+    private var badge: AnyCancellable?
     private var ended: NSObjectProtocol?
     private var todo: NSObjectProtocol?
     private var known: Set<UUID> = []
@@ -39,6 +40,13 @@ final class ApprovalAlerts: NSObject, UNUserNotificationCenterDelegate {
         ended = NotificationCenter.default.addObserver(forName: .projectWorkEnded, object: nil, queue: .main) { [weak self] note in self?.workEnded(note) }
         todo = NotificationCenter.default.addObserver(forName: .todoNeedsUser, object: nil, queue: .main) { [weak self] note in self?.todoNeedsUser(note) }
         watching = ProjectCenter.shared.$requests.receive(on: DispatchQueue.main).sink { [weak self] requests in self?.changed(requests) }
+        // The Dock counts every 🔴 item (Blocked: approvals, timed-out ones, TODOs that need a decision), like the chat's banner.
+        badge = Publishers.CombineLatest3(ProjectCenter.shared.$requests, ProjectCenter.shared.$expired, TodoStore.shared.$snapshot)
+            .receive(on: DispatchQueue.main)
+            .sink { requests, expired, todos in
+                let count = Blocked.count(requests: requests, expired: expired, todos: todos)
+                NSApp.dockTile.badgeLabel = count == 0 ? nil : String(count)
+            }
         let timer = Timer(timeInterval: 30, repeats: true) { [weak self] _ in self?.remind() }
         RunLoop.main.add(timer, forMode: .common)
         repeatTimer = timer
@@ -63,7 +71,6 @@ final class ApprovalAlerts: NSObject, UNUserNotificationCenterDelegate {
             }
         }
         known = ids
-        NSApp.dockTile.badgeLabel = requests.isEmpty ? nil : String(requests.count)
     }
 
     // Project work ended while the user looks elsewhere: "작업 완료 · 5/5" or "작업 실패", opening that chat.

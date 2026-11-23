@@ -96,6 +96,13 @@ func testProjectWork() {
     RunLoop.main.run(until: Date().addingTimeInterval(0.1))
     let note = ProjectCenter.shared.expired.filter { $0.run == run.id }
     expect(note.map(\.title) == ["Expired"] && note.first?.deadline != nil && ProjectCenter.shared.requests.isEmpty, "timed-out approval leaves one Ask-again note, not a waiting card")
+    // The 🔴 count (banner and Dock): waiting approvals, timed-out ones and TODOs that need a decision, parked or not; not a result to check.
+    var todos = TodoData(), list = UUID()
+    for state in [TodoItem.State.needsYou, .needsYou, .review, .ready] { var item = TodoItem(listID: list, title: "Blocked \(state)"); item.state = state; todos.items.append(item) }
+    todos.items[1].parked = TodoPark(questionID: UUID(), at: Date(), reason: "fixture")
+    let card = ProjectApproval(room: run.room, run: run.id, title: "Waiting", detail: "fixture")
+    expect(Blocked.count(requests: [card], expired: note, todos: todos) == 4 && Blocked.count(requests: [], expired: [], todos: TodoData()) == 0,
+           "the blocked count adds approvals, timed-out approvals and TODO decisions")
     ProjectCenter.shared.dismiss(note.first!.id)
     expect(ProjectCenter.shared.expired.isEmpty, "dismissing the note removes it")
     // Deciding twice (card and approval window at once) counts once; denied requests leave no timeout note.

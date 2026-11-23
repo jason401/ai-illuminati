@@ -707,7 +707,7 @@ everything else, Discussion's state above all, stays internal):
   `ChatLink.conversations`; the board and Project info: `SidebarProjects` (`key`, `group`, `pickerName`), `ProjectGroup`,
   `SidebarFold`, `BoardTab`, `PictureDrop`, `Enterprise.permits`, `ProjectLockSection` (Project info's lock setting; the lock stays the chat's), `AutoPick.fiveHour`/`weekly`, `TodoItem.State.title`/`color`;
   DriveLink: `MaterialReader.read`, `RoomDocuments.directory` (AIChatRecords since T4); main: `ChatWindow`, `SpaceRefiner.watchLibrary`,
-  `ApprovalListView`; everyone's views: `PlainHitButtonStyle`/`.plainHit`, `SidebarHeader`.
+  `ApprovalListView`, `Blocked.count` (2026-11-23: the Dock badge in ApprovalAlerts counts the same 🔴 items as the chat's banner); everyone's views: `PlainHitButtonStyle`/`.plainHit`, `SidebarHeader`.
 - `ChatSettings`, `ChatApp` (and `Face`, `Screens`), `FolderSources`/`FolderSource`: the seams above.
 - `ProjectMemoryCleanupLink.runIfIdle(in:project:manual:)` lets the app's timer and Project info start a cleanup on the
   main thread. It returns whether a hidden meeting started. Manual requests bypass the automatic due condition and

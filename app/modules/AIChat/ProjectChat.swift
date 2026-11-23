@@ -221,8 +221,8 @@ struct ApprovalBanner: View {
     // another AI answers in the user's place, the app hands the decision to the AI, or it is parked so the list goes on.
     // Nothing while the user wrote in its chat (TodoScheduler.standIn), and nothing for a parked one or checkEach/stopOnIssue.
     struct TodoDue { let at: Date; let parks: Bool }
-    private func todoDue(_ item: TodoItem) -> TodoDue? {
-        let data = todos.snapshot
+    private func todoDue(_ item: TodoItem) -> TodoDue? { Self.todoDue(item, data: todos.snapshot, discussion: discussion) }
+    static func todoDue(_ item: TodoItem, data: TodoData, discussion: Discussion) -> TodoDue? {
         if let room = item.room, let since = item.stateSince, discussion.userWrote(room, since: since) { return nil }
         let decide = [data.standInDue(item), data.autoAnswerDue(item)].compactMap { $0 }.min()
         let park = data.parkDue(item)
@@ -236,11 +236,7 @@ struct ApprovalBanner: View {
                          : L("\(minutes)분 뒤 AI가 대신 결정", "AI decides in \(minutes) min")
     }
 
-    // Its chat, where the question card is; one that never had a chat opens its project's board.
-    private func openTodo(_ item: TodoItem) {
-        if let room = item.room, discussion.conversations.contains(where: { $0.id == room }) { discussion.open(room); return }
-        discussion.openBoard(project: todos.snapshot.lists.first { $0.id == item.listID }?.project.map(SidebarProjects.key), tab: .todo)
-    }
+    private func openTodo(_ item: TodoItem) { discussion.openTodo(item) }
 }
 
 // Every waiting approval in one place (opened from the menu bar or a notification).
@@ -299,6 +295,11 @@ public struct ApprovalListView: View {
 }
 
 extension Discussion {
+    // A TODO's chat, where its question or result card is; one that never had a chat opens its project's board.
+    func openTodo(_ item: TodoItem) {
+        if let room = item.room, conversations.contains(where: { $0.id == room }) { open(room); return }
+        openBoard(project: TodoStore.shared.snapshot.lists.first { $0.id == item.listID }?.project.map(SidebarProjects.key), tab: .todo)
+    }
     public func approvalChatName(_ room: UUID) -> String {
         let title = conversations.first(where: { $0.id == room })?.title ?? ""
         return title.isEmpty ? L("새 대화", "New chat") : title

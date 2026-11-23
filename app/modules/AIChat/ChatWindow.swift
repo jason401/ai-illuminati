@@ -54,9 +54,11 @@ struct ChatView<Model: ChatSettings>: View {
         // Notes belong to a chat: a project folder (board or info) or another Mac's chat hides them, and they come
         // back when a chat of this Mac is open again.
         // Another Mac opened from Other Macs takes the notes' place (MacConnect.swift).
-        let macShown = connect.shown.flatMap { id in sync.devices.first { $0.id == id } }
+        // The inbox takes the same place, over the board and Spaces too; opening one of the three closes the others.
+        let inboxShown = discussion.inboxShown
+        let macShown = inboxShown ? nil : connect.shown.flatMap { id in sync.devices.first { $0.id == id } }
         let macInline = inline ? layout.macFit : layout.macFitAlone
-        let notesShown = macShown == nil && discussion.notesShown && !discussion.viewingBoard && discussion.viewingRemote == nil && discussion.viewingSpace == nil
+        let notesShown = !inboxShown && macShown == nil && discussion.notesShown && !discussion.viewingBoard && discussion.viewingRemote == nil && discussion.viewingSpace == nil
         // A clicked photo is shown large over the whole window until it is closed.
         let photoShown = photo.image != nil && !discussion.viewingBoard && discussion.viewingSpace == nil
         Group {
@@ -77,6 +79,18 @@ struct ChatView<Model: ChatSettings>: View {
                     if let macShown, macInline {
                         Divider().opacity(0.5)
                         MacPanel(device: macShown, sync: sync)
+                    }
+                    if inboxShown && notesInline {
+                        Divider().opacity(0.5)
+                        InboxPanel(discussion: discussion) { discussion.inboxShown = false }
+                    }
+                }
+                if inboxShown && !notesInline {
+                    HStack(spacing: 0) {
+                        Spacer(minLength: 0)
+                        InboxPanel(discussion: discussion) { discussion.inboxShown = false }
+                            .background(Color(nsColor: .windowBackgroundColor))
+                            .shadow(color: .black.opacity(0.25), radius: 12)
                     }
                 }
                 if let macShown, !macInline {
@@ -119,7 +133,9 @@ struct ChatView<Model: ChatSettings>: View {
             PhotoViewer.shared.chatTitle = { [weak chats] id in chats?.conversations.first { $0.id == id }?.title }
         }
         .onChange(of: discussion.currentID) { _ in discussion.sidebarOverlay = false; photo.image = nil }
-        .onChange(of: discussion.notesShown) { if $0 { connect.shown = nil } }
+        .onChange(of: discussion.notesShown) { if $0 { connect.shown = nil; discussion.inboxShown = false } }
+        .onChange(of: discussion.inboxShown) { if $0 { connect.shown = nil; discussion.notesShown = false } }
+        .onChange(of: connect.shown) { if $0 != nil { discussion.inboxShown = false } }
         // Leaving the chat (another Mac's chat, the board or a Space) closes the photo, so it does not come back later.
         .onChange(of: discussion.viewingRemote == nil) { _ in photo.image = nil }
         .onChange(of: discussion.viewingBoard) { _ in photo.image = nil }
@@ -174,11 +190,12 @@ struct ChatView<Model: ChatSettings>: View {
                 } else {
                     SidebarRow(discussion: discussion, title: L("검색", "Search"), symbol: "magnifyingglass") { discussion.sidebarSearching = true }
                 }
+                inboxRow
             }
             .padding(.horizontal, 10)
             // Other chats stay usable while one answers (Discussion.maxRunning at once).
             .disabled(discussion.importingMaterials)
-            if !discussion.sidebarSearching { workingChats; unreadChats }
+            if !discussion.sidebarSearching { workingChats }
             // Full-width hairlines above and below the scroll view: where the fixed rows end and where the list is cut.
             Divider().padding(.top, 6)
             ScrollView {
@@ -297,60 +314,37 @@ struct ChatView<Model: ChatSettings>: View {
         }
     }
 
-    // Under Working, also fixed: chats whose answer ended while you were elsewhere, until you open them (UnreadChats.swift).
-    @ViewBuilder private var unreadChats: some View {
-        let unread = UnreadChats.list(conversations: discussion.conversations, unread: discussion.unreadRooms,
-                                      running: discussion.runningRooms, todo: todos.snapshot, names: projectInfo.names)
-        if !unread.isEmpty {
-            VStack(alignment: .leading, spacing: 1) {
-                SidebarHeader(title: L("확인 필요", "Needs review"), fold: "unread", badge: unread.count) {
-                    Button(action: { discussion.markAllSeen() }) {
-                        Image(systemName: "checkmark").font(.system(size: 10, weight: .semibold)).frame(width: 22, height: 18)
-                    }
-                    .buttonStyle(.plainHit).foregroundColor(.secondary)
-                    .help(L("모두 확인한 걸로 표시", "Mark all as seen"))
-                    .accessibilityLabel(L("모두 확인", "Mark all as seen"))
+    // The bell opens the inbox on the right (Inbox.swift), which took over "Needs review". The red badge counts only 🔴
+    // (what blocks work, like the Dock); a gray number counts the rest.
+    private var inboxRow: some View {
+        let inbox = Inbox.make(requests: approvals.requests, expired: approvals.expired, todos: todos.snapshot, conversations: discussion.conversations,
+                               unread: discussion.unreadRooms, running: discussion.runningRooms, names: projectInfo.names)
+        let others = inbox.check.count + inbox.info.count
+        let hovered = discussion.hoverKey == "row.inbox"
+        return Button(action: { discussion.inboxShown.toggle() }) {
+            HStack(spacing: 8) {
+                Image(systemName: inbox.blocked.isEmpty ? "bell" : "bell.badge").frame(width: 18)
+                    .foregroundColor(inbox.blocked.isEmpty ? nil : .red)
+                Text(L("알림함", "Inbox"))
+                Spacer()
+                if !inbox.blocked.isEmpty {
+                    Text("\(inbox.blocked.count)").font(.system(size: 10, weight: .semibold).monospacedDigit()).foregroundColor(.white)
+                        .padding(.horizontal, 5).frame(minWidth: 16, minHeight: 16).background(Color.red, in: Capsule())
                 }
-                if !folds.isFolded("unread") {
-                    let page = SidebarFold.projectPage
-                    let listed = Array(unread.prefix(folds.limit("unread", page: page)))
-                    ForEach(listed) { unreadRow($0) }
-                    moreRow("unread", page: page, total: unread.count, listed: listed.count, indent: 28)
+                if others > 0 {
+                    Text("\(others)").font(.system(size: 11).monospacedDigit()).foregroundColor(.secondary)
                 }
             }
-            .padding(.horizontal, 10)
-            .disabled(discussion.importingMaterials)
+            .font(.system(size: 13))
+            .padding(.horizontal, 10).frame(height: 30)
+            .background(discussion.inboxShown ? Color.primary.opacity(0.10) : hovered ? Color.primary.opacity(0.06) : .clear, in: RoundedRectangle(cornerRadius: 8))
+            .contentShape(Rectangle())
         }
-    }
-
-    private func unreadRow(_ chat: UnreadChat) -> some View {
-        let id = chat.conversation.id
-        let key = "unread." + id.uuidString
-        return HStack(spacing: 6) {
-            Group {
-                if chat.failed {
-                    Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 9)).foregroundColor(.orange)
-                } else {
-                    Circle().fill(Color.accentColor).frame(width: 7, height: 7)
-                }
-            }
-            .frame(width: 14)
-            Text(chat.conversation.title).lineLimit(1).truncationMode(.tail)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            if let project = chat.project {
-                Text(project).font(.system(size: 10)).foregroundColor(.secondary).lineLimit(1).truncationMode(.tail)
-                    .frame(maxWidth: 72, alignment: .trailing)
-            }
-        }
-        .font(.system(size: 12))
-        .padding(.leading, 10).padding(.trailing, 10).frame(height: 26)
-        .background(discussion.hoverKey == key ? Color.primary.opacity(0.05) : .clear, in: RoundedRectangle(cornerRadius: 8))
-        .contentShape(Rectangle())
-        .onTapGesture { discussion.open(id) }
-        .onHover { inside in discussion.hover(key, inside) }
-        .contextMenu { Button(L("확인한 걸로 표시", "Mark as seen")) { discussion.markSeen(id) } }
-        .help((chat.failed ? L("오류로 끝남 · ", "Ended with an error · ") : L("새 답변 · ", "New answer · ")) + chat.conversation.title)
-        .accessibilityAddTraits(.isButton)
+        .buttonStyle(.plainHit)
+        .onHover { discussion.hover("row.inbox", $0) }
+        .help(L("알림함: 막힘 \(inbox.blocked.count) · 확인 \(inbox.check.count) · 참고 \(inbox.info.count)",
+                "Inbox: \(inbox.blocked.count) blocked · \(inbox.check.count) to check · \(inbox.info.count) for reference"))
+        .accessibilityLabel(L("알림함", "Inbox"))
     }
 
     private func workingRow(_ chat: WorkingChat) -> some View {

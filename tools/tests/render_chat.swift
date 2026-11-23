@@ -130,6 +130,19 @@ private struct EmptyPreviewLogin: GoogleTokenStore {
         if CommandLine.arguments.contains("--project-approval") {
             ProjectCenter.shared.requests = [ProjectApproval(room: conversation.id, run: UUID(), title: "Run project command", detail: "Runs outside the AI sandbox as your user.\n/Example/Project\n/bin/zsh tools/tests/run_mode2.sh")]
         }
+        if CommandLine.arguments.contains("--inbox") {
+            // The inbox panel (with --projects for a TODO result): an approval, a failed answer and two that ended elsewhere.
+            func ended(_ title: String, final: String?, error: String?) -> Conversation {
+                var c = Conversation(); c.title = title; c.turns = [ChatTurn(question: title)]; c.turns[0].final = final; c.turns[0].error = error; return c
+            }
+            let failed = ended("Weekly report", final: nil, error: "The AI stopped: out of usage")
+            let answered = ended("Trip ideas", final: "Three routes along the coast, with times.", error: nil)
+            let paper = ended("Lamb wave figures", final: "Figure 3 now shows both modes.", error: nil)
+            chat.conversations += [failed, answered, paper]
+            chat.unreadRooms = [failed.id: Date(), answered.id: Date().addingTimeInterval(-120), paper.id: Date().addingTimeInterval(-600)]
+            ProjectCenter.shared.requests = [ProjectApproval(room: conversation.id, run: UUID(), title: "Run project command", detail: "fixture", deadline: Date().addingTimeInterval(600))]
+            chat.inboxShown = true
+        }
         if ProcessInfo.processInfo.environment["CHAT_KOREAN"] == "1" { AppLanguage.current = .korean }
         if CommandLine.arguments.contains("--subrooms") {
             // Sub-rooms (SubRoomViews.swift), CHAT_SUBROOMS=waiting|running|approval|stopped|done: the split card waiting

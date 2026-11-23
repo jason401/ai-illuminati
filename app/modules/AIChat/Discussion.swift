@@ -231,6 +231,8 @@ public final class Discussion: ObservableObject {
     @Published var notesShown = UserDefaults.standard.bool(forKey: "notesShown") {
         didSet { UserDefaults.standard.set(notesShown, forKey: "notesShown") }
     }
+    // The inbox panel (Inbox.swift) in the notes' place; closed at launch, so it is never a window that stays up.
+    @Published var inboxShown = false
     @Published var teamSettingsOpen = false   // the team mode settings popover in the message box
     // @ in the message box: the accounts picked so far, and the list while it is open.
     @Published var draftMentions: [String] = [] { didSet { if draftMentions != oldValue { draftsChanged() } } }
@@ -1672,7 +1674,7 @@ public final class Discussion: ObservableObject {
         return out
     }
 
-    // "Needs review" (확인 필요) under Working: a chat whose answer ended while you were not looking at it stays listed
+    // "Needs review" (확인 필요, the inbox's 🟡/⚪, Inbox.swift): a chat whose answer ended while you were not looking at it stays listed
     // until you open it, so it need not be looked for again. Only this Mac's own chats, kept in `unreadFile` (never
     // synced). Left out: a TODO's chat (its board shows it), a meeting's chat, and an answer you stopped yourself.
     /// Where the list is kept between launches; set by the app before the first chat loads. nil (tests, other programs): in memory only.

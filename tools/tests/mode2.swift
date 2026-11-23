@@ -2965,6 +2965,35 @@ func testUnreadChats() {
     print("PASS: Needs review (seen on screen, listed elsewhere, newest first, restart, opened, app in back, board, stopped, meeting)")
 }
 
+// The inbox (Inbox.swift): worked out from the state, so handled items leave by themselves.
+func testInbox() {
+    let list = TodoList(title: "Inbox list", project: nil)
+    var todos = TodoData(); todos.lists = [list]
+    for (state, title) in [(TodoItem.State.needsYou, "Decide"), (.review, "Check"), (.ready, "Waiting"), (.done, "Done")] {
+        var item = TodoItem(listID: list.id, title: title); item.state = state; item.stateSince = Date(); todos.items.append(item)
+    }
+    var answered = Conversation(); answered.turns = [ChatTurn(question: "a")]; answered.turns[0].final = "Finished\nmore"
+    var failed = Conversation(); failed.turns = [ChatTurn(question: "b")]; failed.turns[0].error = "Broke"
+    var running = Conversation(); running.turns = [ChatTurn(question: "c")]
+    let chats = [answered, failed, running]
+    let unread = [answered.id: Date(), failed.id: Date().addingTimeInterval(-60), running.id: Date()]
+    let card = ProjectApproval(room: answered.id, run: UUID(), title: "Waiting", detail: "fixture")
+    var inbox = Inbox.make(requests: [card], expired: [], todos: todos, conversations: chats, unread: unread, running: [running.id])
+    expect(inbox.blocked.count == 2 && inbox.blocked.count == Blocked.count(requests: [card], expired: [], todos: todos),
+           "🔴 is the strip's and the Dock's items: the approval and the TODO decision")
+    expect(inbox.check.map(\.id) == [todos.items[1].id, failed.id], "🟡: the TODO's result (newest first), then the failed work")
+    expect(inbox.info.map(\.id) == [answered.id], "⚪: the answer that ended elsewhere; a chat answering again is not listed")
+    expect(Inbox.line(answered.turns[0].final) == "Finished" && Inbox.projectName(todos.items[0], todos: todos, names: [:]) == "Inbox list",
+           "rows show one line and the TODO's list")
+    // Handled: approved, decided, checked, opened.
+    todos.items[0].state = .running; todos.items[1].state = .done
+    inbox = Inbox.make(requests: [], expired: [], todos: todos, conversations: chats, unread: [failed.id: Date()], running: [])
+    expect(inbox.blocked.isEmpty && inbox.check.map(\.id) == [failed.id] && inbox.info.isEmpty, "handled items leave by themselves")
+    inbox = Inbox.make(requests: [], expired: [], todos: todos, conversations: chats, unread: [:], running: [])
+    expect(inbox.isEmpty, "nothing left once everything is seen")
+    print("PASS: Inbox (🔴 like the strip, 🟡 TODO results and failures, ⚪ answers, handled items leave)")
+}
+
 runTest("testToolHub", testToolHub)
 runTest("testGoogleDrive", testGoogleDrive)
 
@@ -3002,6 +3031,7 @@ runTest("testStartTurn", testStartTurn)
 runTest("testQueuedMessages", testQueuedMessages)
 runTest("testRoomDrafts", testRoomDrafts)
 runTest("testUnreadChats", testUnreadChats)
+runTest("testInbox", testInbox)
 runTest("testTodoStore", testTodoStore)
 runTest("testTodoScheduler", testTodoScheduler)
 runTest("testTodoSplitExecution", testTodoSplitExecution)

@@ -1,7 +1,8 @@
 import Foundation
 import AIProjects
 
-// "Needs review" (확인 필요) rows under Working; the state and its rules are Discussion's ("Needs review" in Discussion.swift).
+// Chats whose answer ended elsewhere, for the inbox's 🟡 (an error) and ⚪ (Inbox.swift); the state and its rules are
+// Discussion's ("Needs review" in Discussion.swift). The iPhone page still lists them as "Needs review" (RemoteChats).
 struct UnreadChat: Identifiable {
     var id: UUID { conversation.id }
     let conversation: Conversation

@@ -13,6 +13,22 @@ extension FaceLink: @retroactive ToolProvider {
 }
 
 private final class ScreenTools: ToolProvider {
+    private final class Reply: @unchecked Sendable {
+        private let lock = NSLock()
+        private let finished = DispatchSemaphore(value: 0)
+        private var result: [String: Any] = [:]
+
+        func complete(_ result: [String: Any]) {
+            lock.withLock { self.result = result }
+            finished.signal()
+        }
+
+        func wait() -> [String: Any]? {
+            guard finished.wait(timeout: .now() + 12) == .success else { return nil }
+            return lock.withLock { result }
+        }
+    }
+
     static let shared = ScreenTools()
     let active = true
     func tools() -> [[String: Any]] { [] }
@@ -21,14 +37,12 @@ private final class ScreenTools: ToolProvider {
     }
     func call(_ name: String, _ arguments: [String: Any], context: ToolContext) -> [String: Any] {
         // Socket calls run on a worker; AppKit reads the app list on the main actor.
-        let finished = DispatchSemaphore(value: 0)
-        var result: [String: Any] = [:]
+        let reply = Reply()
         let capture = Task { @MainActor in
-            defer { finished.signal() }
-            guard !Task.isCancelled, MacControl.enabled(context.asker) else { return }
-            result = await MacControl.perform(name, arguments)
+            guard !Task.isCancelled, MacControl.enabled(context.asker) else { reply.complete([:]); return }
+            reply.complete(await MacControl.perform(name, arguments))
         }
-        guard finished.wait(timeout: .now() + 12) == .success else {
+        guard let result = reply.wait() else {
             capture.cancel()
             return ToolHub.failure(L("화면 도구가 시간 안에 응답하지 않았어요.", "The screen tool timed out."))
         }

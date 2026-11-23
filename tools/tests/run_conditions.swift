@@ -3,6 +3,7 @@ import AIAccounts
 @testable import AIRuntime
 import AIWorkspace
 import AIProjects
+import AISpaces
 @testable import AIChat
 
 // What each AI's command line tool is started with (program, arguments, environment, folder, process group),
@@ -276,7 +277,8 @@ private func testCapabilityLaunches() {
                 }
                 expect(plain["appToolsOnly"] as? Bool == true, "plain screen bridge has no file tools")
                 if provider == .claude {
-                    expect(value(launch.arguments, "--allowedTools") == "mcp__illuminati__mac_*"
+                    expect(Set(value(launch.arguments, "--allowedTools").split(separator: ",")) ==
+                           ["mcp__illuminati__mac_screenshot", "mcp__illuminati__mac_windows"]
                            && value(launch.arguments, "--tools").isEmpty && launch.arguments.contains("--strict-mcp-config")
                            && launch.arguments.contains("--no-session-persistence")
                            && launch.environment["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] == "1",
@@ -301,16 +303,36 @@ private func testCapabilityLaunches() {
                "\(provider): background calls have no screen access even when the account enables it")
         let chat = Discussion(model: AppModel())
         let own = WorkspaceRoot(path: Discussion.chatFolder(chat.currentID).path, directory: true, writable: true)
-        let builtIn = WorkspaceBinding(roots: [own], face: true)
-        var capturedPlain = false
+        let spaces = WorkspaceRoot(path: SpaceStore.root.path, directory: true, writable: true)
+        let builtIn = WorkspaceBinding(roots: [own, spaces], face: true)
+        var keptBuiltIn = false
         Answerer.launchForTests = { launch in
             let manifest = screenManifest(launch.arguments)
-            capturedPlain = manifest["appToolsOnly"] as? Bool == true && listed(manifest) == screenNames
+            let writable = (manifest["roots"] as? [[String: Any]] ?? [])
+                .filter { $0["writable"] as? Bool == true }.compactMap { $0["path"] as? String }
+            keptBuiltIn = Set(writable) == [own.path, spaces.path] && screenNames.isSubset(of: listed(manifest))
             return .success("captured")
         }
         _ = chat.requestDebate(account, "Say hi.", 60, DebateCancellation(), workspace: builtIn, screen: true)
+        expect(keptBuiltIn, "\(provider): screen viewing keeps the chat and Spaces folders writable")
+
+        let image = root.appendingPathComponent("screen-attachment.png")
+        try! Data([0x89, 0x50, 0x4e, 0x47]).write(to: image)
+        chat.activeImages = [image]
+        chat.pictureAnswer = { _, _, _, _, _, _ in
+            expect(false, "the attachment answer hook must not bypass the screen bridge")
+            return .success("unexpected")
+        }
+        var attached = false
+        Answerer.launchForTests = { launch in
+            let args = launch.arguments
+            let hasImage = provider == .claude ? value(args, "--input-format") == "stream-json" : value(args, "--image") == image.path
+            attached = hasImage && listed(screenManifest(args)) == screenNames
+            return .success("captured")
+        }
+        _ = chat.requestDebate(account, "Look at the attachment.", 60, DebateCancellation(), screen: true)
         Answerer.launchForTests = nil
-        expect(capturedPlain, "\(provider): a normal chat with only its built-in folder launches the screen-only bridge")
+        expect(attached, "\(provider): an attached picture can be sent with the screen-only bridge")
         AICapabilities.set(.off, for: account, .screen)
         for terminal in [true, false] {
             for web in [true, false] {

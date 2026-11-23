@@ -5,7 +5,6 @@ import AIAccounts
 import AIChatRecords
 import AILocalization
 import AIRuntime
-import AISpaces
 import AIWorkspace
 
 extension Discussion {
@@ -98,15 +97,7 @@ extension Discussion {
         func conditions() -> RunConditions {
             let room = activeSessionRoom ?? currentID
             let invocation = activeWorkspace.map { WorkspaceInvocation(binding: $0, room: room) }
-            var run = RunConditions.app(account, invocation, screen: screen)
-            if run.screenTools != nil, let binding = activeWorkspace, binding.project == nil {
-                // Every solo chat has two built-in roots. They don't count as user-linked folders for screen viewing.
-                let builtIn = Set([Self.chatFolder(room).path, SpaceStore.root.path])
-                if binding.roots.allSatisfy({ builtIn.contains($0.path) }) {
-                    run = .app(account, screen: true)
-                }
-            }
-            return Discussion.steered(run, steering).thinkingHard(hard)
+            return Discussion.steered(.app(account, invocation, screen: screen), steering).thinkingHard(hard)
         }
         // Only dedicated Claude / ChatGPT accounts keep sessions; others (Gemini) take the normal path.
         if let room = activeSessionRoom, NativeSessions.eligible(account) {
@@ -121,7 +112,9 @@ extension Discussion {
         if pictures.isEmpty && activeWorkspace == nil && run.screenTools == nil {
             return Discussion.thinkingHard(hard) { debateAnswer(account, start, timeout, token, web) }
         }
-        if let pictureAnswer, activeWorkspace == nil { return pictureAnswer(account, start, pictures, timeout, token, web) }
+        if let pictureAnswer, activeWorkspace == nil, run.screenTools == nil {
+            return pictureAnswer(account, start, pictures, timeout, token, web)
+        }
         return Answerer.ask(account, prompt: start, timeout: timeout, cancellation: token, images: pictures, web: web, run: run, progress: progress)
     }
 }

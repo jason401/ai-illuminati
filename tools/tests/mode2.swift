@@ -588,8 +588,21 @@ do {
     request("source\n\n[Claude]\nanswer\n\n[Other]\nnew", role: "MODERATION")
     expect(!requests[2].2 && requests[2].1 == [image], "moderator must have a separate session")
     request("source\n\n[Claude]\nanswer\n\n[Other]\nnew\nnext", compact: true)
-    request("source\n\n[Claude]\nanswer\n\n[Other]\nnew\nnext\nlast")
+    let lastContext = "source\n\n[Claude]\nanswer\n\n[Other]\nnew\nnext\nlast"
+    request(lastContext)
     expect(requests.last!.2 && requests.last!.1.isEmpty, "compaction keeps the session: resumed, images not resent")
+    let ownership = NativeSessions.directory(room).appendingPathComponent("ownership.json")
+    let saved = try! Data(contentsOf: ownership)
+    _ = sessions.ask(account, room: room, prompt: lastContext + "\nprivate turn\n[MODE3 SPEECH]\nrespond",
+                     images: [image], timeout: 1, token: DebateCancellation(), web: false, speaker: "Claude", persist: false,
+                     invoke: { text, images, call in
+        expect(call == nil && text.contains("private turn") && images == [image], "screen reply starts without a logged session")
+        return .success("private reply")
+    }, note: { _ in })
+    expect((try? Data(contentsOf: ownership)) == saved, "a screen reply leaves the existing session record untouched")
+    request(lastContext + "\nprivate turn\nprivate reply\nnow resume")
+    expect(requests.last!.2 && requests.last!.0.contains("private turn") && requests.last!.0.contains("now resume"),
+           "the existing session resumes and gets the intervening chat text")
     expect(!NativeSessions.eligible(Account(id: "personal", provider: .codex, name: "personal", dir: nil)), "personal default home must stay stateless")
     try! sessions.reset(room)
     let source = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("source.txt")

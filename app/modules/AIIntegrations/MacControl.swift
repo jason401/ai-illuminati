@@ -6,6 +6,8 @@ import AIAccounts
 import AILocalization
 
 public enum MacControl {
+    @MainActor private static var capturing = false
+
     public static func enabled(_ account: Account?) -> Bool {
         guard let account, account.provider == .claude || account.provider == .codex else { return false }
         return AICapabilities.rule(account, .screen) == .on
@@ -22,8 +24,19 @@ public enum MacControl {
 
     @MainActor public static func perform(_ name: String, _ arguments: [String: Any]) async -> [String: Any] {
         guard CGPreflightScreenCaptureAccess() else { return permissionFailure() }
+        let wantsScreenshot = name == "mac_screenshot"
+        if wantsScreenshot {
+            guard !capturing else {
+                return failure(L("스크린샷을 찍는 중이에요. 잠시 후 다시 시도해 주세요.",
+                                 "A screenshot is in progress. Try again shortly."))
+            }
+            capturing = true
+        }
+        // The capture may outlive the socket timeout. Keep the slot until ScreenCaptureKit returns.
+        defer { if wantsScreenshot { capturing = false } }
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: false)
+            try Task.checkCancellation()
             let ownPID = ProcessInfo.processInfo.processIdentifier
             let ownBundle = Bundle.main.bundleIdentifier
             let excluded = content.applications.filter { app in

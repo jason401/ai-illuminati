@@ -72,7 +72,7 @@ public struct WorkspaceToolLink { var socket: String; var session: String; var f
                 result[i + 1] = String(decoding: try JSONSerialization.data(withJSONObject: config), as: UTF8.self)
             }
             if !result.contains("--permission-mode") { result += ["--permission-mode", "dontAsk"] }
-            let allowed = "mcp__illuminati__mac_*"
+            let allowed = "mcp__illuminati__mac_screenshot,mcp__illuminati__mac_windows"
             if let i = result.firstIndex(of: "--allowedTools") { result[i + 1] += "," + allowed }
             else { result += ["--allowedTools", allowed] }
             return result + ["--restricted", "--setting-sources", "", "--disable-slash-commands"]

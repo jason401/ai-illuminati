@@ -188,6 +188,11 @@ public final class NativeSessions {
              token: DebateCancellation, web: Bool, speaker: String, appendContext: Bool = false, fresh: String? = nil, persist: Bool = true,
              invoke: (String, [URL], NativeSessionCall?) -> Result<String, Answerer.Failure>,
              note: (String) -> Void) -> Result<String, Answerer.Failure> {
+        if !persist {
+            // Leave the previous session available. It can catch up from the chat's history once screen viewing is off.
+            note(L("화면 보기: 이번 답은 세션 기록을 남기지 않아요.", "Screen viewing: this turn does not keep a session transcript."))
+            return invoke(fresh ?? prompt, images, nil)
+        }
         guard Self.eligible(account), let (incomingContext, fullInstruction, role) = Self.split(prompt) else {
             note(L("\(account.provider.title): 전체 자료 전달 (전용 계정 세션 미지원)", "\(account.provider.title): full context (dedicated session unavailable)"))
             return invoke(fresh ?? prompt, images, nil)
@@ -195,15 +200,6 @@ public final class NativeSessions {
         lock.lock()
         var records = load(room)
         let index = records.lastIndex { $0.accountID == account.id && $0.role == role && $0.valid }
-        if !persist {
-            if let index {
-                records[index].valid = false
-                try? save(records, room)
-            }
-            lock.unlock()
-            note(L("화면 보기: 이번 답은 세션 기록을 남기지 않아요.", "Screen viewing: this turn does not keep a session transcript."))
-            return invoke(fresh ?? prompt, images, nil)
-        }
         var record = index.map { records[$0] } ?? Record(accountID: account.id, provider: account.provider, role: role)
         let (system, instruction) = Self.splitInstruction(fullInstruction)
         let systemDigest = Self.digest(system)

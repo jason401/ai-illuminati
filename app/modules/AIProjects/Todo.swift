@@ -116,7 +116,7 @@ public struct TodoItem: Codable, Identifiable, Equatable {
     public var state: State = .draft
     public var after: [UUID] = []          // TODOs that must be finished first (any list)
     public var room: UUID?                 // the TODO's own chat, made when it first starts
-    public var originRoom: UUID?           // the chat it was written from: its report card shows there too
+    public var originRoom: UUID?           // the chat it was written from: a one-line chip there opens the TODO's chat
     public var notes: [TodoNote] = []      // the user's answers and change requests, retries; sent with the next attempt
     public var question: TodoQuestion?
     public var attempts = 0                // attempts that ended in an error since the user last answered

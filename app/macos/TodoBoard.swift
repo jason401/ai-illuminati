@@ -1091,13 +1091,48 @@ struct TodoCard: View {
     }
 }
 
-// Above the message box: the cards of TODOs that work in this chat or were written from it.
+// Above the message box: the full cards of TODOs that work in this chat, and a one-line chip for those written from it
+// (a full card with its answer box covered the chat it came from; answering happens in the TODO's own chat).
 struct TodoCardsView: View {
     let room: UUID
     @ObservedObject var discussion: Discussion
     @ObservedObject private var store = TodoStore.shared
     var body: some View {
-        let items = store.snapshot.items.filter { ($0.room == room || $0.originRoom == room) && ($0.state == .review || $0.state == .needsYou) }
-        VStack(spacing: 6) { ForEach(items) { TodoCard(item: $0, discussion: discussion) } }
+        let waiting = store.snapshot.items.filter { $0.state == .review || $0.state == .needsYou }
+        let own = waiting.filter { $0.room == room }
+        let written = waiting.filter { $0.room != room && $0.originRoom == room }
+        VStack(spacing: 6) {
+            ForEach(own) { TodoCard(item: $0, discussion: discussion) }
+            ForEach(written) { TodoChip(item: $0, discussion: discussion) }
+        }
+    }
+}
+
+// One line in the chat a TODO was written from: what it waits for, and a click opens the TODO's chat (no answer box).
+struct TodoChip: View {
+    let item: TodoItem
+    @ObservedObject var discussion: Discussion
+    private var status: String { item.state == .needsYou ? L("결정 필요", "needs your decision") : L("결과 확인", "result to check") }
+    // The TODO's chat; before it has one (or once it is deleted) the TODO board.
+    private func open() {
+        if let room = item.room, discussion.conversations.contains(where: { $0.id == room }) { discussion.open(room) }
+        else { discussion.openBoard(project: nil, tab: .todo) }
+    }
+    var body: some View {
+        Button(action: open) {
+            HStack(spacing: 6) {
+                Circle().fill(item.state == .needsYou ? Color.red : Color.yellow).frame(width: 8, height: 8)
+                Text("TODO '\(item.title)'").font(.system(size: 12, weight: .medium)).lineLimit(1).truncationMode(.tail).layoutPriority(1)
+                Text("· " + status).font(.system(size: 12)).foregroundColor(item.state.color).lineLimit(1)
+                Spacer(minLength: 4)
+                Text(L("열기", "Open")).font(.system(size: 12, weight: .medium)).foregroundColor(.accentColor)
+                Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).foregroundColor(.accentColor)
+            }
+            .padding(.horizontal, 10).frame(minHeight: 24)
+            .background(item.state.color.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plainHit)
+        .help(L("이 TODO의 방을 열어요", "Open this TODO's chat"))
     }
 }

@@ -1113,10 +1113,11 @@ struct TodoChip: View {
     let item: TodoItem
     @ObservedObject var discussion: Discussion
     private var status: String { item.state == .needsYou ? L("결정 필요", "needs your decision") : L("결과 확인", "result to check") }
-    // The TODO's chat; before it has one (or once it is deleted) the TODO board.
+    // The TODO's chat; before it has one (or once it is deleted) its project's TODO board, where its row has the answer box.
     private func open() {
-        if let room = item.room, discussion.conversations.contains(where: { $0.id == room }) { discussion.open(room) }
-        else { discussion.openBoard(project: nil, tab: .todo) }
+        if let room = item.room, discussion.conversations.contains(where: { $0.id == room }) { discussion.open(room); return }
+        let project = TodoStore.shared.snapshot.lists.first { $0.id == item.listID }?.project
+        discussion.openBoard(project: project.map(SidebarProjects.key), tab: .todo)
     }
     var body: some View {
         Button(action: open) {

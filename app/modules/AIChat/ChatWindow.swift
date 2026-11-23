@@ -1007,7 +1007,11 @@ struct ChatView<Model: ChatSettings>: View {
                             .font(.system(size: 30, weight: AppLanguage.current == .korean ? .light : .regular,
                                           design: AppLanguage.current == .korean ? .default : .serif))
                     }
-                    composer
+                    // A TODO's chat can be empty when its run stopped before the first message: its card still shows.
+                    VStack(spacing: 4) {
+                        ChatApp.screens.cards(discussion.currentID, discussion)
+                        composer
+                    }
                     Text(Self.greetingNote(discussion.configuration.mode))
                         .font(.system(size: 12)).foregroundColor(.secondary)
                         .multilineTextAlignment(.center)

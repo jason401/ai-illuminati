@@ -18,6 +18,37 @@ expect(AccountStore.supportDir == home + "/Library/Application Support/AI Illumi
        && AccountStore.accountsDir == home + "/.ai-illuminati/accounts", "data folders sit under the chosen home")
 expect(UserDefaults.app !== UserDefaults.standard, "a test must not use the app's real settings")
 
+// Capability rules: fresh accounts get defaults and saved choices survive a fresh process.
+let first = Account(id: "capabilities-1", provider: .claude, name: "Claude")
+let second = Account(id: "capabilities-2", provider: .claude, name: "Claude")
+if CommandLine.arguments.contains("--read-capabilities") {
+    var renamed = first
+    renamed.name = "Renamed"
+    expect(AICapabilities.rule(renamed, .terminal) == .off
+           && AICapabilities.rule(renamed, .screen) == .ask
+           && AICapabilities.rule(renamed, .chrome) == .on, "a fresh process reads the same rules by account ID")
+    expect(AICapabilities.rule(second, .terminal) == .ask
+           && AICapabilities.rule(second, .screen) == .off
+           && AICapabilities.rule(second, .chrome) == .off, "account and capability choices stay separate")
+    exit(0)
+}
+expect(AICapability.allCases.map { AICapabilities.rule(first, $0) } == [.on, .on, .off, .off, .off, .off],
+       "terminal and web default to on, other capabilities default to off")
+AICapabilities.set(.off, for: first, .terminal)
+AICapabilities.set(.ask, for: first, .screen)
+AICapabilities.set(.on, for: first, .chrome)
+AICapabilities.set(.ask, for: second, .terminal)
+expect(AICapabilities.rule(first, .screen) == .ask && AICapabilities.rule(first, .web) == .on,
+       "a write is readable at once and keeps other capability defaults")
+expect(UserDefaults.app.synchronize(), "flush test settings before the fresh process reads")
+let reader = Process()
+reader.executableURL = URL(fileURLWithPath: CommandLine.arguments[0])
+reader.arguments = ["--read-capabilities"]
+try! reader.run()
+reader.waitUntilExit()
+expect(reader.terminationStatus == 0, "saved capabilities survive process restart")
+print("PASS: capability defaults and saved choices across processes")
+
 // First start: only Gemini, saved at once.
 expect(AccountStore.load() == [AccountStore.gemini] && written().contains("\"gemini-main\""), "first start saves a list with Gemini only")
 

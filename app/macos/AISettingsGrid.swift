@@ -1,4 +1,6 @@
 import AppKit
+import ApplicationServices
+import CoreGraphics
 import SwiftUI
 import AIAccounts
 import AILocalization
@@ -6,7 +8,6 @@ import AIChat
 import AIRuntime
 
 // Every AI's chat settings in one window: AIs down the side (models on this Mac too), settings across.
-// It only shows and switches the settings that already live in AppModel; a cell that does not apply shows a dash.
 final class AISettingsWindow {
     static let shared = AISettingsWindow()
     private var window: NSWindow?
@@ -30,6 +31,7 @@ final class AISettingsWindow {
 
 struct AISettingsGrid: View {
     @ObservedObject var model: AppModel
+    @StateObject private var permissions = MacPermissionStatus()
 
     private enum Column: CaseIterable {
         case model, effort, auto, enterprise, pictures, menuBar, local
@@ -92,7 +94,7 @@ struct AISettingsGrid: View {
                 Text(L("계정이 없어요. 설정 → 계정에서 추가하세요.", "No accounts. Add one in Settings → Accounts."))
                     .foregroundStyle(.secondary).padding(16)
             } else {
-                ScrollView(.horizontal) {
+                table {
                     Grid(alignment: .center, horizontalSpacing: 18, verticalSpacing: 8) {
                         GridRow {
                             Text(L("AI", "AI")).font(.system(size: 11, weight: .semibold)).gridColumnAlignment(.leading)
@@ -104,26 +106,14 @@ struct AISettingsGrid: View {
                         Divider().gridCellUnsizedAxes(.horizontal)
                         ForEach(model.accounts, id: \.id) { account in
                             GridRow {
-                                HStack(spacing: 6) {
-                                    Circle().fill(account.provider.color).frame(width: 8, height: 8)
-                                    VStack(alignment: .leading, spacing: 1) {
-                                        Text(account.name).lineLimit(1)
-                                        Text(account.provider == .ollama ? L("내 Mac", "This Mac") : account.provider.title)
-                                            .font(.system(size: 10)).foregroundStyle(.secondary)
-                                    }
-                                }
-                                .frame(minWidth: 150, alignment: .leading)
+                                accountLabel(account)
                                 ForEach(columns, id: \.self) { column in
                                     cell(column, account)
                                 }
                             }
                         }
                     }
-                    .padding(12)
                 }
-                .background(Color(nsColor: .controlBackgroundColor))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(0.07)))
             }
             HStack {
                 Text(L("계정 추가·이름·순서·로그인은 설정 → 계정에서 해요.", "Add, rename, reorder and sign in under Settings → Accounts."))
@@ -135,9 +125,146 @@ struct AISettingsGrid: View {
                 }
             }
             Divider().padding(.vertical, 4)
+            if !model.accounts.isEmpty { capabilities }
+            permissionRows
+            Divider().padding(.vertical, 4)
             Text(L("모든 AI 공통", "For all AIs")).font(.system(size: 13, weight: .semibold))
             AICommonSettings(model: model).frame(maxWidth: 560, alignment: .leading)
         }
+    }
+
+    private func table<Content: View>(@ViewBuilder _ rows: () -> Content) -> some View {
+        ScrollView(.horizontal) { rows().padding(12) }
+            .background(Color(nsColor: .controlBackgroundColor))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(0.07)))
+    }
+
+    private func accountLabel(_ account: Account) -> some View {
+        HStack(spacing: 6) {
+            Circle().fill(account.provider.color).frame(width: 8, height: 8)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(account.name).lineLimit(1)
+                Text(account.provider == .ollama ? L("내 Mac", "This Mac") : account.provider.title)
+                    .font(.system(size: 10)).foregroundStyle(.secondary)
+            }
+        }
+        .frame(minWidth: 150, alignment: .leading)
+    }
+
+    private var capabilities: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(L("AI가 쓸 수 있는 기능", "What AIs can use")).font(.system(size: 13, weight: .semibold))
+            Text(L("선택한 값은 저장되며, 기능이 연결되면 적용돼요.",
+                   "Choices are saved and take effect when the features are connected."))
+                .font(.system(size: 11)).foregroundStyle(.secondary)
+            table {
+                Grid(alignment: .center, horizontalSpacing: 18, verticalSpacing: 8) {
+                    GridRow {
+                        Text(L("AI", "AI")).font(.system(size: 11, weight: .semibold)).gridColumnAlignment(.leading)
+                        ForEach(AICapability.allCases, id: \.self) { capability in
+                            Text(capabilityTitle(capability)).font(.system(size: 11, weight: .semibold))
+                                .help(capabilityHelp(capability))
+                        }
+                    }
+                    Divider().gridCellUnsizedAxes(.horizontal)
+                    ForEach(model.accounts, id: \.id) { account in
+                        GridRow {
+                            accountLabel(account)
+                            ForEach(AICapability.allCases, id: \.self) { capability in
+                                capabilityCell(capability, account)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func capabilityTitle(_ capability: AICapability) -> String {
+        switch capability {
+        case .terminal: return L("터미널", "Terminal")
+        case .web: return L("인터넷", "Web")
+        case .screen: return L("화면 보기", "View screen")
+        case .input: return L("마우스·키보드", "Mouse & keyboard")
+        case .apps: return L("앱 열기", "Open apps")
+        case .chrome: return L("크롬", "Chrome")
+        }
+    }
+
+    private func capabilityHelp(_ capability: AICapability) -> String {
+        switch capability {
+        case .terminal: return L("터미널 명령을 실행해요.", "Runs terminal commands.")
+        case .web: return L("인터넷에서 검색하고 웹페이지를 읽어요.", "Searches the web and reads web pages.")
+        case .screen: return L("이 Mac의 화면이나 창을 봐요.", "Views the screen or a window on this Mac.")
+        case .input: return L("이 Mac에서 마우스와 키보드를 써요.", "Uses the mouse and keyboard on this Mac.")
+        case .apps: return L("이 Mac에서 앱을 열어요.", "Opens apps on this Mac.")
+        case .chrome: return L("Claude in Chrome 확장으로 크롬을 써요.", "Uses Chrome through the Claude in Chrome extension.")
+        }
+    }
+
+    private func applies(_ capability: AICapability, _ account: Account) -> Bool {
+        switch capability {
+        case .terminal: return account.provider != .ollama
+        case .web: return true
+        case .screen, .input, .apps: return account.provider == .claude || account.provider == .codex
+        case .chrome: return account.provider == .claude
+        }
+    }
+
+    @ViewBuilder private func capabilityCell(_ capability: AICapability, _ account: Account) -> some View {
+        if applies(capability, account) {
+            let warning = capability == .screen && account.isSchool
+                ? "\n" + L("화면 내용이 학교·회사 계정으로 보내져요.", "Screen content is sent to your school or work account.")
+                : ""
+            CapabilityMenu(account: account, capability: capability, title: capabilityTitle(capability))
+                .help(capabilityHelp(capability) + warning)
+        } else {
+            Text("—").foregroundStyle(.tertiary)
+                .accessibilityLabel(L("해당 없음", "Not applicable"))
+                .help(unavailableHelp(capability, account))
+        }
+    }
+
+    private func unavailableHelp(_ capability: AICapability, _ account: Account) -> String {
+        if capability == .chrome { return L("크롬 연결은 Claude에서만 쓸 수 있어요.", "Chrome integration is available only for Claude.") }
+        if account.provider == .gemini {
+            return L("Gemini CLI는 헤드리스 모드에서 앱의 맥 조작 도구를 쓸 수 없어요.",
+                     "The Gemini CLI cannot use the app’s Mac controls in headless mode.")
+        }
+        return L("Ollama는 이 기능을 쓸 수 없어요.", "This feature is unavailable for Ollama.")
+    }
+
+    private var permissionRows: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            permissionRow(L("화면 기록", "Screen Recording"), granted: permissions.screen, pane: "Privacy_ScreenCapture") {
+                _ = CGRequestScreenCaptureAccess()
+            }
+            permissionRow(L("손쉬운 사용", "Accessibility"), granted: permissions.accessibility, pane: "Privacy_Accessibility")
+        }
+        .onAppear(perform: permissions.refresh)
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in permissions.refresh() }
+    }
+
+    private func permissionRow(_ title: String, granted: Bool, pane: String,
+                               request: (() -> Void)? = nil) -> some View {
+        HStack(spacing: 8) {
+            Text(title).fontWeight(.semibold)
+            Text(granted ? L("허용됨", "Allowed") : L("허용 안 됨", "Not allowed")).foregroundStyle(.secondary)
+            if !granted {
+                let buttonTitle = L("시스템 설정 열기", "Open System Settings")
+                Button(buttonTitle) {
+                    request?()
+                    if let url = URL(string: "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?\(pane)") {
+                        NSWorkspace.shared.open(url)
+                    }
+                    permissions.refresh()
+                }
+                .controlSize(.small)
+                .accessibilityLabel(title + " · " + buttonTitle)
+            }
+        }
+        .font(.system(size: 11))
     }
 
     @ViewBuilder private func cell(_ column: Column, _ account: Account) -> some View {
@@ -176,6 +303,58 @@ struct AISettingsGrid: View {
         Toggle(account.name + " · " + column.title, isOn: isOn)
             .labelsHidden().toggleStyle(.switch).controlSize(.small)
     }
+}
+
+private final class MacPermissionStatus: ObservableObject {
+    @Published private(set) var screen = false
+    @Published private(set) var accessibility = false
+
+    func refresh() {
+        screen = CGPreflightScreenCaptureAccess()
+        accessibility = AXIsProcessTrusted()
+    }
+}
+
+private struct CapabilityMenu: View {
+    let account: Account
+    let capability: AICapability
+    let title: String
+    @StateObject private var state: CapabilityPick
+
+    init(account: Account, capability: AICapability, title: String) {
+        self.account = account; self.capability = capability; self.title = title
+        _state = StateObject(wrappedValue: CapabilityPick(AICapabilities.rule(account, capability)))
+    }
+
+    var body: some View {
+        Menu {
+            Picker(title, selection: Binding(get: { state.rule }, set: { rule in
+                AICapabilities.set(rule, for: account, capability)
+                state.rule = rule
+            })) {
+                ForEach(CapabilityRule.allCases, id: \.self) { Text(ruleTitle($0)).tag($0) }
+            }
+            .pickerStyle(.inline).labelsHidden()
+        } label: {
+            Text(ruleTitle(state.rule)).lineLimit(1)
+        }
+        .menuStyle(.borderlessButton).fixedSize().controlSize(.small)
+        .accessibilityLabel(account.name + " · " + title)
+        .accessibilityValue(ruleTitle(state.rule))
+    }
+
+    private func ruleTitle(_ rule: CapabilityRule) -> String {
+        switch rule {
+        case .off: return L("끔", "Off")
+        case .ask: return L("물어보기", "Ask")
+        case .on: return L("켬", "On")
+        }
+    }
+}
+
+private final class CapabilityPick: ObservableObject {
+    @Published var rule: CapabilityRule
+    init(_ rule: CapabilityRule) { self.rule = rule }
 }
 
 // The Thinking column: Auto (nothing saved) or any level this account's model takes (CloudEffort.levels(for:)).

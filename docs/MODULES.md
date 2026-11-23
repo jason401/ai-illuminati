@@ -258,6 +258,11 @@ Guard changes (run_mode2's module block, guard files) are recorded with date and
 | `isSchool`: the setting wins, else the name | Solo, Meeting, Todo, Peer, Enterprise, Settings UI | contract | "school accounts", plain chat (Enterprise), Enterprise lock |
 | New account: private (0700) folder, Codex login in a file there, one Gemini entry | Settings `AppModel.add` | contract: new accounts | none |
 | `EnterpriseLock` (a stored value only; the rules stay in Enterprise.swift): here so `SpaceManifest` can keep it | Enterprise, Discussion, Solo, Todo, SpaceView, AISpaces | none | "an Enterprise Space is changed only by its organization", Enterprise lock |
+| Capability choices are saved in `UserDefaults.app` per account ID and capability. Missing or unknown choices use defaults (terminal and web on, the others off). | Settings by AI | contract: defaults, account and capability isolation, fresh process read | none |
+
+`AICapability` and `CapabilityRule` are public so Settings by AI can list the choices and AIRuntime and AIWorkspace
+can share the same types. `AICapabilities.rule` is the shared read API and `AICapabilities.set` is the settings
+screen's write API. The settings screen decides which choices to offer each provider.
 
 ### AILocalization (`app/modules/AILocalization/Language.swift`)
 Only `L()` and `AppLanguage`: every part uses them, so they depend on nothing (no shared "Core" module).

@@ -1,3 +1,14 @@
+AICapabilities | enum AICapabilities
+AICapabilities.rule(_:_:) | static func rule(_ account: Account, _ capability: AICapability) -> CapabilityRule
+AICapabilities.set(_:for:_:) | static func set(_ rule: CapabilityRule, for account: Account, _ capability: AICapability)
+AICapability | enum AICapability
+AICapability.apps | case apps
+AICapability.chrome | case chrome
+AICapability.init(rawValue:) | init?(rawValue: String)
+AICapability.input | case input
+AICapability.screen | case screen
+AICapability.terminal | case terminal
+AICapability.web | case web
 Account | struct Account
 Account.Provider | enum Provider
 Account.Provider.claude | case claude
@@ -33,6 +44,11 @@ AccountStore.pruneBackups() | static func pruneBackups()
 AccountStore.save(_:) | @discardableResult static func save(_ list: [Account]) -> Bool
 AccountStore.supportDir | static var supportDir: String { get }
 AccountStore.useRealHome() | static func useRealHome()
+CapabilityRule | enum CapabilityRule
+CapabilityRule.ask | case ask
+CapabilityRule.init(rawValue:) | init?(rawValue: String)
+CapabilityRule.off | case off
+CapabilityRule.on | case on
 EnterpriseLock | struct EnterpriseLock
 EnterpriseLock.init(from:) | init(from decoder: any Decoder) throws
 EnterpriseLock.init(organization:name:lockedAt:) | init(organization: String, name: String, lockedAt: Date)

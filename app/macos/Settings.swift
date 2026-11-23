@@ -1590,12 +1590,14 @@ private struct DeviceSyncSettingsView: View {
 // tools, AI Face (adds itself when AI Illuminati is connected in AI Face; which of its tools work is set there),
 // Google Drive, and the servers added here (ExternalMCP.swift).
 struct MCPSettingsTab: View {
+    @ObservedObject var model: AppModel
     var body: some View {
-        SettingsPage { MCPSettings() }
+        SettingsPage { MCPSettings(model: model) }
     }
 }
 
 private struct MCPSettings: View {
+    @ObservedObject var model: AppModel
     @ObservedObject var link = FaceLink.shared
     @ObservedObject var drive = DriveCenter.shared
     @ObservedObject var external = ExternalMCP.shared
@@ -1650,13 +1652,15 @@ private struct MCPSettings: View {
         }
         SettingsCard(title: L("직접 추가한 서버", "Added by you"),
                      help: L("명령 서버는 이 Mac에서 내 권한으로 실행되고, URL 서버는 앱이 이 Mac에서 직접 연결해요(VPN·학교 내부 서버도 돼요). 켜 둔 서버의 도구는 일반 채팅과 프로젝트 작업의 AI가 쓸 수 있어요(엔터프라이즈 채팅은 빼고). URL 서버의 쓰기 도구는 기본으로 쓸 때마다 물어봐요.",
-                             "Command servers run on this Mac as you; URL servers are reached by the app from this Mac (VPN and campus servers work too). The AI in plain chat and project work may use the tools of a server that is on (not in Enterprise chats). Write tools of URL servers ask each time by default.")) {
+                             "Command servers run on this Mac as you; URL servers are reached by the app from this Mac (VPN and campus servers work too). The AI in plain chat and project work may use the tools of a server that is on (not in Enterprise chats). Write tools of URL servers ask each time by default.")
+                        + "\n" + L("‘쓰는 AI’에서 서버마다 쓸 AI를 골라요. 브라우저 MCP(chrome-devtools-mcp, Playwright MCP 등)를 넣으면 ChatGPT도 크롬을 쓸 수 있어요.",
+                                    "Pick which AIs use each server under “Used by”. Add a browser MCP server (chrome-devtools-mcp, Playwright MCP, …) and ChatGPT can use Chrome too.")) {
             if let error = external.loadError {
                 SettingsRow(title: "mcp-servers.json") { Text(error).foregroundStyle(.orange).lineLimit(3) }
                 Divider()
             }
             ForEach(external.servers) { server in
-                MCPServerRow(server: server, status: external.status[server.name], edit: { draft.open(server) },
+                MCPServerRow(server: server, status: external.status[server.name], accounts: model.accounts.filter { $0.provider != .ollama }, edit: { draft.open(server) },
                              enterKey: { draft.open(server, askKey: true) }, showTools: { tools.server = server.name })
                 Divider()
             }
@@ -1693,6 +1697,7 @@ private struct MCPSettings: View {
 private struct MCPServerRow: View {
     let server: MCPServerEntry
     let status: ExternalMCP.Status?
+    let accounts: [Account]
     let edit: () -> Void
     let enterKey: () -> Void
     let showTools: () -> Void
@@ -1719,6 +1724,7 @@ private struct MCPServerRow: View {
                 if status?.oauth == true { Button(L("로그인", "Sign In")) { ExternalMCP.shared.signIn(server.name) } }
                 else { Button(L("키 입력…", "Enter Key…"), action: enterKey) }
             }
+            usedBy
             Toggle(server.name, isOn: Binding(get: { ExternalMCP.isOn(server.name) && status?.state != .off },
                                               set: { ExternalMCP.shared.setOn(server.name, $0) }))
                 .labelsHidden().toggleStyle(.switch)
@@ -1737,6 +1743,23 @@ private struct MCPServerRow: View {
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
         }
         .help(details)
+    }
+
+    // Which AIs see this server's tools (all by default); the switch still turns it off for every AI.
+    private var usedBy: some View {
+        let used = accounts.filter { ExternalMCP.usedBy(server.name, $0) }.count
+        let title = used == accounts.count ? L("모든 AI", "All AIs") : used == 0 ? L("쓰는 AI 없음", "No AI") : L("AI \(used)개", "\(used) AIs")
+        return Menu {
+            ForEach(accounts, id: \.id) { account in
+                Toggle(account.name, isOn: Binding(get: { ExternalMCP.usedBy(server.name, account) },
+                                                   set: { ExternalMCP.shared.setUsed(server.name, by: account, $0) }))
+            }
+        } label: { Text(title).lineLimit(1) }
+            .menuStyle(.borderlessButton).fixedSize().controlSize(.small)
+            .disabled(accounts.isEmpty)
+            .help(L("쓰는 AI: 이 서버의 도구가 보이는 AI", "Used by: the AIs that see this server's tools"))
+            .accessibilityLabel(server.name + " · " + L("쓰는 AI", "Used by"))
+            .accessibilityValue(title)
     }
 
     // On hover: what runs, why it failed, the tools it gives.
@@ -2387,7 +2410,7 @@ final class SettingsWindow {
             t.addTabViewItem(tab(AppearanceSettingsTab(model: model), symbol: "paintbrush"))
             t.addTabViewItem(tab(AccountsSettingsTab(model: model), symbol: "person.2"))
             t.addTabViewItem(tab(ChatSettingsTab(model: model), symbol: "bubble.left.and.bubble.right"))
-            t.addTabViewItem(tab(MCPSettingsTab(), symbol: "puzzlepiece.extension"))
+            t.addTabViewItem(tab(MCPSettingsTab(model: model), symbol: "puzzlepiece.extension"))
             tabs = t
             let w = NSWindow(contentViewController: t)
             w.styleMask = [.titled, .closable, .miniaturizable]

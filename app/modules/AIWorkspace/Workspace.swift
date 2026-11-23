@@ -269,7 +269,8 @@ public struct WorkspaceInvocation {
             if let i = result.firstIndex(of: "--tools") { result[i + 1] = "Read,Grep,Glob" + (edit ? ",Edit,Write" : "") + (shell ? ",Bash" : "") + (web ? ",WebSearch,WebFetch" : "") }
             if let i = result.firstIndex(of: "--allowedTools") { result.removeSubrange(i...i + 1) }
             let allowedEdit = level != .view && binding.projectRunID == nil ? ",Edit,Write" : own.map { ",Edit(/" + $0 + "/**)" }.joined()
-            result += ["--restricted", "--setting-sources", "", "--disable-slash-commands", "--permission-mode", "dontAsk", "--allowedTools", "Read,Grep,Glob,mcp__illuminati__*" + allowedEdit + (shell ? ",Bash" : "") + (web ? ",WebSearch,WebFetch" : "")]
+            result += ["--restricted", "--setting-sources", "", "--disable-slash-commands", "--permission-mode", "dontAsk", "--allowedTools", "Read,Grep,Glob,mcp__illuminati__*" + allowedEdit + (shell ? ",Bash" : "") + (web ? ",WebSearch,WebFetch" : "")
+                       + (original.contains("--chrome") ? "," + Answerer.chromeTools : "")]
             if level == .execute {
                 var settings: [String: Any] = ["sandbox": ["enabled": true, "autoAllowBashIfSandboxed": shell, "allowUnsandboxedCommands": false,
                     "filesystem": ["allowWrite": executionFolders, "denyWrite": binding.project.map(\.protectedPaths) ?? []]]]

@@ -203,7 +203,9 @@ struct AISettingsGrid: View {
                               "Uses the mouse and keyboard on this Mac. Ask shows a card the first time per app in each answer. Settings, Keychain, terminals and IDEs are always asked; AI Illuminati's windows and password fields are always refused. Press Esc to stop.")
         case .apps: return L("이 Mac에서 앱이나 웹 주소를 열어요. ‘물어보기’는 답마다 앱별로 처음 한 번 물어요.",
                              "Opens apps or web addresses on this Mac. Ask asks the first time per app in each answer.")
-        case .chrome: return L("Claude in Chrome 확장으로 크롬을 써요.", "Uses Chrome through the Claude in Chrome extension.")
+        case .chrome:
+            return L("Claude in Chrome 확장으로 크롬을 써요(보이는 답에서만).", "Uses Chrome through the Claude in Chrome extension (in visible answers only).")
+                + (ChromeExtension.installed ? "" : "\n" + ChromeExtension.installHint)
         }
     }
 
@@ -352,15 +354,16 @@ private struct CapabilityMenu: View {
     let capability: AICapability
     let title: String
     @StateObject private var state: CapabilityPick
+    // Chrome has no "ask": the extension asks per site itself, and a saved "ask" counts as off (Answerer runs only "on").
     private var choices: [CapabilityRule] {
-        capability == .terminal || capability == .web ? [.off, .on] : CapabilityRule.allCases
+        capability == .terminal || capability == .web || capability == .chrome ? [.off, .on] : CapabilityRule.allCases
     }
 
     init(account: Account, capability: AICapability, title: String) {
         self.account = account; self.capability = capability; self.title = title
         let rule = AICapabilities.rule(account, capability)
         let onOff = capability == .terminal || capability == .web
-        _state = StateObject(wrappedValue: CapabilityPick(onOff && rule == .ask ? .on : rule))
+        _state = StateObject(wrappedValue: CapabilityPick(rule != .ask ? rule : onOff ? .on : capability == .chrome ? .off : rule))
     }
 
     var body: some View {
@@ -448,4 +451,16 @@ private struct CloudEffortMenu: View {
 private final class CloudEffortPick: ObservableObject {
     @Published var picked: String?
     @Published var offered: [String] = []
+}
+
+// Whether the Claude in Chrome extension is in a Chrome profile on this Mac (the Web Store ID); not whether it is connected.
+enum ChromeExtension {
+    static let id = "fcoeoabgfenejglbffodgkkbkcdhcgfn"
+    static let installHint = L("Chrome에 Claude 확장을 깔아야 해요: chromewebstore.google.com/detail/claude/\(id) (Claude Code와 같은 계정으로 로그인, 처음이면 Chrome 다시 시작)",
+                               "Install the Claude extension in Chrome: chromewebstore.google.com/detail/claude/\(id) (sign in with the same account as Claude Code; restart Chrome the first time)")
+    static var installed: Bool {
+        let base = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("Library/Application Support/Google/Chrome")
+        let profiles = (try? FileManager.default.contentsOfDirectory(atPath: base.path)) ?? []
+        return profiles.contains { FileManager.default.fileExists(atPath: base.appendingPathComponent("\($0)/Extensions/\(id)").path) }
+    }
 }

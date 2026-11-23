@@ -39,10 +39,11 @@ ExternalMCP.Status.tools | var tools: [String]
 ExternalMCP.acknowledgeChanges(_:) | func acknowledgeChanges(_ server: String)
 ExternalMCP.active | var active: Bool { get }
 ExternalMCP.approvalWait | static var approvalWait: TimeInterval
-ExternalMCP.call(_:_:approve:) | func call(_ name: String, _ arguments: [String : Any], approve: (String, String) -> Bool) -> [String : Any]
+ExternalMCP.call(_:_:account:approve:) | func call(_ name: String, _ arguments: [String : Any], account: Account? = nil, approve: (String, String) -> Bool) -> [String : Any]
 ExternalMCP.claudeDesktopServers(existing:) | static func claudeDesktopServers(existing: [MCPServerEntry]) -> [MCPServerEntry]
 ExternalMCP.importClaudeDesktop() | func importClaudeDesktop() -> Int
 ExternalMCP.isOn(_:) | static func isOn(_ name: String) -> Bool
+ExternalMCP.isOn(_:account:) | static func isOn(_ name: String, account: Account?) -> Bool
 ExternalMCP.loadError | @Published var loadError: String? { get set }
 ExternalMCP.reconnect(_:) | func reconnect(_ name: String)
 ExternalMCP.refresh(force:) | func refresh(force: Set<String> = [])
@@ -51,6 +52,7 @@ ExternalMCP.save(_:replacing:on:clientSecret:signIn:) | func save(_ entry: MCPSe
 ExternalMCP.servers | @Published var servers: [MCPServerEntry] { get set }
 ExternalMCP.setOn(_:_:) | func setOn(_ name: String, _ on: Bool)
 ExternalMCP.setRule(_:_:_:) | func setRule(_ server: String, _ tool: String, _ rule: MCPToolRule?)
+ExternalMCP.setUsed(_:by:_:) | func setUsed(_ name: String, by account: Account, _ used: Bool)
 ExternalMCP.shared | static let shared: ExternalMCP
 ExternalMCP.signIn(_:) | func signIn(_ name: String)
 ExternalMCP.signOut(_:) | func signOut(_ name: String)
@@ -59,6 +61,8 @@ ExternalMCP.start() | func start()
 ExternalMCP.status | @Published var status: [String : ExternalMCP.Status] { get set }
 ExternalMCP.stopAll() | func stopAll()
 ExternalMCP.tools() | func tools() -> [[String : Any]]
+ExternalMCP.tools(for:) | func tools(for account: Account?) -> [[String : Any]]
+ExternalMCP.usedBy(_:_:) | static func usedBy(_ name: String, _ account: Account) -> Bool
 FaceLink | final class FaceLink
 FaceLink.Server | struct Server
 FaceLink.Server.args | var args: [String]

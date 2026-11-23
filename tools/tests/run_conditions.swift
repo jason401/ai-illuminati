@@ -228,7 +228,7 @@ private func testCapabilityLaunches() {
         args.firstIndex(of: option).map { args[$0 + 1] } ?? ""
     }
     func capture(_ account: Account, _ workspace: WorkspaceInvocation? = nil, web: Bool = true,
-                 session: NativeSessionCall? = nil, screen: Bool = false,
+                 session: NativeSessionCall? = nil, screen: Bool = false, progress: Bool = false,
                  inspect: @escaping (Answerer.Launch) -> Void = { _ in }) -> [String] {
         var args: [String] = []
         Answerer.launchForTests = { started in
@@ -237,10 +237,32 @@ private func testCapabilityLaunches() {
             return .success("captured")
         }
         defer { Answerer.launchForTests = nil }
-        let result = Answerer.ask(account, prompt: "Say hi.", web: web, session: session, run: .app(account, workspace, screen: screen))
+        let result = Answerer.ask(account, prompt: "Say hi.", web: web, session: session, run: .app(account, workspace, screen: screen),
+                                  progress: progress ? { _ in } : nil)
         if case .failure(let error) = result { expect(false, "capability launch failed: \(error)") }
         return args
     }
+    // Chrome (Claude in Chrome): only "on" gives --chrome and its tools, in answers the user watches (with progress),
+    // through plain chat, a session, a folder and project work; background calls and "ask" stay --no-chrome.
+    let chromeAccount = Account(id: "rc-chrome-\(UUID())", provider: .claude, name: "Chrome", dir: root.path)
+    for rule in CapabilityRule.allCases {
+        AICapabilities.set(rule, for: chromeAccount, .chrome)
+        let on = rule == .on
+        let launches = [("plain", capture(chromeAccount, web: false, progress: true)), ("plain web", capture(chromeAccount, progress: true)),
+                        ("session", capture(chromeAccount, session: NativeSessionCall(id: UUID().uuidString, resume: false, directory: root), progress: true)),
+                        ("folder", capture(chromeAccount, WorkspaceInvocation(binding: WorkspaceBinding(roots: roots), room: room), progress: true)),
+                        ("project", capture(chromeAccount, invocation, progress: true))]
+        for (kind, args) in launches {
+            let allowed = value(args, "--allowedTools").split(separator: ",")
+            let chromeAllowed = allowed.contains(Substring(Answerer.chromeTools)) || args.contains("bypassPermissions")
+            expect(args.contains("--chrome") == on && args.contains("--no-chrome") == !on && (!on || chromeAllowed)
+                   && (on || !allowed.contains(Substring(Answerer.chromeTools))), "Claude chrome \(rule), \(kind): flag and tool rule follow the account")
+            if kind == "plain web" { expect(Set(allowed).isSuperset(of: ["WebSearch", "WebFetch"]), "Claude chrome \(rule): web tools stay allowed") }
+        }
+        let background = capture(chromeAccount)
+        expect(background.contains("--no-chrome") && !background.contains("--chrome"), "Claude chrome \(rule): a background call never gets Chrome")
+    }
+    AICapabilities.set(.off, for: chromeAccount, .chrome)
     for provider in [Account.Provider.claude, .codex] {
         let account = Account(id: "rc-capability-\(provider)-\(UUID())", provider: provider, name: "Capabilities", dir: root.path)
         let control = Account(id: "rc-control-\(provider)-\(UUID())", provider: provider, name: "Control", dir: root.path)

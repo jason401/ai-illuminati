@@ -6,8 +6,8 @@ import AIProjects
 import AIChat
 import AIIntegrations
 
-// Outside MCP servers' tools as ToolHub offers them (the connections live in AIIntegrations): never in Enterprise
-// chats, and a tool set to "ask" waits for the chat's approval card.
+// Outside MCP servers' tools as ToolHub offers them (the connections live in AIIntegrations): only the servers the
+// answering AI uses, never in Enterprise chats, and a tool set to "ask" waits for the chat's approval card.
 extension ExternalMCP: @retroactive ToolProvider {
     // Enterprise chats get no outside servers (their data would leave through tools the user did not pick for them).
     static var isEnterprise: (UUID) -> Bool = { room in
@@ -16,13 +16,13 @@ extension ExternalMCP: @retroactive ToolProvider {
     }
 
     public func tools(context: ToolContext) -> [[String: Any]] {
-        let list = tools()
+        let list = tools(for: context.asker)
         return list.isEmpty || Self.isEnterprise(context.room) ? [] : list
     }
 
     public func call(_ name: String, _ arguments: [String: Any], context: ToolContext) -> [String: Any] {
         guard !Self.isEnterprise(context.room) else { return ToolHub.failure("Outside MCP servers are not available in Enterprise chats.") }
-        return call(name, arguments) { Self.approve($0, $1, arguments, context) }
+        return call(name, arguments, account: context.asker) { Self.approve($0, $1, arguments, context) }
     }
 
     /// The chat's approval card; "Always allow" there saves the rule. Tests replace it.

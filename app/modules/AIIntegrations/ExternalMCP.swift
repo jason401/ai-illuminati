@@ -335,6 +335,29 @@ public final class ExternalMCP: ObservableObject {
         UserDefaults.app.set(list.sorted(), forKey: "mcpOff")
     }
 
+    // Per AI, on top of the switch: "mcpOffAccounts" (server → account IDs switched off). Not listed = every AI.
+    public static func isOn(_ name: String, account: Account?) -> Bool {
+        isOn(name) && !(account.map { offAccounts[name]?.contains($0.id) == true } ?? false)
+    }
+    public static func usedBy(_ name: String, _ account: Account) -> Bool { offAccounts[name]?.contains(account.id) != true }
+    public func setUsed(_ name: String, by account: Account, _ used: Bool) {
+        var all = Self.offAccounts, list = Set(all[name] ?? [])
+        if used { list.remove(account.id) } else { list.insert(account.id) }
+        all[name] = list.isEmpty ? nil : list.sorted()
+        Self.offAccounts = all
+        publish()
+    }
+    private static var offAccounts: [String: [String]] {
+        get { UserDefaults.app.dictionary(forKey: "mcpOffAccounts") as? [String: [String]] ?? [:] }
+        set { UserDefaults.app.set(newValue, forKey: "mcpOffAccounts") }
+    }
+    private static func moveAccounts(_ old: String, to new: String?) {
+        var all = offAccounts
+        let list = all.removeValue(forKey: old)
+        if let new, let list { all[new] = list }
+        offAccounts = all
+    }
+
     /// The saved servers; a file that cannot be read is an error and is never rewritten.
     static func read() -> (object: [String: Any], servers: [MCPServerEntry], error: String?) {
         guard let data = try? Data(contentsOf: file) else {
@@ -378,7 +401,7 @@ public final class ExternalMCP: ObservableObject {
             object["mcpServers"] = raw
             try Self.write(object)
         } } catch { if markedOff { setOff(entry.name, false) }; throw error }
-        if let old, old != entry.name { setOn(old, true); MCPPermissions.rename(old, entry.name) }   // no stale "off" left for a name that is gone
+        if let old, old != entry.name { setOn(old, true); MCPPermissions.rename(old, entry.name); Self.moveAccounts(old, to: entry.name) }   // no stale "off" left for a name that is gone
         if signIn && entry.isRemote { lock.locked { _ = signInAfterAdd.insert(entry.name) } }
         setOn(entry.name, wasOn)
         if entry.isRemote { reconnect(entry.name) } else { refresh(force: [entry.name]) }   // a new key or token is in effect at once
@@ -414,6 +437,7 @@ public final class ExternalMCP: ObservableObject {
             try Self.write(object)
         }
         setOn(name, true)
+        Self.moveAccounts(name, to: nil)
         MCPPermissions.forget(name)
     }
 
@@ -633,11 +657,15 @@ public final class ExternalMCP: ObservableObject {
 
     public var active: Bool { lock.locked { !offered.isEmpty } }
     public func tools() -> [[String: Any]] { lock.locked { offered } }
+    /// The tools one AI may see: only of the servers it uses (nil: every server that is on).
+    public func tools(for account: Account?) -> [[String: Any]] {
+        lock.locked { offered.filter { tool in (tool["name"] as? String).flatMap { routes[$0] }.map { Self.isOn($0.server, account: account) } ?? false } }
+    }
     public var slowTools: [String] { lock.locked { Array(routes.keys) } }
 
     /// One call by its offered name. `approve` is asked for a tool whose rule is "ask" (server, its own tool name);
     /// it may take up to `approvalWait`, counted in the call's two minutes.
-    public func call(_ name: String, _ arguments: [String: Any], approve: (String, String) -> Bool) -> [String: Any] {
+    public func call(_ name: String, _ arguments: [String: Any], account: Account? = nil, approve: (String, String) -> Bool) -> [String: Any] {
         let (route, session, tool) = lock.locked { () -> ((server: String, tool: String)?, MCPConnection?, [String: Any]?) in
             let route = routes[name]
             return (route, route.flatMap { sessions[$0.server] }, route.flatMap { r in lists[r.server]?.first { $0["name"] as? String == r.tool } })
@@ -645,6 +673,7 @@ public final class ExternalMCP: ObservableObject {
         guard let route, Self.isOn(route.server), let session, session.isRunning, let tool else {
             return mcpFailure("This MCP server is switched off or not connected: " + name)
         }
+        guard Self.isOn(route.server, account: account) else { return mcpFailure("This MCP server is switched off for this AI: " + name) }
         let started = Date()
         switch MCPPermissions.rule(route.server, tool, remote: session.entry.isRemote) {
         case .block: return mcpFailure("The user blocked this tool: " + name)

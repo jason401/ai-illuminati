@@ -35,6 +35,7 @@ Answerer.Failure.failed(_:) | case failed(String)
 Answerer.Failure.missingTool | case missingTool
 Answerer.Failure.timedOut | case timedOut
 Answerer.ask(_:prompt:timeout:cancellation:images:web:session:run:progress:) | static func ask(_ account: Account, prompt: String, timeout: TimeInterval = 240, cancellation: DebateCancellation? = nil, images: [URL] = [], web: Bool = false, session: NativeSessionCall? = nil, run: RunConditions, progress: ((AnswerProgress) -> Void)? = nil) -> Result<String, Answerer.Failure>
+Answerer.chromeTools | static let chromeTools: String
 Answerer.toolForTests | static var toolForTests: String?
 ClaudeUsage | enum ClaudeUsage
 ClaudeUsage.forget(_:) | static func forget(_ account: Account)

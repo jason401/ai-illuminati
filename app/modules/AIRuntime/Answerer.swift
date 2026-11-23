@@ -116,6 +116,8 @@ public enum Answerer {
     }()
 
     public enum Failure: Error { case missingTool, failed(String), timedOut }
+    /// Claude in Chrome's tools (`--chrome`); folder rules keep this allow rule when they replace the list.
+    public static let chromeTools = "mcp__claude-in-chrome__*"
     /// Tests: stands in for the AI inside the file-request loop (gets the prompt, returns its reply).
     static var replyForTests: ((String) -> Result<String, Failure>)?
     /// What a call would start: the program, its arguments and environment, its folder, and whether its whole
@@ -266,9 +268,12 @@ public enum Answerer {
         switch account.provider {
         case .claude:
             binary = ClaudeUsage.binary
-            let tools = web ? ["--tools", "WebSearch,WebFetch", "--allowedTools", "WebSearch,WebFetch"] : ["--tools", ""]
+            // Chrome (Claude in Chrome extension) only in answers the user watches, never in background calls.
+            let chrome = progress != nil && AICapabilities.rule(account, .chrome) == .on
+            let allowed = (web ? ["WebSearch,WebFetch"] : []) + (chrome ? [Self.chromeTools] : [])
+            let tools = (web ? ["--tools", "WebSearch,WebFetch"] : ["--tools", ""]) + (allowed.isEmpty ? [] : ["--allowedTools", allowed.joined(separator: ",")])
             arguments = ["-p", prompt] + tools + ["--no-session-persistence",
-                         "--safe-mode", "--strict-mcp-config", "--mcp-config", "{\"mcpServers\":{}}", "--no-chrome"]
+                         "--safe-mode", "--strict-mcp-config", "--mcp-config", "{\"mcpServers\":{}}", chrome ? "--chrome" : "--no-chrome"]
             if let session {
                 arguments.removeAll { $0 == "--no-session-persistence" }
                 arguments += [session.resume ? "--resume" : "--session-id", session.id,

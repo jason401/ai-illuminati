@@ -3196,6 +3196,21 @@ func testExternalMCP() {
     expect(mcp.tools(context: context).isEmpty && mcp.call("fake__echo", [:], context: context)["isError"] as? Bool == true, "no outside servers in Enterprise chats")
     ExternalMCP.isEnterprise = enterprise
 
+    // Per AI: a server used by one AI shows and runs its tools for that AI only; no asker follows the switch alone.
+    let one = Account(id: "mcp-one-\(UUID())", provider: .claude, name: "One"), two = Account(id: "mcp-two-\(UUID())", provider: .codex, name: "Two")
+    let oneContext = ToolContext(room: UUID(), roots: [], asker: one), twoContext = ToolContext(room: UUID(), roots: [], asker: two)
+    expect(ExternalMCP.isOn("fake", account: one) && ExternalMCP.isOn("fake", account: two) && mcp.tools(context: twoContext).count == 4,
+           "by default every AI uses a server that is on")
+    mcp.setUsed("fake", by: two, false)
+    expect(mcp.tools(context: oneContext).count == 4 && mcp.tools(context: twoContext).isEmpty && mcp.tools(context: context).count == 4,
+           "a server used by one AI: only that AI sees its tools")
+    expect(text(mcp.call("fake__echo", [:], context: oneContext)).hasPrefix("echo:") && mcp.call("fake__echo", [:], context: twoContext)["isError"] as? Bool == true,
+           "and only that AI may call them")
+    let twoSession = ToolHub.shared.register(room: UUID(), roots: [], asker: two)
+    let twoListed = (ToolHub.shared.handle(["op": "tools", "session": twoSession])["tools"] as? [[String: Any]]) ?? []
+    expect(!twoListed.contains { ($0["name"] as? String ?? "").hasPrefix("fake__") }, "the hub hides them from the other AI")
+    expect(ExternalMCP.isOn("fake") && !ExternalMCP.usedBy("fake", two) && ExternalMCP.usedBy("fake", one), "the shared switch is unchanged")
+
     // The switch: off stops the server and its tools.
     mcp.setOn("fake", false); settle()
     expect(mcp.tools().isEmpty && mcp.status["fake"]?.state == .off && mcp.call("fake__echo", [:], context: context)["isError"] as? Bool == true, "switched off: no tools, calls refused")
@@ -3205,6 +3220,10 @@ func testExternalMCP() {
     // Editing (rename keeps the switch) and a command that is not there.
     try! mcp.save(MCPServerEntry(name: "renamed", command: "python3", args: [script.path]), replacing: "fake"); settle()
     expect(mcp.servers.map(\.name) == ["renamed"] && mcp.tools().allSatisfy { ($0["name"] as? String ?? "").hasPrefix("renamed__") }, "a renamed server comes back under its new name")
+    expect(!ExternalMCP.usedBy("renamed", two) && ExternalMCP.usedBy("fake", two) && mcp.tools(context: twoContext).isEmpty, "a rename keeps which AIs use it")
+    mcp.setUsed("renamed", by: two, true)
+    expect(mcp.tools(context: twoContext).count == 4 && UserDefaults.app.dictionary(forKey: "mcpOffAccounts")?["renamed"] == nil,
+           "used by every AI again: no list left")
     try! mcp.save(MCPServerEntry(name: "missing", command: "no-such-mcp-command-xyz")); settle()
     expect(mcp.status["missing"]?.state == .failed && (mcp.status["missing"]?.message ?? "").contains("no-such-mcp-command-xyz"), "a missing command shows why")
     try! mcp.remove("missing"); settle()
@@ -3241,7 +3260,7 @@ func testExternalMCP() {
     try! FileManager.default.removeItem(at: ExternalMCP.file)
     settle()
     expect(mcp.loadError == nil && mcp.servers.isEmpty, "no file: no servers")
-    print("PASS: outside MCP servers (own file, renamed tools, slow calls, Enterprise, switch, import, damaged file)")
+    print("PASS: outside MCP servers (own file, renamed tools, slow calls, Enterprise, per AI, switch, import, damaged file)")
 }
 runTest("testExternalMCP", testExternalMCP)
 

@@ -381,6 +381,9 @@ streams `LocalStream`/`PullStream`, `LocalModel.ask` and the Ollama requests):
 - `SteerChannel` (`init`, `live`, `offer`, `close`, `onRead`): the chat hands messages sent while it answers to the running
   answer and gets back what was read and what was not; strings only, so the runtime knows no chat type. Its call side
   (`attach`, `detach`, `tools`, `read`) and `SteerLink` stay internal.
+- `Answerer.chromeTools`: Claude in Chrome's allow rule. Answerer adds `--chrome` and this rule only for a Claude
+  account whose Chrome setting is "on" and only in answers with progress; Workspace's folder rules keep it when they
+  replace `--allowedTools` (they see `--chrome` in the original arguments). Checked in run_conditions (testCapabilityLaunches).
 - `Answerer.toolForTests`: the only public test hook, so `runtime_contract.swift` can run a fake CLI from outside; the
   app never sets it (run_mode2 stage 1 checks that no app file names it).
 - `DebateCancellation` (`init`, `isCancelled`, `child`, `attach`, `detach`, `cancel`, `end`): the app makes the tokens
@@ -837,7 +840,8 @@ Public names and why (found by the compiler: a script opened what an app file as
   `GoogleAuth` (`shared`, `builtInClientID`, `connected`, `needsReconnect`, `canWrite`, `publicClientID`, `connectionVersion`, the three
   sign-ins, `cancelAuthorization`, `disconnect`), `GoogleFailure`, `GoogleAuthPresenter` (DriveUI's browser session);
   `ExternalMCP` (settings, status, sign-in, rules, `tools`, `active`, `slowTools`, `call(…approve:)`, `approvalWait`, `stopAll`, `State`,
-  `Status`), `MCPServerEntry` (Settings' editor), `MCPToolRule`, `MCPSecrets` (`store`, `header`, `clientSecret`), `MCPSession.Failure`
+  `Status`; per AI: `isOn(_:account:)`, `usedBy`, `setUsed`, `tools(for:)` and `call`'s `account`, so the MCP screen's
+  "Used by" menu and ExternalMCPTools filter by the answering account, `ToolContext.asker`, on top of the shared switch), `MCPServerEntry` (Settings' editor), `MCPToolRule`, `MCPSecrets` (`store`, `header`, `clientSecret`), `MCPSession.Failure`
   (Settings shows its message; `MCPSession` itself is public only to hold it); `FaceLink` (`shared`, `socketPath`, `isOn`, `active`,
   `configured`/`connected`/`on`, `codexOff`, `moods`, `rule`, `extract`, `show`, `start`, `refresh`, `tools`, `call`).
 - The injection points (for the contract test, and they say what may be replaced): `GoogleHTTP` (`Reply`, `transport`, `live`),

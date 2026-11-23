@@ -164,7 +164,6 @@ struct InboxPanel: View {
     // What the request does (the detail its card and the approval window show), then Deny / Allow: allowed only where it is read.
     private func approvalBox(_ request: ProjectApproval) -> some View {
         let open = details.open.contains(request.id)
-        let lines = request.detail.split(whereSeparator: \.isNewline).count
         return VStack(alignment: .leading, spacing: 6) {
             if !request.detail.isEmpty {
                 Text(request.detail).font(.system(size: 10, design: .monospaced)).foregroundColor(.secondary).textSelection(.enabled)
@@ -172,7 +171,8 @@ struct InboxPanel: View {
                     .padding(6).background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
             }
             HStack(spacing: 8) {
-                if lines > 4 || request.detail.count > 240 {
+                // Whenever there is a detail: in 280 pt even one line can wrap past four, and Allow comes after reading it whole.
+                if !request.detail.isEmpty {
                     Button(open ? L("접기", "Less") : L("자세히", "Details")) {
                         if open { details.open.remove(request.id) } else { details.open.insert(request.id) }
                     }

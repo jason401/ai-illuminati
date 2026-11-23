@@ -101,6 +101,7 @@ final class TodoDraft: ObservableObject {
                 showDone ? done.count - selected.count : 0)
     }
     @Published var replies: [UUID: String] = [:]   // a card's answer or change request, by TODO
+    @Published var resultsOpen: Set<UUID> = []   // results read whole in the inbox (cut to three lines there first)
     // A chat card folded to one line, with what it showed then: a new state, question or result opens it again.
     struct Fold: Equatable { var state: TodoItem.State; var question: UUID?; var result: String? }
     static func fold(_ item: TodoItem) -> Fold { Fold(state: item.state, question: item.question?.id, result: item.result) }
@@ -994,7 +995,17 @@ struct TodoCard: View {
     // The result, assumptions and errors; in the chat card they scroll inside a capped height so the chat stays visible.
     @ViewBuilder private var reviewBody: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if let result = item.result { Text(result).font(.system(size: 12)).textSelection(.enabled).lineLimit(compact ? 3 : nil) }
+            if let result = item.result {
+                let whole = draft.resultsOpen.contains(item.id)
+                Text(result).font(.system(size: 12)).textSelection(.enabled).lineLimit(compact && !whole ? 3 : nil)
+                // The inbox checks a result in place, so a long one opens there in full (the board's row links its chat).
+                if panel {
+                    Button(whole ? L("접기", "Less") : L("결과 전체 보기", "Show the whole result")) {
+                        if whole { draft.resultsOpen.remove(item.id) } else { draft.resultsOpen.insert(item.id) }
+                    }
+                    .buttonStyle(.plainHit).font(.system(size: 11)).foregroundColor(.accentColor).frame(minHeight: 22)
+                }
+            }
             if !item.assumptions.isEmpty {
                 Text(L("가정: ", "Assumed: ") + item.assumptions.joined(separator: " · ")).font(.system(size: 11)).foregroundColor(.secondary)
                     .textSelection(.enabled)

@@ -814,6 +814,7 @@ extension Discussion {
         var handedOver = false
         var unfinished: (by: String, text: String)?
         var errorHandoffs = 0, lastError: String?   // failures other than a usage limit that were handed over, and the last one
+        var failed: (by: String, error: String)?      // the last of them, for the next account to judge (errorTriage)
         var last = config.lastSoloAccountID
         var manual = config.soloAccountID
         answering: while !cancellation.isCancelled {
@@ -859,9 +860,9 @@ extension Discussion {
                     \(unfinished.text)
                     [End of unfinished reply]
                     Write the complete reply to the latest user message, keeping what is right in the unfinished one.
-                    Do not mention the interruption.
-                    """
+                    """ + (failed == nil ? "\nDo not mention the interruption." : "")
             }
+            if let failed { instruction += "\n" + Self.errorTriage(by: failed.by, error: failed.error, todo: false) }
             if keepState { instruction += "\n" + Self.stateRule(current: Self.loadState(id)) }
             let prompt = context + "\n[SOLO TURN]\n" + instruction
             // The reply appears as it is written; what the AI is doing shows next to the spinner.
@@ -911,10 +912,13 @@ extension Discussion {
                     if sessions { c.turns[index].sessionTranscript = "[User]\n" + question }
                 }
                 return endSolo(id, index)
-            case .failure(let failure) where Self.isOutOfUsage(failure) || (errorHandoffs < Self.errorHandoffs && Self.handsOver(failure)):
-                // A usage limit, or any other failure (at most errorHandoffs times): another account continues the reply.
+            case .failure(let failure) where Self.isOutOfUsage(failure) || errorHandoffs < Self.errorHandoffs:
+                // A usage limit: another account continues the reply. Any other failure (at most errorHandoffs times): it first
+                // decides from the error whether to continue or to stop and say why (errorTriage).
                 let limit = Self.isOutOfUsage(failure)
-                if limit { lastError = nil } else { errorHandoffs += 1; lastError = label(account) + ": " + Self.describe(failure) }
+                if limit { lastError = nil; failed = nil } else {
+                    errorHandoffs += 1; lastError = label(account) + ": " + Self.describe(failure); failed = (speaker, Self.describe(failure))
+                }
                 partialLock.lock(); let cut = Self.extractState(ChatApp.face.extract(partialText).text).reply; partialLock.unlock()
                 if !cut.isEmpty { unfinished = (speaker, cut) }
                 changeTurn(id, index) { $0.partial = nil; $0.partialBy = nil; $0.activity = nil }

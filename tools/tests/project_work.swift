@@ -256,15 +256,16 @@ func testProjectHandoff() {
     // Claude's own wording for its limits is a usage limit too; a refused permission is not handed over.
     expect(["You've hit your session limit · resets 1:40am (America/Los_Angeles)", "5-hour limit reached ∙ resets 3pm", "You've hit your weekly limit"]
             .allSatisfy { Discussion.isOutOfUsage(.failed($0)) } && !Discussion.isOutOfUsage(.failed("socket closed")), "Claude's session and weekly limits count as usage limits")
-    expect(Discussion.handsOver(.timedOut) && Discussion.handsOver(.failed("socket closed")) && !Discussion.handsOver(.failed("tool auto-denied")),
-           "other failures are handed over, a permission the run cannot ask for is not")
+    let triage = Discussion.errorTriage(by: "Fixture Claude", error: "tool auto-denied", todo: true)
+    expect(triage.contains("tool auto-denied") && triage.contains("Before you continue") && triage.contains("task_ask")
+           && !Discussion.errorTriage(by: "x", error: "y", todo: false).contains("task_ask"), "the next AI judges the error first; in a TODO it stops with task_ask")
     // Any other failure (a crash, the network) hands the work over as well, with what the AI wrote before it stopped.
     accounts = []
     chat.workspaceAnswer = { account, prompt, _, _, progress in
         accounts.append(account.id)
         if account.id == "project-claude" { progress?(.text("Fallback works. Now the story drawing in PlaceView.")); return .failure(.failed("socket closed")) }
-        expect(prompt.contains("Stopped by an error: ") && prompt.contains("socket closed") && prompt.contains("Now the story drawing in PlaceView."),
-               "the next AI gets the error and what the last one wrote")
+        expect(prompt.contains("Stopped by an error: ") && prompt.contains("socket closed") && prompt.contains("Before you continue")
+               && prompt.contains("Now the story drawing in PlaceView."), "the next AI gets the error to judge and what the last one wrote")
         return .success("Continued after the error.")
     }
     chat.draft = "Keep going."; chat.send()

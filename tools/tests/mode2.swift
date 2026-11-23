@@ -2270,7 +2270,8 @@ do {
     chat.draft = "BREAK please"
     chat.send(); waitFor(chat)
     let broke = chat.current.turns[0]
-    expect(prompts.map(\.0) == ["st-claude", "st-codex"] && prompts[1].1.contains("Half of it") && broke.final == "Whole answer" && broke.error == nil
+    expect(prompts.map(\.0) == ["st-claude", "st-codex"] && prompts[1].1.contains("Half of it") && prompts[1].1.contains("socket closed")
+           && prompts[1].1.contains("Before you continue") && broke.final == "Whole answer" && broke.error == nil
            && broke.orderNote?.contains(L("오류", "failed")) == true, "a failed reply is continued by the next account: \(prompts.map(\.0)) \(broke.error ?? "-")")
     chat.configure { $0.soloAccountID = nil }
     print("PASS: plain chat streaming (Claude text deltas, Codex steps), chat state summary, short handoff with recent turns and history file, unfinished reply continued")

@@ -77,9 +77,21 @@ extension Discussion {
     }
 
     // A reply that failed because the account's usage limit is used up: asking again would only fail again.
+    // Claude says "You've hit your session limit · resets 1:40am" (also weekly, 5-hour), Codex "usage limit".
     static func isOutOfUsage(_ failure: Answerer.Failure) -> Bool {
         let text = describe(failure).lowercased()
-        return ["429", "resource_exhausted", "quota", "usage limit", "rate limit", "limit reached"].contains { text.contains($0) }
+        return ["429", "resource_exhausted", "quota", "usage limit", "usage_limit", "rate limit", "rate_limit", "limit reached",
+                "session limit", "weekly limit", "hour limit", "hit your limit"].contains { text.contains($0) }
+    }
+
+    // Any other failure (the CLI crashed or timed out, the service or network failed) hands the answer to another AI too,
+    // at most errorHandoffs times per answer, so one bad message does not run through every account. Not a permission
+    // the run could not ask for: the next AI would stop at the same place.
+    static let errorHandoffs = 2
+    static func handsOver(_ failure: Answerer.Failure) -> Bool {
+        guard case .failed(let why) = failure else { return true }
+        let lower = why.lowercased()
+        return !(lower.contains("auto-denied") || lower.contains("headless mode cannot prompt"))
     }
 
     // Stops the open chat's answer (the other chats keep working).

@@ -2257,6 +2257,22 @@ do {
     expect(prompts.map(\.0) == ["st-claude", "st-codex"], "the next account continues after the limit")
     expect(prompts[1].1.contains("[Unfinished reply by") && prompts[1].1.contains("Half of the summary about lenses"), "the unfinished reply is handed over")
     expect(cut.final?.hasPrefix("Answer") == true && cut.finalBy == chat.label(m.accounts[1]) && cut.partial == nil && cut.activity == nil, "the continued answer is shown, the partial one cleared")
+
+    // Any other failure (a crash, the network) is continued by another account the same way.
+    prompts.removeAll()
+    chat.workspaceAnswer = { account, prompt, _, _, progress in
+        lock.lock(); prompts.append((account.id, prompt)); lock.unlock()
+        if account.id == "st-claude" { progress?(.text("Half of it")); return .failure(.failed("socket closed")) }
+        return .success("Whole answer")
+    }
+    chat.newConversation()
+    chat.configure { $0.soloAccountID = "st-claude" }
+    chat.draft = "BREAK please"
+    chat.send(); waitFor(chat)
+    let broke = chat.current.turns[0]
+    expect(prompts.map(\.0) == ["st-claude", "st-codex"] && prompts[1].1.contains("Half of it") && broke.final == "Whole answer" && broke.error == nil
+           && broke.orderNote?.contains(L("오류", "failed")) == true, "a failed reply is continued by the next account: \(prompts.map(\.0)) \(broke.error ?? "-")")
+    chat.configure { $0.soloAccountID = nil }
     print("PASS: plain chat streaming (Claude text deltas, Codex steps), chat state summary, short handoff with recent turns and history file, unfinished reply continued")
 }
 

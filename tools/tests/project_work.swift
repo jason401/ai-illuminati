@@ -253,6 +253,34 @@ func testProjectHandoff() {
            && chat.current.turns.last?.lastActivityAt != nil, "the plan and the last activity stay on the turn being answered")
     expect((try! ProjectProcess.git(["log", "--oneline"], root: root.path)).split(separator: "\n").count == 1, "handoff never fabricates a checkpoint commit")
 
+    // Claude's own wording for its limits is a usage limit too; a refused permission is not handed over.
+    expect(["You've hit your session limit · resets 1:40am (America/Los_Angeles)", "5-hour limit reached ∙ resets 3pm", "You've hit your weekly limit"]
+            .allSatisfy { Discussion.isOutOfUsage(.failed($0)) } && !Discussion.isOutOfUsage(.failed("socket closed")), "Claude's session and weekly limits count as usage limits")
+    expect(Discussion.handsOver(.timedOut) && Discussion.handsOver(.failed("socket closed")) && !Discussion.handsOver(.failed("tool auto-denied")),
+           "other failures are handed over, a permission the run cannot ask for is not")
+    // Any other failure (a crash, the network) hands the work over as well, with what the AI wrote before it stopped.
+    accounts = []
+    chat.workspaceAnswer = { account, prompt, _, _, progress in
+        accounts.append(account.id)
+        if account.id == "project-claude" { progress?(.text("Fallback works. Now the story drawing in PlaceView.")); return .failure(.failed("socket closed")) }
+        expect(prompt.contains("Stopped by an error: ") && prompt.contains("socket closed") && prompt.contains("Now the story drawing in PlaceView."),
+               "the next AI gets the error and what the last one wrote")
+        return .success("Continued after the error.")
+    }
+    chat.draft = "Keep going."; chat.send()
+    let errorDeadline = Date().addingTimeInterval(30)
+    while Date() < errorDeadline && (chat.anyRunning || chat.current.turns.last?.final == nil && chat.current.turns.last?.error == nil) { RunLoop.main.run(until: Date().addingTimeInterval(0.03)) }
+    expect(accounts == ["project-claude", "project-codex"] && chat.current.turns.last?.final == "Continued after the error." && chat.current.turns.last?.error == nil,
+           "a failed project answer is continued by another AI: \(accounts) \(chat.current.turns.last?.error ?? "-")")
+    // Nobody else: the turn ends with that error, as before.
+    accounts = []
+    chat.workspaceAnswer = { account, _, _, _, _ in accounts.append(account.id); return .failure(.failed("socket closed")) }
+    chat.draft = "Again."; chat.send()
+    let bothDeadline = Date().addingTimeInterval(30)
+    while Date() < bothDeadline && (chat.anyRunning || chat.current.turns.last?.final == nil && chat.current.turns.last?.error == nil) { RunLoop.main.run(until: Date().addingTimeInterval(0.03)) }
+    expect(accounts == ["project-claude", "project-codex"] && chat.current.turns.last?.error?.contains("socket closed") == true,
+           "each AI fails once, then the error stays: \(accounts) \(chat.current.turns.last?.error ?? "-")")
+
     // Not picked by hand: the same 10% rule as a plain chat. The last account (Codex) has 5% of its 5-hour limit
     // left, so Claude starts; with enough left it keeps going.
     func left(_ five: Double) -> AIUsage { var u = AIUsage(name: "u"); u.fiveHour = UsageWindow(usedPercent: 100 - five, resetsAt: nil); u.weekly = UsageWindow(usedPercent: 20, resetsAt: nil); return u }

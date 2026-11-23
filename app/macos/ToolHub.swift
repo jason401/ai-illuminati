@@ -57,7 +57,13 @@ private final class ScreenTools: ToolProvider {
     static func approve(_ card: MacControl.Approval) -> Bool {
         var request = ProjectApproval(room: card.room ?? UUID(), run: UUID(), title: card.title, detail: card.detail)
         request.allowLabel = L("이번 답에서 허용", "Allow for this answer")
-        return ProjectCenter.shared.approve(request, token: DebateCancellation(), deadline: Date().addingTimeInterval(MacControl.approvalWait))
+        // The card leaves the chat and the inbox as soon as its answer stops (Esc, Stop, the answer's end).
+        let token = DebateCancellation(), done = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            while done.wait(timeout: .now() + 0.2) == .timedOut { if card.ended() { token.cancel(); return } }
+        }
+        defer { done.signal() }
+        return ProjectCenter.shared.approve(request, token: token, deadline: Date().addingTimeInterval(MacControl.approvalWait))
     }
 }
 

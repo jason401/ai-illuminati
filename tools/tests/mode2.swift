@@ -3017,6 +3017,7 @@ runTest("testWindowDrag", testWindowDrag)
 
 runTest("testRunConditions", testRunConditions)
 runTest("testMacHands", testMacHands)
+runTest("testMacHandsReview", testMacHandsReview)
 runTest("testRuntimeThroughApp", testRuntimeThroughApp)
 runTest("testTokenStats", testTokenStats)
 runTest("testPhoneAccess", testPhoneAccess)

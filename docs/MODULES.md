@@ -801,7 +801,7 @@ ToolHub give those calls a longer wait (a card and the user's own input) and mar
 `perform(_:_:scope:)` takes the answer's grant so the newest screenshot's mapping, the apps allowed on a card, the
 one-answer lock and Esc belong to that answer. `Session` (`init`) and `begin`/`end` are made by RunConditionsApp with the
 chat's `ChatApp.ScreenAnswer` (its room for the cards, the speaker's name, `stop` = the room's run token as the Stop
-button does, `note` = a line in `ChatTurn.macLog`) and ended with the grant. `Approval`, `approve` and `approvalWait`:
+button does, `note` = a line in `ChatTurn.macLog`) and ended with the grant. `Approval` (with `ended`, so the card leaves as soon as its answer stops), `approve` and `approvalWait`:
 the card is the chat's `ProjectCenter.approve` (AIProjects, which this module cannot import), set by ToolHub; tests
 replace it. `ProjectApproval.allowLabel` makes that card say "Allow for this answer". The rules themselves (always refused:
 AI Illuminati's own windows, password fields; always asked: settings, keychain, terminals, IDEs), the coordinate

@@ -188,7 +188,7 @@ public enum MacControl {
 // is asked about once per answer (rule "ask", or always for settings, keychain, terminals and IDEs).
 extension MacControl {
     /// One answer's use of the Mac, from the app's per-answer screen grant until the answer ends (`begin`/`end`).
-    public final class Session {
+    public final class Session: @unchecked Sendable {
         let account: Account
         let room: UUID?
         let speaker: String
@@ -198,7 +198,13 @@ extension MacControl {
         var mapping: Mapping?               // the newest mac_screenshot of this answer
         var allowedApps: Set<String> = []   // bundle IDs allowed on a card in this answer
         var refusedApps: Set<String> = []   // refused or unanswered: not asked again in this answer
-        var stopped = false
+        // Read from any thread too: a card waiting off the main thread ends when the answer stops.
+        private let flag = NSLock()
+        private var ended = false
+        var stopped: Bool {
+            get { flag.withLock { ended } }
+            set { flag.withLock { ended = newValue } }
+        }
         /// `stop` ends the answer (Esc, the band's Stop); `note` adds a line to the answer's action log.
         public init(account: Account, room: UUID?, speaker: String, stop: @escaping () -> Void = {}, note: @escaping (String) -> Void = { _ in }) {
             self.account = account; self.room = room; self.speaker = speaker; self.stop = stop; self.note = note
@@ -211,6 +217,8 @@ extension MacControl {
         public let room: UUID?
         public let title: String
         public let detail: String
+        /// true once the answer stopped (Esc, Stop, its end): the card goes at once instead of waiting out its time.
+        public var ended: @Sendable () -> Bool = { false }
     }
     public static var approve: (Approval) -> Bool = { _ in false }
     public static var approvalWait: TimeInterval = 60
@@ -398,8 +406,9 @@ extension MacControl {
             case .ask:
                 guard !asked else { throw HandError(message: L("허락을 받지 못했어요.", "Not allowed.")) }
                 asked = true
-                let card = Approval(room: session.room, title: verb(target.name),
+                var card = Approval(room: session.room, title: verb(target.name),
                                     detail: action + "\n" + L("앱: ", "App: ") + target.name + " (" + target.bundle + ")\n" + detail)
+                card.ended = { [session] in session.stopped }
                 let before = target
                 let yes = await withCheckedContinuation { done in
                     DispatchQueue.global(qos: .userInitiated).async { done.resume(returning: approve(card)) }
@@ -442,22 +451,22 @@ extension MacControl {
         case "mac_drag":
             let from = try point(arguments, "x", "y", session), to = try point(arguments, "to_x", "to_y", session)
             let action = L("끌기", "Drag") + " (\(Int(from.x)), \(Int(from.y))) → (\(Int(to.x)), \(Int(to.y)))"
-            let target = try await permit(session, capability: .input, action: action,
-                                          verb: { L(subject(say) + " \($0)에서 끌어 옮기려고 해요", "\(say) wants to drag in \($0)") },
-                                          detail: "", typing: false, resolve: {
-                // Both ends count: dropping onto AI Illuminati is refused too.
-                let start = self.target(app(at: from)), end = self.target(app(at: to))
-                return end.own ? end : start
-            })
+            // Both ends count: the app it starts in and the app it drops onto are each checked (and asked) on their own.
+            let verb: (String) -> String = { L(subject(say) + " \($0)에서 끌어 옮기려고 해요", "\(say) wants to drag in \($0)") }
+            let target = try await permit(session, capability: .input, action: action, verb: verb, detail: "", typing: false,
+                                          resolve: { self.target(app(at: from)) })
+            let drop = try await permit(session, capability: .input, action: action, verb: verb, detail: L("놓는 곳", "Drop target"), typing: false,
+                                        resolve: { self.target(app(at: to)) })
+            let apps = target.bundle == drop.bundle ? target.name : target.name + " → " + drop.name
             try Hands.shared.check(session)
             try await Hands.drag(from, to, session)
-            session.note(action + " · " + target.name)
-            return done(action + " · " + target.name)
+            session.note(action + " · " + apps)
+            return done(action + " · " + apps)
         case "mac_scroll":
             let at = try point(arguments, "x", "y", session)
             let direction = arguments["direction"] as? String ?? ""
             guard ["up", "down", "left", "right"].contains(direction) else { throw HandError(message: L("방향은 up, down, left, right 중 하나예요.", "Direction must be up, down, left or right.")) }
-            let amount = max(1, min(50, Int(number(arguments, "amount") ?? 3)))
+            let amount = Int(max(1, min(50, (number(arguments, "amount") ?? 3).rounded())))   // clamped before Int: a huge number must not crash
             let action = L("스크롤", "Scroll") + " \(direction) \(amount) (\(Int(at.x)), \(Int(at.y)))"
             let target = try await permit(session, capability: .input, action: action,
                                           verb: { L(subject(say) + " \($0)에서 스크롤하려고 해요", "\(say) wants to scroll in \($0)") },
@@ -469,8 +478,8 @@ extension MacControl {
         case "mac_type":
             guard let text = arguments["text"] as? String, !text.isEmpty else { throw HandError(message: L("입력할 글자가 없어요.", "There is no text to type.")) }
             guard text.count <= 1000 else { throw HandError(message: L("한 번에 1000자까지 입력할 수 있어요.", "Up to 1000 characters at a time.")) }
-            let shown = text.count > 40 ? String(text.prefix(40)) + "…" : text
-            let action = L("입력", "Type") + " \"" + shown.replacingOccurrences(of: "\n", with: "⏎") + "\" (" + L("\(text.count)자", "\(text.count) characters") + ")"
+            // Only the length: what is typed may be secret, so neither the card nor the log keeps it.
+            let action = L("글자 입력 \(text.count)자", "Type \(text.count) characters")
             let target = try await permit(session, capability: .input, action: action,
                                           verb: { L(subject(say) + " \($0)에 글자를 입력하려고 해요", "\(say) wants to type in \($0)") },
                                           detail: "", typing: true, resolve: { self.target(NSWorkspace.shared.frontmostApplication) })
@@ -691,7 +700,13 @@ extension MacControl {
     static func drag(_ from: CGPoint, _ to: CGPoint, _ session: MacControl.Session) async throws {
         post(CGEvent(mouseEventSource: source, mouseType: .mouseMoved, mouseCursorPosition: from, mouseButton: .left))
         post(CGEvent(mouseEventSource: source, mouseType: .leftMouseDown, mouseCursorPosition: from, mouseButton: .left))
-        defer { post(CGEvent(mouseEventSource: source, mouseType: .leftMouseUp, mouseCursorPosition: to, mouseButton: .left)) }
+        // Stopped halfway: back to where it started and let go there, so nothing is dropped on the way.
+        var finished = false
+        defer {
+            let end = finished ? to : from
+            if !finished { post(CGEvent(mouseEventSource: source, mouseType: .leftMouseDragged, mouseCursorPosition: from, mouseButton: .left)) }
+            post(CGEvent(mouseEventSource: source, mouseType: .leftMouseUp, mouseCursorPosition: end, mouseButton: .left))
+        }
         for step in 1...12 {
             try await Task.sleep(nanoseconds: 25_000_000)
             try shared.check(session)
@@ -699,6 +714,7 @@ extension MacControl {
             let point = CGPoint(x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t)
             post(CGEvent(mouseEventSource: source, mouseType: .leftMouseDragged, mouseCursorPosition: point, mouseButton: .left))
         }
+        finished = true
     }
 
     static func scroll(_ point: CGPoint, direction: String, amount: Int) {

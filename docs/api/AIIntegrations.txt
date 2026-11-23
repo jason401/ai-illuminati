@@ -175,6 +175,7 @@ MCPToolRule.init(rawValue:) | init?(rawValue: String)
 MacControl | enum MacControl
 MacControl.Approval | struct Approval
 MacControl.Approval.detail | let detail: String
+MacControl.Approval.ended | var ended: @Sendable () -> Bool
 MacControl.Approval.room | let room: UUID?
 MacControl.Approval.title | let title: String
 MacControl.Session | final class Session

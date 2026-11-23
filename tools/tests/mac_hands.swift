@@ -135,3 +135,32 @@ func testMacHands() {
     ProjectCenter.shared.cancel(room: room)
     print("PASS: Mac hands (rules, coordinates, lock, keys, tools per setting, the ask card)")
 }
+
+// Review fixes: a card ends with its answer, typed text is never on the card or in the log.
+func testMacHandsReview() {
+    _ = ToolHub.shared
+    ProjectCenter.shared.resume()
+    let wait = MacControl.approvalWait
+    defer { MacControl.approvalWait = wait }
+    MacControl.approvalWait = 30
+    let room = UUID()
+    let account = Account(id: "mac-review-\(UUID())", provider: .claude, name: "Claude (개인)")
+    let session = MacControl.Session(account: account, room: room, speaker: "Claude (개인)")
+    var card = MacControl.Approval(room: room, title: "Claude (개인)이 Finder에서 클릭하려고 해요", detail: "Click (1, 1)")
+    card.ended = { [session] in session.stopped }
+    var answer: Bool?
+    let done = DispatchSemaphore(value: 0)
+    DispatchQueue.global().async { answer = MacControl.approve(card); done.signal() }
+    var until = Date().addingTimeInterval(5)
+    while !ProjectCenter.shared.requests.contains(where: { $0.room == room }) && Date() < until { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
+    expect(ProjectCenter.shared.requests.contains { $0.room == room }, "the card is shown")
+    let stopped = Date()
+    session.stopped = true
+    until = Date().addingTimeInterval(5)
+    while done.wait(timeout: .now()) == .timedOut && Date() < until { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
+    RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+    expect(answer == false && Date().timeIntervalSince(stopped) < 3, "a stopped answer's card is refused at once")
+    expect(!ProjectCenter.shared.requests.contains { $0.room == room } && !ProjectCenter.shared.expired.contains { $0.room == room },
+           "the stopped answer's card leaves the chat and the inbox (not kept as timed out)")
+    print("PASS: Mac hands review (a card ends with its answer)")
+}

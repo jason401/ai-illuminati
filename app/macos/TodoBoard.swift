@@ -940,6 +940,9 @@ struct TodoCard: View {
     }
     @ObservedObject var discussion: Discussion
     var compact = false
+    // In the inbox panel (280 pt): the answer box over its buttons, Stop and Done in ⋯, no steps line (the row shows the time),
+    // and Done on a result (the board's row has its own). The same calls and the same draft as the chat card and the board.
+    var panel = false
     @ObservedObject private var draft = TodoDraft.shared
     @StateObject private var stand = StandInBox()   // TodoScheduler.standingIn: the due time has passed, another AI answers now
     @StateObject private var reviewHeight = HeightBox()   // the review text's own height: the scroll box is no taller
@@ -1027,7 +1030,7 @@ struct TodoCard: View {
                 } else if item.isParked {
                     Text(L("⏸ 보류됨 · 답하면 다시 진행", "⏸ Parked · answer to go on")).font(.system(size: 11, weight: .medium)).foregroundColor(.orange)
                     if let reason = item.parked?.reason { Text(reason).font(.system(size: 11)).foregroundColor(.secondary) }
-                } else if let steps = Self.steps(item, TodoStore.shared.snapshot) {
+                } else if !panel, let steps = Self.steps(item, TodoStore.shared.snapshot) {
                     if let note = item.notes.last, note.kind == .system, note.by != nil, TodoStore.shared.snapshot.standInDue(item) == nil {
                         Text(note.text).font(.system(size: 11)).foregroundColor(.secondary)
                     }
@@ -1053,28 +1056,14 @@ struct TodoCard: View {
                     }
                 }
             }
-            HStack(spacing: 8) {
-                TextField(item.state == .review ? L("수정할 점 (수정 요청)", "What to change") : L("답이나 바뀐 방향", "Your answer or new direction"), text: Binding(get: { text }, set: { text = $0 }), axis: .vertical)
-                    .textFieldStyle(.roundedBorder).lineLimit(1...4)
-                if item.state == .review {
-                    Button(L("수정 요청", "Request changes")) { TodoStore.shared.requestChanges(item.id, text); text = ""; TodoScheduler.shared?.wake() }
-                        .disabled(text.trimmingCharacters(in: .whitespaces).isEmpty)
-                    if !compact { Button(L("완료", "Done")) { TodoStore.shared.accept(item.id) }.buttonStyle(.borderedProminent) }
-                } else {
-                    Button(L("그만", "Stop")) { TodoScheduler.shared?.cancel(item.id) }
-                    Button(L("완료", "Done")) { discussion.markTodoDone(item.id) }
-                        .help(L("답 없이 이 TODO를 끝난 것으로 표시해요", "Mark this TODO done without answering"))
-                    if question?.delegable == true {
-                        Button(L("알아서 해", "Your call")) { text = ""; TodoScheduler.shared?.delegate(item.id) }
-                            .help(L("AI에게 판단을 맡겨요. 추천안이 있으면 그걸로, 없으면 AI가 정해서 진행하고, push·배포·삭제 같은 단계는 하지 않고 확인을 받아요.",
-                                    "Hand the decision to the AI: it takes the recommended answer or decides itself, and leaves pushing, publishing or deleting for your check."))
+            Group {
+                if panel {
+                    VStack(alignment: .trailing, spacing: 6) {
+                        field
+                        HStack(spacing: 8) { buttons }
                     }
-                    // Failed after its retries: with nothing typed it simply tries again.
-                    Button(question?.kind == .failed && text.trimmingCharacters(in: .whitespaces).isEmpty ? L("다시 시도", "Try again") : L("답하고 계속", "Answer and go on")) { TodoStore.shared.answer(item.id, text.trimmingCharacters(in: .whitespacesAndNewlines)); text = ""; TodoScheduler.shared?.wake() }
-                        .buttonStyle(.borderedProminent)
-                }
-                if !compact, let room = item.room, room != discussion.currentID, discussion.conversations.contains(where: { $0.id == room }) {
-                    Button(L("방 열기", "Open chat")) { discussion.open(room) }
+                } else {
+                    HStack(spacing: 8) { field; buttons }
                 }
             }
             .font(.system(size: 12)).controlSize(.small)
@@ -1087,6 +1076,41 @@ struct TodoCard: View {
         .onReceive(TodoScheduler.shared?.$standingIn.eraseToAnyPublisher() ?? Just([]).eraseToAnyPublisher()) { standing in
             let on = standing.contains(item.id)
             if stand.on != on { stand.on = on }
+        }
+    }
+    private var field: some View {
+        TextField(item.state == .review ? L("수정할 점 (수정 요청)", "What to change") : L("답이나 바뀐 방향", "Your answer or new direction"), text: Binding(get: { text }, set: { text = $0 }), axis: .vertical)
+            .textFieldStyle(.roundedBorder).lineLimit(1...4)
+    }
+    @ViewBuilder private var buttons: some View {
+        if item.state == .review {
+            Button(L("수정 요청", "Request changes")) { TodoStore.shared.requestChanges(item.id, text); text = ""; TodoScheduler.shared?.wake() }
+                .disabled(text.trimmingCharacters(in: .whitespaces).isEmpty)
+            if !compact || panel { Button(L("완료", "Done")) { TodoStore.shared.accept(item.id) }.buttonStyle(.borderedProminent) }
+        } else {
+            if panel {
+                Menu {
+                    Button(L("그만 (취소)", "Stop (cancel)")) { TodoScheduler.shared?.cancel(item.id) }
+                    Button(L("답 없이 완료로 표시", "Mark done without answering")) { discussion.markTodoDone(item.id) }
+                } label: { Image(systemName: "ellipsis") }
+                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                    .help(L("그만 · 완료로 표시", "Stop · Mark as done"))
+            } else {
+                Button(L("그만", "Stop")) { TodoScheduler.shared?.cancel(item.id) }
+                Button(L("완료", "Done")) { discussion.markTodoDone(item.id) }
+                    .help(L("답 없이 이 TODO를 끝난 것으로 표시해요", "Mark this TODO done without answering"))
+            }
+            if question?.delegable == true {
+                Button(L("알아서 해", "Your call")) { text = ""; TodoScheduler.shared?.delegate(item.id) }
+                    .help(L("AI에게 판단을 맡겨요. 추천안이 있으면 그걸로, 없으면 AI가 정해서 진행하고, push·배포·삭제 같은 단계는 하지 않고 확인을 받아요.",
+                            "Hand the decision to the AI: it takes the recommended answer or decides itself, and leaves pushing, publishing or deleting for your check."))
+            }
+            // Failed after its retries: with nothing typed it simply tries again.
+            Button(question?.kind == .failed && text.trimmingCharacters(in: .whitespaces).isEmpty ? L("다시 시도", "Try again") : L("답하고 계속", "Answer and go on")) { TodoStore.shared.answer(item.id, text.trimmingCharacters(in: .whitespacesAndNewlines)); text = ""; TodoScheduler.shared?.wake() }
+                .buttonStyle(.borderedProminent)
+        }
+        if !compact, let room = item.room, room != discussion.currentID, discussion.conversations.contains(where: { $0.id == room }) {
+            Button(L("방 열기", "Open chat")) { discussion.open(room) }
         }
     }
 }

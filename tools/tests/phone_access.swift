@@ -88,8 +88,26 @@ func testPhoneServer() {
     ProjectCenter.shared.requests.append(request)
     let card = (call("GET", "/api/chat/\(room.uuidString)").1["approvals"] as? [[String: Any]])?.first
     expect(card?["id"] as? String == request.id.uuidString && card?["detail"] as? String == "origin main", "phone server: the approval card with its details")
+    // The inbox atop the list (the Mac panel's 🔴/🟡): the chat's approval with its detail and chat, an outside tool counting down
+    // with no buttons and no chat, a timed-out one; Allow/Deny there is the same POST /api/approval.
+    let outside = ProjectApproval(room: UUID(), run: UUID(), title: "fake__echo", detail: "{}", deadline: Date().addingTimeInterval(42), alwaysAllow: {})
+    let late = ProjectApproval(room: room, run: UUID(), title: "git_push", detail: "origin main")
+    ProjectCenter.shared.requests.append(outside)
+    ProjectCenter.shared.expired.append(late)
+    let inbox = call("GET", "/api/chats").1["inbox"] as? [[String: Any]] ?? []
+    let mine = inbox.first { $0["id"] as? String == request.id.uuidString }, tool = inbox.first { $0["id"] as? String == outside.id.uuidString }
+    let ran = inbox.first { $0["id"] as? String == late.id.uuidString }
+    expect(mine?["level"] as? String == "red" && mine?["approval"] as? String == request.id.uuidString && mine?["detail"] as? String == "origin main"
+           && mine?["room"] as? String == room.uuidString, "phone server: the inbox has the chat's approval with its detail and chat \(inbox)")
+    expect(tool?["kind"] as? String == "outside" && tool?["approval"] == nil && tool?["room"] == nil && (tool?["time"] as? String)?.contains("4") == true,
+           "phone server: an outside tool only counts down in seconds")
+    expect(ran?["kind"] as? String == "expired" && ran?["approval"] == nil && ran?["room"] as? String == room.uuidString, "phone server: a timed-out approval opens its chat")
+    ProjectCenter.shared.requests.removeAll { $0.id == outside.id }
+    ProjectCenter.shared.expired.removeAll { $0.id == late.id }
     expect(call("POST", "/api/approval/\(request.id.uuidString)", ["allow": false]).0 == 200
            && !ProjectCenter.shared.requests.contains { $0.id == request.id }, "phone server: denied from the phone, gone everywhere")
+    expect(!(call("GET", "/api/chats").1["inbox"] as? [[String: Any]] ?? []).contains { $0["id"] as? String == request.id.uuidString },
+           "phone server: a decided approval leaves the inbox")
     expect(call("POST", "/api/approval/\(request.id.uuidString)", ["allow": true]).0 == 409, "phone server: decided once only")
     expect(call("POST", "/api/chat/\(UUID().uuidString)/send", ["text": "x"]).0 == 409, "phone server: an unknown chat is refused")
     expect(call("POST", "/api/chat/\(room.uuidString)/send", ["text": "  "]).0 == 409, "phone server: nothing to send is refused")

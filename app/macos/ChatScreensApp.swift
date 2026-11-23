@@ -12,6 +12,7 @@ enum ChatScreensApp {
         screens.boardRow = { AnyView(TodoBoardRow(discussion: $0)) }
         screens.board = { AnyView(TodoBoardView(discussion: $0)) }
         screens.cards = { AnyView(TodoCardsView(room: $0, discussion: $1)) }
+        screens.inboxCard = { AnyView(TodoCard(item: $0, discussion: $1, compact: true, panel: true)) }
         screens.projectInfo = { AnyView(ProjectInfoView(discussion: $0, project: $1)) }
         screens.renameProject = { ProjectInfoView.rename($0, current: $1) }
         screens.icon = { illuminatiIcon(colored: $0) }

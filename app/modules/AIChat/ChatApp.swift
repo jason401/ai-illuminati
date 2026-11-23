@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import AIAccounts
 import AIChatRecords
+import AIProjects
 import AIRuntime
 import AIWorkspace
 
@@ -53,6 +54,7 @@ public enum ChatApp {
         public var boardRow: (Discussion) -> AnyView = { _ in AnyView(EmptyView()) }
         public var board: (Discussion) -> AnyView = { _ in AnyView(EmptyView()) }
         public var cards: (UUID, Discussion) -> AnyView = { _, _ in AnyView(EmptyView()) }
+        public var inboxCard: (TodoItem, Discussion) -> AnyView = { _, _ in AnyView(EmptyView()) }   // a TODO's answer or result box in the inbox
         public var projectInfo: (Discussion, String) -> AnyView = { _, _ in AnyView(EmptyView()) }
         public var renameProject: (String, String) -> Void = { _, _ in }
         public var icon: (Bool) -> NSImage = { _ in NSImage() }

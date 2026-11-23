@@ -59,6 +59,56 @@ public enum RemoteChats {
         return sections
     }
 
+    // The inbox's 🔴 and 🟡 (Inbox.make, the Mac panel's lists), each with its name, one line, the time left and the chat it
+    // opens. A chat's approval carries its id and detail for the page's Allow/Deny (POST /api/approval, like a chat's card);
+    // the rest are answered in their chat (a TODO's through the message box, sendToTodo). An outside MCP tool only counts
+    // down (its macOS notification is the way to answer).
+    public static func inbox(_ d: Discussion, now: Date = Date()) -> [[String: Any]] {
+        let center = ProjectCenter.shared, todo = TodoStore.shared.snapshot, names = ProjectInfoStore.shared.names
+        let inbox = Inbox.make(requests: center.requests, expired: center.expired, todos: todo, conversations: d.conversations,
+                               unread: d.unreadRooms, running: d.runningRooms, names: names)
+        func chat(_ room: UUID?) -> String? { room.flatMap { r in d.conversations.contains { $0.id == r } ? r.uuidString : nil } }
+        func entry(_ id: UUID, _ level: String, _ kind: String, name: String, line: String, time: String?, room: String?) -> [String: Any] {
+            var row: [String: Any] = ["id": id.uuidString, "level": level, "kind": kind, "name": name.isEmpty ? L("새 대화", "New chat") : name, "line": line]
+            if let time { row["time"] = time }
+            if let room { row["room"] = room }
+            return row
+        }
+        let blocked = inbox.blocked.map { item -> [String: Any] in
+            switch item {
+            case .approval(let r) where r.alwaysAllow != nil:
+                return entry(r.id, "red", "outside", name: L("외부 도구 허가", "Outside tool approval"), line: r.title,
+                             time: ApprovalBanner.approvalLeft(r, now: now), room: nil)
+            case .approval(let r):
+                let home = d.approvalHome(r.room)
+                var row = entry(r.id, "red", "approval", name: d.approvalChatName(home), line: L("허가 · ", "Approval · ") + r.title,
+                                time: r.deadline == nil ? nil : ApprovalBanner.approvalLeft(r, now: now), room: chat(home))
+                row["approval"] = r.id.uuidString; row["detail"] = r.detail
+                return row
+            case .expired(let r):
+                return entry(r.id, "red", "expired", name: d.approvalChatName(r.room), line: L("허가 기한 지남 · 거절로 처리됨 · ", "Approval timed out · denied · ") + r.title,
+                             time: nil, room: chat(r.room))
+            case .todo(let t):
+                let due = TodoScheduler.shared?.standingIn.contains(t.id) == true ? L("다른 AI가 대신 답하는 중", "Another AI is answering")
+                    : ApprovalBanner.todoDue(t, data: todo, discussion: d).map { ApprovalBanner.todoLeft($0, now: now) }
+                return entry(t.id, "red", "todo", name: Inbox.projectName(t, todos: todo, names: names),
+                             line: (t.isParked ? L("TODO 결정 필요 · 보류됨 · ", "TODO needs you · parked · ") : L("TODO 결정 필요 · ", "TODO needs you · ")) + t.title,
+                             time: due, room: chat(t.room))
+            }
+        }
+        let check = inbox.check.map { item -> [String: Any] in
+            switch item {
+            case .todo(let t):
+                return entry(t.id, "yellow", "review", name: Inbox.projectName(t, todos: todo, names: names), line: L("TODO 결과 확인 · ", "TODO result · ") + t.title,
+                             time: nil, room: chat(t.room))
+            case .failed(let c):
+                return entry(c.id, "yellow", "failed", name: c.conversation.title,
+                             line: L("작업 실패", "Failed") + (Inbox.line(c.conversation.turns.last?.error).map { " · " + $0 } ?? ""), time: nil, room: c.id.uuidString)
+            }
+        }
+        return blocked + check
+    }
+
     // One chat as the page shows it: the user's messages and each AI's answer (the reply so far while it writes),
     // with picture links (/api/image/<chat>/<picture>) and the approval cards waiting in it. Opening it counts as seen.
     public static func chat(_ d: Discussion, _ room: UUID, opened: Bool) -> [String: Any]? {

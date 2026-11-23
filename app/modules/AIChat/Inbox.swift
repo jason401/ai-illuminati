@@ -42,14 +42,25 @@ struct Inbox {
     }
 }
 
+// Which approvals show their whole detail in the inbox (kept while the panel closes; the ids leave with the requests).
+// (An ObservableObject: this Mac's Command Line Tools cannot build SwiftUI's @State macro.)
+final class InboxDetails: ObservableObject {
+    static let shared = InboxDetails()
+    @Published var open: Set<UUID> = []
+}
+
 // The inbox on the right of the chat window, in the notes' place (ChatView), opened by the bell in the sidebar. A panel,
-// not a popover: one keeps what was typed when the user clicks elsewhere. Clicking an item opens where it is.
+// not a popover: one keeps what was typed when the user clicks elsewhere. Clicking an item opens where it is; each item
+// is also handled right here with the calls its own card makes: Allow/Deny (ProjectCenter.decide), Dismiss/Ask again,
+// and a TODO's answer or result box (the board's TodoCard, through ChatApp.screens.inboxCard, with the same draft).
+// An outside MCP tool keeps its macOS notification as the way to answer: its row only counts down.
 struct InboxPanel: View {
     @ObservedObject var discussion: Discussion
     let close: () -> Void
     @ObservedObject private var center = ProjectCenter.shared
     @ObservedObject private var todos = TodoStore.shared
     @ObservedObject private var projectInfo = ProjectInfoStore.shared
+    @ObservedObject private var details = InboxDetails.shared
 
     var body: some View {
         let inbox = Inbox.make(requests: center.requests, expired: center.expired, todos: todos.snapshot, conversations: discussion.conversations,
@@ -122,19 +133,63 @@ struct InboxPanel: View {
                 help: L("허가 창 열기", "Open the approval window")) { ChatApp.screens.approvals() }
         case .approval(let request):
             let home = discussion.approvalHome(request.room)
-            row(request.id, .red, name: discussion.approvalChatName(home), line: L("허가 · ", "Approval · ") + request.title,
-                time: request.deadline == nil ? nil : ApprovalBanner.approvalLeft(request, now: now),
-                help: L("허가를 기다리는 방 열기", "Open the chat waiting for approval")) { discussion.open(home) }
+            VStack(alignment: .leading, spacing: 0) {
+                row(request.id, .red, name: discussion.approvalChatName(home), line: L("허가 · ", "Approval · ") + request.title,
+                    time: request.deadline == nil ? nil : ApprovalBanner.approvalLeft(request, now: now),
+                    help: L("허가를 기다리는 방 열기", "Open the chat waiting for approval")) { discussion.open(home) }
+                approvalBox(request)
+            }
         case .expired(let request):
-            row(request.id, .red, name: discussion.approvalChatName(request.room), line: L("허가 기한 지남 · ", "Approval timed out · ") + request.title, time: nil,
-                help: L("방을 열어 \"다시 요청\"", "Open the chat to ask again")) { discussion.open(request.room) }
+            VStack(alignment: .leading, spacing: 0) {
+                row(request.id, .red, name: discussion.approvalChatName(request.room), line: L("허가 기한 지남 · 거절로 처리됨 · ", "Approval timed out · denied · ") + request.title,
+                    time: nil, help: L("기한이 지난 허가가 있던 방 열기", "Open the chat of the timed-out approval")) { discussion.open(request.room) }
+                HStack(spacing: 8) {
+                    Spacer()
+                    Button(L("닫기", "Dismiss")) { center.dismiss(request.id) }
+                    Button(L("다시 요청", "Ask again")) { discussion.askAgain(request) }
+                        .buttonStyle(.borderedProminent).disabled(discussion.runningRooms.contains(request.room))
+                }
+                .font(.system(size: 12)).controlSize(.small).padding(.leading, 23).padding(.trailing, 8).padding(.bottom, 8)
+            }
         case .todo(let todo):
             let due = TodoScheduler.shared?.standingIn.contains(todo.id) == true ? L("다른 AI가 대신 답하는 중", "Another AI is answering")
                 : ApprovalBanner.todoDue(todo, data: todos.snapshot, discussion: discussion).map { ApprovalBanner.todoLeft($0, now: now) }
             row(todo.id, .red, name: Inbox.projectName(todo, todos: todos.snapshot, names: projectInfo.names),
                 line: (todo.isParked ? L("TODO 결정 필요 · 보류됨 · ", "TODO needs you · parked · ") : L("TODO 결정 필요 · ", "TODO needs you · ")) + todo.title,
                 time: due, help: Inbox.line(todo.question?.reason) ?? todo.title) { discussion.openTodo(todo) }
+            todoBox(todo)
         }
+    }
+
+    // What the request does (the detail its card and the approval window show), then Deny / Allow: allowed only where it is read.
+    private func approvalBox(_ request: ProjectApproval) -> some View {
+        let open = details.open.contains(request.id)
+        let lines = request.detail.split(whereSeparator: \.isNewline).count
+        return VStack(alignment: .leading, spacing: 6) {
+            if !request.detail.isEmpty {
+                Text(request.detail).font(.system(size: 10, design: .monospaced)).foregroundColor(.secondary).textSelection(.enabled)
+                    .lineLimit(open ? nil : 4).frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(6).background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
+            }
+            HStack(spacing: 8) {
+                if lines > 4 || request.detail.count > 240 {
+                    Button(open ? L("접기", "Less") : L("자세히", "Details")) {
+                        if open { details.open.remove(request.id) } else { details.open.insert(request.id) }
+                    }
+                    .buttonStyle(.plainHit).foregroundColor(.accentColor).frame(minHeight: 22)
+                }
+                Spacer()
+                Button(L("거절", "Deny")) { center.decide(request.id, allow: false) }
+                Button(L("허용", "Allow")) { center.decide(request.id, allow: true) }.buttonStyle(.borderedProminent)
+            }
+            .font(.system(size: 12)).controlSize(.small)
+        }
+        .padding(.leading, 23).padding(.trailing, 8).padding(.bottom, 8)
+    }
+
+    // A TODO's question (answer box, Your call, Answer and go on) or result (Request changes, Done): the board's own card.
+    private func todoBox(_ todo: TodoItem) -> some View {
+        ChatApp.screens.inboxCard(todo, discussion).padding(.leading, 23).padding(.trailing, 8).padding(.bottom, 8)
     }
 
     @ViewBuilder private func checkRow(_ item: InboxCheck) -> some View {
@@ -142,6 +197,7 @@ struct InboxPanel: View {
         case .todo(let todo):
             row(todo.id, .yellow, name: Inbox.projectName(todo, todos: todos.snapshot, names: projectInfo.names), line: L("TODO 결과 확인 · ", "TODO result · ") + todo.title,
                 time: nil, help: Inbox.line(todo.result) ?? todo.title) { discussion.openTodo(todo) }
+            todoBox(todo)
         case .failed(let chat):
             let turn = chat.conversation.turns.last
             row(chat.id, .yellow, name: chat.conversation.title, line: L("작업 실패", "Failed") + (Inbox.line(turn?.error).map { " · " + $0 } ?? ""),

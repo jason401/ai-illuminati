@@ -670,7 +670,9 @@ What the chat gets from the app, set by the app (the chat side names none of the
   `ChatApp.driveRule` = DriveLink's rule while on: set in `ChatLinksApp.connect()` (main.swift and mode2, as in C0).
 - `ChatApp.screens`: the TODO board (row, board, a chat's cards), Project info and its rename, the icon, `manageItems`
   (2026-11-16: the app's items atop the sidebar's Manage chats menu, now Connect iPhone in PhoneAccess.swift), `approvals`
-  (2026-11-23: the inbox opens the app's approval window for an outside tool's request; set in main.swift with ApprovalAlerts):
+  (2026-11-23: the inbox opens the app's approval window for an outside tool's request; set in main.swift with ApprovalAlerts),
+  `inboxCard` (2026-11-23: a TODO's answer or result box in the inbox panel, the board's own TodoCard in its narrow form, so the
+  panel calls what the board and the chat card call and shares their draft):
   set in the new `ChatScreensApp.connect()` (main.swift after ChatLinksApp, stage 1 checks the place; the chat preview too).
 - `FolderSources` / `FolderSource`: outside folder kinds shown in the sidebar's Shared folders after the local ones (their
   + menu item, rows and folder count); Google Drive's is registered in `ChatScreensApp.connect()`. Only the list is joined,
@@ -845,7 +847,9 @@ sections as JSON values, built from the sidebar's own internal lists), `chat(_:_
 approval cards; opened counts as seen), `image(_:_:id:)` (a picture of that chat only) and `send(_:room:text:photos:)` (the message
 box's path for any chat: queue while answering, TODO, or a new turn; photos imported like `addImage`), `search(_:_:)` (the
 sidebar's ChatSearch for the page's search field) and `create(_:project:text:photos:)` (the page's new chat: a loose or project chat
-made only with its first message, sent through `send`, removed again when that fails; the Mac's open chat stays).
+made only with its first message, sent through `send`, removed again when that fails; the Mac's open chat stays) and
+`inbox(_:now:)` (2026-11-23: the inbox panel's 🔴/🟡 for the top of the page's list, from `Inbox.make`, with the time left, the chat each
+opens and, for a chat's approval, its id and detail for the page's Allow/Deny on the existing `POST /api/approval`).
 
 ## Records
 

@@ -21,6 +21,7 @@ public enum RemotePage {
             "askAnything": L("무엇이든 물어보세요", "How can I help you today?"),
             "failed": L("보내지 못했어요", "Could not send"),
             "details": L("자세히", "Details"),
+            "inbox": L("알림함", "Inbox"),
             "newChat": L("새 대화", "New chat"),
             "newIn": L("이 프로젝트에 새 대화", "New chat in this project"),
             "showMore": L("더 보기 ({n})", "Show more ({n})"),
@@ -176,6 +177,11 @@ h1 { font-size:30px; font-weight:700; margin:4px 12px 10px; letter-spacing:-.3px
 @media (prefers-color-scheme: dark) { .ring, .aidot { --c:var(--cd, var(--dim)); } }
 @media (prefers-reduced-motion: reduce) { .ring, .spin { animation:none; } }
 @keyframes spin { to { transform:rotate(360deg); } }
+/* The inbox atop the list (the Mac's panel): 🔴 blocked and 🟡 to check, the time left on the right. */
+.dot.red { background:var(--red); } .dot.yellow { background:#f2c200; }
+.row .left { color:var(--dim); font-size:12px; flex:none; max-width:40%; text-align:right; }
+.approval.inboxcard { margin:0 12px 10px 34px; padding:10px 12px; border-radius:12px; box-shadow:none; }
+.approval.inboxcard .buttons { margin-top:6px; }
 .badge { background:var(--warn); color:#fff; font-size:12px; font-weight:600; border-radius:9px; padding:1px 7px; flex:none; }
 .result .snippet { color:var(--dim); font-size:13px; white-space:normal !important; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; }
 mark { background:rgba(255,214,10,.45); color:inherit; border-radius:3px; padding:0 1px; }
@@ -541,9 +547,33 @@ function chatRow(c, child) {
     '<span class="name"><div>' + esc(c.title) + '</div>' + (c.detail ? '<div class="sub">' + esc(c.detail) + '</div>' : '') + '</span>' +
     (c.approvals ? '<span class="badge">' + c.approvals + '</span>' : '') + '</a>';
 }
+// The inbox's 🔴/🟡 (GET /api/chats "inbox"): a row opens its chat (a TODO is answered there, through the message box);
+// a chat's approval has Deny / Allow under it, like its card. Open details stay open while the list redraws.
+const inboxOpen = new Set();
+function inboxRows(items) {
+  if (!items || !items.length) return '';
+  return '<div class="section">' + esc(S.inbox) + '</div>' + items.map(i => {
+    const inner = '<span class="mark"><span class="dot ' + (i.level === 'red' ? 'red' : 'yellow') + '"></span></span>' +
+      '<span class="name"><div>' + esc(i.name) + '</div><div class="sub">' + esc(i.line) + '</div></span>' +
+      (i.time ? '<span class="left">' + esc(i.time) + '</span>' : '');
+    if (i.room) titles[i.room] = titles[i.room] || { title: i.name, detail: '' };
+    const row = i.room ? '<a class="row" href="#c=' + encodeURIComponent(i.room) + '" data-id="' + esc(i.room) + '">' + inner + '</a>'
+      : '<div class="row">' + inner + '</div>';
+    if (!i.approval) return row;
+    return row + '<div class="approval inboxcard">' +
+      (i.detail ? '<details data-open="' + esc(i.approval) + '"' + (inboxOpen.has(i.approval) ? ' open' : '') + '><summary>' + esc(S.details) + '</summary><pre>' + esc(i.detail) + '</pre></details>' : '') +
+      '<div class="buttons"><button class="deny" data-approve="' + esc(i.approval) + '" data-allow="0">' + esc(S.deny) + '</button>' +
+      '<button class="allow" data-approve="' + esc(i.approval) + '" data-allow="1">' + esc(S.allow) + '</button></div></div>';
+  }).join('');
+}
+$('list').addEventListener('toggle', e => {
+  const d = e.target; if (!d.dataset || !d.dataset.open) return;
+  d.open ? inboxOpen.add(d.dataset.open) : inboxOpen.delete(d.dataset.open);
+}, true);
 function renderList(data) {
-  if (!data.sections.length) { $('list').innerHTML = '<div class="note">' + esc(S.empty) + '</div>'; return; }
-  $('list').innerHTML = data.sections.map(s => {
+  const top = inboxRows(data.inbox);
+  if (!data.sections.length && !top) { $('list').innerHTML = '<div class="note">' + esc(S.empty) + '</div>'; return; }
+  $('list').innerHTML = top + data.sections.map(s => {
     let out = '<div class="section">' + esc(s.title) + '</div>', open = false, folderMore = null;
     const close = () => { out += moreRow(folderMore) + '</div>'; open = false; folderMore = null; };
     for (const c of s.chats) {
@@ -577,7 +607,15 @@ async function loadList() {
     renderList(data);
   } catch (e) { $('list').innerHTML = '<div class="note">' + esc(String(e.message) === '401' ? S.noKey : (e.message || S.offline)) + '</div>'; lastList = ''; }
 }
-$('list').addEventListener('click', e => {
+$('list').addEventListener('click', async e => {
+  const decide = e.target.closest('button[data-approve]');
+  if (decide) {
+    e.preventDefault();
+    decide.parentNode.querySelectorAll('button').forEach(x => x.disabled = true);
+    try { await api('/api/approval/' + encodeURIComponent(decide.dataset.approve), { allow: decide.dataset.allow === '1' }); } catch (err) { alert(err.message); }
+    lastList = ''; loadList();
+    return;
+  }
   const more = e.target.closest('.more button');
   if (more) {
     e.preventDefault();

@@ -205,7 +205,7 @@ struct AISettingsGrid: View {
                              "Opens apps or web addresses on this Mac. Ask asks the first time per app in each answer.")
         case .chrome:
             return L("Claude in Chrome 확장으로 크롬을 써요(보이는 답에서만).", "Uses Chrome through the Claude in Chrome extension (in visible answers only).")
-                + (ChromeExtension.installed ? "" : "\n" + ChromeExtension.installHint)
+                + "\n" + (ChromeExtension.installed ? ChromeExtension.connectHint : ChromeExtension.installHint)
         }
     }
 
@@ -458,6 +458,9 @@ enum ChromeExtension {
     static let id = "fcoeoabgfenejglbffodgkkbkcdhcgfn"
     static let installHint = L("Chrome에 Claude 확장을 깔아야 해요: chromewebstore.google.com/detail/claude/\(id) (Claude Code와 같은 계정으로 로그인, 처음이면 Chrome 다시 시작)",
                                "Install the Claude extension in Chrome: chromewebstore.google.com/detail/claude/\(id) (sign in with the same account as Claude Code; restart Chrome the first time)")
+    // Installed but maybe not connected: the app cannot see the connection, so the help always says how to fix it.
+    static let connectHint = L("연결이 안 되면 Chrome에서 Claude 확장이 켜져 있고 Claude Code와 같은 계정으로 로그인돼 있는지 확인한 뒤 Chrome을 다시 시작해 주세요.",
+                               "If it does not connect, check in Chrome that the Claude extension is on and signed in with the same account as Claude Code, then restart Chrome.")
     static var installed: Bool {
         let base = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("Library/Application Support/Google/Chrome")
         let profiles = (try? FileManager.default.contentsOfDirectory(atPath: base.path)) ?? []

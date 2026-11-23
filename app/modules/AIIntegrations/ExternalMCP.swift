@@ -683,6 +683,8 @@ public final class ExternalMCP: ObservableObject {
             }
         case .allow: break
         }
+        // The card may have waited: the switches could have changed meanwhile.
+        guard Self.isOn(route.server, account: account) else { return mcpFailure("This MCP server was switched off for this AI: " + name) }
         // The bridge waits about two minutes in all, approval included.
         var result = session.call(route.tool, arguments, timeout: max(10, Self.callTimeout - Date().timeIntervalSince(started)))
         if session.entry.isRemote, var content = result["content"] as? [[String: Any]] {

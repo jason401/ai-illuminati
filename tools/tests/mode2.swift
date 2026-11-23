@@ -3206,6 +3206,11 @@ func testExternalMCP() {
            "a server used by one AI: only that AI sees its tools")
     expect(text(mcp.call("fake__echo", [:], context: oneContext)).hasPrefix("echo:") && mcp.call("fake__echo", [:], context: twoContext)["isError"] as? Bool == true,
            "and only that AI may call them")
+    // Switched off for that AI while its approval card waits: the approved call is still refused.
+    mcp.setRule("fake", "echo", .ask)
+    let lateOff = mcp.call("fake__echo", [:], account: one) { _, _ in mcp.setUsed("fake", by: one, false); return true }
+    expect(lateOff["isError"] as? Bool == true && !ExternalMCP.usedBy("fake", one), "turned off for the AI while the card waits: refused")
+    mcp.setUsed("fake", by: one, true); mcp.setRule("fake", "echo", nil)
     let twoSession = ToolHub.shared.register(room: UUID(), roots: [], asker: two)
     let twoListed = (ToolHub.shared.handle(["op": "tools", "session": twoSession])["tools"] as? [[String: Any]]) ?? []
     expect(!twoListed.contains { ($0["name"] as? String ?? "").hasPrefix("fake__") }, "the hub hides them from the other AI")

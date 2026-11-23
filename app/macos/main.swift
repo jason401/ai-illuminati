@@ -150,6 +150,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, PhoneU
         ) { [weak self] _ in self?.configureMarkAnimation() }
         updateTitle()
         approvals.start()
+        ChatApp.screens.approvals = { [weak self] in self?.approvals.show() }
         approvalObservation = ProjectCenter.shared.$requests.map(\.count).removeDuplicates().receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.showPending(); self?.rebuildMenu() }
         PhoneServer.shared.usage = self

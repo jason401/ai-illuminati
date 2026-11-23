@@ -57,6 +57,7 @@ public enum ChatApp {
         public var renameProject: (String, String) -> Void = { _, _ in }
         public var icon: (Bool) -> NSImage = { _ in NSImage() }
         public var manageItems: () -> AnyView = { AnyView(EmptyView()) }
+        public var approvals: () -> Void = {}   // the app's approval window (an outside tool's request has no chat to open)
         public init() {}
     }
     public static var screens = Screens()

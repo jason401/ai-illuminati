@@ -54,6 +54,7 @@ ChatApp.Face.moods | var moods: () -> [String]
 ChatApp.Face.rule | var rule: ([String]) -> String
 ChatApp.Face.show | var show: (String) -> Void
 ChatApp.Screens | struct Screens
+ChatApp.Screens.approvals | var approvals: () -> Void
 ChatApp.Screens.board | var board: (Discussion) -> AnyView
 ChatApp.Screens.boardRow | var boardRow: (Discussion) -> AnyView
 ChatApp.Screens.cards | var cards: (UUID, Discussion) -> AnyView

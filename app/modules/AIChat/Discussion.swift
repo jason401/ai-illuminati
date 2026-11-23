@@ -1701,6 +1701,13 @@ public final class Discussion: ObservableObject {
         writeUnread()
     }
 
+    // Several at once, one write (the inbox's Mark all read: only its ⚪ answers, failures stay to check).
+    func markSeen(_ rooms: [UUID]) {
+        let before = unreadRooms.count
+        for room in rooms { unreadRooms.removeValue(forKey: room) }
+        if unreadRooms.count != before { writeUnread() }
+    }
+
     func markAllSeen() {
         guard !unreadRooms.isEmpty else { return }
         unreadRooms = [:]

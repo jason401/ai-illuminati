@@ -5,7 +5,7 @@ import AIProjects
 // The inbox (알림함): what waits on the user now, not a record of notices. Worked out from the current state each
 // time (nothing saved), so a handled item leaves by itself. 🔴 blocked: the strip's items (BlockedItem, also the Dock);
 // 🟡 to check: a TODO's result (still on its board: the same state) and work that ended in an error elsewhere;
-// ⚪ for reference: an answer or work that ended elsewhere, until its chat is opened or "Mark all read".
+// ⚪ for reference: an answer or work that ended elsewhere, until its chat is opened or "Mark all read" (⚪ only: a failure stays).
 // The sidebar's old "Needs review" is the 🟡/⚪ part of it (UnreadChats: Discussion's "Needs review" state).
 enum InboxCheck: Identifiable {
     case todo(TodoItem), failed(UnreadChat)
@@ -85,7 +85,7 @@ struct InboxPanel: View {
                             }
                             if !inbox.info.isEmpty {
                                 header(L("참고", "For reference"), color: Color.secondary.opacity(0.5), count: inbox.info.count) {
-                                    Button(L("모두 읽음", "Mark all read")) { discussion.markAllSeen() }
+                                    Button(L("모두 읽음", "Mark all read")) { discussion.markSeen(inbox.info.map(\.id)) }
                                         .buttonStyle(.plainHit).font(.system(size: 11)).foregroundColor(.accentColor)
                                         .frame(minHeight: 22)
                                 }
@@ -117,9 +117,9 @@ struct InboxPanel: View {
     @ViewBuilder private func blockedRow(_ item: BlockedItem, now: Date) -> some View {
         switch item {
         case .approval(let request) where request.alwaysAllow != nil:
-            // An outside MCP tool: its macOS notification is the way to answer (it has no chat to open).
+            // An outside MCP tool has no chat to open: the app's approval window, where its details and buttons are.
             row(request.id, .red, name: L("외부 도구 허가", "Outside tool approval"), line: request.title, time: ApprovalBanner.approvalLeft(request, now: now),
-                help: L("macOS 알림에서 허가하거나 거절해요", "Allow or deny it in its macOS notification"), open: nil)
+                help: L("허가 창 열기", "Open the approval window")) { ChatApp.screens.approvals() }
         case .approval(let request):
             let home = discussion.approvalHome(request.room)
             row(request.id, .red, name: discussion.approvalChatName(home), line: L("허가 · ", "Approval · ") + request.title,

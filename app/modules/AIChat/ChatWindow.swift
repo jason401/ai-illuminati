@@ -134,7 +134,8 @@ struct ChatView<Model: ChatSettings>: View {
         }
         .onChange(of: discussion.currentID) { _ in discussion.sidebarOverlay = false; photo.image = nil }
         .onChange(of: discussion.notesShown) { if $0 { connect.shown = nil; discussion.inboxShown = false } }
-        .onChange(of: discussion.inboxShown) { if $0 { connect.shown = nil; discussion.notesShown = false } }
+        // The sliding sidebar (a narrow window) closes too, so it does not cover the inbox opened from it.
+        .onChange(of: discussion.inboxShown) { if $0 { connect.shown = nil; discussion.notesShown = false; discussion.sidebarOverlay = false } }
         .onChange(of: connect.shown) { if $0 != nil { discussion.inboxShown = false } }
         // Leaving the chat (another Mac's chat, the board or a Space) closes the photo, so it does not come back later.
         .onChange(of: discussion.viewingRemote == nil) { _ in photo.image = nil }

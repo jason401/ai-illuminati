@@ -190,7 +190,7 @@ public final class NativeSessions {
              note: (String) -> Void) -> Result<String, Answerer.Failure> {
         if !persist {
             // Leave the previous session available. It can catch up from the chat's history once screen viewing is off.
-            note(L("화면 보기: 이번 답은 세션 기록을 남기지 않아요.", "Screen viewing: this turn does not keep a session transcript."))
+            note(L("맥 조작 도구: 이번 답은 CLI 세션을 이어 쓰거나 저장하지 않아요.", "Mac tools: this turn neither reuses nor saves a CLI session."))
             return invoke(fresh ?? prompt, images, nil)
         }
         guard Self.eligible(account), let (incomingContext, fullInstruction, role) = Self.split(prompt) else {

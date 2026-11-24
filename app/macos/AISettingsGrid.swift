@@ -156,8 +156,8 @@ struct AISettingsGrid: View {
         let columns = AICapability.allCases.filter { capability in model.accounts.contains { applies(capability, $0) } }
         return VStack(alignment: .leading, spacing: 6) {
             Text(L("AI가 쓸 수 있는 기능", "What AIs can use")).font(.system(size: 13, weight: .semibold))
-            Text(L("선택한 값은 저장되며, 기능이 연결되면 적용돼요.",
-                   "Choices are saved and take effect when the features are connected."))
+            Text(L("AI마다 쓸 수 있는 기능을 정해요. 칸에 마우스를 올리면 설명이 나와요.",
+                   "Choose what each AI can use. Hover over a cell for details."))
                 .font(.system(size: 11)).foregroundStyle(.secondary)
             table {
                 Grid(alignment: .center, horizontalSpacing: 18, verticalSpacing: 8) {
@@ -193,16 +193,23 @@ struct AISettingsGrid: View {
         }
     }
 
+    // Any Mac tool turns off the CLI's own session for that AI's answers, so screenshots never land in its history files.
+    private var sessionNote: String {
+        "\n" + L("화면 보기·마우스와 키보드·앱 열기 중 하나라도 쓸 수 있으면, 도구를 안 쓴 답도 CLI 세션을 이어 쓰거나 저장하지 않아요. 채팅은 이어지지만 이전 대화를 다시 보내서 사용량이 늘 수 있어요.",
+                  "While View screen, Mouse & keyboard or Open apps is allowed, this AI's answers neither reuse nor save a CLI session, even when no tool is used. The chat goes on, but earlier messages are sent again, which can use more of your limits.")
+    }
+
     private func capabilityHelp(_ capability: AICapability) -> String {
         switch capability {
         case .terminal: return L("실행이 허용된 채팅에서 AI가 터미널 명령을 써요.", "Lets the AI use terminal commands in chats that allow execution.")
         case .web: return L("AI의 웹 검색과 웹페이지 읽기 도구를 써요.", "Lets the AI use its web search and page reading tools.")
-        case .screen: return L("이 Mac의 화면이나 창을 봐요. ‘켬’이면 화면을 볼 수 있는 답은 CLI 세션 기록을 남기지 않아요. ‘물어보기’는 준비 중이에요.",
-                               "Views the screen or a window on this Mac. With On, replies that can view the screen skip CLI session history. Ask is coming later.")
+        case .screen: return L("이 Mac의 화면이나 창을 봐요.", "Views the screen or a window on this Mac.") + sessionNote
         case .input: return L("이 Mac에서 마우스와 키보드를 써요. ‘물어보기’는 답마다 앱별로 처음 한 번 카드로 물어요. 시스템 설정·키체인·터미널·IDE는 늘 물어보고, AI Illuminati 창과 비밀번호 칸은 늘 막아요. Esc로 멈춰요.",
                               "Uses the mouse and keyboard on this Mac. Ask shows a card the first time per app in each answer. Settings, Keychain, terminals and IDEs are always asked; AI Illuminati's windows and password fields are always refused. Press Esc to stop.")
+                              + sessionNote
         case .apps: return L("이 Mac에서 앱이나 웹 주소를 열어요. ‘물어보기’는 답마다 앱별로 처음 한 번 물어요.",
                              "Opens apps or web addresses on this Mac. Ask asks the first time per app in each answer.")
+                             + sessionNote
         case .chrome:
             return L("Claude in Chrome 확장으로 크롬을 써요(보이는 답에서만).", "Uses Chrome through the Claude in Chrome extension (in visible answers only).")
                 + "\n" + (ChromeExtension.installed ? ChromeExtension.connectHint : ChromeExtension.installHint)
@@ -354,16 +361,18 @@ private struct CapabilityMenu: View {
     let capability: AICapability
     let title: String
     @StateObject private var state: CapabilityPick
-    // Chrome has no "ask": the extension asks per site itself, and a saved "ask" counts as off (Answerer runs only "on").
+    // Chrome has no "ask": the extension asks per site itself. Viewing the screen has none yet (MacControl gives it only on "on").
+    // A saved "ask" for either counts as off and shows as off.
     private var choices: [CapabilityRule] {
-        capability == .terminal || capability == .web || capability == .chrome ? [.off, .on] : CapabilityRule.allCases
+        capability == .input || capability == .apps ? CapabilityRule.allCases : [.off, .on]
     }
 
     init(account: Account, capability: AICapability, title: String) {
         self.account = account; self.capability = capability; self.title = title
         let rule = AICapabilities.rule(account, capability)
         let onOff = capability == .terminal || capability == .web
-        _state = StateObject(wrappedValue: CapabilityPick(rule != .ask ? rule : onOff ? .on : capability == .chrome ? .off : rule))
+        let asks = capability == .input || capability == .apps
+        _state = StateObject(wrappedValue: CapabilityPick(rule != .ask || asks ? rule : onOff ? .on : .off))
     }
 
     var body: some View {

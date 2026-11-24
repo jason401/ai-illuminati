@@ -85,6 +85,8 @@ func testMeetingTool() {
     held?.start()
     var state = HeldMeeting.State.running
     expect(spin(60) { state = held?.state ?? .stopped; return state != .running }, "the meeting ends within 60 s")
+    // The end wakes waiters first; the hidden chat and the card change after it, on the main queue (as at the stops below).
+    spin(30) { direct.current.turns.first?.peerNotes?.first { $0.meeting == held?.id }?.headline?.hasPrefix(L("회의 끝남", "Meeting done")) == true }
     expect(state == .done("결론: A로 가자.\n이견: 없음."), "the result goes to the AI that called it: \(state)")
     expect(direct.activeWorkspace?.roots == own.roots && direct.activeWorkspace?.face == true && direct.activeSessionRoom == ownRoom
            && !direct.activeMeeting && direct.activeHeldBy == nil && direct.runCancellation == nil,

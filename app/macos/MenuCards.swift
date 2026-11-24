@@ -5,7 +5,7 @@ import AILocalization
 import AIRuntime
 import AIChat
 
-// The menu's account cards (ideas from CodexBar: usage bars, reset countdowns and an even-use guide).
+// The usage panel's account cards (UsagePanel.swift; ideas from CodexBar: usage bars, reset countdowns and an even-use guide).
 // Each card: the account name and plan, then one line per limit:
 //   5h  [██████████░░░░░|░░]  62%   ◔ Refills in 2h 13m
 // - The bar is what is left; it turns orange under 30% and red under 10%.
@@ -141,20 +141,13 @@ private struct RefillRing: View {
 }
 
 enum MenuCardItem {
-    static let width: CGFloat = 400
+    static let width: CGFloat = 400   // the panel's width in the cards style
+}
 
-    static func make(_ usage: AIUsage, title: String) -> NSMenuItem {
-        let host = NSHostingView(rootView: UsageCard(usage: usage, title: title))
-        host.frame = NSRect(origin: .zero, size: host.fittingSize)
-        let item = NSMenuItem()
-        item.view = MenuRowView(host)
-        item.submenu = detailMenu(usage)
-        return item
-    }
-
-    // A one-line explanation of the tick and ring, under the cards.
-    static func legend() -> NSMenuItem {
-        let view = HStack(spacing: 6) {
+// A one-line explanation of the tick and ring, under the cards.
+struct UsageLegend: View {
+    var body: some View {
+        HStack(spacing: 6) {
             Rectangle().fill(Color.primary.opacity(0.55)).frame(width: 1.5, height: 9)
             Text(L("고르게 쓸 때의 위치", "even-use pace")).font(.caption2).foregroundColor(.secondary)
             RefillRing(progress: 0.6).scaleEffect(0.8)
@@ -162,17 +155,12 @@ enum MenuCardItem {
             Spacer()
         }
         .padding(.horizontal, 14).padding(.vertical, 3)
-        .frame(width: width, alignment: .leading)
-        let host = NSHostingView(rootView: view)
-        host.frame = NSRect(origin: .zero, size: host.fittingSize)
-        let item = NSMenuItem()
-        item.view = host
-        return item
+        .frame(width: MenuCardItem.width, alignment: .leading)
     }
 }
 
 // Alternative presentations of the same readings; fetching and quota calculations stay unchanged.
-// Compact rows: one menu item per account (so hovering a row opens its details to the side),
+// Compact rows: one row per account (resting on a row opens its details to the side),
 // with a small column header and an AI title above each group.
 enum ComparisonLayout {
     static let nameWidth: CGFloat = 58
@@ -195,7 +183,7 @@ struct ComparisonHeader: View {
     }
 }
 
-// An AI's title over its accounts. Hovering it (or a right-click) opens its color menu to the side.
+// An AI's title over its accounts. Resting on it opens its color button to the side.
 struct ComparisonGroupTitle: View {
     let provider: Account.Provider
     var body: some View {
@@ -283,52 +271,9 @@ struct ComparisonRow: View {
     }
 }
 
-// A row in the menu that draws a soft highlight while the mouse is over it (custom-view items do
-// not get the system highlight). AppDelegate sets `highlighted` from menu(_:willHighlight:).
-final class MenuRowView: NSView {
-    var highlighted = false { didSet { if oldValue != highlighted { needsDisplay = true } } }
-    init(_ content: NSView) {
-        super.init(frame: NSRect(origin: .zero, size: content.frame.size))
-        addSubview(content)
-    }
-    required init?(coder: NSCoder) { nil }
-    override func draw(_ dirtyRect: NSRect) {
-        guard highlighted else { return }
-        NSColor.labelColor.withAlphaComponent(0.1).setFill()
-        NSBezierPath(roundedRect: bounds.insetBy(dx: 5, dy: 0.5), xRadius: 5, yRadius: 5).fill()
-    }
-}
-
-extension MenuCardItem {
-    private static func viewItem<V: View>(_ view: V, row: Bool = false) -> NSMenuItem {
-        let host = NSHostingView(rootView: view)
-        host.frame = NSRect(origin: .zero, size: host.fittingSize)
-        let item = NSMenuItem()
-        item.view = row ? MenuRowView(host) : host
-        return item
-    }
-
-    // Header, then per AI a title and one hoverable row per account (details open to the side).
-    static func comparison(_ usages: [AIUsage], style: AppModel.UsageMenuStyle) -> [NSMenuItem] {
-        var items = [viewItem(ComparisonHeader())]
-        for provider in Account.Provider.allCases {
-            let group = usages.filter { $0.account?.provider == provider }
-            guard !group.isEmpty else { continue }
-            let title = viewItem(ComparisonGroupTitle(provider: provider), row: true)
-            title.submenu = AIColorMenu.make(provider)   // hovering the AI's title: its color window
-            items.append(title)
-            for usage in group {
-                let row = viewItem(ComparisonRow(usage: usage, style: style), row: true)
-                row.submenu = detailMenu(usage)
-                items.append(row)
-            }
-        }
-        return items
-    }
-
-    // Everything about one account: plan, each limit with the exact reset time, other limits, problems.
-    static func detailMenu(_ usage: AIUsage) -> NSMenu {
-        let menu = NSMenu()
+// Everything about one account, for the side panel: plan, each limit with the exact reset time, other limits, problems.
+enum UsageDetail {
+    static func lines(_ usage: AIUsage) -> [String] {
         let formatter = DateFormatter()
         formatter.locale = AppLanguage.current.locale
         formatter.dateStyle = .medium; formatter.timeStyle = .short
@@ -341,55 +286,6 @@ extension MenuCardItem {
                 lines.append(line)
             }
         }
-        lines += usage.extras
-        if let note = usage.note { lines.append(note) }
-        for (i, line) in lines.enumerated() {
-            let entry = NSMenuItem(title: line, action: nil, keyEquivalent: "")
-            if i == 0 { entry.attributedTitle = NSAttributedString(string: line, attributes: [.font: NSFont.boldSystemFont(ofSize: 13)]) }
-            menu.addItem(entry)
-        }
-        if let provider = usage.account?.provider {
-            menu.addItem(.separator())
-            let colors = AIColorMenu.item(provider)
-            menu.addItem(colors)
-        }
-        return menu
-    }
-}
-
-// Changing an AI's color from the usage menu: one "<AI> 색 바꾸기…" item that opens the color window
-// (AIColorWindow), the same one as a right-click on the AI's name in the chat and Settings > Appearance.
-enum AIColorMenu {
-    static func make(_ provider: Account.Provider) -> NSMenu {
-        let menu = NSMenu()
-        menu.addItem(item(provider))
-        return menu
-    }
-
-    static func item(_ provider: Account.Provider) -> NSMenuItem {
-        let item = NSMenuItem(title: AIColorWindow.menuTitle(provider), action: #selector(AIColorOpener.open(_:)), keyEquivalent: "")
-        item.target = AIColorOpener.shared
-        item.representedObject = provider.rawValue
-        item.image = swatch(AIColors.color(provider))
-        return item
-    }
-
-    // A round swatch for a menu item; drawn when shown, so it follows light and dark mode.
-    static func swatch(_ color: NSColor) -> NSImage {
-        NSImage(size: NSSize(width: 12, height: 12), flipped: false) { rect in
-            color.setFill()
-            NSBezierPath(ovalIn: rect.insetBy(dx: 1, dy: 1)).fill()
-            NSColor.labelColor.withAlphaComponent(0.2).setStroke()
-            NSBezierPath(ovalIn: rect.insetBy(dx: 1, dy: 1)).stroke()
-            return true
-        }
-    }
-}
-
-final class AIColorOpener: NSObject {
-    static let shared = AIColorOpener()
-    @objc func open(_ item: NSMenuItem) {
-        guard let raw = item.representedObject as? String, let provider = Account.Provider(rawValue: raw) else { return }
-        AIColorWindow.show(provider)
+        return lines + usage.extras + (usage.note.map { [$0] } ?? [])
     }
 }

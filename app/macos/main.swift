@@ -12,9 +12,9 @@ import AIIntegrations
 // AI Illuminati: a menu bar gauge that shows how much of each AI subscription is left
 // (5-hour and weekly limits) and when each one resets, for any number of Claude and ChatGPT
 // accounts. Uses each tool's own login (subscription), never API keys.
-final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, PhoneUsage {
+final class AppDelegate: NSObject, NSApplicationDelegate, PhoneUsage {
     private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-    private let menu = NSMenu()
+    private let panel = UsagePanel()   // opens when the pointer rests on the icon (UsagePanel.swift)
     private let work = DispatchQueue(label: "usage")
     private let model = AppModel()
     private let settings = SettingsWindow()
@@ -61,8 +61,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, PhoneU
         markTimer = ticker
     }
 
-    // Keeps animating while the menu is open (like AI Face): the timer runs in .common mode and only
-    // the menu bar image changes; the menu itself is not rebuilt while open.
+    // Keeps animating while the panel is open (like AI Face): the timer runs in .common mode.
     private func animateMark() {
         let now = ProcessInfo.processInfo.systemUptime
         let frame = MenuMarkFrame.at(now - markStartedAt, working: markWorking,
@@ -85,7 +84,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, PhoneU
         todos.start()
         // Old workspace backups go by age and count: now, after each answer and once a day.
         WorkspaceBackup.startAutomaticCleanUp()
-        model.updater.onAvailableChange = { [weak self] in self?.rebuildMenu() }
+        model.updater.onAvailableChange = { [weak self] in self?.updatePanel() }
         model.updater.isBusy = { [weak self] in
             guard let self else { return false }
             return self.discussion.anyRunning || self.discussion.importingMaterials
@@ -105,24 +104,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, PhoneU
         unsetenv("OLDPWD")
         item.button?.image = illuminatiIcon()
         item.button?.imagePosition = .imageLeading
-        menu.delegate = self
-        item.menu = menu
+        setUpPanel()
         NSApp.mainMenu = keyboardMenu()
         model.onAccountsChange = { [weak self] in self?.refresh() }
         model.onDisplayChange = { [weak self] in
             self?.updateTitle()
-            self?.rebuildMenu()
+            self?.updatePanel()
         }
-        model.onPreviewUsageMenu = { [weak self] in
-            guard let self,
-                  let window = NSApp.keyWindow ?? NSApp.mainWindow ?? NSApp.windows.first(where: { $0.isVisible }),
-                  let content = window.contentView else { return }
-            NSApp.activate(ignoringOtherApps: true)
-            window.makeKeyAndOrderFront(nil)
-            let location = content.convert(window.mouseLocationOutsideOfEventStream, from: nil)
-            self.menu.popUp(positioning: nil, at: location, in: content)
-        }
-        rebuildMenu()
+        model.onPreviewUsageMenu = { [weak self] in self?.panel.preview() }
+        updatePanel()
         refresh()
         timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in self?.refresh() }
         memoryCleanupTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
@@ -152,7 +142,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, PhoneU
         approvals.start()
         ChatApp.screens.approvals = { [weak self] in self?.approvals.show() }
         approvalObservation = ProjectCenter.shared.$requests.map(\.count).removeDuplicates().receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in self?.showPending(); self?.rebuildMenu() }
+            .sink { [weak self] _ in self?.showPending(); self?.updatePanel() }
         PhoneServer.shared.usage = self
         // The phone page's update screen; an update started there is acknowledged once that page answers again.
         PhoneServer.shared.updates = model.updater
@@ -199,24 +189,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, PhoneU
         return true
     }
 
-    private var usageMenuIsOpen = false
-    private var localLoaded: LocalModel.Loaded?   // Gemma in memory, read when the menu opens
-    // Account rows are custom views: draw their hover highlight (their details open to the side).
-    func menu(_ menu: NSMenu, willHighlight item: NSMenuItem?) {
-        for entry in menu.items { (entry.view as? MenuRowView)?.highlighted = entry === item }
+    private var localLoaded: LocalModel.Loaded?   // Gemma in memory, read when the panel opens
+    private var lastRead: TimeInterval?   // when the last usage reading started
+
+    // Resting on the icon or clicking it opens the panel; there is no menu any more.
+    private func setUpPanel() {
+        guard let button = item.button else { return }
+        button.target = self
+        button.action = #selector(iconClicked)
+        panel.icon = { [weak self] in
+            guard let button = self?.item.button, let window = button.window else { return nil }
+            return window.convertToScreen(button.convert(button.bounds, to: nil))
+        }
+        panel.willShow = { [weak self] in self?.panelWillShow() }
+        panel.content.title = { [weak self] in self?.label(for: $0) ?? $0.name }
+        panel.content.act = { [weak self] in self?.perform($0) }
+        button.addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: panel, userInfo: nil))
     }
 
-    func menuWillOpen(_ menu: NSMenu) {
-        localLoaded = model.hasLocal && model.localEnabled ? LocalModel.loaded() : nil
-        rebuildMenu()
-        usageMenuIsOpen = true
-        refresh()
+    @objc private func iconClicked() { panel.click() }
+
+    // Opening shows the last readings at once; they are read again only when older than 30 s (the 60 s timer
+    // keeps them fresh), so resting on the icon many times a day does not ask each service each time.
+    // The Ollama check waits up to 0.7 s, so it runs off the main thread and its line comes when it answers.
+    private func panelWillShow() {
+        updatePanel()
+        if UsagePanelRules.stale(lastRead: lastRead, now: ProcessInfo.processInfo.systemUptime) { refresh() }
+        guard model.hasLocal && model.localEnabled else { localLoaded = nil; updatePanel(); return }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let loaded = LocalModel.loaded()
+            DispatchQueue.main.async {
+                self.localLoaded = loaded
+                self.updatePanel()
+            }
+        }
     }
-    func menuDidClose(_ menu: NSMenu) {
-        // AppKit can still be unwinding menu tracking here. Rebuild on the next event turn.
-        DispatchQueue.main.async {
-            self.usageMenuIsOpen = false
-            self.rebuildMenu()
+
+    private func perform(_ action: UsagePanelAction) {
+        switch action {
+        case .refresh: refresh()   // the panel stays to show the new numbers
+        case .unloadLocal: unloadLocal()
+        default:
+            // The rest opens a window or quits: the panel goes first.
+            panel.hide()
+            switch action {
+            case .approvals: openApprovals()
+            case .chat: openChat()
+            case .settings: openSettings()
+            case .installUpdate: installUpdate()
+            case .quit: NSApp.terminate(nil)
+            case .color(let provider): AIColorWindow.show(provider)
+            case .refresh, .unloadLocal: break
+            }
         }
     }
 
@@ -273,6 +297,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, PhoneU
     func phoneRefreshUsage() { refresh() }
 
     @objc private func refresh() {
+        lastRead = ProcessInfo.processInfo.systemUptime
         let list = accounts
         work.async {
             var fresh = list.map { account -> AIUsage in
@@ -289,7 +314,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, PhoneU
                 self.model.latestUsage = Dictionary(fresh.compactMap { u in u.account.map { ($0.id, u) } },
                                                     uniquingKeysWith: { a, _ in a })
                 self.updateTitle()
-                self.rebuildMenu()
+                self.updatePanel()
             }
         }
     }
@@ -322,12 +347,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, PhoneU
         let window = model.menuBarWindow
         let best = present.map { g in visible.filter { $0.account?.provider == g.1 }.compactMap { window.left($0) }.max() }
         let levels = listed.map { account in usages.first { $0.account?.id == account.id }.flatMap { window.left($0) } }
-        item.button?.toolTip = window.title + "\n" + zip(listed, levels).map { account, left in
-            let usage = usages.first { $0.account?.id == account.id }
-            let text = usage.map { window.hasNoLimit($0) } == true ? L("한도 없음", "no limit")
-                : left.map { "\(Int($0.rounded()))%" } ?? "–"
-            return account.name + " " + text
-        }.joined(separator: "\n")
         // Every account hidden: the mark alone, so the menu bar item never shrinks to nothing.
         let style = listed.isEmpty && model.menuBarStyle != .mark ? .mark : model.menuBarStyle
         let colored = model.menuBarColored
@@ -375,20 +394,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, PhoneU
         item.button?.attributedTitle = title
     }
 
-    private func rebuildMenu() {
-        guard !usageMenuIsOpen else { return }
-        menu.removeAllItems()
-        let pending = ProjectCenter.shared.requests.count
-        if pending > 0 {
-            let waiting = action(L("허가 대기 \(pending)건…", "\(pending) Approval\(pending == 1 ? "" : "s") Waiting…"), #selector(openApprovals))
-            waiting.image = NSImage(systemSymbolName: "exclamationmark.circle.fill", accessibilityDescription: nil)?
-                .withSymbolConfiguration(.init(paletteColors: [.systemOrange]))
-            menu.addItem(waiting)
-            menu.addItem(.separator())
-        }
-        if usages.isEmpty && !accounts.isEmpty { menu.addItem(info(L("확인 중…", "Checking…"))) }
+    private func updatePanel() {
+        let content = panel.content
+        content.pending = ProjectCenter.shared.requests.count
+        content.checking = usages.isEmpty && !accounts.isEmpty
         // Current order and names from the list (readings may be a little older).
-        let shown = accounts.compactMap { account in
+        content.shown = accounts.compactMap { account in
             usages.first { $0.account?.id == account.id }.map { usage -> AIUsage in
                 var copy = usage
                 copy.account = account
@@ -401,39 +412,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, PhoneU
                 return copy
             }
         }
-        if model.usageMenuStyle == .cards {
-            for (i, usage) in shown.enumerated() {
-                if i > 0 { menu.addItem(.separator()) }
-                menu.addItem(MenuCardItem.make(usage, title: label(for: usage)))
-            }
-            if !shown.isEmpty { menu.addItem(MenuCardItem.legend()) }
-        } else if !shown.isEmpty {
-            for row in MenuCardItem.comparison(shown, style: model.usageMenuStyle) { menu.addItem(row) }
+        content.style = model.usageMenuStyle
+        // The Ollama model on this Mac, only while it is in memory: how much and until when, with Unload now.
+        // (Its on/off switch is also in Settings by AI.)
+        content.local = model.hasLocal ? localLoaded.map { loaded in
+            let size = String(format: "%.1f", Double(loaded.bytes) / 1_073_741_824)
+            let minutes = loaded.until.map { max(0, Int(($0.timeIntervalSinceNow / 60).rounded(.up))) }
+            return loaded.title + L(" · 메모리 \(size)GB 사용 중", " · using \(size) GB of memory") + (minutes.map { L(" · \($0)분 뒤 내려감", " · unloads in \($0) min") } ?? "")
+        } : nil
+        // Also seen with Settings closed; read again each time the panel opens.
+        content.update = model.updater.progress.map { L("업데이트 ", "Update ") + $0.summary(at: Date()) }
+        content.install = model.updater.available.flatMap { next in
+            model.updater.progress?.failed ?? true ? L("새 버전 설치 (\(next.prefix(7)))", "Install New Version (\(next.prefix(7)))") : nil
         }
-        if !shown.isEmpty { menu.addItem(.separator()) }
-        menu.addItem(action(L("채팅창 열기…", "Open Chat…"), #selector(openChat), key: "n"))
-        if model.hasLocal {
-            // The Ollama model on this Mac, only while it is in memory: how much and until when, with Unload now.
-            // (Its on/off switch is also in Settings by AI.)
-            if let loaded = localLoaded {
-                menu.addItem(.separator())
-                let size = String(format: "%.1f", Double(loaded.bytes) / 1_073_741_824)
-                let minutes = loaded.until.map { max(0, Int(($0.timeIntervalSinceNow / 60).rounded(.up))) }
-                menu.addItem(info(loaded.title + L(" · 메모리 \(size)GB 사용 중", " · using \(size) GB of memory") + (minutes.map { L(" · \($0)분 뒤 내려감", " · unloads in \($0) min") } ?? "")))
-                menu.addItem(action(L("로컬 모델 지금 내리기", "Unload Local Model Now"), #selector(unloadLocal)))
-            }
-        }
-        if let progress = model.updater.progress {
-            // Also seen with Settings closed; the menu is rebuilt each time it opens.
-            menu.addItem(info(L("업데이트 ", "Update ") + progress.summary(at: Date())))
-        }
-        if let next = model.updater.available, model.updater.progress?.failed ?? true {
-            menu.addItem(action(L("새 버전 설치 (\(next.prefix(7)))", "Install New Version (\(next.prefix(7)))"), #selector(installUpdate)))
-        }
-        menu.addItem(action(L("설정…", "Settings…"), #selector(openSettings), key: ","))
-        menu.addItem(action(L("지금 새로고침", "Refresh Now"), #selector(refresh), key: "r"))
-        menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: L("종료", "Quit"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
     }
 
     private func label(for usage: AIUsage) -> String {
@@ -446,27 +437,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, PhoneU
 
 
     @objc private func openSettings() { settings.show(model: model) }
-    @objc private func unloadLocal() {
+    private func unloadLocal() {
         localLoaded = nil
+        updatePanel()
         DispatchQueue.global(qos: .utility).async { LocalModel.unload() }
     }
-    @objc private func installUpdate() { model.updater.install() }
+    private func installUpdate() { model.updater.install() }
     @objc private func openChat() { chat.show(discussion: discussion) }
-    @objc private func openApprovals() { approvals.show() }
-
-    // MARK: Helpers
-
-    private func info(_ text: String) -> NSMenuItem {
-        let item = NSMenuItem(title: text, action: nil, keyEquivalent: "")
-        item.isEnabled = false
-        return item
-    }
-
-    private func action(_ title: String, _ selector: Selector, key: String = "") -> NSMenuItem {
-        let item = NSMenuItem(title: title, action: selector, keyEquivalent: key)
-        item.target = self
-        return item
-    }
+    private func openApprovals() { approvals.show() }
 
 }
 

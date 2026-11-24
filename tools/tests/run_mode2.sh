@@ -365,6 +365,9 @@ late_stages() {
   limit 300 xcrun swiftc -swift-version 5 $J -module-cache-path "$CACHE" -o "$TEST_DIR/icon-check" \
       app/macos/Icon.swift tools/tests/icon_animation.swift
   limit 60 "$TEST_DIR/icon-check"
+  limit 300 xcrun swiftc -swift-version 5 $J -module-cache-path "$CACHE" -o "$TEST_DIR/usage-panel-check" \
+      app/macos/UsagePanelRules.swift tools/tests/usage_panel_rules.swift
+  limit 60 "$TEST_DIR/usage-panel-check"
   stage_end
 }
 late_start() {

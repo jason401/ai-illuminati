@@ -668,8 +668,8 @@ struct AppearanceSettingsTab: View {
                         Image(systemName: "eye").frame(width: 24, height: 24)
                             .background(RoundedRectangle(cornerRadius: 5).fill(Color.primary.opacity(0.07)))
                     }.buttonStyle(.plainHit)
-                        .help(L("메뉴 미리 보기", "Preview usage menu"))
-                        .accessibilityLabel(L("메뉴 미리 보기", "Preview usage menu"))
+                        .help(L("사용량 창 미리 보기", "Preview usage panel"))
+                        .accessibilityLabel(L("사용량 창 미리 보기", "Preview usage panel"))
                 }
             }
         }

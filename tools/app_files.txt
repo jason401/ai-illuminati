@@ -5,7 +5,9 @@
 main.swift app start: menu, AppDelegate, the real data folder, connects the modules
 Settings.swift AppModel and the Settings window (account list, options)
 AISettingsGrid.swift screen: Settings by AI, one window with every AI's chat switches (AIs down, settings across)
-MenuCards.swift screen: the menu's account cards
+MenuCards.swift screen: the usage panel's account cards
+UsagePanel.swift screen: the usage panel under the menu bar icon (opens on rest or click)
+UsagePanelRules.swift screen: when the usage panel opens and closes, as plain values for the icon check
 Icon.swift screen: the menu bar icon and its animation
 Login.swift app start: Terminal login and install scripts for each CLI (later move candidate: LocalModel.install)
 LocalModels.swift screen: the Ollama models window

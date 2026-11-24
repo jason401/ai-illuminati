@@ -146,7 +146,10 @@ final class Updater: ObservableObject {
                             try step.advance(self.gitStep)
                             self.report(["status": "testing", "current": self.revision, "next": step.new], save: false)
                             self.update { $0.move(to: 1) }
-                            try self.shell(["zsh", "tools/tests/run_mode2.sh"], timeout: 30 * 60, step: "tests")
+                            // The short update check (main passed the full test before its push); a version
+                            // without it (older stable) still runs the full test.
+                            let quick = FileManager.default.fileExists(atPath: self.root.appendingPathComponent("tools/tests/update_check.sh").path)
+                            try self.shell(["zsh", quick ? "tools/tests/update_check.sh" : "tools/tests/run_mode2.sh"], timeout: (quick ? 15 : 30) * 60, step: "tests")
                             self.report(["status": "building", "current": self.revision, "next": step.new], save: false)
                             self.update { $0.move(to: 2) }
                             try self.shell(["zsh", "tools/build_app.sh", "--stage"], timeout: 20 * 60, step: "build")

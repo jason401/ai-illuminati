@@ -51,11 +51,11 @@ public enum AutoPick {
     }
     static func enough(_ usage: AIUsage?, purpose: Purpose, now: Date = Date()) -> Bool { surplus(usage: usage, purpose: purpose, now: now) >= 0 }
 
-    // TODO crew: Claude/Codex accounts with enough left for a TODO (and allowed by the lock), the most surplus first
+    // TODO crew: Claude/Codex/Gemini accounts with enough left for a TODO (and allowed by the lock), the most surplus first
     // (Enterprise first when close, like choose; then the most weekly left); the reviewer of the other kind when there is one.
     static func todoCrew(_ accounts: [Account], usage: [String: AIUsage], lock: EnterpriseLock?, allowed: [String], now: Date = Date()) -> (lead: Account, reviewer: Account?)? {
         let ready = candidates(accounts, usage: usage, lock: lock)
-            .filter { [.claude, .codex].contains($0.provider) && enough(usage[$0.id], purpose: .todo, now: now) && (allowed.isEmpty || allowed.contains($0.id)) }
+            .filter { [.claude, .codex, .gemini].contains($0.provider) && enough(usage[$0.id], purpose: .todo, now: now) && (allowed.isEmpty || allowed.contains($0.id)) }
         func score(_ a: Account) -> (Double, Double) {
             (surplus(usage: usage[a.id], purpose: .todo, now: now) + (a.isSchool ? enterpriseBonus : 0), weekly(usage[a.id], now: now))
         }
@@ -192,7 +192,7 @@ extension Discussion {
             let worker = accounts.first { $0.id == (config.soloAccountID ?? config.lastSoloAccountID) }
                 ?? AutoPick.candidates(accounts, usage: [:], lock: nil).first
             let peer = config.peerAccountID.flatMap { id in accounts.first { $0.id == id && $0.id != worker?.id } }
-                ?? accounts.first { [.claude, .codex].contains($0.provider) && $0.provider != worker?.provider }
+                ?? accounts.first { [.claude, .codex, .gemini].contains($0.provider) && $0.provider != worker?.provider }
             ids = [worker?.id, peer?.id].compactMap { $0 }
         }
         var seen = Set<String>()
@@ -234,7 +234,7 @@ extension Discussion {
     func crew(project: Bool, room: UUID) -> (lead: String, others: [String])? {
         let ready = standingMembers(room: room)
         let able = ready.compactMap { id in model.accounts.first { $0.id == id } }
-            .filter { !project || [.claude, .codex].contains($0.provider) }
+            .filter { !project || [.claude, .codex, .gemini].contains($0.provider) }
         let config = configuration(of: room)
         guard let lead = able.first(where: { $0.id == config.leadID })
                 ?? AutoPick.choose(able, usage: model.latestUsage, lock: nil, current: config.lastSoloAccountID)
@@ -976,14 +976,14 @@ extension Discussion {
         let needs = InstructionNeeds(question: question, images: images, project: project != nil && project?.folderless != true,
                                      documents: project?.documents == true || (project == nil && linkedProject(id)?.isDocuments == true))
         return Self.composeInstruction(name: label(account), provider: account.provider, folders: folders,
-                                drive: binding.face == true && [.claude, .codex].contains(account.provider) ? ChatApp.driveRule() ?? "" : "",
+                                drive: binding.face == true && [.claude, .codex, .gemini].contains(account.provider) ? ChatApp.driveRule() ?? "" : "",
                                 fullAccess: binding.fullAccess == true, picture: pictureRule(account, chat: id), helper: helper,
                                 terminalAllowed: AICapabilities.rule(account, .terminal) != .off, webAllowed: AICapabilities.rule(account, .web) != .off,
                                 face: Self.projectFaceRule(face: binding.face == true), project: project,
                                 notes: id.map { ChatNotes.rule(ChatNotes.current($0)) } ?? "",
                                 space: spaceRule
                                     ? Self.spaceRule(question, draws: !spaceDrawers(chat: id ?? currentID).isEmpty,
-                                                     folder: [.claude, .codex].contains(account.provider) && project == nil
+                                                     folder: [.claude, .codex, .gemini].contains(account.provider) && project == nil
                                                          && binding.roots.contains { $0.path == SpaceStore.root.path && $0.writable == true },
                                                      allowed: { Enterprise.permits(account, lock: self.spaceLock($0)) }) : "",
                                 peer: peerInstruction(account, room: id, brief: !needs.peer),
@@ -1242,6 +1242,6 @@ extension Discussion {
         if let id = manifest.worker, let chosen = workers.first(where: { $0.id == id }) { return chosen }
         if let origin = manifest.originChat.flatMap(UUID.init(uuidString:)), conversations.contains(where: { $0.id == origin }),
            let account = soloNext(room: origin), workers.contains(where: { $0.id == account.id }) { return account }
-        return AutoPick.choose(workers.filter { [.claude, .codex].contains($0.provider) }, usage: model.latestUsage, lock: spaceLock(manifest), current: nil)
+        return AutoPick.choose(workers.filter { [.claude, .codex, .gemini].contains($0.provider) }, usage: model.latestUsage, lock: spaceLock(manifest), current: nil)
     }
 }

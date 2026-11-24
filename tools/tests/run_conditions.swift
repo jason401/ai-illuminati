@@ -59,7 +59,9 @@ func runConditionsCapture() -> String {
         for (path, name) in [(cli, "<cli>"), (resources, "$RESOURCES"), (home, "$TEST_HOME")] where !path.isEmpty {
             text = text.replacingOccurrences(of: path, with: name).replacingOccurrences(of: path.replacingOccurrences(of: "/", with: "\\/"), with: name)
         }
+        // Gemini gets its turn in -p: the fixture repository's commit (dated now) is in its checkpoint.
         return text.replacingOccurrences(of: "[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}", with: "<uuid>", options: .regularExpression)
+            .replacingOccurrences(of: "HEAD: [0-9a-f]{40}", with: "HEAD: <sha>", options: .regularExpression)
     }
     func line(_ value: String) -> String {
         String(data: try! JSONSerialization.data(withJSONObject: [value], options: [.withoutEscapingSlashes]), encoding: .utf8)!.dropFirst().dropLast().description
@@ -109,10 +111,10 @@ func runConditionsCapture() -> String {
             expect(levels == ["high", "medium"], "requestDebate hard: high, then medium again (\(binding == nil ? "plain" : "folder")): \(levels)")
         }
     }
-    // Project work the way ProjectChat starts it (write and execute, its own backup, a session), Claude and Codex
-    // (the only project workers), the chat's full auto off and on. The tool answers at once; nothing else runs.
+    // Project work the way ProjectChat starts it (write and execute, its own backup, a session), Claude, Codex and
+    // Gemini, the chat's full auto off and on. The tool answers at once; nothing else runs.
     // soloBinding carries the chat's switch (it dropped it until 2026-11-23, so "off" still ran full auto).
-    for account in accounts where account.provider == .claude || account.provider == .codex {
+    for account in accounts where account.provider != .ollama {
         for fullAuto in [false, true] {
             let root = URL(fileURLWithPath: home).appendingPathComponent("run-conditions-project-\(account.provider.rawValue)-\(fullAuto)")
             try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -170,12 +172,12 @@ func testRunConditions() {
             expect(plain.contains("exec: <cli>") && plain.contains("group: false") && !plain.contains("AI_ILLUMINATI_PROJECT_PROCESS"), "\(provider): a chat folder runs the tool itself")
         }
     }
-    for provider in ["claude", "codex"] {
+    for provider in ["claude", "codex", "gemini"] {
         for kind in ["project-chat-off", "project-chat-on"] {
             let work = block(provider + " " + kind)
             expect(work.contains("exec: /usr/bin/python3\narg: \"$RESOURCES/project_process.py\"\narg: \"<cli>\"") && work.contains("group: true")
                    && work.contains("env+: AI_ILLUMINATI_PROJECT_PROCESS=\"1\"") && work.contains("env-: GH_TOKEN") == kind.hasSuffix("on")
-                   && (provider == "codex" || work.contains("arg: \"$TEST_HOME/run-conditions-project-claude-\(kind.hasSuffix("on"))\"")),
+                   && (provider != "claude" || work.contains("arg: \"$TEST_HOME/run-conditions-project-claude-\(kind.hasSuffix("on"))\"")),
                    "\(provider) \(kind): ProjectChat's run is wrapped, guarded only when on, and gets its project (Codex full access names no folder)")
         }
     }
@@ -193,6 +195,17 @@ func testRunConditions() {
     let codexChatOff = block("codex project-chat-off"), codexChatOn = block("codex project-chat-on")
     expect(!codexChatOff.contains("danger-full-access") && codexChatOff.contains("sandbox_mode=\\\"workspace-write\\\"") && !codexChatOff.contains("auto-guard")
            && codexChatOn.contains("sandbox_mode=\\\"danger-full-access\\\"") && codexChatOn.contains("auto-guard"), "codex: the project chat's full auto off and on give their own sandbox")
+    // Gemini: the app's tools as a plugin of the launch folder, allowed for the session only; full auto: every command,
+    // no terminal sandbox, edits on; off: the sandbox and agy's own permission prompts (denied headless).
+    let geminiChatOff = block("gemini project-chat-off"), geminiChatOn = block("gemini project-chat-on")
+    expect([geminiChatOff, geminiChatOn, block("gemini folder")].allSatisfy { $0.contains("mcp(illuminati_illuminati\\\\/*)") },
+           "gemini: every folder run may call the app's tools")
+    expect(geminiChatOn.contains("command(*)") && !geminiChatOn.contains("arg: \"--sandbox\"") && geminiChatOn.contains("arg: \"accept-edits\"")
+           && geminiChatOn.contains("auto-guard") && block("gemini folder-full").contains("command(*)"),
+           "gemini: full auto runs every command outside agy's sandbox, with AutoGuard")
+    expect(!geminiChatOff.contains("command(*)") && geminiChatOff.contains("arg: \"--sandbox\"") && !geminiChatOff.contains("auto-guard")
+           && geminiChatOff.contains("write_file($TEST_HOME\\\\/run-conditions-project-gemini-false\\\\/.git)\\\"]"),
+           "gemini: the project chat's full auto off keeps agy's sandbox and Git's own files")
     expect(blocks.filter { $0.hasPrefix("ollama ") }.allSatisfy { !$0.contains("exec:") }, "the local model starts no command line tool")
     // Thinking on Auto: project work and its runs think hard, every other call medium.
     for (provider, high, medium) in [("claude", "arg: \"--effort\"\narg: \"high\"", "arg: \"--effort\"\narg: \"medium\""),
@@ -430,6 +443,12 @@ private func testCapabilityLaunches() {
         else { try? FileManager.default.removeItem(at: settingsURL) }
     }
     let args = capture(gemini, invocation) { launch in
+        let plugin = launch.directory.appendingPathComponent(".agents/plugins/illuminati")
+        let config = (try? Data(contentsOf: plugin.appendingPathComponent("mcp_config.json")))
+            .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: [String: [String: Any]]] }
+        expect(FileManager.default.fileExists(atPath: plugin.appendingPathComponent("plugin.json").path)
+               && (config?["mcpServers"]?["illuminati"]?["args"] as? [String])?.first?.hasSuffix("workspace_mcp.py") == true,
+               "Gemini: the app's tools are a plugin of the launch folder")
         let file = launch.directory.appendingPathComponent(".agents/hooks.json")
         let data = try! Data(contentsOf: file)
         let hooks = try! JSONSerialization.jsonObject(with: data) as! [String: [String: [[String: Any]]]]
@@ -445,7 +464,7 @@ private func testCapabilityLaunches() {
     let object = (try? JSONSerialization.jsonObject(with: override)) as? [String: [String: [String]]]
     let deny = object?["permissions"]?["deny"] ?? []
     expect(["command(*)", "read_url(*)", "write_file(/example)"].allSatisfy { deny.contains($0) }
-           && object?["permissions"]?["allow"] == ["command(ls)"] && (try? Data(contentsOf: settingsURL)) == settings,
+           && object?["permissions"]?["allow"] == ["command(ls)", "mcp(illuminati_illuminati/*)"] && (try? Data(contentsOf: settingsURL)) == settings,
            "Gemini: an account with pre-approved commands can launch with session-only deny rules")
     _ = capture(gemini) { launch in
         let dirs = zip(launch.arguments, launch.arguments.dropFirst()).compactMap { $0 == "--add-dir" ? $1 : nil }

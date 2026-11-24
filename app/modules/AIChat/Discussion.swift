@@ -256,7 +256,7 @@ public final class Discussion: ObservableObject {
     var draggingConversationID: UUID?
     @Published var useClaude = true
     @Published var useCodex = true
-    @Published var useGemini = false
+    @Published var useGemini = true
 
     // Injected in tests so full-history sequencing can be checked without spending usage.
     var answer: (Account, String, TimeInterval) -> Result<String, Answerer.Failure> = {
@@ -919,13 +919,13 @@ public final class Discussion: ObservableObject {
         let sorting = !meeting && (standing.count >= 2 || (forced != nil && project && plain) || (forced == .all && autoMembers) || autoViews)
         // Two or more picked with @ in a project chat and no way picked: their opinions, read only, never work.
         let pickedOpinion = plain && project && mentioned.count >= 2 && forced == nil
-        let opinionLead = crew?.lead ?? standing.first { id in model.accounts.contains { $0.id == id && [.claude, .codex].contains($0.provider) } } ?? standing.first
+        let opinionLead = crew?.lead ?? standing.first { id in model.accounts.contains { $0.id == id && [.claude, .codex, .gemini].contains($0.provider) } } ?? standing.first
         let opinionMembers = !mentioned.isEmpty ? mentioned : opinionLead.map { lead in [lead] + standing.filter { $0 != lead } } ?? []
-        let judges = standing.compactMap { id in model.accounts.first { $0.id == id && [.claude, .codex].contains($0.provider) } }
+        let judges = standing.compactMap { id in model.accounts.first { $0.id == id && [.claude, .codex, .gemini].contains($0.provider) } }
         let doers = mentioned.isEmpty ? called : Array(mentioned.prefix(1))
         let checkers = mentioned.isEmpty ? reviewers : mentioned.count >= 2 ? Array(mentioned.dropFirst())
             : project ? memberIDs(room: id).filter { member in
-                member != mentioned[0] && model.accounts.contains { $0.id == member && [.claude, .codex].contains($0.provider) && permits($0, room: id) }
+                member != mentioned[0] && model.accounts.contains { $0.id == member && [.claude, .codex, .gemini].contains($0.provider) && permits($0, room: id) }
                 && model.latestUsage[member]?.needsLogin != true && (model.latestUsage[member]?.leftNow ?? 50) > 0
             } : []
         let team = called.isEmpty ? pickTeam(room: id) : called.compactMap { id in model.accounts.first { $0.id == id } }

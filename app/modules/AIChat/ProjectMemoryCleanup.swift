@@ -62,7 +62,7 @@ public enum ProjectMemoryCleanupLink {
         let worker = discussion.backgroundMeetingWorker(room, cancellation: token)
         worker.prepareMeeting(room: room, binding: WorkspaceBinding(roots: []), appCalled: true)
         let rules = discussion.model.chatRules.trimmingCharacters(in: .whitespacesAndNewlines)
-        let leader = team.first { [.claude, .codex].contains($0.provider) }?.provider ?? team[0].provider
+        let leader = team.first { [.claude, .codex, .gemini].contains($0.provider) }?.provider ?? team[0].provider
         let notes = ProjectMemory.cleanupLines(ProjectMemoryStore.shared.notes(group.id))
         DispatchQueue.global(qos: .utility).async {
             var applied = false

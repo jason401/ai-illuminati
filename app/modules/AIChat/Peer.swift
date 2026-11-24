@@ -18,7 +18,7 @@ enum Peer {
     static let askTimeout: TimeInterval = 600
     static let reviewTimeout: TimeInterval = 900
     static let diffLimit = 80_000                // characters of diff the reviewer gets in the prompt
-    static let kinds: [Account.Provider] = [.claude, .codex, .gemini]   // who may be asked (Gemini gives views without tools)
+    static let kinds: [Account.Provider] = [.claude, .codex, .gemini]   // who may be asked
 
     enum Purpose: String, CaseIterable {
         case opinion, fact_check, alternative, review
@@ -36,7 +36,7 @@ enum Peer {
     // else the other kind with the most usage left (in an Enterprise chat, of its organization only). Another account of
     // the same kind only when there is no other kind; nil when there is nobody else.
     static func choose(asker: Account?, picked: String?, accounts: [Account], usage: [String: AIUsage], lock: EnterpriseLock?) -> Account? {
-        let able = accounts.filter { [.claude, .codex].contains($0.provider) && $0.id != asker?.id && usage[$0.id]?.needsLogin != true
+        let able = accounts.filter { [.claude, .codex, .gemini].contains($0.provider) && $0.id != asker?.id && usage[$0.id]?.needsLogin != true
             && Enterprise.permits($0, lock: lock) }
         if let picked, let chosen = able.first(where: { $0.id == picked }), chosen.provider != asker?.provider { return chosen }
         let other = able.filter { $0.provider != asker?.provider }
@@ -574,10 +574,10 @@ extension Discussion {
     }
 
     // What ask_ai adds to an answering AI's instruction: who it may ask (nothing when nobody else is available, or for
-    // Gemini and Gemma, which get no tools), and who reviews its project changes.
+    // Gemma, which gets no tools), and who reviews its project changes.
     // `brief`: the one-line reminder (Peer.briefRule) instead of the full rule; ask_peer and reviews keep their full rule.
     func peerInstruction(_ account: Account, room: UUID? = nil, brief: Bool = false) -> String {
-        guard let session = activePeerSession, [.claude, .codex].contains(account.provider) else { return "" }
+        guard let session = activePeerSession, [.claude, .codex, .gemini].contains(account.provider) else { return "" }
         if session.legacy {
             return peerAccount(for: account, reviewers: session.members.filter { $0 != account.id }, room: session.room).map { Peer.legacyRule(peer: label($0)) } ?? ""
         }

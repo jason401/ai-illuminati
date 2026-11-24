@@ -149,7 +149,7 @@ extension Discussion {
         }
         let folder = prepareMeeting(room: room, binding: soloBinding(id))
         let brief = Self.meetingBrief(state: Self.loadState(id), history: history, source: folder.appendingPathComponent(Self.meetingSource).path)
-        let leader = team.first { [.claude, .codex].contains($0.provider) }?.provider ?? team[0].provider
+        let leader = team.first { [.claude, .codex, .gemini].contains($0.provider) }?.provider ?? team[0].provider
         let result = runDebate(question: question, history: [], rules: rules, team: team, leader: leader, perAI: Self.meetingTurnsPerAI,
                                cancellation: cancellation, id: room, index: 0, meeting: brief)
         changeTurn(room, 0, save: true) { $0.answeredAt = Date() }
@@ -346,7 +346,7 @@ extension Discussion {
         let cardID = card.id
         changeTurn(id, index, save: true) { $0.peerNotes = ($0.peerNotes ?? []) + [card] }
         let rules = model.chatRules.trimmingCharacters(in: .whitespacesAndNewlines)
-        let leader = team.first { [.claude, .codex].contains($0.provider) }?.provider ?? team[0].provider
+        let leader = team.first { [.claude, .codex, .gemini].contains($0.provider) }?.provider ?? team[0].provider
         // The one way a convened meeting ends: its state, the hidden chat answered, the card's headline.
         let close = { [weak meeting] (state: HeldMeeting.State) in
             meeting?.end(state)

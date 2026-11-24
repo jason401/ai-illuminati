@@ -163,11 +163,11 @@ final class SplitStore {
 }
 
 extension Discussion {
-    // The AIs for the parts: Claude/Codex accounts the app may pick here (Meeting.meetingTeam's AutoPick rule: most usage left,
+    // The AIs for the parts: Claude/Codex/Gemini accounts the app may pick here (Meeting.meetingTeam's AutoPick rule: most usage left,
     // one of each kind first), with at least AutoPick.threshold of the 5-hour limit left; others than the main room's AI
     // first. Fewer AIs than parts: they take the parts in turn.
     func subTeam(_ count: Int, asker: String?, room: UUID) -> [Account] {
-        let able = model.accounts.filter { [.claude, .codex].contains($0.provider) }
+        let able = model.accounts.filter { [.claude, .codex, .gemini].contains($0.provider) }
         func pick(_ from: [Account]) -> [Account] {
             Self.meetingTeam(from, usage: model.latestUsage, most: count, picks: model.autoTeamPicks) { self.autoAllowed($0, room: room) }
                 .filter { AutoPick.fiveHour(self.model.latestUsage[$0.id]) >= AutoPick.threshold }
@@ -573,7 +573,7 @@ public final class DelegateLink: ToolProvider {
                 return toolFailure("The main work tree has uncommitted changes: commit them (and a contract, if the parts meet) before splitting.")
             }
             let team = onMain { host.subTeam(parts.count, asker: context.asker?.id, room: main).map { ($0.id, host.label($0)) } }
-            guard !team.isEmpty else { return toolFailure("No Claude/Codex account with enough usage left can take a sub-room now. Do the work yourself.") }
+            guard !team.isEmpty else { return toolFailure("No Claude/Codex/Gemini account with enough usage left can take a sub-room now. Do the work yourself.") }
             for i in parts.indices { parts[i].account = team[i % team.count].0; parts[i].name = team[i % team.count].1 }
             let mine = string("mine").isEmpty ? nil : cut(string("mine"), 2000)
             let plan = parts.map { p in

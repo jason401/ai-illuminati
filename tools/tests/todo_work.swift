@@ -800,7 +800,7 @@ func testTodoScheduler() {
     }
     model.latestUsage["todo-claude"] = left(80, 70)
     model.latestUsage["todo-codex"] = left(5, 90)   // under 10%: no TODO work, so no reviewer either
-    model.latestUsage["todo-gemini"] = left(100, 100)
+    model.latestUsage["todo-gemini"] = left(5, 100)   // Gemini takes TODOs like the others; under 10% it does not either
     let chat = Discussion(model: model)
     let open = chat.currentID
     chat.draft = "my own message"
@@ -1629,7 +1629,7 @@ func testTodoCrew() {
     let discussion = Discussion(model: model)
     let scheduler = TodoScheduler(discussion: discussion, store: store)
     let auto = scheduler.crew()
-    expect(auto?.lead.id == "c1" && auto?.reviewer?.id == "x1", "automatic: the most left works, the other kind reviews")
+    expect(auto?.lead.id == "c1" && auto?.reviewer?.id == "g1", "automatic: the most left works, the other kind with the most left reviews (Gemini too)")
     let list = store.current.list(listID)!
     let picked = scheduler.crew(for: list)
     expect(picked?.lead.id == "c2" && picked?.reviewer?.id == "x1", "picked: only those work and review: \(picked.map { $0.lead.id } ?? "-")")

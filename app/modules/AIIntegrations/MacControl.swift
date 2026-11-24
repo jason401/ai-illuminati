@@ -14,9 +14,9 @@ public enum MacControl {
     static let inputNames: Set<String> = ["mac_click", "mac_drag", "mac_scroll", "mac_type", "mac_key"]
     public static let handNames: Set<String> = inputNames.union(["mac_open"])
 
-    /// Any Mac tool for this account: viewing (on), or hands (ask or on). Gemini and Ollama have none.
+    /// Any Mac tool for this account: viewing (on), or hands (ask or on). Ollama has none.
     public static func enabled(_ account: Account?) -> Bool {
-        guard let account, account.provider == .claude || account.provider == .codex else { return false }
+        guard let account, account.provider != .ollama else { return false }
         return AICapabilities.rule(account, .screen) == .on || AICapabilities.rule(account, .input) != .off
             || AICapabilities.rule(account, .apps) != .off
     }

@@ -484,7 +484,8 @@ func testPeerReview() {
     expect(Peer.choose(asker: claude, picked: nil, accounts: [claude, codex, schoolCodex], usage: [:], lock: gsLock)?.id == schoolCodex.id, "Enterprise chats keep an Enterprise reviewer of their organization")
     expect(Peer.choose(asker: claude, picked: claude2.id, accounts: [claude, claude2, codex], usage: [:], lock: nil)?.id == codex.id, "a picked reviewer of the same kind gives way to the other kind")
     expect(Peer.choose(asker: claude, picked: nil, accounts: [claude, claude2], usage: [:], lock: nil)?.id == claude2.id, "same kind only when there is no other")
-    expect(Peer.choose(asker: claude, picked: nil, accounts: [claude, gemini], usage: [:], lock: nil) == nil, "nobody else: no reviewer")
+    expect(Peer.choose(asker: claude, picked: nil, accounts: [claude, gemini], usage: [:], lock: nil)?.id == gemini.id, "Gemini reviews too")
+    expect(Peer.choose(asker: claude, picked: nil, accounts: [claude], usage: [:], lock: nil) == nil, "nobody else: no reviewer")
     expect(Peer.noIssues("No issues.") && Peer.noIssues("**문제 없음**") && !Peer.noIssues("No issues except one: a crash"), "a clean review is recognised")
     // Older chat files and other Macs' copies have none of the new fields.
     let oldConfig = try? JSONDecoder().decode(ChatConfiguration.self, from: Data(#"{"mode":0,"order":["claude"],"participants":["claude"],"leader":"claude"}"#.utf8))

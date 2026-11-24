@@ -2049,7 +2049,7 @@ struct ChatView<Model: ChatSettings>: View {
                     Button((config.leadID == nil ? "✓ " : "") + L("자동 (앱이 정하고 유지)", "Automatic (the app picks and keeps one)")) {
                         discussion.configure { $0.leadID = nil }
                     }
-                    ForEach(members.filter { id in !project || discussion.model.accounts.contains { $0.id == id && [.claude, .codex].contains($0.provider) } }, id: \.self) { id in
+                    ForEach(members.filter { id in !project || discussion.model.accounts.contains { $0.id == id && [.claude, .codex, .gemini].contains($0.provider) } }, id: \.self) { id in
                         Button((config.leadID == id ? "✓ " : "") + name(id)) { discussion.configure { $0.leadID = id } }
                     }
                 }

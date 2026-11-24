@@ -328,6 +328,10 @@ public enum Answerer {
         defer { if let geminiDirectory, run.folders == nil { try? FileManager.default.removeItem(at: geminiDirectory) } }
         var executionDirectory = geminiDirectory ?? session?.directory ?? run.folders.map { $0.directory.appendingPathComponent("stateless-\(UUID().uuidString)") } ?? chatDirectory
         if let geminiPictures, geminiDirectory == nil, session == nil, run.folders == nil { executionDirectory = geminiPictures }
+        // Gemini finds the Mac tools as a plugin of its working folder (WorkspaceInvocation.screenArguments): a folder
+        // of this call, not the chat's own one, so nothing of it stays behind.
+        let geminiScreen = account.provider == .gemini && screenDirectory != nil && geminiDirectory == nil && session == nil && run.folders == nil
+        if geminiScreen, let screenDirectory { executionDirectory = screenDirectory }
         do {
             if let geminiDirectory {
                 // Register the hook root before linked folders. Keep the previous plain chat root available.
@@ -335,9 +339,10 @@ public enum Answerer {
                 if run.folders == nil && geminiPictures == nil { arguments += ["--add-dir", chatDirectory.path] }
             }
             if let geminiPictures { arguments += ["--add-dir", geminiPictures.path] }
+            if geminiScreen && geminiPictures == nil { arguments += ["--add-dir", chatDirectory.path] }
             if let folders = run.folders { arguments = try folders.arguments(arguments, executionDirectory, web) }
             if let screenDirectory, let setup = run.screenTools?.arguments {
-                arguments = try setup(arguments, screenDirectory)
+                arguments = try setup(arguments, account.provider == .gemini ? executionDirectory : screenDirectory)
             }
         } catch { return .failure(.failed("Workspace setup failed: " + error.localizedDescription)) }
         // Steering: the input stays open (stream-json) and Claude says which messages it read (replayed).

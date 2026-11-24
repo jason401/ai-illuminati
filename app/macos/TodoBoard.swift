@@ -714,7 +714,7 @@ struct TodoCrewRow: View {
     @ObservedObject var discussion: Discussion
     let error: (String?) -> Void
 
-    private var workers: [Account] { discussion.model.accounts.filter { [.claude, .codex].contains($0.provider) } }
+    private var workers: [Account] { discussion.model.accounts.filter { [.claude, .codex, .gemini].contains($0.provider) } }
     private var lock: EnterpriseLock? { scheduler.lock(for: list) }
     private func name(_ id: String) -> String { discussion.model.accounts.first { $0.id == id }.map(discussion.label) ?? L("없어진 계정", "Removed account") }
     private func left(_ account: Account) -> String {
@@ -736,7 +736,7 @@ struct TodoCrewRow: View {
         let gone = list.accounts.filter { id in !workers.contains { $0.id == id } }
         HStack(spacing: 8) {
             Menu {
-                Button((list.accounts.isEmpty ? "✓ " : "") + L("자동 (Claude·Codex 모두)", "Automatic (every Claude/Codex)")) { save([]) }
+                Button((list.accounts.isEmpty ? "✓ " : "") + L("자동 (Claude·Codex·Gemini 모두)", "Automatic (every Claude/Codex/Gemini)")) { save([]) }
                 Divider()
                 ForEach(workers, id: \.id) { account in
                     let picked = list.accounts.contains(account.id)

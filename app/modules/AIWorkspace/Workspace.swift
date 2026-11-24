@@ -82,7 +82,10 @@ public struct WorkspaceToolLink { var socket: String; var session: String; var f
                     "-c", "mcp_servers.illuminati.args=" + WorkspaceInvocation.jsonArgument(args),
                     "-c", "mcp_servers.illuminati.required=true",
                     "-c", "mcp_servers.illuminati.default_tools_approval_mode=\"approve\""] + result
-        case .gemini, .ollama:
+        case .gemini:
+            try WorkspaceInvocation.geminiAllow([try WorkspaceInvocation.geminiPlugin(in: directory, command: command, args: args)], deny: [], in: &result)
+            return result
+        case .ollama:
             return result
         }
     }
@@ -328,37 +331,84 @@ public struct WorkspaceInvocation {
         case .gemini:
             // agy implements --mode through slash expansion; disabling it silently disables plan/accept-edits.
             result.removeAll { $0 == "--disable-slash-commands" }
-            // agy headless MCP needs a global allow rule. Never broaden personal
-            // permissions: native workspace tools + the host read-request bridge suffice.
             let folder = directory.appendingPathComponent(".agents")
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
             try Data("{\"mcpServers\":{}}".utf8).write(to: folder.appendingPathComponent("mcp_config.json"), options: .atomic)
+            // The app's tools (git_*, project_run, ask_ai, …) like Claude's and Codex's, without touching the user's agy
+            // settings: a plugin in this launch's own folder, allowed for this session only.
+            var allow = [try Self.geminiPlugin(in: directory, command: command, args: args)], deny: [String] = []
+            let full = binding.fullAccessActive && terminalAllowed
+            if full {
+                // Full auto like Claude's and Codex's: every command, no terminal sandbox (network on). AutoGuard's
+                // environment removes Git credentials and turns rm into the Trash.
+                result.removeAll { $0 == "--sandbox" }
+                allow += ["command(*)", "unsandboxed(*)"]
+            } else if let project = binding.project {
+                // With cards, like Claude's: Git's own files change only through the app's git tools (a write_file rule
+                // covers agy's edits too).
+                deny = Array(Set(project.protectedPaths)).sorted().map { "write_file(\($0))" }
+            }
+            try Self.geminiAllow(allow, deny: deny, in: &result)
             // Existing command auto-grants cannot guarantee a view or write-only workspace.
             // Execute runs with terminal off get an explicit command deny from Answerer.
             let settingsURL = URL(fileURLWithPath: AccountStore.home + "/.gemini/antigravity-cli/settings.json")
             let settings = (try? Data(contentsOf: settingsURL)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
-            let allow = (settings["permissions"] as? [String: Any])?["allow"] as? [String] ?? []
+            let personal = (settings["permissions"] as? [String: Any])?["allow"] as? [String] ?? []
             let auto = settings["toolPermission"] as? String ?? "request-review"
-            if level != .execute && (allow.contains(where: { $0.hasPrefix("command(") || $0.hasPrefix("unsandboxed(") }) || ["always-proceed", "proceed-in-sandbox"].contains(auto)) {
+            let effective = full ? .execute : level
+            if effective != .execute && (personal.contains(where: { $0.hasPrefix("command(") || $0.hasPrefix("unsandboxed(") }) || ["always-proceed", "proceed-in-sandbox"].contains(auto)) {
                 throw WorkspaceError.make("agy 개인 설정에 명령 자동 허용이 있어 이 권한 단계를 보장할 수 없습니다. 개인 설정은 바꾸지 않았습니다. 다른 AI를 선택하세요.")
             }
             // Headless agy ends the whole answer at the first denied tool (it tried `ls` for a plain question),
             // so the prompt says which tools this mode blocks.
             if let i = result.firstIndex(of: "-p"), i + 1 < result.count {
-                result[i + 1] = GeminiLinks.workspaceNote(level: level, runsCommands: shell, searchesWeb: webAllowed,
-                                                        readsPages: allow.contains("read_url(*)")) + result[i + 1]
+                result[i + 1] = GeminiLinks.workspaceNote(level: effective, runsCommands: shell, allCommands: full, searchesWeb: webAllowed,
+                                                        readsPages: personal.contains("read_url(*)")) + result[i + 1]
             }
-            result += ["--mode", level == .view ? "plan" : "accept-edits"]
+            result += ["--mode", effective == .view ? "plan" : "accept-edits"]
             for root in binding.roots where root.directory { result += ["--add-dir", root.path] }
         }
         return result
+    }
+
+    // agy reads MCP servers only from its global settings or from plugins (agy 1.5.16): the bridge as the "illuminati"
+    // plugin of `directory` (agy's working folder), and the allow rule for its tools (agy names them plugin_server).
+    static func geminiPlugin(in directory: URL, command: String, args: [String]) throws -> String {
+        let plugin = directory.appendingPathComponent(".agents/plugins/illuminati", isDirectory: true)
+        try FileManager.default.createDirectory(at: plugin, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try JSONSerialization.data(withJSONObject: ["name": "illuminati"]).write(to: plugin.appendingPathComponent("plugin.json"), options: .atomic)
+        let config = ["mcpServers": ["illuminati": ["command": command, "args": args]]]
+        try JSONSerialization.data(withJSONObject: config).write(to: plugin.appendingPathComponent("mcp_config.json"), options: .atomic)
+        return "mcp(illuminati_illuminati/*)"
+    }
+    // Headless agy cannot ask, so these go into this session's own settings (--settings, never saved), merged with
+    // what is already there (Answerer's deny rules and the user's own lists).
+    static func geminiAllow(_ rules: [String], deny added: [String], in arguments: inout [String]) throws {
+        var settings: [String: Any] = [:]
+        if let i = arguments.firstIndex(of: "--settings"), i + 1 < arguments.count {
+            settings = (try? JSONSerialization.jsonObject(with: Data(arguments[i + 1].utf8)) as? [String: Any]) ?? [:]
+            arguments.removeSubrange(i...i + 1)
+        }
+        var permissions = settings["permissions"] as? [String: Any] ?? [:]
+        if permissions["allow"] == nil, settings.isEmpty {
+            let url = URL(fileURLWithPath: AccountStore.home + "/.gemini/antigravity-cli/settings.json")
+            let saved = (try? Data(contentsOf: url)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+            permissions = saved?["permissions"] as? [String: Any] ?? [:]
+        }
+        let deny = permissions["deny"] as? [String] ?? []
+        permissions["allow"] = (permissions["allow"] as? [String] ?? []) + rules.filter { !deny.contains($0) }
+        if !added.isEmpty { permissions["deny"] = deny + added }
+        settings["permissions"] = permissions
+        arguments += ["--settings", String(decoding: try JSONSerialization.data(withJSONObject: settings, options: .withoutEscapingSlashes), as: UTF8.self)]
     }
 }
 
 extension GeminiLinks {
     // Linked folders: personal agy permissions are not broadened, so only describe what this mode allows.
-    static func workspaceNote(level: WorkspaceLevel, runsCommands: Bool, searchesWeb: Bool, readsPages: Bool) -> String {
-        let commands = runsCommands
+    static func workspaceNote(level: WorkspaceLevel, runsCommands: Bool, allCommands: Bool = false, searchesWeb: Bool, readsPages: Bool) -> String {
+        let commands = allCommands
+            ? "터미널 명령(run_command)을 쓸 수 있어요. Git push는 터미널이 아니라 git_push 도구로 하세요."
+            : runsCommands
             ? "터미널 명령(run_command)은 개인 설정에서 허락된 명령만 실행되고, 허락되지 않은 명령을 시도하면 답 전체가 실패해요. 꼭 필요할 때만 쓰세요."
             : "터미널 명령(run_command)은 이 실행에서 막혀 있고, 한 번이라도 시도하면 답 전체가 실패해요. ls, cat, find 같은 명령도 쓰지 마세요."
         let files = level == .view

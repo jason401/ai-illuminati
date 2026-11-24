@@ -192,7 +192,7 @@ for old in [1, 2, 3, 4] {
     expect(hiddenDefault.configuration.mode == 0, "a chat saved in team mode \(old) opens as a plain chat")
 }
 hiddenDefault.change(hiddenDefault.currentID) { $0.configuration = nil }
-expect(!hiddenDefault.configuration.participants.contains(.gemini) && !hiddenDefault.useGemini, "Gemini must be off by default in new chats")
+expect(hiddenDefault.configuration.participants.contains(.gemini) && hiddenDefault.useGemini, "Gemini takes part by default in new chats")
 Discussion.modernModes = false
 Discussion.availableModes = [1, 2, 3]
 let model = AppModel()

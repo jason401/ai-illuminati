@@ -539,7 +539,7 @@ extension Discussion {
             ? backup.flatMap { ProjectSnapshot.documents(backup: $0, root: reviewRoot) } : ProjectSnapshot.take(root: reviewRoot)
         if let todoReviewBase { start?.head = todoReviewBase }
         while !cancellation.isCancelled && Date() < run.deadline && !run.activeExpired {
-            let eligible = model.accounts.filter { [.claude, .codex].contains($0.provider) && !excluded.contains($0.id) && Enterprise.permits($0, lock: chatLock) && (workers?.contains($0.id) ?? true) }
+            let eligible = model.accounts.filter { [.claude, .codex, .gemini].contains($0.provider) && !excluded.contains($0.id) && Enterprise.permits($0, lock: chatLock) && (workers?.contains($0.id) ?? true) }
             let account = preferred.flatMap { wanted in eligible.first { $0.id == wanted } }
                 ?? AutoPick.choose(workers == nil ? eligible.filter { !autoOff.contains($0.id) } : eligible, usage: model.latestUsage, lock: chatLock, current: config.lastSoloAccountID)
             guard let account else {
@@ -547,10 +547,10 @@ extension Discussion {
                 end(lastError ?? (workers != nil
                     ? L("이 TODO에 고른 AI 중 이어서 작업할 계정이 없어요. 파일 변경은 보존했어요.", "None of the AIs picked for this TODO can continue. Changes are preserved.")
                     : chatLock?.isPersonal == true
-                    ? L("이 개인 방에서 작업할 개인 Claude/Codex 계정이 필요해요. 파일 변경은 보존했어요.", "This personal chat needs a personal Claude/Codex account to continue. Changes are preserved.")
+                    ? L("이 개인 방에서 작업할 개인 Claude/Codex/Gemini 계정이 필요해요. 파일 변경은 보존했어요.", "This personal chat needs a personal Claude/Codex/Gemini account to continue. Changes are preserved.")
                     : chatLock != nil
-                    ? L("이 Enterprise 방에서 작업할 \(chatLock?.name ?? "") Claude/Codex 계정이 필요해요. 파일 변경은 보존했어요.", "This Enterprise chat needs a \(chatLock?.name ?? "") Claude/Codex account to continue. Changes are preserved.")
-                    : L("이어서 작업할 Claude/Codex 계정이 필요해요. 파일 변경은 보존했어요.", "No Claude/Codex account is available to continue. Changes are preserved."))); return
+                    ? L("이 Enterprise 방에서 작업할 \(chatLock?.name ?? "") Claude/Codex/Gemini 계정이 필요해요. 파일 변경은 보존했어요.", "This Enterprise chat needs a \(chatLock?.name ?? "") Claude/Codex/Gemini account to continue. Changes are preserved.")
+                    : L("이어서 작업할 Claude/Codex/Gemini 계정이 필요해요. 파일 변경은 보존했어요.", "No Claude/Codex/Gemini account is available to continue. Changes are preserved."))); return
             }
             let logWorker = {
                 self.projectWorkMemoryScope(room: id, project: selected.groupKey) { Enterprise.permits(account, lock: $0) }

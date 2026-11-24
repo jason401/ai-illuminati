@@ -220,7 +220,7 @@ struct AISettingsGrid: View {
         switch capability {
         case .terminal: return account.provider != .ollama
         case .web: return true
-        case .screen, .input, .apps: return account.provider == .claude || account.provider == .codex
+        case .screen, .input, .apps: return account.provider != .ollama
         case .chrome: return account.provider == .claude
         }
     }
@@ -253,10 +253,6 @@ struct AISettingsGrid: View {
 
     private func unavailableHelp(_ capability: AICapability, _ account: Account) -> String {
         if capability == .chrome { return L("크롬 연결은 Claude에서만 쓸 수 있어요.", "Chrome integration is available only for Claude.") }
-        if account.provider == .gemini {
-            return L("Gemini CLI는 헤드리스 모드에서 앱의 맥 조작 도구를 쓸 수 없어요.",
-                     "The Gemini CLI cannot use the app’s Mac controls in headless mode.")
-        }
         return L("Ollama는 이 기능을 쓸 수 없어요.", "This feature is unavailable for Ollama.")
     }
 

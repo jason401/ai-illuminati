@@ -16,13 +16,13 @@ extension Discussion: TodoChats {
     public var importing: Bool { importingMaterials }
     public var chats: [ProjectChatSummary] { conversations.map(\.projectSummary) }
 
-    // Claude/Codex accounts with enough usage left for a TODO (AutoPick.need: lower near a reset), the most surplus first.
+    // Claude/Codex/Gemini accounts with enough usage left for a TODO (AutoPick.need: lower near a reset), the most surplus first.
     public func crew(lock: EnterpriseLock?, allowed: [String]) -> (lead: Account, reviewer: Account?)? {
         AutoPick.todoCrew(allowed.isEmpty ? model.accounts.filter { !autoOff.contains($0.id) } : model.accounts, usage: model.latestUsage, lock: lock, allowed: allowed)
     }
     // The bar shown is the lowest one any of the accounts that could take the TODO has now.
     public func noCrew(_ allowed: [String], lock: EnterpriseLock?) -> String {
-        let able = model.accounts.filter { [.claude, .codex].contains($0.provider) && Enterprise.permits($0, lock: lock) && (allowed.isEmpty || allowed.contains($0.id)) }
+        let able = model.accounts.filter { [.claude, .codex, .gemini].contains($0.provider) && Enterprise.permits($0, lock: lock) && (allowed.isEmpty || allowed.contains($0.id)) }
         let bar = AutoPick.todoBar(able, usage: model.latestUsage)
         return TodoScheduler.noCrew(allowed, accounts: model.accounts, lock: lock, percent: bar.percent, note: bar.note)
     }
@@ -90,8 +90,8 @@ extension TodoScheduler {
     // `percent`/`note`: the bar in use now and which reset lowers it (AutoPick.todoBar).
     public static func noCrew(_ allowed: [String], accounts: [Account], lock: EnterpriseLock?, percent: String? = nil, note: String = "") -> String {
         let pct = percent ?? "\(Int(threshold))%"
-        guard !allowed.isEmpty else { return L("남은 사용량이 \(pct) 이상인 Claude/Codex 계정이 없어서 기다려요\(note).", "Waiting for a Claude/Codex account with \(pct) usage left\(note).") }
-        let picked = accounts.filter { allowed.contains($0.id) && [.claude, .codex].contains($0.provider) }
+        guard !allowed.isEmpty else { return L("남은 사용량이 \(pct) 이상인 Claude/Codex/Gemini 계정이 없어서 기다려요\(note).", "Waiting for a Claude/Codex/Gemini account with \(pct) usage left\(note).") }
+        let picked = accounts.filter { allowed.contains($0.id) && [.claude, .codex, .gemini].contains($0.provider) }
         if picked.isEmpty { return L("고른 AI 계정이 모두 없어졌어요. 보드에서 일할 AI를 다시 골라 주세요.", "The picked AI accounts are gone. Pick the AIs again on the board.") }
         if !picked.contains(where: { Enterprise.permits($0, lock: lock) }) {
             return L("고른 AI가 이 프로젝트의 잠금(Enterprise·개인)에 맞지 않아요. 일할 AI를 다시 골라 주세요.", "The picked AIs are not allowed by this project's lock (Enterprise or personal). Pick them again.")

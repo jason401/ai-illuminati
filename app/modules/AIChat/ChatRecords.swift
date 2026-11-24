@@ -238,8 +238,8 @@ public enum SpeechLength {
 public struct ChatConfiguration: Codable {
     public var mode = 1
     public var order: [Account.Provider] = [.claude, .codex, .gemini]
-    // Gemini is off by default in every mode (turn it on per chat); chats that saved a list keep it.
-    public var participants: [Account.Provider] = [.claude, .codex]
+    // Every cloud AI takes part by default (Gemini too since it got the app's tools); chats that saved a list keep it.
+    public var participants: [Account.Provider] = [.claude, .codex, .gemini]
     public var leader: Account.Provider = .claude
     public var maxTurns: Int?    // old total limit, no longer used
     public var turnsPerAI: Int?  // mode 3: turns each AI may speak (default 4)
@@ -265,7 +265,7 @@ public struct ChatConfiguration: Codable {
     public var lastReviewAt: Date?
     public var nextReviewAt: Date?
     public var pendingReview: String?
-    public init(mode: Int = 1, order: [Account.Provider] = [.claude, .codex, .gemini], participants: [Account.Provider] = [.claude, .codex], leader: Account.Provider = .claude, maxTurns: Int? = nil, turnsPerAI: Int? = nil, speechLength: Int? = nil, keepSessions: Bool? = nil, modeVersion: Int? = nil, accountIDs: [String]? = nil, leaderAccountID: String? = nil, voteSkippedIDs: [String]? = nil, soloAccountID: String? = nil, lastSoloAccountID: String? = nil, memberIDs: [String]? = nil, leadID: String? = nil, school: Bool? = nil, peerReview: Bool? = nil, peerAccountID: String? = nil, lastReviewSHA: String? = nil, lastReviewAt: Date? = nil, nextReviewAt: Date? = nil, pendingReview: String? = nil) {
+    public init(mode: Int = 1, order: [Account.Provider] = [.claude, .codex, .gemini], participants: [Account.Provider] = [.claude, .codex, .gemini], leader: Account.Provider = .claude, maxTurns: Int? = nil, turnsPerAI: Int? = nil, speechLength: Int? = nil, keepSessions: Bool? = nil, modeVersion: Int? = nil, accountIDs: [String]? = nil, leaderAccountID: String? = nil, voteSkippedIDs: [String]? = nil, soloAccountID: String? = nil, lastSoloAccountID: String? = nil, memberIDs: [String]? = nil, leadID: String? = nil, school: Bool? = nil, peerReview: Bool? = nil, peerAccountID: String? = nil, lastReviewSHA: String? = nil, lastReviewAt: Date? = nil, nextReviewAt: Date? = nil, pendingReview: String? = nil) {
         self.mode = mode
         self.order = order
         self.participants = participants

@@ -57,7 +57,7 @@ func testMacHands() {
     expect(Hands.combo("Return")?.key == 36 && Hands.combo("f12")?.key == 111 && Hands.combo("hyper+x") == nil && Hands.combo("") == nil,
            "named keys, function keys and unknown modifiers")
 
-    // Which tools each setting offers (Gemini never: agy gets no app bridge here).
+    // Which tools each setting offers (Gemini too: agy gets the bridge as a plugin; Ollama never).
     func names(_ a: Account) -> Set<String> { Set(MacControl.tools(a).compactMap { $0["name"] as? String }) }
     for capability in [AICapability.screen, .input, .apps] { AICapabilities.set(.off, for: account, capability) }
     expect(!MacControl.enabled(account) && names(account).isEmpty, "everything off: no Mac tools")
@@ -70,7 +70,10 @@ func testMacHands() {
     expect(!names(account).contains("mac_screenshot"), "screen viewing has no ask yet: ask offers no screenshot")
     let gemini = Account(id: "mac-hands-gemini-\(UUID())", provider: .gemini, name: "Gemini")
     AICapabilities.set(.on, for: gemini, .input)
-    expect(!MacControl.enabled(gemini) && names(gemini).isEmpty, "Gemini gets no Mac tools")
+    expect(MacControl.enabled(gemini) && names(gemini) == ["mac_click", "mac_drag", "mac_scroll", "mac_type", "mac_key"], "Gemini gets Mac tools like the others")
+    let local = Account(id: "mac-hands-local-\(UUID())", provider: .ollama, name: "Gemma")
+    AICapabilities.set(.on, for: local, .input)
+    expect(!MacControl.enabled(local) && names(local).isEmpty, "the local model gets no Mac tools")
 
     // A call outside a live answer, or after Esc, does nothing.
     func run(_ name: String, _ arguments: [String: Any], scope: UUID?) -> [String: Any] {

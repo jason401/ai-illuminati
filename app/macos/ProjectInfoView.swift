@@ -39,10 +39,11 @@ struct ProjectInfoView: View {
                 header(group)
                 if let why = draft.error ?? store.saveError { Text(why).font(.system(size: 12)).foregroundColor(.red) }
                 if let group, group.bindings.first?.isFolderless != true { repository(group); rules(group) }
+                // Where the project works, then what it reads beside it; the AIs' notes after, folded until opened.
                 if let group { workFolders(group) }
-                ProjectMemorySection(discussion: discussion, project: project)
                 folders
                 links
+                ProjectMemorySection(discussion: discussion, project: project)
                 if let group { chatOnly(group); ProjectLockSection(discussion: discussion, group: group) }
             }
             .frame(maxWidth: 760, alignment: .leading)
@@ -248,6 +249,7 @@ struct ProjectInfoView: View {
         }
         .padding(6)
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.accentColor, lineWidth: 2).opacity(draft.dropping ? 1 : 0))
+        .padding(-6)   // the drop outline sits around the section; its title lines up with the others
         .onDrop(of: [UTType.fileURL], isTargeted: $draft.dropping) { providers in
             for provider in providers {
                 _ = provider.loadObject(ofClass: URL.self) { url, _ in

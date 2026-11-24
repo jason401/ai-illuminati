@@ -19,6 +19,8 @@ final class ProjectMemoryDraft: ObservableObject {
     @Published var kind = ProjectMemoryNote.Kind.decision
     @Published var verified = false
     @Published var message: String?
+    // Project info shows the section folded to its title line until it is opened; the choice is kept (the window is always open).
+    @Published var open = UserDefaults.app.bool(forKey: "projectInfo.memoryOpen") { didSet { UserDefaults.app.set(open, forKey: "projectInfo.memoryOpen") } }
 }
 
 struct ProjectMemorySection: View {
@@ -38,9 +40,27 @@ struct ProjectMemorySection: View {
         let notes = memory.notes(project)
         let active = notes.filter { $0.state == .active }, archived = notes.filter { $0.state == .archived }
         let history = memory.history(project)
+        let folded = !full && !draft.open
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Label(L("프로젝트 기억", "Project memory"), systemImage: "brain.head.profile").font(.system(size: 15, weight: .semibold))
+                if full {
+                    Label(L("프로젝트 기억", "Project memory"), systemImage: "brain.head.profile").font(.system(size: 15, weight: .semibold))
+                } else {
+                    // The title line folds and unfolds the notes; folded, it still says how many there are.
+                    Button(action: { draft.open.toggle() }) {
+                        HStack(spacing: 6) {
+                            Label(L("프로젝트 기억", "Project memory"), systemImage: "brain.head.profile").font(.system(size: 15, weight: .semibold))
+                            Image(systemName: folded ? "chevron.right" : "chevron.down").font(.system(size: 11, weight: .semibold)).foregroundColor(.secondary)
+                            if folded && !notes.isEmpty {
+                                Text(L("사용 중 \(active.count) · 보관 \(archived.count)", "In use \(active.count) · Archive \(archived.count)"))
+                                    .font(.system(size: 12)).foregroundColor(.secondary)
+                            }
+                        }
+                        .frame(minHeight: 24).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plainHit).foregroundColor(.primary)
+                    .help(folded ? L("메모 펼치기", "Show the notes") : L("메모 접기", "Hide the notes"))
+                }
                 Spacer(minLength: 6)
                 if !full && !notes.isEmpty {
                     Button(L("새 창에서 보기", "Open in window")) { ProjectMemoryWindow.shared.show(discussion: discussion, project: project) }
@@ -51,45 +71,49 @@ struct ProjectMemorySection: View {
                     .disabled(discussion.anyRunning || discussion.importingMaterials || !discussion.stoppingRooms.isEmpty
                               || todos.snapshot.items.contains { $0.state == .running })
             }
-            Text(L("이 프로젝트의 AI들이 함께 읽고 쓰는 메모예요. AI가 묻지 않고 추가·대체하니, 여기서 확인하고 고치거나 되돌리세요.",
-                   "Notes every AI of this project reads and writes. The AIs add and replace them without asking: check them here, fix or undo."))
-                .font(.system(size: 12)).foregroundColor(.secondary)
-            cleanupSummary(active: active, history: history)
-            HStack(spacing: 8) {
-                TextField(L("메모 검색", "Search notes"), text: $draft.query).textFieldStyle(.roundedBorder).frame(maxWidth: 240)
-                Picker("", selection: $draft.archive) {
-                    Text(L("사용 중 \(active.count)", "In use \(active.count)")).tag(false)
-                    Text(L("보관함 \(archived.count)", "Archive \(archived.count)")).tag(true)
-                }
-                .pickerStyle(.segmented).labelsHidden().frame(maxWidth: 220)
-                Spacer(minLength: 6)
-                Button(draft.history ? L("변경 기록 닫기", "Hide history") : L("변경 기록 \(history.count)", "History \(history.count)")) {
-                    draft.history.toggle()
-                }
-                .controlSize(.small).disabled(history.isEmpty)
-            }
-            if let message = draft.message { Text(message).font(.system(size: 12)).foregroundColor(.red) }
-            if draft.history { changes(history, notes: notes) }
-            let shown = Self.filter(draft.archive ? archived : active, draft.query)
-            if shown.isEmpty {
-                Text(notes.isEmpty ? L("아직 메모가 없어요. 이 프로젝트의 대화에서 AI가 남기면 여기 보여요.", "No notes yet. When an AI saves one in a chat of this project, it shows here.")
-                     : draft.query.isEmpty ? (draft.archive ? L("보관된 메모가 없어요.", "No archived notes.") : L("사용 중인 메모가 없어요.", "No notes in use."))
-                     : L("찾는 메모가 없어요.", "No note matches."))
+            if folded {
+                if let message = draft.message { Text(message).font(.system(size: 12)).foregroundColor(.red) }
+            } else {
+                Text(L("이 프로젝트의 AI들이 함께 읽고 쓰는 메모예요. AI가 묻지 않고 추가·대체하니, 여기서 확인하고 고치거나 되돌리세요.",
+                       "Notes every AI of this project reads and writes. The AIs add and replace them without asking: check them here, fix or undo."))
                     .font(.system(size: 12)).foregroundColor(.secondary)
-            }
-            ForEach(ProjectMemoryNote.Kind.allCases, id: \.self) { kind in
-                let list = shown.filter { $0.kind == kind }
-                // A search shows every match; otherwise the tab keeps the pinned and newest few.
-                let short = full || !draft.query.isEmpty ? list : Array(list.prefix(Self.shortList))
-                if !list.isEmpty {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(Self.title(kind) + " \(list.count)").font(.system(size: 12, weight: .semibold)).foregroundColor(.secondary)
-                        ForEach(short) { row($0, all: notes) }
-                        if short.count < list.count {
-                            Button(L("\(list.count - short.count)개 더 보기 (새 창)", "\(list.count - short.count) more (in a window)")) {
-                                ProjectMemoryWindow.shared.show(discussion: discussion, project: project)
+                cleanupSummary(active: active, history: history)
+                HStack(spacing: 8) {
+                    TextField(L("메모 검색", "Search notes"), text: $draft.query).textFieldStyle(.roundedBorder).frame(maxWidth: 240)
+                    Picker("", selection: $draft.archive) {
+                        Text(L("사용 중 \(active.count)", "In use \(active.count)")).tag(false)
+                        Text(L("보관함 \(archived.count)", "Archive \(archived.count)")).tag(true)
+                    }
+                    .pickerStyle(.segmented).labelsHidden().frame(maxWidth: 220)
+                    Spacer(minLength: 6)
+                    Button(draft.history ? L("변경 기록 닫기", "Hide history") : L("변경 기록 \(history.count)", "History \(history.count)")) {
+                        draft.history.toggle()
+                    }
+                    .controlSize(.small).disabled(history.isEmpty)
+                }
+                if let message = draft.message { Text(message).font(.system(size: 12)).foregroundColor(.red) }
+                if draft.history { changes(history, notes: notes) }
+                let shown = Self.filter(draft.archive ? archived : active, draft.query)
+                if shown.isEmpty {
+                    Text(notes.isEmpty ? L("아직 메모가 없어요. 이 프로젝트의 대화에서 AI가 남기면 여기 보여요.", "No notes yet. When an AI saves one in a chat of this project, it shows here.")
+                         : draft.query.isEmpty ? (draft.archive ? L("보관된 메모가 없어요.", "No archived notes.") : L("사용 중인 메모가 없어요.", "No notes in use."))
+                         : L("찾는 메모가 없어요.", "No note matches."))
+                        .font(.system(size: 12)).foregroundColor(.secondary)
+                }
+                ForEach(ProjectMemoryNote.Kind.allCases, id: \.self) { kind in
+                    let list = shown.filter { $0.kind == kind }
+                    // A search shows every match; otherwise the tab keeps the pinned and newest few.
+                    let short = full || !draft.query.isEmpty ? list : Array(list.prefix(Self.shortList))
+                    if !list.isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(Self.title(kind) + " \(list.count)").font(.system(size: 12, weight: .semibold)).foregroundColor(.secondary)
+                            ForEach(short) { row($0, all: notes) }
+                            if short.count < list.count {
+                                Button(L("\(list.count - short.count)개 더 보기 (새 창)", "\(list.count - short.count) more (in a window)")) {
+                                    ProjectMemoryWindow.shared.show(discussion: discussion, project: project)
+                                }
+                                .buttonStyle(.link).font(.system(size: 12)).padding(.leading, 24)
                             }
-                            .buttonStyle(.link).font(.system(size: 12)).padding(.leading, 24)
                         }
                     }
                 }

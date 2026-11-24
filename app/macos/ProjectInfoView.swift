@@ -6,7 +6,7 @@ import AIWorkspace
 import AIProjects
 import AIChat
 
-// A project folder's "Project info" tab (the other tab is its TODO board): the Git repository, the folders, files
+// A project folder's "Project info" (its TODOs sit beside it, ProjectTodoPanel): the Git repository, the folders, files
 // and links kept for the whole project (ProjectInfo.swift; every chat and TODO of it reads them), and the folders
 // linked to only one chat of it, which can be made the project's.
 
@@ -68,7 +68,7 @@ struct ProjectInfoView: View {
             HStack(spacing: 6) {
                 Text(L("대화 \(chats)개", "\(chats) chats"))
                 Text("·")
-                Button(L("남은 할 일 \(left)개", "\(left) TODOs left")) { discussion.showBoardTab(.todo) }.buttonStyle(.link)
+                Button(L("남은 할 일 \(left)개", "\(left) TODOs left")) { discussion.showTodoPanel(true) }.buttonStyle(.link)
             }
             .font(.system(size: 12)).foregroundColor(.secondary)
         }

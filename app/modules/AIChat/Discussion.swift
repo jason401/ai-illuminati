@@ -28,7 +28,7 @@ public final class Discussion: ObservableObject {
     @Published public var viewingBoard = false            // the TODO board in place of the chat (Todo.swift)
     @Published var viewingSpace: String?           // a Space in place of the chat (SpaceView.swift)
     @Published public var boardProject: String?           // the board shows only this project (SidebarProjects.key); nil = all
-    @Published var boardTab: BoardTab = .todo       // a project's board: its Project info or its TODOs (ProjectInfoView.swift)
+    @Published var boardTab: BoardTab = .todo       // a project's folder: its Project info (ProjectInfoView.swift) or its whole TODO board
     // Several chats can work at once. Each sent message runs on its own worker (a Discussion with `host`
     // set and only that chat), so the run state below (active…, pictures, cancellation) is per chat; the
     // worker hands every change back to the host, which the window shows.
@@ -233,6 +233,8 @@ public final class Discussion: ObservableObject {
     }
     // The inbox panel (Inbox.swift) in the notes' place; closed at launch, so it is never a window that stays up.
     @Published var inboxShown = false
+    // A project's TODOs on the right of its Project info, in the inbox's place (one of the two at a time; ChatView).
+    @Published var todoPanelShown = false
     @Published var teamSettingsOpen = false   // the team mode settings popover in the message box
     // @ in the message box: the accounts picked so far, and the list while it is open.
     @Published var draftMentions: [String] = [] { didSet { if draftMentions != oldValue { draftsChanged() } } }

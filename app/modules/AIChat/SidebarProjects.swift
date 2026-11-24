@@ -241,17 +241,15 @@ public final class SidebarFold: ObservableObject {
         defaults.set(pinnedProjects.sorted(), forKey: Self.pinnedKey)
     }
 
-    // A deleted project: its pin, fold and tab are forgotten (a folder linked again starts fresh).
+    // A deleted project: its pin and fold are forgotten (a folder linked again starts fresh).
     func forget(_ project: String) {
         pinnedProjects.remove(project); folded.remove("project." + project); openFinished.remove(project)
         defaults.set(pinnedProjects.sorted(), forKey: Self.pinnedKey)
         defaults.set(folded.sorted(), forKey: Self.foldedKey)
         defaults.set(openFinished.sorted(), forKey: Self.openFinishedKey)
-        var tabs = defaults.dictionary(forKey: BoardTab.key) ?? [:]
-        if tabs.removeValue(forKey: project) != nil { defaults.set(tabs, forKey: BoardTab.key) }
     }
 
-    // A project that got a new key (its work folder disconnected) keeps its pin, fold and tab.
+    // A project that got a new key (its work folder disconnected) keeps its pin and fold.
     func rekey(_ old: String, to new: String) {
         if pinnedProjects.remove(old) != nil { pinnedProjects.insert(new) }
         if folded.remove("project." + old) != nil { folded.insert("project." + new) }
@@ -259,8 +257,6 @@ public final class SidebarFold: ObservableObject {
         defaults.set(pinnedProjects.sorted(), forKey: Self.pinnedKey)
         defaults.set(folded.sorted(), forKey: Self.foldedKey)
         defaults.set(openFinished.sorted(), forKey: Self.openFinishedKey)
-        var tabs = defaults.dictionary(forKey: BoardTab.key) ?? [:]
-        if let tab = tabs.removeValue(forKey: old) { tabs[new] = tab; defaults.set(tabs, forKey: BoardTab.key) }
     }
 
     // Once, when the sidebar first groups by project: a pinned project chat pins its project's folder (the chat
@@ -281,31 +277,29 @@ extension SidebarProjects {
 }
 
 extension Discussion {
-    // The TODO board in place of the chat: one project's (a click on its folder) or every project's. A project's
-    // opens on the tab the user last chose for it (Project info the first time); `tab` asks for one.
+    // The TODO board in place of the chat: one project's (a click on its folder) or every project's. A project's opens
+    // on Project info with its TODOs in the panel beside it, as the user left that panel, unless the inbox holds the
+    // place; `tab: .todo` asks for its whole board instead.
     public func openBoard(project: String?, tab: BoardTab? = nil) {
         commitComposing()
         viewingRemote = nil; viewingSpace = nil; boardProject = project; viewingBoard = true; sidebarOverlay = false
-        if let project { showBoardTab(tab ?? BoardTab.saved(project) ?? .info) } else { boardTab = .todo }
+        boardTab = project == nil ? .todo : tab ?? .info
+        if project != nil, !inboxShown, !UserDefaults.app.bool(forKey: BoardTab.panelClosedKey) { todoPanelShown = true }
     }
-    public func showBoardTab(_ tab: BoardTab) {
-        boardTab = tab
-        if let project = boardProject { BoardTab.save(tab, for: project) }
+    public func showBoardTab(_ tab: BoardTab) { boardTab = tab }
+    // The panel's button and ✕: the only ones that change whether it opens with a project (the inbox or another Mac
+    // taking its place close it for now only). It takes the place from the inbox.
+    public func showTodoPanel(_ shown: Bool) {
+        todoPanelShown = shown
+        UserDefaults.app.set(!shown, forKey: BoardTab.panelClosedKey)
+        if shown { inboxShown = false }
     }
 }
 
-// The two tabs of a project folder: what belongs to the project, and its TODOs.
+// What a project folder shows in place of the chat: Project info (its TODOs in the panel beside it) or its whole TODO board.
 public enum BoardTab: String {
     case info, todo
-    static let key = "sidebar.projectTabs"
-    static func saved(_ project: String) -> BoardTab? {
-        (UserDefaults.app.dictionary(forKey: key)?[project] as? String).flatMap(BoardTab.init(rawValue:))
-    }
-    static func save(_ tab: BoardTab, for project: String) {
-        var all = UserDefaults.app.dictionary(forKey: key) ?? [:]
-        all[project] = tab.rawValue
-        UserDefaults.app.set(all, forKey: key)
-    }
+    static let panelClosedKey = "sidebar.todoPanelClosed"
 }
 
 // Dragging a chat onto a project folder (or "Move to project" in its menu) links it to that project, like

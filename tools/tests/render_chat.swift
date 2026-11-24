@@ -90,8 +90,10 @@ private struct EmptyPreviewLogin: GoogleTokenStore {
             let todoRoom = linked("TODO · Drag and drop PDFs", repo)
             let item = CommandLine.arguments.contains("--empty-board") ? nil : try? TodoStore.shared.add(title: "Drag and drop PDFs", project: repo, projectName: "AI Illuminati")
             if let item { try? TodoStore.shared.change(item.id) { $0.room = todoRoom.id; $0.state = .review; $0.result = "PDFs dropped on a chat attach like photos; the full test passed." } }
-            if CommandLine.arguments.contains("--inbox") {
-                // With the inbox: a TODO waiting for a decision, its answer box in the panel.
+            if CommandLine.arguments.contains("--inbox") || CommandLine.arguments.contains("--asked") {
+                // With the inbox (or --asked, for the project's TODO panel): a TODO waiting for a decision, its answer box in the panel;
+                // with --asked also one waiting its turn.
+                if CommandLine.arguments.contains("--asked") { _ = try? TodoStore.shared.add(title: "Show the work folder once", project: repo, projectName: "AI Illuminati") }
                 let json = #"{"kind":"choice","blocked":false,"reason":"Two ways to keep the order of dropped files.","items":[{"text":"Which order?","options":["As dropped","By name"],"recommended":"As dropped"}]}"#
                 if let asked = try? TodoStore.shared.add(title: "Keep the drop order", project: repo, projectName: "AI Illuminati"),
                    let question = try? JSONDecoder().decode(TodoQuestion.self, from: Data(json.utf8)) {
@@ -105,7 +107,7 @@ private struct EmptyPreviewLogin: GoogleTokenStore {
             if CommandLine.arguments.contains("--working") {
                 chat.runningRooms = [todoRoom.id, chat.conversations[3].id, notes.id]; chat.stoppingRooms = [notes.id]
             }
-            // CHAT_BOARD=todo|info|all opens the project's folder (its TODO board or Project info) or every project's board in place of the chat.
+            // CHAT_BOARD=todo|info|all opens the project's folder (its whole TODO board, or Project info with the TODO panel) or every project's board.
             if let tab = ProcessInfo.processInfo.environment["CHAT_BOARD"] {
                 chat.openBoard(project: tab == "all" ? nil : SidebarProjects.key(repo), tab: tab == "info" ? .info : .todo)
             }

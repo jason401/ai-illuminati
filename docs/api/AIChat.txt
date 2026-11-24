@@ -69,6 +69,7 @@ ChatApp.Screens.init() | init()
 ChatApp.Screens.manageItems | var manageItems: () -> AnyView
 ChatApp.Screens.projectInfo | var projectInfo: (Discussion, String) -> AnyView
 ChatApp.Screens.renameProject | var renameProject: (String, String) -> Void
+ChatApp.Screens.todoPanel | var todoPanel: (Discussion, String) -> AnyView
 ChatApp.driveRule | static var driveRule: () -> String?
 ChatApp.face | static var face: ChatApp.Face
 ChatApp.run | static var run: (Account, WorkspaceInvocation?, ChatApp.ScreenAnswer?) -> RunConditions
@@ -338,6 +339,7 @@ Discussion.saveDrafts() | func saveDrafts()
 Discussion.sentPhotos(_:) | func sentPhotos(_ room: UUID) -> Set<UUID>
 Discussion.setCrew(room:members:lead:) | func setCrew(room: UUID, members: [String], lead: String)
 Discussion.showBoardTab(_:) | func showBoardTab(_ tab: BoardTab)
+Discussion.showTodoPanel(_:) | func showTodoPanel(_ shown: Bool)
 Discussion.standIn(room:brief:token:done:) | func standIn(room: UUID, brief: String, token: DebateCancellation, done: @escaping (TodoStandInReply) -> Void)
 Discussion.start(room:question:photos:review:extra:) | func start(room: UUID, question: String, photos: [TodoPhoto], review: Bool, extra: String) -> String?
 Discussion.stop(_:) | func stop(_ room: UUID)

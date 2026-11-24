@@ -21,6 +21,8 @@ enum ChatViewSize {
     // The notes sit beside a chat that keeps at least this much.
     static let wide: CGFloat = 700
     static let notesWidth: CGFloat = 280
+    static let todoWidth: CGFloat = 340   // a project's TODO panel: a TODO's title and state on one line
+    static let infoBeside: CGFloat = 440   // Project info keeps this much beside the TODO panel (its sections wrap), else the panel slides over it
     static let bottomSlack: CGFloat = 80
     static let bottomID = "transcript-bottom"
 }
@@ -55,9 +57,13 @@ struct ChatView<Model: ChatSettings>: View {
         // back when a chat of this Mac is open again.
         // Another Mac opened from Other Macs takes the notes' place (MacConnect.swift).
         // The inbox takes the same place, over the board and Spaces too; opening one of the three closes the others.
+        // A project's TODOs take it beside its Project info, never together with the inbox or another Mac.
         let inboxShown = discussion.inboxShown
         let macShown = inboxShown ? nil : connect.shown.flatMap { id in sync.devices.first { $0.id == id } }
         let macInline = inline ? layout.macFit : layout.macFitAlone
+        let todoProject = discussion.todoPanelShown && !inboxShown && macShown == nil && discussion.viewingBoard && discussion.boardTab == .info
+            ? discussion.boardProject : nil
+        let todoInline = inline ? layout.todoFit : layout.todoFitAlone
         let notesShown = !inboxShown && macShown == nil && discussion.notesShown && !discussion.viewingBoard && discussion.viewingRemote == nil && discussion.viewingSpace == nil
         // A clicked photo is shown large over the whole window until it is closed.
         let photoShown = photo.image != nil && !discussion.viewingBoard && discussion.viewingSpace == nil
@@ -83,6 +89,18 @@ struct ChatView<Model: ChatSettings>: View {
                     if inboxShown && notesInline {
                         Divider().opacity(0.5)
                         InboxPanel(discussion: discussion) { discussion.inboxShown = false }
+                    }
+                    if let todoProject, todoInline {
+                        Divider().opacity(0.5)
+                        ChatApp.screens.todoPanel(discussion, todoProject).frame(width: ChatViewSize.todoWidth)
+                    }
+                }
+                if let todoProject, !todoInline {
+                    HStack(spacing: 0) {
+                        Spacer(minLength: 0)
+                        ChatApp.screens.todoPanel(discussion, todoProject).frame(width: ChatViewSize.todoWidth)
+                            .background(Color(nsColor: .windowBackgroundColor))
+                            .shadow(color: .black.opacity(0.25), radius: 12)
                     }
                 }
                 if inboxShown && !notesInline {
@@ -135,8 +153,9 @@ struct ChatView<Model: ChatSettings>: View {
         .onChange(of: discussion.currentID) { _ in discussion.sidebarOverlay = false; photo.image = nil }
         .onChange(of: discussion.notesShown) { if $0 { connect.shown = nil; discussion.inboxShown = false } }
         // The sliding sidebar (a narrow window) closes too, so it does not cover the inbox opened from it.
-        .onChange(of: discussion.inboxShown) { if $0 { connect.shown = nil; discussion.notesShown = false; discussion.sidebarOverlay = false } }
-        .onChange(of: connect.shown) { if $0 != nil { discussion.inboxShown = false } }
+        .onChange(of: discussion.inboxShown) { if $0 { connect.shown = nil; discussion.notesShown = false; discussion.sidebarOverlay = false; discussion.todoPanelShown = false } }
+        .onChange(of: connect.shown) { if $0 != nil { discussion.inboxShown = false; discussion.todoPanelShown = false } }
+        .onChange(of: discussion.todoPanelShown) { if $0 { connect.shown = nil; discussion.inboxShown = false } }
         // Leaving the chat (another Mac's chat, the board or a Space) closes the photo, so it does not come back later.
         .onChange(of: discussion.viewingRemote == nil) { _ in photo.image = nil }
         .onChange(of: discussion.viewingBoard) { _ in photo.image = nil }
@@ -313,6 +332,30 @@ struct ChatView<Model: ChatSettings>: View {
             .padding(.horizontal, 10)
             .disabled(discussion.importingMaterials)
         }
+    }
+
+    // Opens or closes a project's TODO panel (it takes the inbox's place); the orange number counts what waits for the user.
+    private func todoPanelButton(_ project: String) -> some View {
+        let lists = todos.snapshot.lists.filter { $0.project.map(SidebarProjects.key) == project }.map(\.id)
+        let waiting = SidebarProjects.waiting(todos.snapshot, lists: lists)
+        let shown = discussion.todoPanelShown && !discussion.inboxShown && connect.shown == nil
+        return Button(action: { discussion.showTodoPanel(!shown) }) {
+            HStack(spacing: 5) {
+                Image(systemName: "checklist")
+                Text(L("할 일", "TODOs"))
+                if waiting > 0 {
+                    Text("\(waiting)").font(.system(size: 10, weight: .semibold).monospacedDigit()).foregroundColor(.white)
+                        .padding(.horizontal, 5).frame(minWidth: 16, minHeight: 16).background(Color.orange, in: Capsule())
+                }
+            }
+            .font(.system(size: 12, weight: .medium)).foregroundColor(shown ? .accentColor : .primary)
+            .padding(.horizontal, 9).frame(height: 24)
+            .background(shown ? Color.accentColor.opacity(0.14) : Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plainHit)
+        .help(shown ? L("할 일 패널 닫기", "Close the TODO panel")
+                    : L("오른쪽에 이 프로젝트의 할 일 보기 (알림함은 닫혀요)", "Show this project's TODOs on the right (closes the inbox)"))
     }
 
     // The bell opens the inbox on the right (Inbox.swift), which took over "Needs review". The red badge counts only 🔴
@@ -955,14 +998,20 @@ struct ChatView<Model: ChatSettings>: View {
                 }) { Image(systemName: "sidebar.left").frame(width: 24, height: 24) }
                     .buttonStyle(.plainHit).foregroundColor(.secondary)
                     .help(sidebarShown ? L("사이드바 숨기기", "Hide sidebar") : L("사이드바 보기", "Show sidebar"))
-                if discussion.viewingBoard, discussion.boardProject != nil {
-                    // A project folder: two tabs, what belongs to the project and its TODOs.
-                    Picker("", selection: Binding(get: { discussion.boardTab }, set: { discussion.showBoardTab($0) })) {
-                        Text(L("프로젝트 정보", "Project info")).tag(BoardTab.info)
-                        Text(L("할 일", "TODOs")).tag(BoardTab.todo)
+                if discussion.viewingBoard, let project = discussion.boardProject {
+                    // A project folder: its Project info with the TODO panel's button, or its whole board with the way back.
+                    if discussion.boardTab == .todo {
+                        Button(action: { discussion.showBoardTab(.info) }) {
+                            Label(L("프로젝트 정보", "Project info"), systemImage: "chevron.left").font(.system(size: 13, weight: .medium)).frame(minHeight: 24)
+                        }
+                        .buttonStyle(.plainHit).foregroundColor(.accentColor)
+                        .help(L("프로젝트 정보로 돌아가기 (할 일은 오른쪽에)", "Back to Project info (TODOs on the right)"))
+                        WindowDragRegion().frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        Text(L("프로젝트 정보", "Project info")).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                        WindowDragRegion().frame(maxWidth: .infinity, maxHeight: .infinity)
+                        todoPanelButton(project)
                     }
-                    .pickerStyle(.segmented).labelsHidden().fixedSize()
-                    WindowDragRegion().frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if discussion.viewingBoard {
                     Text(L("할 일 보드", "TODO board")).font(.system(size: 13, weight: .medium)).lineLimit(1)
                     WindowDragRegion().frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -3059,6 +3108,8 @@ private final class ChatLayout: ObservableObject {
     @Published private(set) var notesFitAlone = true
     @Published private(set) var macFit = true
     @Published private(set) var macFitAlone = true
+    @Published private(set) var todoFit = true
+    @Published private(set) var todoFitAlone = true
 
     func measure(_ width: CGFloat) {
         let isWide = width >= ChatViewSize.sidebarFits
@@ -3071,6 +3122,10 @@ private final class ChatLayout: ObservableObject {
         let macAlone = width - MacConnect.panelWidth >= ChatViewSize.minSize.width
         if mac != macFit { macFit = mac }
         if macAlone != macFitAlone { macFitAlone = macAlone }
+        let todo = width - ChatViewSize.sidebarWidth - 1 - ChatViewSize.todoWidth >= ChatViewSize.infoBeside
+        let todoAlone = width - ChatViewSize.todoWidth >= ChatViewSize.infoBeside
+        if todo != todoFit { todoFit = todo }
+        if todoAlone != todoFitAlone { todoFitAlone = todoAlone }
     }
 }
 

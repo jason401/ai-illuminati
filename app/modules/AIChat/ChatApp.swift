@@ -66,6 +66,7 @@ public enum ChatApp {
         public var cards: (UUID, Discussion) -> AnyView = { _, _ in AnyView(EmptyView()) }
         public var inboxCard: (TodoItem, Discussion) -> AnyView = { _, _ in AnyView(EmptyView()) }   // a TODO's answer or result box in the inbox
         public var projectInfo: (Discussion, String) -> AnyView = { _, _ in AnyView(EmptyView()) }
+        public var todoPanel: (Discussion, String) -> AnyView = { _, _ in AnyView(EmptyView()) }   // a project's TODOs beside its Project info
         public var renameProject: (String, String) -> Void = { _, _ in }
         public var icon: (Bool) -> NSImage = { _ in NSImage() }
         public var manageItems: () -> AnyView = { AnyView(EmptyView()) }

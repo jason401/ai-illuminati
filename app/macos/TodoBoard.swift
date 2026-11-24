@@ -50,6 +50,7 @@ final class TodoDraft: ObservableObject {
     static let shared = TodoDraft()
     @Published var title = ""
     @Published var detail = ""
+    @Published var panelTitle = ""   // the TODO panel's add box (a title only)
     struct File: Equatable { var id = UUID(); var url: URL }
     @Published var files: [File] = []   // photos and files to attach (copied in when the TODO is added)
     @Published var dropFolders: [URL] = []   // temporary folders of dropped Photos/screenshot files, removed once added
@@ -144,9 +145,11 @@ struct TodoBoardView: View {
 
     // Projects to write TODOs for: every linked Git project of the chats (newest first); on one project's board
     // only its roots (a repository with several worktrees has one per root).
-    private var projects: [(name: String, binding: ProjectBinding)] {
+    private var projects: [(name: String, binding: ProjectBinding)] { Self.projects(discussion) }
+    static func projects(_ discussion: Discussion) -> [(name: String, binding: ProjectBinding)] {
         let mine = { (p: ProjectBinding) in discussion.boardProject.map { SidebarProjects.key(p) == $0 } ?? true }
-        return TodoProject.all(store.snapshot, chats: discussion.conversations.map(\.projectSummary), names: projectInfo.names).filter { mine($0.binding) }.map { ($0.name, $0.binding) }
+        return TodoProject.all(TodoStore.shared.snapshot, chats: discussion.conversations.map(\.projectSummary), names: ProjectInfoStore.shared.names)
+            .filter { mine($0.binding) }.map { ($0.name, $0.binding) }
     }
 
     private var shownLists: [TodoList] {
@@ -154,8 +157,10 @@ struct TodoBoardView: View {
     }
 
     // The root a new TODO goes to (SidebarProjects.slot): the one picked, if it is on this board, else the newest.
-    private func pickedRoot(_ options: [(name: String, binding: ProjectBinding)]) -> String {
-        options.contains { SidebarProjects.slot($0.binding) == draft.projectRoot } ? draft.projectRoot : options.first.map { SidebarProjects.slot($0.binding) } ?? ""
+    private func pickedRoot(_ options: [(name: String, binding: ProjectBinding)]) -> String { Self.pickedRoot(options) }
+    static func pickedRoot(_ options: [(name: String, binding: ProjectBinding)]) -> String {
+        let picked = TodoDraft.shared.projectRoot
+        return options.contains { SidebarProjects.slot($0.binding) == picked } ? picked : options.first.map { SidebarProjects.slot($0.binding) } ?? ""
     }
 
     var body: some View {
@@ -650,21 +655,160 @@ struct TodoBoardView: View {
     }
 
     private func add() {
-        let text = draft.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        let options = projects
+        let root = pickedRoot(projects)
+        act {
+            guard try Self.add(title: draft.title, detail: draft.detail, files: draft.files.map(\.url), after: draftLinks(root), askFirst: draft.askFirst, discussion: discussion) else { return }
+            draft.title = ""; draft.detail = ""; draft.files = []; draft.after = []
+            for folder in draft.dropFolders { try? FileManager.default.removeItem(at: folder) }
+            draft.dropFolders = []
+        }
+    }
+
+    private func act(_ change: () throws -> Void) {
+        do { try change(); draft.error = nil } catch { draft.error = error.localizedDescription }
+    }
+
+    // A new TODO for the picked root of this board's projects (the board's add box and the TODO panel's); false: nothing to add.
+    static func add(title: String, detail: String = "", files: [URL] = [], after: [UUID] = [], askFirst: Bool = false, discussion: Discussion) throws -> Bool {
+        let text = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let options = projects(discussion)
         let root = pickedRoot(options)
-        guard !text.isEmpty, let project = options.first(where: { SidebarProjects.slot($0.binding) == root }) else { return }
+        let store = TodoStore.shared
+        guard !text.isEmpty, let project = options.first(where: { SidebarProjects.slot($0.binding) == root }) else { return false }
         // The chat open before the board, when it works on the same project, gets the report card too.
         let origin = discussion.current.workspace?.project.map(SidebarProjects.slot) == root && !store.snapshot.items.contains { $0.room == discussion.currentID } ? discussion.currentID : nil
         // Written for a locked project (or one worked on in a locked chat): its TODOs keep that lock.
         let lock = (discussion.current.workspace?.project.map(SidebarProjects.slot) == root ? discussion.current.enterpriseLock : nil)
             ?? discussion.conversations.first { $0.workspace?.project.map(SidebarProjects.key) == SidebarProjects.key(project.binding) && $0.enterpriseLock != nil }?.enterpriseLock
-        act {
-            try store.add(title: text, detail: draft.detail.trimmingCharacters(in: .whitespacesAndNewlines), files: draft.files.map(\.url), project: project.binding, projectName: project.name,
-                          after: draftLinks(root), askFirst: draft.askFirst, originRoom: origin, lock: lock)
-            draft.title = ""; draft.detail = ""; draft.files = []; draft.after = []
-            for folder in draft.dropFolders { try? FileManager.default.removeItem(at: folder) }
-            draft.dropFolders = []
+        try store.add(title: text, detail: detail.trimmingCharacters(in: .whitespacesAndNewlines), files: files, project: project.binding, projectName: project.name,
+                      after: after, askFirst: askFirst, originRoom: origin, lock: lock)
+        return true
+    }
+}
+
+// A project's TODOs on the right of its Project info, in the inbox's place (ChatView shows one of the two): what waits
+// for the user with the inbox's answer and result box, the other open TODOs one line each, and a title-only add box.
+// Order, modes, AIs, details, files and finished TODOs stay on the whole board ("Larger").
+struct ProjectTodoPanel: View {
+    @ObservedObject var discussion: Discussion
+    let project: String   // SidebarProjects.key
+    @ObservedObject private var store = TodoStore.shared
+    @ObservedObject private var draft = TodoDraft.shared
+    @ObservedObject private var projectInfo = ProjectInfoStore.shared
+
+    var body: some View {
+        let data = store.snapshot
+        let lists = data.lists.filter { $0.project.map(SidebarProjects.key) == project }
+        let items = lists.flatMap { data.ordered($0.id) }
+        let open = items.filter { $0.state != .done && $0.state != .cancelled }
+        let waiting = open.filter { $0.state == .needsYou || $0.state == .review }
+        let others = open.filter { $0.state != .needsYou && $0.state != .review }
+        VStack(alignment: .leading, spacing: 0) {
+            header(left: open.count, lists: Set(lists.map(\.id)))
+            if let error = draft.error ?? store.saveError {
+                Text(error).font(.system(size: 11)).foregroundColor(.red).padding(.horizontal, 14).padding(.bottom, 6)
+            }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 4) {
+                    if open.isEmpty {
+                        Text(L("남은 할 일이 없어요", "No TODOs left")).font(.system(size: 12)).foregroundColor(.secondary)
+                            .frame(maxWidth: .infinity).padding(.top, 24)
+                    }
+                    if !waiting.isEmpty {
+                        section(L("내 차례", "Your turn"), color: .red, count: waiting.count)
+                        ForEach(waiting) { item in
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack(spacing: 6) {
+                                    Text(item.title).font(.system(size: 12, weight: .semibold)).lineLimit(2)
+                                    Spacer(minLength: 4)
+                                    Text(item.state.title).font(.system(size: 11, weight: .medium)).foregroundColor(item.state.color)
+                                }
+                                TodoCard(item: item, discussion: discussion, compact: true, panel: true)
+                            }
+                            .padding(10)
+                            .background(item.state.color.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
+                        }
+                    }
+                    if !others.isEmpty {
+                        section(L("진행 · 대기", "Running · waiting"), color: Color.secondary.opacity(0.5), count: others.count)
+                        ForEach(others) { row($0, data: data) }
+                    }
+                    let finished = items.count - open.count
+                    if finished > 0 {
+                        Button(L("끝난 할 일 \(finished)개 · 크게 보기", "\(finished) finished · Larger")) { draft.showDone = true; discussion.showBoardTab(.todo) }
+                            .buttonStyle(.link).font(.system(size: 11)).frame(minHeight: 22).padding(.top, 6)
+                    }
+                }
+                .padding(.horizontal, 10).padding(.bottom, 12)
+            }
+            Divider().opacity(0.5)
+            addBox.padding(10)
+        }
+        .frame(maxHeight: .infinity)
+        .background(Color.primary.opacity(0.035))
+    }
+
+    private func header(left: Int, lists: Set<UUID>) -> some View {
+        HStack(spacing: 4) {
+            Text(L("할 일", "TODOs")).font(.system(size: 13, weight: .medium))
+            Text(L("· \(left)개 남음", "· \(left) left")).font(.system(size: 12)).foregroundColor(.secondary).lineLimit(1)
+            Spacer(minLength: 4)
+            if let scheduler = TodoScheduler.shared {
+                Button(action: { act { try store.pause(lists: lists) } }) { Image(systemName: "pause.fill").font(.system(size: 11)).frame(width: 24, height: 24) }
+                    .buttonStyle(.plainHit).foregroundColor(.secondary).disabled(lists.isEmpty)
+                    .help(L("멈추기: 지금 하는 TODO는 마치고, 다음 TODO부터 자동으로 시작하지 않아요", "Pause: the running TODO finishes; the next ones do not start by themselves"))
+                Button(action: { scheduler.startNow(lists: lists) }) { Image(systemName: "play.fill").font(.system(size: 11)).frame(width: 24, height: 24) }
+                    .buttonStyle(.plainHit).foregroundColor(.accentColor).disabled(lists.isEmpty)
+                    .help(L("이 프로젝트 작업 시작: 초안을 대기로 바꾸고 멈춤도 풀어서 바로 확인해요", "Start this project: makes its drafts ready, lifts its pause and checks now"))
+            }
+            Button(L("크게 보기", "Larger")) { discussion.showBoardTab(.todo) }.buttonStyle(.link).font(.system(size: 12))
+                .help(L("순서·진행 방식·AI·자세한 내용·파일은 큰 보드에서", "Order, modes, AIs, details and files are on the whole board"))
+            Button(action: { discussion.showTodoPanel(false) }) { Image(systemName: "xmark").font(.system(size: 11)).frame(width: 22, height: 22) }
+                .buttonStyle(.plainHit).foregroundColor(.secondary)
+                .help(L("할 일 패널 닫기", "Close the TODO panel"))
+        }
+        .padding(.leading, 14).padding(.trailing, 8).frame(height: 40)
+    }
+
+    private func section(_ title: String, color: Color, count: Int) -> some View {
+        HStack(spacing: 6) {
+            Circle().fill(color).frame(width: 8, height: 8)
+            Text(title).font(.system(size: 11, weight: .semibold)).foregroundColor(.secondary)
+            Text("\(count)").font(.system(size: 11).monospacedDigit()).foregroundColor(.secondary)
+        }
+        .padding(.horizontal, 4).padding(.top, 8).padding(.bottom, 4)
+    }
+
+    // One line: its state's dot, title and state; a click opens its chat (the whole board before it has one).
+    private func row(_ item: TodoItem, data: TodoData) -> some View {
+        let status = item.state.title + (item.state == .ready && data.stopped(item) ? L(" · 멈춤", " · paused") : "")
+        let room = item.room.flatMap { id in discussion.conversations.contains { $0.id == id } ? id : nil }
+        return Button(action: { if let room { discussion.open(room) } else { discussion.showBoardTab(.todo) } }) {
+            HStack(spacing: 8) {
+                Circle().fill(item.state.color).frame(width: 8, height: 8)
+                Text(item.title).font(.system(size: 12)).foregroundColor(item.state == .draft ? .secondary : .primary).lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                Spacer(minLength: 4)
+                Text(status).font(.system(size: 11, weight: .medium)).foregroundColor(item.state.color).lineLimit(1)
+            }
+            .padding(.horizontal, 10).padding(.vertical, 6).frame(minHeight: 30)
+            .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plainHit)
+        .help(room != nil ? L("눌러서 이 TODO의 대화 열기", "Click to open this TODO's chat") : L("눌러서 큰 보드에서 보기", "Click to see it on the whole board"))
+    }
+
+    private var addBox: some View {
+        let options = TodoBoardView.projects(discussion)
+        return VStack(alignment: .leading, spacing: 4) {
+            TextField(L("+ 할 일 추가 (Enter)", "+ Add a TODO (Return)"), text: $draft.panelTitle).textFieldStyle(.roundedBorder)
+                .onSubmit { act { if try TodoBoardView.add(title: draft.panelTitle, discussion: discussion) { draft.panelTitle = "" } } }
+                .disabled(options.isEmpty)
+            if options.isEmpty {
+                Text(L("Git 프로젝트가 연결된 채팅이 있어야 TODO를 적을 수 있어요.", "Link a Git project to a chat first; TODOs are written for a project."))
+                    .font(.system(size: 11)).foregroundColor(.secondary)
+            }
         }
     }
 

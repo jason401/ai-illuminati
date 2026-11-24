@@ -681,7 +681,8 @@ What the chat gets from the app, set by the app (the chat side names none of the
   (2026-11-16: the app's items atop the sidebar's Manage chats menu, now Connect iPhone in PhoneAccess.swift), `approvals`
   (2026-11-23: the inbox opens the app's approval window for an outside tool's request; set in main.swift with ApprovalAlerts),
   `inboxCard` (2026-11-23: a TODO's answer or result box in the inbox panel, the board's own TodoCard in its narrow form, so the
-  panel calls what the board and the chat card call and shares their draft):
+  panel calls what the board and the chat card call and shares their draft), `todoPanel` (2026-11-24: a project's TODOs on the
+  right of its Project info, in the inbox's place; the app's ProjectTodoPanel beside the board it shortens):
   set in the new `ChatScreensApp.connect()` (main.swift after ChatLinksApp, stage 1 checks the place; the chat preview too).
 - `FolderSources` / `FolderSource`: outside folder kinds shown in the sidebar's Shared folders after the local ones (their
   + menu item, rows and folder count); Google Drive's is registered in `ChatScreensApp.connect()`. Only the list is joined,
@@ -701,7 +702,8 @@ everything else, Discussion's state above all, stays internal):
   `cancelAll`, `discardPendingImages`, `draftsFile`/`saveDrafts` (2026-11-15: main.swift says where each chat's unsent message
   box is kept, the app's own `drafts.json`; tests leave it nil and keep boxes in memory; quitting writes them), `unreadFile` (2026-11-16: main.swift says where "Needs review" is kept, the app's own `unread.json`, this Mac only; tests leave it nil), `importingMaterials`, `fillSpaceLocks`, `runningRooms`/`stoppingRooms` and their
   publishers); what the app's screens show (TODO board: `conversations`, `conversation`, `currentID`, `label`, `openBoard`,
-  `viewingBoard`, `boardProject`, `hover`/`hoverKey`, `model`; Project info: `listedConversations`, `showBoardTab`,
+  `viewingBoard`, `boardProject`, `hover`/`hoverKey`, `model`; Project info: `listedConversations`, `showBoardTab`, `showTodoPanel` (2026-11-24: the
+  TODO panel's ✕ and Project info's "TODOs left" open or close it and keep that choice),
   `disconnectProjectFolder`, `openTurn` (2026-11-19: a project memory note opens the chat and message it was written in); approvals: `approvalChatName`, `viewingRemote`, `approvalHome` (sub-room P3: a sub-room's request is answered and
   noticed in its main room, ApprovalAlerts); `markTodoDone`: the board's and cards' [Mark as done],
   the same confirmation as the sidebar's ⋯); `TodoChats` (P0's seam, all its members);

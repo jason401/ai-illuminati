@@ -1152,13 +1152,12 @@ func testSidebarProjects() {
     expect(!again.piecesShown(parent.id, automatically: false), "piece folding stays in memory")
     expect(again.isFolded("recents") && again.isFolded("project." + common) && !again.isFolded("pinned") && again.pinnedProjects.isEmpty
            && again.openFinished == [common], "folds, pins and the unfolded finished row come back after a restart")
-    // A deleted project's fold, pin, unfolded finished row and tab are forgotten; others stay.
+    // A deleted project's fold, pin and unfolded finished row are forgotten; others stay.
     again.togglePin(common); again.togglePin("other")
-    defaults.set([common: "todo", "other": "info"], forKey: BoardTab.key)
     again.forget(common)
     let forgotten = SidebarFold(defaults: defaults)
-    expect(!forgotten.isFolded("project." + common) && forgotten.isFolded("recents") && forgotten.pinnedProjects == ["other"] && forgotten.openFinished.isEmpty
-           && defaults.dictionary(forKey: BoardTab.key)?.keys.sorted() == ["other"], "a deleted project's sidebar state is forgotten")
+    expect(!forgotten.isFolded("project." + common) && forgotten.isFolded("recents") && forgotten.pinnedProjects == ["other"] && forgotten.openFinished.isEmpty,
+           "a deleted project's sidebar state is forgotten")
 
     // Recents and each Mac show a page; "Show more" adds one, the open chat stays listed, nothing is saved.
     struct Row: Identifiable { let id: Int }

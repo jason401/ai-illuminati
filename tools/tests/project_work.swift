@@ -1661,7 +1661,6 @@ func testDisconnectProjectFolder() {
     try! ProjectInfoStore.shared.addFolders([shared], to: key)
     try! ProjectInfoStore.shared.addLink(title: "Docs", url: "https://example.com", to: key)
     if !SidebarFold.shared.isPinned(key) { SidebarFold.shared.togglePin(key) }
-    BoardTab.save(.todo, for: key)
 
     let chat = Discussion(model: AppModel())
     let a = chat.addProjectChat(first, title: "A", open: false), b = chat.addProjectChat(second, title: "B", open: false)
@@ -1692,8 +1691,24 @@ func testDisconnectProjectFolder() {
     let info = ProjectInfoStore.shared.info(new)
     expect(info.name == "repo" && info.folders.map(\.path) == [shared.resolvingSymlinksInPath().path] && info.links.map(\.title) == ["Docs"]
            , "name, shared folders and links stay under the key")
-    expect(SidebarFold.shared.isPinned(new) && BoardTab.saved(new) == .todo && chat.boardProject == new,
-           "pin, tab and open board follow the project")
+    expect(SidebarFold.shared.isPinned(new) && chat.boardProject == new,
+           "pin and open board follow the project")
+    // A project opens on Project info with its TODOs in the panel beside it; the panel and the inbox take turns, and only
+    // the panel's own ✕ keeps it closed for the next project.
+    chat.showTodoPanel(true); chat.todoPanelShown = false
+    chat.openBoard(project: new)
+    expect(chat.boardTab == .info && chat.todoPanelShown, "a project opens on Project info with its TODO panel")
+    chat.inboxShown = true; chat.showTodoPanel(true)
+    expect(chat.todoPanelShown && !chat.inboxShown, "opening the TODO panel closes the inbox")
+    chat.inboxShown = true; chat.todoPanelShown = false
+    chat.openBoard(project: new)
+    expect(!chat.todoPanelShown && chat.inboxShown, "a project opened from the open inbox leaves the inbox in place")
+    chat.inboxShown = false; chat.showTodoPanel(false)
+    chat.openBoard(project: new)
+    expect(!chat.todoPanelShown, "a closed TODO panel stays closed for the next project")
+    chat.openBoard(project: new, tab: .todo)
+    expect(chat.boardTab == .todo, "a TODO without a chat opens the project's whole board")
+    chat.showTodoPanel(true); chat.todoPanelShown = false
     let grouped = SidebarProjects.group(chat.listedConversations, todo: todos.current, pinned: [], names: ProjectInfoStore.shared.names).projects
     expect(grouped.filter { $0.id == new }.count == 1 && grouped.first { $0.id == new }?.bindings.allSatisfy(\.isFolderless) == true && grouped.first { $0.id == new }?.name == "repo",
            "the sidebar shows one folderless project under its old name")

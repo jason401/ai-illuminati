@@ -54,8 +54,9 @@ ProjectFolder | struct ProjectFolder
 ProjectFolder.directory | var directory: Bool
 ProjectFolder.id | var id: String { get }
 ProjectFolder.init(from:) | init(from decoder: any Decoder) throws
-ProjectFolder.init(path:directory:) | init(path: String, directory: Bool)
+ProjectFolder.init(path:directory:writable:) | init(path: String, directory: Bool, writable: Bool? = nil)
 ProjectFolder.path | var path: String
+ProjectFolder.writable | var writable: Bool?
 ProjectInfo | struct ProjectInfo
 ProjectInfo.encode(to:) | func encode(to encoder: any Encoder) throws
 ProjectInfo.folders | var folders: [ProjectFolder]
@@ -73,9 +74,11 @@ ProjectInfoStore.activeFolders(_:) | func activeFolders(_ project: String) -> [P
 ProjectInfoStore.addFolders(_:to:) | @discardableResult func addFolders(_ urls: [URL], to project: String) throws -> Int
 ProjectInfoStore.addLink(title:url:to:) | @discardableResult func addLink(title: String, url: String, to project: String) throws -> ProjectLink
 ProjectInfoStore.copy(from:to:name:folders:) | func copy(from old: String, to new: String, name: String?, folders extra: [ProjectFolder] = []) throws
+ProjectInfoStore.editableFolders(_:workRoot:) | func editableFolders(_ project: String, workRoot: String?) -> [String]
 ProjectInfoStore.forget(_:) | func forget(_ project: String) throws
 ProjectInfoStore.info(_:) | func info(_ project: String) -> ProjectInfo
 ProjectInfoStore.init(url:) | init(url: URL)
+ProjectInfoStore.isGit(_:) | static func isGit(_ path: String) -> Bool
 ProjectInfoStore.isLocked | var isLocked: Bool { get }
 ProjectInfoStore.linksRule(_:) | static func linksRule(_ info: ProjectInfo) -> String
 ProjectInfoStore.maxFolders | static let maxFolders: Int
@@ -85,7 +88,9 @@ ProjectInfoStore.removeFolder(_:from:) | func removeFolder(_ path: String, from 
 ProjectInfoStore.removeLink(_:from:) | func removeLink(_ id: UUID, from project: String) throws
 ProjectInfoStore.rename(_:to:) | func rename(_ project: String, to name: String) throws
 ProjectInfoStore.saveError | @Published var saveError: String? { get set }
+ProjectInfoStore.setRead(_:_:in:) | func setRead(_ path: String, _ on: Bool, in project: String) throws
 ProjectInfoStore.setWorkFolders(_:of:) | func setWorkFolders(_ paths: [String], of project: String) throws
+ProjectInfoStore.setWritable(_:_:in:workRoot:) | func setWritable(_ path: String, _ on: Bool, in project: String, workRoot: String?) throws
 ProjectInfoStore.shared | static var shared: ProjectInfoStore
 ProjectInfoStore.snapshot | @Published var snapshot: ProjectInfoData { get set }
 ProjectInfoStore.webURL(_:) | static func webURL(_ remote: String) -> URL?
@@ -288,7 +293,7 @@ ProjectWork.register(_:) | static func register(_ run: ProjectRun)
 ProjectWork.release(_:notify:) | static func release(_ paths: [String], notify: Bool = true)
 ProjectWork.revokeTools | static var revokeTools: (UUID) -> Void { get set }
 ProjectWork.run(for:) | static func run(for context: ToolContext) -> ProjectRun?
-ProjectWork.workBinding(_:project:chatFolder:run:) | static func workBinding(_ binding: WorkspaceBinding, project: ProjectBinding, chatFolder: String, run: ProjectRun) -> WorkspaceBinding
+ProjectWork.workBinding(_:project:chatFolder:run:editable:) | static func workBinding(_ binding: WorkspaceBinding, project: ProjectBinding, chatFolder: String, run: ProjectRun, editable: [String] = []) -> WorkspaceBinding
 RunMode | enum RunMode
 RunMode.aiThenPark | case aiThenPark
 RunMode.auto | case auto

@@ -561,6 +561,12 @@ Public names and why (everything else stays internal: `ProjectError`, `ProjectTo
   saved in project-info.json, the key left out while empty), AIChat's `Discussion.workFolders`/`addWorkFolder`/`removeWorkFolder`/
   `useWorkFolder` (the Project info tab lists, adds and switches; the checks, locks and the move of chats and TODO lists stay in
   AIChat). A switch keeps the project's id, so nothing keyed by it moves.
+- Project folders as one list (2026-11-24): `ProjectFolder.writable` (✏️, a plain folder only; saved only when on, an older
+  app reads it as read only), `ProjectInfoStore.setRead` (👁: off moves a folder into `workFolders`, where an older app shows
+  it as a work folder and no AI reads it), `setWritable`/`editableFolders` (the store owns the rule: no Git around or inside,
+  apart from the work folder, the app's data and the other edited folders), `isGit` (the info tab's badge and lock), and
+  `ProjectWork.workBinding(editable:)` (a project run keeps those folders writable, so they are backed up and listed in the
+  review). AIChat's `soloBinding` and `runProjectSolo` pass them; sub-rooms get none.
 - Project memory (2026-11-19): `ProjectMemoryNote` (its stored fields, `Kind`, `State`, `init`), `ProjectMemoryChange` (a history
   line), `ProjectMemoryStore` (`shared`, `notes`, `history`, `add`, `replace`, `Outcome`, `textLimit`, `revision` for the chat's
   "saved to project memory" line): AIChat's three tools and the instruction read and write notes only through it, so the store

@@ -4,14 +4,17 @@ import AILocalization
 
 // What belongs to a whole project, not to one chat: folders, files and links the user keeps for it. They show
 // on the project folder's "Project info" tab (ProjectInfoView.swift), and every chat and TODO of the project reads
-// them at the time of each answer (Discussion.soloBinding), read only. Kept by project (SidebarProjects.key), so
-// the worktrees of one repository share them.
+// them at the time of each answer (Discussion.soloBinding), read only unless a plain folder's edit switch is on. Kept
+// by project (SidebarProjects.key), so the worktrees of one repository share them.
 
 public struct ProjectFolder: Codable, Equatable, Identifiable {
     public var path: String
     public var directory: Bool
+    // The project's chats and TODOs may change files in it (a plain folder only, backed up before each answer); nil:
+    // read only. Saved only when on, and an older app drops it when it saves, so the folder goes back to read only.
+    public var writable: Bool?
     public var id: String { path }
-    public init(path: String, directory: Bool) { self.path = path; self.directory = directory }
+    public init(path: String, directory: Bool, writable: Bool? = nil) { self.path = path; self.directory = directory; self.writable = writable }
 }
 
 public struct ProjectLink: Codable, Equatable, Identifiable {
@@ -24,8 +27,9 @@ public struct ProjectInfo: Codable, Equatable {
     var name: String?                  // the name the user gave the project folder; nil: its TODO list or folder name
     public var folders: [ProjectFolder] = []
     public var links: [ProjectLink] = []
-    // The project's other work folders: it works in one folder at a time (its chats' and TODO lists' root), and these
-    // wait here until the user switches to one. An older app leaves the key out when it saves.
+    // The project's folders no AI reads (reading off): the other work folders, which wait here until the user switches to
+    // one (the project works in one folder at a time, its chats' and TODO lists' root), and folders turned off. An older
+    // app shows them as work folders to switch to and leaves the key out when it saves.
     public var workFolders: [String] = []
     public init() {}
     private enum Keys: String, CodingKey { case name, folders, links, workFolders }
@@ -63,12 +67,13 @@ public struct ProjectInfoData: Codable, Equatable {
 }
 
 enum ProjectInfoError: LocalizedError, Equatable {
-    case badLink, tooManyFolders, locked(String), save(String)
+    case badLink, tooManyFolders, full, locked(String), refused(String), save(String)
     var errorDescription: String? {
         switch self {
         case .badLink: return L("http:// 또는 https:// 로 시작하는 주소만 넣을 수 있어요.", "Only http:// or https:// addresses can be added.")
         case .tooManyFolders: return L("공통 폴더가 \(ProjectInfoStore.maxFolders)개를 넘어서 작업 폴더를 남길 수 없어요. 공통 폴더를 줄이거나 남기지 않고 끊어 주세요.", "The shared folders would go over \(ProjectInfoStore.maxFolders), so the work folder cannot be kept. Remove some or disconnect without keeping it.")
-        case .locked(let why): return why
+        case .full: return L("프로젝트에는 폴더·파일을 \(ProjectInfoStore.maxFolders)개까지 넣을 수 있어요.", "A project keeps up to \(ProjectInfoStore.maxFolders) folders and files.")
+        case .locked(let why), .refused(let why): return why
         case .save(let why): return L("프로젝트 정보를 저장하지 못했어요: ", "Could not save the project info: ") + why
         }
     }
@@ -174,7 +179,7 @@ public final class ProjectInfoStore: ObservableObject {
         if Thread.isMainThread { apply() } else { DispatchQueue.main.async(execute: apply) }
     }
 
-    // Already listed paths are skipped; symbolic links are followed to what they point at.
+    // Already listed paths are skipped; symbolic links are followed to what they point at. Added read only.
     @discardableResult
     public func addFolders(_ urls: [URL], to project: String) throws -> Int {
         var added = 0
@@ -185,12 +190,105 @@ public final class ProjectInfoStore: ObservableObject {
                 guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), !info.folders.contains(where: { $0.path == path }) else { continue }
                 guard info.folders.count < Self.maxFolders else { break }
                 info.folders.append(ProjectFolder(path: path, directory: isDirectory.boolValue)); added += 1
+                info.workFolders.removeAll { $0 == path }   // a folder turned off is read again
             }
         }
         return added
     }
     public func removeFolder(_ path: String, from project: String) throws {
         try update(project) { $0.folders.removeAll { $0.path == path } }
+    }
+
+    // Reading on or off for a folder (files stay on): one that is read moves to `folders` (read only), one that is not
+    // waits in `workFolders` with the other work folders, so even an older app gives it to no AI.
+    public func setRead(_ path: String, _ on: Bool, in project: String) throws {
+        try update(project) { info in
+            if on {
+                guard info.workFolders.contains(path) else { return }
+                guard info.folders.count < Self.maxFolders else { throw ProjectInfoError.full }
+                info.workFolders.removeAll { $0 == path }
+                if !info.folders.contains(where: { $0.path == path }) { info.folders.append(ProjectFolder(path: path, directory: true)) }
+            } else {
+                guard let i = info.folders.firstIndex(where: { $0.path == path }), info.folders[i].directory else { return }
+                guard info.workFolders.contains(path) || info.workFolders.count < Self.maxFolders else { throw ProjectInfoError.full }
+                info.folders.remove(at: i)
+                if !info.workFolders.contains(path) { info.workFolders.append(path) }
+            }
+        }
+    }
+
+    // Editing on or off for a read folder. On only for a plain folder apart from the work folder (`workRoot`), the app's
+    // data and the other edited folders, with no Git repository in or around it (editRefusal says why not).
+    public func setWritable(_ path: String, _ on: Bool, in project: String, workRoot: String?) throws {
+        if on, let folder = info(project).folders.first(where: { $0.path == path }) {
+            let others = info(project).folders.filter { $0.writable == true && $0.path != path }.map(\.path)
+            if let why = Self.editRefusal(path, directory: folder.directory, workRoot: workRoot, others: others, deep: true) { throw ProjectInfoError.refused(why) }
+        }
+        try update(project) { info in
+            guard let i = info.folders.firstIndex(where: { $0.path == path }) else { return }
+            info.folders[i].writable = on ? true : nil
+        }
+    }
+
+    // The folders a project answer may change now: turned on, still there and still allowed (the cheap checks; the
+    // look for Git repositories inside ran when it was turned on).
+    public func editableFolders(_ project: String, workRoot: String?) -> [String] {
+        var kept: [String] = []
+        for folder in activeFolders(project) where folder.writable == true
+            && Self.editRefusal(folder.path, directory: folder.directory, workRoot: workRoot, others: kept, deep: false) == nil { kept.append(folder.path) }
+        return kept
+    }
+
+    // In a Git work tree (the folder or one above it has .git). Its changes would miss the commits and the review, so
+    // only the work folder edits a repository.
+    public static func isGit(_ path: String) -> Bool {
+        var url = URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL
+        while true {
+            if FileManager.default.fileExists(atPath: url.appendingPathComponent(".git").path) { return true }
+            let parent = url.deletingLastPathComponent()
+            if parent.path == url.path || parent.path.isEmpty { return false }
+            url = parent
+        }
+    }
+
+    // Why a folder may not be edited, nil when it may. `deep`: also look inside for a Git repository and give up on a
+    // folder too big to back up at every answer.
+    static let scanLimit = 50_000
+    static func editRefusal(_ path: String, directory: Bool, workRoot: String?, others: [String], deep: Bool) -> String? {
+        let name = (path as NSString).lastPathComponent
+        guard directory else { return L("파일은 읽기만 할 수 있어요.", "Files are read only.") }
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue else { return L("‘\(name)’ 폴더가 없어요.", "The folder “\(name)” is missing.") }
+        if isGit(path) {
+            return L("Git 폴더는 수정을 켤 수 없어요. 고치려면 ⋯ → ‘작업 폴더로 쓰기’로 바꿔 주세요 (커밋·검수를 거쳐요).",
+                     "A Git folder cannot be edited from here. To change it, use ⋯ → “Use as work folder” (commits and review then cover it).")
+        }
+        func real(_ p: String) -> String { URL(fileURLWithPath: p).resolvingSymlinksInPath().standardizedFileURL.path }
+        func overlaps(_ a: String, _ b: String) -> Bool { a == b || a.hasPrefix(b == "/" ? "/" : b + "/") || b.hasPrefix(a == "/" ? "/" : a + "/") }
+        let here = real(path)
+        if let workRoot, overlaps(here, real(workRoot)) {
+            return L("작업 폴더와 겹치는 폴더(그 안이나 그것을 품은 폴더)는 수정을 켤 수 없어요.", "A folder inside the work folder or around it cannot be edited from here.")
+        }
+        if [AccountStore.supportDir, AccountStore.home + "/.ai-illuminati"].contains(where: { overlaps(here, real($0)) }) {
+            return L("앱 데이터 폴더와 겹쳐서 수정을 켤 수 없어요.", "It overlaps the app's own data, so it cannot be edited.")
+        }
+        if let other = others.first(where: { overlaps(here, real($0)) }) {
+            return L("수정을 켠 다른 폴더(‘\((other as NSString).lastPathComponent)’)와 겹쳐요.", "It overlaps another edited folder (“\((other as NSString).lastPathComponent)”).")
+        }
+        guard deep, let walk = FileManager.default.enumerator(at: URL(fileURLWithPath: here), includingPropertiesForKeys: nil) else { return nil }
+        var seen = 0
+        for case let url as URL in walk {
+            if url.lastPathComponent == ".git" {
+                let repo = url.deletingLastPathComponent().lastPathComponent
+                return L("안에 Git 저장소(‘\(repo)’)가 있어서 수정을 켤 수 없어요.", "It holds a Git repository (“\(repo)”), so it cannot be edited from here.")
+            }
+            seen += 1
+            if seen > scanLimit {
+                return L("파일이 너무 많아서(\(scanLimit)개 넘음) 수정을 켤 수 없어요. 답할 때마다 백업해야 해서 느려져요.",
+                         "It holds too many files (over \(scanLimit)) to back up before every answer, so it cannot be edited.")
+            }
+        }
+        return nil
     }
 
     // Work folders to switch to, at most maxFolders (the checks that a folder may be one are the chat's: Git or documents, locks).

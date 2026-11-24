@@ -530,11 +530,12 @@ public enum ProjectWork {
         guard let run = get(context.projectRun), run.room == context.room, context.projectGeneration == run.generation, !run.cancelled else { return nil }
         return run
     }
-    // What the working AI gets: write and execute, writable only in the project's root and the chat's own folder.
-    public static func workBinding(_ binding: WorkspaceBinding, project: ProjectBinding, chatFolder: String, run: ProjectRun) -> WorkspaceBinding {
+    // What the working AI gets: write and execute, writable only in the project's root, the chat's own folder and the
+    // `editable` project folders (plain folders the user turned to editing; ProjectInfoStore.editableFolders).
+    public static func workBinding(_ binding: WorkspaceBinding, project: ProjectBinding, chatFolder: String, run: ProjectRun, editable: [String] = []) -> WorkspaceBinding {
         var workspace = binding
         workspace.level = .execute
-        workspace.roots = binding.roots.map { WorkspaceRoot(path: $0.path, directory: $0.directory, writable: ($0.path == project.root || $0.path == chatFolder) ? true : nil) }
+        workspace.roots = binding.roots.map { WorkspaceRoot(path: $0.path, directory: $0.directory, writable: ($0.path == project.root || $0.path == chatFolder || $0.directory && editable.contains($0.path)) ? true : nil) }
         workspace.projectRunID = run.id
         return workspace
     }

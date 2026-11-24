@@ -605,7 +605,7 @@ extension Discussion {
         let entryID = entry.id
         changeTurn(id, index, save: true) { $0.peerNotes = ($0.peerNotes ?? []) + [entry]; $0.status = L("\(name)가 검수하는 중…", "\(name) is reviewing…") }
         var view = Self.peerView(binding)
-        if let before = start.before { view.roots.append(WorkspaceRoot(path: before, directory: true)) }
+        for before in [start.before].compactMap({ $0 }) + start.folders.compactMap(\.start.before) { view.roots.append(WorkspaceRoot(path: before, directory: true)) }
         let prompt = Peer.reviewPrompt(peer: name, worker: label(worker), project: root, roots: view.roots, question: question,
                                        work: String(reply.prefix(12_000)) + "\n" + work, documents: start.before != nil)
         let ran = AnswerModel()
@@ -663,6 +663,10 @@ struct ProjectSnapshot {
     // A documents project (no Git): the copy of its folder in this answer's backup, and that copy's stamps.
     var before: String?
     var stamps: [String: WorkspaceBackup.Stamp] = [:]
+    // The other folders this answer may change (project folders turned to editing), from the same backup: outside Git,
+    // so the review lists them on their own.
+    var folders: [EditedFolder] = []
+    final class EditedFolder { let root: String; let start: ProjectSnapshot; init(root: String, start: ProjectSnapshot) { self.root = root; self.start = start } }
 
     // The backup made before the answer is the starting point: same moment, and its copy keeps the old contents.
     static func documents(backup: WorkspaceBackup, root: String) -> ProjectSnapshot? {
@@ -673,10 +677,13 @@ struct ProjectSnapshot {
         for (key, stamp) in backup.before where key.hasPrefix(prefix) && !(backup.cloud ?? []).contains(key) { snapshot.stamps[String(key.dropFirst(prefix.count))] = stamp }
         return snapshot
     }
+    static func editedFolders(backup: WorkspaceBackup, skip: [String]) -> [EditedFolder] {
+        backup.roots.filter { $0.directory && !skip.contains($0.path) }.compactMap { root in documents(backup: backup, root: root.path).map { EditedFolder(root: root.path, start: $0) } }
+    }
     static let textTypes: Set<String> = ["tex", "bib", "md", "markdown", "txt", "typ", "rst", "csv", "tsv", "json", "yaml", "yml", "py", "m", "r", "jl",
                                          "sty", "cls", "bst", "html", "css", "js", "svg", "tikz", "sh", "toml", "ini", "cfg", "xml"]
     // Changed files of a documents project, with a line diff of text files against the backup copy.
-    func documentChanges(root: String) -> String? {
+    func documentChanges(root: String, title: String = "[Files changed in this answer (documents project, no Git)]") -> String? {
         guard let before else { return nil }
         let now = (try? WorkspaceBackup.stamps([WorkspaceRoot(path: root, directory: true)])) ?? [:]
         var current: [String: WorkspaceBackup.Stamp] = [:]
@@ -695,7 +702,7 @@ struct ProjectSnapshot {
         }
         if changed.count > 80 { lines.append("… \(changed.count - 80) more") }
         if diffs.count > Peer.diffLimit { diffs = String(diffs.prefix(Peer.diffLimit)) + "\n[Diff cut here; open the files for the rest]" }
-        return "[Files changed in this answer (documents project, no Git)]\n" + lines.joined(separator: "\n")
+        return title + "\n" + lines.joined(separator: "\n")
             + "\n[Before this answer: the same paths under \(before) (read only). Open Word, PowerPoint, PDF and image files in both places to compare.]"
             + (diffs.isEmpty ? "" : "\n[Diff of text files]\n" + diffs)
     }
@@ -717,7 +724,13 @@ struct ProjectSnapshot {
     // The review material: commits and diff since the start, and uncommitted files this answer touched; nil when
     // nothing changed.
     func changes(root: String) -> String? {
-        if before != nil { return documentChanges(root: root) }
+        let others = folders.compactMap { folder in
+            folder.start.documentChanges(root: folder.root, title: "[Files changed in this answer in the project folder \(folder.root) (outside Git: not committed)]")
+        }
+        let parts = [before != nil ? documentChanges(root: root) : gitChanges(root: root)].compactMap { $0 } + others
+        return parts.isEmpty ? nil : parts.joined(separator: "\n\n")
+    }
+    private func gitChanges(root: String) -> String? {
         func git(_ args: [String]) -> String? { try? ProjectProcess.git(args, root: root, timeout: 60) }
         let now = Self.take(root: root)
         var parts: [String] = []

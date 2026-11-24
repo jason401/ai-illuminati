@@ -229,6 +229,9 @@ let chatFolder = base.appendingPathComponent("chat").path
 let linked = WorkspaceBinding(roots: [WorkspaceRoot(path: repo.path, directory: true), WorkspaceRoot(path: chatFolder, directory: true), WorkspaceRoot(path: "/tmp/shared", directory: true, writable: true)], project: documents)
 let work = ProjectWork.workBinding(linked, project: documents, chatFolder: chatFolder, run: run)
 expect(work.level == .execute && work.roots.map(\.writable) == [true, true, nil] && work.projectRunID == run.id, "work binding: \(work.roots.map(\.writable))")
+// A project folder the user turned to editing stays writable; nothing else.
+let edited = ProjectWork.workBinding(linked, project: documents, chatFolder: chatFolder, run: run, editable: ["/tmp/shared"])
+expect(edited.roots.map(\.writable) == [true, true, true], "edited project folder: \(edited.roots.map(\.writable))")
 
 // Linking and moving a chat's project, the AI's stream plan, a project's TODO lock (C0, moved down from the chat side).
 do {

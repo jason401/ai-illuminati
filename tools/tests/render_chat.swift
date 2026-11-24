@@ -109,6 +109,18 @@ private struct EmptyPreviewLogin: GoogleTokenStore {
             }
             // CHAT_BOARD=todo|info|all opens the project's folder (its whole TODO board, or Project info with the TODO panel) or every project's board.
             if let tab = ProcessInfo.processInfo.environment["CHAT_BOARD"] {
+                if tab == "info" {
+                    // Project info's folder list: an edited folder, a file, and a Git folder turned off (in the preview home).
+                    let home = URL(fileURLWithPath: AccountStore.home), key = SidebarProjects.key(repo)
+                    let notes = home.appendingPathComponent("Design notes"), spec = home.appendingPathComponent("spec.pdf"), old = home.appendingPathComponent("AI Illuminati-old")
+                    try? FileManager.default.createDirectory(at: notes, withIntermediateDirectories: true)
+                    try? FileManager.default.createDirectory(at: old.appendingPathComponent(".git"), withIntermediateDirectories: true)
+                    try? Data("%PDF".utf8).write(to: spec)
+                    _ = try? ProjectInfoStore.shared.addFolders([notes, spec, old], to: key)
+                    let path = { (url: URL) in url.resolvingSymlinksInPath().standardizedFileURL.path }
+                    try? ProjectInfoStore.shared.setWritable(path(notes), true, in: key, workRoot: repo.root)
+                    try? ProjectInfoStore.shared.setRead(path(old), false, in: key)
+                }
                 chat.openBoard(project: tab == "all" ? nil : SidebarProjects.key(repo), tab: tab == "info" ? .info : .todo)
             }
         }

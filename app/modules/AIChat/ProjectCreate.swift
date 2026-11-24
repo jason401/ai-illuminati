@@ -347,6 +347,7 @@ extension Discussion {
             try? nativeSessions.reset(conversations[i].id)   // the AI's earlier sessions knew the old folder
             ChatStore.save(conversations[i])
         }
+        try? ProjectInfoStore.shared.removeFolder(project.root, from: key)   // a read folder made the work folder is listed once, as ★
         sessionNote = L("작업 폴더를 바꿨어요: ", "Work folder switched: ") + (project.root as NSString).lastPathComponent
         return project
     }

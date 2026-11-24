@@ -6,9 +6,9 @@ import AIWorkspace
 import AIProjects
 import AIChat
 
-// A project folder's "Project info" (its TODOs sit beside it, ProjectTodoPanel): the Git repository, the folders, files
-// and links kept for the whole project (ProjectInfo.swift; every chat and TODO of it reads them), and the folders
-// linked to only one chat of it, which can be made the project's.
+// A project folder's "Project info" (its TODOs sit beside it, ProjectTodoPanel): the Git repository, one list of the
+// project's folders and files (the work folder ★, the others read or edited, or turned off; ProjectInfo.swift, every chat
+// and TODO of it reads them), the links, and the folders linked to only one chat of it, which can be made the project's.
 
 // The tab's typing and messages (an ObservableObject: this Mac's Command Line Tools cannot build SwiftUI's @State).
 final class ProjectInfoDraft: ObservableObject {
@@ -39,9 +39,8 @@ struct ProjectInfoView: View {
                 header(group)
                 if let why = draft.error ?? store.saveError { Text(why).font(.system(size: 12)).foregroundColor(.red) }
                 if let group, group.bindings.first?.isFolderless != true { repository(group); rules(group) }
-                // Where the project works, then what it reads beside it; the AIs' notes after, folded until opened.
-                if let group { workFolders(group) }
-                folders
+                // Where the project works and what it reads or edits beside it; the AIs' notes after, folded until opened.
+                folders(group)
                 links
                 ProjectMemorySection(discussion: discussion, project: project)
                 if let group { chatOnly(group); ProjectLockSection(discussion: discussion, group: group) }
@@ -115,8 +114,9 @@ struct ProjectInfoView: View {
             }
             ForEach(group.bindings, id: \.root) { binding in
                 VStack(alignment: .leading, spacing: 4) {
-                    pathRow(binding.root, directory: true, note: group.bindings.count > 1 && binding.root != group.bindings.first?.root ? L("워크트리", "Worktree") : nil) {
-                        EmptyView()
+                    // The work folder itself is the ★ row of "Folders and files"; its worktrees show here.
+                    if binding.root != group.bindings.first?.root {
+                        pathRow(binding.root, directory: true, note: L("워크트리", "Worktree")) { EmptyView() }
                     }
                     if !binding.remoteURL.isEmpty {
                         HStack(spacing: 6) {
@@ -136,38 +136,6 @@ struct ProjectInfoView: View {
                 Button(L("작업 폴더 연결 끊기…", "Disconnect work folder…")) { discussion.disconnectProjectFolder(group.id, name: group.name) }
                 Text(L("채팅·TODO는 남기고 폴더 없는 프로젝트로 바꿔요 (파일은 그대로)", "Keeps the chats and TODOs as a folderless project (the files stay)"))
                     .font(.system(size: 11)).foregroundColor(.secondary)
-            }
-        }
-    }
-
-    // MARK: Work folders
-
-    // The project works in one folder at a time; others wait here to switch to (name, memory and TODOs stay).
-    private func workFolders(_ group: ProjectGroup) -> some View {
-        let (active, others) = discussion.workFolders(group.id)
-        return section(L("작업 폴더", "Work folders"), systemImage: "folder.badge.gearshape") {
-            Text(L("프로젝트는 한 번에 한 작업 폴더에서 일해요. 다른 폴더를 추가해 두면 바꿀 수 있어요 (이름·메모리·TODO는 그대로).",
-                   "The project works in one folder at a time. Add other folders to switch to them (name, memory and TODOs stay)."))
-                .font(.system(size: 12)).foregroundColor(.secondary)
-            if let active { pathRow(active, directory: true, note: L("지금 작업 폴더", "Current")) { EmptyView() } }
-            ForEach(others, id: \.self) { path in
-                pathRow(path, directory: true, note: nil) {
-                    Button(L("작업 폴더로", "Use")) { discussion.useWorkFolder(group.id, path: path, name: group.name) }.controlSize(.small)
-                    Button(action: { act { try discussion.removeWorkFolder(group.id, path: path) } }) {
-                        Image(systemName: "xmark").font(.system(size: 10, weight: .semibold)).frame(width: 22, height: 22)
-                    }
-                    .buttonStyle(.plainHit).foregroundColor(.secondary)
-                    .help(L("목록에서 빼기 (폴더는 그대로)", "Remove from the list (the folder stays)"))
-                }
-            }
-            Button(L("작업 폴더 추가…", "Add work folder…")) {
-                let panel = NSOpenPanel()
-                panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.canCreateDirectories = true
-                panel.prompt = L("추가", "Add")
-                panel.message = L("이 프로젝트가 쓸 작업 폴더를 고르세요. Git 저장소면 코드, 아니면 문서 폴더(Git 없음)로 써요.",
-                                  "Pick a work folder for this project. A Git repository is used as code; any other folder as documents (no Git).")
-                guard panel.runModal() == .OK, let url = panel.url?.resolvingSymlinksInPath() else { return }
-                act { try discussion.addWorkFolder(group.id, path: url.path) }
             }
         }
     }
@@ -226,26 +194,46 @@ struct ProjectInfoView: View {
         return L("앞의 규칙 파일이 \(ProjectRules.limit)자 한도를 다 써서 이 파일은 AI에 가지 않아요.", "The rules file before it uses the whole \(ProjectRules.limit)-character limit, so the AIs do not get this one.")
     }
 
-    // MARK: The project's folders and files
+    // MARK: Folders and files
 
-    private var folders: some View {
-        section(L("프로젝트 공통 폴더·파일", "Project folders and files"), systemImage: "folder") {
-            Text(L("여기 넣은 폴더와 파일은 이 프로젝트의 모든 대화와 TODO에서 AI가 읽을 수 있어요 (읽기 전용).",
-                   "Every chat and TODO of this project can read these folders and files (read only)."))
+    // One row of the list: the work folder (★), a folder or file the AIs read (or edit), or a folder turned off.
+    private struct FolderLine: Identifiable {
+        enum Kind { case work, read, off }
+        let path: String, directory: Bool, kind: Kind, writable: Bool
+        var id: String { path }
+    }
+
+    // The project works in its ★ folder (read and edit, always; Git work goes through commits and the review). Every chat
+    // and TODO of it also reads the folders and files with 👁 on, and edits the plain folders with ✏️ on (backed up before
+    // each answer). Folders with 👁 off are read by no AI; the other work folders wait among them to switch to.
+    private func folders(_ group: ProjectGroup?) -> some View {
+        let (active, others) = discussion.workFolders(project)
+        let lines = (active.map { [FolderLine(path: $0, directory: true, kind: .work, writable: true)] } ?? [])
+            + info.folders.filter { $0.path != active }.map { FolderLine(path: $0.path, directory: $0.directory, kind: .read, writable: $0.writable == true) }
+            + others.filter { path in !info.folders.contains { $0.path == path } }.map { FolderLine(path: $0, directory: true, kind: .off, writable: false) }
+        return section(L("폴더·파일", "Folders and files"), systemImage: "folder") {
+            Text(active == nil
+                 ? L("이 프로젝트의 모든 대화와 TODO에서 AI가 읽는 폴더와 파일이에요. 폴더마다 읽기·수정을 켜고 꺼요.",
+                     "Every chat and TODO of this project reads these folders and files. Turn reading and editing on or off per folder.")
+                 : L("★ 작업 폴더에서 일하고, 나머지는 폴더마다 읽기·수정을 켜고 꺼요.", "The project works in the ★ work folder; turn reading and editing on or off for the others."))
                 .font(.system(size: 12)).foregroundColor(.secondary)
-            ForEach(info.folders) { folder in
-                pathRow(folder.path, directory: folder.directory, note: nil) {
-                    Button(action: { act { try store.removeFolder(folder.path, from: project) } }) {
-                        Image(systemName: "xmark").font(.system(size: 10, weight: .semibold)).frame(width: 22, height: 22)
-                    }
-                    .buttonStyle(.plainHit).foregroundColor(.secondary)
-                    .help(L("프로젝트에서 연결 해제 (파일은 그대로)", "Unlink from the project (the files stay)"))
+            if !lines.isEmpty {
+                HStack(spacing: 6) {
+                    Spacer()
+                    Text(L("읽기", "Read")).frame(width: 28)
+                    Text(L("수정", "Edit")).frame(width: 28)
+                    Color.clear.frame(width: 28, height: 1)
                 }
+                .font(.system(size: 11)).foregroundColor(.secondary).padding(.horizontal, 8).padding(.bottom, -4)
             }
+            ForEach(lines) { line in folderRow(line, group: group, workRoot: active) }
             HStack(spacing: 8) {
                 Button(L("폴더·파일 추가…", "Add folders or files…")) { addFolders(choose()) }
                 Text(L("Finder에서 끌어다 놓아도 돼요", "or drop them from Finder")).font(.system(size: 11)).foregroundColor(.secondary)
             }
+            Text(L("수정 켠 폴더는 답 전에 자동 백업 · Git 폴더와 파일은 읽기만 (Git 폴더를 고치려면 ⋯ → 작업 폴더로 쓰기) · 하위방은 늘 읽기만",
+                   "Edited folders are backed up before each answer · Git folders and files are read only (to change a Git folder: ⋯ → Use as work folder) · sub-rooms only read"))
+                .font(.system(size: 11)).foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true)
         }
         .padding(6)
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.accentColor, lineWidth: 2).opacity(draft.dropping ? 1 : 0))
@@ -261,6 +249,99 @@ struct ProjectInfoView: View {
         }
     }
 
+    private func folderRow(_ line: FolderLine, group: ProjectGroup?, workRoot: String?) -> some View {
+        let exists = FileManager.default.fileExists(atPath: line.path), work = line.kind == .work, off = line.kind == .off
+        let documents = work && group?.bindings.first?.isDocuments == true
+        let git = work ? !documents : line.directory && exists && ProjectInfoStore.isGit(line.path)
+        let badge = !line.directory ? L("파일", "File") : git ? "Git" : documents ? L("문서", "Documents") : L("폴더", "Folder")
+        return HStack(spacing: 6) {
+            Image(systemName: work ? "star.fill" : line.directory ? "folder" : "doc").font(.system(size: 12))
+                .foregroundColor(work ? .accentColor : .secondary).frame(width: 18)
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 6) {
+                    Text((line.path as NSString).lastPathComponent).font(.system(size: 13)).lineLimit(1)
+                    Text(badge).font(.system(size: 10, weight: .medium)).padding(.horizontal, 5).padding(.vertical, 1)
+                        .background(Color.primary.opacity(0.08), in: Capsule()).foregroundColor(.secondary)
+                    if work { Text(L("작업 폴더", "Work folder")).font(.system(size: 11)).foregroundColor(.accentColor) }
+                    if !exists { Text(L("없음", "Missing")).font(.system(size: 11, weight: .medium)).foregroundColor(.red) }
+                }
+                Text((line.path as NSString).abbreviatingWithTildeInPath + (off ? L(" · 읽기 끔", " · reading off") : ""))
+                    .font(.system(size: 11)).foregroundColor(.secondary).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+            }
+            .opacity(exists && !off ? 1 : 0.55)
+            Spacer(minLength: 6)
+            readButton(line)
+            editButton(line, git: git, workRoot: workRoot)
+            folderMenu(line, group: group, exists: exists)
+        }
+        .padding(.horizontal, 8).padding(.vertical, 5)
+        .background(work ? Color.accentColor.opacity(0.08) : Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.accentColor.opacity(work ? 0.5 : 0), lineWidth: 1))
+    }
+
+    private func readButton(_ line: FolderLine) -> some View {
+        let on = line.kind != .off
+        return Button(action: {
+            switch line.kind {
+            case .work: draft.error = L("작업 폴더는 늘 읽어요.", "The work folder is always read.")
+            case .read where !line.directory: draft.error = L("파일은 읽기를 끌 수 없어요. 필요 없으면 ⋯ → 목록에서 빼기를 눌러 주세요.", "A file cannot be turned off. Use ⋯ → Remove from the list instead.")
+            case .read: act { try store.setRead(line.path, false, in: project) }
+            case .off: act { try store.setRead(line.path, true, in: project) }
+            }
+        }) {
+            Image(systemName: on ? "eye" : "eye.slash").font(.system(size: 12))
+                .foregroundColor(line.kind == .work ? .accentColor : .secondary.opacity(on ? 0.9 : 0.6)).frame(width: 28, height: 24)
+        }
+        .buttonStyle(.plainHit)
+        .help(line.kind == .work ? L("작업 폴더: 늘 읽어요", "Work folder: always read")
+              : on ? L("읽기 켬: 이 프로젝트의 AI가 읽어요. 눌러서 끄기", "Read: this project's AIs read it. Click to turn off")
+              : L("읽기 끔: 어떤 AI도 못 봐요. 눌러서 켜기", "Not read: no AI sees it. Click to turn on"))
+        .accessibilityLabel(on ? L("읽기 끄기", "Turn reading off") : L("읽기 켜기", "Turn reading on"))
+    }
+
+    @ViewBuilder
+    private func editButton(_ line: FolderLine, git: Bool, workRoot: String?) -> some View {
+        if !line.directory {
+            Text("—").font(.system(size: 12)).foregroundColor(.secondary.opacity(0.6)).frame(width: 28, height: 24)
+                .help(L("파일은 읽기만 해요", "Files are read only"))
+        } else {
+            let on = line.writable, locked = git || line.kind == .off
+            Button(action: {
+                switch line.kind {
+                case .work: draft.error = L("작업 폴더는 늘 수정해요 (Git이면 커밋·검수, 문서 폴더면 답 전에 백업).", "The work folder is always edited (Git: commits and review; documents: backed up before each answer).")
+                case .off: draft.error = L("읽기를 먼저 켜 주세요.", "Turn reading on first.")
+                case .read: act { try store.setWritable(line.path, !on, in: project, workRoot: workRoot) }
+                }
+            }) {
+                Image(systemName: on ? "pencil" : locked ? "lock" : "pencil.slash").font(.system(size: 12, weight: .medium))
+                    .foregroundColor(on ? .accentColor : .secondary.opacity(locked ? 0.45 : 0.6)).frame(width: 28, height: 24)
+            }
+            .buttonStyle(.plainHit)
+            .help(line.kind == .work ? L("작업 폴더: 늘 수정해요", "Work folder: always edited")
+                  : git ? L("Git 폴더는 읽기만 해요. 고치려면 ⋯ → 작업 폴더로 쓰기", "Git folders are read only. To change one: ⋯ → Use as work folder")
+                  : on ? L("수정 켬: AI가 고치고 만들고 지울 수 있어요 (답 전에 자동 백업, Git 밖이라 커밋 안 됨). 눌러서 읽기만", "Edit: the AIs may edit, create and delete (backed up before each answer; outside Git, so not committed). Click for read only")
+                  : L("읽기만: AI가 고칠 수 없어요. 눌러서 수정 켜기", "Read only: the AIs cannot change it. Click to allow editing"))
+            .accessibilityLabel(on ? L("읽기만으로", "Make read only") : L("수정 켜기", "Allow editing"))
+        }
+    }
+
+    private func folderMenu(_ line: FolderLine, group: ProjectGroup?, exists: Bool) -> some View {
+        Menu {
+            if line.kind != .work, line.directory, let group {
+                Button(L("작업 폴더로 쓰기…", "Use as work folder…")) { discussion.useWorkFolder(group.id, path: line.path, name: group.name) }
+            }
+            if exists {
+                Button(L("Finder에서 보기", "Show in Finder")) { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: line.path)]) }
+            }
+            if line.kind != .work {
+                Button(L("목록에서 빼기 (파일은 그대로)", "Remove from the list (the files stay)")) {
+                    act { if line.kind == .off { try discussion.removeWorkFolder(project, path: line.path) } else { try store.removeFolder(line.path, from: project) } }
+                }
+            }
+        } label: { Image(systemName: "ellipsis") }
+        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().frame(width: 28, height: 24)
+    }
+
     private func choose() -> [URL] {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = true
@@ -273,7 +354,9 @@ struct ProjectInfoView: View {
     private func addFolders(_ urls: [URL]) {
         guard !urls.isEmpty else { return }
         act {
-            let before = info.folders.count
+            let before = info.folders.count, active = discussion.workFolders(project).active
+            // The work folder is the ★ row already.
+            let urls = urls.filter { $0.resolvingSymlinksInPath().standardizedFileURL.path != active }
             try store.addFolders(urls, to: project)
             if before + urls.count > ProjectInfoStore.maxFolders, store.snapshot.projects[project]?.folders.count == ProjectInfoStore.maxFolders {
                 draft.error = L("프로젝트에는 폴더·파일을 \(ProjectInfoStore.maxFolders)개까지 넣을 수 있어요.", "A project keeps up to \(ProjectInfoStore.maxFolders) folders and files.")
@@ -328,13 +411,13 @@ struct ProjectInfoView: View {
         return Group {
             if !found.isEmpty {
                 section(L("대화에만 연결된 자료", "Linked to one chat only"), systemImage: "bubble.left") {
-                    Text(L("이 프로젝트의 어떤 대화에만 붙어 있는 폴더·파일이에요. [공통으로]를 누르면 모든 대화가 읽어요.",
-                           "These are linked to a chat of this project only. Press [Share] and every chat can read them."))
+                    Text(L("이 프로젝트의 어떤 대화에만 붙어 있는 폴더·파일이에요. [공통으로]를 누르면 위 목록에 들어가서 모든 대화가 읽어요.",
+                           "These are linked to a chat of this project only. Press [Share] to add them to the list above, and every chat can read them."))
                         .font(.system(size: 12)).foregroundColor(.secondary)
                     ForEach(found, id: \.root.path) { entry in
                         pathRow(entry.root.path, directory: entry.root.directory, note: entry.chats.prefix(2).joined(separator: ", ") + (entry.chats.count > 2 ? " …" : "")) {
                             Button(L("공통으로", "Share")) { addFolders([URL(fileURLWithPath: entry.root.path)]) }.controlSize(.small)
-                                .help(L("이 프로젝트의 공통 폴더·파일에 넣기 (대화의 연결은 그대로)", "Add it to the project's folders and files (the chat keeps its link)"))
+                                .help(L("이 프로젝트의 폴더·파일 목록에 읽기로 넣기 (대화의 연결은 그대로)", "Add it to the project's folders and files, read only (the chat keeps its link)"))
                         }
                     }
                 }

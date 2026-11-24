@@ -507,7 +507,9 @@ extension Discussion {
                 changeTurn(id, index, save: true) { $0.workspaceChanges = changes; $0.projectCommitted = run.committed; $0.projectPushed = run.pushed; $0.projectLog = run.log.isEmpty ? nil : run.log }
             }
         }
-        var workspace = ProjectWork.workBinding(binding, project: selected, chatFolder: Self.chatFolder(id).path, run: run)
+        // The project folders turned to editing stay writable (and so are backed up below); a sub-room's never.
+        let editable = sub != nil ? [] : ProjectInfoStore.shared.editableFolders(SidebarProjects.key(selected), workRoot: selected.isFolderless ? nil : selected.root)
+        var workspace = ProjectWork.workBinding(binding, project: selected, chatFolder: Self.chatFolder(id).path, run: run, editable: editable)
         do {
             try run.validate(run.generation)
             todoReviewBase = try run.todoReviewBase()
@@ -538,6 +540,7 @@ extension Discussion {
         var start = reviewers.isEmpty || run.noPush ? nil : selected.isDocuments
             ? backup.flatMap { ProjectSnapshot.documents(backup: $0, root: reviewRoot) } : ProjectSnapshot.take(root: reviewRoot)
         if let todoReviewBase { start?.head = todoReviewBase }
+        if let backup { start?.folders = ProjectSnapshot.editedFolders(backup: backup, skip: [reviewRoot, Self.chatFolder(id).path]) }
         while !cancellation.isCancelled && Date() < run.deadline && !run.activeExpired {
             let eligible = model.accounts.filter { [.claude, .codex, .gemini].contains($0.provider) && !excluded.contains($0.id) && Enterprise.permits($0, lock: chatLock) && (workers?.contains($0.id) ?? true) }
             let account = preferred.flatMap { wanted in eligible.first { $0.id == wanted } }

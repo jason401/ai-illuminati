@@ -276,11 +276,17 @@ extension Discussion {
         for root in conversations.first(where: { $0.id == room })?.workspace?.roots ?? [] where !roots.contains(where: { $0.path == root.path }) {
             roots.append(WorkspaceRoot(path: root.path, directory: root.directory, writable: root.directory && (!sub || root.writable == true) ? true : nil))
         }
-        // The project's own folders and files (Project info tab), read at every answer and read only. A path the
-        // chat already has keeps the chat's access.
+        // The project's own folders and files (Project info tab), read at every answer; the plain folders turned to
+        // editing may change (backed up), never in a sub-room. A path the chat already has keeps the chat's access.
         if let project = linked?.project {
-            for folder in ProjectInfoStore.shared.activeFolders(SidebarProjects.key(project)) where !roots.contains(where: { $0.path == folder.path }) {
-                roots.append(WorkspaceRoot(path: folder.path, directory: folder.directory))
+            let key = SidebarProjects.key(project)
+            let editable = sub ? [] : ProjectInfoStore.shared.editableFolders(key, workRoot: project.isFolderless ? nil : project.root)
+            for folder in ProjectInfoStore.shared.activeFolders(key) {
+                if let i = roots.firstIndex(where: { $0.path == folder.path }) {
+                    if editable.contains(folder.path) { roots[i].writable = true }
+                } else {
+                    roots.append(WorkspaceRoot(path: folder.path, directory: folder.directory, writable: editable.contains(folder.path) ? true : nil))
+                }
             }
         }
         // Project work keeps the chat's full auto switch (off = approval cards, the restricted CLI, no AutoGuard run).
@@ -299,6 +305,7 @@ extension Discussion {
                 : root.path == project ? (binding.project?.isDocuments == true ? "linked documents project (no Git) — edit files here; backed up before this answer"
                                                                                     : "linked Git project — edit files here; use the git_* tools for Git")
                 : projectPaths.contains(root.path) && root.writable != true ? (root.directory ? "project folder, shared by every chat of this project — read only" : "project file — read only")
+                : projectPaths.contains(root.path) && binding.project != nil ? "project folder, shared by every chat of this project — you may read, edit, create and delete files here (backed up before this answer; outside Git, so not committed)"
                 : shared.contains(root.path)
                 ? (root.writable == true ? "shared folder — you may read, edit, create and delete files here (backed up before this answer)" : "shared folder — read only")
                 : root.writable != true ? (root.directory ? "linked folder — read only" : "linked file — read only")

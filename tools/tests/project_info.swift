@@ -230,3 +230,90 @@ func testGitBranches() {
     try? FileManager.default.removeItem(at: base)
     print("PASS: Git branches (overview lines and groups, roles, nearest tag +N, origin and stable distances, summary, worktrees, backup refs hidden, deleted origin branches pruned, no repository)")
 }
+
+// One list of a project's folders (ProjectInfo.swift, Project info): reading off waits with the work folders (an older
+// app gives it to no AI either), editing only for a plain folder apart from the work folder, Git and the other edited
+// folders, saved so an older app reads it as read only; a project answer (not a sub-room) gets it writable and the
+// review lists its changes.
+func testProjectFolderAccess() {
+    let fm = FileManager.default
+    let base = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("project-folder-access")
+    try? fm.removeItem(at: base)
+    func folder(_ name: String) -> URL {
+        let url = base.appendingPathComponent(name)
+        try! fm.createDirectory(at: url, withIntermediateDirectories: true)
+        return url.resolvingSymlinksInPath()
+    }
+    let plain = folder("plain"), inner = folder("plain/inner"), work = folder("repo"), holder = folder("holder"), notes = folder("notes")
+    try! fm.createDirectory(at: work.appendingPathComponent(".git"), withIntermediateDirectories: true)
+    try! fm.createDirectory(at: holder.appendingPathComponent("app/.git"), withIntermediateDirectories: true)
+    let inWork = folder("repo/docs"), file = base.appendingPathComponent("spec.txt").resolvingSymlinksInPath()
+    try! "spec".write(to: file, atomically: true, encoding: .utf8)
+    try! "before".write(to: plain.appendingPathComponent("a.txt"), atomically: true, encoding: .utf8)
+    expect(!ProjectInfoStore.isGit(base.path), "the test folder is outside Git")
+
+    let saved = ProjectInfoStore.shared
+    defer { ProjectInfoStore.shared = saved }
+    let url = base.appendingPathComponent("project-info.json")
+    let store = ProjectInfoStore(url: url)
+    ProjectInfoStore.shared = store
+    let key = "/tmp/access-repo/.git"
+    try! store.addFolders([plain, inner, work, holder, inWork, file, notes], to: key)
+    expect(!((try? String(contentsOf: url, encoding: .utf8)) ?? "writable").contains("writable"), "read folders are saved as before")
+
+    // Editing: a plain folder only.
+    try! store.setWritable(plain.path, true, in: key, workRoot: work.path)
+    expect(store.info(key).folders.first { $0.path == plain.path }?.writable == true, "a plain folder may be edited")
+    for (path, why) in [(inner.path, "inside another edited folder"), (work.path, "a Git folder"), (inWork.path, "inside the Git work folder"),
+                        (holder.path, "holds a Git repository"), (file.path, "a file")] {
+        expect((try? store.setWritable(path, true, in: key, workRoot: work.path)) == nil && store.info(key).folders.first { $0.path == path }?.writable != true, "editing refused: \(why)")
+    }
+    expect((try? store.setWritable(notes.path, true, in: key, workRoot: base.path)) == nil, "editing refused: around a documents work folder")
+    let raw = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+    expect(raw.components(separatedBy: "\"writable\"").count == 2, "only the edited folder saves the switch: \(raw)")
+    // An older app's ProjectFolder had no `writable`: it still reads the file, and saves the folder back read only.
+    struct OldFolder: Codable { var path: String; var directory: Bool }
+    struct OldInfo: Codable { var folders: [OldFolder] }
+    struct OldData: Codable { var projects: [String: OldInfo] }
+    let older = try? JSONDecoder().decode(OldData.self, from: Data(contentsOf: url))
+    expect(older?.projects[key]?.folders.count == 7, "an older app still reads the file")
+    expect(ProjectInfoStore(url: url).info(key).folders.first { $0.path == plain.path }?.writable == true, "the switch reads back")
+
+    // Reading off: the folder leaves the read list and waits with the work folders; on again, it is read (not edited).
+    try! store.setWritable(notes.path, false, in: key, workRoot: work.path)
+    try! store.setRead(notes.path, false, in: key)
+    expect(!store.info(key).folders.contains { $0.path == notes.path } && store.info(key).workFolders == [notes.path], "reading off: waits with the work folders")
+    try! store.setRead(file.path, false, in: key)
+    expect(store.info(key).folders.contains { $0.path == file.path }, "a file stays read")
+
+    // Project answers: the edited folder is writable, a Git folder read only, a folder turned off not given; a sub-room only reads.
+    let repo = ProjectBinding(root: work.path, common: key, remote: "origin", remoteURL: "")
+    let m = AppModel(); m.sharedFolders = []
+    let d = Discussion(model: m)
+    var chat = Conversation(); chat.turns = [ChatTurn(question: "hi")]
+    chat.workspace = WorkspaceBinding(roots: [WorkspaceRoot(path: work.path, directory: true, writable: true)], project: repo)
+    var sub = chat; sub.id = UUID(); sub.subOf = SubRoomLink(room: chat.id, split: "s", n: 1)
+    d.conversations = [chat, sub]
+    let binding = d.soloBinding(chat.id)
+    expect(binding.roots.first { $0.path == plain.path }?.writable == true, "an edited folder is writable in the project's answers: \(binding.roots)")
+    expect(binding.roots.first { $0.path == holder.path }?.writable != true && !binding.roots.contains { $0.path == notes.path }, "read only, or not given when off")
+    expect(d.soloBinding(sub.id).roots.first { $0.path == plain.path }.map { $0.writable != true } == true, "a sub-room reads it only")
+    let told = Discussion.soloFolders(binding, shared: [], project: work.path)
+    expect(told.contains(plain.path + " (project folder, shared by every chat of this project — you may read, edit"), "the AI is told it may edit: \(told)")
+    expect(store.editableFolders(key, workRoot: work.path) == [plain.path] && store.editableFolders(key, workRoot: base.path).isEmpty, "the run's list follows the work folder")
+
+    // The review: the edited folder's changes from the answer's backup, besides the work folder's.
+    let room = UUID()
+    let backup = try! WorkspaceBackup.begin(WorkspaceBinding(roots: [WorkspaceRoot(path: plain.path, directory: true, writable: true)], level: .write), room: room, runID: UUID())
+    try! "after".write(to: plain.appendingPathComponent("a.txt"), atomically: true, encoding: .utf8)
+    try! "new".write(to: plain.appendingPathComponent("b.md"), atomically: true, encoding: .utf8)
+    var start = ProjectSnapshot(head: nil)
+    expect(start.changes(root: base.path) == nil, "nothing to review without the folder")
+    start.folders = ProjectSnapshot.editedFolders(backup: backup, skip: [work.path])
+    let review = start.changes(root: base.path) ?? ""
+    expect(review.contains("in the project folder \(plain.path) (outside Git: not committed)") && review.contains("modified: a.txt") && review.contains("added: b.md")
+           && review.contains("+after"), "the review lists the folder's changes: \(review)")
+    expect(ProjectSnapshot.editedFolders(backup: backup, skip: [plain.path]).isEmpty, "the work folder is not listed twice")
+    try? WorkspaceBackup.purgeRoom(room)
+    print("PASS: project folders (one list, reading off, editing only plain folders, older app reads it read only, sub-rooms read only, review lists the changes)")
+}

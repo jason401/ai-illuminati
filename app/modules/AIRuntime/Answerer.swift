@@ -502,9 +502,8 @@ public enum Answerer {
                 if json["type"] as? String == "result" { return json }
                 return account.provider == .gemini ? GeminiEvents.result(json) : nil
             }
-            // With steering the answer is the result that ended the turn: the first one, or after background agents
-            // the last one they woke (anything after it was a late message, ended above).
-            let result = steer.map { results.indices.contains($0.results - 1) ? results[$0.results - 1] : results.first } ?? results.last
+            // With steering, background agents can wake Claude for more results after the first one (SteerLink.answer).
+            let result = steer.map { SteerLink.answer(results, cutAt: $0.cutOff ? $0.results : nil) } ?? results.last
             // JSON asked only for the usage, and the tool answered in plain text: that text is the answer.
             if result == nil && askedJSON && process.terminationStatus == 0 {
                 text = output

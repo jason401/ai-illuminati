@@ -72,8 +72,13 @@ final class SteerLink {
     private var inputOpen = true
     private(set) var answered = false    // the first result came
     private(set) var cutOff = false      // ended by us after the result: a message written too late was not read
-    private(set) var results = 0         // results seen; the answer is the one that set `answered`
-    private var background = 0           // background agents or commands still running (their end wakes Claude again)
+    private(set) var results = 0         // results seen; when cut off, the answer is the one that set `answered`
+    // Background agents or commands still running (their end wakes Claude again), counted two ways and the higher
+    // one kept: one too many only waits longer, one too few at a cut-off would stop a running agent (end()).
+    private var reported = 0             // as Claude last listed them (background_tasks_changed)
+    private var pending: Set<String> = []          // tool calls started in the background, not ended yet
+    private var taskTools: [String: String] = [:]  // task_id → tool_use id
+    private var background: Int { max(reported, pending.count) }
     private var waiting = false          // a result came while they ran: the answer comes after they end
     var end: () -> Void = {}
 
@@ -99,33 +104,45 @@ final class SteerLink {
 
     func saw(_ json: [String: Any]) {
         guard !answered, json["parent_tool_use_id"] == nil || json["parent_tool_use_id"] is NSNull else { return }
+        let type = json["type"] as? String
         let content = (json["message"] as? [String: Any])?["content"]
-        if json["type"] as? String == "system", json["subtype"] as? String == "background_tasks_changed" {
-            background = (json["tasks"] as? [Any])?.count ?? 0
-            return
+        let blocks = content as? [[String: Any]] ?? []
+        // Counted and read in every state, also while waiting: background work and replays are what Claude did.
+        switch type {
+        case "system": noteTask(json); return
+        case "assistant":
+            for block in blocks where block["type"] as? String == "tool_use"
+                && (block["input"] as? [String: Any])?["run_in_background"] as? Bool == true {
+                if let id = block["id"] as? String { pending.insert(id) }
+            }
+        case "user":
+            // A message written before the input closed can be read on a wake-up after the first result.
+            if json["isReplay"] as? Bool == true {
+                channel.read((content as? String) ?? blocks.compactMap { $0["text"] as? String }.joined())
+                return
+            }
+            for block in blocks where block["type"] as? String == "tool_result" && block["is_error"] as? Bool == true {
+                if let id = block["tool_use_id"] as? String { pending.remove(id) }   // failed to start
+            }
+        default: break
         }
         // Between a result and the end of the background work Claude only reports on it: nothing is written in.
-        if waiting && json["type"] as? String != "result" { return }
-        switch json["type"] as? String {
+        if waiting && type != "result" { return }
+        switch type {
         case "assistant":
-            let started = (content as? [[String: Any]] ?? []).filter { $0["type"] as? String == "tool_use" }.compactMap { $0["id"] as? String }
+            let started = blocks.filter { $0["type"] as? String == "tool_use" }.compactMap { $0["id"] as? String }
             guard !started.isEmpty else { return }
             running.formUnion(started)
             channel.tools { [weak self] text in SteerLink.line(text).map { self?.write($0) ?? false } ?? false }
         case "user":
-            if json["isReplay"] as? Bool == true {
-                let text = (content as? String) ?? (content as? [[String: Any]] ?? []).compactMap { $0["text"] as? String }.joined()
-                channel.read(text)
-                return
-            }
-            for block in content as? [[String: Any]] ?? [] where block["type"] as? String == "tool_result" {
+            for block in blocks where block["type"] as? String == "tool_result" {
                 if let id = block["tool_use_id"] as? String { running.remove(id) }
             }
             if running.isEmpty { channel.tools(nil) }
         case "result":
             results += 1
             channel.tools(nil)
-            // Background agents still run: Claude wakes when each ends and writes again, the last result is the answer.
+            // Background agents still run: Claude wakes when each ends and writes again (the answer: answer(_:cutAt:)).
             // Ending the call now would stop them; a message not read yet goes back to the caller (detach).
             if background > 0 { waiting = true; closeInput(); return }
             // The answer is done. A message written but not read would become a second answer: end the call instead,
@@ -134,5 +151,41 @@ final class SteerLink {
             if channel.unread && !waiting { cutOff = true; closeInput(); end() } else { closeInput() }
         default: break
         }
+    }
+
+    // Claude's task events (Claude Code 2.1.x): started (a foreground command can move to the background), and ended.
+    private func noteTask(_ json: [String: Any]) {
+        let task = json["task_id"] as? String
+        switch json["subtype"] as? String {
+        case "background_tasks_changed": reported = (json["tasks"] as? [Any])?.count ?? 0
+        case "task_started":
+            guard let task, let tool = json["tool_use_id"] as? String else { return }
+            taskTools[task] = tool
+            if json["is_backgrounded"] as? Bool == true { pending.insert(tool) }
+        case "task_notification", "task_updated":
+            let status = (json["status"] as? String) ?? ((json["patch"] as? [String: Any])?["status"] as? String)
+            guard let status, ["completed", "failed", "stopped", "killed"].contains(status),
+                  let tool = (json["tool_use_id"] as? String) ?? task.flatMap({ taskTools[$0] }) else { return }
+            pending.remove(tool)
+        default: break
+        }
+    }
+
+    /// The answer among one steered call's results. Cut off: the result that ended it. Otherwise Claude ran until it
+    /// stopped, writing a result each time an ended background task woke it. Measured with Claude Code 2.1.x: those
+    /// results come together at the end, after the tasks' events, an empty one can come first, and the last one can be
+    /// a short note (a timer ended). So: the longest result written after the first (that one was written while the
+    /// work still ran), and the last one after it when that came later.
+    static func answer(_ results: [[String: Any]], cutAt: Int?) -> [String: Any]? {
+        if let cutAt { return results.indices.contains(cutAt - 1) ? results[cutAt - 1] : results.first }
+        func text(_ i: Int) -> String { ((results[i]["result"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
+        let written = results.indices.filter { results[$0]["is_error"] as? Bool != true && !text($0).isEmpty }
+        guard let last = written.last else { return results.last }
+        let woke = written.contains { $0 > 0 } ? written.filter { $0 > 0 } : written
+        let main = woke.dropFirst().reduce(woke[0]) { text($1).count > text($0).count ? $1 : $0 }
+        guard main < last else { return results[last] }
+        var joined = results[last]
+        joined["result"] = text(main) + "\n\n" + text(last)
+        return joined
     }
 }

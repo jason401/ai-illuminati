@@ -374,6 +374,11 @@ def line(wait):
     text = "".join(b.get("text", "") for b in json.loads(raw)["message"]["content"])
     seen.append(text); open(d + "/stdin", "w").write("\n".join(seen))
     return text
+def eof(wait):
+    end = time.time() + wait
+    while time.time() < end:
+        if select.select([fd], [], [], end - time.time())[0] and not os.read(fd, 65536): return True
+    return False
 def replay(t): out({"type": "user", "isReplay": True, "parent_tool_use_id": None, "message": {"role": "user", "content": [{"type": "text", "text": t}]}})
 replay(line(5))
 read = None
@@ -394,6 +399,35 @@ elif mode == "steer-background":
     out({"type": "system", "subtype": "task_notification", "task_id": "k1", "tool_use_id": "a1", "status": "completed", "summary": "found 2"})
     out({"type": "system", "subtype": "background_tasks_changed", "tasks": []})
     out({"type": "result", "is_error": False, "result": "final review", "origin": {"kind": "task-notification"}})
+    sys.exit(0)
+elif mode == "steer-batched":
+    # As Claude Code 2.1.x writes it: the wake-up results come only after the input closed, together, after the tasks'
+    # events (an empty one first, a short note last).
+    out({"type": "assistant", "parent_tool_use_id": None, "message": {"content": [{"type": "tool_use", "id": "a1", "name": "Agent", "input": {"run_in_background": True}}, {"type": "tool_use", "id": "a2", "name": "Bash", "input": {"run_in_background": True}}]}})
+    out({"type": "system", "subtype": "background_tasks_changed", "tasks": [{"task_id": "k1"}, {"task_id": "k2"}]})
+    out({"type": "system", "subtype": "task_started", "task_id": "k1", "tool_use_id": "a1", "is_backgrounded": True})
+    out({"type": "system", "subtype": "task_started", "task_id": "k2", "tool_use_id": "a2", "is_backgrounded": True})
+    out({"type": "user", "parent_tool_use_id": None, "message": {"content": [{"type": "tool_result", "tool_use_id": "a1"}, {"type": "tool_result", "tool_use_id": "a2"}]}})
+    out({"type": "result", "is_error": False, "result": "Waiting for the two background studies to finish."})
+    if not eof(10): out({"type": "result", "is_error": False, "result": "the input stayed open"}); sys.exit(0)
+    out({"type": "system", "subtype": "task_notification", "task_id": "k1", "tool_use_id": "a1", "status": "completed"})
+    out({"type": "system", "subtype": "task_updated", "task_id": "k2", "patch": {"status": "completed"}})
+    out({"type": "system", "subtype": "background_tasks_changed", "tasks": []})
+    for r in ["", "Waiting for both studies to send their completion notices.", "Both studies are done: the full summary of what they found.", "Timer ended."]:
+        out({"type": "result", "is_error": False, "result": r})
+    sys.exit(0)
+elif mode == "steer-agent-unread":
+    # No background_tasks_changed at all. A message written while a tool runs is read only on the wake-up after the
+    # first result: the running agent must not be stopped, and the message is told once.
+    out({"type": "stream_event", "event": {"type": "content_block_start", "content_block": {"type": "tool_use", "name": "Bash"}}})
+    out({"type": "assistant", "parent_tool_use_id": None, "message": {"content": [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {}}, {"type": "tool_use", "id": "a1", "name": "Agent", "input": {"run_in_background": True}}]}})
+    read = line(5)
+    out({"type": "user", "parent_tool_use_id": None, "message": {"content": [{"type": "tool_result", "tool_use_id": "t1"}, {"type": "tool_result", "tool_use_id": "a1"}]}})
+    out({"type": "result", "is_error": False, "result": "agent running"})
+    time.sleep(1)
+    if read: replay(read)
+    out({"type": "system", "subtype": "task_notification", "task_id": "k1", "tool_use_id": "a1", "status": "completed"})
+    out({"type": "result", "is_error": False, "result": "final with " + str(read)})
     sys.exit(0)
 else:
     out({"type": "stream_event", "event": {"type": "message_start"}})
@@ -439,6 +473,12 @@ expect(answer == "first" && reads.isEmpty && left == ["change course"] && took <
 (answer, reads, left, took) = steered("steer-background", offerOn: { _ in false })
 expect(answer == "final review" && left.isEmpty,
        "with a background agent running at the first result, the answer is the result written after it ends: \(String(describing: answer))")
+(answer, reads, left, took) = steered("steer-batched", offerOn: { _ in false })
+expect(answer == "Both studies are done: the full summary of what they found.\n\nTimer ended." && left.isEmpty,
+       "wake-up results that come together at the end: the summary (longest after the first) and the last note: \(String(describing: answer))")
+(answer, reads, left, took) = steered("steer-agent-unread", offerOn: isTool)
+expect(answer == "final with change course" && reads == ["change course"] && left.isEmpty,
+       "without background_tasks_changed a background agent still counts (not cut off), and a message read on its wake-up is told once: \(String(describing: answer)) \(reads) \(left)")
 
 // Token counts from the CLIs' own logs (TokenLedger), everything in the test home: a Claude message counts once with
 // each field at its highest (a later line that grew adds only the rise, to the hour of its first line); one seen in

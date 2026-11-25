@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 """Room-scoped MCP filesystem bridge. No credentials, no network, no eager reads.
-The only connection is the app's local tool socket (plain chat). Google credentials stay in the app."""
+The only connection is the app's local tool socket (plain chat). Credentials stay in the app."""
 import base64, fnmatch, hashlib, json, os, pathlib, socket, subprocess, sys, zipfile
 import xml.etree.ElementTree as ET
 import math, re, shutil, stat, tempfile
@@ -12,7 +12,7 @@ class Workspace:
         # The chat's own folder: changes there need no backup. Other roots follow the level.
         self.own = [pathlib.Path(r['path']).resolve() for r in manifest['roots'] if r.get('writable') and r['directory']]
         self.cache = pathlib.Path(manifest['cache'])
-        # Plain chat: app-side tools (AI Face, read-only Drive), scoped by this answer's
+        # Plain chat: app-side tools (AI Face, Git, TODOs and more), scoped by this answer's
         # capability. Missing or slow app: chats still work without these extra tools.
         self.hub = manifest.get('tools') or manifest.get('face')
         self.tool_session = manifest.get('toolSession')
@@ -34,7 +34,7 @@ class Workspace:
                 value = float(os.environ.get('AI_ILLUMINATI_TEST_BRIDGE_TIMEOUT', '15'))
                 if name and math.isfinite(value) and value > 0: ordinary_timeout = value
             except ValueError: pass
-            timeout = 3610 if name.startswith(('git_', 'delegate_', 'sub_')) or name in ('project_run', 'ask_ai', 'ask_peer', 'meeting_result', 'create_project') else 125 if name in getattr(self, 'slow', ()) else (65 if name.startswith('drive_') else ordinary_timeout)
+            timeout = 3610 if name.startswith(('git_', 'delegate_', 'sub_')) or name in ('project_run', 'ask_ai', 'ask_peer', 'meeting_result', 'create_project') else 125 if name in getattr(self, 'slow', ()) else ordinary_timeout
             s.settimeout(timeout); s.connect(self.hub)
             if self.tool_session: message = dict(message, session=self.tool_session)
             s.sendall(json.dumps(message).encode() + b'\n')

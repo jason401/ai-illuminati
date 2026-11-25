@@ -8,7 +8,7 @@ import AIWorkspace
 
 // What a chat gets from the app, set once by the app before the first chat (ChatLinksApp.connect), like ChatStore.links:
 // the chat side names none of these app parts. Unset (a program that did not connect), a chat runs each tool plainly,
-// leaves AI Face tags in the text, offers no Drive and shows no app screens.
+// leaves AI Face tags in the text and shows no app screens.
 // What a chat reads of the app's settings (AppModel conforms in Settings.swift). The chat window observes it.
 public protocol ChatSettings: ObservableObject {
     var accounts: [Account] { get }
@@ -54,12 +54,9 @@ public enum ChatApp {
     }
     public static var face = Face()
 
-    // Google Drive (DriveLink): the rule an AI gets while Drive is on, nil while it is off.
-    public static var driveRule: () -> String? = { nil }
-
     // The app's screens shown inside the chat window: the TODO board (its sidebar row, the board, a chat's TODO cards),
     // Project info and its rename, the app's icon, the items the app adds to Manage chats (iPhone access).
-    // (Drive's sidebar rows come in through FolderSources.)
+    // (An outside kind's sidebar rows come in through FolderSources.)
     public struct Screens {
         public var boardRow: (Discussion) -> AnyView = { _ in AnyView(EmptyView()) }
         public var board: (Discussion) -> AnyView = { _ in AnyView(EmptyView()) }
@@ -76,8 +73,8 @@ public enum ChatApp {
     public static var screens = Screens()
 }
 
-// Folders from outside this Mac, listed in the sidebar's Shared folders after the local ones (Google Drive now; another
-// cloud is one more entry): its item in the section's + menu, its rows (with its own account hints) and how many folders
+// Folders from outside this Mac, listed in the sidebar's Shared folders after the local ones (none now; a
+// cloud drive is one entry): its item in the section's + menu, its rows (with its own account hints) and how many folders
 // it has, so the section shows one empty hint only while every kind is empty. Only the list is shared, not the storage.
 // The rows stay in the view while the section is folded (SidebarFold "shared"): they hide their own content there.
 public struct FolderSource {

@@ -16,16 +16,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 ARTIFACTS = ROOT / ".ai-illuminati/a-trial"
 MAIN = """import Foundation
-import AIIntegrations
-final class EmptyGoogleStore: GoogleTokenStore {
-    func load() throws -> Data? { nil }
-    func save(_ data: Data) throws {}
-    func clear() throws {}
-}
 func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
     if !condition() { print("FAIL: " + message); exit(1) }
 }
-GoogleAuth.shared = GoogleAuth(store: EmptyGoogleStore())
 testToolHub()
 print("PASS: ToolHub order, collision, exposure and revocation")
 """
@@ -58,7 +51,7 @@ def compile_hub(folder, modules, source):
     (folder / "ToolHub.swift").write_text(source)
     argv = ["xcrun", "swiftc", "-swift-version", "5", "-module-cache-path", folder / "cache",
             "-I", modules, "-o", folder / "run", folder / "main.swift", folder / "ToolHub.swift",
-            ROOT / "app/macos/DriveTools.swift", ROOT / "app/macos/ExternalMCPTools.swift",
+            ROOT / "app/macos/ExternalMCPTools.swift",
             ROOT / "tools/tests/tool_hub.swift", *sorted(modules.glob("lib*.a"))]
     run(argv)
 

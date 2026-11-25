@@ -24,7 +24,7 @@ Examples:
 - *Usage readings for a new AI service*: reading the numbers is `AIRuntime` (usage readers sit there; its contract and the
   promise rows' tests run); the menu card showing them is App (`MenuCards.swift`); the account entry is `AIAccounts`.
 - *A tool that reads a new outside service (say a calendar)*: the sign-in and requests are `AIIntegrations` (injectable
-  network and Keychain, like `DriveLink`); the App offers it as a tool in `ToolHub.swift` (like `DriveTools.swift`), because
+  network and Keychain, like `RemoteMCP`); the App offers it as a tool in `ToolHub.swift` (like `ExternalMCPTools.swift`), because
   Integrations has no tool provider and only the App imports it.
 - *A new field on a TODO and its badge on the board*: the field and its save format are `AIProjects` (`Todo.swift`; run
   `projects_contract` and the `TodoItem` row's tests, update `docs/api/AIProjects.txt`); the badge is App (`TodoBoard.swift`)
@@ -98,9 +98,9 @@ The map below is the final ownership; step reports are in `docs/modules-history.
 | AIProjects | Git work, repository locks, approvals, TODO storage/scheduling, project info/creation; Git/Plan/Task/TodoAdd/ProjectMaker providers | AIAccounts, AILocalization, AIRuntime, AIWorkspace |
 | AIChatRecords | chat record values (pictures, documents, sync origins…), the chats/ path, dropped files, collab log, disk report; no providers; knows no Discussion | AIAccounts, AILocalization, AIRuntime, AIWorkspace |
 | AIChat | chat records/state/storage, routing, meetings/reviews, ask_ai, attachments, DeviceSync, chat/Space views; Peer/Convene/Chat/Memory/Storage providers | AIAccounts, AILocalization, AIRuntime, AIWorkspace, AIProjects, AISpaces, AIChatRecords |
-| AIIntegrations | Google auth/Drive gate, external MCP connections, AI Face; no providers | AIAccounts, AILocalization, AIRuntime (interface only), AIWorkspace |
+| AIIntegrations | external MCP connections and their sign-in, AI Face, Mac control; no providers | AIAccounts, AILocalization, AIRuntime (interface only), AIWorkspace |
 | AIRemote | the iPhone page and its 127.0.0.1 server (key check, HTTP parsing); knows no chat | AILocalization |
-| App (app/macos) | startup, menu/settings, screens, update/login, wiring and explicit 13-provider list; Face/Drive/ExternalMCP conformances | all ten modules, each imported directly by the files that use it |
+| App (app/macos) | startup, menu/settings, screens, update/login, wiring and explicit 13-provider list; Face/ExternalMCP conformances | all ten modules, each imported directly by the files that use it |
 
 Arrows mean imports, from caller to dependency (all direct edges are in the table):
 
@@ -129,23 +129,23 @@ internals; app code may not use @testable (the existing stage-1 check).
 
 ### App tool composition and exposure
 
-App passes `{ ToolHub.appProviders }` into ToolHub. The closure reads the explicit list again so replacing
-DriveLink.shared in an isolated test keeps working. The list is never dynamically registered or sorted:
+App passes `{ ToolHub.appProviders }` into ToolHub. The closure reads the explicit list again so a provider replaced
+in an isolated test is seen. The list is never dynamically registered or sorted (Google Drive, second until
+2026-11-25, was removed):
 
 1. FaceLink
-2. DriveLink
-3. GitLink
-4. PlanLink
-5. PeerLink
-6. ConveneLink
-7. DelegateLink (sub-room P2: delegate_*, git_merge_sub, sub_report, sub_blocked; left out for consulted AIs like Peer and Convene)
-8. ChatLink
-9. MemoryLink
-10. ProjectMakerLink
-11. TaskLink
-12. TodoAddLink
-13. StorageLink
-14. ExternalMCP
+2. GitLink
+3. PlanLink
+4. PeerLink
+5. ConveneLink
+6. DelegateLink (sub-room P2: delegate_*, git_merge_sub, sub_report, sub_blocked; left out for consulted AIs like Peer and Convene)
+7. ChatLink
+8. MemoryLink
+9. ProjectMakerLink
+10. TaskLink
+11. TodoAddLink
+12. StorageLink
+13. ExternalMCP
 
 `shared` alone connects ProjectWork.revokeTools; a fixture hub cannot overwrite that hook.
 The clock defaults to Date(); tests inject time without waiting two hours. `available(context:legacy:)` holds the
@@ -155,7 +155,7 @@ These are app-internal seams: no new module or public symbol.
 
 | Promise | Consumer | Check |
 |---|---|---|
-| The exact 14 singleton identities and order; current replaceable Drive singleton | ToolHub.shared | run_mode2 stage 1 exact source list; testToolHub identity and Drive replacement |
+| The exact 13 singleton identities and order | ToolHub.shared | run_mode2 stage 1 exact source list; testToolHub identity |
 | Tool listing preserves provider order and duplicate names; call uses the first active provider that lists the name in that context | CLI bridge | testToolHub duplicate fixtures, inactive/context-hidden list and call; baseline + A1/A2/A3 mutants |
 | member keeps the list; side has only Peer; consulted excludes Peer, Convene and Delegate; legacy has only Face, before providers' own gates | workspace bridge, ask_ai, meetings, old Face bridge | testToolHub exact selected identities and side/legacy call refusals, A4 mutant; testAskAI, testMeetingTool, testChatThroughCLI |
 | Unknown/expired sessions cannot list or call; project revocation removes only that project's sessions; unknown operations/names fail | all CLI calls, project turn end | testToolHub, injected-clock expiry, A5 mutant; testProjectHandoff |
@@ -168,7 +168,6 @@ These are app-internal seams: no new module or public symbol.
 | Candidate | Possible owner | Boundary to preserve |
 |---|---|---|
 | GitBranches.swift: parsing Git output, branch/version/distance report | AIProjects | inject Git runner; ProjectInfoView and its presentation stay App |
-| DriveUI.swift: DriveTree rows/writable and tree request/cache bookkeeping | pure tree data in AIIntegrations; observable screen state stays App | preserve lazy expansion, cycle/depth bound, inherited write rules and login-version rejection |
 | LocalModels.swift: LocalModelStore refresh/pull/cancel/delete state | AIRuntime behind a narrow view model | remove AppModel coupling first; opening NSWorkspace and the window stay App |
 | Settings.swift: pure default-chat-rule migration and account/model choice transformations | split by AIChat/AIAccounts/AIRuntime ownership | preserve UserDefaults keys, per-instance test settings and the App's ChatSettings conformance |
 
@@ -190,7 +189,7 @@ A does not relocate it or alter AutoGuard, permissions, signing, install or rele
   `AISpaces` → `AIAccounts`, `AILocalization`; `AIRuntime` → `AIAccounts`, `AILocalization`; `AIWorkspace` → `AIAccounts`,
   `AILocalization`, `AIRuntime`; `AIProjects` → `AIAccounts`, `AILocalization`, `AIRuntime`, `AIWorkspace`; `AIChatRecords` → `AIAccounts`, `AILocalization`, `AIRuntime`, `AIWorkspace`; `AIChat` → those five, `AISpaces` and `AIChatRecords` (Chat uses
   Projects, never the other way: Projects names no chat type since P0); `AIIntegrations` → `AIAccounts`, `AILocalization`,
-  `AIRuntime` (only because `AIWorkspace`'s interface names it), `AIWorkspace` (`WorkspaceRoot`: Drive's folders), used by the app only; the other two use none. No circles (the script refuses them).
+  `AIRuntime` (only because `AIWorkspace`'s interface names it), `AIWorkspace` (declared; nothing in the module needs it since Drive was removed, 2026-11-25), used by the app only; the other two use none. No circles (the script refuses them).
 - Every `swiftc` that compiles app files runs it first and adds `-I <out> <out>/lib*.a`:
   `tools/build_app.sh` (compile step), `tools/tests/run_mode2.sh`, the preview scripts.
 - Each file that uses a module says `import <Name>`. Not the hidden compiler option (`-Xfrontend -import-module`):
@@ -201,18 +200,18 @@ A does not relocate it or alter AutoGuard, permissions, signing, install or rele
   outside (`tools/tests/<part>_contract.swift`, public names only), and its `boundary` file checks that internal names
   (`AccountStore.place`, `SpaceStore.setting`, `SpaceAssets.served`, `Answerer.chatDir`, `Answerer.launchForTests`,
   `NativeSessions.split`, `CloudModels.apply`, `WorkspaceBackup.chats`/`keepPerChat`, the whole `AutoGuard` type,
-  `TodoScheduler.retryDelay`, `ProjectWork.leasePrefix`, `TodoStore.encoder`, `ChatTime.calendar`, `CollabLog.maxBytes`/`file`/`Summary` fields, `RoomDocuments.read`, `Discussion.maxRunning`, `Discussion.draft`, the whole `Peer` and `Route` types, `FaceLink.fallbackMoods`, `GoogleAuth.tokenURL`,
-  `DriveLink.isAllowed`, `ExternalMCP.callTimeout`) do not compile outside.
+  `TodoScheduler.retryDelay`, `ProjectWork.leasePrefix`, `TodoStore.encoder`, `ChatTime.calendar`, `CollabLog.maxBytes`/`file`/`Summary` fields, `RoomDocuments.read`, `Discussion.maxRunning`, `Discussion.draft`, the whole `Peer` and `Route` types, `FaceLink.fallbackMoods`,
+  `OAuthLoopback`, `ExternalMCP.callTimeout`) do not compile outside.
 - Tests build the modules with `-enable-testing` only so tests can say `@testable import`: `space_build.swift` for
   `AISpaces` (module insides such as `SpaceCheck`), and for `AIRuntime` the app tests that make their own usage
   readings (`AIUsage`, `UsageWindow` inits) or use its test hooks (`Answerer.launchForTests`/`replyForTests`,
   `StreamParser`): `mode2`, `run_conditions`, `project_work`, `ask_ai`, `collab_log`, `todo_work`, `chat_search`,
   `space_build`, and the settings preview (`render_settings.sh` builds the modules with `-enable-testing` for it).
   For `AIWorkspace` the app tests that reach its insides (`prepare`, `WorkspaceBackup.run`/`treatAsCloud`/`keepPerChat`,
-  `AutoGuard.folder`/`claudeDenied`): `mode2`, `project_work`, `google_drive`, `ask_ai`, `chat_search`.
+  `AutoGuard.folder`/`claudeDenied`): `mode2`, `project_work`, `ask_ai`, `chat_search`.
   For `AIProjects`: `project_work`, `todo_work`, `project_info`, `chat_search` (`RunProgress`, `RunTimings`, `TodoData.eligible`,
   `ProjectInfoStore` insides, `ProjectRun.plan`, …). For `AIIntegrations`: `mode2` (`FaceLink.server`, `RemoteMCPSession`, `MCPHTTP`,
-  `MCPOAuth`, `MCPKeychain`/`MCPFileSecrets`) and `google_drive` (the Drive requests and the Keychain store's insides).
+  `MCPOAuth`, `MCPKeychain`/`MCPFileSecrets`).
   Every app file and every contract test keeps a plain import and sees public names only; the app build
   (`build_app.sh`) has no `-enable-testing`.
 - A `public` name in a module gets its reason in this file (the tables below). A new public name is a promise:
@@ -420,7 +419,7 @@ streams `LocalStream`/`PullStream`, `LocalModel.ask` and the Ollama requests):
 O3 test hook: the bundled Python bridge accepts `AI_ILLUMINATI_TEST_BRIDGE_TIMEOUT` (finite, positive seconds) for
 its ordinary named-tool socket limit. `testProjectWork` uses 1 second only in its child bridge and delays the command
 2 seconds, preserving the long-command exemption check. Defaults remain 15 seconds (ordinary), 3610 (long tools),
-65 (Drive), 125 (outside MCP). Invalid values and tool inventory requests keep 15 seconds. No Swift public name is
+125 (outside MCP and other slow tools). Invalid values and tool inventory requests keep 15 seconds. No Swift public name is
 added, so `docs/api` snapshots stay unchanged and S1 still checks them. `test_workspace_mcp.py` checks the override,
 inventory, invalid values and default; the app test checks the real bridge and app socket together.
 
@@ -442,7 +441,7 @@ are AIProjects'; ToolHub and the Settings backup UI stay App. Providers live wit
 | Save format: a chat's `workspace` (`WorkspaceBinding`, `WorkspaceRoot`, `ProjectBinding`, levels, `ToolOrigin`) and a backup's `complete.json` keep their keys; absent fields left out; older ones read | Discussion (chats/*.json), Todo (lists), ProjectWork, every `load` | "a chat's workspace keeps its saved keys" (golden), "an older workspace reads", "an older backup reads", "complete.json is private" | mode2 "legacy decoding", testTodoStore (saved and read back) |
 | Errors: an NSError (domain `Materials`, code 1, the same texts) the callers show as they are | Solo, ProjectChat, Attachments (notes) | "the refusal names the backup" | mode2 conflict refusal |
 | Disk sizes: lstat blocks, links not followed, a hard link once across calls with one `seen` | ChatStorage (`report`), clean-up (`bytes`) | "a hard link counts once", "… not counted again across calls", "a missing path counts as unreadable" | mode2 "storage by chat, …, hard links once" |
-| Tool gateway's types: `ToolProvider.tools(context:)` defaults to `tools()`; `ToolContext` carries the room, roots, run, asker, turn, origin | ToolHub and the 14 providers (app files) | none (types) | mode2 tool tests (ask_ai, meetings, chat tools, memory, Drive, outside MCP) |
+| Tool gateway's types: `ToolProvider.tools(context:)` defaults to `tools()`; `ToolContext` carries the room, roots, run, asker, turn, origin | ToolHub and the 13 providers (app files) | none (types) | mode2 tool tests (ask_ai, meetings, chat tools, memory, outside MCP) |
 | Screen viewing: the bridge without a workspace exposes only the app's two screen tools. Workspace chats retain their file tools, including the built-in chat and Spaces folders. The screen grant ends with the answer. Runs with the grant bypass native transcript and raw CLI log storage while preserving the previous session for later resumption. | RunConditionsApp, ToolHub, Answerer | `test_workspace_mcp.py` (image and scale relay, refused file call) | `testRunConditions` (account rule, launch arguments, workspace manifest, expiry, attachments), mode2 (session resumption) |
 
 Public names and why (everything else stays internal: `AutoGuard` whole, `WorkspaceError`, `WorkspaceInvocation.prepare`/
@@ -681,8 +680,8 @@ What the chat gets from the app, set by the app (the chat side names none of the
 - `ChatSettings` (protocol, `AppModel` conforms: `extension AppModel: ChatSettings {}`): the 15 settings the chat reads
   (accounts, usage, chat rules, local model, picture makers, team picks, collaboration, opinion digest, shared folders); `Discussion(model:)`
   takes it, `ChatView` is generic over it so the window still observes the settings.
-- `ChatApp.run` = `RunConditions.app` (RunConditionsApp.swift), `ChatApp.face` = FaceLink's extract/show/active/moods/rule,
-  `ChatApp.driveRule` = DriveLink's rule while on: set in `ChatLinksApp.connect()` (main.swift and mode2, as in C0).
+- `ChatApp.run` = `RunConditions.app` (RunConditionsApp.swift), `ChatApp.face` = FaceLink's extract/show/active/moods/rule:
+  set in `ChatLinksApp.connect()` (main.swift and mode2, as in C0).
 - `ChatApp.screens`: the TODO board (row, board, a chat's cards), Project info and its rename, the icon, `manageItems`
   (2026-11-16: the app's items atop the sidebar's Manage chats menu, now Connect iPhone in PhoneAccess.swift), `approvals`
   (2026-11-23: the inbox opens the app's approval window for an outside tool's request; set in main.swift with ApprovalAlerts),
@@ -691,13 +690,13 @@ What the chat gets from the app, set by the app (the chat side names none of the
   right of its Project info, in the inbox's place; the app's ProjectTodoPanel beside the board it shortens):
   set in the new `ChatScreensApp.connect()` (main.swift after ChatLinksApp, stage 1 checks the place; the chat preview too).
 - `FolderSources` / `FolderSource`: outside folder kinds shown in the sidebar's Shared folders after the local ones (their
-  + menu item, rows and folder count); Google Drive's is registered in `ChatScreensApp.connect()`. Only the list is joined,
-  each kind keeps its own storage; another cloud is one more entry.
+  + menu item, rows and folder count); none is registered since Google Drive was removed (2026-11-25). Only the list is joined,
+  each kind keeps its own storage; a cloud drive is one entry.
 - `toolFailure` is the module's copy of `ToolHub.failure` (the same reply shape); `RunConditions.app` inside the module forwards
   to `ChatApp.run`, so the chat's calls read as before.
 
 Stays in the app (what the user sees of other parts): Settings (all tabs, Memory/Rules/Storage windows), TodoBoard, ProjectInfoView,
-GitBranches, DriveUI/DriveLink/GoogleAuth, ExternalMCP/RemoteMCP, FaceLink, ToolHub (the 14 providers in their order, stage 1
+GitBranches, ExternalMCP/RemoteMCP, FaceLink, ToolHub (the 13 providers in their order, stage 1
 checks the list), ApprovalAlerts, MenuCards, main, Login, Updater, Icon, LocalModels, RunConditionsApp, ChatLinksApp,
 ChatScreensApp. Two app edits besides imports: `StorageListView.measured` (one string the compiler could no longer type-check
 inline once the names came from another module; same text) and the `AppModel` conformance line.
@@ -726,7 +725,7 @@ everything else, Discussion's state above all, stays internal):
   `CollabMode`/`CollabLog` (AIChatRecords since T4), `RouteSorter`, `ApprovalAlertSettings`, `AIColors` (each AI's color: the color window changes what `Account.Provider.color` draws; `revisionKey` lets their views redraw), `AIColorWindow` (`show`, `menuTitle`: Appearance's "Change…" and the usage menu's "Change <AI> Color…" open the same window as a right-click on an AI's name in the chat), `DeviceSync` (settings, start, scan, the notes the links call; `deviceID` and `deviceName`: the Usage window puts this Mac's token ledger in the same folder under the same id and name, so a Mac is one Mac in both; `offerConnection`, `onlineHosts`, `checkOnline`, `RemoteConnection` (`init`) and the settings' `shareConnection`/`sharesConnection`: the app's phone page (PhoneAccess.swift) hands over its address and Tailscale's online Macs, which the module cannot read, for Other Macs → connect in MacConnect.swift),
   `ChatLink.conversations`; the board and Project info: `SidebarProjects` (`key`, `group`, `pickerName`), `ProjectGroup`,
   `SidebarFold`, `BoardTab`, `PictureDrop`, `Enterprise.permits`, `ProjectLockSection` (Project info's lock setting; the lock stays the chat's), `AutoPick.fiveHour`/`weekly`, `TodoItem.State.title`/`color`;
-  DriveLink: `MaterialReader.read`, `RoomDocuments.directory` (AIChatRecords since T4); main: `ChatWindow`, `SpaceRefiner.watchLibrary`,
+  main: `ChatWindow`, `SpaceRefiner.watchLibrary`,
   `ApprovalListView`, `Blocked.count` (2026-11-23: the Dock badge in ApprovalAlerts counts the same 🔴 items as the chat's banner); everyone's views: `PlainHitButtonStyle`/`.plainHit`, `SidebarHeader`.
 - `ChatSettings`, `ChatApp` (and `Face`, `Screens`), `FolderSources`/`FolderSource`: the seams above.
 - `ProjectMemoryCleanupLink.runIfIdle(in:project:manual:)` lets the app's timer and Project info start a cleanup on the
@@ -763,12 +762,12 @@ RoomDocuments stays in `AIChat/RoomDocuments.swift` (same file name: run_mode2 C
 `ChatTurn`/`Conversation`/Discussion or the chat window uses their insides): ChatRecords, DeviceSync, Memory, ChatNotes.
 Depends on AIAccounts, AILocalization, AIRuntime (`NativeSessions.directory` in the report), AIWorkspace (`DiskUsage`,
 `WorkspaceBackup.base`); no cycle (Workspace already uses Runtime). Users: AIChat and the App
-(Settings' Storage and collaboration tabs, DriveLink), each file with its own `import AIChatRecords`.
+(Settings' Storage and collaboration tabs, ChatLinksApp), each file with its own `import AIChatRecords`.
 
 | Promise | Users | Module test (`chatrecords_contract.swift`) | User tests |
 |---|---|---|---|
 | Chats live in the data folder's chats/; pictures at <id>.assets/<picture id>.png, a bad picture refused and leaves no file | ChatStore, Attachments, Pictures, TodoChatsApp, ChatWindow | "chats live in …", "picture path", "bad picture refused", "a refused picture leaves no file" | chat contract (`ChatStore.dir`, pictures), mode2 attachments |
-| Dropped files are copied into <id>.documents; the readable kinds are fixed | ChatWindow (drop), MaterialReader, DriveLink | "documents folder", "a dropped file is copied …", "readable document kinds" | mode2 materials (`RoomDocuments.read`) |
+| Dropped files are copied into <id>.documents; the readable kinds are fixed | ChatWindow (drop), MaterialReader | "documents folder", "a dropped file is copied …", "readable document kinds" | mode2 materials (`RoomDocuments.read`) |
 | collab-log.jsonl: old lines read and written back the same (sorted keys, ISO dates); past 2 MB the older half goes; the summary counts | Peer (ask_ai, meetings, reviews, requests), Settings' collaboration tab | "an old collab line …", "a full log keeps its newer half", "the summary line counts them" | testCollabLog |
 | Disk report: a hard-linked file counts once; the parts are named | Settings' Storage, chat_storage (`StorageLink`) | "a hard-linked file counts once", "the report line names the parts" | mode2 storage, testChatTools |
 
@@ -779,20 +778,16 @@ Public names and why: the moved types were already public (C1a, C1b reasons). Ne
 internal and the synthesized `Codable` is unchanged), `CollabLog.add`, `smallTalk(_:)`, `asksOthers(_:)` (Peer).
 Internal (boundary): `CollabLog.maxBytes`, `CollabLog.file`, the `Summary` counts, `RoomDocuments.read`.
 
-### AIIntegrations (`app/modules/AIIntegrations/`: GoogleAuth, DriveLink, ExternalMCP, RemoteMCP, FaceLink, Failure), step I (2026-11-12)
-Moved (`git mv`) from `app/macos`: GoogleAuth (the Google login, its Keychain item, the bounded HTTP client, the sign-in callback),
-DriveLink (the shared folders, the folder gate and the Drive requests), ExternalMCP and RemoteMCP (outside MCP servers: the settings file,
+### AIIntegrations (`app/modules/AIIntegrations/`: ExternalMCP, RemoteMCP, OAuthLoopback, FaceLink, MacControl, Failure), step I (2026-11-12)
+Google Drive (GoogleAuth, DriveLink, DriveMCP, GoogleMCP and the app's DriveUI/DriveTools) was removed on 2026-11-25, to be
+made again; what the remote MCP sign-in shared with it (the `/usr/bin/security` runner, form encoding, the loopback callback)
+stayed as `OAuthLoopback.swift`, internal. Moved (`git mv`) from `app/macos`: ExternalMCP and RemoteMCP (outside MCP servers: the settings file,
 local and remote connections, secrets, tool rules, OAuth) and FaceLink (the AI Face link). Depends on `AIAccounts`, `AILocalization`,
-`AIRuntime` (only because `AIWorkspace`'s interface names it) and `AIWorkspace` (`WorkspaceRoot`: which local folders Drive may read and
-download into). Not on `AIChat` or `AIProjects`; no module imports it (stage 1 checks both): the app uses it and hands the chat what it
+`AIRuntime` (only because `AIWorkspace`'s interface names it) and `AIWorkspace` (still declared and imported by ExternalMCP, but unused since Drive went). Not on `AIChat` or `AIProjects`; no module imports it (stage 1 checks both): the app uses it and hands the chat what it
 needs through `ChatApp` (C1, unchanged).
 
-No tool provider in the module (stage 1: no `ToolProvider`, `ToolHub` or `ToolContext` in its files). The app makes the three providers:
+No tool provider in the module (stage 1: no `ToolProvider`, `ToolHub` or `ToolContext` in its files). The app makes the two providers:
 - `ToolHub.swift` `extension FaceLink: ToolProvider` (as before).
-- New `DriveTools.swift` `extension DriveLink: ToolProvider`: the tool descriptions (`tools()`, `tools(context:)`, unchanged text) and the
-  hand-over `perform(name, arguments, roots:)`. The gate stays in the module because its order is the permission: only allowed folders,
-  a write validated again after the token refresh and right before sending, no result once the login or the settings changed
-  (ChatGPT (school), asked, agreed: the app must not re-implement it).
 - New `ExternalMCPTools.swift` `extension ExternalMCP: ToolProvider`: the Enterprise rule in both the list and the call (before anything
   is passed on), the approval card (`approve`, `isEnterprise`, tests replace them as before); the module's `call(name, arguments, approve:)`
   keeps block/ask/allow, the two-minute limit with the approval counted, the refusal text with `approvalWait`, and the remote-data note.
@@ -819,63 +814,40 @@ AI Illuminati's own windows, password fields; always asked: settings, keychain, 
 mapping, the lock, the band, Esc and the pause while the user moves stay internal (`testMacHands`, mac_hands.swift).
 
 Injected so tests need no real Keychain, network or socket (the defaults do what the app always did):
-- Keychain: `GoogleKeychainStore(run:)` (already) and `MCPKeychain(run:)` (new), both the `/usr/bin/security` runner; `GoogleAuth(store:)`.
-- Network: `GoogleHTTP.transport` and `MCPHTTP.transport` (default `live`: no redirects, nothing kept, size and time limits, SSE as it
-  comes). Every Google and remote MCP request already went through `send`; only its URLSession part moved into `live`.
-- Sockets: `GoogleLoopback.make(port, label)` returns an `OAuthCallback` (both Google's desktop sign-in and MCP's, including the
-  registered port reuse); the tool socket and AI Face's older socket stay ToolHub's (main.swift opens them right before
+- Keychain: `MCPKeychain(run:)`, the `/usr/bin/security` runner (`SecurityTool`).
+- Network: `MCPHTTP.transport` (default `live`: no redirects, nothing kept, size and time limits, SSE as it comes).
+- Sockets: `OAuthLoopback.make(port, label)` (internal) returns an `OAuthCallback` (MCP's sign-in, including the registered port
+  reuse); the tool socket and AI Face's older socket stay ToolHub's (main.swift opens them right before
   `FaceLink.shared.start()`, which no longer does; stage 1 checks the order).
 - AI Face: `FaceLink(open:)` takes the connection (`FacePipe`); the default `FaceProcess` is the old process code moved as it was
   (AIFACE_AGENT=illuminati, 10 s per reply).
-- Office files read from Drive use the chat's material reader through `DriveLink.officeText` (set in `ChatLinksApp.connect()`), so the
-  module names no chat type; without it such a file is "not supported", as other formats are.
 
-Storage unchanged: the Google item is still service "AI Illuminati Google", account `oauth` (copy `oauth-migration`), value
-`ai-illuminati-google-v1:` + base64 of the same `Credentials` JSON; MCP secrets "AI Illuminati MCP" in numbered chunks; `mcp.json`,
-`mcp-servers.json`, `mcpOff`, `driveFolders`, `pausedDriveFolders`, `driveWriteRules`, `drive.log` the same keys and files.
+Storage unchanged: MCP secrets "AI Illuminati MCP" in numbered chunks; `mcp.json`, `mcp-servers.json`, `mcpOff` the same keys and
+files. The removed Drive left its keys (`driveFolders`, `pausedDriveFolders`, `driveWriteRules`, `driveWorkspaceMCP`, …), `drive.log`
+and the Keychain item "AI Illuminati Google" unread; AutoGuard still keeps that item out of the CLIs' reach.
 
 | Promise | Users | Module test (`integrations_contract.swift`) | User tests |
 |---|---|---|---|
-| A saved Google login (current form, an older raw item, a half-done migration) is read; refresh, rotation, expiry and revoke keep the same item and input line | DriveUI, DriveLink | "a saved login is connected…", "a raw item from older versions still loads", "a half-done migration is finished…", "saved through security's stdin…", "an expired login keeps the client…", "disconnect clears…" | google_drive "Google Keychain CLI", "Google Drive backend" |
-| Both sign-ins finish only with their own state, saved in the same form | DriveUI | "the app's client signs in…", "a callback with another state is refused", "the desktop client is saved with its secret" | google_drive (PKCE, state) |
-| Drive's gate: allowed folders, writes re-checked before sending, no result after a change | DriveTools (the app's provider) | none (needs Drive answers) | google_drive (all Drive blocks) |
 | Outside MCP: rules block/ask/allow, Enterprise never, approval, secrets in chunks | ExternalMCPTools, Settings | "an unknown outside tool is refused without asking", MCP secrets block | testExternalMCP, testRemoteMCP |
 | AI Face: one connection, its tools and moods, unknown moods dropped; missing, off or dying AI Face: error replies at once, reconnect on the next use | ToolHub, ChatLinksApp (`ChatApp.face`), RunConditionsApp (`codexOff`) | the AI Face block (fake `FacePipe`) | mode2 "AI Face link", and new there: a dead AI Face server while a plain chat answers (reply shown, tag removed, usual moods in the rule, no wait) |
 
 Public names and why (found by the compiler: a script opened what an app file asked for, the rest by hand for the contract test):
-- What the app's screens and providers use: `DriveLink` (`shared`, `enabled`, `active`, `canWrite`, `folders`, `pausedFolders`,
-  `writeRules`, `rule`, `downloadRoot`, `perform`, `childFolders`, `folder(from:)`, `accountEmail`, `officeText`), `DriveFolder`;
-  `GoogleAuth` (`shared`, `builtInClientID`, `connected`, `needsReconnect`, `canWrite`, `publicClientID`, `connectionVersion`, the three
-  sign-ins, `cancelAuthorization`, `disconnect`), `GoogleFailure`, `GoogleAuthPresenter` (DriveUI's browser session);
-  `ExternalMCP` (settings, status, sign-in, rules, `tools`, `active`, `slowTools`, `call(…approve:)`, `approvalWait`, `stopAll`, `State`,
+- What the app's screens and providers use: `ExternalMCP` (settings, status, sign-in, rules, `tools`, `active`, `slowTools`, `call(…approve:)`, `approvalWait`, `stopAll`, `State`,
   `Status`; per AI: `isOn(_:account:)`, `usedBy`, `setUsed`, `tools(for:)` and `call`'s `account`, so the MCP screen's
   "Used by" menu and ExternalMCPTools filter by the answering account, `ToolContext.asker`, on top of the shared switch), `MCPServerEntry` (Settings' editor), `MCPToolRule`, `MCPSecrets` (`store`, `header`, `clientSecret`), `MCPSession.Failure`
   (Settings shows its message; `MCPSession` itself is public only to hold it); `FaceLink` (`shared`, `socketPath`, `isOn`, `active`,
   `configured`/`connected`/`on`, `codexOff`, `moods`, `rule`, `extract`, `show`, `start`, `refresh`, `tools`, `call`).
-- The injection points (for the contract test, and they say what may be replaced): `GoogleHTTP` (`Reply`, `transport`, `live`),
-  `GoogleTokenStore`, `GoogleKeychainStore` (`Runner`, `init(run:)`, `load`/`save`/`clear`), `GoogleAuth.init(store:)`, `accessToken`,
-  `OAuthCallback`, `GoogleLoopback.make`, `MCPSecretStore`, `MCPKeychain(run:)`, `FaceLink.init(open:)`, `FacePipe`, `FaceLink.file`/
+- `DriveCleanup.start()` (2026-11-25): main.swift calls it once at start, so an app updated from a version with Google Drive
+  removes its settings, `drive.log` and Keychain login (revoked at Google first); only with the real settings, retried while
+  the Keychain fails. `run(defaults:folder:security:revoke:)` stays internal (testDriveCleanup, mode2).
+- The injection points (for the contract test, and they say what may be replaced): `MCPSecretStore`, `MCPKeychain(run:)`, `FaceLink.init(open:)`, `FacePipe`, `FaceLink.file`/
   `faceFolder`, `FaceLink.Server`.
-- Internal (stage 2 checks four): `FaceLink.server`, `fallbackMoods`, `FaceProcess`, `GoogleAuth.tokenURL`/`authorizeURL`/`revokeURL`,
-  `DriveLink.isAllowed`/`isWritable`/`fileID` and every request, `ExternalMCP.callTimeout`, `MCPHTTP`, `RemoteMCPSession`, `MCPOAuth`,
-  `MCPPermissions`, `MCPFileSecrets`. mode2 and google_drive reach them with `@testable import AIIntegrations`.
+- Internal (stage 2 checks three): `FaceLink.server`, `fallbackMoods`, `FaceProcess`, `OAuthLoopback`/`OAuthCallback`/`SecurityTool`/
+  `FormEncoding`, `ExternalMCP.callTimeout`, `MCPHTTP`, `RemoteMCPSession`, `MCPOAuth`, `MCPPermissions`, `MCPFileSecrets`. mode2
+  reaches them with `@testable import AIIntegrations`.
 
-Google Workspace MCP (2026-11-25, Drive's move before Google's 2027-02-01 rule for AI agents): `GoogleMCP.swift` is the client of
-drivemcp/docsmcp/slidesmcp/sheetsmcp (2026-07-28, no session; form elicitation answered by resending with Google's `requestState`;
-401 refreshed once; `MCPHTTP.send` got a per-request answer limit for base64 downloads), `DriveMCP.swift` the same Drive requests in
-MCP terms (`'<folder>' in ancestors` search, then the usual parent walk; Google's File mapped to REST's names so the gate and the tools'
-answers stay the same). Off by default; the Drive menu's "Use Google's Official MCP (Experimental)" switches it. New public names:
-- `GoogleAuth.workspaceMCP`: the switch (DriveUI's menu item, DriveTools hides `drive_trash` and marks writes slow); a REST login is kept
-  and shows "Reconnect" while it is on (`connected`/`needsReconnect` follow it).
-- `GoogleAuth.agenticClientID`, `publicSignInClient`: Google's MCP servers take only clients marked "AI-powered agent", which the
-  built-in client is not; DriveUI signs in with the agentic one when set, else the user's own client file.
-- `DriveApproval` (`Answer`, `tool`, `message`, `choices`, `offersAlways`) and `perform(…approve:)`: Google's approval question reaches
-  the chat's card, which is AIProjects' (`ProjectCenter.approve`, this module cannot import it); DriveTools makes the card, tests replace
-  `DriveLink.approve`. Unanswered or no card: denied.
-Tests: `testGoogleDriveMCP` (google_drive.swift with `fake_google_mcp.py`).
-
-App edits besides imports: main.swift opens ToolHub's two sockets before `FaceLink.shared.start()`; ChatLinksApp sets `DriveLink.officeText`;
-the three provider extensions (`@retroactive`: the conformance is the app's on purpose). mode2's AI Face test opens the older socket itself,
+App edits besides imports: main.swift opens ToolHub's two sockets before `FaceLink.shared.start()`;
+the two provider extensions (`@retroactive`: the conformance is the app's on purpose). mode2's AI Face test opens the older socket itself,
 as main.swift does. Previews import the module.
 
 I falsification table: `docs/modules-history.md`.

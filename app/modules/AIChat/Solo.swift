@@ -973,7 +973,7 @@ extension Discussion {
     }
 
     // One instruction for every plain chat. A linked Git project only adds its own part and drops the lines that
-    // contradict it, so whatever is added here (folders, web, Drive, pictures, face) reaches project work too.
+    // contradict it, so whatever is added here (folders, web, pictures, face) reaches project work too.
     // spaceRule: this answer may make a Space when the message asks for one (only one AI per message does).
     func soloInstruction(_ account: Account, binding: WorkspaceBinding, helper: String, project: ProjectPart? = nil, chat id: UUID? = nil,
                          spaceRule: Bool = true) -> String {
@@ -983,7 +983,6 @@ extension Discussion {
         let needs = InstructionNeeds(question: question, images: images, project: project != nil && project?.folderless != true,
                                      documents: project?.documents == true || (project == nil && linkedProject(id)?.isDocuments == true))
         return Self.composeInstruction(name: label(account), provider: account.provider, folders: folders,
-                                drive: binding.face == true && [.claude, .codex, .gemini].contains(account.provider) ? ChatApp.driveRule() ?? "" : "",
                                 fullAccess: binding.fullAccess == true, picture: pictureRule(account, chat: id), helper: helper,
                                 terminalAllowed: AICapabilities.rule(account, .terminal) != .off, webAllowed: AICapabilities.rule(account, .web) != .off,
                                 face: Self.projectFaceRule(face: binding.face == true), project: project,
@@ -1052,7 +1051,7 @@ extension Discussion {
         return Thread.isMainThread ? read() : DispatchQueue.main.sync(execute: read)
     }
 
-    static func composeInstruction(name: String, provider: Account.Provider, folders: String, drive: String, fullAccess: Bool,
+    static func composeInstruction(name: String, provider: Account.Provider, folders: String, fullAccess: Bool,
                                    picture: String, helper: String, terminalAllowed: Bool = true, webAllowed: Bool = true,
                                    face: String, project: ProjectPart?, notes: String = "", space: String = "",
                                    peer: String = "", memory: String = "", linked: ProjectBinding? = nil, needs: InstructionNeeds = .all) -> String {
@@ -1100,7 +1099,6 @@ extension Discussion {
             parts.append(webAllowed ? "You can search the web. Cite what you used as [source: URL]; never invent a source."
                          : "Web search and web page tools are disabled for this AI account.")
         }
-        parts.append(drive)
         let documentsAutoNote = terminalAllowed ? Self.documentsAutoNote
             : "[FULL AUTO] The user may be away. Follow the project rules and finish without asking where possible. List your decisions at the end."
         if project?.folderless == true {

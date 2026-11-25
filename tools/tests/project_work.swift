@@ -450,14 +450,14 @@ func testFullAuto() {
                                                                   WorkspaceRoot(path: "/repo", directory: true, writable: true)]),
                                          shared: ["/shared"], project: "/repo")
     func compose(_ project: Discussion.ProjectPart?) -> String {
-        Discussion.composeInstruction(name: "Claude", provider: .claude, folders: folders, drive: "[Drive rule]", fullAccess: false,
+        Discussion.composeInstruction(name: "Claude", provider: .claude, folders: folders, fullAccess: false,
                                       picture: "[Picture rule]", helper: "", face: "[Face rule]", project: project)
     }
     let plain = compose(nil)
     let projectText = compose(.init(root: "/repo", fullAuto: true, rules: "[Project rules: AGENTS.md]\nTabs."))
-    expect(["[Folders]", "/shared (shared folder — read only)", "[Drive rule]", "[Picture rule]", "[Face rule]", "search the web", "language of the user"]
+    expect(["[Folders]", "/shared (shared folder — read only)", "[Picture rule]", "[Face rule]", "search the web", "language of the user"]
             .allSatisfy { plain.contains($0) && projectText.contains($0) },
-           "project work gets everything a plain chat gets (shared folders, web, Drive, pictures, face)")
+           "project work gets everything a plain chat gets (shared folders, web, pictures, face)")
     expect(projectText.contains("/repo (linked Git project") && projectText.contains("git_status") && projectText.contains(Discussion.fullAutoNote)
             && projectText.contains("Tabs.") && !projectText.contains("not code") && !projectText.contains("Do not run commands")
             && !projectText.contains("Markdown file in the chat folder") && !plain.contains("git_status") && plain.contains("Do not run commands"),
@@ -1603,7 +1603,7 @@ func testDocumentsProject() {
            && empty.root != empty2.root && decoded == empty
            && (try? ProjectProcess.current(empty)) == empty,
            "folderless projects are distinct, persist and validate without linked folders")
-    let folderlessPrompt = Discussion.composeInstruction(name: "AI", provider: .codex, folders: "", drive: "", fullAccess: false, picture: "", helper: "", face: "", project: Discussion.ProjectPart(root: empty.root, fullAuto: false, rules: "", folderless: true, documents: true))
+    let folderlessPrompt = Discussion.composeInstruction(name: "AI", provider: .codex, folders: "", fullAccess: false, picture: "", helper: "", face: "", project: Discussion.ProjectPart(root: empty.root, fullAuto: false, rules: "", folderless: true, documents: true))
     expect(folderlessPrompt.contains("[Folderless project]") && !folderlessPrompt.contains(empty.root),
            "folderless instructions do not expose an internal directory as a linked folder")
     let workspace = SidebarProjects.moved(nil, to: empty)

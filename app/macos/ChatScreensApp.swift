@@ -1,10 +1,9 @@
 import AppKit
 import SwiftUI
 import AIChat
-import AILocalization
 
 // The app's screens the chat window (AIChat) shows: the TODO board, Project info, the icon, Manage chats' iPhone item
-// (PhoneAccess.swift), and Drive's rows in Shared folders.
+// (PhoneAccess.swift).
 // Connected once by main.swift with ChatLinksApp.connect.
 enum ChatScreensApp {
     static func connect() {
@@ -19,8 +18,5 @@ enum ChatScreensApp {
         screens.icon = { illuminatiIcon(colored: $0) }
         screens.manageItems = { AnyView(PhoneAccessMenuItem()) }
         ChatApp.screens = screens
-        // Drive's count comes from its rows (DriveSidebarSection), so nothing here reads the login yet.
-        FolderSources.shared.list = [FolderSource(id: "drive", addTitle: L("Google Drive 폴더…", "Google Drive Folder…"),
-                                                  add: { DriveCenter.shared.addFolder() }, rows: { AnyView(DriveSidebarSection()) })]
     }
 }

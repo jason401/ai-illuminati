@@ -16,13 +16,13 @@ public protocol MCPSecretStore: AnyObject {
     func set(_ key: String, _ value: String?) throws
 }
 
-// Through /usr/bin/security like the Google login (its ACL survives rebuilds). Its input line is bounded, so a
+// Through /usr/bin/security (SecurityTool: its ACL survives rebuilds). Its input line is bounded, so a
 // long value (a JWT, a token blob) is split over numbered items; item 0 says how many and is written last.
 public final class MCPKeychain: MCPSecretStore {
     private static let service = "AI Illuminati MCP", chunk = 2800
     private let lock = NSLock()
-    private let run: GoogleKeychainStore.Runner
-    public init(run: GoogleKeychainStore.Runner? = nil) { self.run = run ?? GoogleKeychainStore.execute }
+    private let run: SecurityTool.Runner
+    public init(run: (([String], Data?) throws -> (Int32, Data))? = nil) { self.run = run ?? SecurityTool.execute }
     private var cache: [String: String?] = [:]
 
     private func read(_ account: String) -> String? {
@@ -271,10 +271,10 @@ enum MCPHTTP {
 
     private final class Reader: NSObject, URLSessionDataDelegate {
         let done = DispatchSemaphore(value: 0)
-        let wanted: Int?, limit: Int, onMessage: ([String: Any]) -> Void
+        let wanted: Int?, onMessage: ([String: Any]) -> Void
         var data = Data(), pending = Data(), response: HTTPURLResponse?, failure: Error?, messages: [[String: Any]] = []
         var sse = false, answered = false
-        init(wanted: Int?, limit: Int, onMessage: @escaping ([String: Any]) -> Void) { self.wanted = wanted; self.limit = limit; self.onMessage = onMessage }
+        init(wanted: Int?, onMessage: @escaping ([String: Any]) -> Void) { self.wanted = wanted; self.onMessage = onMessage }
         func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
                         newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) { completionHandler(nil) }
         func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse,
@@ -284,7 +284,7 @@ enum MCPHTTP {
             completionHandler(.allow)
         }
         func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
-            guard self.data.count + data.count <= limit else {
+            guard self.data.count + data.count <= MCPHTTP.limit else {
                 failure = MCPSession.Failure(message: "The server's answer is too large."); dataTask.cancel(); return
             }
             self.data.append(data)
@@ -316,21 +316,20 @@ enum MCPHTTP {
     }
 
     /// Every request to a remote MCP server or its sign-in goes through here (tests give a fake: no network).
-    /// `limit` bounds the answer (Google's MCP downloads come as base64 in it).
-    static var transport: (URLRequest, _ wanted: Int?, _ timeout: TimeInterval, _ limit: Int, _ onMessage: @escaping ([String: Any]) -> Void) throws -> Reply = live
+    static var transport: (URLRequest, _ wanted: Int?, _ timeout: TimeInterval, _ onMessage: @escaping ([String: Any]) -> Void) throws -> Reply = live
     static func send(_ url: URL, method: String = "POST", headers: [String: String] = [:], body: Data? = nil, wanted: Int? = nil,
-                     timeout: TimeInterval = 30, limit: Int = MCPHTTP.limit, onMessage: @escaping ([String: Any]) -> Void = { _ in }) throws -> Reply {
+                     timeout: TimeInterval = 30, onMessage: @escaping ([String: Any]) -> Void = { _ in }) throws -> Reply {
         var request = URLRequest(url: url)
         request.httpMethod = method; request.httpBody = body; request.timeoutInterval = min(timeout, 60)
         for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
-        return try transport(request, wanted, timeout, limit, onMessage)
+        return try transport(request, wanted, timeout, onMessage)
     }
     /// The real one: no redirects, nothing kept, an SSE reply read as it comes and closed once `wanted` is answered.
-    static func live(_ request: URLRequest, wanted: Int?, timeout: TimeInterval, limit: Int, onMessage: @escaping ([String: Any]) -> Void) throws -> Reply {
+    static func live(_ request: URLRequest, wanted: Int?, timeout: TimeInterval, onMessage: @escaping ([String: Any]) -> Void) throws -> Reply {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForResource = timeout
         configuration.httpCookieStorage = nil; configuration.urlCredentialStorage = nil; configuration.urlCache = nil
-        let reader = Reader(wanted: wanted, limit: limit, onMessage: onMessage)
+        let reader = Reader(wanted: wanted, onMessage: onMessage)
         let session = URLSession(configuration: configuration, delegate: reader, delegateQueue: nil)
         defer { session.invalidateAndCancel() }
         let task = session.dataTask(with: request)
@@ -726,11 +725,11 @@ enum MCPOAuth {
         var headers = ["Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"]
         if saved.authMethod != "none", let secret = MCPSecrets.store.get(MCPSecrets.clientSecret(server)), !secret.isEmpty {
             if saved.authMethod == "client_secret_basic" {
-                let pair = GoogleHTTP.encode(saved.clientID) + ":" + GoogleHTTP.encode(secret)
+                let pair = FormEncoding.encode(saved.clientID) + ":" + FormEncoding.encode(secret)
                 headers["Authorization"] = "Basic " + Data(pair.utf8).base64EncodedString()
             } else { fields["client_secret"] = secret }
         }
-        let reply = try MCPHTTP.send(endpoint, headers: headers, body: GoogleHTTP.form(fields), timeout: 30)
+        let reply = try MCPHTTP.send(endpoint, headers: headers, body: FormEncoding.form(fields), timeout: 30)
         return (reply.status, reply.json ?? [:])
     }
 
@@ -792,8 +791,8 @@ enum MCPOAuth {
     private static func fail(_ text: String) -> MCPSession.Failure { .init(message: text) }
     // The usual port first, so a registered redirect stays the same; any free port if it is taken.
     private static func newLoopback() throws -> OAuthCallback {
-        if let fixed = try? GoogleLoopback.make(preferredPort, "MCP") { return fixed }
-        return try GoogleLoopback.make(0, "MCP")
+        if let fixed = try? OAuthLoopback.make(preferredPort, "MCP") { return fixed }
+        return try OAuthLoopback.make(0, "MCP")
     }
 
     /// The whole sign-in, off the main thread: find the servers, get a client, open the browser, wait for the
@@ -841,7 +840,7 @@ enum MCPOAuth {
             let methods = meta["token_endpoint_auth_methods_supported"] as? [String] ?? []
             client = (entry.oauthClientID, secret.isEmpty ? "none" : methods.contains("client_secret_post") || methods.isEmpty ? "client_secret_post" : "client_secret_basic", 0, false)
         } else if let previous, previous.registered, previous.issuer == issuer, let port = URL(string: previous.redirect)?.port,
-                  let reused = try? GoogleLoopback.make(UInt16(port), "MCP") {
+                  let reused = try? OAuthLoopback.make(UInt16(port), "MCP") {
             loopback = reused
             client = (previous.clientID, previous.authMethod, UInt16(port), true)
         } else {

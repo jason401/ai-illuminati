@@ -68,9 +68,9 @@ private final class ScreenTools: ToolProvider {
 }
 
 // One app-side gateway. Per-answer capabilities keep other chat modes and arbitrary local
-// pointer paths out; these are not Google credentials and grant no network access to the CLI.
+// pointer paths out; they grant the CLI no credentials and no network access.
 final class ToolHub {
-    static var appProviders: [ToolProvider] { [FaceLink.shared, DriveLink.shared, GitLink.shared, PlanLink.shared, PeerLink.shared, ConveneLink.shared, DelegateLink.shared, ChatLink.shared, MemoryLink.shared, ProjectMakerLink.shared, TaskLink.shared, TodoAddLink.shared, StorageLink.shared, ExternalMCP.shared] }
+    static var appProviders: [ToolProvider] { [FaceLink.shared, GitLink.shared, PlanLink.shared, PeerLink.shared, ConveneLink.shared, DelegateLink.shared, ChatLink.shared, MemoryLink.shared, ProjectMakerLink.shared, TaskLink.shared, TodoAddLink.shared, StorageLink.shared, ExternalMCP.shared] }
     static let shared: ToolHub = {
         let hub = ToolHub(providers: { appProviders })
         MacControl.approve = ScreenTools.approve
@@ -159,7 +159,7 @@ final class ToolHub {
         case "tools":
             let tools = available.filter { $0.active }.flatMap { $0.tools(context: context) }
             // Outside servers' tools may take minutes and Mac hands may wait for a card; the bridge waits longer for exactly these names.
-            let slow = Set(ExternalMCP.shared.slowTools).union(MacControl.handNames).union(DriveLink.slowNames)
+            let slow = Set(ExternalMCP.shared.slowTools).union(MacControl.handNames)
             return ["tools": tools, "slow": tools.compactMap { $0["name"] as? String }.filter(slow.contains)]
         case "call":
             let name = message["name"] as? String ?? ""

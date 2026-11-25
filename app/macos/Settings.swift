@@ -1588,7 +1588,7 @@ private struct DeviceSyncSettingsView: View {
 
 // Every MCP server the chat's AI may use, in one tab, one switch each (like the ChatGPT app): the app's own
 // tools, AI Face (adds itself when AI Illuminati is connected in AI Face; which of its tools work is set there),
-// Google Drive, and the servers added here (ExternalMCP.swift).
+// and the servers added here (ExternalMCP.swift).
 struct MCPSettingsTab: View {
     @ObservedObject var model: AppModel
     var body: some View {
@@ -1599,7 +1599,6 @@ struct MCPSettingsTab: View {
 private struct MCPSettings: View {
     @ObservedObject var model: AppModel
     @ObservedObject var link = FaceLink.shared
-    @ObservedObject var drive = DriveCenter.shared
     @ObservedObject var external = ExternalMCP.shared
     @ObservedObject var draft = MCPServerDraft.shared
     @ObservedObject var tools = MCPToolsChoice.shared
@@ -1629,25 +1628,6 @@ private struct MCPSettings: View {
                 note("ai-face", L("없음", "None"),
                      help: L("AI Face 설정 → AI에서 AI Illuminati를 연결하면 여기에 보여요.",
                              "Connect AI Illuminati in AI Face (Settings → AI) and it shows here."))
-            }
-            Divider()
-            // Google Drive (read only): connected and its folders chosen in the chat window's sidebar.
-            if drive.connected || drive.needsReconnect {
-                SettingsRow(title: "google-drive") {
-                    Text(drive.needsReconnect ? L("다시 연결 필요", "Reconnect needed")
-                         : !drive.on ? L("꺼짐", "Off")
-                         : drive.folders.isEmpty ? L("연결됨 · 폴더 없음", "Connected · no folders")
-                         : L("읽기 전용 · 폴더 \(drive.folders.count - drive.paused.count)개", "Read only · \(drive.folders.count - drive.paused.count) folders"))
-                        .foregroundStyle(drive.needsReconnect ? .orange : drive.on && !drive.folders.isEmpty ? .green : .secondary)
-                    Spacer()
-                    Toggle("google-drive", isOn: $drive.on).labelsHidden().toggleStyle(.switch)
-                }
-                .help(L("Google 드라이브: 일반 채팅의 AI가 고른 드라이브 폴더만 읽어요. 연결과 폴더는 채팅창 사이드바에서 정해요.",
-                        "Google Drive: the AI in plain chat reads only the chosen Drive folders. Connect and choose folders in the chat window's sidebar."))
-            } else {
-                note("google-drive", L("연결 안 됨", "Not connected"),
-                     help: L("채팅창 사이드바의 Google Drive에서 연결해요.",
-                             "Connect it under Google Drive in the chat window's sidebar."))
             }
         }
         SettingsCard(title: L("직접 추가한 서버", "Added by you"),
@@ -1682,7 +1662,7 @@ private struct MCPSettings: View {
         .sheet(isPresented: Binding(get: { tools.server != nil }, set: { if !$0 { tools.server = nil } })) {
             MCPToolsSheet(server: tools.server ?? "", external: external, done: { tools.server = nil })
         }
-        .onAppear { link.refresh(); drive.refresh(); external.refresh() }
+        .onAppear { link.refresh(); external.refresh() }
     }
 
     // A server that is not set up: one short line, with how to add it on hover.
@@ -2001,7 +1981,7 @@ private struct MCPToolsSheet: View {
     }
 }
 
-// (An ObservableObject, not @State: see DriveUI.swift.)
+// (An ObservableObject, not @State: this Mac's Command Line Tools cannot build SwiftUI's @State macro.)
 // While a name is edited, any click outside its field ends the edit (macOS keeps the caret when empty
 // background is clicked). The click itself goes on, so another row's menus and buttons still work.
 private final class NameEditing: ObservableObject {

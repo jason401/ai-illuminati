@@ -26,8 +26,6 @@ New chats start as a plain chat with one AI, like a desktop chat app. **Automati
 
 **Usage bar for TODOs near a reset.** TODOs may use usage that a reset would otherwise throw away; everything else keeps the user's share. A TODO account needs min(10, max(3, 5 × days until the weekly reset))% of its weekly limit left (10% two or more days before the reset, 5% one day before, 3% from 14.4 hours before) and 10% of its five-hour limit, 3% in the last hour before that reset. Plain chats, project chats and the AI picked for ask_ai, stand-in answers and meetings always need 10%. Among the accounts that pass, the one with the most surplus works first (surplus = the smaller of five-hour left − its bar and weekly left − its bar; a tie goes to the most weekly left), so an account close to its reset with much left goes first. The bar is never above 10%, and an unknown reset time, a reset already past or a reading 30 minutes old or older keeps 10%. A TODO that is already running is not stopped by the bar (the limit handoff takes over). The board's waiting text shows the bar in use, the lowest of the accounts that could take the TODO, e.g. "Waiting for a Claude/Codex account with 5% usage left (weekly resets in 1 d)".
 
-**Google Drive (read only).** In the chat sidebar, choose **Shared folders → + → Google Drive Folder… → Sign in with Google** and allow read-only Drive access. If Google shows an unverified-app warning, review the app and choose **Advanced → Go to AI Illuminati** to continue. Login credentials stay in this Mac's Keychain and are never given to an AI. The folder picker opens after the sign-in; choose the Drive folders the AIs may read. They are listed under Shared folders after the local folders, with a cloud icon; only those folders and their subfolders are reachable, with an eye to pause each one. Local `.gdoc`/`.gsheet`/`.gslides` pointers and shortcut targets must also be inside those Drive folders. In plain chat Claude and ChatGPT can search, list and read them (Docs as Markdown, Sheets by tab, Slides as text, PDF and Word as text). What they read goes to whichever AI answers. Settings → Chat → MCP servers has the on/off switch. Advanced users can choose **Connect with Own Client File…** in the sidebar context menu for their own Desktop OAuth client. Signing in, Reconnect needed and Off show as one line above the Drive folders; with no Drive folders and no login nothing of Drive is shown.
-
 **One answer, everyone, or work.** In a project chat with two or more members taking part, the app first sorts each message (without @): **one** when a single answer covers it (a question of fact about the code or the app, an explanation, a status check, a short follow-up, thanks), **all** when it asks for views (opinions, design choices, pros and cons, ideas, or the AIs together), and **work** when it asks to change the project or approves what was just discussed ("가자", "그걸로 하자"). Unsure between one and all, it picks all. Gemma 4 E4B on this Mac sorts it in about a second, whether or not it is checked (checked only means it answers too); it is taken out of memory right after unless it was already loaded. If Ollama is off, E4B is not downloaded, another chat is using the local model, or it does not answer within 10 seconds, the checked Claude or ChatGPT member with the most usage left sorts it without any tools. If nobody can, it is all. One: only the lead answers, the project read only. All: every member answers at the same time, and the project is read only for all of them (only the chat folder stays writable), with no review. Work: the lead works and the others review, as below; a "가자" after opinions gives the lead every opinion in the chat. A label above the answer shows the mode and who sorted it, and under the newest answer **Ask the others too** (after one), **Run as work** and **Ask for opinions** send the same message again, with its pictures, in that mode as a new turn (files a work answer already changed stay changed). With one member, or with @, nothing is sorted.
 
 **Review.** There is no separate switch: a project chat with two or more members has review. The lead gets an `ask_peer` tool and asks another member (the other kind of AI first, Claude ↔ ChatGPT; in an Enterprise chat, one of its organization) before complex work (several files or about 100 lines, saved data, sync or publishing, concurrency, an uncertain design, or when you ask), at most twice per answer. When the lead's answer changed the project, a member who did not do the work reviews those changes (the commits made in the answer and the files it changed; your own earlier unfinished changes are left out). If it finds something, the lead weighs each point, fixes what is right in the same turn and says what it took and left; the fix is shown after the first reply under **After the review**. This happens once per message, with no second review. Questions that change nothing are not reviewed. Reviewers only read: their folders are read only and they get no tools. Opinions and reviews appear as one-line rows under the answer (click for the full text). Chats that had review turned on in an older version get the reviewer as a second member.
@@ -36,7 +34,7 @@ Mark Enterprise (school or work) accounts in Settings → Accounts: every cloud 
 
 Replies are shown with Markdown: bold, italics, code, links, headings, tables and `---` rules. A single `~` stays as written (`2~4GB`); only `~~text~~` strikes through.
 
-**Shared folders** in the sidebar (**+ → Local Folder…**) are read as files by the AI of plain chats (AIs asked along and meetings read only; discussion modes do not get them); they are read only unless their pencil allows changes. Google Drive folders in the same section are not files: only the drive_* tools reach them, in plain chats. A folder linked to a chat with **+ → Link folder** can be read, edited and deleted by that chat's AI; it is backed up before each answer (APFS clones), changed files are listed under the answer, and **Undo** restores the folder. Linked single files are read only. Each chat also has its own folder (right-click the chat → **Show this chat's folder**) where its AI saves new drafts and documents as Markdown.
+**Shared folders** in the sidebar (**+ → Local Folder…**) are read as files by the AI of plain chats (AIs asked along and meetings read only; discussion modes do not get them); they are read only unless their pencil allows changes. A folder linked to a chat with **+ → Link folder** can be read, edited and deleted by that chat's AI; it is backed up before each answer (APFS clones), changed files are listed under the answer, and **Undo** restores the folder. Linked single files are read only. Each chat also has its own folder (right-click the chat → **Show this chat's folder**) where its AI saves new drafts and documents as Markdown.
 
 ## Older team modes
 
@@ -82,27 +80,6 @@ Updates check stable (or main, with the Beta channel in Settings) and install on
 
 Updates fetch, test and build in a separate checkout while the app remains usable. Only replacing the installed app and restarting waits for active chats, material imports and games to finish. Replacement resumes when the work state changes, with a ten-second fallback check. The progress area shows when it last checked and a countdown; a prepared build is reused rather than rebuilt while waiting.
 
-The app uses a public iOS OAuth client ID without a client secret. A small group personally known to the
-developer may qualify for Google’s personal-use exception; a count below 100 alone is not a
-public-distribution exemption.
-
-To enable Drive writing, use a folder's pencil menu → **Allow Writing…** and grant additional Google access.
-Google consent includes full Drive modification authority; the app limits tools to creation, Docs/Slides text/page edits and moving Docs/Slides files to trash in explicitly writable folders. Add a subfolder and set **Read Only** to override a writable parent;
-**Inherit Parent Permission** removes the override. Existing connections remain read only until upgraded.
-The app owner must enable Google Docs API and Google Slides API, and add the Drive write scope in Google Cloud data access.
-Cloud writes are not covered by the local-folder Undo system. Restore trashed files from Google Drive trash before Google purges them. File moving, folder/permanent deletion and Sheets edits are not offered. Folder names refresh automatically when the app becomes active and about once a minute.
-
-Slides supports native text replacement, page addition and page deletion. Reading slide structure provides
-page IDs, text and geometry, but does not visually inspect images or rendered layout.
-
-Google Drive folders in Shared folders form a folder tree. Click a chevron to load/expand direct subfolders; collapse to hide
-them. Only opened branches are fetched, with loading/error/retry states. Each row's permission menu can
-allow writing, force read only, or inherit the parent. Dim icons indicate inherited settings. Child folders
-need not be added as separate shared roots. Root eye switches pause the whole shared tree; removing a root
-only removes sharing and its associated permission overrides, never the real Drive folder. Double-click
-opens the folder in the browser. Expanded branches refresh about once a minute while visible.
-
-
 ## Project work in plain chat
 
 In plain chat, open `+` → **Link folder (full access)**. A top-level Git folder with a remote becomes project work
@@ -113,7 +90,7 @@ git_push only asks for the push (plain chats and TODOs): the app pushes once whe
 review and its fixes, so only the final result reaches the remote (a failed push is the turn's error; the commits stay local).
 The project permission remains attached to that chat until disabled from the same menu.
 Project work uses the same instruction as any plain chat, plus the Git steps: the AI knows the shared folders
-(read only here), can search the web with sources, uses Drive, pictures and AI Face, and keeps the chat state
+(read only here), can search the web with sources, uses pictures and AI Face, and keeps the chat state
 summary in long chats. Whatever is added to plain chat reaches project work too.
 Only one writer in this app may work on a repository at a time. External editors and agents
 are not locked. On a usage limit, the previous attempt is cancelled and another supported
@@ -146,7 +123,7 @@ except temporary folders). These guard mistakes, not a deliberately malicious sc
 Stable publishing always asks approval for the exact main SHA and remote shown on the card, in full auto too: ask in the chat
 and the card appears; without a request the AI only reports what is ready to publish.
 Ordinary push does not update stable. Undo is unavailable after commit or push; use Git to
-review and revert those changes. Google Drive permissions are separate from project work.
+review and revert those changes.
 
 ### Splitting large TODOs (experimental, off by default)
 

@@ -18,7 +18,7 @@ Feature and design notes live in `docs/`; read them only when the task needs the
   `-I <out> <out>/lib*.a`. Module guards alone: `zsh tools/check_modules.sh` (also the pre-commit hook; install the
   hooks once with `zsh tools/setup_dev.sh`). A module's own contract is not enough when its behavior changes (save
   format, errors, folders, isolation): run the tests its promise row in `docs/MODULES.md` names, or the full test.
-- Previews: `zsh tools/tests/render_chat.sh`, `zsh tools/tests/render_drive_tree.sh`.
+- Previews: `zsh tools/tests/render_chat.sh`.
 
 ## Module rules (모듈 유지 규칙)
 Each `app/modules/<Name>/` is a Swift module; others see only its `public` names. Owners, arrows = may import:
@@ -29,7 +29,7 @@ Each `app/modules/<Name>/` is a Swift module; others see only its `public` names
 - `AIProjects` Git work, approvals, TODO board and scheduler, project info → + Workspace
 - `AIChatRecords` chat values, pictures, dropped files, collab log, disk report → Accounts, Localization, Runtime, Workspace
 - `AIChat` chats, Discussion, routing, meetings, ask_ai, chat window → + Projects, Spaces, ChatRecords
-- `AIIntegrations` Google login/Drive, outside MCP, AI Face link → Accounts, Localization, Workspace (Runtime
+- `AIIntegrations` outside MCP, AI Face link, Mac control → Accounts, Localization, Workspace (Runtime
   only through Workspace's interface)
 - `AIRemote` iPhone page and its 127.0.0.1 server → Localization
 - App (`app/macos`): screens, settings, app start, connecting modules; only it imports Integrations.

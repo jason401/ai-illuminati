@@ -70,7 +70,6 @@ ChatApp.Screens.manageItems | var manageItems: () -> AnyView
 ChatApp.Screens.projectInfo | var projectInfo: (Discussion, String) -> AnyView
 ChatApp.Screens.renameProject | var renameProject: (String, String) -> Void
 ChatApp.Screens.todoPanel | var todoPanel: (Discussion, String) -> AnyView
-ChatApp.driveRule | static var driveRule: () -> String?
 ChatApp.face | static var face: ChatApp.Face
 ChatApp.run | static var run: (Account, WorkspaceInvocation?, ChatApp.ScreenAnswer?) -> RunConditions
 ChatApp.screens | static var screens: ChatApp.Screens

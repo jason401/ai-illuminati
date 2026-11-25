@@ -18,9 +18,7 @@ ChatLinksApp.swift connects modules: the chat store to what keeps a chat's data
 ChatScreensApp.swift connects modules: the App screens the chat window shows
 RunConditionsApp.swift connects modules: the app's run policy (permissions, AI Face, AutoGuard) for AIRuntime
 ToolHub.swift connects modules: the one tool gateway and its fixed provider order
-DriveTools.swift connects modules: Drive (AIIntegrations) offered as tools
 ExternalMCPTools.swift connects modules: outside MCP servers (AIIntegrations) offered as tools
-DriveUI.swift screen: Google Drive in the chat sidebar
 GitBranches.swift screen: Project info's read-only branch view (later move candidate: ref parsing)
 ProjectInfoView.swift screen: the Project info tab
 ProjectMemoryView.swift screen: Project info's project memory section, a few notes per kind, and its window with all (view, edit, archive, delete, undo; saving in AIProjects)

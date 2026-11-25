@@ -22,7 +22,7 @@ public struct MCPServerEntry: Equatable, Identifiable {
     public var id: String { name }
     public var isRemote: Bool { !url.isEmpty }
 
-    public static let reserved: Set<String> = ["ai-face", "illuminati", "google-drive"]
+    public static let reserved: Set<String> = ["ai-face", "illuminati"]
     static let maxName = 16, maxTool = 47   // "mcp__illuminati__" + name stays within 64 characters
 
     /// A valid server name from what the user typed: lower case, letters, digits and "-".

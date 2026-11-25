@@ -43,7 +43,7 @@ call, start = s.find('ChatLinksApp.connect()'), s.find('AppDelegate()')
 assert 0 <= s.find('useRealHome()') < call < start and s.count('ChatLinksApp.connect()') == 1, 'main.swift connects the chat store once, before AppDelegate()'
 screens = s.find('ChatScreensApp.connect()')
 assert call < screens < start and s.count('ChatScreensApp.connect()') == 1, 'main.swift connects the chat window to the app screens once, before AppDelegate()'
-# I: Integrations (Drive, outside MCP, AI Face) holds no tool provider: ToolHub's providers are the app's or a feature
+# I: Integrations (outside MCP, AI Face, Mac control) holds no tool provider: ToolHub's providers are the app's or a feature
 # module's. Only the app imports it; it depends on lower modules only.
 import os
 integ = sorted(glob.glob('app/modules/AIIntegrations/*.swift'))
@@ -51,13 +51,13 @@ assert integ and not [f for f in integ if re.search(r'\bToolProvider\b|\bToolHub
 assert Path('app/modules/AIIntegrations/dependencies').read_text().split() == ['AIAccounts', 'AILocalization', 'AIRuntime', 'AIWorkspace']
 assert [f for f in glob.glob('app/modules/*/*.swift') if re.search(r'^import AIIntegrations', Path(f).read_text(), re.M)] == [], 'feature modules do not import AIIntegrations'
 assert all(f'extension {n}: @retroactive ToolProvider' in Path('app/macos/' + f).read_text() for n, f in
-           [('FaceLink', 'ToolHub.swift'), ('DriveLink', 'DriveTools.swift'), ('ExternalMCP', 'ExternalMCPTools.swift')]), 'the app makes the three providers'
+           [('FaceLink', 'ToolHub.swift'), ('ExternalMCP', 'ExternalMCPTools.swift')]), 'the app makes the two providers'
 # AI Face's link starts after the bridge's sockets (FaceLink no longer opens them itself).
 assert s.find('ToolHub.shared.start()') < s.find('ToolHub.shared.startLegacyFaceSocket(at: FaceLink.socketPath)') < s.find('FaceLink.shared.start()')
-# The 14 tool providers in their order (first(where:) picks by it): the app lists them, six are AIChat's (DelegateLink since sub-room P2).
+# The 13 tool providers in their order (first(where:) picks by it): the app lists them, six are AIChat's (DelegateLink since sub-room P2).
 hub = Path('app/macos/ToolHub.swift').read_text()
 order = re.search(r'static var appProviders: \[ToolProvider\] \{ \[(.*?)\] \}', hub).group(1).replace(' ', '').split(',')
-assert order == ['FaceLink.shared', 'DriveLink.shared', 'GitLink.shared', 'PlanLink.shared', 'PeerLink.shared', 'ConveneLink.shared', 'DelegateLink.shared', 'ChatLink.shared',
+assert order == ['FaceLink.shared', 'GitLink.shared', 'PlanLink.shared', 'PeerLink.shared', 'ConveneLink.shared', 'DelegateLink.shared', 'ChatLink.shared',
                  'MemoryLink.shared', 'ProjectMakerLink.shared', 'TaskLink.shared', 'TodoAddLink.shared', 'StorageLink.shared', 'ExternalMCP.shared'], order
 # App files see a module's public names only; @testable is for tests.
 assert subprocess.run(['grep', '-rl', '@testable', 'app'], capture_output=True, text=True).stdout.split() == [], 'no @testable import in app files'

@@ -1901,7 +1901,7 @@ struct ChatView<Model: ChatSettings>: View {
     }
 
     // Shared folders: this Mac's folders first (plain chats' AIs read them as files), then each outside kind's rows
-    // (Google Drive: read only through its drive_* tools). One section, one + menu; each kind keeps its own storage.
+    // (FolderSources; none now). One section, one + menu; each kind keeps its own storage.
     private var sharedFolders: some View {
         VStack(alignment: .leading, spacing: 1) {
             SidebarHeader(title: L("공동 폴더", "Shared folders"), fold: "shared") {
@@ -1910,14 +1910,14 @@ struct ChatView<Model: ChatSettings>: View {
                 }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                 .foregroundColor(.secondary)
-                .help(L("공동 폴더 추가: 이 Mac의 폴더 또는 Google Drive 폴더", "Add a shared folder: one on this Mac or in Google Drive"))
+                .help(L("공동 폴더 추가: 이 Mac의 폴더", "Add a shared folder on this Mac"))
                 .accessibilityLabel(L("공동 폴더 추가", "Add shared folder"))
             }
             if folds.isFolded("shared") {
             } else if model.sharedFolders.isEmpty && folderSources.isEmpty {
                 // A plain button (a Menu's label would not take the hint's gray) that opens the + menu's items.
                 Button(action: popUpAddShared) {
-                    Label(L("폴더 추가 · 로컬 또는 Google Drive", "Add a folder · local or Drive"), systemImage: "folder.badge.plus")
+                    Label(L("폴더 추가", "Add a folder"), systemImage: "folder.badge.plus")
                         .font(.system(size: 12)).foregroundColor(.secondary)
                         .padding(.horizontal, 10).frame(height: 28, alignment: .leading)
                 }
@@ -3100,7 +3100,7 @@ private struct MultilineInput: NSViewRepresentable {
     }
 }
 
-// Which side panels fit in the chat window (no @State: see DriveUI.swift). Published only when one changes.
+// Which side panels fit in the chat window (no @State: this Mac's Command Line Tools cannot build SwiftUI's @State macro). Published only when one changes.
 private final class ChatLayout: ObservableObject {
     static let shared = ChatLayout()
     @Published private(set) var wide = true
@@ -3129,7 +3129,7 @@ private final class ChatLayout: ObservableObject {
     }
 }
 
-// Which Copy button was pressed last, so it shows a check mark for a moment (no @State: see DriveUI.swift).
+// Which Copy button was pressed last, so it shows a check mark for a moment (no @State, as above).
 private final class CopyFeedback: ObservableObject {
     static let shared = CopyFeedback()
     @Published var copied: String?
@@ -3313,7 +3313,7 @@ private struct PictureList: View {
     }
 }
 
-// The photo clicked in the chat, shown large over the window (no @State: see DriveUI.swift). Clicking it again closes it.
+// The photo clicked in the chat, shown large over the window (no @State, as above). Clicking it again closes it.
 final class PhotoViewer: ObservableObject {
     static let shared = PhotoViewer()
     @Published var image: ChatImage?

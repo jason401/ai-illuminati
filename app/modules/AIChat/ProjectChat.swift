@@ -353,8 +353,8 @@ extension Discussion {
             let found = try ProjectProcess.documents(folder.path)
             let alert = NSAlert()
             alert.messageText = L("문서 프로젝트로 연결", "Link as a documents project")
-            alert.informativeText = found.root + "\n\n" + L("AI가 이 폴더의 글·그림·슬라이드를 고칠 수 있어요 (완전 자동: 명령 실행·인터넷 사용). 답할 때마다 폴더를 먼저 백업해서 되돌릴 수 있어요. 클라우드에만 있는 파일과 Google 문서에서 고친 것은 백업에 없어요 (Google 버전 기록으로 되돌려요).\n\n왼쪽 목록에 프로젝트 폴더가 생기고 할 일 보드를 쓸 수 있어요.",
-                                                                "The AI may change the text, figures and slides in this folder (full auto: runs commands, uses the network). The folder is backed up before each answer, so it can be undone. Files only in the cloud and edits in Google Docs are not in the backup (use Google's version history).\n\nThe project gets its own folder in the sidebar and a TODO board.")
+            alert.informativeText = found.root + "\n\n" + L("AI가 이 폴더의 글·그림·슬라이드를 고칠 수 있어요 (완전 자동: 명령 실행·인터넷 사용). 답할 때마다 폴더를 먼저 백업해서 되돌릴 수 있어요. 클라우드에만 있는 파일은 백업에 없어요.\n\n왼쪽 목록에 프로젝트 폴더가 생기고 할 일 보드를 쓸 수 있어요.",
+                                                                "The AI may change the text, figures and slides in this folder (full auto: runs commands, uses the network). The folder is backed up before each answer, so it can be undone. Files only in the cloud are not in the backup.\n\nThe project gets its own folder in the sidebar and a TODO board.")
             alert.addButton(withTitle: L("연결", "Link")); alert.addButton(withTitle: L("취소", "Cancel"))
             guard alert.runModal() == .alertFirstButtonReturn, let project = identifyHere(found) else { return }
             try nativeSessions.reset(currentID)
@@ -752,8 +752,7 @@ extension Discussion {
     - Word/PowerPoint (.docx .pptx): change them with a small python-docx/python-pptx script, run it, and check the result (read it back; render to PDF
       with LibreOffice if it is installed). Leave slides with SmartArt or animations alone and ask. If a "~$" lock file is next to the file, the user has it
       open: do not write it; ask. In Word, prefer tracked changes for edits to the user's text.
-    - Google Docs/Slides (.gdoc .gslides pointer files): read them with drive_read; change them only with drive_edit_doc / drive_edit_slides, in folders
-      the Drive settings allow writing. The app's backup cannot undo these (Google's version history can): say what you changed there.
+    - Google Docs/Slides (.gdoc .gslides pointer files): only links to files in Google's cloud; you cannot read or change them here. Say so and ask.
     - PDF, images and raw data: read only unless the user asks to change that very file.
     Never invent references, citations or data: leave \\cite{TODO} or a clear [TODO] and ask. Never change numbers, results or measured data unless asked.
     Ask before rewriting large parts of the user's own text. Change the user's original files, not a copy, unless asked for a new version.

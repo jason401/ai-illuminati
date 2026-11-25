@@ -108,8 +108,8 @@ struct ProjectInfoView: View {
         return section(documents ? L("문서 폴더 (Git 없음)", "Documents folder (no Git)") : L("Git 저장소", "Git repository"),
                        systemImage: documents ? "doc.on.doc" : "arrow.triangle.branch") {
             if documents {
-                Text(L("글·그림·슬라이드를 함께 다루는 문서 프로젝트예요. AI가 답할 때마다 이 폴더를 먼저 백업해서 되돌릴 수 있어요 (클라우드에만 있는 파일과 Google 문서 수정은 빼고).",
-                       "A documents project for text, figures and slides together. The folder is backed up before each answer so it can be undone (not files only in the cloud or Google Docs edits)."))
+                Text(L("글·그림·슬라이드를 함께 다루는 문서 프로젝트예요. AI가 답할 때마다 이 폴더를 먼저 백업해서 되돌릴 수 있어요 (클라우드에만 있는 파일은 빼고).",
+                       "A documents project for text, figures and slides together. The folder is backed up before each answer so it can be undone (not files only in the cloud)."))
                     .font(.system(size: 12)).foregroundColor(.secondary)
             }
             ForEach(group.bindings, id: \.root) { binding in

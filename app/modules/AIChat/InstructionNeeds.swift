@@ -3,8 +3,7 @@ import Foundation
 // Which per-feature rules one answer's instruction carries (composeInstruction). A rule the message has no use for is
 // left out so the ones that matter are not buried; when in doubt a rule stays in (a missing rule silently turns its
 // feature off). Always in, whatever the message: identity, project, folder rights, safety, web, face, chat state,
-// notes, memory, Google Drive (its scope and write limits must hold in every turn, also a follow-up that does not
-// name Drive). Spaces decide for themselves (Discussion.spaceRule).
+// notes, memory. Spaces decide for themselves (Discussion.spaceRule).
 struct InstructionNeeds: Equatable {
     var picture = true   // making pictures, and reading the attached ones
     var peer = true      // the full ask_ai / meeting rule (otherwise a one-line reminder that they exist)

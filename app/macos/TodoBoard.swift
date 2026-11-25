@@ -45,7 +45,7 @@ struct TodoBoardRow: View {
     }
 }
 
-// What is being typed on the board and in the cards (no @State: see DriveUI.swift).
+// What is being typed on the board and in the cards (no @State: this Mac's Command Line Tools cannot build SwiftUI's @State macro).
 final class TodoDraft: ObservableObject {
     static let shared = TodoDraft()
     @Published var title = ""

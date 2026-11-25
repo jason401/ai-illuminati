@@ -1,32 +1,5 @@
-DriveApproval | struct DriveApproval
-DriveApproval.Answer | enum Answer
-DriveApproval.Answer.always | case always
-DriveApproval.Answer.deny | case deny
-DriveApproval.Answer.once | case once
-DriveApproval.choices | let choices: [String]
-DriveApproval.message | let message: String
-DriveApproval.offersAlways | let offersAlways: Bool
-DriveApproval.tool | let tool: String
-DriveFolder | struct DriveFolder
-DriveFolder.id | var id: String
-DriveFolder.init(from:) | init(from decoder: any Decoder) throws
-DriveFolder.init(id:name:) | init(id: String, name: String)
-DriveFolder.name | var name: String
-DriveLink | final class DriveLink
-DriveLink.accountEmail() | func accountEmail() -> String?
-DriveLink.active | var active: Bool { get }
-DriveLink.canWrite | var canWrite: Bool { get }
-DriveLink.childFolders(of:) | func childFolders(of parent: String) throws -> [DriveFolder]
-DriveLink.downloadRoot(_:) | static func downloadRoot(_ roots: [WorkspaceRoot]) -> WorkspaceRoot?
-DriveLink.enabled | var enabled: Bool { get set }
-DriveLink.folder(from:) | func folder(from value: String) throws -> DriveFolder
-DriveLink.folders | static var folders: [DriveFolder] { get set }
-DriveLink.officeText | static var officeText: ((URL) throws -> String)?
-DriveLink.pausedFolders | static var pausedFolders: Set<String> { get set }
-DriveLink.perform(_:_:roots:approve:) | func perform(_ name: String, _ arguments: [String : Any], roots: [WorkspaceRoot], approve: @escaping (DriveApproval) -> DriveApproval.Answer = { _ in .deny }) -> [String : Any]
-DriveLink.rule() | func rule() -> String
-DriveLink.shared | static var shared: DriveLink
-DriveLink.writeRules | static var writeRules: [String : Bool] { get set }
+DriveCleanup | enum DriveCleanup
+DriveCleanup.start() | static func start()
 ExternalMCP | final class ExternalMCP
 ExternalMCP.State | enum State
 ExternalMCP.State.connected | case connected
@@ -100,57 +73,9 @@ FacePipe.close() | func close()
 FacePipe.isRunning | var isRunning: Bool { get }
 FacePipe.request(_:_:) | func request(_ method: String, _ params: [String : Any]) -> [String : Any]?
 FacePipe.send(_:) | func send(_ message: [String : Any])
-GoogleAuth | final class GoogleAuth
-GoogleAuth.accessToken(forceRefresh:) | func accessToken(forceRefresh: Bool = false) throws -> String
-GoogleAuth.agenticClientID | static let agenticClientID: String
-GoogleAuth.beginAuthorization(clientJSON:writable:completion:) | func beginAuthorization(clientJSON: Data, writable: Bool = false, completion: @escaping (Result<Void, any Error>) -> Void) throws -> URL
-GoogleAuth.beginBuiltInAuthorization(present:clientID:writable:completion:) | func beginBuiltInAuthorization(present: any GoogleAuthPresenter, clientID: String = GoogleAuth.builtInClientID, writable: Bool = false, completion: @escaping (Result<Void, any Error>) -> Void) throws
-GoogleAuth.beginReauthorization(writable:completion:) | func beginReauthorization(writable: Bool = false, completion: @escaping (Result<Void, any Error>) -> Void) throws -> URL
-GoogleAuth.builtInClientID | static let builtInClientID: String
-GoogleAuth.canWrite | var canWrite: Bool { get }
-GoogleAuth.cancelAuthorization() | func cancelAuthorization()
-GoogleAuth.connected | var connected: Bool { get }
-GoogleAuth.connectionVersion | var connectionVersion: Int { get }
-GoogleAuth.disconnect() | func disconnect() throws
-GoogleAuth.init(store:) | init(store: any GoogleTokenStore)
-GoogleAuth.needsReconnect | var needsReconnect: Bool { get }
-GoogleAuth.publicClientID | var publicClientID: String? { get }
-GoogleAuth.publicSignInClient | var publicSignInClient: String? { get }
-GoogleAuth.shared | static var shared: GoogleAuth
-GoogleAuth.workspaceMCP | static var workspaceMCP: Bool { get set }
-GoogleAuthPresenter | protocol GoogleAuthPresenter : AnyObject
-GoogleAuthPresenter.cancel() | func cancel()
-GoogleAuthPresenter.start(_:scheme:completion:) | func start(_ url: URL, scheme: String, completion: @escaping (Result<URL, any Error>) -> Void)
-GoogleFailure | struct GoogleFailure
-GoogleFailure.errorDescription | var errorDescription: String? { get }
-GoogleFailure.init(message:status:) | init(message: String, status: Int? = nil)
-GoogleFailure.message | let message: String
-GoogleHTTP | enum GoogleHTTP
-GoogleHTTP.Reply | struct Reply
-GoogleHTTP.Reply.data | var data: Data
-GoogleHTTP.Reply.headers | var headers: [AnyHashable : Any]
-GoogleHTTP.Reply.init(status:data:headers:) | init(status: Int, data: Data, headers: [AnyHashable : Any])
-GoogleHTTP.Reply.status | var status: Int
-GoogleHTTP.live(_:limit:timeout:) | static func live(_ request: URLRequest, limit: Int, timeout: TimeInterval) throws -> GoogleHTTP.Reply
-GoogleHTTP.transport | static var transport: (URLRequest, Int, TimeInterval) throws -> GoogleHTTP.Reply
-GoogleKeychainStore | struct GoogleKeychainStore
-GoogleKeychainStore.Runner | typealias Runner = ([String], Data?) throws -> (Int32, Data)
-GoogleKeychainStore.clear() | func clear() throws
-GoogleKeychainStore.init(run:) | init(run: GoogleKeychainStore.Runner? = nil)
-GoogleKeychainStore.load() | func load() throws -> Data?
-GoogleKeychainStore.save(_:) | func save(_ data: Data) throws
-GoogleLoopback | final class GoogleLoopback
-GoogleLoopback.cancel() | func cancel()
-GoogleLoopback.make | static var make: (UInt16, String) throws -> any OAuthCallback
-GoogleLoopback.redirect | let redirect: String
-GoogleLoopback.start(_:) | func start(_ completion: @escaping (Result<[String : String], any Error>) -> Void)
-GoogleTokenStore | protocol GoogleTokenStore
-GoogleTokenStore.clear() | func clear() throws
-GoogleTokenStore.load() | func load() throws -> Data?
-GoogleTokenStore.save(_:) | func save(_ data: Data) throws
 MCPKeychain | final class MCPKeychain
 MCPKeychain.get(_:) | func get(_ key: String) -> String?
-MCPKeychain.init(run:) | init(run: GoogleKeychainStore.Runner? = nil)
+MCPKeychain.init(run:) | init(run: (([String], Data?) throws -> (Int32, Data))? = nil)
 MCPKeychain.set(_:_:) | func set(_ key: String, _ value: String?) throws
 MCPSecretStore | protocol MCPSecretStore : AnyObject
 MCPSecretStore.get(_:) | func get(_ key: String) -> String?
@@ -204,7 +129,3 @@ MacControl.end(_:) | static func end(_ scope: UUID)
 MacControl.handNames | static let handNames: Set<String>
 MacControl.perform(_:_:scope:) | @MainActor static func perform(_ name: String, _ arguments: [String : Any], scope: UUID? = nil) async -> [String : Any]
 MacControl.tools(_:) | static func tools(_ account: Account?) -> [[String : Any]]
-OAuthCallback | protocol OAuthCallback : AnyObject
-OAuthCallback.cancel() | func cancel()
-OAuthCallback.redirect | var redirect: String { get }
-OAuthCallback.start(_:) | func start(_ completion: @escaping (Result<[String : String], any Error>) -> Void)

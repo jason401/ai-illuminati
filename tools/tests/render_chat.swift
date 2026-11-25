@@ -6,23 +6,15 @@ import AIAccounts
 import AIWorkspace
 import AIProjects
 @testable import AIChat
-import AIIntegrations
-
-private struct EmptyPreviewLogin: GoogleTokenStore {
-    func load() throws -> Data? { nil }
-    func save(_ data: Data) throws {}
-    func clear() throws {}
-}
 
 // Offscreen fixture rendering only: no real chats, credentials, AI calls or screen capture.
 @main struct ChatPreview {
     static func main() throws {
         _ = NSApplication.shared
         NSApp.setActivationPolicy(.prohibited)
-        GoogleAuth.shared = GoogleAuth(store: EmptyPreviewLogin())
         ChatScreensApp.connect()   // the app's screens in the chat window, as main.swift connects them
         AppLanguage.current = .english
-        UserDefaults.standard.setVolatileDomain(["mcpOff": ["ai-face", "google-drive"], "driveFolders": Data()], forName: UserDefaults.argumentDomain)
+        UserDefaults.standard.setVolatileDomain(["mcpOff": ["ai-face"]], forName: UserDefaults.argumentDomain)
         let output = URL(fileURLWithPath: CommandLine.arguments[1])
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
         let model = AppModel(persist: false)

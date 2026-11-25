@@ -3021,6 +3021,7 @@ func testDriveCleanup() {
     FileManager.default.createFile(atPath: other.path, contents: Data())
     for key in DriveCleanup.keys { defaults.set(["x"], forKey: key) }
     defaults.set(["ai-face", "google-drive", "my-server"], forKey: "mcpOff")
+    defaults.set(["drive", "project./p/.git"], forKey: "sidebar.folded")
     defaults.removeObject(forKey: DriveCleanup.doneKey)
     let login = Data(("ai-illuminati-google-v1:" + Data(#"{"clientID":"c","refreshToken":"r1"}"#.utf8).base64EncodedString()).utf8)
     var items = ["oauth": login, "oauth-migration": Data(#"{"clientID":"c","refreshToken":"r0"}"#.utf8)], calls: [[String]] = [], failDelete = true
@@ -3039,7 +3040,7 @@ func testDriveCleanup() {
     expect(!DriveCleanup.run(defaults: defaults, folder: folder, security: security, revoke: { revoked.append($0) }),
            "a Keychain item that could not be removed is not done")
     expect(DriveCleanup.keys.allSatisfy { defaults.object(forKey: $0) == nil } && defaults.stringArray(forKey: "mcpOff") == ["ai-face", "my-server"]
-           && !FileManager.default.fileExists(atPath: log.path) && FileManager.default.fileExists(atPath: other.path),
+           && defaults.stringArray(forKey: "sidebar.folded") == ["project./p/.git"] && !FileManager.default.fileExists(atPath: log.path) && FileManager.default.fileExists(atPath: other.path),
            "Drive's settings and drive.log go; other switches and files stay")
     expect(revoked == ["r1", "r0"] && items.keys.sorted() == ["oauth"] && !defaults.bool(forKey: DriveCleanup.doneKey),
            "both logins are revoked (current and older form); the one left is tried again")
@@ -3050,7 +3051,7 @@ func testDriveCleanup() {
     expect(DriveCleanup.run(defaults: defaults, folder: folder, security: security, revoke: { revoked.append($0) }) && calls.count == 2
            && revoked == ["r1"] && calls.allSatisfy { $0[0] == "find-generic-password" }, "nothing saved: only looked for, nothing deleted or revoked")
     DriveCleanup.start()   // test settings are not the real ones: does nothing, touches no Keychain
-    defaults.removeObject(forKey: DriveCleanup.doneKey); defaults.removeObject(forKey: "mcpOff")
+    defaults.removeObject(forKey: DriveCleanup.doneKey); defaults.removeObject(forKey: "mcpOff"); defaults.removeObject(forKey: "sidebar.folded")
     try? FileManager.default.removeItem(at: folder)
     print("PASS: the removed Google Drive's settings, log and Keychain login are cleared once")
 }

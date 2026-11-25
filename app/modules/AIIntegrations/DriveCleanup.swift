@@ -14,6 +14,7 @@ public enum DriveCleanup {
     /// real Keychain, like MCPSecrets.store.
     public static func start() {
         guard UserDefaults.app === UserDefaults.standard, !UserDefaults.app.bool(forKey: doneKey) else { return }
+        clearSettings(UserDefaults.app)   // now, before the sidebar first reads (and later rewrites) its folded rows
         DispatchQueue.global(qos: .utility).async { run() }
     }
 
@@ -21,10 +22,7 @@ public enum DriveCleanup {
     @discardableResult
     static func run(defaults: UserDefaults = .app, folder: URL = URL(fileURLWithPath: AccountStore.supportDir),
                     security: SecurityTool.Runner = SecurityTool.execute, revoke: (String) -> Void = revokeAtGoogle) -> Bool {
-        for key in keys { defaults.removeObject(forKey: key) }
-        if let off = defaults.stringArray(forKey: "mcpOff"), off.contains("google-drive") {
-            defaults.set(off.filter { $0 != "google-drive" }, forKey: "mcpOff")
-        }
+        clearSettings(defaults)
         try? FileManager.default.removeItem(at: folder.appendingPathComponent("drive.log"))
         var clean = true
         for item in items {
@@ -38,6 +36,14 @@ public enum DriveCleanup {
         }
         if clean { defaults.set(true, forKey: doneKey) }
         return clean
+    }
+
+    static func clearSettings(_ defaults: UserDefaults) {
+        for key in keys { defaults.removeObject(forKey: key) }
+        // The MCP switch of the "google-drive" row, and the sidebar's folded Drive section.
+        for (key, gone) in [("mcpOff", "google-drive"), ("sidebar.folded", "drive")] {
+            if let list = defaults.stringArray(forKey: key), list.contains(gone) { defaults.set(list.filter { $0 != gone }, forKey: key) }
+        }
     }
 
     // The saved login: "ai-illuminati-google-v1:" + base64 of its JSON, or the raw JSON of older versions.

@@ -10,11 +10,14 @@ public enum DriveCleanup {
     static let service = "AI Illuminati Google", items = ["oauth", "oauth-migration"]
     static let doneKey = "driveCleanupDone"
 
-    /// The app's start calls it; the work runs off the main thread. Only the app itself (real settings) touches the
-    /// real Keychain, like MCPSecrets.store.
+    /// The app's start calls it first, before anything loads SidebarFold; the Keychain work runs off the main thread.
+    /// Only the app itself (real settings) touches the real Keychain, like MCPSecrets.store.
     public static func start() {
-        guard UserDefaults.app === UserDefaults.standard, !UserDefaults.app.bool(forKey: doneKey) else { return }
-        clearSettings(UserDefaults.app)   // now, before the sidebar first reads (and later rewrites) its folded rows
+        guard UserDefaults.app === UserDefaults.standard else { return }
+        // Every start, not only once: the first cleaned version ran after the sidebar had read its folded rows, and the
+        // sidebar wrote "drive" back. Removing what is not there costs nothing.
+        clearSettings(UserDefaults.app)
+        guard !UserDefaults.app.bool(forKey: doneKey) else { return }
         DispatchQueue.global(qos: .utility).async { run() }
     }
 

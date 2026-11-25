@@ -72,6 +72,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, PhoneUsage {
     }
 
     func applicationDidFinishLaunching(_ note: Notification) {
+        // What the removed Google Drive left (settings, drive.log, its Keychain login); first, before the sidebar reads
+        // its folded rows (Discussion loads SidebarFold).
+        DriveCleanup.start()
         // The old per-chat Spaces (<room>.work/space.json) become Spaces of their own, once (Space.swift).
         SpaceStore.migrateLegacy()
         SpaceStore.pruneDrafts()
@@ -153,7 +156,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, PhoneUsage {
         ToolHub.shared.startLegacyFaceSocket(at: FaceLink.socketPath)
         FaceLink.shared.start()
         ExternalMCP.shared.start()   // servers added in Settings → MCP
-        DriveCleanup.start()   // once: what the removed Google Drive left (settings, drive.log, its Keychain login)
         // Chats from your other Macs (off until turned on in Settings → Chat).
         DeviceSync.shared.checkOnline = { PhoneAccess.shared.refresh() }   // Other Macs: which Macs Tailscale sees online
         DeviceSync.shared.start(discussion: discussion)

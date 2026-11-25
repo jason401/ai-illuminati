@@ -526,3 +526,147 @@ func testGoogleDrive() {
     print("PASS: Drive writes (explicit OAuth, folder inheritance/override/pause, create folder/text/Doc, revision conflict, refresh compatibility)")
     print("PASS: Google Drive backend (PKCE, state, refresh/revoke/reconnect, shared Drive folders only, read-only search/list/read, named sheet tabs, PDF/DOCX, bounds, pointer scope, picker folders, real MCP bridge, modes/off, no credentials in results/logs)")
 }
+
+// Drive through Google's Workspace MCP servers (fake_google_mcp.py): the same gate and tools, Google's approval
+// questions on the chat's card, a REST login asking to reconnect, and no trash.
+func testGoogleDriveMCP() {
+    let root = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("google-mcp", isDirectory: true)
+    try! FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let server = Process()
+    server.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+    server.arguments = ["tools/tests/fake_google_mcp.py", root.path]
+    server.standardError = FileHandle.nullDevice; server.standardOutput = FileHandle.nullDevice
+    try! server.run()
+    defer { server.terminate(); server.waitUntilExit() }
+    let portFile = root.appendingPathComponent("google-mcp-port")
+    for _ in 0..<100 where !FileManager.default.fileExists(atPath: portFile.path) { Thread.sleep(forTimeInterval: 0.05) }
+    let base = URL(string: "http://127.0.0.1:" + (try! String(contentsOf: portFile, encoding: .utf8)).trimmingCharacters(in: .whitespacesAndNewlines))!
+    let original = (GoogleAuth.tokenURL, GoogleAuth.authorizeURL, GoogleMCP.address, DriveLink.userinfoURL, DriveLink.isThumbnailURL, GoogleAuth.workspaceMCP, DriveLink.shared, DriveLink.approve)
+    defer {
+        GoogleAuth.tokenURL = original.0; GoogleAuth.authorizeURL = original.1; GoogleMCP.address = original.2; DriveLink.userinfoURL = original.3
+        DriveLink.isThumbnailURL = original.4; GoogleAuth.workspaceMCP = original.5; DriveLink.shared = original.6; DriveLink.approve = original.7
+        DriveLink.folders = []; DriveLink.pausedFolders = []; DriveLink.writeRules = [:]
+    }
+    GoogleAuth.tokenURL = base.appendingPathComponent("token"); GoogleAuth.authorizeURL = base.appendingPathComponent("authorize")
+    GoogleMCP.address = { base.appendingPathComponent($0).appendingPathComponent("mcp/v1") }
+    DriveLink.userinfoURL = base.appendingPathComponent("userinfo")
+    DriveLink.isThumbnailURL = { $0.host == "127.0.0.1" }
+    func records() -> [[String: Any]] { try! JSONSerialization.jsonObject(with: GoogleHTTP.send(base.appendingPathComponent("records")).data) as! [[String: Any]] }
+
+    // A login made for REST is kept but asks to reconnect while MCP is on; switching back uses it again.
+    let restStore = MemoryGoogleStore()
+    restStore.data = Data(#"{"clientID":"961717606753-x.apps.googleusercontent.com","refreshToken":"r-0","writable":true}"#.utf8)
+    let restAuth = GoogleAuth(store: restStore)
+    GoogleAuth.workspaceMCP = false
+    expect(restAuth.connected && !restAuth.needsReconnect, "REST login works while MCP is off")
+    GoogleAuth.workspaceMCP = true
+    expect(!restAuth.connected && restAuth.needsReconnect && restStore.data != nil, "MCP on: the REST login asks to reconnect and is kept")
+    expect(GoogleAuth.agenticClientID.isEmpty ? restAuth.publicSignInClient == nil : restAuth.publicSignInClient == GoogleAuth.agenticClientID,
+           "MCP sign-in never reuses the old non-agentic public client")
+    // The new sign-in asks for each product's scope plus OpenID and is saved as an MCP login.
+    let present = FakeGooglePresenter(), done = DispatchSemaphore(value: 0)
+    var signed = false
+    try! restAuth.beginBuiltInAuthorization(present: present, clientID: "fixture-agent.apps.googleusercontent.com", writable: true) { result in
+        if case .success = result { signed = true }; done.signal()
+    }
+    let scope = URLComponents(url: present.url!, resolvingAgainstBaseURL: false)!.queryItems!.first { $0.name == "scope" }!.value!
+    expect(Set(scope.split(separator: " ").map(String.init)) == Set(GoogleAuth.mcpWriteScopes), "MCP write sign-in asks for Drive, Docs, Slides, Sheets and OpenID")
+    present.respond()
+    expect(done.wait(timeout: .now() + 5) == .success && signed && restAuth.connected && restAuth.canWrite, "MCP sign-in is saved and connected")
+    GoogleAuth.workspaceMCP = false
+    expect(restAuth.connected, "an MCP login also serves REST (same Drive scope)")
+    GoogleAuth.workspaceMCP = true
+
+    let drive = DriveLink(auth: restAuth)
+    DriveLink.shared = drive
+    drive.enabled = true
+    DriveLink.folders = [DriveFolder(id: "allowed", name: "Allowed")]; DriveLink.pausedFolders = []; DriveLink.writeRules = ["allowed": true]
+    var asked: [DriveApproval] = [], answer = DriveApproval.Answer.once
+    DriveLink.approve = { question, _, _ in asked.append(question); return answer }
+    let chatFolder = root.appendingPathComponent("chat", isDirectory: true)
+    try! FileManager.default.createDirectory(at: chatFolder, withIntermediateDirectories: true)
+    let context = ToolContext(room: UUID(), roots: [WorkspaceRoot(path: root.path, directory: true), WorkspaceRoot(path: chatFolder.path, directory: true, writable: true)])
+    func call(_ tool: String, _ args: [String: Any]) -> [String: Any] {
+        let result = drive.call(tool, args, context: context)
+        let text = ((result["content"] as! [[String: Any]])[0]["text"] as! String)
+        expect(result["isError"] as? Bool == false, "MCP Drive tool succeeds: \(tool) \(args) → \(text.prefix(300))")
+        return (try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any]) ?? [:]
+    }
+    func refused(_ tool: String, _ args: [String: Any]) -> String {
+        let result = drive.call(tool, args, context: context)
+        expect(result["isError"] as? Bool == true, "MCP Drive tool refused: \(tool) \(args)")
+        return ((result["content"] as! [[String: Any]])[0]["text"] as! String)
+    }
+
+    let names = drive.tools(context: context).compactMap { $0["name"] as? String }
+    expect(names.contains("drive_upload") && names.contains("drive_download") && !names.contains("drive_trash"), "MCP offers the Drive tools without trash")
+    expect(Set(DriveLink.slowNames) == ["drive_create", "drive_upload", "drive_copy", "drive_edit_doc", "drive_edit_slides"], "writes that may wait for a card get the bridge's long wait")
+    let found = call("drive_search", ["query": "Plan"])
+    let ids = (found["files"] as? [[String: Any]] ?? []).compactMap { $0["id"] as? String }
+    expect(ids == ["doc"], "search finds the nested file and never the one outside the shared folders")
+    let query = records().last { $0["tool"] as? String == "search_files" }?["args"] as? [String: Any]
+    expect((query?["query"] as? String)?.contains("'allowed' in ancestors") == true && (query?["query"] as? String)?.contains("title contains 'Plan'") == true,
+           "search asks Google for the shared folders' insides in MCP terms")
+    let listed = call("drive_list", ["folder": "allowed"])
+    let listedNames = (listed["files"] as? [[String: Any]] ?? []).compactMap { $0["name"] as? String }
+    expect(listedNames.prefix(2) == ["alpha", "Zeta"] && listedNames.contains("Book"), "list: folders first, by name, REST field names")
+    let doc = call("drive_read", ["file": "https://docs.google.com/document/d/doc/edit"])
+    expect(doc["text"] as? String == "Fixture doc text" && doc["revision"] as? String == "rev-1" && doc["name"] as? String == "Plan", "read gives text, name and the edit revision")
+    expect(refused("drive_read", ["file": "outside"]).contains("outside the Google Drive folders"), "a file outside the shared folders is refused")
+    expect(refused("drive_read", ["file": "shortcut"]).contains("outside the Google Drive folders"), "a shortcut to an outside file is refused")
+    let sheet = call("drive_read", ["file": "sheet", "sheet": "Tab B"])
+    expect(sheet["text"] as? String == "x\t1\ny\t2" && (sheet["sheets"] as? [String]) == ["Tab A", "Tab B"], "Sheets read by tab through Sheets MCP")
+    let saved = call("drive_download", ["file": "bin"])
+    expect((try? Data(contentsOf: URL(fileURLWithPath: saved["path"] as? String ?? ""))) == Data([0, 1] + Array("binary".utf8) + [0xff]), "download decodes Google's base64 blob into the chat folder")
+    let preview = refused("drive_read", ["file": "preview"])
+    expect(preview.contains("has not opened") && preview.contains("Developer Preview"), "Google's Developer Preview refusal is explained")
+
+    // Writes: Google asks, the card answers, the same call goes again with the answer and Google's state.
+    let before = records().count
+    let made = call("drive_create", ["folder": "allowed", "name": "notes.txt", "kind": "text", "text": "hello"])
+    let writes = records().dropFirst(before).filter { $0["tool"] as? String == "create_file" }
+    expect(writes.count == 2 && writes[0]["answered"] as? Bool == false && writes[1]["choice"] as? String == "ALLOW_ONCE", "approval: asked, then resent with Allow once")
+    expect((made["id"] as? String)?.hasPrefix("new-") == true && asked.last?.offersAlways == true && asked.last?.message.contains("create_file") == true, "the card shows Google's question and its Always choice")
+    expect((writes[1]["args"] as? [String: Any])?["disableConversionToGoogleType"] as? Bool == true && writes.allSatisfy { $0["elicitation"] as? Bool == true && $0["version"] as? String == "2026-07-28" },
+           "a text file stays text; every request offers form elicitation on 2026-07-28")
+    answer = .always
+    _ = call("drive_create", ["folder": "allowed", "name": "Doc", "kind": "doc", "text": "body"])
+    expect(records().last { $0["tool"] as? String == "create_file" }?["choice"] as? String == "ALLOW_ALWAYS", "Always allow sends Google's lasting choice")
+    answer = .deny
+    let beforeDeny = records().count
+    expect(refused("drive_create", ["folder": "allowed", "name": "no", "kind": "folder"]).contains("did not approve"), "a denied card stops the write")
+    expect(records().dropFirst(beforeDeny).filter { $0["tool"] as? String == "create_file" }.count == 1, "nothing is resent after a denial")
+    answer = .once
+    DriveLink.writeRules = ["allowed": true, "sub": false]
+    expect(refused("drive_create", ["folder": "sub", "name": "x", "kind": "folder"]).contains("read only"), "read-only subfolder still blocks MCP writes")
+    DriveLink.writeRules = ["allowed": true]
+    let edited = call("drive_edit_doc", ["file": "doc", "old": "Fixture", "new": "Real", "revision": "rev-1"])
+    expect(edited["operation"] as? String == "replace_matching_text", "Doc edit goes through Docs MCP with the revision")
+    let local = root.appendingPathComponent("deck.pptx"); try! Data("v2-bytes".utf8).write(to: local)
+    let replaced = call("drive_upload", ["path": local.path, "replace": "old", "confirm_name": "deck.pptx"])
+    let revision = records().last { $0["tool"] as? String == "upload_file_revision" }?["args"] as? [String: Any]
+    expect(replaced["operation"] as? String == "replace" && revision?["etag"] as? String == "e1" && revision?["base64Content"] as? Int == 12, "replace sends a new revision with the read etag")
+    let uploaded = call("drive_upload", ["path": local.path, "folder": "allowed", "convert": true])
+    expect(uploaded["operation"] as? String == "upload" && (records().last { $0["tool"] as? String == "create_file" }?["args"] as? [String: Any])?["disableConversionToGoogleType"] as? Bool == false,
+           "convert uploads let Google convert")
+    let copied = call("drive_copy", ["file": "doc", "folder": "allowed", "name": "Plan copy"])
+    expect(copied["name"] as? String == "Plan copy" && copied["operation"] as? String == "copy", "copy through Drive MCP")
+    expect(refused("drive_copy", ["file": "outside", "folder": "allowed"]).contains("outside"), "copy never reads outside the shared folders")
+    let structure = call("drive_slides_get", ["file": "slides"])
+    expect(structure["revision"] as? String == "s-1" && structure["slideCount"] as? Int == 2, "slide structure through Slides MCP")
+    expect(call("drive_edit_slides", ["file": "slides", "revision": "s-1", "action": "replace_text", "old": "a", "new": "b"])["operation"] as? String == "replace_text", "Slides edit through Slides MCP")
+    let pictures = drive.call("drive_slides_thumbnail", ["file": "slides", "start": 1], context: context)
+    let parts = pictures["content"] as? [[String: Any]] ?? []
+    expect(pictures["isError"] as? Bool == false && parts.count == 2 && parts[1]["type"] as? String == "image", "thumbnail link fetched without a token, image returned")
+    expect(refused("drive_trash", ["file": "doc", "confirm_name": "Plan"]).contains("no trash"), "no trash through MCP")
+
+    // A rejected token is refreshed once; the picker and the account work without REST.
+    _ = try! GoogleHTTP.send(base.appendingPathComponent("reject-next"), method: "POST", body: Data())
+    _ = call("drive_read", ["file": "doc"])
+    expect(records().contains { $0["status"] as? Int == 401 }, "a 401 is retried once with a fresh token")
+    expect((try! drive.childFolders(of: "allowed")).map(\.name) == ["alpha", "Zeta"], "picker lists child folders by name")
+    expect((try! drive.folder(from: "allowed")).name == "Allowed" && drive.accountEmail() == "fixture@example.com", "folder links and account email without REST")
+    let tokens = records().filter { $0["server"] != nil }
+    expect(tokens.allSatisfy { ($0["mcpName"] as? String) == ($0["tool"] as? String) }, "every MCP request names its tool")
+    print("PASS: Google Drive MCP (reconnect from REST, scopes, gate with ancestors search, shortcuts, Sheets tabs, base64 download, approvals once/always/deny, writes re-checked, Docs/Slides edits, thumbnails, no trash, 401 refresh, picker, userinfo)")
+}

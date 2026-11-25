@@ -189,12 +189,31 @@ public protocol GoogleAuthPresenter: AnyObject {
 public final class GoogleAuth {
     public static var shared = GoogleAuth(store: GoogleKeychainStore())
     public static let builtInClientID = "961717606753-4c5cmpcmegejgqdb39plii50ch7rq88m.apps.googleusercontent.com" // Public iOS OAuth client; no secret.
+    // The app's client for Google's Workspace MCP servers: they take only OAuth clients marked "AI-powered agent",
+    // and the client above was made before that mark existed. Empty until one is made in the app's Cloud project;
+    // until then MCP sign-in needs the user's own (agentic) client file.
+    public static let agenticClientID = ""
     static let writeScope = "https://www.googleapis.com/auth/drive"
     static let scope = "https://www.googleapis.com/auth/drive.readonly"
+    // Workspace MCP (drivemcp, docsmcp, slidesmcp, sheetsmcp) checks each product's own scope; openid email replaces Drive's about.
+    static let mcpScopes = ["openid", "email", scope, "https://www.googleapis.com/auth/documents.readonly",
+                            "https://www.googleapis.com/auth/presentations.readonly", "https://www.googleapis.com/auth/spreadsheets.readonly"]
+    static let mcpWriteScopes = ["openid", "email", writeScope, "https://www.googleapis.com/auth/documents",
+                                 "https://www.googleapis.com/auth/presentations", "https://www.googleapis.com/auth/spreadsheets"]
+    /// Drive through Google's Workspace MCP servers instead of the REST APIs (required for AI agents from 2027-02-01).
+    /// A login made before the switch has no MCP scopes, so it shows "Reconnect" until signed in again; switching
+    /// back uses it again.
+    public static var workspaceMCP: Bool {
+        get { UserDefaults.app.bool(forKey: "driveWorkspaceMCP") }
+        set { UserDefaults.app.set(newValue, forKey: "driveWorkspaceMCP") }
+    }
+    static func scopes(writable: Bool) -> String {
+        workspaceMCP ? (writable ? mcpWriteScopes : mcpScopes).joined(separator: " ") : (writable ? writeScope : scope)
+    }
     static var authorizeURL = URL(string: "https://accounts.google.com/o/oauth2/v2/auth")!
     static var tokenURL = URL(string: "https://oauth2.googleapis.com/token")!
     static var revokeURL = URL(string: "https://oauth2.googleapis.com/revoke")!
-    struct Credentials: Codable { var clientID: String; var clientSecret: String?; var refreshToken: String?; var writable: Bool? = nil }
+    struct Credentials: Codable { var clientID: String; var clientSecret: String?; var refreshToken: String?; var writable: Bool? = nil; var mcp: Bool? = nil }
     private let store: GoogleTokenStore
     private let lock = NSRecursiveLock()
     private var access: String?, expires = Date.distantPast
@@ -206,13 +225,19 @@ public final class GoogleAuth {
     public init(store: GoogleTokenStore) { self.store = store }
     public var connected: Bool {
         lock.lock(); defer { lock.unlock() }
-        return ((try? credentials())?.refreshToken?.isEmpty == false)
+        guard let saved = try? credentials() else { return false }
+        return saved.refreshToken?.isEmpty == false && (!Self.workspaceMCP || saved.mcp == true)
     }
-    // Google refused the saved login (expired or revoked): sign in again with the saved client.
+    // Google refused the saved login (expired or revoked), or it was made for REST and MCP is on: sign in again.
     public var needsReconnect: Bool {
         lock.lock(); defer { lock.unlock() }
-        guard let saved = try? credentials() else { return false }
-        return saved.refreshToken?.isEmpty != false
+        guard (try? credentials()) != nil else { return false }
+        return !connected
+    }
+    /// The public client a sign-in uses: in MCP mode the agentic one (nil when it is not configured: own client file).
+    public var publicSignInClient: String? {
+        guard Self.workspaceMCP else { return publicClientID ?? (Self.builtInClientID.isEmpty ? nil : Self.builtInClientID) }
+        return Self.agenticClientID.isEmpty ? nil : Self.agenticClientID
     }
     public func beginReauthorization(writable: Bool = false, completion: @escaping (Result<Void, Error>) -> Void) throws -> URL {
         let saved: Credentials? = { lock.lock(); defer { lock.unlock() }; return try? credentials() }()
@@ -243,13 +268,13 @@ public final class GoogleAuth {
         lock.lock(); defer { lock.unlock() }
         presenter?.cancel(); presenter = nil
         listener?.cancel()
-        let state = try Self.random(), verifier = try Self.random(), identifier = UUID()
+        let state = try Self.random(), verifier = try Self.random(), identifier = UUID(), mcp = Self.workspaceMCP
         let callback = try GoogleLoopback.make(0, "Google")
         listener = callback; authorizationID = identifier
         // Do not overwrite a working account until a successful exchange.
         var components = URLComponents(url: Self.authorizeURL, resolvingAgainstBaseURL: false)!
         components.queryItems = ["client_id": client, "redirect_uri": callback.redirect,
-            "response_type": "code", "scope": writable ? Self.writeScope : Self.scope, "access_type": "offline", "prompt": "consent",
+            "response_type": "code", "scope": Self.scopes(writable: writable), "access_type": "offline", "prompt": "consent",
             "state": state, "code_challenge_method": "S256",
             "code_challenge": Self.base64(Data(SHA256.hash(data: Data(verifier.utf8))))].map { URLQueryItem(name: $0.key, value: $0.value) }
         callback.start { result in
@@ -268,7 +293,7 @@ public final class GoogleAuth {
                     "code_verifier": verifier, "redirect_uri": callback.redirect, "grant_type": "authorization_code"])
                 if writable, let granted = reply["scope"] as? String, !granted.split(separator: " ").contains(Substring(Self.writeScope)) { throw GoogleFailure(message: "Google Drive write permission was not granted.") }
                 guard let refresh = reply["refresh_token"] as? String, !refresh.isEmpty else { throw GoogleFailure(message: "Google did not return offline access. Please reconnect.") }
-                try self.finishAuthorization(Credentials(clientID: client, clientSecret: secret, refreshToken: refresh, writable: writable), reply: reply, identifier: identifier)
+                try self.finishAuthorization(Credentials(clientID: client, clientSecret: secret, refreshToken: refresh, writable: writable, mcp: mcp), reply: reply, identifier: identifier)
                 completion(.success(()))
             } catch {
                 self.lock.lock()
@@ -297,13 +322,13 @@ public final class GoogleAuth {
             throw GoogleFailure(message: "The app's Google client ID has not been configured.")
         }
         cancelAuthorization()
-        let state = try Self.random(), verifier = try Self.random(), identifier = UUID()
+        let state = try Self.random(), verifier = try Self.random(), identifier = UUID(), mcp = Self.workspaceMCP
         let scheme = "com.googleusercontent.apps." + clientID.dropLast(suffix.count)
         let redirect = scheme + ":/oauth2redirect"
         lock.lock(); authorizationID = identifier; presenter = present; lock.unlock()
         var address = URLComponents(url: Self.authorizeURL, resolvingAgainstBaseURL: false)!
         address.queryItems = ["client_id": clientID, "redirect_uri": redirect, "response_type": "code",
-            "scope": writable ? Self.writeScope : Self.scope, "access_type": "offline", "prompt": "consent", "state": state,
+            "scope": Self.scopes(writable: writable), "access_type": "offline", "prompt": "consent", "state": state,
             "code_challenge_method": "S256", "code_challenge": Self.base64(Data(SHA256.hash(data: Data(verifier.utf8))))]
             .map { URLQueryItem(name: $0.key, value: $0.value) }
         present.start(address.url!, scheme: String(scheme)) { result in
@@ -330,7 +355,7 @@ public final class GoogleAuth {
                         "redirect_uri": redirect, "grant_type": "authorization_code"])
                     if writable, let granted = reply["scope"] as? String, !granted.split(separator: " ").contains(Substring(Self.writeScope)) { throw GoogleFailure(message: "Google Drive write permission was not granted.") }
                 guard let refresh = reply["refresh_token"] as? String, !refresh.isEmpty else { throw GoogleFailure(message: "Google did not return offline access. Please reconnect.") }
-                    try self.finishAuthorization(Credentials(clientID: clientID, clientSecret: nil, refreshToken: refresh, writable: writable), reply: reply, identifier: identifier)
+                    try self.finishAuthorization(Credentials(clientID: clientID, clientSecret: nil, refreshToken: refresh, writable: writable, mcp: mcp), reply: reply, identifier: identifier)
                     completion(.success(()))
                 } catch {
                     self.lock.lock()

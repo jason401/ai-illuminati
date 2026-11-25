@@ -860,6 +860,20 @@ Public names and why (found by the compiler: a script opened what an app file as
   `DriveLink.isAllowed`/`isWritable`/`fileID` and every request, `ExternalMCP.callTimeout`, `MCPHTTP`, `RemoteMCPSession`, `MCPOAuth`,
   `MCPPermissions`, `MCPFileSecrets`. mode2 and google_drive reach them with `@testable import AIIntegrations`.
 
+Google Workspace MCP (2026-11-25, Drive's move before Google's 2027-02-01 rule for AI agents): `GoogleMCP.swift` is the client of
+drivemcp/docsmcp/slidesmcp/sheetsmcp (2026-07-28, no session; form elicitation answered by resending with Google's `requestState`;
+401 refreshed once; `MCPHTTP.send` got a per-request answer limit for base64 downloads), `DriveMCP.swift` the same Drive requests in
+MCP terms (`'<folder>' in ancestors` search, then the usual parent walk; Google's File mapped to REST's names so the gate and the tools'
+answers stay the same). Off by default; the Drive menu's "Use Google's Official MCP (Experimental)" switches it. New public names:
+- `GoogleAuth.workspaceMCP`: the switch (DriveUI's menu item, DriveTools hides `drive_trash` and marks writes slow); a REST login is kept
+  and shows "Reconnect" while it is on (`connected`/`needsReconnect` follow it).
+- `GoogleAuth.agenticClientID`, `publicSignInClient`: Google's MCP servers take only clients marked "AI-powered agent", which the
+  built-in client is not; DriveUI signs in with the agentic one when set, else the user's own client file.
+- `DriveApproval` (`Answer`, `tool`, `message`, `choices`, `offersAlways`) and `perform(…approve:)`: Google's approval question reaches
+  the chat's card, which is AIProjects' (`ProjectCenter.approve`, this module cannot import it); DriveTools makes the card, tests replace
+  `DriveLink.approve`. Unanswered or no card: denied.
+Tests: `testGoogleDriveMCP` (google_drive.swift with `fake_google_mcp.py`).
+
 App edits besides imports: main.swift opens ToolHub's two sockets before `FaceLink.shared.start()`; ChatLinksApp sets `DriveLink.officeText`;
 the three provider extensions (`@retroactive`: the conformance is the app's on purpose). mode2's AI Face test opens the older socket itself,
 as main.swift does. Previews import the module.

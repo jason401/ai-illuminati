@@ -1,3 +1,12 @@
+DriveApproval | struct DriveApproval
+DriveApproval.Answer | enum Answer
+DriveApproval.Answer.always | case always
+DriveApproval.Answer.deny | case deny
+DriveApproval.Answer.once | case once
+DriveApproval.choices | let choices: [String]
+DriveApproval.message | let message: String
+DriveApproval.offersAlways | let offersAlways: Bool
+DriveApproval.tool | let tool: String
 DriveFolder | struct DriveFolder
 DriveFolder.id | var id: String
 DriveFolder.init(from:) | init(from decoder: any Decoder) throws
@@ -14,7 +23,7 @@ DriveLink.folder(from:) | func folder(from value: String) throws -> DriveFolder
 DriveLink.folders | static var folders: [DriveFolder] { get set }
 DriveLink.officeText | static var officeText: ((URL) throws -> String)?
 DriveLink.pausedFolders | static var pausedFolders: Set<String> { get set }
-DriveLink.perform(_:_:roots:) | func perform(_ name: String, _ arguments: [String : Any], roots: [WorkspaceRoot]) -> [String : Any]
+DriveLink.perform(_:_:roots:approve:) | func perform(_ name: String, _ arguments: [String : Any], roots: [WorkspaceRoot], approve: @escaping (DriveApproval) -> DriveApproval.Answer = { _ in .deny }) -> [String : Any]
 DriveLink.rule() | func rule() -> String
 DriveLink.shared | static var shared: DriveLink
 DriveLink.writeRules | static var writeRules: [String : Bool] { get set }
@@ -93,6 +102,7 @@ FacePipe.request(_:_:) | func request(_ method: String, _ params: [String : Any]
 FacePipe.send(_:) | func send(_ message: [String : Any])
 GoogleAuth | final class GoogleAuth
 GoogleAuth.accessToken(forceRefresh:) | func accessToken(forceRefresh: Bool = false) throws -> String
+GoogleAuth.agenticClientID | static let agenticClientID: String
 GoogleAuth.beginAuthorization(clientJSON:writable:completion:) | func beginAuthorization(clientJSON: Data, writable: Bool = false, completion: @escaping (Result<Void, any Error>) -> Void) throws -> URL
 GoogleAuth.beginBuiltInAuthorization(present:clientID:writable:completion:) | func beginBuiltInAuthorization(present: any GoogleAuthPresenter, clientID: String = GoogleAuth.builtInClientID, writable: Bool = false, completion: @escaping (Result<Void, any Error>) -> Void) throws
 GoogleAuth.beginReauthorization(writable:completion:) | func beginReauthorization(writable: Bool = false, completion: @escaping (Result<Void, any Error>) -> Void) throws -> URL
@@ -105,7 +115,9 @@ GoogleAuth.disconnect() | func disconnect() throws
 GoogleAuth.init(store:) | init(store: any GoogleTokenStore)
 GoogleAuth.needsReconnect | var needsReconnect: Bool { get }
 GoogleAuth.publicClientID | var publicClientID: String? { get }
+GoogleAuth.publicSignInClient | var publicSignInClient: String? { get }
 GoogleAuth.shared | static var shared: GoogleAuth
+GoogleAuth.workspaceMCP | static var workspaceMCP: Bool { get set }
 GoogleAuthPresenter | protocol GoogleAuthPresenter : AnyObject
 GoogleAuthPresenter.cancel() | func cancel()
 GoogleAuthPresenter.start(_:scheme:completion:) | func start(_ url: URL, scheme: String, completion: @escaping (Result<URL, any Error>) -> Void)

@@ -3012,6 +3012,7 @@ func testInbox() {
 
 runTest("testToolHub", testToolHub)
 runTest("testGoogleDrive", testGoogleDrive)
+runTest("testGoogleDriveMCP", testGoogleDriveMCP)
 
 runTest("testWindowDrag", testWindowDrag)
 

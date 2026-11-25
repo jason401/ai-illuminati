@@ -159,7 +159,7 @@ final class ToolHub {
         case "tools":
             let tools = available.filter { $0.active }.flatMap { $0.tools(context: context) }
             // Outside servers' tools may take minutes and Mac hands may wait for a card; the bridge waits longer for exactly these names.
-            let slow = Set(ExternalMCP.shared.slowTools).union(MacControl.handNames)
+            let slow = Set(ExternalMCP.shared.slowTools).union(MacControl.handNames).union(DriveLink.slowNames)
             return ["tools": tools, "slow": tools.compactMap { $0["name"] as? String }.filter(slow.contains)]
         case "call":
             let name = message["name"] as? String ?? ""

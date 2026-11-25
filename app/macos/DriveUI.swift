@@ -67,6 +67,9 @@ final class DriveCenter: ObservableObject {
     @Published var on: Bool = DriveLink.shared.enabled {
         didSet { if DriveLink.shared.enabled != on { DriveLink.shared.enabled = on } }
     }
+    @Published private(set) var mcp = GoogleAuth.workspaceMCP
+    // Every Workspace MCP call counts against Google's 5,000 a day per product: folder names are checked far less often.
+    private var refreshAge: TimeInterval { mcp ? 1800 : 60 }
     private var attempt = UUID()
     private var namesChecked = Date.distantPast
     private var namesLoading = false
@@ -89,7 +92,7 @@ final class DriveCenter: ObservableObject {
         else { expanded.insert(folder.id); loadChildren(folder.id) }
     }
     func loadChildren(_ id: String, force: Bool = false) {
-        guard connected, !treeLoading.contains(id), force || children[id] == nil || (treeChecked[id]?.timeIntervalSinceNow ?? -61) < -60 else { return }
+        guard connected, !treeLoading.contains(id), force || children[id] == nil || (treeChecked[id]?.timeIntervalSinceNow ?? -.infinity) < -refreshAge else { return }
         let request = UUID(), version = GoogleAuth.shared.connectionVersion
         treeRequests[id] = request; treeLoading.insert(id); treeErrors[id] = nil
         DispatchQueue.global(qos: .utility).async {
@@ -115,7 +118,7 @@ final class DriveCenter: ObservableObject {
             return
         }
         for id in expanded { loadChildren(id) }
-        if !namesLoading && namesChecked.timeIntervalSinceNow < -60 {
+        if !namesLoading && namesChecked.timeIntervalSinceNow < -refreshAge {
             namesLoading = true; namesChecked = Date()
             let version = GoogleAuth.shared.connectionVersion, selected = folders
             DispatchQueue.global(qos: .utility).async {
@@ -142,6 +145,12 @@ final class DriveCenter: ObservableObject {
     // First connection uses the public Google client; own Desktop client remains an advanced fallback.
     // Reconnect: the saved client, straight to the browser.
     func connect() {
+        if mcp {
+            // Google's MCP servers take only clients marked as an AI agent: the app's when it has one, else the user's own file.
+            if let agentic = GoogleAuth.shared.publicSignInClient, connected || needsReconnect { return publicSignIn(agentic) }
+            if needsReconnect, GoogleAuth.shared.publicClientID == nil { return signIn { try GoogleAuth.shared.beginReauthorization(completion: $0) } }
+            if GoogleAuth.shared.publicSignInClient == nil { return connectOwnClient() }
+        }
         if let saved = GoogleAuth.shared.publicClientID { return publicSignIn(saved) }
         if needsReconnect { return signIn { try GoogleAuth.shared.beginReauthorization(completion: $0) } }
         if !GoogleAuth.builtInClientID.isEmpty {
@@ -150,7 +159,7 @@ final class DriveCenter: ObservableObject {
             alert.informativeText = L("구글 로그인 후 AI가 읽을 폴더를 골라요. 읽은 내용은 답하는 AI로 보내져요. 로그인 정보는 이 Mac의 키체인에만 저장돼요. 확인되지 않은 앱 경고가 나오면 고급 → AI Illuminati(으)로 이동을 누르세요.", "Sign in, then choose the folders your AI may read. Read content goes to the responding AI; login credentials stay in this Mac's Keychain. If Google shows an unverified app warning, choose Advanced → Go to AI Illuminati.")
             alert.addButton(withTitle: L("구글로 로그인", "Sign in with Google"))
             alert.addButton(withTitle: L("취소", "Cancel"))
-            if alert.runModal() == .alertFirstButtonReturn { publicSignIn(GoogleAuth.builtInClientID) }
+            if alert.runModal() == .alertFirstButtonReturn, let client = GoogleAuth.shared.publicSignInClient { publicSignIn(client) }
             return
         }
         connectOwnClient()
@@ -177,13 +186,31 @@ final class DriveCenter: ObservableObject {
 
             This is not an API key. The login stays in this Mac's Keychain and never goes to an AI. After connecting, choose the Drive folders the AIs may read. What they read goes to whichever AI answers.
             """)
+        if mcp {
+            alert.messageText = L("Google 공식 MCP로 연결 (내 client 파일)", "Connect through Google's official MCP (own client file)")
+            alert.informativeText = L("""
+                처음 한 번만 해요 (5분쯤).
+                1. 브라우저에서 Google Cloud의 Personal mode 설정을 열어요: console.cloud.google.com/auth/overview/personal?apis=ws,wsmcp&clientType=desktop&isAgent=true
+                2. 새 프로젝트, Desktop app, "Use this client for an AI-powered agent" 체크를 확인하고 Continue를 눌러요.
+                3. client JSON을 받아서 여기서 골라요. 이 client는 만든 Google 계정으로만 로그인돼요.
+
+                로그인 정보는 이 Mac의 키체인에만 있고 AI에게 가지 않아요.
+                """, """
+                One time only (about 5 minutes).
+                1. Open Google Cloud's personal mode setup: console.cloud.google.com/auth/overview/personal?apis=ws,wsmcp&clientType=desktop&isAgent=true
+                2. New project, Desktop app, check "Use this client for an AI-powered agent", then Continue.
+                3. Download the client JSON and choose it here. This client signs in only the Google account that made it.
+
+                The login stays in this Mac's Keychain and never goes to an AI.
+                """)
+        }
         alert.addButton(withTitle: L("파일 고르기…", "Choose File…"))
         alert.addButton(withTitle: L("Google Cloud 열기", "Open Google Cloud"))
         alert.addButton(withTitle: L("취소", "Cancel"))
         switch alert.runModal() {
         case .alertFirstButtonReturn: break
         case .alertSecondButtonReturn:
-            NSWorkspace.shared.open(URL(string: "https://console.cloud.google.com/apis/credentials")!)
+            NSWorkspace.shared.open(URL(string: mcp ? "https://console.cloud.google.com/auth/overview/personal?apis=ws,wsmcp&clientType=desktop&isAgent=true" : "https://console.cloud.google.com/apis/credentials")!)
             return
         default: return
         }
@@ -278,13 +305,48 @@ final class DriveCenter: ObservableObject {
         let alert = NSAlert()
         alert.messageText = L("이 폴더에 쓰기를 허용할까요?", "Allow writing in this folder?")
         alert.informativeText = L("이 폴더와 하위 폴더에서 AI가 파일을 생성하고 Docs/Slides를 수정하거나 휴지통으로 보낼 수 있어요. Slides 페이지도 추가·삭제할 수 있어요. 하위 폴더에서 읽기 전용으로 다시 제한할 수 있어요. Google 추가 동의는 계정 전체 Drive의 수정·삭제 권한을 포함하지만 앱은 허용한 폴더의 생성·Docs/Slides 편집·파일 휴지통 이동만 제공합니다. Google Cloud에 Drive 쓰기 범위를 추가하고 Google Docs API와 Google Slides API도 켜야 해요.", "The AI may create files, edit Docs/Slides and move them to trash in this folder and descendants. A subfolder can override this to read only. Google consent includes account-wide Drive editing/deletion, but the app offers creation, Docs/Slides edits and file trash in permitted folders. The app owner must add the Drive write scope and enable Google Docs API and Google Slides API in Google Cloud.")
+        if mcp {
+            alert.informativeText = L("이 폴더와 하위 폴더에서 AI가 파일을 만들고 올리고 복사하며 Docs/Slides를 수정할 수 있어요. 하위 폴더에서 읽기 전용으로 다시 제한할 수 있어요. Google 공식 MCP로는 휴지통 기능이 없고, Google이 승인을 물으면 채팅에 카드가 떠요. Google 동의는 계정 전체 Drive·Docs·Slides·Sheets 수정 권한을 포함하지만 앱은 허용한 폴더 안에서만 써요.",
+                                      "The AI may create, upload and copy files and edit Docs/Slides in this folder and descendants. A subfolder can override this to read only. Through Google's official MCP there is no trash, and when Google asks for approval a card appears in the chat. Google's consent covers editing all of Drive, Docs, Slides and Sheets, but the app writes only inside permitted folders.")
+        }
         alert.addButton(withTitle: L("허용", "Allow")); alert.addButton(withTitle: L("취소", "Cancel"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         ruleRoots[folder.id] = rootID ?? folder.id
         writeRules[folder.id] = true
         guard !GoogleAuth.shared.canWrite else { return }
-        if let client = GoogleAuth.shared.publicClientID { publicSignIn(client, writable: true) }
+        if GoogleAuth.shared.publicClientID != nil, let client = GoogleAuth.shared.publicSignInClient { publicSignIn(client, writable: true) }
         else { signIn { try GoogleAuth.shared.beginReauthorization(writable: true, completion: $0) } }
+    }
+
+    // Google requires AI agents to reach Workspace through its MCP servers from 2027-02-01. Switching needs one new
+    // sign-in (other scopes, an AI-agent client); the REST login stays saved, so switching back needs none.
+    func setMCP(_ value: Bool) {
+        guard value != mcp else { return }
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = value ? L("Google 공식 MCP로 바꿀까요? (실험)", "Switch to Google's official MCP? (Experimental)")
+                                  : L("예전 방식(REST)으로 돌아갈까요?", "Go back to the previous way (REST)?")
+        alert.informativeText = value ? L("""
+            2027년 2월 1일부터 Google은 AI가 Drive를 쓸 때 공식 MCP 서버를 쓰도록 해요. 바꾸면 한 번 다시 로그인해요(AI 에이전트용 client, Docs·Slides·Sheets 권한 추가). 고른 폴더와 쓰기 설정은 그대로예요.
+            · AI가 파일을 휴지통으로 보내는 기능은 없어요 (Google MCP에 없음).
+            · 업로드는 한 번에 30 MB까지예요.
+            · Google이 승인을 물으면 채팅에 승인 카드가 떠요.
+            · Google이 아직 이 계정에 MCP를 열지 않았으면 오류가 나요. 그때는 여기서 다시 끄면 예전 로그인으로 바로 돌아가요.
+            """, """
+            From February 1, 2027 Google requires AI agents to use its official MCP servers for Drive. Switching needs one new sign-in (an AI-agent client, plus Docs, Slides and Sheets access). Your folders and write settings stay.
+            · The AIs cannot move files to trash (Google's MCP has no such tool).
+            · Uploads are at most 30 MB each.
+            · When Google asks for approval, a card appears in the chat.
+            · If Google has not opened MCP for this account yet, calls fail; switch it off here to go straight back to the previous login.
+            """) : L("예전 로그인이 남아 있으면 다시 로그인 없이 바로 써요.", "If the previous login is still saved, it works again without signing in.")
+        alert.addButton(withTitle: value ? L("바꾸고 로그인", "Switch and Sign In") : L("돌아가기", "Go Back"))
+        alert.addButton(withTitle: L("취소", "Cancel"))
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        GoogleAuth.workspaceMCP = value
+        mcp = value
+        namesChecked = .distantPast; children = [:]; treeChecked = [:]; email = nil
+        refresh()
+        if needsReconnect || !connected { connect() }
     }
 
     func togglePaused(_ id: String) {
@@ -438,6 +500,8 @@ struct DriveSidebarSection: View {
         Button(L("다시 연결…", "Reconnect…")) { center.connect() }
         Button(L("연결 끊기…", "Disconnect…")) { center.disconnect() }
         }
+        Divider()
+        Button((center.mcp ? "✓ " : "") + L("Google 공식 MCP 사용 (실험)", "Use Google's Official MCP (Experimental)")) { center.setMCP(!center.mcp) }
     }
 }
 

@@ -271,10 +271,10 @@ enum MCPHTTP {
 
     private final class Reader: NSObject, URLSessionDataDelegate {
         let done = DispatchSemaphore(value: 0)
-        let wanted: Int?, onMessage: ([String: Any]) -> Void
+        let wanted: Int?, limit: Int, onMessage: ([String: Any]) -> Void
         var data = Data(), pending = Data(), response: HTTPURLResponse?, failure: Error?, messages: [[String: Any]] = []
         var sse = false, answered = false
-        init(wanted: Int?, onMessage: @escaping ([String: Any]) -> Void) { self.wanted = wanted; self.onMessage = onMessage }
+        init(wanted: Int?, limit: Int, onMessage: @escaping ([String: Any]) -> Void) { self.wanted = wanted; self.limit = limit; self.onMessage = onMessage }
         func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
                         newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) { completionHandler(nil) }
         func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse,
@@ -284,7 +284,7 @@ enum MCPHTTP {
             completionHandler(.allow)
         }
         func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
-            guard self.data.count + data.count <= MCPHTTP.limit else {
+            guard self.data.count + data.count <= limit else {
                 failure = MCPSession.Failure(message: "The server's answer is too large."); dataTask.cancel(); return
             }
             self.data.append(data)
@@ -316,20 +316,21 @@ enum MCPHTTP {
     }
 
     /// Every request to a remote MCP server or its sign-in goes through here (tests give a fake: no network).
-    static var transport: (URLRequest, _ wanted: Int?, _ timeout: TimeInterval, _ onMessage: @escaping ([String: Any]) -> Void) throws -> Reply = live
+    /// `limit` bounds the answer (Google's MCP downloads come as base64 in it).
+    static var transport: (URLRequest, _ wanted: Int?, _ timeout: TimeInterval, _ limit: Int, _ onMessage: @escaping ([String: Any]) -> Void) throws -> Reply = live
     static func send(_ url: URL, method: String = "POST", headers: [String: String] = [:], body: Data? = nil, wanted: Int? = nil,
-                     timeout: TimeInterval = 30, onMessage: @escaping ([String: Any]) -> Void = { _ in }) throws -> Reply {
+                     timeout: TimeInterval = 30, limit: Int = MCPHTTP.limit, onMessage: @escaping ([String: Any]) -> Void = { _ in }) throws -> Reply {
         var request = URLRequest(url: url)
         request.httpMethod = method; request.httpBody = body; request.timeoutInterval = min(timeout, 60)
         for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
-        return try transport(request, wanted, timeout, onMessage)
+        return try transport(request, wanted, timeout, limit, onMessage)
     }
     /// The real one: no redirects, nothing kept, an SSE reply read as it comes and closed once `wanted` is answered.
-    static func live(_ request: URLRequest, wanted: Int?, timeout: TimeInterval, onMessage: @escaping ([String: Any]) -> Void) throws -> Reply {
+    static func live(_ request: URLRequest, wanted: Int?, timeout: TimeInterval, limit: Int, onMessage: @escaping ([String: Any]) -> Void) throws -> Reply {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForResource = timeout
         configuration.httpCookieStorage = nil; configuration.urlCredentialStorage = nil; configuration.urlCache = nil
-        let reader = Reader(wanted: wanted, onMessage: onMessage)
+        let reader = Reader(wanted: wanted, limit: limit, onMessage: onMessage)
         let session = URLSession(configuration: configuration, delegate: reader, delegateQueue: nil)
         defer { session.invalidateAndCancel() }
         let task = session.dataTask(with: request)

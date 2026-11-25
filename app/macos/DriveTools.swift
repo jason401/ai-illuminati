@@ -1,5 +1,8 @@
 import Foundation
+import AILocalization
 import AIWorkspace
+import AIRuntime
+import AIProjects
 import AIIntegrations
 
 // Google Drive's tools as ToolHub offers them. The login, the folder gate and the requests are DriveLink's
@@ -23,11 +26,13 @@ extension DriveLink: @retroactive ToolProvider {
                 tool("drive_slides_thumbnail", "See native Google Slides pages as PNG images (as rendered by Google) to check layout, figures, fonts and conversions. slide selects one page ID; otherwise start (zero-based index, default 0) and limit (default 1, maximum 4). size SMALL (200 px), MEDIUM (800 px, default) or LARGE (1600 px).", ["file": string, "slide": string, "start": ["type": "integer", "minimum": 0], "limit": ["type": "integer", "minimum": 1, "maximum": 4], "size": ["type": "string", "enum": ["SMALL", "MEDIUM", "LARGE"]]], ["file"]) ]
         if canWrite && Self.writeRules.values.contains(true) {
             offered += [tool("drive_create", "Create a folder, UTF-8 text file, Google Doc or empty Google Slides presentation inside an explicitly writable folder. Never retry blindly after a timeout; check Drive first.", ["folder": string, "name": string, "kind": ["type": "string", "enum": ["folder", "text", "doc", "slides"]], "text": string], ["folder", "name", "kind"]),
-                        tool("drive_upload", "Upload a local file from this chat's linked folders (absolute path) into an explicitly writable Drive folder, keeping images and layout. convert=true imports .pptx/.docx/.xlsx (and .ppt/.doc/.xls/.csv) as Google Slides/Docs/Sheets. Instead of folder, replace (a file ID) uploads a new version of an existing non-Google file (e.g. .pptx, .pdf) in a writable folder, keeping its link; it needs confirm_name (its exact current name) and takes no name or convert. 100 MB maximum. Never retry blindly after a timeout; check Drive first.", ["folder": string, "path": string, "name": string, "convert": ["type": "boolean"], "replace": string, "confirm_name": string], ["path"]),
+                        tool("drive_upload", "Upload a local file from this chat's linked folders (absolute path) into an explicitly writable Drive folder, keeping images and layout. convert=true imports .pptx/.docx/.xlsx (and .ppt/.doc/.xls/.csv) as Google Slides/Docs/Sheets. Instead of folder, replace (a file ID) uploads a new version of an existing non-Google file (e.g. .pptx, .pdf) in a writable folder, keeping its link; it needs confirm_name (its exact current name) and takes no name or convert. " + (GoogleAuth.workspaceMCP ? "30" : "100") + " MB maximum. Never retry blindly after a timeout; check Drive first.", ["folder": string, "path": string, "name": string, "convert": ["type": "boolean"], "replace": string, "confirm_name": string], ["path"]),
                         tool("drive_copy", "Copy a readable Drive file (not a folder) into an explicitly writable folder, e.g. last week's deck or a template, then edit the copy. name defaults to Google's \"Copy of …\". Never retry blindly after a timeout; check Drive first.", ["file": string, "folder": string, "name": string], ["file", "folder"]),
                         tool("drive_edit_doc", "Replace matching text in a Google Doc. First read to obtain revision; edits fail if the document changed. Requires writable folder. Never retry blindly.", ["file": string, "old": string, "new": string, "revision": string], ["file", "old", "new", "revision"]),
                         tool("drive_edit_slides", "Edit native Google Slides using revision from drive_slides_get. replace_text replaces exact case-sensitive matches (optional slide ID limits to one slide). add_slide adds a title/body page. delete_slide removes a specified page, not the presentation file. Check the result before retrying after errors.", ["file": string, "revision": string, "action": ["type": "string", "enum": ["replace_text", "add_slide", "delete_slide"]], "slide": string, "old": string, "new": string, "title": string, "text": string, "index": ["type": "integer", "minimum": 0]], ["file", "revision", "action"]),
                         tool("drive_trash", "Move a Google Doc, Google Slides file, or any file this app created (drive_create/drive_upload/drive_copy) to Drive trash. No permanent deletion and no folders. Use only when the user requests removal. Requires the exact name from a fresh read/list as confirmation. Google may automatically purge trash later; check Drive before retrying.", ["file": string, "confirm_name": string], ["file", "confirm_name"])]
+            // Google's Drive MCP server has no trash: through it the AIs cannot remove files.
+            if GoogleAuth.workspaceMCP { offered.removeAll { $0["name"] as? String == "drive_trash" } }
         }
         return offered
     }
@@ -42,6 +47,28 @@ extension DriveLink: @retroactive ToolProvider {
     }
 
     public func call(_ name: String, _ arguments: [String: Any], context: ToolContext) -> [String: Any] {
-        perform(name, arguments, roots: context.roots)
+        perform(name, arguments, roots: context.roots) { Self.approve($0, arguments, context) }
     }
+
+    // Through Google's MCP server a write may wait for the user's card: the bridge waits longer for these.
+    static var slowNames: [String] {
+        GoogleAuth.workspaceMCP ? ["drive_create", "drive_upload", "drive_copy", "drive_edit_doc", "drive_edit_slides"] : []
+    }
+
+    /// A question Google asks before it runs a tool, on the chat's card: Allow is Google's one-time choice, Always allow
+    /// its lasting one (when offered); no answer in a minute is no. Tests replace it.
+    static var approve: (DriveApproval, [String: Any], ToolContext) -> DriveApproval.Answer = { question, arguments, context in
+        var shown = arguments
+        if let text = shown["text"] as? String, text.count > 400 { shown["text"] = String(text.prefix(400)) + "…" }
+        let detail = [question.message, L("Google의 선택지: ", "Google's choices: ") + question.choices.joined(separator: " · "),
+                      (try? JSONSerialization.data(withJSONObject: shown, options: [.prettyPrinted, .sortedKeys])).map { String(decoding: $0, as: UTF8.self) } ?? ""]
+            .filter { !$0.isEmpty }.joined(separator: "\n\n")
+        let always = AlwaysChoice()
+        var request = ProjectApproval(room: context.room, run: context.projectRun ?? UUID(),
+                                      title: L("Google Drive 승인 요청: \(question.tool)", "Google Drive asks for approval: \(question.tool)"), detail: String(detail.prefix(4000)))
+        if question.offersAlways { request.alwaysAllow = { always.chosen = true } }
+        guard ProjectCenter.shared.approve(request, token: DebateCancellation(), deadline: Date().addingTimeInterval(ExternalMCP.approvalWait)) else { return .deny }
+        return always.chosen ? .always : .once
+    }
+    final class AlwaysChoice { var chosen = false }
 }

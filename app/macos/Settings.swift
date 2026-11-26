@@ -1074,6 +1074,7 @@ private struct AccountDropDelegate: DropDelegate {
 
 struct ChatSettingsTab: View {
     @ObservedObject var model: AppModel
+    let discussion: Discussion
 
     private var isDefault: Bool { model.chatRules == AppModel.defaultChatRules }
     // The first two non-empty lines, so the tab shows what is set without a cramped editor.
@@ -1084,6 +1085,7 @@ struct ChatSettingsTab: View {
 
     var body: some View {
         SettingsPage {
+            ManageChatsCard(discussion: discussion, access: .shared)
             SettingsCard(title: L("AI별 설정", "Settings by AI"),
                          help: L("AI와 관련된 설정은 모두 이 창에 있어요: AI마다 정하는 표(모델, 자동으로 부르기, 엔터프라이즈, 그림 담당, 메뉴바, Ollama 쓰기)와 모든 AI 공통 설정(메시지 판정, AI끼리 협업, 의견 자동 정리).",
                                  "Every AI setting lives in this window: the per-AI table (model, picked automatically, Enterprise, picture maker, menu bar, use Ollama) and the settings for all AIs (message sorting, AIs working together, sum up views).")) {
@@ -1117,6 +1119,30 @@ struct ChatSettingsTab: View {
             ApprovalAlertSettingsView()
             DeviceSyncSettingsView()
         }
+    }
+}
+
+// What the sidebar's Manage chats menu held: the iPhone page (PhoneAccess.swift) and deleting every chat (it asks
+// first, Discussion.deleteAll). The sidebar's bottom button opens Settings instead.
+private struct ManageChatsCard: View {
+    @ObservedObject var discussion: Discussion
+    @ObservedObject var access: PhoneAccess
+
+    var body: some View {
+        let online = access.status.phones.contains(where: \.online)
+        SettingsCard(title: L("대화 관리", "Manage chats"),
+                     help: L("iPhone에서 이 Mac의 채팅을 쓰는 페이지를 켜고, 모든 대화를 한 번에 지워요. 지우기 전에 한 번 더 물어요.",
+                             "Turn on the page that uses this Mac's chats from an iPhone, and delete every chat at once (it asks first).")) {
+            SettingsRow(title: online ? L("iPhone 연결됨", "iPhone connected") : L("iPhone 연결", "Connect iPhone")) {
+                SettingsAction(title: L("열기…", "Open…")) { PhoneAccessWindow.shared.show() }
+            }
+            Divider()
+            SettingsRow(title: L("대화 전부 지우기", "Delete all chats")) {
+                SettingsAction(title: L("지우기…", "Delete…")) { discussion.deleteAll() }
+                    .disabled(!discussion.canDeleteAll)
+            }
+        }
+        .onAppear { access.refresh() }
     }
 }
 
@@ -2443,14 +2469,14 @@ final class SettingsWindow {
         if let selected = tabs?.tabView.selectedTabViewItem { window?.title = selected.label }
     }
 
-    func show(model: AppModel) {
+    func show(model: AppModel, discussion: Discussion) {
         if window == nil {
             let t = NSTabViewController()
             t.tabStyle = .toolbar
             t.addTabViewItem(tab(GeneralSettingsTab(model: model), symbol: "gearshape"))
             t.addTabViewItem(tab(AppearanceSettingsTab(model: model), symbol: "paintbrush"))
             t.addTabViewItem(tab(AccountsSettingsTab(model: model), symbol: "person.2"))
-            t.addTabViewItem(tab(ChatSettingsTab(model: model), symbol: "bubble.left.and.bubble.right"))
+            t.addTabViewItem(tab(ChatSettingsTab(model: model, discussion: discussion), symbol: "bubble.left.and.bubble.right"))
             t.addTabViewItem(tab(MCPSettingsTab(model: model), symbol: "puzzlepiece.extension"))
             tabs = t
             let w = NSWindow(contentViewController: t)

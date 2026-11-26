@@ -289,21 +289,17 @@ struct ChatView<Model: ChatSettings>: View {
             // The scroll view fills the rest, so this line is where its rows are clipped.
             .frame(maxHeight: .infinity)
             Divider()
+            // Settings: what Manage chats held (iPhone access, deleting every chat) is in its Chat tab now.
             HStack {
-                Menu {
-                    ChatApp.screens.manageItems()
-                    Divider()
-                    Button(L("대화 전부 지우기…", "Delete all chats…"), role: .destructive) { discussion.deleteAll() }
-                        .disabled(!discussion.conversations.contains(where: \.hasContent) || discussion.anyRunning)
-                } label: {
-                    Label(L("대화 관리", "Manage chats"), systemImage: "ellipsis.circle").font(.system(size: 12))
+                Button(action: { ChatApp.screens.openSettings() }) {
+                    Label(L("설정", "Settings"), systemImage: "gearshape").font(.system(size: 12))
                 }
-                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                .buttonStyle(.plainHit)
                 .foregroundColor(.secondary)
+                .help(L("설정 열기 (iPhone 연결, 대화 전부 지우기는 채팅 탭에 있어요)", "Open Settings (Connect iPhone and Delete all chats are in the Chat tab)"))
                 Spacer()
             }
             .padding(.horizontal, 16).padding(.vertical, 10)
-            .disabled(discussion.importingMaterials)
         }
         .frame(width: ChatViewSize.sidebarWidth)
         .background(Color.primary.opacity(0.035))

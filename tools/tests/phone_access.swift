@@ -260,10 +260,11 @@ func testPhoneServer() {
         let pins = sections.contains { ($0["chats"] as? [[String: Any]] ?? []).contains { $0["id"] as? String == pinned.id.uuidString } }
         return ((section?["chats"] as? [Any])?.count ?? 0, section?["more"] as? [String: Any], pins)
     }
-    let total = chat.listedConversations.filter { $0.pinned != true && $0.hasContent }.count
+    // Recents holds loose chats only: project chats other tests left in a shared test home (a serial run) are in Projects.
+    let total = chat.listedConversations.filter { $0.pinned != true && $0.hasContent && $0.workspace?.project == nil }.count
     let short = recents("/api/chats"), long = recents("/api/chats?n.recents=20"), all = recents("/api/chats?n.recents=1000")
     expect(total > 15 && short.rows == SidebarFold.recentsPage && short.more?["hidden"] as? Int == total - SidebarFold.recentsPage
-           && short.more?["key"] as? String == "recents" && short.pinned, "phone server: recents start at one page, the rest counted, pinned kept \(short)")
+           && short.more?["key"] as? String == "recents" && short.pinned, "phone server: recents start at one page, the rest counted, pinned kept \(short), listed \(total)")
     expect(long.rows == min(total, 20) && long.more?["hidden"] as? Int == total - min(total, 20), "phone server: show more lengthens the list \(long)")
     expect(all.rows == total && all.more?["hidden"] as? Int == 0, "phone server: everything shown, show less still offered \(all)")
     expect(recents("/api/chats?n.recents=1").rows == SidebarFold.recentsPage, "phone server: never shorter than one page")

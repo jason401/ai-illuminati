@@ -690,8 +690,10 @@ What the chat gets from the app, set by the app (the chat side names none of the
   takes it, `ChatView` is generic over it so the window still observes the settings.
 - `ChatApp.run` = `RunConditions.app` (RunConditionsApp.swift), `ChatApp.face` = FaceLink's extract/show/active/moods/rule:
   set in `ChatLinksApp.connect()` (main.swift and mode2, as in C0).
-- `ChatApp.screens`: the TODO board (row, board, a chat's cards), Project info and its rename, the icon, `manageItems`
-  (2026-11-16: the app's items atop the sidebar's Manage chats menu, now Connect iPhone in PhoneAccess.swift), `approvals`
+- `ChatApp.screens`: the TODO board (row, board, a chat's cards), Project info and its rename, the icon, `openSettings`
+  (2026-11-26: the sidebar's bottom Settings button, set in main.swift, which owns the window; it replaced `manageItems`, the
+  items of the old Manage chats menu, whose Connect iPhone and Delete all chats moved to Settings → Chat with
+  `Discussion.deleteAll`/`canDeleteAll`, now public for that card), `approvals`
   (2026-11-23: the inbox opens the app's approval window for an outside tool's request; set in main.swift with ApprovalAlerts),
   `inboxCard` (2026-11-23: a TODO's answer or result box in the inbox panel, the board's own TodoCard in its narrow form, so the
   panel calls what the board and the chat card call and shares their draft), `todoPanel` (2026-11-24: a project's TODOs on the
@@ -868,7 +870,7 @@ as main.swift does. Previews import the module.
 I falsification table: `docs/modules-history.md`.
 
 ### AIRemote (`app/modules/AIRemote/`: AIRemote, RemotePage), 2026-11-17
-The iPhone page (Manage chats → Connect iPhone, `app/macos/PhoneAccess.swift`): a small HTTP/1.1 server on 127.0.0.1 only
+The iPhone page (Settings → Chat → Connect iPhone, `app/macos/PhoneAccess.swift`): a small HTTP/1.1 server on 127.0.0.1 only
 (`tailscale serve` brings `https://<mac>.ts.net/` to it) and the one page it serves. It knows no chat: the App's `PhoneServer.handle`
 answers each `/api/` call from AIChat's `RemoteChats` (`RemoteChats.swift`) and
 `ProjectCenter.decide`. Every `/api/` call needs the QR's key (header `X-Remote-Key` or `k`): any program on this Mac, the AI CLIs

@@ -492,19 +492,6 @@ final class PhoneServer: ObservableObject {
     }
 }
 
-// Manage chats → "Connect iPhone…": the title says whether an iPhone is on the tailnet (as of the last check).
-struct PhoneAccessMenuItem: View {
-    @ObservedObject var access = PhoneAccess.shared
-    var body: some View {
-        let online = access.status.phones.contains(where: \.online)
-        Button(action: { PhoneAccessWindow.shared.show() }) {
-            Label(online ? L("iPhone 연결 (연결됨)…", "Connect iPhone (connected)…") : L("iPhone 연결…", "Connect iPhone…"),
-                  systemImage: online ? "iphone.radiowaves.left.and.right" : "iphone")
-        }
-        .onAppear { access.refresh() }
-    }
-}
-
 final class PhoneAccessWindow: NSObject, NSWindowDelegate {
     static let shared = PhoneAccessWindow()
     private var window: NSWindow?

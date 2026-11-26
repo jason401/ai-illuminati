@@ -55,7 +55,7 @@ public enum ChatApp {
     public static var face = Face()
 
     // The app's screens shown inside the chat window: the TODO board (its sidebar row, the board, a chat's TODO cards),
-    // Project info and its rename, the app's icon, the items the app adds to Manage chats (iPhone access).
+    // Project info and its rename, the app's icon, the Settings window (the sidebar's button at the bottom).
     // (An outside kind's sidebar rows come in through FolderSources.)
     public struct Screens {
         public var boardRow: (Discussion) -> AnyView = { _ in AnyView(EmptyView()) }
@@ -66,7 +66,7 @@ public enum ChatApp {
         public var todoPanel: (Discussion, String) -> AnyView = { _, _ in AnyView(EmptyView()) }   // a project's TODOs beside its Project info
         public var renameProject: (String, String) -> Void = { _, _ in }
         public var icon: (Bool) -> NSImage = { _ in NSImage() }
-        public var manageItems: () -> AnyView = { AnyView(EmptyView()) }
+        public var openSettings: () -> Void = {}   // the sidebar's Settings button: the app's Settings window
         public var approvals: () -> Void = {}   // the app's approval window (an outside tool's request has no chat to open)
         public init() {}
     }

@@ -2,8 +2,8 @@ import AppKit
 import SwiftUI
 import AIChat
 
-// The app's screens the chat window (AIChat) shows: the TODO board, Project info, the icon, Manage chats' iPhone item
-// (PhoneAccess.swift), and Shared folders' Google Drive (GoogleDriveFolder.swift).
+// The app's screens the chat window (AIChat) shows: the TODO board, Project info, the icon, and Shared folders' Google
+// Drive (GoogleDriveFolder.swift). The sidebar's Settings button is connected by main.swift, which owns the window.
 // Connected once by main.swift with ChatLinksApp.connect.
 enum ChatScreensApp {
     static func connect() {
@@ -16,7 +16,6 @@ enum ChatScreensApp {
         screens.todoPanel = { AnyView(ProjectTodoPanel(discussion: $0, project: $1)) }
         screens.renameProject = { ProjectInfoView.rename($0, current: $1) }
         screens.icon = { illuminatiIcon(colored: $0) }
-        screens.manageItems = { AnyView(PhoneAccessMenuItem()) }
         ChatApp.screens = screens
         GoogleDriveFolder.register()   // Shared folders' Google Drive (official Drive MCP)
     }

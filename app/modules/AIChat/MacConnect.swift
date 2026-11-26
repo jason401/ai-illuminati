@@ -217,8 +217,8 @@ struct MacPanel: View {
                 VStack(spacing: 10) {
                     Image(systemName: "iphone.slash").font(.system(size: 26)).foregroundColor(.secondary)
                     Text(L("연결할 수 없어요", "Can't connect")).font(.system(size: 15, weight: .semibold))
-                    Text(L("그 Mac에서 메뉴 → iPhone 연결… 의 ‘iPhone에서 채팅 쓰기’와 ‘다른 Mac에서 연결 허용’을 켜 주세요.",
-                           "On that Mac, turn on ‘Use chats on iPhone’ and ‘Let my other Macs connect’ in Manage chats → Connect iPhone…."))
+                    Text(L("그 Mac에서 설정 → 채팅 → iPhone 연결… 의 ‘iPhone에서 채팅 쓰기’와 ‘다른 Mac에서 연결 허용’을 켜 주세요.",
+                           "On that Mac, turn on ‘Use chats on iPhone’ and ‘Let my other Macs connect’ in Settings → Chat → Connect iPhone…."))
                         .font(.system(size: 12)).foregroundColor(.secondary).multilineTextAlignment(.center)
                     if !device.chats.isEmpty {
                         Button(L("저장된 사본 보기", "Show Saved Copies")) { connect.copiesOpen.insert(device.id) }

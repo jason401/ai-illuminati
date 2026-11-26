@@ -678,7 +678,8 @@ public final class Discussion: ObservableObject {
     }
 
     // Deletes every saved chat (or all but the pinned ones), each the same way as deleting one.
-    func deleteAll() {
+    public var canDeleteAll: Bool { !anyRunning && !importingMaterials && conversations.contains { $0.hasContent && $0.meetingOf == nil } }
+    public func deleteAll() {
         guard !anyRunning, !importingMaterials else { return }
         let saved = conversations.filter { $0.hasContent && $0.meetingOf == nil }
         guard !saved.isEmpty else { return }

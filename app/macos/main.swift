@@ -144,6 +144,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, PhoneUsage {
         updateTitle()
         approvals.start()
         ChatApp.screens.approvals = { [weak self] in self?.approvals.show() }
+        ChatApp.screens.openSettings = { [weak self] in self?.openSettings() }
         approvalObservation = ProjectCenter.shared.$requests.map(\.count).removeDuplicates().receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.showPending(); self?.updatePanel() }
         PhoneServer.shared.usage = self
@@ -159,7 +160,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, PhoneUsage {
         // Chats from your other Macs (off until turned on in Settings → Chat).
         DeviceSync.shared.checkOnline = { PhoneAccess.shared.refresh() }   // Other Macs: which Macs Tailscale sees online
         DeviceSync.shared.start(discussion: discussion)
-        // The iPhone page, when it was turned on in Manage chats → Connect iPhone (PhoneAccess.swift).
+        // The iPhone page, when it was turned on in Settings → Chat → Connect iPhone (PhoneAccess.swift).
         PhoneServer.shared.start(discussion: discussion)
         // The Usage window's chat names and links, and token sums from the other Macs (off until turned on there).
         TokenStatsModel.shared.chats = { [weak self] in
@@ -439,7 +440,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, PhoneUsage {
     // MARK: Actions
 
 
-    @objc private func openSettings() { settings.show(model: model) }
+    @objc private func openSettings() { settings.show(model: model, discussion: discussion) }
     private func unloadLocal() {
         localLoaded = nil
         updatePanel()

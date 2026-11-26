@@ -66,7 +66,7 @@ ChatApp.Screens.cards | var cards: (UUID, Discussion) -> AnyView
 ChatApp.Screens.icon | var icon: (Bool) -> NSImage
 ChatApp.Screens.inboxCard | var inboxCard: (TodoItem, Discussion) -> AnyView
 ChatApp.Screens.init() | init()
-ChatApp.Screens.manageItems | var manageItems: () -> AnyView
+ChatApp.Screens.openSettings | var openSettings: () -> Void
 ChatApp.Screens.projectInfo | var projectInfo: (Discussion, String) -> AnyView
 ChatApp.Screens.renameProject | var renameProject: (String, String) -> Void
 ChatApp.Screens.todoPanel | var todoPanel: (Discussion, String) -> AnyView
@@ -306,6 +306,7 @@ Discussion.approvalChatName(_:) | func approvalChatName(_ room: UUID) -> String
 Discussion.approvalHome(_:) | func approvalHome(_ room: UUID) -> UUID
 Discussion.autoPicked(_:picks:) | static func autoPicked(_ account: Account, picks: [String : Bool]) -> Bool
 Discussion.boardProject | @Published var boardProject: String? { get set }
+Discussion.canDeleteAll | var canDeleteAll: Bool { get }
 Discussion.cancelAll() | func cancelAll()
 Discussion.chats | var chats: [ProjectChatSummary] { get }
 Discussion.conversation(_:) | func conversation(_ room: UUID) -> Conversation
@@ -313,6 +314,7 @@ Discussion.conversations | @Published var conversations: [Conversation] { get se
 Discussion.crew(lock:allowed:) | func crew(lock: EnterpriseLock?, allowed: [String]) -> (lead: Account, reviewer: Account?)?
 Discussion.current | var current: Conversation { get }
 Discussion.currentID | @Published var currentID: UUID { get set }
+Discussion.deleteAll() | func deleteAll()
 Discussion.discardPendingImages() | func discardPendingImages()
 Discussion.disconnectProjectFolder(_:name:) | func disconnectProjectFolder(_ key: String, name: String)
 Discussion.draftsFile | static var draftsFile: URL?

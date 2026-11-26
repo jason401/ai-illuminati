@@ -59,7 +59,12 @@
    - iOS 종류 로그인 ID(`961717606753-4c5cmpcmegejgqdb39plii50ch7rq88m`): Mac 로그인 창(ASWebAuthenticationSession,
      리다이렉트 `com.googleusercontent.apps.<id>:/oauth2redirect`, PKCE)으로 secret 없이 로그인·갱신 성공 → 이걸 쓴다.
    - 4개 서버 initialize·tools/list 성공(Drive 9, Docs 2, Sheets 6, Slides 4), Developer Preview 가입 없이 열림, list_recent_files 읽기 성공.
-   - 남은 확인: 만들기·슬라이드 수정·승인 질문(쓰기라 시험 파일이 남음, 사용자 동의 후), 학교 계정, 다음 날 재로그인 없이
+   - 쓰기 시험: Drive `create_file`로 빈 문서·빈 슬라이드 만들기 성공(내 파일이라 승인 질문 없음).
+     Docs·Slides MCP는 `tools/list`는 되지만 도구를 부르면 "Cloud project가 Google Workspace Developer Preview Program에
+     가입해야 한다"며 거절 → Drive MCP는 GA, Docs·Sheets·Slides MCP는 아직 Developer Preview.
+   - Developer Preview(https://developers.google.com/workspace/preview): 신청서에 Workspace 계정(개인 Gmail 불가, 학교 계정 가능)과
+     프로젝트 번호, 승인 며칠. 약관상 GA 전에는 공개 앱에 넣을 수 없고 도메인 밖 사용자에게 열 수 없음.
+   - 남은 확인: 학교 계정, 다음 날 재로그인 없이
 2. 앱 만들기: 공동 폴더 + → Google Drive 연결 → 로그인 → 앱이 공식 서버 4개에 연결해 도구를 그대로 AI 3개에게 → Google의 "허용?"은 승인 카드 → 사이드바 줄(연필=쓰기 도구 켬, 눈=잠시 끔, 연결 끊기)
 3. 시험: 가짜 서버 테스트 → 실제 작업(예전 슬라이드 보고 새 발표 만들기)
 4. 배포 준비: 로그인 ID는 한 곳에서만 바꾸게, 하루 한도 걸리면 안내. 사용자가 늘면 Google 심사

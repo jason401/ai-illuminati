@@ -106,8 +106,8 @@ func testPhoneServer() {
            "phone server: the Mac's nickname comes with the list and the chat")
     server.deviceName = savedName
     let titled = String(decoding: RemotePage.html(), as: UTF8.self)
-    expect(titled.contains("<h1>AI Illuminati<span class=\"mac\"></span></h1>") && titled.contains("showMac(data.device)") && titled.contains("chatSub(data.project"),
-           "phone page: the nickname after the list title and in the chat's small line")
+    expect(titled.contains("<b>AI Illuminati</b><small class=\"mac\"></small>") && titled.contains("<h1>AI Illuminati</h1>") && titled.contains("showMac(data.device)") && titled.contains("chatSub(data.project"),
+           "phone page: the nickname in the list's bar and in the chat's small line")
     let list = call("GET", "/api/chats").1["sections"] as? [[String: Any]] ?? []
     expect(list.contains { ($0["chats"] as? [[String: Any]] ?? []).contains { $0["id"] as? String == room.uuidString } }, "phone server: the list has the chat")
 

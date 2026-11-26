@@ -108,6 +108,32 @@ func testPhoneServer() {
     let titled = String(decoding: RemotePage.html(), as: UTF8.self)
     expect(titled.contains("<b>AI Illuminati</b><small class=\"mac\"></small>") && titled.contains("<h1>AI Illuminati</h1>") && titled.contains("showMac(data.device)") && titled.contains("chatSub(data.project"),
            "phone page: the nickname in the list's bar and in the chat's small line")
+    // The Mac message box's @ and "/" lists: they come with the chat (a plain chat offers no work or one) and, for a new
+    // chat, from GET /api/chat/new; none in a meeting record. An account picked from the page's @ list answers the
+    // message and its "@name" leaves the question; an id the chat cannot call is dropped.
+    model.accounts.append(Account(id: "phone-codex", provider: .codex, name: "Phone GPT"))
+    let picks = call("GET", "/api/chat/\(room.uuidString)").1
+    let offered = picks["mentions"] as? [[String: Any]] ?? [], ways = picks["routes"] as? [[String: Any]] ?? []
+    expect(offered.compactMap { $0["id"] as? String } == ["phone-claude", "phone-codex"] && (offered.last?["names"] as? [String])?.contains("지피") == true
+           && offered.allSatisfy { $0["usage"] is String && ($0["keys"] as? [String])?.isEmpty == false && ($0["color"] as? [String])?.count == 2 },
+           "phone server: the @ list's accounts with the words that find them, usage and colors \(offered)")
+    expect(ways.compactMap { $0["word"] as? String } == ["all", "meet"] && (ways.first?["words"] as? [String])?.contains("모두") == true,
+           "phone server: a plain chat's / list is all and meet \(ways)")
+    let blank = call("GET", "/api/chat/new").1
+    expect((blank["mentions"] as? [Any])?.count == 2 && (blank["routes"] as? [[String: Any]])?.compactMap { $0["word"] as? String } == ["all", "meet"],
+           "phone server: a new chat's message box gets the lists too \(blank)")
+    let record = RemoteChats.picks(chat, plain: false, project: true, lock: nil)
+    expect((record["mentions"] as? [Any])?.isEmpty == true && (record["routes"] as? [Any])?.isEmpty == true, "phone server: no lists where the Mac shows none")
+    let gpt = chat.label(model.accounts[1])
+    let mentioned = call("POST", "/api/chat/\(room.uuidString)/send", ["text": "@\(gpt) which one?", "images": [], "mentions": ["phone-codex", "nobody"]])
+    settle()
+    expect(mentioned.0 == 200 && chat.conversation(room).turns.last?.question == "which one?",
+           "phone server: the account picked on the page is called \(String(describing: chat.conversation(room).turns.last?.question))")
+    model.accounts.removeLast()
+    if let at = chat.conversations.firstIndex(where: { $0.id == room }), chat.conversation(room).turns.count > 1 { chat.conversations[at].turns.removeLast() }
+    let page = String(decoding: RemotePage.html(), as: UTF8.self)
+    expect(page.contains("id=\"picker\"") && page.contains("function menuFind()") && page.contains("setPicks(data)") && page.contains("{ text, images, mentions }")
+           && page.contains("'/api/chat/new' + (project ?"), "phone page: the @ and / lists above the message box, picks sent with the message")
     let list = call("GET", "/api/chats").1["sections"] as? [[String: Any]] ?? []
     expect(list.contains { ($0["chats"] as? [[String: Any]] ?? []).contains { $0["id"] as? String == room.uuidString } }, "phone server: the list has the chat")
 

@@ -881,7 +881,9 @@ box's path for any chat: queue while answering, TODO, or a new turn; photos impo
 sidebar's ChatSearch for the page's search field) and `create(_:project:text:photos:)` (the page's new chat: a loose or project chat
 made only with its first message, sent through `send`, removed again when that fails; the Mac's open chat stays) and
 `inbox(_:now:)` (2026-11-23: the inbox panel's 🔴/🟡 for the top of the page's list, from `Inbox.make`, with the time left, the chat each
-opens and, for a chat's approval, its id and detail for the page's Allow/Deny on the existing `POST /api/approval`).
+opens and, for a chat's approval, its id and detail for the page's Allow/Deny on the existing `POST /api/approval`) and
+`composer(_:project:)` (2026-11-26: a new chat's message-box lists for `GET /api/chat/new`, the @ accounts and "/" ways that `chat`
+also returns; `send` and `create` take the accounts picked from the @ list as `mentions`, which `prepare` checks like the Mac's).
 
 ## Records
 

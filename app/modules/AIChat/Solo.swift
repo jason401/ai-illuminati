@@ -571,13 +571,19 @@ extension Discussion {
     // after @ by name or by the AI's name in English or Korean. At most 9, numbered 1–9.
     func mentionCandidates() -> [Account] {
         guard let query = mentionQuery?.lowercased() else { return [] }
-        let lock = current.enterpriseLock   // an Enterprise chat lists only accounts that may take part
-        let list = model.accounts.filter { account in
-            (account.provider != .ollama || model.localEnabled) && Enterprise.permits(account, lock: lock) && (
-            query.isEmpty || label(account).lowercased().contains(query) || account.name.lowercased().contains(query)
-                || (Self.aiNames[account.provider] ?? []).contains { $0.hasPrefix(query) || query.hasPrefix($0) })
-        }
+        let list = Self.mentionable(model.accounts, lock: current.enterpriseLock, localEnabled: model.localEnabled)
+            .filter { Self.mentionMatches($0, query: query, label: label($0)) }
         return Array(list.prefix(9))
+    }
+    // Who the @ list may offer (the iPhone page's too, RemoteChats.picks): Gemma only while it is on, and in an
+    // Enterprise chat only the accounts that may take part.
+    static func mentionable(_ accounts: [Account], lock: EnterpriseLock?, localEnabled: Bool) -> [Account] {
+        accounts.filter { ($0.provider != .ollama || localEnabled) && Enterprise.permits($0, lock: lock) }
+    }
+    // `query` lowercased. The page narrows its list the same way (RemotePage mentionMatches).
+    static func mentionMatches(_ account: Account, query: String, label: String) -> Bool {
+        query.isEmpty || label.lowercased().contains(query) || account.name.lowercased().contains(query)
+            || (aiNames[account.provider] ?? []).contains { $0.hasPrefix(query) || query.hasPrefix($0) }
     }
 
     // YouTube questions: Gemini searches YouTube first (it reads video pages and search results, not the video).

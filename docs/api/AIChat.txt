@@ -429,12 +429,13 @@ QueuedMessage.sentAt | var sentAt: Date
 QueuedMessage.text | var text: String
 RemoteChats | enum RemoteChats
 RemoteChats.chat(_:_:opened:) | static func chat(_ d: Discussion, _ room: UUID, opened: Bool) -> [String : Any]?
-RemoteChats.create(_:project:text:photos:) | static func create(_ d: Discussion, project: String?, text: String, photos: [Data]) -> (id: UUID?, reason: String?)
+RemoteChats.composer(_:project:) | static func composer(_ d: Discussion, project: String?) -> [String : Any]
+RemoteChats.create(_:project:text:photos:mentions:) | static func create(_ d: Discussion, project: String?, text: String, photos: [Data], mentions: [String] = []) -> (id: UUID?, reason: String?)
 RemoteChats.image(_:_:id:) | static func image(_ d: Discussion, _ room: UUID, id: UUID) -> URL?
 RemoteChats.inbox(_:now:) | static func inbox(_ d: Discussion, now: Date = Date()) -> [[String : Any]]
 RemoteChats.list(_:limits:) | static func list(_ d: Discussion, limits: [String : Int] = [:]) -> [[String : Any]]
 RemoteChats.search(_:_:) | static func search(_ d: Discussion, _ query: String) -> [[String : Any]]
-RemoteChats.send(_:room:text:photos:) | static func send(_ d: Discussion, room: UUID, text: String, photos: [Data]) -> String?
+RemoteChats.send(_:room:text:photos:mentions:) | static func send(_ d: Discussion, room: UUID, text: String, photos: [Data], mentions: [String] = []) -> String?
 RemoteConnection | struct RemoteConnection
 RemoteConnection.init(address:host:app:writtenAt:) | init(address: String, host: String, app: String, writtenAt: Date = Date())
 RemoteConnection.init(from:) | init(from decoder: any Decoder) throws

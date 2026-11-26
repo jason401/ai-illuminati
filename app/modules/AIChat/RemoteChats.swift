@@ -192,12 +192,43 @@ public enum RemoteChats {
         var result: [String: Any] = ["id": room.uuidString, "title": chat.title, "working": working, "turns": turns, "approvals": approvals,
                                      "readOnly": chat.meetingOf != nil]
         if let project = WorkingChats.projectName(chat, todo: TodoStore.shared.snapshot, names: ProjectInfoStore.shared.names) { result["project"] = project }
-        return result
+        let plain = Discussion.modernModes && d.configuration(of: room).mode == 0 && chat.meetingOf == nil
+        return result.merging(picks(d, plain: plain, project: chat.workspace?.project != nil, lock: chat.enterpriseLock)) { a, _ in a }
+    }
+
+    // What the page's message box lists while @ or a first "/" is typed, as the Mac's does: "mentions" the accounts this
+    // chat may call (Discussion.mentionable, narrowed on the page by `keys` and `names` as mentionMatches does) with their
+    // colors and usage, "routes" the ways it offers (RouteChoice.offered) with the words that pick them. Empty in a
+    // meeting record and the team modes, where the Mac shows neither.
+    static func picks(_ d: Discussion, plain: Bool, project: Bool, lock: EnterpriseLock?) -> [String: Any] {
+        guard plain else { return ["mentions": [Any](), "routes": [Any]()] }
+        let mentions = Discussion.mentionable(d.model.accounts, lock: lock, localEnabled: d.model.localEnabled).map { account -> [String: Any] in
+            let label = d.label(account)
+            var row: [String: Any] = ["id": account.id, "label": label, "keys": [label.lowercased(), account.name.lowercased()],
+                                      "names": Discussion.aiNames[account.provider] ?? [], "usage": AutoPick.describe(d.model.latestUsage[account.id])]
+            if let c = colors(account.provider) { row["color"] = c }
+            return row
+        }
+        let routes = RouteChoice.offered(project: project).map { choice -> [String: Any] in
+            ["word": Route.words(choice).first ?? "", "words": Route.words(choice), "title": choice.title, "hint": Route.hint(choice)]
+        }
+        return ["mentions": mentions, "routes": routes]
+    }
+
+    // The lists for a new chat's message box (GET /api/chat/new?project=): a plain chat, locked like the project's new chat.
+    public static func composer(_ d: Discussion, project: String?) -> [String: Any] {
+        let group = project.flatMap { id in projectGroups(d).first { $0.id == id } }
+        return picks(d, plain: Discussion.modernModes, project: group != nil,
+                     lock: group.flatMap { SidebarProjects.lock(of: $0, todo: TodoStore.shared.snapshot) })
+    }
+    static func projectGroups(_ d: Discussion) -> [ProjectGroup] {
+        SidebarProjects.group(d.listedConversations.filter(\.hasContent), todo: TodoStore.shared.snapshot, pinned: SidebarFold.shared.pinnedProjects,
+                              names: ProjectInfoStore.shared.names).projects
     }
 
     // An AI's colors as the Mac shows them (AIColors, which the user may change): ["#light", "#dark"].
-    static func colors(_ speaker: String) -> [String]? {
-        guard let provider = Account.Provider.of(speaker: speaker) else { return nil }
+    static func colors(_ speaker: String) -> [String]? { Account.Provider.of(speaker: speaker).flatMap(colors) }
+    static func colors(_ provider: Account.Provider) -> [String]? {
         let color = AIColors.color(provider)
         return [false, true].map { dark in
             var hex = "#888888"
@@ -226,7 +257,7 @@ public enum RemoteChats {
     // A new chat from the phone, made only when its first message goes (so leaving before sending leaves nothing behind):
     // a loose chat, or a chat in the project whose sidebar id (ProjectGroup.id) is given. The Mac's open chat stays open.
     // Returns the new chat's id, or why it was not sent.
-    public static func create(_ d: Discussion, project: String?, text: String, photos: [Data]) -> (id: UUID?, reason: String?) {
+    public static func create(_ d: Discussion, project: String?, text: String, photos: [Data], mentions: [String] = []) -> (id: UUID?, reason: String?) {
         guard d.host == nil else { return (nil, L("이 Mac에서는 새 대화를 만들 수 없어요.", "Cannot start a chat on this Mac.")) }
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !photos.isEmpty else { return (nil, L("보낼 내용이 없어요.", "Nothing to send.")) }
         guard d.runningRooms.count < Discussion.maxRunning else {
@@ -236,9 +267,7 @@ public enum RemoteChats {
         let room: UUID
         if let project, !project.isEmpty {
             let todo = TodoStore.shared.snapshot
-            let groups = SidebarProjects.group(d.listedConversations.filter(\.hasContent), todo: todo, pinned: SidebarFold.shared.pinnedProjects,
-                                               names: ProjectInfoStore.shared.names).projects
-            guard let group = groups.first(where: { $0.id == project }), let binding = group.bindings.first else {
+            guard let group = projectGroups(d).first(where: { $0.id == project }), let binding = group.bindings.first else {
                 return (nil, L("프로젝트를 찾지 못했어요.", "Project not found."))
             }
             room = d.addProjectChat(binding, title: L("새 대화", "New chat"), open: false, lock: SidebarProjects.lock(of: group, todo: todo))
@@ -247,7 +276,7 @@ public enum RemoteChats {
             d.conversations.insert(fresh, at: 0)
             room = fresh.id
         }
-        if let reason = send(d, room: room, text: text, photos: photos) {
+        if let reason = send(d, room: room, text: text, photos: photos, mentions: mentions) {
             if let chat = d.conversations.first(where: { $0.id == room }), chat.turns.isEmpty {
                 try? ChatStore.delete(chat)
                 d.conversations.removeAll { $0.id == room }
@@ -269,8 +298,10 @@ public enum RemoteChats {
     }
 
     // Sent from the phone like the message box sends (send()): into the queue while the chat answers, to its TODO,
-    // or a new turn. Photos are imported into the chat (at most 4, like addImage). Returns why it was not sent.
-    public static func send(_ d: Discussion, room: UUID, text: String, photos: [Data]) -> String? {
+    // or a new turn. Photos are imported into the chat (at most 4, like addImage). `mentions`: the accounts picked from
+    // the page's @ list, in order; prepare keeps only those this chat may call whose "@name" is still in the text.
+    // Returns why it was not sent.
+    public static func send(_ d: Discussion, room: UUID, text: String, photos: [Data], mentions: [String] = []) -> String? {
         guard d.host == nil, let chat = d.conversations.first(where: { $0.id == room }) else { return L("대화를 찾지 못했어요.", "Chat not found.") }
         guard chat.meetingOf == nil else { return L("회의 기록에는 보낼 수 없어요.", "A meeting record cannot take messages.") }
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -294,7 +325,7 @@ public enum RemoteChats {
         if !images.isEmpty, !running, d.configuration(of: room).leader == .gemini {
             d.configure(room: room) { config in config.leader = config.participants.contains(.claude) ? .claude : .codex }
         }
-        let message = QueuedMessage(text: text, images: images.isEmpty ? nil : images, mentions: nil, route: nil)
+        let message = QueuedMessage(text: text, images: images.isEmpty ? nil : images, mentions: mentions.isEmpty ? nil : mentions, route: nil)
         if running { d.enqueue(message, room: room); return nil }
         let ready = d.prepare(message, room: room)
         switch d.sendToTodo(ready, room: room) {

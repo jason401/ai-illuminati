@@ -42,6 +42,7 @@ public enum RemotePage {
             "dropAnywhere": L("어디에 놓아도 돼요 · 보내기 전에 볼 수 있어요", "Anywhere · you check them before sending"),
             "dropReadOnly": L("읽기 전용 대화라 사진을 넣을 수 없어요", "This chat is read only: no photos"),
             "send": L("보내기", "Send"),
+            "pickOnce": L("이 메시지에만 적용돼요", "For this message only"),
             "usage": L("AI 사용량", "AI Usage"),
             "usageClose": L("닫기", "Close"),
             "usageRefresh": L("새로고침", "Refresh"),
@@ -333,6 +334,18 @@ footer { position:relative; padding:6px 10px calc(env(safe-area-inset-bottom) + 
   font-size:12px; line-height:22px; padding:0; }
 .readonly { display:flex; align-items:center; justify-content:center; gap:8px; color:var(--dim); font-size:14px; border-radius:20px;
   border:1px solid var(--line); background:var(--fill); padding:12px; }
+/* @ or a first "/" being typed: the Mac's lists above the message box (who answers, or how). */
+.picker { margin:0 0 6px; padding:4px; border-radius:16px; border:1px solid var(--line); background:var(--box); box-shadow:0 3px 12px rgba(0,0,0,.1);
+  max-height:38vh; overflow-y:auto; }
+.pick { display:flex; align-items:center; gap:9px; width:100%; height:40px; padding:0 10px; border:0; border-radius:11px; background:none;
+  color:var(--text); font:15px -apple-system, system-ui; text-align:left; }
+.pick.on { background:rgba(0,122,255,.16); }
+.pick .aidot { width:8px; height:8px; }
+.pick .plabel { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.pick .ptitle { flex:none; font-weight:600; }
+.pick code { flex:1; min-width:0; font:13px ui-monospace, Menlo, monospace; color:var(--dim); }
+.pick .pright { flex:none; max-width:55%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--dim); font-size:12px; }
+.pickNote { color:var(--dim); font-size:11px; text-align:center; padding:2px 0 3px; }
 #toBottom { position:absolute; left:50%; top:-44px; margin-left:-17px; width:34px; height:34px; border-radius:17px; border:1px solid var(--line);
   background:var(--box); color:var(--text); box-shadow:0 1px 5px rgba(0,0,0,.2); display:flex; align-items:center; justify-content:center; padding:0;
   transition:opacity .15s; }
@@ -382,6 +395,7 @@ footer { position:relative; padding:6px 10px calc(env(safe-area-inset-bottom) + 
   <footer id="footer">
     <button id="toBottom" class="gone" aria-label="bottom"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v16M5 13l7 7 7-7"/></svg></button>
     <div class="readonly hidden" id="readOnly"></div>
+    <div class="picker hidden" id="picker" role="listbox"></div>
     <div class="box" id="box">
       <div id="thumbs"></div>
       <textarea id="text" rows="1"></textarea>
@@ -545,11 +559,11 @@ function route() {
   else if ((m = h.match(/^#new(?:=(.*))?$/))) { isNew = true; project = m[1] ? decodeURIComponent(m[1]) : null; }
   const key = isUpdate ? 'update' : id || (isNew ? 'new:' + (project || '') : null);
   const animate = navAnimate; navAnimate = false;
-  if (current !== null) drafts[current] = $('text').value;
+  if (current !== null) { drafts[current] = $('text').value; draftPicked[current] = picked; }
   if (!key) pushed = false;
   if (key && key !== current) {
     chatId = id; newProject = project; opened = false; lastChat = ''; photos = []; renderThumbs();
-    $('text').value = drafts[key] || '';
+    $('text').value = drafts[key] || ''; picked = draftPicked[key] || []; menuClose(); setPicks(null);
     $('turns').innerHTML = ''; $('approvals').innerHTML = '';
     const known = id ? titles[id] : null;
     $('chatTitle').textContent = id ? (known ? known.title : '') : S.newChat;
@@ -559,6 +573,7 @@ function route() {
     $('hint').textContent = '';
     if (id && cache[id]) renderChat(cache[id], true);
     else if (!id) $('turns').innerHTML = '<div class="note">' + esc(S.askAnything) + '</div>';
+    if (isNew) api('/api/chat/new' + (project ? '?project=' + encodeURIComponent(project) : '')).then(p => { if (current === key) setPicks(p); }, () => {});
     $('chatScroll').scrollTop = 1e9;
     if (isNew) setTimeout(() => $('text').focus(), animate ? 380 : 0);
     if (isUpdate) { $('turns')._upd = ''; $('footer').classList.add('hidden'); $('chatTitle').textContent = S.update; $('chatSub').textContent = ''; renderUpdate(); }
@@ -1011,6 +1026,7 @@ setInterval(tick, 15000);
 function renderChat(data, first) {
   const box = $('chatScroll'), atEnd = first || box.scrollHeight - box.scrollTop - box.clientHeight < 90, height = box.scrollHeight;
   showMac(data.device);
+  setPicks(data);
   $('chatTitle').textContent = data.title;
   $('chatSub').textContent = chatSub(data.project || '');
   $('box').classList.toggle('hidden', !!data.readOnly);
@@ -1140,7 +1156,88 @@ $('toBottom').addEventListener('click', () => $('chatScroll').scrollTo({ top: 1e
 
 function grow() { const t = $('text'); t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 160) + 'px'; canSend(); }
 function canSend() { $('send').disabled = sending || (!$('text').value.trim() && !photos.length); }
-$('text').addEventListener('input', grow);
+$('text').addEventListener('input', () => { grow(); menuUpdate(); });
+
+// The Mac message box's @ and "/" lists (RemoteChats.picks). @ (at the start or after a space, at most 24 letters back,
+// on this line) lists the accounts this chat may call, narrowed as the Mac narrows (mentionMatches); a first "/" lists
+// the chat's ways, like Route.slashMenu. A tap puts "@name " or "/work " in; a picked account goes with the message
+// (mentions), so alike names cannot be mixed up. Unlike the Mac, a space typed after a name no account starts with
+// closes the @ list, so it does not cover the chat while the message goes on. Esc, or leaving the box, closes it.
+let picks = { mentions: [], routes: [] }, picked = [], menu = null, menuIndex = 0, menuShut = null;
+const draftPicked = {};
+function setPicks(p) {
+  picks = { mentions: (p && p.mentions) || [], routes: (p && p.routes) || [] };
+  if (menu || document.activeElement === $('text')) menuUpdate();
+}
+function mentionMatches(m, q) { return !q || m.keys.some(k => k.includes(q)) || m.names.some(n => n.startsWith(q) || q.startsWith(n)); }
+function menuFind() {
+  const t = $('text'), text = t.value, cursor = t.selectionStart;
+  if (t.selectionEnd !== cursor) return null;
+  let at = -1;
+  for (let i = cursor - 1; i >= 0 && cursor - i <= 24; i--) { if (text[i] === '@') { at = i; break; } if (text[i] === '\n') break; }
+  if (at >= 0 && (at === 0 || /\s/.test(text[at - 1]))) {
+    const tail = text.slice(at);
+    const after = picked.some(id => { const m = picks.mentions.find(x => x.id === id); return m && tail.startsWith('@' + m.label); });
+    const q = text.slice(at + 1, cursor).toLowerCase();
+    const list = after ? [] : picks.mentions.filter(m => mentionMatches(m, q)).slice(0, 9);
+    if (list.length && (!/\s/.test(q) || list.some(m => m.keys[0].startsWith(q)))) return { kind: '@', at, end: cursor, list };
+  }
+  let start = 0;
+  while (text[start] === ' ') start++;
+  if (text[start] !== '/' || cursor <= start) return null;
+  const q = text.slice(start + 1, cursor);
+  if (/\s/.test(q) || (cursor < text.length && !/\s/.test(text[cursor]))) return null;
+  const key = q.toLowerCase(), list = picks.routes.filter(r => r.words.some(w => w.startsWith(key)));
+  return list.length ? { kind: '/', at: start, end: cursor, list } : null;
+}
+function menuUpdate() {
+  const found = menuFind(), sig = found ? found.kind + found.at + ':' + $('text').value.slice(found.at, found.end) : null;
+  if (!found || !menu || menu.sig !== sig) menuIndex = 0;
+  if (sig !== menuShut) menuShut = null;   // closed by hand: shut until the word changes or goes
+  menu = found && sig !== menuShut ? Object.assign(found, { sig }) : null;
+  renderMenu();
+}
+function menuClose() { menuShut = menu ? menu.sig : null; menu = null; renderMenu(); }
+function renderMenu() {
+  const el = $('picker');
+  el.classList.toggle('hidden', !menu);
+  if (!menu) { el.innerHTML = ''; return; }
+  el.innerHTML = menu.list.map((item, i) => '<button type="button" class="pick' + (i === menuIndex ? ' on' : '') + '" data-i="' + i + '" role="option">' +
+    (menu.kind === '@'
+      ? '<span class="aidot"' + colorStyle(item.color) + '></span><span class="plabel">' + esc(item.label) + '</span><span class="pright">' + esc(item.usage || '') + '</span>'
+      : '<span class="ptitle">' + esc(item.title) + '</span><code>/' + esc(item.word) + '</code><span class="pright">' + esc(item.hint) + '</span>') +
+    '</button>').join('') + '<div class="pickNote">' + esc(S.pickOnce) + '</div>';
+  const on = el.querySelector('.pick.on'); if (on && on.scrollIntoView) on.scrollIntoView({ block: 'nearest' });
+}
+function menuPick(i) {
+  const t = $('text'), text = t.value, item = menu && menu.list[i];
+  if (!item) return;
+  const token = menu.kind === '@' ? '@' + item.label : '/' + item.word;
+  if (menu.kind === '@' && !picked.includes(item.id)) picked.push(item.id);
+  // Keep a space already there after the word instead of doubling it.
+  const after = menu.end < text.length && /\s/.test(text[menu.end]), put = token + (after ? '' : ' ');
+  t.value = text.slice(0, menu.at) + put + text.slice(menu.end);
+  const caret = menu.at + put.length + (after ? 1 : 0);
+  t.focus(); t.setSelectionRange(caret, caret);
+  menu = null; menuShut = null; renderMenu(); grow();
+}
+// Pressing a row keeps the keyboard up (the box keeps focus); leaving the box closes the list.
+$('picker').addEventListener('mousedown', e => e.preventDefault());
+$('picker').addEventListener('click', e => { const b = e.target.closest('.pick'); if (b) menuPick(+b.dataset.i); });
+$('text').addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== $('text') && menu) menuClose(); }, 200));
+$('text').addEventListener('click', menuUpdate);
+$('text').addEventListener('keyup', e => { if (e.key.startsWith('Arrow') && !menu) menuUpdate(); });
+// A Mac's keyboard: ↑↓ move, Return or Tab picks (Shift+Return still makes a line), Esc closes the list, not the chat.
+$('text').addEventListener('keydown', e => {
+  if (!menu || e.isComposing || e.metaKey || e.ctrlKey || e.altKey) return;
+  const n = menu.list.length;
+  if (e.key === 'ArrowDown') menuIndex = Math.min(menuIndex + 1, n - 1);
+  else if (e.key === 'ArrowUp') menuIndex = Math.max(menuIndex - 1, 0);
+  else if ((e.key === 'Enter' || e.key === 'Tab') && !e.shiftKey) { e.preventDefault(); menuPick(Math.min(menuIndex, n - 1)); return; }
+  else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); menuClose(); return; }
+  else return;
+  e.preventDefault(); renderMenu();
+});
 $('pick').addEventListener('click', () => $('file').click());
 $('file').addEventListener('change', e => { const files = [...e.target.files]; e.target.value = ''; addPhotos(files); });
 // Picked, dropped anywhere on the chat screen or pasted: the same way in, as thumbnails that go only with Send. Images
@@ -1207,10 +1304,11 @@ $('send').addEventListener('click', async () => {
   if (!key || sending || (!text && !photos.length)) return;
   sending = true; canSend();
   const images = photos.map(p => p.split(',')[1]);
+  const mentions = picked.filter(id => { const m = picks.mentions.find(x => x.id === id); return m && text.includes('@' + m.label); });
   try {
-    if (chatId) await api('/api/chat/' + encodeURIComponent(chatId) + '/send', { text, images });
+    if (chatId) await api('/api/chat/' + encodeURIComponent(chatId) + '/send', { text, images, mentions });
     else {
-      const made = await api('/api/chat/new', { text, images, project: newProject || undefined });
+      const made = await api('/api/chat/new', { text, images, project: newProject || undefined, mentions });
       if (current === key) {
         drafts[key] = '';
         chatId = made.id; current = made.id; opened = false;
@@ -1218,7 +1316,7 @@ $('send').addEventListener('click', async () => {
       }
     }
     if (current === key || current === chatId) {
-      $('text').value = ''; drafts[current] = ''; photos = []; renderThumbs(); grow();
+      $('text').value = ''; drafts[current] = ''; photos = []; picked = []; draftPicked[current] = []; menuClose(); renderThumbs(); grow();
       lastChat = ''; setTimeout(() => { $('chatScroll').scrollTop = 1e9; }, 60);
     }
   } catch (e) { alert(S.failed + ': ' + e.message); }

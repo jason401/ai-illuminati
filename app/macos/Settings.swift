@@ -1602,6 +1602,7 @@ private struct MCPSettings: View {
     @ObservedObject var external = ExternalMCP.shared
     @ObservedObject var draft = MCPServerDraft.shared
     @ObservedObject var tools = MCPToolsChoice.shared
+    @ObservedObject var drive = GoogleDrive.shared
 
     private var importable: [MCPServerEntry] { ExternalMCP.claudeDesktopServers(existing: external.servers) }
 
@@ -1629,6 +1630,16 @@ private struct MCPSettings: View {
                      help: L("AI Face 설정 → AI에서 AI Illuminati를 연결하면 여기에 보여요.",
                              "Connect AI Illuminati in AI Face (Settings → AI) and it shows here."))
             }
+            Divider()
+            // Google Drive is the app's own (GoogleDrive.swift), though saved like an added server: connected from
+            // Shared folders' + menu, then listed here with the same controls.
+            if let server = external.servers.first(where: { $0.name == GoogleDrive.server }) {
+                row(server)
+            } else {
+                note(GoogleDrive.server, drive.signingIn ? L("Google 로그인 중…", "Signing in to Google…") : L("연결 안 함", "Not connected"),
+                     help: L("Google Drive: 사이드바 공동 폴더 + → Google Drive…로 연결하면 여기에 보여요.",
+                             "Google Drive: connect it from Shared folders + → Google Drive… in the sidebar and it shows here."))
+            }
         }
         SettingsCard(title: L("직접 추가한 서버", "Added by you"),
                      help: L("명령 서버는 이 Mac에서 내 권한으로 실행되고, URL 서버는 앱이 이 Mac에서 직접 연결해요(VPN·학교 내부 서버도 돼요). 켜 둔 서버의 도구는 일반 채팅과 프로젝트 작업의 AI가 쓸 수 있어요(엔터프라이즈 채팅은 빼고). URL 서버의 쓰기 도구는 기본으로 쓸 때마다 물어봐요.",
@@ -1639,9 +1650,8 @@ private struct MCPSettings: View {
                 SettingsRow(title: "mcp-servers.json") { Text(error).foregroundStyle(.orange).lineLimit(3) }
                 Divider()
             }
-            ForEach(external.servers) { server in
-                MCPServerRow(server: server, status: external.status[server.name], accounts: model.accounts.filter { $0.provider != .ollama }, edit: { draft.open(server) },
-                             enterKey: { draft.open(server, askKey: true) }, showTools: { tools.server = server.name })
+            ForEach(external.servers.filter { $0.name != GoogleDrive.server }) { server in
+                row(server)
                 Divider()
             }
             HStack(spacing: 8) {
@@ -1653,7 +1663,7 @@ private struct MCPSettings: View {
                     .help(L("Claude 데스크톱에 등록한 서버를 꺼진 채로 가져와요. 하나씩 보고 켜세요.",
                             "Adds the servers set up in Claude desktop, switched off. Look at each one, then turn it on."))
                 }
-                Spacer()
+                Spacer(minLength: 0)
             }
             .disabled(external.loadError != nil)
             .padding(.horizontal, 10).padding(.vertical, 6)
@@ -1663,6 +1673,11 @@ private struct MCPSettings: View {
             MCPToolsSheet(server: tools.server ?? "", external: external, done: { tools.server = nil })
         }
         .onAppear { link.refresh(); external.refresh() }
+    }
+
+    private func row(_ server: MCPServerEntry) -> some View {
+        MCPServerRow(server: server, status: external.status[server.name], accounts: model.accounts.filter { $0.provider != .ollama }, edit: { draft.open(server) },
+                     enterKey: { draft.open(server, askKey: true) }, showTools: { tools.server = server.name })
     }
 
     // A server that is not set up: one short line, with how to add it on hover.
@@ -1682,48 +1697,85 @@ private struct MCPServerRow: View {
     let enterKey: () -> Void
     let showTools: () -> Void
 
+    // Google Drive's row (GoogleDrive.swift): its own sign-in sheet, the pencil in the menu, and removing it revokes the login.
+    private var isDrive: Bool { server.name == GoogleDrive.server }
+
     private var label: (String, Color) {
-        if status?.signingIn == true { return (L("브라우저에서 로그인 중…", "Signing in in the browser…"), .secondary) }
+        if status?.signingIn == true {
+            return (isDrive ? L("Google 로그인 중…", "Signing in to Google…") : L("브라우저에서 로그인 중…", "Signing in in the browser…"), .secondary)
+        }
         switch status?.state {
         case .off: return (L("꺼짐", "Off"), .secondary)
         case .connected:
             let count = status?.tools.count ?? 0, changed = status?.changed.count ?? 0
-            return (L("연결됨 · 도구 \(count)개", "Connected · \(count) tools") + (changed > 0 ? L(" · 바뀐 도구 \(changed)개", " · \(changed) changed") : ""),
+            let access = isDrive ? (GoogleDrive.isWritable(status) ? L(" · 쓰기 허용", " · writable") : L(" · 읽기만", " · read only")) : ""
+            return (L("연결됨 · 도구 \(count)개", "Connected · \(count) tools") + access + (changed > 0 ? L(" · 바뀐 도구 \(changed)개", " · \(changed) changed") : ""),
                     changed > 0 ? .orange : .green)
         case .needsLogin: return (status?.oauth == true ? L("로그인 필요", "Sign-in needed") : L("API 키 필요", "API key needed"), .orange)
-        case .failed: return (L("연결 안 됨", "Not connected"), .orange)
+        // The reason on the row itself (its first line; the whole one on hover).
+        case .failed: return (L("연결 안 됨", "Not connected") + (status?.message?.split(separator: "\n").first.map { " · " + $0 } ?? ""), .orange)
         default: return (L("연결 중…", "Connecting…"), .secondary)
         }
     }
 
+    // Two lines, so the state is never squeezed out by the controls: the name and its controls, then the state and
+    // which AIs use it.
     var body: some View {
-        SettingsRow(title: server.name) {
-            Text(label.0).foregroundStyle(label.1).lineLimit(1)
-            Spacer()
-            if status?.state == .needsLogin, status?.signingIn != true {
-                if status?.oauth == true { Button(L("로그인", "Sign In")) { ExternalMCP.shared.signIn(server.name) } }
-                else { Button(L("키 입력…", "Enter Key…"), action: enterKey) }
-            }
-            usedBy
-            Toggle(server.name, isOn: Binding(get: { ExternalMCP.isOn(server.name) && status?.state != .off },
-                                              set: { ExternalMCP.shared.setOn(server.name, $0) }))
-                .labelsHidden().toggleStyle(.switch)
-            Menu {
-                Button(L("편집…", "Edit…"), action: edit)
-                Button(L("도구…", "Tools…"), action: showTools).disabled(status?.state != .connected)
-                Button(L("다시 연결", "Reconnect")) { ExternalMCP.shared.reconnect(server.name) }
-                    .disabled(status?.state == .off)
-                if server.isRemote {
-                    if status?.signedIn == true { Button(L("로그아웃", "Sign Out")) { ExternalMCP.shared.signOut(server.name) } }
-                    else { Button(L("브라우저로 로그인", "Sign In in Browser")) { ExternalMCP.shared.signIn(server.name) }.disabled(status?.signingIn == true) }
+        let label = self.label
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Text(server.name).fontWeight(.medium).lineLimit(1)
+                if isDrive, let account = GoogleDrive.shared.account {
+                    Text(account).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                } else if isDrive {
+                    Text("Google Drive").foregroundStyle(.secondary).lineLimit(1)
                 }
-                Divider()
-                Button(L("삭제…", "Delete…")) { delete() }
-            } label: { Image(systemName: "ellipsis.circle") }
-                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                Spacer(minLength: 4)
+                if status?.state == .needsLogin, status?.signingIn != true {
+                    if status?.oauth == true { Button(L("로그인", "Sign In"), action: signIn) }
+                    else { Button(L("키 입력…", "Enter Key…"), action: enterKey) }
+                }
+                Toggle(server.name, isOn: Binding(get: { ExternalMCP.isOn(server.name) && status?.state != .off },
+                                                  set: { ExternalMCP.shared.setOn(server.name, $0) }))
+                    .labelsHidden().toggleStyle(.switch)
+                menu
+            }
+            HStack(spacing: 5) {
+                Circle().fill(label.1).frame(width: 6, height: 6)
+                Text(label.0).foregroundStyle(label.1).lineLimit(1).truncationMode(.tail)
+                Spacer(minLength: 4)
+                usedBy
+            }
+            .font(.system(size: 11))
         }
+        .padding(.horizontal, 10).padding(.vertical, 6)
         .help(details)
     }
+
+    private var menu: some View {
+        Menu {
+            // Drive's address and name belong to the app: nothing to edit, the pencil instead.
+            if isDrive {
+                let writable = GoogleDrive.isWritable(status)
+                Button(writable ? L("읽기만으로", "Make Read Only") : L("쓰기 허용", "Allow Changes")) { GoogleDrive.shared.setWritable(!writable) }
+            } else {
+                Button(L("편집…", "Edit…"), action: edit)
+            }
+            Button(L("도구…", "Tools…"), action: showTools).disabled(status?.state != .connected)
+            Button(L("다시 연결", "Reconnect")) { ExternalMCP.shared.reconnect(server.name) }
+                .disabled(status?.state == .off)
+            if server.isRemote {
+                if status?.signedIn == true { Button(L("로그아웃", "Sign Out")) { ExternalMCP.shared.signOut(server.name) } }
+                if isDrive { Button(L("다시 로그인", "Sign In Again"), action: signIn).disabled(status?.signingIn == true || GoogleDrive.shared.signingIn) }
+                else if status?.signedIn != true { Button(L("브라우저로 로그인", "Sign In in Browser"), action: signIn).disabled(status?.signingIn == true) }
+            }
+            Divider()
+            Button(isDrive ? L("연결 끊기…", "Disconnect…") : L("삭제…", "Delete…")) { delete() }
+        } label: { Image(systemName: "ellipsis.circle") }
+            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+    }
+
+    private func signIn() { if isDrive { GoogleDrive.shared.connect() } else { ExternalMCP.shared.signIn(server.name) } }
 
     // Which AIs see this server's tools (all by default); the switch still turns it off for every AI.
     private var usedBy: some View {
@@ -1753,6 +1805,15 @@ private struct MCPServerRow: View {
 
     private func delete() {
         let alert = NSAlert()
+        if isDrive {   // the same as Shared folders' Disconnect: removed here and revoked at Google
+            alert.messageText = L("Google Drive 연결을 끊을까요?", "Disconnect Google Drive?")
+            alert.informativeText = L("AI가 더는 Drive를 못 써요. 이 Mac의 로그인을 지우고 Google에서도 연결을 취소해요. Drive의 파일은 그대로예요.",
+                                      "The AIs can no longer use Drive. The login is deleted from this Mac and revoked at Google. Your Drive files stay as they are.")
+            alert.addButton(withTitle: L("연결 끊기", "Disconnect"))
+            alert.addButton(withTitle: L("취소", "Cancel"))
+            if alert.runModal() == .alertFirstButtonReturn { GoogleDrive.shared.disconnect() }
+            return
+        }
         alert.messageText = L("‘\(server.name)’ 서버를 삭제할까요?", "Delete the server “\(server.name)”?")
         alert.informativeText = server.isRemote ? L("이 Mac에 저장된 키와 로그인 정보도 지워요.", "Its key and sign-in saved on this Mac are removed too.")
             : L("앱 목록에서만 빠져요. 서버 프로그램은 그대로예요.", "It is only removed from the app's list. The server program stays.")

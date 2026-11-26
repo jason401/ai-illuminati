@@ -414,9 +414,9 @@ func testSubRoomScreens() {
     SplitStore.shared.update(main.id) { $0 = [Split(id: "scr", room: main.id, repo: repo, common: binding.common, auto: false, parts: [part, two])] }
     spin(2) { chat.splitRecords[main.id]?.first?.parts.count == 2 }
     expect(chat.splitBadge(main.id, requests: []) == .working(1), "a split with one sub-room answering shows \"1 working\": \(String(describing: chat.splitBadge(main.id, requests: [])))")
-    expect(chat.subRoomsShown(main.id) && chat.subRooms(of: main.id).map(\.id) == [sub.id], "an open split's sub-rooms show under the main room")
-    chat.toggleSubRooms(main.id)
-    expect(!chat.subRoomsShown(main.id), "the user folds them"); chat.toggleSubRooms(main.id)
+    expect(chat.childrenShown(main.id) && chat.subRooms(of: main.id).map(\.id) == [sub.id], "an open split's sub-rooms show under the main room")
+    chat.toggleChildren(main.id)
+    expect(!chat.childrenShown(main.id), "the user folds them"); chat.toggleChildren(main.id)
 
     let run = ProjectRun(room: sub.id, binding: binding, token: DebateCancellation())
     run.isSubRoom = true
@@ -460,9 +460,9 @@ func testSubRoomScreens() {
     expect(chat.splitBadge(main.id, requests: []) == .done && chat.splitRecords[main.id]?.first?.parts.allSatisfy(\.mergeable) == true, "every part reported: done, ready to merge 2/2")
     SplitStore.shared.change(main.id, "scr") { $0.closed = true }
     spin(2) { chat.openSplits(main.id).isEmpty }
-    expect(chat.subRoomsShown(main.id), "unfolded by the user, they stay")
-    chat.subRoomsOpen.remove(main.id)
-    expect(!chat.subRoomsShown(main.id), "an ended split folds into one row")
+    expect(chat.childrenShown(main.id), "unfolded by the user, they stay")
+    chat.childrenOpen.remove(main.id)
+    expect(!chat.childrenShown(main.id), "an ended split folds into the chat row's chip")
 
     try? fm.removeItem(at: SplitStore.folder.appendingPathComponent(main.id.uuidString + ".json"))
     try? fm.removeItem(at: base)

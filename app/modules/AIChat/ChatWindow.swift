@@ -723,72 +723,53 @@ struct ChatView<Model: ChatSettings>: View {
         if folds.isFolded("project." + group.id) { folds.toggle("project." + group.id) }
     }
 
-    // A chat and, under it, the meetings held for it (Meeting.swift): the newest 5 until "show all".
-    // depth 1: inside a project folder. todo: the state of the TODO this chat works on.
-    // Sub-rooms (SubRoomViews.swift) come first, indented, folding on their own; ended ones fold into one row.
+    // A chat and, under it, the rooms attached to it, folded together behind one chip on its row (childrenShown,
+    // Meeting.swift): sub-rooms by part, then meetings (the newest 5 until "show all"), then subagent records (working
+    // ones first, the newest 8). depth 1: inside a project folder. todo: the state of the TODO this chat works on.
     private func chatGroup(_ conversation: Conversation, depth: Int = 0, todo: TodoItem.State? = nil, pieceNumber: Int? = nil) -> some View {
         chatGroup(conversation, depth: depth, todo: todo, pieceNumber: pieceNumber) { EmptyView() }
     }
 
     @ViewBuilder private func chatGroup<Below: View>(_ conversation: Conversation, depth: Int, todo: TodoItem.State?, pieceNumber: Int?,
                                                      @ViewBuilder below: () -> Below) -> some View {
-        let meetings = discussion.meetings(of: conversation.id).filter { $0.subOf == nil && $0.agentOf == nil }
-        let agents = discussion.agentRooms(of: conversation.id)
-        let shown = !meetings.isEmpty && discussion.meetingsShown(conversation.id, meetings)
+        let attached = discussion.meetings(of: conversation.id)
         let subs = discussion.subRooms(of: conversation.id)
-        chatRow(conversation, meetings: meetings.count, shown: shown, depth: depth, todo: todo, pieceNumber: pieceNumber)
+        let meetings = attached.filter { $0.subOf == nil && $0.agentOf == nil }
+        let agents = attached.filter { $0.agentOf != nil }.map { ($0, discussion.agentRunning($0)) }
+            .sorted { $0.1 != $1.1 ? $0.1 : $0.0.createdAt > $1.0.createdAt }.map(\.0)
+        let children = ChatChildren(subs: subs.count, meetings: meetings.count, agents: agents.count,
+                                    working: attached.filter { discussion.childWorking($0) }.count)
+        let shown = children.total > 0 && discussion.childrenShown(conversation.id)
+        chatRow(conversation, children: children, shown: shown, depth: depth, todo: todo, pieceNumber: pieceNumber)
         below()
-        if !subs.isEmpty {
-            SubRoomsFoldedRow(main: conversation.id, count: subs.count, discussion: discussion, depth: depth)
-            if discussion.subRoomsShown(conversation.id) {
-                ForEach(subs) { SubRoomRow(room: $0, discussion: discussion, depth: depth) }
-            }
-        }
-        if !agents.isEmpty {
-            AgentRoomsFoldedRow(main: conversation.id, records: agents, discussion: discussion, depth: depth)
-            if discussion.agentsShown(conversation.id, agents) {
-                // The open one stays listed even when it is older than the newest 8.
-                ForEach(agents.enumerated().filter { $0.offset < 8 || $0.element.id == discussion.currentID }.map(\.element)) {
-                    AgentRoomRow(room: $0, discussion: discussion, depth: depth)
-                }
-            }
-        }
         if shown {
+            ForEach(subs) { SubRoomRow(room: $0, discussion: discussion, depth: depth) }
             let all = discussion.meetingsAll.contains(conversation.id)
-            // The open meeting stays listed even when it is older than the newest 5.
+            // The open meeting or record stays listed even when it is older than the newest 5 or 8.
             let listed = all ? meetings : meetings.enumerated().filter { $0.offset < 5 || $0.element.id == discussion.currentID }.map(\.element)
             ForEach(listed) { meetingRow($0, depth: depth) }
             if meetings.count > 5 && !all {
-                Button(L("전체 보기 (\(meetings.count))", "Show all (\(meetings.count))")) { discussion.meetingsAll.insert(conversation.id) }
-                    .buttonStyle(.link).font(.system(size: 11)).padding(.leading, 34 + CGFloat(depth) * 12).frame(height: 22)
+                Button(L("회의 전체 보기 (\(meetings.count))", "Show all meetings (\(meetings.count))")) { discussion.meetingsAll.insert(conversation.id) }
+                    .buttonStyle(.link).font(.system(size: 11)).padding(.leading, 47 + CGFloat(depth) * 12).frame(height: 22)
+            }
+            ForEach(agents.enumerated().filter { $0.offset < 8 || $0.element.id == discussion.currentID }.map(\.element)) {
+                AgentRoomRow(room: $0, discussion: discussion, depth: depth)
             }
         }
     }
 
-    // A meeting held for the chat above: its topic and when (its chat is read only).
+    // A meeting held for the chat above: its topic and when, or a spinner while it is held (its chat is read only).
     private func meetingRow(_ meeting: Conversation, depth: Int = 0) -> some View {
-        let selected = meeting.id == discussion.currentID && discussion.viewingRemote == nil && discussion.viewingSpace == nil
-        let key = "meeting." + meeting.id.uuidString
-        let hovered = discussion.hoverKey == key
-        return HStack(spacing: 5) {
-            Image(systemName: "person.3").font(.system(size: 9)).foregroundColor(.secondary).frame(width: 18)
-            Text(meeting.turns.first?.question ?? meeting.title).lineLimit(1).truncationMode(.tail)
-                .frame(maxWidth: .infinity, alignment: .leading)
+        ChildRoomRow(room: meeting, title: meeting.turns.first?.question ?? meeting.title, help: meeting.title,
+                     key: "meeting." + meeting.id.uuidString, discussion: discussion, depth: depth) {
+            Image(systemName: "person.3").font(.system(size: 9)).foregroundColor(.secondary)
+        } trailing: {
             if discussion.meetingRunning(meeting) {
                 ProgressView().controlSize(.mini).help(L("회의 중", "Meeting"))
             } else {
-                Text(dateText(meeting.createdAt)).font(.system(size: 10)).foregroundColor(.secondary)
+                Text(dateText(meeting.createdAt))
             }
         }
-        .font(.system(size: 12))
-        .padding(.leading, 24 + CGFloat(depth) * 12).padding(.trailing, 10).frame(height: 26)
-        .background(selected ? Color.primary.opacity(0.10) : hovered ? Color.primary.opacity(0.05) : .clear,
-                    in: RoundedRectangle(cornerRadius: 8))
-        .contentShape(Rectangle())
-        .onTapGesture { discussion.open(meeting.id) }
-        .onHover { inside in discussion.hover(key, inside) }
-        .help(meeting.title)
-        .disabled(discussion.importingMaterials)
     }
 
     // Which kind of AI is answering in a chat now, from its newest message: the one writing, the ones called
@@ -803,7 +784,7 @@ struct ChatView<Model: ChatSettings>: View {
         return Account.Provider.of(speaker: turn.status) ?? turn.entries.last.flatMap { Account.Provider.of(speaker: $0.speaker) }
     }
 
-    private func chatRow(_ conversation: Conversation, meetings: Int = 0, shown: Bool = false, depth: Int = 0, todo: TodoItem.State? = nil,
+    private func chatRow(_ conversation: Conversation, children: ChatChildren = ChatChildren(), shown: Bool = false, depth: Int = 0, todo: TodoItem.State? = nil,
                          pieceNumber: Int? = nil) -> some View {
         let selected = conversation.id == discussion.currentID && discussion.viewingRemote == nil && !discussion.viewingBoard && discussion.viewingSpace == nil
         let hovered = discussion.hoverKey == conversation.id.uuidString
@@ -841,16 +822,19 @@ struct ChatView<Model: ChatSettings>: View {
                 Circle().fill(Color.orange).frame(width: 7, height: 7)
                     .help(L("허가를 기다려요", "Waiting for approval"))
             }
-            if meetings > 0 {
-                Button(action: { discussion.toggleMeetings(conversation.id) }) {
+            // One chip for everything under the chat: how many, blue while one of them works, each kind in the tooltip.
+            if children.total > 0 {
+                Button(action: { discussion.toggleChildren(conversation.id) }) {
                     HStack(spacing: 2) {
                         Image(systemName: shown ? "chevron.down" : "chevron.right").font(.system(size: 8, weight: .semibold))
-                        Text("\(meetings)").font(.system(size: 10))
+                        Text("\(children.total)").font(.system(size: 10))
                     }
                     .padding(.horizontal, 6).frame(minWidth: 30, minHeight: 24).contentShape(Rectangle())
                 }
-                .buttonStyle(.plainHit).foregroundColor(.secondary)
-                .help(shown ? L("회의 접기 (줄을 두 번 눌러도 돼요)", "Hide meetings (or double-click the row)") : L("회의 \(meetings)개 보기 (줄을 두 번 눌러도 돼요)", "Show \(meetings) meetings (or double-click the row)"))
+                .buttonStyle(.plainHit).foregroundColor(children.working > 0 ? RunningRing.titleColor : .secondary)
+                .help(children.summary + "\n" + (shown ? L("접기 (줄을 두 번 눌러도 돼요)", "Fold (or double-click the row)")
+                                                       : L("펼치기 (줄을 두 번 눌러도 돼요)", "Unfold (or double-click the row)")))
+                .accessibilityLabel(children.summary)
             }
             if conversation.hasContent && (hovered || selected) {
                 Menu { chatMenu(conversation) } label: { Image(systemName: "ellipsis").frame(width: 18, height: 18) }
@@ -863,8 +847,8 @@ struct ChatView<Model: ChatSettings>: View {
         .background(selected ? Color.primary.opacity(0.10) : hovered ? Color.primary.opacity(0.05) : .clear,
                     in: RoundedRectangle(cornerRadius: 8))
         .contentShape(Rectangle())
-        // Double-click folds or unfolds its meetings. The single click runs alongside, so opening is not delayed.
-        .onTapGesture(count: 2) { if meetings > 0 { discussion.toggleMeetings(conversation.id) } }
+        // Double-click folds or unfolds the rooms under it. The single click runs alongside, so opening is not delayed.
+        .onTapGesture(count: 2) { if children.total > 0 { discussion.toggleChildren(conversation.id) } }
         .simultaneousGesture(TapGesture().onEnded { discussion.open(conversation.id) })
         .onHover { inside in discussion.hover(conversation.id.uuidString, inside) }
         .help(dateText(conversation.updatedAt))
@@ -3561,6 +3545,51 @@ extension Account.Provider {
 
     // Speaker labels start with the AI's name (for example, "Claude (Work)"), so older replies get a color too.
     static func of(speaker: String) -> Self? { allCases.first { speaker.hasPrefix($0.title) } }
+}
+
+// What hangs under a chat in the sidebar, for its fold chip: "하위방 2 · 회의 1 · 에이전트 14 (1개 작업 중)".
+struct ChatChildren {
+    var subs = 0, meetings = 0, agents = 0, working = 0
+    var total: Int { subs + meetings + agents }
+    var summary: String {
+        let kinds = [(subs, L("하위방", "Sub-rooms")), (meetings, L("회의", "Meetings")), (agents, L("에이전트", "Agents"))]
+            .filter { $0.0 > 0 }.map { "\($0.1) \($0.0)" }.joined(separator: " · ")
+        return kinds + (working > 0 ? L(" (\(working)개 작업 중)", " (\(working) working)") : "")
+    }
+}
+
+// One line under a chat (a sub-room, meeting or subagent record): its kind's mark, its title, a short state on the right
+// (the whole one in the tooltip), and a thin guide line on the left tying it to the chat above.
+struct ChildRoomRow<Mark: View, Trailing: View>: View {
+    let room: Conversation
+    let title: String
+    let help: String
+    let key: String
+    @ObservedObject var discussion: Discussion
+    var depth = 0
+    @ViewBuilder var mark: () -> Mark
+    @ViewBuilder var trailing: () -> Trailing
+    var body: some View {
+        let selected = room.id == discussion.currentID && discussion.viewingRemote == nil && !discussion.viewingBoard && discussion.viewingSpace == nil
+        HStack(spacing: 5) {
+            mark().frame(width: 18)
+            Text(title).lineLimit(1).truncationMode(.tail).frame(maxWidth: .infinity, alignment: .leading)
+            trailing().font(.system(size: 10)).foregroundColor(.secondary).lineLimit(1).fixedSize()
+        }
+        .font(.system(size: 12))
+        .padding(.leading, 24 + CGFloat(depth) * 12).padding(.trailing, 10).frame(height: 26)
+        .background(selected ? Color.primary.opacity(0.10) : discussion.hoverKey == key ? Color.primary.opacity(0.05) : .clear,
+                    in: RoundedRectangle(cornerRadius: 8))
+        // Under the chat row's leading mark; 1 pt longer each way so it runs on across the list's 1 pt gaps.
+        .overlay(alignment: .leading) {
+            Rectangle().fill(Color.primary.opacity(0.15)).frame(width: 1).padding(.vertical, -1).padding(.leading, 17 + CGFloat(depth) * 12)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { discussion.open(room.id) }
+        .onHover { inside in discussion.hover(key, inside) }
+        .help(help)
+        .disabled(discussion.importingMaterials)
+    }
 }
 
 // The sidebar's "answering" mark: a small ring turning in the answering AI's color (gray when not known or

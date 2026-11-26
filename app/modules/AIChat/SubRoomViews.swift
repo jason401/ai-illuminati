@@ -74,17 +74,7 @@ extension Discussion {
         if split.parts.allSatisfy({ [.reported, .merged].contains($0.state) }), !split.closed || now.timeIntervalSince(split.created) < 86_400 { return .done }
         return nil
     }
-    // Sub-rooms under the main room: shown while a split is open or one of them is the open chat, until the user folds
-    // them (the same rule as meetings: meetingsShown/toggleMeetings). Ended splits fold into one row.
-    func subRoomsShown(_ main: UUID) -> Bool {
-        if subRoomsOpen.contains(main) { return true }
-        if subRoomsClosed.contains(main) { return false }
-        return !openSplits(main).isEmpty || conversations.contains { $0.id == currentID && $0.subOf?.room == main }
-    }
-    func toggleSubRooms(_ main: UUID) {
-        if subRoomsShown(main) { subRoomsOpen.remove(main); subRoomsClosed.insert(main) }
-        else { subRoomsClosed.remove(main); subRoomsOpen.insert(main) }
-    }
+    // The sub-rooms under the main room, in the order they were made (their fold: childrenShown, Meeting.swift).
     func subRooms(of main: UUID) -> [Conversation] {
         conversations.filter { $0.subOf?.room == main }.sorted { ($0.createdAt, $0.subOf?.n ?? 0) < ($1.createdAt, $1.subOf?.n ?? 0) }
     }
@@ -388,7 +378,8 @@ struct SplitBadgeView: View {
     }
 }
 
-// A sub-room under its main room: "↳ part n · title" and "AI · running m min / reported / blocked / failed".
+// A sub-room under its main room: "part n · goal", and on the right its AI in blue while it works, else its state
+// (both in the tooltip). Short, so the goal keeps the narrow sidebar's room.
 struct SubRoomRow: View {
     let room: Conversation
     @ObservedObject var discussion: Discussion
@@ -396,51 +387,21 @@ struct SubRoomRow: View {
     var body: some View {
         let link = room.subOf
         let part = link.flatMap { discussion.part($0) }
-        let selected = room.id == discussion.currentID && discussion.viewingRemote == nil && !discussion.viewingBoard && discussion.viewingSpace == nil
-        let key = "sub." + room.id.uuidString
+        let working = discussion.childWorking(room)
         TimelineView(.periodic(from: Date(), by: 30)) { context in
-            HStack(spacing: 5) {
-                Circle().fill(part?.color ?? .secondary).frame(width: 6, height: 6).frame(width: 18)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("↳ " + L("작업 \(link?.n ?? 0) · ", "Part \(link?.n ?? 0) · ") + (part?.goal ?? room.title)).lineLimit(1).truncationMode(.tail)
-                    Text([part?.name, part?.stateText(context.date)].compactMap { $0 }.joined(separator: " · "))
-                        .font(.system(size: 10)).foregroundColor(.secondary).lineLimit(1)
+            ChildRoomRow(room: room, title: L("작업 \(link?.n ?? 0) · ", "Part \(link?.n ?? 0) · ") + (part?.goal ?? room.title),
+                         help: [room.title, part?.name, part?.stateText(context.date)].compactMap { $0 }.joined(separator: " · "),
+                         key: "sub." + room.id.uuidString, discussion: discussion, depth: depth) {
+                Circle().fill(part?.color ?? .secondary).frame(width: 6, height: 6)
+            } trailing: {
+                // The AI's name without its account ("Claude (School)" → "Claude").
+                if working, let name = part?.name {
+                    Text(name.components(separatedBy: " (")[0]).foregroundColor(RunningRing.titleColor)
+                } else if let part {
+                    Text(part.stateText(context.date))
+                        .foregroundColor([.failed, .conflict].contains(part.state) ? .red : part.state == .blocked ? .orange : .secondary)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .font(.system(size: 12))
-        .padding(.leading, 24 + CGFloat(depth) * 12).padding(.trailing, 10).frame(height: 36)
-        .background(selected ? Color.primary.opacity(0.10) : discussion.hoverKey == key ? Color.primary.opacity(0.05) : .clear,
-                    in: RoundedRectangle(cornerRadius: 8))
-        .contentShape(Rectangle())
-        .onTapGesture { discussion.open(room.id) }
-        .onHover { inside in discussion.hover(key, inside) }
-        .help(room.title)
-        .disabled(discussion.importingMaterials)
-    }
-}
-
-// The sub-rooms' fold row, above them: unfolds them ("2 sub-rooms · ended (click for the record)") or folds them again.
-struct SubRoomsFoldedRow: View {
-    let main: UUID
-    let count: Int
-    @ObservedObject var discussion: Discussion
-    var depth = 0
-    var body: some View {
-        let ended = discussion.openSplits(main).isEmpty, shown = discussion.subRoomsShown(main)
-        Button(action: { discussion.toggleSubRooms(main) }) {
-            HStack(spacing: 5) {
-                Image(systemName: shown ? "chevron.down" : "chevron.right").font(.system(size: 8, weight: .semibold)).frame(width: 18)
-                Text(shown ? L("하위방 \(count)개 · 접기", "\(count) sub-rooms · fold")
-                     : ended ? L("하위방 \(count)개 · 끝남 (눌러서 기록 보기)", "\(count) sub-rooms · ended (click for the record)")
-                     : L("하위방 \(count)개 · 접힘 (눌러서 보기)", "\(count) sub-rooms · folded (click to show)"))
-                    .lineLimit(1).truncationMode(.tail)
-                Spacer(minLength: 0)
-            }
-            .font(.system(size: 11)).foregroundColor(.secondary)
-            .padding(.leading, 24 + CGFloat(depth) * 12).padding(.trailing, 10).frame(minHeight: 24).contentShape(Rectangle())
-        }
-        .buttonStyle(.plainHit)
     }
 }

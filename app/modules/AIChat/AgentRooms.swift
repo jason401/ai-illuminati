@@ -89,45 +89,9 @@ extension Discussion {
     func agentRooms(of id: UUID) -> [Conversation] {
         conversations.filter { $0.agentOf?.room == id }.sorted { $0.createdAt > $1.createdAt }
     }
-
-    // Shown while one of them runs or is the open chat, until the user folds them; folded otherwise.
-    func agentsShown(_ id: UUID, _ records: [Conversation]) -> Bool {
-        if agentsOpen.contains(id) { return true }
-        if agentsClosed.contains(id) { return false }
-        return records.contains { $0.id == currentID || agentRunning($0) }
-    }
-
-    func toggleAgents(_ id: UUID) {
-        if agentsShown(id, agentRooms(of: id)) { agentsOpen.remove(id); agentsClosed.insert(id) }
-        else { agentsClosed.remove(id); agentsOpen.insert(id) }
-    }
 }
 
-// The fold row above a chat's subagent records: "에이전트 3개 · 접기" or "· 접힘 (눌러서 보기)".
-struct AgentRoomsFoldedRow: View {
-    let main: UUID
-    let records: [Conversation]
-    @ObservedObject var discussion: Discussion
-    var depth = 0
-    var body: some View {
-        let shown = discussion.agentsShown(main, records), working = records.filter { discussion.agentRunning($0) }.count
-        Button(action: { discussion.toggleAgents(main) }) {
-            HStack(spacing: 5) {
-                Image(systemName: shown ? "chevron.down" : "chevron.right").font(.system(size: 8, weight: .semibold)).frame(width: 18)
-                Text((working > 0 ? L("에이전트 \(records.count)개 · \(working)개 작업 중", "\(records.count) agents · \(working) working")
-                                  : L("에이전트 \(records.count)개", "\(records.count) agents"))
-                     + (shown ? L(" · 접기", " · fold") : L(" · 접힘 (눌러서 보기)", " · folded (click to show)")))
-                    .lineLimit(1).truncationMode(.tail)
-                Spacer(minLength: 0)
-            }
-            .font(.system(size: 11)).foregroundColor(.secondary)
-            .padding(.leading, 24 + CGFloat(depth) * 12).padding(.trailing, 10).frame(minHeight: 24).contentShape(Rectangle())
-        }
-        .buttonStyle(.plainHit)
-    }
-}
-
-// A subagent record under its chat: "↳ 에이전트 · description" and "running m min · Bash · …" / "done" / "failed".
+// A subagent record under its chat: "type · description", and on the right a spinner with its minutes, ✓ or ✗ (red).
 struct AgentRoomRow: View {
     let room: Conversation
     @ObservedObject var discussion: Discussion
@@ -135,33 +99,27 @@ struct AgentRoomRow: View {
     var body: some View {
         let link = room.agentOf
         let running = discussion.agentRunning(room)
-        let selected = room.id == discussion.currentID && discussion.viewingRemote == nil && !discussion.viewingBoard && discussion.viewingSpace == nil
-        let key = "agent." + room.id.uuidString
         TimelineView(.periodic(from: Date(), by: 30)) { context in
-            HStack(spacing: 5) {
-                Group {
-                    if running { ProgressView().controlSize(.mini) }
-                    else { Image(systemName: link?.failed == true ? "xmark.circle" : "checkmark.circle").font(.system(size: 9))
-                        .foregroundColor(link?.failed == true ? .red : .secondary) }
+            ChildRoomRow(room: room, title: [link?.type, link?.description ?? room.title].compactMap { $0 }.joined(separator: " · "),
+                         help: room.title + "\n" + Self.state(room, running: running, now: context.date),
+                         key: "agent." + room.id.uuidString, discussion: discussion, depth: depth) {
+                Image(systemName: "cpu").font(.system(size: 9)).foregroundColor(.secondary)
+            } trailing: {
+                if running {
+                    HStack(spacing: 3) {
+                        ProgressView().controlSize(.mini)
+                        Text(L("\(max(0, Int(context.date.timeIntervalSince(room.createdAt) / 60)))분", "\(max(0, Int(context.date.timeIntervalSince(room.createdAt) / 60))) min"))
+                    }
+                    .foregroundColor(RunningRing.titleColor)
+                } else if link?.failed == true {
+                    Image(systemName: "xmark").font(.system(size: 9, weight: .semibold)).foregroundColor(.red)
+                } else if link?.endedAt == nil {
+                    Image(systemName: "stop.circle").font(.system(size: 9))
+                } else {
+                    Image(systemName: "checkmark").font(.system(size: 9, weight: .semibold))
                 }
-                .frame(width: 18)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("↳ " + L("에이전트 · ", "Agent · ") + (link?.description ?? room.title)).lineLimit(1).truncationMode(.tail)
-                    Text(Self.state(room, running: running, now: context.date))
-                        .font(.system(size: 10)).foregroundColor(.secondary).lineLimit(1)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .font(.system(size: 12))
-        .padding(.leading, 24 + CGFloat(depth) * 12).padding(.trailing, 10).frame(height: 36)
-        .background(selected ? Color.primary.opacity(0.10) : discussion.hoverKey == key ? Color.primary.opacity(0.05) : .clear,
-                    in: RoundedRectangle(cornerRadius: 8))
-        .contentShape(Rectangle())
-        .onTapGesture { discussion.open(room.id) }
-        .onHover { inside in discussion.hover(key, inside) }
-        .help(room.title)
-        .disabled(discussion.importingMaterials)
     }
 
     static func state(_ room: Conversation, running: Bool, now: Date) -> String {

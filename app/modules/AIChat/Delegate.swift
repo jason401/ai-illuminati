@@ -195,7 +195,7 @@ extension Discussion {
         room.configuration = config
         conversations.append(room)
         ChatStore.save(room)
-        meetingsClosed.remove(split.room)
+        childrenClosed.remove(split.room)
     }
 
     // A sub-room's turn, or a place in line for one (main thread). Sub-rooms keep the places they were approved with:

@@ -210,7 +210,23 @@ import AIProjects
             }
             var other = Conversation(); other.title = "Face expressions"; other.turns = [ChatTurn(question: "faces")]
             other.workspace = main.workspace
-            chat.conversations = [main] + subs + [other]; chat.currentID = main.id
+            // With the sub-rooms, a meeting and three subagent records (one working, one done, one failed) under the same chip.
+            var attached: [Conversation] = []
+            if ["running", "done"].contains(state) {
+                var meeting = Conversation(); meeting.title = "Meeting"; meeting.turns = [ChatTurn(question: "When to switch Drive over?")]
+                meeting.meetingOf = MeetingLink(room: main.id, turn: ask.id); meeting.createdAt = Date().addingTimeInterval(-40 * 60)
+                attached.append(meeting)
+                for (i, agent) in [("Explore", "Find the sidebar rows", true, false), ("general-purpose", "Check the API", false, false),
+                                   ("Plan", "Split the steps", false, true)].enumerated() {
+                    var record = Conversation(); record.title = "Agent: " + agent.1; record.turns = [ChatTurn(question: agent.1)]
+                    record.meetingOf = MeetingLink(room: main.id, turn: ask.id); record.createdAt = Date().addingTimeInterval(-Double(3 + i * 4) * 60)
+                    record.agentOf = AgentRoomLink(room: main.id, turn: ask.id, toolUseID: "t\(i)", description: agent.1, type: agent.0,
+                                                   running: agent.2 && state == "running")
+                    if !(agent.2 && state == "running") { record.agentOf?.endedAt = Date(); record.agentOf?.failed = agent.3 }
+                    attached.append(record)
+                }
+            }
+            chat.conversations = [main] + subs + attached + [other]; chat.currentID = main.id
             if state == "waiting" {
                 var plan = split; plan.id = ""; plan.auto = false; plan.paused = false
                 for i in plan.parts.indices { plan.parts[i].state = .creating; plan.parts[i].tree = nil }

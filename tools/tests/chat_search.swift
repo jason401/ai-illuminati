@@ -165,22 +165,38 @@ func testEnterpriseMarks() {
 }
 
 // ⌘F in a chat: turns with the words, moves between them, earlier turns drawn first, highlights.
-// The meetings under a chat stay folded when the chat is opened or one runs; double-click (toggle) unfolds them.
+// The rooms under a chat (meetings, subagent records, sub-rooms) share one fold: folded when the chat is opened,
+// unfolded while one works or is open, kept as the user folded them; one chip counts them all.
 func testMeetingFold() {
     let chat = Discussion(model: AppModel())
     var room = Conversation(); room.id = UUID()
     var meeting = Conversation(); meeting.id = UUID(); meeting.meetingOf = MeetingLink(room: room.id, turn: UUID())
+    meeting.turns = [ChatTurn(question: "topic")]
     chat.conversations += [room, meeting]
     chat.currentID = room.id
-    expect(!chat.meetingsShown(room.id, chat.meetings(of: room.id)), "opening a chat leaves its meetings folded")
-    chat.toggleMeetings(room.id)
-    expect(chat.meetingsShown(room.id, chat.meetings(of: room.id)), "double-click unfolds the meetings")
-    chat.toggleMeetings(room.id)
-    expect(!chat.meetingsShown(room.id, chat.meetings(of: room.id)), "double-click again folds them")
-    chat.meetingsClosed.remove(room.id)
+    expect(!chat.childrenShown(room.id), "opening a chat leaves its meetings folded")
+    chat.toggleChildren(room.id)
+    expect(chat.childrenShown(room.id), "double-click unfolds the meetings")
+    chat.toggleChildren(room.id)
+    expect(!chat.childrenShown(room.id), "double-click again folds them")
+    chat.childrenClosed.remove(room.id)
     chat.currentID = meeting.id
-    expect(chat.meetingsShown(room.id, chat.meetings(of: room.id)), "an open meeting stays listed")
-    print("PASS: meetings folded by default, unfolded by double-click, the open meeting listed")
+    expect(chat.childrenShown(room.id), "an open meeting stays listed")
+    chat.currentID = room.id
+
+    var agent = Conversation(); agent.id = UUID(); agent.meetingOf = MeetingLink(room: room.id, turn: UUID())
+    agent.agentOf = AgentRoomLink(room: room.id, turn: UUID(), toolUseID: "t1", description: "find it", type: "Explore")
+    chat.conversations.append(agent)
+    chat.runningRooms.insert(room.id)
+    expect(chat.childWorking(agent) && chat.childWorking(meeting) && chat.childrenShown(room.id), "a working agent or meeting unfolds them")
+    chat.toggleChildren(room.id)
+    expect(!chat.childrenShown(room.id), "folded by the user, they stay folded while one works")
+    chat.childrenClosed.remove(room.id)
+    chat.runningRooms.remove(room.id)
+    expect(!chat.childWorking(agent) && !chat.childrenShown(room.id), "all ended: folded again")
+    let children = ChatChildren(subs: 2, meetings: 1, agents: 14, working: 1)
+    expect(children.total == 17 && children.summary.contains("14") && children.summary.contains("1"), "one chip counts every kind: \(children.summary)")
+    print("PASS: rooms under a chat fold together (folded on open, unfolded while working or open, the user's fold kept, one count)")
 }
 
 func testChatFind() {

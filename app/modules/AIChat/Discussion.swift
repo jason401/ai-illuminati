@@ -50,11 +50,7 @@ public final class Discussion: ObservableObject {
     // a split waiting for the user's card by its approval request.
     @Published var splitRecords: [UUID: [Split]] = [:]
     @Published var splitPlans: [UUID: Split] = [:]
-    @Published var subRoomsOpen: Set<UUID> = []
-    @Published var agentsOpen: Set<UUID> = []     // subagent records unfolded / folded by the user (AgentRooms.swift)
-    @Published var agentsClosed: Set<UUID> = []
     var agentSavedAt: [UUID: Date] = [:]
-    @Published var subRoomsClosed: Set<UUID> = []
     @Published var splitPlanShown: Set<String> = []   // approved split cards unfolded by the user
     var splitWatch: NSObjectProtocol?
     weak var host: Discussion?
@@ -250,9 +246,10 @@ public final class Discussion: ObservableObject {
     }
     @Published var imageDropActive = false  // a photo is being dragged over the chat window
     @Published var openEntries: Set<UUID> = []  // AI replies unfolded in the chat (not saved)
-    // The meetings under a chat in the sidebar (Meeting.swift), unfolded or folded by the user, and those showing all (not saved).
-    @Published var meetingsOpen: Set<UUID> = []
-    @Published var meetingsClosed: Set<UUID> = []
+    // The rooms under a chat in the sidebar (sub-rooms, meetings, subagent records; Meeting.swift), unfolded or folded
+    // by the user, and the chats showing all their meetings (not saved).
+    @Published var childrenOpen: Set<UUID> = []
+    @Published var childrenClosed: Set<UUID> = []
     @Published var meetingsAll: Set<UUID> = []
     @Published var draggingProvider: Account.Provider?
     var draggingConversationID: UUID?

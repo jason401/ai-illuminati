@@ -103,7 +103,7 @@ extension Discussion {
         Self.saveText(source, to: Self.chatFolder(room.id).appendingPathComponent(Self.meetingSource))
         conversations.append(room)
         ChatStore.save(room)
-        if let id { meetingsClosed.remove(id) }
+        if let id { childrenClosed.remove(id) }
         return room.id
     }
 
@@ -209,17 +209,26 @@ extension Discussion {
         return (runningRooms.contains(link.room) || runningRooms.contains(meeting.id)) && meeting.turns.first?.answeredAt == nil
     }
 
-    // Folded until the user unfolds them (double-click or the chevron); opening the chat alone does not unfold them.
-    // Unless folded by the user, they show while one of them is open, so the open meeting stays in the list.
-    func meetingsShown(_ id: UUID, _ meetings: [Conversation]) -> Bool {
-        if meetingsOpen.contains(id) { return true }
-        if meetingsClosed.contains(id) { return false }
-        return meetings.contains { $0.id == currentID }
+    // Everything under chat `id` in the sidebar shares one fold: its sub-rooms, meetings and subagent records (all of
+    // them carry meetingOf). Unless the user folded or unfolded them, they show while one works, a split is open or one
+    // is the open chat, and fold once all ended; opening the chat alone leaves them folded. A new meeting or split
+    // unfolds them again.
+    func childrenShown(_ id: UUID) -> Bool {
+        if childrenOpen.contains(id) { return true }
+        if childrenClosed.contains(id) { return false }
+        return !openSplits(id).isEmpty || meetings(of: id).contains { $0.id == currentID || childWorking($0) }
     }
 
-    func toggleMeetings(_ id: UUID) {
-        if meetingsShown(id, meetings(of: id)) { meetingsOpen.remove(id); meetingsClosed.insert(id) }
-        else { meetingsClosed.remove(id); meetingsOpen.insert(id) }
+    // A room under a chat still working: a sub-room's turn, a subagent, a meeting being held.
+    func childWorking(_ room: Conversation) -> Bool {
+        if room.agentOf != nil { return agentRunning(room) }
+        if let link = room.subOf { return runningRooms.contains(room.id) || part(link)?.live == true }
+        return meetingRunning(room)
+    }
+
+    func toggleChildren(_ id: UUID) {
+        if childrenShown(id) { childrenOpen.remove(id); childrenClosed.insert(id) }
+        else { childrenClosed.remove(id); childrenOpen.insert(id) }
     }
 
     // Removes the hidden meeting chats of a deleted chat (files, sessions and backups too).

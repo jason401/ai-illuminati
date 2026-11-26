@@ -38,6 +38,9 @@ public enum RemotePage {
             "minutes": L("· {n}분째", "· {n} min"),
             "toBottom": L("맨 아래로", "Scroll to bottom"),
             "photo": L("사진", "Photo"),
+            "dropPhoto": L("놓으면 사진 추가", "Drop to add photos"),
+            "dropAnywhere": L("어디에 놓아도 돼요 · 보내기 전에 볼 수 있어요", "Anywhere · you check them before sending"),
+            "dropReadOnly": L("읽기 전용 대화라 사진을 넣을 수 없어요", "This chat is read only: no photos"),
             "send": L("보내기", "Send"),
             "usage": L("AI 사용량", "AI Usage"),
             "usageClose": L("닫기", "Close"),
@@ -327,6 +330,16 @@ footer { position:relative; padding:6px 10px calc(env(safe-area-inset-bottom) + 
   transition:opacity .15s; }
 #toBottom.gone { opacity:0; pointer-events:none; }
 
+/* Photos dragged over the chat: the whole screen takes them (a tint and a dashed frame; events pass through to the chat). */
+#dropZone { position:absolute; inset:0; z-index:5; pointer-events:none; display:flex; align-items:center; justify-content:center;
+  background:rgba(0,122,255,.16); }
+#dropZone::before { content:''; position:absolute; inset:calc(env(safe-area-inset-top) + 10px) 10px calc(env(safe-area-inset-bottom) + 10px);
+  border:2px dashed var(--accent); border-radius:20px; }
+#dropZone.no { background:rgba(128,128,128,.16); } #dropZone.no::before { border-color:var(--dim); }
+.dropCard { display:flex; flex-direction:column; align-items:center; gap:6px; padding:0 32px; text-align:center; color:var(--text); }
+.dropCard svg { color:var(--accent); } #dropZone.no .dropCard svg { color:var(--dim); }
+.dropCard b { font-size:17px; } .dropCard small { color:var(--dim); font-size:13px; }
+
 #viewer { position:fixed; inset:0; z-index:10; background:rgba(0,0,0,.92); display:flex; align-items:center; justify-content:center; }
 #viewer img { max-width:100%; max-height:100%; object-fit:contain; }
 </style>
@@ -373,6 +386,10 @@ footer { position:relative; padding:6px 10px calc(env(safe-area-inset-bottom) + 
     </div>
     <input type="file" id="file" accept="image/*" multiple class="hidden">
   </footer>
+  <div id="dropZone" class="hidden"><div class="dropCard">
+    <svg width="44" height="36" viewBox="0 0 44 36" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round"><rect x="2" y="2" width="40" height="32" rx="6"/><circle cx="13" cy="12" r="3.5" fill="currentColor" stroke="none"/><path d="M4 31l12-12 9 8 6-5 10 9"/></svg>
+    <b id="dropTitle"></b><small id="dropSub"></small>
+  </div></div>
 </div>
 <div id="viewer" class="hidden"><img alt=""></div>
 <dialog id="usagePanel" aria-labelledby="usageTitle">
@@ -1093,9 +1110,44 @@ function grow() { const t = $('text'); t.style.height = 'auto'; t.style.height =
 function canSend() { $('send').disabled = sending || (!$('text').value.trim() && !photos.length); }
 $('text').addEventListener('input', grow);
 $('pick').addEventListener('click', () => $('file').click());
-$('file').addEventListener('change', async e => {
-  for (const f of e.target.files) { try { photos.push(await shrink(f)); } catch (_) {} }
-  e.target.value = ''; renderThumbs();
+$('file').addEventListener('change', e => { const files = [...e.target.files]; e.target.value = ''; addPhotos(files); });
+// Picked, dropped anywhere on the chat screen or pasted: the same way in, as thumbnails that go only with Send. Images
+// only; a read-only chat takes none, and photos still shrinking when the chat changes are dropped.
+function canAttach() { return !!current && document.body.classList.contains('open') && !$('box').classList.contains('hidden'); }
+async function addPhotos(files) {
+  const key = current;
+  for (const f of files) {
+    if (!f || !/^image\//.test(f.type)) continue;
+    try { const p = await shrink(f); if (current === key) photos.push(p); } catch (_) {}
+  }
+  if (current === key) renderThumbs();
+}
+function hasFiles(e) { return !!e.dataTransfer && [...e.dataTransfer.types].includes('Files'); }
+let dropDepth = 0;
+function dropShown(on) {
+  const zone = $('dropZone'), ok = canAttach();
+  zone.classList.toggle('hidden', !on); zone.classList.toggle('no', !ok);
+  $('dropTitle').textContent = ok ? S.dropPhoto : S.dropReadOnly; $('dropSub').textContent = ok ? S.dropAnywhere : '';
+}
+// enter/leave come for every child the drag crosses: counted, so the tint does not flicker.
+$('chatView').addEventListener('dragenter', e => { if (!hasFiles(e)) return; e.preventDefault(); if (dropDepth++ === 0) dropShown(true); });
+$('chatView').addEventListener('dragover', e => { if (!hasFiles(e)) return; e.preventDefault(); e.dataTransfer.dropEffect = canAttach() ? 'copy' : 'none'; });
+$('chatView').addEventListener('dragleave', e => { if (!hasFiles(e)) return; if (--dropDepth <= 0) { dropDepth = 0; dropShown(false); } });
+$('chatView').addEventListener('drop', e => {
+  if (!hasFiles(e)) return;
+  e.preventDefault(); dropDepth = 0; dropShown(false);
+  if (canAttach()) addPhotos([...e.dataTransfer.files]);
+});
+// A file dropped anywhere else (the list) must not open it in place of the page.
+for (const type of ['dragover', 'drop']) document.addEventListener(type, e => { if (hasFiles(e)) e.preventDefault(); });
+// A copied photo pasted while the chat is open (the message box on the iPhone, anywhere on a Mac). Text pastes as usual.
+document.addEventListener('paste', e => {
+  if (!canAttach() || (e.target.closest && e.target.closest('input'))) return;
+  const items = [...((e.clipboardData && e.clipboardData.items) || [])];
+  const files = items.filter(i => i.kind === 'file' && /^image\//.test(i.type)).map(i => i.getAsFile()).filter(Boolean);
+  if (!files.length) return;
+  if (!items.some(i => i.kind === 'string' && i.type === 'text/plain')) e.preventDefault();
+  addPhotos(files);
 });
 // Photos go as JPEG of at most 2048 px, so a 12 MP picture is a few hundred KB, not 5 MB.
 function shrink(file) {

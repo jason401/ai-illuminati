@@ -260,6 +260,12 @@ func testPhoneUsage() {
            "phone usage: like the menu bar, one row per account under a 5h/Week header, tapped open for details")
     expect(page.contains("$('box').classList.remove('hidden');\n    grow();"),
            "phone page: the message box is sized after it shows again, so leaving the update screen does not shrink it to nothing")
+    // Photos: picked, dropped anywhere on the chat screen or pasted all take one way in (thumbnails, sent only with Send);
+    // a drop elsewhere never opens the file in place of the page. (Checked by hand in a WKWebView with synthetic events.)
+    expect(page.contains("id=\"dropZone\"") && page.contains("$('chatView').addEventListener('drop'")
+           && page.contains("document.addEventListener('paste'") && page.contains("for (const type of ['dragover', 'drop'])")
+           && page.components(separatedBy: "addPhotos(").count >= 4 && !page.contains("photos.push(await shrink(f))"),
+           "phone page: photos dropped on the whole chat screen or pasted go where + puts them")
 }
 
 /// Updating this Mac from the phone page: /api/update needs the key (401), shows the updater's state, refuses a second

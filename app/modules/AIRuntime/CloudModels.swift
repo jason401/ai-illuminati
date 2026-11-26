@@ -1,5 +1,6 @@
 import Foundation
 import AIAccounts
+import AILocalization
 
 // Which model a cloud account answers with (Settings by AI, the Model column). Nothing saved is "Auto": no model
 // option, so the CLI picks its own default as before. Per account, since plans differ in what they offer
@@ -12,6 +13,12 @@ public enum CloudModels {
         guard account.provider != .ollama, let name = (defaults.dictionary(forKey: key) as? [String: String])?[account.id],
               valid(name) else { return nil }
         return name
+    }
+
+    // A call's model: a chat's pick when it is a model name, else the account's own (Settings by AI).
+    public static func model(_ account: Account, picked: String?, defaults: UserDefaults = .app) -> String? {
+        if account.provider != .ollama, let picked, valid(picked) { return picked }
+        return model(account, defaults: defaults)
     }
 
     public static func set(_ name: String?, for account: Account, defaults: UserDefaults = .app) {
@@ -253,13 +260,15 @@ public enum CloudEffort {
     // What this account's model takes, checked 2026-11-22: Claude Code takes all five on every model (the server may
     // lower xhigh and max); agy's default model (Gemini 4 Neon) refuses max; Codex lists each model's levels in its
     // cache (some add ultra). A Gemini model picked by name holds its own level: none.
-    public static func levels(for account: Account, defaults: UserDefaults = .app) -> [String] {
+    // `model`: the model the call runs on when a chat picked one (else the account's own).
+    public static func levels(for account: Account, model picked: String? = nil, defaults: UserDefaults = .app) -> [String] {
+        let chosen = CloudModels.model(account, picked: picked, defaults: defaults)
         switch account.provider {
         case .claude: return Array(all.prefix(5))
-        case .gemini: return CloudModels.model(account, defaults: defaults) == nil ? Array(all.prefix(4)) : []
+        case .gemini: return chosen == nil ? Array(all.prefix(4)) : []
         case .codex:
             let listed = codexLevels(account)
-            let model = CloudModels.model(account, defaults: defaults) ?? codexConfigModel(account)
+            let model = chosen ?? codexConfigModel(account)
             let known = model.flatMap { listed[$0] } ?? Array(Set(listed.values.flatMap { $0 }))
             return known.isEmpty ? Array(all.prefix(5)) : all.filter(known.contains)
         case .ollama: return []
@@ -268,12 +277,27 @@ public enum CloudEffort {
 
     // The level a call is given: the pick or Auto's, lowered to the highest the model takes (a level it lacks fails
     // the answer). None for local models and for Gemini with a picked model (see apply).
-    public static func level(_ account: Account, hard: Bool, harder: Bool = false, defaults: UserDefaults = .app) -> String? {
-        let offered = levels(for: account, defaults: defaults)
+    // `picked`: a chat's own level, before the account's; `model`: the model the call runs on (CloudModels.model(_:picked:)).
+    public static func level(_ account: Account, hard: Bool, harder: Bool = false, picked chat: String? = nil, model: String? = nil,
+                             defaults: UserDefaults = .app) -> String? {
+        let offered = levels(for: account, model: model, defaults: defaults)
         guard !offered.isEmpty else { return nil }
-        let wanted = picked(account, defaults: defaults) ?? (harder ? "xhigh" : hard ? "high" : "medium")
+        let wanted = chat.flatMap { all.contains($0) ? $0 : nil } ?? picked(account, defaults: defaults) ?? (harder ? "xhigh" : hard ? "high" : "medium")
         let rank = all.firstIndex(of: wanted) ?? 1
         return offered.last { all.firstIndex(of: $0)! <= rank } ?? offered.first
+    }
+
+    // A level as the menus show it (Settings by AI and the chat's message box); nil is Auto.
+    public static func title(_ level: String?) -> String {
+        switch level {
+        case "low": return L("낮음", "Low")
+        case "medium": return L("중간", "Medium")
+        case "high": return L("높음", "High")
+        case "xhigh": return L("아주 높음", "Extra high")
+        case "max": return L("최대", "Max")
+        case "ultra": return L("울트라", "Ultra")
+        default: return L("자동", "Auto")
+        }
     }
 
     // Codex's models cache: slug → its reasoning levels.

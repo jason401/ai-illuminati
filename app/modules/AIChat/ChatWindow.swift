@@ -43,6 +43,7 @@ struct ChatView<Model: ChatSettings>: View {
     @ObservedObject private var todos = TodoStore.shared
     @ObservedObject private var projectInfo = ProjectInfoStore.shared
     @ObservedObject private var photo = PhotoViewer.shared
+    @ObservedObject private var modelChoices = ChatModelChoices.shared   // agy's model list arrives later
     @AppStorage(AIColors.revisionKey) private var aiColorsRevision = 0   // an AI's color changed: redraw
 
     var body: some View {
@@ -1486,7 +1487,7 @@ struct ChatView<Model: ChatSettings>: View {
                     }
                     Spacer()
                     if !discussion.routeChoices.isEmpty && !discussion.running { routeChip }
-                    if discussion.configuration.mode == 0 && !discussion.running { accountChip }
+                    if discussion.configuration.mode == 0 && !discussion.running { accountChip; modelChip; effortChip }
                     if discussion.configuration.mode != 0 && !discussion.running { teamChip }
                     composerAction
                 }
@@ -2049,22 +2050,27 @@ struct ChatView<Model: ChatSettings>: View {
                 "How to answer this message. Back to automatic after sending. You can also start the message with /work (/w), /meet (/m)… Type / for the list."))
     }
 
+    // The four pickers' look: the picker's own icon, then Auto (gray) or what was picked (accent).
+    private func chipLabel(_ icon: String, _ title: String, picked: Bool) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: icon).font(.system(size: 11))
+            Text(title).lineLimit(1)
+        }
+        .font(.system(size: 12))
+        .foregroundColor(picked ? .accentColor : .secondary)
+    }
+
+    // Who answers. Auto shows only "Auto": the app picks (the tooltip says who it would be now); usage is in the menu.
     private var accountChip: some View {
         let config = discussion.configuration
         let members = discussion.memberIDs
         let project = discussion.current.workspace?.project != nil
         let crew = discussion.crew(project: project)
         let next = discussion.soloNext
-        let usage = next.flatMap { discussion.model.latestUsage[$0.id] }
         let lock = discussion.current.enterpriseLock
         func name(_ id: String) -> String { discussion.model.accounts.first { $0.id == id }.map { discussion.label($0) } ?? id }
         return Menu {
-            Button((members.isEmpty ? "✓ " : "") + L("자동 (남은 사용량 기준)", "Automatic (most usage left)")) {
-                discussion.configure { c in
-                    c.soloAccountID = nil; c.memberIDs = nil; c.leadID = nil
-                    c.peerReview = nil; c.peerAccountID = nil; c.pendingReview = nil
-                }
-            }
+            Button((members.isEmpty ? "✓ " : "") + L("자동 (남은 사용량 기준)", "Automatic (most usage left)")) { discussion.pickAccountAuto() }
             Divider()
             Text(project ? L("여러 명 체크: 한 명이 작업하고 나머지가 검수해요", "Check several: one works, the others review")
                          : L("여러 명 체크: 모두 함께 답해요", "Check several: they all answer"))
@@ -2107,18 +2113,63 @@ struct ChatView<Model: ChatSettings>: View {
                 (Text(Image(systemName: "person.2")) + Text(" " + members.map(name).joined(separator: " + ")).foregroundColor(.secondary))
                     .font(.system(size: 12))
             } else {
-                let name = (lock.map { $0.isPersonal ? L("개인 · ", "Personal · ") : "Enterprise · " } ?? "")
-                    + (next.map { discussion.label($0) } ?? L("쓸 수 있는 계정 없음", "No account available"))
-                (Text(members.isEmpty ? Image(systemName: "sparkles") : Image(systemName: "person.crop.circle"))
-                 + Text(" " + name).foregroundColor(.primary)
-                 + Text(next == nil ? "" : "  " + AutoPick.describe(usage)).foregroundColor(.secondary))
-                    .font(.system(size: 12))
+                let side = lock.map { $0.isPersonal ? L("개인 · ", "Personal · ") : "Enterprise · " } ?? ""
+                chipLabel("person.crop.circle", side + (members.isEmpty ? L("자동", "Auto") : name(members[0])), picked: !members.isEmpty)
             }
         }
         .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
         .fixedSize()
-        .help(L("답할 AI: 자동이면 5시간이 \(Int(AutoPick.threshold))% 이상 남은 계정 중 주간이 가장 많이 남은 계정. 여러 명을 체크하면 일반 채팅에서는 모두 동시에 답하고, 프로젝트 채팅에서는 한 명이 작업하고 나머지가 바뀐 내용을 검수해요 (@는 그 메시지에만 적용).",
+        .help((members.isEmpty ? L("지금 자동이면: ", "Automatic now: ") + (next.map { discussion.label($0) } ?? L("쓸 수 있는 계정 없음", "No account available")) + "\n" : "")
+              + L("답할 AI: 자동이면 5시간이 \(Int(AutoPick.threshold))% 이상 남은 계정 중 주간이 가장 많이 남은 계정. 여러 명을 체크하면 일반 채팅에서는 모두 동시에 답하고, 프로젝트 채팅에서는 한 명이 작업하고 나머지가 바뀐 내용을 검수해요 (@는 그 메시지에만 적용).",
                 "Who answers: automatic picks, among accounts with at least \(Int(AutoPick.threshold))% of the 5-hour limit left, the one with the most weekly usage left. Check several: in a plain chat they all answer at the same time; in a project chat one works and the others review its changes (@ applies to one message only)."))
+    }
+
+    // The account picked by hand (one only), whose model the chat may pick.
+    private var pickedAccount: Account? {
+        discussion.configuration.soloAccountID.flatMap { id in discussion.model.accounts.first { $0.id == id } }
+    }
+
+    // The model, only once one account is picked by hand (a model belongs to an account's kind and plan). Auto: the
+    // account's setting in Settings by AI. Kept until changed; picking another account or Auto sets it back to Auto.
+    private var modelChip: some View {
+        let account = pickedAccount, picked = account == nil ? nil : discussion.configuration.model
+        let choices = account.map { ChatModelChoices.shared.choices($0) } ?? []
+        let title = picked.map { p in choices.first { $0.id == p }?.title ?? p } ?? L("자동", "Auto")
+        return Menu {
+            Button((picked == nil ? "✓ " : "") + L("자동 (Settings의 AI별 설정)", "Automatic (Settings by AI)")) { discussion.configure { $0.model = nil } }
+            if !choices.isEmpty { Divider() }
+            ForEach(choices, id: \.id) { choice in
+                Button((picked == choice.id ? "✓ " : "") + choice.title) { discussion.configure { $0.model = choice.id } }
+            }
+        } label: { chipLabel("cpu", title, picked: picked != nil) }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .disabled(account == nil || account?.provider == .ollama)
+        .help(account == nil ? L("모델: 계정을 하나 고르면 그 계정의 모델을 정할 수 있어요", "Model: pick one account to choose its model")
+              : L("이 채팅에서 쓸 모델. 계정을 바꾸거나 자동으로 돌리면 모델도 자동이 돼요.", "The model for this chat. Changing the account, or setting it to automatic, sets the model back to automatic."))
+    }
+
+    // How hard this chat's answers think. Auto: the account's setting, else medium for chats and higher for work. A level
+    // the model does not take runs at the highest one it does (CloudEffort.level).
+    private var effortChip: some View {
+        let account = pickedAccount, picked = discussion.configuration.effort
+        let levels = account.map { CloudEffort.levels(for: $0, model: discussion.configuration.model) } ?? Array(CloudEffort.all.prefix(5))
+        return Menu {
+            Button((picked == nil ? "✓ " : "") + L("자동 (일에 맞게)", "Automatic (by the work)")) { discussion.configure { $0.effort = nil } }
+            Divider()
+            ForEach(levels, id: \.self) { level in
+                Button((picked == level ? "✓ " : "") + CloudEffort.title(level)) { discussion.configure { $0.effort = level } }
+            }
+        } label: { chipLabel("brain", CloudEffort.title(levels.isEmpty ? nil : picked), picked: picked != nil && !levels.isEmpty) }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .disabled(levels.isEmpty)
+        .help(levels.isEmpty ? L("thinking: 이 모델은 모델이 정해요", "Thinking: this model decides it itself")
+              : L("이 채팅의 thinking. 자동이면 일반 답은 중간, 작업·검수는 높게. 모델이 못 받는 단계면 받는 가장 높은 단계로 내려요.",
+                  "Thinking for this chat. Automatic: medium for answers, higher for work and review. A level the model lacks runs at the highest it takes."))
     }
 
     // Mode 4: every account votes unless unchecked; the crown drafts the choices when none are listed.
@@ -4027,6 +4078,26 @@ struct GitBranchGlyph: View {
             lines.move(to: tip); lines.addQuadCurve(to: CGPoint(x: trunk.x, y: h * 0.72), control: CGPoint(x: tip.x, y: h * 0.62))
             context.stroke(lines, with: .foreground, lineWidth: w * 0.14)
             for p in [trunk, base, tip] { context.fill(Path(ellipseIn: CGRect(x: p.x - r, y: p.y - r, width: 2 * r, height: 2 * r)), with: .foreground) }
+        }
+    }
+}
+
+// The message box's model menu for one account: Claude's aliases, the models Codex lists in its cache, and agy's
+// list (asked once per account in the background, since it needs the network).
+final class ChatModelChoices: ObservableObject {
+    static let shared = ChatModelChoices()
+    @Published private var gemini: [String: [CloudModels.Choice]] = [:]
+    private var asked: Set<String> = []
+    func choices(_ account: Account) -> [CloudModels.Choice] {
+        switch account.provider {
+        case .claude: return CloudModels.claudeChoices
+        case .codex: return CloudModels.codexChoices(account)
+        case .gemini:
+            if asked.insert(account.id).inserted {
+                CloudModels.loadGemini(account) { list in DispatchQueue.main.async { self.gemini[account.id] = list } }
+            }
+            return gemini[account.id] ?? []
+        case .ollama: return []
         }
     }
 }

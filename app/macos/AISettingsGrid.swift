@@ -407,17 +407,7 @@ private struct CloudEffortMenu: View {
     let account: Account
     @StateObject private var state = CloudEffortPick()   // @State needs a macro plugin the command line build lacks
 
-    static func title(_ level: String?) -> String {
-        switch level {
-        case "low": return L("낮음", "Low")
-        case "medium": return L("중간", "Medium")
-        case "high": return L("높음", "High")
-        case "xhigh": return L("아주 높음", "Extra high")
-        case "max": return L("최대", "Max")
-        case "ultra": return L("울트라", "Ultra")
-        default: return L("자동", "Auto")
-        }
-    }
+    static func title(_ level: String?) -> String { CloudEffort.title(level) }
 
     var body: some View {
         Group {

@@ -73,7 +73,8 @@ public final class Discussion: ObservableObject {
     var debateCancellation: DebateCancellation? { host == nil ? workers[currentID]?.runCancellation : runCancellation }
     var collaborationAnswer: ((Account, String, [URL], DebateCancellation) -> Result<String, Answerer.Failure>)?
     var debateAnswer: (Account, String, TimeInterval, DebateCancellation, Bool) -> Result<String, Answerer.Failure> = {
-        Answerer.ask($0, prompt: $1, timeout: $2, cancellation: $3, web: $4, run: .app($0).tagged("meeting").thinkingHard(Discussion.thinkingHardHere))
+        Answerer.ask($0, prompt: $1, timeout: $2, cancellation: $3, web: $4, run: .app($0).tagged("meeting").thinkingHard(Discussion.thinkingHardHere)
+                        .picking(model: Discussion.picksHere.model, effort: Discussion.picksHere.effort))
     }
     // The open chat's message box; every other chat's unsent box waits in roomDrafts (RoomDrafts below).
     @Published var draft = "" { didSet { if draft != oldValue { draftsChanged() } } }
@@ -458,8 +459,10 @@ public final class Discussion: ObservableObject {
 
     // The saved model also names the thinking level the call was given ("gpt-6.1-sol · high"), read when it starts;
     // the chat shows it beside the model (TurnView.named). Unknown models ("") stay unknown.
-    static func notingEffort(_ progress: ((AnswerProgress) -> Void)?, _ account: Account, hard: Bool, harder: Bool = false) -> ((AnswerProgress) -> Void)? {
-        guard let progress, let level = CloudEffort.level(account, hard: hard, harder: harder) else { return progress }
+    static func notingEffort(_ progress: ((AnswerProgress) -> Void)?, _ account: Account, hard: Bool, harder: Bool = false,
+                             picks: (model: String?, effort: String?) = (nil, nil)) -> ((AnswerProgress) -> Void)? {
+        guard let progress, let level = CloudEffort.level(account, hard: hard, harder: harder, picked: picks.effort,
+                                                          model: CloudModels.model(account, picked: picks.model)) else { return progress }
         return { update in
             if case .model(let name) = update, !name.isEmpty { progress(.model(name + effortMark + level)) } else { progress(update) }
         }
@@ -474,6 +477,20 @@ public final class Discussion: ObservableObject {
         let dictionary = Thread.current.threadDictionary, before = dictionary[hardKey]
         if on { dictionary[hardKey] = true }
         defer { dictionary[hardKey] = before }
+        return body()
+    }
+    // The chat's own model and thinking (chatPicks) reach debateAnswer the same way.
+    private static let picksKey = "AIIlluminati.chatPicks"
+    static var picksHere: (model: String?, effort: String?) {
+        let saved = Thread.current.threadDictionary[picksKey] as? [String: String] ?? [:]
+        return (saved["model"], saved["effort"])
+    }
+    static func picking<T>(_ picks: (model: String?, effort: String?), _ body: () -> T) -> T {
+        let dictionary = Thread.current.threadDictionary, before = dictionary[picksKey]
+        var saved: [String: String] = [:]
+        saved["model"] = picks.model; saved["effort"] = picks.effort
+        dictionary[picksKey] = saved
+        defer { dictionary[picksKey] = before }
         return body()
     }
 

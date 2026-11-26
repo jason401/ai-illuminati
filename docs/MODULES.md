@@ -402,6 +402,11 @@ streams `LocalStream`/`PullStream`, `LocalModel.ask` and the Ollama requests):
   account's model takes) and the chat's label beside the model (Auto = medium, high for important work, xhigh for big work).
   `RunConditions.thinkHard`/`thinkingHard(_:)`, `thinkHarder`/`thinkingHarder(_:)`: the chat side marks important work
   (project work, review, meetings, several views, votes, ask_ai) and big work without the runtime knowing those features.
+- A chat's own model and thinking (2026-11-26, the message box's pickers): `RunConditions.model`/`effort` and
+  `picking(model:effort:)` carry the chat's picks into one call (the chat decides which calls and accounts get them;
+  the runtime only puts them before the account's Settings value), `CloudModels.model(_:picked:)` and the `picked:`/`model:`
+  parameters of `CloudEffort.level` and `levels(for:model:)` resolve them, and `CloudEffort.title` names a level for both
+  the Settings column and the chat's picker. AIChat keeps the picks in `ChatConfiguration.model`/`effort`.
 - `LocalModel` (63 names: variants, the catalog and its entries, fit by memory, Ollama's library, installed/loaded
   models, pull, delete, keep-alive, the gate, `server` for mode2's fake server) and `LocalUsage.read`: the Settings
   Ollama section, the Ollama window, the menu and the Route sorter use all of them. It is the largest public part:

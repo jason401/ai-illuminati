@@ -244,10 +244,28 @@ extension Discussion {
         return (lead.id, others)
     }
 
-    // Checks or unchecks a member. One member answers alone (as picked by hand); none is automatic.
+    // The chat's own model and thinking for a call by `account` in this chat (the message box, mode 0): the model only
+    // for the account it was picked for. Calls the chat makes for others (meetings, ask_ai) do not ask.
+    func chatPicks(_ account: Account, room: UUID) -> (model: String?, effort: String?) {
+        let config = configuration(of: room)
+        guard Self.modernModes, config.mode == 0 else { return (nil, nil) }
+        return (config.soloAccountID == account.id ? config.model : nil, config.effort)
+    }
+
+    // Who answers goes back to automatic, and with it the model (a model belongs to the account it was picked for).
+    func pickAccountAuto() {
+        configure { c in
+            c.soloAccountID = nil; c.memberIDs = nil; c.leadID = nil; c.model = nil
+            c.peerReview = nil; c.peerAccountID = nil; c.pendingReview = nil
+        }
+    }
+
+    // Checks or unchecks a member. One member answers alone (as picked by hand); none is automatic. Any change of
+    // who answers sets the model back to Auto.
     func toggleMember(_ id: String) {
         settleMembers(room: currentID)
         configure { config in
+            config.model = nil
             var ids = Self.migratedMembers(config, accounts: self.model.accounts, lock: self.current.enterpriseLock)
             if let at = ids.firstIndex(of: id) { ids.remove(at: at) } else { ids.append(id) }
             config.memberIDs = ids.isEmpty ? nil : ids

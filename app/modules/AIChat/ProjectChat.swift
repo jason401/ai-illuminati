@@ -590,13 +590,15 @@ extension Discussion {
                 guard permits(account, room: id) else { return .failure(Enterprise.blocked(account)) }
                 if let workspaceAnswer { return workspaceAnswer(account, prompt, workspace, run.attempt, progress) }
                 let invocation = WorkspaceInvocation(binding: workspace, room: id, readOnly: false, backupPath: activeWorkspaceBackupPath)
+                let picks = chatPicks(account, room: id)
                 let conditions = Discussion.steered(.app(account, invocation, screen: screenAnswer(account, room: id, index: index)), steer).thinkingHarder(run.bigWork)
+                    .picking(model: picks.model, effort: picks.effort)
                 return nativeSessions.ask(account, room: id, prompt: prompt, images: activeImages,
                                           timeout: run.deadline.timeIntervalSinceNow, token: run.attempt, web: true, speaker: speaker, fresh: freshPrompt,
                                           persist: conditions.screenTools == nil, invoke: { text, images, session in
                     Answerer.ask(account, prompt: text, timeout: run.deadline.timeIntervalSinceNow, cancellation: run.attempt,
                                  images: images, web: true, session: session,
-                                 run: conditions, progress: Discussion.notingEffort(progress, account, hard: true, harder: run.bigWork))
+                                 run: conditions, progress: Discussion.notingEffort(progress, account, hard: true, harder: run.bigWork, picks: picks))
                 }, note: { text in DispatchQueue.main.async { self.sessionNote = text } })
             }
             let started = Date()

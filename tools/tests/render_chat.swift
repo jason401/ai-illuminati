@@ -64,6 +64,14 @@ import AIProjects
         }
         conversation.turns = [turn]
         chat.conversations = [conversation]; chat.currentID = conversation.id
+        // --picks: the message box's account, model and thinking picked by hand (else all Auto).
+        if CommandLine.arguments.contains("--picks") {
+            model.accounts = [Account(id: "preview-claude", provider: .claude, name: "Claude (학교)")]
+            chat.configure { $0.mode = 0; $0.soloAccountID = "preview-claude"; $0.memberIDs = ["preview-claude"]; $0.model = "opus"; $0.effort = "high" }
+        } else if CommandLine.arguments.contains("--auto") {
+            model.accounts = [Account(id: "preview-claude", provider: .claude, name: "Claude (학교)")]
+            chat.configure { $0.mode = 0 }
+        }
         if CommandLine.arguments.contains("--projects") {
             // The sidebar by project: a repository with a chat, its meeting and a TODO chat; a folded one; a plain chat.
             let repo = ProjectBinding(root: "/tmp/preview/AI Illuminati", common: "/tmp/preview/AI Illuminati/.git", remote: "origin", remoteURL: "")

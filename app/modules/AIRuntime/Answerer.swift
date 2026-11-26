@@ -86,6 +86,10 @@ public struct RunConditions {
     public var usageKind: String? = nil            // what the call is for, kept with its tokens when it leaves no log (TokenLedger)
     public var thinkHard = false                   // important work (project work, review, meetings, views, ask_ai): Auto is high (CloudEffort)
     public var thinkHarder = false                 // big work (a TODO retried, helped or an hour-long split's finish): Auto is xhigh
+    // A chat's own picks (its message box), before the account's in Settings by AI: the model, for the account it was
+    // picked for only, and the thinking level. nil: the account's setting (Auto when none).
+    public var model: String? = nil
+    public var effort: String? = nil
     public struct ScreenTools {
         var arguments: (([String], URL) throws -> [String])?   // plain chats only; folders already have a bridge
         var finish: () -> Void
@@ -106,6 +110,9 @@ public struct RunConditions {
     public func tagged(_ kind: String) -> RunConditions { var r = self; r.usageKind = kind; return r }
     public func thinkingHard(_ on: Bool = true) -> RunConditions { var r = self; r.thinkHard = r.thinkHard || on; return r }
     public func thinkingHarder(_ on: Bool = true) -> RunConditions { var r = thinkingHard(on); r.thinkHarder = r.thinkHarder || on; return r }
+    public func picking(model: String?, effort: String?) -> RunConditions {
+        var r = self; r.model = model ?? r.model; r.effort = effort ?? r.effort; return r
+    }
 }
 
 public enum Answerer {
@@ -136,7 +143,8 @@ public enum Answerer {
                     progress: ((AnswerProgress) -> Void)? = nil) -> Result<String, Failure> {
         defer { run.screenTools?.finish() }
         // Read once, so a change in Settings never switches models in the middle of one answer.
-        let model = CloudModels.model(account), effort = CloudEffort.level(account, hard: run.thinkHard, harder: run.thinkHarder)
+        let model = CloudModels.model(account, picked: run.model)
+        let effort = CloudEffort.level(account, hard: run.thinkHard, harder: run.thinkHarder, picked: run.effort, model: model)
         guard let folders = run.folders else { return askOnce(account, prompt: prompt, timeout: timeout, cancellation: cancellation, images: images, web: web, session: session, run: run, model: model, effort: effort, progress: progress) }
         let instruction = """
         If native workspace read tools are unavailable because of managed policy, request data from the host instead of guessing.

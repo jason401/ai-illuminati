@@ -111,6 +111,37 @@ func runConditionsCapture() -> String {
             expect(levels == ["high", "medium"], "requestDebate hard: high, then medium again (\(binding == nil ? "plain" : "folder")): \(levels)")
         }
     }
+    // The chat's own picks (message box): the model for the account picked by hand only, the thinking level for any of
+    // its answers; Auto again (and the model with it) when who answers goes back to automatic. Not in the golden output.
+    if let claude = accounts.first(where: { $0.provider == .claude }), let other = accounts.first(where: { $0.provider == .codex }) {
+        let saved = chat.configuration
+        chat.configure { $0.mode = 0; $0.soloAccountID = claude.id; $0.memberIDs = [claude.id]; $0.model = "sonnet"; $0.effort = "low" }
+        for binding in [nil, WorkspaceBinding(roots: folder)] {
+            var launches: [Answerer.Launch] = []
+            Answerer.launchForTests = { launch in launches.append(launch); return .success("captured") }
+            _ = chat.requestDebate(claude, "Say hi.", 60, DebateCancellation(), hard: true, workspace: binding)
+            _ = chat.requestDebate(other, "Say hi.", 60, DebateCancellation(), workspace: binding)
+            let first = launches.first?.arguments ?? [], second = launches.dropFirst().first?.arguments ?? []
+            func after(_ args: [String], _ flag: String) -> String? { args.firstIndex(of: flag).map { args[$0 + 1] } }
+            expect(after(first, "--model") == "sonnet" && after(first, "--effort") == "low",
+                   "the chat's model and thinking reach its picked account, over hard work's Auto (\(binding == nil ? "plain" : "folder")): \(first)")
+            expect(!second.contains { $0.hasPrefix("model=") } && second.contains("model_reasoning_effort=\"low\""),
+                   "another account gets the chat's thinking, not its model (\(binding == nil ? "plain" : "folder")): \(second)")
+        }
+        chat.pickAccountAuto()
+        expect(chat.configuration.model == nil && chat.configuration.soloAccountID == nil && chat.configuration.effort == "low",
+               "Auto for who answers sets the model back to Auto; thinking stays")
+        chat.configure { $0.soloAccountID = claude.id; $0.memberIDs = [claude.id]; $0.model = "opus" }
+        chat.toggleMember(other.id)
+        expect(chat.configuration.model == nil, "changing who answers sets the model back to Auto")
+        chat.configure { $0.mode = 1; $0.soloAccountID = claude.id; $0.model = "opus" }
+        let team = chat.chatPicks(claude, room: chat.currentID)
+        expect(team.model == nil && team.effort == nil, "the team modes take no picks")
+        chat.configure { $0 = saved }
+        Answerer.launchForTests = nil
+    }
+    let older = try! JSONDecoder().decode(ChatConfiguration.self, from: Data(#"{"mode":0,"order":["claude"],"participants":["claude"],"leader":"claude"}"#.utf8))
+    expect(older.model == nil && older.effort == nil, "an older chat's settings read with Auto model and thinking")
     // Project work the way ProjectChat starts it (write and execute, its own backup, a session), Claude, Codex and
     // Gemini, the chat's full auto off and on. The tool answers at once; nothing else runs.
     // soloBinding carries the chat's switch (it dropped it until 2026-11-23, so "off" still ran full auto).

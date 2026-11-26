@@ -86,7 +86,8 @@ extension Discussion {
         // `workspace` replaces the chat's folders for this one request (a read-only view for a second AI).
         let activeWorkspace = workspace ?? self.activeWorkspace
         guard permits(account, room: activeSessionRoom ?? currentID) else { return .failure(Enterprise.blocked(account)) }
-        let progress = Discussion.notingEffort(progress, account, hard: hard)
+        let picks = chatPicks(account, room: activeSessionRoom ?? currentID)
+        let progress = Discussion.notingEffort(progress, account, hard: hard, picks: picks)
         let selected: [MaterialContext.Part] = []
         let materialText = selected.isEmpty ? "" : "\n[Selected source excerpts; not an exhaustive review. Use Collaboration for full coverage.]\n" + MaterialContext.quote(selected)
         pictureLock.lock(); let shared = activeImages, sharedContext = imageContext; pictureLock.unlock()
@@ -97,7 +98,7 @@ extension Discussion {
         func conditions() -> RunConditions {
             let room = activeSessionRoom ?? currentID
             let invocation = activeWorkspace.map { WorkspaceInvocation(binding: $0, room: room) }
-            return Discussion.steered(.app(account, invocation, screen: screen), steering).thinkingHard(hard)
+            return Discussion.steered(.app(account, invocation, screen: screen), steering).thinkingHard(hard).picking(model: picks.model, effort: picks.effort)
         }
         // Only dedicated Claude / ChatGPT accounts keep sessions; others (Gemini) take the normal path.
         if let room = activeSessionRoom, NativeSessions.eligible(account) {
@@ -110,7 +111,7 @@ extension Discussion {
         if let workspaceAnswer, let binding = activeWorkspace { return workspaceAnswer(account, start, binding, token, progress) }
         let run = conditions()
         if pictures.isEmpty && activeWorkspace == nil && run.screenTools == nil {
-            return Discussion.thinkingHard(hard) { debateAnswer(account, start, timeout, token, web) }
+            return Discussion.thinkingHard(hard) { Discussion.picking(picks) { debateAnswer(account, start, timeout, token, web) } }
         }
         if let pictureAnswer, activeWorkspace == nil, run.screenTools == nil {
             return pictureAnswer(account, start, pictures, timeout, token, web)

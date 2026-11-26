@@ -257,6 +257,11 @@ public struct ChatConfiguration: Codable {
     // soloAccountID; nil or empty = automatic. Not synced: account IDs differ per Mac.
     public var memberIDs: [String]?
     public var leadID: String?             // the member picked by hand to do the work (nil = the app picks and keeps one)
+    // mode 0: the message box's model, for the one account picked by hand (soloAccountID) only, and its thinking level
+    // for this chat's answers; nil = Auto (the account's setting in Settings by AI). Kept until changed; picking another
+    // account or Auto sets the model back to Auto (Discussion.pickAccountAuto, toggleMember).
+    public var model: String?
+    public var effort: String?
     public var school: Bool?               // older: the side the first answer picked (no longer used; Enterprise.swift)
     // Older review settings, read once to make the reviewer a member (Discussion.migratedMembers).
     public var peerReview: Bool?

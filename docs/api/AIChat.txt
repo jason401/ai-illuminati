@@ -75,6 +75,7 @@ ChatApp.run | static var run: (Account, WorkspaceInvocation?, ChatApp.ScreenAnsw
 ChatApp.screens | static var screens: ChatApp.Screens
 ChatConfiguration | struct ChatConfiguration
 ChatConfiguration.accountIDs | var accountIDs: [String]?
+ChatConfiguration.effort | var effort: String?
 ChatConfiguration.init(from:) | init(from decoder: any Decoder) throws
 ChatConfiguration.init(mode:order:participants:leader:maxTurns:turnsPerAI:speechLength:keepSessions:modeVersion:accountIDs:leaderAccountID:voteSkippedIDs:soloAccountID:lastSoloAccountID:memberIDs:leadID:school:peerReview:peerAccountID:lastReviewSHA:lastReviewAt:nextReviewAt:pendingReview:) | init(mode: Int = 1, order: [Account.Provider] = [.claude, .codex, .gemini], participants: [Account.Provider] = [.claude, .codex, .gemini], leader: Account.Provider = .claude, maxTurns: Int? = nil, turnsPerAI: Int? = nil, speechLength: Int? = nil, keepSessions: Bool? = nil, modeVersion: Int? = nil, accountIDs: [String]? = nil, leaderAccountID: String? = nil, voteSkippedIDs: [String]? = nil, soloAccountID: String? = nil, lastSoloAccountID: String? = nil, memberIDs: [String]? = nil, leadID: String? = nil, school: Bool? = nil, peerReview: Bool? = nil, peerAccountID: String? = nil, lastReviewSHA: String? = nil, lastReviewAt: Date? = nil, nextReviewAt: Date? = nil, pendingReview: String? = nil)
 ChatConfiguration.keepSessions | var keepSessions: Bool?
@@ -88,6 +89,7 @@ ChatConfiguration.maxTurns | var maxTurns: Int?
 ChatConfiguration.memberIDs | var memberIDs: [String]?
 ChatConfiguration.mode | var mode: Int
 ChatConfiguration.modeVersion | var modeVersion: Int?
+ChatConfiguration.model | var model: String?
 ChatConfiguration.nextReviewAt | var nextReviewAt: Date?
 ChatConfiguration.order | var order: [Account.Provider]
 ChatConfiguration.participants | var participants: [Account.Provider]

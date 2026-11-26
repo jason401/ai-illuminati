@@ -42,10 +42,11 @@ ClaudeUsage.forget(_:) | static func forget(_ account: Account)
 ClaudeUsage.read(_:) | static func read(_ account: Account) -> AIUsage
 CloudEffort | enum CloudEffort
 CloudEffort.all | static let all: [String]
-CloudEffort.level(_:hard:harder:defaults:) | static func level(_ account: Account, hard: Bool, harder: Bool = false, defaults: UserDefaults = .app) -> String?
-CloudEffort.levels(for:defaults:) | static func levels(for account: Account, defaults: UserDefaults = .app) -> [String]
+CloudEffort.level(_:hard:harder:picked:model:defaults:) | static func level(_ account: Account, hard: Bool, harder: Bool = false, picked chat: String? = nil, model: String? = nil, defaults: UserDefaults = .app) -> String?
+CloudEffort.levels(for:model:defaults:) | static func levels(for account: Account, model picked: String? = nil, defaults: UserDefaults = .app) -> [String]
 CloudEffort.picked(_:defaults:) | static func picked(_ account: Account, defaults: UserDefaults = .app) -> String?
 CloudEffort.set(_:for:defaults:) | static func set(_ level: String?, for account: Account, defaults: UserDefaults = .app)
+CloudEffort.title(_:) | static func title(_ level: String?) -> String
 CloudModels | enum CloudModels
 CloudModels.Choice | struct Choice
 CloudModels.Choice.id | let id: String
@@ -54,6 +55,7 @@ CloudModels.claudeChoices | static let claudeChoices: [CloudModels.Choice]
 CloudModels.codexChoices(_:) | static func codexChoices(_ account: Account) -> [CloudModels.Choice]
 CloudModels.loadGemini(_:done:) | static func loadGemini(_ account: Account, done: @escaping ([CloudModels.Choice]) -> Void)
 CloudModels.model(_:defaults:) | static func model(_ account: Account, defaults: UserDefaults = .app) -> String?
+CloudModels.model(_:picked:defaults:) | static func model(_ account: Account, picked: String?, defaults: UserDefaults = .app) -> String?
 CloudModels.seenKey | static let seenKey: String
 CloudModels.seenTitle(_:picked:) | static func seenTitle(_ id: String, picked: String?) -> String
 CloudModels.set(_:for:defaults:) | static func set(_ name: String?, for account: Account, defaults: UserDefaults = .app)
@@ -165,9 +167,12 @@ RunConditions.Folders.init(directory:arguments:read:) | init(directory: URL, arg
 RunConditions.ScreenTools | struct ScreenTools
 RunConditions.ScreenTools.init(arguments:finish:) | init(arguments: (([String], URL) throws -> [String])? = nil, finish: @escaping () -> Void)
 RunConditions.beforeStart | var beforeStart: (() -> Void)?
+RunConditions.effort | var effort: String?
 RunConditions.environment | var environment: ([String : String]) -> [String : String]
 RunConditions.folders | var folders: RunConditions.Folders?
 RunConditions.init() | init()
+RunConditions.model | var model: String?
+RunConditions.picking(model:effort:) | func picking(model: String?, effort: String?) -> RunConditions
 RunConditions.prefix | var prefix: [String]
 RunConditions.processGroup | var processGroup: Bool
 RunConditions.screenTools | var screenTools: RunConditions.ScreenTools?

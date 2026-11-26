@@ -431,6 +431,7 @@ RemoteChats | enum RemoteChats
 RemoteChats.chat(_:_:opened:) | static func chat(_ d: Discussion, _ room: UUID, opened: Bool) -> [String : Any]?
 RemoteChats.composer(_:project:) | static func composer(_ d: Discussion, project: String?) -> [String : Any]
 RemoteChats.create(_:project:text:photos:mentions:) | static func create(_ d: Discussion, project: String?, text: String, photos: [Data], mentions: [String] = []) -> (id: UUID?, reason: String?)
+RemoteChats.fold(_:folded:) | static func fold(_ key: String, folded: Bool) -> Bool
 RemoteChats.image(_:_:id:) | static func image(_ d: Discussion, _ room: UUID, id: UUID) -> URL?
 RemoteChats.inbox(_:now:) | static func inbox(_ d: Discussion, now: Date = Date()) -> [[String : Any]]
 RemoteChats.list(_:limits:) | static func list(_ d: Discussion, limits: [String : Int] = [:]) -> [[String : Any]]

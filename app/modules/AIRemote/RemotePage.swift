@@ -175,7 +175,11 @@ h1 { font-size:30px; font-weight:700; margin:4px 12px 10px; letter-spacing:-.3px
 .folder.folded .chev { transform:rotate(-90deg); }
 .folder .ficon { color:var(--dim); flex:none; }
 .folder .tool { width:36px; height:36px; margin:-6px -8px -6px 0; color:var(--dim); }
-.children.folded { display:none; }
+.children.folded, .sbody.folded { display:none; }
+/* A section the Mac's sidebar folds: tap its title (the chevron after it, as on the Mac). */
+.section.fold { display:flex; align-items:center; gap:5px; margin-top:10px; padding:8px 0 4px; cursor:pointer; -webkit-tap-highlight-color:transparent; }
+.section.fold .chev { transition:transform .2s; }
+.section.fold.folded .chev { transform:rotate(-90deg); }
 .more { display:flex; gap:18px; padding:6px 12px 8px 34px; }
 .children .more { padding-left:56px; }
 .more button { border:0; background:none; color:var(--accent); font:14px -apple-system, system-ui; padding:4px 0; }
@@ -436,7 +440,11 @@ const ICON_NEW = '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" st
 const drafts = {}, cache = {}, titles = {}, projects = {};
 let current = null, chatId = null, newProject = null, opened = false, timer = null, lastList = '', lastChat = '', photos = [], sending = false;
 let navAnimate = false, pushed = false, searching = false, searchTimer = null, jump = null;
-const folded = new Set(JSON.parse(localStorage.getItem('folded') || '[]'));
+// Folds are the Mac sidebar's (each section and folder carries "fold" and "folded"; POST /api/fold), so Safari, the
+// Home Screen app and another Mac's panel agree. A tap shows at once and holds until the Mac has it.
+const foldWant = {}, foldTurn = {};
+function isFolded(key, server) { return key in foldWant ? foldWant[key] : !!server; }
+localStorage.removeItem('folded');   // this browser's own folds from before
 const limits = {};   // lists lengthened with "Show more", like the Mac sidebar: in memory only, a reload starts short
 function listPath() {
   return '/api/chats' + Object.keys(limits).map((k, i) => (i ? '&' : '?') + 'n.' + encodeURIComponent(k) + '=' + limits[k]).join('');
@@ -637,14 +645,16 @@ function renderList(data) {
   const top = inboxRows(data.inbox);
   if (!data.sections.length && !top) { $('list').innerHTML = '<div class="note">' + esc(S.empty) + '</div>'; return; }
   $('list').innerHTML = top + data.sections.map(s => {
-    let out = '<div class="section">' + esc(s.title) + '</div>', open = false, folderMore = null;
+    const sf = s.fold && isFolded(s.fold, s.folded) ? ' folded' : '';
+    let out = s.fold ? '<div class="section fold' + sf + '" data-fold="' + esc(s.fold) + '" role="button">' + esc(s.title) + ICON_CHEV + '</div><div class="sbody' + sf + '">'
+      : '<div class="section">' + esc(s.title) + '</div>', open = false, folderMore = null;
     const close = () => { out += moreRow(folderMore) + '</div>'; open = false; folderMore = null; };
     for (const c of s.chats) {
       if (c.folder) {
         if (open) close();
         projects[c.project] = c.folder;
-        const f = folded.has(c.project) ? ' folded' : '';
-        out += '<div class="row folder' + f + '" data-project="' + esc(c.project) + '"><span class="mark">' + ICON_CHEV + '</span><span class="ficon">' + ICON_FOLDER + '</span>' +
+        const f = isFolded(c.fold, c.folded) ? ' folded' : '';
+        out += '<div class="row folder' + f + '" data-fold="' + esc(c.fold) + '"><span class="mark">' + ICON_CHEV + '</span><span class="ficon">' + ICON_FOLDER + '</span>' +
           '<span class="name"><div>' + esc(c.folder) + '</div></span>' + (c.approvals ? '<span class="badge">' + c.approvals + '</span>' : '') +
           '<button class="tool" data-new="' + esc(c.project) + '" aria-label="' + esc(S.newIn) + '">' + ICON_NEW + '</button></div><div class="children' + f + '">';
         open = true; folderMore = c.more || null;
@@ -654,7 +664,7 @@ function renderList(data) {
       }
     }
     if (open) close();
-    return out + moreRow(s.more);
+    return out + moreRow(s.more) + (s.fold ? '</div>' : '');
   }).join('');
 }
 async function loadList() {
@@ -689,12 +699,12 @@ $('list').addEventListener('click', async e => {
   }
   const add = e.target.closest('[data-new]');
   if (add) { e.preventDefault(); go('#new=' + encodeURIComponent(add.dataset.new)); return; }
-  const folder = e.target.closest('.folder');
-  if (folder) {
-    const p = folder.dataset.project, now = !folded.has(p);
-    now ? folded.add(p) : folded.delete(p);
-    localStorage.setItem('folded', JSON.stringify([...folded]));
-    folder.classList.toggle('folded', now); folder.nextElementSibling.classList.toggle('folded', now);
+  const fold = e.target.closest('[data-fold]');
+  if (fold) {
+    const key = fold.dataset.fold, now = !fold.classList.contains('folded'), turn = (foldTurn[key] || 0) + 1;
+    foldWant[key] = now; foldTurn[key] = turn;
+    fold.classList.toggle('folded', now); fold.nextElementSibling.classList.toggle('folded', now);
+    api('/api/fold', { key, folded: now }).catch(() => {}).finally(() => { if (foldTurn[key] === turn) delete foldWant[key]; lastList = ''; loadList(); });
     return;
   }
   const row = e.target.closest('a.row'); if (!row) return;

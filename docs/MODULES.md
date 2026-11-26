@@ -883,7 +883,9 @@ made only with its first message, sent through `send`, removed again when that f
 `inbox(_:now:)` (2026-11-23: the inbox panel's 🔴/🟡 for the top of the page's list, from `Inbox.make`, with the time left, the chat each
 opens and, for a chat's approval, its id and detail for the page's Allow/Deny on the existing `POST /api/approval`) and
 `composer(_:project:)` (2026-11-26: a new chat's message-box lists for `GET /api/chat/new`, the @ accounts and "/" ways that `chat`
-also returns; `send` and `create` take the accounts picked from the @ list as `mentions`, which `prepare` checks like the Mac's).
+also returns; `send` and `create` take the accounts picked from the @ list as `mentions`, which `prepare` checks like the Mac's) and
+`fold(_:folded:)` (2026-11-26: `POST /api/fold`, the page's section and folder folds kept in the Mac's `SidebarFold`, which `list`
+reports as "fold"/"folded", so a browser losing its storage, or another browser of the same Mac, no longer opens everything).
 
 ## Records
 

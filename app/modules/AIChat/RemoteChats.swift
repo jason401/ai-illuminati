@@ -10,7 +10,10 @@ import AIProjects
 public enum RemoteChats {
     // Working, Needs review, Pinned, Projects (each folder with its newest chats), Recents, like ChatView's sidebar.
     // Long lists start at the sidebar's page; `limits` (the phone's "Show more") lengthens one by its key. A shortened
-    // list carries "more": its key, page, how many it has and how many are left out.
+    // list carries "more": its key, page, how many it has and how many are left out. The sections the Mac folds and each
+    // project folder carry "fold" (the sidebar's key) and "folded": one state with the Mac's sidebar (SidebarFold), so
+    // every page of this Mac (Safari, the Home Screen app, another Mac's panel) shows the same and nothing is lost when
+    // a browser's storage is.
     public static func list(_ d: Discussion, limits: [String: Int] = [:]) -> [[String: Any]] {
         func limit(_ key: String, _ page: Int) -> Int { max(limits[key] ?? page, page) }
         func more(_ key: String, page: Int, total: Int, listed: Int) -> [String: Any]? {
@@ -28,35 +31,44 @@ public enum RemoteChats {
             return row
         }
         var sections: [[String: Any]] = []
-        func add(_ title: String, _ rows: [[String: Any]], more: [String: Any]? = nil) {
+        let folds = SidebarFold.shared
+        func add(_ title: String, _ rows: [[String: Any]], more: [String: Any]? = nil, fold: String? = nil) {
             guard !rows.isEmpty else { return }
             var section: [String: Any] = ["title": title, "chats": rows]
             if let more { section["more"] = more }
+            if let fold { section["fold"] = fold; section["folded"] = folds.isFolded(fold) }
             sections.append(section)
         }
         add(L("작업 중", "Working"), WorkingChats.list(conversations: d.conversations, running: d.runningRooms, stopping: d.stoppingRooms,
-                                                     todo: todo, names: names).map { row($0.conversation, detail: $0.project) })
+                                                     todo: todo, names: names).map { row($0.conversation, detail: $0.project) }, fold: "working")
         let unread = UnreadChats.list(conversations: d.conversations, unread: d.unreadRooms, running: d.runningRooms, todo: todo, names: names)
         let unreadListed = unread.prefix(limit("unread", SidebarFold.projectPage))
         add(L("확인 필요", "Needs review"), unreadListed.map { row($0.conversation, detail: $0.project) },
             more: more("unread", page: SidebarFold.projectPage, total: unread.count, listed: unreadListed.count))
         let grouped = SidebarProjects.group(d.listedConversations.filter(\.hasContent), todo: todo, pinned: SidebarFold.shared.pinnedProjects, names: names)
-        add(L("고정됨", "Pinned"), grouped.loose.filter { $0.pinned == true }.map { row($0) })
+        add(L("고정됨", "Pinned"), grouped.loose.filter { $0.pinned == true }.map { row($0) }, fold: "pinned")
         add(L("프로젝트", "Projects"), grouped.projects.flatMap { group -> [[String: Any]] in
             let rooms = SidebarProjects.runningFirst(group, todo: todo, running: d.runningRooms)
             let key = "project." + group.id, page = SidebarFold.projectPage
             let listed = SidebarFold.listedChats(rooms.chats, limit: limit(key, page), open: nil)
             let chats = rooms.running + rooms.going + listed.rows
-            var folder: [String: Any] = ["folder": group.name, "id": key, "project": group.id]
+            var folder: [String: Any] = ["folder": group.name, "id": key, "project": group.id, "fold": key, "folded": folds.isFolded(key)]
             if let more = more(key, page: page, total: listed.unpinned, listed: listed.listed) { folder["more"] = more }
             let count = group.chats.reduce(0) { $0 + (waiting[$1.id] ?? 0) }
             if count > 0 { folder["approvals"] = count }
             return [folder] + chats.map { row($0, depth: 1) }
-        })
+        }, fold: "projects")
         let recents = grouped.loose.filter { $0.pinned != true }, recentsListed = recents.prefix(limit("recents", SidebarFold.recentsPage))
         add(L("최근", "Recents"), recentsListed.map { row($0) },
-            more: more("recents", page: SidebarFold.recentsPage, total: recents.count, listed: recentsListed.count))
+            more: more("recents", page: SidebarFold.recentsPage, total: recents.count, listed: recentsListed.count), fold: "recents")
         return sections
+    }
+
+    // Folds or unfolds a section or project folder from the phone, in the Mac's sidebar too. Only the keys `list` gives.
+    public static func fold(_ key: String, folded: Bool) -> Bool {
+        guard ["working", "pinned", "projects", "recents"].contains(key) || key.hasPrefix("project.") else { return false }
+        if SidebarFold.shared.isFolded(key) != folded { SidebarFold.shared.toggle(key) }
+        return true
     }
 
     // The inbox's 🔴 and 🟡 (Inbox.make, the Mac panel's lists), each with its name, one line, the time left and the chat it

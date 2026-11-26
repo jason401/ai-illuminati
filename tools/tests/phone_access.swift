@@ -136,6 +136,21 @@ func testPhoneServer() {
            && page.contains("'/api/chat/new' + (project ?"), "phone page: the @ and / lists above the message box, picks sent with the message")
     let list = call("GET", "/api/chats").1["sections"] as? [[String: Any]] ?? []
     expect(list.contains { ($0["chats"] as? [[String: Any]] ?? []).contains { $0["id"] as? String == room.uuidString } }, "phone server: the list has the chat")
+    // Folding on the phone is the Mac sidebar's (SidebarFold): sections carry its key and state, POST /api/fold changes
+    // it (the Mac's sidebar too), and only the keys the list gives are taken.
+    func recents() -> [String: Any]? { (call("GET", "/api/chats").1["sections"] as? [[String: Any]] ?? []).first { $0["fold"] as? String == "recents" } }
+    let wasFolded = SidebarFold.shared.isFolded("recents")
+    expect(recents()?["folded"] as? Bool == wasFolded, "phone server: Recents comes with its fold key and the Mac's state")
+    expect(call("POST", "/api/fold", ["key": "recents", "folded": true]).0 == 200 && SidebarFold.shared.isFolded("recents")
+           && recents()?["folded"] as? Bool == true, "phone server: folding Recents on the phone folds it on the Mac")
+    expect(call("POST", "/api/fold", ["key": "recents", "folded": false]).0 == 200 && !SidebarFold.shared.isFolded("recents")
+           && recents()?["folded"] as? Bool == false, "phone server: and unfolds it")
+    expect(call("POST", "/api/fold", ["key": "devices", "folded": true]).0 == 400 && call("POST", "/api/fold", ["key": "recents"]).0 == 400,
+           "phone server: other keys and a missing state are refused")
+    if wasFolded { _ = RemoteChats.fold("recents", folded: true) }
+    let foldPage = String(decoding: RemotePage.html(), as: UTF8.self)
+    expect(foldPage.contains("data-fold=") && foldPage.contains("'/api/fold'") && foldPage.contains("isFolded(s.fold, s.folded)")
+           && !foldPage.contains("localStorage.setItem('folded'"), "phone page: sections and folders fold through the Mac, not this browser")
 
     let request = ProjectApproval(room: room, run: UUID(), title: "git_push", detail: "origin main")
     ProjectCenter.shared.requests.append(request)

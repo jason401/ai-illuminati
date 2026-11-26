@@ -210,7 +210,7 @@ public enum RemoteChats {
     }
 
     // A project folder's "Project info" as the phone page shows it, only to read (ProjectInfoView on the Mac, which also
-    // changes it): the repository and its worktrees, the rules files the AIs get, the folders and files (★ work folder,
+    // changes it): the repository and its worktrees, which rules files the AIs get (names only, not their text), the folders and files (★ work folder,
     // read, edited or off), the links, the project memory's notes in use, the folders linked to one chat only, the lock,
     // and the TODOs left (the panel beside the Mac's tab). nil for an unknown project.
     public static func projectInfo(_ d: Discussion, project: String) -> [String: Any]? {
@@ -231,7 +231,7 @@ public enum RemoteChats {
                 return row
             }
             result["rules"] = (first.map { ProjectRules.read(root: $0.root).parts } ?? []).map { part -> [String: Any] in
-                var row: [String: Any] = ["name": part.file.lastPathComponent, "path": path(part.file.path), "text": ProjectRules.preview(part)]
+                var row: [String: Any] = ["name": part.file.lastPathComponent, "path": path(part.file.path)]
                 if let note = ProjectRules.note(part) { row["note"] = note }
                 return row
             }

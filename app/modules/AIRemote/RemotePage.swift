@@ -428,8 +428,6 @@ footer { position:relative; padding:6px 10px calc(env(safe-area-inset-bottom) + 
 .irow .iright { flex:none; color:var(--dim); font-size:12px; text-align:right; }
 .ibadge { font-size:10px; font-weight:500; color:var(--dim); background:var(--fill); padding:1px 6px; border-radius:8px; margin-left:5px; }
 .iwork { color:var(--accent); font-size:11px; margin-left:5px; } .imiss { color:var(--red); font-size:11px; font-weight:500; margin-left:5px; }
-.ipre { margin:6px 0 0; padding:10px; border-radius:10px; background:var(--fill); font:12px/1.45 ui-monospace, Menlo, monospace; white-space:pre-wrap;
-  overflow-wrap:anywhere; max-height:300px; overflow:auto; -webkit-user-select:text; user-select:text; }
 .ikind { font-size:13px; font-weight:600; color:var(--dim); margin:12px 0 0; }
 .inote { padding:8px 10px; border-radius:10px; background:var(--fill); margin-top:6px; font-size:14px; line-height:1.4; white-space:pre-wrap; overflow-wrap:anywhere;
   -webkit-user-select:text; user-select:text; }
@@ -1278,7 +1276,7 @@ function renderInfo(d) {
   }
   if (d.rules) {
     let body = hint(d.rules.length ? S.infoRulesHint : S.infoRulesNone);
-    for (const r of d.rules) body += infoRow(ICON_DOC, r.name, r.path, r.note ? '<span class="ibadge">' + esc(r.note) + '</span>' : '') + '<pre class="ipre">' + esc(r.text) + '</pre>';
+    for (const r of d.rules) body += infoRow(ICON_DOC, r.name, r.path, r.note ? '<span class="ibadge">' + esc(r.note) + '</span>' : '');
     h += infoSection(S.infoRules, body);
   }
   const folders = d.folders || [];

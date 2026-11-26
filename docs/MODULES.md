@@ -561,8 +561,8 @@ Public names and why (everything else stays internal: `ProjectError`, `ProjectTo
   `useWorkFolder` (the Project info tab lists, adds and switches; the checks, locks and the move of chats and TODO lists stay in
   AIChat). A switch keeps the project's id, so nothing keyed by it moves.
 - Project info text shared by the Mac's tab and the phone page (2026-11-26): `ProjectInfoStore.shownRemote` (a remote
-  without its user or password), `ProjectRules.note`/`preview` (what of a rules file the AIs get, or why none); they moved
-  here from `ProjectInfoView` so both show the same words.
+  without its user or password), `ProjectRules.note` (what of a rules file the AIs get) and `preview` (the Mac's "Show"); they
+  moved here from `ProjectInfoView` so both show the same words.
 - Project folders as one list (2026-11-24): `ProjectFolder.writable` (✏️, a plain folder only; saved only when on, an older
   app reads it as read only), `ProjectInfoStore.setRead` (👁: off moves a folder into `workFolders`, where an older app shows
   it as a work folder and no AI reads it), `setWritable`/`editableFolders` (the store owns the rule: no Git around or inside,
@@ -891,7 +891,7 @@ also returns; `send` and `create` take the accounts picked from the @ list as `m
 reports as "fold"/"folded", so a browser losing its storage, or another browser of the same Mac, no longer opens everything) and
 `saveNotes(_:room:text:)` (2026-11-26: `POST /api/chat/<id>/notes`, the chat's 메모 edited on the page, into `ChatNotes`' open panel
 when it shows that chat, else its file; `chat` returns them as "notes") and `projectInfo(_:project:)` (2026-11-26:
-`GET /api/project?id=`, a project folder's Project info as JSON only to read: repository, rules files, folders and files, links,
+`GET /api/project?id=`, a project folder's Project info as JSON only to read: repository, rules file names (not their text), folders and files, links,
 memory notes in use, chat-only folders, lock and the TODOs left; nothing on the page changes a project).
 
 ## Records

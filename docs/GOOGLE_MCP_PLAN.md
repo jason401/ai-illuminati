@@ -49,7 +49,10 @@
 2. **설치된 앱에서 손 확인 안 함**: 사이드바 줄 모양, 로그인 창이 채팅 창 위에 뜨는지, AI가 실제로 Drive 도구를 쓰는지.
 3. **Google "허용?"(elicitation) 미지원**: `RemoteMCPSession`이 `input_required`를 받으면 "아직 지원 안 함" 오류. 내 파일 만들기는
    질문이 없었지만, 남의 파일·조직 밖 공유 파일은 Google 기본 정책상 질문이 오므로 지금은 실패한다. 승인 카드로 보여 주는 작업이 다음 큰일.
-4. **Docs·Sheets·Slides MCP는 안 붙임**: 도구 호출이 "Workspace Developer Preview Program 가입 필요"로 거절됨. 사용자 결정: 신청 안 함.
+4. **Docs·Sheets·Slides MCP는 안 붙임**: 11-25 시험에서 도구 호출이 "Workspace Developer Preview Program 가입 필요"로 거절됨. 사용자 결정: 신청 안 함.
+   **정정(2026-11-26)**: Google 릴리스 노트(2026-11-24)는 Drive·Docs·Sheets·Slides MCP 모두 "generally available"이고
+   "It might take up to 10 days to become available for your account"라고 함 → 거절은 계정 반영 지연으로 보임(늦어도 12월 4일쯤).
+   미리보기로 남은 건 People·Classroom·Universal Search. 반영되면 서버 추가 + documents/spreadsheets/presentations 권한(다시 로그인).
    그래서 문서·슬라이드·시트 **안 고치기**는 안 된다(내용 읽기는 Drive `read_file_content`로 됨). Google이 GA하면 서버 추가 + scope 추가(다시 로그인).
 5. 학교(Workspace) 계정 로그인, 다음 날 재로그인 없이 유지되는지 확인 안 함.
 6. 앱 미리보기(render_chat)로 Google Drive 줄 그림 확인 안 함.
@@ -127,7 +130,7 @@
    - 4개 서버 initialize·tools/list 성공(Drive 9, Docs 2, Sheets 6, Slides 4), Developer Preview 가입 없이 열림, list_recent_files 읽기 성공.
    - 쓰기 시험: Drive `create_file`로 빈 문서·빈 슬라이드 만들기 성공(내 파일이라 승인 질문 없음).
      Docs·Slides MCP는 `tools/list`는 되지만 도구를 부르면 "Cloud project가 Google Workspace Developer Preview Program에
-     가입해야 한다"며 거절 → Drive MCP는 GA, Docs·Sheets·Slides MCP는 아직 Developer Preview.
+     가입해야 한다"며 거절 → 당시엔 미리보기로 판단했으나, 11-24 GA 발표의 "최대 10일 반영" 기간이었던 것으로 정정(위 4번).
    - Developer Preview(https://developers.google.com/workspace/preview): 신청서에 Workspace 계정(개인 Gmail 불가, 학교 계정 가능)과
      프로젝트 번호, 승인 며칠. 약관상 GA 전에는 공개 앱에 넣을 수 없고 도메인 밖 사용자에게 열 수 없음.
    - 남은 확인: 학교 계정, 다음 날 재로그인 없이

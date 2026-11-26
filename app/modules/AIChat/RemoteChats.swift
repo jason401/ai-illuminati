@@ -209,6 +209,79 @@ public enum RemoteChats {
         return result.merging(picks(d, plain: plain, project: chat.workspace?.project != nil, lock: chat.enterpriseLock)) { a, _ in a }
     }
 
+    // A project folder's "Project info" as the phone page shows it, only to read (ProjectInfoView on the Mac, which also
+    // changes it): the repository and its worktrees, the rules files the AIs get, the folders and files (★ work folder,
+    // read, edited or off), the links, the project memory's notes in use, the folders linked to one chat only, the lock,
+    // and the TODOs left (the panel beside the Mac's tab). nil for an unknown project.
+    public static func projectInfo(_ d: Discussion, project: String) -> [String: Any]? {
+        guard let group = projectGroups(d).first(where: { $0.id == project }) else { return nil }
+        let todo = TodoStore.shared.snapshot, store = ProjectInfoStore.shared
+        let info = store.snapshot.projects[project] ?? ProjectInfo()
+        let first = group.bindings.first, folderless = first?.isFolderless == true, documents = first?.isDocuments == true
+        let fm = FileManager.default
+        func path(_ p: String) -> String { (p as NSString).abbreviatingWithTildeInPath }
+        var result: [String: Any] = ["id": project, "name": group.name, "chats": group.chats.count,
+                                     "kind": folderless ? "folderless" : documents ? "documents" : "git"]
+        if !folderless {
+            result["repository"] = group.bindings.map { binding -> [String: Any] in
+                var row: [String: Any] = ["path": path(binding.root), "worktree": binding.root != first?.root]
+                if !binding.remoteURL.isEmpty {
+                    row["remote"] = (binding.remote.isEmpty ? "" : binding.remote + " · ") + ProjectInfoStore.shownRemote(binding.remoteURL)
+                }
+                return row
+            }
+            result["rules"] = (first.map { ProjectRules.read(root: $0.root).parts } ?? []).map { part -> [String: Any] in
+                var row: [String: Any] = ["name": part.file.lastPathComponent, "path": path(part.file.path), "text": ProjectRules.preview(part)]
+                if let note = ProjectRules.note(part) { row["note"] = note }
+                return row
+            }
+        }
+        // The same rows as the Mac's "Folders and files": the ★ work folder, the folders and files read, those turned off.
+        let (active, others) = d.workFolders(project)
+        func folder(_ p: String, directory: Bool, kind: String, writable: Bool) -> [String: Any] {
+            let exists = fm.fileExists(atPath: p), work = kind == "work"
+            let git = work ? !documents : directory && exists && ProjectInfoStore.isGit(p)
+            return ["name": (p as NSString).lastPathComponent, "path": path(p), "kind": kind, "exists": exists, "writable": work || writable, "directory": directory,
+                    "badge": !directory ? L("파일", "File") : git ? "Git" : work && documents ? L("문서", "Documents") : L("폴더", "Folder")]
+        }
+        result["folders"] = (active.map { [folder($0, directory: true, kind: "work", writable: true)] } ?? [])
+            + info.folders.filter { $0.path != active }.map { folder($0.path, directory: $0.directory, kind: "read", writable: $0.writable == true) }
+            + others.filter { p in !info.folders.contains { $0.path == p } }.map { folder($0, directory: true, kind: "off", writable: false) }
+        result["links"] = info.links.map { ["title": $0.title, "url": $0.url] }
+        // Project memory: the notes in use, newest first, a kind at a time; the work log only its newest lines.
+        let notes = ProjectMemoryStore.shared.notes(project)
+        let inUse = notes.filter { $0.state == .active }.sorted { $0.createdAt > $1.createdAt }
+        result["memory"] = ProjectMemoryNote.Kind.allCases.map { kind -> [String: Any] in
+            let all = inUse.filter { $0.kind == kind }, page = kind == .log ? 10 : 50
+            return ["kind": kind.rawValue, "total": all.count, "notes": all.prefix(page).map { note -> [String: Any] in
+                ["text": note.text, "by": note.by ?? "", "verified": note.verified, "date": ChatTime.day(note.createdAt)]
+            }]
+        }
+        result["archived"] = notes.filter { $0.state == .archived }.count
+        var chatOnly: [(path: String, directory: Bool, chats: [String])] = []
+        let own = Set(group.bindings.map(\.root)).union(info.folders.map(\.path))
+        for chat in group.chats + group.todoRooms {
+            for root in chat.workspace?.roots ?? [] where !own.contains(root.path) {
+                if let i = chatOnly.firstIndex(where: { $0.path == root.path }) { chatOnly[i].chats.append(chat.title) }
+                else { chatOnly.append((root.path, root.directory, [chat.title])) }
+            }
+        }
+        result["chatOnly"] = chatOnly.map { ["name": ($0.path as NSString).lastPathComponent, "path": path($0.path), "exists": fm.fileExists(atPath: $0.path),
+                                             "chats": $0.chats.prefix(2).joined(separator: ", ") + ($0.chats.count > 2 ? " …" : "")] }
+        if let lock = SidebarProjects.lock(of: group, todo: todo) {
+            let left = d.unlockedParts(group.id, todos: todo)
+            result["lock"] = ["personal": lock.isPersonal, "name": lock.name, "chatsLeft": left.chats, "listsLeft": left.lists]
+        }
+        // The TODOs left, yours first (needs you, check), then the rest in the board's order.
+        let lists = todo.lists.filter { $0.project.map(SidebarProjects.key) == project }
+        let open = lists.flatMap { todo.ordered($0.id) }.filter { $0.state != .done && $0.state != .cancelled }
+        let mine = open.filter { $0.state == .needsYou || $0.state == .review }
+        result["todos"] = (mine + open.filter { $0.state != .needsYou && $0.state != .review }).map { item -> [String: Any] in
+            ["title": item.title, "state": item.state.rawValue, "label": item.state.title, "yours": item.state == .needsYou || item.state == .review]
+        }
+        return result
+    }
+
     // The chat's notes (the Mac's 메모 panel, ChatNotes): what the Mac's panel holds now when it shows this chat, typing
     // not yet saved included, else the saved file. Read without saving, since the page asks for them every poll.
     static func notes(_ room: UUID) -> String {

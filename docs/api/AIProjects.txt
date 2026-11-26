@@ -92,6 +92,7 @@ ProjectInfoStore.setRead(_:_:in:) | func setRead(_ path: String, _ on: Bool, in 
 ProjectInfoStore.setWorkFolders(_:of:) | func setWorkFolders(_ paths: [String], of project: String) throws
 ProjectInfoStore.setWritable(_:_:in:workRoot:) | func setWritable(_ path: String, _ on: Bool, in project: String, workRoot: String?) throws
 ProjectInfoStore.shared | static var shared: ProjectInfoStore
+ProjectInfoStore.shownRemote(_:) | static func shownRemote(_ remote: String) -> String
 ProjectInfoStore.snapshot | @Published var snapshot: ProjectInfoData { get set }
 ProjectInfoStore.webURL(_:) | static func webURL(_ remote: String) -> URL?
 ProjectLink | struct ProjectLink
@@ -241,6 +242,8 @@ ProjectRules.Part.cut | let cut: Bool
 ProjectRules.Part.file | let file: URL
 ProjectRules.Part.sent | let sent: String?
 ProjectRules.limit | static let limit: Int
+ProjectRules.note(_:) | static func note(_ part: ProjectRules.Part) -> String?
+ProjectRules.preview(_:) | static func preview(_ part: ProjectRules.Part) -> String
 ProjectRules.read(root:) | static func read(root: String) -> (prompt: String, parts: [ProjectRules.Part])
 ProjectRun | final class ProjectRun
 ProjectRun.activeExpired | var activeExpired: Bool { get }

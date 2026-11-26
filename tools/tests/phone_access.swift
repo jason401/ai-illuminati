@@ -5,6 +5,7 @@ import AIAccounts
 import AIChatRecords
 import AILocalization
 import AIRemote
+import AIWorkspace
 @testable import AIRuntime
 @testable import AIProjects
 @testable import AIChat
@@ -165,6 +166,34 @@ func testPhoneServer() {
     let notesPage = String(decoding: RemotePage.html(), as: UTF8.self)
     expect(notesPage.contains("id=\"notesTool\"") && notesPage.contains("<aside id=\"notes\"") && notesPage.contains("notesFrom(data)")
            && notesPage.contains("'/notes', { text }") && notesPage.contains("drag.notes = true"), "phone page: the notes button, the sliding notes and the swipe to the left")
+    // A project's info, only to read (GET /api/project?id=): what the Mac's Project info tab shows, the remote without its
+    // password, the rules file as the AIs get it, the ★ work folder, links, memory notes in use and the TODOs left.
+    let repo = FileManager.default.temporaryDirectory.appendingPathComponent("phone-info-\(UUID().uuidString)").path
+    try? FileManager.default.createDirectory(atPath: repo, withIntermediateDirectories: true)
+    try? "rule one for the AIs".write(toFile: repo + "/AGENTS.md", atomically: true, encoding: .utf8)
+    let infoRoom = chat.addProjectChat(ProjectBinding(root: repo, common: repo + "/.git", remote: "origin", remoteURL: "https://me:secret@github.com/me/repo.git"),
+                                       title: "info chat", open: false)
+    if let at = chat.conversations.firstIndex(where: { $0.id == infoRoom }) { chat.conversations[at].turns = [ChatTurn(question: "q")] }
+    let key = chat.conversation(infoRoom).workspace?.project.map(SidebarProjects.key) ?? ""
+    _ = try? ProjectInfoStore.shared.addLink(title: "Design doc", url: "https://example.com/doc", to: key)
+    _ = ProjectMemoryStore.shared.add(ProjectMemoryNote(kind: .decision, text: "Phones only read project info"), project: key, by: "Claude")
+    let shownInfo = call("GET", "/api/project?id=" + key)   // call() passes the query as it is (the server's parser decodes it)
+    let infoRules = shownInfo.1["rules"] as? [[String: Any]] ?? [], infoFolders = shownInfo.1["folders"] as? [[String: Any]] ?? []
+    let remote = (shownInfo.1["repository"] as? [[String: Any]])?.first?["remote"] as? String ?? ""
+    let memory = (shownInfo.1["memory"] as? [[String: Any]] ?? []).first { $0["kind"] as? String == "decision" }
+    let firstRule = infoRules.first ?? [:], links = shownInfo.1["links"] as? [[String: String]] ?? []
+    let memoryText = (memory?["notes"] as? [[String: Any]])?.first?["text"] as? String
+    expect(shownInfo.0 == 200 && shownInfo.1["chats"] as? Int == 1 && shownInfo.1["todos"] is [Any], "phone server: a project's info to read \(shownInfo.1)")
+    expect(remote.contains("github.com/me/repo.git") && !remote.contains("secret"), "phone server: the remote without its password: \(remote)")
+    expect(firstRule["name"] as? String == "AGENTS.md" && (firstRule["text"] as? String)?.contains("rule one") == true, "phone server: the rules file as the AIs get it")
+    expect(infoFolders.first?["kind"] as? String == "work" && links.first?["title"] == "Design doc", "phone server: the ★ work folder and the links")
+    expect(memoryText == "Phones only read project info", "phone server: the project memory's notes in use")
+    expect(call("GET", "/api/project?id=nowhere").0 == 404 && call("POST", "/api/project?id=" + key, ["name": "x"]).0 == 404,
+           "phone server: an unknown project, and nothing to change through it")
+    chat.conversations.removeAll { $0.id == infoRoom }   // the list checks below count loose chats only
+    let infoPage = String(decoding: RemotePage.html(), as: UTF8.self)
+    expect(infoPage.contains("data-info=") && infoPage.contains("function renderInfo(d)") && infoPage.contains("'/api/project?id='")
+           && !infoPage.contains("api('/api/project', {"), "phone page: an info button on each project folder opens its info, only to read")
     let foldPage = String(decoding: RemotePage.html(), as: UTF8.self)
     expect(foldPage.contains("data-fold=") && foldPage.contains("'/api/fold'") && foldPage.contains("isFolded(s.fold, s.folded)")
            && !foldPage.contains("localStorage.setItem('folded'"), "phone page: sections and folders fold through the Mac, not this browser")

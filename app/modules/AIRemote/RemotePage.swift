@@ -44,6 +44,46 @@ public enum RemotePage {
             "send": L("보내기", "Send"),
             "pickOnce": L("이 메시지에만 적용돼요", "For this message only"),
             "notes": L("메모", "Notes"),
+            "projectInfo": L("프로젝트 정보", "Project info"),
+            "infoViewOnly": L("iPhone에서는 보기만 해요 · 바꾸려면 Mac의 프로젝트 정보에서", "View only here · change it in Project info on the Mac"),
+            "infoSummary": L("대화 {chats}개 · 남은 할 일 {todos}개", "{chats} chats · {todos} TODOs left"),
+            "infoGit": L("Git 저장소", "Git repository"),
+            "infoDocs": L("문서 폴더 (Git 없음)", "Documents folder (no Git)"),
+            "infoDocsHint": L("글·그림·슬라이드를 함께 다루는 문서 프로젝트예요. AI가 답할 때마다 이 폴더를 먼저 백업해서 되돌릴 수 있어요 (클라우드에만 있는 파일은 빼고).",
+                              "A documents project for text, figures and slides together. The folder is backed up before each answer so it can be undone (not files only in the cloud)."),
+            "infoWorktree": L("워크트리", "Worktree"),
+            "infoRules": L("AI 작업 규칙", "Rules for the AIs"),
+            "infoRulesNone": L("프로젝트 폴더에 AGENTS.md나 CLAUDE.md를 두면 AI가 답할 때마다 읽어요.", "Put an AGENTS.md or CLAUDE.md in the project folder and the AIs read it with every answer."),
+            "infoRulesHint": L("AI가 이 프로젝트에서 답할 때마다 읽는 파일이에요.", "The AIs read these with every answer in this project."),
+            "infoFolders": L("폴더·파일", "Folders and files"),
+            "infoFoldersHint": L("이 프로젝트의 모든 대화와 TODO에서 AI가 읽는 폴더와 파일이에요.", "Every chat and TODO of this project reads these folders and files."),
+            "infoFoldersWork": L("★ 작업 폴더에서 일하고, 나머지는 폴더마다 읽기·수정이 정해져 있어요.", "The project works in the ★ work folder; the others are read or edited as set per folder."),
+            "infoWorkFolder": L("작업 폴더", "Work folder"),
+            "infoMissing": L("없음", "Missing"),
+            "infoReadEdit": L("읽기·수정", "Read · edit"),
+            "infoReadOnly": L("읽기만", "Read only"),
+            "infoOff": L("읽기 끔", "Not read"),
+            "infoNone": L("아직 없어요", "None yet"),
+            "infoLinks": L("링크", "Links"),
+            "infoMemory": L("프로젝트 기억", "Project memory"),
+            "infoMemoryHint": L("이 프로젝트의 AI들이 함께 읽고 쓰는 메모예요 (사용 중인 것만).", "Notes every AI of this project reads and writes (those in use)."),
+            "memDecision": L("결정·사실", "Decisions and facts"),
+            "memProgress": L("진행 중", "Open progress"),
+            "memLog": L("작업 기록", "Work log"),
+            "memMore": L("외 {n}개는 Mac에서 볼 수 있어요", "{n} more on the Mac"),
+            "memArchived": L("보관함 {n}개", "Archive: {n}"),
+            "memNone": L("아직 메모가 없어요", "No notes yet"),
+            "memVerified": L("확인됨", "verified"),
+            "memGuess": L("추측", "guess"),
+            "infoChatOnly": L("대화에만 연결된 자료", "Linked to one chat only"),
+            "infoChatOnlyHint": L("이 프로젝트의 어떤 대화에만 붙어 있는 폴더·파일이에요.", "These are linked to a chat of this project only."),
+            "infoLock": L("잠금", "Lock"),
+            "lockPersonal": L("개인 프로젝트예요. 개인 계정과 내 Mac 모델만 써요.", "A personal project: only personal accounts and models on this Mac."),
+            "lockEnterprise": L("{name} Enterprise 프로젝트예요. {name} 계정과 내 Mac 모델만 써요.", "A {name} Enterprise project: only {name} accounts and models on this Mac."),
+            "lockLeft": L("아직 안 잠긴 대화 {chats}개 · TODO 목록 {lists}개", "Not locked yet: {chats} chats · {lists} TODO lists"),
+            "infoTodos": L("남은 할 일", "TODOs left"),
+            "todosNone": L("남은 할 일이 없어요", "No TODOs left"),
+            "todosYours": L("내 차례", "Your turn"),
             "notesDone": L("완료", "Done"),
             "notesEmpty": L("이 대화의 메모예요. 나만 고칠 수 있고, AI는 답할 때 읽기만 해요.", "Notes for this chat. Only you edit them; the AI reads them when it answers."),
             "notesHint": L("AI는 읽기만 해요 · Mac의 메모와 같아요", "The AI only reads these · the same as on the Mac"),
@@ -372,6 +412,34 @@ footer { position:relative; padding:6px 10px calc(env(safe-area-inset-bottom) + 
 .dropCard svg { color:var(--accent); } #dropZone.no .dropCard svg { color:var(--dim); }
 .dropCard b { font-size:17px; } .dropCard small { color:var(--dim); font-size:13px; }
 
+/* A project's info (the Mac's Project info tab), only to read: its sections one under another. */
+.info { padding:4px 16px 28px; }
+.isum { color:var(--dim); font-size:13px; margin:2px 0 4px; }
+.isec { margin-top:22px; }
+.isec h3 { display:flex; align-items:baseline; gap:8px; font-size:16px; font-weight:600; margin:0 0 6px; }
+.isec h3 small { color:var(--dim); font-size:12px; font-weight:400; }
+.ihint { color:var(--dim); font-size:12px; margin:0 0 6px; line-height:1.4; }
+.irow { display:flex; align-items:center; gap:9px; padding:8px 10px; border-radius:10px; background:var(--fill); margin-top:6px; }
+.irow.work { background:rgba(0,122,255,.1); box-shadow:inset 0 0 0 1px rgba(0,122,255,.45); }
+.irow .ic { flex:none; width:18px; display:flex; justify-content:center; color:var(--dim); } .irow.work .ic { color:var(--accent); }
+.irow .im { flex:1; min-width:0; } .irow.dim .im { opacity:.55; }
+.irow .im > div { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:14px; }
+.irow .im .p { color:var(--dim); font-size:12px; margin-top:1px; -webkit-user-select:text; user-select:text; }
+.irow .iright { flex:none; color:var(--dim); font-size:12px; text-align:right; }
+.ibadge { font-size:10px; font-weight:500; color:var(--dim); background:var(--fill); padding:1px 6px; border-radius:8px; margin-left:5px; }
+.iwork { color:var(--accent); font-size:11px; margin-left:5px; } .imiss { color:var(--red); font-size:11px; font-weight:500; margin-left:5px; }
+.ipre { margin:6px 0 0; padding:10px; border-radius:10px; background:var(--fill); font:12px/1.45 ui-monospace, Menlo, monospace; white-space:pre-wrap;
+  overflow-wrap:anywhere; max-height:300px; overflow:auto; -webkit-user-select:text; user-select:text; }
+.ikind { font-size:13px; font-weight:600; color:var(--dim); margin:12px 0 0; }
+.inote { padding:8px 10px; border-radius:10px; background:var(--fill); margin-top:6px; font-size:14px; line-height:1.4; white-space:pre-wrap; overflow-wrap:anywhere;
+  -webkit-user-select:text; user-select:text; }
+.inote small { display:block; color:var(--dim); font-size:11px; margin-top:4px; }
+.imore { color:var(--dim); font-size:12px; margin-top:6px; }
+.itodo .im > div { white-space:normal; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; }
+.itodo .iright { font-weight:500; }
+.st-needsYou { color:var(--warn) !important; } .st-review { color:#c9a400 !important; } .st-running { color:var(--accent) !important; } .st-ready { color:#34c759 !important; }
+.ionly { color:var(--dim); font-size:12px; text-align:center; margin-top:26px; }
+
 /* The chat's notes (the Mac's 메모 panel): a sheet that slides in from the right over the chat, under a shade. */
 #notes { position:fixed; top:0; bottom:0; right:0; width:min(88vw, 400px); z-index:6; display:flex; flex-direction:column; background:var(--bg);
   padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom); box-shadow:-6px 0 24px rgba(0,0,0,.18);
@@ -467,6 +535,8 @@ const standalone = navigator.standalone === true || matchMedia('(display-mode: s
 const ICON_COPY = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="8" y="8" width="12" height="12" rx="2.5"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>';
 const ICON_FOLDER = '<svg width="17" height="15" viewBox="0 0 24 20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M2 4.5A2.5 2.5 0 0 1 4.5 2h4.2l2.3 2.6h8.5A2.5 2.5 0 0 1 22 7.1v8.4a2.5 2.5 0 0 1-2.5 2.5h-15A2.5 2.5 0 0 1 2 15.5z"/></svg>';
 const ICON_CHEV = '<svg class="chev" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m2 3.5 3 3 3-3"/></svg>';
+const ICON_INFO = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5.5"/><circle cx="12" cy="7.6" r=".6" fill="currentColor"/></svg>';
+const ICON_DOC = '<svg width="14" height="16" viewBox="0 0 20 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M3 3.5A1.5 1.5 0 0 1 4.5 2H13l5 5v13.5a1.5 1.5 0 0 1-1.5 1.5h-12A1.5 1.5 0 0 1 3 20.5z"/><path d="M13 2v5h5"/></svg>';
 const ICON_NEW = '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6"/><path d="M17.6 3.4a1.9 1.9 0 0 1 2.7 2.7L12 14.4l-3.6.9.9-3.6z"/></svg>';
 
 // current: what the chat screen shows ('<id>' or 'new:<project>'), null on the list. chatId: the chat's id once it exists.
@@ -596,9 +666,11 @@ function route() {
   const h = location.hash;
   let m, id = null, project = null, isNew = false;
   const isUpdate = h === '#update';
+  let info = null;
   if ((m = h.match(/^#c=(.+)$/))) id = decodeURIComponent(m[1]);
+  else if ((m = h.match(/^#info=(.+)$/))) info = decodeURIComponent(m[1]);
   else if ((m = h.match(/^#new(?:=(.*))?$/))) { isNew = true; project = m[1] ? decodeURIComponent(m[1]) : null; }
-  const key = isUpdate ? 'update' : id || (isNew ? 'new:' + (project || '') : null);
+  const key = isUpdate ? 'update' : info !== null ? 'info:' + info : id || (isNew ? 'new:' + (project || '') : null);
   const animate = navAnimate; navAnimate = false;
   if (current !== null) { drafts[current] = $('text').value; draftPicked[current] = picked; }
   if (!key) pushed = false;
@@ -619,6 +691,10 @@ function route() {
     $('chatScroll').scrollTop = 1e9;
     if (isNew) setTimeout(() => $('text').focus(), animate ? 380 : 0);
     if (isUpdate) { $('turns')._upd = ''; $('footer').classList.add('hidden'); $('chatTitle').textContent = S.update; $('chatSub').textContent = ''; renderUpdate(); }
+    if (info !== null) {
+      infoId = info; lastInfo = ''; $('footer').classList.add('hidden'); $('turns').innerHTML = '';
+      $('chatTitle').textContent = projects[info] || ''; $('chatSub').textContent = chatSub(S.projectInfo); $('chatScroll').scrollTop = 0;
+    }
   }
   current = key;
   if (!key) { chatId = null; document.activeElement && document.activeElement.blur && document.activeElement.blur(); }
@@ -628,8 +704,9 @@ function route() {
 function poll() {
   clearTimeout(timer);
   if (document.hidden) return;
-  const work = current === 'update' ? loadUpdate() : chatId && current ? loadChat() : !current ? loadList() : Promise.resolve();
-  work.finally(() => { timer = setTimeout(poll, current === 'update' ? 2000 : current ? 1500 : 4000); });
+  const onInfo = !!current && current.startsWith('info:');
+  const work = current === 'update' ? loadUpdate() : onInfo ? loadInfo() : chatId && current ? loadChat() : !current ? loadList() : Promise.resolve();
+  work.finally(() => { timer = setTimeout(poll, current === 'update' ? 2000 : onInfo ? 5000 : current ? 1500 : 4000); });
 }
 
 // The list, in the Mac sidebar's sections; a project's chats fold under its row (remembered on this phone).
@@ -690,6 +767,7 @@ function renderList(data) {
         const f = isFolded(c.fold, c.folded) ? ' folded' : '';
         out += '<div class="row folder' + f + '" data-fold="' + esc(c.fold) + '"><span class="mark">' + ICON_CHEV + '</span><span class="ficon">' + ICON_FOLDER + '</span>' +
           '<span class="name"><div>' + esc(c.folder) + '</div></span>' + (c.approvals ? '<span class="badge">' + c.approvals + '</span>' : '') +
+          '<button class="tool" data-info="' + esc(c.project) + '" aria-label="' + esc(S.projectInfo) + '">' + ICON_INFO + '</button>' +
           '<button class="tool" data-new="' + esc(c.project) + '" aria-label="' + esc(S.newIn) + '">' + ICON_NEW + '</button></div><div class="children' + f + '">';
         open = true; folderMore = c.more || null;
       } else {
@@ -731,6 +809,8 @@ $('list').addEventListener('click', async e => {
     lastList = ''; loadList();
     return;
   }
+  const about = e.target.closest('[data-info]');
+  if (about) { e.preventDefault(); go('#info=' + encodeURIComponent(about.dataset.info)); return; }
   const add = e.target.closest('[data-new]');
   if (add) { e.preventDefault(); go('#new=' + encodeURIComponent(add.dataset.new)); return; }
   const fold = e.target.closest('[data-fold]');
@@ -1161,6 +1241,90 @@ async function loadChat() {
   } catch (e) { if (id === chatId && !cache[id]) $('chatTitle').textContent = e.message || S.offline; lastChat = ''; }
 }
 
+// A project's info (GET /api/project?id=), only to read: nothing on it changes the project. It is read again every few
+// seconds while open, like the Mac's tab, and redrawn only when something changed.
+let infoId = null, lastInfo = '';
+async function loadInfo() {
+  const id = infoId, key = current;
+  try {
+    const data = await api('/api/project?id=' + encodeURIComponent(id));
+    if (current !== key) return;
+    const text = stable(data);
+    if (text === lastInfo) return;
+    lastInfo = text;
+    renderInfo(data);
+  } catch (e) { if (current === key && !lastInfo) $('turns').innerHTML = '<div class="note">' + esc(e.message || S.offline) + '</div>'; }
+}
+function infoSection(title, body, count) {
+  return '<div class="isec"><h3>' + esc(title) + (count ? '<small>' + esc(count) + '</small>' : '') + '</h3>' + body + '</div>';
+}
+function infoRow(icon, name, path, extra, right, cls) {
+  return '<div class="irow' + (cls ? ' ' + cls : '') + '"><span class="ic">' + icon + '</span><div class="im"><div>' + esc(name) + (extra || '') + '</div>' +
+    (path ? '<div class="p">' + esc(path) + '</div>' : '') + '</div>' + (right ? '<span class="iright">' + right + '</span>' : '') + '</div>';
+}
+function renderInfo(d) {
+  showMac(d.device);
+  projects[d.id] = d.name;
+  $('chatTitle').textContent = d.name; $('chatSub').textContent = chatSub(S.projectInfo);
+  const hint = t => '<p class="ihint">' + esc(t) + '</p>';
+  let h = '<div class="info"><div class="isum">' + esc(S.infoSummary.replace('{chats}', d.chats).replace('{todos}', (d.todos || []).length)) + '</div>';
+  if (d.repository) {
+    let body = d.kind === 'documents' ? hint(S.infoDocsHint) : '';
+    for (const r of d.repository) {
+      if (r.worktree) body += infoRow(ICON_FOLDER, r.path.split('/').pop(), r.path, '<span class="ibadge">' + esc(S.infoWorktree) + '</span>');
+      if (r.remote) body += infoRow('🌐', r.remote, '', '', '');
+    }
+    if (body) h += infoSection(d.kind === 'documents' ? S.infoDocs : S.infoGit, body);
+  }
+  if (d.rules) {
+    let body = hint(d.rules.length ? S.infoRulesHint : S.infoRulesNone);
+    for (const r of d.rules) body += infoRow(ICON_DOC, r.name, r.path, r.note ? '<span class="ibadge">' + esc(r.note) + '</span>' : '') + '<pre class="ipre">' + esc(r.text) + '</pre>';
+    h += infoSection(S.infoRules, body);
+  }
+  const folders = d.folders || [];
+  let fbody = hint(folders.some(f => f.kind === 'work') ? S.infoFoldersWork : S.infoFoldersHint);
+  for (const f of folders) {
+    const work = f.kind === 'work', off = f.kind === 'off';
+    const extra = '<span class="ibadge">' + esc(f.badge) + '</span>' + (work ? '<span class="iwork">' + esc(S.infoWorkFolder) + '</span>' : '') +
+      (f.exists ? '' : '<span class="imiss">' + esc(S.infoMissing) + '</span>');
+    const right = esc(off ? S.infoOff : f.writable ? S.infoReadEdit : S.infoReadOnly);
+    fbody += infoRow(work ? '★' : f.directory ? ICON_FOLDER : ICON_DOC, f.name, f.path, extra, right,
+                     (work ? 'work' : '') + (off || !f.exists ? ' dim' : ''));
+  }
+  if (!folders.length) fbody += '<p class="ihint">' + esc(S.infoNone) + '</p>';
+  h += infoSection(S.infoFolders, fbody);
+  if ((d.links || []).length) h += infoSection(S.infoLinks, d.links.map(l => infoRow('🔗', l.title, l.url)).join(''));
+  const kinds = { decision: S.memDecision, progress: S.memProgress, log: S.memLog };
+  const memory = (d.memory || []).filter(k => k.total), used = memory.reduce((n, k) => n + k.total, 0);
+  let mbody = hint(S.infoMemoryHint);
+  for (const k of memory) {
+    mbody += '<div class="ikind">' + esc(kinds[k.kind] || k.kind) + ' · ' + k.total + '</div>' + k.notes.map(n =>
+      '<div class="inote">' + esc(n.text) + '<small>' + esc([n.by, n.date, n.verified ? S.memVerified : S.memGuess].filter(Boolean).join(' · ')) + '</small></div>').join('');
+    if (k.total > k.notes.length) mbody += '<div class="imore">' + esc(S.memMore.replace('{n}', k.total - k.notes.length)) + '</div>';
+  }
+  if (!used) mbody += '<p class="ihint">' + esc(S.memNone) + '</p>';
+  h += infoSection(S.infoMemory, mbody, d.archived ? S.memArchived.replace('{n}', d.archived) : '');
+  if ((d.chatOnly || []).length) {
+    h += infoSection(S.infoChatOnly, hint(S.infoChatOnlyHint) + d.chatOnly.map(c =>
+      infoRow(ICON_FOLDER, c.name, c.path, (c.chats ? '<span class="ibadge">' + esc(c.chats) + '</span>' : '') + (c.exists ? '' : '<span class="imiss">' + esc(S.infoMissing) + '</span>'), '', c.exists ? '' : 'dim')).join(''));
+  }
+  if (d.lock) {
+    const line = d.lock.personal ? S.lockPersonal : S.lockEnterprise.split('{name}').join(d.lock.name);
+    const left = d.lock.chatsLeft + d.lock.listsLeft > 0 ? '<p class="ihint" style="color:var(--warn)">' + esc(S.lockLeft.replace('{chats}', d.lock.chatsLeft).replace('{lists}', d.lock.listsLeft)) + '</p>' : '';
+    h += infoSection(S.infoLock, '<p class="ihint">🔒 ' + esc(line) + '</p>' + left);
+  }
+  const todos = d.todos || [];
+  let tbody = todos.length ? '' : '<p class="ihint">' + esc(S.todosNone) + '</p>', yours = todos.filter(t => t.yours).length;
+  todos.forEach((t, i) => {
+    if (i === 0 && yours) tbody += '<div class="ikind">' + esc(S.todosYours) + ' · ' + yours + '</div>';
+    if (i === yours && yours) tbody += '<div class="ikind">' + esc(S.infoTodos) + ' · ' + (todos.length - yours) + '</div>';
+    tbody += '<div class="irow itodo"><div class="im"><div>' + esc(t.title) + '</div></div><span class="iright st-' + esc(t.state) + '">' + esc(t.label) + '</span></div>';
+  });
+  h += infoSection(S.infoTodos, tbody, todos.length ? String(todos.length) : '');
+  h += '<p class="ionly">' + esc(S.infoViewOnly) + '</p></div>';
+  $('turns').innerHTML = h;
+}
+
 $('approvals').addEventListener('click', async e => {
   const b = e.target.closest('button[data-id]'); if (!b) return;
   b.parentNode.querySelectorAll('button').forEach(x => x.disabled = true);
@@ -1287,7 +1451,7 @@ $('pick').addEventListener('click', () => $('file').click());
 $('file').addEventListener('change', e => { const files = [...e.target.files]; e.target.value = ''; addPhotos(files); });
 // Picked, dropped anywhere on the chat screen or pasted: the same way in, as thumbnails that go only with Send. Images
 // only; a read-only chat takes none, and photos still shrinking when the chat changes are dropped.
-function canAttach() { return !!current && document.body.classList.contains('open') && !$('box').classList.contains('hidden'); }
+function canAttach() { return !!current && document.body.classList.contains('open') && !$('box').classList.contains('hidden') && !$('footer').classList.contains('hidden'); }
 async function addPhotos(files) {
   const key = current;
   for (const f of files) {

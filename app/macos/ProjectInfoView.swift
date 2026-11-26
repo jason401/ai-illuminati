@@ -121,7 +121,7 @@ struct ProjectInfoView: View {
                     if !binding.remoteURL.isEmpty {
                         HStack(spacing: 6) {
                             Image(systemName: "globe").font(.system(size: 11)).foregroundColor(.secondary).frame(width: 18)
-                            Text((binding.remote.isEmpty ? "" : binding.remote + " · ") + Self.shownRemote(binding.remoteURL))
+                            Text((binding.remote.isEmpty ? "" : binding.remote + " · ") + ProjectInfoStore.shownRemote(binding.remoteURL))
                                 .font(.system(size: 12)).foregroundColor(.secondary).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
                             Spacer(minLength: 6)
                             if let web = ProjectInfoStore.webURL(binding.remoteURL) {
@@ -140,13 +140,6 @@ struct ProjectInfoView: View {
         }
     }
 
-    // A remote shown without any user or password in it.
-    static func shownRemote(_ remote: String) -> String {
-        guard remote.contains("://"), var parts = URLComponents(string: remote), parts.password != nil || parts.user != nil else { return remote }
-        parts.user = nil; parts.password = nil
-        return parts.string ?? remote
-    }
-
     // MARK: Rules for the AIs
 
     // AGENTS.md / CLAUDE.md at the project's root, the rules every answer of this project gets.
@@ -160,7 +153,7 @@ struct ProjectInfoView: View {
             ForEach(parts, id: \.file.path) { part in
                 let file = part.file, shown = draft.shownRules.contains(file.path)
                 VStack(alignment: .leading, spacing: 6) {
-                    pathRow(file.path, directory: false, note: Self.ruleNote(part)) {
+                    pathRow(file.path, directory: false, note: ProjectRules.note(part)) {
                         Button(shown ? L("접기", "Hide") : L("보기", "Show")) {
                             if shown { draft.shownRules.remove(file.path) } else { draft.shownRules.insert(file.path) }
                         }.controlSize(.small)
@@ -169,7 +162,7 @@ struct ProjectInfoView: View {
                     }
                     if shown {
                         ScrollView {
-                            Text(Self.preview(part)).font(.system(size: 12, design: .monospaced)).textSelection(.enabled)
+                            Text(ProjectRules.preview(part)).font(.system(size: 12, design: .monospaced)).textSelection(.enabled)
                                 .frame(maxWidth: .infinity, alignment: .leading).padding(10)
                         }
                         .frame(maxHeight: 320)
@@ -178,20 +171,6 @@ struct ProjectInfoView: View {
                 }
             }
         }
-    }
-
-    // The file as the AIs get it (ProjectRules.read), with what they do not get marked.
-    static func ruleNote(_ part: ProjectRules.Part) -> String? {
-        part.sent == nil ? L("AI에 안 감", "Not sent to the AIs") : part.cut ? L("앞부분만 AI에 감", "Only the start is sent") : nil
-    }
-    static func preview(_ part: ProjectRules.Part) -> String {
-        if let sent = part.sent {
-            return part.cut ? sent + "\n\n" + L("… (여기까지 AI에 가요. 규칙 파일은 합쳐서 \(ProjectRules.limit)자까지)", "… (the AIs get up to here; rules files share \(ProjectRules.limit) characters)") : sent
-        }
-        guard let data = try? Data(contentsOf: part.file), String(data: data, encoding: .utf8) != nil else {
-            return L("읽을 수 없는 파일이에요 (UTF-8 텍스트가 아님).", "This file cannot be read (not UTF-8 text).")
-        }
-        return L("앞의 규칙 파일이 \(ProjectRules.limit)자 한도를 다 써서 이 파일은 AI에 가지 않아요.", "The rules file before it uses the whole \(ProjectRules.limit)-character limit, so the AIs do not get this one.")
     }
 
     // MARK: Folders and files

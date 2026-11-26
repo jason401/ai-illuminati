@@ -435,6 +435,7 @@ RemoteChats.fold(_:folded:) | static func fold(_ key: String, folded: Bool) -> B
 RemoteChats.image(_:_:id:) | static func image(_ d: Discussion, _ room: UUID, id: UUID) -> URL?
 RemoteChats.inbox(_:now:) | static func inbox(_ d: Discussion, now: Date = Date()) -> [[String : Any]]
 RemoteChats.list(_:limits:) | static func list(_ d: Discussion, limits: [String : Int] = [:]) -> [[String : Any]]
+RemoteChats.projectInfo(_:project:) | static func projectInfo(_ d: Discussion, project: String) -> [String : Any]?
 RemoteChats.saveNotes(_:room:text:) | static func saveNotes(_ d: Discussion, room: UUID, text: String) -> String?
 RemoteChats.search(_:_:) | static func search(_ d: Discussion, _ query: String) -> [[String : Any]]
 RemoteChats.send(_:room:text:photos:mentions:) | static func send(_ d: Discussion, room: UUID, text: String, photos: [Data], mentions: [String] = []) -> String?

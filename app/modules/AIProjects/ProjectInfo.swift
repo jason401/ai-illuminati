@@ -326,6 +326,13 @@ public final class ProjectInfoStore: ObservableObject {
 
     // A web page for a Git remote: https as it is (without any user or password in it), git@host:owner/repo
     // turned into https://host/owner/repo. Anything else (a local path, another scheme) has none.
+    // A remote shown without any user or password in it (Project info on the Mac and on the phone page).
+    public static func shownRemote(_ remote: String) -> String {
+        guard remote.contains("://"), var parts = URLComponents(string: remote), parts.password != nil || parts.user != nil else { return remote }
+        parts.user = nil; parts.password = nil
+        return parts.string ?? remote
+    }
+
     public static func webURL(_ remote: String) -> URL? {
         let text = remote.trimmingCharacters(in: .whitespacesAndNewlines)
         var address: String
@@ -385,5 +392,19 @@ public enum ProjectRules {
             if prompt.count >= limit { prompt += "\n[Project rules truncated]"; full = true }
         }
         return (prompt, parts)
+    }
+
+    // A file as Project info shows it (the Mac's tab and the phone page): what of it the AIs get, or why they get none.
+    public static func note(_ part: Part) -> String? {
+        part.sent == nil ? L("AI에 안 감", "Not sent to the AIs") : part.cut ? L("앞부분만 AI에 감", "Only the start is sent") : nil
+    }
+    public static func preview(_ part: Part) -> String {
+        if let sent = part.sent {
+            return part.cut ? sent + "\n\n" + L("… (여기까지 AI에 가요. 규칙 파일은 합쳐서 \(limit)자까지)", "… (the AIs get up to here; rules files share \(limit) characters)") : sent
+        }
+        guard let data = try? Data(contentsOf: part.file), String(data: data, encoding: .utf8) != nil else {
+            return L("읽을 수 없는 파일이에요 (UTF-8 텍스트가 아님).", "This file cannot be read (not UTF-8 text).")
+        }
+        return L("앞의 규칙 파일이 \(limit)자 한도를 다 써서 이 파일은 AI에 가지 않아요.", "The rules file before it uses the whole \(limit)-character limit, so the AIs do not get this one.")
     }
 }

@@ -40,7 +40,10 @@
   - `tools/tests/google_drive_live.sh`: 실제 앱 코드로 Google에 붙어 보는 손 확인(사람이 로그인해야 함, 시험 홈만 씀).
 
 ### 안 된 것 / 아직 확인 못 한 것
-1. **실제 앱 코드로 Google에 붙는 확인을 못 했다.** `google_drive_live.sh`를 돌렸지만 로그인 창에서 5분 안에 로그인이 안 돼 시간 초과.
+0. **(2026-11-26 확인) 설치된 앱에서 실제로 연결됨**: 사용자가 공동 폴더 + → Google Drive…로 로그인, 채팅의 AI가
+   `gdrive__list_recent_files`·`search_files`·`read_file_content`를 실제로 써서 사용자 Drive를 읽음. 연필이 꺼져 있어
+   쓰기 도구 3개는 AI에게 안 보임(설계대로). 아래 1·2번은 이걸로 대부분 풀림(연결 방식 세부와 쓰기는 아직).
+1. **(11-25 당시) 실제 앱 코드로 Google에 붙는 확인을 못 했다.** `google_drive_live.sh`를 돌렸지만 로그인 창에서 5분 안에 로그인이 안 돼 시간 초과.
    특히 볼 것: `RemoteMCPSession`이 Google에 modern(2026-07-28, `server/discover`)으로 붙는지, 아니면 older(initialize 2025-11-25)로
    붙는지, 그리고 tools/call이 되는지. 앱 밖 시험(파이썬)은 initialize 2025-06-18로만 확인했다.
 2. **설치된 앱에서 손 확인 안 함**: 사이드바 줄 모양, 로그인 창이 채팅 창 위에 뜨는지, AI가 실제로 Drive 도구를 쓰는지.

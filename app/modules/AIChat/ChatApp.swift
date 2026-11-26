@@ -73,8 +73,8 @@ public enum ChatApp {
     public static var screens = Screens()
 }
 
-// Folders from outside this Mac, listed in the sidebar's Shared folders after the local ones (none now; a
-// cloud drive is one entry): its item in the section's + menu, its rows (with its own account hints) and how many folders
+// Folders from outside this Mac, listed in the sidebar's Shared folders after the local ones (Google Drive is one,
+// GoogleDriveFolder.swift): its item in the section's + menu, its rows (with its own account hints) and how many folders
 // it has, so the section shows one empty hint only while every kind is empty. Only the list is shared, not the storage.
 // The rows stay in the view while the section is folded (SidebarFold "shared"): they hide their own content there.
 public struct FolderSource {

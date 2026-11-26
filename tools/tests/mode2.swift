@@ -3446,6 +3446,82 @@ func testRemoteMCP() {
 }
 runTest("testRemoteMCP", testRemoteMCP)
 
+// Google Drive: only Google's official Drive MCP server, signed in with the public iOS-type client (no secret).
+func testGoogleDrive() {
+    let entry = GoogleDrive.entry
+    expect(entry.name == GoogleDrive.server && entry.url == "https://drivemcp.googleapis.com/mcp/v1" && GoogleDrive.isGoogle(entry)
+           && entry.oauthClientID.hasSuffix(".apps.googleusercontent.com") && MCPServerEntry.validName(entry.name), "the official Drive MCP server and the app's client")
+    func query(_ url: URL) -> [String: String] {
+        Dictionary((URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []).map { ($0.name, $0.value ?? "") }) { a, _ in a }
+    }
+    let present = GoogleDrive.present, post = GoogleDrive.post, revoke = GoogleDrive.revoke
+    defer { GoogleDrive.present = present; GoogleDrive.post = post; GoogleDrive.revoke = revoke }
+    var shown: [String: String] = [:], sent: [String: String] = [:], to: URL?
+    GoogleDrive.present = { link, scheme, done in
+        shown = query(link)
+        done(.success(URL(string: "\(scheme):/oauth2redirect?state=\(shown["state"] ?? "")&code=c-1")!))
+    }
+    let payload = Data(#"{"email":"me@example.com"}"#.utf8).base64EncodedString().replacingOccurrences(of: "=", with: "")
+    GoogleDrive.post = { url, fields in
+        to = url; sent = fields
+        return (200, ["access_token": "a-1", "refresh_token": "r-1", "expires_in": 3600, "id_token": "h.\(payload).s"])
+    }
+    func signIn() -> Result<Void, Error> {
+        let done = DispatchSemaphore(value: 0)
+        var result: Result<Void, Error> = .failure(MCPSession.Failure(message: "no answer"))
+        MCPOAuth.signIn(entry) { result = $0; done.signal() }
+        _ = done.wait(timeout: .now() + 10)
+        return result
+    }
+    let redirect = "com.googleusercontent.apps." + entry.oauthClientID.replacingOccurrences(of: ".apps.googleusercontent.com", with: "") + ":/oauth2redirect"
+    expect((try? signIn().get()) != nil, "signed in through the sheet")
+    expect(shown["client_id"] == entry.oauthClientID && shown["redirect_uri"] == redirect && shown["code_challenge_method"] == "S256"
+           && shown["access_type"] == "offline" && shown["scope"]?.contains("https://www.googleapis.com/auth/drive") == true && shown["resource"] == nil,
+           "the sign-in asks for Drive with PKCE and the app's redirect: \(shown)")
+    expect(to?.absoluteString == "https://oauth2.googleapis.com/token" && sent["client_secret"] == nil && sent["resource"] == nil
+           && sent["code_verifier"]?.isEmpty == false && sent["code"] == "c-1" && sent["redirect_uri"] == redirect, "the code is traded without a secret: \(sent)")
+    let saved = MCPOAuth.saved(entry)
+    expect(saved?.access == "a-1" && saved?.refresh == "r-1" && saved?.account == "me@example.com" && saved?.resource == "" && saved?.authMethod == "none"
+           && GoogleDrive.shared.account == "me@example.com", "the login is kept with its account")
+    expect(!(MCPSecrets.store is MCPKeychain), "tests never touch the real Keychain")
+    GoogleDrive.present = { _, scheme, done in done(.success(URL(string: "\(scheme):/oauth2redirect?state=other&code=c-2")!)) }
+    expect((try? signIn().get()) == nil && MCPOAuth.saved(entry)?.access == "a-1", "an answer for another request is refused")
+    GoogleDrive.present = { link, scheme, done in done(.success(URL(string: "\(scheme):/oauth2redirect?state=\(query(link)["state"] ?? "")&error=access_denied")!)) }
+    if case .failure(let error) = signIn() { expect(error is GoogleDrive.Cancelled, "a refusal is a quiet cancel") } else { expect(false, "a refusal is no sign-in") }
+
+    // The pencil: write tools blocked (not offered) or allowed; read tools keep Google's read-only default.
+    GoogleDrive.shared.setWritable(false)
+    expect(GoogleDrive.writeTools.allSatisfy { MCPPermissions.saved(GoogleDrive.server, $0) == .block } && !GoogleDrive.isWritable(nil), "read only")
+    GoogleDrive.shared.setWritable(true)
+    expect(GoogleDrive.writeTools.allSatisfy { MCPPermissions.saved(GoogleDrive.server, $0) == .allow } && GoogleDrive.isWritable(nil), "writable")
+
+    // Disconnect: the server and its login go, and the login is revoked at Google.
+    try! ExternalMCP.shared.save(entry, on: false)
+    var revoked: [String] = []
+    GoogleDrive.revoke = { revoked.append($0) }
+    GoogleDrive.shared.disconnect()
+    for _ in 0..<100 where revoked.isEmpty { Thread.sleep(forTimeInterval: 0.02) }
+    expect(revoked == ["r-1"] && MCPOAuth.saved(entry) == nil && !ExternalMCP.read().servers.contains { $0.name == GoogleDrive.server }
+           && MCPPermissions.saved(GoogleDrive.server, "create_file") == nil, "disconnected: removed here, revoked at Google")
+    try? FileManager.default.removeItem(at: ExternalMCP.file)
+
+    // Only the official MCP servers: no Drive, Docs, Sheets or Slides REST address in the app, and no client secret.
+    let rest = ["www.googleapis.com/drive", "www.googleapis.com/upload", "docs.googleapis.com/v1", "sheets.googleapis.com/v4", "slides.googleapis.com/v1"]
+    var found: [String] = []
+    for folder in ["app", "tools"] {
+        let files = FileManager.default.enumerator(atPath: folder)?.compactMap { $0 as? String } ?? []
+        for file in files where [".swift", ".py", ".sh", ".json"].contains(where: file.hasSuffix) {
+            let path = folder + "/" + file
+            guard path != "tools/tests/mode2.swift", let text = try? String(contentsOfFile: path, encoding: .utf8) else { continue }
+            for address in rest where folder == "app" && text.contains(address) { found.append(path + ": " + address) }
+            if text.range(of: "GOCSPX-[A-Za-z0-9_-]{10,}", options: .regularExpression) != nil { found.append(path + ": a client secret") }
+        }
+    }
+    expect(found.isEmpty, "no Google REST address or client secret in the sources: \(found)")
+    print("PASS: Google Drive (official Drive MCP, sheet sign-in without a secret, pencil, disconnect, no REST)")
+}
+runTest("testGoogleDrive", testGoogleDrive)
+
 // Chat Markdown: one ~ is a range, not strikethrough; headings and tables are drawn.
 func testChatMarkdown() {
     func struck(_ text: String) -> Bool { ChatMarkdown.inline(text).runs.contains { $0.inlinePresentationIntent?.contains(.strikethrough) == true } }

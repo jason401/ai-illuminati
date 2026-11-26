@@ -73,6 +73,17 @@ FacePipe.close() | func close()
 FacePipe.isRunning | var isRunning: Bool { get }
 FacePipe.request(_:_:) | func request(_ method: String, _ params: [String : Any]) -> [String : Any]?
 FacePipe.send(_:) | func send(_ message: [String : Any])
+GoogleDrive | final class GoogleDrive
+GoogleDrive.account | var account: String? { get }
+GoogleDrive.connect() | func connect()
+GoogleDrive.connectedAt | @Published var connectedAt: Date? { get set }
+GoogleDrive.disconnect() | func disconnect()
+GoogleDrive.error | @Published var error: String? { get set }
+GoogleDrive.isWritable(_:) | static func isWritable(_ status: ExternalMCP.Status?) -> Bool
+GoogleDrive.server | static let server: String
+GoogleDrive.setWritable(_:) | func setWritable(_ on: Bool)
+GoogleDrive.shared | static let shared: GoogleDrive
+GoogleDrive.signingIn | @Published var signingIn: Bool { get set }
 MCPKeychain | final class MCPKeychain
 MCPKeychain.get(_:) | func get(_ key: String) -> String?
 MCPKeychain.init(run:) | init(run: (([String], Data?) throws -> (Int32, Data))? = nil)

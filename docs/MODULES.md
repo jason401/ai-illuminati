@@ -778,10 +778,12 @@ Public names and why: the moved types were already public (C1a, C1b reasons). Ne
 internal and the synthesized `Codable` is unchanged), `CollabLog.add`, `smallTalk(_:)`, `asksOthers(_:)` (Peer).
 Internal (boundary): `CollabLog.maxBytes`, `CollabLog.file`, the `Summary` counts, `RoomDocuments.read`.
 
-### AIIntegrations (`app/modules/AIIntegrations/`: ExternalMCP, RemoteMCP, OAuthLoopback, FaceLink, MacControl, Failure), step I (2026-11-12)
+### AIIntegrations (`app/modules/AIIntegrations/`: ExternalMCP, RemoteMCP, GoogleDrive, OAuthLoopback, FaceLink, MacControl, Failure), step I (2026-11-12)
 Google Drive (GoogleAuth, DriveLink, DriveMCP, GoogleMCP and the app's DriveUI/DriveTools) was removed on 2026-11-25, to be
 made again; what the remote MCP sign-in shared with it (the `/usr/bin/security` runner, form encoding, the loopback callback)
-stayed as `OAuthLoopback.swift`, internal. Moved (`git mv`) from `app/macos`: ExternalMCP and RemoteMCP (outside MCP servers: the settings file,
+stayed as `OAuthLoopback.swift`, internal. Made again on 2026-11-25 as `GoogleDrive.swift` (docs/GOOGLE_MCP_PLAN.md): Google's
+official Drive MCP server as one outside MCP server named `gdrive`, with its own sign-in (the Mac's sign-in sheet, the project's
+public iOS-type client, no secret); nothing of the removed code came back and nothing calls a Drive REST address. Moved (`git mv`) from `app/macos`: ExternalMCP and RemoteMCP (outside MCP servers: the settings file,
 local and remote connections, secrets, tool rules, OAuth) and FaceLink (the AI Face link). Depends on `AIAccounts`, `AILocalization`,
 `AIRuntime` (only because `AIWorkspace`'s interface names it) and `AIWorkspace` (still declared and imported by ExternalMCP, but unused since Drive went). Not on `AIChat` or `AIProjects`; no module imports it (stage 1 checks both): the app uses it and hands the chat what it
 needs through `ChatApp` (C1, unchanged).
@@ -829,6 +831,7 @@ and the Keychain item "AI Illuminati Google" unread; AutoGuard still keeps that 
 | Promise | Users | Module test (`integrations_contract.swift`) | User tests |
 |---|---|---|---|
 | Outside MCP: rules block/ask/allow, Enterprise never, approval, secrets in chunks | ExternalMCPTools, Settings | "an unknown outside tool is refused without asking", MCP secrets block | testExternalMCP, testRemoteMCP |
+| Google Drive: only the official Drive MCP server; sign-in through the sheet with PKCE and no secret or `resource`, the account kept with the login; the pencil blocks or allows the write tools; disconnect removes the server and its login and revokes it at Google; no Drive/Docs/Sheets/Slides REST address or client secret in the sources | GoogleDriveFolder (App) | none | testGoogleDrive |
 | AI Face: one connection, its tools and moods, unknown moods dropped; missing, off or dying AI Face: error replies at once, reconnect on the next use | ToolHub, ChatLinksApp (`ChatApp.face`), RunConditionsApp (`codexOff`) | the AI Face block (fake `FacePipe`) | mode2 "AI Face link", and new there: a dead AI Face server while a plain chat answers (reply shown, tag removed, usual moods in the rule, no wait) |
 
 Public names and why (found by the compiler: a script opened what an app file asked for, the rest by hand for the contract test):
@@ -840,6 +843,10 @@ Public names and why (found by the compiler: a script opened what an app file as
 - `DriveCleanup.start()` (2026-11-25): main.swift calls it once at start, so an app updated from a version with Google Drive
   removes its settings, `drive.log` and Keychain login (revoked at Google first); only with the real settings, retried while
   the Keychain fails. `run(defaults:folder:security:revoke:)` stays internal (testDriveCleanup, mode2).
+- `GoogleDrive` (2026-11-25): Shared folders' Google Drive row (App, GoogleDriveFolder.swift) needs `shared`, `server` (its
+  outside MCP name, to read `ExternalMCP` status and switch it), `connect`/`disconnect` (the + menu, "Sign In Again", right-click),
+  `signingIn`/`error`/`connectedAt`/`account` (what the row shows), `setWritable`/`isWritable` (the pencil). The sign-in itself
+  (`run`, the sheet, `present`/`post`/`revoke` for tests, the client ID and scopes) stays internal (testGoogleDrive, mode2).
 - The injection points (for the contract test, and they say what may be replaced): `MCPSecretStore`, `MCPKeychain(run:)`, `FaceLink.init(open:)`, `FacePipe`, `FaceLink.file`/
   `faceFolder`, `FaceLink.Server`.
 - Internal (stage 2 checks three): `FaceLink.server`, `fallbackMoods`, `FaceProcess`, `OAuthLoopback`/`OAuthCallback`/`SecurityTool`/

@@ -3,7 +3,7 @@ import SwiftUI
 import AIChat
 
 // The app's screens the chat window (AIChat) shows: the TODO board, Project info, the icon, Manage chats' iPhone item
-// (PhoneAccess.swift).
+// (PhoneAccess.swift), and Shared folders' Google Drive (GoogleDriveFolder.swift).
 // Connected once by main.swift with ChatLinksApp.connect.
 enum ChatScreensApp {
     static func connect() {
@@ -18,5 +18,6 @@ enum ChatScreensApp {
         screens.icon = { illuminatiIcon(colored: $0) }
         screens.manageItems = { AnyView(PhoneAccessMenuItem()) }
         ChatApp.screens = screens
+        GoogleDriveFolder.register()   // Shared folders' Google Drive (official Drive MCP)
     }
 }

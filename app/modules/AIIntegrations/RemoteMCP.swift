@@ -198,6 +198,8 @@ enum MCPPermissions {
         guard remote else { return .allow }
         return (tool["annotations"] as? [String: Any])?["readOnlyHint"] as? Bool == true ? .allow : .ask
     }
+    /// The rule the user saved for one tool by name (nil: none, the tool's default applies).
+    static func saved(_ server: String, _ tool: String) -> MCPToolRule? { rules[server]?[tool].flatMap(MCPToolRule.init) }
     static func rule(_ server: String, _ tool: [String: Any], remote: Bool) -> MCPToolRule {
         let name = tool["name"] as? String ?? ""
         return rules[server]?[name].flatMap(MCPToolRule.init) ?? defaultRule(tool, remote: remote)
@@ -675,6 +677,7 @@ enum MCPOAuth {
         var access: String?
         var refresh: String?
         var expires: Double?
+        var account: String?   // Google Drive: the signed-in account, shown in the sidebar
     }
     static var openBrowser: (URL) -> Void = { url in DispatchQueue.main.async { NSWorkspace.shared.open(url) } }
     static var preferredPort: UInt16 = 33421
@@ -688,6 +691,7 @@ enum MCPOAuth {
     private static func store(_ saved: Saved, _ server: String) throws {
         try MCPSecrets.store.set(MCPSecrets.oauth(server), String(decoding: try JSONEncoder().encode(saved), as: UTF8.self))
     }
+    static func keep(_ saved: Saved, _ server: String) throws { lock.lock(); defer { lock.unlock() }; try store(saved, server) }
     static func signedIn(_ entry: MCPServerEntry) -> Bool { saved(entry)?.access != nil }
 
     /// The access token for a request (refreshed when it is about to run out); nil when not signed in.
@@ -697,7 +701,8 @@ enum MCPOAuth {
         let fresh = (saved.expires ?? .infinity) - Date().timeIntervalSince1970 > 60
         if fresh && !force { return access }
         guard let refresh = saved.refresh, let endpoint = URL(string: saved.tokenEndpoint) else { return force ? nil : access }
-        var fields = ["grant_type": "refresh_token", "refresh_token": refresh, "resource": saved.resource]
+        var fields = ["grant_type": "refresh_token", "refresh_token": refresh]
+        if !saved.resource.isEmpty { fields["resource"] = saved.resource }   // Google Drive's login has none
         if let scope = saved.scope { fields["scope"] = scope }
         let (status, json) = try tokenRequest(endpoint, fields, saved, server: entry.name)
         if status == 400 || status == 401 {   // refresh token gone: sign in again
@@ -799,7 +804,7 @@ enum MCPOAuth {
     /// loopback, trade the code. `completion` runs once, on any thread.
     static func signIn(_ entry: MCPServerEntry, completion: @escaping (Result<Void, Error>) -> Void) {
         DispatchQueue.global(qos: .userInitiated).async {
-            do { try run(entry); completion(.success(())) } catch { completion(.failure(error)) }
+            do { try GoogleDrive.isGoogle(entry) ? GoogleDrive.run(entry) : run(entry); completion(.success(())) } catch { completion(.failure(error)) }
         }
     }
 

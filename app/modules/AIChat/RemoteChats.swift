@@ -115,7 +115,19 @@ public enum RemoteChats {
         guard let chat = d.conversations.first(where: { $0.id == room }) else { return nil }
         if opened { d.markSeen(room) }
         let working = d.runningRooms.contains(room)
-        func links(_ images: [ChatImage]?) -> [String] { (images ?? []).map { "/api/image/\(room.uuidString)/\($0.id.uuidString)" } }
+        func link(_ image: ChatImage) -> String { "/api/image/\(room.uuidString)/\(image.id.uuidString)" }
+        func links(_ images: [ChatImage]?) -> [String] { (images ?? []).map(link) }
+        // An answer's pictures as the Mac draws them: those with a marker line in the text go there ("places": N → link),
+        // the rest are listed under it ("images").
+        func pictures(_ images: [ChatImage]?, _ text: String) -> [String: Any] {
+            let placed = ChatMarkdown.placedPictures(text)
+            var places: [String: String] = [:], loose: [String] = []
+            for image in images ?? [] {
+                let number = image.name.hasPrefix("picture-") && image.name.hasSuffix(".png") ? Int(image.name.dropFirst(8).dropLast(4)) : nil
+                if let number, placed.contains(image.name) { places[String(number)] = link(image) } else { loose.append(link(image)) }
+            }
+            return places.isEmpty ? ["images": loose] : ["images": loose, "places": places]
+        }
         var turns: [[String: Any]] = []
         var lastDay: Date?
         for (index, turn) in chat.turns.enumerated() {
@@ -134,12 +146,12 @@ public enum RemoteChats {
             }
             var answers: [[String: Any]] = []
             if let final = turn.final {
-                answers.append(["name": turn.finalBy ?? "AI", "text": final, "images": links(turn.finalImages)])
+                answers.append(pictures(ChatMarkdown.finalPictures(turn, final: final), final).merging(["name": turn.finalBy ?? "AI", "text": final]) { a, _ in a })
             } else if turn.mode != 0, let last = turn.entries.last(where: { !$0.failed }) {
-                answers.append(["name": last.speaker, "text": last.text, "images": links(last.images)])
+                answers.append(pictures(last.images, last.text).merging(["name": last.speaker, "text": last.text]) { a, _ in a })
             }
             for more in turn.mode == 0 ? turn.moreAnswers ?? [] : [] {
-                answers.append(["name": more.speaker, "text": more.text, "images": links(more.images), "error": more.failed ? more.text : NSNull()])
+                answers.append(pictures(more.images, more.text).merging(["name": more.speaker, "text": more.text, "error": more.failed ? more.text : NSNull()]) { a, _ in a })
             }
             if let partials = turn.partials, turn.final == nil {
                 for name in turn.answerOrder ?? partials.keys.sorted() { if let text = partials[name], !text.isEmpty { answers.append(["name": name, "text": text, "waiting": true]) } }

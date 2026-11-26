@@ -96,6 +96,19 @@ enum ChatMarkdown {
     private static let marker = try! NSRegularExpression(pattern: "\\[(?:그림|Picture) (\\d+)\\]")
     private static let markerLine = try! NSRegularExpression(pattern: "^[ \\t]*(?:\\[(?:그림|Picture) \\d+\\][ \\t]*)+$")
 
+    // The final answer's own pictures, plus named team pictures using localized [Picture N] markers (the Mac's
+    // transcript and the phone page show the same ones).
+    static func finalPictures(_ turn: ChatTurn, final: String) -> [ChatImage] {
+        var pictures = turn.finalImages ?? []
+        let ns = final as NSString
+        let named = marker.matches(in: final, range: NSRange(location: 0, length: ns.length)).map { "picture-" + ns.substring(with: $0.range(at: 1)) + ".png" }
+        for name in named {
+            if let image = turn.entries.flatMap({ $0.images ?? [] }).first(where: { $0.name == name }),
+               !pictures.contains(where: { $0.id == image.id }) { pictures.append(image) }
+        }
+        return pictures
+    }
+
     // Picture file names the text has a place for (picture-N.png, as Pictures.harvest names them).
     static func placedPictures(_ text: String) -> Set<String> {
         Set(cachedBlocks(text).flatMap { block -> [String] in

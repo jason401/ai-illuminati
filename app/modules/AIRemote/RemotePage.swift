@@ -208,6 +208,10 @@ mark { background:rgba(255,214,10,.45); color:inherit; border-radius:3px; paddin
 .turn:not(.mine) .pics { justify-content:flex-start; margin:8px 0 0; }
 .pics img { max-width:200px; max-height:200px; border-radius:12px; display:block; object-fit:cover; }
 .turn:not(.mine) .pics img { max-width:100%; max-height:none; }
+/* Pictures where the answer put them ([Picture N] lines); two or more share the line, as on the Mac. */
+.md .pics.inline { margin:8px 0; justify-content:flex-start; align-items:flex-start; }
+.md .pics.pair img { max-width:calc(50% - 3px); min-width:0; }
+.md .pics.inline span { color:var(--dim); }
 .status { display:flex; align-items:center; gap:8px; color:var(--dim); font-size:14px; margin-top:4px; }
 .status.warn { color:var(--warn); }
 .spin { width:13px; height:13px; border-radius:50%; border:2px solid currentColor; border-right-color:transparent; animation:spin .9s linear infinite; flex:none; opacity:.8; }
@@ -460,9 +464,19 @@ function inline(s) {
   return out.replace(/\u0000(\d+)\u0000/g, (_, i) => '<code>' + codes[+i] + '</code>');
 }
 const FENCE = /^\s*```/, HEAD = /^(#{1,6})\s+(.*)$/, RULE = /^\s*([-*_])(\s*\1){2,}\s*$/, ITEM = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/,
-  QUOTE = /^\s*>/, TROW = /^\s*\|.*\|\s*$/, TSEP = /^\s*\|?\s*:?-{2,}/;
-function startsBlock(l, next) { return FENCE.test(l) || HEAD.test(l) || RULE.test(l) || ITEM.test(l) || QUOTE.test(l) || (TROW.test(l) && TSEP.test(next || '')); }
-function markdown(text) {
+  QUOTE = /^\s*>/, TROW = /^\s*\|.*\|\s*$/, TSEP = /^\s*\|?\s*:?-{2,}/,
+  PICS = /^[ \t]*(?:\[(?:그림|Picture) \d+\][ \t]*)+$/, PIC = /\[(?:그림|Picture) (\d+)\]/g;
+function startsBlock(l, next) { return FENCE.test(l) || HEAD.test(l) || RULE.test(l) || ITEM.test(l) || QUOTE.test(l) || PICS.test(l) || (TROW.test(l) && TSEP.test(next || '')); }
+// A line of only [Picture N] markers is where those pictures go (places: N → link), side by side as on the Mac;
+// a marker whose picture is not here stays as written. A marker inside a sentence stays text.
+function pictureLine(l, places) {
+  const found = [...l.matchAll(PIC)].map(m => ({ link: places[m[1]], marker: m[0] }));
+  if (!found.some(f => f.link)) return '<p>' + esc(l.trim()) + '</p>';
+  return '<div class="pics inline' + (found.length > 1 ? ' pair' : '') + '">' + found.map(f => f.link
+    ? '<img src="' + esc(withKey(f.link)) + '" loading="lazy" alt="' + esc(f.marker) + '">' : '<span>' + esc(f.marker) + '</span>').join('') + '</div>';
+}
+function markdown(text, places) {
+  places = places || {};
   const lines = String(text).replace(/\r/g, '').split('\n');
   let html = '', i = 0, m;
   const cells = r => r.trim().replace(/^\||\|$/g, '').split('|').map(c => c.trim());
@@ -477,13 +491,14 @@ function markdown(text) {
     } else if ((m = l.match(HEAD))) {
       const n = Math.min(4, m[1].length); html += '<h' + n + '>' + inline(m[2]) + '</h' + n + '>'; i++;
     } else if (RULE.test(l)) { html += '<hr>'; i++;
+    } else if (PICS.test(l)) { html += pictureLine(l, places); i++;
     } else if (TROW.test(l) && TSEP.test(lines[i + 1] || '')) {
       const rows = []; while (i < lines.length && TROW.test(lines[i])) rows.push(lines[i++]);
       html += '<div class="tablewrap"><table><thead><tr>' + cells(rows[0]).map(c => '<th>' + inline(c) + '</th>').join('') + '</tr></thead><tbody>' +
         rows.slice(2).map(r => '<tr>' + cells(r).map(c => '<td>' + inline(c) + '</td>').join('') + '</tr>').join('') + '</tbody></table></div>';
     } else if (QUOTE.test(l)) {
       const q = []; while (i < lines.length && QUOTE.test(lines[i])) q.push(lines[i++].replace(/^\s*>\s?/, ''));
-      html += '<blockquote>' + markdown(q.join('\n')) + '</blockquote>';
+      html += '<blockquote>' + markdown(q.join('\n'), places) + '</blockquote>';
     } else if (ITEM.test(l)) {
       const items = [];
       while (i < lines.length) {
@@ -959,7 +974,7 @@ function renderTurn(t) {
     h += '<div class="meta">' + (t.waiting ? '<span>' + esc(S.queued) + '</span>' : '') + (t.time ? '<span>' + esc(t.time) + '</span>' : '') + (t.text ? copy : '') + '</div>';
   } else {
     h += '<div class="who"><span class="aidot"' + colorStyle(t.color) + '></span>' + esc(t.name || 'AI') + (t.model ? ' <span class="model">' + esc(t.model) + '</span>' : '') + '</div>';
-    if (t.text) h += '<div class="md">' + markdown(t.text) + '</div>';
+    if (t.text) h += '<div class="md">' + markdown(t.text, t.places) + '</div>';
     if (pics) h += '<div class="pics">' + pics + '</div>';
     if (t.status || (t.waiting && !t.text)) h += '<div class="status' + (t.approval ? ' warn' : '') + '"><span class="spin"></span><span>' + esc(t.status || S.working) +
       (t.since ? ' <span class="elapsed" data-since="' + t.since + '"></span>' : '') + '</span></div>';

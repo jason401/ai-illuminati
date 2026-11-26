@@ -2,6 +2,7 @@ import Foundation
 import AppKit
 import CoreImage
 import AIAccounts
+import AIChatRecords
 import AILocalization
 import AIRemote
 @testable import AIRuntime
@@ -81,6 +82,23 @@ func testPhoneServer() {
     let link = (turns[0]["images"] as? [String])?.first ?? ""
     let picture = server.handle(RemoteRequest(method: "GET", path: link))
     expect(picture.status == 200 && picture.type == "image/png" && !picture.body.isEmpty, "phone server: the photo is served")
+    // AI pictures go where the answer put them, as on the Mac: a [Picture N] line gets its picture ("places"), a marker
+    // inside a sentence and a picture with no marker are listed under the answer ("images").
+    if let at = chat.conversations.firstIndex(where: { $0.id == room }) {
+        let drawn = (1...3).compactMap { try? ImageStore.importImage(png, name: "picture-\($0).png", conversationID: room) }
+        chat.conversations[at].turns[0].final = "Before\n\n[Picture 1]\n\nThe second, [Picture 2], is named in a sentence.\n\nAfter"
+        chat.conversations[at].turns[0].finalImages = drawn
+        let answer = (call("GET", "/api/chat/\(room.uuidString)").1["turns"] as? [[String: Any]] ?? []).last ?? [:]
+        let places = answer["places"] as? [String: String] ?? [:], loose = answer["images"] as? [String] ?? []
+        let url = { (image: ChatImage) in "/api/image/\(room.uuidString)/\(image.id.uuidString)" }
+        expect(drawn.count == 3 && places == ["1": url(drawn[0])] && loose == [url(drawn[1]), url(drawn[2])],
+               "phone server: a picture's place in the answer comes with it: \(places) \(loose)")
+        chat.conversations[at].turns[0].final = "phone answer"
+        chat.conversations[at].turns[0].finalImages = nil
+    }
+    let markdown = String(decoding: RemotePage.html(), as: UTF8.self)
+    expect(markdown.contains("function pictureLine(l, places)") && markdown.contains("markdown(t.text, t.places)") && markdown.contains("PICS.test(l)"),
+           "phone page: [Picture N] lines are drawn as their pictures, in place")
     let list = call("GET", "/api/chats").1["sections"] as? [[String: Any]] ?? []
     expect(list.contains { ($0["chats"] as? [[String: Any]] ?? []).contains { $0["id"] as? String == room.uuidString } }, "phone server: the list has the chat")
 

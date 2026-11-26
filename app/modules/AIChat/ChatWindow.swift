@@ -2887,17 +2887,7 @@ private struct TurnView: View, Equatable {
         return Text("\(name)\(tag)")
     }
 
-    static func finalPictures(_ turn: ChatTurn, final: String) -> [ChatImage] {
-        var pictures = turn.finalImages ?? []
-        let regex = try! NSRegularExpression(pattern: "\\[(?:그림|Picture) (\\d+)\\]")
-        let ns = final as NSString
-        let named = regex.matches(in: final, range: NSRange(location: 0, length: ns.length)).map { "picture-" + ns.substring(with: $0.range(at: 1)) + ".png" }
-        for name in named {
-            if let image = turn.entries.flatMap({ $0.images ?? [] }).first(where: { $0.name == name }),
-               !pictures.contains(where: { $0.id == image.id }) { pictures.append(image) }
-        }
-        return pictures
-    }
+    static func finalPictures(_ turn: ChatTurn, final: String) -> [ChatImage] { ChatMarkdown.finalPictures(turn, final: final) }
 
 }
 

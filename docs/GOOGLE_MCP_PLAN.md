@@ -52,8 +52,14 @@
 0. 준비(사용자, Cloud 콘솔): 기존 "AI Illuminati" 프로젝트 사용(External, In production 확인됨).
    - 기능 켜기: `console.cloud.google.com/flows/enableapi?apiid=` drive, docs, sheets, slides, drivemcp, docsmcp, sheetsmcp, slidesmcp (`.googleapis.com`)
    - 권한(`/auth/scopes`): `drive`, `documents`, `spreadsheets`, `presentations`
-   - 새 로그인 ID(`/auth/clients/create`): Desktop app, "Use this client for an AI-powered agent" 체크. 예전 로그인 ID는 이 표시가 없어 못 씀
-1. 앱 밖 시험(앱 코드 안 건드림): 로그인 → 4개 서버 도구 목록(upload_file_revision 포함 여부) → 읽기·만들기·슬라이드 수정·승인 질문 → client secret 없이 로그인되는지 → 학교 계정 → 다음 날 재로그인 없이
+   - 로그인 ID: 예전 iOS 종류 "AI Illuminati Mac"(Bundle ID `local.aiilluminati`)에 "Use this client for an AI-powered agent"를
+     나중에 체크해도 됐다(2026-11-25 저장, 바로 적용됨). 비밀 값이 없는 종류라 공개 저장소에 넣어도 된다.
+1. 앱 밖 시험(앱 코드 안 건드림) — 2026-11-25 결과:
+   - Desktop 종류 로그인 ID: 로그인·MCP는 되지만 토큰 교환·갱신 모두 client secret 필수("client_secret is missing") → 배포에 못 씀.
+   - iOS 종류 로그인 ID(`961717606753-4c5cmpcmegejgqdb39plii50ch7rq88m`): Mac 로그인 창(ASWebAuthenticationSession,
+     리다이렉트 `com.googleusercontent.apps.<id>:/oauth2redirect`, PKCE)으로 secret 없이 로그인·갱신 성공 → 이걸 쓴다.
+   - 4개 서버 initialize·tools/list 성공(Drive 9, Docs 2, Sheets 6, Slides 4), Developer Preview 가입 없이 열림, list_recent_files 읽기 성공.
+   - 남은 확인: 만들기·슬라이드 수정·승인 질문(쓰기라 시험 파일이 남음, 사용자 동의 후), 학교 계정, 다음 날 재로그인 없이
 2. 앱 만들기: 공동 폴더 + → Google Drive 연결 → 로그인 → 앱이 공식 서버 4개에 연결해 도구를 그대로 AI 3개에게 → Google의 "허용?"은 승인 카드 → 사이드바 줄(연필=쓰기 도구 켬, 눈=잠시 끔, 연결 끊기)
 3. 시험: 가짜 서버 테스트 → 실제 작업(예전 슬라이드 보고 새 발표 만들기)
 4. 배포 준비: 로그인 ID는 한 곳에서만 바꾸게, 하루 한도 걸리면 안내. 사용자가 늘면 Google 심사
@@ -61,8 +67,9 @@
 ## 정해진 것
 - 2027-02-01 규칙(AI는 공식 MCP만): 공식 MCP만 쓰므로 문제없음. 같은 약관의 학습 금지·임베딩 30일은 해당 없음.
 - 친구가 로그인하면 자기 계정만: 로그인은 각자 Mac 키체인에, Google은 그 계정이 볼 수 있는 파일만 허용. 앱 로그인 ID는 앱 이름표일 뿐.
-- 저장소(public)에 올라가는 건 AI-agent 로그인 ID 하나(공개돼도 되는 값). Desktop client secret(`GOCSPX-…`)은 커밋하지 않는다.
-  secret 없이 안 되면 다른 방법으로 채우지 않고 사용자에게 먼저 묻는다. 커밋 전 비밀값 검사를 추가한다.
+- 저장소(public)에 올라가는 건 iOS 종류 AI-agent 로그인 ID 하나(비밀 값 없음). 비밀 값(`GOCSPX-…`)은 커밋하지 않는다.
+  커밋 전 비밀값 검사를 추가한다.
+- 로그인은 Mac 로그인 창으로 하고 끝나면 창이 저절로 닫힌다(브라우저 탭·127.0.0.1 페이지 없음). 연결 뒤 앱 화면은 보기 좋게 만든다.
 - 당분간 사용자 혼자 쓰지만 언제든 배포할 수 있는 구조로 만든다.
 
 ## 나중에

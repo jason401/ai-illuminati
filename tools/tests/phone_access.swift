@@ -167,7 +167,7 @@ func testPhoneServer() {
     expect(notesPage.contains("id=\"notesTool\"") && notesPage.contains("<aside id=\"notes\"") && notesPage.contains("notesFrom(data)")
            && notesPage.contains("'/notes', { text }") && notesPage.contains("drag.notes = true"), "phone page: the notes button, the sliding notes and the swipe to the left")
     // A project's info, only to read (GET /api/project?id=): what the Mac's Project info tab shows, the remote without its
-    // password, the rules file by name (its text stays on the Mac), the ★ work folder, links, memory notes in use and the TODOs left.
+    // password, the rules file by name (its text stays on the Mac), the ★ work folder, links, how many memory notes are in use and the TODOs left.
     let repo = FileManager.default.temporaryDirectory.appendingPathComponent("phone-info-\(UUID().uuidString)").path
     try? FileManager.default.createDirectory(atPath: repo, withIntermediateDirectories: true)
     try? "rule one for the AIs".write(toFile: repo + "/AGENTS.md", atomically: true, encoding: .utf8)
@@ -182,12 +182,11 @@ func testPhoneServer() {
     let remote = (shownInfo.1["repository"] as? [[String: Any]])?.first?["remote"] as? String ?? ""
     let memory = (shownInfo.1["memory"] as? [[String: Any]] ?? []).first { $0["kind"] as? String == "decision" }
     let firstRule = infoRules.first ?? [:], links = shownInfo.1["links"] as? [[String: String]] ?? []
-    let memoryText = (memory?["notes"] as? [[String: Any]])?.first?["text"] as? String
     expect(shownInfo.0 == 200 && shownInfo.1["chats"] as? Int == 1 && shownInfo.1["todos"] is [Any], "phone server: a project's info to read \(shownInfo.1)")
     expect(remote.contains("github.com/me/repo.git") && !remote.contains("secret"), "phone server: the remote without its password: \(remote)")
     expect(firstRule["name"] as? String == "AGENTS.md" && firstRule["text"] == nil, "phone server: the rules file by name only, not its text")
     expect(infoFolders.first?["kind"] as? String == "work" && links.first?["title"] == "Design doc", "phone server: the ★ work folder and the links")
-    expect(memoryText == "Phones only read project info", "phone server: the project memory's notes in use")
+    expect(memory?["total"] as? Int == 1 && memory?["notes"] == nil, "phone server: how many project memory notes are in use, not their text")
     expect(call("GET", "/api/project?id=nowhere").0 == 404 && call("POST", "/api/project?id=" + key, ["name": "x"]).0 == 404,
            "phone server: an unknown project, and nothing to change through it")
     chat.conversations.removeAll { $0.id == infoRoom }   // the list checks below count loose chats only

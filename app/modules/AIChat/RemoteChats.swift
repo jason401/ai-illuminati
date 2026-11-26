@@ -211,7 +211,7 @@ public enum RemoteChats {
 
     // A project folder's "Project info" as the phone page shows it, only to read (ProjectInfoView on the Mac, which also
     // changes it): the repository and its worktrees, which rules files the AIs get (names only, not their text), the folders and files (★ work folder,
-    // read, edited or off), the links, the project memory's notes in use, the folders linked to one chat only, the lock,
+    // read, edited or off), the links, how many project memory notes are in use, the folders linked to one chat only, the lock,
     // and the TODOs left (the panel beside the Mac's tab). nil for an unknown project.
     public static func projectInfo(_ d: Discussion, project: String) -> [String: Any]? {
         guard let group = projectGroups(d).first(where: { $0.id == project }) else { return nil }
@@ -248,14 +248,10 @@ public enum RemoteChats {
             + info.folders.filter { $0.path != active }.map { folder($0.path, directory: $0.directory, kind: "read", writable: $0.writable == true) }
             + others.filter { p in !info.folders.contains { $0.path == p } }.map { folder($0, directory: true, kind: "off", writable: false) }
         result["links"] = info.links.map { ["title": $0.title, "url": $0.url] }
-        // Project memory: the notes in use, newest first, a kind at a time; the work log only its newest lines.
+        // Project memory: how many notes are in use of each kind (the notes themselves stay on the Mac).
         let notes = ProjectMemoryStore.shared.notes(project)
-        let inUse = notes.filter { $0.state == .active }.sorted { $0.createdAt > $1.createdAt }
         result["memory"] = ProjectMemoryNote.Kind.allCases.map { kind -> [String: Any] in
-            let all = inUse.filter { $0.kind == kind }, page = kind == .log ? 10 : 50
-            return ["kind": kind.rawValue, "total": all.count, "notes": all.prefix(page).map { note -> [String: Any] in
-                ["text": note.text, "by": note.by ?? "", "verified": note.verified, "date": ChatTime.day(note.createdAt)]
-            }]
+            ["kind": kind.rawValue, "total": notes.filter { $0.state == .active && $0.kind == kind }.count]
         }
         result["archived"] = notes.filter { $0.state == .archived }.count
         var chatOnly: [(path: String, directory: Bool, chats: [String])] = []

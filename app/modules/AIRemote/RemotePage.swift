@@ -66,15 +66,12 @@ public enum RemotePage {
             "infoNone": L("아직 없어요", "None yet"),
             "infoLinks": L("링크", "Links"),
             "infoMemory": L("프로젝트 기억", "Project memory"),
-            "infoMemoryHint": L("이 프로젝트의 AI들이 함께 읽고 쓰는 메모예요 (사용 중인 것만).", "Notes every AI of this project reads and writes (those in use)."),
+            "infoMemoryHint": L("이 프로젝트의 AI들이 함께 읽고 쓰는 메모 중 사용 중인 개수예요. 내용은 Mac에서 봐요.", "How many notes every AI of this project reads and writes are in use. Read them on the Mac."),
             "memDecision": L("결정·사실", "Decisions and facts"),
             "memProgress": L("진행 중", "Open progress"),
             "memLog": L("작업 기록", "Work log"),
-            "memMore": L("외 {n}개는 Mac에서 볼 수 있어요", "{n} more on the Mac"),
             "memArchived": L("보관함 {n}개", "Archive: {n}"),
             "memNone": L("아직 메모가 없어요", "No notes yet"),
-            "memVerified": L("확인됨", "verified"),
-            "memGuess": L("추측", "guess"),
             "infoChatOnly": L("대화에만 연결된 자료", "Linked to one chat only"),
             "infoChatOnlyHint": L("이 프로젝트의 어떤 대화에만 붙어 있는 폴더·파일이에요.", "These are linked to a chat of this project only."),
             "infoLock": L("잠금", "Lock"),
@@ -429,10 +426,6 @@ footer { position:relative; padding:6px 10px calc(env(safe-area-inset-bottom) + 
 .ibadge { font-size:10px; font-weight:500; color:var(--dim); background:var(--fill); padding:1px 6px; border-radius:8px; margin-left:5px; }
 .iwork { color:var(--accent); font-size:11px; margin-left:5px; } .imiss { color:var(--red); font-size:11px; font-weight:500; margin-left:5px; }
 .ikind { font-size:13px; font-weight:600; color:var(--dim); margin:12px 0 0; }
-.inote { padding:8px 10px; border-radius:10px; background:var(--fill); margin-top:6px; font-size:14px; line-height:1.4; white-space:pre-wrap; overflow-wrap:anywhere;
-  -webkit-user-select:text; user-select:text; }
-.inote small { display:block; color:var(--dim); font-size:11px; margin-top:4px; }
-.imore { color:var(--dim); font-size:12px; margin-top:6px; }
 .itodo .im > div { white-space:normal; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; }
 .itodo .iright { font-weight:500; }
 .st-needsYou { color:var(--warn) !important; } .st-review { color:#c9a400 !important; } .st-running { color:var(--accent) !important; } .st-ready { color:#34c759 !important; }
@@ -1296,9 +1289,7 @@ function renderInfo(d) {
   const memory = (d.memory || []).filter(k => k.total), used = memory.reduce((n, k) => n + k.total, 0);
   let mbody = hint(S.infoMemoryHint);
   for (const k of memory) {
-    mbody += '<div class="ikind">' + esc(kinds[k.kind] || k.kind) + ' · ' + k.total + '</div>' + k.notes.map(n =>
-      '<div class="inote">' + esc(n.text) + '<small>' + esc([n.by, n.date, n.verified ? S.memVerified : S.memGuess].filter(Boolean).join(' · ')) + '</small></div>').join('');
-    if (k.total > k.notes.length) mbody += '<div class="imore">' + esc(S.memMore.replace('{n}', k.total - k.notes.length)) + '</div>';
+    mbody += '<div class="irow"><div class="im"><div>' + esc(kinds[k.kind] || k.kind) + '</div></div><span class="iright">' + k.total + '</span></div>';
   }
   if (!used) mbody += '<p class="ihint">' + esc(S.memNone) + '</p>';
   h += infoSection(S.infoMemory, mbody, d.archived ? S.memArchived.replace('{n}', d.archived) : '');

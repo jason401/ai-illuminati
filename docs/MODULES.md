@@ -892,7 +892,7 @@ reports as "fold"/"folded", so a browser losing its storage, or another browser 
 `saveNotes(_:room:text:)` (2026-11-26: `POST /api/chat/<id>/notes`, the chat's 메모 edited on the page, into `ChatNotes`' open panel
 when it shows that chat, else its file; `chat` returns them as "notes") and `projectInfo(_:project:)` (2026-11-26:
 `GET /api/project?id=`, a project folder's Project info as JSON only to read: repository, rules file names (not their text), folders and files, links,
-memory notes in use, chat-only folders, lock and the TODOs left; nothing on the page changes a project).
+how many memory notes are in use per kind, chat-only folders, lock and the TODOs left; nothing on the page changes a project).
 
 ## Records
 

@@ -148,6 +148,23 @@ func testPhoneServer() {
     expect(call("POST", "/api/fold", ["key": "devices", "folded": true]).0 == 400 && call("POST", "/api/fold", ["key": "recents"]).0 == 400,
            "phone server: other keys and a missing state are refused")
     if wasFolded { _ = RemoteChats.fold("recents", folded: true) }
+    // The chat's notes (the Mac's 메모): they come with the chat, the phone saves them into the file, and into the Mac's
+    // open panel when it shows the chat (so the panel's next save keeps them); unknown chats and missing text are refused.
+    expect(call("POST", "/api/chat/\(room.uuidString)/notes", ["text": "from the phone\n- one"]).0 == 200
+           && ChatNotes.load(room) == "from the phone\n- one" && call("GET", "/api/chat/\(room.uuidString)").1["notes"] as? String == "from the phone\n- one",
+           "phone server: notes saved from the phone come back with the chat")
+    ChatNotes.shared.open(room)
+    expect(call("POST", "/api/chat/\(room.uuidString)/notes", ["text": "while the Mac shows them"]).0 == 200
+           && ChatNotes.shared.text == "while the Mac shows them" && ChatNotes.load(room) == "while the Mac shows them",
+           "phone server: notes saved while the Mac's panel shows the chat go into the panel too")
+    ChatNotes.shared.text = "typed on the Mac"
+    expect(call("GET", "/api/chat/\(room.uuidString)").1["notes"] as? String == "typed on the Mac", "phone server: the Mac's typing not yet saved shows on the phone")
+    ChatNotes.shared.text = ""; ChatNotes.shared.flush(); ChatNotes.shared.open(UUID())   // the panel off this chat again
+    expect(call("POST", "/api/chat/\(UUID().uuidString)/notes", ["text": "x"]).0 == 409 && call("POST", "/api/chat/\(room.uuidString)/notes", [:]).0 == 400
+           && !FileManager.default.fileExists(atPath: ChatNotes.file(room).path), "phone server: notes for unknown chats or without text are refused; empty notes leave no file")
+    let notesPage = String(decoding: RemotePage.html(), as: UTF8.self)
+    expect(notesPage.contains("id=\"notesTool\"") && notesPage.contains("<aside id=\"notes\"") && notesPage.contains("notesFrom(data)")
+           && notesPage.contains("'/notes', { text }") && notesPage.contains("drag.notes = true"), "phone page: the notes button, the sliding notes and the swipe to the left")
     let foldPage = String(decoding: RemotePage.html(), as: UTF8.self)
     expect(foldPage.contains("data-fold=") && foldPage.contains("'/api/fold'") && foldPage.contains("isFolded(s.fold, s.folded)")
            && !foldPage.contains("localStorage.setItem('folded'"), "phone page: sections and folders fold through the Mac, not this browser")

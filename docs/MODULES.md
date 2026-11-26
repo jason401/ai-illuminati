@@ -885,7 +885,9 @@ opens and, for a chat's approval, its id and detail for the page's Allow/Deny on
 `composer(_:project:)` (2026-11-26: a new chat's message-box lists for `GET /api/chat/new`, the @ accounts and "/" ways that `chat`
 also returns; `send` and `create` take the accounts picked from the @ list as `mentions`, which `prepare` checks like the Mac's) and
 `fold(_:folded:)` (2026-11-26: `POST /api/fold`, the page's section and folder folds kept in the Mac's `SidebarFold`, which `list`
-reports as "fold"/"folded", so a browser losing its storage, or another browser of the same Mac, no longer opens everything).
+reports as "fold"/"folded", so a browser losing its storage, or another browser of the same Mac, no longer opens everything) and
+`saveNotes(_:room:text:)` (2026-11-26: `POST /api/chat/<id>/notes`, the chat's 메모 edited on the page, into `ChatNotes`' open panel
+when it shows that chat, else its file; `chat` returns them as "notes").
 
 ## Records
 

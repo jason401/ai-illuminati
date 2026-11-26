@@ -204,8 +204,23 @@ public enum RemoteChats {
         var result: [String: Any] = ["id": room.uuidString, "title": chat.title, "working": working, "turns": turns, "approvals": approvals,
                                      "readOnly": chat.meetingOf != nil]
         if let project = WorkingChats.projectName(chat, todo: TodoStore.shared.snapshot, names: ProjectInfoStore.shared.names) { result["project"] = project }
+        result["notes"] = notes(room)
         let plain = Discussion.modernModes && d.configuration(of: room).mode == 0 && chat.meetingOf == nil
         return result.merging(picks(d, plain: plain, project: chat.workspace?.project != nil, lock: chat.enterpriseLock)) { a, _ in a }
+    }
+
+    // The chat's notes (the Mac's 메모 panel, ChatNotes): what the Mac's panel holds now when it shows this chat, typing
+    // not yet saved included, else the saved file. Read without saving, since the page asks for them every poll.
+    static func notes(_ room: UUID) -> String {
+        ChatNotes.shared.room == room ? ChatNotes.shared.text : ChatNotes.load(room)
+    }
+
+    // Notes edited on the phone: into the Mac's open panel when it shows this chat (so its next save keeps them), else
+    // the file. Only the user writes them (the AIs only read). Returns why they were not saved.
+    public static func saveNotes(_ d: Discussion, room: UUID, text: String) -> String? {
+        guard d.host == nil, d.conversations.contains(where: { $0.id == room }) else { return L("대화를 찾지 못했어요.", "Chat not found.") }
+        if ChatNotes.shared.room == room { ChatNotes.shared.text = text; ChatNotes.shared.flush() } else { ChatNotes.save(text, room: room) }
+        return nil
     }
 
     // What the page's message box lists while @ or a first "/" is typed, as the Mac's does: "mentions" the accounts this

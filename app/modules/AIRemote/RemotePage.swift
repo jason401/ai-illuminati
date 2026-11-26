@@ -43,6 +43,13 @@ public enum RemotePage {
             "dropReadOnly": L("읽기 전용 대화라 사진을 넣을 수 없어요", "This chat is read only: no photos"),
             "send": L("보내기", "Send"),
             "pickOnce": L("이 메시지에만 적용돼요", "For this message only"),
+            "notes": L("메모", "Notes"),
+            "notesDone": L("완료", "Done"),
+            "notesEmpty": L("이 대화의 메모예요. 나만 고칠 수 있고, AI는 답할 때 읽기만 해요.", "Notes for this chat. Only you edit them; the AI reads them when it answers."),
+            "notesHint": L("AI는 읽기만 해요 · Mac의 메모와 같아요", "The AI only reads these · the same as on the Mac"),
+            "notesSaving": L("저장 중…", "Saving…"),
+            "notesSaved": L("저장됨", "Saved"),
+            "notesFailed": L("저장하지 못했어요", "Could not save"),
             "usage": L("AI 사용량", "AI Usage"),
             "usageClose": L("닫기", "Close"),
             "usageRefresh": L("새로고침", "Refresh"),
@@ -365,6 +372,24 @@ footer { position:relative; padding:6px 10px calc(env(safe-area-inset-bottom) + 
 .dropCard svg { color:var(--accent); } #dropZone.no .dropCard svg { color:var(--dim); }
 .dropCard b { font-size:17px; } .dropCard small { color:var(--dim); font-size:13px; }
 
+/* The chat's notes (the Mac's 메모 panel): a sheet that slides in from the right over the chat, under a shade. */
+#notes { position:fixed; top:0; bottom:0; right:0; width:min(88vw, 400px); z-index:6; display:flex; flex-direction:column; background:var(--bg);
+  padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom); box-shadow:-6px 0 24px rgba(0,0,0,.18);
+  transform:translateX(calc(100% + 30px)); transition:transform .38s cubic-bezier(.32,.72,0,1); will-change:transform; }
+#notesShade { position:fixed; inset:0; z-index:5; background:#000; opacity:0; pointer-events:none; transition:opacity .38s cubic-bezier(.32,.72,0,1); }
+body.notes #notes { transform:none; }
+body.notes #notesShade { opacity:var(--shade); pointer-events:auto; }
+body.ndrag #notes, body.ndrag #notesShade, body.ninstant #notes, body.ninstant #notesShade { transition:none !important; }
+.nbar { display:flex; align-items:center; gap:8px; height:48px; padding:0 6px 0 16px; flex:none; }
+.nbar b { font-size:17px; font-weight:600; }
+.nbar .nstate { color:var(--dim); font-size:12px; }
+#notesDone { border:0; background:none; color:var(--accent); font:600 17px -apple-system, system-ui; padding:8px 10px; }
+#notesText { flex:1; min-height:0; margin:0 12px; padding:12px; border:1px solid var(--line); border-radius:14px; background:var(--box); color:var(--text);
+  font:16px/1.45 -apple-system, system-ui; resize:none; outline:0; }
+#notesText::placeholder { color:var(--dim); }
+.nhint { color:var(--dim); font-size:12px; padding:8px 16px 10px; flex:none; }
+#notesTool { color:var(--accent); }
+
 #viewer { position:fixed; inset:0; z-index:10; background:rgba(0,0,0,.92); display:flex; align-items:center; justify-content:center; }
 #viewer img { max-width:100%; max-height:100%; object-fit:contain; }
 </style>
@@ -394,6 +419,8 @@ footer { position:relative; padding:6px 10px calc(env(safe-area-inset-bottom) + 
   <div class="bar" id="chatBar">
     <button class="back" id="back"><svg width="13" height="21" viewBox="0 0 13 21" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M11 2 2.5 10.5 11 19"/></svg><span id="backText"></span></button>
     <div class="mid"><b id="chatTitle"></b><small id="chatSub"></small></div>
+    <div class="spacer"></div>
+    <button class="tool hidden" id="notesTool" aria-haspopup="dialog"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="3" width="15" height="18" rx="2.5"/><path d="M8.5 8h7M8.5 12h7M8.5 16h4"/></svg></button>
   </div>
   <div class="scroll" id="chatScroll"><div id="turns"></div><div id="approvals"></div></div>
   <footer id="footer">
@@ -417,6 +444,12 @@ footer { position:relative; padding:6px 10px calc(env(safe-area-inset-bottom) + 
     <b id="dropTitle"></b><small id="dropSub"></small>
   </div></div>
 </div>
+<div id="notesShade"></div>
+<aside id="notes" aria-hidden="true">
+  <div class="nbar"><b id="notesTitle"></b><span class="nstate" id="notesState"></span><div class="spacer"></div><button id="notesDone"></button></div>
+  <textarea id="notesText" autocomplete="off"></textarea>
+  <div class="nhint" id="notesHint"></div>
+</aside>
 <div id="viewer" class="hidden"><img alt=""></div>
 <dialog id="usagePanel" aria-labelledby="usageTitle">
   <div class="usageHead"><h2 id="usageTitle"></h2><button id="usageClose" autofocus></button></div>
@@ -569,6 +602,7 @@ function route() {
   const animate = navAnimate; navAnimate = false;
   if (current !== null) { drafts[current] = $('text').value; draftPicked[current] = picked; }
   if (!key) pushed = false;
+  if (key !== current) notesLeave();
   if (key && key !== current) {
     chatId = id; newProject = project; opened = false; lastChat = ''; photos = []; renderThumbs();
     $('text').value = drafts[key] || ''; picked = draftPicked[key] || []; menuClose(); setPicks(null);
@@ -1037,6 +1071,7 @@ function renderChat(data, first) {
   const box = $('chatScroll'), atEnd = first || box.scrollHeight - box.scrollTop - box.clientHeight < 90, height = box.scrollHeight;
   showMac(data.device);
   setPicks(data);
+  notesFrom(data);
   $('chatTitle').textContent = data.title;
   $('chatSub').textContent = chatSub(data.project || '');
   $('box').classList.toggle('hidden', !!data.readOnly);
@@ -1342,10 +1377,14 @@ $('pick').setAttribute('aria-label', S.photo);
 $('send').setAttribute('aria-label', S.send);
 $('toBottom').setAttribute('aria-label', S.toBottom);
 $('compose').setAttribute('aria-label', S.newChat);
+$('notesTool').setAttribute('aria-label', S.notes);
+$('notesTitle').textContent = S.notes; $('notesDone').textContent = S.notesDone;
+$('notesText').placeholder = S.notesEmpty; $('notesHint').textContent = S.notesHint;
 
 // Back by swiping right anywhere on the chat: the chat follows the finger, the list comes along under it, and letting
-// go past a third of the screen (or with a flick) goes back; less springs back. Not from rows that scroll sideways
-// (code, tables, photos), and in Safari not from the left edge, which is Safari's own back swipe.
+// go past a third of the screen (or with a flick) goes back; less springs back. Swiping left brings the notes in the
+// same way. Not from rows that scroll sideways (code, tables, photos), and in Safari not from the edges, which are
+// Safari's own back and forward swipes.
 let drag = null;
 const shadeMax = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--shade')) || .14;
 $('chatView').addEventListener('touchstart', e => {
@@ -1354,7 +1393,8 @@ $('chatView').addEventListener('touchstart', e => {
   const t = e.touches[0];
   if (!standalone && t.clientX < 24) return;
   if (e.target.closest('.code, .tablewrap, #thumbs, textarea')) return;
-  drag = { x: t.clientX, y: t.clientY, on: false, dx: 0, lastX: t.clientX, lastT: e.timeStamp, v: 0 };
+  drag = { x: t.clientX, y: t.clientY, on: false, dx: 0, lastX: t.clientX, lastT: e.timeStamp, v: 0, notes: false,
+           edge: !standalone && t.clientX > innerWidth - 24 };
 }, { passive: true });
 $('chatView').addEventListener('touchmove', e => {
   if (!drag) return;
@@ -1364,9 +1404,13 @@ $('chatView').addEventListener('touchmove', e => {
     if (dx > 0 && Math.abs(dx) > Math.abs(dy) * 1.4) {
       drag.on = true; document.body.classList.add('dragging');
       if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+    } else if (dx < 0 && -dx > Math.abs(dy) * 1.4 && chatId && !drag.edge) {
+      drag.on = true; drag.notes = true; document.body.classList.add('ndrag');
+      if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
     } else { drag = null; return; }
   }
   e.preventDefault();
+  if (drag.notes) { notesFollow(drag, t, e.timeStamp, Math.max(-notesWidth(), Math.min(0, dx)) + notesWidth()); return; }
   const w = innerWidth, x = Math.max(0, dx);
   drag.v = (t.clientX - drag.lastX) / Math.max(1, e.timeStamp - drag.lastT); drag.lastX = t.clientX; drag.lastT = e.timeStamp; drag.dx = x;
   $('chatView').style.transform = 'translateX(' + x + 'px)';
@@ -1376,6 +1420,7 @@ $('chatView').addEventListener('touchmove', e => {
 function endDrag() {
   const d = drag; drag = null;
   if (!d || !d.on) return;
+  if (d.notes) { notesLetGo(d, d.x0 < notesWidth() * 0.67 || (d.v < -0.45 && d.x0 < notesWidth() - 30)); return; }
   document.body.classList.remove('dragging');
   $('chatView').style.transform = ''; $('listView').style.transform = ''; $('shade').style.opacity = '';
   if (d.dx > innerWidth * 0.33 || (d.v > 0.45 && d.dx > 30)) { setOpen(false, true); back(); }
@@ -1383,11 +1428,94 @@ function endDrag() {
 $('chatView').addEventListener('touchend', endDrag, { passive: true });
 $('chatView').addEventListener('touchcancel', endDrag, { passive: true });
 
-// On a Mac (another Mac opens this page, or a desktop browser): Esc closes the photo or goes back; a two-finger swipe
-// to the right on the trackpad goes back too, except over rows that scroll sideways.
+// The notes: the bar's button or a swipe to the left brings them in; Done, a tap on the shade, Esc or a swipe to the
+// right takes them away. They are the Mac's 메모 for this chat ("notes" with the chat): typing is saved on the Mac half
+// a second after the last key (POST /api/chat/<id>/notes) and right away when they close or the chat changes. A poll
+// does not replace them while they are being typed or saved.
+let notesOpen = false, notesChat = null, notesDirty = false, notesBusy = 0, notesTimer = null, notesAt = 0;
+const notesWidth = () => $('notes').offsetWidth || Math.min(innerWidth * 0.88, 400);
+function notesShow(on) {
+  notesOpen = on;
+  document.body.classList.toggle('notes', on);
+  $('notes').setAttribute('aria-hidden', on ? 'false' : 'true');
+  if (!on) { if (document.activeElement === $('notesText')) $('notesText').blur(); notesSave(); }
+}
+function notesFrom(data) {
+  $('notesTool').classList.toggle('hidden', !data.id);
+  if (data.id !== notesChat) { notesChat = data.id; notesDirty = false; $('notesState').textContent = ''; }
+  else if (notesDirty || notesBusy || document.activeElement === $('notesText') || Date.now() - notesAt < 3000) return;
+  if ($('notesText').value !== (data.notes || '')) $('notesText').value = data.notes || '';
+}
+async function notesSave() {
+  clearTimeout(notesTimer);
+  if (!notesDirty || !notesChat) return;
+  const id = notesChat, text = $('notesText').value;
+  notesDirty = false; notesBusy++; $('notesState').textContent = S.notesSaving;
+  try { await api('/api/chat/' + encodeURIComponent(id) + '/notes', { text }); if (id === notesChat) $('notesState').textContent = S.notesSaved; }
+  catch (_) { if (id === notesChat) { notesDirty = true; $('notesState').textContent = S.notesFailed; } }
+  notesBusy--; notesAt = Date.now();
+}
+// Leaving the chat (another chat, the list or a new chat): what was typed is saved and the notes go, without sliding.
+function notesLeave() {
+  notesSave();
+  if (notesOpen) {
+    document.body.classList.add('ninstant'); notesShow(false);
+    requestAnimationFrame(() => requestAnimationFrame(() => document.body.classList.remove('ninstant')));
+  }
+  notesChat = null; $('notesText').value = ''; $('notesState').textContent = ''; $('notesTool').classList.add('hidden');
+}
+// While a finger drags the notes: x is how far they are from open (0 open … width closed).
+function notesFollow(d, t, time, x) {
+  d.v = (t.clientX - d.lastX) / Math.max(1, time - d.lastT); d.lastX = t.clientX; d.lastT = time; d.x0 = x;
+  $('notes').style.transform = 'translateX(' + x + 'px)';
+  $('notesShade').style.opacity = shadeMax() * (1 - x / notesWidth());
+}
+function notesLetGo(d, open) {
+  document.body.classList.remove('ndrag');
+  $('notes').style.transform = ''; $('notesShade').style.opacity = '';
+  notesShow(open);
+}
+$('notesTool').addEventListener('click', () => notesShow(!notesOpen));
+$('notesDone').addEventListener('click', () => notesShow(false));
+$('notesShade').addEventListener('click', () => notesShow(false));
+$('notesText').addEventListener('input', () => {
+  notesDirty = true; $('notesState').textContent = '';
+  clearTimeout(notesTimer); notesTimer = setTimeout(notesSave, 500);
+});
+// A swipe to the right on the open notes (not while typing in them) takes them away the same way.
+let ndrag = null;
+for (const el of ['notes', 'notesShade']) {
+  $(el).addEventListener('touchstart', e => {
+    ndrag = null;
+    if (!notesOpen || e.touches.length !== 1 || document.activeElement === $('notesText')) return;
+    const t = e.touches[0];
+    ndrag = { x: t.clientX, y: t.clientY, on: false, lastX: t.clientX, lastT: e.timeStamp, v: 0, x0: 0 };
+  }, { passive: true });
+  $(el).addEventListener('touchmove', e => {
+    if (!ndrag) return;
+    const t = e.touches[0], dx = t.clientX - ndrag.x, dy = t.clientY - ndrag.y;
+    if (!ndrag.on) {
+      if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
+      if (dx > 0 && dx > Math.abs(dy) * 1.4) { ndrag.on = true; document.body.classList.add('ndrag'); } else { ndrag = null; return; }
+    }
+    e.preventDefault();
+    notesFollow(ndrag, t, e.timeStamp, Math.max(0, Math.min(notesWidth(), dx)));
+  }, { passive: false });
+  const end = () => {
+    const d = ndrag; ndrag = null;
+    if (d && d.on) notesLetGo(d, !(d.x0 > notesWidth() * 0.33 || (d.v > 0.45 && d.x0 > 30)));
+  };
+  $(el).addEventListener('touchend', end, { passive: true });
+  $(el).addEventListener('touchcancel', end, { passive: true });
+}
+
+// On a Mac (another Mac opens this page, or a desktop browser): Esc closes the photo or the notes, or goes back; a
+// two-finger swipe to the right on the trackpad goes back too and one to the left opens the notes, except over rows
+// that scroll sideways.
 document.addEventListener('keydown', e => {
   if (e.key !== 'Escape' || e.isComposing || usagePanel.open) return;
   if (!$('viewer').classList.contains('hidden')) { $('viewer').classList.add('hidden'); return; }
+  if (notesOpen) { notesShow(false); return; }
   if (current) { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); setOpen(false, true); back(); }
 });
 let wheel = 0, wheelTimer = null;
@@ -1397,6 +1525,7 @@ $('chatView').addEventListener('wheel', e => {
   clearTimeout(wheelTimer);
   wheelTimer = setTimeout(() => { wheel = 0; }, 250);
   if (wheel < -140) { wheel = 0; setOpen(false, true); back(); }
+  else if (wheel > 140) { wheel = 0; if (chatId && !notesOpen) notesShow(true); }
 }, { passive: true });
 
 document.addEventListener('visibilitychange', () => { if (!document.hidden) { lastList = ''; lastChat = ''; } poll(); });

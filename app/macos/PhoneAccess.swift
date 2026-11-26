@@ -379,7 +379,7 @@ final class PhoneServer: ObservableObject {
 
     // GET /api/chats[?n.<list>=<rows>] (with the inbox's 🔴/🟡), GET /api/search?q=, GET /api/chat/<id>[?open=1], GET /api/image/<chat>/<picture>,
     // POST /api/chat/new {text, images, project?, mentions?} → {id}, GET /api/chat/new[?project=] (its message box's @ and / lists),
-    // POST /api/chat/<id>/send {text, images, mentions?}, POST /api/approval/<id> {allow},
+    // POST /api/chat/<id>/send {text, images, mentions?}, POST /api/chat/<id>/notes {text}, POST /api/approval/<id> {allow},
     // POST /api/fold {key, folded} (a list section or project folder, shared with the Mac's sidebar),
     // GET /api/usage, POST /api/usage/refresh (returns the cached reading immediately),
     // GET /api/update, POST /api/update/check, POST /api/update/install (409 while an update step runs).
@@ -423,6 +423,10 @@ final class PhoneServer: ObservableObject {
             let photos = ((body["images"] as? [String]) ?? []).compactMap { Data(base64Encoded: $0) }
             if let reason = RemoteChats.send(discussion, room: room, text: (body["text"] as? String) ?? "", photos: photos,
                                              mentions: (body["mentions"] as? [String]) ?? []) { return .error(409, reason) }
+            return .json(["ok": true])
+        case ("POST", "chat", 4) where parts[3] == "notes":
+            guard let room = UUID(uuidString: parts[2]), let text = request.json?["text"] as? String else { return .error(400, "bad request") }
+            if let reason = RemoteChats.saveNotes(discussion, room: room, text: text) { return .error(409, reason) }
             return .json(["ok": true])
         case ("POST", "fold", 2):
             guard let key = request.json?["key"] as? String, let folded = request.json?["folded"] as? Bool else { return .error(400, "bad request") }

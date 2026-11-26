@@ -227,6 +227,8 @@ final class PhoneServer: ObservableObject {
     weak var usage: PhoneUsage?        // set at app start; tests set a stand-in
     private var lastUsageRefresh: TimeInterval?
     weak var updates: PhoneUpdates?    // set at app start; tests set a stand-in
+    // This Mac's nickname (Settings → other Macs' device name, else the Mac's name), so the page says which Mac it is.
+    var deviceName: () -> String = { DeviceSync.shared.deviceName }
     private var server: RemoteServer?
 
     @Published private(set) var enabled: Bool
@@ -393,7 +395,7 @@ final class PhoneServer: ObservableObject {
             let limits = request.query.reduce(into: [String: Int]()) { out, item in
                 if item.key.hasPrefix("n."), let n = Int(item.value) { out[String(item.key.dropFirst(2))] = min(n, 1000) }
             }
-            return .json(["sections": RemoteChats.list(discussion, limits: limits), "inbox": RemoteChats.inbox(discussion, now: now)])
+            return .json(["sections": RemoteChats.list(discussion, limits: limits), "inbox": RemoteChats.inbox(discussion, now: now), "device": deviceName()])
         case ("GET", "search", 2):
             return .json(["results": RemoteChats.search(discussion, request.query["q"] ?? "")])
         case ("POST", "chat", 3) where parts[2] == "new":
@@ -406,7 +408,7 @@ final class PhoneServer: ObservableObject {
             guard let room = UUID(uuidString: parts[2]), let chat = RemoteChats.chat(discussion, room, opened: request.query["open"] == "1") else {
                 return .error(404, L("대화를 찾지 못했어요.", "Chat not found."))
             }
-            return .json(chat)
+            return .json(chat.merging(["device": deviceName()]) { a, _ in a })
         case ("GET", "image", 4):
             guard let room = UUID(uuidString: parts[2]), let id = UUID(uuidString: parts[3]),
                   let url = RemoteChats.image(discussion, room, id: id), let data = try? Data(contentsOf: url) else { return .error(404, "no picture") }

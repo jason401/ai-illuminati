@@ -151,6 +151,8 @@ body.instant .view, body.instant #shade, body.dragging .view, body.dragging #sha
 /* The list, like the Mac sidebar: a big title, the search field, small section names, flat rows with rounded presses. */
 #list { padding:0 10px calc(env(safe-area-inset-bottom) + 24px); }
 h1 { font-size:30px; font-weight:700; margin:4px 12px 10px; letter-spacing:-.3px; }
+/* Which Mac this page is, its nickname after the name ("AI Illuminati (Pro)"), so two Macs' pages are told apart. */
+.mac { color:var(--dim); font-weight:600; } h1 .mac { font-size:24px; }
 .searchbox { display:flex; align-items:center; gap:8px; margin:0 10px 6px; }
 .field { flex:1; display:flex; align-items:center; gap:7px; height:38px; padding:0 10px; border-radius:10px; background:var(--fill); color:var(--dim); }
 .field input { flex:1; min-width:0; border:0; outline:0; background:none; color:var(--text); font:16px -apple-system, system-ui; }
@@ -351,14 +353,14 @@ footer { position:relative; padding:6px 10px calc(env(safe-area-inset-bottom) + 
 <body>
 <div id="listView" class="view">
   <div class="bar" id="listBar">
-    <div class="mid" id="listTitle"><b>AI Illuminati</b></div>
+    <div class="mid" id="listTitle"><b>AI Illuminati<span class="mac"></span></b></div>
     <button class="tool" id="usageTool" aria-haspopup="dialog"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.2 17a9 9 0 1 1 15.6 0H4.2ZM12 14l4-5"/><circle cx="12" cy="14" r="1"/></svg></button>
     <button class="tool" id="updTool" aria-label="update"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v8M8.5 12.5 12 16l3.5-3.5"/></svg></button>
     <div class="spacer"></div>
     <button class="tool" id="compose" aria-label="new chat"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6"/><path d="M17.6 3.4a1.9 1.9 0 0 1 2.7 2.7L12 14.4l-3.6.9.9-3.6z"/></svg></button>
   </div>
   <div class="scroll" id="listScroll">
-    <h1>AI Illuminati</h1>
+    <h1>AI Illuminati<span class="mac"></span></h1>
     <div class="searchbox">
       <label class="field"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m20 20-4.8-4.8"/></svg>
         <input id="q" type="search" enterkeyhint="search" autocomplete="off" autocorrect="off"><button class="clear hidden" id="qClear" aria-label="clear">✕</button></label>
@@ -549,7 +551,7 @@ function route() {
     $('turns').innerHTML = ''; $('approvals').innerHTML = '';
     const known = id ? titles[id] : null;
     $('chatTitle').textContent = id ? (known ? known.title : '') : S.newChat;
-    $('chatSub').textContent = id ? (known && known.detail || '') : (project && projects[project] || '');
+    $('chatSub').textContent = chatSub(id ? (known && known.detail || '') : (project && projects[project] || ''));
     $('footer').classList.remove('hidden'); $('readOnly').classList.add('hidden'); $('box').classList.remove('hidden');
     grow();   // after the box shows again: measured while hidden (the update screen), it would shrink to nothing
     $('hint').textContent = '';
@@ -602,7 +604,18 @@ $('list').addEventListener('toggle', e => {
   const d = e.target; if (!d.dataset || !d.dataset.open) return;
   d.open ? inboxOpen.add(d.dataset.open) : inboxOpen.delete(d.dataset.open);
 }, true);
+// This Mac's nickname from each answer (kept for the next start): after the title on the list, first in the chat's small line.
+let macName = localStorage.getItem('mac') || '';
+function showMac(name) {
+  if (typeof name !== 'string' || !name || name === macName && document.querySelector('.mac').textContent) return;
+  macName = name; localStorage.setItem('mac', name);
+  document.querySelectorAll('.mac').forEach(e => { e.textContent = ' (' + name + ')'; });
+  document.querySelectorAll('#chatSub').forEach(e => { e.textContent = chatSub(e._detail || ''); });
+}
+function chatSub(detail) { $('chatSub')._detail = detail; return [macName, detail].filter(Boolean).join(' · '); }
+showMac(macName);
 function renderList(data) {
+  showMac(data.device);
   const top = inboxRows(data.inbox);
   if (!data.sections.length && !top) { $('list').innerHTML = '<div class="note">' + esc(S.empty) + '</div>'; return; }
   $('list').innerHTML = top + data.sections.map(s => {
@@ -994,8 +1007,9 @@ function tick() {
 setInterval(tick, 15000);
 function renderChat(data, first) {
   const box = $('chatScroll'), atEnd = first || box.scrollHeight - box.scrollTop - box.clientHeight < 90, height = box.scrollHeight;
+  showMac(data.device);
   $('chatTitle').textContent = data.title;
-  $('chatSub').textContent = data.project || '';
+  $('chatSub').textContent = chatSub(data.project || '');
   $('box').classList.toggle('hidden', !!data.readOnly);
   $('readOnly').classList.toggle('hidden', !data.readOnly);
   $('readOnly').textContent = S.readOnly;

@@ -99,6 +99,15 @@ func testPhoneServer() {
     let markdown = String(decoding: RemotePage.html(), as: UTF8.self)
     expect(markdown.contains("function pictureLine(l, places)") && markdown.contains("markdown(t.text, t.places)") && markdown.contains("PICS.test(l)"),
            "phone page: [Picture N] lines are drawn as their pictures, in place")
+    // Which Mac the page is: its nickname comes with the list and with each chat, and the page shows it after the title.
+    let savedName = server.deviceName
+    server.deviceName = { "Pro" }
+    expect(call("GET", "/api/chats").1["device"] as? String == "Pro" && call("GET", "/api/chat/\(room.uuidString)").1["device"] as? String == "Pro",
+           "phone server: the Mac's nickname comes with the list and the chat")
+    server.deviceName = savedName
+    let titled = String(decoding: RemotePage.html(), as: UTF8.self)
+    expect(titled.contains("<h1>AI Illuminati<span class=\"mac\"></span></h1>") && titled.contains("showMac(data.device)") && titled.contains("chatSub(data.project"),
+           "phone page: the nickname after the list title and in the chat's small line")
     let list = call("GET", "/api/chats").1["sections"] as? [[String: Any]] ?? []
     expect(list.contains { ($0["chats"] as? [[String: Any]] ?? []).contains { $0["id"] as? String == room.uuidString } }, "phone server: the list has the chat")
 

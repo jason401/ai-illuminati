@@ -264,7 +264,8 @@ struct ChatView<Model: ChatSettings>: View {
                             ForEach(grouped.projects) { projectGroup($0) }
                         }
                         if !discussion.sidebarSearching { SpaceSidebarSection(discussion: discussion); sharedFolders }
-                        let recents = grouped.loose.filter { $0.pinned != true }
+                        // Pinned chats stay here too (at the top), as in a project folder: Pinned is a shortcut.
+                        let recents = grouped.loose
                         if !recents.isEmpty {
                             SidebarHeader(title: L("최근", "Recents"), fold: "recents")
                             if !folds.isFolded("recents") {
@@ -512,7 +513,7 @@ struct ChatView<Model: ChatSettings>: View {
     // The same items in the ⋯ menu and on right-click.
     @ViewBuilder private func chatMenu(_ conversation: Conversation) -> some View {
         Button(L("이름 바꾸기…", "Rename…")) { discussion.rename(conversation.id) }
-        // A project chat too: pinned, it moves from its folder to Pinned at the top.
+        // A project chat too: pinned, it shows in Pinned at the top and stays in its folder.
         Button(conversation.pinned == true ? L("고정 해제", "Unpin") : L("맨 위에 고정", "Pin to top")) { discussion.togglePin(conversation.id) }
         moveMenu(conversation)
         if let todo = Discussion.todoToFinish(room: conversation.id, in: todos.snapshot) {
@@ -576,8 +577,7 @@ struct ChatView<Model: ChatSettings>: View {
         projectRow(group, open: open)
         if open {
             // Chats answering now come first, then TODO chats still going, so the work running now is in sight right away.
-            // Its pinned chats are in Pinned at the top, not here too.
-            let rooms = SidebarProjects.runningFirst(SidebarProjects.unpinned(group), todo: todos.snapshot, running: discussion.runningRooms,
+            let rooms = SidebarProjects.runningFirst(group, todo: todos.snapshot, running: discussion.runningRooms,
                                                      groupPieces: !discussion.sidebarSearching)
             let todoIDs = Set(group.todoRooms.map(\.id))
             ForEach(rooms.running) { room in

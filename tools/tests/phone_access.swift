@@ -282,7 +282,7 @@ func testPhoneServer() {
         return ((section?["chats"] as? [Any])?.count ?? 0, section?["more"] as? [String: Any], pins)
     }
     // Recents holds loose chats only: project chats other tests left in a shared test home (a serial run) are in Projects.
-    let total = chat.listedConversations.filter { $0.pinned != true && $0.hasContent && $0.workspace?.project == nil }.count
+    let total = chat.listedConversations.filter { $0.hasContent && $0.workspace?.project == nil }.count
     let short = recents("/api/chats"), long = recents("/api/chats?n.recents=20"), all = recents("/api/chats?n.recents=1000")
     expect(total > 15 && short.rows == SidebarFold.recentsPage && short.more?["hidden"] as? Int == total - SidebarFold.recentsPage
            && short.more?["key"] as? String == "recents" && short.pinned, "phone server: recents start at one page, the rest counted, pinned kept \(short), listed \(total)")

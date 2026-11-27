@@ -1033,8 +1033,8 @@ func testSidebarProjects() {
            && repo?.bindings.map(\.root) == ["/tmp/side-repo-wt", "/tmp/side-repo"] && repo?.lists.count == 1,
            "worktrees share the folder (each root kept), the pinned chat on top, the TODO chat apart: \(String(describing: repo))")
     expect(grouped.loose.map(\.title) == ["plain pinned", "plain"], "chats without a project stay in Pinned and Recents")
-    expect(SidebarProjects.pinned(grouped).map(\.title) == ["plain pinned", "A"] && repo.map(SidebarProjects.unpinned)?.chats.map(\.title) == ["B"],
-           "a pinned project chat is in Pinned at the top, not in its folder too: \(SidebarProjects.pinned(grouped).map(\.title))")
+    expect(SidebarProjects.pinned(grouped).map(\.title) == ["plain pinned", "A"] && repo?.chats.map(\.title) == ["A", "B"],
+           "a pinned project chat shows in Pinned at the top and stays in its folder: \(SidebarProjects.pinned(grouped).map(\.title))")
     let all = grouped.projects.flatMap { $0.chats + $0.todoRooms } + grouped.loose
     expect(all.count == chats.count && Set(all.map(\.id)).count == chats.count, "every chat shows once")
     expect(SidebarProjects.group(chats, todo: store.current, pinned: [], withLists: false).projects.map(\.id) == ["/tmp/side-other/.git", common],

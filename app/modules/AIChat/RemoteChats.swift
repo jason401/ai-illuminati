@@ -49,11 +49,11 @@ public enum RemoteChats {
             return item
         }, more: more("unread", page: SidebarFold.projectPage, total: unread.count, listed: unreadListed.count), fold: "unread")
         let grouped = SidebarProjects.group(d.listedConversations.filter(\.hasContent), todo: todo, pinned: SidebarFold.shared.pinnedProjects, names: names)
-        // Pinned project chats are in Pinned (with their project's name), not in their folders too, as on the Mac.
+        // Pinned project chats show in Pinned too (with their project's name); every pinned chat stays in its own list, as on the Mac.
         let projectOf = Dictionary(grouped.projects.flatMap { g in g.chats.map { ($0.id, g.name) } }, uniquingKeysWith: { a, _ in a })
         add(L("고정됨", "Pinned"), SidebarProjects.pinned(grouped).map { row($0, detail: projectOf[$0.id]) }, fold: "pinned")
         add(L("프로젝트", "Projects"), grouped.projects.flatMap { group -> [[String: Any]] in
-            let rooms = SidebarProjects.runningFirst(SidebarProjects.unpinned(group), todo: todo, running: d.runningRooms)
+            let rooms = SidebarProjects.runningFirst(group, todo: todo, running: d.runningRooms)
             let key = "project." + group.id, page = SidebarFold.projectPage
             let listed = SidebarFold.listedChats(rooms.chats, limit: limit(key, page), open: nil)
             let chats = rooms.running + rooms.going + listed.rows
@@ -63,7 +63,7 @@ public enum RemoteChats {
             if count > 0 { folder["approvals"] = count }
             return [folder] + chats.map { row($0, depth: 1) }
         }, fold: "projects")
-        let recents = grouped.loose.filter { $0.pinned != true }, recentsListed = recents.prefix(limit("recents", SidebarFold.recentsPage))
+        let recents = grouped.loose, recentsListed = recents.prefix(limit("recents", SidebarFold.recentsPage))
         add(L("최근", "Recents"), recentsListed.map { row($0) },
             more: more("recents", page: SidebarFold.recentsPage, total: recents.count, listed: recentsListed.count), fold: "recents")
         return sections

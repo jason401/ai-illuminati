@@ -102,15 +102,10 @@ public enum SidebarProjects {
         return (projects, pinnedFirst)
     }
 
-    // Pinned chats, loose or in a project (not TODO chats), newest first: all in Pinned at the top, so a project
-    // folder lists only its other chats (unpinned). group() keeps them in `chats` for its locks and running checks.
+    // Pinned chats, loose or in a project (not TODO chats), newest first, for Pinned at the top. A shortcut: each also
+    // stays in its own list (Recents or its project folder), at the top there.
     static func pinned(_ grouped: (projects: [ProjectGroup], loose: [Conversation])) -> [Conversation] {
         (grouped.loose + grouped.projects.flatMap(\.chats)).filter { $0.pinned == true }.sorted(by: newerFirst)
-    }
-    static func unpinned(_ group: ProjectGroup) -> ProjectGroup {
-        var group = group
-        group.chats.removeAll { $0.pinned == true }
-        return group
     }
 
     private static func newerFirst(_ a: Conversation, _ b: Conversation) -> Bool {
@@ -271,7 +266,7 @@ public final class SidebarFold: ObservableObject {
     }
 
     // Once, when the sidebar first groups by project: a pinned project chat pins its project's folder (the chat
-    // stays pinned too, in Pinned at the top).
+    // stays pinned too, in Pinned at the top and at the top inside its folder).
     func adoptPins(_ chats: [Conversation]) {
         guard !defaults.bool(forKey: Self.adoptedKey) else { return }
         for chat in chats where chat.pinned == true { if let project = chat.workspace?.project { pinnedProjects.insert(SidebarProjects.key(project)) } }

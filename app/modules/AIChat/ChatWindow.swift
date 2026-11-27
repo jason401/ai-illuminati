@@ -161,7 +161,7 @@ struct ChatView<Model: ChatSettings>: View {
         .onChange(of: discussion.viewingRemote == nil) { _ in photo.image = nil }
         .onChange(of: discussion.viewingBoard) { _ in photo.image = nil }
         .onChange(of: discussion.viewingSpace == nil) { _ in photo.image = nil }
-        // Back in front, or back from the board/Space/another Mac's chat: the open chat counts as seen ("Needs review" in Discussion.swift).
+        // Back in front, or back from the board/Space/another Mac's chat: the open chat counts as seen.
         .onChange(of: discussion.showingChat) { _ in discussion.seeOpenChat() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in discussion.seeOpenChat() }
         .frame(minWidth: ChatViewSize.minSize.width, minHeight: ChatViewSize.minSize.height)
@@ -221,6 +221,7 @@ struct ChatView<Model: ChatSettings>: View {
             Divider().padding(.top, 6)
             ScrollView {
                 VStack(alignment: .leading, spacing: 1) {
+                    if !discussion.sidebarSearching { unreadChats }
                     // Searching keeps the folders above the results, as before; otherwise they sit between Spaces and Recents.
                     if discussion.sidebarSearching { sharedFolders }
                     // A new chat with nothing in it yet is not listed (like the desktop apps); it appears once it has a message.
@@ -355,12 +356,57 @@ struct ChatView<Model: ChatSettings>: View {
                     : L("오른쪽에 이 프로젝트의 할 일 보기 (알림함은 닫혀요)", "Show this project's TODOs on the right (closes the inbox)"))
     }
 
-    // The bell opens the inbox on the right (Inbox.swift), which took over "Needs review". The red badge counts only 🔴
-    // (what blocks work, like the Dock); a gray number counts the rest.
+    // Unread sits at the top of the scrolling sidebar so a long list leaves the projects reachable.
+    @ViewBuilder private var unreadChats: some View {
+        let chats = UnreadChats.list(conversations: discussion.conversations, unread: discussion.unreadRooms,
+                                    running: discussion.runningRooms, todo: todos.snapshot, names: projectInfo.names)
+        if !chats.isEmpty {
+            let key = "unread", page = SidebarFold.projectPage
+            SidebarHeader(title: L("안 읽음", "Unread"), fold: key) {
+                Button(L("모두 읽음", "Mark all read")) { discussion.markSeen(chats.map(\.id)) }
+                    .buttonStyle(.plainHit).font(.system(size: 11)).foregroundColor(.accentColor)
+                Text("\(chats.count)").font(.system(size: 10)).monospacedDigit().foregroundColor(.secondary)
+            }
+            if !folds.isFolded(key) {
+                let listed = chats.prefix(folds.limit(key, page: page))
+                ForEach(listed) { unreadRow($0) }
+                moreRow(key, page: page, total: chats.count, listed: listed.count)
+            }
+        }
+    }
+
+    private func unreadRow(_ chat: UnreadChat) -> some View {
+        let key = "unread." + chat.id.uuidString
+        let title = chat.conversation.title
+        return Button(action: { discussion.open(chat.id) }) {
+            HStack(spacing: 6) {
+                Group {
+                    if chat.failed {
+                        Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 10)).foregroundColor(.orange)
+                    } else {
+                        Circle().fill(Color.accentColor).frame(width: 6, height: 6)
+                    }
+                }
+                .frame(width: 14)
+                Text(title).lineLimit(1).truncationMode(.tail).frame(maxWidth: .infinity, alignment: .leading)
+                if let project = chat.project {
+                    Text(project).font(.system(size: 10)).foregroundColor(.secondary).lineLimit(1)
+                        .frame(maxWidth: 72, alignment: .trailing)
+                }
+            }
+            .font(.system(size: 12)).padding(.horizontal, 10).frame(height: 26)
+            .background(discussion.hoverKey == key ? Color.primary.opacity(0.05) : .clear, in: RoundedRectangle(cornerRadius: 8))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plainHit)
+        .onHover { discussion.hover(key, $0) }
+        .help(chat.failed ? L("작업 실패 · ", "Failed · ") + title : title)
+        .contextMenu { Button(L("읽음으로 표시", "Mark as read")) { discussion.markSeen(chat.id) } }
+    }
+
+    // The red badge counts what blocks work, like the Dock. The second number counts requests and reviews.
     private var inboxRow: some View {
-        let inbox = Inbox.make(requests: approvals.requests, expired: approvals.expired, todos: todos.snapshot, conversations: discussion.conversations,
-                               unread: discussion.unreadRooms, running: discussion.runningRooms, names: projectInfo.names)
-        let others = inbox.check.count + inbox.info.count
+        let inbox = Inbox.make(requests: approvals.requests, todos: todos.snapshot, conversations: discussion.conversations, running: discussion.runningRooms)
         let hovered = discussion.hoverKey == "row.inbox"
         return Button(action: { discussion.inboxShown.toggle() }) {
             HStack(spacing: 8) {
@@ -372,8 +418,8 @@ struct ChatView<Model: ChatSettings>: View {
                     Text("\(inbox.blocked.count)").font(.system(size: 10, weight: .semibold).monospacedDigit()).foregroundColor(.white)
                         .padding(.horizontal, 5).frame(minWidth: 16, minHeight: 16).background(Color.red, in: Capsule())
                 }
-                if others > 0 {
-                    Text("\(others)").font(.system(size: 11).monospacedDigit()).foregroundColor(.secondary)
+                if !inbox.check.isEmpty {
+                    Text("\(inbox.check.count)").font(.system(size: 11).monospacedDigit()).foregroundColor(.secondary)
                 }
             }
             .font(.system(size: 13))
@@ -383,8 +429,8 @@ struct ChatView<Model: ChatSettings>: View {
         }
         .buttonStyle(.plainHit)
         .onHover { discussion.hover("row.inbox", $0) }
-        .help(L("알림함: 막힘 \(inbox.blocked.count) · 확인 \(inbox.check.count) · 참고 \(inbox.info.count)",
-                "Inbox: \(inbox.blocked.count) blocked · \(inbox.check.count) to check · \(inbox.info.count) for reference"))
+        .help(L("알림함 · 막힘 \(inbox.blocked.count) · 응답·검토 필요 \(inbox.check.count)",
+                "Inbox · \(inbox.blocked.count) blocked · \(inbox.check.count) to reply to or review"))
         .accessibilityLabel(L("알림함", "Inbox"))
     }
 

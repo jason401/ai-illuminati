@@ -2906,7 +2906,7 @@ func testRoomDrafts() {
     print("PASS: room drafts (per chat, composed character, @ names and pictures kept, blank new chat kept and reopened, restart, stale entries, send, rerun, delete)")
 }
 
-// "Needs review" under Working: a chat whose answer ended while it was not on screen stays listed until it is opened;
+// Unread under Working: a chat whose answer ended while it was not on screen stays listed until it is opened;
 // an answer seen as it ended, one you stopped and a meeting's chat are not listed. Kept in a file in the test home. Fake answers.
 func testUnreadChats() {
     let file = URL(fileURLWithPath: AccountStore.supportDir + "/unread-test-\(UUID().uuidString).json")
@@ -2966,7 +2966,7 @@ func testUnreadChats() {
     expect(chat.unreadRooms[a] != nil, "an answer that ends behind the board is listed")
     chat.noteFinished(b, stopped: false)
     chat.markSeen([b])
-    expect(chat.unreadRooms.keys.sorted { $0.uuidString < $1.uuidString } == [a], "marking some seen leaves the others (the inbox's Mark all read is ⚪ only)")
+    expect(chat.unreadRooms.keys.sorted { $0.uuidString < $1.uuidString } == [a], "marking some seen leaves the others")
     chat.markAllSeen()
     chat.noteFinished(b, stopped: true)
     expect(chat.unreadRooms.isEmpty, "an answer you stopped is not listed")
@@ -2977,7 +2977,27 @@ func testUnreadChats() {
     expect(chat.unreadRooms.isEmpty, "a meeting's chat is not listed")
     let stale = Discussion.loadUnread(known: [])
     expect(stale.isEmpty, "a deleted chat drops out on start")
-    print("PASS: Needs review (seen on screen, listed elsewhere, newest first, restart, opened, app in back, board, stopped, meeting)")
+    chat.open(a)
+    chat.workspaceAnswer = { _, prompt, _, _, progress in
+        expect(prompt.contains("[Inbox]") && prompt.contains("<needs-you>"), "the writing AI can explicitly ask for required input")
+        progress?(.text("Choose a branch.\n<needs-you>Which"))
+        return .success("Choose a branch.\n<needs-you>Which branch should I use?</needs-you>\n<chat-state>waiting</chat-state>")
+    }
+    front = false
+    chat.draft = "make the edits"; chat.send(); settle()
+    func pending(_ chat: Discussion) -> [UUID] {
+        Inbox.make(requests: [], todos: TodoData(), conversations: chat.conversations, running: chat.runningRooms).check.map(\.id)
+    }
+    expect(chat.conversation(a).turns.last?.final == "Choose a branch." && pending(chat) == [a],
+           "the request appears in Inbox and its metadata stays out of the reply")
+    expect(chat.unreadRooms.isEmpty && pending(Discussion(model: model)) == [a], "the request survives a restart and appears only in Inbox")
+    chat.open(a)
+    chat.markAllSeen()
+    expect(pending(chat) == [a], "opening a chat or marking it read does not handle the request")
+    chat.workspaceAnswer = { _, _, _, _, _ in .success("Done. Anything else?") }
+    chat.draft = "use the current branch"; chat.send(); settle()
+    expect(pending(chat).isEmpty && chat.unreadRooms[a] != nil, "replying handles the request; a casual question stays in Unread when unseen")
+    print("PASS: Unread and Inbox requests (read state, persistence, explicit request, reply)")
 }
 
 // The inbox (Inbox.swift): worked out from the state, so handled items leave by themselves.
@@ -2993,20 +3013,24 @@ func testInbox() {
     let chats = [answered, failed, running]
     let unread = [answered.id: Date(), failed.id: Date().addingTimeInterval(-60), running.id: Date()]
     let card = ProjectApproval(room: answered.id, run: UUID(), title: "Waiting", detail: "fixture")
-    var inbox = Inbox.make(requests: [card], expired: [], todos: todos, conversations: chats, unread: unread, running: [running.id])
-    expect(inbox.blocked.count == 2 && inbox.blocked.count == Blocked.count(requests: [card], expired: [], todos: todos),
+    var inbox = Inbox.make(requests: [card], todos: todos, conversations: chats, running: [running.id])
+    expect(inbox.blocked.count == 2 && inbox.blocked.count == Blocked.count(requests: [card], todos: todos),
            "🔴 is the strip's and the Dock's items: the approval and the TODO decision")
-    expect(inbox.check.map(\.id) == [todos.items[1].id, failed.id], "🟡: the TODO's result (newest first), then the failed work")
-    expect(inbox.info.map(\.id) == [answered.id], "⚪: the answer that ended elsewhere; a chat answering again is not listed")
+    expect(inbox.check.map(\.id) == [todos.items[1].id], "only the TODO review needs action")
+    let unreadChats = UnreadChats.list(conversations: chats, unread: unread, running: [running.id], todo: todos)
+    expect(unreadChats.map(\.id) == [answered.id, failed.id] && unreadChats.map(\.failed) == [false, true],
+           "unseen results and failures go to Unread; working chats are excluded")
     expect(Inbox.line(answered.turns[0].final) == "Finished" && Inbox.projectName(todos.items[0], todos: todos, names: [:]) == "Inbox list",
            "rows show one line and the TODO's list")
-    // Handled: approved, decided, checked, opened.
+    // Handled: approved, decided, reviewed.
     todos.items[0].state = .running; todos.items[1].state = .done
-    inbox = Inbox.make(requests: [], expired: [], todos: todos, conversations: chats, unread: [failed.id: Date()], running: [])
-    expect(inbox.blocked.isEmpty && inbox.check.map(\.id) == [failed.id] && inbox.info.isEmpty, "handled items leave by themselves")
-    inbox = Inbox.make(requests: [], expired: [], todos: todos, conversations: chats, unread: [:], running: [])
-    expect(inbox.isEmpty, "nothing left once everything is seen")
-    print("PASS: Inbox (🔴 like the strip, 🟡 TODO results and failures, ⚪ answers, handled items leave)")
+    inbox = Inbox.make(requests: [], todos: todos, conversations: chats, running: [])
+    expect(inbox.isEmpty, "handled actions leave by themselves")
+    expect(ChatInputRequest.extract("Wait.\n<needs-you>Please").reply == "Wait."
+           && ChatInputRequest.extract("Wait.\n<needs-you>Please").request == nil, "unfinished request metadata stays hidden")
+    expect(ChatInputRequest.extract("Example\n```xml\n<needs-you>Example</needs-you>\n```").request == nil
+           && ChatInputRequest.extract("Wait.\n<needs-you> </needs-you>").request == nil, "examples and empty requests do not count")
+    print("PASS: Inbox (pending approvals, TODO decisions and review, unread results excluded)")
 }
 
 runTest("testToolHub", testToolHub)

@@ -643,6 +643,7 @@ extension Discussion {
     func runSolo(question: String, history: [ChatTurn], rules: String, config: ChatConfiguration, mentions: [String] = [],
                  reviewers: [String] = [], cancellation: DebateCancellation, id: UUID, index: Int, extra: String = "") {
         let origin = conversations.first { $0.id == id }?.origin
+        let offersRequest = canRequestInput(id)
         let previous = Self.soloPrevious(origin: origin, history: history)
         let asked = Self.soloAsked(previous: previous, question: question)
         let context = Self.soloContext(rules: rules, transcript: asked)
@@ -751,6 +752,7 @@ extension Discussion {
             for (k, account) in called.enumerated() {
                 let speaker = label(account)
                 var instruction = soloInstruction(account, binding: binding, helper: helper, chat: id, spaceRule: k == 0)
+                if offersRequest && k == 0 { instruction += ChatInputRequest.rule }
                 if !extra.isEmpty { instruction += "\n" + extra }
                 if called.count > 1 {
                     instruction += "\nSeveral AIs answer this message at the same time and do not see each other's replies: give your own view."
@@ -766,7 +768,7 @@ extension Discussion {
                     guard !finished() else { return }
                     switch update {
                     case .text(let text):
-                        let shown = Self.extractState(ChatApp.face.extract(text).text).reply
+                        let shown = ChatInputRequest.extract(Self.extractState(ChatApp.face.extract(text).text).reply).reply
                         self.changeWriting(id, index) { t in
                             // Checked again here: text that arrives after the reply is done must not bring it back.
                             guard !finished() else { return }
@@ -792,11 +794,14 @@ extension Discussion {
                     doneLock.lock(); done.insert(accountID); doneLock.unlock()
                     if cancellation.isCancelled { return }
                     var entry: ChatTurn.Entry
+                    let request: String?
                     switch result {
                     case .success(let raw):
                         let (tagless, mood) = ChatApp.face.extract(raw)
                         if let mood, binding.face == true { ChatApp.face.show(mood) }
-                        let (text, newState) = Self.extractState(tagless)
+                        let (body, newState) = Self.extractState(tagless)
+                        let (text, input) = ChatInputRequest.extract(body)
+                        request = input
                         self.notePeerOutcome(account, reply: tagless)
                         if let newState, k == 0 { self.saveState(newState, room: id, index: index) }
                         if k == 0 { self.deliverSpaceBuild(tagless, room: id, turn: index, cancellation: cancellation) }
@@ -805,12 +810,14 @@ extension Discussion {
                         entry.images = harvest.images.isEmpty ? nil : harvest.images
                         doneLock.lock(); answered.append((k, account, harvest.text)); doneLock.unlock()
                     case .failure(let failure):
+                        request = nil
                         entry = .init(round: 1, speaker: speaker, text: Self.describe(failure), failed: true)
                     }
                     if together { entry.accountID = accountID }
                     let failedEntry = entry
                     self.changeTurn(id, index, save: true) { t in
                         var finished = failedEntry
+                        if offersRequest && k == 0 { t.inputRequest = request }
                         // Failed while writing: the reply so far stays (one called: as the answer, cut off; several: in its column).
                         let cut = finished.failed ? (together ? t.partials?[accountID] : t.partialBy == speaker ? t.partial : nil) : nil
                         if t.partialBy == speaker { t.partial = nil; t.partialBy = nil; t.activity = nil }
@@ -886,6 +893,7 @@ extension Discussion {
             }
             let started = Date()
             var instruction = soloInstruction(account, binding: binding, helper: helper, chat: id)
+            if offersRequest { instruction += ChatInputRequest.rule }
             if let unfinished {
                 instruction += """
 
@@ -906,7 +914,7 @@ extension Discussion {
                 switch update {
                 case .text(let text):
                     partialLock.lock(); partialText = text; partialLock.unlock()
-                    let shown = Self.extractState(ChatApp.face.extract(text).text).reply
+                    let shown = ChatInputRequest.extract(Self.extractState(ChatApp.face.extract(text).text).reply).reply
                     self.changeWriting(id, index) { $0.partial = shown; $0.partialBy = speaker }
                 case .activity(let what):
                     self.changeTurn(id, index) { $0.activity = what }
@@ -923,7 +931,8 @@ extension Discussion {
             case .success(let raw):
                 let (tagless, mood) = ChatApp.face.extract(raw)
                 if let mood, binding.face == true { ChatApp.face.show(mood) }
-                let (text, newState) = Self.extractState(tagless)
+                let (body, newState) = Self.extractState(tagless)
+                let (text, request) = ChatInputRequest.extract(body)
                 notePeerOutcome(account, reply: tagless)
                 if let newState { self.saveState(newState, room: id, index: index) }
                 deliverSpaceBuild(tagless, room: id, turn: index, cancellation: cancellation)
@@ -937,6 +946,7 @@ extension Discussion {
                     c.configuration = saved
                     guard c.turns.indices.contains(index) else { return }
                     c.turns[index].final = harvest.text
+                    c.turns[index].inputRequest = offersRequest ? request : nil
                     c.turns[index].finalBy = self.label(account)
                     c.turns[index].finalModel = ran.name
                     c.turns[index].finalImages = harvest.images.isEmpty ? nil : harvest.images
@@ -952,7 +962,7 @@ extension Discussion {
                 if limit { lastError = nil; failed = nil } else {
                     errorHandoffs += 1; lastError = label(account) + ": " + Self.describe(failure); failed = (speaker, Self.describe(failure))
                 }
-                partialLock.lock(); let cut = Self.extractState(ChatApp.face.extract(partialText).text).reply; partialLock.unlock()
+                partialLock.lock(); let cut = ChatInputRequest.extract(Self.extractState(ChatApp.face.extract(partialText).text).reply).reply; partialLock.unlock()
                 if !cut.isEmpty { unfinished = (speaker, cut) }
                 changeTurn(id, index) { $0.partial = nil; $0.partialBy = nil; $0.activity = nil }
                 excluded.insert(account.id)

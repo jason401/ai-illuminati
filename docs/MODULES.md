@@ -715,7 +715,7 @@ Public names and why (found by the compiler, not by hand: a script opened only w
 everything else, Discussion's state above all, stays internal):
 - Discussion (about 30 of its members): `init(model:)`; what main.swift does with the chat (`open`, `current`, `anyRunning`,
   `cancelAll`, `discardPendingImages`, `draftsFile`/`saveDrafts` (2026-11-15: main.swift says where each chat's unsent message
-  box is kept, the app's own `drafts.json`; tests leave it nil and keep boxes in memory; quitting writes them), `unreadFile` (2026-11-16: main.swift says where "Needs review" is kept, the app's own `unread.json`, this Mac only; tests leave it nil), `importingMaterials`, `fillSpaceLocks`, `runningRooms`/`stoppingRooms` and their
+  box is kept, the app's own `drafts.json`; tests leave it nil and keep boxes in memory; quitting writes them), `unreadFile` (main.swift says where Unread is kept, the app's own `unread.json`, this Mac only; tests leave it nil), `importingMaterials`, `fillSpaceLocks`, `runningRooms`/`stoppingRooms` and their
   publishers); what the app's screens show (TODO board: `conversations`, `conversation`, `currentID`, `label`, `openBoard`,
   `viewingBoard`, `boardProject`, `hover`/`hoverKey`, `model`; Project info: `listedConversations`, `showBoardTab`, `showTodoPanel` (2026-11-24: the
   TODO panel's ✕ and Project info's "TODOs left" open or close it and keep that choice),
@@ -736,7 +736,7 @@ everything else, Discussion's state above all, stays internal):
   `ChatLink.conversations`; the board and Project info: `SidebarProjects` (`key`, `group`, `pickerName`), `ProjectGroup`,
   `SidebarFold`, `BoardTab`, `PictureDrop`, `Enterprise.permits`, `ProjectLockSection` (Project info's lock setting; the lock stays the chat's), `AutoPick.fiveHour`/`weekly`, `TodoItem.State.title`/`color`;
   main: `ChatWindow`, `SpaceRefiner.watchLibrary`,
-  `ApprovalListView`, `Blocked.count` (2026-11-23: the Dock badge in ApprovalAlerts counts the same 🔴 items as the chat's banner); everyone's views: `PlainHitButtonStyle`/`.plainHit`, `SidebarHeader`.
+  `ApprovalListView`, `Blocked.count(requests:todos:)` (ApprovalAlerts uses it for the Dock badge, which counts pending approvals and TODO decisions like the chat's banner); everyone's views: `PlainHitButtonStyle`/`.plainHit`, `SidebarHeader`.
 - `ChatSettings`, `ChatApp` (and `Face`, `Screens`), `FolderSources`/`FolderSource`: the seams above.
 - `ProjectMemoryCleanupLink.runIfIdle(in:project:manual:)` lets the app's timer and Project info start a cleanup on the
   main thread. It returns whether a hidden meeting started. Manual requests bypass the automatic due condition and
@@ -890,8 +890,8 @@ approval cards; opened counts as seen), `image(_:_:id:)` (a picture of that chat
 box's path for any chat: queue while answering, TODO, or a new turn; photos imported like `addImage`), `search(_:_:)` (the
 sidebar's ChatSearch for the page's search field) and `create(_:project:text:photos:)` (the page's new chat: a loose or project chat
 made only with its first message, sent through `send`, removed again when that fails; the Mac's open chat stays) and
-`inbox(_:now:)` (2026-11-23: the inbox panel's 🔴/🟡 for the top of the page's list, from `Inbox.make`, with the time left, the chat each
-opens and, for a chat's approval, its id and detail for the page's Allow/Deny on the existing `POST /api/approval`) and
+`inbox(_:now:)` (the inbox panel's pending approvals, TODO decisions and reviews, and explicit AI requests for the top of the page's list,
+from `Inbox.make`, with the chat each opens and the approval detail and id for Allow/Deny on `POST /api/approval`) and
 `composer(_:project:)` (2026-11-26: a new chat's message-box lists for `GET /api/chat/new`, the @ accounts and "/" ways that `chat`
 also returns; `send` and `create` take the accounts picked from the @ list as `mentions`, which `prepare` checks like the Mac's) and
 `fold(_:folded:)` (2026-11-26: `POST /api/fold`, the page's section and folder folds kept in the Mac's `SidebarFold`, which `list`

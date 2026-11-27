@@ -96,13 +96,13 @@ func testProjectWork() {
     RunLoop.main.run(until: Date().addingTimeInterval(0.1))
     let note = ProjectCenter.shared.expired.filter { $0.run == run.id }
     expect(note.map(\.title) == ["Expired"] && note.first?.deadline != nil && ProjectCenter.shared.requests.isEmpty, "timed-out approval leaves one Ask-again note, not a waiting card")
-    // The 🔴 count (banner and Dock): waiting approvals, timed-out ones and TODOs that need a decision, parked or not; not a result to check.
+    // The 🔴 count (banner and Dock): waiting approvals and TODOs that need a decision, parked or not.
     var todos = TodoData(), list = UUID()
     for state in [TodoItem.State.needsYou, .needsYou, .review, .ready] { var item = TodoItem(listID: list, title: "Blocked \(state)"); item.state = state; todos.items.append(item) }
     todos.items[1].parked = TodoPark(questionID: UUID(), at: Date(), reason: "fixture")
     let card = ProjectApproval(room: run.room, run: run.id, title: "Waiting", detail: "fixture")
-    expect(Blocked.count(requests: [card], expired: note, todos: todos) == 4 && Blocked.count(requests: [], expired: [], todos: TodoData()) == 0,
-           "the blocked count adds approvals, timed-out approvals and TODO decisions")
+    expect(Blocked.count(requests: [card], todos: todos) == 3 && Blocked.count(requests: [], todos: TodoData()) == 0,
+           "the blocked count adds pending approvals and TODO decisions")
     ProjectCenter.shared.dismiss(note.first!.id)
     expect(ProjectCenter.shared.expired.isEmpty, "dismissing the note removes it")
     // Deciding twice (card and approval window at once) counts once; denied requests leave no timeout note.
@@ -249,12 +249,16 @@ func testProjectHandoff() {
         expect(prompt.contains("[done] Read code\n[doing] Write fix\n[todo] Run tests"), "next AI gets the work plan in the checkpoint")
         expect(PlanLink.shared.call("work_plan", ["steps": [["text": "stale", "status": "done"]]], context: oldContext!)["isError"] as? Bool == true, "the old AI cannot change the plan after the handoff")
         try! "completed work".write(to: file, atomically: true, encoding: .utf8)
-        return .success("Project continued.")
+        expect(prompt.contains("[Inbox]"), "the project writer can request required input after a handoff")
+        return .success("Project continued. Which branch should I use?\n<needs-you>Which branch should I use?</needs-you>")
     }
     chat.draft = "Continue this project."; chat.send()
     let deadline = Date().addingTimeInterval(30)
     while Date() < deadline && (chat.anyRunning || chat.current.turns.last?.projectCommitted == nil) { RunLoop.main.run(until: Date().addingTimeInterval(0.03)) }
-    expect(accounts == ["project-claude", "project-codex"] && chat.current.turns.last?.final == "Project continued.", "plain-chat project hands off Claude to Codex within the same turn")
+    expect(accounts == ["project-claude", "project-codex"] && chat.current.turns.last?.final == "Project continued. Which branch should I use?",
+           "plain-chat project hands off Claude to Codex within the same turn")
+    expect(Inbox.make(requests: [], todos: TodoData(), conversations: chat.conversations, running: chat.runningRooms).check.map(\.id) == [chat.currentID],
+           "the finished project writer's request is listed in Inbox")
     expect((try! String(contentsOf: file, encoding: .utf8)) == "completed work", "working tree survives handoff without forced commit or pull")
     expect(chat.current.turns.last?.plan?.map(\.text) == ["Read code", "Write fix", "Run tests"] && chat.current.turns.last?.planNote == "found a second bug"
            && chat.current.turns.last?.lastActivityAt != nil, "the plan and the last activity stay on the turn being answered")

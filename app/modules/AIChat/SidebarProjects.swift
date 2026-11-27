@@ -366,7 +366,7 @@ enum WorkingChats {
             }
     }
 
-    // The project folder's name as the sidebar shows it (also for "Needs review", UnreadChats.swift).
+    // The project folder's name as the sidebar shows it (also for Unread).
     static func projectName(_ chat: Conversation, todo: TodoData, names: [String: String]) -> String? {
         chat.workspace?.project.map { p -> String in
             let key = SidebarProjects.key(p)

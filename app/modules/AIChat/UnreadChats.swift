@@ -1,8 +1,7 @@
 import Foundation
 import AIProjects
 
-// Chats whose answer ended elsewhere, for the inbox's 🟡 (an error) and ⚪ (Inbox.swift); the state and its rules are
-// Discussion's ("Needs review" in Discussion.swift). The iPhone page still lists them as "Needs review" (RemoteChats).
+// Chats with a finished reply to read, newest first. An explicit request appears in Inbox.
 struct UnreadChat: Identifiable {
     var id: UUID { conversation.id }
     let conversation: Conversation
@@ -15,10 +14,14 @@ enum UnreadChats {
     // Newest first; a chat answering again (sent from elsewhere) is in Working instead, a deleted one is gone.
     static func list(conversations: [Conversation], unread: [UUID: Date], running: Set<UUID>, todo: TodoData,
                      names: [String: String] = [:]) -> [UnreadChat] {
-        conversations.compactMap { chat -> UnreadChat? in
-            guard let at = unread[chat.id], !running.contains(chat.id), chat.meetingOf == nil else { return nil }
-            let last = chat.turns.last
-            let failed = last.map { $0.error != nil || ($0.final == nil && !$0.entries.isEmpty && $0.entries.allSatisfy(\.failed)) } ?? false
+        let todoRooms = Set(todo.items.compactMap(\.room))
+        return conversations.compactMap { chat -> UnreadChat? in
+            guard let at = unread[chat.id], !running.contains(chat.id), chat.meetingOf == nil,
+                  !todoRooms.contains(chat.id), ChatInputRequest.pending(in: chat) == nil else { return nil }
+            let failed = chat.turns.last.map { turn in
+                let replies = turn.entries + (turn.moreAnswers ?? [])
+                return turn.error != nil || (turn.final == nil && !replies.isEmpty && replies.allSatisfy(\.failed))
+            } ?? false
             return UnreadChat(conversation: chat, project: WorkingChats.projectName(chat, todo: todo, names: names), failed: failed, endedAt: at)
         }
         .sorted { $0.endedAt != $1.endedAt ? $0.endedAt > $1.endedAt : $0.id.uuidString < $1.id.uuidString }

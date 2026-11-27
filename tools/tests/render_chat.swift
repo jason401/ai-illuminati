@@ -153,15 +153,16 @@ import AIProjects
             ProjectCenter.shared.requests = [ProjectApproval(room: conversation.id, run: UUID(), title: "Run project command", detail: "Runs outside the AI sandbox as your user.\n/Example/Project\n/bin/zsh tools/tests/run_mode2.sh")]
         }
         if CommandLine.arguments.contains("--inbox") {
-            // The inbox panel (with --projects for a TODO result): an approval, a failed answer and two that ended elsewhere.
+            // The Inbox and Unread sidebar (with --projects for a TODO result).
             func ended(_ title: String, final: String?, error: String?) -> Conversation {
                 var c = Conversation(); c.title = title; c.turns = [ChatTurn(question: title)]; c.turns[0].final = final; c.turns[0].error = error; return c
             }
             let failed = ended("Weekly report", final: nil, error: "The AI stopped: out of usage")
             let answered = ended("Trip ideas", final: "Three routes along the coast, with times.", error: nil)
-            let paper = ended("Lamb wave figures", final: "Figure 3 now shows both modes.", error: nil)
+            var paper = ended("Lamb wave figures", final: "Which figure should I update?", error: nil)
+            paper.turns[0].inputRequest = "Which figure should I update?"; paper.turns[0].answeredAt = Date()
             chat.conversations += [failed, answered, paper]
-            chat.unreadRooms = [failed.id: Date(), answered.id: Date().addingTimeInterval(-120), paper.id: Date().addingTimeInterval(-600)]
+            chat.unreadRooms = [failed.id: Date(), answered.id: Date().addingTimeInterval(-120)]
             ProjectCenter.shared.requests = [ProjectApproval(room: conversation.id, run: UUID(), title: "Run project command", detail: "fixture", deadline: Date().addingTimeInterval(600))]
             chat.inboxShown = true
         }

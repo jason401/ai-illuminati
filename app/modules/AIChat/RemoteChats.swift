@@ -8,7 +8,7 @@ import AIProjects
 // one chat's messages and approval cards, and a message sent the way the message box sends it. Values are plain
 // JSON (strings, numbers, arrays), so the page and the server need no chat type.
 public enum RemoteChats {
-    // Working, Needs review, Pinned, Projects (each folder with its newest chats), Recents, like ChatView's sidebar.
+    // Working, Unread, Pinned, Projects (each folder with its newest chats), Recents, like ChatView's sidebar.
     // Long lists start at the sidebar's page; `limits` (the phone's "Show more") lengthens one by its key. A shortened
     // list carries "more": its key, page, how many it has and how many are left out. The sections the Mac folds and each
     // project folder carry "fold" (the sidebar's key) and "folded": one state with the Mac's sidebar (SidebarFold), so
@@ -43,8 +43,11 @@ public enum RemoteChats {
                                                      todo: todo, names: names).map { row($0.conversation, detail: $0.project) }, fold: "working")
         let unread = UnreadChats.list(conversations: d.conversations, unread: d.unreadRooms, running: d.runningRooms, todo: todo, names: names)
         let unreadListed = unread.prefix(limit("unread", SidebarFold.projectPage))
-        add(L("확인 필요", "Needs review"), unreadListed.map { row($0.conversation, detail: $0.project) },
-            more: more("unread", page: SidebarFold.projectPage, total: unread.count, listed: unreadListed.count))
+        add(L("안 읽음", "Unread"), unreadListed.map {
+            var item = row($0.conversation, detail: $0.project)
+            if $0.failed { item["failed"] = true }
+            return item
+        }, more: more("unread", page: SidebarFold.projectPage, total: unread.count, listed: unreadListed.count), fold: "unread")
         let grouped = SidebarProjects.group(d.listedConversations.filter(\.hasContent), todo: todo, pinned: SidebarFold.shared.pinnedProjects, names: names)
         add(L("고정됨", "Pinned"), grouped.loose.filter { $0.pinned == true }.map { row($0) }, fold: "pinned")
         add(L("프로젝트", "Projects"), grouped.projects.flatMap { group -> [[String: Any]] in
@@ -66,7 +69,7 @@ public enum RemoteChats {
 
     // Folds or unfolds a section or project folder from the phone, in the Mac's sidebar too. Only the keys `list` gives.
     public static func fold(_ key: String, folded: Bool) -> Bool {
-        guard ["working", "pinned", "projects", "recents"].contains(key) || key.hasPrefix("project.") else { return false }
+        guard ["working", "unread", "pinned", "projects", "recents"].contains(key) || key.hasPrefix("project.") else { return false }
         if SidebarFold.shared.isFolded(key) != folded { SidebarFold.shared.toggle(key) }
         return true
     }
@@ -77,8 +80,7 @@ public enum RemoteChats {
     // down (its macOS notification is the way to answer).
     public static func inbox(_ d: Discussion, now: Date = Date()) -> [[String: Any]] {
         let center = ProjectCenter.shared, todo = TodoStore.shared.snapshot, names = ProjectInfoStore.shared.names
-        let inbox = Inbox.make(requests: center.requests, expired: center.expired, todos: todo, conversations: d.conversations,
-                               unread: d.unreadRooms, running: d.runningRooms, names: names)
+        let inbox = Inbox.make(requests: center.requests, todos: todo, conversations: d.conversations, running: d.runningRooms)
         func chat(_ room: UUID?) -> String? { room.flatMap { r in d.conversations.contains { $0.id == r } ? r.uuidString : nil } }
         func entry(_ id: UUID, _ level: String, _ kind: String, name: String, line: String, time: String?, room: String?) -> [String: Any] {
             var row: [String: Any] = ["id": id.uuidString, "level": level, "kind": kind, "name": name.isEmpty ? L("새 대화", "New chat") : name, "line": line]
@@ -97,9 +99,6 @@ public enum RemoteChats {
                                 time: r.deadline == nil ? nil : ApprovalBanner.approvalLeft(r, now: now), room: chat(home))
                 row["approval"] = r.id.uuidString; row["detail"] = r.detail
                 return row
-            case .expired(let r):
-                return entry(r.id, "red", "expired", name: d.approvalChatName(r.room), line: L("허가 기한 지남 · 거절로 처리됨 · ", "Approval timed out · denied · ") + r.title,
-                             time: nil, room: chat(r.room))
             case .todo(let t):
                 let due = TodoScheduler.shared?.standingIn.contains(t.id) == true ? L("다른 AI가 대신 답하는 중", "Another AI is answering")
                     : ApprovalBanner.todoDue(t, data: todo, discussion: d).map { ApprovalBanner.todoLeft($0, now: now) }
@@ -113,9 +112,8 @@ public enum RemoteChats {
             case .todo(let t):
                 return entry(t.id, "yellow", "review", name: Inbox.projectName(t, todos: todo, names: names), line: L("TODO 결과 확인 · ", "TODO result · ") + t.title,
                              time: nil, room: chat(t.room))
-            case .failed(let c):
-                return entry(c.id, "yellow", "failed", name: c.conversation.title,
-                             line: L("작업 실패", "Failed") + (Inbox.line(c.conversation.turns.last?.error).map { " · " + $0 } ?? ""), time: nil, room: c.id.uuidString)
+            case .request(let room, let name, let text, _):
+                return entry(room, "yellow", "request", name: name, line: text, time: nil, room: room.uuidString)
             }
         }
         return blocked + check

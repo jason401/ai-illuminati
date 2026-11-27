@@ -128,7 +128,7 @@ func testMacHands() {
         card = ProjectCenter.shared.requests.first { $0.room == room }
     }
     expect(card?.allowLabel == "이번 답에서 허용" || card?.allowLabel == "Allow for this answer", "the card offers Allow for this answer")
-    expect(Blocked.count(requests: ProjectCenter.shared.requests, expired: [], todos: TodoData()) >= 1, "the card counts in the inbox's 🔴")
+    expect(Blocked.count(requests: ProjectCenter.shared.requests, todos: TodoData()) >= 1, "the card counts in the inbox's 🔴")
     if let card { ProjectCenter.shared.decide(card.id, allow: true) }
     expect(allowed() == true, "Allow lets the action go on")
     let unanswered = ask()

@@ -2,31 +2,60 @@ import SwiftUI
 import AILocalization
 import AIProjects
 
-// The inbox (알림함): what waits on the user now, not a record of notices. Worked out from the current state each
-// time (nothing saved), so a handled item leaves by itself. 🔴 blocked: the strip's items (BlockedItem, also the Dock);
-// 🟡 to check: a TODO's result (still on its board: the same state) and work that ended in an error elsewhere;
-// ⚪ for reference: an answer or work that ended elsewhere, until its chat is opened or "Mark all read" (⚪ only: a failure stays).
-// The sidebar's old "Needs review" is the 🟡/⚪ part of it (UnreadChats: Discussion's "Needs review" state).
+// One explicit request from the AI writing the reply. It goes before any other hidden reply metadata.
+enum ChatInputRequest {
+    private static let opening = "<needs-you>", closing = "</needs-you>"
+    static let rule = """
+
+        [Inbox]
+        If progress requires a specific answer, decision or action that only the user can provide, explain it in your reply.
+        Then add one plain-text line at the end, before other hidden metadata, in this format:
+        <needs-you>the exact request in the user's language</needs-you>
+        Keep it under 300 characters. Use this only when blocked on the user. Omit it for optional follow-ups,
+        ordinary status reports, or approvals and TODO questions already handled by the app.
+        """
+
+    // Split the trailing line out of the visible reply, including while it is still streaming.
+    static func extract(_ text: String) -> (reply: String, request: String?) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lineStart = trimmed.lastIndex(where: \.isNewline).map { trimmed.index(after: $0) } ?? trimmed.startIndex
+        let line = trimmed[lineStart...].trimmingCharacters(in: .whitespaces)
+        guard line.hasPrefix(opening) || (line.hasPrefix("<needs") && opening.hasPrefix(line)) else { return (text, nil) }
+        let reply = trimmed[..<lineStart].trimmingCharacters(in: .whitespacesAndNewlines)
+        guard line.hasPrefix(opening), line.hasSuffix(closing) else { return (reply, nil) }
+        let body = line.dropFirst(opening.count).dropLast(closing.count).trimmingCharacters(in: .whitespaces)
+        guard !body.isEmpty, body.count <= 300, !body.contains(opening), !body.contains(closing) else { return (reply, nil) }
+        return (reply.isEmpty ? body : reply, body)
+    }
+
+    static func pending(in chat: Conversation) -> (text: String, at: Date)? {
+        guard chat.meetingOf == nil, chat.subOf == nil, let turn = chat.turns.last,
+              let text = turn.inputRequest, let at = turn.answeredAt else { return nil }
+        return (text, at)
+    }
+}
+
+// The inbox follows actions still waiting for the user. Opening a chat only changes its read state.
 enum InboxCheck: Identifiable {
-    case todo(TodoItem), failed(UnreadChat)
-    var id: UUID { switch self { case .todo(let t): return t.id; case .failed(let c): return c.id } }
-    var at: Date { switch self { case .todo(let t): return t.stateSince ?? t.updatedAt; case .failed(let c): return c.endedAt } }
+    case todo(TodoItem), request(room: UUID, name: String, text: String, at: Date)
+    var id: UUID { switch self { case .todo(let t): return t.id; case .request(let room, _, _, _): return room } }
+    var at: Date { switch self { case .todo(let t): return t.stateSince ?? t.updatedAt; case .request(_, _, _, let at): return at } }
 }
 
 struct Inbox {
     var blocked: [BlockedItem] = []
     var check: [InboxCheck] = []
-    var info: [UnreadChat] = []
-    var isEmpty: Bool { blocked.isEmpty && check.isEmpty && info.isEmpty }
+    var isEmpty: Bool { blocked.isEmpty && check.isEmpty }
 
-    // 🔴 in the strip's order; 🟡 and ⚪ newest first.
-    static func make(requests: [ProjectApproval], expired: [ProjectApproval], todos: TodoData, conversations: [Conversation],
-                     unread: [UUID: Date], running: Set<UUID>, names: [String: String] = [:]) -> Inbox {
-        let ended = UnreadChats.list(conversations: conversations, unread: unread, running: running, todo: todos, names: names)
-        let check = todos.items.filter { $0.state == .review }.map(InboxCheck.todo) + ended.filter(\.failed).map(InboxCheck.failed)
-        return Inbox(blocked: BlockedItem.all(requests: requests, expired: expired, todos: todos),
-                     check: check.sorted { $0.at != $1.at ? $0.at > $1.at : $0.id.uuidString < $1.id.uuidString },
-                     info: ended.filter { !$0.failed })
+    static func make(requests: [ProjectApproval], todos: TodoData, conversations: [Conversation], running: Set<UUID>) -> Inbox {
+        let todoRooms = Set(todos.items.compactMap(\.room))
+        let chatRequests = conversations.compactMap { chat -> InboxCheck? in
+            guard !running.contains(chat.id), !todoRooms.contains(chat.id), let pending = ChatInputRequest.pending(in: chat) else { return nil }
+            return .request(room: chat.id, name: chat.title, text: pending.text, at: pending.at)
+        }
+        let check = todos.items.filter { $0.state == .review }.map(InboxCheck.todo) + chatRequests
+        return Inbox(blocked: BlockedItem.all(requests: requests, todos: todos),
+                     check: check.sorted { $0.at != $1.at ? $0.at > $1.at : $0.id.uuidString < $1.id.uuidString })
     }
 
     // The TODO's project as the sidebar names it, else its list's title.
@@ -51,7 +80,7 @@ final class InboxDetails: ObservableObject {
 
 // The inbox on the right of the chat window, in the notes' place (ChatView), opened by the bell in the sidebar. A panel,
 // not a popover: one keeps what was typed when the user clicks elsewhere. Clicking an item opens where it is; each item
-// is also handled right here with the calls its own card makes: Allow/Deny (ProjectCenter.decide), Dismiss/Ask again,
+// can also be handled here with the calls its own card makes: Allow/Deny (ProjectCenter.decide)
 // and a TODO's answer or result box (the board's TodoCard, through ChatApp.screens.inboxCard, with the same draft).
 // An outside MCP tool keeps its macOS notification as the way to answer: its row only counts down.
 struct InboxPanel: View {
@@ -63,8 +92,7 @@ struct InboxPanel: View {
     @ObservedObject private var details = InboxDetails.shared
 
     var body: some View {
-        let inbox = Inbox.make(requests: center.requests, expired: center.expired, todos: todos.snapshot, conversations: discussion.conversations,
-                               unread: discussion.unreadRooms, running: discussion.runningRooms, names: projectInfo.names)
+        let inbox = Inbox.make(requests: center.requests, todos: todos.snapshot, conversations: discussion.conversations, running: discussion.runningRooms)
         // Seconds count down only while an outside MCP tool waits (60 seconds); minutes otherwise.
         let seconds = inbox.blocked.contains { if case .approval(let r) = $0 { return r.alwaysAllow != nil }; return false }
         VStack(alignment: .leading, spacing: 0) {
@@ -91,16 +119,8 @@ struct InboxPanel: View {
                                 ForEach(inbox.blocked) { blockedRow($0, now: context.date) }
                             }
                             if !inbox.check.isEmpty {
-                                header(L("확인", "To check"), color: .yellow, count: inbox.check.count)
+                                header(L("응답·검토 필요", "Reply or review"), color: .yellow, count: inbox.check.count)
                                 ForEach(inbox.check) { checkRow($0) }
-                            }
-                            if !inbox.info.isEmpty {
-                                header(L("참고", "For reference"), color: Color.secondary.opacity(0.5), count: inbox.info.count) {
-                                    Button(L("모두 읽음", "Mark all read")) { discussion.markSeen(inbox.info.map(\.id)) }
-                                        .buttonStyle(.plainHit).font(.system(size: 11)).foregroundColor(.accentColor)
-                                        .frame(minHeight: 22)
-                                }
-                                ForEach(inbox.info) { infoRow($0) }
                             }
                         }
                         .padding(.horizontal, 8).padding(.bottom, 12)
@@ -113,14 +133,12 @@ struct InboxPanel: View {
         .background(Color.primary.opacity(0.035))
     }
 
-    private func header(_ title: String, color: Color, count: Int) -> some View { header(title, color: color, count: count) { EmptyView() } }
-    private func header<Accessory: View>(_ title: String, color: Color, count: Int, @ViewBuilder accessory: () -> Accessory) -> some View {
+    private func header(_ title: String, color: Color, count: Int) -> some View {
         HStack(spacing: 6) {
             Circle().fill(color).frame(width: 8, height: 8)
             Text(title).font(.system(size: 11, weight: .semibold)).foregroundColor(.secondary)
             Text("\(count)").font(.system(size: 11).monospacedDigit()).foregroundColor(.secondary)
             Spacer()
-            accessory()
         }
         .padding(.horizontal, 6).padding(.top, 12).padding(.bottom, 2)
     }
@@ -138,18 +156,6 @@ struct InboxPanel: View {
                     time: request.deadline == nil ? nil : ApprovalBanner.approvalLeft(request, now: now),
                     help: L("허가를 기다리는 방 열기", "Open the chat waiting for approval")) { discussion.open(home) }
                 approvalBox(request)
-            }
-        case .expired(let request):
-            VStack(alignment: .leading, spacing: 0) {
-                row(request.id, .red, name: discussion.approvalChatName(request.room), line: L("허가 기한 지남 · 거절로 처리됨 · ", "Approval timed out · denied · ") + request.title,
-                    time: nil, help: L("기한이 지난 허가가 있던 방 열기", "Open the chat of the timed-out approval")) { discussion.open(request.room) }
-                HStack(spacing: 8) {
-                    Spacer()
-                    Button(L("닫기", "Dismiss")) { center.dismiss(request.id) }
-                    Button(L("다시 요청", "Ask again")) { discussion.askAgain(request) }
-                        .buttonStyle(.borderedProminent).disabled(discussion.runningRooms.contains(request.room))
-                }
-                .font(.system(size: 12)).controlSize(.small).padding(.leading, 23).padding(.trailing, 8).padding(.bottom, 8)
             }
         case .todo(let todo):
             let due = TodoScheduler.shared?.standingIn.contains(todo.id) == true ? L("다른 AI가 대신 답하는 중", "Another AI is answering")
@@ -198,19 +204,9 @@ struct InboxPanel: View {
             row(todo.id, .yellow, name: Inbox.projectName(todo, todos: todos.snapshot, names: projectInfo.names), line: L("TODO 결과 확인 · ", "TODO result · ") + todo.title,
                 time: nil, help: Inbox.line(todo.result) ?? todo.title) { discussion.openTodo(todo) }
             todoBox(todo)
-        case .failed(let chat):
-            let turn = chat.conversation.turns.last
-            row(chat.id, .yellow, name: chat.conversation.title, line: L("작업 실패", "Failed") + (Inbox.line(turn?.error).map { " · " + $0 } ?? ""),
-                time: nil, help: chat.project ?? chat.conversation.title) { discussion.open(chat.id) }
-                .contextMenu { Button(L("확인한 걸로 표시", "Mark as seen")) { discussion.markSeen(chat.id) } }
+        case .request(let room, let name, let text, _):
+            row(room, .yellow, name: name, line: text, time: nil, help: text) { discussion.open(room) }
         }
-    }
-
-    private func infoRow(_ chat: UnreadChat) -> some View {
-        let kind = chat.conversation.isProjectChat ? L("작업 완료", "Work done") : L("답변 끝남", "Answered")
-        return row(chat.id, Color.secondary.opacity(0.5), name: chat.conversation.title, line: kind + (Inbox.line(chat.conversation.turns.last?.final).map { " · " + $0 } ?? ""),
-                   time: nil, help: chat.project ?? chat.conversation.title) { discussion.open(chat.id) }
-            .contextMenu { Button(L("읽음으로 표시", "Mark as read")) { discussion.markSeen(chat.id) } }
     }
 
     // Name (chat or project) over one line of what it is, the time left on the right; the whole row opens it.

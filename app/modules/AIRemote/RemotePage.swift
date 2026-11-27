@@ -22,6 +22,7 @@ public enum RemotePage {
             "failed": L("보내지 못했어요", "Could not send"),
             "details": L("자세히", "Details"),
             "inbox": L("알림함", "Inbox"),
+            "unreadFailed": L("작업 실패", "Failed"),
             "newChat": L("새 대화", "New chat"),
             "newIn": L("이 프로젝트에 새 대화", "New chat in this project"),
             "showMore": L("더 보기 ({n})", "Show more ({n})"),
@@ -228,6 +229,7 @@ h1 { font-size:30px; font-weight:700; margin:4px 12px 10px; letter-spacing:-.3px
 .children .more { padding-left:56px; }
 .more button { border:0; background:none; color:var(--accent); font:14px -apple-system, system-ui; padding:4px 0; }
 .dot { width:8px; height:8px; border-radius:50%; background:var(--accent); }
+.unread-warning { color:var(--warn); font-size:13px; }
 .ring { width:11px; height:11px; border-radius:50%; border:2px solid var(--c, var(--dim)); border-right-color:transparent; animation:spin 1s linear infinite; }
 .ring, .aidot { --c:var(--cl, var(--dim)); }
 @media (prefers-color-scheme: dark) { .ring, .aidot { --c:var(--cd, var(--dim)); } }
@@ -703,12 +705,14 @@ function poll() {
 // The list, in the Mac sidebar's sections; a project's chats fold under its row (remembered on this phone).
 function chatRow(c, child) {
   titles[c.id] = { title: c.title, detail: c.detail || '' };
-  const mark = c.working ? '<span class="ring"' + colorStyle(c.color) + '></span>' : c.unread ? '<span class="dot"></span>' : '';
+  const mark = c.working ? '<span class="ring"' + colorStyle(c.color) + '></span>'
+    : c.failed ? '<span class="unread-warning" role="img" aria-label="' + esc(S.unreadFailed) + '">⚠︎</span>'
+    : c.unread ? '<span class="dot"></span>' : '';
   return '<a class="row' + (child ? ' child' : '') + '" href="#c=' + encodeURIComponent(c.id) + '" data-id="' + esc(c.id) + '"><span class="mark">' + mark + '</span>' +
     '<span class="name"><div>' + esc(c.title) + '</div>' + (c.detail ? '<div class="sub">' + esc(c.detail) + '</div>' : '') + '</span>' +
     (c.approvals ? '<span class="badge">' + c.approvals + '</span>' : '') + '</a>';
 }
-// The inbox's 🔴/🟡 (GET /api/chats "inbox"): a row opens its chat (a TODO is answered there, through the message box);
+// The inbox's 🔴/🟡 (GET /api/chats "inbox"): a row opens its chat (the AI's request or TODO is answered there);
 // a chat's approval has Deny / Allow under it, like its card. Open details stay open while the list redraws.
 const inboxOpen = new Set();
 function inboxRows(items) {

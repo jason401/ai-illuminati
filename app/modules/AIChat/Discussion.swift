@@ -1557,12 +1557,14 @@ public final class Discussion: ObservableObject {
         // The message's ask_ai and meeting tools close before the chat shows it ended (the caller's endPeer after this
         // finds nothing left): closed after, an AI could still convene for an answer that looked done.
         endPeer(activePeerSession)
+        let cancelled = runCancellation?.isCancelled == true
         changeTurn(id, index, save: true) { t in
             if let error {
                 t.error = error
                 t.status = ""
             }
             if t.askedAt != nil { t.answeredAt = Date() }
+            if cancelled || t.error != nil { t.inputRequest = nil }
         }
         let room = currentID
         DispatchQueue.main.async {
@@ -1704,7 +1706,7 @@ public final class Discussion: ObservableObject {
         return out
     }
 
-    // "Needs review" (확인 필요, the inbox's 🟡/⚪, Inbox.swift): a chat whose answer ended while you were not looking at it stays listed
+    // Unread: a chat whose answer ended while you were not looking at it stays listed
     // until you open it, so it need not be looked for again. Only this Mac's own chats, kept in `unreadFile` (never
     // synced). Left out: a TODO's chat (its board shows it), a meeting's chat, and an answer you stopped yourself.
     /// Where the list is kept between launches; set by the app before the first chat loads. nil (tests, other programs): in memory only.
@@ -1715,10 +1717,16 @@ public final class Discussion: ObservableObject {
     // The open chat is on screen (not the board, a Space or another Mac's chat).
     var showingChat: Bool { viewingRemote == nil && !viewingBoard && viewingSpace == nil }
 
+    func canRequestInput(_ room: UUID) -> Bool {
+        let chat = conversation(room)
+        return chat.meetingOf == nil && chat.subOf == nil && !TodoStore.shared.current.items.contains { $0.room == room }
+    }
+
     // An answer ended (main thread, from runFinished).
     func noteFinished(_ room: UUID, stopped: Bool) {
         guard host == nil, !stopped, let chat = conversations.first(where: { $0.id == room }), chat.meetingOf == nil, chat.hasContent,
               !TodoStore.shared.snapshot.items.contains(where: { $0.room == room }) else { return }
+        if ChatInputRequest.pending(in: chat) != nil { markSeen(room); return }
         // On screen as it ended: already seen.
         if room == currentID && showingChat && Self.appActive() { return }
         unreadRooms[room] = Date()
@@ -1731,7 +1739,7 @@ public final class Discussion: ObservableObject {
         writeUnread()
     }
 
-    // Several at once, one write (the inbox's Mark all read: only its ⚪ answers, failures stay to check).
+    // Several at once, one write.
     func markSeen(_ rooms: [UUID]) {
         let before = unreadRooms.count
         for room in rooms { unreadRooms.removeValue(forKey: room) }

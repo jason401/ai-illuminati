@@ -45,6 +45,7 @@ public struct ChatTurn: Identifiable, Codable, Equatable {
     public var status = ""
     public var entries: [Entry] = []
     public var final: String?
+    var inputRequest: String?  // an explicit request in the latest reply, shown in Inbox until the user replies
     public var finalImages: [ChatImage]?
     public var finalBy: String?
     public var finalModel: String?   // the model `final` ran on, when the CLI's output named it (beside finalBy, not in it)

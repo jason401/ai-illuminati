@@ -202,19 +202,40 @@ func testPhoneServer() {
     let card = (call("GET", "/api/chat/\(room.uuidString)").1["approvals"] as? [[String: Any]])?.first
     expect(card?["id"] as? String == request.id.uuidString && card?["detail"] as? String == "origin main", "phone server: the approval card with its details")
     // The inbox atop the list (the Mac panel's 🔴/🟡): the chat's approval with its detail and chat, an outside tool counting down
-    // with no buttons and no chat, a timed-out one; Allow/Deny there is the same POST /api/approval.
+    // with no buttons and no chat, and a chat waiting on the user's reply.
     let outside = ProjectApproval(room: UUID(), run: UUID(), title: "fake__echo", detail: "{}", deadline: Date().addingTimeInterval(42), alwaysAllow: {})
     let late = ProjectApproval(room: room, run: UUID(), title: "git_push", detail: "origin main")
     ProjectCenter.shared.requests.append(outside)
     ProjectCenter.shared.expired.append(late)
-    let inbox = call("GET", "/api/chats").1["inbox"] as? [[String: Any]] ?? []
+    var waiting = Conversation(); waiting.title = "Needs a branch"; waiting.turns = [ChatTurn(question: "Continue")]
+    waiting.turns[0].inputRequest = "Which branch?"; waiting.turns[0].answeredAt = Date()
+    var failed = Conversation(); failed.title = "Failed"; failed.turns = [ChatTurn(question: "Work")]
+    failed.turns[0].error = "Network error"
+    chat.conversations += [waiting, failed]
+    chat.unreadRooms[failed.id] = Date()
+    let data = call("GET", "/api/chats").1
+    let inbox = data["inbox"] as? [[String: Any]] ?? []
     let mine = inbox.first { $0["id"] as? String == request.id.uuidString }, tool = inbox.first { $0["id"] as? String == outside.id.uuidString }
     let ran = inbox.first { $0["id"] as? String == late.id.uuidString }
     expect(mine?["level"] as? String == "red" && mine?["approval"] as? String == request.id.uuidString && mine?["detail"] as? String == "origin main"
            && mine?["room"] as? String == room.uuidString, "phone server: the inbox has the chat's approval with its detail and chat \(inbox)")
     expect(tool?["kind"] as? String == "outside" && tool?["approval"] == nil && tool?["room"] == nil && (tool?["time"] as? String)?.contains("4") == true,
            "phone server: an outside tool only counts down in seconds")
-    expect(ran?["kind"] as? String == "expired" && ran?["approval"] == nil && ran?["room"] as? String == room.uuidString, "phone server: a timed-out approval opens its chat")
+    expect(ran == nil, "phone server: a timed-out approval no longer asks the user to act")
+    let input = inbox.first { $0["kind"] as? String == "request" }
+    expect(input?["room"] as? String == waiting.id.uuidString && input?["line"] as? String == "Which branch?",
+           "phone server: an explicit request links to the exact chat")
+    let unreadSection = (data["sections"] as? [[String: Any]])?.first { $0["fold"] as? String == "unread" }
+    let unread = unreadSection?["chats"] as? [[String: Any]] ?? []
+    expect(unread.contains { $0["id"] as? String == failed.id.uuidString && $0["failed"] as? Bool == true }
+           && !unread.contains { $0["id"] as? String == waiting.id.uuidString },
+           "phone server: unseen failures are marked in Unread")
+    expect(call("GET", "/api/chat/\(failed.id.uuidString)?open=1").0 == 200 && chat.unreadRooms[failed.id] == nil,
+           "phone server: opening the unread chat marks it read")
+    expect(call("GET", "/api/chat/\(waiting.id.uuidString)?open=1").0 == 200
+           && RemoteChats.inbox(chat).contains { $0["room"] as? String == waiting.id.uuidString },
+           "phone server: opening a request leaves it waiting in Inbox")
+    chat.conversations.removeAll { $0.id == waiting.id || $0.id == failed.id }
     ProjectCenter.shared.requests.removeAll { $0.id == outside.id }
     ProjectCenter.shared.expired.removeAll { $0.id == late.id }
     expect(call("POST", "/api/approval/\(request.id.uuidString)", ["allow": false]).0 == 200

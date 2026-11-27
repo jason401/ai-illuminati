@@ -40,11 +40,11 @@ final class ApprovalAlerts: NSObject, UNUserNotificationCenterDelegate {
         ended = NotificationCenter.default.addObserver(forName: .projectWorkEnded, object: nil, queue: .main) { [weak self] note in self?.workEnded(note) }
         todo = NotificationCenter.default.addObserver(forName: .todoNeedsUser, object: nil, queue: .main) { [weak self] note in self?.todoNeedsUser(note) }
         watching = ProjectCenter.shared.$requests.receive(on: DispatchQueue.main).sink { [weak self] requests in self?.changed(requests) }
-        // The Dock counts every 🔴 item (Blocked: approvals, timed-out ones, TODOs that need a decision), like the chat's banner.
-        badge = Publishers.CombineLatest3(ProjectCenter.shared.$requests, ProjectCenter.shared.$expired, TodoStore.shared.$snapshot)
+        // The Dock counts pending approvals and TODO decisions, like the chat's banner.
+        badge = Publishers.CombineLatest(ProjectCenter.shared.$requests, TodoStore.shared.$snapshot)
             .receive(on: DispatchQueue.main)
-            .sink { requests, expired, todos in
-                let count = Blocked.count(requests: requests, expired: expired, todos: todos)
+            .sink { requests, todos in
+                let count = Blocked.count(requests: requests, todos: todos)
                 NSApp.dockTile.badgeLabel = count == 0 ? nil : String(count)
             }
         let timer = Timer(timeInterval: 30, repeats: true) { [weak self] _ in self?.remind() }

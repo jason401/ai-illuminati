@@ -59,5 +59,12 @@ hub = Path('app/macos/ToolHub.swift').read_text()
 order = re.search(r'static var appProviders: \[ToolProvider\] \{ \[(.*?)\] \}', hub).group(1).replace(' ', '').split(',')
 assert order == ['FaceLink.shared', 'GitLink.shared', 'PlanLink.shared', 'PeerLink.shared', 'ConveneLink.shared', 'DelegateLink.shared', 'ChatLink.shared',
                  'MemoryLink.shared', 'ProjectMakerLink.shared', 'TaskLink.shared', 'TodoAddLink.shared', 'StorageLink.shared', 'ExternalMCP.shared'], order
+# Settings stay in UserDefaults.app (the throwaway home's suite outside the app): no .standard writes in tools, no @AppStorage
+# without store:, and a test suite is a path in a temp folder, since a plain name leaves a plist in ~/Library/Preferences.
+grep = lambda pattern, *where: subprocess.run(['grep', '-rnE', '--include=*.swift', pattern, *where], capture_output=True, text=True).stdout.splitlines()
+assert grep(r'UserDefaults\.standard\.(set|remove)\(', 'tools') == [], grep(r'UserDefaults\.standard\.(set|remove)\(', 'tools')
+assert [l for l in grep(r'@AppStorage\(', 'app') if 'store:' not in l] == [], 'give @AppStorage store: .app'
+suites = [l for l in grep(r'UserDefaults\(suiteName:', 'app', 'tools') if not re.search(r'suiteName: (NSTemporaryDirectory\(\)|\w+(\.path)? \+ "/)', l)]
+assert suites == [], ('a UserDefaults suite must be a path in a temp folder', suites)
 # App files see a module's public names only; @testable is for tests.
 assert subprocess.run(['grep', '-rl', '@testable', 'app'], capture_output=True, text=True).stdout.split() == [], 'no @testable import in app files'

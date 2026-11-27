@@ -189,7 +189,7 @@ struct AISettingsGrid: View {
         case .screen: return L("화면 보기", "View screen")
         case .input: return L("마우스·키보드", "Mouse & keyboard")
         case .apps: return L("앱 열기", "Open apps")
-        case .chrome: return L("크롬", "Chrome")
+        case .chrome: return L("Claude in Chrome", "Claude in Chrome")   // the extension, not the "chrome" MCP server
         }
     }
 

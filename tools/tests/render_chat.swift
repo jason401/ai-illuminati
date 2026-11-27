@@ -48,7 +48,7 @@ import AIProjects
             turn.moreAnswers = [failed]
             turn.status = "ChatGPT (School) answering…"
             if !CommandLine.arguments.contains("--three") { turn.answerOrder = ["c", "g"]; turn.moreAnswers = nil }
-            UserDefaults.standard.set(ProcessInfo.processInfo.environment["CHAT_STACKED"] != "1", forKey: "answersSideBySide")
+            UserDefaults.app.set(ProcessInfo.processInfo.environment["CHAT_STACKED"] != "1", forKey: "answersSideBySide")
         }
         if CommandLine.arguments.contains("--progress") {
             // Project work under way: 12 minutes in, quiet for 3, a plan with a step added after a failing test.

@@ -46,7 +46,7 @@ struct ChatView<Model: ChatSettings>: View {
     @ObservedObject private var projectInfo = ProjectInfoStore.shared
     @ObservedObject private var photo = PhotoViewer.shared
     @ObservedObject private var modelChoices = ChatModelChoices.shared   // agy's model list arrives later
-    @AppStorage(AIColors.revisionKey) private var aiColorsRevision = 0   // an AI's color changed: redraw
+    @AppStorage(AIColors.revisionKey, store: .app) private var aiColorsRevision = 0   // an AI's color changed: redraw
 
     var body: some View {
         let wide = layout.wide
@@ -3763,7 +3763,7 @@ private struct ParallelAnswers: View {
     let order: [String]
     let highlight: FindHighlight
     let answeredTime: String?
-    @AppStorage("answersSideBySide") private var sideBySide = true
+    @AppStorage("answersSideBySide", store: .app) private var sideBySide = true
 
     typealias Column = ChatTurn.Column
 

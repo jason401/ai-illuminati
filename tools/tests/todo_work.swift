@@ -1132,9 +1132,11 @@ func testSidebarProjects() {
            "when a piece answers again, its entire finished group leaves the finished heading and cleanup list")
 
     // Folds and pins are kept, in the test's own defaults; old pinned project chats pin their project once.
-    let suite = "ai-illuminati-sidebar-test-\(UUID().uuidString)"
-    let defaults = UserDefaults(suiteName: suite)!
-    defer { defaults.removePersistentDomain(forName: suite) }
+    // A path as the suite name keeps the plist in a temp folder; a plain name leaves an empty one in ~/Library/Preferences.
+    let suiteFolder = NSTemporaryDirectory() + "ai-illuminati-sidebar-test-\(UUID().uuidString)"
+    try! FileManager.default.createDirectory(atPath: suiteFolder, withIntermediateDirectories: true)
+    let defaults = UserDefaults(suiteName: suiteFolder + "/defaults")!
+    defer { try? FileManager.default.removeItem(atPath: suiteFolder) }
     let fold = SidebarFold(defaults: defaults)
     expect(!fold.piecesShown(parent.id, automatically: false) && fold.piecesShown(parent.id, automatically: true),
            "piece chats start folded and can open automatically")

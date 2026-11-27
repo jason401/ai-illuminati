@@ -464,7 +464,7 @@ struct TokenStatsView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var stats: TokenStatsModel
     @ObservedObject private var deviceSync = DeviceSync.shared
-    @AppStorage(AIColors.revisionKey) private var revision = 0   // redraw when an AI's color changes
+    @AppStorage(AIColors.revisionKey, store: .app) private var revision = 0   // redraw when an AI's color changes
 
     var body: some View {
         let _ = revision

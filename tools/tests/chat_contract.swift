@@ -137,9 +137,11 @@ do { _ = try ImageStore.importImage(Data("no picture".utf8), name: "bad.png", co
 catch ImageStore.Failure.invalid {} catch { expect(false, "a bad picture fails as invalid") }
 // AI colors (AIColors): nothing saved = the brand preset; a preset or a picked color is kept per AI in the given
 // defaults (a throwaway suite here, never the real ones); clearing goes back to the brand; shared colors are found.
-let colorSuite = "ai-illuminati-test-colors-\(UUID().uuidString)"
-let colorDefaults = UserDefaults(suiteName: colorSuite)!
-defer { colorDefaults.removePersistentDomain(forName: colorSuite) }
+// A path as the suite name keeps the plist in a temp folder; a plain name leaves an empty one in ~/Library/Preferences.
+let colorFolder = NSTemporaryDirectory() + "ai-illuminati-test-colors-\(UUID().uuidString)"
+try! FileManager.default.createDirectory(atPath: colorFolder, withIntermediateDirectories: true)
+let colorDefaults = UserDefaults(suiteName: colorFolder + "/defaults")!
+defer { try? FileManager.default.removeItem(atPath: colorFolder) }
 expect(AIColors.brand(.claude).id == "coral" && AIColors.brand(.codex).id == "green" && AIColors.brand(.gemini).id == "blue"
        && AIColors.saved(.claude, in: colorDefaults) == nil, "brand colors by default")
 AIColors.set("green", for: .claude, in: colorDefaults)

@@ -3815,10 +3815,10 @@ func testChatTime() {
 runTest("testChatTime", testChatTime)
 
 func testCloudModels() {
-    let defaults = UserDefaults(suiteName: "cloud-models-" + UUID().uuidString)!
     let folder = FileManager.default.temporaryDirectory.appendingPathComponent("cloud-models-" + UUID().uuidString)
     try! FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: folder) }
+    let defaults = UserDefaults(suiteName: folder.path + "/defaults")!   // a path keeps the plist out of ~/Library/Preferences
     let claude = Account(id: "m-claude", provider: .claude, name: "C", dir: nil)
     let codex = Account(id: "m-codex", provider: .codex, name: "X", dir: folder.path)
     expect(CloudModels.model(claude, defaults: defaults) == nil, "nothing saved is Auto")

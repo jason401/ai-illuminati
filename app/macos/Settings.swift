@@ -679,7 +679,7 @@ struct AppearanceSettingsTab: View {
 // Each AI's color (names in the chat and the menu, the sidebar's answering ring): one line per AI with its color
 // and "Change…", which opens the color window (AIColorWindow, also on a right-click of the AI's name).
 private struct AIColorsSettingsCard: View {
-    @AppStorage(AIColors.revisionKey) private var revision = 0   // redraw when a color changes in the color window
+    @AppStorage(AIColors.revisionKey, store: .app) private var revision = 0   // redraw when a color changes in the color window
 
     var body: some View {
         SettingsCard(title: L("AI 색", "AI colors"),

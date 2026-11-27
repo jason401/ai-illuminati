@@ -17,7 +17,8 @@ enum ChatViewSize {
     // sits beside them only while they keep that width (`sidebarFits`); narrower, it slides over them.
     static let minSize = NSSize(width: 560, height: 480)
     static let sidebarWidth: CGFloat = 250
-    static let unreadRowHeight: CGFloat = 26
+    static let sidebarChatRowHeight: CGFloat = 30
+    static let sidebarCompactRowHeight: CGFloat = 26
     static let sidebarFits = sidebarWidth + 1 + minSize.width
     // The notes sit beside a chat that keeps at least this much.
     static let wide: CGFloat = 700
@@ -186,11 +187,16 @@ struct ChatView<Model: ChatSettings>: View {
         }
     }
 
-    // Like the Claude and ChatGPT apps: New chat and Search on top, then pinned chats, projects, Spaces, shared
-    // folders, recent chats as single lines and other Macs last. Folders sit above Recents, which keeps growing.
-    // Right-click (or ⋯ on hover) to pin or delete.
+    // Pinned, Working and Unread stay above the project and recent chat list.
     private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        let chats = discussion.listedConversations.filter {
+            $0.hasContent && (!discussion.sidebarSearching || ChatSearch.passes($0, side: discussion.searchSide, kind: discussion.searchKind))
+        }
+        let query = discussion.sidebarSearching ? discussion.sidebarSearch.trimmingCharacters(in: .whitespacesAndNewlines) : ""
+        let grouped = query.isEmpty
+            ? SidebarProjects.group(chats, todo: todos.snapshot, pinned: folds.pinnedProjects, withLists: !discussion.sidebarSearching, names: projectInfo.names)
+            : (projects: [], loose: [])
+        return VStack(alignment: .leading, spacing: 0) {
             // The title bar above is macOS's own; it moves the window (no drag view of ours there).
             Color.clear.frame(height: 16)
             VStack(alignment: .leading, spacing: 1) {
@@ -217,6 +223,7 @@ struct ChatView<Model: ChatSettings>: View {
             .padding(.horizontal, 10)
             // Other chats stay usable while one answers (Discussion.maxRunning at once).
             .disabled(discussion.importingMaterials)
+            pinnedChats(grouped.loose.filter { $0.pinned == true })
             if !discussion.sidebarSearching {
                 workingChats
                 unreadChats
@@ -227,12 +234,6 @@ struct ChatView<Model: ChatSettings>: View {
                 VStack(alignment: .leading, spacing: 1) {
                     // Searching keeps the folders above the results, as before; otherwise they sit between Spaces and Recents.
                     if discussion.sidebarSearching { sharedFolders }
-                    // A new chat with nothing in it yet is not listed (like the desktop apps); it appears once it has a message.
-                    // Searching: the filters apply, and words find chats by their messages and answers too.
-                    let chats = discussion.listedConversations.filter {
-                        $0.hasContent && (!discussion.sidebarSearching || ChatSearch.passes($0, side: discussion.searchSide, kind: discussion.searchKind))
-                    }
-                    let query = discussion.sidebarSearching ? discussion.sidebarSearch.trimmingCharacters(in: .whitespacesAndNewlines) : ""
                     if !query.isEmpty {
                         let results = ChatSearch.search(query, in: chats)
                         SidebarHeader(title: L("검색 결과", "Results"))
@@ -249,16 +250,6 @@ struct ChatView<Model: ChatSettings>: View {
                                 .disabled(discussion.importingMaterials)
                         }
                     } else {
-                        // Chats with a Git project under its folder (SidebarProjects.swift); the rest pinned or recent.
-                        let grouped = SidebarProjects.group(chats, todo: todos.snapshot, pinned: folds.pinnedProjects, withLists: !discussion.sidebarSearching,
-                                                             names: projectInfo.names)
-                        // Pinned stays in the scroll view: any number of pins, each chatGroup can take several lines,
-                        // and with Working's up to 5 rows above it would eat the list's space.
-                        let pinned = grouped.loose.filter { $0.pinned == true }
-                        if !pinned.isEmpty {
-                            SidebarHeader(title: L("고정됨", "Pinned"), fold: "pinned")
-                            if !folds.isFolded("pinned") { ForEach(pinned) { chatGroup($0) } }
-                        }
                         SidebarHeader(title: L("프로젝트", "Projects"), fold: "projects", badge: todos.waitingForUser) { addProjectMenu }
                         if !folds.isFolded("projects") { ChatApp.screens.boardRow(discussion) }
                         if folds.isFolded("projects") {
@@ -309,7 +300,32 @@ struct ChatView<Model: ChatSettings>: View {
         .background(Color.primary.opacity(0.035))
     }
 
-    // Shortcuts to the chats answering now, outside the scroll view so they stay in sight; hidden when none.
+    @ViewBuilder private func pinnedChats(_ chats: [Conversation]) -> some View {
+        if !chats.isEmpty {
+            VStack(alignment: .leading, spacing: 1) {
+                SidebarHeader(title: L("고정됨", "Pinned"), fold: "pinned")
+                if !folds.isFolded("pinned") {
+                    fixedSidebarRows(rowHeight: ChatViewSize.sidebarChatRowHeight, maxRows: SidebarFold.projectPage) {
+                        ForEach(chats) { chatGroup($0) }
+                    }
+                }
+            }
+            .padding(.horizontal, 10)
+        }
+    }
+
+    // Let crowded sections scroll independently while keeping their headers and a row visible.
+    private func fixedSidebarRows<Rows: View>(rowHeight: CGFloat, maxRows: Int, @ViewBuilder rows: () -> Rows) -> some View {
+        let content = VStack(alignment: .leading, spacing: 1, content: rows)
+        return ViewThatFits(in: .vertical) {
+            content
+            ScrollView { content }
+        }
+        .frame(maxHeight: CGFloat(maxRows) * (rowHeight + 1) - 1)
+        .frame(minHeight: rowHeight)
+    }
+
+    // Shortcuts to the chats answering now; hidden when none.
     // Opening one selects it in its own list below too (the same currentID).
     @ViewBuilder private var workingChats: some View {
         let working = WorkingChats.list(conversations: discussion.conversations, running: discussion.runningRooms,
@@ -323,7 +339,9 @@ struct ChatView<Model: ChatSettings>: View {
                 }
                 if !folds.isFolded("working") {
                     // At most maxRunning rows (a meeting or attachments can add more); the rest as "+n".
-                    ForEach(working.prefix(Discussion.maxRunning)) { workingRow($0) }
+                    fixedSidebarRows(rowHeight: ChatViewSize.sidebarCompactRowHeight, maxRows: Discussion.maxRunning) {
+                        ForEach(working.prefix(Discussion.maxRunning)) { workingRow($0) }
+                    }
                     if working.count > Discussion.maxRunning {
                         Text(L("+\(working.count - Discussion.maxRunning)개 더", "+\(working.count - Discussion.maxRunning) more"))
                             .font(.system(size: 11)).foregroundColor(.secondary).padding(.leading, 28).frame(height: 20)
@@ -373,14 +391,9 @@ struct ChatView<Model: ChatSettings>: View {
                 }
                 if !folds.isFolded(key) {
                     let listed = chats.prefix(folds.limit(key, page: page))
-                    let rowHeight = ChatViewSize.unreadRowHeight
-                    let maxHeight = CGFloat(min(listed.count, page)) * (rowHeight + 1) - 1
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 1) {
-                            ForEach(listed) { unreadRow($0) }
-                        }
+                    fixedSidebarRows(rowHeight: ChatViewSize.sidebarCompactRowHeight, maxRows: page) {
+                        ForEach(listed) { unreadRow($0) }
                     }
-                    .frame(minHeight: rowHeight, maxHeight: maxHeight)
                     moreRow(key, page: page, total: chats.count, listed: listed.count)
                 }
             }
@@ -407,7 +420,7 @@ struct ChatView<Model: ChatSettings>: View {
                         .frame(maxWidth: 72, alignment: .trailing)
                 }
             }
-            .font(.system(size: 12)).padding(.horizontal, 10).frame(height: ChatViewSize.unreadRowHeight)
+            .font(.system(size: 12)).padding(.horizontal, 10).frame(height: ChatViewSize.sidebarCompactRowHeight)
             .background(discussion.hoverKey == key ? Color.primary.opacity(0.05) : .clear, in: RoundedRectangle(cornerRadius: 8))
             .contentShape(Rectangle())
         }
@@ -476,7 +489,7 @@ struct ChatView<Model: ChatSettings>: View {
             }
         }
         .font(.system(size: 12))
-        .padding(.leading, 10).padding(.trailing, 10).frame(height: 26)
+        .padding(.leading, 10).padding(.trailing, 10).frame(height: ChatViewSize.sidebarCompactRowHeight)
         .background(selected ? Color.primary.opacity(0.10) : discussion.hoverKey == key ? Color.primary.opacity(0.05) : .clear,
                     in: RoundedRectangle(cornerRadius: 8))
         .contentShape(Rectangle())
@@ -899,7 +912,7 @@ struct ChatView<Model: ChatSettings>: View {
             }
         }
         .font(.system(size: 13))
-        .padding(.leading, 10 + CGFloat(depth) * 12).padding(.trailing, 10).frame(height: 30)
+        .padding(.leading, 10 + CGFloat(depth) * 12).padding(.trailing, 10).frame(height: ChatViewSize.sidebarChatRowHeight)
         .background(selected ? Color.primary.opacity(0.10) : hovered ? Color.primary.opacity(0.05) : .clear,
                     in: RoundedRectangle(cornerRadius: 8))
         .contentShape(Rectangle())

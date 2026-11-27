@@ -17,6 +17,7 @@ enum ChatViewSize {
     // sits beside them only while they keep that width (`sidebarFits`); narrower, it slides over them.
     static let minSize = NSSize(width: 560, height: 480)
     static let sidebarWidth: CGFloat = 250
+    static let unreadRowHeight: CGFloat = 26
     static let sidebarFits = sidebarWidth + 1 + minSize.width
     // The notes sit beside a chat that keeps at least this much.
     static let wide: CGFloat = 700
@@ -216,12 +217,14 @@ struct ChatView<Model: ChatSettings>: View {
             .padding(.horizontal, 10)
             // Other chats stay usable while one answers (Discussion.maxRunning at once).
             .disabled(discussion.importingMaterials)
-            if !discussion.sidebarSearching { workingChats }
+            if !discussion.sidebarSearching {
+                workingChats
+                unreadChats
+            }
             // Full-width hairlines above and below the scroll view: where the fixed rows end and where the list is cut.
             Divider().padding(.top, 6)
             ScrollView {
                 VStack(alignment: .leading, spacing: 1) {
-                    if !discussion.sidebarSearching { unreadChats }
                     // Searching keeps the folders above the results, as before; otherwise they sit between Spaces and Recents.
                     if discussion.sidebarSearching { sharedFolders }
                     // A new chat with nothing in it yet is not listed (like the desktop apps); it appears once it has a message.
@@ -288,7 +291,7 @@ struct ChatView<Model: ChatSettings>: View {
                 .padding(.horizontal, 10).padding(.top, 6).padding(.bottom, 12)
             }
             // The scroll view fills the rest, so this line is where its rows are clipped.
-            .frame(maxHeight: .infinity)
+            .frame(minHeight: 48, maxHeight: .infinity)
             Divider()
             // Settings: what Manage chats held (iPhone access, deleting every chat) is in its Chat tab now.
             HStack {
@@ -356,22 +359,32 @@ struct ChatView<Model: ChatSettings>: View {
                     : L("오른쪽에 이 프로젝트의 할 일 보기 (알림함은 닫혀요)", "Show this project's TODOs on the right (closes the inbox)"))
     }
 
-    // Unread sits at the top of the scrolling sidebar so a long list leaves the projects reachable.
+    // Keep the Unread header in view and limit the rows' height so projects still have room in a short window.
     @ViewBuilder private var unreadChats: some View {
         let chats = UnreadChats.list(conversations: discussion.conversations, unread: discussion.unreadRooms,
                                     running: discussion.runningRooms, todo: todos.snapshot, names: projectInfo.names)
         if !chats.isEmpty {
             let key = "unread", page = SidebarFold.projectPage
-            SidebarHeader(title: L("안 읽음", "Unread"), fold: key) {
-                Button(L("모두 읽음", "Mark all read")) { discussion.markSeen(chats.map(\.id)) }
-                    .buttonStyle(.plainHit).font(.system(size: 11)).foregroundColor(.accentColor)
-                Text("\(chats.count)").font(.system(size: 10)).monospacedDigit().foregroundColor(.secondary)
+            VStack(alignment: .leading, spacing: 1) {
+                SidebarHeader(title: L("안 읽음", "Unread"), fold: key) {
+                    Button(L("모두 읽음", "Mark all read")) { discussion.markSeen(chats.map(\.id)) }
+                        .buttonStyle(.plainHit).font(.system(size: 11)).foregroundColor(.accentColor)
+                    Text("\(chats.count)").font(.system(size: 10)).monospacedDigit().foregroundColor(.secondary)
+                }
+                if !folds.isFolded(key) {
+                    let listed = chats.prefix(folds.limit(key, page: page))
+                    let rowHeight = ChatViewSize.unreadRowHeight
+                    let maxHeight = CGFloat(min(listed.count, page)) * (rowHeight + 1) - 1
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 1) {
+                            ForEach(listed) { unreadRow($0) }
+                        }
+                    }
+                    .frame(minHeight: rowHeight, maxHeight: maxHeight)
+                    moreRow(key, page: page, total: chats.count, listed: listed.count)
+                }
             }
-            if !folds.isFolded(key) {
-                let listed = chats.prefix(folds.limit(key, page: page))
-                ForEach(listed) { unreadRow($0) }
-                moreRow(key, page: page, total: chats.count, listed: listed.count)
-            }
+            .padding(.horizontal, 10)
         }
     }
 
@@ -394,7 +407,7 @@ struct ChatView<Model: ChatSettings>: View {
                         .frame(maxWidth: 72, alignment: .trailing)
                 }
             }
-            .font(.system(size: 12)).padding(.horizontal, 10).frame(height: 26)
+            .font(.system(size: 12)).padding(.horizontal, 10).frame(height: ChatViewSize.unreadRowHeight)
             .background(discussion.hoverKey == key ? Color.primary.opacity(0.05) : .clear, in: RoundedRectangle(cornerRadius: 8))
             .contentShape(Rectangle())
         }

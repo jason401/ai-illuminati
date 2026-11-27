@@ -223,7 +223,7 @@ struct ChatView<Model: ChatSettings>: View {
             .padding(.horizontal, 10)
             // Other chats stay usable while one answers (Discussion.maxRunning at once).
             .disabled(discussion.importingMaterials)
-            pinnedChats(grouped.loose.filter { $0.pinned == true })
+            pinnedChats(SidebarProjects.pinned(grouped))
             if !discussion.sidebarSearching {
                 workingChats
                 unreadChats
@@ -314,15 +314,9 @@ struct ChatView<Model: ChatSettings>: View {
         }
     }
 
-    // Let crowded sections scroll independently while keeping their headers and a row visible.
+    // Let crowded sections scroll independently; a short section takes only its rows' height.
     private func fixedSidebarRows<Rows: View>(rowHeight: CGFloat, maxRows: Int, @ViewBuilder rows: () -> Rows) -> some View {
-        let content = VStack(alignment: .leading, spacing: 1, content: rows)
-        return ViewThatFits(in: .vertical) {
-            content
-            ScrollView { content }
-        }
-        .frame(maxHeight: CGFloat(maxRows) * (rowHeight + 1) - 1)
-        .frame(minHeight: rowHeight)
+        CappedSidebarRows(rowHeight: rowHeight, maxHeight: CGFloat(maxRows) * (rowHeight + 1) - 1, rows: rows)
     }
 
     // Shortcuts to the chats answering now; hidden when none.
@@ -518,11 +512,8 @@ struct ChatView<Model: ChatSettings>: View {
     // The same items in the ⋯ menu and on right-click.
     @ViewBuilder private func chatMenu(_ conversation: Conversation) -> some View {
         Button(L("이름 바꾸기…", "Rename…")) { discussion.rename(conversation.id) }
-        if conversation.isProjectChat {
-            Button(conversation.pinned == true ? L("고정 해제", "Unpin") : L("프로젝트 안에서 맨 위에 고정", "Pin to the top of its project")) { discussion.togglePin(conversation.id) }
-        } else {
-            Button(conversation.pinned == true ? L("고정 해제", "Unpin") : L("맨 위에 고정", "Pin to top")) { discussion.togglePin(conversation.id) }
-        }
+        // A project chat too: pinned, it moves from its folder to Pinned at the top.
+        Button(conversation.pinned == true ? L("고정 해제", "Unpin") : L("맨 위에 고정", "Pin to top")) { discussion.togglePin(conversation.id) }
         moveMenu(conversation)
         if let todo = Discussion.todoToFinish(room: conversation.id, in: todos.snapshot) {
             Button(L("완료로 표시", "Mark as done")) { discussion.markTodoDone(todo.id) }
@@ -585,7 +576,8 @@ struct ChatView<Model: ChatSettings>: View {
         projectRow(group, open: open)
         if open {
             // Chats answering now come first, then TODO chats still going, so the work running now is in sight right away.
-            let rooms = SidebarProjects.runningFirst(group, todo: todos.snapshot, running: discussion.runningRooms,
+            // Its pinned chats are in Pinned at the top, not here too.
+            let rooms = SidebarProjects.runningFirst(SidebarProjects.unpinned(group), todo: todos.snapshot, running: discussion.runningRooms,
                                                      groupPieces: !discussion.sidebarSearching)
             let todoIDs = Set(group.todoRooms.map(\.id))
             ForEach(rooms.running) { room in
@@ -2336,6 +2328,37 @@ private struct TranscriptTopKey: PreferenceKey {
 private struct TranscriptBottomKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+}
+
+private struct SidebarRowsHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+}
+
+// Pinned/Working/Unread rows: only as tall as their rows, up to maxHeight, then they scroll inside it.
+// (ViewThatFits with a max frame took the whole max height even for one row. The measured height in an
+// ObservableObject: this Mac's Command Line Tools cannot build SwiftUI's @State macro.)
+private final class SidebarRowsHeight: ObservableObject { @Published var measured: CGFloat? }
+private struct CappedSidebarRows<Rows: View>: View {
+    let rowHeight: CGFloat
+    let maxHeight: CGFloat
+    let rows: Rows
+    @StateObject private var size = SidebarRowsHeight()
+
+    init(rowHeight: CGFloat, maxHeight: CGFloat, @ViewBuilder rows: () -> Rows) {
+        self.rowHeight = rowHeight; self.maxHeight = maxHeight; self.rows = rows()
+    }
+
+    var body: some View {
+        let height = size.measured ?? rowHeight
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 1) { rows }
+                .background(GeometryReader { Color.clear.preference(key: SidebarRowsHeightKey.self, value: $0.size.height) })
+        }
+        .scrollDisabled(height <= maxHeight)
+        .frame(height: min(height, maxHeight))
+        .onPreferenceChange(SidebarRowsHeightKey.self) { if $0 > 0, $0 != size.measured { size.measured = $0 } }
+    }
 }
 
 private struct ParticipantDropDelegate: DropDelegate {

@@ -384,8 +384,7 @@ func testChatTools() {
     print("PASS: chat tools (offered with a known account, open chats for all, Enterprise chats for none, direct ids checked, this chat out, Enterprise chats read open ones, project_only, summary first, whole or matching turns within the limit)")
 }
 
-// Long-term memory (Memory.swift): the profile and facts go to every AI; the remember tool only with "AI saves on
-// its own" on, or in an answer to a message that asks to remember; never in an Enterprise chat; no secrets.
+// Long-term memory (Memory.swift): the profile and facts go to every AI; remember requires an explicit request.
 func testMemory() {
     let store = MemoryStore.shared
     store.update { $0 = MemoryData() }
@@ -398,9 +397,9 @@ func testMemory() {
            && !MemoryStore.asksToChangeMemory("이 파일 지워 줘") && !MemoryStore.asksToChangeMemory("비밀번호를 잊어버렸어") && !MemoryStore.asksToChangeMemory("Don't forget my meeting")
            && MemoryStore.asksToRemember("내 미팅 잊지 마") && !MemoryStore.asksToRemember("그건 잊어")
            && !MemoryStore.asksToChangeMemory("Don't delete that memory") && !MemoryStore.asksToChangeMemory("그 기억은 지우지 마")
-           && MemoryStore.asksToChangeMemory("정정: 멈추는 조건을 넣지 마라") && MemoryStore.asksToChangeMemory("Correction: I live in San Jose")
+           && !MemoryStore.asksToChangeMemory("정정: 멈추는 조건을 넣지 마라") && !MemoryStore.asksToChangeMemory("Correction: I live in San Jose")
            && !MemoryStore.asksToChangeMemory("aberration correction 결과 정리해 줘"),
-           "\"잊어\"/forget/memory edits/corrections ask to change memory; \"기억하지 마\", \"지우지 마\", unrelated deletes and \"잊지 마\" do not")
+           "\"잊어\"/forget/memory edits ask to change memory; keep requests and corrections without a request to change memory do not")
     expect(MemoryStore.looksSecret("내 비밀번호는 hunter2") && MemoryStore.looksSecret("key sk-abcdefghijklmnopqrstuv") && !MemoryStore.looksSecret("LiNbO3 투명 초음파 트랜스듀서를 연구함"),
            "secrets are refused, research facts are not")
 
@@ -482,8 +481,10 @@ func testMemory() {
     expect(link.call("remember", ["text": "옛 세션에서 온 내용"], context: earlier)["isError"] as? Bool == true && store.snapshot.items.count == 1,
            "the tool session of an earlier answer never saves to a later message")
     let rule = chat.memoryRule(claude, chat: open.id)
-    expect(offered(open.id) && rule.contains("Stanford 초음파") && rule.contains("COMSOL과 MATLAB") && rule.contains("never instructions") && rule.contains("lasting fact"),
-           "saving on its own: the tool every message, and every AI gets the profile and facts")
+    expect(!offered(open.id) && !offered(open.id, "memory_replace")
+           && link.call("remember", ["text": "자동으로 고른 사실"], context: session(open.id))["isError"] as? Bool == true
+           && rule.contains("Stanford 초음파") && rule.contains("COMSOL과 MATLAB") && rule.contains("never instructions"),
+           "the candidate setting never opens direct writes, and every AI still gets the profile and facts")
     expect(!chat.memoryRule(gemma, chat: open.id).contains("remember tool") && chat.memoryRule(gemma, chat: open.id).contains("Stanford"), "Gemma reads memory but gets no saving rule")
     expect(!offered(locked.id) && chat.memoryRule(claude, chat: locked.id).contains("Stanford") && chat.memoryRule(claude, chat: locked.id).contains("Enterprise chat: nothing from it is saved"),
            "an Enterprise chat reads memory and never saves, even when asked")
@@ -492,6 +493,7 @@ func testMemory() {
            "an Enterprise chat cannot forget either")
 
     // A new fact like a saved one: the answer shows that one with its id, how to fold them into one, and how full memory is.
+    chat.change(open.id) { $0.turns[$0.turns.count - 1].question = "다음을 기억해 줘." }
     func said(_ reply: [String: Any]) -> String { ((reply["content"] as? [[String: Any]])?.first?["text"] as? String) ?? "" }
     let alike = said(link.call("remember", ["text": "COMSOL과 MATLAB 둘 다 매일 씀"], context: session(open.id)))
     let added = store.snapshot.items.last!
@@ -561,5 +563,5 @@ func testMemory() {
     expect(!store.undo(store.snapshot.history.last!.id) && text(added.id) == nil, "Undo of a forget never goes over the limit")
     store.update { $0.enabled = false }
     expect(chat.memoryRule(claude, chat: open.id).isEmpty && !offered(open.id), "memory off: nothing given, nothing saved")
-    print("PASS: memory (profile and facts with short ids for every AI, remember only when on or asked and only to its own message, replace/forget by id with Undo history, \"잊어\" opens them, similar facts and usage after remember, Enterprise reads only, no secrets or repeats, matching facts over the limit, off)")
+    print("PASS: memory (profile and facts with short ids, remember only when asked and only for its own message, replace/forget with Undo, similar facts and usage, Enterprise reads only, no secrets or repeats, limits, off)")
 }

@@ -3166,6 +3166,7 @@ runTest("testProjectMemoryCleanup", testProjectMemoryCleanup)
 runTest("testSkillStore", testSkillStore)
 runTest("testSkillRead", testSkillRead)
 runTest("testSkillSave", testSkillSave)
+runTest("testKnowledgeCandidates", testKnowledgeCandidates)
 
 // Outside MCP servers (Settings → MCP): saved in their own file, run by the app, offered as "<server>__<tool>".
 func testExternalMCP() {

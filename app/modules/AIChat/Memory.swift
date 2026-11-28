@@ -6,8 +6,8 @@ import AIWorkspace
 
 // Long-term memory (note 8): what every AI should know about the user, kept on this Mac and put into every
 // plain-chat and project request (soloInstruction). Two parts: a short profile the user writes, and saved facts,
-// one line each. Facts are saved with the remember tool: by the AI on its own only when the user turned that on
-// (Settings ▸ Memory); otherwise only in an answer to a message that asks for it ("기억해", "remember").
+// one line each. Facts are saved with remember in an answer to a message that asks for it ("기억해", "remember").
+// AIs use memory_propose for facts they picked themselves, when the user's candidate setting allows it.
 // The AI corrects (memory_replace) or deletes (memory_forget) a fact by the short id shown in the prompt; the old
 // version stays in history for Undo. Enterprise chats read memory but never change it. Not synced to other Macs.
 public struct MemoryItem: Codable, Identifiable, Equatable {
@@ -37,7 +37,7 @@ struct MemoryChange: Codable, Identifiable, Equatable {
 public struct MemoryData: Codable, Equatable {
     public var profile = ""
     public var items: [MemoryItem] = []
-    public var autoSave = false   // the AI saves on its own
+    public var autoSave = true    // kept as autoSave on disk; controls the AI's memory proposals
     public var enabled = true     // off: memory is neither given to the AIs nor added to
     var history: [MemoryChange] = []   // newest last, at most MemoryStore.maxHistory
 }
@@ -48,7 +48,7 @@ extension MemoryData {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         profile = try c.decodeIfPresent(String.self, forKey: .profile) ?? ""
         items = try c.decodeIfPresent([MemoryItem].self, forKey: .items) ?? []
-        autoSave = try c.decodeIfPresent(Bool.self, forKey: .autoSave) ?? false
+        autoSave = try c.decodeIfPresent(Bool.self, forKey: .autoSave) ?? true
         enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
         history = try c.decodeIfPresent([MemoryChange].self, forKey: .history) ?? []
     }
@@ -142,12 +142,12 @@ public final class MemoryStore: ObservableObject {
     }
 
     // A message that asks to correct or delete what is saved: "잊어", "forget", or an edit word next to memory
-    // ("기억 고쳐", "update your memory") or a correction ("정정: ...", "correction: ..."). "잊지 마"/"don't forget" and
+    // ("기억 고쳐", "update your memory"). "잊지 마"/"don't forget" and
     // "지우지 마"/"don't delete" ask to keep, "잊어버렸어"/"forgot" only tell. Bare "지워"/"고쳐" are left out: they are
     // mostly about files and code.
     static func asksToChangeMemory(_ text: String) -> Bool {
         let lower = text.lowercased().replacingOccurrences(of: keep + "|" + keepEdits + "|잊어버렸|잊어\\s*버렸", with: " ", options: .regularExpression)
-        if lower.range(of: "잊어|잊어버려|잊으|forget|정정|correction\\s*[:：]", options: .regularExpression) != nil { return true }
+        if lower.range(of: "잊어|잊어버려|잊으|forget", options: .regularExpression) != nil { return true }
         let memory = ["기억", "메모리", "memory", "remember"].contains(where: lower.contains)
         let edit = ["지워", "지우", "삭제", "고쳐", "수정", "바꿔", "정정", "틀렸", "갱신", "업데이트",
                     "update", "correct", "change", "delete", "remove", "fix", "wrong"].contains(where: lower.contains)
@@ -333,7 +333,7 @@ public final class MemoryStore: ObservableObject {
         guard data.enabled, let chat, !chat.isEnterprise, let turn = chat.turns.last, turn.answeredAt == nil else { return false }
         if let wanted, wanted != turn.id { return false }
         // "기억하지 마" wins over saving on its own.
-        return asksNotToSave(turn.question) ? false : data.autoSave || asksToRemember(turn.question)
+        return asksToRemember(turn.question)
     }
 
     // May it correct or forget saved facts now? Whenever it may save, and when the message asks to change memory.
@@ -349,12 +349,10 @@ public final class MemoryStore: ObservableObject {
         guard data.enabled, let chat else { return "" }
         if chat.isEnterprise { return "This is an Enterprise chat: nothing from it is saved to memory or changed in it (you have no memory tools here)." }
         if mayRemember(data, chat: chat) {
-            return data.autoSave
-                ? "You have the remember tool. When the user states a lasting fact about themselves, their work or how they want answers, save it as one short line in their language. Do not save passing details, file contents, other people's private data or secrets. " + changeRule + " Mention briefly what you saved or changed."
-                : "The user asked you to remember something: save it with the remember tool as one short line in their language (not secrets). " + changeRule + " Say what you saved or changed."
+            return "The user asked you to remember something: save it with the remember tool as one short line in their language (not secrets). " + changeRule + " Say what you saved or changed."
         }
         guard mayChange(data, chat: chat) else { return "" }
-        return "The user may be asking you to change or forget something in their memory: if their message is about a saved fact, correct it with memory_replace (its [id] and the new line, no secrets) or delete it with memory_forget, and say what you changed; otherwise leave memory as it is. Nothing new is saved in this answer."
+        return "Use memory_replace (its [id] and the new line, no secrets) or memory_forget only if the user asked to change or forget a saved fact, and say what you changed. For a lasting correction you noticed on your own, use memory_propose if available."
     }
 }
 

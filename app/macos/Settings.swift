@@ -1324,17 +1324,14 @@ private struct MemorySettingsCard: View {
             }
             if memory.data.enabled {
                 Divider()
-                SettingsRow(title: L("AI가 알아서 저장", "AI saves on its own")) {
+                SettingsRow(title: L("AI 기억 후보 제안", "AI memory proposals")) {
                     Spacer()
-                    Toggle(L("AI가 알아서 저장", "AI saves on its own"), isOn: Binding(
+                    Toggle(L("AI 기억 후보 제안", "AI memory proposals"), isOn: Binding(
                         get: { memory.data.autoSave }, set: { on in memory.update { $0.autoSave = on } }))
                         .labelsHidden().toggleStyle(.switch)
                 }
-                .help(memory.data.autoSave
-                      ? L("AI가 기억할 만한 내용을 스스로 저장해요. 저장하면 답 아래에 \"기억함\"과 취소 버튼이 떠요.",
-                          "AIs save lasting facts on their own. Each one shows under the answer with Undo.")
-                      : L("꺼져 있으면 \"기억해\"라고 말한 메시지에서만 저장해요.",
-                          "Off: facts are saved only when your message asks to remember."))
+                .help(L("AI가 기억할 만한 내용을 검토 후보로 올려요. 답 아래에서 취소할 수 있어요. \"기억해\"라고 요청하면 바로 저장해요.",
+                        "AIs can propose lasting facts for review. You can withdraw a proposal under the answer. An explicit request to remember still saves immediately."))
                 Divider()
                 SettingsRow(title: L("저장된 내용", "Saved")) {
                     Text(L("\(memory.data.items.count)개", "\(memory.data.items.count)")).monospacedDigit()

@@ -72,6 +72,29 @@ public final class SkillLink: ToolProvider {
         case save = "skill_save", delete = "skill_delete"
     }
 
+    private enum Proposal: String, CaseIterable {
+        case skill = "skill_propose", memory = "memory_propose"
+
+        var required: [String] {
+            switch self {
+            case .skill: return ["name", "description", "body", "scope", "evidence"]
+            case .memory: return ["text", "evidence"]
+            }
+        }
+
+        var replacement: String { self == .skill ? "replaces" : "replaces_id" }
+
+        var description: String {
+            let shared = "Queue one candidate for later review, with evidence of what worked (a TODO ID, commit, passing test, or user correction). Propose only a repeatable procedure or a lasting correction, never a one-off detail or secrets. The two proposal tools share a limit of one per answer and one per TODO. An explicit user request to save goes through the usual save tool."
+            switch self {
+            case .skill:
+                return shared + " A global skill's name, description and body must contain reusable procedures only, with no data, such as specific files, measurements, results, or people's names. Cite evidence separately without private data. Use project scope for project-specific procedures. Optional replaces is the previous skill name in the same scope."
+            case .memory:
+                return shared + " Propose a short fact for the user's memory in their language. Optional replaces_id is the ID of the existing fact."
+            }
+        }
+    }
+
     private static let saveRule = "Create or update an app skill as the user requested. Global skills must contain reusable procedures only, with no specific file names, measurements, results, or people's names in any field. Use scope=project if the procedure needs project data. Project scope requires a project chat."
     private static let deleteRule = "Delete a saved app skill by name as the user requested. If a project and a global skill share the name, disambiguate in the app before deleting."
 
@@ -232,11 +255,24 @@ public final class SkillLink: ToolProvider {
         return Self.requestedEdits(scope.turn.question)
     }
 
+    private func mayPropose(_ proposal: Proposal, scope: Scope, context: ToolContext) -> Bool {
+        guard context.origin == .member, context.allowsSkillEdits, context.asker?.provider != .ollama,
+              scope.chat.meetingOf == nil, scope.chat.agentOf == nil, scope.turn.mode == 0 else { return false }
+        if context.projectRun != nil {
+            guard let run = ProjectWork.run(for: context), !run.todoWasSplit,
+                  run.binding.groupKey == ProjectMemory.project(scope.chat) else { return false }
+        }
+        if proposal == .skill { return true }
+        let memory = MemoryLink.shared.store.snapshot
+        return !scope.chat.isEnterprise && memory.enabled && memory.autoSave && !MemoryStore.asksNotToSave(scope.turn.question)
+    }
+
     public func tools(context: ToolContext) -> [[String: Any]] {
         guard let scope = answeringScope(context) else { return [] }
-        func tool(_ name: String, _ description: String, _ fields: [String], scopes: [String] = []) -> [String: Any] {
+        func tool(_ name: String, _ description: String, _ fields: [String], scopes: [String] = [],
+                  optional: [String] = []) -> [String: Any] {
             var properties: [String: [String: Any]] = [:]
-            for field in fields { properties[field] = ["type": "string"] }
+            for field in fields + optional { properties[field] = ["type": "string"] }
             if !scopes.isEmpty { properties["scope"]?["enum"] = scopes }
             return ["name": name, "description": description,
                     "inputSchema": ["type": "object", "properties": properties,
@@ -251,6 +287,10 @@ public final class SkillLink: ToolProvider {
             tools.append(tool(Edit.save.rawValue, Self.saveRule, ["name", "description", "body", "scope"], scopes: ["global", "project"]))
         }
         if edits.contains(.delete) { tools.append(tool(Edit.delete.rawValue, Self.deleteRule, ["name"])) }
+        for proposal in Proposal.allCases where mayPropose(proposal, scope: scope, context: context) {
+            tools.append(tool(proposal.rawValue, proposal.description, proposal.required,
+                              scopes: proposal == .skill ? ["global", "project"] : [], optional: [proposal.replacement]))
+        }
         return tools
     }
 
@@ -258,6 +298,10 @@ public final class SkillLink: ToolProvider {
         if let edit = Edit(rawValue: name) {
             // Check the live turn and perform the write together on the main thread, like project memory.
             let perform = { self.edit(edit, arguments, context: context) }
+            return Thread.isMainThread ? perform() : DispatchQueue.main.sync(execute: perform)
+        }
+        if let proposal = Proposal(rawValue: name) {
+            let perform = { self.propose(proposal, arguments, context: context) }
             return Thread.isMainThread ? perform() : DispatchQueue.main.sync(execute: perform)
         }
         guard name == "skill_read", let slug = arguments["name"] as? String, SkillDocument.isValidSlug(slug),
@@ -270,6 +314,57 @@ public final class SkillLink: ToolProvider {
         guard let skill, skill.record.enabled else { return unavailable() }
         let text = "\(Self.warning)\n[Skill: \(slug)]\n\(skill.document.body)\n[/Skill: \(slug)]\n\(Self.warning)"
         return ["content": [["type": "text", "text": text]], "isError": false]
+    }
+
+    private func propose(_ proposal: Proposal, _ arguments: [String: Any], context: ToolContext) -> [String: Any] {
+        guard let account = context.asker, let scope = answeringScope(context), mayPropose(proposal, scope: scope, context: context) else {
+            return toolFailure(L("이 답에서는 후보를 올릴 수 없어요.", "Candidates are unavailable for this answer."))
+        }
+        let fields = arguments.compactMapValues { ($0 as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }
+        guard let evidence = fields["evidence"], !evidence.isEmpty else {
+            return toolFailure(L("무엇이 성공했는지 증거를 적어 주세요.", "Include evidence of what worked."))
+        }
+        let allowed = Set(proposal.required + [proposal.replacement])
+        guard fields.count == arguments.count, Set(fields.keys).isSubset(of: allowed),
+              proposal.required.allSatisfy({ fields[$0]?.isEmpty == false }),
+              fields[proposal.replacement]?.isEmpty != true else {
+            return toolFailure(L("후보에 필요한 항목을 확인해 주세요.", "Check the candidate's fields."))
+        }
+
+        var project: String?
+        var content = fields
+        content.removeValue(forKey: "evidence")
+        switch proposal {
+        case .skill:
+            guard let name = fields["name"], SkillDocument.isValidSlug(name),
+                  let description = fields["description"], description.count <= SkillDocument.maxDescriptionLength,
+                  let body = fields["body"], body.utf8.count <= SkillDocument.maxBodyBytes,
+                  fields["replaces"].map(SkillDocument.isValidSlug) != false,
+                  let destination = fields["scope"], ["global", "project"].contains(destination) else {
+                return toolFailure(L("스킬 이름, 설명, 본문, 범위를 확인해 주세요.", "Check the skill name, description, body, and scope."))
+            }
+            if destination == "project" {
+                guard let binding = scope.chat.workspace?.project, let key = scope.project,
+                      binding.isFolderless || context.roots.contains(where: { $0.path == binding.root }) else {
+                    return toolFailure(L("이 대화에 연결된 프로젝트에서만 프로젝트 스킬을 제안할 수 있어요.",
+                                         "Propose a project skill from a chat linked to that project."))
+                }
+                project = key
+            }
+        case .memory:
+            guard let text = fields["text"], text.count <= MemoryStore.itemLength, !text.contains(where: \.isNewline),
+                  !MemoryStore.looksSecret(text) else {
+                return toolFailure(L("비밀 정보 없이 기억할 사실을 한 줄로 적어 주세요.", "Enter one short fact without secrets."))
+            }
+        }
+        let todo = context.projectRun.flatMap { _ in
+            TodoStore.shared.current.items.first { $0.room == context.room && $0.state == .running }?.id
+        }
+        let candidate = KnowledgeCandidate(kind: proposal == .skill ? .skill : .memory, content: content,
+                                           evidence: evidence, accountID: account.id, accountName: account.name,
+                                           chatID: context.room, turnID: scope.turn.id, todoID: todo)
+        if let failure = KnowledgeCandidates.shared.submit(candidate, project: project) { return toolFailure(failure) }
+        return ["content": [["type": "text", "text": L("후보로 올림", "Proposed for review")]], "isError": false]
     }
 
     private func edit(_ edit: Edit, _ arguments: [String: Any], context: ToolContext) -> [String: Any] {

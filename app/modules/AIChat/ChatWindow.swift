@@ -2846,6 +2846,7 @@ private struct TurnView: View, Equatable {
                 .cornerRadius(10)
             }
             if turn.mode == 0 { RememberedLine(turnID: turn.id) }
+            KnowledgeCandidateLine(chatID: discussion.currentID, turnID: turn.id)
             if SkillLink.asksToEdit(turn.question) {
                 SkillChangedLine(turnID: turn.id, project: discussion.linkedProject(discussion.currentID).map(SidebarProjects.key))
             }
@@ -4020,6 +4021,30 @@ private struct RememberedLine: View {
                     .font(.system(size: 11))
                 }
             }
+        }
+    }
+}
+
+private struct KnowledgeCandidateLine: View {
+    let chatID: UUID
+    let turnID: UUID
+    @ObservedObject private var candidates = KnowledgeCandidates.shared
+    @StateObject private var failures = UndoFailures()
+
+    var body: some View {
+        if let id = candidates.pending(chat: chatID, turn: turnID) {
+            HStack(spacing: 6) {
+                Label(L("후보로 올림", "Proposed for review"), systemImage: "tray")
+                    .foregroundColor(.secondary)
+                Button(L("취소", "Undo")) {
+                    if !candidates.drop(id, chat: chatID, turn: turnID) { failures.ids.insert(id) }
+                }
+                .buttonStyle(.link)
+                if failures.ids.contains(id) {
+                    Text(L("후보를 취소하지 못했어요.", "Could not withdraw the candidate.")).foregroundColor(.orange)
+                }
+            }
+            .font(.system(size: 11))
         }
     }
 }

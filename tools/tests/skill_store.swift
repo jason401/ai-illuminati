@@ -757,3 +757,133 @@ func testSkillSave() {
            "a project answer can delete a uniquely named project skill")
 }
 
+func testKnowledgeCandidates() {
+    let home = URL(fileURLWithPath: AccountStore.home, isDirectory: true)
+    expect(ProcessInfo.processInfo.environment["AI_ILLUMINATI_TEST_HOME"] == home.path, "candidates use the isolated test home")
+    let project = ProjectBinding(root: "", common: "", remote: "", remoteURL: "", kind: "folderless", id: ProjectBinding.newID())
+    let projectFile = ProjectMemoryStore.folder(project.groupKey).appendingPathComponent("knowledge-candidates.jsonl")
+    let globalFile = URL(fileURLWithPath: AccountStore.supportDir).appendingPathComponent("knowledge-candidates.jsonl")
+    let todoFile = home.appendingPathComponent("knowledge-candidates-todos.json")
+    let fm = FileManager.default, previousTodos = TodoStore.shared, memory = MemoryStore.shared
+    let previousMemory = memory.snapshot
+    TodoStore.shared = TodoStore(url: todoFile)
+    memory.update { $0 = MemoryData() }
+    defer {
+        TodoStore.shared = previousTodos
+        memory.update { $0 = previousMemory }
+        for file in [globalFile, projectFile.deletingLastPathComponent(), todoFile] { try? fm.removeItem(at: file) }
+    }
+
+    let member = Account(id: "proposer", provider: .codex, name: "ChatGPT")
+    let school = Account(id: "school-proposer", provider: .gemini, name: "Gemini (School)", school: true)
+    let local = Account(id: "local-proposer", provider: .ollama, name: "Ollama")
+    func turn(_ question: String = "Check the result.") -> ChatTurn {
+        var turn = ChatTurn(question: question)
+        turn.mode = 0
+        return turn
+    }
+    let binding = WorkspaceBinding(roots: [], project: project, face: true)
+    let plain = Conversation(turns: [turn()])
+    let linked = Conversation(turns: [turn()], workspace: binding)
+    let enterprise = Conversation(turns: [turn()], workspace: binding, enterpriseLock: Enterprise.organizations([school]).first)
+    let todoRoom = Conversation(turns: [turn()], workspace: binding)
+    let list = TodoList(title: "Candidate tests", project: project)
+    var todo = TodoItem(listID: list.id, title: "Check the result")
+    todo.room = todoRoom.id
+    todo.state = .running
+    try! TodoStore.shared.update { $0.lists = [list]; $0.items = [todo] }
+    let discussion = Discussion(model: AppModel(persist: false))
+    discussion.conversations = [plain, linked, enterprise, todoRoom]
+    let hub = ToolHub(providers: { ToolHub.appProviders }, listenOnRegister: false)
+    let run = ProjectRun(room: todoRoom.id, binding: project, token: DebateCancellation())
+    ProjectWork.register(run)
+    defer { ProjectWork.finish(run) }
+
+    func token(_ chat: Conversation, _ account: Account = member, origin: ToolOrigin = .member,
+               allowsSkillEdits: Bool = true, run: ProjectRun? = nil) -> String {
+        hub.register(room: chat.id, roots: [], projectRun: run?.id, generation: run?.generation,
+                     asker: account, origin: origin, allowsSkillEdits: allowsSkillEdits)
+    }
+    func tools(_ token: String) -> [[String: Any]] {
+        (hub.handle(["op": "tools", "session": token])["tools"] as? [[String: Any]] ?? [])
+            .filter { ($0["name"] as? String)?.hasSuffix("_propose") == true }
+    }
+    func names(_ token: String) -> Set<String> { Set(tools(token).compactMap { $0["name"] as? String }) }
+    func call(_ token: String, _ name: String, _ args: [String: String]) -> (ok: Bool, text: String) {
+        let reply = hub.handle(["op": "call", "session": token, "name": name, "arguments": args])
+        return (reply["isError"] as? Bool == false, (reply["content"] as? [[String: String]])?.first?["text"] ?? "")
+    }
+    func skill(_ scope: String) -> [String: String] {
+        ["name": "verify-result", "description": "Use when reviewing output", "body": "Check assumptions.\nRun the relevant tests.",
+         "scope": scope, "evidence": "Regression test passed at commit 0123456789abcdef0123456789abcdef01234567.", "replaces": "verify-output"]
+    }
+    let fact = ["text": "사용자는 결과를 표로 정리하는 걸 선호한다.", "evidence": "User corrected the result format.", "replaces_id": "a1b2c3d4"]
+    func lines(_ file: URL) -> [[String: Any]] {
+        (try! String(contentsOf: file, encoding: .utf8)).split(separator: "\n").map {
+            try! JSONSerialization.jsonObject(with: Data($0.utf8)) as! [String: Any]
+        }
+    }
+
+    let plainToken = token(plain), projectToken = token(linked), enterpriseToken = token(enterprise, school)
+    let todoToken = token(todoRoom, run: run), both: Set = ["skill_propose", "memory_propose"]
+    expect(names(plainToken) == both && names(projectToken) == both && names(todoToken) == both
+           && names(enterpriseToken) == ["skill_propose"] && names(token(enterprise)).isEmpty,
+           "plain, project and TODO get both tools; Enterprise gets only skills for its own accounts")
+    expect(names(token(plain, local)).isEmpty && names(token(plain, origin: .side)).isEmpty
+           && names(token(plain, origin: .consulted)).isEmpty && names(token(linked, allowsSkillEdits: false)).isEmpty,
+           "local models, helpers and supplemental reviewers do not get proposal tools")
+    for definition in tools(plainToken) {
+        let schema = definition["inputSchema"] as? [String: Any]
+        expect((schema?["required"] as? [String])?.contains("evidence") == true, "evidence is required in both tool schemas")
+    }
+    let missing = call(plainToken, "memory_propose", ["text": fact["text"]!])
+    let blank = call(projectToken, "skill_propose", skill("project").merging(["evidence": " \n "]) { _, new in new })
+    expect(!missing.ok && !blank.ok && missing.text == blank.text
+           && !fm.fileExists(atPath: globalFile.path) && !fm.fileExists(atPath: projectFile.path),
+           "missing or whitespace evidence never saves or takes the quota")
+    expect(!call(enterpriseToken, "memory_propose", fact).ok && !call(plainToken, "skill_propose", skill("project")).ok,
+           "direct calls cannot bypass Enterprise or project scope")
+    memory.update { $0.autoSave = false }
+    expect(names(plainToken) == ["skill_propose"] && !call(plainToken, "memory_propose", fact).ok,
+           "the candidate setting can turn off user memory proposals")
+    memory.update { $0.autoSave = true }
+    expect(call(plainToken, "memory_propose", fact).ok, "memory proposal with evidence succeeds")
+    let duplicate = call(plainToken, "skill_propose", skill("global"))
+    expect(!duplicate.ok && duplicate.text.contains(L("한 답", "per answer")), "the two tools share one quota per turn")
+    expect(call(enterpriseToken, "skill_propose", skill("project")).ok, "Enterprise skill proposals reach the project inbox")
+    expect(call(todoToken, "skill_propose", skill("project")).ok, "a project TODO writes its candidate")
+    let rows = lines(projectFile), globalRows = lines(globalFile)
+    expect(rows.count == 2 && globalRows.count == 1, "submissions preserve earlier JSONL lines in each scope")
+    let memoryRow = globalRows[0]
+    let todoRow = rows[1], todoTurn = todoRoom.turns[0].id
+    expect(rows[0]["accountID"] as? String == school.id && todoRow["todoID"] as? String == todo.id.uuidString
+           && todoRow["chatID"] as? String == todoRoom.id.uuidString && todoRow["turnID"] as? String == todoTurn.uuidString
+           && todoRow["createdAt"] is String && todoRow["kind"] as? String == "skill" && todoRow["state"] as? String == "pending"
+           && (todoRow["content"] as? [String: String])?["body"] == skill("project")["body"]
+           && (todoRow["content"] as? [String: String])?["replaces"] == "verify-output"
+           && todoRow["evidence"] as? String == skill("project")["evidence"],
+           "project JSONL carries scope, source, metadata, evidence and a multiline body on one line per candidate")
+    expect(memoryRow["kind"] as? String == "memory" && memoryRow["accountName"] as? String == member.name
+           && (memoryRow["content"] as? [String: String])?["replaces_id"] == "a1b2c3d4" && memory.snapshot.items.isEmpty
+           && ProjectSkillStore.shared.read("verify-result", project: project.groupKey) == nil,
+           "the global JSONL carries memory content and neither candidate activated")
+    let reopened = KnowledgeCandidates()
+    let receipt = reopened.pending(chat: todoRoom.id, turn: todoTurn)!
+    expect(receipt.uuidString == todoRow["id"] as? String && !reopened.drop(receipt, chat: plain.id, turn: todoTurn)
+           && reopened.drop(receipt, chat: todoRoom.id, turn: todoTurn)
+           && reopened.pending(chat: todoRoom.id, turn: todoTurn) == nil && lines(projectFile)[1]["state"] as? String == "dropped",
+           "the saved receipt survives reopening and cancellation persists dropped")
+    discussion.conversations[3].turns.append(turn())
+    let retried = call(token(todoRoom, run: run), "memory_propose", fact)
+    expect(!retried.ok && retried.text.contains(L("TODO 하나", "per TODO")) && lines(globalFile).count == 1,
+           "a later TODO turn in another scope cannot replace its dropped candidate")
+    expect(!call(todoToken, "skill_propose", skill("project")).ok, "the earlier TODO session is closed")
+    try! TodoStore.shared.change(todo.id) { $0.state = .done }
+    discussion.conversations[3].turns.append(turn())
+    expect(call(token(todoRoom), "memory_propose", fact).ok && lines(globalFile).last?["todoID"] == nil,
+           "an ordinary follow-up in a finished TODO's chat has its own quota")
+    discussion.conversations[0].turns.append(turn("기억하지 마"))
+    expect(names(plainToken).isEmpty && names(token(plain)) == ["skill_propose"],
+           "an older session expires and the user's do-not-remember instruction is respected")
+}
+

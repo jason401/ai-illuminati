@@ -1106,7 +1106,7 @@ struct ChatSettingsTab: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 10).padding(.vertical, 6)
             }
-            MemorySettingsCard()
+            MemorySettingsCard(discussion: discussion)
             SettingsCard(title: L("main 자동으로 받기", "Pull main by itself"),
                          help: L("연결된 Git 프로젝트마다 앱을 켤 때, Mac이 잠에서 깰 때, 그리고 10분마다 origin/main의 새 커밋을 받아요. main이 체크아웃되어 있고, 커밋하지 않은 변경과 올리지 않은 커밋이 없을 때만 받아요(fast-forward). AI가 그 프로젝트에서 작업 중이면 다음에 받아요.",
                                  "For each linked Git project, pulls new commits of origin/main when the app starts, when the Mac wakes and every 10 minutes. Only when main is checked out with no uncommitted changes and nothing unpushed (fast-forward). If an AI is working in the project, it waits for the next round.")) {
@@ -1301,7 +1301,10 @@ private struct CollabSettingsCard: View {
 }
 
 private struct MemorySettingsCard: View {
+    let discussion: Discussion   // not observed: the card needs its projects only when skills change or it opens
     @ObservedObject var memory = MemoryStore.shared
+    @ObservedObject private var skills = SkillStore.shared
+    @ObservedObject private var projectSkills = ProjectSkillStore.shared
 
     private var saved: String {
         let profile = memory.data.profile.isEmpty ? L("프로필 없음", "No profile") : L("프로필 \(memory.data.profile.count)자", "Profile \(memory.data.profile.count) chars")
@@ -1309,9 +1312,9 @@ private struct MemorySettingsCard: View {
     }
 
     var body: some View {
-        SettingsCard(title: L("기억", "Memory"),
-                     help: L("모든 AI가 같은 기억을 읽어요. 이 Mac에만 저장되지만 답할 때 그 AI에게 보내져요. Enterprise 방은 읽기만 하고 저장하지 않아요. 비밀번호나 키는 저장하지 않아요.",
-                             "Every AI reads the same memory. It stays on this Mac but is sent to the AI that answers. Enterprise chats only read it. Passwords and keys are never saved.")) {
+        SettingsCard(title: L("스킬 & 기억", "Skills & Memory"),
+                     help: L("모든 AI가 같은 기억을 읽어요. 이 Mac에만 저장되지만 답할 때 그 AI에게 보내져요. Enterprise 방은 읽기만 하고 저장하지 않아요. 비밀번호나 키는 저장하지 않아요. 스킬은 AI가 필요할 때 읽는 작업 순서이고, 꺼진 스킬은 AI에게 보내지 않아요.",
+                             "Every AI reads the same memory. It stays on this Mac but is sent to the AI that answers. Enterprise chats only read it. Passwords and keys are never saved. Skills are procedures the AIs read when needed; skills turned off are not sent.")) {
             SettingsRow(title: L("기억 사용", "Use memory")) {
                 Spacer()
                 Toggle(L("기억 사용", "Use memory"), isOn: Binding(
@@ -1339,6 +1342,16 @@ private struct MemorySettingsCard: View {
                 }
                 .help(saved)
             }
+            Divider()
+            SettingsRow(title: L("스킬", "Skills")) {
+                let _ = (skills.revision, projectSkills.revision)
+                let all = SkillsCatalog.rows(.all, projects: SkillsCatalog.projects(discussion))
+                Text(L("스킬 \(all.count)개 (켜짐 \(all.filter(\.skill.record.enabled).count))",
+                       "\(all.count) skills (\(all.filter(\.skill.record.enabled).count) on)")).monospacedDigit()
+                Spacer()
+                SettingsAction(title: L("스킬 관리…", "Manage skills…")) { SkillsWindow.shared.show(discussion: discussion) }.frame(width: 110)
+            }
+            .help(L("전역 스킬과 프로젝트별 스킬을 보고 하나씩 또는 모두 켜고 꺼요.", "See global and project skills and turn them on or off, one by one or all at once."))
         }
     }
 }

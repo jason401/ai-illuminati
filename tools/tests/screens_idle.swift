@@ -65,4 +65,42 @@ import AIProjects
         window.contentView = nil
     }
     print("PASS: TODO cards stay still when nothing changes")
+
+    // Settings > Skills & Memory > Manage skills (SkillsWindow.swift): the window shows and holds still, its toggle and
+    // turn-all buttons reach the stores, and a skill turned off leaves the [Skills] list the AIs get.
+    let project = SkillProject(id: "/tmp/skills-window-project", name: "Demo")
+    func saved(_ outcome: SkillOutcome) -> Bool { if case .saved = outcome { return true }; return false }
+    precondition(saved(SkillStore.shared.save(name: "tidy-notes", description: "Tidy meeting notes", body: "Steps", by: .user)))
+    precondition(saved(SkillStore.shared.save(name: "ai-helper", description: "Added by an AI", body: "Steps", by: .ai)))
+    precondition(saved(ProjectSkillStore.shared.save(name: "build-check", description: "Build first", body: "Steps", by: .meeting, project: project.id)))
+    let skillsHost = NSHostingView(rootView: SkillsView(projects: { [project] }, close: {}).frame(width: 600, height: 500))
+    let skillsWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 500), styleMask: [.titled], backing: .buffered, defer: false)
+    skillsWindow.contentView = skillsHost
+    func settle() { for _ in 0..<5 { skillsHost.layoutSubtreeIfNeeded(); skillsWindow.displayIfNeeded(); RunLoop.main.run(until: Date().addingTimeInterval(0.05)) } }
+    settle()
+    let skillsStart = cpu()
+    RunLoop.main.run(until: Date().addingTimeInterval(2))
+    guard cpu() - skillsStart < 0.5 else { print("FAIL: the skills window redraws itself while nothing changes"); exit(1) }
+    func enabled(_ filter: SkillsFilter) -> [String: Bool] {
+        Dictionary(uniqueKeysWithValues: SkillsCatalog.rows(filter, projects: [project]).map { ($0.skill.name, $0.skill.record.enabled) })
+    }
+    func listed() -> String { SkillLink.rule(project: project.id, question: "", local: false) }
+    precondition(enabled(.all) == ["tidy-notes": true, "ai-helper": true, "build-check": true])
+    precondition(Set(enabled(.global).keys) == ["tidy-notes", "ai-helper"] && Set(enabled(.project(project.id)).keys) == ["build-check"])
+    let rows = SkillsCatalog.rows(.all, projects: [project])
+    precondition(rows.first { $0.skill.name == "tidy-notes" }?.skill.record.userLocked == true)
+    precondition(rows.first { $0.skill.name == "build-check" }?.project == project)
+    precondition(SkillsCatalog.set(rows.first { $0.skill.name == "tidy-notes" }!, false) == nil)
+    precondition(enabled(.all) == ["tidy-notes": false, "ai-helper": true, "build-check": true])
+    precondition(!listed().contains("tidy-notes") && listed().contains("ai-helper") && listed().contains("build-check"))
+    precondition(SkillsCatalog.setAll(false, filter: .project(project.id), projects: [project]) == nil)
+    precondition(enabled(.all) == ["tidy-notes": false, "ai-helper": true, "build-check": false])
+    precondition(SkillsCatalog.setAll(true, filter: .all, projects: [project]) == nil)
+    precondition(enabled(.all).values.allSatisfy { $0 })
+    precondition(SkillsCatalog.setAll(false, filter: .global, projects: [project]) == nil)
+    precondition(enabled(.all) == ["tidy-notes": false, "ai-helper": false, "build-check": true])
+    precondition(!listed().contains("ai-helper") && listed().contains("build-check"))
+    settle()   // the window redraws with the stores' changes
+    skillsWindow.contentView = nil
+    print("PASS: the skills window shows every skill, and its toggles and turn-all buttons reach the stores")
 }}

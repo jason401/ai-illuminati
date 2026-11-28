@@ -69,6 +69,7 @@ public final class MemoryStore: ObservableObject {
     @Published public private(set) var data = MemoryData()
     private let lock = NSLock()       // tool calls come from several threads: one change at a time
     private var current = MemoryData()
+    private var unreadable = false    // memory.json is there but could not be read: `current` is empty, not emptied
     var problem: String?
 
     static var file: URL { URL(fileURLWithPath: AccountStore.supportDir + "/memory/memory.json") }
@@ -77,7 +78,9 @@ public final class MemoryStore: ObservableObject {
 
     public func reload() {
         lock.lock()
-        current = (try? Data(contentsOf: Self.file)).flatMap { try? JSONDecoder().decode(MemoryData.self, from: $0) } ?? MemoryData()
+        let decoded = (try? Data(contentsOf: Self.file)).flatMap { try? JSONDecoder().decode(MemoryData.self, from: $0) }
+        current = decoded ?? MemoryData()
+        unreadable = decoded == nil && FileManager.default.fileExists(atPath: Self.file.path)
         let copy = current
         lock.unlock()
         publish(copy)
@@ -85,6 +88,8 @@ public final class MemoryStore: ObservableObject {
 
     // What is saved now (any thread).
     var snapshot: MemoryData { lock.lock(); defer { lock.unlock() }; return current }
+    // The same, nil while memory.json cannot be read (KnowledgeSync must not take that for everything deleted).
+    var readableSnapshot: MemoryData? { lock.lock(); defer { lock.unlock() }; return unreadable ? nil : current }
 
     // Changes and saves; true only when it is on disk.
     @discardableResult
@@ -93,7 +98,7 @@ public final class MemoryStore: ObservableObject {
         var next = current
         edit(&next)
         let saved = Self.write(next)
-        if saved { current = next }
+        if saved { current = next; unreadable = false }
         let copy = current
         lock.unlock()
         publish(copy)

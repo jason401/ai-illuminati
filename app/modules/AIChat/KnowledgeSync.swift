@@ -15,7 +15,8 @@ import AIProjects
 // Enterprise skills go too (DeviceSync's includeSchool is for chats); user memory is never saved from Enterprise chats.
 // Without state.json (the first pass) everything goes out once as `add` lines marked `initial`.
 // A pass compares the stores with state.json, so changes made while it was off or the app was closed go out too;
-// who made a change comes from the skills' history and from MemoryItem/MemoryChange.meeting.
+// who made a change comes from the skills' history and from MemoryItem/MemoryChange.meeting. Changes in one pass are
+// merged (A→B→C is one A→C line; added and deleted before a pass, no line): the folder carries state, not keystrokes.
 
 struct KnowledgeChange: Codable, Equatable {
     enum Kind: String, Codable { case skill, memory, profile }
@@ -56,13 +57,16 @@ final class KnowledgeSync {
     let deviceID: String
     private let sync: DeviceSync
     private let skills: SkillStore
-    private let memory: () -> MemoryData
+    private let memory: () -> MemoryData?   // nil: memory.json could not be read (not the same as empty)
     private let io = DispatchQueue(label: "knowledge-sync")
     private var subscriptions: [AnyCancellable] = []
     private var scheduled: DispatchWorkItem?
+    private let lock = NSLock()
+    private var allowed = false   // the switch as the io queue sees it: turned off, a pass already queued writes nothing
     static let delay: TimeInterval = 3   // several changes in a row become one pass
+    static let retry: TimeInterval = 60  // iCloud Drive away or a write failed: try again
 
-    init(sync: DeviceSync, skills: SkillStore = .shared, memory: @escaping () -> MemoryData = { MemoryStore.shared.snapshot }) {
+    init(sync: DeviceSync, skills: SkillStore = .shared, memory: @escaping () -> MemoryData? = { MemoryStore.shared.readableSnapshot }) {
         self.sync = sync
         self.deviceID = sync.deviceID
         self.skills = skills
@@ -84,29 +88,48 @@ final class KnowledgeSync {
         subscriptions = [
             skills.$revision.dropFirst().sink { [weak self] _ in self?.schedule() },
             MemoryStore.shared.$data.dropFirst().sink { [weak self] _ in self?.schedule() },
-            sync.$settings.sink { [weak self] _ in DispatchQueue.main.async { self?.schedule() } },   // after didSet
+            sync.$settings.sink { [weak self] settings in
+                if !settings.syncsKnowledge { self?.allow(false) }   // at once, before a queued pass runs
+                DispatchQueue.main.async { self?.schedule() }        // after didSet
+            },
         ]
     }
 
-    private func schedule() {
+    private func allow(_ on: Bool) { lock.lock(); allowed = on; lock.unlock() }
+    private var isAllowed: Bool { lock.lock(); defer { lock.unlock() }; return allowed }
+
+    private func schedule(after delay: TimeInterval = KnowledgeSync.delay) {
         scheduled?.cancel()
         let work = DispatchWorkItem { [weak self] in
-            guard let self, let target = self.target else { return }
-            self.io.async { self.pass(target) }
+            guard let self else { return }
+            self.scheduled = nil
+            guard let target = self.target else { return self.retryLater() }   // on but no folder: iCloud Drive may come back
+            self.allow(true)
+            let memory = self.memory()   // read now, while it is on
+            self.io.async { if self.pass(target, memory: memory) == nil { DispatchQueue.main.async { self.retryLater() } } }
         }
         scheduled = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.delay, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
-    // One pass now (tests; the app goes through schedule): the number of lines written, nil when off or not written.
+    // Main thread: only while it is on, and never in place of a pass already waiting.
+    private func retryLater() {
+        guard sync.settings.syncsKnowledge, scheduled == nil else { return }
+        schedule(after: Self.retry)
+    }
+
+    // One pass now (tests; the app goes through schedule): the number of lines written, nil when off or not all written.
     @discardableResult
     func syncNow(now: Date = Date()) -> Int? {
         guard let target else { return nil }
-        return io.sync { pass(target, now: now) }
+        allow(true)
+        let memory = self.memory()
+        return io.sync { pass(target, memory: memory, now: now) }
     }
 
     @discardableResult
-    private func pass(_ target: Target, now: Date = Date()) -> Int? {
+    private func pass(_ target: Target, memory data: MemoryData?, now: Date = Date()) -> Int? {
+        guard isAllowed else { return nil }
         let fm = FileManager.default
         let mine = myFolder(target.folder)
         do { try fm.createDirectory(at: mine.appendingPathComponent("skills"), withIntermediateDirectories: true) } catch { return nil }
@@ -123,6 +146,7 @@ final class KnowledgeSync {
                                          enabled: enabled, text: text, initial: initial, device: deviceID))
         }
         func skillFolder(_ id: String) -> URL { mine.appendingPathComponent("skills").appendingPathComponent(id) }
+        var incomplete = false
 
         // Skills: the file first, so a line never names a SKILL.md that is not there.
         let history = skills.history(), listed = skills.list()
@@ -138,14 +162,15 @@ final class KnowledgeSync {
                 do {
                     try fm.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
                     try Data(text.utf8).write(to: file, options: .atomic)
-                } catch { if let before { state.skills[id] = before }; continue }
+                } catch { if let before { state.skills[id] = before }; incomplete = true; continue }
             }
             state.skills[id] = current
-            let (by, at) = Self.author(summary, detail.record, history)
             if before?.hash != current.hash {
+                let (by, at) = Self.author(summary, detail.record, history, toggle: false)
                 line(.skill, before == nil ? .add : .modify, id, at: at, by: by, base: before?.hash, hash: current.hash, name: current.name, enabled: current.enabled)
             }
             if let before, before.enabled != current.enabled {
+                let (by, at) = Self.author(summary, detail.record, history, toggle: true)
                 line(.skill, current.enabled ? .enable : .disable, id, at: at, by: by, base: current.hash, hash: current.hash, name: current.name, enabled: current.enabled)
             }
         }
@@ -160,30 +185,33 @@ final class KnowledgeSync {
         }
 
         // Memory: the profile and each fact. A fact without `meeting` is the user's, typed or asked for (Memory.swift).
-        let data = memory()
-        let profile = data.profile.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : data.profile
-        state.profile = profile.map { SkillDocument.hash($0) }
-        if state.profile != was.profile {
-            line(.profile, profile == nil ? .delete : was.profile == nil ? .add : .modify, "profile", at: now, by: .user,
-                 base: was.profile, hash: state.profile, text: profile)
-        }
-        for item in data.items {
-            let id = item.id.uuidString, hash = SkillDocument.hash(item.text)
-            state.memory[id] = hash
-            guard let before = was.memory[id] else {
-                line(.memory, .add, id, at: item.createdAt, by: item.meeting == nil ? .user : .meeting, base: nil, hash: hash, text: item.text)
-                continue
+        // An unreadable memory.json stays as it was written, not every fact deleted.
+        if let data {
+            let profile = data.profile.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : data.profile
+            state.profile = profile.map { SkillDocument.hash($0) }
+            if state.profile != was.profile {
+                line(.profile, profile == nil ? .delete : was.profile == nil ? .add : .modify, "profile", at: now, by: .user,
+                     base: was.profile, hash: state.profile, text: profile)
             }
-            guard before != hash else { continue }
-            let change = data.history.last { $0.old.id == item.id && $0.new == item.text }
-            line(.memory, .modify, id, at: change?.at ?? now, by: change?.meeting == nil ? .user : .meeting, base: before, hash: hash, text: item.text)
-        }
-        for (id, before) in was.memory.sorted(by: { $0.key < $1.key }) where state.memory[id] == nil {
-            let change = data.history.last { $0.old.id.uuidString == id && $0.new == nil }
-            line(.memory, .delete, id, at: change?.at ?? now, by: change?.meeting == nil ? .user : .meeting, base: before, hash: nil)
-        }
+            for item in data.items {
+                let id = item.id.uuidString, hash = SkillDocument.hash(item.text)
+                state.memory[id] = hash
+                guard let before = was.memory[id] else {
+                    line(.memory, .add, id, at: item.createdAt, by: item.meeting == nil ? .user : .meeting, base: nil, hash: hash, text: item.text)
+                    continue
+                }
+                guard before != hash else { continue }
+                let change = data.history.last { $0.old.id == item.id && $0.new == item.text }
+                line(.memory, .modify, id, at: change?.at ?? now, by: change?.meeting == nil ? .user : .meeting, base: before, hash: hash, text: item.text)
+            }
+            for (id, before) in was.memory.sorted(by: { $0.key < $1.key }) where state.memory[id] == nil {
+                let change = data.history.last { $0.old.id.uuidString == id && $0.new == nil }
+                line(.memory, .delete, id, at: change?.at ?? now, by: change?.meeting == nil ? .user : .meeting, base: before, hash: nil)
+            }
+        } else { state.memory = was.memory; state.profile = was.profile }
 
         // The lines, then the state they add up to: a pass cut short repeats its lines rather than losing them.
+        guard isAllowed else { return nil }
         if !lines.isEmpty {
             let encoder = Self.encoder(); encoder.outputFormatting = [.sortedKeys]
             var chunk = Data()
@@ -193,13 +221,18 @@ final class KnowledgeSync {
         if old == nil || state != was {
             guard let encoded = try? Self.encoder().encode(state), (try? encoded.write(to: stateFile, options: .atomic)) != nil else { return nil }
         }
-        return lines.count
+        return incomplete ? nil : lines.count
     }
 
-    // Who made the skill as it is now: its latest history line; an edit outside the app is the user's.
-    static func author(_ summary: SkillSummary, _ record: SkillRecord, _ history: [SkillHistoryEntry]) -> (SkillAuthor, Date) {
-        if summary.externallyModified { return (.user, record.updatedAt) }
-        let latest = history.last { entry in entry.items.contains { $0.after?.record.id == record.id } }
+    // Who made the skill's text (or its on/off) as it is now: the latest history line that changed that, so an AI's
+    // edit stays the AI's when the user then turns the skill off. An edit outside the app is the user's.
+    static func author(_ summary: SkillSummary, _ record: SkillRecord, _ history: [SkillHistoryEntry], toggle: Bool) -> (SkillAuthor, Date) {
+        if summary.externallyModified && !toggle { return (.user, record.updatedAt) }
+        let latest = history.last { entry in entry.items.contains { item in
+            guard let after = item.after?.record, after.id == record.id else { return false }
+            let before = item.before?.record
+            return toggle ? before?.enabled != after.enabled : before?.contentHash != after.contentHash || before?.name != after.name
+        } }
         return latest.map { ($0.by, $0.at) } ?? (record.createdBy, record.updatedAt)
     }
 
@@ -215,11 +248,21 @@ final class KnowledgeSync {
         (try? Data(contentsOf: hostFile(sync))).flatMap { try? decoder().decode(KnowledgeHost.self, from: $0) }
     }
 
-    private static func append(_ chunk: Data, to file: URL) -> Bool {
+    // A last line cut short by an earlier write is ended first, so the next line is not glued onto it.
+    static func append(_ chunk: Data, to file: URL) -> Bool {
         if !FileManager.default.fileExists(atPath: file.path) { return (try? chunk.write(to: file, options: .atomic)) != nil }
-        guard let handle = try? FileHandle(forWritingTo: file) else { return false }
+        guard let handle = try? FileHandle(forUpdating: file) else { return false }
         defer { try? handle.close() }
-        do { try handle.seekToEnd(); try handle.write(contentsOf: chunk); return true } catch { return false }
+        do {
+            let end = try handle.seekToEnd()
+            var chunk = chunk
+            if end > 0 {
+                try handle.seek(toOffset: end - 1)
+                if try handle.read(upToCount: 1) != Data([10]) { chunk.insert(10, at: 0) }
+                try handle.seekToEnd()
+            }
+            try handle.write(contentsOf: chunk); return true
+        } catch { return false }
     }
 
     static func encoder() -> JSONEncoder { DeviceSync.encoder() }

@@ -274,8 +274,8 @@ func testKnowledgeSync() {
     let syncA = DeviceSync(deviceID: "mac-a", persist: false, settings: on)
     expect(!syncA.settings.enabled && !syncA.settings.includeSchool, "it is on while chats from other Macs are off, Enterprise chats not included")
     let skills = SkillStore(folder: { skillsDir })
-    var memory = MemoryData()
-    let a = KnowledgeSync(sync: syncA, skills: skills, memory: { memory })
+    var memory = MemoryData(), memoryBroken = false
+    let a = KnowledgeSync(sync: syncA, skills: skills, memory: { memoryBroken ? nil : memory })
     _ = skills.save(name: "lens-cleaning", description: "Clean a lens", body: "1. Blow off dust", by: .user)
     _ = skills.save(name: "school-procedure", description: "Made in an Enterprise chat", body: "Steps", by: .ai)
     _ = skills.save(name: "old-skill", description: "Old", body: "Gone soon", by: .user)
@@ -363,5 +363,35 @@ func testKnowledgeSync() {
     expect(a.syncNow() == nil && lines().count == 12, "off: nothing is written")
     syncA.settings.syncsKnowledge = true
     expect(a.syncNow() == 1 && lines().last?.op == .enable && lines().last?.initial == nil, "on again: the change made while off goes out, not everything again")
-    print("PASS: knowledge sync: own folder, first full export, modify/enable/disable/tombstones with base hashes, host kept, off writes nothing")
+
+    // An AI's edit, then the user turning the skill off before the pass: each line keeps its own author.
+    _ = skills.save(name: "school-procedure", description: "Made in an Enterprise chat", body: "Steps, revised", by: .ai)
+    _ = skills.setEnabled("school-procedure", false)
+    expect(a.syncNow() == 2, "an edit and a turn-off: two lines")
+    let pair = lines().suffix(2)
+    expect(pair.first { $0.op == .modify }?.by == .ai && pair.first { $0.op == .disable }?.by == .user,
+           "the edit stays the AI's, the turn-off is the user's")
+
+    // An unreadable memory.json is not every fact deleted.
+    let count = lines().count
+    memoryBroken = true
+    expect(a.syncNow() == 0 && lines().count == count, "an unreadable memory.json writes no tombstones")
+    memoryBroken = false
+    expect(a.syncNow() == 0, "readable again: nothing to write")
+    let memoryFile = MemoryStore.file, keptMemory = try? Data(contentsOf: memoryFile)
+    try? fm.createDirectory(at: memoryFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try! Data("{broken".utf8).write(to: memoryFile)
+    let brokenStore = MemoryStore()
+    expect(brokenStore.readableSnapshot == nil && brokenStore.snapshot.items.isEmpty, "MemoryStore tells an unreadable file from an empty one")
+    expect(brokenStore.update { $0.profile = "New" } && brokenStore.readableSnapshot?.profile == "New", "saved again: readable")
+    if let keptMemory { try! keptMemory.write(to: memoryFile) } else { try? fm.removeItem(at: memoryFile) }
+
+    // A last line cut short by an earlier write: the next line starts on its own line.
+    let handle = try! FileHandle(forWritingTo: changesFile)
+    handle.seekToEndOfFile(); handle.write(Data("{\"kind\":\"memory\",\"op\":\"ad".utf8)); handle.closeFile()
+    memory.profile = "Postdoc at Stanford"
+    let rows = { ((try? String(contentsOf: changesFile, encoding: .utf8)) ?? "").split(separator: "\n") }
+    expect(a.syncNow() == 1 && rows().count == lines().count + 1 && lines().last?.kind == .profile && lines().last?.text == "Postdoc at Stanford",
+           "after a line cut short, the next line still reads")
+    print("PASS: knowledge sync: own folder, first full export, modify/enable/disable/tombstones with base hashes, host kept, off writes nothing, unreadable stores and cut lines")
 }

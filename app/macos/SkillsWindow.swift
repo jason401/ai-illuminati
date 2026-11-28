@@ -40,6 +40,14 @@ enum SkillsCatalog {
         return out
     }
 
+    static func shows(_ row: SkillRowItem, _ filter: SkillsFilter) -> Bool {
+        switch filter {
+        case .all: return true
+        case .global: return row.project == nil
+        case .project(let id): return row.project?.id == id
+        }
+    }
+
     // nil when saved; otherwise why not.
     static func set(_ row: SkillRowItem, _ on: Bool) -> String? {
         let outcome = row.project.map { ProjectSkillStore.shared.setEnabled(row.skill.name, on, project: $0.id) }
@@ -72,8 +80,10 @@ final class SkillsWindow {
     private var window: NSWindow?
 
     func show(discussion: Discussion) {
-        // A fresh view each time: skills edited on disk or by an AI meanwhile show up.
+        // A fresh view each time (new identity, so the filter and last error start over): skills edited on disk or by
+        // an AI meanwhile show up.
         let view = SkillsView(projects: { SkillsCatalog.projects(discussion) }, close: { [weak self] in self?.window?.close() })
+            .id(UUID())
             .frame(minWidth: 480, idealWidth: 600, minHeight: 360, idealHeight: 520)
         if let window, let host = window.contentViewController as? NSHostingController<AnyView> {
             host.rootView = AnyView(view)
@@ -88,6 +98,20 @@ final class SkillsWindow {
         }
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
+    }
+}
+
+// The Settings card's "N skills (M on)", kept between redraws so the card reads the skill files only when the stores
+// change or the user comes back to a window (skills edited on disk, projects linked or removed meanwhile).
+final class SkillCounts: ObservableObject {
+    @Published private(set) var total = 0
+    @Published private(set) var on = 0
+
+    func refresh(_ discussion: Discussion) {
+        let all = SkillsCatalog.rows(.all, projects: SkillsCatalog.projects(discussion))
+        let enabled = all.filter(\.skill.record.enabled).count
+        if total != all.count { total = all.count }
+        if on != enabled { on = enabled }
     }
 }
 
@@ -107,17 +131,21 @@ struct SkillsView: View {
         let _ = (global.revision, scoped.revision)
         let known = projects()
         let all = SkillsCatalog.rows(.all, projects: known)
-        let rows = SkillsCatalog.rows(draft.filter, projects: known)
-        // Only projects that have skills get a filter entry.
+        // Only projects that have skills get a filter entry; a picked project whose last skill went away shows All.
         let withSkills = known.filter { p in all.contains { $0.project?.id == p.id } }
+        let filter: SkillsFilter = {
+            if case .project(let id) = draft.filter, !withSkills.contains(where: { $0.id == id }) { return .all }
+            return draft.filter
+        }()
+        let rows = all.filter { SkillsCatalog.shows($0, filter) }
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                Button(L("모두 켜기", "Turn all on")) { draft.error = SkillsCatalog.setAll(true, filter: draft.filter, projects: known) }
+                Button(L("모두 켜기", "Turn all on")) { draft.error = SkillsCatalog.setAll(true, filter: filter, projects: known) }
                     .disabled(rows.allSatisfy(\.skill.record.enabled))
-                Button(L("모두 끄기", "Turn all off")) { draft.error = SkillsCatalog.setAll(false, filter: draft.filter, projects: known) }
+                Button(L("모두 끄기", "Turn all off")) { draft.error = SkillsCatalog.setAll(false, filter: filter, projects: known) }
                     .disabled(rows.allSatisfy { !$0.skill.record.enabled })
                 Spacer()
-                Picker(L("보기", "Show"), selection: $draft.filter) {
+                Picker(L("보기", "Show"), selection: Binding(get: { filter }, set: { draft.filter = $0 })) {
                     Text(L("전체", "All")).tag(SkillsFilter.all)
                     Text(L("전역", "Global")).tag(SkillsFilter.global)
                     if !withSkills.isEmpty { Divider() }

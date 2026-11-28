@@ -89,6 +89,9 @@ import AIProjects
     precondition(Set(enabled(.global).keys) == ["tidy-notes", "ai-helper"] && Set(enabled(.project(project.id)).keys) == ["build-check"])
     let rows = SkillsCatalog.rows(.all, projects: [project])
     precondition(rows.first { $0.skill.name == "tidy-notes" }?.skill.record.userLocked == true)
+    for filter in [SkillsFilter.all, .global, .project(project.id), .project("/tmp/gone")] {   // the window filters rows in memory
+        precondition(rows.filter { SkillsCatalog.shows($0, filter) }.map(\.id) == SkillsCatalog.rows(filter, projects: [project]).map(\.id))
+    }
     precondition(rows.first { $0.skill.name == "build-check" }?.project == project)
     precondition(SkillsCatalog.set(rows.first { $0.skill.name == "tidy-notes" }!, false) == nil)
     precondition(enabled(.all) == ["tidy-notes": false, "ai-helper": true, "build-check": true])

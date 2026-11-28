@@ -1301,10 +1301,11 @@ private struct CollabSettingsCard: View {
 }
 
 private struct MemorySettingsCard: View {
-    let discussion: Discussion   // not observed: the card needs its projects only when skills change or it opens
+    let discussion: Discussion   // not observed: the card needs its projects only when skills change or a window comes back
     @ObservedObject var memory = MemoryStore.shared
     @ObservedObject private var skills = SkillStore.shared
     @ObservedObject private var projectSkills = ProjectSkillStore.shared
+    @StateObject private var counts = SkillCounts()
 
     private var saved: String {
         let profile = memory.data.profile.isEmpty ? L("프로필 없음", "No profile") : L("프로필 \(memory.data.profile.count)자", "Profile \(memory.data.profile.count) chars")
@@ -1343,16 +1344,21 @@ private struct MemorySettingsCard: View {
                 .help(saved)
             }
             Divider()
-            SettingsRow(title: L("스킬", "Skills")) {
-                let _ = (skills.revision, projectSkills.revision)
-                let all = SkillsCatalog.rows(.all, projects: SkillsCatalog.projects(discussion))
-                Text(L("스킬 \(all.count)개 (켜짐 \(all.filter(\.skill.record.enabled).count))",
-                       "\(all.count) skills (\(all.filter(\.skill.record.enabled).count) on)")).monospacedDigit()
+            // No 118 pt title column: the window is 334 pt wide, and the summary would wrap next to the button.
+            HStack(spacing: 8) {
+                Text(L("스킬 \(counts.total)개 (켜짐 \(counts.on))", "\(counts.total) skills (\(counts.on) on)"))
+                    .monospacedDigit().lineLimit(1)
                 Spacer()
                 SettingsAction(title: L("스킬 관리…", "Manage skills…")) { SkillsWindow.shared.show(discussion: discussion) }.frame(width: 110)
             }
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .frame(minHeight: 32)
             .help(L("전역 스킬과 프로젝트별 스킬을 보고 하나씩 또는 모두 켜고 꺼요.", "See global and project skills and turn them on or off, one by one or all at once."))
         }
+        .onAppear { counts.refresh(discussion) }
+        .onChange(of: skills.revision) { _ in counts.refresh(discussion) }
+        .onChange(of: projectSkills.revision) { _ in counts.refresh(discussion) }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in counts.refresh(discussion) }
     }
 }
 

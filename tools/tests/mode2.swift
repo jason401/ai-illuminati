@@ -3103,6 +3103,7 @@ runTest("testMeetingTool", testMeetingTool)
 runTest("testProjectCreate", testProjectCreate)
 runTest("testUpdateChannels", testUpdateChannels)
 runTest("testDeviceSync", testDeviceSync)
+runTest("testKnowledgeSync", testKnowledgeSync)
 
 runTest("testClaudeAgentStream", testClaudeAgentStream)
 runTest("testAgentRooms", testAgentRooms)

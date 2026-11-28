@@ -1,6 +1,7 @@
 import Foundation
 import AIAccounts
 import AIChatRecords
+import AIProjects
 import AIWorkspace
 @testable import AIChat
 
@@ -254,4 +255,113 @@ func testMacConnection(folder: URL) {
     var saved = DeviceSyncSettings(); saved.enabled = true
     let old = try! JSONSerialization.data(withJSONObject: ["enabled": true, "shareAll": false, "includeSchool": false])
     expect((try? JSONDecoder().decode(DeviceSyncSettings.self, from: old))?.sharesConnection == false && !saved.sharesConnection, "connect: older settings read as off")
+}
+
+/// "Sync skills & memory" (연동 1/3): a throwaway folder stands in for iCloud Drive; skills and memory are test stores.
+func testKnowledgeSync() {
+    let fm = FileManager.default
+    let root = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("knowledge-sync-" + UUID().uuidString)
+    defer { try? fm.removeItem(at: root) }
+    let folder = root.appendingPathComponent("sync"), skillsDir = root.appendingPathComponent("skills")
+    let realCloud = fm.homeDirectoryForCurrentUser.appendingPathComponent("Library/Mobile Documents").standardizedFileURL.path
+    let shared = KnowledgeSync.folder(DeviceSync.shared.folder).standardizedFileURL.path
+    expect(shared.hasPrefix(URL(fileURLWithPath: AccountStore.home).standardizedFileURL.path + "/") && !shared.hasPrefix(realCloud),
+           "knowledge sync's default folder is under the test home, not the real iCloud Drive: \(shared)")
+    expect(!DeviceSync.shared.settings.syncsKnowledge && KnowledgeSync.shared.syncNow() == nil, "sync skills & memory is off until turned on")
+
+    var on = DeviceSyncSettings(); on.folder = folder.path; on.deviceName = "Mac mini"; on.syncsKnowledge = true
+    try? fm.createDirectory(at: folder, withIntermediateDirectories: true)
+    let syncA = DeviceSync(deviceID: "mac-a", persist: false, settings: on)
+    expect(!syncA.settings.enabled && !syncA.settings.includeSchool, "it is on while chats from other Macs are off, Enterprise chats not included")
+    let skills = SkillStore(folder: { skillsDir })
+    var memory = MemoryData()
+    let a = KnowledgeSync(sync: syncA, skills: skills, memory: { memory })
+    _ = skills.save(name: "lens-cleaning", description: "Clean a lens", body: "1. Blow off dust", by: .user)
+    _ = skills.save(name: "school-procedure", description: "Made in an Enterprise chat", body: "Steps", by: .ai)
+    _ = skills.save(name: "old-skill", description: "Old", body: "Gone soon", by: .user)
+    let reviewID = UUID()
+    let mine = MemoryItem(text: "Prefers Word documents", by: "Claude")
+    let reviewed = MemoryItem(text: "Uses Caltrain", by: "Claude", meeting: reviewID)
+    memory.profile = "Postdoc"
+    memory.items = [mine, reviewed]
+    let ids = Dictionary(uniqueKeysWithValues: skills.list().map { ($0.name, $0.id.uuidString) })
+    let knowledge = KnowledgeSync.folder(folder), myFolder = a.myFolder(folder)
+    let changesFile = myFolder.appendingPathComponent("changes.jsonl")
+    func lines() -> [KnowledgeChange] {
+        ((try? String(contentsOf: changesFile, encoding: .utf8)) ?? "").split(separator: "\n")
+            .compactMap { try? DeviceSync.decoder().decode(KnowledgeChange.self, from: Data($0.utf8)) }
+    }
+    func skillText(_ name: String) -> String? {
+        try? String(contentsOf: myFolder.appendingPathComponent("skills/\(ids[name]!)/SKILL.md"), encoding: .utf8)
+    }
+
+    // The first pass: everything once, the host claimed.
+    expect(a.syncNow() == 6, "the first pass writes all three skills, the profile and both facts")
+    let first = lines()
+    expect(first.count == 6 && first.allSatisfy { $0.op == .add && $0.initial == true && $0.base == nil && $0.hash != nil && $0.device == "mac-a" },
+           "the first pass is all initial adds with a hash and no base")
+    let lens = first.first { $0.id == ids["lens-cleaning"] }
+    expect(lens?.kind == .skill && lens?.name == "lens-cleaning" && lens?.enabled == true && lens?.by == .user, "a skill line has its name, on/off and author")
+    expect(first.first { $0.id == ids["school-procedure"] }?.by == .ai, "a skill an AI saved (an Enterprise chat's too) goes, by ai")
+    expect(first.first { $0.id == mine.id.uuidString }?.by == .user && first.first { $0.id == reviewed.id.uuidString }?.by == .meeting
+           && first.first { $0.id == reviewed.id.uuidString }?.text == "Uses Caltrain", "facts: the user's (asked for) and a review's, with their text")
+    expect(first.first { $0.kind == .profile }?.text == "Postdoc", "the profile goes too")
+    expect(skillText("lens-cleaning") == skills.read("lens-cleaning")?.document.render()
+           && lens?.hash == SkillDocument.hash(skills.read("lens-cleaning")!.document.render()), "SKILL.md is the skill as written, its hash in the line")
+    expect(KnowledgeSync.host(folder)?.device == "mac-a" && KnowledgeSync.host(folder)?.name == "Mac mini", "the first Mac to turn it on holds the meetings")
+    expect(!fm.fileExists(atPath: folder.appendingPathComponent("devices").path), "chat copies are not written by it")
+
+    // Nothing changed: nothing written.
+    let before = try? Data(contentsOf: changesFile)
+    expect(a.syncNow() == 0 && (try? Data(contentsOf: changesFile)) == before, "an unchanged pass writes no line")
+
+    // Another Mac: its own folder; the host stays.
+    on.deviceName = "MacBook"
+    let b = KnowledgeSync(sync: DeviceSync(deviceID: "mac-b", persist: false, settings: on), skills: SkillStore(folder: { root.appendingPathComponent("skills-b") }), memory: { MemoryData() })
+    expect(b.syncNow() == 0 && fm.fileExists(atPath: b.myFolder(folder).appendingPathComponent("state.json").path)
+           && KnowledgeSync.host(folder)?.device == "mac-a", "another Mac writes its own folder and leaves host.json as it is")
+
+    // Changes: modify, disable, delete (tombstone), a review's change, a fact the user removed, the profile cleared.
+    let lensHash = lens!.hash, oldHash = first.first { $0.id == ids["old-skill"] }!.hash
+    _ = skills.save(name: "lens-cleaning", description: "Clean a lens", body: "1. Blow off dust\n2. Wipe once", by: .user)
+    _ = skills.setEnabled("school-procedure", false)
+    _ = skills.delete("old-skill")
+    var changed = reviewed; changed.text = "Uses Caltrain and VTA"
+    memory.history.append(MemoryChange(old: reviewed, new: changed.text, meeting: reviewID))
+    memory.items = [changed]
+    memory.profile = ""
+    expect(a.syncNow() == 6, "six changes, six lines")
+    let next = Array(lines().dropFirst(6))
+    let modify = next.first { $0.id == ids["lens-cleaning"] }
+    expect(modify?.op == .modify && modify?.base == lensHash && modify?.hash != lensHash && modify?.initial == nil && modify?.by == .user,
+           "a modify names the hash it was made on")
+    expect(skillText("lens-cleaning")?.contains("Wipe once") == true, "SKILL.md follows the change")
+    let off = next.first { $0.id == ids["school-procedure"] }
+    expect(off?.op == .disable && off?.enabled == false && off?.by == .user, "turning a skill off is a disable line")
+    let gone = next.first { $0.id == ids["old-skill"] }
+    expect(gone?.op == .delete && gone?.hash == nil && gone?.base == oldHash && gone?.name == "old-skill"
+           && skills.tombstones().contains { $0.id.uuidString == ids["old-skill"] && $0.deletedAt == gone?.at }, "a delete is a tombstone line at the skill's deletion time")
+    expect(!fm.fileExists(atPath: myFolder.appendingPathComponent("skills/\(ids["old-skill"]!)").path), "a deleted skill's SKILL.md leaves the folder")
+    let fact = next.first { $0.id == reviewed.id.uuidString }
+    expect(fact?.op == .modify && fact?.by == .meeting && fact?.text == "Uses Caltrain and VTA" && fact?.base == SkillDocument.hash("Uses Caltrain"),
+           "a review's change to a fact is by meeting, on the old text's hash")
+    let removed = next.first { $0.id == mine.id.uuidString }
+    expect(removed?.op == .delete && removed?.by == .user && removed?.hash == nil && removed?.text == nil, "a fact removed is a tombstone line")
+    expect(next.first { $0.kind == .profile }?.op == .delete, "the profile cleared is a delete")
+    expect(knowledge.appendingPathComponent("mac-a/changes.jsonl").path == changesFile.path, "lines go to knowledge/<this Mac>/changes.jsonl")
+
+    // An unreadable skills.json lists no skill: that is not every skill deleted.
+    let index = skillsDir.appendingPathComponent("skills.json"), saved = try! Data(contentsOf: index)
+    try! Data("{broken".utf8).write(to: index)
+    expect(skills.list().isEmpty && a.syncNow() == 0 && lines().count == 12, "an unreadable skill index writes no tombstones")
+    try! saved.write(to: index)
+    expect(a.syncNow() == 0, "readable again: nothing to write")
+
+    // Turning it off writes nothing more; on again, only what changed meanwhile.
+    syncA.settings.syncsKnowledge = false
+    _ = skills.setEnabled("school-procedure", true)
+    expect(a.syncNow() == nil && lines().count == 12, "off: nothing is written")
+    syncA.settings.syncsKnowledge = true
+    expect(a.syncNow() == 1 && lines().last?.op == .enable && lines().last?.initial == nil, "on again: the change made while off goes out, not everything again")
+    print("PASS: knowledge sync: own folder, first full export, modify/enable/disable/tombstones with base hashes, host kept, off writes nothing")
 }

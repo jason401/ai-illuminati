@@ -1306,6 +1306,7 @@ private struct MemorySettingsCard: View {
     @ObservedObject private var skills = SkillStore.shared
     @ObservedObject private var projectSkills = ProjectSkillStore.shared
     @StateObject private var counts = SkillCounts()
+    @ObservedObject private var sync = DeviceSync.shared
 
     private var saved: String {
         let profile = memory.data.profile.isEmpty ? L("프로필 없음", "No profile") : L("프로필 \(memory.data.profile.count)자", "Profile \(memory.data.profile.count) chars")
@@ -1314,8 +1315,8 @@ private struct MemorySettingsCard: View {
 
     var body: some View {
         SettingsCard(title: L("스킬 & 기억", "Skills & Memory"),
-                     help: L("모든 AI가 같은 기억을 읽어요. 이 Mac에만 저장되지만 답할 때 그 AI에게 보내져요. Enterprise 방은 읽기만 하고 저장하지 않아요. 비밀번호나 키는 저장하지 않아요. 스킬은 AI가 필요할 때 읽는 작업 순서이고, 꺼진 스킬은 AI에게 보내지 않아요.",
-                             "Every AI reads the same memory. It stays on this Mac but is sent to the AI that answers. Enterprise chats only read it. Passwords and keys are never saved. Skills are procedures the AIs read when needed; skills turned off are not sent.")) {
+                     help: L("모든 AI가 같은 기억을 읽어요. 이 Mac에 저장되고(연동을 켜면 iCloud Drive에도) 답할 때 그 AI에게 보내져요. Enterprise 방은 읽기만 하고 저장하지 않아요. 비밀번호나 키는 저장하지 않아요. 스킬은 AI가 필요할 때 읽는 작업 순서이고, 꺼진 스킬은 AI에게 보내지 않아요.",
+                             "Every AI reads the same memory. It is kept on this Mac (and in iCloud Drive with sync on) and sent to the AI that answers. Enterprise chats only read it. Passwords and keys are never saved. Skills are procedures the AIs read when needed; skills turned off are not sent.")) {
             SettingsRow(title: L("기억 사용", "Use memory")) {
                 Spacer()
                 Toggle(L("기억 사용", "Use memory"), isOn: Binding(
@@ -1351,6 +1352,22 @@ private struct MemorySettingsCard: View {
             .padding(.horizontal, 10).padding(.vertical, 6)
             .frame(minHeight: 32)
             .help(L("전역 스킬과 프로젝트별 스킬을 보고 하나씩 또는 모두 켜고 꺼요.", "See global and project skills and turn them on or off, one by one or all at once."))
+            Divider()
+            SettingsRow(title: L("스킬 & 기억 연동", "Sync skills & memory")) {
+                if sync.settings.syncsKnowledge && !sync.folderAvailable {
+                    Text(L("iCloud Drive 꺼짐", "iCloud Drive off")).font(.system(size: 11)).foregroundStyle(.orange).lineLimit(1)
+                }
+                Spacer()
+                Toggle(L("스킬 & 기억 연동", "Sync skills & memory"), isOn: Binding(
+                    get: { sync.settings.syncsKnowledge }, set: { sync.settings.syncsKnowledge = $0 }))
+                    .labelsHidden().toggleStyle(.switch)
+            }
+            .help(L("켜면 전역 스킬(켜짐·꺼짐 포함)과 기억(프로필·저장된 내용)이 둘 다 iCloud Drive의 동기화 폴더에 올라가 다른 Mac과 같이 써요. Enterprise에서 만든 스킬도 올라가요. 프로젝트 스킬과 프로젝트 기억은 Mac마다 달라서 올리지 않아요. Advanced Data Protection이 꺼져 있으면 end-to-end 암호화가 아니에요. ‘다른 기기의 대화’가 꺼져 있어도 따로 켤 수 있어요.",
+                    "When on, global skills (with their on/off state) and memory (profile and saved facts) both go to the sync folder in iCloud Drive, shared with your other Macs. Skills made in Enterprise chats go too. Project skills and project memory stay on each Mac. Without Advanced Data Protection this is not end-to-end encrypted. Works even when ‘Chats from other Macs’ is off."))
+            Text(L("켜면 스킬과 기억이 둘 다 iCloud Drive에 올라가요. Advanced Data Protection이 꺼져 있으면 end-to-end 암호화가 아니에요.",
+                   "Skills and memory both go to iCloud Drive. Without Advanced Data Protection this is not end-to-end encrypted."))
+                .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 10).padding(.bottom, 6)
         }
         .onAppear { counts.refresh(discussion) }
         .onChange(of: skills.revision) { _ in counts.refresh(discussion) }

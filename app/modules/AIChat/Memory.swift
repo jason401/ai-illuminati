@@ -9,7 +9,8 @@ import AIWorkspace
 // one line each. Facts are saved with remember in an answer to a message that asks for it ("기억해", "remember").
 // AIs use memory_propose for facts they picked themselves, when the user's candidate setting allows it.
 // The AI corrects (memory_replace) or deletes (memory_forget) a fact by the short id shown in the prompt; the old
-// version stays in history for Undo. Enterprise chats read memory but never change it. Not synced to other Macs.
+// version stays in history for Undo. Enterprise chats read memory but never change it. Goes to the other Macs only with "Sync skills & memory" on
+// (KnowledgeSync.swift).
 public struct MemoryItem: Codable, Identifiable, Equatable {
     public var id = UUID()
     public var text: String

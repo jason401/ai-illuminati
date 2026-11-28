@@ -64,6 +64,11 @@ public struct DeviceSyncSettings: Codable, Equatable {
         get { shareConnection == true }
         set { shareConnection = newValue ? true : nil }
     }
+    public var syncKnowledge: Bool?     // "Sync skills & memory" (KnowledgeSync.swift), apart from chats (nil: off)
+    public var syncsKnowledge: Bool {
+        get { syncKnowledge == true }
+        set { syncKnowledge = newValue ? true : nil }
+    }
 }
 
 public final class DeviceSync: ObservableObject {
@@ -73,6 +78,8 @@ public final class DeviceSync: ObservableObject {
         didSet {
             guard settings != oldValue else { return }
             if persist, let data = try? JSONEncoder().encode(settings) { UserDefaults.app.set(data, forKey: Self.settingsKey) }
+            var chats = settings; chats.syncKnowledge = oldValue.syncKnowledge
+            guard chats != oldValue else { return }   // only "Sync skills & memory": KnowledgeSync hears it
             if settings.enabled { reconcile(); scan() } else { devices = []; lastChecked = nil }
             writeConnection()
         }
@@ -160,6 +167,7 @@ public final class DeviceSync: ObservableObject {
         timer = ticker
         if settings.enabled { reconcile(); scan() }
         writeConnection()
+        if self === Self.shared { KnowledgeSync.shared.start() }
     }
 
     // MARK: This Mac's phone page for the other Macs

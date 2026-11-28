@@ -296,6 +296,8 @@ DeviceSyncSettings.init(from:) | init(from decoder: any Decoder) throws
 DeviceSyncSettings.shareAll | var shareAll: Bool
 DeviceSyncSettings.shareConnection | var shareConnection: Bool?
 DeviceSyncSettings.sharesConnection | var sharesConnection: Bool { get set }
+DeviceSyncSettings.syncKnowledge | var syncKnowledge: Bool?
+DeviceSyncSettings.syncsKnowledge | var syncsKnowledge: Bool { get set }
 Discussion | final class Discussion
 Discussion.addChat(_:title:lock:) | func addChat(_ project: ProjectBinding, title: String, lock: EnterpriseLock?) -> UUID
 Discussion.addWorkFolder(_:path:) | func addWorkFolder(_ key: String, path: String) throws

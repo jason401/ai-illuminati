@@ -455,7 +455,18 @@ public enum KnowledgeReviewLink {
     // Defaults to true until the sync TODO connects it.
     public static var isReviewHost: () -> Bool = { true }
 
-    // Earliest time another company's auto-picked account is expected to regain usage (for wait logging).
+    // Who may meet for a review: the cloud AIs `meetingTeam` picks, but only those with enough left for a chat
+    // (`AutoPick.enough(.chat)`), so a review the app opens on its own never takes the user's last 10%. Meetings the
+    // user opens keep `meetingTeam` as it is.
+    static func reviewTeam(in discussion: Discussion, now: Date) -> [Account] {
+        let usage = discussion.model.latestUsage
+        return Discussion.meetingTeam(discussion.model.accounts, usage: usage, most: most,
+                                      picks: discussion.model.autoTeamPicks, now: now) {
+            Discussion.meets($0) && Enterprise.permits($0, lock: nil) && AutoPick.enough(usage[$0.id], purpose: .chat, now: now)
+        }
+    }
+
+    // Earliest time another company's auto-picked account is expected to have enough left again (as in `reviewTeam`), for wait logging.
     static func nextReset(accounts: [Account], usage: [String: AIUsage], picks: [String: Bool],
                           excluding: Set<Account.Provider>, now: Date) -> Date? {
         var earliest: Date?
@@ -464,7 +475,8 @@ public enum KnowledgeReviewLink {
             guard let u = usage[account.id], !u.needsLogin else { continue }
             var blocking: [Date] = []
             var unknownBlock = false
-            for window in [u.fiveHour, u.weekly].compactMap({ $0 }) where window.left(now: now) <= 0 {
+            for (window, kind) in [(u.fiveHour, AutoPick.Window.fiveHour), (u.weekly, .weekly)] {
+                guard let window, window.left(now: now) < AutoPick.need(window: window, kind: kind, purpose: .chat, now: now) else { continue }
                 if let reset = window.resetsAt, reset > now { blocking.append(reset) } else { unknownBlock = true }
             }
             guard !unknownBlock, let readyAt = blocking.max() else { continue }
@@ -479,7 +491,7 @@ public enum KnowledgeReviewLink {
     // since the last review or attempt. Previously shown undecided/retry candidates still join the next review once a new
     // candidate arrives, without re-triggering reviews or aging the 24h clock on their own; alone, they reopen a review once
     // `partialAfter` passed since the last review or attempt.
-    // Prefers >= 2 distinct cloud companies from `meetingTeam`. With < 2 companies, waits for usage reset unless the
+    // Prefers >= 2 distinct cloud companies from `reviewTeam` (10% left, like chats). With < 2 companies, waits for usage reset unless the
     // oldest unreviewed pending candidate has waited >= `partialAfter` (24h), in which case it runs a partial review with
     // whatever AIs remain (other accounts of the same company + Ollama if enabled); 0 AIs waits for the next wake.
     @discardableResult
@@ -503,10 +515,7 @@ public enum KnowledgeReviewLink {
         let failures = attempt.flatMap { a in records.last.map { $0.at > a.at } == true ? 0 : a.failures } ?? 0
         if let last, current.timeIntervalSince(last) < KnowledgeReview.cooldown(failures: failures) { return false }
 
-        let cloudTeam = Discussion.meetingTeam(discussion.model.accounts, usage: discussion.model.latestUsage,
-                                               most: most, picks: discussion.model.autoTeamPicks, now: current) {
-            Discussion.meets($0) && Enterprise.permits($0, lock: nil)
-        }
+        let cloudTeam = reviewTeam(in: discussion, now: current)
         let companies = Set(cloudTeam.map(\.provider))
         let team: [Account]
         let partial: Bool
@@ -561,10 +570,7 @@ public enum KnowledgeReviewLink {
         guard isReviewHost(), !running else { return false }
         let candidates = eligible(discussion)
         guard !candidates.isEmpty else { return false }
-        let team = Discussion.meetingTeam(discussion.model.accounts, usage: discussion.model.latestUsage, most: most,
-                                          picks: discussion.model.autoTeamPicks) {
-            Discussion.meets($0) && Enterprise.permits($0, lock: nil)
-        }
+        let team = reviewTeam(in: discussion, now: Date())
         guard team.count >= 2 else { return false }
         let partial = Set(team.filter(Discussion.meets).map(\.provider)).count < 2
         // Manual reviews always require at least 2 speakers to succeed (single-AI completion is only for 24h auto fallback).

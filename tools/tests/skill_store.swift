@@ -1476,6 +1476,33 @@ private func testKnowledgeReviewIdleScheduling() {
     let logText = (try? String(contentsOf: KnowledgeReview.logFile, encoding: .utf8)) ?? ""
     expect(logText.contains(ISO8601DateFormatter().string(from: resetAt)), "wait log records next usage resetsAt")
 
+    // 2b) Under 10% left counts as out for reviews (like chats): ChatGPT with 5% left still shows up in `meetingTeam`
+    // (meetings the user opens are unchanged) but not in `reviewTeam`, so only Claude is left and the review waits.
+    let lowReset = t0.addingTimeInterval(2 * 3_600 + 600)
+    model.latestUsage[codex.id] = usage(codex, fiveHourUsed: 95, resetsAt: lowReset)
+    let tLow = t0.addingTimeInterval(5_400)
+    let userTeam = Discussion.meetingTeam(model.accounts, usage: model.latestUsage, most: KnowledgeReviewLink.most,
+                                          picks: model.autoTeamPicks, now: tLow) { Discussion.meets($0) }
+    let lowTeam = KnowledgeReviewLink.reviewTeam(in: discussion, now: tLow)
+    expect(userTeam.contains(where: { $0.id == codex.id }), "meetingTeam still takes an account with 5% left")
+    expect(!lowTeam.contains(where: { $0.id == codex.id }) && Set(lowTeam.map(\.provider)) == [.claude],
+           "reviewTeam leaves out an account under 10%, leaving one company")
+    expect(KnowledgeReviewLink.nextReset(accounts: model.accounts, usage: model.latestUsage, picks: model.autoTeamPicks,
+                                         excluding: [.claude], now: tLow) == lowReset,
+           "nextReset counts a window under 10% as blocking")
+    expect(!KnowledgeReviewLink.runIfIdle(in: discussion, now: tLow),
+           "an account under 10% does not make a second company: automatic review waits")
+    let lowLog = (try? String(contentsOf: KnowledgeReview.logFile, encoding: .utf8)) ?? ""
+    expect(lowLog.contains(ISO8601DateFormatter().string(from: lowReset)), "wait log records when the low account is back above 10%")
+    // Weekly under 10% too; the manual review then has only one AI and does not start.
+    model.latestUsage[claudePersonal.id] = usage(claudePersonal, fiveHourUsed: 30, weeklyUsed: 92)
+    expect(KnowledgeReviewLink.reviewTeam(in: discussion, now: tLow).map(\.id) == [claudeSchool.id],
+           "weekly under 10% leaves an account out too")
+    expect(!KnowledgeReviewLink.run(in: discussion) && !KnowledgeReviewLink.running,
+           "manual review uses the same 10% rule and needs two AIs")
+    model.latestUsage[claudePersonal.id] = usage(claudePersonal, fiveHourUsed: 30)
+    model.latestUsage[codex.id] = usage(codex, fiveHourUsed: 100, resetsAt: resetAt)
+
     // 3) After codex resets (2 companies available): runs full review (partial == false).
     speakers.removeAll()
     let tReset = t0.addingTimeInterval(3 * 3_600)

@@ -47,6 +47,8 @@ public final class SkillStore: ObservableObject {
         directory.setAllEnabled(enabled, by: by, actor: actor, now: now)
     }
 
+    @discardableResult public func markSeen(_ name: String) -> Bool { directory.markSeen(name) }
+
     public func delete(_ name: String, by: SkillAuthor = .user,
                        actor: String? = nil, now: Date = Date(), turn: UUID? = nil) -> SkillOutcome {
         directory.delete(name, by: by, actor: actor, now: now, turn: turn)

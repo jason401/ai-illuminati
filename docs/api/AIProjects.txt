@@ -286,6 +286,7 @@ ProjectSkillStore.folder(_:) | static func folder(_ project: String) -> URL
 ProjectSkillStore.history(_:) | func history(_ project: String) -> [SkillHistoryEntry]
 ProjectSkillStore.init() | init()
 ProjectSkillStore.list(_:) | func list(_ project: String) -> [SkillSummary]
+ProjectSkillStore.markSeen(_:project:) | @discardableResult func markSeen(_ name: String, project: String) -> Bool
 ProjectSkillStore.read(_:project:) | func read(_ name: String, project: String) -> SkillDetail?
 ProjectSkillStore.revision | @Published var revision: Int { get set }
 ProjectSkillStore.save(name:description:body:by:project:id:actor:isNew:now:turn:) | func save(name: String, description: String, body: String, by: SkillAuthor, project: String, id: UUID? = nil, actor: String? = nil, isNew: Bool? = nil, now: Date = Date(), turn: UUID? = nil) -> SkillOutcome
@@ -343,6 +344,7 @@ SkillDirectory.delete(_:by:actor:now:turn:) | func delete(_ name: String, by: Sk
 SkillDirectory.history() | func history() -> [SkillHistoryEntry]
 SkillDirectory.init(folder:onChange:) | init(folder: @escaping () -> URL, onChange: (() -> Void)? = nil)
 SkillDirectory.list() | func list() -> [SkillSummary]
+SkillDirectory.markSeen(_:) | @discardableResult func markSeen(_ name: String) -> Bool
 SkillDirectory.read(_:) | func read(_ name: String) -> SkillDetail?
 SkillDirectory.root | var root: URL { get }
 SkillDirectory.save(name:description:body:by:id:actor:isNew:now:turn:) | func save(name: String, description: String, body: String, by: SkillAuthor, id: UUID? = nil, actor: String? = nil, isNew: Bool? = nil, now: Date = Date(), turn: UUID? = nil) -> SkillOutcome

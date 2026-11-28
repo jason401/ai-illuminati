@@ -496,6 +496,7 @@ SkillStore.folder | static var folder: URL { get }
 SkillStore.history() | func history() -> [SkillHistoryEntry]
 SkillStore.init(folder:) | init(folder: (() -> URL)? = nil)
 SkillStore.list() | func list() -> [SkillSummary]
+SkillStore.markSeen(_:) | @discardableResult func markSeen(_ name: String) -> Bool
 SkillStore.read(_:) | func read(_ name: String) -> SkillDetail?
 SkillStore.revision | @Published var revision: Int { get set }
 SkillStore.save(name:description:body:by:id:actor:isNew:now:turn:) | func save(name: String, description: String, body: String, by: SkillAuthor, id: UUID? = nil, actor: String? = nil, isNew: Bool? = nil, now: Date = Date(), turn: UUID? = nil) -> SkillOutcome

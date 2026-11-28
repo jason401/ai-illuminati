@@ -247,6 +247,15 @@ func testSkillStore() {
            && global.read("paper-review")?.record.enabled == false
            && global.read("daily-quest")?.record.enabled == true,
            "undo of setAllEnabled restores each skill's prior enabled state")
+    // Opening a skill in Settings clears "new" without a history line, so the AI's add can still be undone.
+    expect(saved(global.save(name: "seen-check", description: "Added by an AI", body: "x", by: .ai))?.isNew == true,
+           "an AI's new skill starts with the new badge")
+    let beforeSeen = global.history().count
+    expect(global.markSeen("seen-check") && global.read("seen-check")?.record.isNew == false
+           && global.read("seen-check")?.record.userLocked == false && global.history().count == beforeSeen
+           && !global.markSeen("seen-check") && !global.markSeen("no-such-skill"),
+           "markSeen clears isNew once, keeps the lock as it was, and logs no history")
+    expect(undone(global.undo()) != nil && global.read("seen-check") == nil, "undo after markSeen still removes the AI's add")
 
     // 7. Delete, tombstone persistence, undo of delete, and recreating same slug with fresh UUID.
     let deleteTime = t0.addingTimeInterval(100)

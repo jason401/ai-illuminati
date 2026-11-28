@@ -5,7 +5,8 @@ import AIProjects
 import AIChat
 
 // Settings > Skills & Memory > Manage skills: every app skill (global ones and each project's), so skills a meeting or
-// an AI added can be seen and turned off. A skill turned off leaves the [Skills] list the AIs get (SkillLink).
+// an AI added can be seen, turned off, edited and deleted. A skill turned off leaves the [Skills] list the AIs get
+// (SkillLink); one the user saves here is locked (🔒), so AIs and meetings need approval to change it.
 struct SkillProject: Identifiable, Equatable {
     let id: String     // SidebarProjects.key, the key ProjectSkillStore uses
     let name: String
@@ -16,7 +17,15 @@ enum SkillsFilter: Hashable { case all, global, project(String) }
 struct SkillRowItem: Identifiable, Equatable {
     let project: SkillProject?   // nil: global
     let skill: SkillSummary
-    var id: String { (project?.id ?? "") + "\n" + skill.name }
+    var id: String { Self.id(project, skill.name) }
+    static func id(_ project: SkillProject?, _ name: String) -> String { (project?.id ?? "") + "\n" + name }
+}
+
+// The last delete, offered for Undo at the bottom of the window for a few seconds.
+struct RemovedSkill: Equatable {
+    let project: SkillProject?
+    let name: String
+    let change: UUID   // the delete's history entry
 }
 
 enum SkillsCatalog {
@@ -67,6 +76,60 @@ enum SkillsCatalog {
         return failures.isEmpty ? nil : failures.joined(separator: "\n")
     }
 
+    static func detail(_ row: SkillRowItem) -> SkillDetail? {
+        if let project = row.project { return ProjectSkillStore.shared.read(row.skill.name, project: project.id) }
+        return SkillStore.shared.read(row.skill.name)
+    }
+
+    // Every history entry that touched this skill (by UUID, so renames stay), oldest first.
+    static func changes(_ row: SkillRowItem) -> [SkillHistoryEntry] {
+        let id = row.skill.record.id
+        return (row.project.map { ProjectSkillStore.shared.history($0.id) } ?? SkillStore.shared.history()).filter { entry in
+            entry.skillID == id || entry.items.contains { $0.before?.record.id == id || $0.after?.record.id == id }
+        }
+    }
+
+    static func markSeen(_ row: SkillRowItem) {
+        guard row.skill.record.isNew else { return }
+        if let project = row.project { ProjectSkillStore.shared.markSeen(row.skill.name, project: project.id) } else { SkillStore.shared.markSeen(row.skill.name) }
+    }
+
+    static func file(_ row: SkillRowItem) -> URL {
+        (row.project.map { ProjectSkillStore.folder($0.id) } ?? SkillStore.folder)
+            .appendingPathComponent(row.skill.name, isDirectory: true).appendingPathComponent("SKILL.md")
+    }
+
+    // Saves the editor as the user's: locked, no longer new. nil when saved; otherwise why not.
+    static func save(_ row: SkillRowItem, name: String, description: String, body: String) -> String? {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        func put(_ name: String) -> SkillOutcome {
+            if let project = row.project {
+                return ProjectSkillStore.shared.save(name: name, description: description, body: body, by: .user, project: project.id, id: row.skill.record.id)
+            }
+            return SkillStore.shared.save(name: name, description: description, body: body, by: .user, id: row.skill.record.id)
+        }
+        // A file put in or edited outside the app is taken in under its own name first, so the rename moves its
+        // folder instead of leaving a copy behind.
+        if name != row.skill.name, row.skill.externallyModified, SkillDocument.isValidSlug(name),
+           let why = failure(put(row.skill.name)) { return why }
+        return failure(put(name))
+    }
+
+    // Deletes the skill (skills.json keeps a tombstone) and returns the change Undo takes back.
+    static func delete(_ row: SkillRowItem) -> (removed: RemovedSkill?, error: String?) {
+        let outcome = row.project.map { ProjectSkillStore.shared.delete(row.skill.name, project: $0.id) } ?? SkillStore.shared.delete(row.skill.name)
+        guard case .deleted(let tombstone) = outcome else { return (nil, failure(outcome) ?? L("스킬을 지우지 못했어요.", "Could not delete the skill.")) }
+        let history = row.project.map { ProjectSkillStore.shared.history($0.id) } ?? SkillStore.shared.history()
+        let change = history.last { $0.action == .delete && $0.skillID == tombstone.id }?.id
+        return (change.map { RemovedSkill(project: row.project, name: row.skill.name, change: $0) }, nil)
+    }
+
+    // Undoes exactly that delete, not whatever changed last.
+    static func undo(_ removed: RemovedSkill) -> String? {
+        failure(removed.project.map { ProjectSkillStore.shared.undo(project: $0.id, change: removed.change) }
+                ?? SkillStore.shared.undo(change: removed.change))
+    }
+
     private static func failure(_ outcome: SkillOutcome) -> String? {
         switch outcome {
         case .refused(let why), .needsApproval(_, let why): return why
@@ -84,14 +147,14 @@ final class SkillsWindow {
         // an AI meanwhile show up.
         let view = SkillsView(projects: { SkillsCatalog.projects(discussion) }, close: { [weak self] in self?.window?.close() })
             .id(UUID())
-            .frame(minWidth: 480, idealWidth: 600, minHeight: 360, idealHeight: 520)
+            .frame(minWidth: 720, idealWidth: 880, minHeight: 420, idealHeight: 580)
         if let window, let host = window.contentViewController as? NSHostingController<AnyView> {
             host.rootView = AnyView(view)
         } else {
             let w = NSWindow(contentViewController: NSHostingController(rootView: AnyView(view)))
             w.styleMask = [.titled, .closable, .miniaturizable, .resizable]
             w.title = L("스킬", "Skills")
-            w.setContentSize(NSSize(width: 600, height: 520))
+            w.setContentSize(NSSize(width: 880, height: 580))
             w.isReleasedWhenClosed = false
             w.center()
             window = w
@@ -118,6 +181,31 @@ final class SkillCounts: ObservableObject {
 final class SkillsDraft: ObservableObject {
     @Published var filter = SkillsFilter.all
     @Published var error: String?   // why the last change was not saved
+    @Published var selected: String?   // SkillRowItem.id shown on the right
+    @Published var loaded: SkillDetail?   // what the editor started from
+    @Published var name = ""
+    @Published var description = ""
+    @Published var body = ""
+    @Published var removed: RemovedSkill?
+
+    init(selected: String? = nil) { self.selected = selected }
+
+    var edited: Bool {
+        guard let loaded else { return false }
+        return name != loaded.name || description != loaded.document.description || body != loaded.document.body
+    }
+
+    func load(_ detail: SkillDetail?) {
+        loaded = detail
+        name = detail?.name ?? ""; description = detail?.document.description ?? ""; body = detail?.document.body ?? ""
+    }
+
+    func offerUndo(_ removed: RemovedSkill) {
+        self.removed = removed
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
+            if self?.removed == removed { self?.removed = nil }
+        }
+    }
 }
 
 struct SkillsView: View {
@@ -125,7 +213,13 @@ struct SkillsView: View {
     let close: () -> Void
     @ObservedObject private var global = SkillStore.shared
     @ObservedObject private var scoped = ProjectSkillStore.shared
-    @StateObject private var draft = SkillsDraft()
+    @StateObject private var draft: SkillsDraft
+
+    init(projects: @escaping () -> [SkillProject], close: @escaping () -> Void, selected: String? = nil) {
+        self.projects = projects
+        self.close = close
+        _draft = StateObject(wrappedValue: SkillsDraft(selected: selected))
+    }
 
     var body: some View {
         let _ = (global.revision, scoped.revision)
@@ -166,22 +260,153 @@ struct SkillsView: View {
                     .font(.system(size: 11)).foregroundStyle(.secondary)
                 Spacer()
             } else {
-                List(rows) { row in
-                    SkillRow(row: row) { on in draft.error = SkillsCatalog.set(row, on) }
+                HStack(alignment: .top, spacing: 10) {
+                    List(rows, selection: $draft.selected) { row in
+                        SkillRow(row: row) { on in draft.error = SkillsCatalog.set(row, on) }.tag(row.id)
+                    }
+                    .listStyle(.inset)
+                    .frame(minWidth: 240, idealWidth: 290, maxWidth: 330)
+                    if let row = rows.first(where: { $0.id == draft.selected }), draft.loaded != nil {
+                        SkillDetailPane(row: row, draft: draft, open: open)
+                    } else {
+                        Text(L("스킬을 고르면 여기에서 보고 고치고 지울 수 있어요.", "Pick a skill to see, edit or delete it here."))
+                            .font(.system(size: 11)).foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
                 }
-                .listStyle(.inset)
             }
             HStack {
-                Text(L("스킬 \(all.count)개 (켜짐 \(all.filter(\.skill.record.enabled).count))",
-                       "\(all.count) skills (\(all.filter(\.skill.record.enabled).count) on)"))
-                    .font(.system(size: 11)).foregroundStyle(.secondary).monospacedDigit()
+                if let removed = draft.removed {
+                    Text(L("‘\(removed.name)’ 지움", "Deleted ‘\(removed.name)’")).font(.system(size: 11))
+                    Button(L("취소", "Undo")) {
+                        draft.error = SkillsCatalog.undo(removed)
+                        draft.removed = nil
+                        if draft.error == nil { draft.selected = SkillRowItem.id(removed.project, removed.name) }
+                    }
+                    .controlSize(.small)
+                } else {
+                    Text(L("스킬 \(all.count)개 (켜짐 \(all.filter(\.skill.record.enabled).count))",
+                           "\(all.count) skills (\(all.filter(\.skill.record.enabled).count) on)"))
+                        .font(.system(size: 11)).foregroundStyle(.secondary).monospacedDigit()
+                }
                 Spacer()
                 Button(L("완료", "Done"), action: close).keyboardShortcut(.defaultAction)
             }
         }
         .padding(14)
         .background(Color(nsColor: .windowBackgroundColor))
+        .onAppear { open(draft.selected) }
+        .onChange(of: draft.selected) { open($0) }
     }
+
+    // Loads the picked skill into the editor; the first look clears its "new" badge.
+    private func open(_ id: String?) {
+        guard let id, let row = SkillsCatalog.rows(.all, projects: projects()).first(where: { $0.id == id }) else { draft.load(nil); return }
+        draft.load(SkillsCatalog.detail(row))
+        SkillsCatalog.markSeen(row)
+    }
+}
+
+// The picked skill: name, description and body to edit, who made it and when, its latest changes, and
+// Save / Delete / Show in Finder.
+private struct SkillDetailPane: View {
+    let row: SkillRowItem
+    @ObservedObject var draft: SkillsDraft
+    let open: (String?) -> Void
+
+    var body: some View {
+        let changes = SkillsCatalog.changes(row)
+        let record = row.skill.record
+        VStack(alignment: .leading, spacing: 5) {
+            label(L("이름", "Name"))
+            TextField("", text: $draft.name).textFieldStyle(.roundedBorder).font(.system(size: 12, design: .monospaced))
+            label(L("설명", "Description"))
+            TextField("", text: $draft.description, axis: .vertical).textFieldStyle(.roundedBorder).lineLimit(1...3).font(.system(size: 12))
+            label(L("본문", "Body"))
+            TextEditor(text: $draft.body).font(.system(size: 12, design: .monospaced))
+                .frame(minHeight: 120)
+                .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color(nsColor: .separatorColor)))
+            Text(made(record, changes)).font(.system(size: 11)).foregroundStyle(.secondary)
+            if row.skill.externallyModified {
+                Text(L("앱 밖에서 고친 파일이라 🔒 잠겼어요.", "Edited outside the app, so it is locked 🔒."))
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+            }
+            if !changes.isEmpty {
+                label(L("최근 변경", "Latest changes"))
+                ForEach(changes.suffix(4).reversed()) { entry in
+                    Text([Self.action(entry.action), Self.who(entry.by, entry.actor), Self.day(entry.at)].joined(separator: " · "))
+                        .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                }
+            }
+            HStack(spacing: 8) {
+                Button(L("저장", "Save"), action: save).disabled(!draft.edited)
+                    .help(L("내가 저장한 스킬은 🔒 잠겨서 AI나 회의가 바꾸려면 승인이 필요해요.", "Skills you save are locked 🔒: AIs and meetings need your approval to change them."))
+                Button(L("되돌리기", "Revert")) { draft.load(draft.loaded) }.disabled(!draft.edited)
+                Spacer()
+                Button(L("Finder에서 보기", "Show in Finder")) { NSWorkspace.shared.activateFileViewerSelecting([SkillsCatalog.file(row)]) }
+                Button(L("삭제…", "Delete…"), role: .destructive, action: delete)
+            }
+            .controlSize(.small)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func label(_ text: String) -> some View { Text(text).font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary) }
+
+    private func save() {
+        let name = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        draft.error = SkillsCatalog.save(row, name: name, description: draft.description, body: draft.body)
+        guard draft.error == nil else { return }
+        let id = SkillRowItem.id(row.project, name)
+        if draft.selected == id { open(id) } else { draft.selected = id }
+    }
+
+    private func delete() {
+        let alert = NSAlert()
+        alert.messageText = L("‘\(row.skill.name)’ 스킬을 지울까요?", "Delete the skill ‘\(row.skill.name)’?")
+        alert.informativeText = L("AI에게 더 이상 보내지 않아요. 지운 직후에는 창 아래 [취소]로 되돌릴 수 있어요.",
+                                  "The AIs no longer get it. Right after, [Undo] at the bottom of the window brings it back.")
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: L("삭제", "Delete"))
+        alert.addButton(withTitle: L("취소", "Cancel"))
+        alert.buttons.first?.hasDestructiveAction = true
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let result = SkillsCatalog.delete(row)
+        draft.error = result.error
+        guard result.error == nil else { return }
+        draft.selected = nil
+        if let removed = result.removed { draft.offerUndo(removed) }
+    }
+
+    private func made(_ record: SkillRecord, _ changes: [SkillHistoryEntry]) -> String {
+        let by = L("만든 주체: ", "Made by: ") + Self.who(record.createdBy, changes.first { $0.action == .add }?.actor)
+        if let added = changes.first(where: { $0.action == .add }) {
+            return by + " · " + Self.day(added.at) + (changes.count > 1 ? L(" · 최근 변경 ", " · last changed ") + Self.day(record.updatedAt) : "")
+        }
+        return by + " · " + L("앱 밖에서 넣은 파일 · ", "a file put in outside the app · ") + Self.day(record.updatedAt)
+    }
+
+    static func who(_ by: SkillAuthor, _ actor: String?) -> String {
+        switch by {
+        case .user: return L("사용자", "You")
+        case .ai: return actor ?? "AI"
+        case .meeting: return L("회의", "Meeting") + (actor.map { " (\($0))" } ?? "")
+        }
+    }
+
+    static func action(_ action: SkillAction) -> String {
+        switch action {
+        case .add: return L("만듦", "Created")
+        case .update: return L("수정", "Edited")
+        case .delete: return L("지움", "Deleted")
+        case .enable: return L("켬", "Turned on")
+        case .disable: return L("끔", "Turned off")
+        case .setAllEnabled: return L("모두 켜기/끄기", "Turn all on/off")
+        case .undo: return L("되돌림", "Undone")
+        }
+    }
+
+    static func day(_ date: Date) -> String { date.formatted(date: .abbreviated, time: .shortened) }
 }
 
 private struct SkillRow: View {

@@ -834,6 +834,26 @@ public final class SkillDirectory {
         }
     }
 
+    // The user opened the skill: clears its "new" badge. Not a change of the skill, so no history line (Undo skips it
+    // and it never blocks undoing the change that added the skill) and the lock and content stay as they are.
+    @discardableResult public func markSeen(_ name: String) -> Bool {
+        var changed = false
+        defer { if changed { onChange?() } }
+        lock.lock(); defer { lock.unlock() }
+        guard var index = loadIndex(), let i = index.skills.firstIndex(where: { $0.name == name }), index.skills[i].isNew else { return false }
+        index.skills[i].isNew = false
+        var tx = FileTransaction(root: root)
+        do {
+            try tx.writePrivateFile(try Self.prettyEncoder.encode(index), to: indexURL)
+            tx.commit()
+            changed = true
+            return true
+        } catch {
+            tx.rollback()
+            return false
+        }
+    }
+
     public func delete(_ name: String, by: SkillAuthor = .user,
                        actor: String? = nil, now: Date = Date(), turn: UUID? = nil) -> SkillOutcome {
         let now = Self.isoSecond(now)
@@ -1406,6 +1426,8 @@ public final class ProjectSkillStore: ObservableObject {
                               actor: String? = nil, now: Date = Date()) -> SkillOutcome {
         directory(project).setAllEnabled(enabled, by: by, actor: actor, now: now)
     }
+
+    @discardableResult public func markSeen(_ name: String, project: String) -> Bool { directory(project).markSeen(name) }
 
     public func delete(_ name: String, project: String, by: SkillAuthor = .user,
                        actor: String? = nil, now: Date = Date(), turn: UUID? = nil) -> SkillOutcome {

@@ -73,10 +73,9 @@ import AIProjects
     precondition(saved(SkillStore.shared.save(name: "tidy-notes", description: "Tidy meeting notes", body: "Steps", by: .user)))
     precondition(saved(SkillStore.shared.save(name: "ai-helper", description: "Added by an AI", body: "Steps", by: .ai)))
     precondition(saved(ProjectSkillStore.shared.save(name: "build-check", description: "Build first", body: "Steps", by: .meeting, project: project.id)))
-    let skillsHost = NSHostingView(rootView: SkillsView(projects: { [project] }, close: {}).frame(width: 600, height: 500))
-    let skillsWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 500), styleMask: [.titled], backing: .buffered, defer: false)
-    skillsWindow.contentView = skillsHost
-    func settle() { for _ in 0..<5 { skillsHost.layoutSubtreeIfNeeded(); skillsWindow.displayIfNeeded(); RunLoop.main.run(until: Date().addingTimeInterval(0.05)) } }
+    let skillsWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 880, height: 580), styleMask: [.titled], backing: .buffered, defer: false)
+    skillsWindow.contentView = NSHostingView(rootView: SkillsView(projects: { [project] }, close: {}).frame(width: 880, height: 580))
+    func settle() { for _ in 0..<5 { skillsWindow.contentView?.layoutSubtreeIfNeeded(); skillsWindow.displayIfNeeded(); RunLoop.main.run(until: Date().addingTimeInterval(0.05)) } }
     settle()
     let skillsStart = cpu()
     RunLoop.main.run(until: Date().addingTimeInterval(2))
@@ -104,6 +103,44 @@ import AIProjects
     precondition(enabled(.all) == ["tidy-notes": false, "ai-helper": false, "build-check": true])
     precondition(!listed().contains("ai-helper") && listed().contains("build-check"))
     settle()   // the window redraws with the stores' changes
-    skillsWindow.contentView = nil
     print("PASS: the skills window shows every skill, and its toggles and turn-all buttons reach the stores")
+
+    // The detail pane: opening a skill clears its "new" badge (lock unchanged) and holds still; saving there makes it
+    // the user's (locked, so an AI now needs approval); delete keeps a tombstone and [Undo] brings that delete back.
+    func globalRow(_ name: String) -> SkillRowItem? { SkillsCatalog.rows(.global, projects: [project]).first { $0.skill.name == name } }
+    let aiID = globalRow("ai-helper")!.skill.record.id
+    precondition(globalRow("ai-helper")!.skill.record.isNew && !globalRow("ai-helper")!.skill.record.userLocked)
+    skillsWindow.contentView = NSHostingView(rootView: SkillsView(projects: { [project] }, close: {}, selected: globalRow("ai-helper")!.id).frame(width: 880, height: 580))
+    settle()
+    precondition(!globalRow("ai-helper")!.skill.record.isNew && !globalRow("ai-helper")!.skill.record.userLocked)
+    let detailStart = cpu()
+    RunLoop.main.run(until: Date().addingTimeInterval(2))
+    guard cpu() - detailStart < 0.5 else { print("FAIL: the skills window with a skill open redraws itself while nothing changes"); exit(1) }
+    precondition(SkillsCatalog.save(globalRow("ai-helper")!, name: "ai-helper", description: "Edited by me", body: "New steps") == nil)
+    let edited = globalRow("ai-helper")!
+    precondition(edited.skill.record.userLocked && edited.skill.record.id == aiID && edited.skill.record.createdBy == .ai
+                 && SkillsCatalog.detail(edited)?.document.body == "New steps" && SkillsCatalog.changes(edited).first?.action == .add
+                 && SkillsCatalog.changes(edited).last?.action == .update)
+    if case .needsApproval = SkillStore.shared.save(name: "ai-helper", description: "AI again", body: "x", by: .ai) {} else { preconditionFailure("an AI changed a skill the user saved") }
+    // A SKILL.md put in by hand is locked; renaming it moves its folder instead of leaving a copy.
+    let outside = SkillStore.folder.appendingPathComponent("outside-note", isDirectory: true)
+    try! FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+    try! SkillDocument.render(name: "outside-note", description: "By hand", body: "Hand steps").write(to: outside.appendingPathComponent("SKILL.md"), atomically: true, encoding: .utf8)
+    precondition(globalRow("outside-note")!.skill.externallyModified && globalRow("outside-note")!.skill.record.userLocked)
+    precondition(SkillsCatalog.save(globalRow("outside-note")!, name: "outside-renamed", description: "By hand", body: "Hand steps") == nil)
+    precondition(globalRow("outside-note") == nil && !FileManager.default.fileExists(atPath: outside.path)
+                 && SkillsCatalog.detail(globalRow("outside-renamed")!)?.document.body == "Hand steps")
+    settle()
+    let removal = SkillsCatalog.delete(edited)
+    precondition(removal.error == nil && removal.removed?.name == "ai-helper" && globalRow("ai-helper") == nil
+                 && SkillStore.shared.tombstones().contains { $0.id == aiID } && !listed().contains("ai-helper"))
+    precondition(SkillsCatalog.set(globalRow("tidy-notes")!, true) == nil)   // a later change to another skill does not get in the way
+    precondition(SkillsCatalog.undo(removal.removed!) == nil)
+    let restored = globalRow("ai-helper")!
+    precondition(restored.skill.record.id == aiID && restored.skill.record.userLocked && SkillsCatalog.detail(restored)?.document.body == "New steps"
+                 && !SkillStore.shared.tombstones().contains { $0.id == aiID } && globalRow("tidy-notes")!.skill.record.enabled)
+    precondition(SkillsCatalog.undo(removal.removed!) != nil)   // that delete is already undone
+    settle()
+    skillsWindow.contentView = nil
+    print("PASS: the skills window opens a skill (clears new), saves it as the user's (locked), and deletes it with Undo")
 }}

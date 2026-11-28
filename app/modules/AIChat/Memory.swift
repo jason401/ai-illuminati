@@ -198,8 +198,13 @@ public final class MemoryStore: ObservableObject {
         return found.count == 1 ? found[0] : nil
     }
 
-    // memory_replace (text) and memory_forget (nil): the old version goes to history.
-    func change(_ id: String, to text: String?, room: UUID?, turn: UUID?, by: String?, meeting: UUID? = nil) -> Changed {
+    // Returned when `expected` no longer matches: the fact changed since the caller looked (Inbox approval, 회의 3/3).
+    static let changedSince = "The fact changed since."
+
+    // memory_replace (text) and memory_forget (nil): the old version goes to history. `expected`: change only while the
+    // fact still says this, checked in the same write so a change saved in between is not overwritten.
+    func change(_ id: String, to text: String?, room: UUID?, turn: UUID?, by: String?, meeting: UUID? = nil,
+                expected: String? = nil) -> Changed {
         var clean: String?
         if let text {
             let line = text.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -211,6 +216,7 @@ public final class MemoryStore: ObservableObject {
         var result = Changed.refused("No saved fact has the id \(id). Use the [id] shown before each saved fact.")
         let ok = update { data in
             guard let i = Self.find(id, in: data.items) else { return }
+            if let expected, data.items[i].text != expected { result = .refused(Self.changedSince); return }
             if let clean, data.items.enumerated().contains(where: { $0.offset != i && $0.element.text.lowercased() == clean.lowercased() }) {
                 result = .refused("Another saved fact already says this: forget this one with memory_forget instead."); return
             }

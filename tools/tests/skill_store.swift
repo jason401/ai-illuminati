@@ -1258,6 +1258,80 @@ private func testKnowledgeApproval() {
     expect(KnowledgeReview.undo(meeting) == nil && global.read("mine-apply")?.document.body == "line 1\nline 2"
            && global.read("mine-apply")?.record.userLocked == true && memory.snapshot.items.first { $0.id == keep.id }?.text == keep.text,
            "undoing the review restores the approved skill and fact")
+
+    // An older review refused the same candidate (it stayed pending): the later review's waiting change is the one decided.
+    _ = global.save(name: "mine-later", description: "Steps for mine-later", body: "first", by: .user)
+    _ = global.save(name: "mine-retry", description: "Steps for mine-retry", body: "first", by: .user)
+    guard case .saved(let retryFact) = memory.remember("사용자는 저녁에 걷는다", room: nil, turn: nil, roomTitle: nil, by: "Claude")
+    else { expect(false, "retry fact saved"); return }
+    let later = propose(.skill, ["name": "mine-later"]), retrySkill = propose(.skill, ["name": "mine-retry"])
+    let retryRow = propose(.memory, ["text": "사용자는 저녁에 오래 걷는다", "replaces_id": retryFact.shortID])
+    func review(_ json: String, _ rows: [KnowledgeCandidate]) -> UUID? {
+        let id = UUID()
+        guard let decisions = KnowledgeReview.decisions(from: json),
+              case .applied = KnowledgeReview.apply(decisions, meeting: id, attendees: ["a", "b"],
+                                                    candidates: rows.map { KnowledgeReview.Candidate(row: $0, project: nil, inProject: false) })
+        else { return nil }
+        return id
+    }
+    let first = review("[{\"candidate\":\"\(cid(later))\",\"action\":\"add\",\"name\":\"mine-later\",\"body\":\"again\"}]", [later])
+    let second = review("""
+    [{"candidate":"\(cid(later))","action":"modify","target":"\(sid("mine-later"))","body":"later body"},
+     {"candidate":"\(cid(retrySkill))","action":"modify","target":"\(sid("mine-retry"))","body":"retried body"},
+     {"candidate":"\(cid(retryRow))","action":"modify","target":"m:\(retryFact.shortID)","text":"사용자는 저녁에 오래 걷는다"}]
+    """, [later, retrySkill, retryRow])
+    expect(first != nil && second != nil && KnowledgeReview.records().first { $0.id == first }?.outcomes.first?.result == .refused
+           && KnowledgeInbox.shared.items.filter { $0.review == second }.count == 3, "the later review waits after an earlier refusal")
+    expect(KnowledgeApproval.decide(later.id, apply: true) == .applied && global.read("mine-later")?.document.body == "later body",
+           "Apply finds the later review's waiting change, not the earlier refused one")
+
+    // Apply saved the change but not its record: the next Apply finishes it instead of calling it changed since.
+    let retryItem = KnowledgeInbox.shared.items.first { $0.id == retrySkill.id }!
+    if case .saved = global.save(name: "mine-retry", description: "Steps for mine-retry", body: "retried body", by: .meeting,
+                                 id: retryItem.outcome.skillID, actor: "x", isNew: false, batch: second, approved: retryItem.outcome.proposal?.hash) {} else {
+        expect(false, "the half-done Apply saved the skill")
+    }
+    _ = memory.change(retryFact.id.uuidString, to: "사용자는 저녁에 오래 걷는다", room: nil, turn: nil, by: "x", meeting: second,
+                      expected: retryFact.text)
+    expect(KnowledgeApproval.decide(retrySkill.id, apply: true) == .applied && KnowledgeApproval.decide(retryRow.id, apply: true) == .applied
+           && global.read("mine-retry")?.document.body == "retried body", "a retried Apply closes the item as applied")
+    expect(KnowledgeReview.undo(second!) == nil && global.read("mine-retry")?.document.body == "first"
+           && memory.snapshot.items.first { $0.id == retryFact.id }?.text == retryFact.text, "and the review's Undo still takes it back")
+
+    // The fact's old text is compared inside the same write.
+    if case .refused(let why) = memory.change(retryFact.id.uuidString, to: "다른 문장", room: nil, turn: nil, by: "x", expected: "옛 문장") {
+        expect(why == MemoryStore.changedSince && memory.snapshot.items.first { $0.id == retryFact.id }?.text == retryFact.text,
+               "a fact that no longer says what was expected is not changed")
+    } else { expect(false, "a fact that no longer says what was expected is not changed") }
+
+    // A waiting decision saved before approvals kept a diff goes back to the next review.
+    _ = global.save(name: "mine-legacy", description: "Steps for mine-legacy", body: "first", by: .user)
+    let legacy = propose(.skill, ["name": "mine-legacy"])
+    let old = review("[{\"candidate\":\"\(cid(legacy))\",\"action\":\"modify\",\"target\":\"\(sid("mine-legacy"))\",\"body\":\"x\"}]", [legacy])
+    var stripped = KnowledgeReview.records()
+    if let i = stripped.firstIndex(where: { $0.id == old }) { stripped[i].outcomes[0].proposal = nil }
+    _ = KnowledgeReview.write(stripped)
+    let pendingBefore = (try? inbox.pendingRows().contains { $0.candidate.id == legacy.id }) ?? true
+    expect(KnowledgeApproval.releaseLegacy() && !pendingBefore && (try? inbox.pendingRows().contains { $0.candidate.id == legacy.id }) == true
+           && KnowledgeReview.records().first { $0.id == old }?.outcomes.first.map { $0.result == .refused && $0.decidedAt != nil } == true,
+           "a legacy waiting decision closes and its candidate is pending again")
+
+    // An untracked 🔒 SKILL.md renamed by a meeting waits, and the approved rename moves it and keeps it locked.
+    let outside = SkillStore.folder.appendingPathComponent("outside-skill", isDirectory: true)
+    try? FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+    try? SkillDocument.render(name: "outside-skill", description: "Made outside", body: "hand written")
+        .write(to: outside.appendingPathComponent("SKILL.md"), atomically: true, encoding: .utf8)
+    let synthetic = global.list().first { $0.name == "outside-skill" }!.record
+    if case .needsApproval = global.save(name: "outside-renamed", description: "Made outside", body: "AI", by: .meeting, id: synthetic.id) {} else {
+        expect(false, "renaming an untracked locked skill waits for approval")
+    }
+    expect(global.read("outside-renamed") == nil && global.read("outside-skill")?.document.body == "hand written",
+           "nothing is created or changed while it waits")
+    if case .saved(let renamed) = global.save(name: "outside-renamed", description: "Made outside", body: "AI", by: .meeting,
+                                              id: synthetic.id, approved: synthetic.contentHash) {
+        expect(renamed.id == synthetic.id && renamed.userLocked && global.read("outside-skill") == nil
+               && global.read("outside-renamed")?.document.body == "AI", "the approved rename moves the untracked skill and keeps it locked")
+    } else { expect(false, "the approved rename moves the untracked skill and keeps it locked") }
 }
 
 // Automatic idle review scheduling (회의 2/3): busy guards, iCloud host hook, >= 2 companies vs 1 company waiting for

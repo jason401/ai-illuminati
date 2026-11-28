@@ -611,8 +611,26 @@ public final class SkillDirectory {
             guard unusedSkillFolder(name) else { return occupiedSkillFolder(name) }
         }
 
+        // An untracked SKILL.md is known by its synthetic ID: a save naming that ID under another name renames it, and
+        // the lock and approval below still apply to it instead of creating an unlocked skill next to it.
+        var untrackedName: String?
+        if let id, existingIndex == nil {
+            let tracked = Set(index.skills.map(\.name))
+            untrackedName = diskSkillNames().first { found in
+                guard !tracked.contains(found), found != name,
+                      case .present(_, let hash, _, _) = inspectDiskSkill(found) else { return false }
+                return resolveRecord(name: found, tracked: nil, diskHash: hash, tombstones: index.tombstones).record.id == id
+            }
+            if untrackedName != nil {
+                if FileManager.default.fileExists(atPath: skillFile(name).path) {
+                    return .refused(L("같은 이름의 스킬(\(name))이 이미 있어요.", "A skill named \(name) already exists."))
+                }
+                guard unusedSkillFolder(name) else { return occupiedSkillFolder(name) }
+            }
+        }
+
         let existingRecord = existingIndex.map { index.skills[$0] }
-        let sourceName = existingRecord?.name ?? name
+        let sourceName = existingRecord?.name ?? untrackedName ?? name
         let disk = inspectDiskSkill(sourceName)
         if case .unreadable(let err) = disk {
             return .refused(saveFailure(err))
@@ -627,15 +645,17 @@ public final class SkillDirectory {
 
         // Untracked SKILL.md on disk is treated as user-authored and locked.
         if existingRecord == nil, case .present(_, let diskHash, let diskRaw, _) = disk {
-            let synthetic = resolveRecord(name: name, tracked: nil, diskHash: diskHash, tombstones: index.tombstones).record
+            let synthetic = resolveRecord(name: sourceName, tracked: nil, diskHash: diskHash, tombstones: index.tombstones).record
             if by != .user && approved != diskHash {
                 return .needsApproval(synthetic, approvalMessage())
             }
             let doc = SkillDocument(name: name, description: cleanDesc, body: body)
             var tx = FileTransaction(root: root)
             do {
+                if sourceName != name { try tx.moveFolder(skillFolder(sourceName), to: skillFolder(name)) }
                 let written = try tx.writeSkill(doc, to: skillFile(name))
                 var updated = synthetic
+                updated.name = name
                 updated.contentHash = written.hash
                 updated.userLocked = true
                 updated.isNew = isNew ?? false

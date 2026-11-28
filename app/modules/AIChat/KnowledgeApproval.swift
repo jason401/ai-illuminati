@@ -75,13 +75,21 @@ struct KnowledgeApproval: Identifiable, Equatable {
 
     enum Decision: Equatable { case applied, rejected, changed, failed(String) }
 
+    // Still waiting for the user's answer, with the before and after it is shown and applied with.
+    static func awaits(_ outcome: KnowledgeReviewRecord.Outcome) -> Bool {
+        outcome.result == .waiting && outcome.decidedAt == nil && outcome.proposal != nil
+    }
+
     // The user's answer (main thread): Apply or Reject one waiting change. `.changed`: the skill or fact is no longer as
     // the meeting saw it, so nothing is applied and the item closes. `.failed`: nothing changed, the item stays.
+    // An Apply whose change was saved but whose record was not is finished by the next Apply (found by the review's
+    // batch in the skill or memory history) instead of being taken for a change made since.
     static func decide(_ candidate: UUID, apply: Bool, now: Date = Date()) -> Decision {
         precondition(Thread.isMainThread)
         var records = KnowledgeReview.records()
-        guard let i = records.firstIndex(where: { $0.undoneAt == nil && $0.outcomes.contains { $0.candidate == candidate } }),
-              let j = records[i].outcomes.firstIndex(where: { $0.candidate == candidate && $0.result == .waiting && $0.decidedAt == nil }),
+        // The waiting decision itself: an older review may have refused the same candidate, which then stayed pending.
+        guard let i = records.lastIndex(where: { $0.undoneAt == nil && $0.outcomes.contains { $0.candidate == candidate && awaits($0) } }),
+              let j = records[i].outcomes.firstIndex(where: { $0.candidate == candidate && awaits($0) }),
               let proposal = records[i].outcomes[j].proposal
         else { return .failed(L("이미 처리된 항목이에요.", "This was already decided.")) }
         let review = records[i].id
@@ -100,6 +108,16 @@ struct KnowledgeApproval: Identifiable, Equatable {
         let by = L("지식 검토 회의 · 사용자 승인", "Knowledge review · approved by the user")
         if outcome.proposal?.text == nil {
             let project = outcome.project
+            func finish(_ name: String) -> Decision {
+                outcome.skill = name
+                if let project, !records[i].projects.contains(project) { records[i].projects.append(project) }
+                return close(.applied, .applied)
+            }
+            let history = project.map { ProjectSkillStore.shared.history($0) } ?? SkillStore.shared.history()
+            if let done = history.last(where: { entry in entry.batch == review && entry.by == .meeting
+                && (outcome.skillID.map { entry.skillID == $0 } ?? (entry.name == proposal.name)) }) {
+                return finish(done.name ?? proposal.name ?? "")
+            }
             let current = proposal.oldName.flatMap { name in project.map { ProjectSkillStore.shared.read(name, project: $0) } ?? SkillStore.shared.read(name) }
             guard let current, let hash = proposal.hash, current.record.contentHash == hash,
                   outcome.skillID.map({ $0 == current.record.id }) ?? true,
@@ -110,26 +128,47 @@ struct KnowledgeApproval: Identifiable, Equatable {
                                               id: outcome.skillID, actor: by, isNew: false, now: now, batch: review, approved: hash)
             } ?? SkillStore.shared.save(name: name, description: description, body: body, by: .meeting, id: outcome.skillID,
                                         actor: by, isNew: false, now: now, batch: review, approved: hash)
-            var saved: SkillRecord?
             switch result {
-            case .saved(let skill): saved = skill
-            case .updated(let skills): saved = skills.first
+            case .saved(let skill): return finish(skill.name)
+            case .updated(let skills): return finish(skills.first?.name ?? name)
             case .needsApproval: return close(.refused, .changed, why: changedSince)
             case .refused(let why): return .failed(why)
             default: return .failed(L("스킬을 저장하지 못했어요.", "The skill was not saved."))
             }
-            if let saved { outcome.skill = saved.name }
-            if let project, !records[i].projects.contains(project) { records[i].projects.append(project) }
+        }
+        guard let factID = outcome.fact, let text = proposal.text else { return close(.refused, .changed, why: changedSince) }
+        if MemoryStore.shared.snapshot.history.contains(where: { $0.meeting == review && $0.old.id == factID }) {
             return close(.applied, .applied)
         }
-        guard let factID = outcome.fact, let fact = MemoryStore.shared.snapshot.items.first(where: { $0.id == factID }),
-              fact.text == proposal.oldText, let text = proposal.text
-        else { return close(.refused, .changed, why: changedSince) }
         // change() keeps the fact the user's (its `meeting` stays nil); the history entry carries the review for its Undo.
-        switch MemoryStore.shared.change(fact.id.uuidString, to: text, room: nil, turn: nil, by: by, meeting: review) {
+        // `expected` compares the fact with what the meeting saw inside the same write.
+        switch MemoryStore.shared.change(factID.uuidString, to: text, room: nil, turn: nil, by: by, meeting: review,
+                                         expected: proposal.oldText ?? "") {
         case .changed: return close(.applied, .applied)
-        case .refused(let why): return .failed(why)
+        case .refused(let why) where why == MemoryStore.changedSince: return close(.refused, .changed, why: changedSince)
+        case .refused(let why):
+            guard MemoryStore.shared.snapshot.items.contains(where: { $0.id == factID }) else { return close(.refused, .changed, why: changedSince) }
+            return .failed(why)
         }
+    }
+
+    // 회의 1/3 kept a waiting decision without its before and after: it can be neither shown nor applied safely, so it
+    // closes and its candidate goes back to pending for the next review. Run once when the Inbox first loads.
+    @discardableResult
+    static func releaseLegacy(now: Date = Date()) -> Bool {
+        var records = KnowledgeReview.records(), states: [UUID: KnowledgeCandidate.State] = [:]
+        for i in records.indices where records[i].undoneAt == nil {
+            for j in records[i].outcomes.indices {
+                let o = records[i].outcomes[j]
+                guard o.result == .waiting, o.decidedAt == nil, o.proposal == nil else { continue }
+                records[i].outcomes[j].result = .refused; records[i].outcomes[j].decidedAt = now
+                records[i].outcomes[j].reason = "Saved before approvals kept a diff: back to pending for the next review."
+                states[o.candidate] = .pending
+            }
+        }
+        guard !states.isEmpty else { return true }
+        guard KnowledgeCandidates.shared.settle(states, from: .waiting) else { return false }
+        return KnowledgeReview.write(records)
     }
 }
 
@@ -138,7 +177,11 @@ final class KnowledgeInbox: ObservableObject {
     static let shared = KnowledgeInbox()
     @Published private(set) var items: [KnowledgeApproval] = []
 
-    private init() { items = Self.waiting(KnowledgeReview.records()) }
+    private init() {
+        items = Self.waiting(KnowledgeReview.records())
+        // After init: releasing writes the review file, which reloads `shared`.
+        DispatchQueue.main.async { KnowledgeApproval.releaseLegacy() }
+    }
 
     func reload() {
         let next = Self.waiting(KnowledgeReview.records())
@@ -147,7 +190,7 @@ final class KnowledgeInbox: ObservableObject {
 
     static func waiting(_ records: [KnowledgeReviewRecord]) -> [KnowledgeApproval] {
         records.filter { $0.undoneAt == nil }.reversed().flatMap { record in
-            record.outcomes.filter { $0.result == .waiting && $0.decidedAt == nil && $0.proposal != nil }
+            record.outcomes.filter(KnowledgeApproval.awaits)
                 .map { KnowledgeApproval(review: record.id, at: record.at, outcome: $0) }
         }
     }

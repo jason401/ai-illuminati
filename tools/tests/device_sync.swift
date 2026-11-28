@@ -275,7 +275,8 @@ func testKnowledgeSync() {
     expect(!syncA.settings.enabled && !syncA.settings.includeSchool, "it is on while chats from other Macs are off, Enterprise chats not included")
     let skills = SkillStore(folder: { skillsDir })
     var memory = MemoryData(), memoryBroken = false
-    let a = KnowledgeSync(sync: syncA, skills: skills, memory: { memoryBroken ? nil : memory })
+    let a = KnowledgeSync(sync: syncA, skills: skills, memory: { memoryBroken ? nil : memory }, updateMemory: { edit in edit(&memory); return true },
+                          candidates: KnowledgeCandidates(root: root.appendingPathComponent("local-a")), local: root.appendingPathComponent("local-a"))
     _ = skills.save(name: "lens-cleaning", description: "Clean a lens", body: "1. Blow off dust", by: .user)
     _ = skills.save(name: "school-procedure", description: "Made in an Enterprise chat", body: "Steps", by: .ai)
     _ = skills.save(name: "old-skill", description: "Old", body: "Gone soon", by: .user)
@@ -317,9 +318,15 @@ func testKnowledgeSync() {
 
     // Another Mac: its own folder; the host stays.
     on.deviceName = "MacBook"
-    let b = KnowledgeSync(sync: DeviceSync(deviceID: "mac-b", persist: false, settings: on), skills: SkillStore(folder: { root.appendingPathComponent("skills-b") }), memory: { MemoryData() })
-    expect(b.syncNow() == 0 && fm.fileExists(atPath: b.myFolder(folder).appendingPathComponent("state.json").path)
-           && KnowledgeSync.host(folder)?.device == "mac-a", "another Mac writes its own folder and leaves host.json as it is")
+    var memoryB = MemoryData()
+    let skillsB = SkillStore(folder: { root.appendingPathComponent("skills-b") })
+    let b = KnowledgeSync(sync: DeviceSync(deviceID: "mac-b", persist: false, settings: on), skills: skillsB,
+                          memory: { memoryB }, updateMemory: { edit in edit(&memoryB); return true },
+                          candidates: KnowledgeCandidates(root: root.appendingPathComponent("local-b")), local: root.appendingPathComponent("local-b"))
+    expect(b.syncNow() == 6 && fm.fileExists(atPath: b.myFolder(folder).appendingPathComponent("state.json").path)
+           && KnowledgeSync.host(folder)?.device == "mac-a", "another Mac takes the first Mac's six items, writes them in its own folder and leaves host.json as it is")
+    expect(skillsB.list().map(\.id.uuidString).sorted() == ids.values.sorted() && memoryB.items.map(\.id) == [mine.id, reviewed.id]
+           && memoryB.profile == "Postdoc", "the other Mac has the same skills and facts, under the same ids")
 
     // Changes: modify, disable, delete (tombstone), a review's change, a fact the user removed, the profile cleared.
     let lensHash = lens!.hash, oldHash = first.first { $0.id == ids["old-skill"] }!.hash
@@ -394,4 +401,153 @@ func testKnowledgeSync() {
     expect(a.syncNow() == 1 && rows().count == lines().count + 1 && lines().last?.kind == .profile && lines().last?.text == "Postdoc at Stanford",
            "after a line cut short, the next line still reads")
     print("PASS: knowledge sync: own folder, first full export, modify/enable/disable/tombstones with base hashes, host kept, off writes nothing, unreadable stores and cut lines")
+}
+
+/// "Sync skills & memory" 2/3: two throwaway Mac folders and one throwaway sync folder stand in for two Macs and iCloud Drive.
+func testKnowledgeSyncMerge() {
+    let fm = FileManager.default
+    let root = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("knowledge-merge-" + UUID().uuidString)
+    defer { try? fm.removeItem(at: root) }
+    let folder = root.appendingPathComponent("sync")
+    try? fm.createDirectory(at: folder, withIntermediateDirectories: true)
+    final class Mac {
+        let sync: KnowledgeSync, skills: SkillStore, inbox: KnowledgeCandidates, support: URL
+        var memory = MemoryData()
+        init(_ id: String, _ name: String, root: URL, folder: URL) {
+            var on = DeviceSyncSettings(); on.folder = folder.path; on.deviceName = name; on.syncsKnowledge = true
+            support = root.appendingPathComponent(id)
+            let skillsDir = support.appendingPathComponent("skills")
+            skills = SkillStore(folder: { skillsDir })
+            inbox = KnowledgeCandidates(root: support)
+            var box: Mac?
+            sync = KnowledgeSync(sync: DeviceSync(deviceID: id, persist: false, settings: on), skills: skills,
+                                 memory: { box?.memory }, updateMemory: { edit in guard let mac = box else { return false }; edit(&mac.memory); return true },
+                                 candidates: inbox, local: support)
+            box = self
+        }
+        func body(_ name: String) -> String? { skills.read(name)?.document.body }
+        func rows() -> [KnowledgeCandidate] { inbox.globalRows() ?? [] }
+    }
+    let mini = Mac("mac-a", "Mac mini", root: root, folder: folder), book = Mac("mac-b", "MacBook", root: root, folder: folder)
+    let t0 = Date(timeIntervalSince1970: 1_800_000_000)
+    func at(_ s: TimeInterval) -> Date { t0.addingTimeInterval(s) }
+
+    // The Mac mini syncs first and holds the reviews; the MacBook takes its skills and facts under the same ids.
+    _ = mini.skills.save(name: "lens-cleaning", description: "Clean a lens", body: "1. Blow off dust", by: .user, now: at(1))
+    _ = mini.skills.save(name: "plot-style", description: "Plot figures", body: "Use 12 pt", by: .ai, now: at(2))
+    let fact = MemoryItem(text: "Uses Caltrain", createdAt: at(3))
+    mini.memory.items = [fact]
+    expect(mini.sync.syncNow(now: at(10)) == 3 && mini.sync.isReviewHost, "the first Mac writes its three items and holds the reviews")
+    expect(book.sync.syncNow(now: at(11)) == 3, "the second Mac applies them and writes them as its own first pass")
+    let lensID = mini.skills.read("lens-cleaning")!.record.id
+    expect(book.skills.read("lens-cleaning")?.record.id == lensID && book.skills.read("lens-cleaning")?.record.userLocked == true
+           && book.skills.read("plot-style")?.record.createdBy == .ai && book.memory.items.map(\.id) == [fact.id],
+           "same ids, the user's skill locked, the AI's skill still the AI's")
+    expect(!book.sync.isReviewHost && KnowledgeSync.host(folder)?.device == "mac-a", "the other Mac does not hold reviews")
+    let miniHistory = mini.skills.history().count
+    expect(mini.sync.syncNow(now: at(12)) == 0 && mini.skills.history().count == miniHistory && mini.memory.items == [fact],
+           "the other Mac's copy of the same items changes nothing on the first")
+
+    // A change and a switch go across; a SKILL.md that does not match its line yet waits, the rest still applies.
+    _ = book.skills.save(name: "lens-cleaning", description: "Clean a lens", body: "1. Blow off dust\n2. Wipe once", by: .user, now: at(100))
+    _ = book.skills.setEnabled("plot-style", false, now: at(101))
+    expect(book.sync.syncNow(now: at(110)) == 2, "a modify and a disable")
+    let lensFile = book.sync.myFolder(folder).appendingPathComponent("skills/\(lensID.uuidString)/SKILL.md")
+    let lensText = try! Data(contentsOf: lensFile)
+    try! Data("---\nname: lens-cleaning\ndescription: Clean a lens\n---\nsomething newer\n".utf8).write(to: lensFile)
+    let bookLines = KnowledgeSync.lines(book.sync.myFolder(folder).appendingPathComponent("changes.jsonl")).count
+    _ = mini.sync.syncNow(now: at(120))
+    expect(mini.body("lens-cleaning") == "1. Blow off dust" && mini.skills.read("plot-style")?.record.enabled == false
+           && (mini.sync.loadCursor().read["mac-b"] ?? 0) < bookLines, "a SKILL.md that does not match waits; the switch is applied")
+    try! lensText.write(to: lensFile)
+    _ = mini.sync.syncNow(now: at(121))
+    expect(mini.body("lens-cleaning") == "1. Blow off dust\n2. Wipe once" && mini.sync.loadCursor().read["mac-b"] == bookLines,
+           "then it applies, and this Mac keeps how far it read each Mac")
+    expect(mini.skills.read("lens-cleaning")?.record.userLocked == true
+           && mini.skills.history().last { $0.skillID == lensID }?.by == .user, "applied as the user's change")
+    _ = book.sync.syncNow(now: at(122))
+
+    // A delete wins over a change made beside it, which goes to the inbox; the deleted skill never comes back.
+    _ = book.skills.save(name: "plot-style", description: "Plot figures", body: "Use 14 pt", by: .ai, now: at(200))
+    expect(book.sync.syncNow(now: at(210)) == 1, "the MacBook's AI edit goes out")
+    _ = mini.skills.delete("plot-style", now: at(205))
+    _ = mini.sync.syncNow(now: at(220))
+    expect(mini.skills.read("plot-style") == nil, "the Mac that deleted it does not take the edit made beside the delete")
+    _ = book.sync.syncNow(now: at(230))
+    let lostEdit = book.rows().first { $0.origin == "sync" && $0.content["body"] == "Use 14 pt" }
+    expect(book.skills.read("plot-style") == nil && book.skills.tombstones().contains { $0.name == "plot-style" } && lostEdit != nil,
+           "the other Mac deletes it too and puts its edit in the inbox")
+    _ = mini.sync.syncNow(now: at(240))
+    expect(mini.skills.read("plot-style") == nil && mini.rows().contains { $0.id == lostEdit?.id && $0.state == .pending },
+           "no resurrection, and the review Mac has that candidate")
+
+    // The user's change beats a review's made beside it on the other Mac, on both Macs; the review's text goes to the inbox.
+    let lockedHash = mini.skills.read("lens-cleaning")!.record.contentHash
+    _ = mini.skills.save(name: "lens-cleaning", description: "Clean a lens", body: "A-meeting", by: .meeting, now: at(300), approved: lockedHash)
+    _ = book.skills.save(name: "lens-cleaning", description: "Clean a lens", body: "B-user", by: .user, now: at(310))
+    _ = mini.sync.syncNow(now: at(320))
+    _ = book.sync.syncNow(now: at(330))
+    expect(book.body("lens-cleaning") == "B-user", "the MacBook keeps the user's version")
+    _ = mini.sync.syncNow(now: at(340))
+    let setAside = mini.rows().filter { $0.content["body"] == "A-meeting" }
+    expect(mini.body("lens-cleaning") == "B-user" && setAside.count == 1 && setAside.first?.content["replaces"] == "lens-cleaning"
+           && setAside.first?.state == .pending && book.rows().contains { $0.id == setAside.first?.id },
+           "the Mac mini takes the user's version; the review's text is one candidate, the same on both Macs")
+
+    // Both by the user: the later stays for now and both versions go to the review as one conflict-merge candidate.
+    mini.memory.history.append(MemoryChange(old: mini.memory.items[0], new: "Uses Caltrain and VTA", at: at(400)))
+    mini.memory.items[0].text = "Uses Caltrain and VTA"
+    book.memory.history.append(MemoryChange(old: book.memory.items[0], new: "Uses Caltrain and BART", at: at(410)))
+    book.memory.items[0].text = "Uses Caltrain and BART"
+    _ = mini.sync.syncNow(now: at(420))
+    _ = book.sync.syncNow(now: at(430))
+    _ = mini.sync.syncNow(now: at(440))
+    let merge = mini.rows().filter { $0.kind == .memory && $0.origin == "sync" }
+    expect(mini.memory.items.map(\.text) == ["Uses Caltrain and BART"] && book.memory.items.map(\.text) == ["Uses Caltrain and BART"],
+           "both Macs keep the later fact for now")
+    expect(merge.count == 1 && merge.first?.content["text"] == "Uses Caltrain and VTA" && merge.first?.content["replaces_id"] == fact.id.uuidString
+           && (merge.first?.evidence.contains("충돌 병합") == true || merge.first?.evidence.contains("Conflict merge") == true)
+           && merge.first?.evidence.contains("Uses Caltrain and BART") == true, "one conflict-merge candidate with both versions")
+
+    // Candidates: the MacBook only proposes; the review Mac takes its pending rows, and its outcome goes back.
+    func candidate(_ name: String) -> KnowledgeCandidate {
+        KnowledgeCandidate(kind: .skill, content: ["name": name, "description": "d", "body": "b"], evidence: "seen twice", accountID: "a",
+                           accountName: "ChatGPT", chatID: UUID(), turnID: UUID(), todoID: nil)
+    }
+    let fromBook = candidate("from-book"), fromMini = candidate("from-mini")
+    expect(book.inbox.submit(fromBook, project: nil) == nil && mini.inbox.submit(fromMini, project: nil) == nil, "candidates proposed on each Mac")
+    book.sync.shareable = { [fromBook.id] }; mini.sync.shareable = { [fromMini.id] }
+    _ = book.sync.syncNow(now: at(500))
+    _ = mini.sync.syncNow(now: at(510))
+    expect(mini.rows().first { $0.id == fromBook.id }?.origin == "mac-b" && mini.rows().first { $0.id == fromBook.id }?.state == .pending,
+           "the review Mac adds the other Mac's candidate to its inbox")
+    _ = book.sync.syncNow(now: at(520))
+    expect(!book.rows().contains { $0.id == fromMini.id }, "a Mac that does not hold reviews does not collect the others' candidates")
+    expect(mini.inbox.settle([fromBook.id: .applied]), "the review applies it")
+    _ = mini.sync.syncNow(now: at(530))
+    _ = book.sync.syncNow(now: at(540))
+    expect(book.rows().first { $0.id == fromBook.id }?.state == .applied && book.sync.shareable().contains(fromBook.id),
+           "the outcome reaches the Mac that proposed it")
+
+    // The review Mac quiet for over a week: the other Mac takes over, and the old one no longer holds reviews.
+    let week = KnowledgeSync.quiet
+    expect(book.sync.syncNow(now: at(540 + week - 3_600)) != nil && !book.sync.isReviewHost, "within a week the review Mac stays")
+    _ = book.sync.syncNow(now: at(540 + week + 3_600))
+    expect(book.sync.isReviewHost && KnowledgeSync.host(folder)?.device == "mac-b", "after a week without a pass the next Mac takes over")
+    _ = mini.sync.syncNow(now: at(540 + week + 7_200))
+    expect(!mini.sync.isReviewHost && book.sync.isReviewHost, "the old review Mac comes back and leaves the reviews to the new one")
+    let early = KnowledgeHost(device: "mac-c", name: "iMac", since: at(0)), late = KnowledgeHost(device: "mac-a", name: "Mac mini", since: at(5))
+    let devices = ["mac-c": KnowledgeDevice(name: "iMac", since: at(0), at: at(9))]
+    expect(KnowledgeSync.reviewHost([late, early], devices: devices, me: "mac-a", now: at(10)) == ("mac-c", false),
+           "two Macs that claimed at once: both take the earlier claim")
+
+    // The review: a row from another Mac is reviewed without its chat; this Mac's own rows still need theirs.
+    let shared = KnowledgeCandidates.shared, inboxFile = KnowledgeCandidates.file(nil), kept = try? Data(contentsOf: inboxFile)
+    defer { if let kept { try? kept.write(to: inboxFile) } else { try? fm.removeItem(at: inboxFile) } }
+    var remoteRow = candidate("from-other-mac"); remoteRow.origin = "mac-b"
+    let orphan = candidate("chat-gone")
+    expect(shared.merge([remoteRow, orphan], adding: true), "rows in this Mac's inbox")
+    let eligible = KnowledgeReviewLink.eligible(Discussion(model: AppModel(persist: false))).map(\.row.id)
+    expect(eligible.contains(remoteRow.id) && !eligible.contains(orphan.id), "another Mac's candidate is reviewed here; one whose chat is gone is not")
+    print("PASS: knowledge sync 2/3: other Macs' changes applied once, waits for SKILL.md, tombstones, user first, conflict-merge candidates, review Mac and takeover")
 }

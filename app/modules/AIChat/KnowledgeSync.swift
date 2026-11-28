@@ -6,12 +6,14 @@ import AIProjects
 // "Sync skills & memory" (연동 1/3): global skills, user memory and the skills' on/off state go to the folder
 // DeviceSync uses (iCloud Drive/AI Illuminati Sync by default), on their own switch (DeviceSyncSettings.syncsKnowledge):
 //   <folder>/knowledge/host.json                         the Mac that holds the knowledge review meetings: the first
-//                                                        one to turn this on (never overwritten)
+//                                                        one to turn this on, until it is quiet for a week (KnowledgeMerge.swift)
+//   <folder>/knowledge/<deviceID>/device.json            this Mac's name, when it started syncing and last passed
+//   <folder>/knowledge/<deviceID>/candidates.jsonl       its global candidate inbox, for the review Mac
 //   <folder>/knowledge/<deviceID>/changes.jsonl          one KnowledgeChange per add, modify, delete (tombstone),
 //                                                        enable and disable, with the hash it was made on
 //   <folder>/knowledge/<deviceID>/skills/<id>/SKILL.md   each skill as this Mac last wrote it
 //   <folder>/knowledge/<deviceID>/state.json             what the lines add up to: a pass writes only the difference
-// Each Mac writes only its own folder. Project skills and project memory stay on their Mac (projects differ per Mac).
+// Each Mac writes only its own folder (and host.json); it applies the other Macs' lines itself (KnowledgeMerge.swift). Project skills and project memory stay on their Mac (projects differ per Mac).
 // Enterprise skills go too (DeviceSync's includeSchool is for chats); user memory is never saved from Enterprise chats.
 // Without state.json (the first pass) everything goes out once as `add` lines marked `initial`.
 // A pass compares the stores with state.json, so changes made while it was off or the app was closed go out too;
@@ -56,21 +58,34 @@ final class KnowledgeSync {
 
     let deviceID: String
     private let sync: DeviceSync
-    private let skills: SkillStore
-    private let memory: () -> MemoryData?   // nil: memory.json could not be read (not the same as empty)
+    let skills: SkillStore
+    let memory: () -> MemoryData?   // nil: memory.json could not be read (not the same as empty)
+    let updateMemory: ((inout MemoryData) -> Void) -> Bool
+    let candidates: KnowledgeCandidates
+    let local: URL                  // this Mac's own record of what it read (KnowledgeMerge.swift)
+    // The global inbox candidates proposed here that may go to the other Macs (set by the app: chat there, not Enterprise).
+    var shareable: () -> Set<UUID> = { [] }
     private let io = DispatchQueue(label: "knowledge-sync")
     private var subscriptions: [AnyCancellable] = []
+    private var timer: Timer?
+    private var activation: NSObjectProtocol?
     private var scheduled: DispatchWorkItem?
     private let lock = NSLock()
     private var allowed = false   // the switch as the io queue sees it: turned off, a pass already queued writes nothing
+    private var hostCache: String?   // the review Mac as the last pass found it
     static let delay: TimeInterval = 3   // several changes in a row become one pass
     static let retry: TimeInterval = 60  // iCloud Drive away or a write failed: try again
 
-    init(sync: DeviceSync, skills: SkillStore = .shared, memory: @escaping () -> MemoryData? = { MemoryStore.shared.readableSnapshot }) {
+    init(sync: DeviceSync, skills: SkillStore = .shared, memory: @escaping () -> MemoryData? = { MemoryStore.shared.readableSnapshot },
+         updateMemory: @escaping ((inout MemoryData) -> Void) -> Bool = { MemoryStore.shared.update($0) },
+         candidates: KnowledgeCandidates = .shared, local: URL = URL(fileURLWithPath: AccountStore.supportDir)) {
         self.sync = sync
         self.deviceID = sync.deviceID
         self.skills = skills
         self.memory = memory
+        self.updateMemory = updateMemory
+        self.candidates = candidates
+        self.local = local
     }
 
     static func folder(_ sync: URL) -> URL { sync.appendingPathComponent("knowledge") }
@@ -82,9 +97,22 @@ final class KnowledgeSync {
         return Target(folder: sync.folder, name: sync.deviceName)
     }
 
-    // The app only (DeviceSync.start): a pass after skill, memory or settings changes.
-    func start() {
+    // The app only (DeviceSync.start): a pass after skill, memory or settings changes, at DeviceSync's scan interval and
+    // when the app comes forward (the other Macs' changes come in then); only the review Mac holds the reviews.
+    func start(discussion: Discussion) {
         guard subscriptions.isEmpty else { return }
+        shareable = { [weak discussion] in
+            guard let discussion else { return [] }
+            return Set(KnowledgeReviewLink.eligible(discussion).filter { !$0.inProject && $0.row.origin == nil }.map(\.row.id))
+        }
+        KnowledgeReviewLink.isReviewHost = { [weak self] in self?.isReviewHost ?? true }
+        let ticker = Timer(timeInterval: DeviceSync.interval, repeats: true) { [weak self] _ in self?.wake() }
+        ticker.tolerance = 30
+        RunLoop.main.add(ticker, forMode: .common)
+        timer = ticker
+        activation = NotificationCenter.default.addObserver(forName: Notification.Name("NSApplicationDidBecomeActiveNotification"), object: nil, queue: .main) { [weak self] _ in
+            self?.wake()
+        }
         subscriptions = [
             skills.$revision.dropFirst().sink { [weak self] _ in self?.schedule() },
             MemoryStore.shared.$data.dropFirst().sink { [weak self] _ in self?.schedule() },
@@ -94,6 +122,16 @@ final class KnowledgeSync {
             },
         ]
     }
+
+    // This Mac holds the knowledge reviews: always with sync off; with it on, while host.json names it (or nobody yet).
+    // Not known before the first pass: no review until then.
+    var isReviewHost: Bool {
+        guard sync.settings.syncsKnowledge else { return true }
+        lock.lock(); defer { lock.unlock() }
+        return hostCache == deviceID
+    }
+
+    private func wake() { if sync.settings.syncsKnowledge, scheduled == nil { schedule() } }
 
     private func allow(_ on: Bool) { lock.lock(); allowed = on; lock.unlock() }
     private var isAllowed: Bool { lock.lock(); defer { lock.unlock() }; return allowed }
@@ -105,8 +143,18 @@ final class KnowledgeSync {
             self.scheduled = nil
             guard let target = self.target else { return self.retryLater() }   // on but no folder: iCloud Drive may come back
             self.allow(true)
-            let memory = self.memory()   // read now, while it is on
-            self.io.async { if self.pass(target, memory: memory) == nil { DispatchQueue.main.async { self.retryLater() } } }
+            // Read the folder (io), apply the other Macs' changes (main: the stores and the inbox live there), write this Mac's.
+            self.io.async {
+                let remote = self.read(target, now: Date())
+                DispatchQueue.main.async {
+                    guard self.target != nil, self.isAllowed else { return }
+                    let shared = self.merge(remote, now: Date())
+                    let memory = self.memory()   // read now, while it is on
+                    self.io.async {
+                        if self.pass(target, memory: memory, remote: remote, shared: shared) == nil { DispatchQueue.main.async { self.retryLater() } }
+                    }
+                }
+            }
         }
         scheduled = work
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
@@ -123,17 +171,23 @@ final class KnowledgeSync {
     func syncNow(now: Date = Date()) -> Int? {
         guard let target else { return nil }
         allow(true)
+        let remote = io.sync { read(target, now: now) }
+        let shared = merge(remote, now: now)
         let memory = self.memory()
-        return io.sync { pass(target, memory: memory, now: now) }
+        return io.sync { pass(target, memory: memory, remote: remote, shared: shared, now: now) }
     }
 
     @discardableResult
-    private func pass(_ target: Target, memory data: MemoryData?, now: Date = Date()) -> Int? {
+    private func pass(_ target: Target, memory data: MemoryData?, remote: KnowledgeRemote, shared: [KnowledgeCandidate]?, now: Date = Date()) -> Int? {
         guard isAllowed else { return nil }
         let fm = FileManager.default
         let mine = myFolder(target.folder)
         do { try fm.createDirectory(at: mine.appendingPathComponent("skills"), withIntermediateDirectories: true) } catch { return nil }
-        claimHost(target, now: now)
+        if remote.takeOver { takeOver(target, now: now) } else if remote.host == nil { claimHost(target, now: now) }
+        let host = remote.takeOver ? deviceID : remote.host ?? Self.host(target.folder)?.device
+        lock.lock(); hostCache = host; lock.unlock()
+        heartbeat(mine, name: target.name, info: remote.myInfo, now: now)
+        if let shared { share(shared, to: mine, was: remote.myCandidates) }
         let stateFile = mine.appendingPathComponent("state.json")
         let old = (try? Data(contentsOf: stateFile)).flatMap { try? Self.decoder().decode(KnowledgeState.self, from: $0) }
         let initial: Bool? = old == nil ? true : nil
@@ -242,6 +296,28 @@ final class KnowledgeSync {
         guard !FileManager.default.fileExists(atPath: file.path),
               let data = try? Self.encoder().encode(KnowledgeHost(device: deviceID, name: target.name, since: now)) else { return }
         try? data.write(to: file, options: .withoutOverwriting)
+    }
+
+    // The review Mac went quiet for a week: this Mac, next in line, holds the reviews from now on.
+    private func takeOver(_ target: Target, now: Date) {
+        guard let data = try? Self.encoder().encode(KnowledgeHost(device: deviceID, name: target.name, since: now)) else { return }
+        try? data.write(to: Self.hostFile(target.folder), options: .atomic)
+    }
+
+    // device.json: when this Mac last passed (hourly at most, so iCloud Drive is not kept busy), and since when it syncs.
+    private func heartbeat(_ mine: URL, name: String, info: KnowledgeDevice?, now: Date) {
+        if let info, info.name == name, now.timeIntervalSince(info.at) < Self.heartbeat, info.at <= now { return }
+        let next = KnowledgeDevice(name: name, since: info?.since ?? now, at: now)
+        if let data = try? Self.encoder().encode(next) { try? data.write(to: mine.appendingPathComponent("device.json"), options: .atomic) }
+    }
+
+    // candidates.jsonl: this Mac's global inbox rows the other Macs see, written only when it changed.
+    private func share(_ rows: [KnowledgeCandidate], to mine: URL, was: Data?) {
+        let encoder = Self.encoder(); encoder.outputFormatting = [.sortedKeys]
+        var data = Data()
+        for row in rows { guard let line = try? encoder.encode(row) else { continue }; data.append(line); data.append(10) }
+        guard data != was ?? Data() else { return }
+        try? data.write(to: mine.appendingPathComponent("candidates.jsonl"), options: .atomic)
     }
 
     static func host(_ sync: URL) -> KnowledgeHost? {

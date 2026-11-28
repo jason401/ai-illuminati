@@ -3104,6 +3104,7 @@ runTest("testProjectCreate", testProjectCreate)
 runTest("testUpdateChannels", testUpdateChannels)
 runTest("testDeviceSync", testDeviceSync)
 runTest("testKnowledgeSync", testKnowledgeSync)
+runTest("testKnowledgeSyncMerge", testKnowledgeSyncMerge)
 
 runTest("testClaudeAgentStream", testClaudeAgentStream)
 runTest("testAgentRooms", testAgentRooms)

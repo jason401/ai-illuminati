@@ -167,7 +167,7 @@ public final class DeviceSync: ObservableObject {
         timer = ticker
         if settings.enabled { reconcile(); scan() }
         writeConnection()
-        if self === Self.shared { KnowledgeSync.shared.start() }
+        if self === Self.shared { KnowledgeSync.shared.start(discussion: discussion) }
     }
 
     // MARK: This Mac's phone page for the other Macs

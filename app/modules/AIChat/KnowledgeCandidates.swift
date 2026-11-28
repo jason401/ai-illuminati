@@ -20,6 +20,7 @@ struct KnowledgeCandidate: Codable, Identifiable {
     let todoID: UUID?
     var createdAt = Date()
     var state: State = .pending
+    var origin: String?   // nil: proposed in a chat on this Mac; else the Mac it came from or "sync" (a conflict, 연동 2/3)
 }
 
 // The main thread serializes tool calls and chat actions. The files are the record for quotas, including after a
@@ -35,8 +36,13 @@ final class KnowledgeCandidates: ObservableObject {
         let file: URL
     }
     private var receipts: [UUID: Receipt]?
+    private let root: URL?   // tests: another Mac's support folder
+
+    init(root: URL? = nil) { self.root = root }
 
     private static var support: URL { URL(fileURLWithPath: AccountStore.supportDir, isDirectory: true) }
+    private var support: URL { root ?? Self.support }
+    var globalFile: URL { root?.appendingPathComponent(Self.fileName) ?? Self.file(nil) }
     static func file(_ project: String?) -> URL {
         let folder = project.map { ProjectSkillStore.folder($0).deletingLastPathComponent() } ?? support
         return folder.appendingPathComponent(fileName)
@@ -52,7 +58,7 @@ final class KnowledgeCandidates: ObservableObject {
             if let todo = candidate.todoID, existing.contains(where: { $0.todoID == todo }) {
                 return L("TODO 하나에는 후보를 한 개만 올릴 수 있어요.", "Only one candidate can be proposed per TODO.")
             }
-            let file = Self.file(project)
+            let file = project.map { Self.file($0) } ?? globalFile
             // A directory listing can return a different URL for the same file as the project store.
             try write(try read(file) + [candidate], to: file)
             var updated = receiptIndex(files)
@@ -118,6 +124,34 @@ final class KnowledgeCandidates: ObservableObject {
         } catch { return false }
     }
 
+    // The global inbox as it is (KnowledgeSync shares it with the other Macs); nil when it cannot be read.
+    func globalRows() -> [KnowledgeCandidate]? { try? read(globalFile) }
+
+    // Rows from the other Macs' shared inboxes (연동 2/3): a row this Mac has takes the further state (pending, then
+    // waiting, then applied or dropped), so the review Mac's outcome reaches the Mac that proposed it; a pending row it
+    // does not have is added only when `adding` (the review Mac). False when the inbox could not be read or written.
+    func merge(_ rows: [KnowledgeCandidate], adding: Bool) -> Bool {
+        func rank(_ state: KnowledgeCandidate.State) -> Int { state == .pending ? 0 : state == .waiting ? 1 : 2 }
+        do {
+            var files = try readAll()
+            let known = Set(files.values.joined().map(\.id))
+            var global = files[globalFile] ?? [], touched = false
+            for row in rows {
+                if let i = global.firstIndex(where: { $0.id == row.id }) {
+                    if rank(row.state) > rank(global[i].state) { global[i].state = row.state; touched = true }
+                } else if adding, row.state == .pending, !known.contains(row.id), !global.contains(where: { $0.id == row.id }) {
+                    global.append(row); touched = true
+                }
+            }
+            guard touched else { return true }
+            try write(global, to: globalFile)
+            files[globalFile] = global
+            receipts = receiptIndex(files)
+            revision += 1
+            return true
+        } catch { return false }
+    }
+
     private func receiptIndex(_ files: [URL: [KnowledgeCandidate]]) -> [UUID: Receipt] {
         var updated: [UUID: Receipt] = [:]
         for (file, rows) in files {
@@ -129,7 +163,7 @@ final class KnowledgeCandidates: ObservableObject {
     }
 
     private func filesOnDisk() throws -> [URL] {
-        let projects = Self.support.appendingPathComponent("projects", isDirectory: true)
+        let projects = support.appendingPathComponent("projects", isDirectory: true)
         let fm = FileManager.default
         try checkLink(projects)
         let folders: [URL]
@@ -139,7 +173,7 @@ final class KnowledgeCandidates: ObservableObject {
             folders = []
         }
         // Match the existing project store's directory IDs. Other files under projects are unrelated.
-        return [Self.file(nil)] + folders.filter {
+        return [globalFile] + folders.filter {
             $0.lastPathComponent.range(of: "^[0-9a-f]{16}$", options: .regularExpression) != nil
         }.map { $0.appendingPathComponent(Self.fileName) }
     }

@@ -609,8 +609,13 @@ public enum KnowledgeReviewLink {
             do { return try ProjectMemoryStore.shared.accessLock(project) == nil } catch { return false }
         }
         return rows.compactMap { file, row in
-            guard let chat = chats[row.chatID], chat.enterpriseLock == nil, row.kind == .skill || memoryOn else { return nil }
             let folder = file.deletingLastPathComponent().resolvingSymlinksInPath().path
+            // From another Mac or a sync conflict (연동 2/3): its chat is not here; the Mac that shared it checked it.
+            if row.origin != nil {
+                guard folder == global, row.kind == .skill || memoryOn else { return nil }
+                return .init(row: row, project: nil, inProject: false)
+            }
+            guard let chat = chats[row.chatID], chat.enterpriseLock == nil, row.kind == .skill || memoryOn else { return nil }
             if folder == global {
                 let project = chat.workspace?.project.map(SidebarProjects.key)
                 guard row.kind == .memory || project.map(open) ?? true else { return nil }

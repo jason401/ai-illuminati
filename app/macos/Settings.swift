@@ -1318,10 +1318,11 @@ private struct MemorySettingsCard: View {
         let kept = sync.settings.syncsKnowledge
             ? L("이 Mac에 저장되고 iCloud Drive로 다른 Mac과 연동돼요. 답할 때 그 AI에게 보내져요.",
                 "It is kept on this Mac and synced with your other Macs through iCloud Drive. It is sent to the AI that answers.")
-            : L("이 Mac에만 저장되지만 답할 때 그 AI에게 보내져요.", "It stays on this Mac but is sent to the AI that answers.")
+            : L("이 Mac에 저장되고 다른 Mac과 연동하지 않지만 답할 때 그 AI에게 보내져요. 전에 연동을 켰다면 동기화 폴더에 올라간 사본은 지울 때까지 남아요.",
+                "It is kept on this Mac, not synced, but sent to the AI that answers. If sync was on before, the copies already in the sync folder stay until you delete them.")
         return L("모든 AI가 같은 기억을 읽어요. ", "Every AI reads the same memory. ") + kept
-            + L(" Enterprise 방은 읽기만 하고 저장하지 않아요. 비밀번호나 키는 저장하지 않아요. 스킬은 AI가 필요할 때 읽는 작업 순서이고, 꺼진 스킬은 AI에게 보내지 않아요.",
-                " Enterprise chats only read it. Passwords and keys are never saved. Skills are procedures the AIs read when needed; skills turned off are not sent.")
+            + L(" Enterprise 방은 읽기만 하고 저장하지 않아요. 비밀번호나 키는 저장하지 않아요. 스킬은 AI가 필요할 때 읽는 작업 순서이고, 꺼진 스킬은 답할 때 보내지 않아요(검토 회의에는 비슷한 스킬로 보일 수 있어요).",
+                " Enterprise chats only read it. Passwords and keys are never saved. Skills are procedures the AIs read when needed; skills turned off are not sent with answers (a review meeting may see them as similar skills).")
     }
 
     var body: some View {
@@ -1372,10 +1373,10 @@ private struct MemorySettingsCard: View {
                     get: { sync.settings.syncsKnowledge }, set: { sync.settings.syncsKnowledge = $0 }))
                     .labelsHidden().toggleStyle(.switch)
             }
-            .help(L("켜면 전역 스킬(켜짐·꺼짐 포함)과 기억(프로필·저장된 내용)이 둘 다 iCloud Drive의 동기화 폴더에 올라가 다른 Mac과 같이 써요. Enterprise에서 만든 스킬도 올라가요. 프로젝트 스킬과 프로젝트 기억은 Mac마다 달라서 올리지 않아요. Advanced Data Protection이 꺼져 있으면 end-to-end 암호화가 아니에요. ‘다른 기기의 대화’가 꺼져 있어도 따로 켤 수 있어요.",
-                    "When on, global skills (with their on/off state) and memory (profile and saved facts) both go to the sync folder in iCloud Drive, shared with your other Macs. Skills made in Enterprise chats go too. Project skills and project memory stay on each Mac. Without Advanced Data Protection this is not end-to-end encrypted. Works even when ‘Chats from other Macs’ is off."))
-            Text(L("켜면 스킬과 기억이 둘 다 iCloud Drive에 올라가요. Advanced Data Protection이 꺼져 있으면 end-to-end 암호화가 아니에요.",
-                   "Skills and memory both go to iCloud Drive. Without Advanced Data Protection this is not end-to-end encrypted."))
+            .help(L("켜면 전역 스킬(켜짐·꺼짐 포함)과 기억(프로필·저장된 내용), AI가 제안한 전역 후보와 그 근거가 iCloud Drive의 동기화 폴더에 올라가 다른 Mac과 같이 써요. Enterprise에서 만든 스킬도 올라가요. 프로젝트 스킬과 프로젝트 기억은 Mac마다 달라서 올리지 않아요. Advanced Data Protection이 꺼져 있으면 end-to-end 암호화가 아니에요. 끄면 더 올리지 않지만 올라간 파일은 남아요. ‘다른 기기의 대화’가 꺼져 있어도 따로 켤 수 있어요.",
+                    "When on, global skills (with their on/off state) and memory (profile and saved facts), and the global candidates AIs proposed with their evidence go to the sync folder in iCloud Drive, shared with your other Macs. Skills made in Enterprise chats go too. Project skills and project memory stay on each Mac. Without Advanced Data Protection this is not end-to-end encrypted. Turning it off stops uploads; files already there stay. Works even when ‘Chats from other Macs’ is off."))
+            Text(L("켜면 스킬·기억·후보가 iCloud Drive에 올라가요. Advanced Data Protection이 꺼져 있으면 end-to-end 암호화가 아니에요.",
+                   "Skills, memory and candidates go to iCloud Drive. Without Advanced Data Protection this is not end-to-end encrypted."))
                 .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 10).padding(.bottom, 6)
         }

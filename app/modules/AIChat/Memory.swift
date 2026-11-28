@@ -4,7 +4,7 @@ import AILocalization
 import AIProjects
 import AIWorkspace
 
-// Long-term memory (note 8): what every AI should know about the user, kept in <support>/memory.json and put into every
+// Long-term memory (note 8): what every AI should know about the user, kept in <support>/memory/memory.json and put into every
 // plain-chat and project request (soloInstruction). Two parts: a short profile the user writes, and saved facts,
 // one line each. Facts are saved with remember in an answer to a message that asks for it ("기억해", "remember").
 // AIs use memory_propose for facts they picked themselves, when the user's candidate setting allows it.

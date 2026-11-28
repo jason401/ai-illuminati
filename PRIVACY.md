@@ -45,7 +45,7 @@ It runs only on your Mac. The developer runs no server and collects no data from
 ## Skills and memory
 
 - **Where they are kept** (all in `~/Library/Application Support/AI Illuminati`):
-  - Memory (your profile and saved facts, with their history for Undo): `memory.json`. Project memory:
+  - Memory (your profile and saved facts, with their history for Undo): `memory/memory.json`. Project memory:
     `projects/<project>/memory.json`.
   - Skills (procedures the AIs follow): global ones in `skills/<name>/SKILL.md` with `skills.json` and
     `skills-history.jsonl`; project skills in `projects/<project>/skills/`.
@@ -55,16 +55,18 @@ It runs only on your Mac. The developer runs no server and collects no data from
 - **What is sent to an AI**, always to the AI service you chose for that answer, under your own account:
   - Memory: the profile and saved facts go with every plain-chat and project request while memory is on.
   - The `[Skills]` list: the names and short descriptions of the skills that are on (global and the current project's),
-    in every request. Skills that are off are not sent.
+    in every request. Skills that are off are not listed.
   - A skill's full text, only when an AI reads it with `skill_read`.
   - Review meetings: when the app is idle, a hidden meeting of up to three of your AIs (Ollama on this Mac only when you
     turned it on) gets the pending candidates with their evidence, the most similar saved skills and facts, and the
-    rules for deciding. Candidates from Enterprise chats and projects with an Enterprise audience are left out. Changes
+    rules for deciding. The similar skills can include ones that are off (their description and the start of their
+    text), so the review does not add a skill you already have. Candidates from Enterprise chats and projects with an Enterprise audience are left out. Changes
     to your own facts and to skills you saved (🔒) wait for your approval in the Inbox.
 - **Sync skills & memory** (Settings → Skills & Memory) is **off by default**. Only if you turn it on: global skills
   (with their on/off state), the memory profile and saved facts, and the global candidates are written to
   `knowledge/<this Mac>/` in the sync folder (iCloud Drive/AI Illuminati Sync by default) as plain readable files:
-  `changes.jsonl` (one line per change, including deletions, so a deleted item is not brought back), `skills/<id>/SKILL.md`,
+  `changes.jsonl` (one line per change, including deletions, so the other Macs delete the item too; when an AI's or a
+  review's delete meets your own edit on another Mac, your edit stays), `skills/<id>/SKILL.md`,
   `state.json`, `device.json` (this Mac's name and sync times) and `candidates.jsonl`; `knowledge/host.json` names the Mac
   that holds the review meetings. Your other Macs read these files and apply the changes. Project skills and project
   memory are never synced. Skills made in Enterprise chats are synced too; memory is never saved from Enterprise chats.
@@ -92,7 +94,7 @@ Questions: open an issue at https://github.com/jason401/ai-illuminati/issues .
 - 구글 드라이브는 직접 추가해야 연결되고, Google 공식 Drive MCP 서버만 써요. AI는 찾기·읽기·내려받기를 하고, 쓰기(연필)를 켜면 파일·폴더 만들기, 복사, 새 버전 올리기를 해요. 공식 MCP에 없는 삭제·휴지통·이동·이름 바꾸기·공유는 하지 않아요.
 - 구글 로그인 정보는 내 Mac의 키체인에만 저장돼요.
 - AI에게 질문할 때, 그 답에 필요한 파일 내용은 내가 고른 AI 서비스(Claude, ChatGPT 등)로 보내져요.
-- 기억(프로필·저장된 내용)·스킬·후보함은 내 Mac(`~/Library/Application Support/AI Illuminati`)에 저장돼요. 기억과 켜진 스킬의 이름·설명([Skills] 목록)은 답하는 AI에게 매번 보내지고, 스킬 본문은 AI가 skill_read로 읽을 때만 보내져요. 한가할 때 열리는 검토 회의에는 후보와 근거, 비슷한 스킬·기억이 회의에 참여하는 AI에게 보내져요(Enterprise 방 후보는 빼요).
-- "스킬 & 기억 연동"을 켜면(기본 꺼짐) 전역 스킬·기억·후보가 동기화 폴더의 `knowledge/<이 Mac>/`에 읽을 수 있는 파일로 올라가 다른 Mac과 같이 써요. 프로젝트 스킬·프로젝트 기억은 올리지 않아요. Advanced Data Protection이 꺼져 있으면 iCloud Drive는 end-to-end 암호화가 아니에요(Apple이 키를 가짐).
+- 기억(프로필·저장된 내용)·스킬·후보함은 내 Mac(`~/Library/Application Support/AI Illuminati`)에 저장돼요. 기억과 켜진 스킬의 이름·설명([Skills] 목록)은 답하는 AI에게 매번 보내지고, 스킬 본문은 AI가 skill_read로 읽을 때만 보내져요. 한가할 때 열리는 검토 회의에는 후보와 근거, 비슷한 스킬(꺼진 스킬의 설명·본문 앞부분 포함)·기억이 회의에 참여하는 AI에게 보내져요(Enterprise 방 후보는 빼요).
+- "스킬 & 기억 연동"을 켜면(기본 꺼짐) 전역 스킬·기억·후보가 동기화 폴더의 `knowledge/<이 Mac>/`에 읽을 수 있는 파일로 올라가 다른 Mac과 같이 써요. 프로젝트 스킬·프로젝트 기억은 올리지 않아요. Advanced Data Protection이 꺼져 있으면 iCloud Drive는 end-to-end 암호화가 아니에요(Apple이 키를 가짐). 연동을 끄면 더 올리지 않지만 이미 올라간 파일은 지울 때까지 남아요.
 - "다른 기기의 대화"를 켜면(기본 꺼짐), 고른 대화의 사본이 동기화 폴더(기본 iCloud Drive)에 읽을 수 있는 파일로 저장돼요. 엔터프라이즈 대화는 따로 켜야 올라가요.
 - 연결 끊기: 사이드바 공동 폴더의 Google Drive를 오른쪽 클릭 → 연결 끊기(Google에서도 취소돼요), 또는 https://myaccount.google.com/permissions

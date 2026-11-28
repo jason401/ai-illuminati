@@ -163,7 +163,7 @@ final class SkillsWindow {
         // A fresh view each time (new identity, so the filter and last error start over): skills edited on disk or by
         // an AI meanwhile show up.
         let view = SkillsView(projects: { SkillsCatalog.projects(discussion) }, close: { [weak self] in self?.window?.close() },
-                              review: { KnowledgeReviewLink.run(in: discussion) })
+                              review: { KnowledgeReviewLink.run(in: discussion, done: $0) })
             .id(UUID())
             .frame(minWidth: 720, idealWidth: 880, minHeight: 420, idealHeight: 580)
         if let window, let host = window.contentViewController as? NSHostingController<AnyView> {
@@ -230,13 +230,13 @@ final class SkillsDraft: ObservableObject {
 struct SkillsView: View {
     let projects: () -> [SkillProject]
     let close: () -> Void
-    let review: (() -> Bool)?
+    let review: ((@escaping (String) -> Void) -> Bool)?    // starts a review; its argument gets the review's end line
     @ObservedObject private var global = SkillStore.shared
     @ObservedObject private var scoped = ProjectSkillStore.shared
     @StateObject private var draft: SkillsDraft
 
     init(projects: @escaping () -> [SkillProject], close: @escaping () -> Void, selected: String? = nil,
-         review: (() -> Bool)? = nil) {
+         review: ((@escaping (String) -> Void) -> Bool)? = nil) {
         self.projects = projects
         self.close = close
         self.review = review
@@ -262,7 +262,10 @@ struct SkillsView: View {
                     .disabled(rows.allSatisfy { !$0.skill.record.enabled })
                 if let review {
                     Button(L("지금 검토", "Review now")) {
-                        draft.note = review()
+                        // The end line replaces "reviewing" and redraws the window, also when only memory or the
+                        // inbox changed (the skill stores are all it watches otherwise).
+                        draft.error = nil
+                        draft.note = review { [weak draft] line in draft?.note = line }
                             ? L("스킬·기억 후보를 회의에서 검토하고 있어요. 끝나면 바로 적용돼요.", "A meeting is reviewing the skill and memory candidates; its decisions apply when it ends.")
                             : L("검토할 후보가 없거나, 회의할 AI가 둘보다 적거나, 이미 검토 중이에요.", "No candidates to review, fewer than two AIs to meet, or a review is already running.")
                     }

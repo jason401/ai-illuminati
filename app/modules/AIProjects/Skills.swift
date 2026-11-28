@@ -936,7 +936,7 @@ public final class SkillDirectory {
     }
 
     // Undoes every active change of one meeting, newest first, after checking that no later change outside it touched
-    // the same skills. `.updated` lists the restored records; nothing to undo is `.refused`.
+    // the same skills. `.updated` lists the restored records (none when every change was already undone one by one).
     public func undo(batch: UUID, by: SkillAuthor = .user, actor: String? = nil, now: Date = Date()) -> SkillOutcome {
         var changed = false
         defer { if changed { onChange?() } }
@@ -947,7 +947,6 @@ public final class SkillDirectory {
         }
         let undone = Self.undoneIDs(history)
         let targets = history.filter { $0.batch == batch && $0.action != .undo && !undone.contains($0.id) }
-        guard !targets.isEmpty else { return .refused(L("되돌릴 변경이 없어요.", "Nothing to undo.")) }
         var restored: [SkillRecord] = []
         for entry in targets.reversed() {
             let outcome = undoLocked(by: by, actor: actor, now: Self.isoSecond(now), change: entry.id)
@@ -959,13 +958,33 @@ public final class SkillDirectory {
     }
 
     private func batchBlock(_ batch: UUID) -> String? {
-        guard let history = loadHistory(), loadIndex() != nil else {
+        guard let history = loadHistory(), let index = loadIndex() else {
             return L("스킬 저장소를 읽지 못해서 되돌리지 못했어요.", "The skill store could not be read.")
         }
         let undone = Self.undoneIDs(history)
         let active = history.filter { $0.action != .undo && !undone.contains($0.id) }
         guard let first = active.firstIndex(where: { $0.batch == batch }) else { return nil }
-        let records = active.filter { $0.batch == batch }.flatMap { $0.items.flatMap { [$0.before?.record, $0.after?.record].compactMap { $0 } } }
+        let mine = active.filter { $0.batch == batch }
+        // What undoLocked checks before each change, for all of them up front: the file each change left is still on
+        // disk as it left it (readable, not edited outside), and a renamed skill's old name is free again.
+        var left: [UUID: SkillSnapshot] = [:]
+        for item in mine.flatMap(\.items) {
+            if let after = item.after { left[after.record.id] = after } else if let before = item.before { left[before.record.id] = nil }
+            if let before = item.before, let after = item.after, before.record.name != after.record.name,
+               index.skills.contains(where: { $0.name == before.record.name && $0.id != before.record.id }) || !unusedSkillFolder(before.record.name) {
+                return L("같은 이름의 스킬(\(before.record.name))이 이미 있어 되돌릴 수 없어요.", "A skill named '\(before.record.name)' already exists.")
+            }
+        }
+        for after in left.values {
+            switch inspectDiskSkill(after.record.name) {
+            case .unreadable(let error): return saveFailure(error)
+            case .present(_, let hash, _, _) where hash != after.record.contentHash:
+                return L("스킬(\(after.record.name))이 밖에서 직접 수정되어 되돌릴 수 없어요.",
+                         "Skill '\(after.record.name)' was edited externally and cannot be undone automatically.")
+            default: break
+            }
+        }
+        let records = mine.flatMap { $0.items.flatMap { [$0.before?.record, $0.after?.record].compactMap { $0 } } }
         let ids = Set(records.map(\.id)), names = Set(records.map(\.name))
         let later = active[(first + 1)...].filter { $0.batch != batch }
         if let entry = later.first(where: { entry in

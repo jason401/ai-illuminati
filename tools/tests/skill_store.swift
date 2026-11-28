@@ -1069,4 +1069,91 @@ func testKnowledgeReview() {
            && memory.snapshot.items.contains { $0.id == reviewFact.id && $0.text == "답은 짧게 쓴다" },
            "the review's facts are taken back")
     expect(KnowledgeReview.undo(record.id) != nil && KnowledgeReview.records().last?.undoneAt != nil, "a review undoes once")
+
+    // Guards (review fixes): applied straight, with the candidates as the meeting saw them.
+    _ = global.save(name: "shared-steps", description: "Use when sharing steps", body: "Shared body", by: .meeting, isNew: false)
+    guard case .saved(let edited) = memory.remember("회의가 넣은 사실", room: nil, turn: nil, roomTitle: nil, by: "Review", meeting: UUID())
+    else { expect(false, "a review's fact saved"); return }
+    memory.setItem(edited.id, text: "사용자가 고친 사실")
+    expect(memory.snapshot.items.first { $0.id == edited.id }?.meeting == nil, "a review's fact the user edits becomes the user's")
+    propose(.skill, skill("fresh-add", "Fresh body."), chat: plain)
+    propose(.skill, skill("same-name", "Another body."), chat: plain)
+    propose(.skill, skill("shared-better", "Not used."), chat: plain)
+    propose(.skill, skill("shared-again", "Not used."), chat: plain)
+    propose(.skill, skill("blank-body", "Not used."), chat: plain)
+    propose(.skill, skill("project-merge", "Not used.", scope: "project"), chat: linked)
+    propose(.skill, skill("dropped-meanwhile", "Dropped body."), chat: plain)
+    propose(.memory, ["text": "사용자가 고친 사실 정정", "replaces_id": edited.shortID], chat: plain)
+    let fresh = (try? inbox.pendingRows().map(\.candidate)) ?? []
+    func row(_ value: String) -> KnowledgeCandidate { fresh.first { $0.content["name"] == value || $0.content["text"] == value }! }
+    func cid(_ value: String) -> String { "c:" + String(row(value).id.uuidString.prefix(8)).lowercased() }
+    let shared = global.list().first { $0.name == "shared-steps" }!
+    let sid = "s:" + String(shared.id.uuidString.prefix(8)).lowercased()
+    let gone = row("dropped-meanwhile")
+    let names: Set = ["fresh-add", "same-name", "shared-better", "shared-again", "blank-body", "project-merge", "dropped-meanwhile", "사용자가 고친 사실 정정"]
+    let shown = KnowledgeReviewLink.eligible(discussion).filter { names.contains($0.row.content["name"] ?? $0.row.content["text"] ?? "") }
+    expect(shown.count == 8, "the meeting is shown every new candidate")
+    expect(inbox.drop(gone.id, chat: gone.chatID, turn: gone.turnID), "a candidate is dropped in its chat while the meeting runs")
+    let guards: [KnowledgeDecision] = KnowledgeReview.decisions(from: """
+    Agreed:
+    ```json
+    [{"candidate":"\(cid("fresh-add"))","action":"add","scope":"global","body":"Fresh body.\\n```\\nrun it\\n```","reason":"새 절차"},
+     {"candidate":"\(cid("same-name"))","action":"add","scope":"global","name":"shared-steps","reason":"같은 이름"},
+     {"candidate":"\(cid("shared-better"))","action":"modify","target":"\(sid)","description":"Use when sharing steps with others","reason":"설명만"},
+     {"candidate":"\(cid("shared-again"))","action":"modify","target":"\(sid)","body":"Second body","reason":"또 고침"},
+     {"candidate":"\(cid("blank-body"))","action":"add","scope":"global","body":"   ","reason":"빈 본문"},
+     {"candidate":"\(cid("project-merge"))","action":"modify","target":"review-output","scope":"project","body":"Merged from the project","reason":"전역에 합침"},
+     {"candidate":"c:\(String(gone.id.uuidString.prefix(8)))","action":"add","scope":"global","reason":"이미 버림"},
+     {"candidate":"\(cid("사용자가 고친 사실 정정"))","action":"modify","target":"M: \(edited.shortID.uppercased())","text":"사용자가 고친 사실 정정","reason":"정정"}]
+    ```
+    """) ?? []
+    expect(guards.count == 8, "a list whose skill body has its own code fence still decodes")
+    let meetingID = UUID()
+    guard case .applied(let second) = KnowledgeReview.apply(guards, meeting: meetingID, attendees: ["a", "b"], candidates: shown)
+    else { expect(false, "the guard review applies"); return }
+    func result(_ value: String) -> KnowledgeReviewRecord.Outcome? { second.outcomes.first { $0.candidate == row(value).id } }
+    let stillPending = Set(((try? inbox.pendingRows().map(\.candidate.id)) ?? []))
+    expect(global.read("review-output")?.document.body == "Merged from the project" && result("project-merge")?.result == .applied
+           && result("project-merge")?.project == nil, "a project candidate can modify the similar global skill it was shown")
+    expect(result("fresh-add")?.result == .applied && global.read("fresh-add")?.document.body.contains("```\nrun it") == true,
+           "an added skill keeps the code fence in its body")
+    expect(result("same-name")?.result == .refused && stillPending.contains(row("same-name").id)
+           && global.read("shared-steps")?.document.body == "Shared body",
+           "add never overwrites a saved skill of that name; the candidate waits for the next review")
+    expect(global.read("shared-steps")?.document.description == "Use when sharing steps with others"
+           && global.read("shared-steps")?.document.body == "Shared body" && global.read("shared-steps")?.record.name == "shared-steps",
+           "modify keeps the saved name and body where the decision leaves them out")
+    expect(result("shared-again")?.result == .refused && stillPending.contains(row("shared-again").id),
+           "a second change to the same skill in one review is not applied, and its candidate stays pending")
+    expect(result("blank-body")?.result == .refused && global.read("blank-body") == nil && !stillPending.contains(row("blank-body").id),
+           "a skill with an empty body is refused")
+    expect(result("dropped-meanwhile") == nil && global.read("dropped-meanwhile") == nil
+           && (try? inbox.pendingRows())?.contains { $0.candidate.id == gone.id } == false,
+           "a candidate dropped while the meeting ran is not applied")
+    expect(result("사용자가 고친 사실 정정")?.result == .waiting && memory.snapshot.items.first { $0.id == edited.id }?.text == "사용자가 고친 사실",
+           "an \"M: <ID>\" target is found, and a fact the user edited waits for approval")
+
+    let file = SkillStore.folder.appendingPathComponent("fresh-add/SKILL.md")
+    let raw = try! Data(contentsOf: file)
+    try! Data("---\nname: fresh-add\ndescription: edited\n---\nEdited outside\n".utf8).write(to: file)
+    expect(KnowledgeReview.undo(meetingID) != nil && global.history().filter { $0.batch == meetingID && $0.action == .undo }.isEmpty
+           && KnowledgeReview.records().last?.undoneAt == nil,
+           "a skill edited on disk blocks the whole undo before anything changes, and the review can be undone later")
+    try! raw.write(to: file)
+    expect(KnowledgeReview.undo(meetingID) == nil && global.read("fresh-add") == nil
+           && global.read("shared-steps")?.document.description == "Use when sharing steps" && global.read("review-output")?.document.body == "Old body",
+           "the review undoes once the file is back")
+
+    // Memory turned off, or a project with an Enterprise audience: their candidates wait.
+    propose(.memory, ["text": "꺼진 동안의 후보"], chat: plain)
+    propose(.skill, skill("locked-project", "Body."), chat: linked, project: key)
+    memory.update { $0.enabled = false }
+    var waiting = KnowledgeReviewLink.eligible(discussion)
+    expect(!waiting.contains { $0.row.kind == .memory } && waiting.contains { $0.row.content["name"] == "locked-project" },
+           "memory candidates wait while memory is off")
+    memory.update { $0.enabled = true }
+    _ = try! ProjectMemoryStore.shared.accessLock(key, protecting: locked.enterpriseLock!)
+    waiting = KnowledgeReviewLink.eligible(discussion)
+    expect(!waiting.contains { $0.project == key } && waiting.contains { $0.row.content["text"] == "꺼진 동안의 후보" },
+           "a project with a saved Enterprise audience keeps its candidates and skills out of the review")
 }

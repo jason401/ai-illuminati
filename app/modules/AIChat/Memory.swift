@@ -122,7 +122,8 @@ public final class MemoryStore: ObservableObject {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         let line = String(text.replacingOccurrences(of: "\n", with: " ").prefix(Self.itemLength))
         update { data in
-            if let i = data.items.firstIndex(where: { $0.id == id }) { data.items[i].text = line }
+            // A review's fact the user edited is the user's now: a later review only proposes changes to it.
+            if let i = data.items.firstIndex(where: { $0.id == id }), data.items[i].text != line { data.items[i].text = line; data.items[i].meeting = nil }
         }
     }
     // A fact the user removed has no Undo left: its changes go too, so an old "Undo" never brings it back.
@@ -250,19 +251,19 @@ public final class MemoryStore: ObservableObject {
     }
 
     // Takes back what one knowledge review did: its changes newest first (each as undo does), then the facts it added
-    // that are still as it left them. Facts the user edited or changed again since stay; returns how many did not.
-    func undoMeeting(_ meeting: UUID) -> Int {
+    // that are still as it left them (the user's edit clears `meeting`, an AI's change leaves history). Facts changed
+    // again since stay: `left` counts them; saved is false when memory could not be written.
+    func undoMeeting(_ meeting: UUID) -> (left: Int, saved: Bool) {
         var left = 0
         for change in snapshot.history.filter({ $0.meeting == meeting }).reversed() where !undo(change.id) { left += 1 }
-        let added = snapshot.items.filter { $0.meeting == meeting }
-        update { data in
-            for item in added {
-                guard let i = data.items.firstIndex(where: { $0.id == item.id && $0.text == item.text }),
-                      !data.history.contains(where: { $0.old.id == item.id }) else { left += 1; continue }
-                data.items.remove(at: i)
+        let saved = update { data in
+            data.items.removeAll { item in
+                guard item.meeting == meeting else { return false }
+                guard !data.history.contains(where: { $0.old.id == item.id }) else { left += 1; return false }
+                return true
             }
         }
-        return left
+        return (left, saved)
     }
 
     // Saved facts that share many words with `text` (longer words count more, so a shared "씀" alone is not

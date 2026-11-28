@@ -388,7 +388,7 @@ KnowledgeReview.Outcome.refused(_:) | case refused(String)
 KnowledgeReview.records() | static func records() -> [KnowledgeReviewRecord]
 KnowledgeReview.undo(_:now:) | static func undo(_ meeting: UUID, now: Date = Date()) -> String?
 KnowledgeReviewLink | enum KnowledgeReviewLink
-KnowledgeReviewLink.run(in:) | @discardableResult static func run(in discussion: Discussion) -> Bool
+KnowledgeReviewLink.run(in:done:) | @discardableResult static func run(in discussion: Discussion, done: ((String) -> Void)? = nil) -> Bool
 KnowledgeReviewRecord | struct KnowledgeReviewRecord
 KnowledgeReviewRecord.Outcome | struct Outcome
 KnowledgeReviewRecord.Outcome.candidate | var candidate: UUID

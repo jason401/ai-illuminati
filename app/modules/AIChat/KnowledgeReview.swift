@@ -87,10 +87,11 @@ public enum KnowledgeReview {
     static func decisions(from text: String) -> [KnowledgeDecision]? {
         let decoder = JSONDecoder()
         if let list = try? decoder.decode([KnowledgeDecision].self, from: Data(text.utf8)) { return list }
-        let fenced = text.components(separatedBy: "```")
-        if fenced.count == 3, let newline = fenced[1].firstIndex(of: "\n") {
-            let body = fenced[1][fenced[1].index(after: newline)...]
-            return try? decoder.decode([KnowledgeDecision].self, from: Data(body.utf8))
+        // From the first fence to the last, so a skill body with its own fences still decodes.
+        if let open = text.range(of: "```"), let close = text.range(of: "```", options: .backwards), open.upperBound < close.lowerBound,
+           let newline = text[open.upperBound..<close.lowerBound].firstIndex(of: "\n"),
+           let list = try? decoder.decode([KnowledgeDecision].self, from: Data(text[text.index(after: newline)..<close.lowerBound].utf8)) {
+            return list
         }
         guard let start = text.firstIndex(of: "["), let end = text.lastIndex(of: "]"), start <= end else { return nil }
         return try? decoder.decode([KnowledgeDecision].self, from: Data(text[start...end].utf8))
@@ -106,10 +107,12 @@ public enum KnowledgeReview {
 
     private static func short(_ id: UUID) -> String { String(id.uuidString.prefix(8)).lowercased() }
 
-    // "c:1a2b3c4d", the full id or its first 8+ characters, when exactly one matches.
+    // "c:1a2b3c4d" ("M: 1A2B3C4D" too), the full id or its first 8+ characters, when exactly one matches.
     static func match<T>(_ key: String, in items: [T], id: (T) -> UUID) -> T? {
         var k = key.trimmingCharacters(in: CharacterSet(charactersIn: "[] \n")).lowercased()
-        if let colon = k.firstIndex(of: ":"), k.distance(from: k.startIndex, to: colon) <= 2 { k = String(k[k.index(after: colon)...]) }
+        if let colon = k.firstIndex(of: ":"), k.distance(from: k.startIndex, to: colon) <= 2 {
+            k = k[k.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+        }
         guard k.count >= 8 else { return nil }
         let hits = items.filter { id($0).uuidString.lowercased().hasPrefix(k) }
         return hits.count == 1 ? hits[0] : nil
@@ -148,8 +151,11 @@ public enum KnowledgeReview {
                 var saved = SkillStore.shared.list().map { (scope: "global", skill: $0) }
                 if let project = c.project { saved += ProjectSkillStore.shared.list(project).map { (scope: "project", skill: $0) } }
                 var shown = similar([content["name"], content["description"]].compactMap { $0 }.joined(separator: " "), in: saved)
-                if let replaces = content["replaces"], let same = saved.first(where: { $0.skill.name == replaces }),
-                   !shown.contains(where: { $0.skill.id == same.skill.id }) { shown.insert(same, at: 0) }
+                for name in [content["replaces"], content["name"]].compactMap({ $0 }) {
+                    if let same = saved.first(where: { $0.skill.name == name }), !shown.contains(where: { $0.skill.id == same.skill.id }) {
+                        shown.insert(same, at: 0)
+                    }
+                }
                 lines.append("Similar saved skills:" + (shown.isEmpty ? " none" : ""))
                 for s in shown {
                     let detail = s.scope == "global" ? SkillStore.shared.read(s.skill.name)
@@ -195,47 +201,75 @@ public enum KnowledgeReview {
     Write reasons in \(L("Korean", "English")). Leave out a candidate the meeting could not agree on: it waits for the next review.
     """ }
 
-    // Applies one meeting's decisions to the candidates it was shown (on the main thread: the inbox lives there).
-    static func apply(_ decisions: [KnowledgeDecision], meeting: UUID, attendees: [String], candidates: [Candidate],
+    // Applies one meeting's decisions to the candidates it was shown (on the main thread: the inbox lives there). Only
+    // candidates still pending count: one dropped in its chat while the meeting ran stays dropped.
+    static func apply(_ decisions: [KnowledgeDecision], meeting: UUID, attendees: [String], candidates shown: [Candidate],
                       now: Date = Date()) -> Outcome {
         precondition(Thread.isMainThread)
         var records = Self.records()
         if records.contains(where: { $0.id == meeting }) { return .refused("This review was already applied.") }
-        var record = KnowledgeReviewRecord(id: meeting, at: now, attendees: attendees, candidates: candidates.map(\.row.id))
-        var states: [UUID: KnowledgeCandidate.State] = [:], touched = Set<String>()
+        guard let pending = try? Set(KnowledgeCandidates.shared.pendingRows().map(\.candidate.id)) else {
+            return .refused("The candidate inbox could not be read.")
+        }
+        let candidates = shown.filter { pending.contains($0.row.id) }
+        var record = KnowledgeReviewRecord(id: meeting, at: now, attendees: attendees, candidates: shown.map(\.row.id))
+        var states: [UUID: KnowledgeCandidate.State] = [:], seen = Set<UUID>(), touched = Set<UUID>()
         let by = L("지식 검토 회의", "Knowledge review")
         for decision in decisions {
-            guard let c = match(decision.candidate, in: candidates, id: \.row.id), states[c.row.id] == nil else { continue }
+            guard let c = match(decision.candidate, in: candidates, id: \.row.id), seen.insert(c.row.id).inserted else { continue }
             var outcome = KnowledgeReviewRecord.Outcome(candidate: c.row.id, decision: decision, result: .refused,
                                                         reason: decision.reason ?? "")
-            func refuse(_ why: String) { outcome.result = .refused; outcome.reason = why }
+            // retry: not this candidate's fault (another one already changed the same skill or fact): it stays pending.
+            var retry = false
+            func refuse(_ why: String, retry again: Bool = false) { outcome.result = .refused; outcome.reason = why; retry = again }
             switch (decision.action, c.row.kind) {
             case (.drop, _):
                 outcome.result = .dropped
             case (_, .skill):
                 let content = c.row.content
-                let name = (decision.name ?? content["name"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                let description = decision.description ?? content["description"] ?? ""
-                let body = decision.body ?? content["body"] ?? ""
-                var scope = c.inProject ? "project" : decision.scope ?? content["scope"] ?? "global"
-                if scope == "global", hasData([name, description, body].joined(separator: "\n")) {
-                    guard c.project != nil else { refuse("A global skill may not carry data, and no project is known."); break }
-                    scope = "project"
-                    outcome.reason += (outcome.reason.isEmpty ? "" : " · ") + "Data in a global skill: saved in the project."
-                }
-                guard scope == "global" || scope == "project" else { refuse("Unknown scope \(scope)."); break }
-                let project = scope == "project" ? c.project : nil
-                if scope == "project", project == nil { refuse("No project for a project skill."); break }
-                let saved = project.map { p in ProjectSkillStore.shared.list(p) } ?? SkillStore.shared.list()
-                var id: UUID?
+                var name: String, description: String, body: String, project: String?, id: UUID?
                 if decision.action == .modify {
-                    guard let key = decision.target ?? content["replaces"],
-                          let found = match(key, in: saved, id: \.id) ?? saved.first(where: { $0.name == key.trimmingCharacters(in: .whitespaces) })
+                    // The target may be in either store the material showed: global or the candidate's project.
+                    guard let key = decision.target ?? content["replaces"] else { refuse("No saved skill named to modify."); break }
+                    let plainKey = key.trimmingCharacters(in: .whitespaces)
+                    let stores: [String?] = [nil] + (c.project.map { [$0] } ?? [])
+                    let hits: [(project: String?, skill: SkillSummary)] = stores.compactMap { p in
+                        let saved = p.map { ProjectSkillStore.shared.list($0) } ?? SkillStore.shared.list()
+                        return (match(key, in: saved, id: \.id) ?? saved.first { $0.name == plainKey }).map { (p, $0) }
+                    }
+                    let wanted = decision.scope ?? (c.inProject ? "project" : "global")
+                    guard let hit = hits.first(where: { ($0.project == nil ? "global" : "project") == wanted }) ?? hits.first
                     else { refuse("No such saved skill to modify."); break }
-                    id = found.id
+                    guard !touched.contains(hit.skill.id) else { refuse("This skill was already changed in this review.", retry: true); break }
+                    project = hit.project; id = hit.skill.id
+                    // What the decision leaves out stays as saved.
+                    name = (decision.name ?? hit.skill.name).trimmingCharacters(in: .whitespacesAndNewlines)
+                    description = decision.description ?? hit.skill.description
+                    let saved = project.map { ProjectSkillStore.shared.read(hit.skill.name, project: $0) } ?? SkillStore.shared.read(hit.skill.name)
+                    body = decision.body ?? saved?.document.body ?? ""
+                    if project == nil, hasData([name, description, body].joined(separator: "\n")) {
+                        refuse("A global skill may not carry data."); break
+                    }
+                } else {
+                    name = (decision.name ?? content["name"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                    description = decision.description ?? content["description"] ?? ""
+                    body = decision.body ?? content["body"] ?? ""
+                    var scope = c.inProject ? "project" : decision.scope ?? content["scope"] ?? "global"
+                    if scope == "global", hasData([name, description, body].joined(separator: "\n")) {
+                        guard c.project != nil else { refuse("A global skill may not carry data, and no project is known."); break }
+                        scope = "project"
+                        outcome.reason += (outcome.reason.isEmpty ? "" : " · ") + "Data in a global skill: saved in the project."
+                    }
+                    guard scope == "global" || scope == "project" else { refuse("Unknown scope \(scope)."); break }
+                    project = scope == "project" ? c.project : nil
+                    if scope == "project", project == nil { refuse("No project for a project skill."); break }
+                    // Saving would update the skill of that name: that is a modify the meeting did not decide.
+                    let saved = project.map { ProjectSkillStore.shared.list($0) } ?? SkillStore.shared.list()
+                    if saved.contains(where: { $0.name == name }) {
+                        refuse("A skill named \(name) is already saved: the next review can modify it.", retry: true); break
+                    }
                 }
-                let slot = (project ?? "") + "\n" + (id?.uuidString ?? name)
-                guard touched.insert(slot).inserted else { refuse("This skill was already changed in this review."); break }
+                guard !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { refuse("The skill has no body."); break }
                 let result = project.map {
                     ProjectSkillStore.shared.save(name: name, description: description, body: body, by: .meeting, project: $0,
                                                   id: id, actor: by, isNew: true, now: now, batch: meeting)
@@ -246,6 +280,7 @@ public enum KnowledgeReview {
                 switch result {
                 case .saved, .updated:
                     outcome.result = .applied; outcome.skill = done?.name ?? name; outcome.project = project
+                    if let skill = done?.id ?? id { touched.insert(skill) }
                     if let project, !record.projects.contains(project) { record.projects.append(project) }
                 case .needsApproval(let skill, _):
                     outcome.result = .waiting; outcome.skill = skill.name; outcome.project = project
@@ -255,25 +290,25 @@ public enum KnowledgeReview {
             case (.add, .memory):
                 let text = decision.text ?? c.row.content["text"] ?? ""
                 switch MemoryStore.shared.remember(text, room: c.row.chatID, turn: nil, roomTitle: nil, by: by, meeting: meeting) {
-                case .saved(let item): outcome.result = .applied; outcome.fact = item.id
+                case .saved(let item): outcome.result = .applied; outcome.fact = item.id; touched.insert(item.id)
                 case .duplicate: refuse("Already in memory.")
                 case .refused(let why): refuse(why)
                 }
             case (.modify, .memory):
                 let text = decision.text ?? c.row.content["text"] ?? ""
                 let items = MemoryStore.shared.snapshot.items
-                guard let key = decision.target ?? c.row.content["replaces_id"], let i = MemoryStore.find(key.replacingOccurrences(of: "m:", with: ""), in: items)
+                guard let key = decision.target ?? c.row.content["replaces_id"], let fact = match(key, in: items, id: \.id)
                 else { refuse("No such saved fact to modify."); break }
-                guard touched.insert("memory\n" + items[i].id.uuidString).inserted else { refuse("This fact was already changed in this review."); break }
-                outcome.fact = items[i].id
+                guard touched.insert(fact.id).inserted else { refuse("This fact was already changed in this review.", retry: true); break }
+                outcome.fact = fact.id
                 // The user's own facts change only with the user's approval (Inbox, 회의 3/3).
-                guard items[i].meeting != nil else { outcome.result = .waiting; break }
-                switch MemoryStore.shared.change(items[i].id.uuidString, to: text, room: c.row.chatID, turn: nil, by: by, meeting: meeting) {
+                guard fact.meeting != nil else { outcome.result = .waiting; break }
+                switch MemoryStore.shared.change(fact.id.uuidString, to: text, room: c.row.chatID, turn: nil, by: by, meeting: meeting) {
                 case .changed: outcome.result = .applied
                 case .refused(let why): refuse(why)
                 }
             }
-            states[c.row.id] = outcome.result == .applied ? .applied : outcome.result == .waiting ? .waiting : .dropped
+            if !retry { states[c.row.id] = outcome.result == .applied ? .applied : outcome.result == .waiting ? .waiting : .dropped }
             record.outcomes.append(outcome)
         }
         records.append(record)
@@ -284,23 +319,28 @@ public enum KnowledgeReview {
     }
 
     // Takes back one whole review: the skills it saved in every store (each its history batch) and the facts it added
-    // or changed. Checks every skill store first, so a later change to one of its skills undoes nothing. nil: done.
+    // or changed. Checks every skill store first (later changes, edits on disk, unreadable files), so a blocked one undoes
+    // nothing. A failure part way leaves the review open to try again; facts changed since only stay. nil: done.
     public static func undo(_ meeting: UUID, now: Date = Date()) -> String? {
         var records = Self.records()
         guard let i = records.firstIndex(where: { $0.id == meeting }) else { return L("그 검토 기록이 없어요.", "That review is not on record.") }
         guard records[i].undoneAt == nil else { return L("이미 되돌린 검토예요.", "This review was already undone.") }
+        // From the record, not the stores' history: an unreadable store must block, not be skipped.
+        let hasGlobal = records[i].outcomes.contains { $0.result == .applied && $0.skill != nil && $0.project == nil }
         let projects = records[i].projects
-        let hasGlobal = SkillStore.shared.history().contains { $0.batch == meeting }
-        let scoped = projects.filter { p in ProjectSkillStore.shared.history(p).contains { $0.batch == meeting } }
         if let block = (hasGlobal ? SkillStore.shared.undoBlock(batch: meeting) : nil)
-            ?? scoped.lazy.compactMap({ ProjectSkillStore.shared.undoBlock(batch: meeting, project: $0) }).first { return block }
+            ?? projects.lazy.compactMap({ ProjectSkillStore.shared.undoBlock(batch: meeting, project: $0) }).first { return block }
         var failures: [String] = []
         if hasGlobal, case .refused(let why) = SkillStore.shared.undo(batch: meeting, now: now) { failures.append(why) }
-        for p in scoped { if case .refused(let why) = ProjectSkillStore.shared.undo(batch: meeting, project: p, now: now) { failures.append(why) } }
-        let left = MemoryStore.shared.undoMeeting(meeting)
-        if left > 0 { failures.append(L("기억 \(left)개는 그 뒤 바뀌어서 그대로 뒀어요.", "\(left) facts changed since, so they stay.")) }
-        records[i].undoneAt = now
-        if !write(records) { failures.append(L("검토 기록을 저장하지 못했어요.", "The review record could not be saved.")) }
+        for p in projects { if case .refused(let why) = ProjectSkillStore.shared.undo(batch: meeting, project: p, now: now) { failures.append(why) } }
+        let facts = MemoryStore.shared.undoMeeting(meeting)
+        if !facts.saved { failures.append(L("기억을 저장하지 못했어요.", "Memory could not be saved.")) }
+        let open = !failures.isEmpty
+        if facts.left > 0 { failures.append(L("기억 \(facts.left)개는 그 뒤 바뀌어서 그대로 뒀어요.", "\(facts.left) facts changed since, so they stay.")) }
+        if !open {
+            records[i].undoneAt = now
+            if !write(records) { failures.append(L("검토 기록을 저장하지 못했어요.", "The review record could not be saved.")) }
+        }
         return failures.isEmpty ? nil : failures.joined(separator: " ")
     }
 }
@@ -311,10 +351,12 @@ public enum KnowledgeReviewLink {
     static let most = 3
 
     // Starts one review of every pending candidate; false when none can be shown, fewer than two AIs can meet, or a
-    // review is already running. The meeting runs in the background; candidates from Enterprise chats, or whose chat or
-    // project is gone, wait (the meeting's AIs could not be sure to be allowed to read them).
+    // review is already running. The meeting runs in the background; candidates from Enterprise chats or Enterprise-locked
+    // projects, or whose chat or project is gone, wait (the meeting's AIs could not be sure to be allowed to read them);
+    // memory candidates wait while memory is off.
+    // `done` gets, on the main thread when the meeting ends, a line for the screen: what was applied, or why nothing was.
     @discardableResult
-    public static func run(in discussion: Discussion) -> Bool {
+    public static func run(in discussion: Discussion, done: ((String) -> Void)? = nil) -> Bool {
         precondition(Thread.isMainThread)
         guard !running else { return false }
         let candidates = eligible(discussion)
@@ -346,16 +388,22 @@ public enum KnowledgeReviewLink {
                                           meeting: brief, cleanup: true, resultPrompt: KnowledgeReview.resultPrompt)
             DispatchQueue.main.async {
                 defer { running = false }
-                guard !token.isCancelled else { worker.finish(room, 0); return }
+                guard !token.isCancelled else { worker.finish(room, 0); done?(L("검토를 멈췄어요.", "The review was stopped.")); return }
                 guard let result, let decisions = KnowledgeReview.decisions(from: result.text) else {
-                    worker.finish(room, 0, error: L("검토 회의에서 유효한 결정 목록을 받지 못했어요.",
-                                                   "The review meeting did not return a valid decision list."))
+                    let why = L("검토 회의에서 유효한 결정 목록을 받지 못했어요. 아무것도 바꾸지 않았어요.",
+                                "The review meeting did not return a valid decision list. Nothing was changed.")
+                    worker.finish(room, 0, error: why); done?(why)
                     return
                 }
                 switch KnowledgeReview.apply(decisions, meeting: room, attendees: result.attendees, candidates: candidates) {
-                case .applied: worker.finish(room, 0)
+                case .applied(let record):
+                    worker.finish(room, 0)
+                    let dropped = record.outcomes.filter { $0.result == .dropped || $0.result == .refused }.count
+                    done?(L("검토 끝 · 적용 \(record.applied)개 · 승인 대기 \(record.waiting)개 · 버림 \(dropped)개",
+                            "Review done · \(record.applied) applied · \(record.waiting) awaiting approval · \(dropped) dropped"))
                 case .refused(let why):
-                    worker.finish(room, 0, error: L("검토 결과를 적용하지 못했어요. ", "Could not apply the review. ") + why)
+                    let line = L("검토 결과를 적용하지 못했어요. ", "Could not apply the review. ") + why
+                    worker.finish(room, 0, error: line); done?(line)
                 }
             }
         }
@@ -372,13 +420,20 @@ public enum KnowledgeReviewLink {
             projects[KnowledgeCandidates.file(key).deletingLastPathComponent().resolvingSymlinksInPath().path] = key
         }
         let global = KnowledgeCandidates.file(nil).deletingLastPathComponent().resolvingSymlinksInPath().path
+        let memoryOn = MemoryStore.shared.snapshot.enabled
+        // A project with a saved Enterprise audience (or an unreadable one) keeps its skills from a personal team.
+        func open(_ project: String) -> Bool {
+            do { return try ProjectMemoryStore.shared.accessLock(project) == nil } catch { return false }
+        }
         return rows.compactMap { file, row in
-            guard let chat = chats[row.chatID], chat.enterpriseLock == nil else { return nil }
+            guard let chat = chats[row.chatID], chat.enterpriseLock == nil, row.kind == .skill || memoryOn else { return nil }
             let folder = file.deletingLastPathComponent().resolvingSymlinksInPath().path
             if folder == global {
-                return .init(row: row, project: chat.workspace?.project.map(SidebarProjects.key), inProject: false)
+                let project = chat.workspace?.project.map(SidebarProjects.key)
+                guard row.kind == .memory || project.map(open) ?? true else { return nil }
+                return .init(row: row, project: project, inProject: false)
             }
-            guard let key = projects[folder] else { return nil }
+            guard let key = projects[folder], open(key) else { return nil }
             return .init(row: row, project: key, inProject: true)
         }
     }

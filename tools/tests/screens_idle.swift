@@ -116,6 +116,11 @@ import AIProjects
     let detailStart = cpu()
     RunLoop.main.run(until: Date().addingTimeInterval(2))
     guard cpu() - detailStart < 0.5 else { print("FAIL: the skills window with a skill open redraws itself while nothing changes"); exit(1) }
+    // A change made after the editor opened is noticed before saving over it.
+    let opened = SkillsCatalog.detail(globalRow("ai-helper")!)!
+    precondition(SkillsCatalog.changed(globalRow("ai-helper")!, since: opened) == nil)
+    if case .saved = SkillStore.shared.save(name: "ai-helper", description: opened.document.description, body: "AI's newer steps", by: .ai) {} else { preconditionFailure("the AI's edit") }
+    precondition(SkillsCatalog.changed(globalRow("ai-helper")!, since: opened)?.document.body == "AI's newer steps")
     precondition(SkillsCatalog.save(globalRow("ai-helper")!, name: "ai-helper", description: "Edited by me", body: "New steps") == nil)
     let edited = globalRow("ai-helper")!
     precondition(edited.skill.record.userLocked && edited.skill.record.id == aiID && edited.skill.record.createdBy == .ai
@@ -127,6 +132,10 @@ import AIProjects
     try! FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
     try! SkillDocument.render(name: "outside-note", description: "By hand", body: "Hand steps").write(to: outside.appendingPathComponent("SKILL.md"), atomically: true, encoding: .utf8)
     precondition(globalRow("outside-note")!.skill.externallyModified && globalRow("outside-note")!.skill.record.userLocked)
+    // A rename onto a name in use is refused before anything is written: the hand-made file keeps its text.
+    precondition(SkillsCatalog.save(globalRow("outside-note")!, name: "tidy-notes", description: "Changed", body: "Changed steps") != nil
+                 && SkillsCatalog.detail(globalRow("outside-note")!)?.document.body == "Hand steps"
+                 && SkillsCatalog.detail(globalRow("tidy-notes")!)?.document.body != "Changed steps")
     precondition(SkillsCatalog.save(globalRow("outside-note")!, name: "outside-renamed", description: "By hand", body: "Hand steps") == nil)
     precondition(globalRow("outside-note") == nil && !FileManager.default.fileExists(atPath: outside.path)
                  && SkillsCatalog.detail(globalRow("outside-renamed")!)?.document.body == "Hand steps")

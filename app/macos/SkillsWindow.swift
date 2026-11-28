@@ -89,6 +89,12 @@ enum SkillsCatalog {
         }
     }
 
+    // The skill as it is now when it changed after the editor loaded `loaded`; nil when unchanged.
+    static func changed(_ row: SkillRowItem, since loaded: SkillDetail) -> SkillDetail? {
+        guard let now = detail(row), now.document != loaded.document || now.record.contentHash != loaded.record.contentHash else { return nil }
+        return now
+    }
+
     static func markSeen(_ row: SkillRowItem) {
         guard row.skill.record.isNew else { return }
         if let project = row.project { ProjectSkillStore.shared.markSeen(row.skill.name, project: project.id) } else { SkillStore.shared.markSeen(row.skill.name) }
@@ -109,10 +115,21 @@ enum SkillsCatalog {
             return SkillStore.shared.save(name: name, description: description, body: body, by: .user, id: row.skill.record.id)
         }
         // A file put in or edited outside the app is taken in under its own name first, so the rename moves its
-        // folder instead of leaving a copy behind.
-        if name != row.skill.name, row.skill.externallyModified, SkillDocument.isValidSlug(name),
-           let why = failure(put(row.skill.name)) { return why }
-        return failure(put(name))
+        // folder instead of leaving a copy behind. The new name is checked first, and if the rename still fails the
+        // take-in is undone, so a refused rename leaves the file as it was.
+        guard name != row.skill.name, row.skill.externallyModified, SkillDocument.isValidSlug(name) else { return failure(put(name)) }
+        let folder = file(row).deletingLastPathComponent().deletingLastPathComponent()
+        guard (row.project.map { ProjectSkillStore.shared.list($0.id) } ?? SkillStore.shared.list()).allSatisfy({ $0.name != name }),
+              !FileManager.default.fileExists(atPath: folder.appendingPathComponent(name).path) else {
+            return L("같은 이름의 스킬(\(name))이나 폴더가 이미 있어요.", "A skill or folder named \(name) already exists.")
+        }
+        if let why = failure(put(row.skill.name)) { return why }
+        guard let why = failure(put(name)) else { return nil }
+        let history = row.project.map { ProjectSkillStore.shared.history($0.id) } ?? SkillStore.shared.history()
+        if let takeIn = history.last(where: { $0.action == .update && $0.skillID == row.skill.record.id })?.id {
+            _ = row.project.map { ProjectSkillStore.shared.undo(project: $0.id, change: takeIn) } ?? SkillStore.shared.undo(change: takeIn)
+        }
+        return why
     }
 
     // Deletes the skill (skills.json keeps a tombstone) and returns the change Undo takes back.
@@ -355,6 +372,14 @@ private struct SkillDetailPane: View {
 
     private func save() {
         let name = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Changed by an AI or on disk since the editor opened: say so once and keep the edits, so saving does not
+        // silently put back the old text in the fields the user did not touch. Saving again overwrites.
+        if let loaded = draft.loaded, let now = SkillsCatalog.changed(row, since: loaded) {
+            draft.loaded = now
+            draft.error = L("열어 둔 뒤 이 스킬이 바뀌었어요. [되돌리기]로 새 내용을 불러오거나, 다시 [저장]하면 지금 편집한 내용으로 덮어써요.",
+                            "This skill changed after you opened it. [Revert] loads the new version; [Save] again overwrites it with your edits.")
+            return
+        }
         draft.error = SkillsCatalog.save(row, name: name, description: draft.description, body: draft.body)
         guard draft.error == nil else { return }
         let id = SkillRowItem.id(row.project, name)

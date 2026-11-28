@@ -256,6 +256,32 @@ func testSkillStore() {
            && !global.markSeen("seen-check") && !global.markSeen("no-such-skill"),
            "markSeen clears isNew once, keeps the lock as it was, and logs no history")
     expect(undone(global.undo()) != nil && global.read("seen-check") == nil, "undo after markSeen still removes the AI's add")
+    // An AI's second edit before the user first looks: undoing that edit keeps the badge the user already cleared.
+    _ = global.save(name: "seen-twice", description: "Added by an AI", body: "v1", by: .ai)
+    _ = global.save(name: "seen-twice", description: "Added by an AI", body: "v2", by: .ai)
+    expect(global.markSeen("seen-twice") && undone(global.undo()) != nil
+           && global.read("seen-twice")?.document.body == "v1" && global.read("seen-twice")?.record.isNew == false,
+           "undoing an edit after markSeen does not bring the new badge back")
+    // Files next to SKILL.md go with a rename and its Undo, and stay through a delete so its Undo restores the whole skill.
+    guard let kit = saved(global.save(name: "kit-a", description: "With a script", body: "Run run.sh", by: .user)) else {
+        expect(false, "kit-a saved"); return
+    }
+    try! Data("echo hi".utf8).write(to: globalFolder.appendingPathComponent("kit-a/run.sh"))
+    expect(saved(global.save(name: "kit-b", description: "With a script", body: "Run run.sh", by: .user, id: kit.id)) != nil
+           && fm.fileExists(atPath: globalFolder.appendingPathComponent("kit-b/run.sh").path)
+           && !fm.fileExists(atPath: globalFolder.appendingPathComponent("kit-a").path),
+           "a rename moves the whole skill folder")
+    expect(undone(global.undo()) != nil && fm.fileExists(atPath: globalFolder.appendingPathComponent("kit-a/run.sh").path)
+           && global.read("kit-a") != nil && !fm.fileExists(atPath: globalFolder.appendingPathComponent("kit-b").path),
+           "undoing a rename moves the whole folder back")
+    expect(deleted(global.delete("kit-a", by: .user)) != nil && global.read("kit-a") == nil
+           && fm.fileExists(atPath: globalFolder.appendingPathComponent("kit-a/run.sh").path)
+           && undone(global.undo()) != nil && global.read("kit-a")?.document.body == "Run run.sh"
+           && fm.fileExists(atPath: globalFolder.appendingPathComponent("kit-a/run.sh").path),
+           "a user's delete keeps the files next to SKILL.md and its Undo restores the whole skill")
+    expect(undone(global.undo()) != nil && undone(global.undo()) != nil && global.read("kit-a") == nil
+           && global.read("seen-twice") == nil && !fm.fileExists(atPath: globalFolder.appendingPathComponent("kit-a").path),
+           "undoing the kit's and seen-twice's adds clears them")
 
     // 7. Delete, tombstone persistence, undo of delete, and recreating same slug with fresh UUID.
     let deleteTime = t0.addingTimeInterval(100)

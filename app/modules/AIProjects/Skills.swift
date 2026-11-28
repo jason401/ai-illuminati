@@ -668,10 +668,11 @@ public final class SkillDirectory {
             let doc = SkillDocument(name: name, description: cleanDesc, body: body)
             var tx = FileTransaction(root: root)
             do {
-                let written = try tx.writeSkill(doc, to: skillFile(name))
+                // A rename moves the whole folder, so scripts and notes next to SKILL.md go with it.
                 if tracked.name != name {
-                    try tx.removeItem(skillFolder(tracked.name))
+                    try tx.moveFolder(skillFolder(tracked.name), to: skillFolder(name))
                 }
+                let written = try tx.writeSkill(doc, to: skillFile(name))
                 var updated = effective
                 updated.name = name
                 updated.contentHash = written.hash
@@ -901,7 +902,8 @@ public final class SkillDirectory {
                                       items: [SkillHistoryItem(before: before, after: nil, tombstone: tombstone)], turn: turn)
         var tx = FileTransaction(root: root)
         do {
-            try tx.removeSkill(skillFile(name), preservingOtherFiles: turn != nil)
+            // History keeps only SKILL.md, so files next to it stay for Undo to bring back the whole skill.
+            try tx.removeSkill(skillFile(name), preservingOtherFiles: true)
             try persist(index: index, append: entry, tx: &tx)
             tx.commit()
             changed = true
@@ -995,7 +997,7 @@ public final class SkillDirectory {
                     }
                     if before.record.name != after.record.name,
                        (index.skills.contains(where: { $0.name == before.record.name && $0.id != before.record.id })
-                        || FileManager.default.fileExists(atPath: skillFile(before.record.name).path)) {
+                        || !unusedSkillFolder(before.record.name)) {
                         return .refused(L("같은 이름의 스킬(\(before.record.name))이 이미 있어 되돌릴 수 없어요.",
                                           "A skill named '\(before.record.name)' already exists."))
                     }
@@ -1032,18 +1034,18 @@ public final class SkillDirectory {
                     reverseItems.append(SkillHistoryItem(before: after, after: nil))
 
                 case (let before?, let after?):
+                    var restored = before.record
                     if !isToggleUndo {
+                        if before.record.name != after.record.name {
+                            try tx.moveFolder(skillFolder(after.record.name), to: skillFolder(before.record.name))
+                        }
                         if let md = before.markdown {
                             try tx.writeRaw(md, to: skillFile(before.record.name))
                         }
-                        if before.record.name != after.record.name {
-                            try tx.removeItem(skillFolder(after.record.name))
-                        }
-                        if let i = index.skills.firstIndex(where: { $0.id == before.record.id }) {
-                            index.skills[i] = before.record
-                        } else {
-                            index.skills.append(before.record)
-                        }
+                        let i = index.skills.firstIndex(where: { $0.id == before.record.id })
+                        // A skill the user has already looked at does not get its "new" badge back.
+                        if let i, !index.skills[i].isNew { restored.isNew = false }
+                        if let i { index.skills[i] = restored } else { index.skills.append(restored) }
                     } else {
                         // Enable/disable undo: preserve any newer disk edits while restoring enabled state.
                         if let i = index.skills.firstIndex(where: { $0.id == before.record.id }) {
@@ -1059,7 +1061,7 @@ public final class SkillDirectory {
                             index.skills.append(before.record)
                         }
                     }
-                    reverseItems.append(SkillHistoryItem(before: after, after: before))
+                    reverseItems.append(SkillHistoryItem(before: after, after: SkillSnapshot(record: restored, markdown: before.markdown)))
 
                 case (let before?, nil):
                     if let md = before.markdown {
@@ -1290,6 +1292,15 @@ public final class SkillDirectory {
             } else {
                 try removeItem(folder)
             }
+        }
+
+        // Moves a skill folder onto an unused name (an empty folder there is set aside first).
+        mutating func moveFolder(_ from: URL, to: URL) throws {
+            let fm = FileManager.default
+            guard fm.fileExists(atPath: from.path) else { return }
+            try removeItem(to)
+            try fm.moveItem(at: from, to: to)
+            rollbacks.append { try? fm.moveItem(at: to, to: from) }
         }
 
         mutating func removeItem(_ item: URL) throws {

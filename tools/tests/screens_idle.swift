@@ -149,6 +149,12 @@ import AIProjects
     precondition(restored.skill.record.id == aiID && restored.skill.record.userLocked && SkillsCatalog.detail(restored)?.document.body == "New steps"
                  && !SkillStore.shared.tombstones().contains { $0.id == aiID } && globalRow("tidy-notes")!.skill.record.enabled)
     precondition(SkillsCatalog.undo(removal.removed!) != nil)   // that delete is already undone
+    let normalRec = KnowledgeReviewRecord(id: UUID(), at: Date(), attendees: ["Claude", "ChatGPT"], candidates: [], partial: false)
+    let partialRec = KnowledgeReviewRecord(id: UUID(), at: Date(), attendees: ["Claude", "Gemma"], candidates: [], partial: true)
+    let normalSummary = SkillsCatalog.reviewSummary(normalRec)
+    let partialSummary = SkillsCatalog.reviewSummary(partialRec)
+    precondition(!normalSummary.contains("부분 검토") && !normalSummary.contains("Partial review")
+                 && (partialSummary.contains("부분 검토") || partialSummary.contains("Partial review")))
     settle()
     skillsWindow.contentView = nil
     print("PASS: the skills window opens a skill (clears new), saves it as the user's (locked), and deletes it with Undo")

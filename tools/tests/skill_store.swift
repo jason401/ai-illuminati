@@ -911,7 +911,8 @@ func testKnowledgeReview() {
     expect(ProcessInfo.processInfo.environment["AI_ILLUMINATI_TEST_HOME"] == home.path, "the review uses the isolated test home")
     let fm = FileManager.default, memory = MemoryStore.shared, previousMemory = memory.snapshot
     let aside = home.appendingPathComponent("review-aside-\(UUID().uuidString.prefix(8))")
-    let moved = [SkillStore.folder, KnowledgeCandidates.file(nil), KnowledgeReview.file]
+    let moved = [SkillStore.folder, KnowledgeCandidates.file(nil), KnowledgeReview.file,
+                 KnowledgeReview.attemptFile, KnowledgeReview.logFile]
     try? fm.createDirectory(at: aside, withIntermediateDirectories: true)
     for (i, url) in moved.enumerated() where fm.fileExists(atPath: url.path) {
         try! fm.moveItem(at: url, to: aside.appendingPathComponent("\(i)"))
@@ -1156,4 +1157,244 @@ func testKnowledgeReview() {
     waiting = KnowledgeReviewLink.eligible(discussion)
     expect(!waiting.contains { $0.project == key } && waiting.contains { $0.row.content["text"] == "꺼진 동안의 후보" },
            "a project with a saved Enterprise audience keeps its candidates and skills out of the review")
+
+    testKnowledgeReviewIdleScheduling()
+}
+
+// Automatic idle review scheduling (회의 2/3): busy guards, iCloud host hook, >= 2 companies vs 1 company waiting for
+// usage reset (with resetsAt log), minInterval cooldown, 24h partial review (same-company accounts + Ollama, 1-AI and
+// Ollama-only partial reviews, 0-AI wait), backward-compatible decoding, and TodoScheduler.onTick hook.
+private func testKnowledgeReviewIdleScheduling() {
+    let home = URL(fileURLWithPath: AccountStore.home, isDirectory: true)
+    expect(ProcessInfo.processInfo.environment["AI_ILLUMINATI_TEST_HOME"] == home.path, "idle review uses isolated test home")
+    let fm = FileManager.default, memory = MemoryStore.shared, previousMemory = memory.snapshot
+    let previousTodos = TodoStore.shared, previousHost = KnowledgeReviewLink.isReviewHost
+    let todoFile = home.appendingPathComponent("idle-review-todos-\(UUID().uuidString.prefix(8)).json")
+    let aside = home.appendingPathComponent("idle-review-aside-\(UUID().uuidString.prefix(8))")
+    let moved = [SkillStore.folder, KnowledgeCandidates.file(nil), KnowledgeReview.file,
+                 KnowledgeReview.attemptFile, KnowledgeReview.logFile]
+    try? fm.createDirectory(at: aside, withIntermediateDirectories: true)
+    for (i, url) in moved.enumerated() where fm.fileExists(atPath: url.path) {
+        try! fm.moveItem(at: url, to: aside.appendingPathComponent("\(i)"))
+    }
+    TodoStore.shared = TodoStore(url: todoFile)
+    memory.update { $0 = MemoryData() }
+    defer {
+        KnowledgeReviewLink.isReviewHost = previousHost
+        TodoStore.shared = previousTodos
+        memory.update { $0 = previousMemory }
+        try? fm.removeItem(at: todoFile)
+        for (i, url) in moved.enumerated() {
+            try? fm.removeItem(at: url)
+            if fm.fileExists(atPath: aside.appendingPathComponent("\(i)").path) {
+                try? fm.moveItem(at: aside.appendingPathComponent("\(i)"), to: url)
+            }
+        }
+        try? fm.removeItem(at: aside)
+    }
+
+    // Legacy knowledge-reviews.json without `partial` decodes cleanly as partial == false.
+    let legacyJSON = #"[{"id":"00000000-0000-0000-0000-000000000001","at":"2026-11-01T00:00:00Z","attendees":["Claude","ChatGPT"],"candidates":[],"outcomes":[],"projects":[]}]"#
+    let dec = JSONDecoder(); dec.dateDecodingStrategy = .iso8601
+    let legacyDecoded = try? dec.decode([KnowledgeReviewRecord].self, from: Data(legacyJSON.utf8))
+    expect(legacyDecoded?.count == 1 && legacyDecoded?.first?.partial == false,
+           "older review records without partial decode with partial == false")
+
+    expect(KnowledgeReview.minInterval == 3_600 && KnowledgeReview.partialAfter == 86_400,
+           "timing policy lives in single named constants")
+
+    let plain = Conversation(turns: [ChatTurn(question: "q")])
+    let inbox = KnowledgeCandidates.shared
+    func submitSkill(_ name: String, at date: Date) -> KnowledgeCandidate {
+        var row = KnowledgeCandidate(kind: .skill,
+                                     content: ["name": name, "description": "Use for \(name)", "body": "Do \(name).", "scope": "global"],
+                                     evidence: "verified", accountID: "a", accountName: "Claude",
+                                     chatID: plain.id, turnID: UUID(), todoID: nil)
+        row.createdAt = date
+        expect(inbox.submit(row, project: nil) == nil, "idle candidate submitted")
+        return row
+    }
+
+    let claudeSchool = Account(id: "idle-claude-school", provider: .claude, name: "Claude (학교)", school: true)
+    let claudePersonal = Account(id: "idle-claude-personal", provider: .claude, name: "Claude (개인)", school: false)
+    let codex = Account(id: "idle-codex", provider: .codex, name: "ChatGPT")
+    let ollama = Account(id: "idle-ollama", provider: .ollama, name: "Gemma")
+
+    func usage(_ account: Account, fiveHourUsed: Double, resetsAt: Date? = nil, weeklyUsed: Double = 10) -> AIUsage {
+        var u = AIUsage(name: account.name, account: account)
+        u.fiveHour = UsageWindow(usedPercent: fiveHourUsed, resetsAt: resetsAt)
+        u.weekly = UsageWindow(usedPercent: weeklyUsed, resetsAt: nil)
+        return u
+    }
+
+    let model = AppModel(persist: false)
+    model.localEnabled = true
+    model.accounts = [claudeSchool, claudePersonal, codex, ollama]
+    let discussion = Discussion(model: model)
+    discussion.conversations = [plain]
+
+    let promptLock = NSLock()
+    var speakers = Set<String>()
+    var nextDecisionJSON = "[]"
+    discussion.workspaceAnswer = { account, prompt, _, _, _ in
+        if prompt.contains("[MEETING RESULT]") { return .success(nextDecisionJSON) }
+        if prompt.contains("[MODE3 MODERATION]") { return .success(#"{"action":"finish","reason":"enough"}"#) }
+        if prompt.contains("[MODE3 SPEECH]") { promptLock.lock(); speakers.insert(account.id); promptLock.unlock() }
+        return .success("Looks good.")
+    }
+    func waitForMeeting() {
+        let deadline = Date().addingTimeInterval(20)
+        while (discussion.anyRunning || KnowledgeReviewLink.running) && Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+        }
+        expect(!discussion.anyRunning && !KnowledgeReviewLink.running, "idle background review finished")
+    }
+    func addDecision(_ row: KnowledgeCandidate) -> String {
+        #"[{"candidate":"c:\#(String(row.id.uuidString.prefix(8)).lowercased())","action":"add","scope":"global","reason":"유용함"}]"#
+    }
+
+    // 0) Empty inbox: never runs.
+    let t0 = Date(timeIntervalSince1970: 1_800_000_000)
+    expect(!KnowledgeReviewLink.runIfIdle(in: discussion, now: t0), "no pending candidates does not start a review")
+
+    // 1) Busy guards & iCloud host hook.
+    let c1 = submitSkill("idle-first", at: t0)
+    nextDecisionJSON = addDecision(c1)
+    model.latestUsage = [
+        claudeSchool.id: usage(claudeSchool, fiveHourUsed: 20),
+        claudePersonal.id: usage(claudePersonal, fiveHourUsed: 20),
+        codex.id: usage(codex, fiveHourUsed: 20),
+    ]
+    discussion.runningRooms.insert(plain.id)
+    expect(!KnowledgeReviewLink.runIfIdle(in: discussion, now: t0.addingTimeInterval(60)), "an answering chat blocks automatic review")
+    discussion.runningRooms.remove(plain.id)
+
+    discussion.importingMaterials = true
+    expect(!KnowledgeReviewLink.runIfIdle(in: discussion, now: t0.addingTimeInterval(60)), "importing materials blocks automatic review")
+    discussion.importingMaterials = false
+
+    discussion.stoppingRooms.insert(plain.id)
+    expect(!KnowledgeReviewLink.runIfIdle(in: discussion, now: t0.addingTimeInterval(60)), "stopping rooms blocks automatic review")
+    discussion.stoppingRooms.remove(plain.id)
+
+    let list = TodoList(title: "Busy", project: nil)
+    var runningTodo = TodoItem(listID: list.id, title: "Running task")
+    runningTodo.state = .running
+    try! TodoStore.shared.update { $0.lists = [list]; $0.items = [runningTodo] }
+    expect(!KnowledgeReviewLink.runIfIdle(in: discussion, now: t0.addingTimeInterval(60)), "a running TODO blocks automatic review")
+    try! TodoStore.shared.change(runningTodo.id) { $0.state = .done }
+
+    KnowledgeReviewLink.isReviewHost = { false }
+    expect(!KnowledgeReviewLink.runIfIdle(in: discussion, now: t0.addingTimeInterval(60)), "non-host Mac skips automatic review")
+    KnowledgeReviewLink.isReviewHost = { true }
+
+    // 2) Only 1 company available (even with 2 accounts of that company) and < 24h: waits and logs resetsAt.
+    let resetAt = t0.addingTimeInterval(2 * 3_600)
+    model.latestUsage = [
+        claudeSchool.id: usage(claudeSchool, fiveHourUsed: 20),
+        claudePersonal.id: usage(claudePersonal, fiveHourUsed: 30),
+        codex.id: usage(codex, fiveHourUsed: 100, resetsAt: resetAt),
+    ]
+    let computedReset = KnowledgeReviewLink.nextReset(accounts: model.accounts, usage: model.latestUsage,
+                                                      picks: model.autoTeamPicks, excluding: [.claude], now: t0.addingTimeInterval(3_600))
+    expect(computedReset == resetAt, "nextReset returns the earliest blocking window reset of another company")
+    expect(!KnowledgeReviewLink.runIfIdle(in: discussion, now: t0.addingTimeInterval(3_600)),
+           "single company (even 2 Claude accounts) waits while oldest candidate is under 24h")
+    let logText = (try? String(contentsOf: KnowledgeReview.logFile, encoding: .utf8)) ?? ""
+    expect(logText.contains(ISO8601DateFormatter().string(from: resetAt)), "wait log records next usage resetsAt")
+
+    // 3) After codex resets (2 companies available): runs full review (partial == false).
+    speakers.removeAll()
+    let tReset = t0.addingTimeInterval(3 * 3_600)
+    var doneLine: String?
+    expect(KnowledgeReviewLink.runIfIdle(in: discussion, now: tReset, done: { doneLine = $0 }),
+           "two companies after usage reset start a full review")
+    waitForMeeting()
+    let rec1 = KnowledgeReview.records().last
+    expect(rec1?.partial == false && rec1?.at == tReset && SkillStore.shared.read("idle-first") != nil
+           && speakers.contains(codex.id) && (speakers.contains(claudeSchool.id) || speakers.contains(claudePersonal.id))
+           && !speakers.contains(ollama.id),
+           "full review marks partial=false, applies skill, uses cloud companies (no Ollama)")
+
+    // 4) Minimum interval: too soon after last review skips; after minInterval proceeds.
+    let tSoon = tReset.addingTimeInterval(1_800)
+    let c2 = submitSkill("idle-second", at: tSoon)
+    nextDecisionJSON = addDecision(c2)
+    expect(!KnowledgeReviewLink.runIfIdle(in: discussion, now: tSoon),
+           "within minInterval (30 min) automatic review waits")
+    let tAfterInterval = tReset.addingTimeInterval(KnowledgeReview.minInterval + 60)
+    expect(KnowledgeReviewLink.runIfIdle(in: discussion, now: tAfterInterval),
+           "after minInterval automatic review proceeds")
+    waitForMeeting()
+    expect(KnowledgeReview.records().last?.partial == false && SkillStore.shared.read("idle-second") != nil,
+           "second full review succeeds after minInterval")
+
+    // 5) 24h elapsed with only 1 company (Claude school + personal) + Ollama enabled: partial review runs with all 3.
+    let t1 = tAfterInterval.addingTimeInterval(2 * 3_600)
+    let c3 = submitSkill("idle-partial-team", at: t1)
+    nextDecisionJSON = addDecision(c3)
+    model.latestUsage = [
+        claudeSchool.id: usage(claudeSchool, fiveHourUsed: 20),
+        claudePersonal.id: usage(claudePersonal, fiveHourUsed: 30),
+        codex.id: usage(codex, fiveHourUsed: 100, resetsAt: t1.addingTimeInterval(48 * 3_600)),
+    ]
+    model.localEnabled = true
+    expect(!KnowledgeReviewLink.runIfIdle(in: discussion, now: t1.addingTimeInterval(KnowledgeReview.partialAfter - 60)),
+           "just under 24h still waits with 1 company")
+    speakers.removeAll(); doneLine = nil
+    let tPartial1 = t1.addingTimeInterval(KnowledgeReview.partialAfter + 60)
+    expect(KnowledgeReviewLink.runIfIdle(in: discussion, now: tPartial1, done: { doneLine = $0 }),
+           "past 24h starts partial review with same-company accounts + Ollama")
+    waitForMeeting()
+    let recPartial1 = KnowledgeReview.records().last
+    expect(recPartial1?.partial == true && SkillStore.shared.read("idle-partial-team") != nil
+           && speakers == [claudeSchool.id, claudePersonal.id, ollama.id]
+           && (doneLine?.contains("부분 검토") == true || doneLine?.contains("Partial review") == true),
+           "partial review includes same-company accounts and enabled Ollama, and marks record & summary as partial")
+
+    // 6) 24h elapsed with only 1 AI (Ollama off, single Claude account): still runs partial review (minSpeakers=1).
+    let t2 = tPartial1.addingTimeInterval(2 * 3_600)
+    let c4 = submitSkill("idle-single-ai", at: t2)
+    nextDecisionJSON = addDecision(c4)
+    model.accounts = [claudePersonal, codex, ollama]
+    model.localEnabled = false
+    model.latestUsage = [
+        claudePersonal.id: usage(claudePersonal, fiveHourUsed: 10),
+        codex.id: usage(codex, fiveHourUsed: 100, resetsAt: t2.addingTimeInterval(48 * 3_600)),
+    ]
+    speakers.removeAll()
+    let tPartial2 = t2.addingTimeInterval(KnowledgeReview.partialAfter + 60)
+    expect(KnowledgeReviewLink.runIfIdle(in: discussion, now: tPartial2),
+           "past 24h with 1 remaining AI runs partial review")
+    waitForMeeting()
+    let recPartial2 = KnowledgeReview.records().last
+    expect(recPartial2?.partial == true && speakers == [claudePersonal.id] && SkillStore.shared.read("idle-single-ai") != nil,
+           "single-AI partial review completes synthesis and marks partial=true")
+
+    // 7) 24h elapsed with 0 AIs available: waits; turning Ollama on allows Ollama-only partial review.
+    let t3 = tPartial2.addingTimeInterval(2 * 3_600)
+    let c5 = submitSkill("idle-zero-then-ollama", at: t3)
+    nextDecisionJSON = addDecision(c5)
+    model.latestUsage = [
+        claudePersonal.id: usage(claudePersonal, fiveHourUsed: 100, resetsAt: t3.addingTimeInterval(48 * 3_600)),
+        codex.id: usage(codex, fiveHourUsed: 100, resetsAt: t3.addingTimeInterval(48 * 3_600)),
+    ]
+    model.localEnabled = false
+    let tZero = t3.addingTimeInterval(KnowledgeReview.partialAfter + 60)
+    expect(!KnowledgeReviewLink.runIfIdle(in: discussion, now: tZero), "0 AIs available still waits even past 24h")
+    model.localEnabled = true
+    speakers.removeAll()
+    expect(KnowledgeReviewLink.runIfIdle(in: discussion, now: tZero.addingTimeInterval(60)),
+           "enabling Ollama allows Ollama-only partial review past 24h")
+    waitForMeeting()
+    expect(KnowledgeReview.records().last?.partial == true && speakers == [ollama.id]
+           && SkillStore.shared.read("idle-zero-then-ollama") != nil,
+           "Ollama-only partial review applies and marks partial=true")
+
+    // 8) TodoScheduler.onTick hook fires when scheduler ticks.
+    let scheduler = TodoScheduler(discussion: discussion, store: TodoStore.shared)
+    var ticked = 0
+    scheduler.onTick = { ticked += 1 }
+    scheduler.tick()
+    expect(ticked == 1, "TodoScheduler.tick invokes onTick hook")
 }

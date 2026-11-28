@@ -58,8 +58,8 @@ extension Discussion {
     // teams (autoPicked) and allowed here, signed in and not out of usage (unknown usage counts as half left), the most left first; one of each kind before
     // a second account of a kind, so different kinds of AI meet; at most `most`.
     static func meetingTeam(_ accounts: [Account], usage: [String: AIUsage], most: Int = meetingMost, picks: [String: Bool] = [:],
-                            allowed: (Account) -> Bool) -> [Account] {
-        func left(_ account: Account) -> Double { min(AutoPick.fiveHour(usage[account.id]), AutoPick.weekly(usage[account.id])) }
+                            now: Date = Date(), allowed: (Account) -> Bool) -> [Account] {
+        func left(_ account: Account) -> Double { min(AutoPick.fiveHour(usage[account.id], now: now), AutoPick.weekly(usage[account.id], now: now)) }
         let ready = accounts.filter { autoPicked($0, picks: picks) && allowed($0) && usage[$0.id]?.needsLogin != true && left($0) > 0 }
             .enumerated().sorted { a, b in
                 let x = left(a.element) + (a.element.isSchool ? AutoPick.enterpriseBonus : 0), y = left(b.element) + (b.element.isSchool ? AutoPick.enterpriseBonus : 0)

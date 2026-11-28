@@ -147,6 +147,14 @@ enum SkillsCatalog {
                 ?? SkillStore.shared.undo(change: removed.change))
     }
 
+    // Summary line for the latest review banner; marks 24h fallback / single-company reviews as "부분 검토".
+    static func reviewSummary(_ record: KnowledgeReviewRecord) -> String {
+        let head = record.partial ? L("최근 검토 · 부분 검토", "Last review · Partial review") : L("최근 검토", "Last review")
+        return head + " · \(SkillDetailPane.day(record.at))"
+            + L(" · 적용 \(record.applied)개", " · \(record.applied) applied")
+            + (record.waiting == 0 ? "" : L(" · 승인 대기 \(record.waiting)개", " · \(record.waiting) awaiting approval"))
+    }
+
     private static func failure(_ outcome: SkillOutcome) -> String? {
         switch outcome {
         case .refused(let why), .needsApproval(_, let why): return why
@@ -289,10 +297,9 @@ struct SkillsView: View {
             if let note = draft.note {
                 Text(note).font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
-            if let last = KnowledgeReview.records().last, last.undoneAt == nil, last.applied + last.waiting > 0 {
+            if let last = KnowledgeReview.records().last, last.undoneAt == nil, last.applied + last.waiting > 0 || last.partial {
                 HStack(spacing: 8) {
-                    Text(L("최근 검토 · \(SkillDetailPane.day(last.at)) · 적용 \(last.applied)개", "Last review · \(SkillDetailPane.day(last.at)) · \(last.applied) applied")
-                         + (last.waiting == 0 ? "" : L(" · 승인 대기 \(last.waiting)개", " · \(last.waiting) awaiting approval")))
+                    Text(SkillsCatalog.reviewSummary(last))
                         .font(.system(size: 11)).foregroundStyle(.secondary)
                     if last.applied > 0 {
                         Button(L("이 검토 되돌리기", "Undo this review")) {

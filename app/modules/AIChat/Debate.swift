@@ -177,7 +177,7 @@ extension Discussion {
     func runDebate(question: String, history: [ChatTurn], rules: String, team: [Account],
                    leader: Account.Provider, perAI: Int, cancellation: DebateCancellation, id: UUID, index: Int,
                    meeting: String? = nil, cleanup: Bool = false,
-                   resultPrompt: String? = nil) -> (text: String, images: [ChatImage], attendees: [String])? {
+                   resultPrompt: String? = nil, minSpeakers: Int? = nil) -> (text: String, images: [ChatImage], attendees: [String])? {
         let limit = perAI * team.count
         let previous = meeting ?? Self.transcript(history)
         var outcome: (text: String, images: [ChatImage], attendees: [String])?
@@ -346,7 +346,8 @@ extension Discussion {
         }
         changeTurn(id, index, save: true) { t in t.endReason = ending; t.debateFocus = nil }
         // Stop never starts another request, including the final synthesis.
-        if !cancellation.isCancelled, let moderator, moderatorAnswered(), !cleanup || successful.count >= 2 {
+        let required = minSpeakers ?? (cleanup ? 2 : 1)
+        if !cancellation.isCancelled, let moderator, moderatorAnswered(), successful.count >= required {
             changeTurn(id, index) { $0.status = L("대표가 최종 답을 정리하는 중…", "Moderator is writing the final answer…") }
             let finalStarted = Date()
             let ran = AnswerModel()

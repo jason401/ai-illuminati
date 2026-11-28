@@ -16,6 +16,12 @@ enum ChatLinksApp {
         return ProjectMemoryCleanupLink.runIfIdle(in: discussion, project: project, manual: project != nil)
     }
 
+    @discardableResult
+    static func reviewKnowledge(in discussion: Discussion) -> Bool {
+        guard !discussion.importingMaterials, discussion.stoppingRooms.isEmpty else { return false }
+        return KnowledgeReviewLink.runIfIdle(in: discussion)
+    }
+
     static func connect() {
         ChatStore.links = ChatStore.Links(
             // The same order and failures as before: sessions (exact IDs only, never an account folder), then backups.

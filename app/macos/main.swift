@@ -83,6 +83,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, PhoneUsage {
         SpaceRefiner.watchLibrary()   // the Spaces folder, as chats and editors left it (SpaceLibrary.sync)
         // TODO work (Todo.swift): running TODOs from before a quit are ready again, then the board is checked.
         let todos = TodoScheduler(discussion: discussion, store: .shared)
+        todos.onTick = { [weak self] in
+            guard let self else { return }
+            ChatLinksApp.reviewKnowledge(in: self.discussion)
+        }
         TodoScheduler.shared = todos
         todos.start()
         // Old workspace backups go by age and count: now, after each answer and once a day.
@@ -121,6 +125,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, PhoneUsage {
         memoryCleanupTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
             guard let self else { return }
             ChatLinksApp.cleanProjectMemory(in: self.discussion)
+            ChatLinksApp.reviewKnowledge(in: self.discussion)
         }
         // Linked projects pull main by themselves: shortly after start, on wake (back from another device) and every 10 minutes.
         DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak self] in self?.autoPullProjects() }

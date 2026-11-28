@@ -388,7 +388,9 @@ KnowledgeReview.Outcome.refused(_:) | case refused(String)
 KnowledgeReview.records() | static func records() -> [KnowledgeReviewRecord]
 KnowledgeReview.undo(_:now:) | static func undo(_ meeting: UUID, now: Date = Date()) -> String?
 KnowledgeReviewLink | enum KnowledgeReviewLink
+KnowledgeReviewLink.isReviewHost | static var isReviewHost: () -> Bool
 KnowledgeReviewLink.run(in:done:) | @discardableResult static func run(in discussion: Discussion, done: ((String) -> Void)? = nil) -> Bool
+KnowledgeReviewLink.runIfIdle(in:now:done:) | @discardableResult static func runIfIdle(in discussion: Discussion, now: Date = Date(), done: ((String) -> Void)? = nil) -> Bool
 KnowledgeReviewRecord | struct KnowledgeReviewRecord
 KnowledgeReviewRecord.Outcome | struct Outcome
 KnowledgeReviewRecord.Outcome.candidate | var candidate: UUID
@@ -409,9 +411,11 @@ KnowledgeReviewRecord.applied | var applied: Int { get }
 KnowledgeReviewRecord.at | var at: Date
 KnowledgeReviewRecord.attendees | var attendees: [String]
 KnowledgeReviewRecord.candidates | var candidates: [UUID]
+KnowledgeReviewRecord.encode(to:) | func encode(to encoder: any Encoder) throws
 KnowledgeReviewRecord.id | var id: UUID
 KnowledgeReviewRecord.init(from:) | init(from decoder: any Decoder) throws
 KnowledgeReviewRecord.outcomes | var outcomes: [KnowledgeReviewRecord.Outcome]
+KnowledgeReviewRecord.partial | var partial: Bool
 KnowledgeReviewRecord.projects | var projects: [String]
 KnowledgeReviewRecord.undoneAt | var undoneAt: Date?
 KnowledgeReviewRecord.waiting | var waiting: Int { get }

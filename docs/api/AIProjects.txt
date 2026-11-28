@@ -289,7 +289,7 @@ ProjectSkillStore.list(_:) | func list(_ project: String) -> [SkillSummary]
 ProjectSkillStore.markSeen(_:project:) | @discardableResult func markSeen(_ name: String, project: String) -> Bool
 ProjectSkillStore.read(_:project:) | func read(_ name: String, project: String) -> SkillDetail?
 ProjectSkillStore.revision | @Published var revision: Int { get set }
-ProjectSkillStore.save(name:description:body:by:project:id:actor:isNew:now:turn:batch:) | func save(name: String, description: String, body: String, by: SkillAuthor, project: String, id: UUID? = nil, actor: String? = nil, isNew: Bool? = nil, now: Date = Date(), turn: UUID? = nil, batch: UUID? = nil) -> SkillOutcome
+ProjectSkillStore.save(name:description:body:by:project:id:actor:isNew:now:turn:batch:approved:) | func save(name: String, description: String, body: String, by: SkillAuthor, project: String, id: UUID? = nil, actor: String? = nil, isNew: Bool? = nil, now: Date = Date(), turn: UUID? = nil, batch: UUID? = nil, approved: String? = nil) -> SkillOutcome
 ProjectSkillStore.setAllEnabled(_:project:by:actor:now:) | func setAllEnabled(_ enabled: Bool, project: String, by: SkillAuthor = .user, actor: String? = nil, now: Date = Date()) -> SkillOutcome
 ProjectSkillStore.setEnabled(_:_:project:by:actor:now:) | func setEnabled(_ name: String, _ enabled: Bool, project: String, by: SkillAuthor = .user, actor: String? = nil, now: Date = Date()) -> SkillOutcome
 ProjectSkillStore.shared | static let shared: ProjectSkillStore
@@ -349,7 +349,7 @@ SkillDirectory.list() | func list() -> [SkillSummary]
 SkillDirectory.markSeen(_:) | @discardableResult func markSeen(_ name: String) -> Bool
 SkillDirectory.read(_:) | func read(_ name: String) -> SkillDetail?
 SkillDirectory.root | var root: URL { get }
-SkillDirectory.save(name:description:body:by:id:actor:isNew:now:turn:batch:) | func save(name: String, description: String, body: String, by: SkillAuthor, id: UUID? = nil, actor: String? = nil, isNew: Bool? = nil, now: Date = Date(), turn: UUID? = nil, batch: UUID? = nil) -> SkillOutcome
+SkillDirectory.save(name:description:body:by:id:actor:isNew:now:turn:batch:approved:) | func save(name: String, description: String, body: String, by: SkillAuthor, id: UUID? = nil, actor: String? = nil, isNew: Bool? = nil, now: Date = Date(), turn: UUID? = nil, batch: UUID? = nil, approved: String? = nil) -> SkillOutcome
 SkillDirectory.setAllEnabled(_:by:actor:now:) | func setAllEnabled(_ enabled: Bool, by: SkillAuthor = .user, actor: String? = nil, now: Date = Date()) -> SkillOutcome
 SkillDirectory.setEnabled(_:_:by:actor:now:) | func setEnabled(_ name: String, _ enabled: Bool, by: SkillAuthor = .user, actor: String? = nil, now: Date = Date()) -> SkillOutcome
 SkillDirectory.tombstones() | func tombstones() -> [SkillTombstone]

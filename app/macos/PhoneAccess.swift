@@ -439,6 +439,8 @@ final class PhoneServer: ObservableObject {
         case ("POST", "approval", 3):
             guard let id = UUID(uuidString: parts[2]), let allow = request.json?["allow"] as? Bool else { return .error(400, "bad request") }
             guard ProjectCenter.shared.requests.contains(where: { $0.id == id }) else {
+                // A knowledge review's change waiting in the inbox (회의 3/3): Allow applies it, Deny rejects it.
+                if let why = RemoteChats.decideKnowledge(id, apply: allow) { return why.isEmpty ? .json(["ok": true]) : .error(409, why) }
                 return .error(409, L("이미 처리된 요청이에요.", "This request was already decided."))
             }
             ProjectCenter.shared.decide(id, allow: allow)

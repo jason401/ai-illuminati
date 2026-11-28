@@ -36,10 +36,19 @@ enum ChatInputRequest {
 }
 
 // The inbox follows actions still waiting for the user. Opening a chat only changes its read state.
+// A knowledge review's change to a 🔒 skill or the user's own fact (KnowledgeApproval) waits here for Apply or Reject.
 enum InboxCheck: Identifiable {
-    case todo(TodoItem), request(room: UUID, name: String, text: String, at: Date)
-    var id: UUID { switch self { case .todo(let t): return t.id; case .request(let room, _, _, _): return room } }
-    var at: Date { switch self { case .todo(let t): return t.stateSince ?? t.updatedAt; case .request(_, _, _, let at): return at } }
+    case todo(TodoItem), request(room: UUID, name: String, text: String, at: Date), knowledge(KnowledgeApproval)
+    var id: UUID {
+        switch self { case .todo(let t): return t.id; case .request(let room, _, _, _): return room; case .knowledge(let k): return k.id }
+    }
+    var at: Date {
+        switch self {
+        case .todo(let t): return t.stateSince ?? t.updatedAt
+        case .request(_, _, _, let at): return at
+        case .knowledge(let k): return k.at
+        }
+    }
 }
 
 struct Inbox {
@@ -47,13 +56,14 @@ struct Inbox {
     var check: [InboxCheck] = []
     var isEmpty: Bool { blocked.isEmpty && check.isEmpty }
 
-    static func make(requests: [ProjectApproval], todos: TodoData, conversations: [Conversation], running: Set<UUID>) -> Inbox {
+    static func make(requests: [ProjectApproval], todos: TodoData, conversations: [Conversation], running: Set<UUID>,
+                     knowledge: [KnowledgeApproval] = []) -> Inbox {
         let todoRooms = Set(todos.items.compactMap(\.room))
         let chatRequests = conversations.compactMap { chat -> InboxCheck? in
             guard !running.contains(chat.id), !todoRooms.contains(chat.id), let pending = ChatInputRequest.pending(in: chat) else { return nil }
             return .request(room: chat.id, name: chat.title, text: pending.text, at: pending.at)
         }
-        let check = todos.items.filter { $0.state == .review }.map(InboxCheck.todo) + chatRequests
+        let check = todos.items.filter { $0.state == .review }.map(InboxCheck.todo) + chatRequests + knowledge.map(InboxCheck.knowledge)
         return Inbox(blocked: BlockedItem.all(requests: requests, todos: todos),
                      check: check.sorted { $0.at != $1.at ? $0.at > $1.at : $0.id.uuidString < $1.id.uuidString })
     }
@@ -76,6 +86,8 @@ struct Inbox {
 final class InboxDetails: ObservableObject {
     static let shared = InboxDetails()
     @Published var open: Set<UUID> = []
+    @Published var failed: [UUID: String] = [:]   // why Apply or Reject did nothing (the item stays)
+    @Published var notice: String?                // a review's change that closed without applying (changed since)
 }
 
 // The inbox on the right of the chat window, in the notes' place (ChatView), opened by the bell in the sidebar. A panel,
@@ -90,9 +102,11 @@ struct InboxPanel: View {
     @ObservedObject private var todos = TodoStore.shared
     @ObservedObject private var projectInfo = ProjectInfoStore.shared
     @ObservedObject private var details = InboxDetails.shared
+    @ObservedObject private var knowledge = KnowledgeInbox.shared
 
     var body: some View {
-        let inbox = Inbox.make(requests: center.requests, todos: todos.snapshot, conversations: discussion.conversations, running: discussion.runningRooms)
+        let inbox = Inbox.make(requests: center.requests, todos: todos.snapshot, conversations: discussion.conversations, running: discussion.runningRooms,
+                               knowledge: knowledge.items)
         // Seconds count down only while an outside MCP tool waits (60 seconds); minutes otherwise.
         let seconds = inbox.blocked.contains { if case .approval(let r) = $0 { return r.alwaysAllow != nil }; return false }
         VStack(alignment: .leading, spacing: 0) {
@@ -104,6 +118,10 @@ struct InboxPanel: View {
                     .help(L("알림함 닫기", "Close the inbox"))
             }
             .padding(.horizontal, 14).frame(height: 40)
+            if let notice = details.notice {
+                Text(notice).font(.system(size: 11)).foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 14).padding(.bottom, 4).onTapGesture { details.notice = nil }
+            }
             if inbox.isEmpty {
                 VStack(spacing: 6) {
                     Image(systemName: "checkmark.circle").font(.system(size: 22)).foregroundColor(.secondary)
@@ -206,6 +224,55 @@ struct InboxPanel: View {
             todoBox(todo)
         case .request(let room, let name, let text, _):
             row(room, .yellow, name: name, line: text, time: nil, help: text) { discussion.open(room) }
+        case .knowledge(let change):
+            VStack(alignment: .leading, spacing: 0) {
+                row(change.id, .yellow, name: change.title, line: change.reason, time: nil, help: change.reason, open: nil)
+                knowledgeBox(change)
+            }
+        }
+    }
+
+    // The review's change as a diff (only the changed lines until Details), then Reject / Apply.
+    private func knowledgeBox(_ change: KnowledgeApproval) -> some View {
+        let open = details.open.contains(change.id), all = change.diff
+        let lines = open ? all : Array(KnowledgeApproval.short(all).prefix(8))
+        return VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                    Text(line.marked).font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(line.kind == .same ? .secondary : .primary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(line.kind == .removed ? Color.red.opacity(0.14) : line.kind == .added ? Color.green.opacity(0.16) : .clear)
+                }
+            }
+            .textSelection(.enabled).padding(6).background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
+            if let note = details.failed[change.id] {
+                Text(note).font(.system(size: 11)).foregroundColor(.red).fixedSize(horizontal: false, vertical: true)
+            }
+            HStack(spacing: 8) {
+                if lines.count < all.count || open {
+                    Button(open ? L("접기", "Less") : L("자세히", "Details")) {
+                        if open { details.open.remove(change.id) } else { details.open.insert(change.id) }
+                    }
+                    .buttonStyle(.plainHit).foregroundColor(.accentColor).frame(minHeight: 22)
+                }
+                Spacer()
+                Button(L("거절", "Reject")) { decide(change, apply: false) }
+                Button(L("적용", "Apply")) { decide(change, apply: true) }.buttonStyle(.borderedProminent)
+            }
+            .font(.system(size: 12)).controlSize(.small)
+        }
+        .padding(.leading, 23).padding(.trailing, 8).padding(.bottom, 8)
+    }
+
+    private func decide(_ change: KnowledgeApproval, apply: Bool) {
+        details.notice = nil
+        switch KnowledgeApproval.decide(change.id, apply: apply) {
+        case .applied, .rejected: details.failed[change.id] = nil
+        case .changed:
+            details.failed[change.id] = nil
+            details.notice = L("\(change.title): 회의 뒤에 바뀌어서 적용하지 않고 닫았어요.", "\(change.title) changed after the review, so it was closed without applying.")
+        case .failed(let why): details.failed[change.id] = why
         }
     }
 

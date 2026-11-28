@@ -40,6 +40,7 @@ struct ChatView<Model: ChatSettings>: View {
     @ObservedObject private var sync = DeviceSync.shared
     @ObservedObject private var connect = MacConnect.shared
     @ObservedObject private var approvals = ProjectCenter.shared
+    @ObservedObject private var knowledge = KnowledgeInbox.shared
     @ObservedObject private var folds = SidebarFold.shared
     @ObservedObject private var folderSources = FolderSources.shared
     @ObservedObject private var todos = TodoStore.shared
@@ -427,7 +428,8 @@ struct ChatView<Model: ChatSettings>: View {
 
     // The red badge counts what blocks work, like the Dock. The second number counts requests and reviews.
     private var inboxRow: some View {
-        let inbox = Inbox.make(requests: approvals.requests, todos: todos.snapshot, conversations: discussion.conversations, running: discussion.runningRooms)
+        let inbox = Inbox.make(requests: approvals.requests, todos: todos.snapshot, conversations: discussion.conversations, running: discussion.runningRooms,
+                               knowledge: knowledge.items)
         let hovered = discussion.hoverKey == "row.inbox"
         return Button(action: { discussion.inboxShown.toggle() }) {
             HStack(spacing: 8) {

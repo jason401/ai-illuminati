@@ -556,10 +556,11 @@ public final class SkillDirectory {
 
     // Creates, updates, or (when `id` matches an existing skill with another name) renames a skill.
     // User saves always set userLocked = true. AI/meeting saves on a user-locked or externally edited skill return
-    // .needsApproval without modifying disk files.
+    // .needsApproval without modifying disk files, unless `approved` is the skill's content hash the user approved the
+    // change against (Inbox, 회의 3/3): then it saves and the skill stays locked; a skill changed since still waits.
     public func save(name: String, description: String, body: String, by: SkillAuthor,
                      id: UUID? = nil, actor: String? = nil, isNew: Bool? = nil, now: Date = Date(), turn: UUID? = nil,
-                     batch: UUID? = nil) -> SkillOutcome {
+                     batch: UUID? = nil, approved: String? = nil) -> SkillOutcome {
         let now = Self.isoSecond(now)
         guard SkillDocument.isValidSlug(name) else {
             return .refused(L("스킬 이름은 소문자, 숫자, 하이픈만 쓸 수 있어요 (예: my-skill).",
@@ -627,7 +628,7 @@ public final class SkillDirectory {
         // Untracked SKILL.md on disk is treated as user-authored and locked.
         if existingRecord == nil, case .present(_, let diskHash, let diskRaw, _) = disk {
             let synthetic = resolveRecord(name: name, tracked: nil, diskHash: diskHash, tombstones: index.tombstones).record
-            if by != .user {
+            if by != .user && approved != diskHash {
                 return .needsApproval(synthetic, approvalMessage())
             }
             let doc = SkillDocument(name: name, description: cleanDesc, body: body)
@@ -666,7 +667,7 @@ public final class SkillDirectory {
                 effective = tracked
                 priorRaw = nil
             }
-            if effective.userLocked && by != .user {
+            if effective.userLocked && by != .user && approved != effective.contentHash {
                 return .needsApproval(effective, approvalMessage())
             }
             let doc = SkillDocument(name: name, description: cleanDesc, body: body)
@@ -1500,9 +1501,9 @@ public final class ProjectSkillStore: ObservableObject {
 
     public func save(name: String, description: String, body: String, by: SkillAuthor, project: String,
                      id: UUID? = nil, actor: String? = nil, isNew: Bool? = nil, now: Date = Date(), turn: UUID? = nil,
-                     batch: UUID? = nil) -> SkillOutcome {
+                     batch: UUID? = nil, approved: String? = nil) -> SkillOutcome {
         directory(project).save(name: name, description: description, body: body, by: by, id: id, actor: actor, isNew: isNew,
-                                now: now, turn: turn, batch: batch)
+                                now: now, turn: turn, batch: batch, approved: approved)
     }
 
     public func setEnabled(_ name: String, _ enabled: Bool, project: String, by: SkillAuthor = .user,

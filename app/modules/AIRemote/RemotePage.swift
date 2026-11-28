@@ -727,8 +727,8 @@ function inboxRows(items) {
     if (!i.approval) return row;
     return row + '<div class="approval inboxcard">' +
       (i.detail ? '<details data-open="' + esc(i.approval) + '"' + (inboxOpen.has(i.approval) ? ' open' : '') + '><summary>' + esc(S.details) + '</summary><pre>' + esc(i.detail) + '</pre></details>' : '') +
-      '<div class="buttons"><button class="deny" data-approve="' + esc(i.approval) + '" data-allow="0">' + esc(S.deny) + '</button>' +
-      '<button class="allow" data-approve="' + esc(i.approval) + '" data-allow="1">' + esc(S.allow) + '</button></div></div>';
+      '<div class="buttons"><button class="deny" data-approve="' + esc(i.approval) + '" data-allow="0">' + esc(i.denyLabel || S.deny) + '</button>' +
+      '<button class="allow" data-approve="' + esc(i.approval) + '" data-allow="1">' + esc(i.allowLabel || S.allow) + '</button></div></div>';
   }).join('');
 }
 $('list').addEventListener('toggle', e => {

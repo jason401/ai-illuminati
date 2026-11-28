@@ -79,10 +79,12 @@ public enum RemoteChats {
     // The inbox's 🔴 and 🟡 (Inbox.make, the Mac panel's lists), each with its name, one line, the time left and the chat it
     // opens. A chat's approval carries its id and detail for the page's Allow/Deny (POST /api/approval, like a chat's card);
     // the rest are answered in their chat (a TODO's through the message box, sendToTodo). An outside MCP tool only counts
-    // down (its macOS notification is the way to answer).
+    // down (its macOS notification is the way to answer). A knowledge review's change (회의 3/3) carries its diff as the
+    // detail and Apply / Reject labels; the page sends it to the same POST /api/approval (decideKnowledge).
     public static func inbox(_ d: Discussion, now: Date = Date()) -> [[String: Any]] {
         let center = ProjectCenter.shared, todo = TodoStore.shared.snapshot, names = ProjectInfoStore.shared.names
-        let inbox = Inbox.make(requests: center.requests, todos: todo, conversations: d.conversations, running: d.runningRooms)
+        let inbox = Inbox.make(requests: center.requests, todos: todo, conversations: d.conversations, running: d.runningRooms,
+                               knowledge: KnowledgeInbox.shared.items)
         func chat(_ room: UUID?) -> String? { room.flatMap { r in d.conversations.contains { $0.id == r } ? r.uuidString : nil } }
         func entry(_ id: UUID, _ level: String, _ kind: String, name: String, line: String, time: String?, room: String?) -> [String: Any] {
             var row: [String: Any] = ["id": id.uuidString, "level": level, "kind": kind, "name": name.isEmpty ? L("새 대화", "New chat") : name, "line": line]
@@ -116,9 +118,25 @@ public enum RemoteChats {
                              time: nil, room: chat(t.room))
             case .request(let room, let name, let text, _):
                 return entry(room, "yellow", "request", name: name, line: text, time: nil, room: room.uuidString)
+            case .knowledge(let k):
+                var row = entry(k.id, "yellow", "knowledge", name: k.title, line: k.reason, time: nil, room: nil)
+                row["approval"] = k.id.uuidString; row["detail"] = k.diff.map(\.marked).joined(separator: "\n")
+                row["allowLabel"] = L("적용", "Apply"); row["denyLabel"] = L("거절", "Reject")
+                return row
             }
         }
         return blocked + check
+    }
+
+    // The page's Apply / Reject on a knowledge review's change (POST /api/approval/<id>). nil: no such waiting change;
+    // "": done; otherwise why nothing was applied (changed since: the item closed; a failure: it stays).
+    public static func decideKnowledge(_ id: UUID, apply: Bool) -> String? {
+        guard KnowledgeInbox.shared.items.contains(where: { $0.id == id }) else { return nil }
+        switch KnowledgeApproval.decide(id, apply: apply) {
+        case .applied, .rejected: return ""
+        case .changed: return L("회의 뒤에 바뀌어서 적용하지 않고 닫았어요.", "It changed after the review, so it was closed without applying.")
+        case .failed(let why): return why
+        }
     }
 
     // One chat as the page shows it: the user's messages and each AI's answer (the reply so far while it writes),

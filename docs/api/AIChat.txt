@@ -489,6 +489,7 @@ RemoteChats | enum RemoteChats
 RemoteChats.chat(_:_:opened:) | static func chat(_ d: Discussion, _ room: UUID, opened: Bool) -> [String : Any]?
 RemoteChats.composer(_:project:) | static func composer(_ d: Discussion, project: String?) -> [String : Any]
 RemoteChats.create(_:project:text:photos:mentions:) | static func create(_ d: Discussion, project: String?, text: String, photos: [Data], mentions: [String] = []) -> (id: UUID?, reason: String?)
+RemoteChats.decideKnowledge(_:apply:) | static func decideKnowledge(_ id: UUID, apply: Bool) -> String?
 RemoteChats.fold(_:folded:) | static func fold(_ key: String, folded: Bool) -> Bool
 RemoteChats.image(_:_:id:) | static func image(_ d: Discussion, _ room: UUID, id: UUID) -> URL?
 RemoteChats.inbox(_:now:) | static func inbox(_ d: Discussion, now: Date = Date()) -> [[String : Any]]
@@ -553,7 +554,7 @@ SkillStore.list() | func list() -> [SkillSummary]
 SkillStore.markSeen(_:) | @discardableResult func markSeen(_ name: String) -> Bool
 SkillStore.read(_:) | func read(_ name: String) -> SkillDetail?
 SkillStore.revision | @Published var revision: Int { get set }
-SkillStore.save(name:description:body:by:id:actor:isNew:now:turn:batch:) | func save(name: String, description: String, body: String, by: SkillAuthor, id: UUID? = nil, actor: String? = nil, isNew: Bool? = nil, now: Date = Date(), turn: UUID? = nil, batch: UUID? = nil) -> SkillOutcome
+SkillStore.save(name:description:body:by:id:actor:isNew:now:turn:batch:approved:) | func save(name: String, description: String, body: String, by: SkillAuthor, id: UUID? = nil, actor: String? = nil, isNew: Bool? = nil, now: Date = Date(), turn: UUID? = nil, batch: UUID? = nil, approved: String? = nil) -> SkillOutcome
 SkillStore.setAllEnabled(_:by:actor:now:) | func setAllEnabled(_ enabled: Bool, by: SkillAuthor = .user, actor: String? = nil, now: Date = Date()) -> SkillOutcome
 SkillStore.setEnabled(_:_:by:actor:now:) | func setEnabled(_ name: String, _ enabled: Bool, by: SkillAuthor = .user, actor: String? = nil, now: Date = Date()) -> SkillOutcome
 SkillStore.shared | static let shared: SkillStore

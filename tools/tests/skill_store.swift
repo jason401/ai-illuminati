@@ -1158,7 +1158,106 @@ func testKnowledgeReview() {
     expect(!waiting.contains { $0.project == key } && waiting.contains { $0.row.content["text"] == "꺼진 동안의 후보" },
            "a project with a saved Enterprise audience keeps its candidates and skills out of the review")
 
+    testKnowledgeApproval()
     testKnowledgeReviewIdleScheduling()
+}
+
+// Approving a review's change in the Inbox (회의 3/3): a 🔒 skill and the user's own fact wait with a diff; Apply saves
+// by the meeting and keeps them the user's, Reject drops, and one changed since closes without applying.
+private func testKnowledgeApproval() {
+    let global = SkillStore.shared, memory = MemoryStore.shared, inbox = KnowledgeCandidates.shared
+    let chat = UUID()
+    func propose(_ kind: KnowledgeCandidate.Kind, _ content: [String: String]) -> KnowledgeCandidate {
+        let row = KnowledgeCandidate(kind: kind, content: content, evidence: "seen twice", accountID: "a", accountName: "ChatGPT",
+                                     chatID: chat, turnID: UUID(), todoID: nil)
+        expect(inbox.submit(row, project: nil) == nil, "approval candidate submitted")
+        return row
+    }
+    func cid(_ row: KnowledgeCandidate) -> String { "c:" + String(row.id.uuidString.prefix(8)).lowercased() }
+    for name in ["mine-apply", "mine-reject", "mine-changed"] {
+        _ = global.save(name: name, description: "Steps for \(name)", body: "line 1\nline 2", by: .user)
+    }
+    func sid(_ name: String) -> String { "s:" + String(global.list().first { $0.name == name }!.id.uuidString.prefix(8)).lowercased() }
+    guard case .saved(let keep) = memory.remember("사용자는 아침에 집중한다", room: nil, turn: nil, roomTitle: nil, by: "Claude"),
+          case .saved(let edit) = memory.remember("사용자는 녹차를 마신다", room: nil, turn: nil, roomTitle: nil, by: "Claude")
+    else { expect(false, "approval facts saved"); return }
+    let rows = [propose(.skill, ["name": "mine-apply"]), propose(.skill, ["name": "mine-reject"]), propose(.skill, ["name": "mine-changed"]),
+                propose(.memory, ["text": "사용자는 아침 일찍 집중한다", "replaces_id": keep.shortID]),
+                propose(.memory, ["text": "사용자는 홍차를 마신다", "replaces_id": edit.shortID])]
+    let json = """
+    [{"candidate":"\(cid(rows[0]))","action":"modify","target":"\(sid("mine-apply"))","body":"line 1\\nline 2 better\\nline 3","reason":"보완"},
+     {"candidate":"\(cid(rows[1]))","action":"modify","target":"\(sid("mine-reject"))","body":"AI rewrite","reason":"다시 씀"},
+     {"candidate":"\(cid(rows[2]))","action":"modify","target":"\(sid("mine-changed"))","body":"AI change","reason":"정리"},
+     {"candidate":"\(cid(rows[3]))","action":"modify","target":"m:\(keep.shortID)","text":"사용자는 아침 일찍 집중한다","reason":"정정"},
+     {"candidate":"\(cid(rows[4]))","action":"modify","target":"m:\(edit.shortID)","text":"사용자는 홍차를 마신다","reason":"정정"}]
+    """
+    let meeting = UUID()
+    guard let decisions = KnowledgeReview.decisions(from: json),
+          case .applied(let record) = KnowledgeReview.apply(decisions, meeting: meeting, attendees: ["a", "b"],
+                                                            candidates: rows.map { KnowledgeReview.Candidate(row: $0, project: nil, inProject: false) })
+    else { expect(false, "the approval review applies"); return }
+    expect(record.waiting == 5 && global.read("mine-apply")?.document.body == "line 1\nline 2"
+           && memory.snapshot.items.first { $0.id == keep.id }?.text == keep.text, "every change to the user's skills and facts waits")
+
+    let waiting = KnowledgeInbox.shared.items.filter { $0.review == meeting }
+    expect(waiting.count == 5 && Set(waiting.map(\.id)) == Set(rows.map(\.id)), "each waiting change is one inbox item")
+    let applyItem = waiting.first { $0.id == rows[0].id }!
+    expect(applyItem.title.contains("mine-apply") && applyItem.reason.contains("보완")
+           && applyItem.diff.contains(.init(kind: .removed, text: "line 2")) && applyItem.diff.contains(.init(kind: .added, text: "line 2 better"))
+           && applyItem.diff.contains(.init(kind: .added, text: "line 3")) && applyItem.diff.contains(.init(kind: .same, text: "line 1")),
+           "the item has the skill's name, the meeting's reason and a line diff of old and new")
+    let factItem = waiting.first { $0.id == rows[3].id }!
+    expect(!factItem.isSkill && factItem.diff == [.init(kind: .removed, text: keep.text), .init(kind: .added, text: "사용자는 아침 일찍 집중한다")],
+           "a fact's item diffs the old and new line")
+    let model = AppModel(persist: false)
+    let discussion = Discussion(model: model)
+    let board = Inbox.make(requests: [], todos: TodoData(), conversations: [], running: [], knowledge: KnowledgeInbox.shared.items)
+    expect(rows.allSatisfy { row in board.check.contains { $0.id == row.id } } && board.blocked.isEmpty,
+           "the Mac inbox lists them to review, not as blocked")
+    let phone = RemoteChats.inbox(discussion).filter { ($0["kind"] as? String) == "knowledge" }
+    expect(rows.allSatisfy { row in phone.contains { $0["approval"] as? String == row.id.uuidString } }
+           && phone.contains { ($0["detail"] as? String)?.contains("+ line 2 better") == true && $0["allowLabel"] != nil },
+           "the iPhone page's inbox gets the same items with their diff and Apply / Reject")
+    if case .needsApproval = global.save(name: "mine-apply", description: "x", body: "y", by: .meeting, approved: "not-the-hash") {} else {
+        expect(false, "a meeting save against another hash still waits")
+    }
+
+    // Apply: saved by the meeting, still 🔒 and the user's, in history under the review.
+    expect(KnowledgeApproval.decide(rows[0].id, apply: true) == .applied, "Apply saves the skill")
+    let applied = global.read("mine-apply")
+    expect(applied?.document.body == "line 1\nline 2 better\nline 3" && applied?.record.userLocked == true && applied?.record.createdBy == .user,
+           "the approved skill has the new body and stays locked and the user's")
+    let entry = global.history().last
+    expect(entry?.by == .meeting && entry?.batch == meeting && entry?.name == "mine-apply", "history records the meeting's change under the review")
+    expect(KnowledgeApproval.decide(rows[0].id, apply: true) != .applied && !KnowledgeInbox.shared.items.contains { $0.id == rows[0].id },
+           "an applied item leaves the inbox and cannot be applied twice")
+
+    // Reject: nothing changes, the candidate is dropped.
+    expect(KnowledgeApproval.decide(rows[1].id, apply: false) == .rejected && global.read("mine-reject")?.document.body == "line 1\nline 2",
+           "Reject leaves the skill as it was")
+
+    // Changed since: the user edited the skill, the fact; Apply closes the item without applying.
+    _ = global.save(name: "mine-changed", description: "Steps for mine-changed", body: "user edit", by: .user)
+    memory.setItem(edit.id, text: "사용자는 보리차를 마신다")
+    expect(KnowledgeApproval.decide(rows[2].id, apply: true) == .changed && global.read("mine-changed")?.document.body == "user edit",
+           "a skill changed since the review is not applied")
+    expect(KnowledgeApproval.decide(rows[4].id, apply: true) == .changed
+           && memory.snapshot.items.first { $0.id == edit.id }?.text == "사용자는 보리차를 마신다", "a fact changed since is not applied")
+
+    // A fact: changed, still the user's.
+    expect(RemoteChats.decideKnowledge(rows[3].id, apply: true) == "" && RemoteChats.decideKnowledge(UUID(), apply: true) == nil,
+           "the phone's Allow applies a waiting fact; an unknown id is not a knowledge item")
+    let fact = memory.snapshot.items.first { $0.id == keep.id }
+    expect(fact?.text == "사용자는 아침 일찍 집중한다" && fact?.meeting == nil, "the approved fact has the new text and stays the user's")
+    expect(!KnowledgeInbox.shared.items.contains { $0.review == meeting }, "nothing of the review waits any more")
+    let outcomes = KnowledgeReview.records().first { $0.id == meeting }?.outcomes ?? []
+    expect(outcomes.map(\.result) == [.applied, .dropped, .refused, .applied, .refused] && outcomes.allSatisfy { $0.decidedAt != nil },
+           "the record keeps each answer and when it was given")
+
+    // The review's Undo takes the approved changes back too.
+    expect(KnowledgeReview.undo(meeting) == nil && global.read("mine-apply")?.document.body == "line 1\nline 2"
+           && global.read("mine-apply")?.record.userLocked == true && memory.snapshot.items.first { $0.id == keep.id }?.text == keep.text,
+           "undoing the review restores the approved skill and fact")
 }
 
 // Automatic idle review scheduling (회의 2/3): busy guards, iCloud host hook, >= 2 companies vs 1 company waiting for

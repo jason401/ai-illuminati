@@ -98,14 +98,15 @@ final class KnowledgeCandidates: ObservableObject {
         }
     }
 
-    // A review's outcome: each listed candidate still pending gets its new state. False when a file could not be written.
-    func settle(_ states: [UUID: KnowledgeCandidate.State]) -> Bool {
+    // A review's outcome: each listed candidate still in `from` (pending; waiting for the user's answer in the Inbox)
+    // gets its new state. False when a file could not be written.
+    func settle(_ states: [UUID: KnowledgeCandidate.State], from: KnowledgeCandidate.State = .pending) -> Bool {
         guard !states.isEmpty else { return true }
         do {
             var files = try readAll()
             for (file, rows) in files {
                 var next = rows, touched = false
-                for i in next.indices where next[i].state == .pending {
+                for i in next.indices where next[i].state == from {
                     guard let state = states[next[i].id] else { continue }
                     next[i].state = state; touched = true
                 }

@@ -36,6 +36,9 @@ public struct KnowledgeReviewRecord: Codable, Equatable, Identifiable {
         public var project: String?       // the project store a skill went to
         public var skill: String?         // the saved skill's name
         public var fact: UUID?            // the saved or changed fact
+        var skillID: UUID?                // waiting: the saved skill a modify targets (nil: by name)
+        var proposal: KnowledgeProposal?  // waiting: before and after, for the user's approval (Inbox)
+        var decidedAt: Date?              // when the user applied or rejected it, or found it changed since (Inbox)
     }
     public var id: UUID                   // the meeting id, also the skills' history batch
     public var at: Date
@@ -151,12 +154,13 @@ public enum KnowledgeReview {
         } catch {}
     }
 
-    private static func write(_ records: [KnowledgeReviewRecord]) -> Bool {
+    static func write(_ records: [KnowledgeReviewRecord]) -> Bool {
         do {
             try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true,
                                                     attributes: [.posixPermissions: 0o700])
             try encoder.encode(records).write(to: file, options: .atomic)
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+            KnowledgeInbox.shared.reload()
             return true
         } catch { return false }
     }
@@ -361,7 +365,11 @@ public enum KnowledgeReview {
                     if let skill = done?.id ?? id { touched.insert(skill) }
                     if let project, !record.projects.contains(project) { record.projects.append(project) }
                 case .needsApproval(let skill, _):
-                    outcome.result = .waiting; outcome.skill = skill.name; outcome.project = project
+                    outcome.result = .waiting; outcome.skill = skill.name; outcome.project = project; outcome.skillID = id
+                    let old = project.map { ProjectSkillStore.shared.read(skill.name, project: $0) } ?? SkillStore.shared.read(skill.name)
+                    outcome.proposal = KnowledgeProposal(name: name, description: description, body: body,
+                                                         oldName: skill.name, oldDescription: old?.document.description,
+                                                         oldBody: old?.document.body, hash: old?.record.contentHash ?? skill.contentHash)
                 case .refused(let why): refuse(why)
                 default: refuse("The skill was not saved.")
                 }
@@ -380,7 +388,9 @@ public enum KnowledgeReview {
                 guard touched.insert(fact.id).inserted else { refuse("This fact was already changed in this review.", retry: true); break }
                 outcome.fact = fact.id
                 // The user's own facts change only with the user's approval (Inbox, 회의 3/3).
-                guard fact.meeting != nil else { outcome.result = .waiting; break }
+                guard fact.meeting != nil else {
+                    outcome.result = .waiting; outcome.proposal = KnowledgeProposal(text: text, oldText: fact.text); break
+                }
                 switch MemoryStore.shared.change(fact.id.uuidString, to: text, room: c.row.chatID, turn: nil, by: by, meeting: meeting) {
                 case .changed: outcome.result = .applied
                 case .refused(let why): refuse(why)

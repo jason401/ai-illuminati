@@ -466,17 +466,22 @@ func testMemory() {
     expect(offered(open.id, "memory_forget") && !offered(open.id), "\"이거 잊어\" offers forget (it used to close every memory tool)")
     chat.change(open.id) { $0.turns[$0.turns.count - 1].question = "이건 기억하지 마" }
     expect(!offered(open.id) && !offered(open.id, "memory_forget"), "\"기억하지 마\" offers nothing")
-    store.update { $0.autoSave = true }
+    store.update { $0.autoPropose = true }
     expect(!offered(open.id) && !offered(open.id, "memory_forget") && chat.memoryRule(claude, chat: open.id).contains("Saved facts")
            && !chat.memoryRule(claude, chat: open.id).contains("remember tool"), "\"기억하지 마\" wins over saving on its own")
-    store.update { $0.autoSave = false }
+    store.update { $0.autoPropose = false }
     chat.change(open.id) { $0.turns[$0.turns.count - 1].answeredAt = Date() }
     let old = Data(#"{"profile":"옛 프로필","items":[{"id":"1A2B3C4D-0000-0000-0000-000000000000","text":"옛 사실","createdAt":0}],"autoSave":false,"enabled":true}"#.utf8)
     let decoded = try? JSONDecoder().decode(MemoryData.self, from: old)
-    expect(decoded?.items.first?.shortID == "1a2b3c4d" && decoded?.history.isEmpty == true && decoded?.profile == "옛 프로필", "an older memory.json without history still reads")
+    expect(decoded?.items.first?.shortID == "1a2b3c4d" && decoded?.history.isEmpty == true && decoded?.profile == "옛 프로필"
+           && decoded?.autoPropose == true, "older memory files keep their contents and get the new proposal default")
+    var proposalsOff = decoded!
+    proposalsOff.autoPropose = false
+    let reopened = try! JSONDecoder().decode(MemoryData.self, from: JSONEncoder().encode(proposalsOff))
+    expect(reopened == proposalsOff, "the new proposal preference survives saving and reopening")
 
     let earlier = session(open.id)
-    store.update { $0.autoSave = true; $0.profile = "Stanford 초음파 연구자. 수치 위주 답 선호." }
+    store.update { $0.autoPropose = true; $0.profile = "Stanford 초음파 연구자. 수치 위주 답 선호." }
     chat.change(open.id) { $0.turns.append(ChatTurn(question: "다음 실험은?")) }
     expect(link.call("remember", ["text": "옛 세션에서 온 내용"], context: earlier)["isError"] as? Bool == true && store.snapshot.items.count == 1,
            "the tool session of an earlier answer never saves to a later message")

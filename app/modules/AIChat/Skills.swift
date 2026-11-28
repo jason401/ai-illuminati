@@ -264,7 +264,7 @@ public final class SkillLink: ToolProvider {
         }
         if proposal == .skill { return true }
         let memory = MemoryLink.shared.store.snapshot
-        return !scope.chat.isEnterprise && memory.enabled && memory.autoSave && !MemoryStore.asksNotToSave(scope.turn.question)
+        return !scope.chat.isEnterprise && memory.enabled && memory.autoPropose && !MemoryStore.asksNotToSave(scope.turn.question)
     }
 
     public func tools(context: ToolContext) -> [[String: Any]] {
@@ -320,14 +320,18 @@ public final class SkillLink: ToolProvider {
         guard let account = context.asker, let scope = answeringScope(context), mayPropose(proposal, scope: scope, context: context) else {
             return toolFailure(L("이 답에서는 후보를 올릴 수 없어요.", "Candidates are unavailable for this answer."))
         }
+        var arguments = arguments
+        let replacement = arguments[proposal.replacement]
+        if replacement is NSNull || (replacement as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true {
+            arguments.removeValue(forKey: proposal.replacement)
+        }
         let fields = arguments.compactMapValues { ($0 as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }
         guard let evidence = fields["evidence"], !evidence.isEmpty else {
             return toolFailure(L("무엇이 성공했는지 증거를 적어 주세요.", "Include evidence of what worked."))
         }
         let allowed = Set(proposal.required + [proposal.replacement])
         guard fields.count == arguments.count, Set(fields.keys).isSubset(of: allowed),
-              proposal.required.allSatisfy({ fields[$0]?.isEmpty == false }),
-              fields[proposal.replacement]?.isEmpty != true else {
+              proposal.required.allSatisfy({ fields[$0]?.isEmpty == false }) else {
             return toolFailure(L("후보에 필요한 항목을 확인해 주세요.", "Check the candidate's fields."))
         }
 

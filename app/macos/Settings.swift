@@ -1327,7 +1327,7 @@ private struct MemorySettingsCard: View {
                 SettingsRow(title: L("AI 기억 후보 제안", "AI memory proposals")) {
                     Spacer()
                     Toggle(L("AI 기억 후보 제안", "AI memory proposals"), isOn: Binding(
-                        get: { memory.data.autoSave }, set: { on in memory.update { $0.autoSave = on } }))
+                        get: { memory.data.autoPropose }, set: { on in memory.update { $0.autoPropose = on } }))
                         .labelsHidden().toggleStyle(.switch)
                 }
                 .help(L("AI가 기억할 만한 내용을 검토 후보로 올려요. 답 아래에서 취소할 수 있어요. \"기억해\"라고 요청하면 바로 저장해요.",

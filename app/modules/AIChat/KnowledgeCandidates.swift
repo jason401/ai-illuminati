@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import AIAccounts
 import AILocalization
 import AIProjects
@@ -148,8 +149,19 @@ final class KnowledgeCandidates: ObservableObject {
             data.append(try encoder.encode(row))
             data.append(10)
         }
-        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true,
+        let folder = file.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true,
                                                 attributes: [.posixPermissions: 0o700])
-        try data.write(to: file, options: .atomic)
+        // Write privately in the same directory so the rename publishes a complete, owner-only file.
+        var template = Array(folder.appendingPathComponent(".knowledge-candidates.XXXXXX").path.utf8CString)
+        let descriptor = mkstemp(&template)
+        guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        let temporaryPath = String(cString: template)
+        defer { _ = unlink(temporaryPath) }
+        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+        guard fchmod(descriptor, 0o600) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        try handle.write(contentsOf: data)
+        try handle.close()
+        guard rename(temporaryPath, file.path) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
     }
 }

@@ -767,7 +767,8 @@ func testKnowledgeCandidates() {
     let fm = FileManager.default, previousTodos = TodoStore.shared, memory = MemoryStore.shared
     let previousMemory = memory.snapshot
     TodoStore.shared = TodoStore(url: todoFile)
-    memory.update { $0 = MemoryData() }
+    let legacy = try! JSONDecoder().decode(MemoryData.self, from: Data(#"{"autoSave":false,"enabled":true}"#.utf8))
+    memory.update { $0 = legacy }
     defer {
         TodoStore.shared = previousTodos
         memory.update { $0 = previousMemory }
@@ -809,7 +810,7 @@ func testKnowledgeCandidates() {
             .filter { ($0["name"] as? String)?.hasSuffix("_propose") == true }
     }
     func names(_ token: String) -> Set<String> { Set(tools(token).compactMap { $0["name"] as? String }) }
-    func call(_ token: String, _ name: String, _ args: [String: String]) -> (ok: Bool, text: String) {
+    func call(_ token: String, _ name: String, _ args: [String: Any]) -> (ok: Bool, text: String) {
         let reply = hub.handle(["op": "call", "session": token, "name": name, "arguments": args])
         return (reply["isError"] as? Bool == false, (reply["content"] as? [[String: String]])?.first?["text"] ?? "")
     }
@@ -823,12 +824,15 @@ func testKnowledgeCandidates() {
             try! JSONSerialization.jsonObject(with: Data($0.utf8)) as! [String: Any]
         }
     }
+    func permissions(_ file: URL) -> Int? {
+        (try? fm.attributesOfItem(atPath: file.path))?[.posixPermissions] as? Int
+    }
 
     let plainToken = token(plain), projectToken = token(linked), enterpriseToken = token(enterprise, school)
     let todoToken = token(todoRoom, run: run), both: Set = ["skill_propose", "memory_propose"]
     expect(names(plainToken) == both && names(projectToken) == both && names(todoToken) == both
            && names(enterpriseToken) == ["skill_propose"] && names(token(enterprise)).isEmpty,
-           "plain, project and TODO get both tools; Enterprise gets only skills for its own accounts")
+           "old settings still enable both tools for plain, project and TODO answers; Enterprise gets only skills")
     expect(names(token(plain, local)).isEmpty && names(token(plain, origin: .side)).isEmpty
            && names(token(plain, origin: .consulted)).isEmpty && names(token(linked, allowsSkillEdits: false)).isEmpty,
            "local models, helpers and supplemental reviewers do not get proposal tools")
@@ -843,20 +847,28 @@ func testKnowledgeCandidates() {
            "missing or whitespace evidence never saves or takes the quota")
     expect(!call(enterpriseToken, "memory_propose", fact).ok && !call(plainToken, "skill_propose", skill("project")).ok,
            "direct calls cannot bypass Enterprise or project scope")
-    memory.update { $0.autoSave = false }
+    memory.update { $0.autoPropose = false }
     expect(names(plainToken) == ["skill_propose"] && !call(plainToken, "memory_propose", fact).ok,
            "the candidate setting can turn off user memory proposals")
-    memory.update { $0.autoSave = true }
+    memory.update { $0.autoPropose = true }
+    var wrongType: [String: Any] = fact
+    wrongType["replaces_id"] = 123
+    expect(!call(plainToken, "memory_propose", wrongType).ok, "a replacement ID of the wrong type is refused")
     expect(call(plainToken, "memory_propose", fact).ok, "memory proposal with evidence succeeds")
     let duplicate = call(plainToken, "skill_propose", skill("global"))
     expect(!duplicate.ok && duplicate.text.contains(L("한 답", "per answer")), "the two tools share one quota per turn")
-    expect(call(enterpriseToken, "skill_propose", skill("project")).ok, "Enterprise skill proposals reach the project inbox")
+    var enterpriseSkill: [String: Any] = skill("project")
+    enterpriseSkill["replaces"] = NSNull()
+    expect(call(enterpriseToken, "skill_propose", enterpriseSkill).ok, "Enterprise skill proposals accept null replacements")
     expect(call(todoToken, "skill_propose", skill("project")).ok, "a project TODO writes its candidate")
     let rows = lines(projectFile), globalRows = lines(globalFile)
     expect(rows.count == 2 && globalRows.count == 1, "submissions preserve earlier JSONL lines in each scope")
+    expect(permissions(globalFile) == 0o600 && permissions(projectFile) == 0o600,
+           "both inbox files are readable and writable by their owner only")
     let memoryRow = globalRows[0]
     let todoRow = rows[1], todoTurn = todoRoom.turns[0].id
-    expect(rows[0]["accountID"] as? String == school.id && todoRow["todoID"] as? String == todo.id.uuidString
+    expect(rows[0]["accountID"] as? String == school.id && (rows[0]["content"] as? [String: String])?["replaces"] == nil
+           && todoRow["todoID"] as? String == todo.id.uuidString
            && todoRow["chatID"] as? String == todoRoom.id.uuidString && todoRow["turnID"] as? String == todoTurn.uuidString
            && todoRow["createdAt"] is String && todoRow["kind"] as? String == "skill" && todoRow["state"] as? String == "pending"
            && (todoRow["content"] as? [String: String])?["body"] == skill("project")["body"]
@@ -869,10 +881,11 @@ func testKnowledgeCandidates() {
            "the global JSONL carries memory content and neither candidate activated")
     let reopened = KnowledgeCandidates()
     let receipt = reopened.pending(chat: todoRoom.id, turn: todoTurn)!
+    try! fm.setAttributes([.posixPermissions: 0o644], ofItemAtPath: projectFile.path)
     expect(receipt.uuidString == todoRow["id"] as? String && !reopened.drop(receipt, chat: plain.id, turn: todoTurn)
            && reopened.drop(receipt, chat: todoRoom.id, turn: todoTurn)
-           && reopened.pending(chat: todoRoom.id, turn: todoTurn) == nil && lines(projectFile)[1]["state"] as? String == "dropped",
-           "the saved receipt survives reopening and cancellation persists dropped")
+           && reopened.pending(chat: todoRoom.id, turn: todoTurn) == nil && lines(projectFile)[1]["state"] as? String == "dropped"
+           && permissions(projectFile) == 0o600, "reopening preserves the receipt and dropping it rewrites the file privately")
     discussion.conversations[3].turns.append(turn())
     let retried = call(token(todoRoom, run: run), "memory_propose", fact)
     expect(!retried.ok && retried.text.contains(L("TODO 하나", "per TODO")) && lines(globalFile).count == 1,
@@ -880,8 +893,11 @@ func testKnowledgeCandidates() {
     expect(!call(todoToken, "skill_propose", skill("project")).ok, "the earlier TODO session is closed")
     try! TodoStore.shared.change(todo.id) { $0.state = .done }
     discussion.conversations[3].turns.append(turn())
-    expect(call(token(todoRoom), "memory_propose", fact).ok && lines(globalFile).last?["todoID"] == nil,
-           "an ordinary follow-up in a finished TODO's chat has its own quota")
+    let followUp = fact.merging(["replaces_id": " \n "]) { _, new in new }
+    expect(call(token(todoRoom), "memory_propose", followUp).ok, "a follow-up can propose a memory with a blank replacement ID")
+    let nextRow = lines(globalFile).last
+    expect(nextRow?["todoID"] == nil && (nextRow?["content"] as? [String: String])?["replaces_id"] == nil,
+           "an ordinary follow-up has its own quota and a blank replacement ID is omitted")
     discussion.conversations[0].turns.append(turn("기억하지 마"))
     expect(names(plainToken).isEmpty && names(token(plain)) == ["skill_propose"],
            "an older session expires and the user's do-not-remember instruction is respected")

@@ -368,7 +368,7 @@ FolderSources.shared | static let shared: FolderSources
 MaterialReader | enum MaterialReader
 MaterialReader.read(_:room:) | static func read(_ source: URL, room: UUID) throws -> RoomDocument
 MemoryData | struct MemoryData
-MemoryData.autoSave | var autoSave: Bool
+MemoryData.autoPropose | var autoPropose: Bool
 MemoryData.enabled | var enabled: Bool
 MemoryData.init(from:) | init(from decoder: any Decoder) throws
 MemoryData.items | var items: [MemoryItem]

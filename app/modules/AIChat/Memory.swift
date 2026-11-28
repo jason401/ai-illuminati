@@ -37,7 +37,7 @@ struct MemoryChange: Codable, Identifiable, Equatable {
 public struct MemoryData: Codable, Equatable {
     public var profile = ""
     public var items: [MemoryItem] = []
-    public var autoSave = true    // kept as autoSave on disk; controls the AI's memory proposals
+    public var autoPropose = true
     public var enabled = true     // off: memory is neither given to the AIs nor added to
     var history: [MemoryChange] = []   // newest last, at most MemoryStore.maxHistory
 }
@@ -48,7 +48,8 @@ extension MemoryData {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         profile = try c.decodeIfPresent(String.self, forKey: .profile) ?? ""
         items = try c.decodeIfPresent([MemoryItem].self, forKey: .items) ?? []
-        autoSave = try c.decodeIfPresent(Bool.self, forKey: .autoSave) ?? true
+        // The previous autoSave setting controlled direct writes.
+        autoPropose = try c.decodeIfPresent(Bool.self, forKey: .autoPropose) ?? true
         enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
         history = try c.decodeIfPresent([MemoryChange].self, forKey: .history) ?? []
     }

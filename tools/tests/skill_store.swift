@@ -1494,8 +1494,10 @@ private func testKnowledgeReviewIdleScheduling() {
            "an account under 10% does not make a second company: automatic review waits")
     let lowLog = (try? String(contentsOf: KnowledgeReview.logFile, encoding: .utf8)) ?? ""
     expect(lowLog.contains(ISO8601DateFormatter().string(from: lowReset)), "wait log records when the low account is back above 10%")
-    // Weekly under 10% too; the manual review then has only one AI and does not start.
+    // Weekly under 10% too; the manual review then has only one AI and does not start. `run` reads the real clock, so
+    // ChatGPT gets no reset time here (one in the past would count as reset and let it back in).
     model.latestUsage[claudePersonal.id] = usage(claudePersonal, fiveHourUsed: 30, weeklyUsed: 92)
+    model.latestUsage[codex.id] = usage(codex, fiveHourUsed: 95)
     expect(KnowledgeReviewLink.reviewTeam(in: discussion, now: tLow).map(\.id) == [claudeSchool.id],
            "weekly under 10% leaves an account out too")
     expect(!KnowledgeReviewLink.run(in: discussion) && !KnowledgeReviewLink.running,

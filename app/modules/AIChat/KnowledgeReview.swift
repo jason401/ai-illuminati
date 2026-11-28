@@ -572,6 +572,7 @@ public enum KnowledgeReviewLink {
         guard !candidates.isEmpty else { return false }
         let team = reviewTeam(in: discussion, now: Date())
         guard team.count >= 2 else { return false }
+        // The user asked now: one company does not wait for a reset like `runIfIdle`, it runs as a partial review.
         let partial = Set(team.filter(Discussion.meets).map(\.provider)).count < 2
         // Manual reviews always require at least 2 speakers to succeed (single-AI completion is only for 24h auto fallback).
         return start(in: discussion, candidates: candidates, team: team, partial: partial,

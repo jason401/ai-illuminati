@@ -18,6 +18,7 @@ public struct MemoryItem: Codable, Identifiable, Equatable {
     var turn: UUID?        // the message it was saved in (Undo shows there)
     public var roomTitle: String?
     public var by: String?        // the AI that saved it
+    var meeting: UUID?     // the knowledge review that added it; nil: the user typed it or asked for it
 
     // What the AI sees and passes back: the first 8 characters of the id.
     var shortID: String { String(id.uuidString.prefix(8)).lowercased() }
@@ -32,6 +33,7 @@ struct MemoryChange: Codable, Identifiable, Equatable {
     var room: UUID?
     var turn: UUID?        // the message it was changed in (Undo shows there)
     var by: String?
+    var meeting: UUID?     // the knowledge review that changed it (KnowledgeReview.undo)
 }
 
 public struct MemoryData: Codable, Equatable {
@@ -167,7 +169,7 @@ public final class MemoryStore: ObservableObject {
 
     enum Saved: Equatable { case saved(MemoryItem), duplicate(MemoryItem), refused(String) }
 
-    func remember(_ text: String, room: UUID?, turn: UUID?, roomTitle: String?, by: String?) -> Saved {
+    func remember(_ text: String, room: UUID?, turn: UUID?, roomTitle: String?, by: String?, meeting: UUID? = nil) -> Saved {
         let clean = text.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !clean.isEmpty else { return .refused("Write the fact to remember in one short line.") }
         guard clean.count <= Self.itemLength else { return .refused("Too long: keep it to one short line (at most \(Self.itemLength) characters).") }
@@ -177,7 +179,7 @@ public final class MemoryStore: ObservableObject {
             let key = clean.lowercased()
             if let same = data.items.first(where: { $0.text.lowercased() == key }) { result = .duplicate(same); return }
             guard data.items.count < Self.maxItems else { result = .refused("Memory is full (\(Self.maxItems) facts). Ask the user to remove some in Settings ▸ Memory."); return }
-            let item = MemoryItem(text: clean, room: room, turn: turn, roomTitle: roomTitle, by: by)
+            let item = MemoryItem(text: clean, room: room, turn: turn, roomTitle: roomTitle, by: by, meeting: meeting)
             data.items.append(item)
             result = .saved(item)
         }
@@ -196,7 +198,7 @@ public final class MemoryStore: ObservableObject {
     }
 
     // memory_replace (text) and memory_forget (nil): the old version goes to history.
-    func change(_ id: String, to text: String?, room: UUID?, turn: UUID?, by: String?) -> Changed {
+    func change(_ id: String, to text: String?, room: UUID?, turn: UUID?, by: String?, meeting: UUID? = nil) -> Changed {
         var clean: String?
         if let text {
             let line = text.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -211,7 +213,7 @@ public final class MemoryStore: ObservableObject {
             if let clean, data.items.enumerated().contains(where: { $0.offset != i && $0.element.text.lowercased() == clean.lowercased() }) {
                 result = .refused("Another saved fact already says this: forget this one with memory_forget instead."); return
             }
-            let change = MemoryChange(old: data.items[i], new: clean, room: room, turn: turn, by: by)
+            let change = MemoryChange(old: data.items[i], new: clean, room: room, turn: turn, by: by, meeting: meeting)
             if let clean { data.items[i].text = clean } else { data.items.remove(at: i) }
             data.history.append(change)
             if data.history.count > Self.maxHistory { data.history.removeFirst(data.history.count - Self.maxHistory) }
@@ -245,6 +247,22 @@ public final class MemoryStore: ObservableObject {
             done = true
         }
         return saved && done
+    }
+
+    // Takes back what one knowledge review did: its changes newest first (each as undo does), then the facts it added
+    // that are still as it left them. Facts the user edited or changed again since stay; returns how many did not.
+    func undoMeeting(_ meeting: UUID) -> Int {
+        var left = 0
+        for change in snapshot.history.filter({ $0.meeting == meeting }).reversed() where !undo(change.id) { left += 1 }
+        let added = snapshot.items.filter { $0.meeting == meeting }
+        update { data in
+            for item in added {
+                guard let i = data.items.firstIndex(where: { $0.id == item.id && $0.text == item.text }),
+                      !data.history.contains(where: { $0.old.id == item.id }) else { left += 1; continue }
+                data.items.remove(at: i)
+            }
+        }
+        return left
     }
 
     // Saved facts that share many words with `text` (longer words count more, so a shared "씀" alone is not

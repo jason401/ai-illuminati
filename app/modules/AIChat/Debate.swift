@@ -176,7 +176,8 @@ extension Discussion {
     @discardableResult
     func runDebate(question: String, history: [ChatTurn], rules: String, team: [Account],
                    leader: Account.Provider, perAI: Int, cancellation: DebateCancellation, id: UUID, index: Int,
-                   meeting: String? = nil, cleanup: Bool = false) -> (text: String, images: [ChatImage], attendees: [String])? {
+                   meeting: String? = nil, cleanup: Bool = false,
+                   resultPrompt: String? = nil) -> (text: String, images: [ChatImage], attendees: [String])? {
         let limit = perAI * team.count
         let previous = meeting ?? Self.transcript(history)
         var outcome: (text: String, images: [ChatImage], attendees: [String])?
@@ -350,7 +351,8 @@ extension Discussion {
             let finalStarted = Date()
             let ran = AnswerModel()
             let missing = team.filter { !successful.contains($0.id) }.map(label)
-            let final = cleanup ? ProjectMemoryCleanupLink.resultPrompt : Self.meetingFinal(missing: missing, caller: activeHeldBy)
+            // An app meeting other than the memory cleanup (KnowledgeReview) brings its own result format.
+            let final = cleanup ? resultPrompt ?? ProjectMemoryCleanupLink.resultPrompt : Self.meetingFinal(missing: missing, caller: activeHeldBy)
             let result = meeting != nil ? requestDebate(moderator, Self.debateContext(rules: rules, transcript: transcript) + "\n"
                 + (board.isEmpty ? "" : "Moderator board:\n" + board + "\n") + "End reason: \(ending)\n" + final
                 + "\n\(cleanup ? "" : pictureRule(moderator))\nDo not change files or execute commands.", 180, cancellation, hard: true, progress: ran.watch()) : requestDebate(moderator, """

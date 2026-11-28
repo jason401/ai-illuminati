@@ -448,9 +448,11 @@ public struct SkillHistoryEntry: Codable, Identifiable, Equatable {
     public var items: [SkillHistoryItem]
     public var undoes: UUID?
     public var turn: UUID?
+    public var batch: UUID?     // a knowledge review meeting's id: its changes are undone together
 
     public init(id: UUID = UUID(), at: Date = Date(), action: SkillAction, by: SkillAuthor, actor: String? = nil,
-                skillID: UUID? = nil, name: String? = nil, items: [SkillHistoryItem], undoes: UUID? = nil, turn: UUID? = nil) {
+                skillID: UUID? = nil, name: String? = nil, items: [SkillHistoryItem], undoes: UUID? = nil, turn: UUID? = nil,
+                batch: UUID? = nil) {
         self.id = id
         self.at = at
         self.action = action
@@ -461,6 +463,7 @@ public struct SkillHistoryEntry: Codable, Identifiable, Equatable {
         self.items = items
         self.undoes = undoes
         self.turn = turn
+        self.batch = batch
     }
 }
 
@@ -555,7 +558,8 @@ public final class SkillDirectory {
     // User saves always set userLocked = true. AI/meeting saves on a user-locked or externally edited skill return
     // .needsApproval without modifying disk files.
     public func save(name: String, description: String, body: String, by: SkillAuthor,
-                     id: UUID? = nil, actor: String? = nil, isNew: Bool? = nil, now: Date = Date(), turn: UUID? = nil) -> SkillOutcome {
+                     id: UUID? = nil, actor: String? = nil, isNew: Bool? = nil, now: Date = Date(), turn: UUID? = nil,
+                     batch: UUID? = nil) -> SkillOutcome {
         let now = Self.isoSecond(now)
         guard SkillDocument.isValidSlug(name) else {
             return .refused(L("스킬 이름은 소문자, 숫자, 하이픈만 쓸 수 있어요 (예: my-skill).",
@@ -640,7 +644,7 @@ public final class SkillDirectory {
                 let after = SkillSnapshot(record: updated, markdown: written.raw)
                 let entry = SkillHistoryEntry(at: now, action: .update, by: by, actor: actor,
                                               skillID: updated.id, name: updated.name,
-                                              items: [SkillHistoryItem(before: before, after: after)], turn: turn)
+                                              items: [SkillHistoryItem(before: before, after: after)], turn: turn, batch: batch)
                 try persist(index: index, append: entry, tx: &tx)
                 tx.commit()
                 changed = true
@@ -686,7 +690,7 @@ public final class SkillDirectory {
                 let after = SkillSnapshot(record: updated, markdown: written.raw)
                 let entry = SkillHistoryEntry(at: now, action: .update, by: by, actor: actor,
                                               skillID: updated.id, name: updated.name,
-                                              items: [SkillHistoryItem(before: before, after: after)], turn: turn)
+                                              items: [SkillHistoryItem(before: before, after: after)], turn: turn, batch: batch)
                 try persist(index: index, append: entry, tx: &tx)
                 tx.commit()
                 changed = true
@@ -717,7 +721,7 @@ public final class SkillDirectory {
             let after = SkillSnapshot(record: record, markdown: written.raw)
             let entry = SkillHistoryEntry(at: now, action: .add, by: by, actor: actor,
                                           skillID: record.id, name: record.name,
-                                          items: [SkillHistoryItem(before: nil, after: after)], turn: turn)
+                                          items: [SkillHistoryItem(before: nil, after: after)], turn: turn, batch: batch)
             try persist(index: index, append: entry, tx: &tx)
             tx.commit()
             changed = true
@@ -916,11 +920,64 @@ public final class SkillDirectory {
 
     // A chat's Undo addresses its own change, provided no active newer change affects the same skills.
     public func undo(by: SkillAuthor = .user, actor: String? = nil, now: Date = Date(), change: UUID? = nil) -> SkillOutcome {
-        let now = Self.isoSecond(now)
         var changed = false
         defer { if changed { onChange?() } }
-
         lock.lock(); defer { lock.unlock() }
+        let outcome = undoLocked(by: by, actor: actor, now: Self.isoSecond(now), change: change)
+        if case .undone = outcome { changed = true }
+        return outcome
+    }
+
+    // Why a meeting's changes cannot all be undone now (nil: they can, or there are none): a later change outside the
+    // meeting touched one of its skills, or the store cannot be read. Lets a caller check every store before undoing any.
+    public func undoBlock(batch: UUID) -> String? {
+        lock.lock(); defer { lock.unlock() }
+        return batchBlock(batch)
+    }
+
+    // Undoes every active change of one meeting, newest first, after checking that no later change outside it touched
+    // the same skills. `.updated` lists the restored records; nothing to undo is `.refused`.
+    public func undo(batch: UUID, by: SkillAuthor = .user, actor: String? = nil, now: Date = Date()) -> SkillOutcome {
+        var changed = false
+        defer { if changed { onChange?() } }
+        lock.lock(); defer { lock.unlock() }
+        if let block = batchBlock(batch) { return .refused(block) }
+        guard let history = loadHistory() else {
+            return .refused(L("스킬 저장소를 읽지 못해서 되돌리지 못했어요.", "The skill store could not be read."))
+        }
+        let undone = Self.undoneIDs(history)
+        let targets = history.filter { $0.batch == batch && $0.action != .undo && !undone.contains($0.id) }
+        guard !targets.isEmpty else { return .refused(L("되돌릴 변경이 없어요.", "Nothing to undo.")) }
+        var restored: [SkillRecord] = []
+        for entry in targets.reversed() {
+            let outcome = undoLocked(by: by, actor: actor, now: Self.isoSecond(now), change: entry.id)
+            guard case .undone(let done) = outcome else { return outcome }
+            changed = true
+            restored += done.items.compactMap { $0.after?.record }
+        }
+        return .updated(restored)
+    }
+
+    private func batchBlock(_ batch: UUID) -> String? {
+        guard let history = loadHistory(), loadIndex() != nil else {
+            return L("스킬 저장소를 읽지 못해서 되돌리지 못했어요.", "The skill store could not be read.")
+        }
+        let undone = Self.undoneIDs(history)
+        let active = history.filter { $0.action != .undo && !undone.contains($0.id) }
+        guard let first = active.firstIndex(where: { $0.batch == batch }) else { return nil }
+        let records = active.filter { $0.batch == batch }.flatMap { $0.items.flatMap { [$0.before?.record, $0.after?.record].compactMap { $0 } } }
+        let ids = Set(records.map(\.id)), names = Set(records.map(\.name))
+        let later = active[(first + 1)...].filter { $0.batch != batch }
+        if let entry = later.first(where: { entry in
+            entry.items.contains { [$0.before?.record, $0.after?.record].compactMap { $0 }.contains { ids.contains($0.id) || names.contains($0.name) } }
+        }) {
+            let name = entry.name.map { " (\($0))" } ?? ""
+            return L("회의 뒤에 같은 스킬이 바뀌어서 되돌리지 않았어요\(name).", "A skill this meeting changed was changed again later\(name), so nothing was undone.")
+        }
+        return nil
+    }
+
+    private func undoLocked(by: SkillAuthor, actor: String?, now: Date, change: UUID?) -> SkillOutcome {
         guard var index = loadIndex(), let history = loadHistory() else {
             return .refused(L("스킬 저장소를 읽지 못해서 되돌리지 못했어요.", "The skill store could not be read."))
         }
@@ -1083,7 +1140,6 @@ public final class SkillDirectory {
                                               items: reverseItems, undoes: target.id)
             try persist(index: index, append: undoEntry, tx: &tx)
             tx.commit()
-            changed = true
             return .undone(undoEntry)
         } catch {
             tx.rollback()
@@ -1424,8 +1480,10 @@ public final class ProjectSkillStore: ObservableObject {
     public func history(_ project: String) -> [SkillHistoryEntry] { directory(project).history() }
 
     public func save(name: String, description: String, body: String, by: SkillAuthor, project: String,
-                     id: UUID? = nil, actor: String? = nil, isNew: Bool? = nil, now: Date = Date(), turn: UUID? = nil) -> SkillOutcome {
-        directory(project).save(name: name, description: description, body: body, by: by, id: id, actor: actor, isNew: isNew, now: now, turn: turn)
+                     id: UUID? = nil, actor: String? = nil, isNew: Bool? = nil, now: Date = Date(), turn: UUID? = nil,
+                     batch: UUID? = nil) -> SkillOutcome {
+        directory(project).save(name: name, description: description, body: body, by: by, id: id, actor: actor, isNew: isNew,
+                                now: now, turn: turn, batch: batch)
     }
 
     public func setEnabled(_ name: String, _ enabled: Bool, project: String, by: SkillAuthor = .user,
@@ -1447,5 +1505,10 @@ public final class ProjectSkillStore: ObservableObject {
 
     public func undo(project: String, by: SkillAuthor = .user, actor: String? = nil, now: Date = Date(), change: UUID? = nil) -> SkillOutcome {
         directory(project).undo(by: by, actor: actor, now: now, change: change)
+    }
+
+    public func undoBlock(batch: UUID, project: String) -> String? { directory(project).undoBlock(batch: batch) }
+    public func undo(batch: UUID, project: String, by: SkillAuthor = .user, actor: String? = nil, now: Date = Date()) -> SkillOutcome {
+        directory(project).undo(batch: batch, by: by, actor: actor, now: now)
     }
 }

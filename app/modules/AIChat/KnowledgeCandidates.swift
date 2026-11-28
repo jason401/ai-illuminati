@@ -6,7 +6,8 @@ import AIProjects
 
 struct KnowledgeCandidate: Codable, Identifiable {
     enum Kind: String, Codable { case skill, memory }
-    enum State: String, Codable { case pending, applied, dropped }
+    // waiting: the review decided a change the user must approve (a locked skill or a fact the user made).
+    enum State: String, Codable { case pending, applied, dropped, waiting }
 
     var id = UUID()
     let kind: Kind
@@ -85,6 +86,32 @@ final class KnowledgeCandidates: ObservableObject {
             rows[index].state = .dropped
             try write(rows, to: file)
             receipts?.removeValue(forKey: turn)
+            revision += 1
+            return true
+        } catch { return false }
+    }
+
+    // Every pending candidate with the inbox file it is in (the review's material).
+    func pendingRows() throws -> [(file: URL, candidate: KnowledgeCandidate)] {
+        try readAll().sorted { $0.key.path < $1.key.path }.flatMap { file, rows in
+            rows.filter { $0.state == .pending }.map { (file, $0) }
+        }
+    }
+
+    // A review's outcome: each listed candidate still pending gets its new state. False when a file could not be written.
+    func settle(_ states: [UUID: KnowledgeCandidate.State]) -> Bool {
+        guard !states.isEmpty else { return true }
+        do {
+            var files = try readAll()
+            for (file, rows) in files {
+                var next = rows, touched = false
+                for i in next.indices where next[i].state == .pending {
+                    guard let state = states[next[i].id] else { continue }
+                    next[i].state = state; touched = true
+                }
+                if touched { try write(next, to: file); files[file] = next }
+            }
+            receipts = receiptIndex(files)
             revision += 1
             return true
         } catch { return false }

@@ -33,8 +33,10 @@ public final class SkillStore: ObservableObject {
     public func history() -> [SkillHistoryEntry] { directory.history() }
 
     public func save(name: String, description: String, body: String, by: SkillAuthor,
-                     id: UUID? = nil, actor: String? = nil, isNew: Bool? = nil, now: Date = Date(), turn: UUID? = nil) -> SkillOutcome {
-        directory.save(name: name, description: description, body: body, by: by, id: id, actor: actor, isNew: isNew, now: now, turn: turn)
+                     id: UUID? = nil, actor: String? = nil, isNew: Bool? = nil, now: Date = Date(), turn: UUID? = nil,
+                     batch: UUID? = nil) -> SkillOutcome {
+        directory.save(name: name, description: description, body: body, by: by, id: id, actor: actor, isNew: isNew, now: now,
+                       turn: turn, batch: batch)
     }
 
     public func setEnabled(_ name: String, _ enabled: Bool, by: SkillAuthor = .user,
@@ -56,6 +58,11 @@ public final class SkillStore: ObservableObject {
 
     public func undo(by: SkillAuthor = .user, actor: String? = nil, now: Date = Date(), change: UUID? = nil) -> SkillOutcome {
         directory.undo(by: by, actor: actor, now: now, change: change)
+    }
+
+    public func undoBlock(batch: UUID) -> String? { directory.undoBlock(batch: batch) }
+    public func undo(batch: UUID, by: SkillAuthor = .user, actor: String? = nil, now: Date = Date()) -> SkillOutcome {
+        directory.undo(batch: batch, by: by, actor: actor, now: now)
     }
 }
 

@@ -289,12 +289,14 @@ ProjectSkillStore.list(_:) | func list(_ project: String) -> [SkillSummary]
 ProjectSkillStore.markSeen(_:project:) | @discardableResult func markSeen(_ name: String, project: String) -> Bool
 ProjectSkillStore.read(_:project:) | func read(_ name: String, project: String) -> SkillDetail?
 ProjectSkillStore.revision | @Published var revision: Int { get set }
-ProjectSkillStore.save(name:description:body:by:project:id:actor:isNew:now:turn:) | func save(name: String, description: String, body: String, by: SkillAuthor, project: String, id: UUID? = nil, actor: String? = nil, isNew: Bool? = nil, now: Date = Date(), turn: UUID? = nil) -> SkillOutcome
+ProjectSkillStore.save(name:description:body:by:project:id:actor:isNew:now:turn:batch:) | func save(name: String, description: String, body: String, by: SkillAuthor, project: String, id: UUID? = nil, actor: String? = nil, isNew: Bool? = nil, now: Date = Date(), turn: UUID? = nil, batch: UUID? = nil) -> SkillOutcome
 ProjectSkillStore.setAllEnabled(_:project:by:actor:now:) | func setAllEnabled(_ enabled: Bool, project: String, by: SkillAuthor = .user, actor: String? = nil, now: Date = Date()) -> SkillOutcome
 ProjectSkillStore.setEnabled(_:_:project:by:actor:now:) | func setEnabled(_ name: String, _ enabled: Bool, project: String, by: SkillAuthor = .user, actor: String? = nil, now: Date = Date()) -> SkillOutcome
 ProjectSkillStore.shared | static let shared: ProjectSkillStore
 ProjectSkillStore.tombstones(_:) | func tombstones(_ project: String) -> [SkillTombstone]
+ProjectSkillStore.undo(batch:project:by:actor:now:) | func undo(batch: UUID, project: String, by: SkillAuthor = .user, actor: String? = nil, now: Date = Date()) -> SkillOutcome
 ProjectSkillStore.undo(project:by:actor:now:change:) | func undo(project: String, by: SkillAuthor = .user, actor: String? = nil, now: Date = Date(), change: UUID? = nil) -> SkillOutcome
+ProjectSkillStore.undoBlock(batch:project:) | func undoBlock(batch: UUID, project: String) -> String?
 ProjectWork | enum ProjectWork
 ProjectWork.acquire(_:) | static func acquire(_ binding: WorkspaceBinding?) throws -> [String]
 ProjectWork.active | static var active: Bool { get }
@@ -347,11 +349,13 @@ SkillDirectory.list() | func list() -> [SkillSummary]
 SkillDirectory.markSeen(_:) | @discardableResult func markSeen(_ name: String) -> Bool
 SkillDirectory.read(_:) | func read(_ name: String) -> SkillDetail?
 SkillDirectory.root | var root: URL { get }
-SkillDirectory.save(name:description:body:by:id:actor:isNew:now:turn:) | func save(name: String, description: String, body: String, by: SkillAuthor, id: UUID? = nil, actor: String? = nil, isNew: Bool? = nil, now: Date = Date(), turn: UUID? = nil) -> SkillOutcome
+SkillDirectory.save(name:description:body:by:id:actor:isNew:now:turn:batch:) | func save(name: String, description: String, body: String, by: SkillAuthor, id: UUID? = nil, actor: String? = nil, isNew: Bool? = nil, now: Date = Date(), turn: UUID? = nil, batch: UUID? = nil) -> SkillOutcome
 SkillDirectory.setAllEnabled(_:by:actor:now:) | func setAllEnabled(_ enabled: Bool, by: SkillAuthor = .user, actor: String? = nil, now: Date = Date()) -> SkillOutcome
 SkillDirectory.setEnabled(_:_:by:actor:now:) | func setEnabled(_ name: String, _ enabled: Bool, by: SkillAuthor = .user, actor: String? = nil, now: Date = Date()) -> SkillOutcome
 SkillDirectory.tombstones() | func tombstones() -> [SkillTombstone]
+SkillDirectory.undo(batch:by:actor:now:) | func undo(batch: UUID, by: SkillAuthor = .user, actor: String? = nil, now: Date = Date()) -> SkillOutcome
 SkillDirectory.undo(by:actor:now:change:) | func undo(by: SkillAuthor = .user, actor: String? = nil, now: Date = Date(), change: UUID? = nil) -> SkillOutcome
+SkillDirectory.undoBlock(batch:) | func undoBlock(batch: UUID) -> String?
 SkillDocument | struct SkillDocument
 SkillDocument.body | var body: String
 SkillDocument.description | var description: String
@@ -372,10 +376,11 @@ SkillHistoryEntry | struct SkillHistoryEntry
 SkillHistoryEntry.action | var action: SkillAction
 SkillHistoryEntry.actor | var actor: String?
 SkillHistoryEntry.at | var at: Date
+SkillHistoryEntry.batch | var batch: UUID?
 SkillHistoryEntry.by | var by: SkillAuthor
 SkillHistoryEntry.id | var id: UUID
 SkillHistoryEntry.init(from:) | init(from decoder: any Decoder) throws
-SkillHistoryEntry.init(id:at:action:by:actor:skillID:name:items:undoes:turn:) | init(id: UUID = UUID(), at: Date = Date(), action: SkillAction, by: SkillAuthor, actor: String? = nil, skillID: UUID? = nil, name: String? = nil, items: [SkillHistoryItem], undoes: UUID? = nil, turn: UUID? = nil)
+SkillHistoryEntry.init(id:at:action:by:actor:skillID:name:items:undoes:turn:batch:) | init(id: UUID = UUID(), at: Date = Date(), action: SkillAction, by: SkillAuthor, actor: String? = nil, skillID: UUID? = nil, name: String? = nil, items: [SkillHistoryItem], undoes: UUID? = nil, turn: UUID? = nil, batch: UUID? = nil)
 SkillHistoryEntry.items | var items: [SkillHistoryItem]
 SkillHistoryEntry.name | var name: String?
 SkillHistoryEntry.skillID | var skillID: UUID?

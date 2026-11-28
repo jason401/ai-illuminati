@@ -162,7 +162,8 @@ final class SkillsWindow {
     func show(discussion: Discussion) {
         // A fresh view each time (new identity, so the filter and last error start over): skills edited on disk or by
         // an AI meanwhile show up.
-        let view = SkillsView(projects: { SkillsCatalog.projects(discussion) }, close: { [weak self] in self?.window?.close() })
+        let view = SkillsView(projects: { SkillsCatalog.projects(discussion) }, close: { [weak self] in self?.window?.close() },
+                              review: { KnowledgeReviewLink.run(in: discussion) })
             .id(UUID())
             .frame(minWidth: 720, idealWidth: 880, minHeight: 420, idealHeight: 580)
         if let window, let host = window.contentViewController as? NSHostingController<AnyView> {
@@ -204,6 +205,7 @@ final class SkillsDraft: ObservableObject {
     @Published var description = ""
     @Published var body = ""
     @Published var removed: RemovedSkill?
+    @Published var note: String?    // what [Review now] or a review's Undo did
 
     init(selected: String? = nil) { self.selected = selected }
 
@@ -228,13 +230,16 @@ final class SkillsDraft: ObservableObject {
 struct SkillsView: View {
     let projects: () -> [SkillProject]
     let close: () -> Void
+    let review: (() -> Bool)?
     @ObservedObject private var global = SkillStore.shared
     @ObservedObject private var scoped = ProjectSkillStore.shared
     @StateObject private var draft: SkillsDraft
 
-    init(projects: @escaping () -> [SkillProject], close: @escaping () -> Void, selected: String? = nil) {
+    init(projects: @escaping () -> [SkillProject], close: @escaping () -> Void, selected: String? = nil,
+         review: (() -> Bool)? = nil) {
         self.projects = projects
         self.close = close
+        self.review = review
         _draft = StateObject(wrappedValue: SkillsDraft(selected: selected))
     }
 
@@ -255,6 +260,14 @@ struct SkillsView: View {
                     .disabled(rows.allSatisfy(\.skill.record.enabled))
                 Button(L("모두 끄기", "Turn all off")) { draft.error = SkillsCatalog.setAll(false, filter: filter, projects: known) }
                     .disabled(rows.allSatisfy { !$0.skill.record.enabled })
+                if let review {
+                    Button(L("지금 검토", "Review now")) {
+                        draft.note = review()
+                            ? L("스킬·기억 후보를 회의에서 검토하고 있어요. 끝나면 바로 적용돼요.", "A meeting is reviewing the skill and memory candidates; its decisions apply when it ends.")
+                            : L("검토할 후보가 없거나, 회의할 AI가 둘보다 적거나, 이미 검토 중이에요.", "No candidates to review, fewer than two AIs to meet, or a review is already running.")
+                    }
+                    .help(L("후보함의 스킬·기억 후보를 AI 회의가 추가·수정·버림으로 정해요.", "AIs meet to add, merge into existing ones, or drop the proposed skills and memories."))
+                }
                 Spacer()
                 Picker(L("보기", "Show"), selection: Binding(get: { filter }, set: { draft.filter = $0 })) {
                     Text(L("전체", "All")).tag(SkillsFilter.all)
@@ -269,6 +282,25 @@ struct SkillsView: View {
                 .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             if let error = draft.error {
                 Text(error).font(.system(size: 11)).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+            }
+            if let note = draft.note {
+                Text(note).font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            if let last = KnowledgeReview.records().last, last.undoneAt == nil, last.applied + last.waiting > 0 {
+                HStack(spacing: 8) {
+                    Text(L("최근 검토 · \(SkillDetailPane.day(last.at)) · 적용 \(last.applied)개", "Last review · \(SkillDetailPane.day(last.at)) · \(last.applied) applied")
+                         + (last.waiting == 0 ? "" : L(" · 승인 대기 \(last.waiting)개", " · \(last.waiting) awaiting approval")))
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                    if last.applied > 0 {
+                        Button(L("이 검토 되돌리기", "Undo this review")) {
+                            let failure = KnowledgeReview.undo(last.id)
+                            draft.error = failure
+                            draft.note = failure == nil ? L("검토 한 번을 통째로 되돌렸어요.", "The whole review was undone.") : nil
+                            open(draft.selected)
+                        }
+                        .controlSize(.small)
+                    }
+                }
             }
             if rows.isEmpty {
                 Text(all.isEmpty

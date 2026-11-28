@@ -365,6 +365,56 @@ FolderSources | final class FolderSources
 FolderSources.counts | @Published var counts: [String : Int] { get set }
 FolderSources.list | @Published var list: [FolderSource] { get set }
 FolderSources.shared | static let shared: FolderSources
+KnowledgeDecision | struct KnowledgeDecision
+KnowledgeDecision.Action | enum Action
+KnowledgeDecision.Action.add | case add
+KnowledgeDecision.Action.drop | case drop
+KnowledgeDecision.Action.init(rawValue:) | init?(rawValue: String)
+KnowledgeDecision.Action.modify | case modify
+KnowledgeDecision.action | var action: KnowledgeDecision.Action
+KnowledgeDecision.body | var body: String?
+KnowledgeDecision.candidate | var candidate: String
+KnowledgeDecision.description | var description: String?
+KnowledgeDecision.init(from:) | init(from decoder: any Decoder) throws
+KnowledgeDecision.name | var name: String?
+KnowledgeDecision.reason | var reason: String?
+KnowledgeDecision.scope | var scope: String?
+KnowledgeDecision.target | var target: String?
+KnowledgeDecision.text | var text: String?
+KnowledgeReview | enum KnowledgeReview
+KnowledgeReview.Outcome | enum Outcome
+KnowledgeReview.Outcome.applied(_:) | case applied(KnowledgeReviewRecord)
+KnowledgeReview.Outcome.refused(_:) | case refused(String)
+KnowledgeReview.records() | static func records() -> [KnowledgeReviewRecord]
+KnowledgeReview.undo(_:now:) | static func undo(_ meeting: UUID, now: Date = Date()) -> String?
+KnowledgeReviewLink | enum KnowledgeReviewLink
+KnowledgeReviewLink.run(in:) | @discardableResult static func run(in discussion: Discussion) -> Bool
+KnowledgeReviewRecord | struct KnowledgeReviewRecord
+KnowledgeReviewRecord.Outcome | struct Outcome
+KnowledgeReviewRecord.Outcome.candidate | var candidate: UUID
+KnowledgeReviewRecord.Outcome.decision | var decision: KnowledgeDecision
+KnowledgeReviewRecord.Outcome.fact | var fact: UUID?
+KnowledgeReviewRecord.Outcome.init(from:) | init(from decoder: any Decoder) throws
+KnowledgeReviewRecord.Outcome.project | var project: String?
+KnowledgeReviewRecord.Outcome.reason | var reason: String
+KnowledgeReviewRecord.Outcome.result | var result: KnowledgeReviewRecord.Result
+KnowledgeReviewRecord.Outcome.skill | var skill: String?
+KnowledgeReviewRecord.Result | enum Result
+KnowledgeReviewRecord.Result.applied | case applied
+KnowledgeReviewRecord.Result.dropped | case dropped
+KnowledgeReviewRecord.Result.init(rawValue:) | init?(rawValue: String)
+KnowledgeReviewRecord.Result.refused | case refused
+KnowledgeReviewRecord.Result.waiting | case waiting
+KnowledgeReviewRecord.applied | var applied: Int { get }
+KnowledgeReviewRecord.at | var at: Date
+KnowledgeReviewRecord.attendees | var attendees: [String]
+KnowledgeReviewRecord.candidates | var candidates: [UUID]
+KnowledgeReviewRecord.id | var id: UUID
+KnowledgeReviewRecord.init(from:) | init(from decoder: any Decoder) throws
+KnowledgeReviewRecord.outcomes | var outcomes: [KnowledgeReviewRecord.Outcome]
+KnowledgeReviewRecord.projects | var projects: [String]
+KnowledgeReviewRecord.undoneAt | var undoneAt: Date?
+KnowledgeReviewRecord.waiting | var waiting: Int { get }
 MaterialReader | enum MaterialReader
 MaterialReader.read(_:room:) | static func read(_ source: URL, room: UUID) throws -> RoomDocument
 MemoryData | struct MemoryData
@@ -499,12 +549,14 @@ SkillStore.list() | func list() -> [SkillSummary]
 SkillStore.markSeen(_:) | @discardableResult func markSeen(_ name: String) -> Bool
 SkillStore.read(_:) | func read(_ name: String) -> SkillDetail?
 SkillStore.revision | @Published var revision: Int { get set }
-SkillStore.save(name:description:body:by:id:actor:isNew:now:turn:) | func save(name: String, description: String, body: String, by: SkillAuthor, id: UUID? = nil, actor: String? = nil, isNew: Bool? = nil, now: Date = Date(), turn: UUID? = nil) -> SkillOutcome
+SkillStore.save(name:description:body:by:id:actor:isNew:now:turn:batch:) | func save(name: String, description: String, body: String, by: SkillAuthor, id: UUID? = nil, actor: String? = nil, isNew: Bool? = nil, now: Date = Date(), turn: UUID? = nil, batch: UUID? = nil) -> SkillOutcome
 SkillStore.setAllEnabled(_:by:actor:now:) | func setAllEnabled(_ enabled: Bool, by: SkillAuthor = .user, actor: String? = nil, now: Date = Date()) -> SkillOutcome
 SkillStore.setEnabled(_:_:by:actor:now:) | func setEnabled(_ name: String, _ enabled: Bool, by: SkillAuthor = .user, actor: String? = nil, now: Date = Date()) -> SkillOutcome
 SkillStore.shared | static let shared: SkillStore
 SkillStore.tombstones() | func tombstones() -> [SkillTombstone]
+SkillStore.undo(batch:by:actor:now:) | func undo(batch: UUID, by: SkillAuthor = .user, actor: String? = nil, now: Date = Date()) -> SkillOutcome
 SkillStore.undo(by:actor:now:change:) | func undo(by: SkillAuthor = .user, actor: String? = nil, now: Date = Date(), change: UUID? = nil) -> SkillOutcome
+SkillStore.undoBlock(batch:) | func undoBlock(batch: UUID) -> String?
 SpaceRefiner | final class SpaceRefiner
 SpaceRefiner.watchLibrary() | static func watchLibrary()
 SpeechLength | enum SpeechLength

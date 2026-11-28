@@ -903,3 +903,170 @@ func testKnowledgeCandidates() {
            "an older session expires and the user's do-not-remember instruction is respected")
 }
 
+
+// Knowledge review (회의 1/3): a fake meeting decides the pending candidates; the app checks the JSON, applies add/modify
+// for skills and memory, keeps 🔒 skills and the user's own facts for approval, records the review and undoes it whole.
+func testKnowledgeReview() {
+    let home = URL(fileURLWithPath: AccountStore.home, isDirectory: true)
+    expect(ProcessInfo.processInfo.environment["AI_ILLUMINATI_TEST_HOME"] == home.path, "the review uses the isolated test home")
+    let fm = FileManager.default, memory = MemoryStore.shared, previousMemory = memory.snapshot
+    let aside = home.appendingPathComponent("review-aside-\(UUID().uuidString.prefix(8))")
+    let moved = [SkillStore.folder, KnowledgeCandidates.file(nil), KnowledgeReview.file]
+    try? fm.createDirectory(at: aside, withIntermediateDirectories: true)
+    for (i, url) in moved.enumerated() where fm.fileExists(atPath: url.path) {
+        try! fm.moveItem(at: url, to: aside.appendingPathComponent("\(i)"))
+    }
+    let project = ProjectBinding(root: "", common: "", remote: "", remoteURL: "", kind: "folderless", id: ProjectBinding.newID())
+    let key = project.groupKey
+    defer {
+        memory.update { $0 = previousMemory }
+        try? fm.removeItem(at: ProjectMemoryStore.folder(key))
+        for (i, url) in moved.enumerated() {
+            try? fm.removeItem(at: url)
+            if fm.fileExists(atPath: aside.appendingPathComponent("\(i)").path) { try? fm.moveItem(at: aside.appendingPathComponent("\(i)"), to: url) }
+        }
+        try? fm.removeItem(at: aside)
+    }
+    memory.update { $0 = MemoryData() }
+
+    let global = SkillStore.shared, scoped = ProjectSkillStore.shared
+    _ = global.save(name: "locked-steps", description: "Steps the user wrote", body: "User body", by: .user)
+    _ = global.save(name: "review-output", description: "Use when reviewing generated output", body: "Old body", by: .meeting, isNew: false)
+    guard case .saved(let userFact) = memory.remember("사용자는 표 정리를 선호한다", room: nil, turn: nil, roomTitle: nil, by: "Claude"),
+          case .saved(let reviewFact) = memory.remember("답은 짧게 쓴다", room: nil, turn: nil, roomTitle: nil, by: "Review", meeting: UUID())
+    else { expect(false, "memory fixtures saved"); return }
+    let lockedBefore = global.read("locked-steps")
+
+    let plain = Conversation(turns: [ChatTurn(question: "q")])
+    let linked = Conversation(turns: [ChatTurn(question: "q")], workspace: WorkspaceBinding(roots: [], project: project, face: true))
+    let school = Account(id: "review-school", provider: .gemini, name: "Gemini (School)", school: true)
+    let locked = Conversation(turns: [ChatTurn(question: "q")], enterpriseLock: Enterprise.organizations([school]).first)
+    let inbox = KnowledgeCandidates.shared
+    func propose(_ kind: KnowledgeCandidate.Kind, _ content: [String: String], chat: Conversation, project: String? = nil) {
+        let row = KnowledgeCandidate(kind: kind, content: content, evidence: "test passed", accountID: "a", accountName: "ChatGPT",
+                                     chatID: chat.id, turnID: UUID(), todoID: nil)
+        expect(inbox.submit(row, project: project) == nil, "candidate submitted")
+    }
+    func skill(_ name: String, _ body: String, scope: String = "global") -> [String: String] {
+        ["name": name, "description": "Use when \(name.replacingOccurrences(of: "-", with: " "))", "body": body, "scope": scope]
+    }
+    propose(.skill, skill("first-steps", "Write the plan first."), chat: plain)
+    propose(.skill, skill("review-output-better", "Check the diff, then run the tests."), chat: plain)
+    propose(.skill, skill("locked-steps", "AI body"), chat: plain)
+    propose(.skill, skill("plot-results", "Open result.csv and plot it."), chat: linked)
+    propose(.skill, skill("tune-drive", "Drive the transducer at 2 MHz."), chat: plain)
+    propose(.memory, ["text": "사용자는 드립 커피를 좋아한다"], chat: plain)
+    propose(.memory, ["text": "사용자는 표보다 목록을 선호한다", "replaces_id": userFact.shortID], chat: plain)
+    propose(.memory, ["text": "답은 짧고 직설적으로 쓴다"], chat: plain)
+    propose(.memory, ["text": "오늘 점심은 국수"], chat: plain)
+    propose(.skill, skill("secret-org-steps", "Enterprise only"), chat: locked)
+    propose(.skill, skill("project-build", "Build with the project's script.", scope: "project"), chat: linked, project: key)
+    propose(.memory, ["text": "아직 정하지 못한 후보"], chat: plain)
+    let rows = (try? inbox.pendingRows().map(\.candidate)) ?? []
+    func id(_ value: String) -> String {
+        let row = rows.first { $0.content["name"] == value || $0.content["text"] == value }!
+        return "c:" + String(row.id.uuidString.prefix(8)).lowercased()
+    }
+    let reviewSkill = global.list().first { $0.name == "review-output" }!
+    let locks = global.list().first { $0.name == "locked-steps" }!
+    let decisions = """
+    The meeting agreed:
+    ```json
+    [{"candidate":"\(id("first-steps"))","action":"add","scope":"global","name":"first-steps","description":"Use before coding","body":"Write the plan first.","reason":"반복 절차"},
+     {"candidate":"\(id("review-output-better"))","action":"modify","target":"s:\(String(reviewSkill.id.uuidString.prefix(8)))","scope":"global","name":"review-output","description":"Use when reviewing generated output","body":"Check the diff, then run the tests.","reason":"기존 스킬과 합침"},
+     {"candidate":"\(id("locked-steps"))","action":"modify","target":"\(locks.id.uuidString)","scope":"global","name":"locked-steps","description":"Steps the user wrote","body":"AI body","reason":"개선"},
+     {"candidate":"\(id("plot-results"))","action":"add","scope":"global","reason":"전역으로"},
+     {"candidate":"\(id("tune-drive"))","action":"add","scope":"global","reason":"전역으로"},
+     {"candidate":"\(id("사용자는 드립 커피를 좋아한다"))","action":"add","text":"사용자는 드립 커피를 선호한다","reason":"취향"},
+     {"candidate":"\(id("사용자는 표보다 목록을 선호한다"))","action":"modify","target":"m:\(userFact.shortID)","text":"사용자는 표보다 목록을 선호한다","reason":"정정"},
+     {"candidate":"\(id("답은 짧고 직설적으로 쓴다"))","action":"modify","target":"m:\(reviewFact.shortID)","text":"답은 짧고 직설적으로 쓴다","reason":"합침"},
+     {"candidate":"\(id("오늘 점심은 국수"))","action":"drop","reason":"일회성"},
+     {"candidate":"\(id("project-build"))","action":"add","scope":"project","reason":"프로젝트 절차"},
+     {"candidate":"\(id("first-steps"))","action":"drop","reason":"a second decision is ignored"}]
+    ```
+    """
+    expect(KnowledgeReview.decisions(from: #"[{"candidate":"c:1","action":"merge","reason":"x"}]"#) == nil
+           && KnowledgeReview.decisions(from: "no list") == nil && KnowledgeReview.decisions(from: decisions)?.count == 11,
+           "an unknown action or missing list decodes to nothing; a fenced list decodes")
+
+    let model = AppModel(persist: false)
+    model.accounts = [Account(id: "review-claude", provider: .claude, name: "Claude"), Account(id: "review-codex", provider: .codex, name: "ChatGPT")]
+    let discussion = Discussion(model: model)
+    discussion.conversations = [plain, linked, locked]
+    let promptLock = NSLock()
+    var speeches: [String] = []
+    var answer = "not JSON at all"
+    discussion.workspaceAnswer = { _, prompt, _, _, _ in
+        if prompt.contains("[MEETING RESULT]") { return .success(answer) }
+        if prompt.contains("[MODE3 MODERATION]") { return .success(#"{"action":"finish","reason":"enough"}"#) }
+        if prompt.contains("[MODE3 SPEECH]") { promptLock.lock(); speeches.append(prompt); promptLock.unlock() }
+        return .success("Merge where a saved skill covers it.")
+    }
+    func waitForMeeting() {
+        let deadline = Date().addingTimeInterval(20)
+        while (discussion.anyRunning || KnowledgeReviewLink.running) && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
+        expect(!discussion.anyRunning && !KnowledgeReviewLink.running, "the background review finished")
+    }
+    model.accounts.removeLast()
+    expect(!KnowledgeReviewLink.run(in: discussion), "one AI cannot hold a review")
+    model.accounts.append(Account(id: "review-codex", provider: .codex, name: "ChatGPT"))
+
+    expect(KnowledgeReviewLink.run(in: discussion) && !KnowledgeReviewLink.run(in: discussion), "one review runs at a time")
+    waitForMeeting()
+    expect(KnowledgeReview.records().isEmpty && global.read("first-steps") == nil && memory.snapshot.items.count == 2
+           && ((try? inbox.pendingRows().count) ?? 0) == 12, "a broken result applies nothing and leaves every candidate pending")
+    expect(speeches.count == 2 && speeches.allSatisfy { p in
+        ["[Review material]", id("first-steps"), "Write the plan first.", "[s:\(String(reviewSkill.id.uuidString.prefix(8)).lowercased())]",
+         "locked-steps 🔒", "[m:\(userFact.shortID)]", "the user's", "no data", "project-build"].allSatisfy(p.contains)
+            && !p.contains("Enterprise only") && !p.contains("[User]")
+    }, "both AIs see candidates, similar saved skills and facts and the rules, never an Enterprise chat's candidate")
+
+    answer = decisions
+    expect(KnowledgeReviewLink.run(in: discussion), "the second review starts")
+    waitForMeeting()
+    guard let record = KnowledgeReview.records().last else { expect(false, "the review is recorded"); return }
+    func outcome(_ value: String) -> KnowledgeReviewRecord.Outcome? {
+        let candidate = rows.first { $0.content["name"] == value || $0.content["text"] == value }!.id
+        return record.outcomes.first { $0.candidate == candidate }
+    }
+    let added = global.read("first-steps")
+    expect(added?.record.createdBy == .meeting && added?.record.enabled == true && added?.record.isNew == true
+           && added?.record.userLocked == false && added?.document.description == "Use before coding",
+           "an added global skill is by the meeting, on and new, with the meeting's wording")
+    expect(global.read("review-output")?.document.body == "Check the diff, then run the tests." && global.read("review-output-better") == nil
+           && outcome("review-output-better")?.result == .applied, "modify merges into the existing skill instead of adding one")
+    expect(global.read("locked-steps") == lockedBefore && outcome("locked-steps")?.result == .waiting,
+           "a 🔒 skill is never changed: the decision waits for approval")
+    expect(global.read("plot-results") == nil && scoped.read("plot-results", project: key)?.record.createdBy == .meeting
+           && outcome("plot-results")?.project == key, "a global skill with a file name goes to the proposing chat's project")
+    expect(global.read("tune-drive") == nil && outcome("tune-drive")?.result == .refused,
+           "a global skill with a measurement and no project is not saved")
+    expect(scoped.read("project-build", project: key) != nil && record.projects == [key], "a project inbox candidate is saved in its project")
+    let facts = memory.snapshot.items
+    expect(facts.contains { $0.text == "사용자는 드립 커피를 선호한다" && $0.meeting == record.id }
+           && facts.contains { $0.id == userFact.id && $0.text == userFact.text } && outcome("사용자는 표보다 목록을 선호한다")?.result == .waiting
+           && facts.contains { $0.id == reviewFact.id && $0.text == "답은 짧고 직설적으로 쓴다" },
+           "memory adds and modifies a review's fact through remember/change; the user's own fact waits")
+    expect(outcome("오늘 점심은 국수")?.result == .dropped && outcome("오늘 점심은 국수")?.reason == "일회성"
+           && outcome("first-steps")?.result == .applied && record.outcomes.count == 10
+           && Set(record.attendees) == Set(model.accounts.map(discussion.label)) && record.candidates.count == 11,
+           "the record keeps attendees, candidates, decisions and why a candidate was dropped")
+    let left = (try? inbox.pendingRows().map(\.candidate)) ?? []
+    expect(Set(left.compactMap { $0.content["name"] ?? $0.content["text"] }) == ["secret-org-steps", "아직 정하지 못한 후보"],
+           "undecided and Enterprise candidates stay pending; decided ones leave the inbox")
+    let history = global.history().filter { $0.batch == record.id }
+    expect(history.count == 2 && scoped.history(key).filter { $0.batch == record.id }.count == 2, "each store's history marks the meeting's batch")
+
+    _ = global.setEnabled("first-steps", false)
+    expect(KnowledgeReview.undo(record.id) != nil && global.read("first-steps") != nil && KnowledgeReview.records().last?.undoneAt == nil,
+           "a later user change to one of its skills blocks undoing the review, and nothing is undone")
+    _ = global.undo()
+    expect(KnowledgeReview.undo(record.id) == nil, "the whole review undoes")
+    expect(global.read("first-steps") == nil && global.read("review-output")?.document.body == "Old body"
+           && scoped.read("plot-results", project: key) == nil && scoped.read("project-build", project: key) == nil
+           && global.read("locked-steps") == lockedBefore, "every skill the review saved or changed is back as before")
+    expect(!memory.snapshot.items.contains { $0.text == "사용자는 드립 커피를 선호한다" }
+           && memory.snapshot.items.contains { $0.id == reviewFact.id && $0.text == "답은 짧게 쓴다" },
+           "the review's facts are taken back")
+    expect(KnowledgeReview.undo(record.id) != nil && KnowledgeReview.records().last?.undoneAt != nil, "a review undoes once")
+}

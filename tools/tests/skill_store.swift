@@ -67,6 +67,46 @@ func testSkillStore() {
            && SkillDocument.parse("---\nname: ok\ndescription:   \n---\nbody") == nil,
            "invalid frontmatter returns nil")
 
+    // Standard YAML compatibility: numeric/boolean/date scalars are quoted; inline comments are stripped on parse.
+    for (slug, desc) in [("123", "456"), ("true", "3.14"), ("2026-11-28", "0x10"), ("1e5", "no")] {
+        let out = SkillDocument.render(name: slug, description: desc, body: "body")
+        expect(out.contains("name: \"\(slug)\"\n") && out.contains("description: \"\(desc)\"\n")
+               && SkillDocument.parse(out) == SkillDocument(name: slug, description: desc, body: "body"),
+               "numeric/keyword/date YAML scalar is quoted and round-trips: \(slug) / \(desc)")
+    }
+    let commentedYAML = """
+        ---
+        name: review # inline comment on plain scalar
+        description: Use C# and F# tools # trailing comment
+        ---
+
+        Check everything.
+        """
+    expect(SkillDocument.parse(commentedYAML) == SkillDocument(name: "review", description: "Use C# and F# tools", body: "Check everything."),
+           "plain YAML scalars strip inline comments while preserving # inside words")
+    let quotedCommentYAML = """
+        ---
+        name: "123" # quoted numeric slug
+        description: 'it''s # literal' # real comment
+        ---
+
+        Body
+        """
+    expect(SkillDocument.parse(quotedCommentYAML) == SkillDocument(name: "123", description: "it's # literal", body: "Body"),
+           "quoted YAML scalars ignore # inside quotes and strip trailing comments")
+    let blockCommentYAML = """
+        ---
+        name: block-test # comment
+        description: > # folded comment
+          First line
+          second line
+        ---
+
+        Done
+        """
+    expect(SkillDocument.parse(blockCommentYAML) == SkillDocument(name: "block-test", description: "First line second line", body: "Done"),
+           "block scalar headers allow trailing inline comments")
+
     func saved(_ o: SkillOutcome) -> SkillRecord? { if case .saved(let r) = o { return r }; return nil }
     func deleted(_ o: SkillOutcome) -> SkillTombstone? { if case .deleted(let t) = o { return t }; return nil }
     func needsApproval(_ o: SkillOutcome) -> Bool {
@@ -225,10 +265,15 @@ func testSkillStore() {
            && !global.tombstones().contains(tomb),
            "undo of delete restores SKILL.md, metadata and removes its tombstone")
 
-    // Delete again permanently (no undo) and verify recreating with same slug keeps old tombstone and uses a new UUID.
+    // Delete again permanently (no undo) and verify recreating with same slug keeps old tombstone and uses a new UUID,
+    // while explicitly reusing a tombstoned UUID in save(id:) is refused.
     guard let tomb2 = deleted(global.delete("paper-review", by: .user, now: t0.addingTimeInterval(120))) else {
         expect(false, "second delete"); return
     }
+    expect(refused(global.save(name: "revived-slug", description: "Should not reuse deleted UUID",
+                               body: "nope", by: .user, id: tomb2.id, now: t0.addingTimeInterval(125)))
+           && global.read("revived-slug") == nil,
+           "save(id:) refuses to reuse a tombstoned UUID")
     guard let recreated = saved(global.save(name: "paper-review", description: "Fresh review skill",
                                             body: "New body", by: .user, now: t0.addingTimeInterval(130))) else {
         expect(false, "recreate with same slug"); return
@@ -236,7 +281,27 @@ func testSkillStore() {
     expect(recreated.id != userSkill.id && global.tombstones().contains(tomb2),
            "recreating a deleted slug gets a fresh UUID while preserving the old tombstone")
 
-    // 8. Project store (AIProjects ProjectSkillStore) + chained undo + crash/corruption handling.
+    // 7b. Non-UTF-8 (UTF-16) external edit on an unlocked AI skill is detected by raw byte hash before decoding.
+    guard saved(global.save(name: "utf16-skill", description: "AI created", body: "v1", by: .ai, now: t0.addingTimeInterval(140))) != nil else {
+        expect(false, "utf16-skill saved"); return
+    }
+    let utf16URL = globalFolder.appendingPathComponent("utf16-skill/SKILL.md")
+    let utf16Bytes = "---\nname: utf16-skill\ndescription: UTF-16 user edit\n---\n\nEdited in UTF-16\n".data(using: .utf16)!
+    try! utf16Bytes.write(to: utf16URL, options: .atomic)
+    expect(global.list().first(where: { $0.name == "utf16-skill" })?.record.userLocked == true
+           && global.list().first(where: { $0.name == "utf16-skill" })?.externallyModified == true,
+           "UTF-16 external edit is listed as userLocked and externallyModified")
+    expect(needsApproval(global.save(name: "utf16-skill", description: "AI overwrite", body: "clobber", by: .ai))
+           && needsApproval(global.setEnabled("utf16-skill", false, by: .ai))
+           && needsApproval(global.setAllEnabled(false, by: .ai))
+           && needsApproval(global.delete("utf16-skill", by: .ai))
+           && needsApproval(global.undo(by: .ai))
+           && refused(global.undo(by: .user))
+           && (try? Data(contentsOf: utf16URL)) == utf16Bytes,
+           "UTF-16 external edit blocks AI save/toggle/delete/undo and user content undo without altering raw bytes")
+    expect(deleted(global.delete("utf16-skill", by: .user)) != nil, "user can clean up UTF-16 external skill")
+
+    // 8. Project store (AIProjects ProjectSkillStore) + undo lock checks + chained undo + crash/rollback handling.
     let proj = ProjectSkillStore.shared
     guard let p1 = saved(proj.save(name: "build-stage", description: "Stage build check",
                                    body: "Run build --stage", by: .ai, project: projectKey, now: t0)),
@@ -248,31 +313,60 @@ func testSkillStore() {
            && proj.read("build-stage", project: projectKey)?.document.body == "Run build --stage && check_modules"
            && fm.fileExists(atPath: projectFolder.appendingPathComponent("build-stage/SKILL.md").path),
            "ProjectSkillStore stores under projects/<id>/skills and upgrades lock on user edit")
-    expect(needsApproval(proj.save(name: "build-stage", description: "AI", body: "bad", by: .ai, project: projectKey)),
-           "ProjectSkillStore refuses AI save on userLocked skill with Inbox approval required")
-    // Chained undo: undo user edit -> back to p1 (unlocked); undo add -> removed; third undo -> refused.
-    expect(undone(proj.undo(project: projectKey)) != nil
+    expect(needsApproval(proj.save(name: "build-stage", description: "AI", body: "bad", by: .ai, project: projectKey))
+           && needsApproval(proj.undo(project: projectKey, by: .ai))
+           && needsApproval(proj.undo(project: projectKey, by: .meeting))
+           && proj.read("build-stage", project: projectKey)?.document.body == "Run build --stage && check_modules",
+           "ProjectSkillStore refuses AI/meeting save and undo on userLocked skill with Inbox approval required")
+    // Chained undo: user undoes user edit -> back to p1 (unlocked); AI can undo its own unlocked add; third undo -> refused.
+    expect(undone(proj.undo(project: projectKey, by: .user)) != nil
            && proj.read("build-stage", project: projectKey)?.record.userLocked == false
            && proj.read("build-stage", project: projectKey)?.document.body == "Run build --stage",
-           "first undo restores AI v1 and unlocked state")
-    expect(undone(proj.undo(project: projectKey)) != nil
+           "first undo by user restores AI v1 and unlocked state")
+    expect(undone(proj.undo(project: projectKey, by: .ai)) != nil
            && proj.read("build-stage", project: projectKey) == nil
            && proj.list(projectKey).isEmpty,
-           "second undo removes the added skill")
+           "second undo by AI removes its own unlocked add")
     expect(refused(proj.undo(project: projectKey)), "third undo refuses when nothing left to undo")
 
-    // Crash resilience: a cut-off last line in skills-history.jsonl is ignored and overwritten on next save;
-    // corrupted skills.json refuses writes without overwriting.
+    // User delete of an unlocked AI skill cannot be undone by AI without Inbox approval.
+    _ = proj.save(name: "ai-only", description: "Temp AI skill", body: "steps", by: .ai, project: projectKey)
+    _ = proj.delete("ai-only", project: projectKey, by: .user)
+    expect(needsApproval(proj.undo(project: projectKey, by: .ai))
+           && proj.read("ai-only", project: projectKey) == nil,
+           "AI cannot undo a user deletion without Inbox approval")
+
+    // Crash resilience: a cut-off last line in skills-history.jsonl (even > 64 KiB) is ignored and truncated on next save;
+    // corrupted skills.json refuses writes without overwriting; mid-save index failure rolls back SKILL.md and history.
     _ = proj.save(name: "test-skill", description: "Crash check", body: "ok", by: .ai, project: projectKey)
     let projHistURL = projectFolder.appendingPathComponent("skills-history.jsonl")
     let projIndexURL = projectFolder.appendingPathComponent("skills.json")
     if let h = try? FileHandle(forWritingTo: projHistURL) {
-        h.seekToEndOfFile(); h.write(Data("{\"action\":\"add".utf8)); h.closeFile()
+        h.seekToEndOfFile()
+        let bigTruncated = "{\"action\":\"add\",\"pad\":\"" + String(repeating: "x", count: 100_000)
+        h.write(Data(bigTruncated.utf8))
+        h.closeFile()
     }
     let countBeforeRecover = proj.history(projectKey).count
     expect(saved(proj.save(name: "test-skill", description: "Crash check 2", body: "ok2", by: .ai, project: projectKey)) != nil
            && proj.history(projectKey).count == countBeforeRecover + 1,
-           "truncated tail line in skills-history.jsonl is recovered on next save")
+           "truncated tail line > 64 KiB in skills-history.jsonl is recovered on next save")
+
+    // Rollback on mid-persist failure: make root read-only (0500) so SKILL.md (inside 0700 subdir) and in-place
+    // history append succeed, while atomic skills.json write fails -> both SKILL.md and history must roll back!
+    let testSkillFile = projectFolder.appendingPathComponent("test-skill/SKILL.md")
+    let priorSkillBytes = try! Data(contentsOf: testSkillFile)
+    let priorHistBytes = try! Data(contentsOf: projHistURL)
+    let priorIndexBytes = try! Data(contentsOf: projIndexURL)
+    try! fm.setAttributes([.posixPermissions: 0o500], ofItemAtPath: projectFolder.path)
+    let failOutcome = proj.save(name: "test-skill", description: "Must rollback", body: "must not persist", by: .user, project: projectKey)
+    try! fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: projectFolder.path)
+    expect(refused(failOutcome)
+           && (try? Data(contentsOf: testSkillFile)) == priorSkillBytes
+           && (try? Data(contentsOf: projHistURL)) == priorHistBytes
+           && (try? Data(contentsOf: projIndexURL)) == priorIndexBytes,
+           "mid-save failure on skills.json rolls back SKILL.md and skills-history.jsonl together")
+
     let goodIndex = try! Data(contentsOf: projIndexURL)
     try! Data("{ broken json".utf8).write(to: projIndexURL)
     expect(refused(proj.save(name: "test-skill", description: "Should fail", body: "x", by: .user, project: projectKey))
@@ -280,5 +374,5 @@ func testSkillStore() {
            "damaged skills.json refuses mutations and is never overwritten")
     try! goodIndex.write(to: projIndexURL)
 
-    print("PASS: skill store (SKILL.md frontmatter, global/project stores, user lock + external edit, rename UUID, setEnabled/setAllEnabled, tombstone, chained undo, crash safety)")
+    print("PASS: skill store (SKILL.md frontmatter, YAML compatibility, global/project stores, user lock + UTF-16 external edit, rename UUID, setEnabled/setAllEnabled, tombstone reuse guard, undo lock check, rollback & >64 KiB crash safety)")
 }

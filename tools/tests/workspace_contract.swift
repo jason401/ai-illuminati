@@ -47,7 +47,8 @@ expect(fullCodex.contains("sandbox_mode=\"danger-full-access\"") && fullCodex.co
        && !fullCodex.contains("--sandbox") && value(fullCodex, after: "-C") == session.path, "Codex full access: runs in the session folder with the app's outer sandbox")
 
 let support = URL(fileURLWithPath: AccountStore.supportDir, isDirectory: true)
-let sync = base.appendingPathComponent("Sync \"Custom\"")
+let syncContainer = base.appendingPathComponent("sync-container")
+let sync = syncContainer.appendingPathComponent("Sync \"Custom\"")
 let localKnowledge = ["skills", "memory", "projects", "knowledge-candidates.jsonl", "knowledge-reviews.json",
                       "knowledge-review-attempt.json", "knowledge-review.log", "knowledge-sync.json"].map { support.appendingPathComponent($0).path }
 let syncKnowledge = sync.appendingPathComponent("knowledge").path
@@ -91,16 +92,19 @@ for file in protectedFiles + [chatFile] {
 try! "original".write(to: protectedFiles[0], atomically: true, encoding: .utf8)
 var sandboxed = WorkspaceInvocation(binding: full, room: UUID(), account: Account(id: "protected-claude", provider: .claude, name: "test"))
 let wrapper = sandboxed.protectKnowledge(syncFolder: sync)
-func writeInSandbox(_ file: URL) -> (Int32, String) {
+func runInSandbox(_ executable: String, _ arguments: [String], using wrapper: [String]) -> (Int32, String) {
     let process = Process()
     let errors = Pipe()
     process.executableURL = URL(fileURLWithPath: wrapper[0])
-    process.arguments = Array(wrapper.dropFirst()) + ["/bin/sh", "-c", "/bin/echo changed > \"$1\"", "test", file.path]
+    process.arguments = Array(wrapper.dropFirst()) + [executable] + arguments
     process.standardError = errors
     try! process.run()
     let error = String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
     process.waitUntilExit()
     return (process.terminationStatus, error)
+}
+func writeInSandbox(_ file: URL) -> (Int32, String) {
+    runInSandbox("/bin/sh", ["-c", "/bin/echo changed > \"$1\"", "test", file.path], using: wrapper)
 }
 for file in protectedFiles {
     let (status, error) = writeInSandbox(file)
@@ -109,6 +113,12 @@ for file in protectedFiles {
 let (chatStatus, chatError) = writeInSandbox(chatFile)
 expect(chatStatus == 0, "the launch policy allows chat files, exit \(chatStatus): \(chatError)")
 expect(try! String(contentsOf: protectedFiles[0], encoding: .utf8) == "original", "a denied write leaves existing contents intact")
+let (moveStatus, moveError) = runInSandbox("/bin/mv", [syncContainer.path, base.appendingPathComponent("moved-sync-container").path], using: wrapper)
+expect(moveStatus == 1 && fm.fileExists(atPath: syncContainer.path), "the launch policy pins sync ancestors, exit \(moveStatus): \(moveError)")
+let missingSync = base.appendingPathComponent("future-sync")
+let futureWrapper = sandboxed.protectKnowledge(syncFolder: missingSync)
+let (createStatus, createError) = runInSandbox("/bin/mkdir", [missingSync.path], using: futureWrapper)
+expect(createStatus == 1 && !fm.fileExists(atPath: missingSync.path), "the launch policy pins a missing sync folder, exit \(createStatus): \(createError)")
 // An Enterprise workspace that forbids full access (its cached cloud requirements): workspace-write on the writable folder,
 // not danger-full-access (Codex would fall back to a read-only root). Allowed or no requirements: full access as before.
 func codexAccount(_ name: String, requirements: String?) -> Account {
@@ -151,7 +161,8 @@ expect(viewCodex.contains("sandbox_mode=\"read-only\"") && viewCodex.contains("f
        "view: Codex read only, no shell, no web, old sandbox options replaced")
 // The chat's own folder may change in view (writable root): Edit only there.
 let own = base.appendingPathComponent("own"); try! fm.createDirectory(at: own, withIntermediateDirectories: true)
-let ownClaude = try! WorkspaceInvocation(binding: WorkspaceBinding(roots: [root, WorkspaceRoot(path: own.path, directory: true, writable: true)]), room: UUID())
+let viewWithWrites = WorkspaceBinding(roots: [root, WorkspaceRoot(path: own.path, directory: true, writable: true)])
+let ownClaude = try! WorkspaceInvocation(binding: viewWithWrites, room: UUID())
     .arguments(provider: .claude, original: claudeBase, directory: session, web: false, tools: gateway)
 expect(value(ownClaude, after: "--allowedTools") == "Read,Grep,Glob,mcp__illuminati__*,Edit(/\(own.path)/**)", "view: only the chat's own folder is editable")
 
@@ -163,6 +174,18 @@ do {
     expect(false, "writing without a backup is refused")
 } catch { expect(error.localizedDescription.contains("백업"), "the refusal names the backup: \(error.localizedDescription)") }
 var backup = try! WorkspaceBackup.begin(execute, room: room, runID: UUID())
+let write = WorkspaceBinding(roots: [root], level: .write, fullAuto: false)
+for (binding, readOnly) in [(write, false), (viewWithWrites, true)] {
+    var invocation = WorkspaceInvocation(binding: binding, room: room, readOnly: readOnly, backupPath: backup.directory)
+    expect(invocation.protectKnowledge(syncFolder: sync).isEmpty, "limited file writes keep each CLI's sandbox mode")
+    let claude = try! invocation.arguments(provider: .claude, original: claudeBase, directory: session, web: false, tools: gateway)
+    let gemini = try! invocation.arguments(provider: .gemini, original: geminiBase, directory: session, web: false, tools: gateway)
+    expect(settings(claude)["sandbox"] == nil && writeDenials(claude).contains("Edit(/\(syncKnowledge)/**)")
+           && manifest(claude).object["protectedWritePaths"] as? [String] == knowledgePaths,
+           "limited Claude writes protect knowledge in the file tools and bridge")
+    expect(writeDenials(gemini).contains("write_file(\(syncKnowledge))") && gemini.contains("--sandbox"),
+           "limited Gemini writes protect knowledge and keep the terminal sandbox")
+}
 let exe = try! WorkspaceInvocation(binding: execute, room: room, readOnly: false, backupPath: backup.directory)
     .arguments(provider: .claude, original: claudeBase, directory: session, web: false, tools: gateway)
 expect(value(exe, after: "--tools") == "Read,Grep,Glob,Edit,Write,Bash" && value(exe, after: "--allowedTools") == "Read,Grep,Glob,mcp__illuminati__*,Edit,Write,Bash",

@@ -462,9 +462,10 @@ Public names and why (everything else stays internal: `AutoGuard` whole, `Worksp
   `level` only through the init): the
   app builds one per answer and turns it into the tool's start (`RunConditions.app`).
 - `WorkspaceInvocation.protectKnowledge(syncFolder:)` lets the app supply the selected sync folder from AIChat and
-  add the macOS write-deny wrapper inside the existing project process group. Claude execute also uses
-  `sandbox.filesystem.denyWrite` and file-tool denies, and agy execute uses `write_file` denies. The workspace bridge
-  checks the same paths at every file mutation in these runs. Skill and memory MCP calls still go to the app.
+  add the macOS write-deny wrapper inside the existing project process group. The wrapper also denies creating or moving
+  ancestors of the stores. When a workspace permits edits, Claude and agy deny knowledge writes in their file tools and
+  the workspace bridge enforces the same paths. Claude execute adds `sandbox.filesystem.denyWrite` for Bash. Skill and
+  memory MCP calls still go to the app.
   [Claude sandbox settings](https://code.claude.com/docs/en/sandboxing), [agy permission rules](https://antigravity.google/docs/cli-permissions).
 - `DeviceSync.configuredFolder` gives RunConditionsApp the persisted sync folder for CLI launch setup on a worker
   thread, without reading DeviceSync's published settings.
@@ -472,6 +473,7 @@ Public names and why (everything else stays internal: `AutoGuard` whole, `Worksp
   its existing sandbox and writable roots. [Codex permissions](https://developers.openai.com/codex/permissions).
 - On macOS, a full-access CLI command that attempts to start its own Seatbelt sandbox can fail because another sandbox
   is already active. The app leaves personal and managed sandbox settings in force.
+- The app launches registered `project_run` commands outside the CLI's Seatbelt profile, including in full auto.
 - `WorkspaceTools`, `WorkspaceToolLink` (init only): how the app gives its gateway (W0).
 - `WorkspaceBackup` (`begin`, `finish`, `finishLeftOpen` (since 2026-11-16: a backup whose answer never ended, the app quit,
   finished at the next launch so its changes list and Undo works; Discussion `recoverInterrupted`), `restore`, `load`, `purgeRoom`, `stamps`, `digest`, `base`, `directory`, `roots`,

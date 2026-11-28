@@ -15,6 +15,7 @@ import AISpaces
 // Write a new golden file only on purpose: AI_ILLUMINATI_WRITE_GOLDEN=<path> (then compare the diff by hand).
 func runConditionsCapture() -> String {
     let home = AccountStore.home
+    let testRun = (home as NSString).deletingLastPathComponent
     let resources = ProcessInfo.processInfo.environment["AI_ILLUMINATI_TEST_RESOURCES"] ?? "/no-resources"
     let root = URL(fileURLWithPath: home).appendingPathComponent("run-conditions-root")
     try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -56,7 +57,7 @@ func runConditionsCapture() -> String {
     // Paths also as JSON writes them inside a JSON argument ("\/tmp\/…").
     func clean(_ text: String, cli: String) -> String {
         var text = text
-        for (path, name) in [(cli, "<cli>"), (resources, "$RESOURCES"), (home, "$TEST_HOME")] where !path.isEmpty {
+        for (path, name) in [(cli, "<cli>"), (resources, "$RESOURCES"), (home, "$TEST_HOME"), (testRun, "$TEST_RUN")] where !path.isEmpty && path != "/" {
             text = text.replacingOccurrences(of: path, with: name).replacingOccurrences(of: path.replacingOccurrences(of: "/", with: "\\/"), with: name)
         }
         // Gemini gets its turn in -p: the fixture repository's commit (dated now) is in its checkpoint.

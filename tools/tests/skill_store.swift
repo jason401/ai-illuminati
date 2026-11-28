@@ -405,8 +405,9 @@ func testSkillRead() {
     }
     let plain = room(), linked = room(own), schoolRoom = room(own, schoolLocked: true)
     discussion.conversations = [plain, linked, schoolRoom]
-    func prompt(_ account: Account, _ chat: Conversation) -> String {
-        discussion.soloInstruction(account, binding: chat.workspace ?? WorkspaceBinding(roots: []), helper: "", chat: chat.id)
+    func prompt(_ account: Account, _ chat: Conversation, binding: WorkspaceBinding? = nil) -> String {
+        discussion.soloInstruction(account, binding: binding ?? WorkspaceBinding(roots: [], project: chat.workspace?.project, face: true),
+                                   helper: "", chat: chat.id)
     }
     let empty = prompt(accounts[0], plain)
     expect(!empty.contains("[Skills]") && !empty.contains("skill_read"), "no enabled skills leaves the prompt unchanged")
@@ -433,6 +434,12 @@ func testSkillRead() {
     let foreign = ProjectSkillStore.folder(other.groupKey).appendingPathComponent("other-procedure")
     let alias = SkillStore.folder.appendingPathComponent("foreign-alias")
     try! fm.createSymbolicLink(at: alias, withDestinationURL: foreign)
+    let catalogAlias = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("skill-catalog-alias")
+    try! fm.createSymbolicLink(at: catalogAlias, withDestinationURL: SkillStore.folder)
+    defer { try? fm.removeItem(at: catalogAlias) }
+    expect(global.read("foreign-alias")?.document.body == "OTHER PROJECT BODY"
+           && SkillStore(folder: { catalogAlias }).list().contains { $0.name == "shared-procedure" },
+           "the user store still reads a manually linked skill and lists a symlinked catalog")
 
     for account in accounts + [school] {
         let instruction = prompt(account, account.id == school.id ? schoolRoom : linked)
@@ -447,6 +454,14 @@ func testSkillRead() {
     }
     expect(!prompt(accounts[1], plain).contains("project-procedure") && prompt(accounts[1], plain).contains("Global version"),
            "plain chats only list global skills, including ones saved by a school account")
+    let fileOnly = WorkspaceBinding(roots: [])
+    expect(!prompt(accounts[0], linked, binding: fileOnly).contains("[Skills]")
+           && !prompt(accounts[1], schoolRoom).contains("[Skills]")
+           && !prompt(accounts[3], linked, binding: fileOnly.consulted).contains("[Skills]")
+           && RunConditions.app(accounts[3]).readSkill == nil,
+           "the skill prompt requires a reachable tool for this chat and the local reader requires a workspace")
+    expect(prompt(accounts[0], linked, binding: fileOnly.side).contains("[Skills]"),
+           "a side answer's read-only gateway provides skill_read")
 
     let hub = ToolHub(providers: { ToolHub.appProviders }, listenOnRegister: false)
     func token(_ chat: Conversation, _ account: Account, origin: ToolOrigin = .member) -> String {
@@ -486,18 +501,21 @@ func testSkillRead() {
     let local = accounts[3]
     let localPrompt = prompt(local, linked)
     let localRun = RunConditions.app(local, WorkspaceInvocation(binding: linked.workspace!, room: linked.id))
-    var localPrompts: [String] = []
-    Answerer.replyForTests = { text in
-        localPrompts.append(text)
-        return .success(localPrompts.count == 1 ? #"{"skill_read":{"name":"project-procedure"}}"# : "Local final answer")
+    let call = #"{"skill_read":{"name":"project-procedure"}}"#
+    for toolReply in [call, "I’ll read the procedure first.\n```json\n\(call)\n```\n"] {
+        var localPrompts: [String] = []
+        Answerer.replyForTests = { text in
+            localPrompts.append(text)
+            return .success(localPrompts.count == 1 ? toolReply : "Local final answer")
+        }
+        defer { Answerer.replyForTests = nil }
+        let result = Answerer.ask(local, prompt: localPrompt, run: localRun)
+        expect((try? result.get()) == "Local final answer" && localPrompts.count == 2
+               && localPrompts[0].contains(#"{"skill_read":{"name":"the-skill-name"}}"#)
+               && !localPrompts[0].contains("PROJECT BODY")
+               && localPrompts[1].contains(projectResult),
+               "Ollama reads the same wrapped body whether the JSON is bare or fenced after prose")
     }
-    defer { Answerer.replyForTests = nil }
-    let result = Answerer.ask(local, prompt: localPrompt, run: localRun)
-    expect((try? result.get()) == "Local final answer" && localPrompts.count == 2
-           && localPrompts[0].contains(#"{"skill_read":{"name":"the-skill-name"}}"#)
-           && !localPrompts[0].contains("PROJECT BODY")
-           && localPrompts[1].contains(projectResult),
-           "Ollama asks for the same skill by name and receives the same wrapped body before continuing")
 
     let filler = String(repeating: "z", count: 800)
     saveGlobal("matched-entry", "piezoresonance " + filler, "MATCHED BODY", date: 10)
@@ -510,6 +528,15 @@ func testSkillRead() {
     let justNewest = SkillLink.rule(project: own.groupKey, question: "", local: true)
     expect(justNewest.count <= 2_000 && justNewest.contains("newest-entry") && justNewest.contains("older-entry")
            && !justNewest.contains("matched-entry"), "without a match, Ollama's list fits its longer header and prioritizes recency")
+
+    _ = try! ProjectMemoryStore.shared.accessLock(own.groupKey, protecting: schoolRoom.enterpriseLock!)
+    let personalRule = prompt(accounts[0], linked), schoolRule = prompt(school, schoolRoom)
+    expect(personalRule.contains("shared-procedure") && !personalRule.contains("project-procedure")
+           && schoolRule.contains("shared-procedure") && schoolRule.contains("project-procedure")
+           && open("project-procedure", token: member)["isError"] as? Bool == true
+           && body("project-procedure", token: enterprise).contains("PROJECT BODY")
+           && body("shared-procedure", token: member).contains("GLOBAL BODY"),
+           "the project's saved Enterprise audience filters metadata and live reads while global skills remain shared")
 
     discussion.conversations[1].turns.append(ChatTurn(question: "next"))
     expect(open("shared-procedure", token: member)["isError"] as? Bool == true, "a tool session expires when a new turn starts")

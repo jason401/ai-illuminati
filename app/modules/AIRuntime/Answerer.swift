@@ -165,8 +165,10 @@ public enum Answerer {
         // many different reads in one answer also end in "answer now" so it can't go on forever.
         var answerNow = false
         var readFailures = 0, served = 0
-        let answerNowNote = "\nNo more data will be sent for this answer. Do not return workspace_reads again: answer now with the data already sent above, and say what you could not check."
-            + (readSkill == nil ? "" : " Do not request skill_read again.")
+        var answerNowNote: String {
+            "\nNo more data will be sent for this answer. Do not return workspace_reads again: answer now with the data already sent above, and say what you could not check."
+                + (seen.contains { $0.hasPrefix("skill_read:") } ? " Do not request skill_read again." : "")
+        }
         // Without a session the AI remembers nothing: each call sends the request once, then everything read so far.
         var delivered: [String] = []
         func evidence(_ data: String, note: String = "") -> String {
@@ -192,8 +194,7 @@ public enum Answerer {
             if case .success(let text) = result, let start = text.firstIndex(of: "{"), let end = text.lastIndex(of: "}"), start < end,
                let decoded = try? JSONSerialization.jsonObject(with: Data(text[start...end].utf8)) as? [String: Any] {
                 object = decoded
-                if readSkill != nil, decoded.count == 1, let arguments = decoded["skill_read"] as? [String: Any], arguments.count == 1,
-                   text.trimmingCharacters(in: .whitespacesAndNewlines) == String(text[start...end]) {
+                if readSkill != nil, decoded.count == 1, let arguments = decoded["skill_read"] as? [String: Any], arguments.count == 1 {
                     skillName = arguments["name"] as? String
                 }
             } else {

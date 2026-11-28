@@ -60,7 +60,7 @@ extension RunConditions {
         if account.provider == .ollama, workspace.binding.origin != .consulted {
             let context = ToolContext(room: workspace.room, roots: workspace.binding.roots, asker: account,
                                       turn: MemoryLink.shared.newestTurn(workspace.room), origin: workspace.binding.origin ?? .member)
-            run.readSkill = SkillLink.shared.tools(context: context).isEmpty ? nil : { slug in
+            run.readSkill = { slug in
                 let result = SkillLink.shared.call("skill_read", ["name": slug], context: context)
                 return (result["content"] as? [[String: Any]])?.first?["text"] as? String ?? ""
             }

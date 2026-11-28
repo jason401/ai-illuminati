@@ -90,6 +90,7 @@ WorkspaceBinding.inventory() | func inventory() -> [String]
 WorkspaceBinding.isFullAuto | var isFullAuto: Bool { get }
 WorkspaceBinding.level | var level: WorkspaceLevel
 WorkspaceBinding.meeting(folder:) | func meeting(folder: String) -> WorkspaceBinding
+WorkspaceBinding.offersChatTools | var offersChatTools: Bool { get }
 WorkspaceBinding.opinion(chatFolder:) | func opinion(chatFolder: String) -> WorkspaceBinding
 WorkspaceBinding.origin | var origin: ToolOrigin?
 WorkspaceBinding.project | var project: ProjectBinding?

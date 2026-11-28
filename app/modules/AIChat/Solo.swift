@@ -751,7 +751,8 @@ extension Discussion {
             var answered: [(k: Int, account: Account, text: String)] = []   // good replies, for the digest
             for (k, account) in called.enumerated() {
                 let speaker = label(account)
-                var instruction = soloInstruction(account, binding: binding, helper: helper, chat: id, spaceRule: k == 0)
+                let toolsBinding = k > 0 && called.count > 1 ? Self.sideView(binding) : binding
+                var instruction = soloInstruction(account, binding: binding, helper: helper, chat: id, spaceRule: k == 0, toolsBinding: toolsBinding)
                 if offersRequest && k == 0 { instruction += ChatInputRequest.rule }
                 if !extra.isEmpty { instruction += "\n" + extra }
                 if called.count > 1 {
@@ -789,7 +790,7 @@ extension Discussion {
                     let result = self.requestDebate(account, Self.soloContext(rules: rules, transcript: asked) + "\n[SOLO TURN]\n" + instruction,
                                                     binding.fullAccess == true ? 8 * 3600 : Self.soloTimeout, cancellation, hard: called.count > 1, web: true,
                                                     fresh: freshTranscript.map { Self.soloContext(rules: rules, transcript: $0) + "\n[SOLO TURN]\n" + instruction },
-                                                    workspace: k > 0 && called.count > 1 ? Self.sideView(binding) : nil,
+                                                    workspace: toolsBinding,
                                                     screen: self.screenAnswer(account, room: id, index: index), steering: called.count == 1 ? self.steer : nil, progress: ran.watch(progress))
                     doneLock.lock(); done.insert(accountID); doneLock.unlock()
                     if cancellation.isCancelled { return }
@@ -925,7 +926,8 @@ extension Discussion {
             let ran = AnswerModel()
             // Full access works on its own for long (tests, builds): the same 8 hours as a called AI, not 15 minutes.
             let result = requestDebate(account, prompt, binding.fullAccess == true ? 8 * 3600 : Self.soloTimeout, cancellation, web: true,
-                                       fresh: fresh.map { $0 + "\n[SOLO TURN]\n" + instruction }, screen: screenAnswer(account, room: id, index: index), steering: steer, progress: ran.watch(progress))
+                                       fresh: fresh.map { $0 + "\n[SOLO TURN]\n" + instruction }, workspace: binding,
+                                       screen: screenAnswer(account, room: id, index: index), steering: steer, progress: ran.watch(progress))
             if cancellation.isCancelled { break }
             switch result {
             case .success(let raw):
@@ -1010,8 +1012,9 @@ extension Discussion {
     // contradict it, so whatever is added here (folders, web, pictures, face) reaches project work too.
     // spaceRule: this answer may make a Space when the message asks for one (only one AI per message does).
     func soloInstruction(_ account: Account, binding: WorkspaceBinding, helper: String, project: ProjectPart? = nil, chat id: UUID? = nil,
-                         spaceRule: Bool = true) -> String {
+                         spaceRule: Bool = true, toolsBinding: WorkspaceBinding? = nil) -> String {
         let question = lastQuestion(id), linked = linkedProject(id)
+        let skills = id.map { SkillLink.shared.rule(account, room: $0, binding: toolsBinding ?? binding, question: question) } ?? ""
         let folders = Self.soloFolders(binding, shared: model.activeSharedFolders, project: project?.root)
         pictureLock.lock(); let images = !activeImages.isEmpty || imageNumber > 0; pictureLock.unlock()
         let needs = InstructionNeeds(question: question, images: images, project: project != nil && project?.folderless != true,
@@ -1027,8 +1030,7 @@ extension Discussion {
                                                          && binding.roots.contains { $0.path == SpaceStore.root.path && $0.writable == true },
                                                      allowed: { Enterprise.permits(account, lock: self.spaceLock($0)) }) : "",
                                 peer: peerInstruction(account, room: id, brief: !needs.peer),
-                                memory: [memoryRule(account, chat: id), projectMemoryRule(account, chat: id),
-                                         SkillLink.rule(project: linked.map(SidebarProjects.key), question: question, local: account.provider == .ollama)]
+                                memory: [memoryRule(account, chat: id), projectMemoryRule(account, chat: id), skills]
                                     .filter { !$0.isEmpty }.joined(separator: "\n"),
                                 linked: project == nil ? linked : nil, needs: needs)
     }

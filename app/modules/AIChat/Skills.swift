@@ -66,11 +66,33 @@ public final class SkillLink: ToolProvider {
     public var active: Bool { true }
     public func tools() -> [[String: Any]] { [] }
 
+    // Store APIs also serve the user. Only AI exposure requires the file to stay at its catalog path.
+    private static func mayExpose(_ name: String, under folder: URL) -> Bool {
+        let file = folder.appendingPathComponent(name, isDirectory: true).appendingPathComponent("SKILL.md")
+        let support = URL(fileURLWithPath: AccountStore.supportDir, isDirectory: true)
+        let prefix = support.path + "/"
+        guard file.path.hasPrefix(prefix) else { return false }
+        let relative = String(file.path.dropFirst(prefix.count))
+        return file.resolvingSymlinksInPath().path == support.resolvingSymlinksInPath().appendingPathComponent(relative).path
+    }
+
     private static func available(project: String?) -> [SkillSummary] {
-        let scoped = project.map { ProjectSkillStore.shared.list($0) } ?? []
+        let scoped = project.map { key in
+            ProjectSkillStore.shared.list(key).filter { $0.record.enabled && mayExpose($0.name, under: ProjectSkillStore.folder(key)) }
+        } ?? []
+        let global = SkillStore.shared.list().filter { $0.record.enabled && mayExpose($0.name, under: SkillStore.folder) }
         // The name-only tool resolves an enabled project skill before a global skill with the same name.
-        let enabled = (scoped + SkillStore.shared.list()).filter(\.record.enabled)
-        return Dictionary(enabled.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first }).values.sorted { $0.name < $1.name }
+        return Dictionary((scoped + global).map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
+            .values.sorted { $0.name < $1.name }
+    }
+
+    func rule(_ account: Account, room: UUID, binding: WorkspaceBinding, question: String) -> String {
+        let local = account.provider == .ollama
+        guard local || binding.offersChatTools else { return "" }
+        let context = ToolContext(room: room, roots: binding.roots, asker: account,
+                                  turn: MemoryLink.shared.newestTurn(room), origin: binding.origin ?? .member)
+        guard let scope = answeringScope(context) else { return "" }
+        return Self.rule(project: scope.project, question: question, local: local)
     }
 
     static func rule(project: String?, question: String, local: Bool) -> String {
@@ -106,17 +128,22 @@ public final class SkillLink: ToolProvider {
         return chosen.joined(separator: "\n")
     }
 
-    private func answeringChat(_ context: ToolContext) -> Conversation? {
+    private struct Scope { let project: String? }
+
+    private func answeringScope(_ context: ToolContext) -> Scope? {
         guard let account = context.asker, let turn = context.turn, context.origin != .consulted else { return nil }
         let read = { ChatLink.shared.conversations().first { $0.id == context.room } }
         let chat = Thread.isMainThread ? read() : DispatchQueue.main.sync(execute: read)
         guard let chat, let last = chat.turns.last, last.id == turn, last.answeredAt == nil,
               Enterprise.permits(account, lock: chat.enterpriseLock) else { return nil }
-        return chat
+        let project = ProjectMemory.project(chat).flatMap { key in
+            ProjectMemory.permits(account, chat: chat, project: key) ? key : nil
+        }
+        return Scope(project: project)
     }
 
     public func tools(context: ToolContext) -> [[String: Any]] {
-        guard let chat = answeringChat(context), !Self.available(project: ProjectMemory.project(chat)).isEmpty else { return [] }
+        guard let scope = answeringScope(context), !Self.available(project: scope.project).isEmpty else { return [] }
         return [["name": "skill_read",
                  "description": "Read the body of an enabled skill by name from the user’s global skills or this chat’s project.",
                  "inputSchema": ["type": "object", "properties": ["name": ["type": "string"]],
@@ -125,10 +152,12 @@ public final class SkillLink: ToolProvider {
 
     public func call(_ name: String, _ arguments: [String: Any], context: ToolContext) -> [String: Any] {
         guard name == "skill_read", let slug = arguments["name"] as? String, SkillDocument.isValidSlug(slug),
-              let chat = answeringChat(context) else { return unavailable() }
-        let project = ProjectMemory.project(chat)
-        let scoped = project.flatMap { ProjectSkillStore.shared.read(slug, project: $0) }
-        let skill = scoped.flatMap { $0.record.enabled ? $0 : nil } ?? SkillStore.shared.read(slug)
+              let scope = answeringScope(context) else { return unavailable() }
+        let scoped = scope.project.flatMap { key in
+            Self.mayExpose(slug, under: ProjectSkillStore.folder(key)) ? ProjectSkillStore.shared.read(slug, project: key) : nil
+        }
+        let skill = scoped.flatMap { $0.record.enabled ? $0 : nil }
+            ?? (Self.mayExpose(slug, under: SkillStore.folder) ? SkillStore.shared.read(slug) : nil)
         guard let skill, skill.record.enabled else { return unavailable() }
         let text = "\(Self.warning)\n[Skill: \(slug)]\n\(skill.document.body)\n[/Skill: \(slug)]\n\(Self.warning)"
         return ["content": [["type": "text", "text": text]], "isError": false]

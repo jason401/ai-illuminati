@@ -105,6 +105,7 @@ public struct WorkspaceBinding: Codable {
     public var fullAccessActive: Bool { (isFullAuto && projectRunID != nil) || fullAccess == true }
     public var face: Bool? = nil   // plain chat: the bridge also offers AI Face's tools through the app
     public var origin: ToolOrigin? = nil   // runtime only: whose tool session this is; nil = member
+    public var offersChatTools: Bool { face == true || projectRunID != nil || origin == .side }
     public init(roots: [WorkspaceRoot], level: WorkspaceLevel = .view, project: ProjectBinding? = nil, projectRunID: UUID? = nil, projectGeneration: Int? = nil, fullAuto: Bool? = nil, fullAccess: Bool? = nil, face: Bool? = nil, origin: ToolOrigin? = nil) {
         self.roots = roots; self.level = level; self.project = project; self.projectRunID = projectRunID; self.projectGeneration = projectGeneration; self.fullAuto = fullAuto; self.fullAccess = fullAccess; self.face = face; self.origin = origin
     }
@@ -162,7 +163,7 @@ public struct WorkspaceInvocation {
                                       "cache": NativeSessions.directory(room).appendingPathComponent("document-cache").path,
                                       "extractor": Self.resources.appendingPathComponent("WorkspaceDocument").path]
         object["project"] = binding.projectRunID != nil
-        let link = (binding.face == true || binding.projectRunID != nil || binding.origin == .side ? tools : screenTools)(self)
+        let link = (binding.offersChatTools ? tools : screenTools)(self)
         if let link {
             object["tools"] = link.socket
             object["toolSession"] = link.session

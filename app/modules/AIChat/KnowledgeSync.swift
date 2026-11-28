@@ -184,7 +184,8 @@ final class KnowledgeSync {
         let mine = myFolder(target.folder)
         do { try fm.createDirectory(at: mine.appendingPathComponent("skills"), withIntermediateDirectories: true) } catch { return nil }
         if remote.takeOver { takeOver(target, now: now) } else if remote.host == nil { claimHost(target, now: now) }
-        let host = remote.takeOver ? deviceID : remote.host ?? Self.host(target.folder)?.device
+        // A takeover holds only once host.json says so: else the old review Mac, back, would hold reviews too.
+        let host = remote.takeOver ? (Self.host(target.folder)?.device == deviceID ? deviceID : nil) : remote.host ?? Self.host(target.folder)?.device
         lock.lock(); hostCache = host; lock.unlock()
         heartbeat(mine, name: target.name, info: remote.myInfo, now: now)
         if let shared { share(shared, to: mine, was: remote.myCandidates) }

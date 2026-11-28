@@ -18,8 +18,9 @@ import AIProjects
 //   candidate with both versions, for the review to make one of them. The user is not asked to pick.
 // Both Macs decide the same way (the same rule on the same two lines) and make the same candidate (its id comes from the
 // two hashes), so they end up alike. A deleted item never comes back: a tombstone line or this Mac's own delete beats
-// any change made beside it (that change's text goes to the inbox). On/off goes the same way, the latest switch winning,
-// the user's over an AI's.
+// any change made beside it (that change's text goes to the inbox), except an AI's or a review's delete beside the user's
+// change: the user's change stays (on the Mac that deleted it, a skill comes back under a new id, its old id an alias).
+// On/off goes the same way, the latest switch winning, the user's over an AI's.
 // The candidate inbox (global one only) goes to <folder>/knowledge/<deviceID>/candidates.jsonl: the review Mac adds the
 // other Macs' pending candidates to its own inbox, and every Mac takes a further state (waiting, applied, dropped) from
 // the others, so the review's outcome reaches the Mac that proposed it.
@@ -30,6 +31,7 @@ import AIProjects
 struct KnowledgeCursor: Codable, Equatable {
     var read: [String: Int] = [:]      // another Mac → how many of its lines are applied
     var alias: [String: String] = [:]  // "skill:<its id>" → this Mac's item made on both Macs before they synced
+    var conflicts: [KnowledgeCandidate]?   // candidates of lines read but not in the inbox yet (written with `read`)
 }
 
 // <folder>/knowledge/<deviceID>/device.json: the Mac and when it last passed (at most hourly).
@@ -69,9 +71,11 @@ extension KnowledgeSync {
         (try? Data(contentsOf: cursorFile)).flatMap { try? Self.decoder().decode(KnowledgeCursor.self, from: $0) } ?? KnowledgeCursor()
     }
 
-    func saveCursor(_ cursor: KnowledgeCursor) {
+    @discardableResult
+    func saveCursor(_ cursor: KnowledgeCursor) -> Bool {
         try? FileManager.default.createDirectory(at: local, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        if let data = try? Self.encoder().encode(cursor) { try? data.write(to: cursorFile, options: .atomic) }
+        guard let data = try? Self.encoder().encode(cursor) else { return false }
+        return (try? data.write(to: cursorFile, options: .atomic)) != nil
     }
 
     // MARK: Reading (io queue)
@@ -165,8 +169,12 @@ extension KnowledgeSync {
             for key in order where !merger.apply(content[key], toggle: toggle[key], from: mac) { stop = min(stop, first[key]!) }
             merger.cursor.read[mac.id] = stop
         }
+        // The candidates go into the cursor file with the lines they came from, then into the inbox: a quit or an inbox that
+        // cannot be written in between leaves them there for the next pass, not lost with the lines already read.
+        let pending = (cursor.conflicts ?? []) + merger.conflicts.filter { row in !(cursor.conflicts ?? []).contains { $0.id == row.id } }
+        merger.cursor.conflicts = pending.isEmpty ? nil : pending
         if merger.cursor != cursor { saveCursor(merger.cursor) }
-        if !merger.conflicts.isEmpty { _ = candidates.merge(merger.conflicts, adding: true) }
+        if !pending.isEmpty, candidates.merge(pending, adding: true) { merger.cursor.conflicts = nil; saveCursor(merger.cursor) }
         // Other Macs' rows: their state everywhere; their pending ones into the review Mac's inbox.
         let host = remote.host == nil || remote.host == deviceID
         let rows = remote.others.flatMap { mac in mac.candidates.map { row -> KnowledgeCandidate in
@@ -208,26 +216,43 @@ private struct Merger {
     var conflicts: [KnowledgeCandidate] = []
     private var parents: [String: [String: Set<String>]] = [:]   // item → hash → the hashes it was made on
     private var deleted: Set<String> = []                        // items with a tombstone
+    private var made: [String: [String: Date]] = [:]             // item → hash → when its latest line made it
+    private var userMade: [String: Set<String>] = [:]            // item → the hashes a user's add or modify made
     private var mineLast: [String: KnowledgeChange] = [:]        // this Mac's last line per item
     static let none = "-"                                        // the hash of "nothing" (a profile cleared)
 
     init(sync: KnowledgeSync, remote: KnowledgeRemote, cursor: KnowledgeCursor, now: Date) {
         self.sync = sync; self.remote = remote; self.cursor = cursor; self.now = now
         for line in remote.mine { mineLast[line.kind.rawValue + ":" + line.id] = line }
-        var removed: [String: Date] = [:], added: [String: Date] = [:]
-        for line in remote.mine.map(Optional.some) + remote.others.flatMap(\.lines) {
-            guard let line else { continue }
+        var removed: [String: Date] = [:], added: [String: Date] = [:], kept: Set<String> = []
+        let all = (remote.mine.map(Optional.some) + remote.others.flatMap(\.lines)).compactMap { $0 }
+        for line in all {
             let key = local(line.kind, line.id)
-            if line.kind != .profile, line.op == .delete { removed[key] = max(removed[key] ?? line.at, line.at) }
-            if line.op == .add { added[key] = max(added[key] ?? line.at, line.at) }
+            guard line.op == .add || line.op == .modify || (line.kind == .profile && line.op == .delete) else { continue }
+            let hash = line.hash ?? Self.none
+            made[key, default: [:]][hash] = max(made[key]?[hash] ?? line.at, line.at)
+            if line.by == .user, line.kind != .profile { userMade[key, default: []].insert(hash) }
             // A line without a base (an add) has no parent: "nothing" as its parent would make a cleared profile look older.
-            if let base = line.base, line.op == .add || line.op == .modify || (line.kind == .profile && line.op == .delete) {
-                parents[key, default: [:]][line.hash ?? Self.none, default: []].insert(base)
+            if let base = line.base { parents[key, default: [:]][hash, default: []].insert(base) }
+        }
+        for line in all {
+            let key = local(line.kind, line.id)
+            if line.kind != .profile, line.op == .delete {
+                if overruled(line, key) { kept.insert(key) } else { removed[key] = max(removed[key] ?? line.at, line.at) }
             }
+            if line.op == .add { added[key] = max(added[key] ?? line.at, line.at) }
         }
         // A tombstone holds unless the item was added again later (Undo brings a deleted fact back under its id).
         deleted = Set(removed.filter { key, at in (added[key] ?? .distantPast) <= at }.keys)
-        for t in sync.skills.tombstones() { deleted.insert("skill:" + t.id.uuidString) }
+        for t in sync.skills.tombstones() where !kept.contains("skill:" + t.id.uuidString) && !kept.contains(local(.skill, t.id.uuidString)) {
+            deleted.insert("skill:" + t.id.uuidString)
+        }
+    }
+
+    // An AI's or a review's delete made beside the user's change (one it did not see): the user's change stays.
+    func overruled(_ line: KnowledgeChange, _ key: String) -> Bool {
+        guard line.op == .delete, line.kind != .profile, line.by != .user, let base = line.base else { return false }
+        return userMade[key]?.contains { $0 != base && !isAncestor($0, of: base, key) } == true
     }
 
     func local(_ kind: KnowledgeChange.Kind, _ id: String) -> String {
@@ -245,6 +270,14 @@ private struct Merger {
             if let e = extra[h] { queue.append(e) }
         }
         return false
+    }
+
+    // Whether this Mac already went past `theirs`: it is one of the versions `mine` was made from. An edit undone
+    // (X → Y → X) makes each the other's ancestor; then the later of the two decides, so a late X → Y does not undo the undo.
+    func behind(_ theirs: String, at: Date, mine: String, mineAt: () -> Date, _ key: String, extra: [String: String]) -> Bool {
+        guard isAncestor(theirs, of: mine, key, extra: extra) else { return false }
+        guard isAncestor(mine, of: theirs, key, extra: extra) else { return true }
+        return max(made[key]?[mine] ?? .distantPast, mineAt()) >= at
     }
 
     // false: not applied yet (a SKILL.md not here or not matching its line, a store not writable): read again next time.
@@ -271,15 +304,20 @@ private struct Merger {
         var created = false
         if let line = content {
             if line.op == .delete {
-                guard let here = detail else { return true }
+                guard let here = detail, !overruled(line, key) else { return true }
                 let hash = Self.hash(here)
                 if hash != line.base, !isAncestor(hash, of: line.base ?? Self.none, key, extra: unexported(key, hash)) {
-                    // Changed here since: the delete still goes (a deleted skill never comes back), the change to the inbox.
-                    lost(.skill, key, kept: nil, lost: version(here, key), by: line, from: mac)
+                    // Changed here since: the delete still goes (a deleted skill never comes back), the change to the inbox;
+                    // unless the user changed it and an AI deleted it (the change's line, once written, overrules it everywhere).
+                    let ours = version(here, key)
+                    if ours.by == .user, line.by != .user { return true }
+                    lost(.skill, key, kept: nil, lost: ours, by: line, from: mac)
                 }
                 return Self.done(skills.delete(here.name, by: line.by, now: line.at)) || Self.done(skills.delete(here.name, by: .user, now: line.at))
             }
             if deleted.contains(key) { return true }
+            // This Mac's own delete not written out yet: decided next pass, once its line is there to weigh against this one.
+            if detail == nil, remote.myState?.skills[String(key.dropFirst("skill:".count))] != nil { return false }
             guard let text = mac.skills[id], let hash = line.hash, SkillDocument.hash(text) == hash else { return false }
             guard let doc = SkillDocument.parse(text) else { return true }
             if detail == nil, let same = skills.read(doc.name) {
@@ -293,7 +331,7 @@ private struct Merger {
             if let here = detail {
                 let mine = Self.hash(here)
                 let extra = unexported(key, mine)
-                if mine == hash || (isAncestor(hash, of: mine, key, extra: extra) && !isAncestor(mine, of: hash, key, extra: extra)) {
+                if mine == hash || behind(hash, at: line.at, mine: mine, mineAt: { version(here, key).at }, key, extra: extra) {
                     // Already here, or this Mac went past it.
                 } else if isAncestor(mine, of: hash, key, extra: extra) {
                     guard save(theirs, over: here) else { return false }
@@ -309,8 +347,15 @@ private struct Merger {
             } else {
                 let outcome = skills.save(name: doc.name, description: doc.description, body: doc.body, by: line.by,
                                           id: UUID(uuidString: id), now: line.at)
-                // A skill id this store deleted cannot come back (SkillDirectory refuses it): skipped, not tried again.
-                if case .refused = outcome { return skills.tombstones().contains { $0.id.uuidString == id } }
+                if case .refused = outcome {
+                    guard skills.tombstones().contains(where: { $0.id.uuidString == id }) else { return false }
+                    // Deleted here by an AI beside the user's change (else `deleted` skipped it): SkillDirectory does not take
+                    // a deleted id again, so it comes back under a new one, the old id its alias.
+                    guard Self.done(skills.save(name: doc.name, description: doc.description, body: doc.body, by: line.by, now: line.at)),
+                          let back = skills.read(doc.name) else { return false }
+                    cursor.alias["skill:" + id] = "skill:" + back.id.uuidString
+                    key = "skill:" + back.id.uuidString
+                }
                 created = true
             }
             detail = current()
@@ -368,10 +413,12 @@ private struct Merger {
         // A fact this Mac removed and has not written out yet is a tombstone too.
         let pendingDelete = here == nil && remote.myState?.memory[id(key)] != nil
         if line.op == .delete {
-            guard let item = here else { return true }
+            guard let item = here, !overruled(line, key) else { return true }
             let hash = SkillDocument.hash(item.text)
             if hash != line.base, !isAncestor(hash, of: line.base ?? Self.none, key, extra: unexported(key, hash)) {
-                lost(.memory, key, kept: nil, lost: factVersion(item, key, data), by: line, from: mac)
+                let ours = factVersion(item, key, data)
+                if ours.by == .user, line.by != .user { return true }
+                lost(.memory, key, kept: nil, lost: ours, by: line, from: mac)
             }
             return sync.updateMemory { data in
                 guard let i = data.items.firstIndex(where: { $0.id == item.id }) else { return }
@@ -380,7 +427,8 @@ private struct Merger {
                 Self.trim(&data)
             }
         }
-        guard !deleted.contains(key), !pendingDelete, let text = line.text, let hash = line.hash else { return true }
+        if pendingDelete, !deleted.contains(key) { return false }   // weighed next pass, against its line
+        guard !deleted.contains(key), let text = line.text, let hash = line.hash else { return true }
         if here == nil, let same = data.items.first(where: { $0.text.lowercased() == text.lowercased() }) {
             cursor.alias["memory:" + line.id] = "memory:" + same.id.uuidString
             key = "memory:" + same.id.uuidString
@@ -404,7 +452,7 @@ private struct Merger {
                 Self.trim(&data)
             }
         }
-        if mine == hash || (isAncestor(hash, of: mine, key, extra: extra) && !isAncestor(mine, of: hash, key, extra: extra)) { return true }
+        if mine == hash || behind(hash, at: line.at, mine: mine, mineAt: { factVersion(item, key, data).at }, key, extra: extra) { return true }
         if isAncestor(mine, of: hash, key, extra: extra) { return put(theirs) }
         let ours = factVersion(item, key, data)
         if KnowledgeSync.wins(theirs.tuple, over: ours.tuple) {
@@ -439,10 +487,11 @@ private struct Merger {
         var extra: [String: String] = [:]
         if let was = remote.myState.map({ $0.profile ?? Self.none }), was != mine { extra[mine] = was }
         let key = "profile:profile"
-        if mine == theirs || (isAncestor(theirs, of: mine, key, extra: extra) && !isAncestor(mine, of: theirs, key, extra: extra)) { return true }
-        // Nothing here (and the other Mac's is not an old one this Mac cleared since): take it.
-        if mine != Self.none, !isAncestor(mine, of: theirs, key, extra: extra) {
-            let at = mineLast[key].flatMap { $0.hash ?? Self.none == mine ? $0.at : nil } ?? now
+        let at = mineLast[key].flatMap { $0.hash ?? Self.none == mine ? $0.at : nil } ?? now
+        if mine == theirs || behind(theirs, at: line.at, mine: mine, mineAt: { at }, key, extra: extra) { return true }
+        // Never set here: take it. Cleared here (a line or a clear not written yet) or set: the later one, as on the other Mac.
+        let cleared = mine == Self.none && (extra[mine] != nil || mineLast[key].map { $0.hash == nil } == true)
+        if mine != Self.none || cleared, !isAncestor(mine, of: theirs, key, extra: extra) {
             guard KnowledgeSync.wins((.user, line.at, line.device), over: (.user, at, sync.deviceID)) else { return true }
         }
         return sync.updateMemory { $0.profile = line.text ?? "" }

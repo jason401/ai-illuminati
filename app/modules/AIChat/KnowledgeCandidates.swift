@@ -4,7 +4,7 @@ import AIAccounts
 import AILocalization
 import AIProjects
 
-struct KnowledgeCandidate: Codable, Identifiable {
+struct KnowledgeCandidate: Codable, Identifiable, Equatable {
     enum Kind: String, Codable { case skill, memory }
     // waiting: the review decided a change the user must approve (a locked skill or a fact the user made).
     enum State: String, Codable { case pending, applied, dropped, waiting }

@@ -275,6 +275,8 @@ struct SkillsView: View {
                         draft.error = nil
                         draft.note = review { [weak draft] line in draft?.note = line }
                             ? L("스킬·기억 후보를 회의에서 검토하고 있어요. 끝나면 바로 적용돼요.", "A meeting is reviewing the skill and memory candidates; its decisions apply when it ends.")
+                            : !KnowledgeReviewLink.isReviewHost()
+                            ? L("연동 중에는 담당 Mac만 검토해요. 이 Mac의 후보는 담당 Mac의 다음 검토에 올라가요.", "With sync on, only the review Mac holds reviews; this Mac's candidates go to its next review.")
                             : L("검토할 후보가 없거나, 회의할 AI가 둘보다 적거나, 이미 검토 중이에요.", "No candidates to review, fewer than two AIs to meet, or a review is already running.")
                     }
                     .help(L("후보함의 스킬·기억 후보를 AI 회의가 추가·수정·버림으로 정해요.", "AIs meet to add, merge into existing ones, or drop the proposed skills and memories."))

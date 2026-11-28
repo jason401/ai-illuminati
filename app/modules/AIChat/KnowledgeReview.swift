@@ -519,15 +519,16 @@ public enum KnowledgeReviewLink {
         return start(in: discussion, candidates: candidates, team: team, partial: partial, now: now, done: done)
     }
 
-    // Starts one review of every pending candidate; false when none can be shown, fewer than two AIs can meet, or a
-    // review is already running. The meeting runs in the background; candidates from Enterprise chats or Enterprise-locked
-    // projects, or whose chat or project is gone, wait (the meeting's AIs could not be sure to be allowed to read them);
-    // memory candidates wait while memory is off.
+    // Starts one review of every pending candidate; false when none can be shown, fewer than two AIs can meet, a
+    // review is already running, or another Mac holds the reviews (`isReviewHost`). The meeting runs in the background;
+    // candidates from Enterprise chats or Enterprise-locked projects, or whose chat or project is gone, wait (the
+    // meeting's AIs could not be sure to be allowed to read them); memory candidates wait while memory is off.
     // `done` gets, on the main thread when the meeting ends, a line for the screen: what was applied, or why nothing was.
     @discardableResult
     public static func run(in discussion: Discussion, done: ((String) -> Void)? = nil) -> Bool {
         precondition(Thread.isMainThread)
-        guard !running else { return false }
+        // With sync on, only the review Mac: another one sees only its own candidates, which the review Mac reviews too.
+        guard isReviewHost(), !running else { return false }
         let candidates = eligible(discussion)
         guard !candidates.isEmpty else { return false }
         let team = Discussion.meetingTeam(discussion.model.accounts, usage: discussion.model.latestUsage, most: most,

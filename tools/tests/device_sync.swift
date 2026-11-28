@@ -509,6 +509,80 @@ func testKnowledgeSyncMerge() {
            && (merge.first?.evidence.contains("충돌 병합") == true || merge.first?.evidence.contains("Conflict merge") == true)
            && merge.first?.evidence.contains("Uses Caltrain and BART") == true, "one conflict-merge candidate with both versions")
 
+    // An edit undone (X → Y → X) on the Mac mini while the MacBook's own X → Y was still on its way: the late line does not
+    // undo the undo, and the MacBook takes the undo too.
+    func edit(_ mac: Mac, _ id: UUID, _ text: String, _ s: TimeInterval) {
+        let i = mac.memory.items.firstIndex { $0.id == id }!
+        mac.memory.history.append(MemoryChange(old: mac.memory.items[i], new: text, at: at(s)))
+        mac.memory.items[i].text = text
+    }
+    let coffee = MemoryItem(text: "Prefers drip coffee", createdAt: at(450))
+    mini.memory.items.append(coffee)
+    _ = mini.sync.syncNow(now: at(451)); _ = book.sync.syncNow(now: at(452)); _ = mini.sync.syncNow(now: at(453))
+    let bookChanges = book.sync.myFolder(folder).appendingPathComponent("changes.jsonl")
+    let delivered = try! Data(contentsOf: bookChanges)
+    edit(book, coffee.id, "Prefers pour-over", 455)
+    _ = book.sync.syncNow(now: at(456))
+    let full = try! Data(contentsOf: bookChanges)
+    try! delivered.write(to: bookChanges)   // iCloud has not brought the MacBook's line to the Mac mini yet
+    edit(mini, coffee.id, "Prefers pour-over", 457); _ = mini.sync.syncNow(now: at(458))
+    edit(mini, coffee.id, "Prefers drip coffee", 459); _ = mini.sync.syncNow(now: at(460))
+    try! full.write(to: bookChanges)
+    _ = mini.sync.syncNow(now: at(461))
+    _ = book.sync.syncNow(now: at(462))
+    func text(_ mac: Mac, _ id: UUID) -> String? { mac.memory.items.first { $0.id == id }?.text }
+    expect(text(mini, coffee.id) == "Prefers drip coffee" && text(book, coffee.id) == "Prefers drip coffee",
+           "a late X → Y does not undo an undo; both Macs keep the later X")
+
+    // An AI's delete beside the user's change: the user's change stays on both Macs (on the deleting Mac under a new id).
+    _ = mini.skills.save(name: "trip-plan", description: "Plan trips", body: "Caltrain first", by: .ai, now: at(463))
+    _ = mini.sync.syncNow(now: at(464)); _ = book.sync.syncNow(now: at(465)); _ = mini.sync.syncNow(now: at(466))
+    let tripID = mini.skills.read("trip-plan")!.record.id
+    if case .deleted = mini.skills.delete("trip-plan", by: .ai, now: at(470)) {} else { expect(false, "the Mac mini's AI deletes it") }
+    _ = book.skills.save(name: "trip-plan", description: "Plan trips", body: "Caltrain first, then VTA", by: .user, now: at(471))
+    _ = mini.sync.syncNow(now: at(472))
+    _ = book.sync.syncNow(now: at(473))
+    _ = mini.sync.syncNow(now: at(474))
+    _ = book.sync.syncNow(now: at(475))
+    expect(book.body("trip-plan") == "Caltrain first, then VTA" && book.skills.read("trip-plan")?.record.id == tripID,
+           "the MacBook keeps the user's change under its id")
+    expect(mini.body("trip-plan") == "Caltrain first, then VTA" && mini.skills.read("trip-plan")?.record.id != tripID,
+           "the Mac mini brings it back under a new id")
+    _ = book.skills.save(name: "trip-plan", description: "Plan trips", body: "Walk to the station", by: .user, now: at(476))
+    _ = book.sync.syncNow(now: at(477)); _ = mini.sync.syncNow(now: at(478)); _ = book.sync.syncNow(now: at(479))
+    expect(mini.body("trip-plan") == "Walk to the station" && book.skills.read("trip-plan")?.record.id == tripID
+           && mini.skills.list().filter { $0.name == "trip-plan" }.count == 1, "later changes still reach it through the alias")
+
+    // A conflict candidate the inbox cannot take yet stays in the cursor file and reaches the inbox on a later pass.
+    let bus = MemoryItem(text: "Takes the 22 bus", createdAt: at(480))
+    mini.memory.items.append(bus)
+    _ = mini.sync.syncNow(now: at(481)); _ = book.sync.syncNow(now: at(482)); _ = mini.sync.syncNow(now: at(483))
+    edit(mini, bus.id, "Takes the 22 bus at 8", 484); _ = mini.sync.syncNow(now: at(485))
+    edit(book, bus.id, "Takes the 22 bus at 9", 484.5)
+    let bookInbox = book.inbox.globalFile, inboxData = try? Data(contentsOf: bookInbox)
+    try? fm.removeItem(at: bookInbox); try! fm.createDirectory(at: bookInbox, withIntermediateDirectories: true)
+    _ = book.sync.syncNow(now: at(486))
+    let held = book.sync.loadCursor().conflicts ?? []
+    expect(held.count == 1 && held.first?.content["text"] == "Takes the 22 bus at 8", "the inbox cannot be written: the candidate waits in the cursor file")
+    try! fm.removeItem(at: bookInbox); if let inboxData { try! inboxData.write(to: bookInbox) }
+    _ = book.sync.syncNow(now: at(487))
+    expect(book.sync.loadCursor().conflicts == nil && book.rows().contains { $0.id == held.first?.id }, "then it goes into the inbox")
+    _ = mini.sync.syncNow(now: at(488)); _ = book.sync.syncNow(now: at(489))
+
+    // The profile cleared on the Mac mini after the MacBook changed it from the same version: both keep the later clear.
+    mini.memory.profile = "Postdoc at Stanford"
+    _ = mini.sync.syncNow(now: at(490)); _ = book.sync.syncNow(now: at(491)); _ = mini.sync.syncNow(now: at(492))
+    let profileDelivered = try! Data(contentsOf: bookChanges)
+    book.memory.profile = "Postdoc at Stanford, Ginzton Lab"; _ = book.sync.syncNow(now: at(493))
+    let profileFull = try! Data(contentsOf: bookChanges)
+    try! profileDelivered.write(to: bookChanges)
+    mini.memory.profile = ""; _ = mini.sync.syncNow(now: at(494))
+    try! profileFull.write(to: bookChanges)
+    _ = mini.sync.syncNow(now: at(495))
+    _ = book.sync.syncNow(now: at(496))
+    _ = mini.sync.syncNow(now: at(497))
+    expect(mini.memory.profile.isEmpty && book.memory.profile.isEmpty, "both Macs keep the later clear")
+
     // Candidates: the MacBook only proposes; the review Mac takes its pending rows, and its outcome goes back.
     func candidate(_ name: String) -> KnowledgeCandidate {
         KnowledgeCandidate(kind: .skill, content: ["name": name, "description": "d", "body": "b"], evidence: "seen twice", accountID: "a",
@@ -549,5 +623,5 @@ func testKnowledgeSyncMerge() {
     expect(shared.merge([remoteRow, orphan], adding: true), "rows in this Mac's inbox")
     let eligible = KnowledgeReviewLink.eligible(Discussion(model: AppModel(persist: false))).map(\.row.id)
     expect(eligible.contains(remoteRow.id) && !eligible.contains(orphan.id), "another Mac's candidate is reviewed here; one whose chat is gone is not")
-    print("PASS: knowledge sync 2/3: other Macs' changes applied once, waits for SKILL.md, tombstones, user first, conflict-merge candidates, review Mac and takeover")
+    print("PASS: knowledge sync 2/3: other Macs' changes applied once, waits for SKILL.md, tombstones, user first (also over an AI delete), undone edits, held conflicts, profile clears, conflict-merge candidates, review Mac and takeover")
 }

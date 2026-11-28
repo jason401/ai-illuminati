@@ -58,9 +58,10 @@ extension RunConditions {
             answering.binding.fullAccess = false
         }
         if account.provider == .ollama, workspace.binding.origin != .consulted {
-            let context = ToolContext(room: workspace.room, roots: workspace.binding.roots,
+            var context = ToolContext(room: workspace.room, roots: workspace.binding.roots,
                                       projectRun: workspace.binding.projectRunID, projectGeneration: workspace.binding.projectGeneration, asker: account,
                                       turn: MemoryLink.shared.newestTurn(workspace.room), origin: workspace.binding.origin ?? .member)
+            context.allowsSkillEdits = workspace.binding.allowsSkillEdits != false
             let call: (String, [String: Any]) -> String = { name, arguments in
                 let result = SkillLink.shared.call(name, arguments, context: context)
                 return (result["content"] as? [[String: Any]])?.first?["text"] as? String ?? ""

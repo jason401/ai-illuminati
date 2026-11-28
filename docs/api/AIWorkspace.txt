@@ -28,6 +28,7 @@ ProjectBinding.remote | var remote: String
 ProjectBinding.remoteURL | var remoteURL: String
 ProjectBinding.root | var root: String
 ToolContext | struct ToolContext
+ToolContext.allowsSkillEdits | var allowsSkillEdits: Bool
 ToolContext.asker | var asker: Account?
 ToolContext.init(room:roots:projectRun:projectGeneration:asker:turn:origin:) | init(room: UUID, roots: [WorkspaceRoot], projectRun: UUID? = nil, projectGeneration: Int? = nil, asker: Account? = nil, turn: UUID? = nil, origin: ToolOrigin = .member)
 ToolContext.origin | var origin: ToolOrigin
@@ -78,6 +79,7 @@ WorkspaceBackup.roots | var roots: [WorkspaceRoot]
 WorkspaceBackup.stamps(_:) | static func stamps(_ roots: [WorkspaceRoot]) throws -> [String : WorkspaceBackup.Stamp]
 WorkspaceBackup.startAutomaticCleanUp() | static func startAutomaticCleanUp()
 WorkspaceBinding | struct WorkspaceBinding
+WorkspaceBinding.allowsSkillEdits | var allowsSkillEdits: Bool?
 WorkspaceBinding.consulted | var consulted: WorkspaceBinding { get }
 WorkspaceBinding.description | var description: String { get }
 WorkspaceBinding.face | var face: Bool?

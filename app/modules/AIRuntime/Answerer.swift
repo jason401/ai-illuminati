@@ -217,9 +217,8 @@ public enum Answerer {
                 return result
             }
             if answerNow { return .failure(.failed("자료 요청을 멈추고 답하라고 했는데도 계속 요청해서 중단했습니다.")) }
-            let signatureData: Any = skillEdit == nil ? requests : (object ?? [:])
             let signature = skillName.map { "skill_read:" + $0 }
-                ?? String(data: (try? JSONSerialization.data(withJSONObject: signatureData, options: [.sortedKeys])) ?? Data(), encoding: .utf8) ?? ""
+                ?? (skillEdit != nil ? "skill_edit" : String(decoding: (try? JSONSerialization.data(withJSONObject: requests, options: [.sortedKeys])) ?? Data(), as: UTF8.self))
             let resumable = call?.nativeID != nil
             if let previous = call, let sid = previous.nativeID { call = NativeSessionCall(id: sid, resume: true, directory: previous.directory, system: previous.system) }
             func reply(_ note: String) {
@@ -227,18 +226,24 @@ public enum Answerer {
                 currentImages = resumable ? [] : readImages
             }
             served += 1
+            if skillEdit != nil, seen.contains(signature) {
+                // The model sees the original prompt again. Keep the first result, including if the new arguments differ.
+                answerNow = true
+                reply(answerNowNote)
+                continue
+            }
             if !seen.insert(signature).inserted || served > 12 {
                 // The same request again: say so once; a second repeat (or too many reads) gets "answer now".
                 if repeated || served > 12 { answerNow = true; reply(answerNowNote); continue }
                 repeated = true
-                reply(skillName == nil && skillEdit == nil
+                reply(skillName == nil
                     ? "\nThe app already sent this exact range above; sending it again would give the same data. Answer now with what you have, or request a different range (or the same range with \"offset\": next_offset if it was cut)."
                     : "\nThe response to this skill request is already below. Continue the answer without repeating the request.")
                 continue
             }
             if let skillEdit, let editSkill {
                 delivered.append(editSkill(skillEdit.name, skillEdit.arguments))
-                reply("\nThe app processed the skill tool call. Use its result below to answer the user.")
+                reply("\nThe app processed the single skill edit for this answer. Use its result below to answer the user. Do not request another skill change.")
                 continue
             }
             if let skillName, let readSkill {

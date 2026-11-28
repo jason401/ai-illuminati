@@ -9,6 +9,7 @@ public struct ToolContext {
     public var asker: Account? = nil   // the account answering (search_chats / read_chat decide by it)
     public var turn: UUID? = nil       // the message being answered when the session was made (remember saves only to it)
     public var origin: ToolOrigin = .member
+    public var allowsSkillEdits = true
     public init(room: UUID, roots: [WorkspaceRoot], projectRun: UUID? = nil, projectGeneration: Int? = nil, asker: Account? = nil, turn: UUID? = nil, origin: ToolOrigin = .member) {
         self.room = room; self.roots = roots; self.projectRun = projectRun; self.projectGeneration = projectGeneration; self.asker = asker; self.turn = turn; self.origin = origin
     }

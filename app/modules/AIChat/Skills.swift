@@ -78,16 +78,19 @@ public final class SkillLink: ToolProvider {
         let text = question.lowercased().replacingOccurrences(of: #"(?s)~~~.*?(?:~~~|$)|```.*?(?:```|$)"#, with: " ", options: .regularExpression)
             .replacingOccurrences(of: #"(?m)^[ \t]*>[^\n]*"#, with: " ", options: .regularExpression)
             .replacingOccurrences(of: #"`[^`\n]*`|"[^"\n]*"|“[^”\n]*”|(?<!\w)'[^'\n]*'(?!\w)"#, with: " quoted-name ", options: .regularExpression)
-        let prefix = #"^\s*(?:(?:please|then|can you|could you|would you|will you|i want you to)\s+)*"#
+        let prefix = #"^\s*(?:(?:please|then|now|ok(?:ay)?|also|let['’]s|and|can you|could you|would you|will you|i want you to)(?:\s*[,，]\s*|\s+))*"#
         let tail = #"(?=\s*(?:$|[,，]|(?:with|to|for|from|named|called|in|by|so|and|please)\b))"#
         let target = #"(?:(?:the|this|that|my|our|your|a|an)\s+)?(?:(?:existing|new|global|project)\s+){0,3}(?:[\w-]+\s+)?skills?\b"# + tail
         let ending = #"(?:\s*(?:줘|주세요|주라|줄래|주겠어|줘요|요|라))?(?=\s*(?:$|[,，]|그리고\b|하고\b|서\b))"#
         let skill = #"스킬(?:을|를|은|는|도)?\s*"#
+        let modifier = #"(?:(?:하나|한\s*개|좀|먼저|바로)\s*)*"#
+        let doIt = #"\s*(?:좀\s*)?해"#
         let save = prefix + #"(?:(?:make|create|add|save|update|edit|modify|rewrite|revise|fix|change|replace)\s+"# + target
-            + #"|(?:make|turn|convert|save|store)\s+.+?\s+(?:as|into|to)?\s*(?:a|an|the)\s+(?:(?:global|project|new)\s+)*skill\b"# + tail + ")"
-            + "|" + skill + #"(?:로\s*)?(?:만들어|작성해|추가해|저장해|등록해|고쳐|수정해|업데이트해|바꿔|편집해)\s*"# + ending
+            + #"|(?:make|turn|convert|save|store)\s+.+?\s+(?:as|into|to)?\s*(?:a|an|the)\s+(?:(?:global|project|new)\s+)*skill\b"# + tail
+            + #"|add\s+.+?\s+to\s+(?:my|our|the)\s+(?:(?:global|project)\s+)?skills\b"# + tail + ")"
+            + "|" + skill + #"(?:로\s*)?"# + modifier + #"(?:만들어|고쳐|바꿔|(?:작성|추가|저장|등록|수정|업데이트|편집)"# + doIt + ")" + #"\s*"# + ending
         let delete = prefix + #"(?:delete|remove|erase|drop)\s+"# + target
-            + "|" + skill + #"(?:지워|지우고|삭제해|삭제하고|삭제|없애|제거해)\s*"# + ending
+            + "|" + skill + modifier + #"(?:지워|지우고|없애|삭제(?:\s*하고|"# + doIt + #")?|제거"# + doIt + ")" + #"\s*"# + ending
         var edits: Set<Edit> = []
         for clause in text.components(separatedBy: CharacterSet(charactersIn: ".!?。！？;\n")) {
             if clause.range(of: #"하지\s*(?:마|말)|지\s*(?:마|말아|말고)|\b(?:don['’]?t|do not|never)\s+(?:make|turn|convert|store|create|add|save|update|edit|modify|rewrite|revise|fix|change|replace|delete|remove|erase|drop)\b"#, options: .regularExpression) != nil { continue }
@@ -151,9 +154,10 @@ public final class SkillLink: ToolProvider {
     func rule(_ account: Account, room: UUID, binding: WorkspaceBinding, question: String) -> String {
         let local = account.provider == .ollama
         guard local || binding.offersChatTools else { return "" }
-        let context = ToolContext(room: room, roots: binding.roots,
+        var context = ToolContext(room: room, roots: binding.roots,
                                   projectRun: binding.projectRunID, projectGeneration: binding.projectGeneration, asker: account,
                                   turn: MemoryLink.shared.newestTurn(room), origin: binding.origin ?? .member)
+        context.allowsSkillEdits = binding.allowsSkillEdits != false
         guard let scope = answeringScope(context) else { return "" }
         let edits = allowedEdits(scope, context: context)
         var blocks = [Self.rule(project: scope.project, question: question, local: local)]
@@ -221,7 +225,7 @@ public final class SkillLink: ToolProvider {
 
     private func allowedEdits(_ scope: Scope, context: ToolContext) -> Set<Edit> {
         // Skills have no organization of their own. Enterprise references may contain protected content.
-        guard context.origin == .member, !scope.chat.isEnterprise, scope.turn.mode == 0 || scope.turn.mode == nil,
+        guard context.allowsSkillEdits, context.origin == .member, !scope.chat.isEnterprise, scope.turn.mode == 0 || scope.turn.mode == nil,
               context.projectRun == nil || ProjectWork.run(for: context) != nil else { return [] }
         return Self.requestedEdits(scope.turn.question)
     }
@@ -321,6 +325,7 @@ public final class SkillLink: ToolProvider {
         let text: String
         switch outcome {
         case .saved(let skill): text = L("스킬 저장함 · ", "Skill saved · ") + skill.name
+        case .updated: text = L("스킬 고침 · ", "Skill updated · ") + name
         case .deleted: text = L("스킬 지움 · ", "Skill deleted · ") + name
         case .refused(let message), .needsApproval(_, let message): return toolFailure(message)
         default: return toolFailure(L("스킬을 변경하지 못했어요.", "Could not change the skill."))

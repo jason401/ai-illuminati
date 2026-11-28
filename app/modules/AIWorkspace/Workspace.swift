@@ -105,6 +105,7 @@ public struct WorkspaceBinding: Codable {
     public var fullAccessActive: Bool { (isFullAuto && projectRunID != nil) || fullAccess == true }
     public var face: Bool? = nil   // plain chat: the bridge also offers AI Face's tools through the app
     public var origin: ToolOrigin? = nil   // runtime only: whose tool session this is; nil = member
+    public var allowsSkillEdits: Bool? = nil   // runtime only: a supplemental project reviewer has read-only skill access
     public var offersChatTools: Bool { face == true || projectRunID != nil || origin == .side }
     public init(roots: [WorkspaceRoot], level: WorkspaceLevel = .view, project: ProjectBinding? = nil, projectRunID: UUID? = nil, projectGeneration: Int? = nil, fullAuto: Bool? = nil, fullAccess: Bool? = nil, face: Bool? = nil, origin: ToolOrigin? = nil) {
         self.roots = roots; self.level = level; self.project = project; self.projectRunID = projectRunID; self.projectGeneration = projectGeneration; self.fullAuto = fullAuto; self.fullAccess = fullAccess; self.face = face; self.origin = origin

@@ -603,6 +603,7 @@ public final class SkillDirectory {
                 || FileManager.default.fileExists(atPath: skillFile(name).path) {
                 return .refused(L("같은 이름의 스킬(\(name))이 이미 있어요.", "A skill named \(name) already exists."))
             }
+            guard unusedSkillFolder(name) else { return occupiedSkillFolder(name) }
         }
 
         let existingRecord = existingIndex.map { index.skills[$0] }
@@ -643,7 +644,7 @@ public final class SkillDirectory {
                 try persist(index: index, append: entry, tx: &tx)
                 tx.commit()
                 changed = true
-                return .saved(updated)
+                return turn == nil ? .saved(updated) : .updated([updated])
             } catch {
                 tx.rollback()
                 return .refused(saveFailure(error))
@@ -675,6 +676,7 @@ public final class SkillDirectory {
                 updated.name = name
                 updated.contentHash = written.hash
                 updated.userLocked = effective.userLocked || by == .user
+                // A direct chat save records user ownership. The before snapshot keeps the earlier author.
                 if by == .user && turn != nil { updated.createdBy = .user }
                 if let isNew { updated.isNew = isNew } else if by == .user { updated.isNew = false }
                 updated.updatedAt = now
@@ -687,7 +689,7 @@ public final class SkillDirectory {
                 try persist(index: index, append: entry, tx: &tx)
                 tx.commit()
                 changed = true
-                return .saved(updated)
+                return turn == nil ? .saved(updated) : .updated([updated])
             } catch {
                 tx.rollback()
                 return .refused(saveFailure(error))
@@ -695,6 +697,7 @@ public final class SkillDirectory {
         }
 
         // New skill.
+        guard unusedSkillFolder(name) else { return occupiedSkillFolder(name) }
         let doc = SkillDocument(name: name, description: cleanDesc, body: body)
         var tx = FileTransaction(root: root)
         do {
@@ -1099,6 +1102,16 @@ public final class SkillDirectory {
     private func approvalMessage() -> String {
         L("Inbox 승인 필요: 사용자가 만들거나 수정한 스킬은 AI가 바로 덮어쓸 수 없어요.",
           "Inbox approval required: AI cannot overwrite a user-locked skill directly.")
+    }
+
+    private func unusedSkillFolder(_ name: String) -> Bool {
+        let folder = skillFolder(name).path, fm = FileManager.default
+        return !fm.fileExists(atPath: folder) || (try? fm.contentsOfDirectory(atPath: folder).isEmpty) == true
+    }
+
+    private func occupiedSkillFolder(_ name: String) -> SkillOutcome {
+        .refused(L("스킬 폴더(\(name))에 파일이 남아 있어요. 파일을 옮기거나 다른 이름을 써 주세요.",
+                   "Files remain in the skill folder '\(name)'. Move them or use a different skill name."))
     }
 
     private func cannotRestore() -> SkillOutcome {

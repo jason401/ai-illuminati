@@ -1,5 +1,6 @@
 import Foundation
 import AIAccounts
+import AILocalization
 @testable import AIRuntime
 @testable import AIWorkspace
 @testable import AIProjects
@@ -544,11 +545,15 @@ func testSkillRead() {
 
 func testSkillSave() {
     let requests = ["이걸 스킬로 만들어 줘", "이 스킬을 고쳐 줄래?", "스킬 지워", "스킬을 삭제해 주세요.",
-                    "Make this a skill.", "Could you update the `paper-review` skill?", "Please delete the project skill."]
+                    "Make this a skill.", "Could you update the `paper-review` skill?", "Please delete the project skill.",
+                    "스킬 수정 해줘", "스킬로 저장 해 줘", "스킬 삭제 해줘", "스킬로 저장 좀 해줘", "스킬 하나 만들어줘",
+                    "OK, make this a skill", "Now make this a skill", "Let's make this a skill",
+                    "Also update the skill", "Add this to my skills"]
     let other = ["스킬을 만들어 주지 마", "스킬을 삭제하지 마.", "Don't update the skill.", "How do I make this a skill?",
                  "Explain how to update the skill.", "Please update the skill detector.", "Make this a skill test.",
                  "스킬을 만드는 법 알려줘", "스킬 저장 구현해 줘", "> 스킬을 지워",
-                 "스킬을 수정했어.", "예: “스킬로 만들어”", "Example: `make this a skill`",
+                 "스킬을 수정했어.", "스킬 수정 하지 마", "스킬로 저장 좀 하지 마", "OK, don't make this a skill",
+                 "Now explain how to add this to my skills", "예: “스킬로 만들어”", "Example: `make this a skill`",
                  "~~~\nDelete the skill.\n~~~", "스킬 도구는 \"스킬 지워\" 요청에서만 노출해 줘"]
     expect(requests.allSatisfy(SkillLink.asksToEdit) && !other.contains(where: SkillLink.asksToEdit),
            "explicit Korean and English skill edits open the gate, advice, examples and negatives do not")
@@ -580,15 +585,18 @@ func testSkillSave() {
     enterprise.turns = [turn(requests[0])]
     discussion.conversations = [plain, linked, enterprise]
     let hub = ToolHub(providers: { ToolHub.appProviders }, listenOnRegister: false)
-    func token(_ chat: Conversation, _ account: Account = member, origin: ToolOrigin = .member) -> String {
-        hub.register(room: chat.id, roots: [], asker: account, origin: origin)
+    func token(_ chat: Conversation, _ account: Account = member, origin: ToolOrigin = .member, allowsSkillEdits: Bool = true) -> String {
+        hub.register(room: chat.id, roots: [], asker: account, origin: origin, allowsSkillEdits: allowsSkillEdits)
     }
     func definitions(_ token: String) -> [[String: Any]] {
         hub.handle(["op": "tools", "session": token])["tools"] as? [[String: Any]] ?? []
     }
     func toolNames(_ token: String) -> [String] { definitions(token).compactMap { $0["name"] as? String } }
+    func response(_ token: String, _ name: String, _ args: [String: String]) -> [String: Any] {
+        hub.handle(["op": "call", "session": token, "name": name, "arguments": args])
+    }
     func call(_ token: String, _ name: String, _ args: [String: String]) -> Bool {
-        hub.handle(["op": "call", "session": token, "name": name, "arguments": args])["isError"] as? Bool == false
+        response(token, name, args)["isError"] as? Bool == false
     }
     func args(_ name: String, _ scope: String = "global", _ body: String = "Check the assumptions.") -> [String: String] {
         ["name": name, "description": "Review the result", "body": body, "scope": scope]
@@ -627,7 +635,19 @@ func testSkillSave() {
 
     let projectToken = token(linked)
     _ = projects.save(name: "work-review", description: "Review a draft", body: "Original.", by: .meeting, project: project.groupKey)
-    expect(call(projectToken, "skill_save", args("work-review", "project", "Updated."))
+    let reviewer = token(linked, allowsSkillEdits: false)
+    expect(toolNames(reviewer).contains("skill_read") && !toolNames(reviewer).contains("skill_save")
+           && !call(reviewer, "skill_save", args("work-review", "project"))
+           && call(reviewer, "skill_read", ["name": "work-review"]),
+           "a supplemental reviewer can read skills while the requested write belongs to the answering AI")
+    var reviewBinding = linked.workspace!
+    reviewBinding.allowsSkillEdits = false
+    let reviewRun = RunConditions.app(local, WorkspaceInvocation(binding: reviewBinding, room: linked.id))
+    expect(reviewRun.readSkill?("work-review").contains("Original.") == true && reviewRun.editSkill == nil,
+           "the local reviewer can also read skills")
+    let updated = response(projectToken, "skill_save", args("work-review", "project", "Updated."))
+    expect(updated["isError"] as? Bool == false
+           && (updated["content"] as? [[String: String]])?.first?["text"] == L("스킬 고침 · ", "Skill updated · ") + "work-review"
            && projects.read("work-review", project: project.groupKey)?.record.createdBy == .user
            && projects.read("work-review", project: project.groupKey)?.record.userLocked == true,
            "updates keep their project scope and claim the user lock, including for AI-authored skills")
@@ -647,6 +667,8 @@ func testSkillSave() {
     let deletion = SkillLink.changes(global.history(), for: deletionTurn).first!
     expect(deletion.action == .delete && global.read("review") == nil && global.tombstones().contains { $0.name == "review" }
            && fm.fileExists(atPath: companion.path), "delete leaves a tombstone and keeps companion files for Undo")
+    if case .refused = global.save(name: "review", description: "New procedure", body: "Different.", by: .user) {}
+    else { fatalError("a replacement must not adopt files from the deleted skill") }
     if case .refused = SkillLink.undo(creation, project: nil) {} else { fatalError("older Undo must refuse a newer same-skill delete") }
     _ = global.save(name: "unrelated", description: "Another procedure", body: "Continue.", by: .user)
     if case .undone = SkillLink.undo(deletion, project: nil) {} else { fatalError("delete Undo failed after an unrelated save") }
@@ -658,6 +680,10 @@ func testSkillSave() {
     discussion.conversations[0].turns[1].answeredAt = Date()
     expect(!toolNames(removing).contains("skill_delete") && !call(removing, "skill_delete", ["name": "unrelated"]),
            "the completed answer's session loses write tools")
+    discussion.conversations[0].turns.append(turn("OK, make this a skill."))
+    expect(!call(token(plain), "skill_save", args("review")) && global.read("review") == nil
+           && (try? String(contentsOf: companion, encoding: .utf8)) == "Useful worksheet",
+           "saving after creation Undo refuses the occupied directory and preserves its files")
     discussion.conversations[0].turns.append(turn("How do I save this as a skill?"))
     let advice = token(plain)
     expect(!toolNames(advice).contains("skill_save") && !call(advice, "skill_save", args("unrequested")),
@@ -670,14 +696,20 @@ func testSkillSave() {
     var prompts: [String] = []
     Answerer.replyForTests = { text in
         prompts.append(text)
-        return .success(prompts.count == 1 ? #"{"skill_save":{"name":"local-review","description":"Review","body":"Check the work.","scope":"project"}}"# : "Saved")
+        switch prompts.count {
+        case 1: return .success(#"{"skill_save":{"name":"local-review","description":"Review","body":"Check the work.","scope":"project"}}"#)
+        case 2: return .success(#"{"skill_save":{"name":"local-review","description":"Review","body":"Do something else.","scope":"project"}}"#)
+        default: return .success("Saved")
+        }
     }
     defer { Answerer.replyForTests = nil }
     expect((try? Answerer.ask(local, prompt: instruction, run: run).get()) == "Saved"
-           && instruction.contains("\"skill_save\"") && prompts.count == 2
-           && prompts[1].contains("local-review")
-           && projects.read("local-review", project: project.groupKey)?.record.userLocked == true,
-           "Ollama uses the same guarded store and receives a result before replying")
+           && instruction.contains("\"skill_save\"") && prompts.count == 3
+           && prompts[1].contains("local-review") && prompts[2].contains("local-review")
+           && projects.read("local-review", project: project.groupKey)?.document.body == "Check the work."
+           && projects.read("local-review", project: project.groupKey)?.record.userLocked == true
+           && SkillLink.changes(projects.history(project.groupKey), for: discussion.conversations[1].turns.last!.id).map(\.action) == [.add],
+           "Ollama receives the first result again after trying a write with different arguments")
 
     _ = projects.save(name: "unrelated", description: "Project-only variant", body: "Check.", by: .user, project: project.groupKey)
     discussion.conversations[1].turns.append(turn("Delete the project skill."))

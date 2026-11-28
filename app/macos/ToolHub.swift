@@ -98,13 +98,14 @@ final class ToolHub {
     }
 
     func register(room: UUID, roots: [WorkspaceRoot], projectRun: UUID? = nil, generation: Int? = nil, asker: Account? = nil,
-                  origin: ToolOrigin = .member, screenScope: UUID? = nil, screenOnly: Bool = false) -> String {
+                  origin: ToolOrigin = .member, screenScope: UUID? = nil, screenOnly: Bool = false, allowsSkillEdits: Bool = true) -> String {
         if listenOnRegister { start() }
         let turn = asker == nil || screenOnly ? nil : MemoryLink.shared.newestTurn(room)   // read before taking the lock (it may wait for the main thread)
         lock.lock(); defer { lock.unlock() }
         sessions = sessions.filter { $0.value.expires > now() }
         let key = UUID().uuidString
-        let context = ToolContext(room: room, roots: roots, projectRun: projectRun, projectGeneration: generation, asker: asker, turn: turn, origin: origin)
+        var context = ToolContext(room: room, roots: roots, projectRun: projectRun, projectGeneration: generation, asker: asker, turn: turn, origin: origin)
+        context.allowsSkillEdits = allowsSkillEdits
         sessions[key] = Session(context: context, expires: now().addingTimeInterval(7200), screenScope: screenScope, screenOnly: screenOnly)
         return key
     }
@@ -115,7 +116,8 @@ final class ToolHub {
         guard screenScope != nil || shared.active else { return nil }
         let binding = invocation.binding
         let session = shared.register(room: invocation.room, roots: binding.roots, projectRun: binding.projectRunID, generation: binding.projectGeneration,
-                                      asker: invocation.account, origin: binding.origin ?? .member, screenScope: screenScope, screenOnly: screenOnly)
+                                      asker: invocation.account, origin: binding.origin ?? .member, screenScope: screenScope, screenOnly: screenOnly,
+                                      allowsSkillEdits: binding.allowsSkillEdits != false)
         return WorkspaceToolLink(socket: socketPath, session: session, face: !screenOnly && FaceLink.active() != nil ? FaceLink.socketPath : nil)
     }
 

@@ -675,7 +675,7 @@ extension Discussion {
                     run.nextAttempt()
                     var view = workspace
                     view.level = .view; view.project = nil; view.projectRunID = nil; view.projectGeneration = nil
-                    view.origin = .consulted
+                    view.allowsSkillEdits = false
                     view.roots = workspace.roots.map { WorkspaceRoot(path: $0.path, directory: $0.directory, writable: $0.path == Self.chatFolder(id).path ? true : nil) }
                     let reviewPrompt = Self.soloContext(rules: rules, transcript: transcript + "\n[Writer result]\n" + text) + "\n[SOLO TURN]\nReview the linked project read-only. Do not edit the project or run Git writes.\n" + run.checkpoint("Read-only review")
                     let reviewed = AnswerModel()

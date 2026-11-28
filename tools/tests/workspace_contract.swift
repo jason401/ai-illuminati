@@ -6,8 +6,7 @@ import AIWorkspace
 // gets (Claude, Codex) per level, full access with AutoGuard's denied list (every entry), the bridge's manifest and
 // when it asks for the app's tool gateway, AutoGuard's environment and shims, the backup before writes and its Undo,
 // the saved shapes (a chat's `workspace`, a backup's complete.json) and disk sizes. Run with AI_ILLUMINATI_TEST_HOME
-// set to an empty folder (run_mode2.sh). No real CLI, home, Keychain or network is used; Gemini is left out (it reads
-// agy's settings in the user's home).
+// set to an empty folder (run_mode2.sh). No real CLI, home, Keychain or network is used.
 func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
     if !condition() { fatalError("FAIL: " + message) }
 }
@@ -45,7 +44,71 @@ expect(value(fullClaude, after: "--permission-mode") == "bypassPermissions" && v
        "full access: every tool, no prompts, the folder added, no personal settings")
 let fullCodex = try! WorkspaceInvocation(binding: full, room: UUID()).arguments(provider: .codex, original: codexBase, directory: session, web: false, tools: gateway)
 expect(fullCodex.contains("sandbox_mode=\"danger-full-access\"") && fullCodex.contains("approval_policy=\"never\"")
-       && !fullCodex.contains("--sandbox") && value(fullCodex, after: "-C") == session.path, "Codex full access: no sandbox, runs in the session folder")
+       && !fullCodex.contains("--sandbox") && value(fullCodex, after: "-C") == session.path, "Codex full access: runs in the session folder with the app's outer sandbox")
+
+let support = URL(fileURLWithPath: AccountStore.supportDir, isDirectory: true)
+let sync = base.appendingPathComponent("Sync \"Custom\"")
+let localKnowledge = ["skills", "memory", "projects", "knowledge-candidates.jsonl", "knowledge-reviews.json",
+                      "knowledge-review-attempt.json", "knowledge-review.log", "knowledge-sync.json"].map { support.appendingPathComponent($0).path }
+let syncKnowledge = sync.appendingPathComponent("knowledge").path
+let knowledgePaths = localKnowledge + [syncKnowledge]
+let geminiBase = ["-p", "x", "--sandbox"]
+func settings(_ arguments: [String]) -> [String: Any] {
+    try! JSONSerialization.jsonObject(with: Data(value(arguments, after: "--settings")!.utf8)) as! [String: Any]
+}
+func writeDenials(_ arguments: [String]) -> [String] {
+    (settings(arguments)["permissions"] as! [String: Any])["deny"] as! [String]
+}
+for (provider, original) in [(Account.Provider.claude, claudeBase), (.codex, codexBase), (.gemini, geminiBase)] {
+    var invocation = WorkspaceInvocation(binding: full, room: UUID(), account: Account(id: "protected-\(provider.rawValue)", provider: provider, name: "test"))
+    let wrapper = invocation.protectKnowledge(syncFolder: sync)
+    expect(wrapper.count == 3 && wrapper[0] == "/usr/bin/sandbox-exec" && wrapper[1] == "-p"
+           && knowledgePaths.allSatisfy { wrapper[2].contains($0.replacingOccurrences(of: "\"", with: "\\\"")) },
+           "\(provider): full access passes every protected path to Seatbelt")
+    let args = try! invocation.arguments(provider: provider, original: original, directory: session, web: false, tools: gateway)
+    if provider == .claude {
+        let deny = writeDenials(args)
+        expect(knowledgePaths.allSatisfy { deny.contains("Edit(/\($0)/**)") && deny.contains("Write(/\($0))") },
+               "Claude full access denies native file writes")
+    } else if provider == .gemini {
+        let deny = writeDenials(args)
+        expect(!args.contains("--sandbox") && knowledgePaths.allSatisfy { deny.contains("write_file(\($0))") },
+               "Gemini full access denies native file writes")
+    }
+}
+
+// Exercise the generated policy with real OS writes in a throwaway home, including a subprocess, a new file
+// in the configured sync folder, and a chat write beside the protected stores.
+let protectedFiles = [support.appendingPathComponent("skills/example/SKILL.md"),
+                      support.appendingPathComponent("projects/new-project/skills/skills-history.jsonl"),
+                      support.appendingPathComponent("memory/memory.json"),
+                      support.appendingPathComponent("knowledge-candidates.jsonl"),
+                      sync.appendingPathComponent("knowledge/device/state.json")]
+let chatFile = support.appendingPathComponent("chats/test.work/files/note.txt")
+for file in protectedFiles + [chatFile] {
+    try! fm.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+}
+try! "original".write(to: protectedFiles[0], atomically: true, encoding: .utf8)
+var sandboxed = WorkspaceInvocation(binding: full, room: UUID(), account: Account(id: "protected-claude", provider: .claude, name: "test"))
+let wrapper = sandboxed.protectKnowledge(syncFolder: sync)
+func writeInSandbox(_ file: URL) -> (Int32, String) {
+    let process = Process()
+    let errors = Pipe()
+    process.executableURL = URL(fileURLWithPath: wrapper[0])
+    process.arguments = Array(wrapper.dropFirst()) + ["/bin/sh", "-c", "/bin/echo changed > \"$1\"", "test", file.path]
+    process.standardError = errors
+    try! process.run()
+    let error = String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+    process.waitUntilExit()
+    return (process.terminationStatus, error)
+}
+for file in protectedFiles {
+    let (status, error) = writeInSandbox(file)
+    expect(status == 1, "the launch policy denies writes to \(file.lastPathComponent), exit \(status): \(error)")
+}
+let (chatStatus, chatError) = writeInSandbox(chatFile)
+expect(chatStatus == 0, "the launch policy allows chat files, exit \(chatStatus): \(chatError)")
+expect(try! String(contentsOf: protectedFiles[0], encoding: .utf8) == "original", "a denied write leaves existing contents intact")
 // An Enterprise workspace that forbids full access (its cached cloud requirements): workspace-write on the writable folder,
 // not danger-full-access (Codex would fall back to a read-only root). Allowed or no requirements: full access as before.
 func codexAccount(_ name: String, requirements: String?) -> Account {
@@ -60,7 +123,11 @@ func codexAccount(_ name: String, requirements: String?) -> Account {
 let managedRun = WorkspaceBinding(roots: [WorkspaceRoot(path: folder.path, directory: true, writable: true)], projectRunID: UUID())
 expect(managedRun.fullAccessActive, "a full auto project run has full access")
 func managedCodex(_ account: Account) -> [String] {
-    try! WorkspaceInvocation(binding: managedRun, room: UUID(), account: account).arguments(provider: .codex, original: codexBase, directory: session, web: false, tools: gateway)
+    var invocation = WorkspaceInvocation(binding: managedRun, room: UUID(), account: account)
+    let wrapper = invocation.protectKnowledge(syncFolder: sync)
+    let args = try! invocation.arguments(provider: .codex, original: codexBase, directory: session, web: false, tools: gateway)
+    expect(wrapper.isEmpty == args.contains("sandbox_mode=\"workspace-write\""), "the managed fallback keeps only Codex's sandbox")
+    return args
 }
 let blocked = managedCodex(codexAccount("codex-managed", requirements: "allowed_approval_policies = [ \"on-request\" ]\nallowed_sandbox_modes = [\n  \"read-only\",\n  \"workspace-write\" ]\n"))
 expect(blocked.contains("sandbox_mode=\"workspace-write\"") && !blocked.contains { $0.contains("danger-full-access") }
@@ -100,10 +167,17 @@ let exe = try! WorkspaceInvocation(binding: execute, room: room, readOnly: false
     .arguments(provider: .claude, original: claudeBase, directory: session, web: false, tools: gateway)
 expect(value(exe, after: "--tools") == "Read,Grep,Glob,Edit,Write,Bash" && value(exe, after: "--allowedTools") == "Read,Grep,Glob,mcp__illuminati__*,Edit,Write,Bash",
        "execute: edit and Bash")
-let settings = try! JSONSerialization.jsonObject(with: Data(value(exe, after: "--settings")!.utf8)) as! [String: Any]
-let sandbox = settings["sandbox"] as! [String: Any], files = sandbox["filesystem"] as! [String: Any]
+let sandbox = settings(exe)["sandbox"] as! [String: Any], files = sandbox["filesystem"] as! [String: Any]
 expect(sandbox["enabled"] as? Bool == true && sandbox["allowUnsandboxedCommands"] as? Bool == false && files["allowWrite"] as? [String] == [folder.path],
        "execute: Bash in the sandbox, writes only in the linked folder")
+expect((files["denyWrite"] as? [String])?.starts(with: localKnowledge) == true
+       && localKnowledge.allSatisfy { writeDenials(exe).contains("Edit(/\($0)/**)") },
+       "execute without a project: Claude denies knowledge writes in Bash and file tools")
+var geminiExecute = WorkspaceInvocation(binding: execute, room: room, readOnly: false, backupPath: backup.directory)
+_ = geminiExecute.protectKnowledge(syncFolder: sync)
+let geminiExec = try! geminiExecute.arguments(provider: .gemini, original: geminiBase, directory: session, web: false, tools: gateway)
+expect(geminiExec.contains("--sandbox") && knowledgePaths.allSatisfy { writeDenials(geminiExec).contains("write_file(\($0))") },
+       "execute without a project: Gemini keeps the sandbox and denies knowledge file writes")
 // A project's Git data is never written, even in execute.
 let common = base.path + "/common.git"
 execute.project = ProjectBinding(root: folder.path, common: common, remote: "origin", remoteURL: "https://example.invalid/r.git")
@@ -111,7 +185,8 @@ let project = try! WorkspaceInvocation(binding: execute, room: room, readOnly: f
     .arguments(provider: .claude, original: claudeBase, directory: session, web: false, tools: gateway)
 let projectSettings = try! JSONSerialization.jsonObject(with: Data(value(project, after: "--settings")!.utf8)) as! [String: Any]
 let deny = (projectSettings["permissions"] as! [String: Any])["deny"] as! [String]
-expect(((projectSettings["sandbox"] as! [String: Any])["filesystem"] as! [String: Any])["denyWrite"] as? [String] == [common, folder.path + "/.git"]
+let projectWriteDenials = ((projectSettings["sandbox"] as! [String: Any])["filesystem"] as! [String: Any])["denyWrite"] as? [String]
+expect(projectWriteDenials?.starts(with: [common, folder.path + "/.git"] + localKnowledge) == true
        && deny.contains("Edit(/\(folder.path)/.git/**)") && deny.contains("Write(/\(folder.path)/.git)") && deny.contains("Edit(/\(common)/**)"), "execute: the project's Git data is denied: \(deny)")
 let codexExe = try! WorkspaceInvocation(binding: WorkspaceBinding(roots: [root], level: .execute), room: room, readOnly: false, backupPath: backup.directory)
     .arguments(provider: .codex, original: codexBase, directory: session, web: false, tools: gateway)

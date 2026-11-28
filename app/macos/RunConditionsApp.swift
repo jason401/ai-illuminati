@@ -57,6 +57,8 @@ extension RunConditions {
             answering.binding.fullAuto = false
             answering.binding.fullAccess = false
         }
+        let knowledgeSandbox = answering.protectKnowledge(syncFolder: DeviceSync.configuredFolder)
+        if !knowledgeSandbox.isEmpty { run.wrapper = (run.wrapper ?? []) + knowledgeSandbox }
         if account.provider == .ollama, workspace.binding.origin != .consulted {
             var context = ToolContext(room: workspace.room, roots: workspace.binding.roots,
                                       projectRun: workspace.binding.projectRunID, projectGeneration: workspace.binding.projectGeneration, asker: account,

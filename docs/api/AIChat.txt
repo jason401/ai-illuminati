@@ -267,6 +267,7 @@ DeviceSync | final class DeviceSync
 DeviceSync.ago(_:now:) | static func ago(_ date: Date, now: Date = Date()) -> String
 DeviceSync.chatLocked(_:) | func chatLocked(_ conversation: Conversation)
 DeviceSync.checkOnline | var checkOnline: () -> Void
+DeviceSync.configuredFolder | static var configuredFolder: URL { get }
 DeviceSync.deviceID | let deviceID: String
 DeviceSync.deviceName | var deviceName: String { get }
 DeviceSync.devices | @Published var devices: [RemoteDevice] { get set }

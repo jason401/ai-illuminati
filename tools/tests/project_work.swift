@@ -408,7 +408,7 @@ func testFullAuto() {
     }
     expect(AutoGuard.claudeDenied.contains("Bash(/usr/bin/security:*)"), "Claude Bash cannot call /usr/bin/security directly")
 
-    // CLI options: no prompts, no sandbox, Git push denied.
+    // CLI options: no prompts, native knowledge write denies and Git push denied.
     expect(binding.isFullAuto && !binding.fullAccessActive && !WorkspaceBinding(roots: []).isFullAuto, "linked folders are full auto by default; access opens only during a run")
     binding.fullAuto = false; expect(!binding.isFullAuto, "full auto can be turned off per chat")
     binding.fullAuto = nil; binding.level = .execute; binding.projectRunID = UUID()
@@ -417,8 +417,12 @@ func testFullAuto() {
     let invocation = WorkspaceInvocation(binding: binding, room: room, readOnly: false, backupPath: backup.directory)
     let dir = base.appendingPathComponent("session"); try! FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     let claude = try! invocation.arguments(provider: .claude, original: ["-p", "x", "--tools", "", "--mcp-config", "{}"], directory: dir, web: false, tools: ToolHub.workspaceLink)
-    expect(claude.contains("bypassPermissions") && claude.contains("default") && !claude.contains("--restricted") && !claude.contains("--settings")
-           && claude.contains { $0.contains("Bash(git push:*)") }, "Claude full auto: all tools, no prompts, no sandbox, push denied")
+    let settingsIndex = claude.firstIndex(of: "--settings")!
+    let claudeSettings = try! JSONSerialization.jsonObject(with: Data(claude[settingsIndex + 1].utf8)) as! [String: Any]
+    let writeDenials = (claudeSettings["permissions"] as? [String: [String]])?["deny"] ?? []
+    expect(claude.contains("bypassPermissions") && claude.contains("default") && !claude.contains("--restricted") && claudeSettings["sandbox"] == nil
+           && writeDenials.contains("Edit(/\(AccountStore.supportDir)/memory/**)")
+           && claude.contains { $0.contains("Bash(git push:*)") }, "Claude full auto: all tools, no prompts, knowledge writes and push denied")
     let codex = try! invocation.arguments(provider: .codex, original: ["exec", "-C", dir.path, "x"], directory: dir, web: false, tools: ToolHub.workspaceLink)
     expect(codex.contains("sandbox_mode=\"danger-full-access\"") && codex.contains("web_search=\"live\"") && !codex.contains { $0.contains("network_access=false") },
            "Codex full auto: full access with network")

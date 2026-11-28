@@ -11,6 +11,7 @@ class Workspace:
         self.roots = [(pathlib.Path(r['path']).resolve(), r['directory']) for r in manifest['roots']]
         # The chat's own folder: changes there need no backup. Other roots follow the level.
         self.own = [pathlib.Path(r['path']).resolve() for r in manifest['roots'] if r.get('writable') and r['directory']]
+        self.protected_writes = [pathlib.Path(path).resolve() for path in manifest.get('protectedWritePaths', [])]
         self.cache = pathlib.Path(manifest['cache'])
         # Plain chat: app-side tools (AI Face, Git, TODOs and more), scoped by this answer's
         # capability. Missing or slow app: chats still work without these extra tools.
@@ -239,6 +240,8 @@ class Workspace:
 
     def writable(self, p=None):
         if self.manifest.get("project") and p is not None and ".git" in p.parts: raise PermissionError("Use app git tools; .git is read only")
+        if p is not None and any(p == r or r in p.parents or p in r.parents for r in self.protected_writes):
+            raise PermissionError("Use the app's skill and memory tools to change protected knowledge")
         if p is not None and any(p == r or r in p.parents for r in self.own): return
         if self.manifest.get('project'): raise PermissionError('Project writes are limited to the authorized project and chat folder')
         if self.manifest.get('level') not in ('write','execute'): raise PermissionError('View mode cannot modify files')

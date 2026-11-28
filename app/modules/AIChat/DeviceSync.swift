@@ -115,10 +115,7 @@ public final class DeviceSync: ObservableObject {
     init(deviceID: String, persist: Bool, settings: DeviceSyncSettings? = nil) {
         self.deviceID = deviceID
         self.persist = persist
-        if let settings { self.settings = settings }
-        else if persist, let data = UserDefaults.app.data(forKey: Self.settingsKey),
-                let saved = try? JSONDecoder().decode(DeviceSyncSettings.self, from: data) { self.settings = saved }
-        else { self.settings = DeviceSyncSettings() }
+        self.settings = settings ?? (persist ? Self.savedSettings : nil) ?? DeviceSyncSettings()
     }
 
     // MARK: Places
@@ -129,7 +126,13 @@ public final class DeviceSync: ObservableObject {
         URL(fileURLWithPath: AccountStore.home).appendingPathComponent("Library/Mobile Documents/com~apple~CloudDocs")
     }
     static var defaultFolder: URL { iCloudDrive.appendingPathComponent("AI Illuminati Sync") }
-    public var folder: URL { settings.folder.map { URL(fileURLWithPath: $0) } ?? Self.defaultFolder }
+    private static var savedSettings: DeviceSyncSettings? {
+        UserDefaults.app.data(forKey: settingsKey).flatMap { try? JSONDecoder().decode(DeviceSyncSettings.self, from: $0) }
+    }
+    private static func syncFolder(_ path: String?) -> URL { path.map { URL(fileURLWithPath: $0) } ?? defaultFolder }
+    // CLI launches can be prepared off the main thread. Read the persisted value rather than the published UI state.
+    public static var configuredFolder: URL { syncFolder(savedSettings?.folder) }
+    public var folder: URL { Self.syncFolder(settings.folder) }
     var devicesFolder: URL { folder.appendingPathComponent("devices") }
     var myFolder: URL { devicesFolder.appendingPathComponent(deviceID) }
     var myChats: URL { myFolder.appendingPathComponent("chats") }

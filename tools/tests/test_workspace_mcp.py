@@ -122,6 +122,20 @@ class WorkspaceTests(unittest.TestCase):
         ws.delete_file('draft.md');self.assertFalse((own/'draft.md').exists())
         with self.assertRaises(PermissionError):ws.write_file(str(self.folder/'bad.txt'),content='bad',root=1)
         with self.assertRaises(PermissionError):ws.delete_file(str(own))
+    def test_knowledge_paths_deny_workspace_mutations(self):
+        store = self.folder / 'support' / 'skills'
+        store.mkdir(parents=True)
+        skill = store / 'SKILL.md'
+        skill.write_text('original')
+        ws = module.Workspace(dict(self.ws.manifest,
+                                   roots=[dict(self.ws.manifest['roots'][0], writable=True)],
+                                   protectedWritePaths=[str(store)]))
+        with self.assertRaises(PermissionError): ws.write_file(str(store / 'new.md'), content='bad')
+        with self.assertRaises(PermissionError): ws.edit_file(str(skill), 'original', 'bad')
+        with self.assertRaises(PermissionError): ws.delete_file(str(store.parent))
+        self.assertEqual(skill.read_text(), 'original')
+        ws.write_file('support/chats/test.work/files/note.txt', content='chat')
+        self.assertEqual((store.parent / 'chats/test.work/files/note.txt').read_text(), 'chat')
     def test_office_images_are_on_demand_and_cached(self):
         p=self.folder/'draft.docx'
         with zipfile.ZipFile(p,'w') as z:

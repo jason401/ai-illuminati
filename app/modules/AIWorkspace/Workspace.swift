@@ -1,4 +1,5 @@
 import Cocoa
+import Darwin
 import AIAccounts
 import AILocalization
 import AIRuntime
@@ -140,6 +141,8 @@ public struct WorkspaceInvocation {
     public var room: UUID
     var readOnly: Bool = true
     var backupPath: String?
+    private var knowledgeSyncDirectory: URL?
+    private var codexFullAccessAtSetup: Bool?
     public var account: Account? = nil   // who answers (set by Answerer right before the call), for the chat tools
     public init(binding: WorkspaceBinding, room: UUID, readOnly: Bool = true, backupPath: String? = nil, account: Account? = nil) {
         self.binding = binding; self.room = room; self.readOnly = readOnly; self.backupPath = backupPath; self.account = account
@@ -164,6 +167,7 @@ public struct WorkspaceInvocation {
                                       "cache": NativeSessions.directory(room).appendingPathComponent("document-cache").path,
                                       "extractor": Self.resources.appendingPathComponent("WorkspaceDocument").path]
         object["project"] = binding.projectRunID != nil
+        if binding.fullAccessActive || level == .execute { object["protectedWritePaths"] = knowledgeWritePaths.map(\.path) }
         let link = (binding.offersChatTools ? tools : screenTools)(self)
         if let link {
             object["tools"] = link.socket
@@ -218,6 +222,7 @@ public struct WorkspaceInvocation {
     // An Enterprise workspace may forbid Codex's full access (managed requirements: the cloud bundle Codex caches in
     // its home, or /etc/codex). Codex then silently falls back to a read-only root, so full auto asks for workspace-write.
     var codexFullAccessAllowed: Bool {
+        if let codexFullAccessAtSetup { return codexFullAccessAtSetup }
         guard let account, account.provider == .codex else { return true }
         var texts = [(try? String(contentsOfFile: "/etc/codex/requirements.toml", encoding: .utf8)) ?? ""]
         if let data = FileManager.default.contents(atPath: account.codexHome + "/cloud-config-bundle-cache.json"),
@@ -238,6 +243,60 @@ public struct WorkspaceInvocation {
         return String(decoding: data, as: UTF8.self).dropFirst().dropLast().description
     }
 
+    private var knowledgeWritePaths: [URL] {
+        let support = URL(fileURLWithPath: AccountStore.supportDir, isDirectory: true)
+        // The projects directory holds project skills, memory and candidates for every project, including future ones.
+        let local = ["skills", "memory", "projects", "knowledge-candidates.jsonl", "knowledge-reviews.json",
+                     "knowledge-review-attempt.json", "knowledge-review.log", "knowledge-sync.json"]
+        return local.map { support.appendingPathComponent($0) } + (knowledgeSyncDirectory.map { [$0] } ?? [])
+    }
+
+    private func resolvedKnowledgePath(_ path: String) -> String {
+        // Seatbelt matches the kernel path. Foundation rewrites /private/tmp back to /tmp.
+        if let resolved = realpath(path, nil) {
+            defer { free(resolved) }
+            return String(cString: resolved)
+        }
+        // A store may not exist yet, even if an existing ancestor is a symlink.
+        let original = path as NSString
+        let parent = original.deletingLastPathComponent
+        guard !parent.isEmpty, parent != path else { return path }
+        return (resolvedKnowledgePath(parent) as NSString).appendingPathComponent(original.lastPathComponent)
+    }
+
+    private func knowledgePathVariants(_ urls: [URL]) -> [String] {
+        let originals = urls.map { $0.standardizedFileURL.path }
+        let aliases = Set(originals.map { resolvedKnowledgePath($0) }).subtracting(originals).sorted()
+        return originals + aliases
+    }
+
+    // The app supplies the configured sync folder. Full access needs a process-wide deny so shell commands,
+    // native file tools and the filesystem bridge all get the same restriction.
+    public mutating func protectKnowledge(syncFolder: URL) -> [String] {
+        knowledgeSyncDirectory = syncFolder.appendingPathComponent("knowledge", isDirectory: true)
+        guard binding.fullAccessActive, let account, AICapabilities.rule(account, .terminal) != .off,
+              account.provider != .ollama else { return [] }
+        if account.provider == .codex {
+            // Choose the wrapper and Codex arguments with the same managed policy.
+            codexFullAccessAtSetup = codexFullAccessAllowed
+            guard codexFullAccessAtSetup == true else { return [] }
+        }
+
+        let paths = knowledgeWritePaths
+        let denied = knowledgePathVariants(paths)
+        let parents = Set(knowledgePathVariants(paths.map { $0.deletingLastPathComponent() })).sorted()
+        let writes = denied.map { "(subpath \(Self.jsonArgument($0)))" }.joined(separator: " ")
+        // Keep the stores anchored while allowing ordinary writes to siblings such as chats/.
+        let moves = parents.map { "(literal \(Self.jsonArgument($0)))" }.joined(separator: " ")
+        return ["/usr/bin/sandbox-exec", "-p", "(version 1) (allow default) (deny file-write* \(writes)) (deny file-write-unlink \(moves))"]
+    }
+
+    private func claudeWritePermissions(_ paths: [String]) -> [String: [String]] {
+        ["deny": paths.flatMap { path in
+            ["Edit(/\(path))", "Edit(/\(path)/**)", "Write(/\(path))", "Write(/\(path)/**)"]
+        }]
+    }
+
     public func arguments(provider: Account.Provider, original: [String], directory: URL, web: Bool,
                           tools: WorkspaceTools, screenTools: WorkspaceTools = { _ in nil }) throws -> [String] {
         let (command, args) = try prepare(in: directory, tools: tools, screenTools: screenTools)
@@ -246,6 +305,7 @@ public struct WorkspaceInvocation {
         let webAllowed = account.map { AICapabilities.rule($0, .web) != .off } ?? true
         let web = web && webAllowed
         let shell = level == .execute && terminalAllowed
+        let knowledge = binding.fullAccessActive || level == .execute ? knowledgePathVariants(knowledgeWritePaths) : []
         var result = original
         switch provider {
         case .claude:
@@ -258,13 +318,14 @@ public struct WorkspaceInvocation {
             let config = String(data: try JSONSerialization.data(withJSONObject: mcp), encoding: .utf8)!
             if let i = result.firstIndex(of: "--mcp-config") { result[i + 1] = config }
             if binding.fullAccessActive && terminalAllowed {
-                // Full auto: every tool, no prompts, no sandbox (network on), like Claude Code run by the user.
+                // Full auto: every tool, no prompts, and the app's write-only path sandbox (network on).
                 // AutoGuard's environment removes Git credentials and turns rm into the Trash.
                 if let i = result.firstIndex(of: "--tools") { result[i + 1] = "default" }
                 if let i = result.firstIndex(of: "--allowedTools") { result.removeSubrange(i...i + 1) }
                 let denied = AutoGuard.claudeDenied + (webAllowed ? [] : ["WebSearch", "WebFetch"])
+                let settings = ["permissions": claudeWritePermissions(knowledge)]
                 result += ["--setting-sources", "", "--disable-slash-commands", "--permission-mode", "bypassPermissions",
-                           "--disallowedTools", denied.joined(separator: ",")]
+                           "--disallowedTools", denied.joined(separator: ","), "--settings", json(settings)]
                 for root in binding.roots where root.directory { result += ["--add-dir", root.path] }
                 break
             }
@@ -277,15 +338,10 @@ public struct WorkspaceInvocation {
             result += ["--restricted", "--setting-sources", "", "--disable-slash-commands", "--permission-mode", "dontAsk", "--allowedTools", "Read,Grep,Glob,mcp__illuminati__*" + allowedEdit + (shell ? ",Bash" : "") + (web ? ",WebSearch,WebFetch" : "")
                        + (original.contains("--chrome") ? "," + Answerer.chromeTools : "")]
             if level == .execute {
-                var settings: [String: Any] = ["sandbox": ["enabled": true, "autoAllowBashIfSandboxed": shell, "allowUnsandboxedCommands": false,
-                    "filesystem": ["allowWrite": executionFolders, "denyWrite": binding.project.map(\.protectedPaths) ?? []]]]
-                if let project = binding.project {
-                    let protected = project.protectedPaths
-                    let denied: [String] = protected.flatMap { path -> [String] in
-                        ["Edit(/\(path))", "Edit(/\(path)/**)", "Write(/\(path))", "Write(/\(path)/**)"]
-                    }
-                    settings["permissions"] = ["deny": denied]
-                }
+                let protected = (binding.project?.protectedPaths ?? []) + knowledge
+                let settings: [String: Any] = ["sandbox": ["enabled": true, "autoAllowBashIfSandboxed": shell, "allowUnsandboxedCommands": false,
+                    "filesystem": ["allowWrite": executionFolders, "denyWrite": protected]],
+                    "permissions": claudeWritePermissions(protected)]
                 result += ["--settings", String(data: try JSONSerialization.data(withJSONObject: settings), encoding: .utf8)!]
             }
             for root in binding.roots where root.directory { result += ["--add-dir", root.path] }
@@ -338,18 +394,20 @@ public struct WorkspaceInvocation {
             try Data("{\"mcpServers\":{}}".utf8).write(to: folder.appendingPathComponent("mcp_config.json"), options: .atomic)
             // The app's tools (git_*, project_run, ask_ai, …) like Claude's and Codex's, without touching the user's agy
             // settings: a plugin in this launch's own folder, allowed for this session only.
-            var allow = [try Self.geminiPlugin(in: directory, command: command, args: args)], deny: [String] = []
+            var allow = [try Self.geminiPlugin(in: directory, command: command, args: args)]
             let full = binding.fullAccessActive && terminalAllowed
+            var protected = full || level == .execute ? knowledge : []
             if full {
-                // Full auto like Claude's and Codex's: every command, no terminal sandbox (network on). AutoGuard's
+                // Full auto uses the app's write-only path sandbox (network on). AutoGuard's
                 // environment removes Git credentials and turns rm into the Trash.
                 result.removeAll { $0 == "--sandbox" }
                 allow += ["command(*)", "unsandboxed(*)"]
             } else if let project = binding.project {
                 // With cards, like Claude's: Git's own files change only through the app's git tools (a write_file rule
                 // covers agy's edits too).
-                deny = Array(Set(project.protectedPaths)).sorted().map { "write_file(\($0))" }
+                protected += project.protectedPaths
             }
+            let deny = Array(Set(protected)).sorted().map { "write_file(\($0))" }
             try Self.geminiAllow(allow, deny: deny, in: &result)
             // Existing command auto-grants cannot guarantee a view or write-only workspace.
             // Execute runs with terminal off get an explicit command deny from Answerer.

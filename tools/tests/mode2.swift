@@ -1862,7 +1862,7 @@ do {
     expect(edited.undone == true && (try? String(contentsOf: linkedDir.appendingPathComponent("paper.md"), encoding: .utf8)) == "v1"
            && !FileManager.default.fileExists(atPath: linkedDir.appendingPathComponent("notes.md").path), "undo restores the linked folder")
 
-    // A linked folder gets full access by default (any command, network, no sandbox, Git push blocked).
+    // A linked folder gets full access by default (commands and network, with protected knowledge stores and Git push blocked).
     let dir = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("solo-args")
     let fullBinding = chat.soloBinding(chat.currentID)
     let fullArgs = try! WorkspaceInvocation(binding: fullBinding, room: chat.currentID).arguments(provider: .claude, original: ["-p", "--tools", "", "--allowedTools", "x", "--safe-mode", "--mcp-config", "{}"], directory: dir, web: true, tools: ToolHub.workspaceLink)

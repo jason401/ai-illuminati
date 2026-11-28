@@ -9,7 +9,7 @@ import AISpaces
 // What each AI's command line tool is started with (program, arguments, environment, folder, process group),
 // captured through the app's own way in (Discussion.requestDebate) and compared with run_conditions.golden.
 // Nothing is started: Answerer.launchForTests takes the launch. Kinds per provider:
-//   plain (no folder), folder (linked folder, view), folder-full (fullAccess on a plain chat: AutoGuard alone),
+//   plain (no folder), folder (linked folder, view), folder-full (fullAccess on a plain chat),
 //   project-off / project-on (project work, full auto off / on: the 8 combinations with the local model).
 // Gemini has no "plain" here: without a folder it adds web rules to agy's settings in the real home.
 // Write a new golden file only on purpose: AI_ILLUMINATI_WRITE_GOLDEN=<path> (then compare the diff by hand).
@@ -196,17 +196,30 @@ func testRunConditions() {
                "\(provider): full access runs with AutoGuard's environment (no GitHub token, no SSH agent)")
         expect(!projectOff.contains("auto-guard") && !folder.contains("auto-guard"), "\(provider): without full access no AutoGuard environment")
         for project in [projectOn, projectOff] {
-            expect(project.contains("exec: /usr/bin/python3\narg: \"$RESOURCES/project_process.py\"\narg: \"<cli>\"") && project.contains("group: true")
+            expect(project.contains("exec: /usr/bin/python3\narg: \"$RESOURCES/project_process.py\"") && project.contains("group: true")
                    && project.contains("env+: AI_ILLUMINATI_PROJECT_PROCESS=\"1\""), "\(provider): project work runs in its own process group")
         }
         for plain in [folder, folderFull] {
-            expect(plain.contains("exec: <cli>") && plain.contains("group: false") && !plain.contains("AI_ILLUMINATI_PROJECT_PROCESS"), "\(provider): a chat folder runs the tool itself")
+            expect(plain.contains("group: false") && !plain.contains("AI_ILLUMINATI_PROJECT_PROCESS"), "\(provider): a chat folder needs no project process group")
+        }
+        expect(folder.contains("exec: <cli>") && !projectOff.contains("sandbox-exec"), "\(provider): restricted runs keep the CLI's own restrictions")
+        expect(folderFull.contains("exec: /usr/bin/sandbox-exec")
+               && projectOn.contains("arg: \"$RESOURCES/project_process.py\"\narg: \"/usr/bin/sandbox-exec\""),
+               "\(provider): both full-access launches enter Seatbelt, inside the process group for project runs")
+        for full in [folderFull, projectOn] {
+            let profile = full.components(separatedBy: "\n").first { $0.hasPrefix("arg: \"(version 1)") } ?? ""
+            expect(profile.contains("/AI Illuminati/skills") && profile.contains("/AI Illuminati/memory")
+                   && profile.contains("/AI Illuminati/projects") && profile.contains("/AI Illuminati/knowledge-candidates.jsonl")
+                   && profile.contains("/AI Illuminati/knowledge-reviews.json") && profile.contains("/AI Illuminati/knowledge-sync.json")
+                   && profile.contains("/AI Illuminati Sync/knowledge") && !profile.contains("/AI Illuminati/chats"),
+                   "\(provider): the Seatbelt profile covers knowledge stores and excludes chat folders")
         }
     }
     for provider in ["claude", "codex", "gemini"] {
         for kind in ["project-chat-off", "project-chat-on"] {
             let work = block(provider + " " + kind)
-            expect(work.contains("exec: /usr/bin/python3\narg: \"$RESOURCES/project_process.py\"\narg: \"<cli>\"") && work.contains("group: true")
+            expect(work.contains("exec: /usr/bin/python3\narg: \"$RESOURCES/project_process.py\"") && work.contains("group: true")
+                   && work.contains("/usr/bin/sandbox-exec") == (kind == "project-chat-on")
                    && work.contains("env+: AI_ILLUMINATI_PROJECT_PROCESS=\"1\"") && work.contains("env-: GH_TOKEN") == kind.hasSuffix("on")
                    && (provider != "claude" || work.contains("arg: \"$TEST_HOME/run-conditions-project-claude-\(kind.hasSuffix("on"))\"")),
                    "\(provider) \(kind): ProjectChat's run is wrapped, guarded only when on, and gets its project (Codex full access names no folder)")

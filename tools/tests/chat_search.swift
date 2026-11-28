@@ -496,9 +496,12 @@ func testMemory() {
     let alike = said(link.call("remember", ["text": "COMSOL과 MATLAB 둘 다 매일 씀"], context: session(open.id)))
     let added = store.snapshot.items.last!
     expect(alike.hasPrefix("Saved to memory: [\(added.shortID)] COMSOL과 MATLAB 둘 다 매일 씀") && alike.contains("Similar saved facts:\n- [\(saved.shortID)] COMSOL과 MATLAB을 씀 (")
-           && alike.contains("change that one with memory_replace and remove this new one ([\(added.shortID)]) with memory_forget")
+           && alike.contains("first remove this new one ([\(added.shortID)]) with memory_forget, then change that one with memory_replace")
            && alike.contains("Memory use: 2 of 300 facts;") && alike.contains("of 6000 characters") && !alike.contains("Over that budget") && !alike.contains("Nearly full"),
-           "a fact like a saved one: the answer names it by id, says to replace that one and forget this one, and shows how full memory is")
+           "a fact like a saved one: the answer names it by id, says to forget this one and then replace that one, and shows how full memory is")
+    let again = link.call("remember", ["text": "comsol과 matlab을 씀"], context: session(open.id))
+    expect(again["isError"] as? Bool == false && said(again).hasPrefix("Already in memory: [\(saved.shortID)] COMSOL과 MATLAB을 씀")
+           && said(again).contains("Memory use: 2 of 300 facts;") && store.snapshot.items.count == 2, "the same fact again: the saved one's id and how full memory is")
     let apart = said(link.call("remember", ["text": "San Jose에 살고 Caltrain을 탐"], context: session(open.id)))
     expect(apart.hasPrefix("Saved to memory: [") && !apart.contains("Similar saved facts") && !apart.contains("memory_replace") && apart.contains("3 of 300 facts"),
            "an unrelated fact: no similar facts and no advice, only how full memory is")
@@ -519,6 +522,23 @@ func testMemory() {
            && text(saved.id) == "COMSOL과 MATLAB을 씀" && store.snapshot.history.filter { $0.turn == message }.isEmpty
            && store.snapshot.items.map(\.id) == [saved.id, added.id, store.snapshot.items[2].id],
            "Undo puts forgotten and replaced facts back as they were, in their place, and the line goes away")
+    // A→B→C→B: the fact reads B again, but the first change is not its latest, so its Undo does not wipe the later ones.
+    _ = link.call("memory_replace", ["id": saved.shortID, "text": "COMSOL만 씀"], context: session(open.id))
+    _ = link.call("memory_replace", ["id": saved.shortID, "text": "MATLAB만 씀"], context: session(open.id))
+    _ = link.call("memory_replace", ["id": saved.shortID, "text": "COMSOL만 씀"], context: session(open.id))
+    let loop = store.snapshot.history.suffix(3).map(\.id)
+    expect(!store.undo(loop[0]) && text(saved.id) == "COMSOL만 씀" && store.undo(loop[2]) && store.undo(loop[1]) && store.undo(loop[0])
+           && text(saved.id) == "COMSOL과 MATLAB을 씀", "an older change whose fact reads the same again is undone only after the later ones")
+    // Forget, save the same words again, then undo the forget: no second copy.
+    _ = link.call("memory_forget", ["id": added.shortID], context: session(open.id))
+    let forgot = store.snapshot.history.last!.id
+    _ = link.call("remember", ["text": "COMSOL과 MATLAB 둘 다 매일 씀"], context: session(open.id))
+    let resaved = store.snapshot.items.last!
+    expect(!store.undo(forgot) && store.snapshot.items.filter { $0.text == "COMSOL과 MATLAB 둘 다 매일 씀" }.count == 1,
+           "undoing a forget is refused when the same words were saved again")
+    _ = link.call("memory_forget", ["id": resaved.shortID], context: session(open.id))
+    let dropped = store.snapshot.history.last!.id
+    expect(store.undo(forgot) && store.undo(dropped) == false && text(added.id) == "COMSOL과 MATLAB 둘 다 매일 씀", "(put back for the rest)")
 
     // Many facts: those that match the message, within the limit.
     store.update { data in

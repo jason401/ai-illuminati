@@ -164,7 +164,7 @@ public final class MemoryStore: ObservableObject {
         return patterns.contains { text.range(of: $0, options: .regularExpression) != nil }
     }
 
-    enum Saved: Equatable { case saved(MemoryItem), duplicate, refused(String) }
+    enum Saved: Equatable { case saved(MemoryItem), duplicate(MemoryItem), refused(String) }
 
     func remember(_ text: String, room: UUID?, turn: UUID?, roomTitle: String?, by: String?) -> Saved {
         let clean = text.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -174,7 +174,7 @@ public final class MemoryStore: ObservableObject {
         var result = Saved.refused("Memory could not be saved on this Mac.")
         let ok = update { data in
             let key = clean.lowercased()
-            if data.items.contains(where: { $0.text.lowercased() == key }) { result = .duplicate; return }
+            if let same = data.items.first(where: { $0.text.lowercased() == key }) { result = .duplicate(same); return }
             guard data.items.count < Self.maxItems else { result = .refused("Memory is full (\(Self.maxItems) facts). Ask the user to remove some in Settings ▸ Memory."); return }
             let item = MemoryItem(text: clean, room: room, turn: turn, roomTitle: roomTitle, by: by)
             data.items.append(item)
@@ -220,13 +220,17 @@ public final class MemoryStore: ObservableObject {
         return result
     }
 
-    // Puts the old version back while the fact is still as the change left it; false otherwise.
+    // Puts the old version back while the fact is still as the change left it (its latest change, so A→B→C→B is
+    // not undone from the first one) and no other fact says the same; false otherwise.
     @discardableResult
     func undo(_ change: UUID) -> Bool {
         var done = false
         let saved = update { data in
             guard let h = data.history.firstIndex(where: { $0.id == change }) else { return }
             let entry = data.history[h]
+            guard !data.history[(h + 1)...].contains(where: { $0.old.id == entry.old.id }) else { return }
+            let key = entry.old.text.lowercased()
+            guard !data.items.contains(where: { $0.id != entry.old.id && $0.text.lowercased() == key }) else { return }
             if let new = entry.new {
                 guard let i = data.items.firstIndex(where: { $0.id == entry.old.id }), data.items[i].text == new else { return }
                 data.items[i] = entry.old
@@ -279,7 +283,8 @@ public final class MemoryStore: ObservableObject {
         let near = similar(item.text, in: data.items, except: item.id)
         if !near.isEmpty {
             lines.append("Similar saved facts:\n" + near.map(promptLine).joined(separator: "\n"))
-            lines.append("If this updates one of them, change that one with memory_replace and remove this new one ([" + item.shortID + "]) with memory_forget.")
+            // Forget first: replacing with words this new fact already has is refused as a duplicate.
+            lines.append("If this updates one of them, first remove this new one ([" + item.shortID + "]) with memory_forget, then change that one with memory_replace.")
         }
         lines.append(usage(data))
         return lines.joined(separator: "\n")
@@ -450,7 +455,9 @@ public final class MemoryLink: ToolProvider {
         switch store.remember(arguments["text"] as? String ?? "", room: context.room, turn: turn,
                               roomTitle: found?.title, by: context.asker?.name) {
         case .saved(let item): return ["content": [["type": "text", "text": MemoryStore.savedNote(item, in: store.snapshot)]], "isError": false]
-        case .duplicate: return ["content": [["type": "text", "text": "Already in memory."]], "isError": false]
+        case .duplicate(let item):
+            let note = "Already in memory: [" + item.shortID + "] " + item.text + "\n" + MemoryStore.usage(store.snapshot)
+            return ["content": [["type": "text", "text": note]], "isError": false]
         case .refused(let why): return toolFailure(why)
         }
     }

@@ -110,21 +110,34 @@ public enum KnowledgeReview {
     private static let decoder: JSONDecoder = { let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601; return d }()
     private static var lastWaitLog: (message: String, at: Date)?
 
+    struct Attempt: Codable, Equatable {
+        var at: Date
+        var failures: Int = 0
+    }
+
+    // Back off repeated failed automatic attempts (1h, 2h, 4h, … up to 24h) so broken output does not burn quota hourly.
+    static func cooldown(failures: Int) -> TimeInterval {
+        guard failures > 1 else { return minInterval }
+        return min(partialAfter, minInterval * pow(2.0, Double(failures - 1)))
+    }
+
     // Every review, oldest first.
     public static func records() -> [KnowledgeReviewRecord] {
         (try? Data(contentsOf: file)).flatMap { try? decoder.decode([KnowledgeReviewRecord].self, from: $0) } ?? []
     }
 
-    static func lastAttempt() -> Date? {
-        (try? Data(contentsOf: attemptFile)).flatMap { try? decoder.decode(Date.self, from: $0) }
+    static func lastAttempt() -> Attempt? {
+        guard let data = try? Data(contentsOf: attemptFile) else { return nil }
+        if let attempt = try? decoder.decode(Attempt.self, from: data) { return attempt }
+        return (try? decoder.decode(Date.self, from: data)).map { Attempt(at: $0, failures: 0) }
     }
 
-    // Saved before starting an automatic review so a failed or interrupted meeting still respects `minInterval`.
-    static func recordAttempt(at now: Date) -> Bool {
+    // Saved before starting an automatic review (incrementing failures) and reset to 0 when a review applies.
+    static func recordAttempt(at now: Date, failures: Int = 0) -> Bool {
         do {
             try FileManager.default.createDirectory(at: attemptFile.deletingLastPathComponent(), withIntermediateDirectories: true,
                                                     attributes: [.posixPermissions: 0o700])
-            try encoder.encode(now).write(to: attemptFile, options: .atomic)
+            try encoder.encode(Attempt(at: now, failures: failures)).write(to: attemptFile, options: .atomic)
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: attemptFile.path)
             return true
         } catch { return false }
@@ -460,25 +473,38 @@ public enum KnowledgeReviewLink {
         return earliest
     }
 
-    // Automatic idle review (회의 2/3): called when the TODO scheduler wakes or the app is idle.
-    // Runs when: this Mac may host reviews (`isReviewHost`), no chat/TODO/import/stop is busy, at least one eligible
-    // pending candidate exists, and at least `minInterval` passed since the last review or attempt.
+    // Automatic idle review (회의 2/3): called when the TODO scheduler's periodic timer wakes or the app is idle.
+    // Runs when: this Mac may host reviews (`isReviewHost`), no chat/TODO/import/stop is busy, at least one unreviewed
+    // eligible pending candidate exists, and at least `cooldown` (`minInterval`, backing off on repeated failures) passed
+    // since the last review or attempt. Previously shown undecided/retry candidates still join the next review once a new
+    // candidate arrives, without re-triggering reviews or aging the 24h clock on their own; alone, they reopen a review once
+    // `partialAfter` passed since the last review or attempt.
     // Prefers >= 2 distinct cloud companies from `meetingTeam`. With < 2 companies, waits for usage reset unless the
-    // oldest eligible pending candidate has waited >= `partialAfter` (24h), in which case it runs a partial review with
+    // oldest unreviewed pending candidate has waited >= `partialAfter` (24h), in which case it runs a partial review with
     // whatever AIs remain (other accounts of the same company + Ollama if enabled); 0 AIs waits for the next wake.
     @discardableResult
-    public static func runIfIdle(in discussion: Discussion, now: Date = Date(), done: ((String) -> Void)? = nil) -> Bool {
+    public static func runIfIdle(in discussion: Discussion, now: Date? = nil, done: ((String) -> Void)? = nil) -> Bool {
         precondition(Thread.isMainThread)
         guard isReviewHost(), !running, !discussion.anyRunning, !discussion.importingMaterials,
               discussion.stoppingRooms.isEmpty,
               !TodoStore.shared.current.items.contains(where: { $0.state == .running }) else { return false }
         let candidates = eligible(discussion)
         guard !candidates.isEmpty else { return false }
-        let last = [KnowledgeReview.records().last?.at, KnowledgeReview.lastAttempt()].compactMap { $0 }.max()
-        if let last, now.timeIntervalSince(last) < KnowledgeReview.minInterval { return false }
+        let records = KnowledgeReview.records()
+        let reviewed = Set(records.flatMap(\.candidates))
+        let current = now ?? Date()
+        let attempt = KnowledgeReview.lastAttempt()
+        let last = [records.last?.at, attempt?.at].compactMap { $0 }.max()
+        // Candidates a review already showed (left undecided, retry, released from the Inbox) come back on their own
+        // once a day, so they never sit pending forever when no new candidate arrives.
+        var unseen = candidates.filter { !reviewed.contains($0.row.id) }
+        if unseen.isEmpty, let last, current.timeIntervalSince(last) >= KnowledgeReview.partialAfter { unseen = candidates }
+        guard !unseen.isEmpty else { return false }
+        let failures = attempt.flatMap { a in records.last.map { $0.at > a.at } == true ? 0 : a.failures } ?? 0
+        if let last, current.timeIntervalSince(last) < KnowledgeReview.cooldown(failures: failures) { return false }
 
         let cloudTeam = Discussion.meetingTeam(discussion.model.accounts, usage: discussion.model.latestUsage,
-                                               most: most, picks: discussion.model.autoTeamPicks, now: now) {
+                                               most: most, picks: discussion.model.autoTeamPicks, now: current) {
             Discussion.meets($0) && Enterprise.permits($0, lock: nil)
         }
         let companies = Set(cloudTeam.map(\.provider))
@@ -488,17 +514,20 @@ public enum KnowledgeReviewLink {
             team = cloudTeam
             partial = false
         } else {
-            let oldest = candidates.map(\.row.createdAt).min() ?? now
-            guard now.timeIntervalSince(oldest) >= KnowledgeReview.partialAfter else {
+            let oldest = unseen.map(\.row.createdAt).min() ?? current
+            guard current.timeIntervalSince(oldest) >= KnowledgeReview.partialAfter else {
                 let reset = nextReset(accounts: discussion.model.accounts, usage: discussion.model.latestUsage,
-                                      picks: discussion.model.autoTeamPicks, excluding: companies, now: now)
+                                      picks: discussion.model.autoTeamPicks, excluding: companies, now: current)
                 let resetNote = reset.map { "next usage reset \(ISO8601DateFormatter().string(from: $0))" } ?? "no reset time known"
                 let companyList = companies.map(\.rawValue).sorted().joined(separator: ",")
-                KnowledgeReview.logWait("waiting: \(companies.count) company available (\(companyList.isEmpty ? "none" : companyList)), \(candidates.count) pending; \(resetNote)", at: now)
+                KnowledgeReview.logWait("waiting: \(companies.count) company available (\(companyList.isEmpty ? "none" : companyList)), \(unseen.count) new (\(candidates.count) pending); \(resetNote)", at: current)
                 return false
             }
+            // 24h fallback ("Ollama가 켜져 있으면 Ollama도"): intentionally checks `localEnabled` rather than `autoPicked`
+            // (matching Solo.lastResort), because Ollama defaults to off in automatic teams (`autoTeamPicks`).
             let locals = discussion.model.localEnabled ? discussion.model.accounts.filter { account in
-                account.provider == .ollama && discussion.model.latestUsage[account.id]?.needsLogin != true
+                account.provider == .ollama && Enterprise.permits(account, lock: nil)
+                && discussion.model.latestUsage[account.id]?.needsLogin != true
                 && !cloudTeam.contains(where: { $0.id == account.id })
             } : []
             // Prefer model diversity within `most`: first cloud account, first Ollama (if on), then other same-company accounts.
@@ -509,14 +538,15 @@ public enum KnowledgeReviewLink {
             fallback.append(contentsOf: locals.dropFirst())
             fallback = Array(fallback.prefix(most))
             guard !fallback.isEmpty else {
-                KnowledgeReview.logWait("waiting: 24h passed with \(candidates.count) pending, but 0 AIs available", at: now)
+                KnowledgeReview.logWait("waiting: 24h passed with \(unseen.count) new (\(candidates.count) pending), but 0 AIs available", at: current)
                 return false
             }
             team = fallback
             partial = true
         }
-        guard KnowledgeReview.recordAttempt(at: now) else { return false }
-        return start(in: discussion, candidates: candidates, team: team, partial: partial, now: now, done: done)
+        guard KnowledgeReview.recordAttempt(at: current, failures: failures + 1) else { return false }
+        return start(in: discussion, candidates: candidates, team: team, partial: partial,
+                     minSpeakers: partial ? 1 : 2, fixedNow: now, done: done)
     }
 
     // Starts one review of every pending candidate; false when none can be shown, fewer than two AIs can meet, a
@@ -537,11 +567,13 @@ public enum KnowledgeReviewLink {
         }
         guard team.count >= 2 else { return false }
         let partial = Set(team.filter(Discussion.meets).map(\.provider)).count < 2
-        return start(in: discussion, candidates: candidates, team: team, partial: partial, now: Date(), done: done)
+        // Manual reviews always require at least 2 speakers to succeed (single-AI completion is only for 24h auto fallback).
+        return start(in: discussion, candidates: candidates, team: team, partial: partial,
+                     minSpeakers: 2, fixedNow: nil, done: done)
     }
 
     private static func start(in discussion: Discussion, candidates: [KnowledgeReview.Candidate], team: [Account],
-                              partial: Bool, now: Date, done: ((String) -> Void)?) -> Bool {
+                              partial: Bool, minSpeakers: Int, fixedNow: Date?, done: ((String) -> Void)?) -> Bool {
         running = true
         let topic = L("스킬·기억 검토", "Skill and memory review")
         let room = discussion.openMeeting(topic: topic)
@@ -560,7 +592,6 @@ public enum KnowledgeReviewLink {
         [End of review material]
         """
         let perAI = team.count == 1 ? 1 : Discussion.meetingTurnsPerAI
-        let minSpeakers = partial ? 1 : 2
         DispatchQueue.global(qos: .utility).async {
             let result = worker.runDebate(question: topic, history: [], rules: rules, team: team, leader: leader,
                                           perAI: perAI, cancellation: token, id: room, index: 0,
@@ -575,11 +606,13 @@ public enum KnowledgeReviewLink {
                     worker.finish(room, 0, error: why); done?(why)
                     return
                 }
+                let finishedAt = fixedNow ?? Date()
                 let attendedCompanies = Set(team.filter { Discussion.meets($0) && result.attendees.contains(discussion.label($0)) }.map(\.provider))
                 let isPartial = partial || attendedCompanies.count < 2
                 switch KnowledgeReview.apply(decisions, meeting: room, attendees: result.attendees, candidates: candidates,
-                                             partial: isPartial, now: now) {
+                                             partial: isPartial, now: finishedAt) {
                 case .applied(let record):
+                    _ = KnowledgeReview.recordAttempt(at: finishedAt, failures: 0)
                     worker.finish(room, 0)
                     let dropped = record.outcomes.filter { $0.result == .dropped || $0.result == .refused }.count
                     let head = record.partial ? L("부분 검토 끝", "Partial review done") : L("검토 끝", "Review done")

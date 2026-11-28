@@ -1612,14 +1612,15 @@ public final class TodoScheduler: ObservableObject {
     var held: (String) -> Bool = ProjectWork.isHeld
     // The TODO open for editing on the board: not started until the edit is saved or dropped.
     public var editing: UUID? { didSet { if oldValue != editing { wake() } } }
-    // Called at the end of every scheduler wake (`tick`) so the app can run idle checks (e.g. KnowledgeReviewLink).
+    // Called on the periodic timer wake (every `interval`, 30 min) after `tick()` finishes, so idle tasks
+    // (e.g. KnowledgeReviewLink) do not fire right after a user message, a chat answer, or Start Now.
     public var onTick: (() -> Void)?
 
     public init(chats: TodoChats, store: TodoStore) { self.chats = chats; self.store = store }
 
     public func start() {
         recover()
-        let timer = Timer(timeInterval: Self.interval, repeats: true) { [weak self] _ in self?.tick() }
+        let timer = Timer(timeInterval: Self.interval, repeats: true) { [weak self] _ in self?.scheduledTick() }
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
         nextCheck = Date().addingTimeInterval(Self.interval)
@@ -1628,6 +1629,11 @@ public final class TodoScheduler: ObservableObject {
                     // A chat lets go of a repository after its answer is marked finished: the next TODO need not wait 30 minutes.
                     NotificationCenter.default.publisher(for: .projectReleased).receive(on: DispatchQueue.main).sink { [weak self] _ in self?.wake() }]
         wake()
+    }
+
+    func scheduledTick() {
+        tick()
+        onTick?()
     }
 
     // A message the user wrote in a TODO's own chat while it does not run: it goes to the TODO (an answer, a change request,
@@ -1772,7 +1778,6 @@ public final class TodoScheduler: ObservableObject {
             }
         }
         waiting = started == 0 && !ready.isEmpty ? note : nil
-        onTick?()
     }
 
     // The Enterprise lock a TODO's work keeps: its list's, else that of a locked chat on the project (the one it was

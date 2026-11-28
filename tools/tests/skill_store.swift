@@ -1503,6 +1503,9 @@ private func testKnowledgeReviewIdleScheduling() {
            "second full review succeeds after minInterval")
 
     // 5) 24h elapsed with only 1 company (Claude school + personal) + Ollama enabled: partial review runs with all 3.
+    // Even with default autoTeamPicks (Ollama off for normal automatic teams), 24h fallback includes enabled Ollama (like Solo.lastResort).
+    expect(!Discussion.autoPicked(ollama, picks: model.autoTeamPicks),
+           "Ollama defaults to off in autoTeamPicks")
     let t1 = tAfterInterval.addingTimeInterval(2 * 3_600)
     let c3 = submitSkill("idle-partial-team", at: t1)
     nextDecisionJSON = addDecision(c3)
@@ -1564,10 +1567,115 @@ private func testKnowledgeReviewIdleScheduling() {
            && SkillStore.shared.read("idle-zero-then-ollama") != nil,
            "Ollama-only partial review applies and marks partial=true")
 
-    // 8) TodoScheduler.onTick hook fires when scheduler ticks.
+    // 8) Undecided candidate does not re-trigger reviews hourly or age the 24h clock for new candidates; alone it comes back daily.
+    model.accounts = [claudeSchool, claudePersonal, codex, ollama]
+    model.latestUsage = [
+        claudeSchool.id: usage(claudeSchool, fiveHourUsed: 10),
+        claudePersonal.id: usage(claudePersonal, fiveHourUsed: 10),
+        codex.id: usage(codex, fiveHourUsed: 10),
+    ]
+    let t4 = tZero.addingTimeInterval(3 * 3_600)
+    let cUndecided = submitSkill("idle-undecided", at: t4)
+    nextDecisionJSON = "[]"   // meeting returns empty decisions: cUndecided remains pending
+    expect(KnowledgeReviewLink.runIfIdle(in: discussion, now: t4),
+           "new candidate opens a review even when meeting leaves it undecided")
+    waitForMeeting()
+    expect((try? inbox.pendingRows())?.contains(where: { $0.candidate.id == cUndecided.id }) == true,
+           "undecided candidate stays pending")
+    expect(!KnowledgeReviewLink.runIfIdle(in: discussion, now: t4.addingTimeInterval(KnowledgeReview.minInterval + 60)),
+           "undecided candidate alone does not reopen automatic review after minInterval")
+    expect(!KnowledgeReviewLink.runIfIdle(in: discussion, now: t4.addingTimeInterval(KnowledgeReview.partialAfter - 60)),
+           "undecided candidate alone does not reopen automatic review before 24h")
+    expect(KnowledgeReviewLink.runIfIdle(in: discussion, now: t4.addingTimeInterval(KnowledgeReview.partialAfter + 60)),
+           "undecided candidate alone reopens automatic review once 24h passed, so it never waits forever")
+    waitForMeeting()   // still "[]": cUndecided stays pending for the next case
+
+    // With 1 company and a fresh candidate arriving after >24h, the 24h clock uses the fresh candidate, not cUndecided.
+    let tFresh = t4.addingTimeInterval(KnowledgeReview.partialAfter + 2 * 3_600)
+    let cFresh = submitSkill("idle-fresh-after-undecided", at: tFresh)
+    model.latestUsage = [
+        claudeSchool.id: usage(claudeSchool, fiveHourUsed: 10),
+        claudePersonal.id: usage(claudePersonal, fiveHourUsed: 10),
+        codex.id: usage(codex, fiveHourUsed: 100, resetsAt: tFresh.addingTimeInterval(6 * 3_600)),
+    ]
+    expect(!KnowledgeReviewLink.runIfIdle(in: discussion, now: tFresh.addingTimeInterval(3_600)),
+           "old undecided candidate does not force immediate partial review for a fresh candidate under 24h")
+    // When usage resets, the new review includes both the fresh and previously-undecided candidates.
+    model.latestUsage[codex.id] = usage(codex, fiveHourUsed: 10)
+    nextDecisionJSON = """
+    [{"candidate":"c:\(String(cFresh.id.uuidString.prefix(8)).lowercased())","action":"add","scope":"global","reason":"신규"},
+     {"candidate":"c:\(String(cUndecided.id.uuidString.prefix(8)).lowercased())","action":"drop","reason":"재검토 버림"}]
+    """
+    expect(KnowledgeReviewLink.runIfIdle(in: discussion, now: tFresh.addingTimeInterval(2 * 3_600)),
+           "fresh candidate triggers review once 2 companies are available")
+    waitForMeeting()
+    expect(SkillStore.shared.read("idle-fresh-after-undecided") != nil
+           && (try? inbox.pendingRows())?.contains(where: { $0.candidate.id == cUndecided.id }) == false,
+           "previously undecided candidate is reconsidered alongside the new candidate")
+
+    // 9) Repeated broken-JSON failures back off exponentially (1h -> 2h) and reset on success.
+    let tFail = tFresh.addingTimeInterval(5 * 3_600)
+    let cFail = submitSkill("idle-backoff", at: tFail)
+    nextDecisionJSON = "not valid json"
+    expect(KnowledgeReviewLink.runIfIdle(in: discussion, now: tFail), "first broken-JSON attempt starts")
+    waitForMeeting()
+    expect(!KnowledgeReviewLink.runIfIdle(in: discussion, now: tFail.addingTimeInterval(1_800)),
+           "first failure respects 1h cooldown")
+    let tFail2 = tFail.addingTimeInterval(KnowledgeReview.minInterval + 60)
+    expect(KnowledgeReviewLink.runIfIdle(in: discussion, now: tFail2), "second attempt runs after 1h")
+    waitForMeeting()
+    expect(!KnowledgeReviewLink.runIfIdle(in: discussion, now: tFail2.addingTimeInterval(KnowledgeReview.minInterval + 60)),
+           "second consecutive failure backs off to 2h cooldown")
+    let tFail3 = tFail2.addingTimeInterval(2 * KnowledgeReview.minInterval + 60)
+    nextDecisionJSON = addDecision(cFail)
+    expect(KnowledgeReviewLink.runIfIdle(in: discussion, now: tFail3), "third attempt runs after 2h backoff")
+    waitForMeeting()
+    expect(SkillStore.shared.read("idle-backoff") != nil && KnowledgeReview.lastAttempt()?.failures == 0,
+           "successful review applies and resets failure backoff")
+
+    // 10) Manual run keeps minSpeakers=2 (even for same-company accounts) and records completion time (not start time).
+    let cManual = submitSkill("idle-manual-guard", at: tFail3.addingTimeInterval(60))
+    model.accounts = [claudeSchool, claudePersonal]
+    model.latestUsage = [
+        claudeSchool.id: usage(claudeSchool, fiveHourUsed: 10),
+        claudePersonal.id: usage(claudePersonal, fiveHourUsed: 10),
+    ]
+    nextDecisionJSON = addDecision(cManual)
+    var failSecond = true
+    var answerDelay: TimeInterval = 0
+    discussion.workspaceAnswer = { account, prompt, _, _, _ in
+        if answerDelay > 0 { Thread.sleep(forTimeInterval: answerDelay) }
+        if failSecond && account.id == claudePersonal.id { return .failure(.failed("simulated failure")) }
+        if prompt.contains("[MEETING RESULT]") { return .success(nextDecisionJSON) }
+        if prompt.contains("[MODE3 MODERATION]") { return .success(#"{"action":"finish","reason":"enough"}"#) }
+        if prompt.contains("[MODE3 SPEECH]") { promptLock.lock(); speakers.insert(account.id); promptLock.unlock() }
+        return .success("Looks good.")
+    }
+    let countBeforeManual = KnowledgeReview.records().count
+    expect(KnowledgeReviewLink.run(in: discussion), "manual review starts with 2 same-company accounts")
+    waitForMeeting()
+    expect(KnowledgeReview.records().count == countBeforeManual && SkillStore.shared.read("idle-manual-guard") == nil,
+           "manual review with only 1 successful speaker does not synthesize or apply (minSpeakers=2)")
+
+    failSecond = false
+    answerDelay = 1.05   // records keep whole seconds (ISO 8601), so the meeting must outlast one to tell end from start
+    let beforeManualRun = Date()
+    expect(KnowledgeReviewLink.run(in: discussion), "manual review succeeds when both speakers answer")
+    waitForMeeting()
+    let manualRec = KnowledgeReview.records().last
+    expect(SkillStore.shared.read("idle-manual-guard") != nil,
+           "manual review with both speakers applies: \(KnowledgeReview.records().count - countBeforeManual) new record(s)")
+    expect(manualRec?.partial == true, "same-company manual review is marked partial: \(String(describing: manualRec?.partial))")
+    expect((manualRec?.at.timeIntervalSince(beforeManualRun) ?? 0) >= 0.05,
+           "manual review records completion timestamp (after meeting work), not start timestamp: \(manualRec?.at.timeIntervalSince(beforeManualRun) ?? -1) s")
+
+    // 11) TodoScheduler.onTick fires only on periodic scheduled timer wake, not on tick()/startNow().
     let scheduler = TodoScheduler(discussion: discussion, store: TodoStore.shared)
     var ticked = 0
     scheduler.onTick = { ticked += 1 }
     scheduler.tick()
-    expect(ticked == 1, "TodoScheduler.tick invokes onTick hook")
+    scheduler.startNow()
+    expect(ticked == 0, "TodoScheduler.tick and startNow do not fire onTick")
+    scheduler.scheduledTick()
+    expect(ticked == 1, "TodoScheduler.scheduledTick invokes onTick hook")
 }

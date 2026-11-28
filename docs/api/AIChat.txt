@@ -392,7 +392,7 @@ KnowledgeReview.undo(_:now:) | static func undo(_ meeting: UUID, now: Date = Dat
 KnowledgeReviewLink | enum KnowledgeReviewLink
 KnowledgeReviewLink.isReviewHost | static var isReviewHost: () -> Bool
 KnowledgeReviewLink.run(in:done:) | @discardableResult static func run(in discussion: Discussion, done: ((String) -> Void)? = nil) -> Bool
-KnowledgeReviewLink.runIfIdle(in:now:done:) | @discardableResult static func runIfIdle(in discussion: Discussion, now: Date = Date(), done: ((String) -> Void)? = nil) -> Bool
+KnowledgeReviewLink.runIfIdle(in:now:done:) | @discardableResult static func runIfIdle(in discussion: Discussion, now: Date? = nil, done: ((String) -> Void)? = nil) -> Bool
 KnowledgeReviewRecord | struct KnowledgeReviewRecord
 KnowledgeReviewRecord.Outcome | struct Outcome
 KnowledgeReviewRecord.Outcome.candidate | var candidate: UUID

@@ -66,6 +66,33 @@ public final class SkillStore: ObservableObject {
     }
 }
 
+// A message's sentences, each cut into the parts a comma or "근데/but" joins, so a "~지 마" stops only its own part:
+// "스킬로 만들어, 근데 파일은 건드리지 마" still asks for the skill.
+enum RequestParts {
+    private static let joint = #"[,，、]|(?<!\w)(?:근데|그런데|하지만|그렇지만|그러나|다만|but|though|although|however)(?!\w)"#
+        + #"|(?<!\w)단(?=\s*[,，:]|\s+[가-힣]+(?:은|는|이|가)(?!\w))|\band\s+(?=(?:please\s+)?(?:don['’]?t|do\s+not|never)\b)"#
+    private static let retraction = #"^\s*(?:아니|아냐|아뇨|no\b|nope\b|wait\b|actually\b|scratch that\b)|^\s*(?:그냥\s*)?(?:하지|그러지)\s*(?:마|말)"#
+    private static let dangling = #"\b(?:don['’]?t|do\s+not|never)\s*$"#
+
+    static func sentences(_ text: String) -> [[String]] {
+        text.components(separatedBy: CharacterSet(charactersIn: ".!?。！？;\n")).map { sentence in
+            // "아니, 만들지 마": the "아니" stays with the part it takes back.
+            sentence.replacingOccurrences(of: joint, with: "\u{1F}", options: .regularExpression).components(separatedBy: "\u{1F}")
+                .reduce(into: [String]()) { parts, part in
+                    if let last = parts.last, last.range(of: #"^\s*(?:아니\S*|아냐|아뇨|no|nope|wait|actually)\s*$"#, options: .regularExpression) != nil {
+                        parts[parts.count - 1] = last + " " + part
+                    } else { parts.append(part) }
+                }
+        }
+    }
+
+    // A part that takes the whole sentence back: "아니, 만들지 마", "Make it a skill, actually don't", "Do not, ever, …".
+    static func takesBack(_ part: String, negated: Bool) -> Bool {
+        part.range(of: dangling, options: .regularExpression) != nil
+            || negated && part.range(of: retraction, options: .regularExpression) != nil
+    }
+}
+
 // Available to the AIs answering a chat. Both the prompt and the tool use the chat's saved project.
 public final class SkillLink: ToolProvider {
     public static let shared = SkillLink()
@@ -123,11 +150,15 @@ public final class SkillLink: ToolProvider {
             + "|" + skill + #"(?:로\s*)?"# + modifier + #"(?:만들어|고쳐|바꿔|(?:작성|추가|저장|등록|수정|업데이트|편집)"# + doIt + ")" + #"\s*"# + ending
         let delete = prefix + #"(?:delete|remove|erase|drop)\s+"# + target
             + "|" + skill + modifier + #"(?:지워|지우고|없애|삭제(?:\s*하고|"# + doIt + #")?|제거"# + doIt + ")" + #"\s*"# + ending
+        let negation = #"하지\s*(?:마|말)|지\s*(?:마|말아|말고)|\b(?:don['’]?t|do not|never)\s+(?:make|turn|convert|store|create|add|save|update|edit|modify|rewrite|revise|fix|change|replace|delete|remove|erase|drop)\b"#
         var edits: Set<Edit> = []
-        for clause in text.components(separatedBy: CharacterSet(charactersIn: ".!?。！？;\n")) {
-            if clause.range(of: #"하지\s*(?:마|말)|지\s*(?:마|말아|말고)|\b(?:don['’]?t|do not|never)\s+(?:make|turn|convert|store|create|add|save|update|edit|modify|rewrite|revise|fix|change|replace|delete|remove|erase|drop)\b"#, options: .regularExpression) != nil { continue }
-            if clause.range(of: save, options: .regularExpression) != nil { edits.insert(.save) }
-            if clause.range(of: delete, options: .regularExpression) != nil { edits.insert(.delete) }
+        for parts in RequestParts.sentences(text) {
+            let negated = parts.map { $0.range(of: negation, options: .regularExpression) != nil }
+            if zip(parts, negated).contains(where: { RequestParts.takesBack($0.0, negated: $0.1) }) { continue }
+            for (part, negated) in zip(parts, negated) where !negated {
+                if part.range(of: save, options: .regularExpression) != nil { edits.insert(.save) }
+                if part.range(of: delete, options: .regularExpression) != nil { edits.insert(.delete) }
+            }
         }
         return edits
     }

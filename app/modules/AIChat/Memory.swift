@@ -148,11 +148,17 @@ public final class MemoryStore: ObservableObject {
 
     static func asksNotToSave(_ text: String) -> Bool { noSave.contains(where: text.lowercased().contains) }
 
-    // A message that asks to remember something (and not one that asks not to).
+    // A message that asks to remember something. "기억하지 마" stops only its own part ("이건 기억해, 그건 기억하지 마"),
+    // or its whole sentence when it takes the request back ("기억해 줘, 아니 기억하지 마"). Auto proposals still stop for
+    // any "기억하지 마" in the message (asksNotToSave).
     static func asksToRemember(_ text: String) -> Bool {
-        let lower = text.lowercased()
-        if asksNotToSave(lower) { return false }
-        return lower.range(of: "기억\\s*해|기억해\\s*(줘|둬|놔)|기억\\s*해\\s*(줘|둬|놔)|기억해\\s*줄래|remember|" + keep, options: .regularExpression) != nil
+        RequestParts.sentences(text.lowercased()).contains { parts in
+            let negated = parts.map(asksNotToSave)
+            return !zip(parts, negated).contains { RequestParts.takesBack($0.0, negated: $0.1) }
+                && zip(parts, negated).contains { part, negated in
+                    !negated && part.range(of: "기억\\s*해|기억해\\s*(줘|둬|놔)|기억\\s*해\\s*(줘|둬|놔)|기억해\\s*줄래|remember|" + keep, options: .regularExpression) != nil
+                }
+        }
     }
 
     // A message that asks to correct or delete what is saved: "잊어", "forget", or an edit word next to memory

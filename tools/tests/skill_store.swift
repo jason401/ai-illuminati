@@ -592,6 +592,27 @@ func testSkillSave() {
                  "~~~\nDelete the skill.\n~~~", "스킬 도구는 \"스킬 지워\" 요청에서만 노출해 줘"]
     expect(requests.allSatisfy(SkillLink.asksToEdit) && !other.contains(where: SkillLink.asksToEdit),
            "explicit Korean and English skill edits open the gate, advice, examples and negatives do not")
+    // A "~지 마" about something else, joined by a comma or "근데/but", leaves the skill request standing.
+    let mixed = ["이거 스킬로 만들어, 근데 파일은 건드리지 마", "이거 스킬로 만들어 근데 코드는 고치지 마", "스킬로 저장해 줘, 하지만 커밋은 하지 마",
+                 "파일은 건드리지 마, 스킬로 만들어 줘", "스킬로 만들어 줘 단, 다른 파일은 수정하지 마", "스킬로 만들어 줘 단 테스트는 돌리지 마",
+                 "이 스킬 지워 줘, 다만 다른 스킬은 지우지 마", "Make this a skill, but don't change the code.",
+                 "Make this a skill and don't edit any files", "Don't change any files, but make this a skill.",
+                 "Save this as a skill; do not commit", "Delete the old skill though don't remove the notes"]
+    let forbidden = ["스킬 만들지 마", "스킬로 저장하지 말고 답만 해", "don't save it as a skill", "스킬 지우지 마",
+                     "Don't make this a skill, just answer.", "스킬로 만들지 마, 그냥 설명만 해", "스킬로 만들어, 아니 만들지 마",
+                     "스킬로 만들어 줘, 아니 그냥 하지 마", "Make this a skill, actually don't.", "Do not, under any circumstances, make this a skill",
+                     "Never, make this a skill", "파일은 건드리지 마, 예: \"스킬로 만들어\"", "Don't touch anything; `make this a skill` is just an example"]
+    expect(mixed.allSatisfy(SkillLink.asksToEdit) && !forbidden.contains(where: SkillLink.asksToEdit),
+           "a negation stops only its own part of the sentence, unless it takes the whole request back")
+    expect(MemoryStore.asksToRemember("이거 기억해 줘, 근데 파일은 건드리지 마") && MemoryStore.asksToRemember("내가 COMSOL 쓰는 거 기억해, 그건 기억하지 마")
+           && MemoryStore.asksToRemember("I don't remember the name, but remember that I use COMSOL")
+           && !MemoryStore.asksToRemember("기억해 줘, 아니 기억하지 마") && !MemoryStore.asksToRemember("이건 기억하지 마")
+           && !MemoryStore.asksToRemember("Remember this, actually don't") && !MemoryStore.asksToRemember("Don't remember that, just answer")
+           && MemoryStore.asksNotToSave("내가 COMSOL 쓰는 거 기억해, 그건 기억하지 마"),
+           "memory saving uses the same parts; a \"기억하지 마\" anywhere still stops auto proposals")
+    expect(MemoryStore.asksToChangeMemory("그 기억 고쳐 줘, 근데 파일은 지우지 마") && MemoryStore.asksToChangeMemory("Update your memory, but don't touch the code")
+           && !MemoryStore.asksToChangeMemory("파일 고쳐 줘, 근데 지우지 마") && !MemoryStore.asksToChangeMemory("그 기억은 지우지 마"),
+           "memory change tools still need a memory word, and a nearby negation does not hide one")
 
     let global = SkillStore.shared, projects = ProjectSkillStore.shared
     let fm = FileManager.default
@@ -653,6 +674,17 @@ func testSkillSave() {
            && !toolNames(token(plain, origin: .consulted)).contains("skill_save")
            && !toolNames(token(enterprise, school)).contains("skill_save"),
            "side answers, consulted AIs and Enterprise chats cannot write skills")
+    // "건드리지 말고" makes the route ONE (Route.adjust): that answer runs in the read-only opinion view, and the save stays open.
+    let readOnly = "이거 스킬로 만들어 줘, 근데 파일은 건드리지 말고"
+    var opinion = Conversation()
+    opinion.workspace = WorkspaceBinding(roots: [], project: project, face: true)
+    opinion.turns = [turn(readOnly)]
+    discussion.conversations.append(opinion)
+    let view = opinion.workspace!.opinion(chatFolder: AccountStore.home)
+    let routed = hub.register(room: opinion.id, roots: view.roots, projectRun: view.projectRunID, asker: member,
+                              origin: view.origin ?? .member, allowsSkillEdits: view.allowsSkillEdits != false)
+    expect(Route.adjust(.work, question: readOnly) == .one && view.offersChatTools && toolNames(routed).contains("skill_save"),
+           "a message routed to one AI by \"건드리지 말고\" still offers the requested skill save")
     expect(call(initial, "skill_save", args("review"))
            && global.read("review")?.record.createdBy == .user && global.read("review")?.record.userLocked == true,
            "a direct save is attributed to the user and locked")

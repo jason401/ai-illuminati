@@ -491,6 +491,35 @@ func testMemory() {
     expect(!offered(locked.id, "memory_forget") && link.call("memory_forget", ["id": saved.shortID], context: session(locked.id))["isError"] as? Bool == true,
            "an Enterprise chat cannot forget either")
 
+    // A new fact like a saved one: the answer shows that one with its id, how to fold them into one, and how full memory is.
+    func said(_ reply: [String: Any]) -> String { ((reply["content"] as? [[String: Any]])?.first?["text"] as? String) ?? "" }
+    let alike = said(link.call("remember", ["text": "COMSOL과 MATLAB 둘 다 매일 씀"], context: session(open.id)))
+    let added = store.snapshot.items.last!
+    expect(alike.hasPrefix("Saved to memory: [\(added.shortID)] COMSOL과 MATLAB 둘 다 매일 씀") && alike.contains("Similar saved facts:\n- [\(saved.shortID)] COMSOL과 MATLAB을 씀 (")
+           && alike.contains("change that one with memory_replace and remove this new one ([\(added.shortID)]) with memory_forget")
+           && alike.contains("Memory use: 2 of 300 facts;") && alike.contains("of 6000 characters") && !alike.contains("Over that budget") && !alike.contains("Nearly full"),
+           "a fact like a saved one: the answer names it by id, says to replace that one and forget this one, and shows how full memory is")
+    let apart = said(link.call("remember", ["text": "San Jose에 살고 Caltrain을 탐"], context: session(open.id)))
+    expect(apart.hasPrefix("Saved to memory: [") && !apart.contains("Similar saved facts") && !apart.contains("memory_replace") && apart.contains("3 of 300 facts"),
+           "an unrelated fact: no similar facts and no advice, only how full memory is")
+    expect(MemoryStore.similar("Python 씀", in: store.snapshot.items).isEmpty && MemoryStore.similar("COMSOL 씀", in: store.snapshot.items).map(\.id).contains(saved.id)
+           && MemoryStore.similar("COMSOL MATLAB", in: (0..<5).map { MemoryItem(text: "COMSOL MATLAB \($0)") }).count == 3,
+           "a shared short word alone is not similar; at most 3 similar facts")
+
+    // Undo under the answer ("기억 고침/기억 지움 + 취소"): every change of this message goes back from history, newest first.
+    let message = link.newestTurn(open.id)
+    func text(_ id: UUID) -> String? { store.snapshot.items.first { $0.id == id }?.text }
+    _ = link.call("memory_replace", ["id": saved.shortID, "text": "COMSOL만 씀"], context: session(open.id))
+    _ = link.call("memory_replace", ["id": saved.shortID, "text": "COMSOL과 Python을 씀"], context: session(open.id))
+    _ = link.call("memory_forget", ["id": added.shortID], context: session(open.id))
+    let shown = store.snapshot.history.filter { $0.turn == message }
+    expect(shown.count == 3 && text(saved.id) == "COMSOL과 Python을 씀" && text(added.id) == nil, "the message's changes are what its line shows")
+    expect(!store.undo(shown[0].id) && text(saved.id) == "COMSOL과 Python을 씀", "an earlier change of a fact changed again since does not undo over the newer one")
+    expect(store.undo(shown[2].id) && text(added.id) == "COMSOL과 MATLAB 둘 다 매일 씀" && store.undo(shown[1].id) && store.undo(shown[0].id)
+           && text(saved.id) == "COMSOL과 MATLAB을 씀" && store.snapshot.history.filter { $0.turn == message }.isEmpty
+           && store.snapshot.items.map(\.id) == [saved.id, added.id, store.snapshot.items[2].id],
+           "Undo puts forgotten and replaced facts back as they were, in their place, and the line goes away")
+
     // Many facts: those that match the message, within the limit.
     store.update { data in
         data.items += (0..<200).map { MemoryItem(text: "잡다한 사실 번호 \($0) 입니다 그리고 조금 더 긴 설명을 붙여서 길이를 늘립니다") }
@@ -499,7 +528,18 @@ func testMemory() {
     let many = MemoryStore.rule(store.snapshot, question: "트랜스듀서 공진 주파수 얼마였지?")
     expect(many.contains("2 MHz") && many.contains("others left out") && many.count < MemoryStore.profileLimit + MemoryStore.itemsLimit + 800,
            "over the limit: the matching facts go first and the rest is cut")
+    let over = said(link.call("remember", ["text": "드립 커피를 좋아함"], context: session(open.id)))
+    expect(over.hasPrefix("Saved to memory:") && over.contains("205 of 300 facts") && over.contains("Over that budget") && !over.contains("Nearly full"),
+           "over the prompt budget: saved, with a warning only")
+    store.update { data in data.items += (0..<(MemoryStore.maxItems - 1 - data.items.count)).map { MemoryItem(text: "채우기 \($0)") } }
+    let last = link.call("remember", ["text": "마지막 한 줄"], context: session(open.id))
+    expect(last["isError"] as? Bool == false && said(last).contains("300 of 300 facts") && said(last).contains("Nearly full"), "near the limit: still saved, with a warning")
+    let full = link.call("remember", ["text": "넘치는 한 줄"], context: session(open.id))
+    expect(full["isError"] as? Bool == true && said(full).contains("Memory is full") && store.snapshot.items.count == MemoryStore.maxItems, "at the limit new facts are still refused")
+    _ = link.call("memory_forget", ["id": added.shortID], context: session(open.id))
+    _ = link.call("remember", ["text": "자리를 채운 한 줄"], context: session(open.id))
+    expect(!store.undo(store.snapshot.history.last!.id) && text(added.id) == nil, "Undo of a forget never goes over the limit")
     store.update { $0.enabled = false }
     expect(chat.memoryRule(claude, chat: open.id).isEmpty && !offered(open.id), "memory off: nothing given, nothing saved")
-    print("PASS: memory (profile and facts with short ids for every AI, remember only when on or asked and only to its own message, replace/forget by id with Undo history, \"잊어\" opens them, Enterprise reads only, no secrets or repeats, matching facts over the limit, off)")
+    print("PASS: memory (profile and facts with short ids for every AI, remember only when on or asked and only to its own message, replace/forget by id with Undo history, \"잊어\" opens them, similar facts and usage after remember, Enterprise reads only, no secrets or repeats, matching facts over the limit, off)")
 }

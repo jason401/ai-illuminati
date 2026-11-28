@@ -3163,6 +3163,7 @@ runTest("testMemory", testMemory)
 runTest("testProjectMemory", testProjectMemory)
 runTest("testProjectMemoryUndo", testProjectMemoryUndo)
 runTest("testProjectMemoryCleanup", testProjectMemoryCleanup)
+runTest("testSkillStore", testSkillStore)
 
 // Outside MCP servers (Settings → MCP): saved in their own file, run by the app, offered as "<server>__<tool>".
 func testExternalMCP() {

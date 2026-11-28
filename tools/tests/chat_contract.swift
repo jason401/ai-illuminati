@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import AIAccounts
+import AIProjects
 import AIChat
 import AIChatRecords
 // contract needs: chat fixtures
@@ -157,4 +158,22 @@ let revision = colorDefaults.integer(forKey: AIColors.revisionKey)
 AIColors.set(nil, for: .claude, in: colorDefaults); AIColors.set(nil, for: .gemini, in: colorDefaults)
 expect(AIColors.saved(.claude, in: colorDefaults) == nil && colorDefaults.object(forKey: "aiColors") == nil
        && colorDefaults.integer(forKey: AIColors.revisionKey) == revision + 2, "clearing goes back to the brand and tells the views")
+
+// Global skills (SkillStore): kept under <support>/skills/ in the test home, using AIProjects' SKILL.md format.
+do {
+    let skills = SkillStore.shared
+    expect(SkillStore.folder.path == AccountStore.supportDir + "/skills", "global skills live under supportDir/skills")
+    guard case .saved(let rec) = skills.save(name: "writing-style", description: "Style guide", body: "Keep concise.", by: .user) else {
+        fatalError("FAIL: global skill save")
+    }
+    expect(rec.userLocked && skills.read("writing-style")?.document.body == "Keep concise."
+           && skills.list().map(\.name) == ["writing-style"], "global skill saved and read")
+    if case .needsApproval = skills.save(name: "writing-style", description: "AI", body: "x", by: .ai) {} else {
+        fatalError("FAIL: AI must not overwrite a user-locked global skill")
+    }
+    guard case .deleted(let tomb) = skills.delete("writing-style") else { fatalError("FAIL: global skill delete") }
+    expect(tomb.id == rec.id && skills.tombstones().contains(tomb), "global skill delete leaves a tombstone")
+    guard case .undone = skills.undo() else { fatalError("FAIL: global skill undo") }
+    expect(skills.read("writing-style")?.record.id == rec.id, "global skill undo restores it")
+}
 print("PASS: chat contract")

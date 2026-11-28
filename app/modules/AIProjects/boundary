@@ -5,3 +5,4 @@ _ = TodoScheduler.retryDelay	retryDelay
 _ = ProjectWork.leasePrefix	leasePrefix
 _ = TodoStore.encoder	encoder
 _ = ProjectMemoryStore.maxActive	maxActive
+_ = SkillDirectory.indexFileName	indexFileName

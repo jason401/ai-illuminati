@@ -372,5 +372,24 @@ do {
            && fm.fileExists(atPath: saved.path + "/" + folders[0] + "/memory-history.jsonl"), "kept in projects/<id>/ under the test home")
 }
 
-print("PASS: Projects promises (TODO retry, busy repository, the user after retries, report on the check, next start after the lock's release, cancel, a free place, restart, todos.json, project memory, repository lock, scoped tools, work binding)")
+// Project skills: SKILL.md frontmatter + body under projects/<id>/skills/, user lock, tombstone and undo.
+do {
+    let skills = ProjectSkillStore.shared, key = repo.path + "/skills"
+    guard case .saved(let first) = skills.save(name: "deploy-check", description: "Check deploy steps", body: "1. Build", by: .user, project: key) else {
+        fatalError("FAIL: project skill save")
+    }
+    expect(first.userLocked && skills.read("deploy-check", project: key)?.document.body == "1. Build"
+           && skills.list(key).map(\.name) == ["deploy-check"], "project skill saved and read back")
+    if case .needsApproval = skills.save(name: "deploy-check", description: "AI edit", body: "2", by: .ai, project: key) {} else {
+        fatalError("FAIL: AI must not overwrite a user-locked project skill")
+    }
+    guard case .deleted(let tomb) = skills.delete("deploy-check", project: key) else { fatalError("FAIL: project skill delete") }
+    expect(tomb.id == first.id && skills.tombstones(key).contains(tomb) && skills.read("deploy-check", project: key) == nil,
+           "delete records a tombstone")
+    guard case .undone = skills.undo(project: key) else { fatalError("FAIL: project skill undo") }
+    expect(skills.read("deploy-check", project: key)?.record.id == first.id && skills.tombstones(key).isEmpty,
+           "undo restores the deleted skill and clears its tombstone")
+}
+
+print("PASS: Projects promises (TODO retry, busy repository, the user after retries, report on the check, next start after the lock's release, cancel, a free place, restart, todos.json, project memory, project skills, repository lock, scoped tools, work binding)")
 exit(0)

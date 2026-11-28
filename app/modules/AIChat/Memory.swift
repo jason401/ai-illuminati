@@ -149,16 +149,18 @@ public final class MemoryStore: ObservableObject {
     static func asksNotToSave(_ text: String) -> Bool { noSave.contains(where: text.lowercased().contains) }
 
     // A message that asks to remember something. "기억하지 마" stops only its own part ("이건 기억해, 그건 기억하지 마"),
-    // or its whole sentence when it takes the request back ("기억해 줘, 아니 기억하지 마"). Auto proposals still stop for
-    // any "기억하지 마" in the message (asksNotToSave).
+    // or its sentence and those before it when it takes the request back ("기억해 줘. 아니, 기억하지 마"). Auto
+    // proposals still stop for any "기억하지 마" in the message (asksNotToSave).
     static func asksToRemember(_ text: String) -> Bool {
-        RequestParts.sentences(text.lowercased()).contains { parts in
-            let negated = parts.map(asksNotToSave)
-            return !zip(parts, negated).contains { RequestParts.takesBack($0.0, negated: $0.1) }
-                && zip(parts, negated).contains { part, negated in
-                    !negated && part.range(of: "기억\\s*해|기억해\\s*(줘|둬|놔)|기억\\s*해\\s*(줘|둬|놔)|기억해\\s*줄래|remember|" + keep, options: .regularExpression) != nil
-                }
+        var asked = false
+        for parts in RequestParts.sentences(text.lowercased()) {
+            let negated = RequestParts.negations(parts, parts.map { asksNotToSave($0.text) })
+            if zip(parts, negated).contains(where: { RequestParts.takesBack($0.0.text, negated: $0.1) }) { asked = false; continue }
+            asked = asked || zip(parts, negated).contains { part, negated in
+                !negated && part.text.range(of: "기억\\s*해|기억해\\s*(줘|둬|놔)|기억\\s*해\\s*(줘|둬|놔)|기억해\\s*줄래|remember|" + keep, options: .regularExpression) != nil
+            }
         }
+        return asked
     }
 
     // A message that asks to correct or delete what is saved: "잊어", "forget", or an edit word next to memory
@@ -168,9 +170,12 @@ public final class MemoryStore: ObservableObject {
     static func asksToChangeMemory(_ text: String) -> Bool {
         let lower = text.lowercased().replacingOccurrences(of: keep + "|" + keepEdits + "|잊어버렸|잊어\\s*버렸", with: " ", options: .regularExpression)
         if lower.range(of: "잊어|잊어버려|잊으|forget", options: .regularExpression) != nil { return true }
-        let memory = ["기억", "메모리", "memory", "remember"].contains(where: lower.contains)
+        // A part that asks to keep names no memory to change: "그 기억은 지우지 마, 예제 파일은 지워 줘".
+        let asked = RequestParts.sentences(text.lowercased()).joined().map(\.text)
+            .filter { $0.range(of: keep + "|" + keepEdits, options: .regularExpression) == nil }.joined(separator: " ")
+        let memory = ["기억", "메모리", "memory", "remember"].contains(where: asked.contains)
         let edit = ["지워", "지우", "삭제", "고쳐", "수정", "바꿔", "정정", "틀렸", "갱신", "업데이트",
-                    "update", "correct", "change", "delete", "remove", "fix", "wrong"].contains(where: lower.contains)
+                    "update", "correct", "change", "delete", "remove", "fix", "wrong"].contains(where: asked.contains)
         return memory && edit
     }
 

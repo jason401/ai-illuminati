@@ -597,21 +597,31 @@ func testSkillSave() {
                  "파일은 건드리지 마, 스킬로 만들어 줘", "스킬로 만들어 줘 단, 다른 파일은 수정하지 마", "스킬로 만들어 줘 단 테스트는 돌리지 마",
                  "이 스킬 지워 줘, 다만 다른 스킬은 지우지 마", "Make this a skill, but don't change the code.",
                  "Make this a skill and don't edit any files", "Don't change any files, but make this a skill.",
-                 "Save this as a skill; do not commit", "Delete the old skill though don't remove the notes"]
+                 "Save this as a skill; do not commit", "Delete the old skill though don't remove the notes",
+                 "Make this a skill, but actually don't change the code.", "스킬로 만들어 줘 단 파일 건드리지 마",
+                 "스킬로 만들어 줘 파일은 건드리지 마", "스킬로 만들어, 아니 근데 파일은 건드리지 마",
+                 "Don't touch the files, but create a skill, or update the old skill", "Make this a skill. Actually, don't change the code."]
     let forbidden = ["스킬 만들지 마", "스킬로 저장하지 말고 답만 해", "don't save it as a skill", "스킬 지우지 마",
                      "Don't make this a skill, just answer.", "스킬로 만들지 마, 그냥 설명만 해", "스킬로 만들어, 아니 만들지 마",
                      "스킬로 만들어 줘, 아니 그냥 하지 마", "Make this a skill, actually don't.", "Do not, under any circumstances, make this a skill",
-                     "Never, make this a skill", "파일은 건드리지 마, 예: \"스킬로 만들어\"", "Don't touch anything; `make this a skill` is just an example"]
+                     "Never, make this a skill", "파일은 건드리지 마, 예: \"스킬로 만들어\"", "Don't touch anything; `make this a skill` is just an example",
+                     "Don't change the code, create a skill, or commit anything.", "Don't change the code, create a skill or commit",
+                     "스킬로 만들어. 아니, 만들지 마.", "Make this a skill. Actually, don't do that.", "스킬로 만들어 줘, 아니 그건 만들지 마",
+                     "Make it a skill, actually don't make it a skill", "스킬로 만들어 줘 아니 하지 마"]
     expect(mixed.allSatisfy(SkillLink.asksToEdit) && !forbidden.contains(where: SkillLink.asksToEdit),
            "a negation stops only its own part of the sentence, unless it takes the whole request back")
     expect(MemoryStore.asksToRemember("이거 기억해 줘, 근데 파일은 건드리지 마") && MemoryStore.asksToRemember("내가 COMSOL 쓰는 거 기억해, 그건 기억하지 마")
            && MemoryStore.asksToRemember("I don't remember the name, but remember that I use COMSOL")
            && !MemoryStore.asksToRemember("기억해 줘, 아니 기억하지 마") && !MemoryStore.asksToRemember("이건 기억하지 마")
            && !MemoryStore.asksToRemember("Remember this, actually don't") && !MemoryStore.asksToRemember("Don't remember that, just answer")
+           && !MemoryStore.asksToRemember("Remember this. Actually, don't remember it.") && !MemoryStore.asksToRemember("기억해 줘. 아니, 기억하지 마.")
+           && MemoryStore.asksToRemember("아니, 기억하지 마. 대신 이건 기억해 줘") && MemoryStore.asksToRemember("기억해 줘 파일은 건드리지 마")
            && MemoryStore.asksNotToSave("내가 COMSOL 쓰는 거 기억해, 그건 기억하지 마"),
            "memory saving uses the same parts; a \"기억하지 마\" anywhere still stops auto proposals")
     expect(MemoryStore.asksToChangeMemory("그 기억 고쳐 줘, 근데 파일은 지우지 마") && MemoryStore.asksToChangeMemory("Update your memory, but don't touch the code")
-           && !MemoryStore.asksToChangeMemory("파일 고쳐 줘, 근데 지우지 마") && !MemoryStore.asksToChangeMemory("그 기억은 지우지 마"),
+           && !MemoryStore.asksToChangeMemory("파일 고쳐 줘, 근데 지우지 마") && !MemoryStore.asksToChangeMemory("그 기억은 지우지 마")
+           && !MemoryStore.asksToChangeMemory("그 기억은 지우지 마, 예제 파일은 지워 줘") && !MemoryStore.asksToChangeMemory("Don't delete that memory, just fix the file")
+           && MemoryStore.asksToChangeMemory("기억 하나 틀렸어, 고쳐 줘. 파일은 지우지 마"),
            "memory change tools still need a memory word, and a nearby negation does not hide one")
 
     let global = SkillStore.shared, projects = ProjectSkillStore.shared

@@ -396,8 +396,11 @@ func testMemory() {
     expect(MemoryStore.asksToChangeMemory("그건 잊어") && MemoryStore.asksToChangeMemory("Forget that I use MATLAB") && MemoryStore.asksToChangeMemory("기억한 거 틀렸어, 고쳐 줘")
            && MemoryStore.asksToChangeMemory("update your memory: I moved to Palo Alto") && !MemoryStore.asksToChangeMemory("이건 기억하지 마")
            && !MemoryStore.asksToChangeMemory("이 파일 지워 줘") && !MemoryStore.asksToChangeMemory("비밀번호를 잊어버렸어") && !MemoryStore.asksToChangeMemory("Don't forget my meeting")
-           && MemoryStore.asksToRemember("내 미팅 잊지 마") && !MemoryStore.asksToRemember("그건 잊어"),
-           "\"잊어\"/forget/memory edits ask to change memory; \"기억하지 마\", unrelated deletes and \"잊지 마\" do not")
+           && MemoryStore.asksToRemember("내 미팅 잊지 마") && !MemoryStore.asksToRemember("그건 잊어")
+           && !MemoryStore.asksToChangeMemory("Don't delete that memory") && !MemoryStore.asksToChangeMemory("그 기억은 지우지 마")
+           && MemoryStore.asksToChangeMemory("정정: 멈추는 조건을 넣지 마라") && MemoryStore.asksToChangeMemory("Correction: I live in San Jose")
+           && !MemoryStore.asksToChangeMemory("aberration correction 결과 정리해 줘"),
+           "\"잊어\"/forget/memory edits/corrections ask to change memory; \"기억하지 마\", \"지우지 마\", unrelated deletes and \"잊지 마\" do not")
     expect(MemoryStore.looksSecret("내 비밀번호는 hunter2") && MemoryStore.looksSecret("key sk-abcdefghijklmnopqrstuv") && !MemoryStore.looksSecret("LiNbO3 투명 초음파 트랜스듀서를 연구함"),
            "secrets are refused, research facts are not")
 
@@ -454,10 +457,20 @@ func testMemory() {
     expect(link.call("memory_forget", ["id": saved.shortID], context: session(open.id))["isError"] as? Bool == false
            && store.snapshot.items.isEmpty && store.snapshot.history.last?.new == nil, "forget removes the fact and keeps it in history")
     expect(store.undo(store.snapshot.history.last!.id) && store.snapshot.items.first?.id == saved.id && !store.undo(UUID()), "Undo brings a forgotten fact back")
+    _ = link.call("memory_forget", ["id": saved.shortID], context: session(open.id))
+    let gone = store.snapshot
+    store.removeAll()
+    expect(store.snapshot.history.isEmpty && !store.undo(gone.history.last!.id) && store.snapshot.items.isEmpty, "removing all memory also drops its Undo")
+    store.update { $0 = gone }
+    expect(store.undo(gone.history.last!.id), "(put back for the rest)")
     chat.change(open.id) { $0.turns[$0.turns.count - 1].question = "그건 잊어" }
     expect(offered(open.id, "memory_forget") && !offered(open.id), "\"이거 잊어\" offers forget (it used to close every memory tool)")
     chat.change(open.id) { $0.turns[$0.turns.count - 1].question = "이건 기억하지 마" }
     expect(!offered(open.id) && !offered(open.id, "memory_forget"), "\"기억하지 마\" offers nothing")
+    store.update { $0.autoSave = true }
+    expect(!offered(open.id) && !offered(open.id, "memory_forget") && chat.memoryRule(claude, chat: open.id).contains("Saved facts")
+           && !chat.memoryRule(claude, chat: open.id).contains("remember tool"), "\"기억하지 마\" wins over saving on its own")
+    store.update { $0.autoSave = false }
     chat.change(open.id) { $0.turns[$0.turns.count - 1].answeredAt = Date() }
     let old = Data(#"{"profile":"옛 프로필","items":[{"id":"1A2B3C4D-0000-0000-0000-000000000000","text":"옛 사실","createdAt":0}],"autoSave":false,"enabled":true}"#.utf8)
     let decoded = try? JSONDecoder().decode(MemoryData.self, from: old)

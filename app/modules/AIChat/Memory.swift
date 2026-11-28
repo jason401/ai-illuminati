@@ -122,25 +122,32 @@ public final class MemoryStore: ObservableObject {
             if let i = data.items.firstIndex(where: { $0.id == id }) { data.items[i].text = line }
         }
     }
-    public func remove(_ id: UUID) { update { $0.items.removeAll { $0.id == id } } }
-    public func removeAll() { update { $0.items = [] } }
+    // A fact the user removed has no Undo left: its changes go too, so an old "Undo" never brings it back.
+    public func remove(_ id: UUID) { update { data in data.items.removeAll { $0.id == id }; data.history.removeAll { $0.old.id == id } } }
+    public func removeAll() { update { $0.items = []; $0.history = [] } }
 
     // "기억하지 마": do not save this. Not the same as "잊어" (forget something already saved: asksToChangeMemory).
     static let noSave = ["기억하지 마", "기억하지마", "기억하지 말", "don't remember", "dont remember", "do not remember"]
     static let keep = "잊지\\s*(마|말)|don'?t forget|do not forget"
+    // "지우지 마", "don't delete that memory": asks to keep, not to change.
+    static let keepEdits = "(지우|삭제하|고치|수정하|바꾸|갱신하|업데이트하)지\\s*(마|말)|(don'?t|do not|never)\\s+(delete|remove|change|update|fix|correct|erase|touch)"
+
+    static func asksNotToSave(_ text: String) -> Bool { noSave.contains(where: text.lowercased().contains) }
 
     // A message that asks to remember something (and not one that asks not to).
     static func asksToRemember(_ text: String) -> Bool {
         let lower = text.lowercased()
-        if noSave.contains(where: lower.contains) { return false }
+        if asksNotToSave(lower) { return false }
         return lower.range(of: "기억\\s*해|기억해\\s*(줘|둬|놔)|기억\\s*해\\s*(줘|둬|놔)|기억해\\s*줄래|remember|" + keep, options: .regularExpression) != nil
     }
 
     // A message that asks to correct or delete what is saved: "잊어", "forget", or an edit word next to memory
-    // ("기억 고쳐", "update your memory"). "잊지 마"/"don't forget" ask to keep, "잊어버렸어"/"forgot" only tell.
+    // ("기억 고쳐", "update your memory") or a correction ("정정: ...", "correction: ..."). "잊지 마"/"don't forget" and
+    // "지우지 마"/"don't delete" ask to keep, "잊어버렸어"/"forgot" only tell. Bare "지워"/"고쳐" are left out: they are
+    // mostly about files and code.
     static func asksToChangeMemory(_ text: String) -> Bool {
-        let lower = text.lowercased().replacingOccurrences(of: keep + "|잊어버렸|잊어\\s*버렸", with: " ", options: .regularExpression)
-        if lower.range(of: "잊어|잊어버려|잊으|forget", options: .regularExpression) != nil { return true }
+        let lower = text.lowercased().replacingOccurrences(of: keep + "|" + keepEdits + "|잊어버렸|잊어\\s*버렸", with: " ", options: .regularExpression)
+        if lower.range(of: "잊어|잊어버려|잊으|forget|정정|correction\\s*[:：]", options: .regularExpression) != nil { return true }
         let memory = ["기억", "메모리", "memory", "remember"].contains(where: lower.contains)
         let edit = ["지워", "지우", "삭제", "고쳐", "수정", "바꿔", "정정", "틀렸", "갱신", "업데이트",
                     "update", "correct", "change", "delete", "remove", "fix", "wrong"].contains(where: lower.contains)
@@ -217,7 +224,7 @@ public final class MemoryStore: ObservableObject {
     @discardableResult
     func undo(_ change: UUID) -> Bool {
         var done = false
-        update { data in
+        let saved = update { data in
             guard let h = data.history.firstIndex(where: { $0.id == change }) else { return }
             let entry = data.history[h]
             if let new = entry.new {
@@ -232,7 +239,7 @@ public final class MemoryStore: ObservableObject {
             data.history.remove(at: h)
             done = true
         }
-        return done
+        return saved && done
     }
 
     // The block given to the AI: the profile, then the facts (all of them while they fit, else those that match
@@ -278,14 +285,15 @@ public final class MemoryStore: ObservableObject {
     static func mayRemember(_ data: MemoryData, chat: Conversation?, turn wanted: UUID? = nil) -> Bool {
         guard data.enabled, let chat, !chat.isEnterprise, let turn = chat.turns.last, turn.answeredAt == nil else { return false }
         if let wanted, wanted != turn.id { return false }
-        return data.autoSave || asksToRemember(turn.question)
+        // "기억하지 마" wins over saving on its own.
+        return asksNotToSave(turn.question) ? false : data.autoSave || asksToRemember(turn.question)
     }
 
     // May it correct or forget saved facts now? Whenever it may save, and when the message asks to change memory.
     static func mayChange(_ data: MemoryData, chat: Conversation?, turn wanted: UUID? = nil) -> Bool {
         guard data.enabled, let chat, !chat.isEnterprise, let turn = chat.turns.last, turn.answeredAt == nil else { return false }
         if let wanted, wanted != turn.id { return false }
-        return data.autoSave || asksToRemember(turn.question) || asksToChangeMemory(turn.question)
+        return mayRemember(data, chat: chat, turn: wanted) || asksToChangeMemory(turn.question)
     }
 
     static let changeRule = "If it updates a saved fact, use memory_replace with that fact's [id] instead of remember; if a saved fact is wrong, delete it with memory_forget."
@@ -299,7 +307,7 @@ public final class MemoryStore: ObservableObject {
                 : "The user asked you to remember something: save it with the remember tool as one short line in their language (not secrets). " + changeRule + " Say what you saved or changed."
         }
         guard mayChange(data, chat: chat) else { return "" }
-        return "The user asked you to change or forget something in their memory: correct a saved fact with memory_replace (its [id] and the new line, no secrets) or delete it with memory_forget, and say what you changed. Nothing new is saved in this answer."
+        return "The user may be asking you to change or forget something in their memory: if their message is about a saved fact, correct it with memory_replace (its [id] and the new line, no secrets) or delete it with memory_forget, and say what you changed; otherwise leave memory as it is. Nothing new is saved in this answer."
     }
 }
 

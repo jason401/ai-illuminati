@@ -3979,9 +3979,13 @@ private struct WorkPlanView: View {
     }
 }
 
+// Changes whose Undo did not go through (no @State, as above).
+private final class UndoFailures: ObservableObject { @Published var ids: Set<UUID> = [] }
+
 private struct RememberedLine: View {
     let turnID: UUID
     @ObservedObject var memory = MemoryStore.shared
+    @StateObject private var failed = UndoFailures()
 
     var body: some View {
         let saved = memory.data.items.filter { $0.turn == turnID }
@@ -4003,9 +4007,12 @@ private struct RememberedLine: View {
                         Image(systemName: "brain.head.profile").foregroundColor(.secondary)
                         Text(change.new.map { L("기억 고침: ", "Memory changed: ") + change.old.text + " → " + $0 }
                              ?? L("기억 지움: ", "Forgot: ") + change.old.text).foregroundColor(.secondary).lineLimit(2)
-                        Button(L("취소", "Undo")) { memory.undo(change.id) }
+                        Button(L("취소", "Undo")) { if !memory.undo(change.id) { failed.ids.insert(change.id) } }
                             .buttonStyle(.link)
                             .help(L("예전 기억으로 되돌려요.", "Puts the earlier memory back."))
+                        if failed.ids.contains(change.id) {
+                            Text(L("되돌리지 못했어요 (그 뒤 바뀌었거나 저장 실패)", "Could not undo (changed since, or not saved)")).foregroundColor(.orange)
+                        }
                     }
                     .font(.system(size: 11))
                 }

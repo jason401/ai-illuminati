@@ -175,6 +175,7 @@ RunConditions.model | var model: String?
 RunConditions.picking(model:effort:) | func picking(model: String?, effort: String?) -> RunConditions
 RunConditions.prefix | var prefix: [String]
 RunConditions.processGroup | var processGroup: Bool
+RunConditions.readSkill | var readSkill: ((String) -> String)?
 RunConditions.screenTools | var screenTools: RunConditions.ScreenTools?
 RunConditions.steering | var steering: SteerChannel?
 RunConditions.tagged(_:) | func tagged(_ kind: String) -> RunConditions

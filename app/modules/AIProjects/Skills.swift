@@ -1061,6 +1061,11 @@ public final class SkillDirectory {
     private func inspectDiskSkill(_ name: String) -> DiskSkill {
         let url = skillFile(name)
         guard FileManager.default.fileExists(atPath: url.path) else { return .missing }
+        // A global or project catalog cannot expose a skill redirected outside its directory.
+        let expected = root.deletingLastPathComponent().resolvingSymlinksInPath()
+            .appendingPathComponent(root.lastPathComponent, isDirectory: true)
+            .appendingPathComponent(name, isDirectory: true).appendingPathComponent(Self.skillFileName)
+        guard url.resolvingSymlinksInPath().path == expected.path else { return .unreadable(CocoaError(.fileReadNoPermission)) }
         do {
             let data = try Data(contentsOf: url)
             let hash = SkillDocument.hash(data)

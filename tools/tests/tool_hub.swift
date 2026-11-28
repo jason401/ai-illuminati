@@ -22,7 +22,7 @@ private final class HubFixture: ToolProvider {
 func testToolHub() {
     let expected: [ToolProvider] = [FaceLink.shared, GitLink.shared, PlanLink.shared, PeerLink.shared,
         ConveneLink.shared, DelegateLink.shared, ChatLink.shared, MemoryLink.shared, ProjectMakerLink.shared, TaskLink.shared,
-        TodoAddLink.shared, StorageLink.shared, ExternalMCP.shared]
+        TodoAddLink.shared, StorageLink.shared, ExternalMCP.shared, SkillLink.shared]
     let actual = ToolHub.appProviders
     let appHub = ToolHub(providers: { ToolHub.appProviders })
     let ordinary = ToolContext(room: UUID(), roots: [])
@@ -30,12 +30,13 @@ func testToolHub() {
     var sideAnswer = ordinary; sideAnswer.origin = .side
     let consultedProviders = appHub.available(context: consultation)
     let expectedConsulted = expected.filter { $0 !== PeerLink.shared && $0 !== ConveneLink.shared && $0 !== DelegateLink.shared }
-    expect(consultedProviders.count == 10 && zip(consultedProviders, expectedConsulted).allSatisfy { $0 === $1 },
+    expect(consultedProviders.count == expectedConsulted.count && zip(consultedProviders, expectedConsulted).allSatisfy { $0 === $1 },
            "consulted provider identities exclude Peer, Convene and Delegate before their own gates")
     let sideProviders = appHub.available(context: sideAnswer), legacyProviders = appHub.available(context: ordinary, legacy: true)
-    expect(sideProviders.count == 1 && sideProviders[0] === PeerLink.shared, "side provider identity is Peer only")
+    expect(sideProviders.count == 2 && sideProviders[0] === PeerLink.shared && sideProviders[1] === SkillLink.shared,
+           "side answers keep Peer and the read-only skill provider")
     expect(legacyProviders.count == 1 && legacyProviders[0] === FaceLink.shared, "legacy provider identity is Face only")
-    expect(actual.count == 13 && zip(actual, expected).allSatisfy { $0 === $1 }, "the app supplies all 13 providers in their original order")
+    expect(actual.count == 14 && zip(actual, expected).allSatisfy { $0 === $1 }, "the app supplies all 14 providers in order")
 
     let socket = ToolHub.socketPath
     ToolHub.socketPath = AccountStore.home + "/hub.sock"

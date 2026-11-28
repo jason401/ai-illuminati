@@ -54,11 +54,11 @@ assert all(f'extension {n}: @retroactive ToolProvider' in Path('app/macos/' + f)
            [('FaceLink', 'ToolHub.swift'), ('ExternalMCP', 'ExternalMCPTools.swift')]), 'the app makes the two providers'
 # AI Face's link starts after the bridge's sockets (FaceLink no longer opens them itself).
 assert s.find('ToolHub.shared.start()') < s.find('ToolHub.shared.startLegacyFaceSocket(at: FaceLink.socketPath)') < s.find('FaceLink.shared.start()')
-# The 13 tool providers in their order (first(where:) picks by it): the app lists them, six are AIChat's (DelegateLink since sub-room P2).
+# The 14 tool providers in their order (first(where:) picks by it): the app lists them, seven are AIChat's.
 hub = Path('app/macos/ToolHub.swift').read_text()
 order = re.search(r'static var appProviders: \[ToolProvider\] \{ \[(.*?)\] \}', hub).group(1).replace(' ', '').split(',')
 assert order == ['FaceLink.shared', 'GitLink.shared', 'PlanLink.shared', 'PeerLink.shared', 'ConveneLink.shared', 'DelegateLink.shared', 'ChatLink.shared',
-                 'MemoryLink.shared', 'ProjectMakerLink.shared', 'TaskLink.shared', 'TodoAddLink.shared', 'StorageLink.shared', 'ExternalMCP.shared'], order
+                 'MemoryLink.shared', 'ProjectMakerLink.shared', 'TaskLink.shared', 'TodoAddLink.shared', 'StorageLink.shared', 'ExternalMCP.shared', 'SkillLink.shared'], order
 # Settings stay in UserDefaults.app (the throwaway home's suite outside the app): no .standard writes in tools, no @AppStorage
 # without store:, and a test suite is a path in a temp folder, since a plain name leaves a plist in ~/Library/Preferences.
 grep = lambda pattern, *where: subprocess.run(['grep', '-rnE', '--include=*.swift', pattern, *where], capture_output=True, text=True).stdout.splitlines()

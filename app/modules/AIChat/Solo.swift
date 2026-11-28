@@ -1011,11 +1011,11 @@ extension Discussion {
     // spaceRule: this answer may make a Space when the message asks for one (only one AI per message does).
     func soloInstruction(_ account: Account, binding: WorkspaceBinding, helper: String, project: ProjectPart? = nil, chat id: UUID? = nil,
                          spaceRule: Bool = true) -> String {
-        let question = lastQuestion(id)
+        let question = lastQuestion(id), linked = linkedProject(id)
         let folders = Self.soloFolders(binding, shared: model.activeSharedFolders, project: project?.root)
         pictureLock.lock(); let images = !activeImages.isEmpty || imageNumber > 0; pictureLock.unlock()
         let needs = InstructionNeeds(question: question, images: images, project: project != nil && project?.folderless != true,
-                                     documents: project?.documents == true || (project == nil && linkedProject(id)?.isDocuments == true))
+                                     documents: project?.documents == true || (project == nil && linked?.isDocuments == true))
         return Self.composeInstruction(name: label(account), provider: account.provider, folders: folders,
                                 fullAccess: binding.fullAccess == true, picture: pictureRule(account, chat: id), helper: helper,
                                 terminalAllowed: AICapabilities.rule(account, .terminal) != .off, webAllowed: AICapabilities.rule(account, .web) != .off,
@@ -1027,8 +1027,10 @@ extension Discussion {
                                                          && binding.roots.contains { $0.path == SpaceStore.root.path && $0.writable == true },
                                                      allowed: { Enterprise.permits(account, lock: self.spaceLock($0)) }) : "",
                                 peer: peerInstruction(account, room: id, brief: !needs.peer),
-                                memory: [memoryRule(account, chat: id), projectMemoryRule(account, chat: id)].filter { !$0.isEmpty }.joined(separator: "\n"),
-                                linked: project == nil ? linkedProject(id) : nil, needs: needs)
+                                memory: [memoryRule(account, chat: id), projectMemoryRule(account, chat: id),
+                                         SkillLink.rule(project: linked.map(SidebarProjects.key), question: question, local: account.provider == .ollama)]
+                                    .filter { !$0.isEmpty }.joined(separator: "\n"),
+                                linked: project == nil ? linked : nil, needs: needs)
     }
 
     // The project this chat is linked to, also while an opinion runs without it.
@@ -1060,7 +1062,7 @@ extension Discussion {
         return Thread.isMainThread ? read() : DispatchQueue.main.sync(execute: read)
     }
 
-    // Long-term memory (Memory.swift) for every AI, and when it may save to it (not Gemma, which has no tools).
+    // Long-term memory (Memory.swift) for every AI, and when it may save to it (Ollama has no memory tools).
     func memoryRule(_ account: Account, chat id: UUID?) -> String {
         let data = MemoryStore.shared.snapshot
         guard data.enabled else { return "" }

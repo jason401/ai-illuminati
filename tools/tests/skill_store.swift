@@ -1,5 +1,6 @@
 import Foundation
 import AIAccounts
+@testable import AIRuntime
 @testable import AIWorkspace
 @testable import AIProjects
 @testable import AIChat
@@ -376,3 +377,141 @@ func testSkillStore() {
 
     print("PASS: skill store (SKILL.md frontmatter, YAML compatibility, global/project stores, user lock + UTF-16 external edit, rename UUID, setEnabled/setAllEnabled, tombstone reuse guard, undo lock check, rollback & >64 KiB crash safety)")
 }
+
+func testSkillRead() {
+    let fm = FileManager.default
+    let global = SkillStore.shared, projects = ProjectSkillStore.shared
+    expect(ProcessInfo.processInfo.environment["AI_ILLUMINATI_TEST_HOME"] == AccountStore.home
+           && global.list().isEmpty, "skill prompt test starts with an empty store in the test home")
+    let own = ProjectBinding(root: "", common: "", remote: "", remoteURL: "", kind: "folderless", id: ProjectBinding.newID())
+    let other = ProjectBinding(root: "", common: "", remote: "", remoteURL: "", kind: "folderless", id: ProjectBinding.newID())
+    defer {
+        try? fm.removeItem(at: SkillStore.folder)
+        try? fm.removeItem(at: ProjectMemoryStore.folder(own.groupKey))
+        try? fm.removeItem(at: ProjectMemoryStore.folder(other.groupKey))
+    }
+
+    let providers: [Account.Provider] = [.claude, .codex, .gemini, .ollama]
+    let accounts = providers.map { Account(id: "skill-\($0.rawValue)", provider: $0, name: $0.title) }
+    let school = Account(id: "skill-school", provider: .codex, name: "ChatGPT (School)", school: true)
+    let model = AppModel()
+    let discussion = Discussion(model: model)
+    func room(_ project: ProjectBinding? = nil, schoolLocked: Bool = false) -> Conversation {
+        var chat = Conversation()
+        chat.workspace = project.map { WorkspaceBinding(roots: [], project: $0) }
+        if schoolLocked { chat.enterpriseLock = Enterprise.organizations([school]).first }
+        chat.turns = [ChatTurn(question: "piezoresonance")]
+        return chat
+    }
+    let plain = room(), linked = room(own), schoolRoom = room(own, schoolLocked: true)
+    discussion.conversations = [plain, linked, schoolRoom]
+    func prompt(_ account: Account, _ chat: Conversation) -> String {
+        discussion.soloInstruction(account, binding: chat.workspace ?? WorkspaceBinding(roots: []), helper: "", chat: chat.id)
+    }
+    let empty = prompt(accounts[0], plain)
+    expect(!empty.contains("[Skills]") && !empty.contains("skill_read"), "no enabled skills leaves the prompt unchanged")
+
+    func saveGlobal(_ name: String, _ description: String, _ body: String, date: TimeInterval = 1) {
+        if case .saved = global.save(name: name, description: description, body: body, by: .user, actor: school.name,
+                                     now: Date(timeIntervalSince1970: date)) { return }
+        fatalError("could not save test skill \(name)")
+    }
+    func saveProject(_ name: String, _ description: String, _ body: String, in project: ProjectBinding? = nil) {
+        if case .saved = projects.save(name: name, description: description, body: body, by: .user, project: (project ?? own).groupKey) { return }
+        fatalError("could not save project test skill \(name)")
+    }
+    saveGlobal("shared-procedure", "Check the result", "GLOBAL BODY")
+    saveGlobal("collision", "Global version", "GLOBAL COLLISION BODY")
+    saveGlobal("hidden-global", "Disabled reference", "DISABLED GLOBAL BODY")
+    _ = global.setEnabled("hidden-global", false)
+    saveProject("project-procedure", "Project naming guide", "PROJECT BODY")
+    saveProject("collision", "Project version", "PROJECT COLLISION BODY")
+    saveProject("hidden-project", "Disabled project", "DISABLED PROJECT BODY")
+    _ = projects.setEnabled("hidden-project", false, project: own.groupKey)
+    saveProject("other-procedure", "Other project guide", "OTHER PROJECT BODY", in: other)
+
+    let foreign = ProjectSkillStore.folder(other.groupKey).appendingPathComponent("other-procedure")
+    let alias = SkillStore.folder.appendingPathComponent("foreign-alias")
+    try! fm.createSymbolicLink(at: alias, withDestinationURL: foreign)
+
+    for account in accounts + [school] {
+        let instruction = prompt(account, account.id == school.id ? schoolRoom : linked)
+        expect(instruction.contains("[Skills] " + SkillLink.warning)
+               && instruction.contains("- shared-procedure — Check the result")
+               && instruction.contains("- project-procedure — Project naming guide")
+               && instruction.contains("- collision — Project version")
+               && !instruction.contains("Global version") && !instruction.contains(" BODY")
+               && !instruction.contains("hidden-global") && !instruction.contains("hidden-project")
+               && !instruction.contains("other-procedure") && !instruction.contains("foreign-alias"),
+               "\(account.provider) gets only enabled metadata for the current scope")
+    }
+    expect(!prompt(accounts[1], plain).contains("project-procedure") && prompt(accounts[1], plain).contains("Global version"),
+           "plain chats only list global skills, including ones saved by a school account")
+
+    let hub = ToolHub(providers: { ToolHub.appProviders }, listenOnRegister: false)
+    func token(_ chat: Conversation, _ account: Account, origin: ToolOrigin = .member) -> String {
+        hub.register(room: chat.id, roots: [], asker: account, origin: origin)
+    }
+    func open(_ slug: String, token: String) -> [String: Any] {
+        hub.handle(["op": "call", "session": token, "name": "skill_read", "arguments": ["name": slug]])
+    }
+    func body(_ slug: String, token: String) -> String {
+        (open(slug, token: token)["content"] as? [[String: Any]])?.first?["text"] as? String ?? ""
+    }
+    let member = token(linked, accounts[0]), side = token(linked, accounts[1], origin: .side)
+    let enterprise = token(schoolRoom, school), personal = token(plain, accounts[2])
+    let definition = (hub.handle(["op": "tools", "session": member])["tools"] as? [[String: Any]])?.first { $0["name"] as? String == "skill_read" }
+    expect((definition?["inputSchema"] as? [String: Any])?["required"] as? [String] == ["name"], "MCP lists the skill tool by name")
+    let projectResult = body("project-procedure", token: member)
+    expect(projectResult.hasPrefix(SkillLink.warning) && projectResult.hasSuffix(SkillLink.warning)
+           && projectResult.contains("\nPROJECT BODY\n") && !projectResult.contains("Project naming guide"),
+           "skill_read wraps the body in the same prompt warning")
+    expect(body("collision", token: side).contains("PROJECT COLLISION BODY")
+           && body("collision", token: personal).contains("GLOBAL COLLISION BODY")
+           && body("shared-procedure", token: enterprise).contains("GLOBAL BODY")
+           && body("shared-procedure", token: personal).contains("GLOBAL BODY"),
+           "side, project, personal and school answers resolve skills in their own scopes")
+    for slug in ["hidden-global", "hidden-project", "other-procedure", "foreign-alias", "../project-procedure"] {
+        expect(open(slug, token: member)["isError"] as? Bool == true, "\(slug) is unavailable to the project session")
+    }
+    expect(open("project-procedure", token: personal)["isError"] as? Bool == true
+           && open("project-procedure", token: token(linked, accounts[0], origin: .consulted))["isError"] as? Bool == true
+           && open("shared-procedure", token: token(schoolRoom, accounts[1]))["isError"] as? Bool == true,
+           "plain, consulted and out-of-lock sessions cannot read outside their scope")
+    _ = projects.setEnabled("collision", false, project: own.groupKey)
+    expect(body("collision", token: member).contains("GLOBAL COLLISION BODY")
+           && !prompt(accounts[0], linked).contains("Project version"),
+           "disabling the project entry takes effect immediately and exposes the enabled global entry")
+
+    let local = accounts[3]
+    let localPrompt = prompt(local, linked)
+    let localRun = RunConditions.app(local, WorkspaceInvocation(binding: linked.workspace!, room: linked.id))
+    var localPrompts: [String] = []
+    Answerer.replyForTests = { text in
+        localPrompts.append(text)
+        return .success(localPrompts.count == 1 ? #"{"skill_read":{"name":"project-procedure"}}"# : "Local final answer")
+    }
+    defer { Answerer.replyForTests = nil }
+    let result = Answerer.ask(local, prompt: localPrompt, run: localRun)
+    expect((try? result.get()) == "Local final answer" && localPrompts.count == 2
+           && localPrompts[0].contains(#"{"skill_read":{"name":"the-skill-name"}}"#)
+           && !localPrompts[0].contains("PROJECT BODY")
+           && localPrompts[1].contains(projectResult),
+           "Ollama asks for the same skill by name and receives the same wrapped body before continuing")
+
+    let filler = String(repeating: "z", count: 800)
+    saveGlobal("matched-entry", "piezoresonance " + filler, "MATCHED BODY", date: 10)
+    saveGlobal("older-entry", filler, "OLDER BODY", date: 20)
+    saveGlobal("newest-entry", filler, "NEWEST BODY", date: 30)
+    let limited = SkillLink.rule(project: own.groupKey, question: "piezoresonance", local: false)
+    expect(limited.count <= 2_000 && limited.contains("matched-entry") && limited.contains("newest-entry")
+           && !limited.contains("older-entry") && limited.contains("(1 omitted from the list.)"),
+           "the budget includes the notice and ranks exact matches ahead of newer skills, then fills by recency")
+    let justNewest = SkillLink.rule(project: own.groupKey, question: "", local: true)
+    expect(justNewest.count <= 2_000 && justNewest.contains("newest-entry") && justNewest.contains("older-entry")
+           && !justNewest.contains("matched-entry"), "without a match, Ollama's list fits its longer header and prioritizes recency")
+
+    discussion.conversations[1].turns.append(ChatTurn(question: "next"))
+    expect(open("shared-procedure", token: member)["isError"] as? Bool == true, "a tool session expires when a new turn starts")
+}
+

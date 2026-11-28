@@ -70,7 +70,7 @@ private final class ScreenTools: ToolProvider {
 // One app-side gateway. Per-answer capabilities keep other chat modes and arbitrary local
 // pointer paths out; they grant the CLI no credentials and no network access.
 final class ToolHub {
-    static var appProviders: [ToolProvider] { [FaceLink.shared, GitLink.shared, PlanLink.shared, PeerLink.shared, ConveneLink.shared, DelegateLink.shared, ChatLink.shared, MemoryLink.shared, ProjectMakerLink.shared, TaskLink.shared, TodoAddLink.shared, StorageLink.shared, ExternalMCP.shared] }
+    static var appProviders: [ToolProvider] { [FaceLink.shared, GitLink.shared, PlanLink.shared, PeerLink.shared, ConveneLink.shared, DelegateLink.shared, ChatLink.shared, MemoryLink.shared, ProjectMakerLink.shared, TaskLink.shared, TodoAddLink.shared, StorageLink.shared, ExternalMCP.shared, SkillLink.shared] }
     static let shared: ToolHub = {
         let hub = ToolHub(providers: { appProviders })
         MacControl.approve = ScreenTools.approve
@@ -185,7 +185,7 @@ final class ToolHub {
     // Keep origin filtering distinct from each provider's own context gate.
     func available(context: ToolContext, legacy: Bool = false) -> [ToolProvider] {
         legacy ? [FaceLink.shared]
-            : context.origin == .side ? [PeerLink.shared]
+            : context.origin == .side ? [PeerLink.shared, SkillLink.shared]
             : context.origin == .consulted ? providers.filter { $0 !== PeerLink.shared && $0 !== ConveneLink.shared && $0 !== DelegateLink.shared } : providers
     }
 

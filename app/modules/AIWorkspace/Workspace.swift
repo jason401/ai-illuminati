@@ -49,7 +49,7 @@ public struct ProjectBinding: Codable, Equatable {
     public var protectedPaths: [String] { isDocuments ? [root + "/.git"] : [common, root + "/.git"] }
 }
 // Who a tool session belongs to. member: an AI answering the user (every tool); side: another AI answering the same
-// message at the same time, read only (only ask_ai); consulted: an AI another AI asked or called to a meeting (no ask_ai
+// message at the same time, read only (ask_ai and skill_read); consulted: an AI another AI asked or called to a meeting (no ask_ai
 // or convene_meeting, so depth stays 1).
 public enum ToolOrigin: String, Codable { case member, side, consulted }
 // The app's tool gateway as the bridge sees it: the app passes it to each call, so the rules here name neither the
@@ -432,7 +432,7 @@ extension WorkspaceBinding {
         view.origin = .consulted
         return view
     }
-    // Another AI answering the same message at the same time: the same folders read only; of the tools only ask_ai.
+    // Another AI answering the same message at the same time: the same folders read only, with ask_ai and skill_read.
     public var side: WorkspaceBinding {
         var view = consulted
         view.origin = .side

@@ -84,13 +84,13 @@ func testAskAI() {
            && !PeerLink.shared.tools(context: other).isEmpty, "no one to ask: no ask_ai for that AI")
     PeerLink.shared.close(nobody)
 
-    // Through the app's tool gateway: consulted sessions list no ask_ai; side sessions (another AI answering at once) only ask_ai.
+    // Through the gateway, consulted sessions list no ask_ai. With an empty skill store, side sessions list ask_ai.
     PeerLink.shared.open(session)
     func listed(_ origin: ToolOrigin) -> [String] {
         let key = ToolHub.shared.register(room: room, roots: [], asker: claude, origin: origin)
         return (ToolHub.shared.handle(["session": key, "op": "tools"])["tools"] as? [[String: Any]] ?? []).compactMap { $0["name"] as? String }
     }
-    expect(!listed(.consulted).contains("ask_ai") && listed(.side) == ["ask_ai"], "depth 1 at the gateway; side answers get only ask_ai")
+    expect(!listed(.consulted).contains("ask_ai") && listed(.side) == ["ask_ai"], "depth 1 at the gateway; side answers with no skills get ask_ai")
     PeerLink.shared.close(session)
     let dir = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("ask-ai-" + UUID().uuidString)
     let base = WorkspaceBinding(roots: [WorkspaceRoot(path: dir.path, directory: true, writable: true)], face: true)

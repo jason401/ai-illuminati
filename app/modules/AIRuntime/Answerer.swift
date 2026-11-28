@@ -80,6 +80,7 @@ public struct RunConditions {
     public var environment: ([String: String]) -> [String: String] = { $0 }   // the account's environment → the tool's
     public var processGroup = false                // the wrapper made a group: stop all of it when the call ends
     public var folders: Folders? = nil
+    public var readSkill: ((String) -> String)? = nil   // the app's read-only skill tool for Ollama answers
     public var screenTools: ScreenTools? = nil    // one answer, with no provider transcript or raw CLI log
     public var beforeStart: (() -> Void)? = nil   // the caller's own preparation (agy's web rule), just before the arguments
     public var steering: SteerChannel? = nil       // Claude with progress: messages sent while it answers go into the answer
@@ -154,6 +155,7 @@ public enum Answerer {
         For text and code files start/end are line numbers; for PDFs and slides they are pages. If a result has next_offset, it was cut there: request the same range again with "offset": next_offset for the rest.
         If a result has read_failed, that one path was wrong: use its similar paths or list the folder, and request again.
         """
+        let readSkill = account.provider == .ollama ? run.readSkill : nil
         var current = prompt + "\n" + instruction
         var currentImages = images, call = session
         var readImages = images
@@ -164,6 +166,7 @@ public enum Answerer {
         var answerNow = false
         var readFailures = 0, served = 0
         let answerNowNote = "\nNo more data will be sent for this answer. Do not return workspace_reads again: answer now with the data already sent above, and say what you could not check."
+            + (readSkill == nil ? "" : " Do not request skill_read again.")
         // Without a session the AI remembers nothing: each call sends the request once, then everything read so far.
         var delivered: [String] = []
         func evidence(_ data: String, note: String = "") -> String {
@@ -174,27 +177,37 @@ public enum Answerer {
         var ranOn: String?
         while true {
             if cancellation?.isCancelled == true { return .failure(.failed("Cancelled")) }
-            // A request for file data (workspace_reads JSON) is for the app, not a reply to show. The model is held
-            // back: only the call that gives the answer names it.
+            // Host read requests are for the app. Only the call that gives the answer names the model.
             modelLock.lock(); ranOn = nil; modelLock.unlock()
             let shown: ((AnswerProgress) -> Void)? = progress.map { report in { update in
-                if case .text(let text) = update, text.contains("\"workspace_reads\"") { return }
+                if case .text(let text) = update,
+                   text.contains("\"workspace_reads\"") || (readSkill != nil && text.contains("\"skill_read\"") && text.contains("{")) { return }
                 if case .model(let name) = update { modelLock.lock(); ranOn = name; modelLock.unlock(); return }
                 report(update)
             } }
             let result = replyForTests?(current) ?? askOnce(account, prompt: current, timeout: timeout, cancellation: cancellation, images: currentImages, web: web, session: call, run: run, model: model, effort: effort, progress: shown)
             if let session, let call { session.nativeID = call.nativeID; session.completed = call.completed; session.compacted = session.compacted || call.compacted }
-            guard case .success(let text) = result,
-                  let start = text.firstIndex(of: "{"), let end = text.lastIndex(of: "}"), start < end,
-                  let data = String(text[start...end]).data(using: .utf8),
-                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let requests = object["workspace_reads"] as? [[String: Any]], !requests.isEmpty else {
+            let object: [String: Any]?
+            var skillName: String?
+            if case .success(let text) = result, let start = text.firstIndex(of: "{"), let end = text.lastIndex(of: "}"), start < end,
+               let decoded = try? JSONSerialization.jsonObject(with: Data(text[start...end].utf8)) as? [String: Any] {
+                object = decoded
+                if readSkill != nil, decoded.count == 1, let arguments = decoded["skill_read"] as? [String: Any], arguments.count == 1,
+                   text.trimmingCharacters(in: .whitespacesAndNewlines) == String(text[start...end]) {
+                    skillName = arguments["name"] as? String
+                }
+            } else {
+                object = nil
+            }
+            let requests = object?["workspace_reads"] as? [[String: Any]] ?? []
+            guard !requests.isEmpty || skillName != nil else {
                 modelLock.lock(); let name = ranOn; modelLock.unlock()
                 if case .success = result, let name, let progress { report(.model(name), to: progress) }
                 return result
             }
             if answerNow { return .failure(.failed("자료 요청을 멈추고 답하라고 했는데도 계속 요청해서 중단했습니다.")) }
-            let signature = String(data: (try? JSONSerialization.data(withJSONObject: requests, options: [.sortedKeys])) ?? Data(), encoding: .utf8) ?? ""
+            let signature = skillName.map { "skill_read:" + $0 }
+                ?? String(data: (try? JSONSerialization.data(withJSONObject: requests, options: [.sortedKeys])) ?? Data(), encoding: .utf8) ?? ""
             let resumable = call?.nativeID != nil
             if let previous = call, let sid = previous.nativeID { call = NativeSessionCall(id: sid, resume: true, directory: previous.directory, system: previous.system) }
             func reply(_ note: String) {
@@ -206,7 +219,14 @@ public enum Answerer {
                 // The same request again: say so once; a second repeat (or too many reads) gets "answer now".
                 if repeated || served > 12 { answerNow = true; reply(answerNowNote); continue }
                 repeated = true
-                reply("\nThe app already sent this exact range above; sending it again would give the same data. Answer now with what you have, or request a different range (or the same range with \"offset\": next_offset if it was cut).")
+                reply(skillName == nil
+                    ? "\nThe app already sent this exact range above; sending it again would give the same data. Answer now with what you have, or request a different range (or the same range with \"offset\": next_offset if it was cut)."
+                    : "\nThe response to this skill request is already below. Continue the answer or request another skill by name.")
+                continue
+            }
+            if let skillName, let readSkill {
+                delivered.append(readSkill(skillName))
+                reply("")
                 continue
             }
             do {

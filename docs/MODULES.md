@@ -100,7 +100,7 @@ The map below is the final ownership; step reports are in `docs/modules-history.
 | AIChat | chat records/state/storage, routing, meetings/reviews, ask_ai, attachments, DeviceSync, chat/Space views; Peer/Convene/Chat/Memory/Storage providers | AIAccounts, AILocalization, AIRuntime, AIWorkspace, AIProjects, AISpaces, AIChatRecords |
 | AIIntegrations | external MCP connections and their sign-in, AI Face, Mac control; no providers | AIAccounts, AILocalization, AIRuntime (interface only), AIWorkspace |
 | AIRemote | the iPhone page and its 127.0.0.1 server (key check, HTTP parsing); knows no chat | AILocalization |
-| App (app/macos) | startup, menu/settings, screens, update/login, wiring and explicit 13-provider list; Face/ExternalMCP conformances | all ten modules, each imported directly by the files that use it |
+| App (app/macos) | startup, menu/settings, screens, update/login, wiring and explicit 14-provider list; Face/ExternalMCP conformances | all ten modules, each imported directly by the files that use it |
 
 Arrows mean imports, from caller to dependency (all direct edges are in the table):
 
@@ -146,6 +146,7 @@ in an isolated test is seen. The list is never dynamically registered or sorted 
 11. TodoAddLink
 12. StorageLink
 13. ExternalMCP
+14. SkillLink
 
 `shared` alone connects ProjectWork.revokeTools; a fixture hub cannot overwrite that hook.
 The clock defaults to Date(); tests inject time without waiting two hours. `available(context:legacy:)` holds the
@@ -155,9 +156,9 @@ These are app-internal seams: no new module or public symbol.
 
 | Promise | Consumer | Check |
 |---|---|---|
-| The exact 13 singleton identities and order | ToolHub.shared | run_mode2 stage 1 exact source list; testToolHub identity |
+| The exact 14 singleton identities and order | ToolHub.shared | run_mode2 stage 1 exact source list; testToolHub identity |
 | Tool listing preserves provider order and duplicate names; call uses the first active provider that lists the name in that context | CLI bridge | testToolHub duplicate fixtures, inactive/context-hidden list and call; baseline + A1/A2/A3 mutants |
-| member keeps the list; side has only Peer; consulted excludes Peer, Convene and Delegate; legacy has only Face, before providers' own gates | workspace bridge, ask_ai, meetings, old Face bridge | testToolHub exact selected identities and side/legacy call refusals, A4 mutant; testAskAI, testMeetingTool, testChatThroughCLI |
+| member keeps the list; side has Peer and SkillLink; consulted excludes Peer, Convene and Delegate; legacy has only Face, before providers' own gates | workspace bridge, ask_ai, meetings, old Face bridge | testToolHub exact selected identities and side/legacy call refusals, A4 mutant; testAskAI, testMeetingTool, testChatThroughCLI |
 | Unknown/expired sessions cannot list or call; project revocation removes only that project's sessions; unknown operations/names fail | all CLI calls, project turn end | testToolHub, injected-clock expiry, A5 mutant; testProjectHandoff |
 | Slow names are limited to tools actually exposed | workspace_mcp.py | testExternalMCP (nonempty exposed fake-server slow names); an excluded-slow-name negative case is not covered |
 | Each module follows its declared imports and allowed direction | every module/app build in run_mode2 | check_module_dependencies.py, DependencyRules temporary-tree falsifications, build_modules.sh visibility and cycle checks |
@@ -206,7 +207,7 @@ A does not relocate it or alter AutoGuard, permissions, signing, install or rele
   `AISpaces` (module insides such as `SpaceCheck`), and for `AIRuntime` the app tests that make their own usage
   readings (`AIUsage`, `UsageWindow` inits) or use its test hooks (`Answerer.launchForTests`/`replyForTests`,
   `StreamParser`): `mode2`, `run_conditions`, `project_work`, `ask_ai`, `collab_log`, `todo_work`, `chat_search`,
-  `space_build`, and the settings preview (`render_settings.sh` builds the modules with `-enable-testing` for it).
+  `space_build`, `skill_store`, and the settings preview (`render_settings.sh` builds the modules with `-enable-testing` for it).
   For `AIWorkspace` the app tests that reach its insides (`prepare`, `WorkspaceBackup.run`/`treatAsCloud`/`keepPerChat`,
   `AutoGuard.folder`/`claudeDenied`): `mode2`, `project_work`, `ask_ai`, `chat_search`.
   For `AIProjects`: `project_work`, `todo_work`, `project_info`, `chat_search` (`RunProgress`, `RunTimings`, `TodoData.eligible`,
@@ -446,7 +447,7 @@ are AIProjects'; ToolHub and the Settings backup UI stay App. Providers live wit
 | Save format: a chat's `workspace` (`WorkspaceBinding`, `WorkspaceRoot`, `ProjectBinding`, levels, `ToolOrigin`) and a backup's `complete.json` keep their keys; absent fields left out; older ones read | Discussion (chats/*.json), Todo (lists), ProjectWork, every `load` | "a chat's workspace keeps its saved keys" (golden), "an older workspace reads", "an older backup reads", "complete.json is private" | mode2 "legacy decoding", testTodoStore (saved and read back) |
 | Errors: an NSError (domain `Materials`, code 1, the same texts) the callers show as they are | Solo, ProjectChat, Attachments (notes) | "the refusal names the backup" | mode2 conflict refusal |
 | Disk sizes: lstat blocks, links not followed, a hard link once across calls with one `seen` | ChatStorage (`report`), clean-up (`bytes`) | "a hard link counts once", "… not counted again across calls", "a missing path counts as unreadable" | mode2 "storage by chat, …, hard links once" |
-| Tool gateway's types: `ToolProvider.tools(context:)` defaults to `tools()`; `ToolContext` carries the room, roots, run, asker, turn, origin | ToolHub and the 13 providers (app files) | none (types) | mode2 tool tests (ask_ai, meetings, chat tools, memory, outside MCP) |
+| Tool gateway's types: `ToolProvider.tools(context:)` defaults to `tools()`; `ToolContext` carries the room, roots, run, asker, turn, origin | ToolHub and the 14 providers | none (types) | mode2 tool tests (ask_ai, meetings, chat tools, memory, outside MCP) |
 | Screen viewing: the bridge without a workspace exposes only the app's two screen tools. Workspace chats retain their file tools, including the built-in chat and Spaces folders. The screen grant ends with the answer. Runs with the grant bypass native transcript and raw CLI log storage while preserving the previous session for later resumption. | RunConditionsApp, ToolHub, Answerer | `test_workspace_mcp.py` (image and scale relay, refused file call) | `testRunConditions` (account rule, launch arguments, workspace manifest, expiry, attachments), mode2 (session resumption) |
 
 Public names and why (everything else stays internal: `AutoGuard` whole, `WorkspaceError`, `WorkspaceInvocation.prepare`/
@@ -513,7 +514,7 @@ TODO usage bar: `AutoPick.need(window:kind:purpose:now:checkedAt:)` (Solo.swift)
 | Approvals: one list for every place, a decision clears them all, 15 minutes unanswered is no and leaves a note | ProjectChat views, ApprovalAlerts, ExternalMCP, ProjectCreator | none | `testProjectWork` (expired, twice), render_chat |
 | New projects: card first, folder + first commit + GitHub + push, asking again continues the same plan; folderless and documents kinds | ProjectCreate (menus), ProjectMakerLink | none (needs a fake gh) | `testProjectCreate`, `testDocumentsProject` |
 | Project memory (ProjectMemory.swift): one note set per project (`groupKey`) in `projects/<id>/memory.json` under the support folder (a test home in tests); notes are added or replaced, never edited in place (the old one archived and linked both ways), a duplicate active note is not saved again, every change is one line appended to `memory-history.jsonl`, which is the record (the notes are its lines replayed, memory.json a copy; a line cut off by a crash is dropped, a damaged history refuses every save); the user edits, pins, archives, restores and undoes any change or a whole meeting cleanup (`batch`; refused when the note changed since), each one more history line; only the user deletes for good, which blanks the text in both files and keeps a hash `mark` that refuses the same words from an AI or a meeting; a meeting cleanup (ProjectMemoryCleanup.swift) applies only agreed edits with evidence from its material, at most 30, folds committed logs older than 14 days into one line per ISO week (archived after 30 days), one batch, recorded in `memory-cleanups.json`; Enterprise chats can add and replace only when every project chat, meeting and TODO list shares their organization, and protected memory keeps that audience across later project membership changes | AIChat ProjectMemoryLink (tools, instruction), ChatWindow (the saved line), App ProjectMemoryView (Project info) | "project memory" | testProjectMemory, testProjectMemoryUndo |
-| Project skills (Skills.swift): one folder + `SKILL.md` (agentskills frontmatter `name`/`description` + markdown body, lowercase-hyphen slug) per skill under `<support>/projects/<id>/skills/` (same `groupKey` as ProjectMemoryStore), with `skills.json` (UUID kept across renames, `enabled`, `createdBy`, `userLocked`, `contentHash`, `isNew`, `updatedAt`, and delete `tombstones`) and `skills-history.jsonl` (one line per add/update/delete/enable/disable/set_all_enabled/undo, crash-tail safe); user edits and external file edits (changed `contentHash`) are `userLocked`, so AI/meeting saves return `.needsApproval` ("Inbox 승인 필요") without touching disk; `undo` reverts the latest active change (and clears a delete's tombstone); damaged index/history refuses writes | AIChat (`SkillStore` reuses `SkillDocument`/`SkillDirectory`), future skill tools & settings UI | "project skills" | testSkillStore |
+| Project skills (Skills.swift): one folder + `SKILL.md` (agentskills frontmatter `name`/`description` + markdown body, lowercase-hyphen slug) per skill under `<support>/projects/<id>/skills/` (same `groupKey` as ProjectMemoryStore), with `skills.json` (UUID kept across renames, `enabled`, `createdBy`, `userLocked`, `contentHash`, `isNew`, `updatedAt`, and delete `tombstones`) and `skills-history.jsonl` (one line per add/update/delete/enable/disable/set_all_enabled/undo, crash-tail safe); user edits and external file edits (changed `contentHash`) are `userLocked`, so AI/meeting saves return `.needsApproval` ("Inbox 승인 필요") without touching disk; `undo` reverts the latest active change (and clears a delete's tombstone); damaged index/history refuses writes | AIChat (`SkillStore` reuses `SkillDocument`/`SkillDirectory`), SkillLink and future settings UI | "project skills" | testSkillStore, testSkillRead |
 
 Public names and why (everything else stays internal: `ProjectError`, `ProjectTools`, the lock tables and files, `RunProgress`,
 `RunTimings`, `TodoStore.encoder`/`decoder`/`copyIn`, `TodoData.eligible`/`hasCycle`, `TodoScheduler.begin`/`settle`/
@@ -708,7 +709,7 @@ What the chat gets from the app, set by the app (the chat side names none of the
   to `ChatApp.run`, so the chat's calls read as before.
 
 Stays in the app (what the user sees of other parts): Settings (all tabs, Memory/Rules/Storage windows), TodoBoard, ProjectInfoView,
-GitBranches, ExternalMCP/RemoteMCP, FaceLink, ToolHub (the 13 providers in their order, stage 1
+GitBranches, ExternalMCP/RemoteMCP, FaceLink, ToolHub (the 14 providers in their order, stage 1
 checks the list), ApprovalAlerts, MenuCards, main, Login, Updater, Icon, LocalModels, RunConditionsApp, ChatLinksApp,
 ChatScreensApp. Two app edits besides imports: `StorageListView.measured` (one string the compiler could no longer type-check
 inline once the names came from another module; same text) and the `AppModel` conformance line.
@@ -725,8 +726,7 @@ everything else, Discussion's state above all, stays internal):
   noticed in its main room, ApprovalAlerts); `markTodoDone`: the board's and cards' [Mark as done],
   the same confirmation as the sidebar's ⋯); `TodoChats` (P0's seam, all its members);
   `Discussion.meets`/`autoPicked` (Settings' team picks).
-- The six tool providers (`shared`, `active`, `tools`, `call`; `MemoryLink.newestTurn` for ToolHub.register): ToolHub lists them
-  (`DelegateLink` since sub-room P2).
+- ToolHub lists AIChat’s seven providers (`shared`, `active`, `tools`, `call`; `MemoryLink.newestTurn` binds session tools to a turn). `SkillLink` exposes `skill_read` to active member and side answers. The app also calls it for Ollama through `RunConditions.readSkill`, which lets AIRuntime replay a read-only skill request without a CLI.
   `DelegateLink.enabledKey`/`enabled`: Settings ▸ Chat's "Split into sub-rooms" switch (off by default) writes the key the module reads.
 - `Conversation.subOf` and `SubRoomLink` (`room`, `split`, `n`, one public init): a sub-room's chat record says which split it works
   for, so it is saved with the chat like `meetingOf` (the chat window and synced copies read the record type).
@@ -754,6 +754,7 @@ everything else, Discussion's state above all, stays internal):
 | A work answer's change is reviewed once by the other member, read only, and fixed in the same turn | ChatWindow, TODOs | `testChatThroughCLI`, testPeerReview, testDocumentsProject |
 | A failure in the middle of an answer (the CLI killed, out of usage with nobody left, the network, a time-out, the app quitting) keeps the reply so far as the answer (`cutOff`) in chats/*.json, saved every few seconds while written and at quit (`cancelAll`); the chat stops showing it answering (at launch too, `recoverInterrupted`), says Try again, and Try again continues from it; the files it changed are listed for Undo, also after a quit (`finishLeftOpen`) | ChatWindow (Try again), TODOs, main (quit) | `failure_recovery.swift` `testFailureRecovery` (fake CLI, no answer hooks), `testTodoFailureRecovery` |
 | The 14 tool providers keep their order | ToolHub | run_mode2 stage 1 (the exact list) |
+| Skills (Skills.swift) list enabled global and current-project names and descriptions in the per-turn prompt, with a 2,000-character limit and omissions reported. Overflow prioritizes word matches, then recent edits. An enabled project entry takes precedence on a shared name. `skill_read` returns the body with the same priority warning and checks the live chat and enabled state on every call. Global skills are shared with Enterprise accounts. Ollama uses the host reply loop to call the same provider. | Solo and project answers, ToolHub and AIRuntime | testSkillRead, testRunConditions (zero skills) |
 | Sub-rooms (`Delegate.swift`, SUBROOM_PLAN 4, 6, 8): the split record `splits/<main room id>.json` is written before any work tree; at most two parts with owned files that do not overlap; a card unless full auto (then "approved automatically" on the card); a sub-room gets only sub_report/sub_blocked and no push, pull, switch, branch or publish, and cannot split again; places kept for approved sub-rooms (`subWaiting`) count against other chats and TODOs; the join turn once per split; the main room's Stop stops its sub-rooms and keeps their work trees (Continue/Discard); after a restart nothing goes on by itself and each leftover is a card once; merged work trees go after the push | ChatWindow (cards), TODOs (places), ToolHub | `testDelegate` (fake AIs: two parts → reports → merges → push → cleanup, card vs full auto, overlap and a sub-room's split refused, join turn once, Stop and Continue/Discard, restart cases, project_run in line), `testToolHub` |
 | The chat runs each AI with the app's run conditions and AI Face rules | Answerer | testRunConditions (golden), testRuntimeThroughApp, mode2 AI Face link |
 

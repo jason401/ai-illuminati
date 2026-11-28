@@ -58,11 +58,19 @@ extension RunConditions {
             answering.binding.fullAccess = false
         }
         if account.provider == .ollama, workspace.binding.origin != .consulted {
-            let context = ToolContext(room: workspace.room, roots: workspace.binding.roots, asker: account,
+            let context = ToolContext(room: workspace.room, roots: workspace.binding.roots,
+                                      projectRun: workspace.binding.projectRunID, projectGeneration: workspace.binding.projectGeneration, asker: account,
                                       turn: MemoryLink.shared.newestTurn(workspace.room), origin: workspace.binding.origin ?? .member)
-            run.readSkill = { slug in
-                let result = SkillLink.shared.call("skill_read", ["name": slug], context: context)
+            let call: (String, [String: Any]) -> String = { name, arguments in
+                let result = SkillLink.shared.call(name, arguments, context: context)
                 return (result["content"] as? [[String: Any]])?.first?["text"] as? String ?? ""
+            }
+            run.readSkill = { call("skill_read", ["name": $0]) }
+            if SkillLink.shared.tools(context: context).contains(where: {
+                let name = $0["name"] as? String
+                return name == "skill_save" || name == "skill_delete"
+            }) {
+                run.editSkill = call
             }
         }
         run.folders = RunConditions.Folders(directory: NativeSessions.directory(workspace.room),

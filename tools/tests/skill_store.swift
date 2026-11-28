@@ -542,3 +542,151 @@ func testSkillRead() {
     expect(open("shared-procedure", token: member)["isError"] as? Bool == true, "a tool session expires when a new turn starts")
 }
 
+func testSkillSave() {
+    let requests = ["이걸 스킬로 만들어 줘", "이 스킬을 고쳐 줄래?", "스킬 지워", "스킬을 삭제해 주세요.",
+                    "Make this a skill.", "Could you update the `paper-review` skill?", "Please delete the project skill."]
+    let other = ["스킬을 만들어 주지 마", "스킬을 삭제하지 마.", "Don't update the skill.", "How do I make this a skill?",
+                 "Explain how to update the skill.", "Please update the skill detector.", "Make this a skill test.",
+                 "스킬을 만드는 법 알려줘", "스킬 저장 구현해 줘", "> 스킬을 지워",
+                 "스킬을 수정했어.", "예: “스킬로 만들어”", "Example: `make this a skill`",
+                 "~~~\nDelete the skill.\n~~~", "스킬 도구는 \"스킬 지워\" 요청에서만 노출해 줘"]
+    expect(requests.allSatisfy(SkillLink.asksToEdit) && !other.contains(where: SkillLink.asksToEdit),
+           "explicit Korean and English skill edits open the gate, advice, examples and negatives do not")
+
+    let global = SkillStore.shared, projects = ProjectSkillStore.shared
+    let fm = FileManager.default
+    let project = ProjectBinding(root: "", common: "", remote: "", remoteURL: "", kind: "folderless", id: ProjectBinding.newID())
+    expect(ProcessInfo.processInfo.environment["AI_ILLUMINATI_TEST_HOME"] == AccountStore.home && global.list().isEmpty,
+           "skill edit tools only exercise an empty test catalog")
+    defer {
+        try? fm.removeItem(at: SkillStore.folder)
+        try? fm.removeItem(at: ProjectMemoryStore.folder(project.groupKey))
+    }
+
+    let discussion = Discussion(model: AppModel(persist: false))
+    let member = Account(id: "skill-writer", provider: .codex, name: "Codex")
+    let local = Account(id: "skill-local", provider: .ollama, name: "Ollama")
+    let school = Account(id: "skill-enterprise", provider: .codex, name: "ChatGPT (School)", school: true)
+    var plain = Conversation(), linked = Conversation(), enterprise = Conversation()
+    linked.workspace = WorkspaceBinding(roots: [], project: project, face: true)
+    enterprise.enterpriseLock = Enterprise.organizations([school]).first
+    func turn(_ question: String) -> ChatTurn {
+        var turn = ChatTurn(question: question)
+        turn.mode = 0
+        return turn
+    }
+    plain.turns = [turn(requests[0])]
+    linked.turns = [turn(requests[5])]
+    enterprise.turns = [turn(requests[0])]
+    discussion.conversations = [plain, linked, enterprise]
+    let hub = ToolHub(providers: { ToolHub.appProviders }, listenOnRegister: false)
+    func token(_ chat: Conversation, _ account: Account = member, origin: ToolOrigin = .member) -> String {
+        hub.register(room: chat.id, roots: [], asker: account, origin: origin)
+    }
+    func definitions(_ token: String) -> [[String: Any]] {
+        hub.handle(["op": "tools", "session": token])["tools"] as? [[String: Any]] ?? []
+    }
+    func toolNames(_ token: String) -> [String] { definitions(token).compactMap { $0["name"] as? String } }
+    func call(_ token: String, _ name: String, _ args: [String: String]) -> Bool {
+        hub.handle(["op": "call", "session": token, "name": name, "arguments": args])["isError"] as? Bool == false
+    }
+    func args(_ name: String, _ scope: String = "global", _ body: String = "Check the assumptions.") -> [String: String] {
+        ["name": name, "description": "Review the result", "body": body, "scope": scope]
+    }
+
+    let initial = token(plain)
+    let definition = definitions(initial).first { $0["name"] as? String == "skill_save" }
+    let schema = definition?["inputSchema"] as? [String: Any]
+    expect((schema?["required"] as? [String]) == ["name", "description", "body", "scope"]
+           && (definition?["description"] as? String)?.contains("reusable procedures only") == true
+           && !toolNames(initial).contains("skill_delete"),
+           "save is offered even with an empty catalog and advertises the global data rule")
+    expect(!call(initial, "skill_save", args("review", "project"))
+           && !call(initial, "skill_save", args("review", "other"))
+           && !call(initial, "skill_save", args("review", "global", " "))
+           && !call(initial, "skill_delete", ["name": "review"]),
+           "plain project scope, invalid scope, empty bodies and unrequested deletion are refused")
+    expect(!toolNames(token(plain, origin: .side)).contains("skill_save")
+           && !toolNames(token(plain, origin: .consulted)).contains("skill_save")
+           && !toolNames(token(enterprise, school)).contains("skill_save"),
+           "side answers, consulted AIs and Enterprise chats cannot write skills")
+    expect(call(initial, "skill_save", args("review"))
+           && global.read("review")?.record.createdBy == .user && global.read("review")?.record.userLocked == true,
+           "a direct save is attributed to the user and locked")
+    let creation = SkillLink.changes(global.history(), for: plain.turns[0].id).first!
+    expect(creation.action == .add && creation.name == "review", "the save is attached to the answer")
+    let companion = SkillStore.folder.appendingPathComponent("review/worksheet.txt")
+    try! Data("Useful worksheet".utf8).write(to: companion)
+    let otherFolder = URL(fileURLWithPath: AccountStore.home).appendingPathComponent("skill-save-link-target")
+    try! fm.createDirectory(at: otherFolder, withIntermediateDirectories: true)
+    defer { try? fm.removeItem(at: otherFolder) }
+    try! fm.createSymbolicLink(at: SkillStore.folder.appendingPathComponent("link-to-other"), withDestinationURL: otherFolder)
+    expect(!call(initial, "skill_save", args("link-to-other"))
+           && !fm.fileExists(atPath: otherFolder.appendingPathComponent("SKILL.md").path),
+           "saving cannot create a document through a symlinked skill folder")
+
+    let projectToken = token(linked)
+    _ = projects.save(name: "work-review", description: "Review a draft", body: "Original.", by: .meeting, project: project.groupKey)
+    expect(call(projectToken, "skill_save", args("work-review", "project", "Updated."))
+           && projects.read("work-review", project: project.groupKey)?.record.createdBy == .user
+           && projects.read("work-review", project: project.groupKey)?.record.userLocked == true,
+           "updates keep their project scope and claim the user lock, including for AI-authored skills")
+    let update = SkillLink.changes(projects.history(project.groupKey), for: linked.turns[0].id).first!
+    expect(update.action == .update, "the reply gets an update receipt")
+    if case .undone = SkillLink.undo(update, project: project.groupKey) {} else { fatalError("update Undo failed") }
+    expect(projects.read("work-review", project: project.groupKey)?.document.body == "Original."
+           && projects.read("work-review", project: project.groupKey)?.record.createdBy == .meeting
+           && SkillLink.changes(projects.history(project.groupKey), for: linked.turns[0].id).isEmpty,
+           "Undo restores body and attribution, and removes the receipt")
+
+    discussion.conversations[0].turns.append(turn("Delete the skill."))
+    let removing = token(plain)
+    expect(!call(initial, "skill_save", args("stale")) && !toolNames(removing).contains("skill_save")
+           && call(removing, "skill_delete", ["name": "review"]), "stale save sessions close and a direct delete succeeds")
+    let deletionTurn = discussion.conversations[0].turns.last!.id
+    let deletion = SkillLink.changes(global.history(), for: deletionTurn).first!
+    expect(deletion.action == .delete && global.read("review") == nil && global.tombstones().contains { $0.name == "review" }
+           && fm.fileExists(atPath: companion.path), "delete leaves a tombstone and keeps companion files for Undo")
+    if case .refused = SkillLink.undo(creation, project: nil) {} else { fatalError("older Undo must refuse a newer same-skill delete") }
+    _ = global.save(name: "unrelated", description: "Another procedure", body: "Continue.", by: .user)
+    if case .undone = SkillLink.undo(deletion, project: nil) {} else { fatalError("delete Undo failed after an unrelated save") }
+    expect(global.read("review")?.record.userLocked == true && global.tombstones().isEmpty && global.read("unrelated") != nil,
+           "Undo restores the right locked skill and clears its tombstone")
+    if case .undone = SkillLink.undo(creation, project: nil) {} else { fatalError("creation Undo failed") }
+    expect(global.read("review") == nil && global.read("unrelated") != nil && fm.fileExists(atPath: companion.path),
+           "creation Undo removes only the skill document it saved")
+    discussion.conversations[0].turns[1].answeredAt = Date()
+    expect(!toolNames(removing).contains("skill_delete") && !call(removing, "skill_delete", ["name": "unrelated"]),
+           "the completed answer's session loses write tools")
+    discussion.conversations[0].turns.append(turn("How do I save this as a skill?"))
+    let advice = token(plain)
+    expect(!toolNames(advice).contains("skill_save") && !call(advice, "skill_save", args("unrequested")),
+           "ordinary questions leave the tools closed")
+
+    discussion.conversations[1].turns.append(turn("Save this as a project skill."))
+    let invocation = WorkspaceInvocation(binding: linked.workspace!, room: linked.id)
+    let instruction = discussion.soloInstruction(local, binding: linked.workspace!, helper: "", chat: linked.id)
+    let run = RunConditions.app(local, invocation)
+    var prompts: [String] = []
+    Answerer.replyForTests = { text in
+        prompts.append(text)
+        return .success(prompts.count == 1 ? #"{"skill_save":{"name":"local-review","description":"Review","body":"Check the work.","scope":"project"}}"# : "Saved")
+    }
+    defer { Answerer.replyForTests = nil }
+    expect((try? Answerer.ask(local, prompt: instruction, run: run).get()) == "Saved"
+           && instruction.contains("\"skill_save\"") && prompts.count == 2
+           && prompts[1].contains("local-review")
+           && projects.read("local-review", project: project.groupKey)?.record.userLocked == true,
+           "Ollama uses the same guarded store and receives a result before replying")
+
+    _ = projects.save(name: "unrelated", description: "Project-only variant", body: "Check.", by: .user, project: project.groupKey)
+    discussion.conversations[1].turns.append(turn("Delete the project skill."))
+    let projectDelete = token(linked)
+    expect(!call(projectDelete, "skill_delete", ["name": "unrelated"])
+           && global.read("unrelated") != nil && projects.read("unrelated", project: project.groupKey) != nil,
+           "an ambiguous name leaves both scopes intact")
+    expect(call(projectDelete, "skill_delete", ["name": "local-review"])
+           && projects.read("local-review", project: project.groupKey) == nil,
+           "a project answer can delete a uniquely named project skill")
+}
+

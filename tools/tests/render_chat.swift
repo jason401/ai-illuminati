@@ -28,6 +28,16 @@ import AIProjects
         if CommandLine.arguments.contains("--markdown") {
             turn.final = "Memory first.\n\n## Models\n\n| Model | Memory | Time |\n|---|---|---|\n| SD 1.5 | 2~4GB | 10~20s |\n| **SDXL** | 7~9GB | 30s~1min |\n\n---\n### Notes\nKeep ~~old~~ text and `a~b` code."
         }
+        if CommandLine.arguments.contains("--skills") {
+            turn.question = "Save this as a skill. Update the review skill. Delete the obsolete skill."
+            turn.final = "I saved the new workflow, updated the review checklist, and deleted the obsolete procedure."
+            let store = SkillStore.shared
+            _ = store.save(name: "review", description: "Review a checklist", body: "Read the checklist.", by: .user)
+            _ = store.save(name: "obsolete", description: "Former procedure", body: "Follow the previous process.", by: .user)
+            _ = store.save(name: "workflow", description: "Save a workflow", body: "Record each step.", by: .user, turn: turn.id)
+            _ = store.save(name: "review", description: "Review a checklist", body: "Verify each check.", by: .user, turn: turn.id)
+            _ = store.delete("obsolete", turn: turn.id)
+        }
         if CommandLine.arguments.contains("--pictures") {
             // AI pictures where their markers are: one alone, two on a line, a missing one and one with no place (listed below).
             func picture(_ n: Int, _ color: String, _ w: Int, _ h: Int) -> ChatImage? {

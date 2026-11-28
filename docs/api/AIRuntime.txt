@@ -167,6 +167,7 @@ RunConditions.Folders.init(directory:arguments:read:) | init(directory: URL, arg
 RunConditions.ScreenTools | struct ScreenTools
 RunConditions.ScreenTools.init(arguments:finish:) | init(arguments: (([String], URL) throws -> [String])? = nil, finish: @escaping () -> Void)
 RunConditions.beforeStart | var beforeStart: (() -> Void)?
+RunConditions.editSkill | var editSkill: ((String, [String : Any]) -> String)?
 RunConditions.effort | var effort: String?
 RunConditions.environment | var environment: ([String : String]) -> [String : String]
 RunConditions.folders | var folders: RunConditions.Folders?

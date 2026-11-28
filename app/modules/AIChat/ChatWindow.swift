@@ -2846,6 +2846,9 @@ private struct TurnView: View, Equatable {
                 .cornerRadius(10)
             }
             if turn.mode == 0 { RememberedLine(turnID: turn.id) }
+            if SkillLink.asksToEdit(turn.question) {
+                SkillChangedLine(turnID: turn.id, project: discussion.linkedProject(discussion.currentID).map(SidebarProjects.key))
+            }
             if let project = discussion.linkedProject(discussion.currentID).map(SidebarProjects.key) { ProjectRememberedLine(turnID: turn.id, project: project) }
             if let note = turn.spaceDraft { SpaceDraftCard(note: note, turn: turn, discussion: discussion, busy: busy) }
             if let edits = turn.spaceEdits, !edits.isEmpty { SpaceEditsView(notes: edits, discussion: discussion) }
@@ -4018,6 +4021,48 @@ private struct RememberedLine: View {
                 }
             }
         }
+    }
+}
+
+private struct SkillChangedLine: View {
+    let turnID: UUID
+    let project: String?
+    @ObservedObject private var global = SkillStore.shared
+    @ObservedObject private var projects = ProjectSkillStore.shared
+    @StateObject private var failed = UndoFailures()
+
+    var body: some View {
+        let globalChanges = SkillLink.changes(global.history(), for: turnID)
+        let projectChanges = project.map { SkillLink.changes(projects.history($0), for: turnID) } ?? []
+        if !globalChanges.isEmpty || !projectChanges.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(globalChanges) { line($0, project: nil) }
+                ForEach(projectChanges) { line($0, project: project) }
+            }
+        }
+    }
+
+    private func line(_ change: SkillHistoryEntry, project: String?) -> some View {
+        let label: String
+        switch change.action {
+        case .add: label = L("스킬 저장함", "Skill saved")
+        case .update: label = L("스킬 고침", "Skill updated")
+        default: label = L("스킬 지움", "Skill deleted")
+        }
+        return HStack(spacing: 6) {
+            Image(systemName: "list.bullet.rectangle").foregroundColor(.secondary)
+            Text(label + " · " + (change.name ?? "")).foregroundColor(.secondary).lineLimit(2)
+            Button(L("취소", "Undo")) {
+                if case .undone = SkillLink.undo(change, project: project) { failed.ids.remove(change.id) }
+                else { failed.ids.insert(change.id) }
+            }
+            .buttonStyle(.link)
+            .help(L("이 스킬 변경을 되돌려요.", "Reverts this skill change."))
+            if failed.ids.contains(change.id) {
+                Text(L("스킬 변경을 되돌리지 못했어요.", "Could not undo the skill change.")).foregroundColor(.orange)
+            }
+        }
+        .font(.system(size: 11))
     }
 }
 

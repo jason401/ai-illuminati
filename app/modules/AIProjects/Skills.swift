@@ -447,9 +447,10 @@ public struct SkillHistoryEntry: Codable, Identifiable, Equatable {
     public var name: String?
     public var items: [SkillHistoryItem]
     public var undoes: UUID?
+    public var turn: UUID?
 
     public init(id: UUID = UUID(), at: Date = Date(), action: SkillAction, by: SkillAuthor, actor: String? = nil,
-                skillID: UUID? = nil, name: String? = nil, items: [SkillHistoryItem], undoes: UUID? = nil) {
+                skillID: UUID? = nil, name: String? = nil, items: [SkillHistoryItem], undoes: UUID? = nil, turn: UUID? = nil) {
         self.id = id
         self.at = at
         self.action = action
@@ -459,6 +460,7 @@ public struct SkillHistoryEntry: Codable, Identifiable, Equatable {
         self.name = name
         self.items = items
         self.undoes = undoes
+        self.turn = turn
     }
 }
 
@@ -553,7 +555,7 @@ public final class SkillDirectory {
     // User saves always set userLocked = true. AI/meeting saves on a user-locked or externally edited skill return
     // .needsApproval without modifying disk files.
     public func save(name: String, description: String, body: String, by: SkillAuthor,
-                     id: UUID? = nil, actor: String? = nil, isNew: Bool? = nil, now: Date = Date()) -> SkillOutcome {
+                     id: UUID? = nil, actor: String? = nil, isNew: Bool? = nil, now: Date = Date(), turn: UUID? = nil) -> SkillOutcome {
         let now = Self.isoSecond(now)
         guard SkillDocument.isValidSlug(name) else {
             return .refused(L("스킬 이름은 소문자, 숫자, 하이픈만 쓸 수 있어요 (예: my-skill).",
@@ -609,6 +611,13 @@ public final class SkillDirectory {
         if case .unreadable(let err) = disk {
             return .refused(saveFailure(err))
         }
+        if turn != nil {
+            switch disk {
+            case .present(_, _, nil, _): return cannotRestore()
+            case .missing where existingRecord != nil: return cannotRestore()
+            default: break
+            }
+        }
 
         // Untracked SKILL.md on disk is treated as user-authored and locked.
         if existingRecord == nil, case .present(_, let diskHash, let diskRaw, _) = disk {
@@ -630,7 +639,7 @@ public final class SkillDirectory {
                 let after = SkillSnapshot(record: updated, markdown: written.raw)
                 let entry = SkillHistoryEntry(at: now, action: .update, by: by, actor: actor,
                                               skillID: updated.id, name: updated.name,
-                                              items: [SkillHistoryItem(before: before, after: after)])
+                                              items: [SkillHistoryItem(before: before, after: after)], turn: turn)
                 try persist(index: index, append: entry, tx: &tx)
                 tx.commit()
                 changed = true
@@ -660,12 +669,13 @@ public final class SkillDirectory {
             do {
                 let written = try tx.writeSkill(doc, to: skillFile(name))
                 if tracked.name != name {
-                    try tx.removeFolder(skillFolder(tracked.name))
+                    try tx.removeItem(skillFolder(tracked.name))
                 }
                 var updated = effective
                 updated.name = name
                 updated.contentHash = written.hash
                 updated.userLocked = effective.userLocked || by == .user
+                if by == .user && turn != nil { updated.createdBy = .user }
                 if let isNew { updated.isNew = isNew } else if by == .user { updated.isNew = false }
                 updated.updatedAt = now
                 index.skills[i] = updated
@@ -673,7 +683,7 @@ public final class SkillDirectory {
                 let after = SkillSnapshot(record: updated, markdown: written.raw)
                 let entry = SkillHistoryEntry(at: now, action: .update, by: by, actor: actor,
                                               skillID: updated.id, name: updated.name,
-                                              items: [SkillHistoryItem(before: before, after: after)])
+                                              items: [SkillHistoryItem(before: before, after: after)], turn: turn)
                 try persist(index: index, append: entry, tx: &tx)
                 tx.commit()
                 changed = true
@@ -703,7 +713,7 @@ public final class SkillDirectory {
             let after = SkillSnapshot(record: record, markdown: written.raw)
             let entry = SkillHistoryEntry(at: now, action: .add, by: by, actor: actor,
                                           skillID: record.id, name: record.name,
-                                          items: [SkillHistoryItem(before: nil, after: after)])
+                                          items: [SkillHistoryItem(before: nil, after: after)], turn: turn)
             try persist(index: index, append: entry, tx: &tx)
             tx.commit()
             changed = true
@@ -822,7 +832,7 @@ public final class SkillDirectory {
     }
 
     public func delete(_ name: String, by: SkillAuthor = .user,
-                       actor: String? = nil, now: Date = Date()) -> SkillOutcome {
+                       actor: String? = nil, now: Date = Date(), turn: UUID? = nil) -> SkillOutcome {
         let now = Self.isoSecond(now)
         guard SkillDocument.isValidSlug(name) else {
             return .refused(L("올바른 스킬 이름이 아니에요.", "Invalid skill name."))
@@ -858,16 +868,17 @@ public final class SkillDirectory {
         if effective.userLocked && by != .user {
             return .needsApproval(effective, approvalMessage())
         }
+        if turn != nil && priorRaw == nil { return cannotRestore() }
         if let i = trackedIndex { index.skills.remove(at: i) }
         let tombstone = SkillTombstone(id: effective.id, name: effective.name, deletedAt: now)
         index.tombstones.append(tombstone)
         let before = SkillSnapshot(record: effective, markdown: priorRaw)
         let entry = SkillHistoryEntry(at: now, action: .delete, by: by, actor: actor,
                                       skillID: effective.id, name: effective.name,
-                                      items: [SkillHistoryItem(before: before, after: nil, tombstone: tombstone)])
+                                      items: [SkillHistoryItem(before: before, after: nil, tombstone: tombstone)], turn: turn)
         var tx = FileTransaction(root: root)
         do {
-            try tx.removeFolder(skillFolder(name))
+            try tx.removeSkill(skillFile(name), preservingOtherFiles: turn != nil)
             try persist(index: index, append: entry, tx: &tx)
             tx.commit()
             changed = true
@@ -878,8 +889,8 @@ public final class SkillDirectory {
         }
     }
 
-    // Reverts the latest change that has not yet been undone.
-    public func undo(by: SkillAuthor = .user, actor: String? = nil, now: Date = Date()) -> SkillOutcome {
+    // A chat's Undo addresses its own change, provided no active newer change affects the same skills.
+    public func undo(by: SkillAuthor = .user, actor: String? = nil, now: Date = Date(), change: UUID? = nil) -> SkillOutcome {
         let now = Self.isoSecond(now)
         var changed = false
         defer { if changed { onChange?() } }
@@ -889,8 +900,21 @@ public final class SkillDirectory {
             return .refused(L("스킬 저장소를 읽지 못해서 되돌리지 못했어요.", "The skill store could not be read."))
         }
         let undone = Self.undoneIDs(history)
-        guard let target = history.last(where: { $0.action != .undo && !undone.contains($0.id) }) else {
+        let active = history.filter { $0.action != .undo && !undone.contains($0.id) }
+        guard let position = active.lastIndex(where: { change == nil || $0.id == change }) else {
             return .refused(L("되돌릴 변경이 없어요.", "Nothing to undo."))
+        }
+        let target = active[position]
+        let records = target.items.flatMap { [$0.before?.record, $0.after?.record].compactMap { $0 } }
+        let ids = Set(records.map(\.id)), names = Set(records.map(\.name))
+        if active.dropFirst(position + 1).contains(where: { entry in
+            entry.items.contains { item in
+                [item.before?.record, item.after?.record].compactMap { $0 }.contains {
+                    ids.contains($0.id) || names.contains($0.name)
+                }
+            }
+        }) {
+            return .refused(L("그 뒤 같은 스킬이 바뀌었어요.", "The same skill changed after this edit."))
         }
 
         let isToggleUndo = target.action == .enable || target.action == .disable || target.action == .setAllEnabled
@@ -981,7 +1005,7 @@ public final class SkillDirectory {
                 switch (item.before, item.after) {
                 case (nil, let after?):
                     index.skills.removeAll { $0.id == after.record.id }
-                    try tx.removeFolder(skillFolder(after.record.name))
+                    try tx.removeSkill(skillFile(after.record.name), preservingOtherFiles: target.turn != nil)
                     reverseItems.append(SkillHistoryItem(before: after, after: nil))
 
                 case (let before?, let after?):
@@ -990,7 +1014,7 @@ public final class SkillDirectory {
                             try tx.writeRaw(md, to: skillFile(before.record.name))
                         }
                         if before.record.name != after.record.name {
-                            try tx.removeFolder(skillFolder(after.record.name))
+                            try tx.removeItem(skillFolder(after.record.name))
                         }
                         if let i = index.skills.firstIndex(where: { $0.id == before.record.id }) {
                             index.skills[i] = before.record
@@ -1075,6 +1099,11 @@ public final class SkillDirectory {
     private func approvalMessage() -> String {
         L("Inbox 승인 필요: 사용자가 만들거나 수정한 스킬은 AI가 바로 덮어쓸 수 없어요.",
           "Inbox approval required: AI cannot overwrite a user-locked skill directly.")
+    }
+
+    private func cannotRestore() -> SkillOutcome {
+        .refused(L("이전 파일 내용을 복원할 수 없어서 스킬을 바꾸지 않았어요.",
+                   "The skill was left as it is because the previous file could not be restored."))
     }
 
     private func saveFailure(_ error: Error) -> String {
@@ -1218,16 +1247,28 @@ public final class SkillDirectory {
             }
         }
 
-        mutating func removeFolder(_ folder: URL) throws {
+        // Chat history snapshots the skill document. Keep any companion files so Undo can restore the whole skill.
+        mutating func removeSkill(_ file: URL, preservingOtherFiles: Bool) throws {
+            let folder = file.deletingLastPathComponent()
             let fm = FileManager.default
-            guard fm.fileExists(atPath: folder.path) else { return }
+            if preservingOtherFiles, fm.fileExists(atPath: folder.path),
+               try fm.contentsOfDirectory(atPath: folder.path).contains(where: { $0 != file.lastPathComponent }) {
+                try removeItem(file)
+            } else {
+                try removeItem(folder)
+            }
+        }
+
+        mutating func removeItem(_ item: URL) throws {
+            let fm = FileManager.default
+            guard fm.fileExists(atPath: item.path) else { return }
             try fm.createDirectory(at: root, withIntermediateDirectories: true,
                                    attributes: [.posixPermissions: 0o700])
             let backup = root.appendingPathComponent(".rollback-\(UUID().uuidString)", isDirectory: true)
-            try fm.moveItem(at: folder, to: backup)
+            try fm.moveItem(at: item, to: backup)
             rollbacks.append {
-                if fm.fileExists(atPath: folder.path) { try? fm.removeItem(at: folder) }
-                try? fm.moveItem(at: backup, to: folder)
+                if fm.fileExists(atPath: item.path) { try? fm.removeItem(at: item) }
+                try? fm.moveItem(at: backup, to: item)
             }
             cleanups.append {
                 try? fm.removeItem(at: backup)
@@ -1339,8 +1380,8 @@ public final class ProjectSkillStore: ObservableObject {
     public func history(_ project: String) -> [SkillHistoryEntry] { directory(project).history() }
 
     public func save(name: String, description: String, body: String, by: SkillAuthor, project: String,
-                     id: UUID? = nil, actor: String? = nil, isNew: Bool? = nil, now: Date = Date()) -> SkillOutcome {
-        directory(project).save(name: name, description: description, body: body, by: by, id: id, actor: actor, isNew: isNew, now: now)
+                     id: UUID? = nil, actor: String? = nil, isNew: Bool? = nil, now: Date = Date(), turn: UUID? = nil) -> SkillOutcome {
+        directory(project).save(name: name, description: description, body: body, by: by, id: id, actor: actor, isNew: isNew, now: now, turn: turn)
     }
 
     public func setEnabled(_ name: String, _ enabled: Bool, project: String, by: SkillAuthor = .user,
@@ -1354,11 +1395,11 @@ public final class ProjectSkillStore: ObservableObject {
     }
 
     public func delete(_ name: String, project: String, by: SkillAuthor = .user,
-                       actor: String? = nil, now: Date = Date()) -> SkillOutcome {
-        directory(project).delete(name, by: by, actor: actor, now: now)
+                       actor: String? = nil, now: Date = Date(), turn: UUID? = nil) -> SkillOutcome {
+        directory(project).delete(name, by: by, actor: actor, now: now, turn: turn)
     }
 
-    public func undo(project: String, by: SkillAuthor = .user, actor: String? = nil, now: Date = Date()) -> SkillOutcome {
-        directory(project).undo(by: by, actor: actor, now: now)
+    public func undo(project: String, by: SkillAuthor = .user, actor: String? = nil, now: Date = Date(), change: UUID? = nil) -> SkillOutcome {
+        directory(project).undo(by: by, actor: actor, now: now, change: change)
     }
 }

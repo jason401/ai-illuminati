@@ -491,19 +491,19 @@ SkillLink.shared | static let shared: SkillLink
 SkillLink.tools() | func tools() -> [[String : Any]]
 SkillLink.tools(context:) | func tools(context: ToolContext) -> [[String : Any]]
 SkillStore | final class SkillStore
-SkillStore.delete(_:by:actor:now:) | func delete(_ name: String, by: SkillAuthor = .user, actor: String? = nil, now: Date = Date()) -> SkillOutcome
+SkillStore.delete(_:by:actor:now:turn:) | func delete(_ name: String, by: SkillAuthor = .user, actor: String? = nil, now: Date = Date(), turn: UUID? = nil) -> SkillOutcome
 SkillStore.folder | static var folder: URL { get }
 SkillStore.history() | func history() -> [SkillHistoryEntry]
 SkillStore.init(folder:) | init(folder: (() -> URL)? = nil)
 SkillStore.list() | func list() -> [SkillSummary]
 SkillStore.read(_:) | func read(_ name: String) -> SkillDetail?
 SkillStore.revision | @Published var revision: Int { get set }
-SkillStore.save(name:description:body:by:id:actor:isNew:now:) | func save(name: String, description: String, body: String, by: SkillAuthor, id: UUID? = nil, actor: String? = nil, isNew: Bool? = nil, now: Date = Date()) -> SkillOutcome
+SkillStore.save(name:description:body:by:id:actor:isNew:now:turn:) | func save(name: String, description: String, body: String, by: SkillAuthor, id: UUID? = nil, actor: String? = nil, isNew: Bool? = nil, now: Date = Date(), turn: UUID? = nil) -> SkillOutcome
 SkillStore.setAllEnabled(_:by:actor:now:) | func setAllEnabled(_ enabled: Bool, by: SkillAuthor = .user, actor: String? = nil, now: Date = Date()) -> SkillOutcome
 SkillStore.setEnabled(_:_:by:actor:now:) | func setEnabled(_ name: String, _ enabled: Bool, by: SkillAuthor = .user, actor: String? = nil, now: Date = Date()) -> SkillOutcome
 SkillStore.shared | static let shared: SkillStore
 SkillStore.tombstones() | func tombstones() -> [SkillTombstone]
-SkillStore.undo(by:actor:now:) | func undo(by: SkillAuthor = .user, actor: String? = nil, now: Date = Date()) -> SkillOutcome
+SkillStore.undo(by:actor:now:change:) | func undo(by: SkillAuthor = .user, actor: String? = nil, now: Date = Date(), change: UUID? = nil) -> SkillOutcome
 SpaceRefiner | final class SpaceRefiner
 SpaceRefiner.watchLibrary() | static func watchLibrary()
 SpeechLength | enum SpeechLength

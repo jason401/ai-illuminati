@@ -21,6 +21,7 @@ app/macos/ExternalMCPTools.swift	testToolHub testExternalMCP testRemoteMCP
 tools/tests/search_fixtures.swift	testEnterpriseMarks testMeetingFold testChatFind testChatSearch testChatTools testMemory
 tools/tests/project_memory.swift	testProjectMemory testProjectMemoryUndo testProjectMemoryCleanup
 tools/tests/skill_store.swift	testSkillStore testSkillRead testSkillSave testKnowledgeCandidates testKnowledgeReview
+tools/tests/device_sync.swift	testDeviceSync testKnowledgeSync testKnowledgeSyncMerge
 app/macos/TokenStats.swift	testTokenStats
 tools/tests/token_stats.swift	testTokenStats
 app/macos/PhoneAccess.swift	testPhoneAccess testPhoneServer testPhoneUsage testPhoneUpdates

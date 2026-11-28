@@ -1313,10 +1313,20 @@ private struct MemorySettingsCard: View {
         return profile + " · " + L("기억 \(memory.data.items.count)개", "\(memory.data.items.count) facts")
     }
 
+    // Where memory lives depends on the sync switch below, so the card's help follows it.
+    private var cardHelp: String {
+        let kept = sync.settings.syncsKnowledge
+            ? L("이 Mac에 저장되고 iCloud Drive로 다른 Mac과 연동돼요. 답할 때 그 AI에게 보내져요.",
+                "It is kept on this Mac and synced with your other Macs through iCloud Drive. It is sent to the AI that answers.")
+            : L("이 Mac에만 저장되지만 답할 때 그 AI에게 보내져요.", "It stays on this Mac but is sent to the AI that answers.")
+        return L("모든 AI가 같은 기억을 읽어요. ", "Every AI reads the same memory. ") + kept
+            + L(" Enterprise 방은 읽기만 하고 저장하지 않아요. 비밀번호나 키는 저장하지 않아요. 스킬은 AI가 필요할 때 읽는 작업 순서이고, 꺼진 스킬은 AI에게 보내지 않아요.",
+                " Enterprise chats only read it. Passwords and keys are never saved. Skills are procedures the AIs read when needed; skills turned off are not sent.")
+    }
+
     var body: some View {
         SettingsCard(title: L("스킬 & 기억", "Skills & Memory"),
-                     help: L("모든 AI가 같은 기억을 읽어요. 이 Mac에 저장되고(연동을 켜면 iCloud Drive에도) 답할 때 그 AI에게 보내져요. Enterprise 방은 읽기만 하고 저장하지 않아요. 비밀번호나 키는 저장하지 않아요. 스킬은 AI가 필요할 때 읽는 작업 순서이고, 꺼진 스킬은 AI에게 보내지 않아요.",
-                             "Every AI reads the same memory. It is kept on this Mac (and in iCloud Drive with sync on) and sent to the AI that answers. Enterprise chats only read it. Passwords and keys are never saved. Skills are procedures the AIs read when needed; skills turned off are not sent.")) {
+                     help: cardHelp) {
             SettingsRow(title: L("기억 사용", "Use memory")) {
                 Spacer()
                 Toggle(L("기억 사용", "Use memory"), isOn: Binding(

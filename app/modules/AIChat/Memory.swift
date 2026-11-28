@@ -4,13 +4,17 @@ import AILocalization
 import AIProjects
 import AIWorkspace
 
-// Long-term memory (note 8): what every AI should know about the user, kept on this Mac and put into every
+// Long-term memory (note 8): what every AI should know about the user, kept in <support>/memory.json and put into every
 // plain-chat and project request (soloInstruction). Two parts: a short profile the user writes, and saved facts,
 // one line each. Facts are saved with remember in an answer to a message that asks for it ("기억해", "remember").
 // AIs use memory_propose for facts they picked themselves, when the user's candidate setting allows it.
 // The AI corrects (memory_replace) or deletes (memory_forget) a fact by the short id shown in the prompt; the old
-// version stays in history for Undo. Enterprise chats read memory but never change it. Goes to the other Macs only with "Sync skills & memory" on
-// (KnowledgeSync.swift).
+// version stays in history for Undo. Enterprise chats read memory but never change it.
+// Next to it: skills (Skills.swift) are procedures listed by name under [Skills] and read in full with skill_read;
+// AI proposals (memory_propose, skill_propose) wait in the candidate inbox (KnowledgeCandidates.swift) until an idle
+// hidden review meeting adds, changes or drops them (KnowledgeReview.swift; the user's facts and 🔒 skills only after
+// Inbox approval). Profile and facts go to the other Macs through iCloud Drive only with "Sync skills & memory" on
+// (off by default, KnowledgeSync.swift); otherwise they stay on this Mac.
 public struct MemoryItem: Codable, Identifiable, Equatable {
     public var id = UUID()
     public var text: String

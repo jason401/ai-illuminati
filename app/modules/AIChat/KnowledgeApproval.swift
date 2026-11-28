@@ -148,7 +148,11 @@ struct KnowledgeApproval: Identifiable, Equatable {
         case .refused(let why) where why == MemoryStore.changedSince: return close(.refused, .changed, why: changedSince)
         case .refused(let why):
             guard MemoryStore.shared.snapshot.items.contains(where: { $0.id == factID }) else { return close(.refused, .changed, why: changedSince) }
-            return .failed(why)
+            // MemoryStore's refusals are written for the AI's tools (English only); the Inbox shows the user's language.
+            if why.hasPrefix("Another saved fact") { return .failed(L("같은 내용의 기억이 이미 있어서 바꾸지 않았어요.", "Another saved fact already says this, so it was not changed.")) }
+            if why.hasPrefix("Too long") { return .failed(L("제안된 기억이 너무 길어서 바꾸지 않았어요.", "The proposed fact is too long, so it was not changed.")) }
+            if why.hasPrefix("Not saved: passwords") { return .failed(L("비밀번호나 키처럼 보여서 바꾸지 않았어요.", "It looks like a password or key, so it was not changed.")) }
+            return .failed(L("기억을 바꾸지 못했어요.", "The fact was not changed."))
         }
     }
 

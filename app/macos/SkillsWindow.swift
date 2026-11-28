@@ -492,7 +492,7 @@ private struct SkillRow: View {
                         Text("🔒").font(.system(size: 10)).help(L("사용자가 저장한 스킬: AI나 회의가 바꾸려면 승인이 필요해요.", "Saved by you: AIs and meetings need your approval to change it."))
                     }
                     if record.isNew {
-                        Text("new").font(.system(size: 9, weight: .semibold)).foregroundStyle(.white)
+                        Text(L("새", "new")).font(.system(size: 9, weight: .semibold)).foregroundStyle(.white)
                             .padding(.horizontal, 4).padding(.vertical, 1)
                             .background(Capsule().fill(Color.accentColor))
                             .help(L("새로 들어온 스킬이에요.", "Newly added skill."))

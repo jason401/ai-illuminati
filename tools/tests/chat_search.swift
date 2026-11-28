@@ -393,6 +393,11 @@ func testMemory() {
     expect(MemoryStore.asksToRemember("이거 기억해 줘") && MemoryStore.asksToRemember("Please remember I use COMSOL")
            && !MemoryStore.asksToRemember("이건 기억하지 마") && !MemoryStore.asksToRemember("forget it, don't remember that") && !MemoryStore.asksToRemember("논문 요약해 줘"),
            "a message that asks to remember, not one that asks not to")
+    expect(MemoryStore.asksToChangeMemory("그건 잊어") && MemoryStore.asksToChangeMemory("Forget that I use MATLAB") && MemoryStore.asksToChangeMemory("기억한 거 틀렸어, 고쳐 줘")
+           && MemoryStore.asksToChangeMemory("update your memory: I moved to Palo Alto") && !MemoryStore.asksToChangeMemory("이건 기억하지 마")
+           && !MemoryStore.asksToChangeMemory("이 파일 지워 줘") && !MemoryStore.asksToChangeMemory("비밀번호를 잊어버렸어") && !MemoryStore.asksToChangeMemory("Don't forget my meeting")
+           && MemoryStore.asksToRemember("내 미팅 잊지 마") && !MemoryStore.asksToRemember("그건 잊어"),
+           "\"잊어\"/forget/memory edits ask to change memory; \"기억하지 마\", unrelated deletes and \"잊지 마\" do not")
     expect(MemoryStore.looksSecret("내 비밀번호는 hunter2") && MemoryStore.looksSecret("key sk-abcdefghijklmnopqrstuv") && !MemoryStore.looksSecret("LiNbO3 투명 초음파 트랜스듀서를 연구함"),
            "secrets are refused, research facts are not")
 
@@ -409,7 +414,7 @@ func testMemory() {
     let link = MemoryLink.shared
     // A tool session is made for the chat's newest message (ToolHub.register).
     func session(_ room: UUID) -> ToolContext { ToolContext(room: room, roots: [], asker: claude, turn: link.newestTurn(room)) }
-    func offered(_ room: UUID) -> Bool { link.tools(context: session(room)).contains { $0["name"] as? String == "remember" } }
+    func offered(_ room: UUID, _ name: String = "remember") -> Bool { link.tools(context: session(room)).contains { $0["name"] as? String == name } }
 
     expect(chat.memoryRule(claude, chat: open.id).isEmpty && !offered(open.id), "nothing saved and saving off: no memory block, no tool")
     expect(link.call("remember", ["text": "x"], context: session(open.id))["isError"] as? Bool == true, "a call without the tool is refused")
@@ -423,8 +428,40 @@ func testMemory() {
     expect(link.call("remember", ["text": "비밀번호 1234"], context: session(open.id))["isError"] as? Bool == true
            && link.call("remember", ["text": String(repeating: "a", count: 400)], context: session(open.id))["isError"] as? Bool == true
            && store.snapshot.items.count == 1, "secrets and long text are refused")
+    expect(offered(open.id, "memory_replace") && offered(open.id, "memory_forget") && chat.memoryRule(claude, chat: open.id).contains("memory_replace"),
+           "asked to remember: it may also correct a saved fact instead of adding a contradicting one")
+    let saved = store.snapshot.items[0]
+    expect(saved.shortID.count == 8 && chat.memoryRule(claude, chat: open.id).contains("- [\(saved.shortID)] COMSOL과 MATLAB을 씀 ("), "each fact in the prompt has its short id")
     chat.change(open.id) { $0.turns[0].answeredAt = Date() }
-    expect(!offered(open.id), "once the answer is done the tool closes")
+    expect(!offered(open.id) && !offered(open.id, "memory_forget"), "once the answer is done the tools close")
+
+    // "잊어"/"고쳐": replace and forget only, by the short id; the old version stays for Undo.
+    chat.change(open.id) { $0.turns.append(ChatTurn(question: "기억한 거 틀렸어. MATLAB은 이제 안 써, 고쳐 줘")) }
+    expect(!offered(open.id) && offered(open.id, "memory_replace") && offered(open.id, "memory_forget")
+           && chat.memoryRule(claude, chat: open.id).contains("change or forget"), "a request to fix memory opens replace and forget, not remember")
+    expect(link.call("memory_replace", ["id": saved.shortID, "text": "  "], context: session(open.id))["isError"] as? Bool == true
+           && link.call("memory_replace", ["id": saved.shortID, "text": "비밀번호는 hunter2"], context: session(open.id))["isError"] as? Bool == true
+           && link.call("memory_replace", ["id": "deadbeef", "text": "COMSOL만 씀"], context: session(open.id))["isError"] as? Bool == true
+           && store.snapshot.items[0].text == "COMSOL과 MATLAB을 씀" && store.snapshot.history.isEmpty, "empty text, secrets and unknown ids are refused")
+    let fixed = link.call("memory_replace", ["id": "[\(saved.shortID)]", "text": "COMSOL만 씀"], context: session(open.id))
+    let fixTurn = store.snapshot.history.last?.turn
+    expect(fixed["isError"] as? Bool == false && store.snapshot.items.count == 1 && store.snapshot.items[0].id == saved.id && store.snapshot.items[0].text == "COMSOL만 씀"
+           && store.snapshot.history.last?.old.text == "COMSOL과 MATLAB을 씀" && fixTurn == chat.conversations.first { $0.id == open.id }?.turns.last?.id,
+           "replace changes the fact in place and keeps the old line in history with the message it was changed in")
+    let raw = try! JSONEncoder().encode(store.snapshot)
+    expect((try? JSONDecoder().decode(MemoryData.self, from: raw)) == store.snapshot, "history survives saving")
+    expect(store.undo(store.snapshot.history.last!.id) && store.snapshot.items[0].text == "COMSOL과 MATLAB을 씀" && store.snapshot.history.isEmpty, "Undo puts the old line back")
+    expect(link.call("memory_forget", ["id": saved.shortID], context: session(open.id))["isError"] as? Bool == false
+           && store.snapshot.items.isEmpty && store.snapshot.history.last?.new == nil, "forget removes the fact and keeps it in history")
+    expect(store.undo(store.snapshot.history.last!.id) && store.snapshot.items.first?.id == saved.id && !store.undo(UUID()), "Undo brings a forgotten fact back")
+    chat.change(open.id) { $0.turns[$0.turns.count - 1].question = "그건 잊어" }
+    expect(offered(open.id, "memory_forget") && !offered(open.id), "\"이거 잊어\" offers forget (it used to close every memory tool)")
+    chat.change(open.id) { $0.turns[$0.turns.count - 1].question = "이건 기억하지 마" }
+    expect(!offered(open.id) && !offered(open.id, "memory_forget"), "\"기억하지 마\" offers nothing")
+    chat.change(open.id) { $0.turns[$0.turns.count - 1].answeredAt = Date() }
+    let old = Data(#"{"profile":"옛 프로필","items":[{"id":"1A2B3C4D-0000-0000-0000-000000000000","text":"옛 사실","createdAt":0}],"autoSave":false,"enabled":true}"#.utf8)
+    let decoded = try? JSONDecoder().decode(MemoryData.self, from: old)
+    expect(decoded?.items.first?.shortID == "1a2b3c4d" && decoded?.history.isEmpty == true && decoded?.profile == "옛 프로필", "an older memory.json without history still reads")
 
     let earlier = session(open.id)
     store.update { $0.autoSave = true; $0.profile = "Stanford 초음파 연구자. 수치 위주 답 선호." }
@@ -437,6 +474,9 @@ func testMemory() {
     expect(!chat.memoryRule(gemma, chat: open.id).contains("remember tool") && chat.memoryRule(gemma, chat: open.id).contains("Stanford"), "Gemma reads memory but gets no saving rule")
     expect(!offered(locked.id) && chat.memoryRule(claude, chat: locked.id).contains("Stanford") && chat.memoryRule(claude, chat: locked.id).contains("Enterprise chat: nothing from it is saved"),
            "an Enterprise chat reads memory and never saves, even when asked")
+    chat.change(locked.id) { $0.turns[0].question = "그거 잊어. 기억 고쳐" }
+    expect(!offered(locked.id, "memory_forget") && link.call("memory_forget", ["id": saved.shortID], context: session(locked.id))["isError"] as? Bool == true,
+           "an Enterprise chat cannot forget either")
 
     // Many facts: those that match the message, within the limit.
     store.update { data in
@@ -448,5 +488,5 @@ func testMemory() {
            "over the limit: the matching facts go first and the rest is cut")
     store.update { $0.enabled = false }
     expect(chat.memoryRule(claude, chat: open.id).isEmpty && !offered(open.id), "memory off: nothing given, nothing saved")
-    print("PASS: memory (profile and facts for every AI, remember only when on or asked and only to its own message, Enterprise reads only, no secrets or repeats, matching facts over the limit, off)")
+    print("PASS: memory (profile and facts with short ids for every AI, remember only when on or asked and only to its own message, replace/forget by id with Undo history, \"잊어\" opens them, Enterprise reads only, no secrets or repeats, matching facts over the limit, off)")
 }

@@ -3985,7 +3985,8 @@ private struct RememberedLine: View {
 
     var body: some View {
         let saved = memory.data.items.filter { $0.turn == turnID }
-        if !saved.isEmpty {
+        let changed = memory.data.history.filter { $0.turn == turnID }
+        if !saved.isEmpty || !changed.isEmpty {
             VStack(alignment: .leading, spacing: 4) {
                 ForEach(saved) { item in
                     HStack(spacing: 6) {
@@ -3994,6 +3995,17 @@ private struct RememberedLine: View {
                         Button(L("취소", "Undo")) { memory.remove(item.id) }
                             .buttonStyle(.link)
                             .help(L("이 기억을 지워요.", "Removes this from memory."))
+                    }
+                    .font(.system(size: 11))
+                }
+                ForEach(changed) { change in
+                    HStack(spacing: 6) {
+                        Image(systemName: "brain.head.profile").foregroundColor(.secondary)
+                        Text(change.new.map { L("기억 고침: ", "Memory changed: ") + change.old.text + " → " + $0 }
+                             ?? L("기억 지움: ", "Forgot: ") + change.old.text).foregroundColor(.secondary).lineLimit(2)
+                        Button(L("취소", "Undo")) { memory.undo(change.id) }
+                            .buttonStyle(.link)
+                            .help(L("예전 기억으로 되돌려요.", "Puts the earlier memory back."))
                     }
                     .font(.system(size: 11))
                 }
